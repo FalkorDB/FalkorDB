@@ -21,31 +21,31 @@ class testMultiLabel():
         query = "MATCH (a:L0) RETURN LABELS(a)"
         query_result = self.graph.query(query)
         expected_result = [[['L0','L1']]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Issue a query that matches the single (:L0:L1) node.
         query = "MATCH (a:L0:L1) RETURN LABELS(a)"
         query_result = self.graph.query(query)
         expected_result = [[['L0','L1']]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Issue a query that matches the single (:L1:L0) node.
         query = "MATCH (a:L1:L0) RETURN LABELS(a)"
         query_result = self.graph.query(query)
         expected_result = [[['L0','L1']]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Issue a query that matches all 3 nodes with the label :L1.
         query = "MATCH (a:L1) RETURN LABELS(a) ORDER BY LABELS(a)"
         query_result = self.graph.query(query)
         expected_result = [[['L0','L1']], [['L1']], [['L1','L2']]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Issue a query that matches no nodes, as the (:L0:L2) label disjunction is not present.
         query = "MATCH (a:L0:L2) RETURN LABELS(a)"
         query_result = self.graph.query(query)
         expected_result = []
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
     # Validate basic multi-label traversals.
     def test02_multilabel_traversal(self):
@@ -54,15 +54,15 @@ class testMultiLabel():
             "MATCH (a:L0:L1)-[]->(b) RETURN LABELS(a), LABELS(b)",
             "MATCH (a:L0:L1)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
             "MATCH (a:L0:L1)-[:E]->(b:L1) RETURN LABELS(a), LABELS(b)",
-            "MATCH (b:L1) WITH (b) MATCH (a:L0:L1)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
-            "MATCH (b:L1) WITH (b) MATCH (a:L0)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
+            "MATCH (b:L1) WITH b MATCH (a:L0:L1)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
+            "MATCH (b:L1) WITH b MATCH (a:L0)-[:E]->(b) RETURN LABELS(a), LABELS(b)",
         ]
 
         expected_result = [[['L0','L1'], ['L1']]]
 
         for q in queries:
             query_result = self.graph.query(q)
-            self.env.assertEquals(query_result.result_set, expected_result)
+            self.env.assertEqual(query_result.result_set, expected_result)
 
     # Validate that the graph properly handles label counts greater than its default.
     def test03_large_label_count(self):
@@ -71,7 +71,7 @@ class testMultiLabel():
         query = "CREATE (n :" + ':'.join(labels) + ") RETURN LABELS(n)"
         query_result = self.graph.query(query)
         expected_result = [[labels]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
     def test04_label_scan_optimization(self):
         # create graph with 10 A nodes, 100 B nodes and 1000 C nodes
@@ -106,13 +106,13 @@ class testMultiLabel():
             for query in queries:
                 query = query.format(ls=':'.join(permutation))
                 plan = str(self.graph.explain(query))
-                self.env.assertContains("Node By Label Scan | (n:A)", plan)
+                self.env.assertContains("Node By Label Scan | (n:A:B:C)", plan)
 
     # Validate behavior of index scans on multi-labeled nodes
     def test05_index_scan(self):
 
         query_result = create_node_range_index(self.graph, 'L1', 'v', sync=True)
-        self.env.assertEquals(query_result.indices_created, 1)
+        self.env.assertEqual(query_result.indices_created, 1)
 
         # Query the explicitly created index
         query = """MATCH (a:L1) WHERE a.v > 0 RETURN a.v ORDER BY a.v"""
@@ -122,7 +122,7 @@ class testMultiLabel():
         expected_result = [[1],
                            [2],
                            [3]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Query the explicitly created index on a multi-labeled node
         queries = [
@@ -135,22 +135,22 @@ class testMultiLabel():
             self.env.assertContains("Index Scan", plan)
             query_result = self.graph.query(q)
             expected_result = [[3]]
-            self.env.assertEquals(query_result.result_set, expected_result)
+            self.env.assertEqual(query_result.result_set, expected_result)
 
     # Validate the creation of multi-labeled nodes with the MERGE clause
     def test06_multi_label_merge(self):
         query = """MERGE (a:L2:L3 {v: 4}) RETURN labels(a)"""
         query_result = self.graph.query(query)
         expected_result = [[["L2", "L3"]]]
-        self.env.assertEquals(query_result.nodes_created, 1)
-        self.env.assertEquals(query_result.labels_added, 2)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.nodes_created, 1)
+        self.env.assertEqual(query_result.labels_added, 1)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Repetition of the query should not create a new node
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.nodes_created, 0)
-        self.env.assertEquals(query_result.labels_added, 0)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.nodes_created, 0)
+        self.env.assertEqual(query_result.labels_added, 0)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
     # Validate that OPTIONAL MATCH enforces multi-label constraints
     def test07_multi_label_optional_match(self):
@@ -160,76 +160,105 @@ class testMultiLabel():
         expected_result = [[["L0", "L1"], None],
                            [["L1"], ["L1", "L2"]],
                            [["L1", "L2"], None]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         # Specify an additional label for the source node in the OPTIONAL MATCH
         query = """MATCH (a:L0) OPTIONAL MATCH (a:L1)-[]->(b:L1) RETURN labels(a) AS la, labels(b) AS lb ORDER BY la, lb"""
         query_result = self.graph.query(query)
         expected_result = [[["L0", "L1"], ["L1"]]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
     # Validate multi-labeled sources and destinations in variable-length traversals
     def test08_multi_label_variable_length_traversal(self):
         query = """MATCH (a {v: 1})-[*]->(b:L1:L2 {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
         expected_result = [[["L0", "L1"], ["L1", "L2"]]]
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         query = """MATCH (a:L0 {v: 1})-[*]->(b:L1:L2 {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         query = """MATCH (a:L0 {v: 1})-[*]->(b:L1:L2 {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         query = """MATCH (a:L0:L1 {v: 1})-[*]->(b:L2 {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         query = """MATCH (a:L0:L1 {v: 1})-[*]->(b {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         query = """MATCH (a:L0)-[*]->(b:L1:L2 {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         query = """MATCH (a:L0:L1)-[*]->(b:L2 {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
 
         query = """MATCH (a:L0:L1)-[*]->(b {v: 3}) RETURN labels(a), labels(b)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.result_set, expected_result)
+        self.env.assertEqual(query_result.result_set, expected_result)
+
+    # every occurrence of an alias in a pattern is a predicate, whether the
+    # occurrences are comma separated or spread over several MATCH clauses
+    def test09_repeated_alias_predicates(self):
+        # (v1:L0:L1 {v: 1})-[:E]->(v2:L1 {v: 2})-[:E]->(v3:L1:L2 {v: 3})
+
+        # labels accumulate: only v1 carries both L0 and L1
+        for query in ["MATCH (n:L0) MATCH (n:L1) RETURN n.v",
+                      "MATCH (n:L1) MATCH (n:L0) RETURN n.v",
+                      "MATCH (n:L0), (n:L1) RETURN n.v"]:
+            query_result = self.graph.query(query)
+            self.env.assertEqual(query_result.result_set, [[1]])
+
+        # no node carries both L0 and L2
+        query_result = self.graph.query("MATCH (n:L1) MATCH (n:L0:L2) RETURN n.v")
+        self.env.assertEqual(query_result.result_set, [])
+
+        # inline properties accumulate as well, so contradicting predicates
+        # match nothing
+        query_result = self.graph.query("MATCH (n {v: 1}), (n {v: 2}) RETURN n.v")
+        self.env.assertEqual(query_result.result_set, [])
+
+        query_result = self.graph.query("MATCH (n:L1 {v: 3}), (n:L2) RETURN n.v")
+        self.env.assertEqual(query_result.result_set, [[3]])
+
+        # a label added to an alias which is also a traversal endpoint
+        query = "MATCH (a:L1)-[]->(b), (a:L0) RETURN a.v, b.v"
+        query_result = self.graph.query(query)
+        self.env.assertEqual(query_result.result_set, [[1, 2]])
 
     def test10_test_delete_label(self):
         self.graph = self.db.select_graph('delete_multi_label')
 
         query = """CREATE (a:L1) RETURN labels(a)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.labels_added, 1)
-        self.env.assertEquals(query_result.nodes_created, 1)
-        self.env.assertEquals(query_result.result_set[0][0], ["L1"])
+        self.env.assertEqual(query_result.labels_added, 1)
+        self.env.assertEqual(query_result.nodes_created, 1)
+        self.env.assertEqual(query_result.result_set[0][0], ["L1"])
 
         query = """CREATE (a:L2) RETURN labels(a)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.labels_added, 1)
-        self.env.assertEquals(query_result.nodes_created, 1)
-        self.env.assertEquals(query_result.result_set[0][0], ["L2"])
+        self.env.assertEqual(query_result.labels_added, 1)
+        self.env.assertEqual(query_result.nodes_created, 1)
+        self.env.assertEqual(query_result.result_set[0][0], ["L2"])
 
         query = """CREATE (a:L3) RETURN labels(a)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.labels_added, 1)
-        self.env.assertEquals(query_result.nodes_created, 1)
-        self.env.assertEquals(query_result.result_set[0][0], ["L3"])
+        self.env.assertEqual(query_result.labels_added, 1)
+        self.env.assertEqual(query_result.nodes_created, 1)
+        self.env.assertEqual(query_result.result_set[0][0], ["L3"])
 
         query = """MATCH (a) DELETE a"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.nodes_deleted, 3)
+        self.env.assertEqual(query_result.nodes_deleted, 3)
 
         query = """CREATE (a:L4) RETURN labels(a)"""
         query_result = self.graph.query(query)
-        self.env.assertEquals(query_result.labels_added, 1)
-        self.env.assertEquals(query_result.nodes_created, 1)
-        self.env.assertEquals(query_result.result_set[0][0], ["L4"])
+        self.env.assertEqual(query_result.labels_added, 1)
+        self.env.assertEqual(query_result.nodes_created, 1)
+        self.env.assertEqual(query_result.result_set[0][0], ["L4"])

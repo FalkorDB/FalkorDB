@@ -1,0 +1,89 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "TCK",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["${workspaceFolder}/tests/tck/test_tck.py", "-s"],
+            "env": {
+                "TCK_DONE": "tck_done.txt"
+            }
+        },
+        {
+            "name": "MVCC Test",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "pytest",
+            "args": ["${workspaceFolder}/tests/test_mvcc.py", "-s", "-vv"],
+        },
+        {
+            "type": "antlr-debug",
+            "request": "launch",
+            "name": "Debug Cypher Grammar",
+            "input": "input.txt",
+            "visualParseTree": true,
+            "grammar": "${workspaceFolder}/graph/src/Cypher.g4"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Launch Debug Mac",
+            "program": "/usr/local/bin/redis-server",
+            "args": [
+                "--loadmodule",
+                "${workspaceFolder}/target/debug/libfalkordb.dylib"
+            ],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": [
+                "rust"
+            ],
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Launch Release Mac",
+            "program": "/usr/local/bin/redis-server",
+            "args": [
+                "--loadmodule",
+                "${workspaceFolder}/target/release/libfalkordb.dylib"
+            ],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": [
+                "rust"
+            ],
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Launch Linux",
+            "program": "redis-server",
+            "args": [
+                "--loadmodule",
+                "${workspaceFolder}/target/debug/libfalkordb.so"
+            ],
+            "cwd": "${workspaceFolder}",
+            "sourceLanguages": [
+                "rust"
+            ],
+        },
+        {
+            "name": "Debug Flow Tests Linux",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "RLTest",
+            "args": ["--test", "tests/flow/test_load_csv.py", "--module", "${workspaceFolder}/target/debug/libfalkordb.so", "--log-dir", "${workspaceFolder}/tests/flow/logs", "--no-progress", "-v"],
+        },
+        {
+            "name": "Debug Flow Tests Mac",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "RLTest",
+            "args": ["--test", "tests/flow/test_load_csv.py", "--module", "${workspaceFolder}/target/debug/libfalkordb.dylib", "--log-dir", "${workspaceFolder}/tests/flow/logs", "--no-progress", "-v"]
+        },
+    ]
+}

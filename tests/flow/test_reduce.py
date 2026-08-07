@@ -25,42 +25,42 @@ class testReduce():
         q = "RETURN reduce(sum = 0, n in [1,2,3] | sum + n)"
         expected = 6
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
         #-----------------------------------------------------------------------
 
         # sum = 0, for n in [1,2,3], sum -= n
         q = "RETURN reduce(sum = 0, n in [1,2,3] | sum - n)"
         expected = -6
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
         #-----------------------------------------------------------------------
 
         # sum = 0, for n in ['1','2','3'], sum += int(n)
         q = "RETURN reduce(sum = 0, n in ['1','2','3'] | sum + tointeger(n))"
         expected = 6
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_overwrite_reduction(self):
         # last = 0, for n in [1,2,3], last = n
         q = "RETURN reduce(last = 0, n in [1,2,3] | n)"
         expected = 3
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_string_reduction(self):
         # msg = 'hello ' + 'world'
         q = "RETURN reduce(msg='hello ', c in ['w', 'o', 'r', 'l', 'd'] | msg+c)"
         expected = "hello world"
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_array_reduction(self):
         # arr = [1,2] + [2,3]
         q = "RETURN reduce(arr=[1,2], n in [2,3] | arr+n)"
         expected = [1,2,2,3]
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_variable_reduction(self):
         # sum = 1 + 1 + 2 + 3 - 3
@@ -68,7 +68,7 @@ class testReduce():
                RETURN reduce(sum=base, n in arr | sum + n + bias)"""
         expected = 4
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_multiple_reductions(self):
         q = """UNWIND [[1,2,3], [4,5,6]] AS arr
@@ -76,7 +76,7 @@ class testReduce():
 
         expected = [[7], [16]]
         actual = self.graph.query(q).result_set
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_missing_sections_reduction(self):
         # missing accumulator expression
@@ -84,7 +84,7 @@ class testReduce():
         try:
             self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertIn("Unknown function 'reduce'", str(e))
+            self.env.assertContains("Unknown function 'reduce'", str(e))
         #-----------------------------------------------------------------------
 
         # missing list expression
@@ -92,7 +92,7 @@ class testReduce():
         try:
             self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertIn("Invalid input '|'", str(e))
+            self.env.assertContains("Unknown function 'reduce'", str(e))
         #-----------------------------------------------------------------------
 
         # missing accumulator init
@@ -100,7 +100,7 @@ class testReduce():
         try:
             self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertIn("Invalid input '|'", str(e))
+            self.env.assertContains("Unknown function 'reduce'", str(e))
 
     def test_missing_variables_reduction(self):
         # `x` isn't defined
@@ -108,21 +108,21 @@ class testReduce():
         try:
             actual = self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertIn("'x' not defined", str(e))
+            self.env.assertContains("'x' not defined", str(e))
         #-----------------------------------------------------------------------
 
         q = "RETURN reduce(sum=0, n in x | sum+n)"
         try:
             actual = self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertIn("'x' not defined", str(e))
+            self.env.assertContains("'x' not defined", str(e))
         #-----------------------------------------------------------------------
 
         q = "RETURN reduce(sum=0, n in [1,2,3] | sum+x)"
         try:
             actual = self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertIn("'x' not defined", str(e))
+            self.env.assertContains("'x' not defined", str(e))
 
     def test_nested_reduction(self):
         # sum = 1 + 1
@@ -135,14 +135,14 @@ class testReduce():
 
         expected = 5
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_empty_reduction(self):
         # 1 + nothing is 1
         q = "RETURN reduce(sum=1, n in [] | sum + n)"
         expected = 1
         actual = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_type_missmatch_reduction(self):
         # 'a' * 1 is an invalid operation
@@ -150,7 +150,7 @@ class testReduce():
         try:
             actual = self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertIn("Type mismatch", str(e))
+            self.env.assertContains("Type mismatch", str(e))
         #-----------------------------------------------------------------------
 
         # '2' isn't an array
@@ -158,25 +158,25 @@ class testReduce():
         try:
             actual = self.graph.query(q).result_set
         except ResponseError as e:
-            self.env.assertIn("Type mismatch", str(e))
+            self.env.assertContains("Type mismatch", str(e))
 
     def test_null_reduction(self):
         q = "RETURN reduce(sum=NULL, n in [1,2,3] | sum+n)"
         actual = self.graph.query(q).result_set[0][0]
         expected = None
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
         #-----------------------------------------------------------------------
 
         q = "RETURN reduce(sum=1, n in NULL | sum+n)"
         actual = self.graph.query(q).result_set[0][0]
         expected = None
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
         #-----------------------------------------------------------------------
 
         q = "RETURN reduce(sum=1, n in [1,2,3] | sum + n + NULL)"
         actual = self.graph.query(q).result_set[0][0]
         expected = None
-        self.env.assertEquals(actual, expected)
+        self.env.assertEqual(actual, expected)
 
     def test_invalid_use(self):
         queries = [
@@ -191,9 +191,9 @@ class testReduce():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
-                self.env.assertContains(str(e), "Unknown function 'reduce'")
+                self.env.assertContains("Unknown function 'reduce'", str(e))
                 pass
     
     def test_aggregate_in_reduce(self):
@@ -209,7 +209,7 @@ class testReduce():
             try:
                 self.graph.query(query)
                 self.env.assertTrue(False)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 # Expecting an error.
-                self.env.assertContains(str(e), "Invalid use of aggregating function 'min'")
+                self.env.assertContains("Invalid use of aggregating function 'min'", str(e))
                 pass

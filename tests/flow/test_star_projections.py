@@ -36,14 +36,14 @@ class testStarProjections():
             query = """MATCH () RETURN *"""
             actual_result = self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("RETURN * is not allowed when there are no variables in scope", str(e))
 
         try:
             query = """CALL db.indexes() RETURN *"""
             actual_result = self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             self.env.assertContains("RETURN * is not allowed when there are no variables in scope", str(e))
 
     # verify that star projections combined with explicit aliases function properly
@@ -84,7 +84,7 @@ class testStarProjections():
             query = """UNWIND range(1, 3) AS x RETURN *, *"""
             actual_result = self.graph.query(query)
             self.env.assertTrue(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             pass
 
     # verify that star projections in WITH clauses perform as

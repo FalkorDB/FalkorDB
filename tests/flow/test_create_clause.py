@@ -23,6 +23,7 @@ class testCreateClause():
         # new entities within the same clause
 
         queries = [
+                "CREATE (a {v:a.x})",
                 "CREATE (a {v:1}), (z {v:a.v+2})",
                 "CREATE (z {v:a.v+2}), (a {v:1})",
                 "CREATE (z {v:a.v}), (a {v:z.v})",
@@ -42,27 +43,9 @@ class testCreateClause():
             except Exception as e:
                 self.env.assertTrue("not defined" in str(e))
 
-        # following query is going to produce a run-time error
-        q = "CREATE (a {v:a.x})"
-        try:
-            self.g.query(q)
-            # should not reach this point
-            self.env.assertTrue(False)
-        except Exception as e:
-            self.env.assertTrue("Attempted to access undefined attribute" in str(e))
-
     def test02_edge_reuse(self):
-        # bound edges can not be used in a CREATE clause
-
-        q = "CREATE ()-[e:R]->()-[e:R]->()"
-        try:
-            self.g.query(q)
-            # should not reach this point
-            self.env.assertTrue(False)
-        except Exception as e:
-            self.env.assertTrue("Variable `e` already declared" in str(e))
-
-        queries = ["MATCH ()-[e:R]->() CREATE ()-[e:R]->()",
+        queries = ["CREATE ()-[e:R]->()-[e:R]->()",
+                   "MATCH ()-[e:R]->() CREATE ()-[e:R]->()",
                    "CREATE ()-[e:R]->() CREATE ()-[e:R]->()"]
 
         for q in queries:

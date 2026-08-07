@@ -1,0 +1,79 @@
+# The benchmark harness is its own uv project rather than part of the repo's
+# `tests/` virtualenv, for one reason: it has to run inside a container that
+# ships nothing but the engine. `uv sync --frozen` gives a locked dependency
+# set and its own pinned interpreter in any image, so the measurement jobs no
+# longer `apt-get install python3` and no longer meet PEP 668's
+# externally-managed-environment refusal. See bench/Dockerfile.
+#
+# tests/requirements.txt (e2e / TCK / flow) is deliberately untouched — that
+# suite keeps the venv flow documented in CLAUDE.md.
+[project]
+name = "falkorbench"
+version = "0.1.0"
+description = "Per-query performance harness for FalkorDB"
+requires-python = ">=3.11"
+
+dependencies = [
+    # The FalkorDB client, not raw redis-py: `Graph.query` raises on an error
+    # reply, which is what replaces the old `"execution time" not in out`
+    # substring check on redis-cli's stdout. redis-py still arrives as a
+    # transitive dependency and `db.connection` exposes it for the raw
+    # commands (INFO, MEMORY MALLOC-STATS, DEBUG RELOAD, GRAPH.CONSTRAINT).
+    "falkordb>=1.0.9",
+    "click>=8.1",
+]
+
+[project.scripts]
+bench = "falkorbench.cli:cli"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/falkorbench"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.format]
+# queries.py is a data table whose columns are hand-aligned so a reader can scan
+# name/write/cypher down the page. The formatter would explode each multi-value
+# literal onto its own line and destroy that. The linter still checks it.
+exclude = ["src/falkorbench/queries.py"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # isort
+    "UP",      # pyupgrade — keeps the syntax current for requires-python
+    "B",       # bugbear
+    "SIM",     # simplify
+    "RUF",
+]
+ignore = [
+    # The harness prints aligned tables; f-strings in the print calls are the
+    # clearest way to express those and E501 on a long format string is noise.
+    "E501",
+    # The generated markdown intentionally contains en/em dashes — an en dash is
+    # the range separator in the C column ("149,000–151,000") and em dashes are
+    # used in prose. RUF001 wants ASCII there.
+    "RUF001",
+]
+
+[tool.ruff.lint.isort]
+# One import per line. The pre-refactor code mixed `import a, b, c` (four
+# files) with one-per-line (one file); this settles it mechanically rather
+# than by review.
+force-single-line = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

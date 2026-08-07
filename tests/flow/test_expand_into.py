@@ -23,14 +23,14 @@ class testExpandInto():
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[:R]->(b) RETURN count(a)"
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
-        self.env.assertIn("Expand Into", plan)
-        self.env.assertEquals(1, result.result_set[0][0])
+        self.env.assertContains("Expand Into", plan)
+        self.env.assertEqual(1, result.result_set[0][0])
 
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[e:R]->(b) RETURN e.v"
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
-        self.env.assertIn("Expand Into", plan)
-        self.env.assertEquals(1, result.result_set[0][0])
+        self.env.assertContains("Expand Into", plan)
+        self.env.assertEqual(1, result.result_set[0][0])
 
 
     # test expand into single hop multi-edge
@@ -47,15 +47,15 @@ class testExpandInto():
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[e:R]->(b) RETURN count(e)"
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
-        self.env.assertIn("Expand Into", plan)
-        self.env.assertEquals(2, result.result_set[0][0])
+        self.env.assertContains("Expand Into", plan)
+        self.env.assertEqual(2, result.result_set[0][0])
 
         query = "MATCH (a:A)-[]->(b:B) WITH a,b MATCH (a)-[e:R]->(b) RETURN e.v ORDER BY e.v"
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
-        self.env.assertIn("Expand Into", plan)
-        self.env.assertEquals(1, result.result_set[0][0])
-        self.env.assertEquals(2, result.result_set[1][0])
+        self.env.assertContains("Expand Into", plan)
+        self.env.assertEqual(1, result.result_set[0][0])
+        self.env.assertEqual(2, result.result_set[1][0])
 
 
     # test expand into multiple hops with no multi-edge
@@ -72,8 +72,8 @@ class testExpandInto():
         query = "MATCH (a:A)-[*]->(b:B) WITH a,b MATCH (a)-[:R]->()-[]->(b) RETURN count(a)"
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
-        self.env.assertIn("Expand Into", plan)
-        self.env.assertEquals(1, result.result_set[0][0])
+        self.env.assertContains("Expand Into", plan)
+        self.env.assertEqual(1, result.result_set[0][0])
 
     # test expand into multiple hops with multi-edge
     # (a:A)-[:R]->(i)-[:R]->(b:B)
@@ -90,8 +90,8 @@ class testExpandInto():
         query = "MATCH (a:A)-[*]->(b:B) WITH a,b MATCH (a)-[:R]->()-[]->(b) RETURN count(1)"
         plan = str(self.graph.explain(query))
         result = self.graph.query(query)
-        self.env.assertIn("Expand Into", plan)
-        self.env.assertEquals(4, result.result_set[0][0])
+        self.env.assertContains("Expand Into", plan)
+        self.env.assertEqual(4, result.result_set[0][0])
 
     def test05_no_hop_multi_label(self):
         self.graph.delete()
@@ -100,7 +100,8 @@ class testExpandInto():
         query = "CREATE (:A), (:A:B), (:A:B:C)"
         self.graph.query(query)
 
-        # make sure expand into is utilize
+        # make sure multi-label scan is utilized (get_nodes intersects
+        # all label matrices, so ExpandInto is no longer needed)
         queries = ["MATCH (a:A:B:C) RETURN count(a)",
                    "MATCH (a:A:C:B) RETURN count(a)",
                    "MATCH (a:B:A:C) RETURN count(a)",
@@ -111,9 +112,8 @@ class testExpandInto():
         for q in queries:
             plan = str(self.graph.explain(q))
             result = self.graph.query(q)
-            self.env.assertIn("Label Scan", plan)
-            self.env.assertIn("Expand Into", plan)
-            self.env.assertEquals(1, result.result_set[0][0])
+            self.env.assertContains("Label Scan", plan)
+            self.env.assertEqual(1, result.result_set[0][0])
 
     def test06_expand_into_reset_crash(self):
         # crash: https://github.com/FalkorDB/FalkorDB/issues/1231

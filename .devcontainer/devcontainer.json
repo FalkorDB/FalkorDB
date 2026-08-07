@@ -1,0 +1,41 @@
+{
+  "name": "FalkorDB-rs Development",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+        "tamasfe.even-better-toml"
+      ],
+      "settings": {
+        "rust-analyzer.check.command": "clippy",
+        "rust-analyzer.check.extraArgs": [
+          "--",
+          "-W",
+          "clippy::pedantic",
+          "-W",
+          "clippy::nursery",
+          "-W",
+          "clippy::cargo",
+          "-A",
+          "clippy::missing-errors-doc",
+          "-A",
+          "clippy::missing-panics-doc"
+        ],
+        "rust-analyzer.cargo.features": "all"
+      }
+    }
+  },
+  "postCreateCommand": "bash -c 'source /data/venv/bin/activate && echo \"Dev container ready! Run /build to build the project.\"'",
+  "remoteUser": "root",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+  "mounts": [
+    "source=${localWorkspaceFolder}/.cargo-cache,target=/root/.cargo/registry,type=bind,consistency=cached"
+  ]
+}

@@ -91,7 +91,6 @@ Feature: Match4 - Match variable length patterns scenarios
       | ({name: 'A'}) | ({name: 'B'}) | ({name: 'C'}) |
     And no side effects
 
-  @skip
   Scenario: [4] Matching longer variable length paths
     Given an empty graph
     And having executed:

@@ -178,7 +178,6 @@ Feature: Pattern1 - Pattern predicate
       | (:D) |
     And no side effects
 
-  @skip
   Scenario: [10] Matching on a specific type of undirected connection with length 2
     Given an empty graph
     And having executed:
@@ -339,7 +338,6 @@ Feature: Pattern1 - Pattern predicate
       | (:D) | (:B) |
     And no side effects
 
-  @skip
   Scenario: [18] Matching two nodes on a specific type of undirected connection with length 2
     Given an empty graph
     And having executed:
@@ -423,7 +421,6 @@ Feature: Pattern1 - Pattern predicate
 	"""
     Then a SyntaxError should be raised at compile time: UnexpectedSyntax
 
-  @skip
   Scenario: [24] Fail on using pattern in right-hand side of SET
     Given any graph
     When executing query:

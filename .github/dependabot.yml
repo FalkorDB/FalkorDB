@@ -1,10 +1,33 @@
----
-version: 2
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-
+- directory: /
+  ignore:
+  - dependency-name: "github/gh-aw-actions/**" # Managed by gh aw compile. Version-locked to the gh-aw compiler; do not bump.
+  package-ecosystem: github-actions
+  schedule:
+    interval: weekly
+- directory: /
+  package-ecosystem: cargo
+  schedule:
+    interval: weekly
+# Keep the C engine's GitHub Actions bumps alive on `master`.
+#
+# Dependabot reads .github/dependabot.yml from the DEFAULT branch ONLY. Once this
+# tree is the default branch, master's own copy of the file is never read again
+# and C silently stops receiving dependency PRs — so the entry has to live here,
+# with target-branch pointing at master. Mirrors master's config verbatim
+# (github-actions at /, weekly, 7-day cooldown); C has no other ecosystem,
+# because its native dependencies are git submodules, bumped by
+# submodule-update.yml rather than by Dependabot.
+#
+# Two entries may share package-ecosystem + directory as long as target-branch
+# differs — that is the supported way to cover several branches.
+#
+# See issue #2255.
+- directory: /
+  package-ecosystem: github-actions
+  target-branch: master
+  schedule:
+    interval: weekly
+  cooldown:
+    default-days: 7
+version: 2

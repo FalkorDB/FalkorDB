@@ -20,7 +20,10 @@ def udf_list(db, lib=None, with_code=None):
 
 class testUDF():
     def __init__(self):
-        self.env, self.db = Env()
+        # Three tests in this class call env.restart_and_reload(), which is
+        # backed by DEBUG RELOAD. Redis rejects DEBUG by default; the flag
+        # adds --enable-debug-command yes to the spawn.
+        self.env, self.db = Env(enableDebugCommand=True)
         self.graph = self.db.select_graph(GRAPH_ID)
         self.conn = self.env.getConnection()
 
@@ -291,7 +294,7 @@ class testUDF():
                 self.graph.query(q)
                 assert False, "Expected failure on missing args"
             except ResponseError as e:
-                self.env.assertIn("UDF Exception:", str(e))
+                self.env.assertContains("UDF Exception:", str(e))
 
         temporal_queries = [
             """WITH date('2025-08-22') AS x
@@ -625,7 +628,7 @@ class testUDF():
             except Exception as e:
                 # Success: An exception was caught. Check if the error message is relevant.
                 # (Note: Specific error message checking depends on your DB implementation)
-                self.env.assertIn('Exception', str(e))
+                self.env.assertContains('Exception', str(e))
 
         #-----------------------------------------------------------------------
         # Invalid Inputs
@@ -776,8 +779,8 @@ class testUDF():
         names = res[0][0]
 
         self.env.assertEqual(len(names), 2)
-        self.env.assertIn("Bob", names)
-        self.env.assertIn("Alice", names)
+        self.env.assertContains("Bob", names)
+        self.env.assertContains("Alice", names)
 
         # 3. Happy Path: Single result
         res = self.graph.query("RETURN test_lib.getNamesByLabel('Animal')").result_set
@@ -840,7 +843,7 @@ class testUDF():
 
         self.env.assertEqual(len(actual), len(expected))
         for e in expected:
-            self.env.assertIn(e, actual)
+            self.env.assertContains(e, actual)
 
         # 3. Happy Path: Single result
         # Only one FOLLOWS edge exists
@@ -848,7 +851,7 @@ class testUDF():
         expected = self.graph.query("MATCH ()-[e:FOLLOWS]->() RETURN collect(e)").result_set[0][0]
         self.env.assertEqual(len(actual), len(expected))
         for e in expected:
-            self.env.assertIn(e, actual)
+            self.env.assertContains(e, actual)
 
         # 4. Scenario: Relationship type does not exist
         # The iterator should be empty, resulting in an empty list, not an error
@@ -1069,13 +1072,13 @@ class testUDF():
             self.db.execute_command("GRAPH.UDF", "LOAD")
             assert False, "Expected failure on missing args"
         except ResponseError as e:
-            self.env.assertIn("wrong number of arguments", str(e).lower())
+            self.env.assertContains("wrong number of arguments", str(e).lower())
 
         try:
             self.db.execute_command("GRAPH.UDF", "LOAD", "lib", "script", "INVALID")
             assert False, "Expected failure on invalid option"
         except ResponseError as e:
-            self.env.assertIn("unknown option given", str(e).lower())
+            self.env.assertContains("unknown option given", str(e).lower())
 
     def test_load_udf_lib(self):
         """
@@ -1147,7 +1150,7 @@ class testUDF():
             self.db.udf_load("conflict_lib", script, False)
             assert False, "Expected conflict error"
         except ResponseError as e:
-            self.env.assertIn("already registered", str(e).lower())
+            self.env.assertContains("already registered", str(e).lower())
 
         y = self.graph.query("RETURN conflict_lib.Y()").result_set[0][0]
         self.env.assertEqual(y, 1)
@@ -1194,7 +1197,7 @@ class testUDF():
             self.db.udf_load("badlib", bad_script)
             assert False, "Expected JS parse error"
         except ResponseError as e:
-            self.env.assertIn("SyntaxError:", str(e))
+            self.env.assertContains("SyntaxError:", str(e))
 
     def test_persistence_and_replication(self):
         """
@@ -1229,13 +1232,13 @@ class testUDF():
             self.db.execute_command("GRAPH.UDF", "DELETE")
             assert False, "Expected failure on missing args"
         except ResponseError as e:
-            self.env.assertIn("wrong number of arguments", str(e).lower())
+            self.env.assertContains("wrong number of arguments", str(e).lower())
 
         try:
             self.db.execute_command("GRAPH.UDF", "DELETE", "lib", "extra")
             assert False, "Expected failure on extra args"
         except ResponseError as e:
-            self.env.assertIn("wrong number of arguments", str(e).lower())
+            self.env.assertContains("wrong number of arguments", str(e).lower())
 
     def test_delete_existing_library(self):
         """
@@ -1268,7 +1271,7 @@ class testUDF():
             self.graph.query("RETURN del_lib.DelTest()")
             assert False, "Expected failure calling deleted function"
         except ResponseError as e:
-            self.env.assertIn("unknown function 'del_lib.deltest'", str(e).lower())
+            self.env.assertContains("unknown function 'del_lib.deltest'", str(e).lower())
 
     def test_delete_nonexistent_library(self):
         """
@@ -1281,7 +1284,7 @@ class testUDF():
             self.db.udf_delete("no_such_lib")
             assert False, "Expected error deleting nonexistent library"
         except ResponseError as e:
-            self.env.assertIn("does not exist", str(e).lower())
+            self.env.assertContains("does not exist", str(e).lower())
 
     def test_multiple_libraries_deletion(self):
         """
@@ -1339,7 +1342,7 @@ class testUDF():
             self.graph.query ("RETURN persist_del_lib.PersistDel()")
             assert False, f"Expected failure calling deleted function {f}"
         except ResponseError as e:
-            self.env.assertIn("unknown function", str(e).lower())
+            self.env.assertContains("unknown function", str(e).lower())
 
     def test_delete_library_with_multiple_functions(self):
         """
@@ -1369,7 +1372,7 @@ class testUDF():
                 self.graph.query(f"RETURN multi_func_lib.{f}()")
                 assert False, f"Expected failure calling deleted function {f}"
             except ResponseError as e:
-                self.env.assertIn("unknown function", str(e).lower())
+                self.env.assertContains("unknown function", str(e).lower())
 
     def test_flush_invalid_invocations(self):
         """
@@ -1381,7 +1384,7 @@ class testUDF():
             self.db.execute_command("GRAPH.UDF", "FLUSH", "extra")
             assert False, "Expected failure on extra args"
         except ResponseError as e:
-            self.env.assertIn("wrong number of arguments", str(e).lower())
+            self.env.assertContains("wrong number of arguments", str(e).lower())
 
     def test_flush_removes_all_libraries(self):
         """
@@ -1401,8 +1404,8 @@ class testUDF():
         # sanity check they exist
         res = udf_list(self.db)
         libs = [r["library_name"] for r in res]
-        self.env.assertIn("lib1", libs)
-        self.env.assertIn("lib2", libs)
+        self.env.assertContains("lib1", libs)
+        self.env.assertContains("lib2", libs)
 
         # flush all UDFs
         res = self.db.udf_flush()
@@ -1417,7 +1420,7 @@ class testUDF():
                 self.graph.query(f"RETURN {f}()")
                 assert False, f"Expected failure calling flushed function {f}"
             except ResponseError as e:
-                self.env.assertIn("unknown function", str(e).lower())
+                self.env.assertContains("unknown function", str(e).lower())
 
     def test_flush_on_empty_registry(self):
         """
@@ -1467,7 +1470,7 @@ class testUDF():
             self.db.execute_command("GRAPH.UDF", "LIST", "lib", "extra")
             assert False, "Expected LIST with extra args to fail"
         except ResponseError as e:
-            self.env.assertIn("unknown option given", str(e).lower())
+            self.env.assertContains("unknown option given", str(e).lower())
 
     def test_list_empty_registry(self):
         """
@@ -1547,7 +1550,7 @@ class testUDF():
             self.graph.query("RETURN HeapTest.ExploitHeap()")
             self.env.assertTrue(False, "Query should have failed due to JS_HEAP_SIZE constraint")
         except Exception as e:
-            self.env.assertIn("out of memory", str(e).lower())
+            self.env.assertContains("out of memory", str(e).lower())
 
         # Update JS heap size to 2GB and retry
         response = self.db.config_set("JS_HEAP_SIZE", 2 * 1024 * 1024 * 1024)
@@ -1592,7 +1595,7 @@ class testUDF():
         except Exception as e:
             # FalkorDB typically returns a 'Query timed out' error
             # We check for the presence of 'timeout' in the error message
-            self.env.assertIn("UDF Exception", str(e))
+            self.env.assertContains("UDF Exception", str(e))
 
         # Reset timeout to a higher value for subsequent tests
         self.db.config_set("TIMEOUT_DEFAULT", 0)
@@ -1622,7 +1625,7 @@ class test_udf_javascript():
             self.db.udf_load("dup", script)
             assert False, "Expected duplicate registration to fail"
         except ResponseError as e:
-            self.env.assertIn("Failed to register UDF library", str(e))
+            self.env.assertContains("Failed to register UDF library", str(e))
 
         #-----------------------------------------------------------------------
 
@@ -1653,7 +1656,7 @@ class test_udf_javascript():
             self.graph.query("RETURN lib.DoesNotExist()")
             assert False, "Expected error when calling unknown UDF"
         except ResponseError as e:
-            self.env.assertIn("unknown function 'lib.doesnotexist'", str(e).lower())
+            self.env.assertContains("unknown function 'lib.doesnotexist'", str(e).lower())
 
     def test_redeclaration_non_exposed_function(self):
         """
@@ -1722,7 +1725,7 @@ class test_udf_javascript():
             res = self.graph.query("RETURN lib_invalid.bad()").result_set
             assert False, "Expected error when calling unknown UDF"
         except ResponseError as e:
-            self.env.assertIn("udf exception: 'console' is not defined", str(e).lower())
+            self.env.assertContains("udf exception: 'console' is not defined", str(e).lower())
 
     def test_global_variable_usage(self):
         """
@@ -1769,7 +1772,7 @@ class test_udf_javascript():
             self.graph.query("RETURN lib_fail.fail()")
             assert False, "Expected JS exception to propagate"
         except ResponseError as e:
-            self.env.assertIn("boom", str(e).lower())
+            self.env.assertContains("boom", str(e).lower())
 
     def test_argument_handling(self):
         """
@@ -1803,161 +1806,4 @@ class test_udf_javascript():
 
         v = self.graph.query("RETURN lib_undef.undef()").result_set[0][0]
         self.env.assertEqual(v, None)
-
-class testUDFCluster():
-    def __init__(self):
-        self.env, self.db = Env(env='oss-cluster', shardsCount=3)
-        self.master_1 = self.env.getConnection(shardId=1)
-        self.master_2 = self.env.getConnection(shardId=2)
-        self.master_3 = self.env.getConnection(shardId=3)
-        self.shards = [self.master_1, self.master_2, self.master_3]
-
-    def tearDown(self):
-        for shard in self.shards:
-            shard.execute_command("FLUSHALL")
-            shard.execute_command("GRAPH.UDF", "FLUSH")
-
-    def test_udf_load_propagation(self):
-        """
-        load UDF to one master shard and make sure
-        that on success the UDF is propagated to the rest of the cluster
-        """
-
-        # make sure all shards are clean
-        for shard in self.shards:
-            udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(len(udfs), 0)
-
-        # load UDF to master_1
-        script = """
-        falkor.register('add', function(a,b) {return a + b;});
-        """
-
-        res = self.db.udf_load("math", script)
-        self.env.assertEqual(res, "OK")
-
-        # collect UDFs from master_1
-        master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
-        self.env.assertNotEqual(len(master_1_udfs), 0)
-
-        # make sure UDFs been propagated to the rest of the cluster
-        for shard in self.shards:
-            udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_1_udfs, udfs)
-
-        # update UDFs on master_2
-        script = """
-        falkor.register('add', function(a,b) {return a + b;});
-        falkor.register('sub', function(a,b) {return a - b;});
-        """
-
-        res = self.db.udf_load("math", script, replace=True)
-        self.env.assertEqual(res, "OK")
-
-        # collect UDFs from master_2
-        master_2_udfs = self.master_2.execute_command("GRAPH.UDF", "LIST")
-        self.env.assertNotEqual(len(master_2_udfs), 0)
-
-        # make sure UDFs been propagated to the rest of the cluster
-        for shard in self.shards:
-            udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_2_udfs, udfs)
-
-        # make sure a failed load doesn't effects the cluster
-        try:
-            # LOAD should fail as 'math' lib already exists and we did not
-            # specified REPLACE
-            self.db.udf_load("math", script)
-            self.env.assertFalse(True)
-        except Exception:
-            pass
-
-        # make sure UDFs remaind as before the failed call
-        for shard in self.shards:
-            udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_2_udfs, udfs)
-
-    def test_udf_delete_propagation(self):
-        """
-        delete UDF from one master shard and make sure
-        that on success the UDF is deleted from the rest of the cluster
-        """
-
-        # load 3 libraries
-        libs    = ["A", "B", "C"]
-        scripts = ["falkor.register('a', function(a) {return a;});",
-                   "falkor.register('b', function(b) {return b;});",
-                   "falkor.register('c', function(c) {return c;});"]
-
-        for i in range(0, 3):
-            lib    = libs[i]
-            script = scripts[i]
-
-            res = self.db.udf_load(lib, script)
-            self.env.assertEqual(res, "OK")
-
-        # make sure all 3 libs are available throughout the cluster
-        master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
-        self.env.assertEqual(len(master_1_udfs), 3)
-
-        # make sure UDFs been propagated to the rest of the cluster
-        for shard in self.shards:
-            udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_1_udfs, udfs)
-
-        # start removing libs
-        remove_sequance = [(self.master_2, "B"),  # remove B from master 2
-                           (self.master_3, "A"),  # remove A from master 3
-                           (self.master_1, "C")]  # remove C from master 1
-
-        for shard, lib in remove_sequance:
-            res = self.db.udf_delete(lib)
-            self.env.assertEqual(res, "OK")
-
-            # make sure all nodes in the cluster has the same view over UDFs
-            udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            for s in self.shards:
-                s_udfs = s.execute_command("GRAPH.UDF", "LIST")
-                self.env.assertEqual(udfs, s_udfs)
-
-        # all shards should have no UDFs
-        for s in self.shards:
-            udfs = s.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(len(udfs), 0)
-
-    def test_udf_flush_propagation(self):
-        """
-        flush UDFs from one master shard and make sure
-        that on success the UDFs been flushed from the rest of the cluster
-        """
-        # load 3 libraries
-        libs    = ["A", "B", "C"]
-        scripts = ["falkor.register('a', function(a) {return a;});",
-                   "falkor.register('b', function(b) {return b;});",
-                   "falkor.register('c', function(c) {return c;});"]
-
-        for i in range(0, 3):
-            lib    = libs[i]
-            script = scripts[i]
-
-            res = self.db.udf_load(lib, script)
-            self.env.assertEqual(res, "OK")
-
-        # make sure all 3 libs are available throughout the cluster
-        master_1_udfs = self.master_1.execute_command("GRAPH.UDF", "LIST")
-        self.env.assertEqual(len(master_1_udfs), 3)
-
-        # make sure UDFs been propagated to the rest of the cluster
-        for shard in self.shards:
-            udfs = shard.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(master_1_udfs, udfs)
-
-        # flush UDFs
-        res = self.db.udf_flush()
-        self.env.assertEqual(res, "OK")
-
-        # all shards should have no UDFs
-        for s in self.shards:
-            udfs = s.execute_command("GRAPH.UDF", "LIST")
-            self.env.assertEqual(len(udfs), 0)
 

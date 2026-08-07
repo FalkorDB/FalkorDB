@@ -20,4 +20,4 @@ class testReversedPatterns(FlowTestsBase):
         rightToLeft = """MATCH (c:L)<-[b]-(a:L) RETURN a, TYPE(b), c"""
         leftToRightResult = self.graph.query(leftToRight)
         rightToLeftResult = self.graph.query(rightToLeft)
-        self.env.assertEquals(leftToRightResult.result_set, rightToLeftResult.result_set)
+        self.env.assertEqual(leftToRightResult.result_set, rightToLeftResult.result_set)

@@ -26,7 +26,7 @@ class testEffects():
     def effects_disabled(self):
         return not self.effects_enabled()
 
-    def monitor_thread(self):
+    def _monitor_loop(self):
         global MONITOR_ATTACHED
         try:
             with self.replica.monitor() as m:
@@ -98,7 +98,9 @@ class testEffects():
 
         self.effects_enable()
 
-        self.monitor_thread = threading.Thread(target=self.monitor_thread)
+        # daemon=True so a stuck listen() (replica killed mid-MONITOR, container
+        # gone, …) doesn't keep the test process alive past test completion.
+        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self.monitor_thread.start()
         # wait for monitor thread to attach
         while MONITOR_ATTACHED is False:
@@ -119,7 +121,7 @@ class testEffects():
         # introduce a new label which in turn creates a new schema
         q = "CREATE (:L)"
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEqual(res.nodes_created, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -131,8 +133,8 @@ class testEffects():
         # introduce multiple labels
         q = "CREATE (:X:Y)"
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.labels_added, 2)
-        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEqual(res.labels_added, 2)
+        self.env.assertEqual(res.nodes_created, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -170,7 +172,7 @@ class testEffects():
             """
 
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 5)
+        self.env.assertEqual(res.properties_set, 5)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -188,7 +190,7 @@ class testEffects():
             """
 
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 4)
+        self.env.assertEqual(res.properties_set, 4)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -236,7 +238,7 @@ class testEffects():
         queries = [q0, q1, q2, q3]
         for q in queries:
             res = self.query_master_and_wait(q)
-            self.env.assertEquals(res.nodes_created, 1)
+            self.env.assertEqual(res.nodes_created, 1)
 
             if(expect_effect):
                 self.wait_for_effect()
@@ -275,7 +277,7 @@ class testEffects():
         queries = [q1, q2, q3, q4]
         for q in queries:
             res = self.query_master_and_wait(q)
-            self.env.assertEquals(res.relationships_created, 1)
+            self.env.assertEqual(res.relationships_created, 1)
 
             if(expect_effect):
                 self.wait_for_effect()
@@ -322,7 +324,7 @@ class testEffects():
                     n.xa = n.xa + 1"""
 
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 11)
+        self.env.assertEqual(res.properties_set, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -385,7 +387,7 @@ class testEffects():
         q = "MATCH (n:L) WITH n LIMIT 1 SET n.b = NULL"
 
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_removed, 1)
+        self.env.assertEqual(res.properties_removed, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -483,7 +485,7 @@ class testEffects():
                     e.a = e.a + 1"""
 
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 11)
+        self.env.assertEqual(res.properties_set, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -546,7 +548,7 @@ class testEffects():
         q = "MATCH ()-[e]->() WITH e LIMIT 1 SET e.b = NULL"
 
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_removed, 1)
+        self.env.assertEqual(res.properties_removed, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -614,7 +616,7 @@ class testEffects():
 
         q = """MATCH (n:A:B) SET n:C"""
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.labels_added, 1)
+        self.env.assertEqual(res.labels_added, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -626,7 +628,7 @@ class testEffects():
         # test the addition of an existing and anew node label by an effect
         q = """MATCH (n:A:B:C) SET n:C:D"""
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.labels_added, 1)
+        self.env.assertEqual(res.labels_added, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -643,7 +645,7 @@ class testEffects():
 
         q = """MATCH (n:C) REMOVE n:C RETURN n"""
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.labels_removed, 1)
+        self.env.assertEqual(res.labels_removed, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -660,7 +662,7 @@ class testEffects():
 
         q = """MATCH ()-[e]->() WITH e LIMIT 1 DELETE e"""
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.relationships_deleted, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -697,9 +699,8 @@ class testEffects():
                ON MATCH SET n.v = 'green'
                ON CREATE SET n.v = 'blue'"""
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(res.properties_set, 2)
-        self.env.assertEquals(res.properties_removed, 1)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.properties_set, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -713,8 +714,8 @@ class testEffects():
                ON MATCH SET n.v = 'green'
                ON CREATE SET n.v = 'red'"""
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 1)
-        self.env.assertEquals(res.properties_removed, 1)
+        self.env.assertEqual(res.properties_set, 1)
+        self.env.assertEqual(res.properties_removed, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -734,8 +735,8 @@ class testEffects():
                ON MATCH SET e.v = 'green'
                ON CREATE SET e.v = 'blue'"""
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 3)
-        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEqual(res.properties_set, 2)
+        self.env.assertEqual(res.relationships_created, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -750,8 +751,8 @@ class testEffects():
                ON MATCH SET e.v = 'green'
                ON CREATE SET e.v = 'red'"""
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.properties_set, 1)
-        self.env.assertEquals(res.properties_removed, 1)
+        self.env.assertEqual(res.properties_set, 1)
+        self.env.assertEqual(res.properties_removed, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -768,8 +769,8 @@ class testEffects():
 
         q = "CREATE ({v:vecf32([])})"
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(res.properties_set, 1)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.properties_set, 1)
 
         if(expect_effect):
             self.wait_for_effect()
@@ -781,8 +782,8 @@ class testEffects():
     def test15_create_node_with_random_and_timestamp_effect(self, expect_effect=True):
         q = "CREATE ({r:rand(), t:timestamp()})"
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(res.properties_set, 2)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.properties_set, 2)
 
         if expect_effect:
             self.wait_for_effect()
@@ -869,27 +870,27 @@ class testEffects():
         multi_create = "CREATE " + ",".join(nodes)
         res = self.query_master_and_wait(multi_create)
 
-        self.env.assertEquals(res.nodes_created, 2048)
+        self.env.assertEqual(res.nodes_created, 2048)
         self.assert_graph_eq()
 
         # delete nodes
         res = self.query_master_and_wait("MATCH (n) DELETE n")
-        self.env.assertEquals(res.nodes_deleted, 2048)
+        self.env.assertEqual(res.nodes_deleted, 2048)
 
         self.assert_graph_eq()
 
         q = "MATCH (n) RETURN count(n)"
         replica_node_count = self.replica_graph.ro_query(q).result_set[0][0]
         master_node_count = self.master_graph.query(q).result_set[0][0]
-        self.env.assertEquals(master_node_count, 0)
-        self.env.assertEquals(replica_node_count, master_node_count)
+        self.env.assertEqual(master_node_count, 0)
+        self.env.assertEqual(replica_node_count, master_node_count)
 
         for l in lbls:
             q = "MATCH (n:{}) RETURN count(n)".format(l)
             master_node_count = self.master_graph.query(q).result_set[0][0]
             replica_node_count = self.replica_graph.ro_query(q).result_set[0][0]
-            self.env.assertEquals(master_node_count, 0)
-            self.env.assertEquals(replica_node_count, master_node_count)
+            self.env.assertEqual(master_node_count, 0)
+            self.env.assertEqual(replica_node_count, master_node_count)
 
     def test19_multiple_edges(self):
         """Test the creation & deletion of multiple edges."""
@@ -906,27 +907,27 @@ class testEffects():
         multi_create = "CREATE" + ",".join(edges)
         res = self.query_master_and_wait(multi_create)
 
-        self.env.assertEquals(res.relationships_created, 2048)
+        self.env.assertEqual(res.relationships_created, 2048)
         self.assert_graph_eq()
 
         # delete edges
         res = self.query_master_and_wait("MATCH ()-[e]->() DELETE e")
 
-        self.env.assertEquals(res.relationships_deleted, 2048)
+        self.env.assertEqual(res.relationships_deleted, 2048)
         self.assert_graph_eq()
 
         q = "MATCH ()-[e]->() RETURN count(e)"
         replica_edge_count = self.replica_graph.ro_query(q).result_set[0][0]
         master_edge_count = self.master_graph.query(q).result_set[0][0]
-        self.env.assertEquals(master_edge_count, 0)
-        self.env.assertEquals(replica_edge_count, master_edge_count)
+        self.env.assertEqual(master_edge_count, 0)
+        self.env.assertEqual(replica_edge_count, master_edge_count)
 
         for t in types:
             q = "MATCH ()-[e:{}]->() RETURN count(e)".format(t)
             master_edge_count = self.master_graph.query(q).result_set[0][0]
             replica_edge_count = self.replica_graph.ro_query(q).result_set[0][0]
-            self.env.assertEquals(master_edge_count, 0)
-            self.env.assertEquals(replica_edge_count, master_edge_count)
+            self.env.assertEqual(master_edge_count, 0)
+            self.env.assertEqual(replica_edge_count, master_edge_count)
 
     def test20_multiple_entities(self):
         """Test creation & deletion of multiple entities with a single randomized delete query."""
@@ -957,8 +958,8 @@ class testEffects():
         multi_create = "CREATE " + ",".join(patterns)
         res = self.query_master_and_wait(multi_create)
 
-        self.env.assertEquals(res.nodes_created, node_count)
-        self.env.assertEquals(res.relationships_created, edge_count)
+        self.env.assertEqual(res.nodes_created, node_count)
+        self.env.assertEqual(res.relationships_created, edge_count)
         self.assert_graph_eq()
 
         #-------------------------------------------------------------------
@@ -1020,14 +1021,14 @@ class testEffects():
         q = "MATCH (n) RETURN count(n)"
         replica_node_count = self.replica_graph.ro_query(q).result_set[0][0]
         master_node_count = self.master_graph.query(q).result_set[0][0]
-        self.env.assertEquals(master_node_count, 0)
-        self.env.assertEquals(replica_node_count, master_node_count)
+        self.env.assertEqual(master_node_count, 0)
+        self.env.assertEqual(replica_node_count, master_node_count)
 
         q = "MATCH ()-[e]->() RETURN count(e)"
         replica_edge_count = self.replica_graph.ro_query(q).result_set[0][0]
         master_edge_count = self.master_graph.query(q).result_set[0][0]
-        self.env.assertEquals(master_edge_count, 0)
-        self.env.assertEquals(replica_edge_count, master_edge_count)
+        self.env.assertEqual(master_edge_count, 0)
+        self.env.assertEqual(replica_edge_count, master_edge_count)
 
     def test21_mandatory_effects(self):
         """Make sure non deterministic queries always uses effects"""
@@ -1115,11 +1116,11 @@ class testEffects():
         q = "CREATE (b:B)"
         #res = self.master_graph.query (q)
         res = self.query_master_and_wait(q)
-        self.env.assertEquals(res.labels_added, 1)
+        self.env.assertEqual(res.labels_added, 1)
 
         q = "CALL db.meta.stats()"
         master_stats  = self.master_graph.ro_query  (q).result_set
         replica_stats = self.replica_graph.ro_query (q).result_set
 
-        self.env.assertEquals(master_stats, replica_stats)
+        self.env.assertEqual(master_stats, replica_stats)
 

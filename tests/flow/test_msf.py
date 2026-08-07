@@ -101,7 +101,7 @@ class testMSF(FlowTestsBase):
             try:
                 self.graph.query(q)
                 self.env.assertFalse(True)
-            except redis.exceptions.ResponseError as e:
+            except redis.ResponseError as e:
                 pass
 
     def test_msf_on_empty_graph(self):
@@ -405,8 +405,8 @@ class testMSF(FlowTestsBase):
             """)
 
         result_set = result.result_set
-        self.env.assertIn([2, 1000.0], result_set)
-        self.env.assertIn([2, 7654.0], result_set)
+        self.env.assertContains([2, 1000.0], result_set)
+        self.env.assertContains([2, 7654.0], result_set)
         self.env.assertTrue([2, "Hello"] in result_set or [2, None] in result_set)
 
     def test_msf_rand_labels(self):
@@ -439,7 +439,7 @@ class testMSF(FlowTestsBase):
                 #     # connected component with 40 nodes: must have 39 edges.
                 #     self.env.assertEqual(len(result_set), 1)
                 #     self.env.assertEqual(len(result_set[0][0]), 39)
-                #     self.env.assertIn(minEdge, result_set[0][0])
+                #     self.env.assertContains(minEdge, result_set[0][0])
 
     def test_msf_rand_labels_max(self):
         """Test MSF algorithm on random graph with multiple labels"""
@@ -471,7 +471,7 @@ class testMSF(FlowTestsBase):
                     # connected component with 40 nodes: must have 39 edges.
                     self.env.assertEqual(len(result_set), 1)
                     self.env.assertEqual(len(result_set[0][0]), 39)
-                    self.env.assertIn(maxEdge, result_set[0][0])
+                    self.env.assertContains(maxEdge, result_set[0][0])
 
     def test_msf_rand_forest_no_weight(self):
         """ Test that MSF correctly identifies and groups multiple trees """

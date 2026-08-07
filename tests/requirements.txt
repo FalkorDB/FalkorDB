@@ -1,11 +1,14 @@
 behave
-click
-docker
-falkordb==1.2.2
+falkordb
+# redis-py 8.1.0 adds `himport_registry` to ConnectionPool.connection_kwargs,
+# which falkordb-py 1.6.2's async Is_Cluster forwards to the sync Redis()
+# constructor, which rejects it. Every flow test that builds its own pool
+# fails with a TypeError. Keep in sync with build/Dockerfile; drop both once
+# falkordb-py releases a fix.
+redis<8.1
 falkordb-bulk-loader
-grammarinator
-wheel
-rmtest
-psutil
-python-dateutil
-RLTest==0.7.20
+hypothesis
+pytest
+textual
+textual-dev
+RLTest>=0.7.25

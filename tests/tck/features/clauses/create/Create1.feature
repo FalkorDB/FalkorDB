@@ -202,8 +202,8 @@ Feature: Create1 - Creating nodes
       """
     Then a SyntaxError should be raised at compile time: VariableAlreadyBound
 
-  @skip
   # Consider improve naming of this and the next three scenarios, they seem to test invariant nature of node patterns
+  @skip
   Scenario: [16] Fail when adding new label predicate on a node that is already bound 2
     Given an empty graph
     When executing query:

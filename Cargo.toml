@@ -1,5 +1,64 @@
 [workspace]
-resolver = "2"
 members = [
-    "deps/FalkorDB-core-rs",
-]
+    "graph",
+    "fuzz",
+    "runtime-fuzz-target", ]
+
+[package]
+name = "falkordb-rs"
+version = "99.99.99"
+edition = "2024"
+description = "Graph database"
+license = "SSPL-1.0"
+repository = "https://github.com/FalkorDB/FalkorDB"
+readme = "README.md"
+keywords = ["graph", "database"]
+categories = ["database"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "falkordb"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+atomic_refcell = "0.1.14"
+crossfire = "3.1.19"
+graph = { path = "graph", version = "0.1.0" }
+lazy_static = "1.5.0"
+libc = "0.2"
+parking_lot = { version = "0.12.5", features = ["arc_lock"] }
+redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
+roaring = "0.11.4"
+rustc-hash = "2"
+ryu = "1.0.23"
+thin-vec = "0.2.18"
+orx-tree = "2.2.0"
+
+[build-dependencies]
+redis-module-macros = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
+
+[profile.dev]
+opt-level = 2
+
+[profile.release]
+codegen-units = 1
+lto = true
+# debug = true
+# strip = false
+
+# Release performance (LTO on, so it mirrors the shipped build) plus full
+# DWARF debuginfo so `perf --call-graph dwarf` can unwind + symbolize (incl.
+# inlined frames) for flame graphs. Not stripped. Used by `bench profile`.
+[profile.profiling]
+inherits = "release"
+debug = true
+strip = false
+
+[features]
+fuzz = []
+# Drive GraphBLAS at GxB_JIT_ON (full JIT including compile-on-demand) so the
+# JIT cache populates as we exercise the test suite. Consumed by graph's
+# matrix.rs and forwarded by gen_prejit.sh; never enable in shipped builds —
+# the runtime image has no compiler and no on-disk cache.
+prejit_harvest = ["graph/prejit_harvest"]

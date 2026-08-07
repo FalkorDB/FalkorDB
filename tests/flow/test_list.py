@@ -15,39 +15,39 @@ class testGraphList(FlowTestsBase):
         # no graphs, expecting an empty array
         con = self.env.getConnection()
         graphs = self.db.list_graphs()
-        self.env.assertEquals(graphs, [])
+        self.env.assertEqual(graphs, [])
 
         # create graph key GRAPH_ID
         self.create_graph(GRAPH_ID, con)
         graphs = self.db.list_graphs()
-        self.env.assertEquals(graphs, [GRAPH_ID])
+        self.env.assertEqual(graphs, [GRAPH_ID])
 
         # create a second graph key "X"
         self.create_graph("X", con)
         graphs = self.db.list_graphs()
         graphs.sort()
-        self.env.assertEquals(graphs, ["X", GRAPH_ID])
+        self.env.assertEqual(graphs, ["X", GRAPH_ID])
 
         # create a string key "str", graph list shouldn't be effected
         con.set("str", "some string")
         graphs = self.db.list_graphs()
         graphs.sort()
-        self.env.assertEquals(graphs, ["X", GRAPH_ID])
+        self.env.assertEqual(graphs, ["X", GRAPH_ID])
 
         # delete graph key GRAPH_ID
         con.delete(GRAPH_ID)
         graphs = self.db.list_graphs()
-        self.env.assertEquals(graphs, ["X"])
+        self.env.assertEqual(graphs, ["X"])
 
         # rename graph key X to Z
         con.rename("X", "Z")
         graphs = self.db.list_graphs()
-        self.env.assertEquals(graphs, ["Z"])
+        self.env.assertEqual(graphs, ["Z"])
 
         # delete graph key "Z", no graph keys in the keyspace
         con.execute_command("GRAPH.DELETE", "Z")
         graphs = self.db.list_graphs()
-        self.env.assertEquals(graphs, [])
+        self.env.assertEqual(graphs, [])
 
 # tests the list datatype
 class testList(FlowTestsBase):
@@ -61,7 +61,7 @@ class testList(FlowTestsBase):
         query = """MATCH (n) RETURN collect(n)"""
         result = self.graph.query(query)
         result_set = result.result_set
-        self.env.assertEquals(len(result_set), 1)
+        self.env.assertEqual(len(result_set), 1)
         self.env.assertTrue(all(isinstance(n, Node) for n in result_set[0][0]))
 
     def test02_unwind(self):
@@ -71,7 +71,7 @@ class testList(FlowTestsBase):
         result_set = self.graph.query(query).result_set
         expected_result = [[0], [1], [2], [3],
                            [4], [5], [6], [7], [8], [9], [10]]
-        self.env.assertEquals(result_set, expected_result)
+        self.env.assertEqual(result_set, expected_result)
 
     # List functions should handle null inputs appropriately.
     def test03_null_list_function_inputs(self):
@@ -80,60 +80,60 @@ class testList(FlowTestsBase):
         # NULL list argument to subscript.
         query = """WITH NULL as list RETURN list[0]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL list argument to slice.
         query = """WITH NULL as list RETURN list[0..5]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL list argument to HEAD.
         query = """WITH NULL as list RETURN head(list)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL list argument to LAST.
         query = """WITH NULL as list RETURN last(list)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL list argument to TAIL.
         query = """WITH NULL as list RETURN tail(list)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL list argument to IN.
         query = """WITH NULL as list RETURN 'val' in list"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL list argument to SIZE.
         query = """WITH NULL as list RETURN size(list)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL subscript argument.
         query = """WITH ['a'] as list RETURN list[NULL]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL IN non-empty list should return NULL.
         query = """RETURN NULL in ['val']"""
         actual_result = self.graph.query(query)
         expected_result = [[None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL arguments to slice.
         query = """WITH ['a'] as list RETURN list[0..NULL]"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # NULL range argument should produce an error.
         query = """RETURN range(NULL, 5)"""
         try:
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError:
+        except redis.ResponseError:
             # Expecting an error.
             pass
 
@@ -141,32 +141,32 @@ class testList(FlowTestsBase):
         query = """RETURN NULL in []"""
         actual_result = self.graph.query(query)
         expected_result = [[False]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test04_head_function(self):
         # Test empty list input
         query = """RETURN head([])"""
         actual_result = self.graph.query(query)
         expected_result = [[None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test integer list input
         query = """WITH [1, 2, 3] as list RETURN head(list)"""
         actual_result = self.graph.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test string list input
         query = """WITH ['a', 'b', 'c'] as list RETURN head(list)"""
         actual_result = self.graph.query(query)
         expected_result = [['a']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test NULL value in list input
         query = """WITH [NULL, 'b', NULL] as list RETURN head(list)"""
         actual_result = self.graph.query(query)
         expected_result = [[None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test wrong type inputs
         try:
@@ -198,25 +198,25 @@ class testList(FlowTestsBase):
         query = """RETURN last([])"""
         actual_result = self.graph.query(query)
         expected_result = [[None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test integer list input
         query = """WITH [1, 2, 3] as list RETURN last(list)"""
         actual_result = self.graph.query(query)
         expected_result = [[3]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test string list input
         query = """WITH ['a', 'b', 'c'] as list RETURN last(list)"""
         actual_result = self.graph.query(query)
         expected_result = [['c']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test NULL value in list input
         query = """WITH [NULL, 'b', NULL] as list RETURN last(list)"""
         actual_result = self.graph.query(query)
         expected_result = [[None]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test wrong type inputs
         try:
@@ -248,50 +248,53 @@ class testList(FlowTestsBase):
         expected_result = [None]
         query = """RETURN toBooleanList(null)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # List of NULL values input should return list of NULL values
         query = """RETURN toBooleanList([null, null])"""
         expected_result = [[None, None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # Test list with mixed type values
         query = """RETURN toBooleanList(['abc', true, 'false', null, ['a','b']])"""
         expected_result = [[None, True, False, None, None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
-        # Tests with empty array result
-        query = """MATCH (n:X) RETURN toBooleanList(n)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        # Tests with type mismatch for node/edge/path inputs
+        try:
+            self.graph.query("""MATCH (n:X) RETURN toBooleanList(n)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Node", str(e))
 
         query = """MATCH (n:X) RETURN toBooleanList([n])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH ()-[e]->() RETURN toBooleanList(e)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH ()-[e]->() RETURN toBooleanList(e)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Edge", str(e))
 
         query = """MATCH ()-[e]->() RETURN toBooleanList([e])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH p=()-[]->() RETURN toBooleanList(p)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH p=()-[]->() RETURN toBooleanList(p)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Path", str(e))
 
         query = """MATCH p=()-[]->() RETURN toBooleanList([p])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Test of type mismatch input
         try:
@@ -350,7 +353,7 @@ class testList(FlowTestsBase):
         query = """CREATE (a:X) RETURN toBooleanList([a])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X) DELETE a"""
         self.graph.query(query)
 
@@ -358,7 +361,7 @@ class testList(FlowTestsBase):
         query = """CREATE (a:X)-[r:R]->(b:Y) RETURN toBooleanList([r])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X),(b:Y) DELETE a, b"""
         self.graph.query(query)
 
@@ -370,7 +373,7 @@ class testList(FlowTestsBase):
         query = """MATCH p=()-[]->() RETURN toBooleanList([p])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X),(b:Y) DELETE a, b"""
         self.graph.query(query)
 
@@ -387,55 +390,58 @@ class testList(FlowTestsBase):
         expected_result = [None]
         query = """RETURN toFloatList(null)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # List of NULL values input should return list of NULL values
         query = """RETURN toFloatList([null, null])"""
         expected_result = [[None, None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # Test list with mixed type values
         query = """RETURN toFloatList(['abc', 1.5, 7.0578, null, ['a','b']]) """
         expected_result = [[None, 1.5, 7.0578, None, None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         query = """RETURN toFloatList(['7.0578']) """
         expected_result = 7.0578
         actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(float(actual_result.result_set[0][0][0]), expected_result, 1e-5)
 
-        # Tests with empty array result
-        query = """MATCH (n:X) RETURN toFloatList(n)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        # Tests with type mismatch for node/edge/path inputs
+        try:
+            self.graph.query("""MATCH (n:X) RETURN toFloatList(n)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Node", str(e))
 
         query = """MATCH (n:X) RETURN toFloatList([n])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH ()-[e]->() RETURN toFloatList(e)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH ()-[e]->() RETURN toFloatList(e)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Edge", str(e))
 
         query = """MATCH ()-[e]->() RETURN toFloatList([e])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH p=()-[]->() RETURN toFloatList(p)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH p=()-[]->() RETURN toFloatList(p)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Path", str(e))
 
         query = """MATCH p=()-[]->() RETURN toFloatList([p])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         try:
             self.graph.query("RETURN toFloatList(true)")
@@ -496,7 +502,7 @@ class testList(FlowTestsBase):
         query = """CREATE (a:X) RETURN toFloatList([a])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X) DELETE a"""
         self.graph.query(query)
 
@@ -504,7 +510,7 @@ class testList(FlowTestsBase):
         query = """CREATE (a:X)-[r:R]->(b:Y) RETURN toFloatList([r])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X),(b:Y) DELETE a, b"""
         self.graph.query(query)
 
@@ -516,7 +522,7 @@ class testList(FlowTestsBase):
         query = """MATCH p=()-[]->() RETURN toFloatList([p])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X), (b:Y) DELETE a, b"""
         self.graph.query(query)
 
@@ -533,50 +539,53 @@ class testList(FlowTestsBase):
         expected_result = [None]
         query = """RETURN toIntegerList(null)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # List of NULL values input should return list of NULL values
         query = """RETURN toIntegerList([null, null])"""
         expected_result = [[None, None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # Test list with mixed type values
         query = """RETURN toIntegerList(['abc', 7, '5', null, ['a','b']]) """
         expected_result = [[None, 7, 5, None, None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
-        # Tests with empty array result
-        query = """MATCH (n:X) RETURN toIntegerList(n)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        # Tests with type mismatch for node/edge/path inputs
+        try:
+            self.graph.query("""MATCH (n:X) RETURN toIntegerList(n)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Node", str(e))
 
         query = """MATCH (n:X) RETURN toIntegerList([n])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH ()-[e]->() RETURN toIntegerList(e)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH ()-[e]->() RETURN toIntegerList(e)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Edge", str(e))
 
         query = """MATCH ()-[e]->() RETURN toIntegerList([e])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH p=()-[]->() RETURN toIntegerList(p)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH p=()-[]->() RETURN toIntegerList(p)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Path", str(e))
 
         query = """MATCH p=()-[]->() RETURN toIntegerList([p])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         try:
             self.graph.query("RETURN toIntegerList(true)")
@@ -637,7 +646,7 @@ class testList(FlowTestsBase):
         query = """CREATE (a:X) RETURN toIntegerList([a])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X) DELETE a"""
         self.graph.query(query)
 
@@ -645,7 +654,7 @@ class testList(FlowTestsBase):
         query = """CREATE (a:X)-[r:R]->(b:Y) RETURN toIntegerList([r])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X),(b:Y) DELETE a, b"""
         self.graph.query(query)
 
@@ -657,7 +666,7 @@ class testList(FlowTestsBase):
         query = """MATCH p=()-[]->() RETURN toIntegerList([p])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X), (b:Y) DELETE a, b"""
         self.graph.query(query)
 
@@ -674,62 +683,65 @@ class testList(FlowTestsBase):
         expected_result = [None]
         query = """RETURN toStringList(null)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # List of NULL values input should return list of NULL values
         query = """RETURN toStringList([null, null])"""
         expected_result = [[None, None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result) 
+        self.env.assertEqual(actual_result.result_set[0], expected_result) 
 
         # Test list with string values
         query = """RETURN toStringList(['abc', '5.32', 'true', 'this is a test'])"""
         expected_result = [['abc', '5.32', 'true', 'this is a test']]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # Test list with float values
         query = """RETURN toStringList([0.32425, 5.32, 7.1])"""
-        expected_result = [['0.324250', '5.320000', '7.100000']]
+        expected_result = [['0.32425', '5.32', '7.1']]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # Test list with mixed type values
         query = """RETURN toStringList(['abc', 7, '5.32', null, ['a','b']]) """
         expected_result = [['abc', '7', '5.32', None, None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
-        # Tests with empty array result
-        query = """MATCH (n:X) RETURN toStringList(n)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        # Tests with type mismatch for node/edge/path inputs
+        try:
+            self.graph.query("""MATCH (n:X) RETURN toStringList(n)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Node", str(e))
 
         query = """MATCH (n:X) RETURN toStringList([n])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH ()-[e]->() RETURN toStringList(e)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH ()-[e]->() RETURN toStringList(e)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Edge", str(e))
 
         query = """MATCH ()-[e]->() RETURN toStringList([e])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
-        query = """MATCH p=()-[]->() RETURN toStringList(p)"""
-        expected_result = []
-        actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        try:
+            self.graph.query("""MATCH p=()-[]->() RETURN toStringList(p)""")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Type mismatch: expected List or Null but was Path", str(e))
 
         query = """MATCH p=()-[]->() RETURN toStringList([p])"""
         expected_result = []
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         try:
             self.graph.query("RETURN toStringList(true)")
@@ -790,7 +802,7 @@ class testList(FlowTestsBase):
         query = """CREATE (a:X) RETURN toStringList([a])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X) DELETE a"""
         self.graph.query(query)
 
@@ -798,7 +810,7 @@ class testList(FlowTestsBase):
         query = """CREATE (a:X)-[r:R]->(b:Y) RETURN toStringList([r])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X),(b:Y) DELETE a, b"""
         self.graph.query(query)
 
@@ -810,7 +822,7 @@ class testList(FlowTestsBase):
         query = """MATCH p=()-[]->() RETURN toStringList([p])"""
         expected_result = [[None]]
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """MATCH (a:X), (b:Y) DELETE a, b"""
         self.graph.query(query)
 
@@ -827,7 +839,7 @@ class testList(FlowTestsBase):
         expected_result = [None]
         query = """WITH NULL as list RETURN list.remove(null, 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # 2nd arg should be integer
         try:
@@ -872,72 +884,72 @@ class testList(FlowTestsBase):
         expected_result = [[1]]
         query = """RETURN list.remove([1,2,3], 1, 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,4]]
         query = """RETURN list.remove([1,2,3,4], 1, 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2]]
         query = """RETURN list.remove([1,2,3], 2, 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.remove([1,2,3], 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test negative index
         expected_result = [[1,2,3]]
         query = """RETURN list.remove([1,2,3,4], -1, 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test negative index
         expected_result = [[2,3,4]]
         query = """RETURN list.remove([1,2,3,4], -4, 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range removal
         expected_result = [[1,2,3]]
         query = """RETURN list.remove([1,2,3,4], -1, 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range removal
         expected_result = [[1]]
         query = """RETURN list.remove([1,2,3,4], -3, 5)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range removal
         expected_result = [[1]]
         query = """RETURN list.remove([1,2,3,4], 1, 5)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out bound index
         expected_result = [[1,2,3,4]]
         query = """RETURN list.remove([1,2,3,4], -5, 5)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out bound index
         expected_result = [[1,2,3,4]]
         query = """RETURN list.remove([1,2,3,4], 4, 5)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3]]
         query = """RETURN list.remove([1,2,3], 1, 0)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3]]
         query = """RETURN list.remove([1,2,3], 1, -1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
 
     def test10_sort(self):
@@ -945,7 +957,7 @@ class testList(FlowTestsBase):
         expected_result = [None]
         query = """WITH NULL as list RETURN list.sort(null, true)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # 2nd arg should be bool
         try:
@@ -974,64 +986,64 @@ class testList(FlowTestsBase):
         expected_result = [[1]]
         query = """RETURN list.sort([1])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3]]
         query = """RETURN list.sort([1,3,2])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.sort([1,3,2], true)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.sort([3,1,2])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.sort([1,2,3])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.sort([3,2,1])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[3,2,1]]
         query = """RETURN list.sort([1,3,2], false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.sort([1,3,2], false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.sort([3,1,2], false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.sort([1,2,3], false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
         query = """RETURN list.sort([3,2,1], false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[[1,2,3],[4,5,6]]]
         query = """RETURN list.sort([[4,5,6], [1,2,3]])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[[1,2,3],[1,2,3,4]]]
         query = """RETURN list.sort([[1,2,3,4], [1,2,3]])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         query = """WITH {a: 1, b: 2, c: 3} as map RETURN list.sort([map, 1, [2,1,3]])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0][0][0], {'a': 1, 'b': 2, 'c': 3})
-        self.env.assertEquals(actual_result.result_set[0][0][1], [2,1,3])
-        self.env.assertEquals(actual_result.result_set[0][0][2], 1)
+        self.env.assertEqual(actual_result.result_set[0][0][0], {'a': 1, 'b': 2, 'c': 3})
+        self.env.assertEqual(actual_result.result_set[0][0][1], [2,1,3])
+        self.env.assertEqual(actual_result.result_set[0][0][2], 1)
 
     def test11_insert(self):
         # NULL input should return NULL
         expected_result = [None]
         query = """WITH NULL as list RETURN list.insert(null, 2, 3)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # 2nd arg should be integer
         try:
@@ -1077,94 +1089,94 @@ class testList(FlowTestsBase):
         expected_result = [[4,1,2,3]]
         query = """RETURN list.insert([1,2,3], 0, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,4,2,3]]
         query = """RETURN list.insert([1,2,3], 1, 4, true)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,4,3]]
         query = """RETURN list.insert([1,2,3], 2, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,4]]
         query = """RETURN list.insert([1,2,3], 3, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,4]]
         query = """RETURN list.insert([1,2,3], -1, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,4,3]]
         query = """RETURN list.insert([1,2,3], -2, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,4,2,3]]
         query = """RETURN list.insert([1,2,3], -3, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4,1,2,3]]
         query = """RETURN list.insert([1,2,3], -4, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4]]
         query = """RETURN list.insert([], 0, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4]]
         query = """RETURN list.insert([], -1, 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,[1,3]]]
         query = """RETURN list.insert([1,2,3], 3, [1,2+1])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range index
         expected_result = [[1,2,3]]
         query = """RETURN list.insert([1,2,3], 4, 5)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range index
         expected_result = [[1,2,3]]
         query = """RETURN list.insert([1,2,3], -5, 5)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test val of type NULL
         expected_result = [[1,2,3]]
         query = """RETURN list.insert([1,2,3], 1, null)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test dup=true
         expected_result = [[1,2,3]]
         query = """RETURN list.insert([1,2,3], 0, 2, false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test dup=true
         expected_result = [[[1,3],1,2,3]]
         query = """RETURN list.insert([[1,3],1,2,3], 4, [1,2+1], false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
     def test12_insertListElements(self):
         # NULL input should return NULL
         expected_result = [None]
         query = """WITH NULL as list RETURN list.insertListElements(null, [1,2,3], 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # 2nd arg should be list
         try:
@@ -1210,175 +1222,175 @@ class testList(FlowTestsBase):
         expected_result = [[4,1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [4], 0)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,4,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [4], 1, true)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,4,3]]
         query = """RETURN list.insertListElements([1,2,3], [4], 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,4]]
         query = """RETURN list.insertListElements([1,2,3], [4], 3)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,4]]
         query = """RETURN list.insertListElements([1,2,3], [4], -1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,4,3]]
         query = """RETURN list.insertListElements([1,2,3], [4], -2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,4,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [4], -3)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4,1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [4], -4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4]]
         query = """RETURN list.insertListElements([], [4], 0)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4]]
         query = """RETURN list.insertListElements([], [4], -1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,[1,3]]]
         query = """RETURN list.insertListElements([1,2,3], [[1,2+1]], 3)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range index
         expected_result = [[1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [5], 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range index
         expected_result = [[1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [5], -5)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test val of type NULL
         expected_result = [[1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], null, 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test dup=true
         expected_result = [[1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [2], 0, false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test dup=true
         expected_result = [[[1,3],1,2,3]]
         query = """RETURN list.insertListElements([[1,3],1,2,3], [[1,2+1]], 4, false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         ### test multiple values in list2 ###
 
         expected_result = [[4,5,6,1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [4,5,6], 0)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,4,5,6,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [4,5,6], 1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,4,5,6,3]]
         query = """RETURN list.insertListElements([1,2,3], [4,5,6], 2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,4,5,6]]
         query = """RETURN list.insertListElements([1,2,3], [4,5,6], 3)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,4,5,6]]
         query = """RETURN list.insertListElements([1,2,3], [4,5,6], -1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,4,5,6,3]]
         query = """RETURN list.insertListElements([1,2,3], [4,5,6], -2)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,4,5,6,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [4,5,6], -3)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4,5,6,1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [4,5,6], -4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4,5,6]]
         query = """RETURN list.insertListElements([], [4,5,6], 0)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[4,5,6]]
         query = """RETURN list.insertListElements([], [4,5,6], -1)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[1,2,3,[1,3],4]]
         query = """RETURN list.insertListElements([1,2,3], [[1,2+1], 4], 3)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range index
         expected_result = [[1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [5, 6], 4)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test out of range index
         expected_result = [[1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [5, 9], -5)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test dup=true
         expected_result = [[9,7,1,2,3]]
         query = """RETURN list.insertListElements([1,2,3], [9,3,2,7], 0, false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # test dup=true
         expected_result = [[1,[1,3],2,3,[1,4],8,[5]]]
         query = """RETURN list.insertListElements([1,[1,3],2,3,[5]], [[1,4],[1,2+1],8,[5]], 4, false)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
     def test13_dedup(self):
         # NULL input should return NULL
         expected_result = [None]
         query = """WITH NULL as list RETURN list.dedup(null)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         # 1st arg should be list
         try:
@@ -1409,14 +1421,14 @@ class testList(FlowTestsBase):
         expected_result = [[1,2,3,4]]
         query = """RETURN list.dedup([1,2,3,2,2,1,4])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[3]]
         query = """RETURN list.dedup([3,3,3])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)
 
         expected_result = [[3,[1,2],[1]]]
         query = """RETURN list.dedup([3,[1,2],3,[1],[1,2]])"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0], expected_result)
+        self.env.assertEqual(actual_result.result_set[0], expected_result)

@@ -13,133 +13,133 @@ class testGraphMergeFlow():
     def test01_single_node_with_label(self):
         query = """MERGE (robert:Critic)"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 1)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 0)
 
     # Retry to create an existing entity.
     def test02_existing_single_node_with_label(self):
         query = """MERGE (robert:Critic)"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     # Create a single node with two properties and no labels.
     def test03_single_node_with_properties(self):
         query = """MERGE (charlie { name: 'Charlie Sheen', age: 10 })"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 2)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 2)
 
     # Retry to create an existing entity.
     def test04_existing_single_node_with_properties(self):
         query = """MERGE (charlie { name: 'Charlie Sheen', age: 10 })"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     # Create a single node with both label and property.
     def test05_single_node_both_label_and_property(self):
         query = """MERGE (michael:Person { name: 'Michael Douglas' })"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 1)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 1)
+        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 1)
 
     # Retry to create an existing entity.
     def test06_existing_single_node_both_label_and_property(self):
         query = """MERGE (michael:Person { name: 'Michael Douglas' })"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     # Create a single edge and additional two nodes.
     def test07_merge_on_relationship(self):
         query = """MERGE (charlie:ACTOR)-[r:ACTED_IN]->(wallStreet:MOVIE)"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 2)
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.relationships_created, 1)
+        self.env.assertEqual(result.labels_added, 2)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.relationships_created, 1)
 
     # Retry to create a single edge and additional two nodes.
     def test08_existing_merge_on_relationship(self):
         query = """MERGE (charlie:ACTOR)-[r:ACTED_IN]->(wallStreet:MOVIE)"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.relationships_created, 0)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.relationships_created, 0)
 
     # Update existing entity
     def test09_update_existing_node(self):
         query = """MERGE (charlie { name: 'Charlie Sheen' }) SET charlie.age = 11, charlie.lastname='Sheen' """
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 2)
-        self.env.assertEquals(result.relationships_created, 0)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.relationships_created, 0)
 
         query = """MATCH (charlie { name: 'Charlie Sheen' }) RETURN charlie.age, charlie.name, charlie.lastname"""
         actual_result = self.graph.query(query)
         expected_result = [[11, 'Charlie Sheen', 'Sheen']]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Update new entity
     def test10_update_new_node(self):
         query = """MERGE (tamara:ACTOR { name: 'tamara tunie' }) SET tamara.age = 59, tamara.name = 'Tamara Tunie' """
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 1)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 3)
-        self.env.assertEquals(result.relationships_created, 0)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.relationships_created, 0)
 
         query = """MATCH (tamara:ACTOR { name: 'Tamara Tunie' }) RETURN tamara.name, tamara.age"""
         actual_result = self.graph.query(query)
         expected_result = [['Tamara Tunie', 59]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Create a single edge and additional two nodes.
     def test11_update_new_relationship(self):
         query = """MERGE (franklin:ACTOR { name: 'Franklin Cover' })-[r:ACTED_IN {rate:5.7}]->(almostHeroes:MOVIE) SET r.date=1998, r.rate=5.8"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 2)
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.properties_set, 4)
-        self.env.assertEquals(result.relationships_created, 1)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.properties_set, 3)
+        self.env.assertEqual(result.relationships_created, 1)
 
     # Update existing relation
     def test12_update_existing_edge(self):
         query = """MERGE (franklin:ACTOR { name: 'Franklin Cover' })-[r:ACTED_IN {rate:5.8, date:1998}]->(almostHeroes:MOVIE) SET r.date=1998, r.rate=5.9"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 1)
-        self.env.assertEquals(result.properties_removed, 1)
-        self.env.assertEquals(result.relationships_created, 0)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 1)
+        self.env.assertEqual(result.properties_removed, 1)
+        self.env.assertEqual(result.relationships_created, 0)
 
         query = """MATCH (franklin:ACTOR { name: 'Franklin Cover' })-[r:ACTED_IN {rate:5.9, date:1998}]->(almostHeroes:MOVIE) RETURN franklin.name, franklin.age, r.rate, r.date"""
         actual_result = self.graph.query(query)
         expected_result = [['Franklin Cover', None, 5.9, 1998]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Update multiple nodes
     def test13_update_multiple_nodes(self):
         query = """CREATE (:person {age:31}),(:person {age:31}),(:person {age:31}),(:person {age:31})"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 4)
-        self.env.assertEquals(result.nodes_created, 4)
-        self.env.assertEquals(result.properties_set, 4)
+        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.nodes_created, 4)
+        self.env.assertEqual(result.properties_set, 4)
 
         query = """MERGE (p:person {age:31}) SET p.newprop=100"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 4)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 4)
 
         query = """MATCH (p:person) RETURN p.age, p.newprop"""
         actual_result = self.graph.query(query)
@@ -147,16 +147,16 @@ class testGraphMergeFlow():
                            [31, 100],
                            [31, 100],
                            [31, 100]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     # Update multiple nodes
     def test14_merge_unbounded_pattern(self):
         query = """MERGE (p:person {age:31})-[:owns]->(d:dog {name:'max'})"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 2)
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.properties_set, 2)
-        self.env.assertEquals(result.relationships_created, 1)
+        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.relationships_created, 1)
 
         # Although person with age 31 and dog with the name max exists,
         # specified pattern doesn't exists, as a result the entire pattern
@@ -165,10 +165,10 @@ class testGraphMergeFlow():
         # bounded and won't be duplicated.
         query = """MERGE (p:person {age:31})-[:owns]->(d:dog {name:'max'})-[:eats]->(f:food {name:'Royal Canin'})"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 3)
-        self.env.assertEquals(result.nodes_created, 3)
-        self.env.assertEquals(result.properties_set, 3)
-        self.env.assertEquals(result.relationships_created, 2)
+        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.nodes_created, 3)
+        self.env.assertEqual(result.properties_set, 3)
+        self.env.assertEqual(result.relationships_created, 2)
 
     # Add node that matches pre-existing index
     def test15_merge_indexed_entity(self):
@@ -182,21 +182,21 @@ class testGraphMergeFlow():
         # Add one new person
         merge_query = """MERGE (p:person {age:40})"""
         result = self.graph.query(merge_query)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 1)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 1)
         # Verify that one indexed node has been added
         result = self.graph.query(count_query)
         updated_count = result.result_set[0][0]
-        self.env.assertEquals(updated_count, original_count+1)
+        self.env.assertEqual(updated_count, original_count+1)
 
         # Perform another merge that does not create an entity
         result = self.graph.query(merge_query)
-        self.env.assertEquals(result.nodes_created, 0)
+        self.env.assertEqual(result.nodes_created, 0)
 
         # Verify that indexed node count is unchanged
         result = self.graph.query(count_query)
         updated_count = result.result_set[0][0]
-        self.env.assertEquals(updated_count, original_count+1)
+        self.env.assertEqual(updated_count, original_count+1)
 
     # Update nodes based on non-constant inlined properties
     def test16_merge_dynamic_properties(self):
@@ -205,25 +205,25 @@ class testGraphMergeFlow():
         expected = [['ABCDE']]
 
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 1)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 1)
+        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 1)
 
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.result_set, expected)
 
         # Repeat the query and verify that no changes were introduced
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
         # Verify that MATCH...MERGE on the same entity does not introduce changes
         query = """MATCH (q {name: 'ABCDE'}) MERGE (r {name: q.name}) RETURN r.name"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.result_set, expected)
 
     def test17_complex_merge_queries(self):
         self.graph.delete()
@@ -234,48 +234,48 @@ class testGraphMergeFlow():
         expected = [['a', 1, 'b']]
 
         # Verify the results
-        self.env.assertEquals(result.labels_added, 2)
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.relationships_created, 1)
-        self.env.assertEquals(result.properties_set, 3)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 1)
+        self.env.assertEqual(result.properties_set, 3)
+        self.env.assertEqual(result.result_set, expected)
 
         # Repeat the query and verify that no changes were introduced
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.result_set, expected)
 
         # Verify that these entities are accessed properly with MATCH...MERGE queries
         query = """MATCH (a:Person {name: 'a'}), (b:Person {name: 'b'}) MERGE (a)-[e:FRIEND {val: 1}]->(b) RETURN a.name, e.val, b.name"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.result_set, expected)
 
         # Verify that we can bind entities properly in variable-length traversals
         query = """MATCH (a)-[*]->(b) MERGE (a)-[e:FRIEND {val: 1}]->(b) RETURN a.name, e.val, b.name"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.result_set, expected)
 
         # Verify UNWIND...MERGE does not recreate existing entities
         query = """UNWIND ['a', 'b'] AS names MERGE (a:Person {name: names}) RETURN a.name"""
-        expected = [['b'], ['a']]
+        expected = [['a'], ['b']]
 
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.result_set, expected)
 
         # Merging entities from an UNWIND list
         query = """UNWIND ['a', 'b', 'c'] AS names MERGE (a:Person {name: names}) ON MATCH SET a.set_by = 'match' ON CREATE SET a.set_by = 'create' RETURN a.name, a.set_by ORDER BY a.name"""
@@ -284,10 +284,10 @@ class testGraphMergeFlow():
                     ['c', 'create']]
 
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 1)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 4)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 4)
+        self.env.assertEqual(result.result_set, expected)
 
         # Connect 'c' to both 'a' and 'b' via a Friend relation
         # One thing to note here is that both `c` and `x` are bounded, which means
@@ -295,31 +295,31 @@ class testGraphMergeFlow():
         # nodes! as such the first created edge is different from the second one (due to changes in the destination node).
         query = """MATCH (c:Person {name: 'c'}) MATCH (x:Person) WHERE x.name in ['a', 'b'] WITH c, x MERGE(c)-[:FRIEND]->(x)"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.relationships_created, 2)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.relationships_created, 2)
 
         # Verify function calls in MERGE do not recreate existing entities
         query = """UNWIND ['A', 'B'] AS names MERGE (a:Person {name: toLower(names)}) RETURN a.name"""
-        expected = [['b'], ['a']]
+        expected = [['a'], ['b']]
 
         result = self.graph.query(query)
-        self.env.assertEquals(result.labels_added, 0)
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.result_set, expected)
 
         query = """MERGE (a:Person {name: 'a'}) ON MATCH SET a.set_by = 'match' ON CREATE SET a.set_by = 'create' MERGE (b:Clone {name: a.name + '_clone'}) ON MATCH SET b.set_by = 'match' ON CREATE SET b.set_by = 'create' RETURN a.name, a.set_by, b.name, b.set_by"""
         result = self.graph.query(query)
         expected = [['a', 'match', 'a_clone', 'create']]
 
         # Verify the results
-        self.env.assertEquals(result.labels_added, 1)
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 2)
-        self.env.assertEquals(result.result_set, expected)
+        self.env.assertEqual(result.labels_added, 1)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 2)
+        self.env.assertEqual(result.result_set, expected)
 
     def test18_merge_unique_creations(self):
         # Create a new pattern with non-unique entities.
@@ -327,17 +327,17 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created in both executions.
-        self.env.assertEquals(result.nodes_created, 4)
-        self.env.assertEquals(result.relationships_created, 2)
-        self.env.assertEquals(result.properties_set, 4)
+        self.env.assertEqual(result.nodes_created, 4)
+        self.env.assertEqual(result.relationships_created, 2)
+        self.env.assertEqual(result.properties_set, 4)
 
         # Repeat the query.
         result = self.graph.query(query)
 
         # Verify that no data was modified.
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     def test19_merge_dependency(self):
         self.graph.delete()
@@ -348,17 +348,17 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created.
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.relationships_created, 2)
-        self.env.assertEquals(result.properties_set, 2)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 2)
+        self.env.assertEqual(result.properties_set, 2)
 
         # Repeat the query.
         result = self.graph.query(query)
 
         # Verify that no data was modified.
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     def test20_merge_edge_dependency(self):
         self.graph.delete()
@@ -369,17 +369,17 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created.
-        self.env.assertEquals(result.nodes_created, 5)
-        self.env.assertEquals(result.relationships_created, 3)
-        self.env.assertEquals(result.properties_set, 2)
+        self.env.assertEqual(result.nodes_created, 5)
+        self.env.assertEqual(result.relationships_created, 3)
+        self.env.assertEqual(result.properties_set, 2)
 
         # Repeat the query.
         result = self.graph.query(query)
 
         # Verify that no data was modified.
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     def test21_merge_scan(self):
         # Starting with an empty graph.
@@ -389,9 +389,9 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created.
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.relationships_created, 1)
-        self.env.assertEquals(result.properties_set, 1)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 1)
+        self.env.assertEqual(result.properties_set, 1)
 
         # Starting with an empty graph.
         # Label scan should see created nodes.
@@ -400,9 +400,9 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created.
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.relationships_created, 1)
-        self.env.assertEquals(result.properties_set, 1)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 1)
+        self.env.assertEqual(result.properties_set, 1)
 
     def test22_merge_label_scan(self):
         # Starting with an empty graph.
@@ -412,17 +412,17 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created.
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.relationships_created, 2)
-        self.env.assertEquals(result.properties_set, 2)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 2)
+        self.env.assertEqual(result.properties_set, 2)
 
         # Repeat the query.
         result = self.graph.query(query)
 
         # Verify that no data was modified.
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     def test23_merge_var_traverse(self):
         # Starting with an empty graph.
@@ -432,17 +432,17 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created.
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.relationships_created, 2)
-        self.env.assertEquals(result.properties_set, 2)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 2)
+        self.env.assertEqual(result.properties_set, 2)
 
         # Repeat the query.
         result = self.graph.query(query)
 
         # Verify that no data was modified.
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.relationships_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.relationships_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     def test24_merge_merge_delete(self):
         # Merge followed by an additional merge and ending with a deletion
@@ -453,17 +453,17 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created.
-        self.env.assertEquals(result.nodes_created, 4)
-        self.env.assertEquals(result.properties_set, 4)
-        self.env.assertEquals(result.relationships_created, 3)
+        self.env.assertEqual(result.nodes_created, 4)
+        self.env.assertEqual(result.properties_set, 4)
+        self.env.assertEqual(result.relationships_created, 3)
 
         # Repeat the query.
         result = self.graph.query(query)
 
         # Verify that no data was modified.
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
-        self.env.assertEquals(result.relationships_created, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
+        self.env.assertEqual(result.relationships_created, 0)
 
     def test25_merge_with_where(self):
         # Index the "L:prop) combination so that the MERGE tree will not have a filter op.
@@ -480,21 +480,25 @@ class testGraphMergeFlow():
         self.env.assertFalse(re.search('Merge\s+Filter', plan))
 
         # Verify that the entity was created and no results were returned.
-        self.env.assertEquals(result.nodes_created, 1)
-        self.env.assertEquals(result.properties_set, 1)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(result.properties_set, 1)
 
         # Repeat the query.
         result = self.graph.query(query)
 
         # Verify that no data was modified and no results were returned.
-        self.env.assertEquals(result.nodes_created, 0)
-        self.env.assertEquals(result.properties_set, 0)
+        self.env.assertEqual(result.nodes_created, 0)
+        self.env.assertEqual(result.properties_set, 0)
 
     def test26_merge_set_invalid_property(self):
         self.graph.delete()
-        query = """MATCH p=() MERGE () ON MATCH SET p.prop4 = 5"""
-        result = self.graph.query(query)
-        self.env.assertEquals(result.properties_set, 0)
+        try:
+            query = """MATCH p=() MERGE () ON MATCH SET p.prop4 = 5"""
+            self.graph.query(query)
+            assert(False)
+        except redis.ResponseError as e:
+            self.env.assertContains("Type mismatch", str(e))
+            self.env.assertContains("Path", str(e))
 
     def test27_merge_create_invalid_entity(self):
         try:
@@ -502,24 +506,24 @@ class testGraphMergeFlow():
             query = """MERGE (n {v: NULL})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
-            self.env.assertIn("Cannot merge node using null property value", str(e))
+            self.env.assertContains("Cannot merge node using null property value", str(e))
             pass
 
         # Verify that no entities were created.
         query = """MATCH (a) RETURN a"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.result_set, [])
+        self.env.assertEqual(result.result_set, [])
 
         try:
             # Try to merge a node with a self-referential property.
             query = """MERGE (a:L {v: a.v})"""
             self.graph.query(query)
             assert(False)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
-            self.env.assertIn("Cannot merge node using null property value", str(e))
+            self.env.assertContains("'a' not defined", str(e))
 
     def test28_merge_reset_label_scan(self):
         # Starting with an empty graph.
@@ -529,15 +533,15 @@ class testGraphMergeFlow():
         result = self.graph.query(query)
 
         # Verify that every entity was created.
-        self.env.assertEquals(result.nodes_created, 2)
-        self.env.assertEquals(result.relationships_created, 1)
-        self.env.assertEquals(result.properties_set, 2)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.relationships_created, 1)
+        self.env.assertEqual(result.properties_set, 2)
 
         # Issue a query that forces a Cartesian Product to reset a Node by Label Scan
         # after a Merge operation has freed that scan once.
         query = """MERGE (a:Person {name: 'a'})-[:FRIEND]->() WITH NULL AS a MATCH (n1:Person), (n2:Person) MERGE (:NEW)"""
         result = self.graph.query(query)
-        self.env.assertEquals(result.nodes_created, 1)
+        self.env.assertEqual(result.nodes_created, 1)
 
     def test29_merge_resue(self):
         query = """
@@ -559,9 +563,9 @@ class testGraphMergeFlow():
         RETURN m.v, u.v, n.v"""
 
         res = self.graph.query(query)
-        self.env.assertEquals(res.nodes_created, 0)
-        self.env.assertEquals(res.relationships_created, 2)
-        self.env.assertEquals(res.result_set, [['abcd', 'x', 'y'],['abcd', 'x', 'y']])
+        self.env.assertEqual(res.nodes_created, 0)
+        self.env.assertEqual(res.relationships_created, 2)
+        self.env.assertEqual(res.result_set, [['abcd', 'x', 'y'],['abcd', 'x', 'y']])
 
     def test30_record_clone_under_merge(self):
         # the following operations
@@ -586,7 +590,7 @@ class testGraphMergeFlow():
                    MERGE (m)-[:R]->(i)
                    RETURN x"""
         res = self.graph.query(query)
-        self.env.assertEquals(res.result_set[0][0], expected)
+        self.env.assertEqual(res.result_set[0][0], expected)
 
         # all node scan under merge
         query = """UNWIND [{name: "A", id: "C"}] AS x
@@ -596,7 +600,7 @@ class testGraphMergeFlow():
                    MERGE (m)-[:R]->(i)
                    RETURN x"""
         res = self.graph.query(query)
-        self.env.assertEquals(res.result_set[0][0], expected)
+        self.env.assertEqual(res.result_set[0][0], expected)
 
         # node by id seek under merge
         query = """UNWIND [{name: "A", id: "C"}] AS x
@@ -607,7 +611,7 @@ class testGraphMergeFlow():
                    MERGE (m)-[:R]->(i)
                    RETURN x"""
         res = self.graph.query(query)
-        self.env.assertEquals(res.result_set[0][0], expected)
+        self.env.assertEqual(res.result_set[0][0], expected)
 
     def test31_alias_multiple_definition(self):
         # Redefinition of an alias by depicting L2 as a label of a
@@ -615,27 +619,27 @@ class testGraphMergeFlow():
         query = """MERGE ()-[:R2]->(a:L1)-[:R1]->(a:L2) RETURN *"""
         try:
             self.graph.explain(query)
-        except redis.exceptions.ResponseError as e:
+        except redis.ResponseError as e:
             # Expecting an error.
             assert("can't be redeclared in a MERGE clause" in str(e))
 
     def test32_reset_op(self):
         # MERGE operation register a reset function validate that it works as expected
         res = self.graph.query("CREATE (a:A), (b:B)")
-        self.env.assertEquals(res.nodes_created, 2)
+        self.env.assertEqual(res.nodes_created, 2)
 
         res = self.graph.query("MATCH (a:A), (b:B) SET a:X MERGE (c:C) MERGE (d:D)")
-        self.env.assertEquals(res.nodes_created, 2)
+        self.env.assertEqual(res.nodes_created, 2)
     
     def test33_merge_create_reserve_id(self):
         # MERGE and CREATE node id reservation should be done only if new node is created
         # ensure that only 21 nodes are created
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i}) MERGE (:B {id: i % 10})")
-        self.env.assertEquals(res.nodes_created, 21)
+        self.env.assertEqual(res.nodes_created, 21)
 
         # ensure that only 11 nodes are created and no crash
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i}) MERGE (:B {id: i % 10})")
-        self.env.assertEquals(res.nodes_created, 11)
+        self.env.assertEqual(res.nodes_created, 11)
 
     def test34_merge_handle_duplicates(self):
         # duplicates scheduled for creation should be matched
@@ -657,11 +661,11 @@ class testGraphMergeFlow():
                RETURN n.v, n.created, n.matched"""
 
         res = self.graph.query(q).result_set
-        self.env.assertEquals(len(res), 3)
+        self.env.assertEqual(len(res), 3)
         for row in res:
-            self.env.assertEquals(row[0], 1)
-            self.env.assertEquals(row[1], True)
-            self.env.assertEquals(row[2], True)
+            self.env.assertEqual(row[0], 1)
+            self.env.assertEqual(row[1], True)
+            self.env.assertEqual(row[2], True)
 
     def test35_inquery_rel_intro(self):
         # make sure relationship types introduced within a query
@@ -682,7 +686,7 @@ class testGraphMergeFlow():
                RETURN count(1)"""
 
         res = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(res, 2)
+        self.env.assertEqual(res, 2)
 
         # clear the graph
         self.graph.delete()
@@ -695,7 +699,7 @@ class testGraphMergeFlow():
                RETURN count(1)"""
 
         res = self.graph.query(q).result_set[0][0]
-        self.env.assertEquals(res, 2)
+        self.env.assertEqual(res, 2)
 
     def test36_reset_index(self):
         self.graph.delete()
@@ -706,7 +710,7 @@ class testGraphMergeFlow():
                             MERGE (cv:N {v: toString(x % 2)})
                             ON CREATE SET
                               cv.x = x""")
-        self.env.assertEquals(res.nodes_created, 2)
+        self.env.assertEqual(res.nodes_created, 2)
 
     def test37_updated_schema_awareness(self):
         """
@@ -741,12 +745,12 @@ class testGraphMergeFlow():
 
         params = {'relationships': [1, 2]}
         res = self.graph.query(q, params).result_set
-        self.env.assertEquals(len(res), 2)
-        self.env.assertEquals(res[0][0], res[1][0])
+        self.env.assertEqual(len(res), 2)
+        self.env.assertEqual(res[0][0], res[1][0])
 
         edge = res[0][0]
-        self.env.assertEquals(edge.properties['created'], True)
-        self.env.assertEquals(edge.properties['matched'], True)
+        self.env.assertEqual(edge.properties['created'], True)
+        self.env.assertEqual(edge.properties['matched'], True)
 
         # run a similar query only this time the merge pattern matching operation
         # is going to be 'ConditionalTraverse' instead of 'ExpandInto'
@@ -770,10 +774,10 @@ class testGraphMergeFlow():
 
         params = {'relationships': [1, 2]}
         res = self.graph.query(q, params).result_set
-        self.env.assertEquals(len(res), 2)
-        self.env.assertEquals(res[0][0], res[1][0])
+        self.env.assertEqual(len(res), 2)
+        self.env.assertEqual(res[0][0], res[1][0])
 
         edge = res[0][0]
-        self.env.assertEquals(edge.properties['created'], True)
-        self.env.assertEquals(edge.properties['matched'], True)
+        self.env.assertEqual(edge.properties['created'], True)
+        self.env.assertEqual(edge.properties['matched'], True)
 

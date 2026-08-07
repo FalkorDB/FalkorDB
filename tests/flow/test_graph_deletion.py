@@ -1,7 +1,6 @@
 from common import *
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)) + '/../..')
-from demo import QueryInfo
 
 GRAPH_ID = "graph_deletion"
 
@@ -44,7 +43,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         query = """MATCH (n) WHERE EXISTS(n.name)=true RETURN count(n)"""
         actual_result = self.graph.query(query)
         nodeCount = actual_result.result_set[0][0]
-        self.env.assertEquals(nodeCount, 7)
+        self.env.assertEqual(nodeCount, 7)
 
         # Remove Tal's name attribute.
         query = """MATCH (n) WHERE n.name = 'Tal' SET n.name = NULL"""
@@ -55,7 +54,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         query = """MATCH (n) WHERE EXISTS(n.name)=true RETURN count(n)"""
         actual_result = self.graph.query(query)
         nodeCount = actual_result.result_set[0][0]
-        self.env.assertEquals(nodeCount, 6)
+        self.env.assertEqual(nodeCount, 6)
 
         # Reintroduce Tal's name attribute.
         query = """MATCH (n) WHERE EXISTS(n.name)=false SET n.name = 'Tal'"""
@@ -65,7 +64,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         query = """MATCH (n) WHERE EXISTS(n.name)=true RETURN count(n)"""
         actual_result = self.graph.query(query)
         nodeCount = actual_result.result_set[0][0]
-        self.env.assertEquals(nodeCount, 7)
+        self.env.assertEqual(nodeCount, 7)
 
     # Delete edges pointing into either Boaz or Ori.
     def test02_delete_edges(self):
@@ -75,8 +74,8 @@ class testGraphDeletionFlow(FlowTestsBase):
 
         query = """MATCH (s:person)-[e:know]->(d:person) WHERE d.name = "Boaz" OR d.name = "Ori" DELETE e"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.relationships_deleted, edge_count)
-        self.env.assertEquals(actual_result.nodes_deleted, 0)
+        self.env.assertEqual(actual_result.relationships_deleted, edge_count)
+        self.env.assertEqual(actual_result.nodes_deleted, 0)
 
     # Make sure there are no edges going into either Boaz or Ori.
     def test03_verify_edge_deletion(self):
@@ -84,7 +83,7 @@ class testGraphDeletionFlow(FlowTestsBase):
                     WHERE d.name = "Boaz" AND d.name = "Ori"
                     RETURN COUNT(s)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0][0], 0)
+        self.env.assertEqual(actual_result.result_set[0][0], 0)
 
     # Remove 'know' edge connecting Roi to Alon
     # Leaving a single edge of type SameBirthday
@@ -100,8 +99,8 @@ class testGraphDeletionFlow(FlowTestsBase):
                    DELETE e"""
 
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.relationships_deleted, edge_count)
-        self.env.assertEquals(actual_result.nodes_deleted, 0)
+        self.env.assertEqual(actual_result.relationships_deleted, edge_count)
+        self.env.assertEqual(actual_result.nodes_deleted, 0)
 
     # Make sure Roi is still connected to Alon
     # via the "SameBirthday" type edge.
@@ -109,12 +108,12 @@ class testGraphDeletionFlow(FlowTestsBase):
         query = """MATCH (s:person {name: "Roi"})-[e:SameBirthday]->(d:person {name: "Alon"})
                    RETURN COUNT(s)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), 1)
+        self.env.assertEqual(len(actual_result.result_set), 1)
 
         query = """MATCH (s:person {name: "Roi"})-[e:know]->(d:person {name: "Alon"})
                    RETURN COUNT(s)"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.result_set[0][0], 0)
+        self.env.assertEqual(actual_result.result_set[0][0], 0)
 
     # Remove both Alon and Boaz from the graph.
     def test06_delete_nodes(self):
@@ -131,8 +130,8 @@ class testGraphDeletionFlow(FlowTestsBase):
                     WHERE s.name = "Boaz" OR s.name = "Alon"
                     DELETE s"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.relationships_deleted, rel_count)
-        self.env.assertEquals(actual_result.nodes_deleted, 2)
+        self.env.assertEqual(actual_result.relationships_deleted, rel_count)
+        self.env.assertEqual(actual_result.nodes_deleted, 2)
 
     # Make sure Alon and Boaz are not in the graph.
     def test07_get_deleted_nodes(self):
@@ -140,7 +139,7 @@ class testGraphDeletionFlow(FlowTestsBase):
                     WHERE s.name = "Boaz" OR s.name = "Alon"
                     RETURN s"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(len(actual_result.result_set), 0)
+        self.env.assertEqual(len(actual_result.result_set), 0)
 
     # Make sure Alon and Boaz are the only removed nodes.
     def test08_verify_node_deletion(self):
@@ -148,7 +147,7 @@ class testGraphDeletionFlow(FlowTestsBase):
                    RETURN COUNT(s)"""
         actual_result = self.graph.query(query)
         nodeCount = actual_result.result_set[0][0]
-        self.env.assertEquals(nodeCount, 5)
+        self.env.assertEqual(nodeCount, 5)
 
     def test09_delete_entire_graph(self):
         # Make sure graph exists.
@@ -164,16 +163,15 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.graph.query(query)
         result = self.graph.query(query)
         nodeCount = result.result_set[0][0]
-        self.env.assertEquals(nodeCount, 0)
+        self.env.assertEqual(nodeCount, 0)
 
     def test10_bulk_edge_deletion_timing(self):
         # Create large amount of relationships (50000).
-        self.graph.query("""UNWIND(range(1, 50000)) as x CREATE ()-[:R]->()""")
+        self.graph.query("""UNWIND range(1, 50000) as x CREATE ()-[:R]->()""")
         # Delete and benchmark for 300ms.
         query = """MATCH (a)-[e:R]->(b) DELETE e"""
         result = self.graph.query(query)
-        query_info = QueryInfo(query = query, description = "Test the execution time for deleting large number of edges")
-        self.env.assertEquals(result.relationships_deleted, 50000)
+        self.env.assertEqual(result.relationships_deleted, 50000)
 
     def test11_delete_entity_type_validation(self):
         # Currently we only support deletion of either nodes, edges or paths
@@ -190,21 +188,21 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.graph.delete()
 
         # Create 10 nodes.
-        self.graph.query("UNWIND(range(1, 10)) as x CREATE ()")
+        self.graph.query("UNWIND range(1, 10) as x CREATE ()")
 
         # Unwind path nodes.
         query = """MATCH p = () UNWIND nodes(p) AS node DELETE node"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.nodes_deleted, 10)
-        self.env.assertEquals(actual_result.relationships_deleted, 0)
+        self.env.assertEqual(actual_result.nodes_deleted, 10)
+        self.env.assertEqual(actual_result.relationships_deleted, 0)
 
-        self.graph.query("UNWIND(range(1, 10)) as x CREATE ()")
+        self.graph.query("UNWIND range(1, 10) as x CREATE ()")
 
         # Unwind collected nodes.
         query = """MATCH (n) WITH collect(n) AS nodes UNWIND nodes AS node DELETE node"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.nodes_deleted, 10)
-        self.env.assertEquals(actual_result.relationships_deleted, 0)
+        self.env.assertEqual(actual_result.nodes_deleted, 10)
+        self.env.assertEqual(actual_result.relationships_deleted, 0)
 
     def test13_delete_path_elements(self):
         self.graph.query("CREATE ()-[:R]->()")
@@ -213,8 +211,8 @@ class testGraphDeletionFlow(FlowTestsBase):
         # Unwind path nodes.
         query = """MATCH p = (src)-[e]->(dest) WITH nodes(p)[0] AS node, relationships(p)[0] as edge DELETE node, edge"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.nodes_deleted, 1)
-        self.env.assertEquals(actual_result.relationships_deleted, 1)
+        self.env.assertEqual(actual_result.nodes_deleted, 1)
+        self.env.assertEqual(actual_result.relationships_deleted, 1)
 
     # Verify that variable-length traversals in each direction produce the correct results after deletion.
     def test14_post_deletion_traversal_directions(self):
@@ -235,19 +233,19 @@ class testGraphDeletionFlow(FlowTestsBase):
         # Delete a node.
         query = """MATCH (n:Src2) DELETE n"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.nodes_deleted, 1)
-        self.env.assertEquals(actual_result.relationships_deleted, 1)
+        self.env.assertEqual(actual_result.nodes_deleted, 1)
+        self.env.assertEqual(actual_result.relationships_deleted, 1)
 
         query = """MATCH (n1:Src)-[*]->(n2:Dest) RETURN COUNT(*)"""
         actual_result = self.graph.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
         # Perform the same traversal, this time traveling from destination to source.
         query = """MATCH (n1:Src)-[*]->(n2:Dest {val: 0}) RETURN COUNT(*)"""
         actual_result = self.graph.query(query)
         expected_result = [[1]]
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test15_update_deleted_entities(self):
         self.graph.delete()
@@ -256,35 +254,35 @@ class testGraphDeletionFlow(FlowTestsBase):
         # Attempt to update entities after deleting them.
         query = """MATCH (a)-[e]->(b) DELETE a, b SET a.v = 1, e.v = 2, b.v = 3"""
         actual_result = self.graph.query(query)
-        self.env.assertEquals(actual_result.nodes_deleted, 2)
-        self.env.assertEquals(actual_result.relationships_deleted, 1)
+        self.env.assertEqual(actual_result.nodes_deleted, 2)
+        self.env.assertEqual(actual_result.relationships_deleted, 1)
         # No properties should be set.
         # (Note that this behavior is left unspecified by Cypher.)
-        # self.env.assertEquals(actual_result.properties_set, 0)
+        # self.env.assertEqual(actual_result.properties_set, 0)
 
         # Validate that the graph is empty.
         query = """MATCH (a) RETURN a"""
         actual_result = self.graph.query(query)
         expected_result = []
-        self.env.assertEquals(actual_result.result_set, expected_result)
+        self.env.assertEqual(actual_result.result_set, expected_result)
 
     def test16_repeated_entity_deletion(self):
         # create 2 nodes cyclically connected by 2 edges
         actual_result = self.graph.query("CREATE (x1:A)-[r:R]->(n2:B)-[t:T]->(x1)")
-        self.env.assertEquals(actual_result.nodes_created, 2)
-        self.env.assertEquals(actual_result.relationships_created, 2)
+        self.env.assertEqual(actual_result.nodes_created, 2)
+        self.env.assertEqual(actual_result.relationships_created, 2)
 
         # attempt to repeatedly delete edges
         query = """MATCH ()-[r]-() delete r delete r, r delete r, r"""
         actual_result = self.graph.query(query)
         # 2 edges should be reported as deleted
-        self.env.assertEquals(actual_result.relationships_deleted, 2)
+        self.env.assertEqual(actual_result.relationships_deleted, 2)
 
         # attempt to repeatedly delete nodes
         query = """MATCH (n) delete n delete n, n delete n, n"""
         actual_result = self.graph.query(query)
         # 2 nodes should be reported as deleted
-        self.env.assertEquals(actual_result.nodes_deleted, 2)
+        self.env.assertEqual(actual_result.nodes_deleted, 2)
 
     def test17_invalid_deletions(self):
         self.graph.query("CREATE ()")
@@ -311,7 +309,7 @@ class testGraphDeletionFlow(FlowTestsBase):
             self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Delete was constructed without a child operation", str(e))
+            self.env.assertContains("DELETE can only be called on nodes, paths and relationships", str(e))
 
         # try to delete a function return that's not a graph entity
         try:
@@ -319,7 +317,7 @@ class testGraphDeletionFlow(FlowTestsBase):
             self.graph.query(query)
             self.env.assertTrue(False)
         except ResponseError as e:
-            self.env.assertContains("Delete type mismatch", str(e))
+            self.env.assertContains("DELETE can only be called on nodes, paths and relationships", str(e))
 
         # try deleting all scalar types at runtime
         queries = ["WITH 1 AS n DELETE n",
@@ -343,8 +341,8 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.graph.query("MATCH (a:person), (b:person) WHERE (a.name = 'roi' AND b.name='amit')  CREATE (a)-[:knows]->(a)")
         res = self.graph.query("MATCH (a:person) WHERE (a.name = 'roi') DELETE a")
 
-        self.env.assertEquals(res.nodes_deleted, 1)
-        self.env.assertEquals(res.relationships_deleted, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
 
     def test19_random_delete(self):
         # test random graph deletion added as a result of a crash found in Graph_GetNodeEdges
@@ -373,7 +371,7 @@ class testGraphDeletionFlow(FlowTestsBase):
             DELETE nodes(p2)[0]")
 
         # validate that the nodes were deleted
-        self.env.assertEquals(res.nodes_deleted, 2)
+        self.env.assertEqual(res.nodes_deleted, 2)
 
         # create 2 nodes, with the same label N
         self.graph.query("CREATE (:N), (:N)")
@@ -381,79 +379,83 @@ class testGraphDeletionFlow(FlowTestsBase):
             nodes(p)[0]")
 
         # validate that the nodes were deleted
-        self.env.assertEquals(res.nodes_deleted, 2)
+        self.env.assertEqual(res.nodes_deleted, 2)
 
     def test21_not_existed_label(self):
         res = self.graph.query("CREATE (n:Foo:Bar)")
-        self.env.assertEquals(res.nodes_created, 1)
-        self.env.assertEquals(res.labels_added, 2)
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.labels_added, 2)
 
         res = self.graph.query("MATCH (n) REMOVE n:Bar")
-        self.env.assertEquals(res.labels_removed, 1)
+        self.env.assertEqual(res.labels_removed, 1)
 
         res = self.graph.query("MATCH (n) REMOVE n:Bar")
-        self.env.assertEquals(res.labels_removed, 0)
+        self.env.assertEqual(res.labels_removed, 0)
 
         res = self.graph.query("MATCH (n:Bar) RETURN count(n)")
-        self.env.assertEquals(res.result_set[0][0], 0)
+        self.env.assertEqual(res.result_set[0][0], 0)
 
     def test22_delete_reserve_id(self):
         # clean the db
         self.graph.delete()
 
         res = self.graph.query("UNWIND range(0, 10) AS i CREATE (:A {id: i})")
-        self.env.assertEquals(res.nodes_created, 11)
+        self.env.assertEqual(res.nodes_created, 11)
 
         # expecting IDs to be reused
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
+            WITH *
             CREATE (b:A)
             RETURN ID(b) ORDER BY ID(b)"""
         )
-        self.env.assertEquals(res.nodes_deleted, 11)
-        self.env.assertEquals(res.nodes_created, 11)
-        self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+        self.env.assertEqual(res.nodes_deleted, 11)
+        self.env.assertEqual(res.nodes_created, 11)
+        self.env.assertEqual(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
 
         res = self.graph.query("""
             MATCH (a:A)
             DELETE a
+            WITH *
             CREATE (b:A)
             RETURN ID(b) ORDER BY ID(b)"""
         )
-        self.env.assertEquals(res.nodes_deleted, 11)
-        self.env.assertEquals(res.nodes_created, 11)
-        self.env.assertEquals(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
+        self.env.assertEqual(res.nodes_deleted, 11)
+        self.env.assertEqual(res.nodes_created, 11)
+        self.env.assertEqual(res.result_set, [[0], [1], [2], [3], [4], [5], [6], [7], [8], [9], [10]])
 
         # clean the db
         self.graph.delete()
 
         res = self.graph.query("UNWIND range(0, 9) AS i CREATE (:A {id: i})")
-        self.env.assertEquals(res.nodes_created, 10)
+        self.env.assertEqual(res.nodes_created, 10)
 
         res = self.graph.query("""
             MATCH (a:A)
             WITH a, a.id as id
             DELETE a
+            WITH *
             MERGE (b:A {id: id})
             RETURN ID(b), b.id ORDER BY ID(b)"""
         )
-        self.env.assertEquals(res.nodes_deleted, 10)
-        self.env.assertEquals(res.nodes_created, 10)
-        self.env.assertEquals(res.result_set, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9]])
+        self.env.assertEqual(res.nodes_deleted, 10)
+        self.env.assertEqual(res.nodes_created, 10)
+        self.env.assertEqual(res.result_set, [[0, 0], [1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6], [7, 7], [8, 8], [9, 9]])
 
         res = self.graph.query("""
             MATCH (a:A)
             WITH a, a.id as id
             DELETE a
+            WITH *
             MERGE (b:A {id: id})
             RETURN ID(b), b.id ORDER BY ID(b) DESC"""
         )
-        self.env.assertEquals(res.nodes_deleted, 10)
-        self.env.assertEquals(res.nodes_created, 10)
+        self.env.assertEqual(res.nodes_deleted, 10)
+        self.env.assertEqual(res.nodes_created, 10)
         expected = [[i,i] for i in range(0, 10)]
         expected.reverse()
-        self.env.assertEquals(res.result_set, expected)
+        self.env.assertEqual(res.result_set, expected)
 
     def test23_delete_edges(self):
         # clean the db
@@ -493,13 +495,13 @@ class testGraphDeletionFlow(FlowTestsBase):
             WHERE NOT (b)<-[]-()
             DELETE b""")
 
-        self.env.assertEquals(result.nodes_deleted, 1)
-        self.env.assertEquals(result.relationships_deleted, 1)
+        self.env.assertEqual(result.nodes_deleted, 1)
+        self.env.assertEqual(result.relationships_deleted, 1)
 
         # only the A node should remain
         result = self.graph.query("MATCH (n) RETURN n").result_set
-        self.env.assertEquals(len(result), 1)
-        self.env.assertEquals(result[0][0], a)
+        self.env.assertEqual(len(result), 1)
+        self.env.assertEqual(result[0][0], a)
 
         # cleanup
         self.graph.delete()
@@ -522,18 +524,18 @@ class testGraphDeletionFlow(FlowTestsBase):
             WHERE NOT (b)<-[]-()
             DELETE b""")
 
-        self.env.assertEquals(result.nodes_deleted, 0)
-        self.env.assertEquals(result.relationships_deleted, 1)
+        self.env.assertEqual(result.nodes_deleted, 0)
+        self.env.assertEqual(result.relationships_deleted, 1)
 
         # both A nodes and the B node should still exist
         result = self.graph.query("""
         MATCH (n)
         RETURN n ORDER BY n.id""").result_set
 
-        self.env.assertEquals(len(result), 3)
-        self.env.assertEquals(result[0][0], a0)
-        self.env.assertEquals(result[1][0], b)
-        self.env.assertEquals(result[2][0], a1)
+        self.env.assertEqual(len(result), 3)
+        self.env.assertEqual(result[0][0], a0)
+        self.env.assertEqual(result[1][0], b)
+        self.env.assertEqual(result[2][0], a1)
 
     def test25_delete_does_not_leave_phantom_label_entries(self):
         # clean the db
@@ -545,21 +547,21 @@ class testGraphDeletionFlow(FlowTestsBase):
 
         # delete a subset that includes the BOO node (id 0)
         res = self.graph.query("MATCH (x) WITH x LIMIT 10000 DELETE x")
-        self.env.assertEquals(res.nodes_deleted, 10000)
+        self.env.assertEqual(res.nodes_deleted, 10000)
 
         # regression: deleted node must not remain discoverable via label scan
         res = self.graph.query("MATCH (x:BOO) RETURN count(x)")
-        self.env.assertEquals(res.result_set[0][0], 0)
+        self.env.assertEqual(res.result_set[0][0], 0)
 
         # regression: property access on labeled result must not hit undefined attribute
         res = self.graph.query("MATCH (x:BOO) WHERE x.id = 0 RETURN x")
-        self.env.assertEquals(res.result_set, [])
+        self.env.assertEqual(res.result_set, [])
 
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
 
-        if SANITIZER or VALGRIND:
+        if SANITIZER:
             self.env.skip()
 
         self.graph = self.db.select_graph("bulk-delete")
@@ -576,8 +578,8 @@ class testGraphBulkDeletion(FlowTestsBase):
         q = """UNWIND range(1, 500000) as x
                CREATE (:A)-[:R]->()"""
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_created, 1000000)
-        self.env.assertEquals(res.relationships_created, 500000)
+        self.env.assertEqual(res.nodes_created, 1000000)
+        self.env.assertEqual(res.relationships_created, 500000)
 
         #-----------------------------------------------------------------------
         # introduce tensors
@@ -590,7 +592,7 @@ class testGraphBulkDeletion(FlowTestsBase):
                CREATE (t)-[:X]->(s), (t)-[:X]->(s), (t)-[:R]->(s)"""
 
         res = self.graph.query(q)
-        self.env.assertEquals(res.relationships_created, 6)
+        self.env.assertEqual(res.relationships_created, 6)
 
         #-----------------------------------------------------------------------
         # delete all nodes
@@ -598,8 +600,8 @@ class testGraphBulkDeletion(FlowTestsBase):
 
         q = "MATCH (n) DELETE n"
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_deleted, 1000000)
-        self.env.assertEquals(res.relationships_deleted, 500006)
+        self.env.assertEqual(res.nodes_deleted, 1000000)
+        self.env.assertEqual(res.relationships_deleted, 500006)
 
         #-----------------------------------------------------------------------
         # verify graph stats
@@ -618,10 +620,10 @@ class testGraphBulkDeletion(FlowTestsBase):
         relCount_expected  = 0
         nodeCount_expected = 0
 
-        self.env.assertEquals(labels,    labels_expected)
-        self.env.assertEquals(relTypes,  relTypes_expected)
-        self.env.assertEquals(relCount,  relCount_expected)
-        self.env.assertEquals(nodeCount, nodeCount_expected)
+        self.env.assertEqual(labels,    labels_expected)
+        self.env.assertEqual(relTypes,  relTypes_expected)
+        self.env.assertEqual(relCount,  relCount_expected)
+        self.env.assertEqual(nodeCount, nodeCount_expected)
 
     def test02_bulk_delete_diff_dim(self):
         """ delete a large number of nodes > .5M
@@ -636,15 +638,15 @@ class testGraphBulkDeletion(FlowTestsBase):
         # these will eventually have their matrices lag behind in terms of dimentionality
         q = "CREATE (:A)-[:R]->()"""
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_created, 2)
-        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEqual(res.nodes_created, 2)
+        self.env.assertEqual(res.relationships_created, 1)
 
         # create additional entities under a different label / rel-types
         q = """UNWIND range(1, 499999) as x
                CREATE (:B)-[:X]->()"""
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_created, 999998)
-        self.env.assertEquals(res.relationships_created, 499999)
+        self.env.assertEqual(res.nodes_created, 999998)
+        self.env.assertEqual(res.relationships_created, 499999)
 
         #-----------------------------------------------------------------------
         # delete all nodes
@@ -652,8 +654,8 @@ class testGraphBulkDeletion(FlowTestsBase):
 
         q = "MATCH (n) DELETE n"
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_deleted, 1000000)
-        self.env.assertEquals(res.relationships_deleted, 500000)
+        self.env.assertEqual(res.nodes_deleted, 1000000)
+        self.env.assertEqual(res.relationships_deleted, 500000)
 
         #-----------------------------------------------------------------------
         # verify graph stats
@@ -672,10 +674,10 @@ class testGraphBulkDeletion(FlowTestsBase):
         relCount_expected  = 0
         nodeCount_expected = 0
 
-        self.env.assertEquals(labels,    labels_expected)
-        self.env.assertEquals(relTypes,  relTypes_expected)
-        self.env.assertEquals(relCount,  relCount_expected)
-        self.env.assertEquals(nodeCount, nodeCount_expected)
+        self.env.assertEqual(labels,    labels_expected)
+        self.env.assertEqual(relTypes,  relTypes_expected)
+        self.env.assertEqual(relCount,  relCount_expected)
+        self.env.assertEqual(nodeCount, nodeCount_expected)
 
     def test03_bulk_delete_overlap_edges(self):
         """
@@ -690,8 +692,8 @@ class testGraphBulkDeletion(FlowTestsBase):
         q = """UNWIND range(1, 500000) as x
                CREATE (:A)-[:R]->()"""
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_created, 1000000)
-        self.env.assertEquals(res.relationships_created, 500000)
+        self.env.assertEqual(res.nodes_created, 1000000)
+        self.env.assertEqual(res.relationships_created, 500000)
 
         #-----------------------------------------------------------------------
         # delete all nodes and a few explicit edges
@@ -699,8 +701,8 @@ class testGraphBulkDeletion(FlowTestsBase):
 
         q = "MATCH ()-[e]->() WITH e LIMIT 1 MATCH (n) DELETE e, n"
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_deleted, 1000000)
-        self.env.assertEquals(res.relationships_deleted, 500000)
+        self.env.assertEqual(res.nodes_deleted, 1000000)
+        self.env.assertEqual(res.relationships_deleted, 500000)
 
         #-----------------------------------------------------------------------
         # verify graph stats
@@ -719,10 +721,10 @@ class testGraphBulkDeletion(FlowTestsBase):
         relCount_expected  = 0
         nodeCount_expected = 0
 
-        self.env.assertEquals(labels,    labels_expected)
-        self.env.assertEquals(relTypes,  relTypes_expected)
-        self.env.assertEquals(relCount,  relCount_expected)
-        self.env.assertEquals(nodeCount, nodeCount_expected)
+        self.env.assertEqual(labels,    labels_expected)
+        self.env.assertEqual(relTypes,  relTypes_expected)
+        self.env.assertEqual(relCount,  relCount_expected)
+        self.env.assertEqual(nodeCount, nodeCount_expected)
 
     def test04_bulk_delete_duplicated_nodes(self):
         """
@@ -736,8 +738,8 @@ class testGraphBulkDeletion(FlowTestsBase):
         q = """UNWIND range(1, 500000) as x
                CREATE (:A)-[:R]->()"""
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_created, 1000000)
-        self.env.assertEquals(res.relationships_created, 500000)
+        self.env.assertEqual(res.nodes_created, 1000000)
+        self.env.assertEqual(res.relationships_created, 500000)
 
         #-----------------------------------------------------------------------
         # delete all nodes and a few explicit edges
@@ -745,8 +747,8 @@ class testGraphBulkDeletion(FlowTestsBase):
 
         q = "MATCH (n) DELETE n, n, n"
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_deleted, 1000000)
-        self.env.assertEquals(res.relationships_deleted, 500000)
+        self.env.assertEqual(res.nodes_deleted, 1000000)
+        self.env.assertEqual(res.relationships_deleted, 500000)
 
         #-----------------------------------------------------------------------
         # verify graph stats
@@ -765,10 +767,10 @@ class testGraphBulkDeletion(FlowTestsBase):
         relCount_expected  = 0
         nodeCount_expected = 0
 
-        self.env.assertEquals(labels,    labels_expected)
-        self.env.assertEquals(relTypes,  relTypes_expected)
-        self.env.assertEquals(relCount,  relCount_expected)
-        self.env.assertEquals(nodeCount, nodeCount_expected)
+        self.env.assertEqual(labels,    labels_expected)
+        self.env.assertEqual(relTypes,  relTypes_expected)
+        self.env.assertEqual(relCount,  relCount_expected)
+        self.env.assertEqual(nodeCount, nodeCount_expected)
 
     def test05_bulk_delete_duplicated_edges(self):
         """
@@ -783,8 +785,8 @@ class testGraphBulkDeletion(FlowTestsBase):
         q = """UNWIND range(1, 500000) as x
                CREATE (:A)-[:R]->()"""
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_created, 1000000)
-        self.env.assertEquals(res.relationships_created, 500000)
+        self.env.assertEqual(res.nodes_created, 1000000)
+        self.env.assertEqual(res.relationships_created, 500000)
 
         #-----------------------------------------------------------------------
         # delete all nodes and a few explicit edges
@@ -792,8 +794,8 @@ class testGraphBulkDeletion(FlowTestsBase):
 
         q = "MATCH ()-[e]->() WITH e LIMIT 1 MATCH (n) DELETE e, e, n, e, e"
         res = self.graph.query(q)
-        self.env.assertEquals(res.nodes_deleted, 1000000)
-        self.env.assertEquals(res.relationships_deleted, 500000)
+        self.env.assertEqual(res.nodes_deleted, 1000000)
+        self.env.assertEqual(res.relationships_deleted, 500000)
 
         #-----------------------------------------------------------------------
         # verify graph stats
@@ -812,7 +814,7 @@ class testGraphBulkDeletion(FlowTestsBase):
         relCount_expected  = 0
         nodeCount_expected = 0
 
-        self.env.assertEquals(labels,    labels_expected)
-        self.env.assertEquals(relTypes,  relTypes_expected)
-        self.env.assertEquals(relCount,  relCount_expected)
-        self.env.assertEquals(nodeCount, nodeCount_expected)
+        self.env.assertEqual(labels,    labels_expected)
+        self.env.assertEqual(relTypes,  relTypes_expected)
+        self.env.assertEqual(relCount,  relCount_expected)
+        self.env.assertEqual(nodeCount, nodeCount_expected)

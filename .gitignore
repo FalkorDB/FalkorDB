@@ -1,78 +1,64 @@
-# Object files
-*.o
-*.ko
-*.obj
-*.elf
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
-*.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Folders
-CMakeFiles/
-logs/
-/bin/
-
-# Files
-CMakeCache.txt
-DartConfiguration.tcl
-lemon
-deps/GraphBLAS/Config/GraphBLAS.h.tmp
-
-# Project
-.cproject
-.project
-
-# Debug files
-*.dSYM/
-*.su
-
-# Additional suffixes
-*.pyc
-*.xml
-*.iml
-*.d
-
-# test result files
-/tests/flow/logs/
-/tests/tck/logs/
-tests/**/*.csv
-# gcov
-*.gcda
-*.gcno
-/cov/
-/venv/
-/.vscode/
-/.idea/
-/1/
-
 target
-cmake-build-*
-cov
-cov.all
-cov.json
-*~
-redis.conf
+__pycache__
+.pytest_cache
+venv
+redis-test.log
+redis-debug.log
+.vscode
+*.ipr
+.idea
+*.iml
+myenv
+# Root-anchored: an unanchored `coverage.sh` also matched bench/coverage.sh and
+# silently kept it out of the tree, so CI ran `bash bench/coverage.sh` against a
+# file that was never committed.
+/coverage.sh
+codecov.txt*
+temp-*
+/coverage
+dump.rdb
+.antlr
+cov.profdata
+*.profraw
+neo.md
+.history
+.DS_Store
+cov.html
+.hypothesis
+in
+out
+outg
+data
+tests/flow/logs
+tests/flow/csvs
+redisearch
+lagraph_lib
+/GraphBLAS/
+/LAGraph/
+/.graphblas-harvest/
+.venv/
+.zed/
+.github/copilot-instructions.md
+attrs/
+.cargo-cache
+logs/
 
-# ctags
-tags
+# Local perf-branch artifacts (profiles, ad-hoc benchmarks)
+*.profile.json
+*.profile.json.gz
+profile.json.gz
+day6_*.json
+falkordb-arm.so
+rust_out
+_thread_bench_data/
+bench_*.py
+phase_stats.py
+profile_day6.py
+thread_benchmarks*
+twitter_thread.md
+# Editor/agent scratch
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+local-build.so
+bench/tests/flow/.ci-tmp/
+bin/

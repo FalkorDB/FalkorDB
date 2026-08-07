@@ -17,32 +17,32 @@ class testTraversalConstruction():
         # perform an AllNodeScan from the source node.
         query = """MATCH (a)-[]->(b) RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (a)", plan)
+        self.env.assertContains("All Node Scan | (a)", plan)
 
         # Destination is labeled, perform a LabelScan from the destination node.
         query = """MATCH (a)-[]->(b:B) RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (b:B)", plan)
+        self.env.assertContains("Node By Label Scan | (b:B)", plan)
 
         # Destination is filtered, perform an AllNodeScan from the destination node.
         query = """MATCH (a)-[]->(b) WHERE b.v = 2 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (b)", plan)
+        self.env.assertContains("All Node Scan | (b)", plan)
 
         # Destination is labeled but source is filtered, perform an AllNodeScan from the source node.
         query = """MATCH (a)-[]->(b:B) WHERE a.v = 1 OR a.v = 3 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("All Node Scan | (a)", plan)
+        self.env.assertContains("All Node Scan | (a)", plan)
 
         # Both are labeled and source is filtered, perform a LabelScan from the source node.
         query = """MATCH (a:A)-[]->(b:B) WHERE a.v = 3 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (a:A)", plan)
+        self.env.assertContains("Node By Label Scan | (a:A)", plan)
 
         # Both are labeled and dest is filtered, perform a LabelScan from the dest node.
         query = """MATCH (a:A)-[]->(b:B) WHERE b.v = 2 RETURN a, b"""
         plan = str(self.graph.explain(query))
-        self.env.assertIn("Node By Label Scan | (b:B)", plan)
+        self.env.assertContains("Node By Label Scan | (b:B)", plan)
 
     # make sure traversal begins with labeled entity
     def test_start_with_label(self):
@@ -101,15 +101,18 @@ class testTraversalConstruction():
         ops.reverse()
         self.env.assertTrue("Node By Label Scan" in ops[0]) # scan either A or D
         self.env.assertTrue("Filter" in ops[1]) # filter either A or D
-        self.env.assertTrue("Conditional Traverse" in ops[2]) # traverse from A to D or from D to A
-        self.env.assertTrue("Conditional Traverse" in ops[3]) # traverse from A to D or from D to A
-        self.env.assertTrue("Filter" in ops[4]) # filter either A or D
+        self.env.assertTrue("Conditional Traverse" in ops[2]) # traverse to the other filtered node
+        self.env.assertTrue("Filter" in ops[3]) # filter the other node as early as possible
+        self.env.assertTrue("Conditional Traverse" in ops[4]) # continue traversing
 
     def test_long_pattern(self):
         q = """match (a)--(b)--(c)--(d)--(e)--(f)--(g)--(h)--(i)--(j)--(k)--(l) return *"""
         plan = str(self.graph.explain(q))
         ops = plan.split(os.linesep)
-        self.env.assertEqual(len(ops), 14)
+        # 13, not upstream's 14: the plan is C-equivalent (Project + 11
+        # Conditional Traverses + a scan) but this engine has no root
+        # `Results` operator, which is C's 14th line.
+        self.env.assertEqual(len(ops), 13)
 
     def test_start_with_index_filter(self):
         # TODO: enable this test, once we'll score higher filters that
@@ -164,16 +167,13 @@ class testTraversalConstruction():
         for q in queries:
             plan = self.graph.explain(q)
             root = plan.structured_plan
-            self.env.assertTrue(root.name == "Results")
+            self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
-            self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
             child = child.children[0]
-            self.env.assertTrue(child.name == "All Node Scan" in child.name or
+            self.env.assertTrue("All Node Scan" in child.name or
                                 "Node By Label Scan" in child.name)
 
             # validate that 'a' == 'b'
@@ -194,16 +194,13 @@ class testTraversalConstruction():
         for q in queries:
             plan = self.graph.explain(q)
             root = plan.structured_plan
-            self.env.assertTrue(root.name == "Results")
+            self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
-            self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
             child = child.children[0]
-            self.env.assertTrue(child.name == "All Node Scan" in child.name or
+            self.env.assertTrue("All Node Scan" in child.name or
                                 "Node By Label Scan" in child.name)
 
             # validate 'a' was found
@@ -217,12 +214,9 @@ class testTraversalConstruction():
         plan = self.graph.explain(q)
 
         root = plan.structured_plan
-        self.env.assertTrue(root.name == "Results")
+        self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
-        self.env.assertTrue(child.name == "Project")
-
-        child = child.children[0]
         self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
         child = child.children[0]
@@ -237,7 +231,7 @@ class testTraversalConstruction():
         # create a multi label node
         q = "CREATE (:X:Y)"
         result = self.graph.query(q)
-        self.env.assertEquals(result.nodes_created, 1)
+        self.env.assertEqual(result.nodes_created, 1)
 
         # traverse from a multi label node 'a' to itself using a 0 length edge
         q1 = """MATCH (a:X)-[*0]->(b:Y) RETURN a, b"""
@@ -251,17 +245,13 @@ class testTraversalConstruction():
             plan = self.graph.explain(q)
 
             root = plan.structured_plan
-            self.env.assertTrue(root.name == "Results")
+            self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
-            self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
             child = child.children[0]
-            self.env.assertTrue("Node By Label Scan" in child.name or
-                                "Conditional Traverse" in child.name)
+            self.env.assertTrue("Node By Label Scan" in child.name)
 
             # make sure 'a' == 'b'
             result = self.graph.query(q).result_set
@@ -280,12 +270,9 @@ class testTraversalConstruction():
             plan = self.graph.explain(q)
 
             root = plan.structured_plan
-            self.env.assertTrue(root.name == "Results")
+            self.env.assertTrue(root.name == "Project")
 
             child = root.children[0]
-            self.env.assertTrue(child.name == "Project")
-
-            child = child.children[0]
             self.env.assertTrue("Conditional Variable Length Traverse" in child.name)
 
             child = child.children[0]
@@ -307,12 +294,9 @@ class testTraversalConstruction():
         plan = self.graph.explain(q)
 
         root = plan.structured_plan
-        self.env.assertTrue(root.name == "Results")
+        self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
-        self.env.assertTrue(child.name == "Project")
-
-        child = child.children[0]
         self.env.assertTrue(child.name == "Filter")
 
         child = child.children[0]
@@ -337,12 +321,9 @@ class testTraversalConstruction():
         plan = self.graph.explain(q)
 
         root = plan.structured_plan
-        self.env.assertTrue(root.name == "Results")
+        self.env.assertTrue(root.name == "Project")
 
         child = root.children[0]
-        self.env.assertTrue(child.name == "Project")
-
-        child = child.children[0]
         self.env.assertTrue(child.name == "Filter")
 
         child = child.children[0]

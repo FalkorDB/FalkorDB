@@ -1,0 +1,125 @@
+# Reusable workflow: build the falkordb shared library natively on macOS arm64
+# and upload it as `falkordb-<suffix>.so`. Separate from _build-artifacts.yml
+# because hosted macOS runners have no Docker — this is a native cargo build,
+# not a `docker build --target artifact`. The produced Mach-O dylib is renamed
+# to the C-parity `.so` name (Redis loads modules by path, extension-agnostic).
+#
+# The build mirrors the proven native-macOS setup from #551 (brew toolchain +
+# the CC/CXX-driven graphblas.sh / redisearch.sh + static Homebrew libomp), but
+# only the artifact-producing steps — no test suites.
+
+name: Build artifacts macOS (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      commit_sha:
+        description: "Commit SHA to check out and build"
+        required: true
+        type: string
+      suffix:
+        description: "Asset suffix → falkordb-<suffix>.so"
+        required: false
+        type: string
+        default: "macos-arm64v8"
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      # Static-link Homebrew libomp.a (keeps the .so self-contained for OpenMP,
+      # matching the Linux single-.so contract). graph/build.rs links static
+      # when ${LIBOMP_PREFIX}/lib/libomp.a exists.
+      LIBOMP_PREFIX: /opt/homebrew/opt/libomp
+      # Workspace-local GraphBLAS install (no sudo; cacheable). graphblas.sh
+      # reads GRAPHBLAS_INSTALL_PREFIX; build.rs reads GRAPHBLAS_LIB_DIR.
+      GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
+      GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Install Homebrew build deps
+        run: brew install cmake llvm libomp openssl@3
+
+      - name: Export Homebrew LLVM into PATH/CC/CXX
+        run: |
+          set -euo pipefail
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          echo "${LLVM_PREFIX}/bin"             >> "$GITHUB_PATH"
+          echo "CC=${LLVM_PREFIX}/bin/clang"    >> "$GITHUB_ENV"
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
+          # Bust the native-deps cache when Homebrew LLVM moves (the C artefacts
+          # are ABI-tied to it).
+          echo "BREW_LLVM_VERSION=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_ENV"
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          shared-key: "macos-artifact-release"
+
+      # Hosted macOS has no Docker toolchain image, so rebuild GraphBLAS +
+      # LAGraph + RediSearch from source and cache them (keyed on the build
+      # scripts + vendored PreJIT + the exact Homebrew LLVM version).
+      - name: Restore GraphBLAS + RediSearch native builds
+        id: native-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            .deps/graphblas
+            lagraph_lib
+            redisearch/RediSearch/bin
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
+
+      - name: Build GraphBLAS + LAGraph
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: ./graphblas.sh
+
+      - name: Build RediSearch
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        run: ./redisearch.sh
+
+      - name: Save GraphBLAS + RediSearch native builds
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
+        with:
+          path: |
+            .deps/graphblas
+            lagraph_lib
+            redisearch/RediSearch/bin
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      - name: Build libfalkordb.dylib
+        run: cargo build --release
+
+      - name: Stage + validate + checksum
+        env:
+          SUFFIX: ${{ inputs.suffix }}
+        run: |
+          set -euo pipefail
+          test -f target/release/libfalkordb.dylib || { echo "::error::target/release/libfalkordb.dylib missing"; exit 1; }
+          mkdir -p dist
+          cp target/release/libfalkordb.dylib "dist/falkordb-${SUFFIX}.so"
+          echo "=== otool -L (the FalkorDB static deps must NOT appear as dynamic) ==="
+          otool -L "dist/falkordb-${SUFFIX}.so"
+          if otool -L "dist/falkordb-${SUFFIX}.so" | grep -E 'libomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity'; then
+            echo "::error::forbidden dynamic dependency in macOS .so (single-.so contract violated)"; exit 1
+          fi
+          ( cd dist && shasum -a 256 "falkordb-${SUFFIX}.so" > "falkordb-${SUFFIX}.so.sha256" )
+          echo "Built falkordb-${SUFFIX}.so ($(du -h "dist/falkordb-${SUFFIX}.so" | cut -f1))"
+          cat "dist/falkordb-${SUFFIX}.so.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: falkordb-${{ inputs.suffix }}.so
+          path: dist/falkordb-${{ inputs.suffix }}.so*
+          retention-days: 7
+          compression-level: 0

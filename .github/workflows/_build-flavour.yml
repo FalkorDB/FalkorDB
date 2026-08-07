@@ -1,0 +1,205 @@
+# Reusable workflow: build + push a falkordb runtime image for ONE flavour.
+#
+# Unified between the "release" shape (multi-arch, full+server variants,
+# manifest combining, optional Docker Hub push) and the "instrumented"
+# shape (single-arch, single variant, GHCR only, no manifest).
+#
+# Callers describe the build cells via the `cells:` input as a JSON array of
+# {arch, platform, runner, target, repo} objects:
+#
+#   Release (4 cells):
+#     [
+#       {arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: full,   repo: falkordb},
+#       {arch: x64,     platform: linux/amd64, runner: ubuntu-latest,    target: server, repo: falkordb-server},
+#       {arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: full,   repo: falkordb},
+#       {arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm, target: server, repo: falkordb-server}
+#     ]
+#
+#   Instrumented (1 cell, e.g. asan or coverage):
+#     [
+#       {arch: x64, platform: linux/amd64, runner: ubuntu-latest, target: server, repo: falkordb}
+#     ]
+#
+# Tag format:
+#   create_manifest=true   → builds push to ${repo}:${tag}-${arch}; manifest
+#                            job combines per-arch tags into ${repo}:${tag}.
+#   create_manifest=false  → builds push directly to ${repo}:${tag}; no manifest.
+
+name: Build runtime image (flavour, reusable)
+
+on:
+  workflow_call:
+    inputs:
+      flavour:
+        description: "Flavour identifier — used in buildcache keys and log lines"
+        required: true
+        type: string
+      tag:
+        description: "Image tag (e.g. rc-pr-42, rc-pr-42-asan, 0.1.0)"
+        required: true
+        type: string
+      commit_sha:
+        description: "Commit SHA to check out and build"
+        required: true
+        type: string
+      cells:
+        description: "JSON array of build cells — see header for shape"
+        required: true
+        type: string
+      dockerfile:
+        description: "Dockerfile path"
+        required: false
+        type: string
+        default: "build/runtime/Dockerfile"
+      browser_tag:
+        description: "falkordb-browser image tag bundled into the `full` target"
+        required: false
+        type: string
+        default: "edge"
+      build_image:
+        description: "Toolchain image used as the chef stage base"
+        required: false
+        type: string
+        default: "ghcr.io/falkordb/falkordb-build:latest"
+      push_to_dockerhub:
+        description: "Also push to Docker Hub (release flow only)"
+        required: false
+        type: boolean
+        default: false
+      is_latest:
+        description: "Also tag :latest on the multi-arch manifest (release-only)"
+        required: false
+        type: boolean
+        default: false
+      create_manifest:
+        description: "Run the manifest job to combine per-arch tags. False for single-cell (instrumented) — builds push directly to the bare tag."
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      DOCKER_USERNAME:
+        description: "Docker Hub username (only needed when push_to_dockerhub=true)"
+        required: false
+      DOCKER_PASSWORD:
+        description: "Docker Hub password/token (only needed when push_to_dockerhub=true)"
+        required: false
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(inputs.cells) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Login to Docker Hub
+        if: ${{ inputs.push_to_dockerhub }}
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (${{ inputs.flavour }} / ${{ matrix.arch }} / ${{ matrix.target }})
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          target: ${{ matrix.target }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          build-args: |
+            BROWSER_TAG=${{ inputs.browser_tag }}
+            BUILD_IMAGE=${{ inputs.build_image }}
+          # When create_manifest=true (release), push per-arch tags so the
+          # manifest job below can combine them. When false (instrumented),
+          # push directly to the bare tag — single-arch images don't need
+          # a manifest indirection.
+          tags: |
+            ${{ inputs.create_manifest && format('ghcr.io/falkordb/{0}:{1}-{2}', matrix.repo, inputs.tag, matrix.arch) || format('ghcr.io/falkordb/{0}:{1}', matrix.repo, inputs.tag) }}
+            ${{ inputs.push_to_dockerhub && inputs.create_manifest && format('falkordb/{0}:{1}-{2}', matrix.repo, inputs.tag, matrix.arch) || '' }}
+            ${{ inputs.push_to_dockerhub && !inputs.create_manifest && format('falkordb/{0}:{1}', matrix.repo, inputs.tag) || '' }}
+          # Per-flavour + per-arch buildcache so each flavour's cache is
+          # independent and concurrent flavour builds don't fight.
+          cache-from: type=registry,ref=ghcr.io/falkordb/${{ matrix.repo }}:buildcache-${{ inputs.flavour }}-${{ matrix.arch }}
+          cache-to:   type=registry,ref=ghcr.io/falkordb/${{ matrix.repo }}:buildcache-${{ inputs.flavour }}-${{ matrix.arch }},mode=max
+
+  # Manifest combining job — only for multi-arch (release).
+  # For each unique repo in `cells`, combines the per-arch tags into a
+  # single multi-arch manifest tagged ${repo}:${tag}.
+  manifest:
+    needs: build
+    if: ${{ inputs.create_manifest }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Login to Docker Hub
+        if: ${{ inputs.push_to_dockerhub }}
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GHCR
+        uses: docker/login-action@abd2ef45e78c5afb21d64d4ca52ee8550d9572c7 # v4.5.1
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble multi-arch manifests
+        env:
+          TAG:       ${{ inputs.tag }}
+          IS_LATEST: ${{ inputs.is_latest }}
+          PUSH_HUB:  ${{ inputs.push_to_dockerhub }}
+          CELLS:     ${{ inputs.cells }}
+        run: |
+          set -euo pipefail
+
+          REGISTRIES="ghcr.io/falkordb"
+          if [ "$PUSH_HUB" = "true" ]; then
+            REGISTRIES="$REGISTRIES falkordb"
+          fi
+
+          # Loop unique repos in the cells. For each, collect its per-arch tag
+          # references and create a manifest combining them.
+          REPOS=$(echo "$CELLS" | jq -r 'map(.repo) | unique[]')
+          for REPO in $REPOS; do
+            ARCHES=$(echo "$CELLS" | jq -r --arg r "$REPO" '[ .[] | select(.repo == $r) | .arch ] | unique[]')
+            SRC_TAGS=""
+            for ARCH in $ARCHES; do
+              SRC_TAGS="$SRC_TAGS ghcr.io/falkordb/${REPO}:${TAG}-${ARCH}"
+            done
+
+            for REGISTRY in $REGISTRIES; do
+              EXTRA_TAGS=""
+              if [ "$IS_LATEST" = "true" ]; then
+                EXTRA_TAGS="-t ${REGISTRY}/${REPO}:latest"
+              fi
+              docker buildx imagetools create \
+                -t "${REGISTRY}/${REPO}:${TAG}" \
+                $EXTRA_TAGS \
+                $SRC_TAGS
+            done
+          done

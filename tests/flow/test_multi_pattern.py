@@ -23,8 +23,8 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         query = """MATCH(r:person {name:"Roi"}), (f:person) WHERE f.name <> r.name CREATE (r)-[:friend]->(f) RETURN count(f)"""
         actual_result = self.graph.query(query)
         friend_count = actual_result.result_set[0][0]
-        self.env.assertEquals(friend_count, 6)
-        self.env.assertEquals(actual_result.relationships_created, 6)
+        self.env.assertEqual(friend_count, 6)
+        self.env.assertEqual(actual_result.relationships_created, 6)
 
     def test02_verify_cartesian_product_streams_reset(self):
         # See https://github.com/RedisGraph/RedisGraph/issues/249
@@ -37,7 +37,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         for q in queries:
             actual_result = self.graph.query(q)
             records_count = len(actual_result.result_set)
-            self.env.assertEquals(records_count, expected_resultset_size)
+            self.env.assertEqual(records_count, expected_resultset_size)
 
 
     def test03_reset_nested_cartesian_product(self):
@@ -74,8 +74,8 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         query = """MATCH(a:person), (b:person) WHERE a.name <> b.name CREATE (a)-[f:friend]->(b) RETURN count(f)"""
         actual_result = self.graph.query(query)
         friend_count = actual_result.result_set[0][0]
-        self.env.assertEquals(friend_count, 42)
-        self.env.assertEquals(actual_result.relationships_created, 42)
+        self.env.assertEqual(friend_count, 42)
+        self.env.assertEqual(actual_result.relationships_created, 42)
     
     # Perform a cartesian product of 3 sets.
     def test05_cartesian_product(self):
@@ -88,7 +88,7 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
         for q, c in queries.items():
             actual_result = self.graph.query(q)
             friend_count = actual_result.result_set[0][0]
-            self.env.assertEquals(friend_count, c)
+            self.env.assertEqual(friend_count, c)
 
     def test06_multiple_create_clauses(self):
         queries = ["""CREATE (:a {v:1}), (:b {v:2, z:3}), (:c), (:a)-[:r0 {k:9}]->(:b), (:c)-[:r1]->(:d)""",
@@ -96,7 +96,41 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
                    """CREATE (:a {v:1}), (:b {v:2, z:3}) CREATE (:c), (:a)-[:r0 {k:9}]->(:b) CREATE (:c)-[:r1]->(:d)"""]
         for q in queries:
             actual_result = self.graph.query(q)
-            self.env.assertEquals(actual_result.relationships_created, 2)
-            self.env.assertEquals(actual_result.properties_set, 4)
-            self.env.assertEquals(actual_result.nodes_created, 7)
+            self.env.assertEqual(actual_result.relationships_created, 2)
+            self.env.assertEqual(actual_result.properties_set, 4)
+            self.env.assertEqual(actual_result.nodes_created, 7)
+
+    # A cartesian product must stream its right-hand branches rather than
+    # cross-multiplying them into one materialized set: over N nodes a 4-way
+    # product holds 3N rows, not N^3. Materializing the product happened inside
+    # a single next() call, so the query neither honored its deadline nor
+    # bounded its memory — a 1 ms timeout over 1001 nodes ran for minutes and
+    # allocated ~20 GB.
+    def test07_multi_branch_cartesian_product_is_streamed(self):
+        g = self.db.select_graph("multi_pattern_stream")
+        g.query("UNWIND range(0, 1000) AS x CREATE ({v: x})")
+
+        q = "MATCH (a), (b), (c), (d) RETURN *"
+
+        start = time.time()
+        try:
+            # 1001^4 rows: the query must hit its deadline, not run to completion
+            g.query(q, timeout=1)
+            self.env.assertTrue(False)
+        except ResponseError as error:
+            self.env.assertContains("Query timed out", str(error))
+        # Generous bound: streaming gives up in single-digit milliseconds, while
+        # materializing the branches took over two minutes.
+        self.env.assertLess(time.time() - start, 10)
+
+        # Nor may LIMIT pay for the product before emitting a row. Each branch is
+        # still materialized in full (3 x 1001 rows), but only the combinations
+        # actually consumed are ever merged, so one row costs one merge instead
+        # of 1001^3 of them.
+        start = time.time()
+        res = g.query(q + " LIMIT 1")
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertLess(time.time() - start, 10)
+
+        g.delete()
 

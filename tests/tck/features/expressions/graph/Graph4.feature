@@ -135,7 +135,6 @@ Feature: Graph4 - Edge relationship type
       | ''      |
       | []      |
 
-  @skip
   Scenario: [7] Failing when using `type()` on a node
     Given any graph
     When executing query:
