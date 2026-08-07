@@ -224,14 +224,22 @@ Rust storage engine. Specifically:
 
 \paragraph{Scope.} This is a design and analysis paper about a single data
 structure, written against a specific artifact: \texttt{Tensor} in
-\texttt{graph/src/graph/graphblas/tensor.rs} on the \texttt{main-rs} branch of
-the FalkorDB repository at commit \texttt{a30d4ca}. Our evaluation
-(\S\ref{sec:cost}) is analytic: we derive space and operation costs from the
-storage formats and the GraphBLAS operations invoked, and we do not report
-end-to-end query benchmarks. We flag this plainly because the design's
-central claim --- that inline-first is cheaper for the common case --- is a
-claim about constants, and constants deserve measurement; \S\ref{sec:future}
-says what we would measure.
+\texttt{graph/src/graph/graphblas/tensor.rs} in the FalkorDB repository, at the
+commits given under Availability. Our evaluation (\S\ref{sec:cost}) is
+analytic: we derive space and operation costs from the storage formats and the
+GraphBLAS operations invoked, and we do not report end-to-end query benchmarks.
+We flag this plainly because the design's central claim --- that inline-first
+is cheaper for the common case --- is a claim about constants, and constants
+deserve measurement; \S\ref{sec:future} says what we would measure. The one
+place where we do rely on measured constants is the fold policy of
+\S\ref{sec:folding}, whose two cost parameters are measured rather than derived
+precisely because the rule they determine is sensitive to them.
+
+The invariants, the per-pair automaton and the theorems of
+\S\ref{sec:correctness} are machine-checked in Lean 4 against a model
+transcribed from the Rust (\S\ref{sec:mechanised}). That is a claim about the
+model's correspondence to the code, which no proof can establish; we say what
+that correspondence rests on and where it stops.
 
 % =====================================================================
 \section{Background}
@@ -297,9 +305,11 @@ pending deletions. The effective content is
 \[
   \mathcal{E} \;=\; (m \setminus dm) \cup dp ,
 \]
-and when a delta exceeds a threshold (10{,}000 entries) it is folded into the
-base and cleared --- structurally the same amortisation as an LSM tree's
-compaction \cite{oneil1996lsm}, at one level. Each physical matrix sits behind
+and once a delta is large enough to earn the rewrite it is folded into the base
+and cleared --- structurally the same amortisation as an LSM tree's compaction
+\cite{oneil1996lsm}, at one level, though \S\ref{sec:folding} shows the sizing
+rule differs from an LSM ratio for a reason specific to this setting. Each
+physical matrix sits behind
 a copy-on-write cell, so opening a write transaction clones handles in $O(1)$
 and the first mutation of a given matrix pays its deep copy; read-only
 transactions pay nothing.
@@ -984,6 +994,7 @@ with no sub-iterator at all --- the point of the whole design, visible in one
 line of code.
 
 \subsection{Folding}
+\label{sec:folding}
 
 Folding merges an oversized delta into the base. For the Boolean layers the
 usual pattern union suffices; for the \texttt{UINT64} forward layer it must
@@ -995,8 +1006,63 @@ value is in $dp$:
 \]
 \textsc{Second} makes $dp$ win on the intersection, which is exactly the
 shadow semantics. By Invariant~\ref{inv:pure} the two folds are
-order-independent, so they can be applied under independent size thresholds
---- the artifact folds each at $10{,}000$ entries.
+order-independent, so each layer carries its own decision.
+
+\paragraph{When to fold.} A fixed threshold is the obvious rule and the wrong
+one. The premise that sets the shape is that \emph{every write transaction
+pays $O(|\delta|)$}, not $O(\text{what it added})$: it copy-on-write dups the
+delta and, if anything materialises it, merges its pending tuples. So with
+transactions of $t$ entries accumulating to a fold point $D$, writing $D$
+entries costs $\sum_i (i\,t)\,w + F \approx wD^2/(2t) + F$, i.e.\ per entry
+$wD/(2t) + F/D$ --- a rewrite tax growing with $D$ against a fold bill
+shrinking with it. The two balance at
+\[
+  D^{\ast} \;=\; \sqrt{2\,(F/w)\,t} ,
+\]
+which is why this is a square-root rule rather than the LSM-style ratio
+$D \ge \text{base}/K$. A ratio is right when each entry is rewritten $O(1)$
+times between merges; here every transaction re-touches the \emph{whole}
+delta, so the accumulated tax is quadratic in $D$ and depends on $t$.
+
+$F$ and $w$ are measured rather than modelled. The fold is $\approx 82\%$
+fixed cost and independent of $\mathrm{nrows}$ --- an empty fold costs
+$2.35\,\mu\text{s}$ at $\mathrm{nrows} = 65\text{k}$, $1\text{M}$ and
+$16.7\text{M}$ alike --- so $F$ is flat in the base above about $10^6$
+entries, and the balance point does not track base size. And $w$ differs by
+$250\times$ between the two paths: a write nobody reads pays only the dup
+($w_{\text{dup}} \approx 0.2\,\text{ns}$/entry, memcpy speed), while a
+transaction whose delta is also materialised pays the pending-tuple merge
+($w_{\text{merge}} \approx 50\,\text{ns}$/entry). Since
+$D^{\ast} \propto 1/\sqrt{w}$, the read path's balance point sits
+$\sqrt{250} \approx 16\times$ tighter than the write path's, and the artifact
+uses separate constants accordingly.
+
+One escape hatch overrides the balance point: a delta comparable to the base
+($2|\delta| \ge |m|$) always folds, because the fold then costs the same order
+as a single delta touch and because the delta is holding as much memory as the
+base it shadows. Without it a one-shot bulk transaction --- whose huge $t$
+defeats the square-root term --- can leave a base-sized delta taxing every
+later transaction, and a delete-everything leaves the tensor holding $m$ and a
+tombstone set of equal size until something happens to touch that matrix
+again.
+
+\paragraph{Where the decision is taken, and why it is not a correctness
+concern.} The decision is \emph{latched} at version creation and at reads, but
+\emph{executed} before the next mutation, where folding also replaces the
+copy-on-write dup of both the delta and the base. Deliberately, a read does not
+schedule its own fold: a create-then-delete transaction would otherwise fold
+its own pending additions into the base immediately before deleting them,
+leaving the base full of stale entries and the tombstone set full of
+tombstones that later transactions erode one at a time.
+
+All of this is throughput policy, and it is worth being explicit that it is
+\emph{only} throughput policy. The sizes it consults are approximate counters
+maintained without GraphBLAS calls --- reading a delta's true \texttt{nvals}
+would force its pending tuples to merge, the very $O(|\delta|)$ cost the policy
+exists to bound --- so they drift, and by design. Folding preserves the
+effective state pointwise, so no choice of constants and no drift in the
+counters can change what the tensor denotes. \S\ref{sec:mechanised} states
+that as a theorem.
 
 Note what folding does to the automaton: it collapses the shadowed states.
 $\mathbf{F} \to \mathbf{E}$, $\mathbf{I} \to \mathbf{D}$, $\mathbf{H} \to
@@ -1104,6 +1170,69 @@ right failure mode (loud, immediate, memory-safe), but it is worth being
 explicit that the invariant is a precondition of iteration and not
 re-established by it.
 \end{remark}
+
+\subsection{Mechanisation}
+\label{sec:mechanised}
+
+The theorems above, the invariant set of \S\ref{sec:invariants} and the
+per-pair automaton of \S\ref{sec:automaton} are machine-checked in Lean 4
+against a model transcribed statement-by-statement from the Rust. The
+development is in \texttt{proofs/} in the artifact and comes in two layers, the
+second discharging the first's one abstraction boundary:
+
+\begin{itemize}
+\item \textbf{\texttt{Tensor}} ($\approx$3{,}950 lines, $\approx$290 theorems).
+  Every operation of \texttt{tensor.rs} gets two theorems: it preserves the
+  invariants, and it acts on $\mathrm{Ids}$ the way its specification says. It
+  models $mt$ and $me$ --- \texttt{VersionedMatrix} values in Rust --- as the
+  sets of their effective entries, which is the whole interface the tensor uses.
+\item \textbf{\texttt{VersionedMatrix}} ($\approx$940 lines, $\approx$73
+  theorems). The Boolean delta matrix underneath, proved against exactly that
+  interface, so no hand-waved layer remains between the query-visible behaviour
+  and the GraphBLAS calls.
+\end{itemize}
+
+No \texttt{sorry}, no \texttt{admit}, no bespoke axiom: every top-level result
+rests only on Lean's three standard axioms.
+
+Three consequences are worth reporting, because they are the kind of thing a
+mechanisation buys that a proof on paper does not.
+
+\paragraph{The fold policy is quantified over, not modelled.} \textsc{Flush} takes its
+two fold decisions as parameters and every theorem holds for all four
+combinations. This is deliberate: the policy of \S\ref{sec:folding} is a cost
+heuristic with measured constants, read off counters that are approximate by
+design. Pinning a formula into the model would freeze one tuning decision;
+quantifying over the decision proves the stronger statement that no retuning and
+no counter drift can change the denotation. The policy's own claim --- that it
+bounds delta growth without costing throughput --- is a measurement question,
+not a theorem, and is treated as one.
+
+\paragraph{Two branches were unreachable, and are now gone.} The mechanisation
+found two pieces of dead code that the implementation did not know were dead.
+In bulk deletion's sentinel case, the arm handling ``all identifiers removed at
+once, so the pair is gone'' cannot fire: a sentinel pair holds at least two
+identifiers, so erasing one always leaves a survivor. And in backward
+iteration, the fallback that supplied a default identifier when $\varepsilon$
+returned nothing cannot fire either, because $mt$ never holds a pair the
+forward layers have lost (Invariant~\ref{inv:mt}). The second was worse than
+merely dead: the default it supplied was $0$, a \emph{valid} edge identifier ---
+so had the invariant broken, iteration would have quietly emitted a fabricated
+edge rather than failed. Both are now explicit unreachable assertions citing
+their theorems. Note the direction of the exchange: the models retain both arms,
+because a total definition must, and it is precisely the proof of
+unreachability that licensed deleting them from the code.
+
+\paragraph{Two fast paths are now known to agree with their slow paths.} Bulk
+insertion checks once whether the tombstone set is empty and then runs either a
+batched loop or the general per-entry write; nothing in the code forces those to
+coincide, since the fast path skips an already-committed pair where the general
+path clears its tombstone. They do coincide, because clearing a tombstone from
+an empty set is a no-op. Separately, the unchecked bulk insert used for freshly
+allocated identifiers omits the per-entry base probe that keeps
+$\dom(dp) \cap \dom(m) = \emptyset$ for the Boolean layers; that omission is
+sound exactly under the freshness precondition, which is now an explicit
+hypothesis rather than a comment.
 
 % =====================================================================
 \section{Two hazards from the host runtime}
@@ -1315,7 +1444,7 @@ Operation & Cost & Notes \\
 \textsc{RemoveAll}, multi & $O(n)$ FFI $+$ demotions & $\le 2$ row probes per edge, no row count \\
 Forward scan              & $O(|P^{\ast}| + |E|)$, no matrix alloc & 3-way merge; delta iterators elided when empty \\
 Backward scan             & $+\,O(1)$ probe per pair & identifiers not duplicated in $mt$ \\
-\textsc{Flush}            & $2$ bulk ops, amortised & threshold $10{,}000$; order-free by Inv.~\ref{inv:pure} \\
+\textsc{Flush}            & $2$ bulk ops, amortised & folds at $|\delta| \ge \sqrt{2(F/w)t}$, or $2|\delta| \ge |m|$; order-free by Inv.~\ref{inv:pure} \\
 \textsc{RebuildBackward}  & $O(|P^{\ast}|)$ & materialise-then-transpose \\
 \bottomrule
 \end{tabular}
@@ -1449,9 +1578,22 @@ $\mathrm{nrows}(me)$ rather than from $32$-bit packing
 (\S\ref{sec:limits}), which removes the discrepancy and makes the bound
 self-documenting.
 
-\paragraph{Make \texttt{multi\_count} checkable.} A debug-mode assertion of
-Theorem~\ref{thm:count} against a scan would convert the whole invariant set
-into a testable property, at a cost paid only in debug builds.
+\paragraph{Make \texttt{multi\_count} checkable at run time.} The invariant set
+is now proved (\S\ref{sec:mechanised}), but proofs bind the model, not the
+running process: a memory error, a decoder fed a corrupt blob, or a future edit
+to a path the model does not cover can still break an invariant in production.
+A debug-mode assertion of Theorem~\ref{thm:count} against an independent scan
+would catch that, at a cost paid only in debug builds. Mechanisation and
+run-time checking answer different questions and the first does not retire the
+second.
+
+\paragraph{Close the two remaining modelling gaps.} Iteration is mechanised by
+its \emph{result} --- the effective set restricted to a row range --- rather
+than as the three-way lookahead merge that computes it, and the
+\texttt{Encode}/\texttt{Decode} blob format is outside the model on both
+layers. Those are the two places where the code is ahead of the proof, and the
+merge is the one with delicate index reasoning, so it is the more valuable of
+the two to close.
 
 \paragraph{Demotion policy.} Demotion is currently eager: the moment a pair
 drops to one edge, its identifier returns inline and its $me$ row is emptied.
@@ -1502,11 +1644,24 @@ data structure with its own invariants inside someone else's execution model.
 
 The implementation described here is \texttt{Tensor} in
 \texttt{graph/src/graph/graphblas/tensor.rs}, with supporting code in
-\texttt{versioned\_matrix.rs}, \texttt{matrix.rs} and \texttt{cow.rs}, on the
-\texttt{main-rs} branch of \url{https://github.com/FalkorDB/FalkorDB} at
-commit \texttt{a30d4ca}. It is built against SuiteSparse:GraphBLAS v10.3.1
-and LAGraph v1.2.1. The C implementation used for comparison as design (A) is
+\texttt{versioned\_matrix.rs}, \texttt{matrix.rs} and \texttt{cow.rs}, in
+\url{https://github.com/FalkorDB/FalkorDB}. This revision describes the
+\texttt{fold-policy} branch at commit \texttt{6458a2a}, which adds the fold
+policy of \S\ref{sec:folding}; the Lean development of
+\S\ref{sec:mechanised} is under \texttt{proofs/} on the \texttt{tensor-proof}
+branch at commit \texttt{0a10c93} (that branch is \texttt{fold-policy} plus the
+proofs). The measurements behind $F$ and $w$ are reproducible from
+\texttt{fold\_cost\_bench.rs} in the same tree.
+
+Both branch from \texttt{main}, the Rust engine's trunk, at commit
+\texttt{02049e0}. Note that the earlier revision of this paper cited a
+\texttt{main-rs} branch; the Rust engine's trunk is now \texttt{main}, and
+\texttt{master} carries the C implementation used for comparison as design (A),
 under \texttt{src/graph/tensor/}.
+
+Built against SuiteSparse:GraphBLAS v10.3.1 and LAGraph v1.2.1; the proofs
+against Lean 4 v4.32.0 with mathlib v4.32.0, pinned in the project's
+\texttt{lean-toolchain} and \texttt{lakefile.toml}.
 
 % =====================================================================
 \begin{thebibliography}{99}
@@ -1689,7 +1844,9 @@ J & add 3        & I & \\
 
 The artifact carries two tests that correspond directly to
 \S\ref{sec:hazards}, and both are worth reading as specifications rather than
-as tests.
+as tests. Three further tests, listed after them, witness properties that
+\S\ref{sec:mechanised} proves --- kept because a proof binds the model and a
+test binds the process.
 
 \paragraph{\texttt{bulk\_remove\_and\_extract\_edge\_id\_zero}.}
 Builds $10{,}000$ edges with identifiers $0\ldots9999$, folds them so that
@@ -1706,5 +1863,39 @@ Builds and folds $10{,}000$ edges, grows the tensor to $114{,}688 \times
 $10{,}001 \to 10{,}501$ queues nothing and the bug hides --- then asserts the
 base is not pending, exercises the assertion the way read paths reach it, and
 reads an edge back (\S\ref{sec:hazard-resize}).
+
+\paragraph{\texttt{delta\_invariants\_hold\_across\_mutation\_sequences}.}
+Drives the Boolean delta matrix through $4{,}000$ randomised steps --- single
+writes and deletes, bulk writes, masked bulk deletes, version boundaries, reads,
+and the base-sized fold --- from a deterministic generator over a keyspace far
+smaller than the matrix, so repeated operations on one coordinate are the common
+case rather than a rarity. After each stride it checks the invariants on the raw
+layers \emph{and} the derived state they exist to protect: the cardinality
+identity and the effective set against an independently maintained model. It
+also asserts that the sequence actually reached the post-fold states, without
+which it would only have exercised an empty base.
+
+This test replaced \texttt{debug\_assert!}s that had sat inside the write path.
+Those could only be evaluated by probing the delta layers, and probing a
+possibly-shared, possibly-pending layer materialises it --- a mutation racing
+lock-free readers. Guarding them so that debug builds waited where release
+builds do not would have meant the write path under test was not the write path
+being shipped. Moving the check outside the operation is what makes it
+observable without perturbing what it observes.
+
+\paragraph{\texttt{folded\_entry\_deleted\_and\_re\_added\_stays\_out\_of\_dp}.}
+The tightest form of the same property: an entry added, folded into the
+committed base, deleted, and re-added must round-trip through the tombstone
+branch without ever landing in the pending layer alongside its base entry. That
+is the one sequence in which the Boolean no-shadowing invariant is easiest to
+break, because a fold silently moves an entry from the pending layer into the
+base between the caller's two writes.
+
+\paragraph{\texttt{deleting\_everything\_folds\_the\_tombstones\_away}.}
+Witnesses the escape hatch of \S\ref{sec:folding}. Deleting every edge leaves
+each one as a tombstone shadowing a live base entry, so without the hatch the
+tensor holds two copies of itself until some later transaction happens to touch
+that matrix --- which, after a delete-everything, may never come. The test fails
+if the fold is left to the ordinary balance point.
 
 \end{document}
