@@ -104,6 +104,8 @@ use crate::{
     runtime::{orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::falkordb_index::NumericAnswer;
 
 /// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`, meaning the index
 /// numeric index should be the sole maintainer of node Range indexes and the
@@ -4023,54 +4025,57 @@ impl Graph {
         self.node_indexer.query(label, query).map(NodeId)
     }
 
-    /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
-    /// (non-numeric / composite / missing column). Wraps
-    /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId` (whose constructor is
-    /// module-private). `use<>` keeps the returned iterator free of the `&self` borrow — it owns its
-    /// tree snapshot, so it outlives this borrow.
+    /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
+    /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
+    /// three-way answer: rows, `NotReady` (column still building — scan), or `None` (cannot be
+    /// served). `use<>` keeps the returned iterator free of the `&self` borrow — it owns its tree
+    /// snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<impl Iterator<Item = NodeId> + use<>> {
+    ) -> Option<NumericAnswer<impl Iterator<Item = NodeId> + use<>>> {
         self.falkordb_index()
             .query_numeric(EntityType::Node, label, query)
-            .map(|iter| iter.map(NodeId))
+            .map(|answer| answer.map_rows(|rows| rows.map(NodeId)))
     }
 
     /// Answer an EDGE numeric `Equal`/`Range` from the index column for `type_name`, yielding
     /// `(src, dst, edge_id)` — endpoints recovered from the graph's `edge_id → (src, dst)` reverse
     /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
     /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
-    /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
-    /// RediSearch) for non-numeric/composite predicates or a missing column. #51.
+    /// only holds a temporary graph borrow, so the result must not borrow `self`. Three-way answer
+    /// as for nodes: rows, `NotReady` (still building — scan), `None` (not servable). #51.
     #[cfg(feature = "index-falkordb")]
     pub fn query_index_numeric_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>> {
-        let iter =
-            self.falkordb_index()
-                .query_numeric(EntityType::Relationship, type_name, query)?;
+    ) -> Option<NumericAnswer<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>>> {
+        let answer = self
+            .falkordb_index()
+            .query_numeric(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump and the decode
         // is the same shift/mask `endpoints_for_edge` does. Laziness matters here — a range scan
-        // under a LIMIT should stop at the limit, not materialize every match first.
-        let endpoints = Arc::clone(&self.edge_endpoints);
-        Some(iter.filter_map(move |eid| {
-            endpoints
-                .get(eid as usize)
-                .filter(|&&key| key != EDGE_NO_ENDPOINT)
-                .map(|&key| {
-                    (
-                        NodeId(key >> 32),
-                        NodeId(key & 0xFFFF_FFFF),
-                        RelationshipId(eid),
-                    )
-                })
+        // under a LIMIT should stop at the limit, not materialize every match first. `map_rows`
+        // only runs on `Rows`, so a not-ready column does not even pay the refcount bump.
+        Some(answer.map_rows(|rows| {
+            let endpoints = Arc::clone(&self.edge_endpoints);
+            rows.filter_map(move |eid| {
+                endpoints
+                    .get(eid as usize)
+                    .filter(|&&key| key != EDGE_NO_ENDPOINT)
+                    .map(|&key| {
+                        (
+                            NodeId(key >> 32),
+                            NodeId(key & 0xFFFF_FFFF),
+                            RelationshipId(eid),
+                        )
+                    })
+            })
         }))
     }
 
