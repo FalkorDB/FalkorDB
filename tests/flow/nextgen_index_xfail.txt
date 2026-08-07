@@ -80,21 +80,18 @@ test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keep
 # ---------------------------------------------------------------------------
 # IGNORED in both directions (`!` prefix) — NOT a native-index gap.
 #
-# The check skips these entirely: they are neither required to fail nor required to pass. That is
-# the point — an entry here fails on some environments and passes on others, so either direction
-# of the normal check would be permanently red somewhere.
+# The check skips a `!` entry entirely: it is neither required to fail nor required to pass. That
+# is for a test that fails on some environments and passes on others, where either direction of
+# the normal check would be permanently red somewhere.
 #
-# Use this sparingly and only with evidence that the flag is not involved. Removing the `!` turns
-# an entry back into a normal expected-failure.
+# There are none right now, and that is the preferred state. Use it sparingly and only with
+# evidence that the flag is not involved; removing the `!` turns an entry back into a normal
+# expected-failure.
 #
-# test05_index_delete: a client-library version mismatch in the local virtualenv —
-#   TypeError: Redis.__init__() got an unexpected keyword argument 'himport_registry'
-# the installed `falkordb` package passes a kwarg the installed `redis-py` does not accept. It is
-# the only test that constructs `FalkorDB(connection_pool=...)` directly, which is why it is the
-# only one affected. Reproduces with the flag OFF and on pristine `main`; no `native index cannot
-# serve` error appears anywhere in its output. Linux CI, with its own pinned venv, is green on it.
-#
-# (An earlier version of this note blamed asyncio on macOS + Python 3.14. That was read off the
-# traceback frames rather than the exception, and would have sent someone after the wrong thing.)
+# `test05_index_delete` lived here briefly. It was never an index problem: FalkorDB 1.6.2 declares
+# `redis>=7.1.0` with no upper bound, and redis-py 8.x connection pools carry kwargs that
+# `Redis.__init__` rejects (`himport_registry` on 8.1, `maint_notifications_pool_handler` on 8.0),
+# which the async cluster probe splats straight into a constructor. Pinning `redis<8` locally
+# fixed it and the whole flow suite along with it. If it reappears, check the client versions
+# before suspecting the index.
 # ---------------------------------------------------------------------------
-!test_index_create:testIndexCreationFlow.test05_index_delete
