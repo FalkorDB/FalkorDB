@@ -1709,11 +1709,16 @@ impl Graph {
         //
         // The two are equivalent because `dp ∩ m = ∅` holds for
         // `VersionedMatrix<bool>`: its `set` clears the `dm` tombstone when `m`
-        // already holds the pair instead of writing a shadowing `dp` entry, and
-        // asserts as much. So `remove_mask`'s two effects — tombstone `mask ∩ m`,
-        // drop `mask ∩ dp` — can never both apply to one entry, which is exactly
-        // the choice `remove` makes per entry. (The valued matrices *do* allow
-        // `dp` to shadow `m`; `remove` is defined only on the boolean ones.)
+        // already holds the pair instead of writing a shadowing `dp` entry. So
+        // `remove_mask`'s two effects — tombstone `mask ∩ m`, drop `mask ∩ dp` —
+        // can never both apply to one entry, which is exactly the choice `remove`
+        // makes per entry. (The valued matrices *do* allow `dp` to shadow `m`;
+        // `remove` is defined only on the boolean ones.)
+        //
+        // That invariant is covered by
+        // `delta_invariants_hold_across_mutation_sequences`, and this specific
+        // substitution is machine-checked as
+        // `eff_removeMask_eq_foldl_remove` in `proofs/versioned_matrix`.
         for id in deleted_nodes {
             self.all_nodes_matrix.remove(id, id);
         }
