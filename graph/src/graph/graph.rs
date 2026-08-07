@@ -88,7 +88,7 @@ use crate::index::falkordb::versioned::IndexId;
 #[cfg(feature = "index-falkordb")]
 use crate::index::falkordb::{
     falkordb_index::{BuildCursor, FalkorDbIndex},
-    graph_writes::{self, index_only_writes},
+    graph_writes,
 };
 use crate::index::index_docs::IndexDocs;
 use crate::{
@@ -115,6 +115,49 @@ use crate::{
     runtime::{orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
+
+/// The index fields that still need feeding to RediSearch in this build.
+///
+/// Without `index-falkordb` this is the identity function: RediSearch owns every kind.
+///
+/// With it, the native index owns every **Range** column. The scan ops route Range predicates to
+/// it, and unique constraints ask it for duplicates. Their calls to `get_indexed_nodes` /
+/// `get_indexed_edges`, RediSearch's only Range readers, are compiled only without the flag, so
+/// nothing in this build reads Range data from RediSearch. The two functions themselves are still
+/// compiled in: a caller added under the flag would read a RediSearch copy that writes no longer
+/// reach.
+///
+/// Dropping it is not just about the wasted write. A second copy of the data is what would let a
+/// native-index maintenance bug pass every test: the flag exists so that a gap *surfaces*, and a
+/// silent shadow copy in RediSearch is exactly the thing that stops it surfacing. It also makes
+/// the write path measurable — while both engines were fed, any write benchmark was timing the
+/// double-write rather than the native index.
+///
+/// Fulltext and Vector fields are untouched. They have no native equivalent, and their procedures
+/// still query RediSearch, so they are fed exactly as before. This is per **field**, not per
+/// index, so a label carrying both a Range and a Fulltext index keeps the Fulltext half.
+#[cfg(not(feature = "index-falkordb"))]
+fn redisearch_fields(
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>
+) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    fields
+}
+
+#[cfg(feature = "index-falkordb")]
+fn redisearch_fields(
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>
+) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    fields
+        .into_iter()
+        .filter_map(|(key, fields)| {
+            let kept: Vec<Arc<Field>> = fields
+                .into_iter()
+                .filter(|f| !matches!(f.ty, IndexType::Range))
+                .collect();
+            (!kept.is_empty()).then_some((key, kept))
+        })
+        .collect()
+}
 
 /// Result of query parsing and planning.
 ///
@@ -3884,7 +3927,12 @@ impl Graph {
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
-            let fields = indexer.get_fields(name);
+            let fields = redisearch_fields(indexer.get_fields(name));
+            if fields.is_empty() {
+                // Every field is served natively. Skipping here also skips the endpoint
+                // resolution below, which is a scan over the type's tensor.
+                continue;
+            }
 
             // Resolve `(src, dst)` only for the edge ids we actually
             // need, instead of materializing the full tensor every
@@ -3956,16 +4004,6 @@ impl Graph {
             return;
         }
 
-        // Measurement gate, not a shipping mode: see `index_only_writes`. The native index
-        // was already maintained by the write hooks, so only the redundant RediSearch feed is
-        // dropped.
-        #[cfg(feature = "index-falkordb")]
-        if matches!(kind, IndexKind::Node) && index_only_writes() {
-            index_add_docs.clear();
-            remove_docs.clear();
-            return;
-        }
-
         let (indexer, names, attr_store) = match kind {
             IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
@@ -3974,7 +4012,10 @@ impl Graph {
         let mut add_docs = HashMap::new();
         for (slot, ids) in index_add_docs.drain() {
             let name = &names[slot as usize];
-            let fields = indexer.get_fields(name);
+            let fields = redisearch_fields(indexer.get_fields(name));
+            if fields.is_empty() {
+                continue; // every field of this label is served natively
+            }
             let mut docs = vec![];
             for id in ids {
                 let mut doc = Document::new(id);
