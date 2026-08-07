@@ -52,19 +52,29 @@ test_index_scans:testIndexScanFlow.test14_index_scan_utilize_array
 test_index_scans:testIndexScanFlow.test20_index_scan_stopwords
 test_index_scans:testIndexScanFlow.test_24_multitype_index
 test_index_scans:testIndexScanFlow.test_25_unescaped_string
+test_index_delete:testNodeIndexDeletionFlow.test_07_reset_order
 test_index_updates:testIndexUpdatesFlow.test04_node_deletion
 test_edge_index_updates:testEdgeIndexUpdatesFlow.test04_edge_deletion
 test_edge_index_scans:testEdgeByIndexScanFlow.test15_chained_optional_match_indexed_edge
 test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test17_child_var_reference_safety
 
 # ---------------------------------------------------------------------------
-# Conjunctions — `And` of two predicates the planner could not fold at plan time.
-#   error: "a conjunction of 2 predicates"
-# The common shape is two ranges on the SAME key whose bounds are only known at runtime; that
-# wants an arithmetic collapse (tighter min, tighter max, one cursor), not a doc-stream
-# intersection. The cross-key case needs a real intersection and is rarer.
+# Conjunctions — `And` the planner could not fold at plan time. The message names the children,
+# because the three shapes that land here need completely different work:
+#   [equality on `v`; range on `v`]     same key  -> arithmetic collapse, one cursor
+#   [range on `id`; range on `id`]      same key  -> tighter min/max, one cursor
+#   [equality on `a`; equality on `b`]  two keys  -> a real intersection
+#
+# A fourth shape used to dominate and is now gone: the *same* predicate twice, from an inline
+# property map on a traversal endpoint (`MATCH (a:L {p: v})-[]->(b)`). `push_filters_down` merged
+# the planner's filter and `select_scan_node`'s identical copy into an `And` without dedup. It now
+# dedups, which removed 31 of the bench suite's 40 failures and one entry from this file — that
+# entry, `test_07_reset_order`, turned out to be a plain string gap underneath and has moved to
+# the group above.
+#
+# Only the same-key Equal+Range case is left here. An `Equal` is a degenerate range, so this one
+# collapses without any doc-stream intersection machinery.
 # ---------------------------------------------------------------------------
-test_index_delete:testNodeIndexDeletionFlow.test_07_reset_order
 test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keeps_pushed_conjuncts
 
 # ---------------------------------------------------------------------------
@@ -77,8 +87,14 @@ test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test28_post_filter_keep
 # Use this sparingly and only with evidence that the flag is not involved. Removing the `!` turns
 # an entry back into a normal expected-failure.
 #
-# test05_index_delete: an `asyncio.run` failure inside the test harness on macOS + Python 3.14.
-# Reproduces identically with the flag OFF and on pristine `main`; no `native index cannot serve`
-# error appears anywhere in its output. Linux CI is green on it.
+# test05_index_delete: a client-library version mismatch in the local virtualenv —
+#   TypeError: Redis.__init__() got an unexpected keyword argument 'himport_registry'
+# the installed `falkordb` package passes a kwarg the installed `redis-py` does not accept. It is
+# the only test that constructs `FalkorDB(connection_pool=...)` directly, which is why it is the
+# only one affected. Reproduces with the flag OFF and on pristine `main`; no `native index cannot
+# serve` error appears anywhere in its output. Linux CI, with its own pinned venv, is green on it.
+#
+# (An earlier version of this note blamed asyncio on macOS + Python 3.14. That was read off the
+# traceback frames rather than the exception, and would have sent someone after the wrong thing.)
 # ---------------------------------------------------------------------------
 !test_index_create:testIndexCreationFlow.test05_index_delete
