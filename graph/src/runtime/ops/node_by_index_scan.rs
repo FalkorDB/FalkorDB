@@ -301,16 +301,17 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                         // gap has to be visible to be closed. The message names the predicate so
                         // the failure is diagnosable rather than a bare "no rows".
                         #[cfg(feature = "index-falkordb")]
-                        let it: Option<Box<dyn Iterator<Item = NodeId>>> =
-                            match g.query_index_numeric_nodes(self.index, &q) {
-                                Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
-                                // The column exists and will serve this once its build installs
-                                // the base; until then the scan below is the correct answer.
-                                Some(NumericAnswer::NotReady) => None,
-                                None => {
-                                    return Err(unsupported_by_native_index("node", self.index, &q));
-                                }
-                            };
+                        let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
+                            .query_index_numeric_nodes(self.index, &q)
+                        {
+                            Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
+                            // The column exists and will serve this once its build installs
+                            // the base; until then the scan below is the correct answer.
+                            Some(NumericAnswer::NotReady) => None,
+                            None => {
+                                return Err(unsupported_by_native_index("node", self.index, &q));
+                            }
+                        };
                         #[cfg(not(feature = "index-falkordb"))]
                         let it: Option<Box<dyn Iterator<Item = NodeId>>> =
                             Some(Box::new(g.get_indexed_nodes(self.index, q)));

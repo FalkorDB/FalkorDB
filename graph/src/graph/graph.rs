@@ -83,6 +83,8 @@ use orx_tree::DynTree;
 use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::falkordb_index::NumericAnswer;
 use crate::{
     entity_type::EntityType,
     graph::{
@@ -104,24 +106,46 @@ use crate::{
     runtime::{eval::evaluate_param, orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
-#[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::falkordb_index::NumericAnswer;
 
-/// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`, meaning the index
-/// numeric index should be the sole maintainer of node Range indexes and the
-/// redundant RediSearch feed is skipped on the write path. Read once and cached.
+/// The index fields that still need feeding to RediSearch in this build.
 ///
-/// This exists only to benchmark the index-only write cost against RediSearch
-/// without the dark-launch double-write; it is not a shipping mode (it disables
-/// the string/geo fallback). P7 replaces it with a per-index coverage guard.
+/// Without `index-falkordb` this is the identity function: RediSearch owns every kind.
+///
+/// With it, the native index owns every **Range** column. The scan ops route Range predicates to
+/// it, and `get_indexed_nodes` / `get_indexed_edges` — RediSearch's only Range readers — are
+/// compiled out of that build entirely, so a Range document written to RediSearch is one nothing
+/// can ever read back.
+///
+/// Dropping it is not just about the wasted write. A second copy of the data is what would let a
+/// native-index maintenance bug pass every test: the flag exists so that a gap *surfaces*, and a
+/// silent shadow copy in RediSearch is exactly the thing that stops it surfacing. It also makes
+/// the write path measurable — while both engines were fed, any write benchmark was timing the
+/// double-write rather than the native index.
+///
+/// Fulltext and Vector fields are untouched. They have no native equivalent, and their procedures
+/// still query RediSearch, so they are fed exactly as before. This is per **field**, not per
+/// index, so a label carrying both a Range and a Fulltext index keeps the Fulltext half.
+#[cfg(not(feature = "index-falkordb"))]
+fn redisearch_fields(
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>
+) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    fields
+}
+
 #[cfg(feature = "index-falkordb")]
-fn index_only_writes() -> bool {
-    use std::sync::OnceLock;
-    static INDEX_ONLY: OnceLock<bool> = OnceLock::new();
-    *INDEX_ONLY.get_or_init(|| {
-        std::env::var("FALKORDB_INDEX_ONLY")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-    })
+fn redisearch_fields(
+    fields: HashMap<Arc<String>, Vec<Arc<Field>>>
+) -> HashMap<Arc<String>, Vec<Arc<Field>>> {
+    fields
+        .into_iter()
+        .filter_map(|(key, fields)| {
+            let kept: Vec<Arc<Field>> = fields
+                .into_iter()
+                .filter(|f| !matches!(f.ty, IndexType::Range))
+                .collect();
+            (!kept.is_empty()).then_some((key, kept))
+        })
+        .collect()
 }
 
 /// Result of query parsing and planning.
@@ -3607,7 +3631,12 @@ impl Graph {
         let mut add_docs: HashMap<Arc<String>, Vec<Document>> = HashMap::new();
         for (type_id, ids) in index_add_edge_docs.drain() {
             let name = &self.relationship_types[type_id as usize];
-            let fields = indexer.get_fields(name);
+            let fields = redisearch_fields(indexer.get_fields(name));
+            if fields.is_empty() {
+                // Every field is served natively. Skipping here also skips the endpoint
+                // resolution below, which is a scan over the type's tensor.
+                continue;
+            }
 
             // Resolve `(src, dst)` only for the edge ids we actually
             // need, instead of materializing the full tensor every
@@ -3679,21 +3708,6 @@ impl Graph {
             return;
         }
 
-        // MEASUREMENT GATE (not a shipping mode): with the index active,
-        // `FALKORDB_INDEX_ONLY=1` skips RediSearch node maintenance so the write path is
-        // index-only — isolating the index-vs-RediSearch write cost without the dark-launch
-        // double-write. The index column has already been maintained inline in the mutation
-        // hooks, so the tuples are safe; only the redundant RediSearch feed is
-        // dropped. This breaks string/geo reads on a Range index (they still expect RediSearch), so
-        // it is a benchmark instrument for all-numeric workloads. P7 productionizes the same skip
-        // behind a per-label "fully index-covered" guard + the xfail ledger.
-        #[cfg(feature = "index-falkordb")]
-        if matches!(kind, IndexKind::Node) && index_only_writes() {
-            index_add_docs.clear();
-            remove_docs.clear();
-            return;
-        }
-
         let (indexer, names, attr_store) = match kind {
             IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
@@ -3702,7 +3716,10 @@ impl Graph {
         let mut add_docs = HashMap::new();
         for (slot, ids) in index_add_docs.drain() {
             let name = &names[slot as usize];
-            let fields = indexer.get_fields(name);
+            let fields = redisearch_fields(indexer.get_fields(name));
+            if fields.is_empty() {
+                continue; // every field of this label is served natively
+            }
             let mut docs = vec![];
             for id in ids {
                 let mut doc = Document::new(id);
@@ -3861,9 +3878,9 @@ impl Graph {
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<NumericAnswer<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>>> {
-        let answer = self
-            .falkordb_index()
-            .query_numeric(EntityType::Relationship, type_name, query)?;
+        let answer =
+            self.falkordb_index()
+                .query_numeric(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump and the decode
