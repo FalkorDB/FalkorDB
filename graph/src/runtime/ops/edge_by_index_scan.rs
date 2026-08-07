@@ -25,6 +25,8 @@
 use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::unsupported_by_native_index;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
@@ -329,10 +331,13 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         #[cfg(feature = "index-falkordb")]
                         let it: Box<
                             dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
-                        > = if let Some(hit) = g.query_index_numeric_edges(label, &q) {
-                            Box::new(hit)
-                        } else {
-                            Box::new(g.get_indexed_edges(label, q))
+                        > = match g.query_index_numeric_edges(label, &q) {
+                            Some(hit) => Box::new(hit),
+                            None => {
+                                // See node_by_index_scan: native is the only index under this
+                                // flag, so an unserviceable predicate is a loud error.
+                                return Err(unsupported_by_native_index("relationship", label, &q));
+                            }
                         };
                         #[cfg(not(feature = "index-falkordb"))]
                         let it: Box<

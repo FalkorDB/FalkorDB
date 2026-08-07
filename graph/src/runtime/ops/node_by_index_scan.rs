@@ -23,6 +23,8 @@
 use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
+#[cfg(feature = "index-falkordb")]
+use crate::index::falkordb::unsupported_by_native_index;
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
@@ -290,15 +292,19 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 // label scan.
                 let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
                     let g = self.runtime.g.borrow();
-                    // Index: a numeric Equal/Range on a column we own is served by the
-                    // CoW B-tree; everything else (string/geo on the same Range index, composite, or a
-                    // missing column) falls through to RediSearch during the dark-launch.
+                    // Under `index-falkordb` the native index is the ONLY index: a predicate it
+                    // cannot serve is an error, not a quiet detour to RediSearch. Falling back
+                    // would hide every unimplemented kind behind correct-looking results, which
+                    // is exactly what the xfail ledger exists to prevent — a gap has to be
+                    // visible to be closed. The message names the predicate so the failure is
+                    // diagnosable rather than a bare "no rows".
                     #[cfg(feature = "index-falkordb")]
                     let it: Box<dyn Iterator<Item = NodeId>> =
-                        if let Some(hit) = g.query_index_numeric_nodes(self.index, &q) {
-                            Box::new(hit)
-                        } else {
-                            Box::new(g.get_indexed_nodes(self.index, q))
+                        match g.query_index_numeric_nodes(self.index, &q) {
+                            Some(hit) => Box::new(hit),
+                            None => {
+                                return Err(unsupported_by_native_index("node", self.index, &q));
+                            }
                         };
                     #[cfg(not(feature = "index-falkordb"))]
                     let it: Box<dyn Iterator<Item = NodeId>> =
