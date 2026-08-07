@@ -511,28 +511,28 @@ impl Tensor {
                     if still_multi {
                         continue;
                     }
+                    // A MULTI pair keeps *all* of its ids in `me` and has at
+                    // least two of them, so removing one always leaves a
+                    // survivor and this pair cannot empty here — a
+                    // single-edge pair holds its id inline and is handled by
+                    // the arm below. Machine-checked as `removeOne_survivor`
+                    // in `proofs/tensor`, which is also what retired the
+                    // "all ids removed at once" branch this replaced.
+                    let Some((_, last)) = survivor else {
+                        unreachable!("MULTI pair ({src}, {dst}) held one id in `me`")
+                    };
                     self.multi_count -= 1;
-                    if let Some((_, last)) = survivor {
-                        // Demote: the surviving id returns inline. If it *is*
-                        // the committed value, the deltas cancel and the pair
-                        // returns clean; otherwise `dp` shadows `m` with the
-                        // live value (no `dm` mask).
-                        self.me.remove(key, last);
-                        if self.m.get(src, dst) == Some(last) {
-                            self.dp.erase(src, dst);
-                        } else {
-                            self.dp.insert(src, dst, last);
-                        }
-                        // mt structure already has (dst, src); the pair survives.
-                    } else {
-                        // All ids removed at once; the pair is gone.
+                    // Demote: the surviving id returns inline. If it *is* the
+                    // committed value, the deltas cancel and the pair returns
+                    // clean; otherwise `dp` shadows `m` with the live value
+                    // (no `dm` mask).
+                    self.me.remove(key, last);
+                    if self.m.get(src, dst) == Some(last) {
                         self.dp.erase(src, dst);
-                        if self.m.contains(src, dst) {
-                            self.dm.insert(src, dst, true);
-                        }
-                        self.mt.remove(dst, src);
-                        emptied.push((src, dst));
+                    } else {
+                        self.dp.insert(src, dst, last);
                     }
+                    // mt structure already has (dst, src); the pair survives.
                 }
                 Some(inline_id) if inline_id == id => {
                     self.dp.erase(src, dst);
@@ -1175,7 +1175,16 @@ impl Iterator for Iter<'_> {
             BaseIter::Backward(it) => {
                 let (row, col) = it.next()?;
                 let (src, dest) = (col, row);
-                let id = self.t.eff_get(src, dest).unwrap_or(0);
+                // `mt` mirrors the effective forward structure, so a pair
+                // reached through it always has a forward inline value.
+                // Machine-checked as `iterBwd_eff_get_isSome` in
+                // `proofs/tensor`. This replaced an `unwrap_or(0)`, which was
+                // worse than unreachable: 0 is a *valid* edge id, so the
+                // fallback would have quietly emitted a fabricated edge
+                // rather than failed.
+                let Some(id) = self.t.eff_get(src, dest) else {
+                    unreachable!("mt holds ({src}, {dest}) but the forward matrix does not")
+                };
                 (src, dest, id)
             }
         };
