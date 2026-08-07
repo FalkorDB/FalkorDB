@@ -162,6 +162,25 @@ impl MvccGraph {
 
         new_graph.borrow_mut().trim_attr_stores();
 
+        // Fold away any delta that has grown comparable to its base. The
+        // transaction is done mutating and the write lock is still held, so
+        // this is the last point at which a delete-everything's tombstones
+        // can be applied — otherwise both the base and a base-sized `dm`
+        // stay resident until some later transaction happens to touch the
+        // same matrix.
+        new_graph.borrow_mut().fold_oversized_deltas();
+
+        // Materialize the committed base (`m`) layer of every matrix before
+        // publishing. Readers reach bases lock-free (`m()`, raw `m.nvals()`),
+        // and any GrB call on a pending matrix finishes that work internally
+        // (a mutation) — so two readers racing on a shared pending base
+        // corrupt GrB state (GrB_INVALID_OBJECT, heap corruption under
+        // stress). dp/dm stay lazy: every read of them goes through the
+        // mutex-guarded Matrix::wait first. Per-matrix cost when already
+        // synced is one atomic load; waiting the deltas here instead was
+        // measured at +35% instructions on `create 10k`.
+        new_graph.borrow().wait_bases();
+
         // Use an immutable borrow here: `set_indexer_graph` only publishes
         // `new_graph` into the indexers' own `Mutex`-guarded fields. Holding
         // a mutable borrow across this call previously created a race with
