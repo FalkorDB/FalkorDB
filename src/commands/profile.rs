@@ -21,7 +21,9 @@ pub fn graph_profile(
     let query = args.next_str()?;
     let mut timeout: Option<i64> = None;
     while let Ok(arg) = args.next_str() {
-        if arg == "timeout"
+        // Matched case-insensitively, as the C dispatcher does with strcasecmp:
+        // `TIMEOUT` is the documented spelling.
+        if arg.eq_ignore_ascii_case("timeout")
             && let Ok(t_str) = args.next_str()
         {
             timeout = t_str.parse::<i64>().ok();

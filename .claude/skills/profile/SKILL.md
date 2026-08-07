@@ -26,16 +26,30 @@ On stop, samply opens the Firefox Profiler UI in your browser. Use
 
 ## 2. Benchmark suite
 
-There is **no benchmark or profiling CI in this repository** — the A/B
-pipeline, the flame-graph workflow and their `gh-pages` dashboards were
-removed, because they depended on a `gh-pages` branch and GCE-runner
-variables that do not exist here. So there is no trend history to compare a
-suspected regression against.
+Use the per-query harness in `bench/` — see the **`bench`** skill for the full
+loop and `bench/README.md` for the details. In short:
 
-To measure a change, run the [`FalkorDB/benchmark`](https://github.com/FalkorDB/benchmark)
-tool locally against two containers (before/after, or vs the C engine's
-`docker.io/falkordb/falkordb-server:edge`), and treat samply flamegraphs
-above as the primary tool for locating a bottleneck.
+```bash
+cargo build --release
+uv sync --project bench                        # once
+uv run --project bench bench measure           # 317 queries -> bench/results/current.csv
+uv run --project bench bench compare           # regression gate vs your own baseline
+```
+
+To profile one benchmark query rather than a workload you drive by hand,
+`bench profile "<query name>"` records the server with samply while that query
+runs in a loop — it reuses the harness's own server, so you name the query once.
+
+In CI, labelling a PR **`benchmark-cov`** runs the same harness against the PR
+and its base and posts a per-query comparison, plus deterministic callgrind
+instruction counts (`.github/workflows/benchmark-cov.yml`). Those counts are
+PR-vs-base only — the C engine cannot be measured under callgrind, because it
+busy-waits on a worker thread valgrind schedules arbitrarily; the vs-C comparison
+runs on allocated bytes instead. It is on-demand only, so a suspected regression
+is compared against the PR base rather than against a stored series.
+
+Treat samply flamegraphs above as the primary tool for *locating* a bottleneck
+and `bench/` for *quantifying* it.
 
 ## Notes
 

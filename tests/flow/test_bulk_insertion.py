@@ -835,3 +835,81 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         for edge_csv in edge_csvs:
             os.remove(edge_csv)
 
+    # Rows appended by GRAPH.BULK into a graph that ALREADY has an index must be indexed.
+    #
+    # GRAPH.BULK only creates a graph when the batch carries a BEGIN token; a batch
+    # without it appends to the existing graph. The official loader always begins on a
+    # fresh graph and adds its indexes afterwards, so it never exercises the append path
+    # against a live index — this test does, by reusing the loader's own serialization
+    # with the BEGIN token suppressed.
+    #
+    # Regression: the bulk path collected index documents *before* importing the
+    # attributes, so `has_attributes(id)` was always false and it collected none — then
+    # dropped the map without committing it. Nothing repaired it afterwards, because
+    # GRAPH.BULK does not run the post-load `populate_indexes_sync` rebuild.
+    def test13_bulk_append_into_indexed_graph(self):
+        from falkordb_bulk_loader.bulk_insert import parse_schemas, process_entities
+        from falkordb_bulk_loader.query_buffer import QueryBuffer
+        from falkordb_bulk_loader.config import Config
+        from falkordb_bulk_loader.label import Label
+        from falkordb_bulk_loader.relation_type import RelationType
+
+        graphname = "bulk_append_indexed"
+        graph = self.db.select_graph(graphname)
+
+        # Creates the graph AND the indexes, before any bulk data exists.
+        graph.query("CREATE INDEX FOR (n:N) ON (n.v)")
+        graph.query("CREATE INDEX FOR ()-[r:R]->() ON (r.w)")
+
+        node_csv, rel_csv = '/tmp/bulk_append_nodes.tmp', '/tmp/bulk_append_rels.tmp'
+        with open(node_csv, mode='w') as csv_file:
+            out = csv.writer(csv_file)
+            out.writerow(["v"])
+            for i in range(100):
+                out.writerow([i])
+        with open(rel_csv, mode='w') as csv_file:
+            out = csv.writer(csv_file)
+            out.writerow(["src", "dest", "w"])
+            for i in range(99):
+                out.writerow([i, i + 1, i])
+
+        # Append (no BEGIN) — the path the loader CLI cannot produce.
+        config = Config(store_node_identifiers=True)
+        buf = QueryBuffer(graphname, self.db.connection, config)
+        buf.initial_query = False
+        entities = parse_schemas(Label, buf, [], [('N', node_csv)], config)
+        entities += parse_schemas(RelationType, buf, [], [('R', rel_csv)], config)
+        process_entities(entities)
+        buf.send_buffer()
+        buf.wait_pool()
+
+        # An index-served count must equal the full-scan count; `+ 0` defeats index selection.
+        # Compare an index-served count against a full-scan count of the same rows: the
+        # `+ 0` defeats index selection, so the two agree only if the bulk-loaded rows
+        # actually reached the index.
+        #
+        # Pin that premise first. Without these two assertions the comparison silently
+        # degrades to scan-vs-scan the day the planner stops picking the index here, and
+        # the test would then pass with the fix reverted.
+        idx_n_query = "MATCH (n:N) WHERE n.v >= 0 RETURN count(n)"
+        scan_n_query = "MATCH (n:N) WHERE n.v + 0 >= 0 RETURN count(n)"
+        self.env.assertContains('Node By Index Scan', str(graph.explain(idx_n_query)))
+        self.env.assertNotContains('Node By Index Scan', str(graph.explain(scan_n_query)))
+
+        idx_n = graph.query(idx_n_query).result_set[0][0]
+        scan_n = graph.query(scan_n_query).result_set[0][0]
+        self.env.assertEqual(scan_n, 100)
+        self.env.assertEqual(idx_n, scan_n)
+
+        idx_e_query = "MATCH ()-[r:R]->() WHERE r.w >= 0 RETURN count(r)"
+        scan_e_query = "MATCH ()-[r:R]->() WHERE r.w + 0 >= 0 RETURN count(r)"
+        self.env.assertContains('Edge By Index Scan', str(graph.explain(idx_e_query)))
+        self.env.assertNotContains('Edge By Index Scan', str(graph.explain(scan_e_query)))
+
+        idx_e = graph.query(idx_e_query).result_set[0][0]
+        scan_e = graph.query(scan_e_query).result_set[0][0]
+        self.env.assertEqual(scan_e, 99)
+        self.env.assertEqual(idx_e, scan_e)
+
+        os.remove(node_csv)
+        os.remove(rel_csv)
