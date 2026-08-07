@@ -8,6 +8,9 @@
 
 //------------------------------------------------------------------------------
 
+// fixme for CUDA: there will need to be one unique malloc and a unique free
+// method for each GPU.
+
 #include "GB.h"
 
 void GB_rmm_free (void *p)

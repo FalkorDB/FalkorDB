@@ -218,11 +218,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
         }
         #endif
 
-// HACK
-//int64_t end_time = (int64_t) clock ( ) ;
-//cij = end_time - start_time ;
-//cij_exists = 1 ;
-
         // write result for this block to global mem
         if (tid == 0)
         {
@@ -239,7 +234,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_mp_kernel
                Ci [pair_id] = GB_ZOMBIE (i) ;
             }
         }
-        //__syncthreads(); 
     }
 
     //--------------------------------------------------------------------------

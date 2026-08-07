@@ -29,7 +29,8 @@ GrB_Info GB_cuda_apply_unop
 
     GrB_Info info ;
     GB_void *ythunk_cuda = nullptr ;
-    uint64_t ythunk_cuda_mem = GB_mem (GB_ARENA_RMM, 0) ;
+    int data_arena = GrB_DEFAULT ;  // FIXME: will depend on device id
+    uint64_t ythunk_cuda_mem = GB_mem (data_arena, 0) ;
 
     cudaStream_t stream = nullptr ;
 

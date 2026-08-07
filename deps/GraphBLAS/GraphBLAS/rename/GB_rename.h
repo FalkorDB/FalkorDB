@@ -3064,6 +3064,7 @@
 #define GxB_ANY_UINT8 GxM_ANY_UINT8
 #define GxB_ANY_UINT8_MONOID GxM_ANY_UINT8_MONOID
 #define GxB_arena_init GxM_arena_init
+#define GxB_arena_initialized GxM_arena_initialized
 #define GxB_ASIN_FC32 GxM_ASIN_FC32
 #define GxB_ASIN_FC64 GxM_ASIN_FC64
 #define GxB_ASIN_FP32 GxM_ASIN_FP32
@@ -3834,6 +3835,7 @@
 #define GxB_Matrix_concat GxM_Matrix_concat
 #define GxB_Matrix_deserialize_arena GxM_Matrix_deserialize_arena
 #define GxB_Matrix_deserialize GxM_Matrix_deserialize
+#define GxB_Matrix_diag_arena GxM_Matrix_diag_arena
 #define GxB_Matrix_diag GxM_Matrix_diag
 #define GxB_Matrix_dup_arena GxM_Matrix_dup_arena
 #define GxB_Matrix_eWiseUnion GxM_Matrix_eWiseUnion

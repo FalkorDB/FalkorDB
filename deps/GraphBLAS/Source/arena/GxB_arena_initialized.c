@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GxB_Matrix_set_arenas: set the arenas (header and data) of a matrix
+// GxB_arena_initialized:  determine if an arena has been initialized
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
@@ -9,15 +9,12 @@
 
 #include "GB.h"
 
-#define GB_FREE_ALL ;
-
-GrB_Info GxB_Matrix_set_arenas
+GrB_Info GxB_arena_initialized
 (
-    // input/output
-    GrB_Matrix *Ahandle,        // handle of matrix to modify
+    // output
+    int *flag,              // returns true if the arena has been initialized
     // input
-    const int new_header_arena, // new arena for the header of A
-    const int new_data_arena    // new arena for the data content of A
+    int arena               // 1 to GxB_NARENAS-1
 )
 { 
 
@@ -26,15 +23,30 @@ GrB_Info GxB_Matrix_set_arenas
     //--------------------------------------------------------------------------
 
     GB_CHECK_INIT ;
-    if (Ahandle == NULL || *Ahandle == NULL)
+    if (flag == NULL)
     { 
         return (GrB_NULL_POINTER) ;
     }
 
+    (*flag) = false ;
+
+    if (arena < 0 || arena >= GxB_NARENAS)
+    { 
+        // arena out of range
+        return (GrB_INVALID_VALUE) ;
+
+    }
+
     //--------------------------------------------------------------------------
-    // change the arenas of the matrix
+    // determine if the arena has been initialized
     //--------------------------------------------------------------------------
 
-    return (GB_set_arenas (Ahandle, new_header_arena, new_data_arena)) ;
+    (*flag) =
+        GB_Global_malloc_function_get  (arena) != NULL ||
+        GB_Global_calloc_function_get  (arena) != NULL ||
+        GB_Global_realloc_function_get (arena) != NULL ||
+        GB_Global_free_function_get    (arena) != NULL ;
+
+    return (GrB_SUCCESS) ;
 }
 

@@ -92,6 +92,9 @@ void mexFunction
     // create a new arena with just malloc/free
     int arena = 3 ;
     OK (GxB_arena_init (3, malloc, NULL, NULL, free)) ;
+    int flag = false ;
+    OK (GxB_arena_initialized (&flag, 3)) ;
+    CHECK (flag == true) ;
 
     have_realloc = GB_Global_realloc_function_have (arena) ;
     CHECK (!have_realloc) ;

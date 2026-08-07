@@ -33,10 +33,7 @@
 #include "GB.h"
 #include "semiring/GB_Semiring_new.h"
 
-#define GB_FREE_ALL                         \
-{                                           \
-    GB_FREE_MEMORY (semiring, header_mem) ; \
-}
+#define GB_FREE_ALL GB_FREE_MEMORY (semiring, header_mem) ;
 
 GrB_Info GxB_Semiring_new_arena     // create a semiring
 (
@@ -56,8 +53,10 @@ GrB_Info GxB_Semiring_new_arena     // create a semiring
 
     GrB_Info info ;
     (*semiring) = NULL ;
+    uint64_t header_mem = 0 ;
     GB_RETURN_IF_NULL_OR_FAULTY (add) ;
     GB_RETURN_IF_NULL_OR_FAULTY (multiply) ;
+    GB_OK (GB_check_arena (header_arena)) ;
     ASSERT_MONOID_OK (add, "semiring->add", GB0) ;
     ASSERT_BINARYOP_OK (multiply, "semiring->multiply", GB0) ;
 
@@ -66,8 +65,8 @@ GrB_Info GxB_Semiring_new_arena     // create a semiring
     //--------------------------------------------------------------------------
 
     uint64_t mem = GB_mem (header_arena, 0) ;
-    uint64_t header_mem = mem ;
-    (*semiring) = GB_MALLOC_MEMORY (1, sizeof (struct GB_Semiring_opaque),
+    header_mem = mem ;
+    (*semiring) = GB_CALLOC_MEMORY (1, sizeof (struct GB_Semiring_opaque),
         &header_mem) ;
     if (*semiring == NULL)
     { 

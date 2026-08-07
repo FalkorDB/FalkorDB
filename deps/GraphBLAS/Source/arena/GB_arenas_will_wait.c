@@ -13,27 +13,28 @@
 
     // The CUDA branch tests will perform the following tests on its
     // input/output matrices:
-    if (A != NULL && A->data_arena != GxB_ARENA_RMM)
+    if (A != NULL && A->data_arena != some arena for the GPU)
     {
         cannot solve this problem with CUDA
     }
     if (!GB_shallow_arenas_ok (A))
     {
         cannot solve this problem with CUDA; it contains shallow components
-        not in A->data_arena = GxB_ARENA_RMM
+        not in a data_arena on the GPU
     }
 
     // the CUDA kernel will now work; but it must ensure it can access the data:
     if (GB_arenas_will_wait (A))
     {
-        // wait on all data arenas to ensure they are in GxB_ARENA_RMM
+        // wait on all data arenas to ensure they are in an arena the
+        // GPU can access
         GB_wait_arenas (A)
     }
     GrB_Matrix A_alias = NULL ;
-    if (GB_arena (A->header_mem) != GxB_ARENA_RMM)
+    if (GB_arena (A->header_mem) != arena that can be accessed by the GPU)
     {
         // make an alias of A so the GPU can access the header of A
-        GB_get_arena_alias (&A_alias, GxB_ARENA_RMM, A) ;
+        GB_get_arena_alias (&A_alias, some_arena, A) ;
     }
 
     // ... do the CUDA kernel ... using A_alias if not-NULL, or A otherwise

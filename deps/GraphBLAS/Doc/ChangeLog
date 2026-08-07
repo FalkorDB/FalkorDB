@@ -1,4 +1,4 @@
-July 31, 2026, version 10.4.0
+Aug 7, 2026, version 10.4.0
 
     * Memory arenas: allows the use of multiple memory allocators.
     * substantial revision to MATLAB/Octave interface: GhB is a new handle   

@@ -65,7 +65,8 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
     GrB_Matrix T = (*Thandle) ;     // just the header of T is given on input
     ASSERT (T != NULL) ;
 
-    uint64_t mem = GB_mem (GB_ARENA_RMM, 0) ;
+    int data_arena = GrB_DEFAULT ;  // FIXME: will depend on device id
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     cudaStream_t stream = nullptr ;
     GB_void *Key_input = NULL ;
@@ -140,7 +141,7 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
     info = GB_new (Thandle, // hyper, existing header
         ctype, avdim, avlen, GB_ph_null, C_is_csc,
         GxB_HYPERSPARSE, A_hyper_switch, 0,
-        Cp_is_32, Cj_is_32, Ci_is_32, GB_ARENA_RMM, GB_ARENA_RMM) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, data_arena, data_arena) ;
     ASSERT (info == GrB_SUCCESS) ;
 
     GB_void *X = NULL ;
@@ -176,7 +177,7 @@ GrB_Info GB_cuda_transpose      // T=A', T=(ctype)A' or T=op(A')
         // Swork = op (A)
         // fixme: tell GB_apply_op it "must" use the GPU
         info = GB_apply_op (Swork, ctype, C_code_iso, op, scalar,
-            binop_bind1st, flipij, A, GB_ARENA_RMM, Werk) ;
+            binop_bind1st, flipij, A, data_arena, Werk) ;
         ASSERT (info == GrB_SUCCESS) ;
         // GB_cuda_builder will not need to typecast Swork to T->x, and it may
         // choose to transplant it into T->x

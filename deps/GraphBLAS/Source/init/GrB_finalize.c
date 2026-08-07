@@ -51,15 +51,6 @@ GrB_Info GrB_finalize ( )
     GB_Global_realloc_function_set (realloc, GrB_DEFAULT) ;
     GB_Global_free_function_set (free, GrB_DEFAULT) ;
 
-    // arena 1 default allocators:
-    #ifdef GRAPHBLAS_HAS_CUDA
-    GB_Global_malloc_function_set (GB_rmm_malloc, GxB_ARENA_RMM) ;
-    GB_Global_free_function_set (GB_rmm_free, GxB_ARENA_RMM) ;
-    #else
-    GB_Global_malloc_function_set (malloc, GxB_ARENA_RMM) ;
-    GB_Global_free_function_set (free, GxB_ARENA_RMM) ;
-    #endif
-
     //--------------------------------------------------------------------------
     // GraphBLAS has now been finalized
     //--------------------------------------------------------------------------

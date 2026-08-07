@@ -35,6 +35,8 @@
 #include "GB.h"
 #include "serialize/GB_serialize.h"
 
+#define GB_FREE_ALL ;
+
 GrB_Info GxB_Vector_serialize_arena // serialize a GrB_Vector to a blob
 (
     // output:
@@ -53,9 +55,13 @@ GrB_Info GxB_Vector_serialize_arena // serialize a GrB_Vector to a blob
     //--------------------------------------------------------------------------
 
     GB_RETURN_IF_NULL (blob_handle) ;
+    (*blob_handle) = NULL ;
     GB_RETURN_IF_NULL (blob_memsize_handle) ;
+    (*blob_memsize_handle) = 0 ;
     GB_RETURN_IF_NULL (u) ;
+
     GB_WHERE_1 (u, "GxB_Vector_serialize (&blob, &blob_memsize, u, desc)") ;
+    GB_OK (GB_check_arena (data_arena)) ;
     GB_BURBLE_START ("GxB_Vector_serialize") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;

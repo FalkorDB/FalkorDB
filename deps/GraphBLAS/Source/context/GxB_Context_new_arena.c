@@ -11,6 +11,8 @@
 
 #include "GB.h"
 
+#define GB_FREE_ALL GxB_Context_free (&Context) ;
+
 GrB_Info GxB_Context_new_arena      // create a new Context in given arena
 (
     GxB_Context *Context_handle,    // handle of Context to create
@@ -22,10 +24,12 @@ GrB_Info GxB_Context_new_arena      // create a new Context in given arena
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (Context_handle) ;
     (*Context_handle) = NULL ;
     GxB_Context Context = NULL ;
+    GB_OK (GB_check_arena (header_arena)) ;
 
     //--------------------------------------------------------------------------
     // create the Context
@@ -53,16 +57,7 @@ GrB_Info GxB_Context_new_arena      // create a new Context in given arena
     Context->chunk = GB_Context_chunk_get (NULL) ;
     int32_t gpu_ids [GB_MAX_NGPUS] ;
     int32_t ngpus = GB_Context_gpu_ids_get (NULL, gpu_ids) ;
-    GrB_Info info = GB_Context_gpu_ids_set (Context, gpu_ids, ngpus) ;
-    if (info != GrB_SUCCESS)
-    {
-        // This "cannot" fail since the global settings have already been
-        // checked, so the inputs to the call to GB_Context_gpu_ids_set will
-        // always be valid.  As a result, the test coverage cannot test this
-        // case.
-        GxB_Context_free (&Context) ;
-        return (info) ;
-    }
+    GB_OK (GB_Context_gpu_ids_set (Context, gpu_ids, ngpus)) ;
 
     // return the result
     (*Context_handle) = Context ;
