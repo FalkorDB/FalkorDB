@@ -289,12 +289,20 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         key: u64,
     ) -> Option<u64> {
         let mut node = &self.root;
-        // The first entry immediately to the right of the descent path. When a
-        // key's entries begin exactly at a child boundary (the key is the min of
+        // The subtree immediately to the right of the descent path. When a key's
+        // entries begin exactly at a child boundary (the key is the min of
         // `children[ci + 1]`), `child_index(key, 0)` steers into the *previous*
-        // child, whose leaf then has no matching entry — the answer is this
-        // recorded separator. (The cursor instead advances leaves via its stack.)
-        let mut right_sep: Option<(u64, u64)> = None;
+        // child, whose leaf then has no matching entry — the answer is that
+        // subtree's minimum. (The cursor instead advances leaves via its stack.)
+        //
+        // It has to be the subtree, not the separator standing in for it. A
+        // separator is only guaranteed to be a valid *routing* boundary, not a
+        // live `min(children[ci + 1])`: removing a child's minimum without
+        // triggering a rebalance leaves the separator naming a tuple that is no
+        // longer in the tree, and reading a doc straight out of it hands back a
+        // deleted entry. Re-deriving the minimum is one extra walk down a left
+        // spine, and only on the miss path.
+        let mut right_subtree: Option<&Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> = None;
         loop {
             match node {
                 Node::Leaf(leaf) => {
@@ -302,13 +310,18 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                     if pos < leaf.count() && leaf.key(pos) == key {
                         return Some(leaf.doc(pos));
                     }
-                    // Overshot this leaf: the next entry is the right separator.
-                    return right_sep.filter(|s| s.0 == key).map(|s| s.1);
+                    // Overshot this leaf: the next entry in key order is that minimum.
+                    return right_subtree
+                        .map(Node::min)
+                        .filter(|&(k, _)| k == key)
+                        .map(|(_, doc)| doc);
                 }
                 Node::Branch(branch) => {
                     let ci = branch.child_index(key, 0);
-                    if ci < branch.seps.len() {
-                        right_sep = Some(branch.seps[ci]); // == min(children[ci + 1])
+                    if ci + 1 < branch.children.len() {
+                        // Deeper levels overwrite shallower ones, which is what we want:
+                        // the nearest right neighbour is the deepest one on the path.
+                        right_subtree = Some(&branch.children[ci + 1]);
                     }
                     node = &branch.children[ci];
                 }
