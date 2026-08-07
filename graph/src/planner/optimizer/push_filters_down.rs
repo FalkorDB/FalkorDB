@@ -40,11 +40,11 @@ use std::sync::Arc;
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
-    parser::ast::{ExprIR, Variable},
+    parser::ast::{ExprIR, StructuralEq, Variable},
     tree,
 };
 
-use super::super::{IR, subtree_contains};
+use super::super::{IR, expr_has_non_deterministic, subtree_contains};
 use super::{collect_expr_variables, collect_subtree_variables};
 
 /// Variables a filter hoisted directly above `node` is allowed to reference,
@@ -117,7 +117,19 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let filter = filter.clone();
                 let child_idx = child.idx();
 
-                // Flatten conjuncts from both filters
+                // Flatten conjuncts from both filters, dropping exact duplicates.
+                //
+                // Stacked filters are routinely the *same* predicate twice. The commonest source
+                // is an inline property map on a traversal endpoint: the planner emits a filter
+                // for `relationship.from.attrs` above the CondTraverse (deliberately — the chain
+                // reversal pass needs to see it), and `select_scan_node::make_scan_subtree` emits
+                // the identical filter again when it builds that node's scan. So
+                // `MATCH (a:L {p: v})-[]->(b)` arrives here as two copies of `a.p = v`.
+                //
+                // Keeping both costs a second evaluation per row on the most common shape in
+                // Cypher, and it also blocks index utilization: two conjuncts on one key become
+                // `IndexQuery::And`, which no index kind serves — the pair is strictly worse than
+                // either one alone.
                 let mut conjuncts: Vec<DynTree<ExprIR<Variable>>> = vec![];
                 for f in [&filter, &child_filter] {
                     if matches!(f.root().data(), ExprIR::And) {
@@ -126,6 +138,21 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                         conjuncts.push((**f).clone());
                     }
                 }
+                let mut deduped: Vec<DynTree<ExprIR<Variable>>> =
+                    Vec::with_capacity(conjuncts.len());
+                for c in conjuncts {
+                    // Two independent conditions. `structurally_eq` answers "is it the same
+                    // expression?"; the non-determinism check answers "is collapsing it legal?".
+                    // A conjunct that evaluates `rand()` is never a duplicate of anything — not
+                    // even of an identical copy of itself — because `rand() < 0.5 AND rand() <
+                    // 0.5` is two independent draws and is not equivalent to one of them.
+                    let collapsible = !expr_has_non_deterministic(&c)
+                        && deduped.iter().any(|kept| kept.structurally_eq(&c));
+                    if !collapsible {
+                        deduped.push(c);
+                    }
+                }
+                let conjuncts = deduped;
 
                 let merged = if conjuncts.len() == 1 {
                     Arc::new(conjuncts.into_iter().next().unwrap())
@@ -464,4 +491,152 @@ fn rebuild_with_cp_split(
         solving_set,
         remaining_conjuncts,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::cypher::Parser;
+    use crate::planner::{Planner, binder::Binder};
+
+    /// The predicate the planner builds for `query`'s `WHERE` clause — a real bound expression
+    /// tree rather than a hand-assembled one, so these tests exercise the shapes that actually
+    /// occur.
+    fn filter_expr(query: &str) -> DynTree<ExprIR<Variable>> {
+        // Binding a call like `rand()` resolves it against the function registry, which the
+        // module initialises at startup. Idempotent: `init_functions` returns Err once set.
+        let _ = crate::runtime::functions::init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let plan = Planner::new(scope_vars).plan(ir);
+        plan.root()
+            .indices::<Bfs>()
+            .find_map(|idx| match plan.node(idx).data() {
+                IR::Filter(f) => Some((**f).clone()),
+                _ => None,
+            })
+            .expect("query must plan to a Filter")
+    }
+
+    /// Two stacked filters over a leaf, which is the shape `push_filters_down` merges. The leaf
+    /// has no children, so the pass merges and then stops rather than pushing anything down.
+    fn conjuncts_after_merge(
+        upper: DynTree<ExprIR<Variable>>,
+        lower: DynTree<ExprIR<Variable>>,
+    ) -> usize {
+        let mut plan = tree!(
+            IR::Filter(Arc::new(upper)),
+            tree!(IR::Filter(Arc::new(lower)), tree!(IR::Argument(None)))
+        );
+        push_filters_down(&mut plan);
+
+        let merged = plan
+            .root()
+            .indices::<Bfs>()
+            .find_map(|idx| match plan.node(idx).data() {
+                IR::Filter(f) => Some(f.clone()),
+                _ => None,
+            })
+            .expect("a filter must survive");
+        assert!(
+            plan.root()
+                .indices::<Bfs>()
+                .filter(|i| matches!(plan.node(*i).data(), IR::Filter(_)))
+                .count()
+                == 1,
+            "the two filters must become one"
+        );
+        if matches!(merged.root().data(), ExprIR::And) {
+            merged.root().num_children()
+        } else {
+            1
+        }
+    }
+
+    #[test]
+    fn identical_conjuncts_collapse_to_one() {
+        let e = filter_expr("MATCH (a:L) WHERE a.p = 1 RETURN a");
+        assert_eq!(conjuncts_after_merge(e.clone(), e), 1);
+    }
+
+    /// The bug this pass was changed for: the planner and `select_scan_node` each emit the inline
+    /// attr filter for a traversal endpoint, so the same comparison arrives twice. Keeping both
+    /// turns a servable `Equal` into an `IndexQuery::And` that no index kind serves.
+    #[test]
+    fn duplicate_inline_attr_predicate_collapses() {
+        let e = filter_expr("MATCH (a:Person) WHERE a.id = 5 RETURN a");
+        assert_eq!(conjuncts_after_merge(e.clone(), e), 1);
+    }
+
+    #[test]
+    fn different_predicates_are_both_kept() {
+        let a = filter_expr("MATCH (a:L) WHERE a.p = 1 RETURN a");
+        let b = filter_expr("MATCH (a:L) WHERE a.p = 2 RETURN a");
+        assert_eq!(conjuncts_after_merge(a, b), 2, "different constants");
+
+        let a = filter_expr("MATCH (a:L) WHERE a.p = 1 RETURN a");
+        let b = filter_expr("MATCH (a:L) WHERE a.q = 1 RETURN a");
+        assert_eq!(conjuncts_after_merge(a, b), 2, "different properties");
+
+        let a = filter_expr("MATCH (a:L) WHERE a.p = 1 RETURN a");
+        let b = filter_expr("MATCH (a:L) WHERE a.p > 1 RETURN a");
+        assert_eq!(conjuncts_after_merge(a, b), 2, "different operators");
+    }
+
+    /// `rand() < 0.5 AND rand() < 0.5` is two independent draws. The trees are identical, so this
+    /// is caught by the legality check at the merge site, not by `structurally_eq`.
+    #[test]
+    fn non_deterministic_predicates_are_never_collapsed() {
+        let e = filter_expr("MATCH (a:L) WHERE rand() < 0.5 RETURN a");
+        assert!(
+            e.structurally_eq(&e),
+            "the two trees ARE identical — it is collapsing them that is illegal"
+        );
+        assert!(expr_has_non_deterministic(&e));
+        assert_eq!(conjuncts_after_merge(e.clone(), e), 2);
+    }
+
+    /// A deterministic call is fine to collapse — the guard must be about non-determinism, not
+    /// about function calls in general.
+    #[test]
+    fn deterministic_function_calls_do_collapse() {
+        let e = filter_expr("MATCH (a:L) WHERE toUpper(a.p) = 'X' RETURN a");
+        assert!(e.structurally_eq(&e));
+        assert!(!expr_has_non_deterministic(&e));
+        assert_eq!(conjuncts_after_merge(e.clone(), e), 1);
+    }
+
+    /// Structural equality must look at children, not just the root: same operator, different
+    /// operands.
+    #[test]
+    fn same_operator_different_operands_is_not_equal() {
+        let a = filter_expr("MATCH (a:L) WHERE a.p = a.q RETURN a");
+        let b = filter_expr("MATCH (a:L) WHERE a.p = a.r RETURN a");
+        assert!(!a.structurally_eq(&b));
+    }
+
+    /// The case unguarded discriminant comparison gets wrong. A `Quantifier` carries its own
+    /// bound variable, and a `Case` carries `has_subject`; `node_eq` inspects neither, so it must
+    /// refuse to call two of them identical — even two copies of the same one. Losing a
+    /// simplification here is the correct trade against ever collapsing two different ones.
+    #[test]
+    fn state_carrying_variants_are_never_equal() {
+        // Root is a `Quantifier`.
+        let q = filter_expr("MATCH (a:L) WHERE any(x IN a.list WHERE x > 1) RETURN a");
+        assert!(
+            !q.structurally_eq(&q.clone()),
+            "a quantifier must not equal a copy of itself"
+        );
+
+        // Root is `Eq`, but a `Case` sits underneath — the refusal has to propagate up from a
+        // child, not just apply at the root.
+        let c = filter_expr("MATCH (a:L) WHERE (CASE WHEN a.p = 1 THEN 1 ELSE 2 END) = 1 RETURN a");
+        assert!(
+            !c.structurally_eq(&c.clone()),
+            "a nested Case must block equality of the whole conjunct"
+        );
+        assert_eq!(conjuncts_after_merge(c.clone(), c), 2);
+    }
 }
