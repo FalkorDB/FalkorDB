@@ -311,6 +311,15 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         self.range(key, key)
     }
 
+    /// Whether the root is a branch rather than a single leaf — tests that need to exercise the
+    /// branch-routing paths assert on this, so they cannot silently pass on a tree too small to
+    /// have any.
+    #[cfg(test)]
+    #[must_use]
+    pub fn root_is_branch(&self) -> bool {
+        matches!(self.root, Node::Branch(_))
+    }
+
     /// Whether any doc is stored under `key`. Descends to the first matching entry
     /// and stops — no full point scan.
     #[must_use]
