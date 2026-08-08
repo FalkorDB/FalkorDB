@@ -114,7 +114,7 @@ class testCreateClause():
                        ("CREATE (_anon_0),(_anon_0)",   "_anon_0")]:
             try:
                 res = self.g.query(q)
-            except Exception as e:
+            except ResponseError as e:
                 self.env.assertContains(
                     f"The bound variable '{var}' can't be redeclared in a CREATE clause", str(e))
                 continue
