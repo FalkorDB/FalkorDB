@@ -2562,9 +2562,9 @@ fn grouping_key_of(node: &DynNode<ExprIR<Variable>>) -> Option<(GroupingKey, Opt
 /// projects. Neo4j reports those as "implicit grouping expressions"; leaving
 /// them to evaluate to Null is how the wrong answers got out.
 ///
-/// Nodes that bind their own variables are copied verbatim rather than
-/// descended into: those variables are local, so treating them as grouping-key
-/// candidates could only reject valid queries.
+/// Comprehensions, quantifiers and `reduce` are descended into, since they are
+/// evaluated inline against the same row and can capture a grouping key, but
+/// the variables they bind themselves are carried down and left alone.
 fn bind_grouping_keys(
     projected: Vec<(Variable, QueryExpr<Variable>)>
 ) -> Result<Vec<(Variable, QueryExpr<Variable>)>, String> {
@@ -2582,7 +2582,7 @@ fn bind_grouping_keys(
             if !expr.is_aggregation() {
                 return Ok((name, expr));
             }
-            let rewritten = replace_grouping_keys(&expr.root(), &keys)?;
+            let rewritten = replace_grouping_keys(&expr.root(), &keys, &HashSet::new())?;
             Ok((name, Arc::new(rewritten)))
         })
         .collect()
@@ -2591,17 +2591,32 @@ fn bind_grouping_keys(
 fn replace_grouping_keys(
     node: &DynNode<ExprIR<Variable>>,
     keys: &HashMap<GroupingKey, Variable>,
+    locals: &HashSet<(u32, u32)>,
 ) -> Result<DynTree<ExprIR<Variable>>, String> {
     match node.data() {
         ExprIR::FuncInvocation(func) if func.is_aggregate() => return Ok(node.clone_as_tree()),
-        ExprIR::ListComprehension(_)
-        | ExprIR::Quantifier { .. }
-        | ExprIR::Reduce(_)
-        | ExprIR::PatternComprehension(_) => return Ok(node.clone_as_tree()),
+        // A pattern comprehension is lifted out into its own sub-plan, which
+        // runs against the row feeding the aggregation rather than against the
+        // group's key row, so the projected alias does not exist there.
+        ExprIR::PatternComprehension(_) => return Ok(node.clone_as_tree()),
+        // The rest are evaluated inline against the same row as their parent, so
+        // a grouping key they capture has to be rewritten like any other. Their
+        // own variables are bound locally and must be left alone.
+        ExprIR::ListComprehension(var) | ExprIR::Quantifier { var, .. } => {
+            let locals = extend(locals, [var]);
+            return rebuild(node, keys, &locals);
+        }
+        ExprIR::Reduce(vars) => {
+            let locals = extend(locals, [&vars.accumulator, &vars.iterator]);
+            return rebuild(node, keys, &locals);
+        }
         _ => {}
     }
 
     if let Some((key, name)) = grouping_key_of(node) {
+        if locals.contains(&(key.0, key.1)) {
+            return Ok(node.clone_as_tree());
+        }
         if let Some(projected_as) = keys.get(&key) {
             return Ok(DynTree::new(ExprIR::Variable(projected_as.clone())));
         }
@@ -2621,13 +2636,33 @@ fn replace_grouping_keys(
         ));
     }
 
-    let mut rewritten = DynTree::new(node.data().clone());
+    rebuild(node, keys, locals)
+}
+
+/// Copies `node`, resolving grouping keys in each of its children.
+fn rebuild(
+    node: &DynNode<ExprIR<Variable>>,
+    keys: &HashMap<GroupingKey, Variable>,
+    locals: &HashSet<(u32, u32)>,
+) -> Result<DynTree<ExprIR<Variable>>, String> {
+    let mut rebuilt = DynTree::new(node.data().clone());
     for child in node.children() {
-        rewritten
+        rebuilt
             .root_mut()
-            .push_child_tree(replace_grouping_keys(&child, keys)?);
+            .push_child_tree(replace_grouping_keys(&child, keys, locals)?);
     }
-    Ok(rewritten)
+    Ok(rebuilt)
+}
+
+fn extend<'a>(
+    locals: &HashSet<(u32, u32)>,
+    vars: impl IntoIterator<Item = &'a Variable>,
+) -> HashSet<(u32, u32)> {
+    locals
+        .iter()
+        .copied()
+        .chain(vars.into_iter().map(|var| (var.id, var.scope_id)))
+        .collect()
 }
 
 fn replace_agg_subtrees(

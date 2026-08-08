@@ -290,6 +290,18 @@ class testAggregations():
                 # a key read from inside a map, alongside an aggregation
                 ("MATCH (n:P) RETURN n.a AS a, {same: n.a = 10, kids: collect(n.b)} AS m",
                  [[10, {'same': True, 'kids': [20, 30]}]]),
+                # a key captured by a construct that binds its own variables;
+                # these are evaluated inline, so the capture has to resolve too
+                ("MATCH (n:P) RETURN n.a AS a, count(*) + reduce(s = 0, x IN [1] | s + n.a)",
+                 [[10, 12]]),
+                ("MATCH (n:P) RETURN n.a AS a, count(*) + size([x IN [1] WHERE x < n.a | x])",
+                 [[10, 3]]),
+                ("MATCH (n:P) RETURN n.a AS a, count(*), any(x IN [1] WHERE x < n.a)",
+                 [[10, 2, True]]),
+                # the variables those constructs bind are local, so they are
+                # neither rewritten nor demanded as grouping keys
+                ("MATCH (n:P) RETURN count(*) + reduce(s = 0, x IN [1,2] | s + x)", [[5]]),
+                ("MATCH (n:P) RETURN count(*), [x IN [1,2] | x * 2]",              [[2, [2, 4]]]),
                 # no key involved at all
                 ("MATCH (n:P) RETURN 1 + count(*)",                      [[3]]),
                 ("MATCH (n:P) RETURN collect(n.a)[0]",                   [[10]]),
@@ -317,6 +329,10 @@ class testAggregations():
                  "paths"),
                 # the same read, one WITH earlier
                 ("MATCH (n:P) WITH n.b AS b, n WITH b + count(n) AS r RETURN r", "b"),
+                # a construct that binds its own variables does not excuse a key
+                # it captures without projecting
+                ("MATCH (n:P) RETURN n.a AS a, count(*) + reduce(s = 0, x IN [1] | s + n.b)",
+                 "n.b"),
         ]:
             self.assert_rejected(
                 g, query, f"'{read}' is read outside an aggregation function")
