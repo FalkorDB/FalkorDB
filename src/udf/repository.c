@@ -177,6 +177,13 @@ void UDF_RepoPopulateJSContext
 
 		// an ASSERT here compiles out in release builds, leaving the library
 		// silently absent from this thread's context
+		//
+		// logging is as far as this goes: the version was already recorded
+		// above, so this thread keeps a context missing the library and will
+		// not rebuild until the repo changes again, and AR_UDF reports the
+		// miss as "Unknown function" rather than the load failure. Reporting
+		// the real cause needs an error channel from this rebuild out to the
+		// query, which is worth doing separately
 		if (JS_IsException (val)) {
 			JSValue exc = JS_GetException (js_ctx) ;
 			const char *msg = JS_ToCString (js_ctx, exc) ;

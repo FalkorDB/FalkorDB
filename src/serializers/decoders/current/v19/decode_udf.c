@@ -30,10 +30,16 @@ bool AUXLoadUDF_latest
 		const char *lib    = RedisModule_LoadStringBuffer (io, &lib_len) ;
 		const char *script = RedisModule_LoadStringBuffer (io, &script_len) ; 
 
-		// a malformed payload can hand us a zero-length buffer; decrementing it
-		// unconditionally underflows size_t to SIZE_MAX, which is then read as
-		// a length
-		if (lib == NULL || script == NULL || lib_len == 0 || script_len == 0) {
+		// `n` is read off the wire and is not bounded here; bounding it belongs
+		// with the rest of the decoder surface in #2376. Stopping on the first
+		// failed read is what keeps an absurd count from spinning: a truncated
+		// payload fails immediately rather than looping `n` times.
+		//
+		// a malformed payload can also hand us a zero-length buffer;
+		// decrementing it unconditionally underflows size_t to SIZE_MAX, which
+		// is then read as a length
+		if (RedisModule_IsIOError (io) || lib == NULL || script == NULL ||
+			lib_len == 0 || script_len == 0) {
 			RedisModule_LogIOError (io, "warning",
 					"UDF: malformed library entry %llu of %llu, aborting load",
 					(unsigned long long)i, (unsigned long long)n) ;
