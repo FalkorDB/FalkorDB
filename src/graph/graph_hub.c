@@ -785,6 +785,12 @@ bool GraphHub_DropConstraint
 		attrs [i] = id ;
 	}
 
+	// sort attribute IDs to match GraphHub_AddConstraint's normalization -
+	// Schema_GetConstraint compares attribute arrays positionally, and a
+	// stored constraint's attributes are always sorted, regardless of the
+	// order properties were originally supplied in
+	qsort (attrs, n, sizeof (AttributeID), _cmp_AttributeID) ;
+
 	//--------------------------------------------------------------------------
 	// try to get constraint
 	//--------------------------------------------------------------------------

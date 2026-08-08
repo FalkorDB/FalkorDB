@@ -584,6 +584,32 @@ class testConstraintNodes():
         drop_node_range_index(self.g, "Author", "nickname")
         drop_node_range_index(self.g, "Author", "birthdate")
 
+    def test09_drop_multi_prop_constraint_argument_order(self):
+        # regression test: dropping a multi-property constraint must succeed
+        # regardless of the order properties are supplied in, even when that
+        # order differs from how the underlying attribute IDs happen to sort.
+        # GraphHub_DropConstraint used to look up the constraint using the
+        # caller's property order verbatim, while GraphHub_AddConstraint
+        # always sorts by attribute ID before storing - since
+        # Schema_GetConstraint compares attribute arrays positionally, a
+        # mismatched order caused a false "no such constraint" on drop.
+
+        def widget_constraints():
+            return [c for c in list_constraints(self.g) if c.label == "Widget"]
+
+        # 'zulu' is introduced first (lower attribute ID), 'alpha' second
+        # (higher attribute ID) - the reverse of the order used below
+        create_node_range_index(self.g, "Widget", "zulu", "alpha")
+
+        # create the constraint listing properties in 'alpha' then 'zulu'
+        # order - the reverse of their attribute-ID order
+        create_constraint(self.g, "unique", "node", "Widget", "alpha", "zulu")
+        self.env.assertEqual(len(widget_constraints()), 1)
+
+        # drop using the exact same property order used at creation time
+        drop_unique_node_constraint(self.g, "Widget", "alpha", "zulu")
+        self.env.assertEqual(len(widget_constraints()), 0)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
