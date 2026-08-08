@@ -210,15 +210,14 @@ typedef enum {
 // constructs the constraint, and adds it to the schema; does not enforce it
 // (caller is expected to call Constraint_Enforce on success)
 //
-// on return, props[i] is updated in place to a GraphContext-owned attribute
-// name, and may no longer be in the caller's original order
+// 'props' is read-only - it's never mutated or retained past this call
 Constraint GraphHub_AddConstraint
 (
 	GraphContext *gc,                // graph context
 	ConstraintType ct,               // constraint type (unique/mandatory)
 	GraphEntityType et,              // entity type (node/edge)
 	const char *label,               // label/relationship type
-	const char **props,              // constrained attribute names (mutated in place)
+	const char **props,              // constrained attribute names
 	uint8_t n,                       // number of constrained attributes
 	bool log,                        // should operation be logged
 	ConstraintCreateStatus *status,  // [output] outcome

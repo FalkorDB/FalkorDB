@@ -164,9 +164,9 @@ static void ApplyCreateEdge
 	// attributes (id,value) pair
 	//--------------------------------------------------------------------------
 
-	int i = 0 ;                       // size of current batch
-	const size_t batch_size = 4096 ;  // max batch size
-	Edge edges[batch_size] ;          // edges
+	int i = 0 ;                     // size of current batch
+	enum { batch_size = 4096 } ;    // compile-time constant, avoids a VLA
+	Edge edges[batch_size] ;        // edges
 
 	Edge **batch = arr_new (Edge *, 1) ;  // batch, points to edges
 	AttributeSet *sets = arr_new (AttributeSet, 1) ;  // attribute-sets
@@ -438,7 +438,7 @@ static bool ApplyAddAttribute
 	fread_assert (&l, sizeof (l), stream) ;
 
 	// read attribute name
-	const char attr[l] ;
+	char attr[l] ;
 	fread_assert (attr, l, stream) ;
 
 	// attr should not exist
@@ -651,9 +651,9 @@ static bool ApplyDeleteNode
 	EntityID id;                             // node ID
 	Graph *g = GraphContext_GetGraph (gc) ;  // graph to delete node from
 
-	int i = 0 ;                      // size of batch
-	const size_t batch_size = 4096 ; // max batch size
-	Node nodes[batch_size] ;         // nodes
+	int i = 0 ;                    // size of batch
+	enum { batch_size = 4096 } ;   // compile-time constant, avoids a VLA
+	Node nodes[batch_size] ;       // nodes
 
 	while (true) {
 		Node *n = nodes + i ;
@@ -716,8 +716,8 @@ static bool ApplyDeleteEdge
 	//    dest ID
 	//--------------------------------------------------------------------------
 
-	int i = 0 ;                       // size of current batch
-	const size_t batch_size = 4096 ;  // max batch size
+	int i = 0 ;                     // size of current batch
+	enum { batch_size = 4096 } ;    // compile-time constant, avoids a VLA
 	Edge edges[batch_size] ;          // edges
 
 	// encoded edge struct

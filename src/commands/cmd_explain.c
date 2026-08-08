@@ -22,7 +22,7 @@
 // optnone: see the identical comment on _query in cmd_query.c - the same
 // "goto cleanup" / llvm.assume miscompilation risk applies here now that
 // this function also has a GraphContext_RetrieveOrQueue failure path
-__attribute__((optnone))
+OPTNONE
 void Graph_Explain
 (
 	void *args

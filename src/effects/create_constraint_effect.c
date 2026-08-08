@@ -111,8 +111,8 @@ bool ApplyCreateConstraint
 	if (ok) {
 		ConstraintCreateStatus status ;
 		const char *err_msg = NULL ;
-		Constraint c = GraphHub_AddConstraint (gc, ct, et, label, props, n,
-				false, &status, &err_msg) ;
+		Constraint c = GraphHub_AddConstraint (gc, ct, et, label,
+				(const char **)props, n, false, &status, &err_msg) ;
 
 		if (c != NULL) {
 			Constraint_Enforce (c, (struct GraphContext *)gc) ;

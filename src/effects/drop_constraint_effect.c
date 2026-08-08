@@ -104,8 +104,8 @@ bool ApplyDropConstraint
 
 	if (ok) {
 		const char *err_msg = NULL ;
-		result = GraphHub_DropConstraint (gc, ct, et, label, props, n, false,
-				&err_msg) ;
+		result = GraphHub_DropConstraint (gc, ct, et, label,
+				(const char **)props, n, false, &err_msg) ;
 
 		if (!result) {
 			RedisModule_Log (NULL, "warning",

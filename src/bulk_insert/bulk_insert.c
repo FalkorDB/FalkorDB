@@ -321,7 +321,7 @@ static int _BulkInsert_ProcessNodeFile
 	//--------------------------------------------------------------------------
 
 	uint32_t batch_size = 0 ;
-	const uint32_t batch_cap = 4096 ;
+	enum { batch_cap = 4096 } ;  // compile-time constant, avoids a VLA
 
 	Node nodes[batch_cap] ;         // batched nodes
 	Node *p_nodes[batch_cap] ;      // pointer to nodes
