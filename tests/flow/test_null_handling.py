@@ -126,23 +126,25 @@ class testNullHandlingFlow(FlowTestsBase):
     # selects no branch. Every pair below is checked against `=` itself, since
     # the two must not disagree.
     def test09_null_simple_case(self):
-        for subject, when, matches in [("null",       "null",       False),
-                                       ("null",       "1",          False),
-                                       ("1",          "null",       False),
-                                       ("1",          "1",          True),
-                                       ("1.0",        "1",          True),
-                                       ("'a'",        "'a'",        True),
-                                       ("'a'",        "'b'",        False),
-                                       ("[1,2]",      "[1,2]",      True),
-                                       # a null anywhere inside makes `=` null
-                                       ("[1,null]",   "[1,null]",   False),
-                                       ("{a:null}",   "{a:null}",   False)]:
+        # `eq` is what `=` answers for the pair; None means null, which must
+        # stay distinct from False
+        for subject, when, eq in [("null",       "null",       None),
+                                  ("null",       "1",          None),
+                                  ("1",          "null",       None),
+                                  ("1",          "1",          True),
+                                  ("1.0",        "1",          True),
+                                  ("'a'",        "'a'",        True),
+                                  ("'a'",        "'b'",        False),
+                                  ("[1,2]",      "[1,2]",      True),
+                                  # a null anywhere inside makes `=` null
+                                  ("[1,null]",   "[1,null]",   None),
+                                  ("{a:null}",   "{a:null}",   None)]:
             q = f"RETURN CASE {subject} WHEN {when} THEN 'm' ELSE 'no' END AS v, {subject} = {when} AS eq"
-            branch, eq = self.graph.query(q).result_set[0]
+            branch, actual_eq = self.graph.query(q).result_set[0]
 
-            self.env.assertEqual(branch, 'm' if matches else 'no')
+            self.env.assertEqual(actual_eq, eq)
             # the branch is taken exactly when `=` is true, never when it is null
-            self.env.assertEqual(branch == 'm', eq is True)
+            self.env.assertEqual(branch, 'm' if eq is True else 'no')
 
         # with no ELSE, an unmatched subject yields null rather than a branch
         res = self.graph.query("RETURN CASE null WHEN null THEN 'm' END AS v")
