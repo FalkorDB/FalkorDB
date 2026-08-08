@@ -1042,17 +1042,48 @@ impl<'a> Parser<'a> {
     /// both labels, `MATCH (n {v: 1}), (n {w: 2})` both properties. CREATE and
     /// MERGE keep the first occurrence — a repeated alias there refers back to
     /// the entity being created, it does not add predicates.
+    /// Adds `node` to the pattern, reporting whether the alias is new to it.
     fn add_pattern_node(
         query_graph: &mut QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
         nodes_alias: &mut HashSet<Arc<String>>,
         node: &Arc<QueryNode<Arc<String>, Arc<String>>>,
         clause: &Keyword,
-    ) {
+    ) -> bool {
         if nodes_alias.insert(node.alias.clone()) {
             query_graph.add_node(node.clone());
-        } else if *clause == Keyword::Match {
+            return true;
+        }
+        if *clause == Keyword::Match {
             query_graph.merge_node(node);
         }
+        false
+    }
+
+    /// Rejects a `CREATE` path that opens by declaring an alias the clause has
+    /// already declared, e.g. `CREATE (n),(n)`.
+    ///
+    /// The pattern stores one node per alias, so the second `(n)` used to be
+    /// dropped and the clause quietly created a single node. Reusing an alias
+    /// to attach a relationship is a reference rather than a declaration, so
+    /// `CREATE (a),(b),(a)-[:R]->(b)` stays valid; only a path that opens on a
+    /// bare repeat is rejected.
+    fn reject_create_redeclaration(
+        &self,
+        declared: bool,
+        node: &QueryNode<Arc<String>, Arc<String>>,
+        clause: &Keyword,
+    ) -> Result<(), String> {
+        if declared
+            || *clause != Keyword::Create
+            || node.alias.starts_with("_anon")
+            || matches!(self.lexer.current()?, Token::Dash | Token::LessThan)
+        {
+            return Ok(());
+        }
+        Err(format!(
+            "The bound variable '{}' can't be redeclared in a CREATE clause",
+            node.alias
+        ))
     }
 
     fn parse_pattern(
@@ -1195,7 +1226,9 @@ impl<'a> Parser<'a> {
                 let mut vars = vec![];
                 let mut left = self.parse_node_pattern()?;
                 vars.push(left.alias.clone());
-                Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
+                let declared =
+                    Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
+                self.reject_create_redeclaration(declared, &left, clause)?;
                 loop {
                     if let Token::Dash | Token::LessThan = self.lexer.current()? {
                         let (relationship, right) =
@@ -1220,7 +1253,9 @@ impl<'a> Parser<'a> {
             } else {
                 let mut left = self.parse_node_pattern()?;
 
-                Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
+                let declared =
+                    Self::add_pattern_node(&mut query_graph, &mut nodes_alias, &left, clause);
+                self.reject_create_redeclaration(declared, &left, clause)?;
                 while let Token::Dash | Token::LessThan = self.lexer.current()? {
                     let (relationship, right) = self.parse_relationship_pattern(left, clause)?;
                     left = right.clone();

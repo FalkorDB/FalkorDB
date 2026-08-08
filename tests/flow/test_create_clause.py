@@ -96,3 +96,35 @@ class testCreateClause():
         self.env.assertEqual(v, 2)
         self.env.assertEqual(d, "B")
 
+    def test_04_node_reuse(self):
+        """a repeated bare node pattern redeclares its variable, while reusing
+        one to attach a relationship only references it"""
+
+        # each of these opens a path by redeclaring a variable the clause has
+        # already declared; the pattern keeps one node per alias, so these used
+        # to silently create a single node
+        for q in ["CREATE (n),(n)",
+                  "CREATE (n),(n),(n)",
+                  "CREATE (n {v:1}),(n)",
+                  "CREATE (n),(n:L)",
+                  "CREATE p = (n), q = (n)",
+                  "CREATE (n)-[:R]->(m), (n)"]:
+            try:
+                res = self.g.query(q)
+            except Exception as e:
+                self.env.assertContains(
+                    "The bound variable 'n' can't be redeclared in a CREATE clause", str(e))
+                continue
+            raise AssertionError(f"{q!r} should have been rejected, created {res.nodes_created} nodes")
+
+        # reusing an alias as a relationship endpoint is a reference, so these
+        # stay valid and must keep creating exactly one node per declaration
+        for q, nodes, edges in [("CREATE (a),(b),(a)-[:R]->(b)",            2, 1),
+                                ("CREATE (a),(b),(a)-[:R]->(b),(a)-[:S]->(b)", 2, 2),
+                                ("CREATE (a)-[:R]->(b), (b)-[:S]->(c)",    3, 2),
+                                ("CREATE (),()",                           2, 0),
+                                ("CREATE (a),(b)",                         2, 0)]:
+            res = self.g.query(q)
+            self.env.assertEqual(res.nodes_created, nodes)
+            self.env.assertEqual(res.relationships_created, edges)
+
