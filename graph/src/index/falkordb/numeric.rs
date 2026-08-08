@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
-use super::encode::encode_numeric;
+use super::encode::{StoredKeys, encode_numeric, encode_stored};
 use crate::index::IndexQuery;
 use crate::runtime::value::Value;
 
@@ -98,7 +98,60 @@ impl Iterator for UnionIter {
 /// [`FalkorDbIndex`](super::falkordb_index::FalkorDbIndex)).
 #[derive(Clone, Default)]
 pub struct NumericIndex {
+    /// Scalar values: exactly one tuple per indexed entity.
     tree: Tree,
+    /// Elements of **list**-valued properties: one tuple per distinct numeric element.
+    ///
+    /// A separate key space, not a convenience. Sharing one tree would make a node with
+    /// `v = [1, 2]` carry the key for `1`, so `WHERE n.v = 1` — false in Cypher — would match it,
+    /// and `Equal` has no post-filter to catch that (its plan is a bare `Node By Index Scan`).
+    /// RediSearch keeps the same separation with its `numeric:arr` sub-field.
+    ///
+    /// Read only by `ArrayContains` (`value IN n.prop`), which is a point lookup, so a doc is
+    /// reached through exactly one key per query and cannot be yielded twice.
+    array_tree: Tree,
+}
+
+/// Encoded tuples for one column, split by the tree they belong to.
+///
+/// The online build moves BASE, DELTA and TOMB around as raw `(key, doc)` tuples; each of those
+/// artifacts has to keep the two key spaces apart for the same reason the trees do.
+#[derive(Default, Debug, Clone)]
+pub struct EncodedTuples {
+    pub scalar: Vec<(u64, u64)>,
+    pub array: Vec<(u64, u64)>,
+}
+
+impl EncodedTuples {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.scalar.is_empty() && self.array.is_empty()
+    }
+
+    /// Total tuples across both key spaces.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.scalar.len() + self.array.len()
+    }
+
+    /// Scalar-only tuples — the shape a column with no list values produces.
+    #[must_use]
+    pub fn scalars(scalar: Vec<(u64, u64)>) -> Self {
+        Self {
+            scalar,
+            array: Vec::new(),
+        }
+    }
+
+    /// Drop every tuple whose doc fails `keep` — the install's deleted-entity backstop, which
+    /// must sweep both key spaces or a deleted node survives in its array half.
+    pub fn retain_docs(
+        &mut self,
+        mut keep: impl FnMut(u64) -> bool,
+    ) {
+        self.scalar.retain(|&(_, doc)| keep(doc));
+        self.array.retain(|&(_, doc)| keep(doc));
+    }
 }
 
 impl NumericIndex {
@@ -114,15 +167,16 @@ impl NumericIndex {
     /// traversal.
     #[must_use]
     pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
-        let mut pairs: Vec<(u64, u64)> = entries
-            .into_iter()
-            .filter_map(|(v, id)| encode_numeric(v).map(|k| (k, id)))
-            .collect();
-        pairs.sort_unstable();
-        pairs.dedup();
-        Self {
-            tree: Tree::from_sorted(&pairs),
+        let mut out = EncodedTuples::default();
+        let mut keys = Vec::new();
+        for (v, id) in entries {
+            let dest = match encode_stored(v, &mut keys) {
+                StoredKeys::Scalar => &mut out.scalar,
+                StoredKeys::Array => &mut out.array,
+            };
+            dest.extend(keys.iter().map(|&k| (k, id)));
         }
+        Self::from_encoded(out)
     }
 
     /// Index `id` under `value`. A no-op for non-numeric / `NaN` values and
@@ -132,11 +186,17 @@ impl NumericIndex {
         value: &Value,
         id: u64,
     ) {
-        if let Some(k) = encode_numeric(value) {
+        let mut keys = Vec::new();
+        let kind = encode_stored(value, &mut keys);
+        let tree = match kind {
+            StoredKeys::Scalar => &mut self.tree,
+            StoredKeys::Array => &mut self.array_tree,
+        };
+        for k in keys {
             // The bool reports whether the tuple was newly inserted — for callers keeping an
             // exact live count. This index derives its counts from the tree, so it is discarded
             // deliberately rather than ignored.
-            let _newly_inserted = self.tree.insert(k, id);
+            let _newly_inserted = tree.insert(k, id);
         }
     }
 
@@ -146,8 +206,14 @@ impl NumericIndex {
         value: &Value,
         id: u64,
     ) {
-        if let Some(k) = encode_numeric(value) {
-            let _was_present = self.tree.remove(k, id);
+        let mut keys = Vec::new();
+        let kind = encode_stored(value, &mut keys);
+        let tree = match kind {
+            StoredKeys::Scalar => &mut self.tree,
+            StoredKeys::Array => &mut self.array_tree,
+        };
+        for k in keys {
+            let _was_present = tree.remove(k, id);
         }
     }
 
@@ -159,9 +225,11 @@ impl NumericIndex {
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
     ) {
-        let mut pairs = Self::encode_pairs(entries);
-        pairs.sort_unstable();
-        self.tree.insert_batch(&pairs);
+        let mut t = Self::encode_pairs(entries);
+        t.scalar.sort_unstable();
+        t.array.sort_unstable();
+        self.tree.insert_batch(&t.scalar);
+        self.array_tree.insert_batch(&t.array);
     }
 
     /// Remove a batch of `(value, id)` entries, consuming any iterator. Non-numeric / `NaN` dropped;
@@ -170,34 +238,46 @@ impl NumericIndex {
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
     ) {
-        let mut pairs = Self::encode_pairs(entries);
-        pairs.sort_unstable();
-        self.tree.remove_batch(&pairs);
+        let mut t = Self::encode_pairs(entries);
+        t.scalar.sort_unstable();
+        t.array.sort_unstable();
+        self.tree.remove_batch(&t.scalar);
+        self.array_tree.remove_batch(&t.array);
     }
 
     /// Encode `(value, id)` entries to `(key, id)` tree tuples, dropping non-numeric / `NaN` values.
-    fn encode_pairs(entries: impl IntoIterator<Item = (Value, u64)>) -> Vec<(u64, u64)> {
-        entries
-            .into_iter()
-            .filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id)))
-            .collect()
+    fn encode_pairs(entries: impl IntoIterator<Item = (Value, u64)>) -> EncodedTuples {
+        let mut out = EncodedTuples::default();
+        let mut keys = Vec::new();
+        for (v, id) in entries {
+            let dest = match encode_stored(&v, &mut keys) {
+                StoredKeys::Scalar => &mut out.scalar,
+                StoredKeys::Array => &mut out.array,
+            };
+            dest.extend(keys.iter().map(|&k| (k, id)));
+        }
+        out
     }
 
     /// Build directly from already-encoded `(key, doc)` tuples, in any order — how the
     /// install adopts a background-built BASE without re-encoding or re-sorting it per row.
     #[must_use]
-    pub fn from_encoded(mut pairs: Vec<(u64, u64)>) -> Self {
-        pairs.sort_unstable();
-        pairs.dedup();
+    pub fn from_encoded(mut tuples: EncodedTuples) -> Self {
+        let build = |pairs: &mut Vec<(u64, u64)>| {
+            pairs.sort_unstable();
+            pairs.dedup();
+            Tree::from_sorted(pairs)
+        };
         Self {
-            tree: Tree::from_sorted(&pairs),
+            tree: build(&mut tuples.scalar),
+            array_tree: build(&mut tuples.array),
         }
     }
 
     /// Encode `(value, id)` entries to tree tuples, dropping non-numeric / `NaN`.
     /// Public so a background build can encode BASE off the write thread.
     #[must_use]
-    pub fn encode_entries(entries: Vec<(Value, u64)>) -> Vec<(u64, u64)> {
+    pub fn encode_entries(entries: Vec<(Value, u64)>) -> EncodedTuples {
         Self::encode_pairs(entries)
     }
 
@@ -208,9 +288,11 @@ impl NumericIndex {
     /// tuples in a tight loop, skipping the per-entry enum dispatch and `Iterator::next` a lazy
     /// cursor pays, and this call always consumes the whole artifact anyway.
     #[must_use]
-    pub fn encoded_tuples(&self) -> Vec<(u64, u64)> {
-        let mut out = Vec::new();
-        self.tree.for_each_tuple(|k, d| out.push((k, d)));
+    pub fn encoded_tuples(&self) -> EncodedTuples {
+        let mut out = EncodedTuples::default();
+        self.tree.for_each_tuple(|k, d| out.scalar.push((k, d)));
+        self.array_tree
+            .for_each_tuple(|k, d| out.array.push((k, d)));
         out
     }
 
@@ -219,25 +301,29 @@ impl NumericIndex {
     /// decoded key would be a second trip through a many-to-one map.
     pub fn add_encoded(
         &mut self,
-        pairs: &mut Vec<(u64, u64)>,
+        tuples: &mut EncodedTuples,
     ) {
-        pairs.sort_unstable();
-        self.tree.insert_batch(pairs);
+        tuples.scalar.sort_unstable();
+        tuples.array.sort_unstable();
+        self.tree.insert_batch(&tuples.scalar);
+        self.array_tree.insert_batch(&tuples.array);
     }
 
     /// Remove already-encoded tuples — the install subtracting TOMB from BASE.
     pub fn remove_encoded(
         &mut self,
-        pairs: &mut Vec<(u64, u64)>,
+        tuples: &mut EncodedTuples,
     ) {
-        pairs.sort_unstable();
-        self.tree.remove_batch(pairs);
+        tuples.scalar.sort_unstable();
+        tuples.array.sort_unstable();
+        self.tree.remove_batch(&tuples.scalar);
+        self.array_tree.remove_batch(&tuples.array);
     }
 
     /// Whether the index holds no tuples.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.tree.is_empty()
+        self.tree.is_empty() && self.array_tree.is_empty()
     }
 
     /// Entity ids whose value equals `value`. Empty for a non-numeric value.
@@ -305,6 +391,28 @@ impl NumericIndex {
         DocIter::One(self.tree.range(lo, hi))
     }
 
+    /// Entity ids whose **list**-valued property contains `value` — `value IN n.prop`.
+    ///
+    /// A point lookup into the array tree, so each matching doc is reached through one key and
+    /// appears once. The scalar tree is deliberately not consulted: `1 IN n.v` must not match a
+    /// node whose `v` is the scalar `1`.
+    ///
+    /// May over-return relative to Cypher: a list element the encoder cannot represent is absent,
+    /// and a `Range`-indexed column holds no type tag, so `1 IN n.v` also matches `v = [true]`
+    /// (the encoder maps `true` to `1.0`). `utilize_index` keeps the original filter on this
+    /// predicate precisely so the runtime rechecks it — which is why the array tree is allowed to
+    /// be approximate where the scalar tree is not.
+    #[must_use]
+    pub fn array_contains(
+        &self,
+        value: &Value,
+    ) -> DocIter {
+        match encode_numeric(value) {
+            Some(k) => DocIter::One(self.array_tree.point(k)),
+            None => self.empty(),
+        }
+    }
+
     /// Dispatch the numeric *leaf* predicates. `Equal` → [`point`](Self::point),
     /// `Range` → [`range`](Self::range). Composite (`And`/`Or`) and non-numeric
     /// variants return `None` — the query router composes or rejects those (P5).
@@ -323,6 +431,7 @@ impl NumericIndex {
                 ..
             } => Some(self.range(min.as_ref(), max.as_ref(), *include_min, *include_max)),
             IndexQuery::Or(children) => self.union(children),
+            IndexQuery::ArrayContains { value, .. } => Some(self.array_contains(value)),
             _ => None,
         }
     }
@@ -396,6 +505,7 @@ impl NumericIndex {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use thin_vec::ThinVec;
 
     fn ids(it: DocIter) -> Vec<u64> {
         it.collect()
@@ -749,6 +859,142 @@ mod tests {
             rest,
             vec![2],
             "the second member must be answered from the snapshot the union started on"
+        );
+    }
+
+    /// The reason the array elements live in their own tree.
+    ///
+    /// A node whose `v` is the list `[1, 2]` must NOT be returned by `WHERE n.v = 1` — that is
+    /// false in Cypher — and a node whose `v` is the scalar `1` must NOT be returned by
+    /// `WHERE 1 IN n.v`. One shared key space cannot tell those apart, and `Equal` carries no
+    /// post-filter to clean up after it (its plan is a bare `Node By Index Scan`), so the wrong
+    /// row would reach the caller.
+    #[test]
+    fn a_scalar_and_a_list_element_do_not_share_a_key_space() {
+        let attr = Arc::new("v".to_string());
+        let mut idx = NumericIndex::new();
+        idx.add(&Value::Int(1), 10); // scalar 1
+        idx.add(
+            &Value::List(Arc::new(
+                [Value::Int(1), Value::Int(2)].into_iter().collect(),
+            )),
+            20,
+        ); // list [1, 2]
+
+        let eq = IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(1),
+        };
+        assert_eq!(
+            ids(idx.query(&eq).expect("servable")),
+            vec![10],
+            "`n.v = 1` must match the scalar only, never the list that contains 1"
+        );
+
+        let contains = IndexQuery::ArrayContains {
+            key: attr.clone(),
+            value: Value::Int(1),
+        };
+        assert_eq!(
+            ids(idx.query(&contains).expect("servable")),
+            vec![20],
+            "`1 IN n.v` must match the list only, never the scalar 1"
+        );
+
+        // A range over the scalar tree must not see list elements either.
+        let rng = IndexQuery::Range {
+            key: attr,
+            min: Some(Value::Int(0)),
+            max: Some(Value::Int(5)),
+            include_min: true,
+            include_max: true,
+        };
+        assert_eq!(ids(idx.query(&rng).expect("servable")), vec![10]);
+    }
+
+    /// Every numeric element is reachable, and a repeated element contributes one tuple — the
+    /// tree stores `(key, doc)` as a set, so a removal must not depend on how many times the
+    /// value happened to list the same number.
+    #[test]
+    fn every_element_is_indexed_once() {
+        let attr = Arc::new("v".to_string());
+        let list = |xs: &[i64]| {
+            Value::List(Arc::new(
+                xs.iter().map(|&x| Value::Int(x)).collect::<ThinVec<_>>(),
+            ))
+        };
+        let mut idx = NumericIndex::new();
+        idx.add(&list(&[1, 1, 2]), 7);
+
+        let contains = |v: i64| IndexQuery::ArrayContains {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+        assert_eq!(ids(idx.query(&contains(1)).expect("servable")), vec![7]);
+        assert_eq!(ids(idx.query(&contains(2)).expect("servable")), vec![7]);
+        assert!(ids(idx.query(&contains(3)).expect("servable")).is_empty());
+
+        // Removing the same value takes every element with it, duplicates included.
+        idx.remove(&list(&[1, 1, 2]), 7);
+        assert!(idx.is_empty(), "both trees must be empty again");
+    }
+
+    /// Non-numeric elements are skipped individually rather than rejecting the whole list — they
+    /// belong to a text kind, exactly as a non-numeric scalar does.
+    #[test]
+    fn mixed_lists_index_their_numeric_elements() {
+        let attr = Arc::new("v".to_string());
+        let mixed = Value::List(Arc::new(
+            [Value::Int(4), Value::String(Arc::new("x".to_string()))]
+                .into_iter()
+                .collect::<ThinVec<_>>(),
+        ));
+        let mut idx = NumericIndex::new();
+        idx.add(&mixed, 3);
+        assert_eq!(
+            ids(idx
+                .query(&IndexQuery::ArrayContains {
+                    key: attr,
+                    value: Value::Int(4),
+                })
+                .expect("servable")),
+            vec![3]
+        );
+    }
+
+    /// The encoded artifacts the online build passes around must keep the split, or a
+    /// background-built column loses its array half on install.
+    #[test]
+    fn encoded_tuples_round_trip_both_trees() {
+        let attr = Arc::new("v".to_string());
+        let mut idx = NumericIndex::new();
+        idx.add(&Value::Int(1), 10);
+        idx.add(
+            &Value::List(Arc::new(
+                [Value::Int(1)].into_iter().collect::<ThinVec<_>>(),
+            )),
+            20,
+        );
+
+        let rebuilt = NumericIndex::from_encoded(idx.encoded_tuples());
+        assert_eq!(
+            ids(rebuilt
+                .query(&IndexQuery::Equal {
+                    key: attr.clone(),
+                    value: Value::Int(1),
+                })
+                .expect("servable")),
+            vec![10]
+        );
+        assert_eq!(
+            ids(rebuilt
+                .query(&IndexQuery::ArrayContains {
+                    key: attr,
+                    value: Value::Int(1),
+                })
+                .expect("servable")),
+            vec![20],
+            "the array half must survive the encode/install round trip"
         );
     }
 }

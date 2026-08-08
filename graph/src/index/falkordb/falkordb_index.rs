@@ -17,7 +17,7 @@ use crate::index::IndexQuery;
 use crate::runtime::value::Value;
 
 use super::encode::encode_numeric;
-use super::numeric::{DocIter, NumericIndex};
+use super::numeric::{DocIter, EncodedTuples, NumericIndex};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
@@ -93,7 +93,7 @@ impl IndexColumn {
     pub fn encode_entries(
         &self,
         entries: Vec<(Value, u64)>,
-    ) -> Vec<(u64, u64)> {
+    ) -> EncodedTuples {
         match self {
             Self::Numeric(_) => NumericIndex::encode_entries(entries),
         }
@@ -104,10 +104,10 @@ impl IndexColumn {
     #[must_use]
     pub fn new_like_from_encoded(
         &self,
-        pairs: Vec<(u64, u64)>,
+        tuples: EncodedTuples,
     ) -> Self {
         match self {
-            Self::Numeric(_) => Self::Numeric(NumericIndex::from_encoded(pairs)),
+            Self::Numeric(_) => Self::Numeric(NumericIndex::from_encoded(tuples)),
         }
     }
 
@@ -116,7 +116,7 @@ impl IndexColumn {
     /// the column it will be subtracted from, and decoding to re-encode would be a second
     /// trip through a many-to-one map.
     #[must_use]
-    pub fn encoded_tuples(&self) -> Vec<(u64, u64)> {
+    pub fn encoded_tuples(&self) -> EncodedTuples {
         match self {
             Self::Numeric(idx) => idx.encoded_tuples(),
         }
@@ -125,20 +125,20 @@ impl IndexColumn {
     /// Add already-encoded tuples (install: replay DELTA onto BASE).
     pub fn add_encoded(
         &mut self,
-        pairs: &mut Vec<(u64, u64)>,
+        tuples: &mut EncodedTuples,
     ) {
         match self {
-            Self::Numeric(idx) => idx.add_encoded(pairs),
+            Self::Numeric(idx) => idx.add_encoded(tuples),
         }
     }
 
     /// Remove already-encoded tuples (install: subtract TOMB from BASE).
     pub fn remove_encoded(
         &mut self,
-        pairs: &mut Vec<(u64, u64)>,
+        tuples: &mut EncodedTuples,
     ) {
         match self {
-            Self::Numeric(idx) => idx.remove_encoded(pairs),
+            Self::Numeric(idx) => idx.remove_encoded(tuples),
         }
     }
 
@@ -497,7 +497,7 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
         epoch: u64,
-        base: Vec<(u64, u64)>,
+        base: EncodedTuples,
     ) -> bool {
         let Some(entry) = self
             .columns_mut(entity)
@@ -530,7 +530,7 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
         entries: Vec<(Value, u64)>,
-    ) -> Option<Vec<(u64, u64)>> {
+    ) -> Option<EncodedTuples> {
         self.columns(entity)
             .get(&(label.clone(), attr.clone()))
             .map(|entry| entry.column.encode_entries(entries))
@@ -609,7 +609,11 @@ impl FalkorDbIndex {
                 let same_key = member_keys.iter().all(|k| *k == first_key);
                 (first_key, same_key)
             }
-            // And / Point (geo) / InList / ArrayContains → not a numeric leaf.
+            // `value IN n.prop`, where the property holds a list. Served from the column's
+            // separate array tree — see `NumericIndex::array_contains`. Servable when the probed
+            // value encodes; the elements themselves were filtered at write time.
+            IndexQuery::ArrayContains { key, value } => (key, encode_numeric(value).is_some()),
+            // And / Point (geo) / InList → not a numeric leaf.
             _ => return None,
         };
         if !servable {
@@ -699,7 +703,13 @@ mod tests {
         // A stale epoch — as if the column had been dropped and re-created — installs nothing and
         // must not flip the column `Ready`.
         assert!(
-            !idx.install_base(Node, &label, &attr, epoch + 1, vec![(key(99), 9)]),
+            !idx.install_base(
+                Node,
+                &label,
+                &attr,
+                epoch + 1,
+                EncodedTuples::scalars(vec![(key(99), 9)])
+            ),
             "stale epoch cannot install"
         );
         assert!(building(&idx, 99), "stale epoch cannot publish");
@@ -710,7 +720,13 @@ mod tests {
         );
 
         // The real install, one commit: BASE holds the snapshot-era rows 10 and 20.
-        assert!(idx.install_base(Node, &label, &attr, epoch, vec![(key(10), 0), (key(20), 1)]));
+        assert!(idx.install_base(
+            Node,
+            &label,
+            &attr,
+            epoch,
+            EncodedTuples::scalars(vec![(key(10), 0), (key(20), 1)])
+        ));
         assert!(idx.building_columns().is_empty(), "no longer building");
         assert_eq!(hits(&idx, 10), vec![0], "untouched base row survives");
         assert!(
