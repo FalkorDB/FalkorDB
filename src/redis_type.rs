@@ -234,7 +234,11 @@ unsafe extern "C" fn graph_aux_load(
         };
 
         let repo = get_udf_repo();
-        let mut libs = Vec::with_capacity(count as usize);
+        // `count` comes off the wire, so it cannot size an allocation: a
+        // corrupt or hostile dump would otherwise reserve up to `u64::MAX`
+        // entries before the first read fails. Growing on demand costs
+        // nothing here, since a server holds a handful of libraries.
+        let mut libs = Vec::new();
         for _ in 0..count {
             let name = match load_string_buffer(rdb) {
                 Ok(buf) => String::from_utf8_lossy(buf.as_ref()).to_string(),
