@@ -76,6 +76,24 @@ SETUP = [
     # the constraint goes OPERATIONAL (unlike the SIMILAR one, which fails).
     "CREATE INDEX FOR ()-[r:UREL]-() ON (r.uid)",
     "MATCH (a:Person {id: 1}), (b:Person {id: 2}) CREATE (a)-[:UREL {uid: 1}]->(b), (a)-[:UREL {uid: 2}]->(b)",
+    # ---- write-path index-maintenance corpus --------------------------------
+    # Deliberately NOT constrained. A unique constraint is enforced by scanning
+    # the whole label matrix and rebuilding every node's composite key, per
+    # affected node — that cost would swamp the index maintenance this corpus
+    # exists to isolate. `WIdx` carries `v` (indexed) beside `w` (not), so a
+    # write to each is identical apart from the index.
+    "CREATE INDEX FOR (n:WIdx) ON (n.id)",
+    "CREATE INDEX FOR (n:WIdx) ON (n.v)",
+    "UNWIND range(0, 999) AS i CREATE (:WIdx {id: i, v: i, w: i})",
+    # Deletion pool. Sized for `mass delete indexed`'s explicit rep count with
+    # room to spare: running dry does not fail, it quietly measures a no-op.
+    "CREATE INDEX FOR (n:WDel) ON (n.v)",
+    "UNWIND range(0, 5999) AS i CREATE (:WDel {v: i})",
+    # Indexed label for create/delete round trips.
+    "CREATE INDEX FOR (n:WTmp) ON (n.v)",
+    # Edge equivalent: `wv` indexed, `ww` not, no constraint.
+    "CREATE INDEX FOR ()-[r:WREL]-() ON (r.wv)",
+    "MATCH (a:WIdx {id: 0}), (b:WIdx {id: 1}) CREATE (a)-[:WREL {wv: 1, ww: 1}]->(b)",
 ]
 
 # Raw redis commands run after SETUP (redis-cli arg lists). {graph} is
@@ -526,6 +544,37 @@ QUERIES = [
     Q("runtime-bound index range", False, "MATCH (a:Person {id: 9990}) WITH a MATCH (b:Person) WHERE b.id > a.id RETURN count(b)"),
     # Distance index scan over the Geo point index (IndexQuery::Point).
     Q("distance index scan geo", False, "MATCH (g:Geo) WHERE distance(g.loc, point({latitude: 0.0, longitude: 0.0})) < 10000 RETURN count(g)"),
+
+    # ---- write-path index maintenance ---------------------------------------
+    # Each indexed write is paired with the identical write to an UNINDEXED
+    # property of the same node, so the delta between the pair is the index
+    # maintenance cost and nothing else — same match, same commit, same
+    # attribute-store write.
+    #
+    # Values are incremented rather than assigned a constant: `SET n.v = 42`
+    # writes the same value every rep after the first, and an update that does
+    # not move the key is not the update this is meant to measure.
+    # Read-only baseline for the pair below: the same indexed lookup with no
+    # write at all. Both SET queries pay this lookup, and it is itself served by
+    # a different engine in each build, so it has to be measured separately
+    # before the pair's delta can be attributed to write-side maintenance.
+    Q("WIdx lookup only",      False, "MATCH (n:WIdx {id: 500}) RETURN n.w"),
+    Q("SET indexed prop",      True, "MATCH (n:WIdx {id: 500}) SET n.v = n.v + 1 RETURN n.v"),
+    Q("SET unindexed prop",    True, "MATCH (n:WIdx {id: 500}) SET n.w = n.w + 1 RETURN n.w"),
+    Q("SET += indexed map",    True, "MATCH (n:WIdx {id: 501}) SET n += {v: n.v + 1, x: 1} RETURN n.v"),
+    Q("SET += unindexed map",  True, "MATCH (n:WIdx {id: 501}) SET n += {w: n.w + 1, x: 1} RETURN n.w"),
+    # Create/delete round trips. The unindexed twin is the existing
+    # "CREATE + DELETE" on :Tmp.
+    Q("create indexed node",   True, "CREATE (:WTmp {v: 1})"),
+    Q("create+delete indexed", True, "CREATE (t:WTmp {v: 1}) WITH t DELETE t"),
+    # Scattered mass delete — the `remove_batch` path. Explicit reps because
+    # this drains its pool: 50 x 100 against 6,000 :WDel.
+    Q("mass delete indexed",   True, "MATCH (t:WDel) WITH t LIMIT 100 DELETE t", 50),
+    # Label add/remove re-routes which columns a node belongs to.
+    Q("label churn indexed",   True, "MATCH (n:WIdx {id: 502}) SET n:WExtra REMOVE n:WExtra"),
+    # Edge pair.
+    Q("SET indexed edge prop",   True, "MATCH ()-[r:WREL]->() SET r.wv = r.wv + 1 RETURN r.wv"),
+    Q("SET unindexed edge prop", True, "MATCH ()-[r:WREL]->() SET r.ww = r.ww + 1 RETURN r.ww"),
 
     # ---- sized writes ------------------------------------------------------
     # Kept LAST: they inflate node capacity / matrix dimension to max(N),
