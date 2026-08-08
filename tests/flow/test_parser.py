@@ -334,3 +334,50 @@ class testParser(FlowTestsBase):
         except:
             pass
 
+    def test_chained_unary_sign(self):
+        # signs chain, only the parity of the minus signs matters
+        # `-` is a single char token, so `--` is two signs, not a comment
+        for query, expected in [("RETURN - -5",     5),
+                                ("RETURN --5",      5),
+                                ("RETURN -(-5)",    5),
+                                ("RETURN ---5",    -5),
+                                ("RETURN - + -5",   5),
+                                ("RETURN -+5",     -5),
+                                ("RETURN +-5",     -5),
+                                ("RETURN 1 - -2",   3),
+                                ("RETURN 1 - - -2",-1),
+                                ("RETURN - -1.5",   1.5)]:
+            actual = self.graph.query(query).result_set
+            self.env.assertEqual(actual, [[expected]])
+
+    def test_chained_unary_sign_int_min(self):
+        # the smallest i64 is only reachable through an odd number of signs,
+        # an even number makes it 2^63 which does not fit
+        min_i64 = -9223372036854775808
+
+        for query, expected in [("RETURN -9223372036854775808",     min_i64),
+                                ("RETURN - - -9223372036854775808", min_i64)]:
+            actual = self.graph.query(query).result_set
+            self.env.assertEqual(actual, [[expected]])
+
+        for query in ["RETURN 9223372036854775808",
+                      "RETURN - -9223372036854775808"]:
+            try:
+                self.graph.query(query)
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Integer overflow", str(e))
+
+        # the sign is carried into the message of a literal the lexer rejects
+        try:
+            self.graph.query("RETURN - -9223372036854775809")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Integer overflow '9223372036854775809'", str(e))
+
+        try:
+            self.graph.query("RETURN - - -9223372036854775809")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Integer overflow '-9223372036854775809'", str(e))
+

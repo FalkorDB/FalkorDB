@@ -60,7 +60,7 @@
 //! add_sub         ::= mul_div ( ('+' | '-') mul_div )*
 //! mul_div         ::= power ( ('*' | '/' | '%') power )*
 //! power           ::= unary ( '^' unary )*
-//! unary           ::= ['-'] postfix
+//! unary           ::= ( '+' | '-' )* postfix
 //! postfix         ::= primary ( '.' prop | '[' index ']' )*
 //! primary         ::= literal | variable | '(' expr ')' | function_call
 //!                    | CASE | list_comprehension | pattern_comprehension
@@ -1881,8 +1881,15 @@ impl<'a> Parser<'a> {
                     stack.push((current + 1, None));
                 } else if current == 9 {
                     // unary add or subtract
-                    optional_match_token!(self.lexer, Plus);
-                    let is_negate = optional_match_token!(self.lexer, Dash);
+                    //
+                    // Signs chain, so `- -5` and `--5` are both `5`. Only the
+                    // parity of the minus signs matters, the same way `NOT`
+                    // folds above.
+                    let mut is_negate = false;
+                    while let Ok(token @ (Token::Plus | Token::Dash)) = self.lexer.current() {
+                        is_negate ^= token == Token::Dash;
+                        self.lexer.next();
+                    }
 
                     // Handle integer overflow with negation
                     if is_negate && let Err(err) = self.lexer.current() {
