@@ -1819,36 +1819,45 @@ class test_udf_javascript():
         every query hangs.
         """
 
-        # 1s budget, so the interrupt fires quickly
+        # 1s budget, so the interrupt fires quickly. tearDown does not restore
+        # configuration, so the previous value has to be put back here or every
+        # later test in this class inherits it
+        prior_timeout = self.conn.execute_command(
+            "GRAPH.CONFIG", "GET", "TIMEOUT_DEFAULT")[1]
         self.conn.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", "1000")
 
-        # `__falkor_registered_names` exists only while validating, so the loop
-        # is unreachable at registration and reached on every rebuild
-        script = """
-        if (typeof globalThis.__falkor_registered_names === 'undefined') {
-            while (true) {}
-        }
-        falkor.register('spin', function() { return 1; });
-        """
-        self.db.udf_load("lib_spin", script)
-
-        # a short-lived connection, so an unbounded rebuild fails this test in
-        # seconds instead of hanging on the suite's 600s socket timeout
-        bounded = self.env.getConnection()
-        bounded.connection_pool.connection_kwargs['socket_timeout'] = 30
-
         try:
-            bounded.execute_command("GRAPH.QUERY", GRAPH_ID, "RETURN lib_spin.spin()")
-            raise AssertionError("expected the runaway top-level code to be interrupted")
-        except ResponseError as e:
-            self.env.assertContains("interrupted", str(e).lower())
-        except redis.exceptions.TimeoutError:
-            raise AssertionError(
-                "rebuild ran unbounded: the call neither returned nor errored")
+            # `__falkor_registered_names` exists only while validating, so the
+            # loop is unreachable at registration and reached on every rebuild
+            script = """
+            if (typeof globalThis.__falkor_registered_names === 'undefined') {
+                while (true) {}
+            }
+            falkor.register('spin', function() { return 1; });
+            """
+            self.db.udf_load("lib_spin", script)
 
-        # the worker is released, so the server keeps serving
-        self.conn.execute_command("GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", "0")
-        self.db.udf_flush()
-        self.env.assertEqual(
-            self.graph.query("RETURN 1").result_set, [[1]])
+            # a short-lived connection, so an unbounded rebuild fails this test
+            # in seconds instead of hanging on the suite's 600s socket timeout
+            bounded = self.env.getConnection()
+            bounded.connection_pool.connection_kwargs['socket_timeout'] = 30
+
+            try:
+                bounded.execute_command(
+                    "GRAPH.QUERY", GRAPH_ID, "RETURN lib_spin.spin()")
+                raise AssertionError(
+                    "expected the runaway top-level code to be interrupted")
+            except ResponseError as e:
+                self.env.assertContains("interrupted", str(e).lower())
+            except redis.exceptions.TimeoutError as e:
+                raise AssertionError(
+                    "rebuild ran unbounded: the call neither returned nor "
+                    "errored") from e
+        finally:
+            self.conn.execute_command(
+                "GRAPH.CONFIG", "SET", "TIMEOUT_DEFAULT", str(prior_timeout))
+            self.db.udf_flush()
+
+        # the worker was released rather than pinned, so the server keeps serving
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
 
