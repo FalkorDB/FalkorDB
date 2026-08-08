@@ -863,9 +863,9 @@ mod tests {
         assert!(lex_all("$`é").is_err());
     }
 
-    /// Regression: subnormals were rejected as "Float overflow" even though
-    /// they are finite and representable, so the parser refused magnitudes the
-    /// evaluator produces on its own (`1.0e-307 / 10`).
+    // Regression: subnormals were rejected as "Float overflow" even though
+    // they are finite and representable, so the parser refused magnitudes the
+    // evaluator produces on its own (`1.0e-307 / 10`).
     #[test]
     fn subnormal_float_literals_are_accepted() {
         // `5e-324` and `4.9e-324` are the smallest positive subnormal
@@ -879,8 +879,8 @@ mod tests {
         }
     }
 
-    /// Pins the overflow path, so narrowing the guard that used to exclude
-    /// subnormals cannot be loosened further into accepting infinities.
+    // Pins the overflow path, so narrowing the guard that used to exclude
+    // subnormals cannot be loosened further into accepting infinities.
     #[test]
     fn float_literals_beyond_the_representable_range_still_overflow() {
         for literal in ["1e400", "1.8e308"] {
