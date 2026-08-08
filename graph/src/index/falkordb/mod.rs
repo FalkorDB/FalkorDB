@@ -105,7 +105,13 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
         ),
         Q::InList { key, .. } => format!("an IN list on `{key}`"),
         Q::Point { key, .. } => format!("a geo predicate on `{key}`"),
-        Q::ArrayContains { key, .. } => format!("an array-contains on `{key}`"),
+        Q::ArrayContains { key, value } => {
+            if encode::encode_numeric(value).is_some() {
+                format!("an array-contains on `{key}`")
+            } else {
+                format!("an array-contains on `{key}` with a non-numeric value")
+            }
+        }
     }
 }
 
