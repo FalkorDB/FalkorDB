@@ -37,6 +37,55 @@ pub fn encode_numeric(value: &Value) -> Option<u64> {
     (!x.is_nan()).then(|| encode_f64(x))
 }
 
+/// Append the keys a **stored** value contributes, and say which tree they belong in.
+///
+/// A scalar contributes at most one key to the *scalar* tree. A list contributes one key per
+/// numeric element to the *array* tree — so `1 IN n.samples` is an ordinary point lookup.
+///
+/// The two key spaces must stay separate. If a list's elements landed in the scalar tree, a node
+/// with `v = [1, 2]` would carry the key for `1`, and `WHERE n.v = 1` — which is **false** in
+/// Cypher — would match it. `Equal` retains no post-filter (the plan is a bare `Node By Index
+/// Scan`), so that false positive would be returned to the user. RediSearch avoids the same
+/// collision with a separate `numeric:arr` sub-field; this is the native equivalent.
+///
+/// Keys are deduplicated, so `[1, 1.0, 2]` contributes two tuples rather than three: `(key, doc)`
+/// is a set member in the tree, and a removal must not depend on how many times the value
+/// happened to list the same number. Nested lists are not flattened — Cypher's `IN` does not look
+/// inside them.
+///
+/// Deliberately separate from [`encode_numeric`], which answers a different question: the key of
+/// a **query** value. A query value is a single scalar; one that is a list is declined rather
+/// than expanded, because `n.v = [1,2]` asks about the list itself.
+#[must_use]
+pub fn encode_stored(
+    value: &Value,
+    out: &mut Vec<u64>,
+) -> StoredKeys {
+    out.clear();
+    match value {
+        Value::List(items) => {
+            out.extend(items.iter().filter_map(encode_numeric));
+            out.sort_unstable();
+            out.dedup();
+            StoredKeys::Array
+        }
+        _ => {
+            out.extend(encode_numeric(value));
+            StoredKeys::Scalar
+        }
+    }
+}
+
+/// Which tree [`encode_stored`] filled `out` for.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StoredKeys {
+    /// The value was a scalar: at most one key, for the scalar tree.
+    Scalar,
+    /// The value was a list: one key per numeric element, for the array tree. `out` may be empty
+    /// (a list with no numeric elements) — that is still an array-kind value, not a scalar.
+    Array,
+}
+
 /// Monotone total order over non-`NaN` `f64`, as a `u64`: for non-`NaN` `a`, `b`,
 /// `a < b`  ⇔  `encode_f64(a) < encode_f64(b)`.
 ///

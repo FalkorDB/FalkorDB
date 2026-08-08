@@ -25,13 +25,20 @@
 # test_34, test10, test17). Their passing is not evidence of native array support.
 
 # ---------------------------------------------------------------------------
-# Array-valued properties — `ArrayContains`.
-#   error: "an array-contains on `samples`"
-# The numeric encoder rejects lists outright, so an array-valued property is not in the numeric
-# column at all — there is nothing for the native index to answer from. Needs an array/list kind.
+# STRING elements inside array-valued properties.
+#   error: "an array-contains on `samples` with a non-numeric value"
+#
+# Numeric array elements ARE served now: each one is a tuple in the column's separate array tree,
+# and `value IN n.prop` is a point lookup into it. `test_29_array_index` passes on that and has
+# been removed from this file.
+#
+# What is left is the string half. These tests index a list of strings and probe it, and there is
+# no native text kind — so this group closes with the text work, not with more array work.
+#
+# The two key spaces are separate on purpose: sharing one would make `WHERE n.v = 1` match a node
+# whose `v` is `[1, 2]`, and `Equal` has no post-filter to catch it.
 # ---------------------------------------------------------------------------
 test_index_scans:testIndexScanFlow.test_28_array_index
-test_index_scans:testIndexScanFlow.test_29_array_index
 test_index_scans:testIndexScanFlow.test_30_update_array_index
 test_index_scans:testIndexScanFlow.test_31_remove_array_index
 test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
