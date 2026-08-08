@@ -992,4 +992,52 @@ mod tests {
             "the array half must survive the encode/install round trip"
         );
     }
+
+    /// A value changing kind must move its tuples between the two trees, not leave a copy behind.
+    ///
+    /// The dangerous case is the same key crossing over: scalar `1` becoming `[1]` and back. A
+    /// remove that routed on the *new* value's kind instead of the old one would delete from the
+    /// wrong tree, stranding a tuple that no later write can reach — and on the scalar side
+    /// nothing re-checks the index's answer, so the stale tuple becomes a wrong row.
+    #[test]
+    fn a_value_changing_kind_moves_between_trees() {
+        let attr = Arc::new("v".to_string());
+        let list = |xs: &[i64]| {
+            Value::List(Arc::new(
+                xs.iter().map(|&x| Value::Int(x)).collect::<ThinVec<_>>(),
+            ))
+        };
+        let eq = |v: i64| IndexQuery::Equal {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+        let contains = |v: i64| IndexQuery::ArrayContains {
+            key: attr.clone(),
+            value: Value::Int(v),
+        };
+
+        let mut idx = NumericIndex::new();
+        idx.add(&Value::Int(1), 1);
+        assert_eq!(ids(idx.query(&eq(1)).unwrap()), vec![1]);
+        assert!(ids(idx.query(&contains(1)).unwrap()).is_empty());
+
+        // scalar 1 -> array [1]: the SAME key crosses into the other tree.
+        idx.remove(&Value::Int(1), 1);
+        idx.add(&list(&[1]), 1);
+        assert!(
+            ids(idx.query(&eq(1)).unwrap()).is_empty(),
+            "the scalar tuple must be gone, not shadowed"
+        );
+        assert_eq!(ids(idx.query(&contains(1)).unwrap()), vec![1]);
+
+        // array [1] -> scalar 1: and back again.
+        idx.remove(&list(&[1]), 1);
+        idx.add(&Value::Int(1), 1);
+        assert_eq!(ids(idx.query(&eq(1)).unwrap()), vec![1]);
+        assert!(ids(idx.query(&contains(1)).unwrap()).is_empty());
+
+        // Removing whatever it currently is leaves nothing on either side.
+        idx.remove(&Value::Int(1), 1);
+        assert!(idx.is_empty(), "no tuple stranded in either tree");
+    }
 }
