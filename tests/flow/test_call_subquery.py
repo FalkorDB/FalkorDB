@@ -2885,3 +2885,46 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 2) # avgX
 
+    def test_54_unit_subquery_cardinality(self):
+        """a subquery with no RETURN contributes no rows of its own, however
+        many its body produces internally"""
+
+        g = self.db.select_graph("unit_subquery")
+        g.query("CREATE (:S), (:S), (:S)")
+
+        # the body fans out to 3 rows per input row and writes once per row it
+        # produced, but the outer row count stays at the 3 the MATCH yielded.
+        # both numbers match the C engine
+        for q, rows, created in [
+                # body fans out, one write per fanned-out row
+                ("MATCH (x:S) CALL { MATCH (y:S) CREATE (:T) } RETURN count(*)",       3, 3 * 3),
+                # nesting compounds the writes, never the rows
+                ("MATCH (x:S) CALL { CALL { MATCH (y:S) RETURN y } CREATE (:T) } "
+                 "RETURN count(*)",                                                    3, 3 * 3),
+                ("MATCH (x:S) CALL { CALL { CALL { MATCH (z:S) RETURN z } "
+                 "MATCH (y:S) RETURN y } CREATE (:T) } RETURN count(*)",               3, 3 * 3 * 3),
+                # UNWIND fans out the same way
+                ("MATCH (x:S) CALL { UNWIND [1,2] AS k CREATE (:T {k:k}) } "
+                 "RETURN count(*)",                                                    3, 3 * 2),
+                # no fan-out at all
+                ("MATCH (x:S) CALL { CREATE (:T) } RETURN count(*)",                   3, 3),
+                # a body that matches nothing still lets its input row through
+                ("MATCH (x:S) CALL { MATCH (y:Nope) CREATE (:T) } RETURN count(*)",    3, 0),
+                # opening the query on the subquery: one implicit input row
+                ("CALL { MATCH (y:S) CREATE (:T) } RETURN count(*)",                   1, 3),
+                # two unit subqueries in a row each keep the count
+                ("MATCH (x:S) CALL { MATCH (y:S) CREATE (:T) } CALL { CREATE (:Q) } "
+                 "RETURN count(*)",                                                    3, 3 * 3 + 3),
+        ]:
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[rows]])
+            self.env.assertEqual(res.nodes_created, created)
+            g.query("MATCH (t) WHERE t:T OR t:Q DELETE t")
+
+        # the operator replaces the Apply/Optional pair that let the fan-out out
+        plan = g.explain("MATCH (x:S) CALL { MATCH (y:S) CREATE (:T) } RETURN count(*)")
+        self.env.assertEqual(count_operation(plan.structured_plan, "Unit Subquery"), 1)
+        self.env.assertEqual(count_operation(plan.structured_plan, "Optional"), 0)
+
+        g.delete()
+
