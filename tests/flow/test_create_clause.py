@@ -103,17 +103,20 @@ class testCreateClause():
         # each of these opens a path by redeclaring a variable the clause has
         # already declared; the pattern keeps one node per alias, so these used
         # to silently create a single node
-        for q in ["CREATE (n),(n)",
-                  "CREATE (n),(n),(n)",
-                  "CREATE (n {v:1}),(n)",
-                  "CREATE (n),(n:L)",
-                  "CREATE p = (n), q = (n)",
-                  "CREATE (n)-[:R]->(m), (n)"]:
+        for q, var in [("CREATE (n),(n)",                "n"),
+                       ("CREATE (n),(n),(n)",           "n"),
+                       ("CREATE (n {v:1}),(n)",         "n"),
+                       ("CREATE (n),(n:L)",             "n"),
+                       ("CREATE p = (n), q = (n)",      "n"),
+                       ("CREATE (n)-[:R]->(m), (n)",    "n"),
+                       # a query may write the name unaliased nodes are given,
+                       # so anonymity cannot be read off the alias text
+                       ("CREATE (_anon_0),(_anon_0)",   "_anon_0")]:
             try:
                 res = self.g.query(q)
             except Exception as e:
                 self.env.assertContains(
-                    "The bound variable 'n' can't be redeclared in a CREATE clause", str(e))
+                    f"The bound variable '{var}' can't be redeclared in a CREATE clause", str(e))
                 continue
             raise AssertionError(f"{q!r} should have been rejected, created {res.nodes_created} nodes")
 

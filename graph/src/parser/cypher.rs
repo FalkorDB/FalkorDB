@@ -1067,6 +1067,11 @@ impl<'a> Parser<'a> {
     /// to attach a relationship is a reference rather than a declaration, so
     /// `CREATE (a),(b),(a)-[:R]->(b)` stays valid; only a path that opens on a
     /// bare repeat is rejected.
+    ///
+    /// An unaliased node needs no special case: it is given a fresh
+    /// `_anon_<n>`, so `declared` is always true for one. Exempting the name
+    /// instead would let a query that writes `_anon` itself keep the old
+    /// silent behaviour.
     fn reject_create_redeclaration(
         &self,
         declared: bool,
@@ -1075,7 +1080,6 @@ impl<'a> Parser<'a> {
     ) -> Result<(), String> {
         if declared
             || *clause != Keyword::Create
-            || node.alias.starts_with("_anon")
             || matches!(self.lexer.current()?, Token::Dash | Token::LessThan)
         {
             return Ok(());
