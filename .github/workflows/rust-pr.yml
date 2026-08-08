@@ -188,7 +188,14 @@ jobs:
         # ledger check below is the gate. But each suite's exit status is recorded: a suite that
         # dies without running its tests would otherwise let its ledger entries reconcile
         # silently, and the check cannot tell "did not run" from "passed" on its own.
+        #
+        # `set +e` is load-bearing and was missing. GitHub runs `run:` under `bash -e -o pipefail`,
+        # so `flow.sh | tee` takes RLTest's exit status and `-e` aborted the whole step on the
+        # FIRST suite with a failing test — before its `SUITE_EXIT` was recorded and before the
+        # reconciliation step ran at all. The job reported "exit code 2" and the ledger it exists
+        # to validate was never checked in CI even once.
         run: |
+          set +e
           . /data/venv/bin/activate
           rc=0
           for t in tests/flow/test_index_create tests/flow/test_index_scans \
