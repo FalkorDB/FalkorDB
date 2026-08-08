@@ -6,6 +6,9 @@
 
 #include "graph_hub.h"
 #include "../query_ctx.h"
+#include "../index/indexer.h"
+
+#include <stdlib.h>
 
 // create a node
 // set the node labels and attributes
@@ -474,6 +477,7 @@ AttributeID GraphHub_FindOrAddAttribute
 // create index
 Index GraphHub_AddIndex
 (
+	GraphContext *gc,    // graph context to add the index to
 	const char *label,   // label/relationship type
 	const char *attr,    // attribute to index
 	GraphEntityType et,  // entity type (node/edge)
@@ -481,73 +485,339 @@ Index GraphHub_AddIndex
 	SIValue options,     // index options
 	bool log
 ) {
-	ASSERT(label != NULL);
-	ASSERT(attr != NULL);
-	ASSERT(et != GETYPE_UNKNOWN);
-	ASSERT(t == INDEX_FLD_FULLTEXT ||
-		   t == INDEX_FLD_RANGE    ||
-		   t == INDEX_FLD_VECTOR);
-
-	GraphContext *gc = QueryCtx_GetGraphCtx();
+	ASSERT (gc    != NULL) ;
+	ASSERT (label != NULL) ;
+	ASSERT (attr  != NULL) ;
+	ASSERT (et != GETYPE_UNKNOWN) ;
+	ASSERT (t == INDEX_FLD_FULLTEXT ||
+			t == INDEX_FLD_RANGE    ||
+			t == INDEX_FLD_VECTOR) ;
 
 	//--------------------------------------------------------------------------
 	// make sure schema exists
 	//--------------------------------------------------------------------------
 
-	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-	Schema *s = GraphContext_GetSchema(gc, label, st);
+	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
+	Schema *s = GraphContext_GetSchema (gc, label, st) ;
 
 	// schema missing, creating an index will create the schema
-	if(s == NULL) {
-		s = GraphHub_AddSchema(gc, label, st, log);
+	if (s == NULL) {
+		s = GraphHub_AddSchema (gc, label, st, log) ;
 	}
-	ASSERT(s != NULL);
+	ASSERT (s != NULL) ;
 
 	//--------------------------------------------------------------------------
 	// make sure attribute exists
 	//--------------------------------------------------------------------------
 
 	// creating an index will create the attribute
-	AttributeID attr_id = GraphHub_FindOrAddAttribute(gc, attr, log);
+	AttributeID attr_id = GraphHub_FindOrAddAttribute (gc, attr, log) ;
 
 	//--------------------------------------------------------------------------
 	// create index field
 	//--------------------------------------------------------------------------
 
-	Index idx = NULL;
-	if(t == INDEX_FLD_RANGE) {
-		idx = Index_RangeCreate(label, et, attr, attr_id);
-	} else if(t == INDEX_FLD_FULLTEXT) {
-		idx = Index_FulltextCreate(label, et, attr, attr_id, options);
-	} else if(t == INDEX_FLD_VECTOR) {
-		idx = Index_VectorCreate(label, et, attr, attr_id, options);
+	Index idx = NULL ;
+	if (t == INDEX_FLD_RANGE) {
+		idx = Index_RangeCreate (label, et, attr, attr_id) ;
+	} else if (t == INDEX_FLD_FULLTEXT) {
+		idx = Index_FulltextCreate (label, et, attr, attr_id, options) ;
+	} else if (t == INDEX_FLD_VECTOR) {
+		idx = Index_VectorCreate (label, et, attr, attr_id, options) ;
 	} else {
-		assert(false && "unknown index type");
+		assert (false && "unknown index type") ;
 	}
 
 	//--------------------------------------------------------------------------
 	// add create index operation to undo log
 	//--------------------------------------------------------------------------
 
-	if(idx != NULL && log == true) {
-		UndoLog log = QueryCtx_GetUndoLog();
+	if (idx != NULL && log == true) {
+		UndoLog log = QueryCtx_GetUndoLog () ;
 
 		// extract label and field from index
-		IndexField *fld = Index_GetField(NULL, idx, attr_id);
-		const char *field_name = IndexField_GetName(fld);
-		const char *lbl = Index_GetLabel(idx);
+		IndexField *fld = Index_GetField (NULL, idx, attr_id) ;
+		const char *field_name = IndexField_GetName (fld) ;
+		const char *lbl = Index_GetLabel (idx) ;
 
 		// add index create undo operation
-		UndoLog_CreateIndex(log, st, lbl, field_name, t);
+		UndoLog_CreateIndex (log, st, lbl, field_name, t) ;
 	}
 
-	// index operation is not replicated via effects
-	// remove all index creation side effects:
-	// 1. schema creation
-	// 2. attribute creation
-	// from effects buffer, forcing query replication of the index
-	EffectsBuffer_Reset(QueryCtx_GetEffectsBuffer());
+	//--------------------------------------------------------------------------
+	// emit index field creation effect
+	//--------------------------------------------------------------------------
 
-	return idx;
+	if (idx != NULL && log == true) {
+		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
+		EffectsBuffer_AddCreateIndexEffect (eb, st, Schema_GetID(s), label,
+				attr_id, attr, t, options) ;
+	}
+
+	return idx ;
+}
+
+// drop index field
+int GraphHub_DropIndex
+(
+	GraphContext *gc,   // graph context
+	SchemaType st,      // schema type (node/edge)
+	const char *label,  // label/relationship type
+	const char *field,  // attribute to remove from index
+	IndexFieldType t,   // type of index (range/fulltext/vector)
+	bool log            // should operation be logged
+) {
+	ASSERT (gc    != NULL) ;
+	ASSERT (label != NULL) ;
+	ASSERT (field != NULL) ;
+
+	Schema *s = GraphContext_GetSchema (gc, label, st) ;
+	ASSERT(s != NULL) ;
+
+	AttributeID attr_id = GraphContext_GetAttributeID (gc, field) ;
+	ASSERT (attr_id != ATTRIBUTE_ID_NONE) ;
+
+	int label_id = Schema_GetID (s) ;
+
+	int res = GraphContext_DeleteIndex (gc, st, label, field, t) ;
+
+	if (res == INDEX_OK && log == true) {
+		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
+		EffectsBuffer_AddDropIndexEffect (eb, st, label_id, label, attr_id,
+				field, t) ;
+	}
+
+	return res ;
+}
+
+// comparator for sorting AttributeID arrays
+static inline int _cmp_AttributeID
+(
+	const void *a,
+	const void *b
+) {
+	const AttributeID *_a = a;
+	const AttributeID *_b = b;
+	return *_a - *_b;
+}
+
+// create a constraint
+Constraint GraphHub_AddConstraint
+(
+	GraphContext *gc,                // graph context
+	ConstraintType ct,               // constraint type (unique/mandatory)
+	GraphEntityType et,              // entity type (node/edge)
+	const char *label,               // label/relationship type
+	const char **props,              // constrained attribute names
+	uint8_t n,                       // number of constrained attributes
+	bool log,                        // should operation be logged
+	ConstraintCreateStatus *status,  // [output] outcome
+	const char **err_msg             // [output] error message
+) {
+	ASSERT (n       >  0)    ;
+	ASSERT (gc      != NULL) ;
+	ASSERT (label   != NULL) ;
+	ASSERT (props   != NULL) ;
+	ASSERT (status  != NULL) ;
+	ASSERT (err_msg != NULL) ;
+
+	*status = CONSTRAINT_CREATED ;
+
+	//--------------------------------------------------------------------------
+	// convert attribute name to attribute ID
+	//--------------------------------------------------------------------------
+
+	AttributeID attr_ids [n] ;
+	for (uint i = 0; i < n; i++) {
+		attr_ids [i] = GraphHub_FindOrAddAttribute (gc, props [i], log) ;
+		if (attr_ids [i] == ATTRIBUTE_ID_NONE) {
+			*err_msg = "Max number of attributes exceeded" ;
+			*status  = CONSTRAINT_ERROR ;
+			return NULL ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// check for duplicates
+	//--------------------------------------------------------------------------
+
+	// sort the properties for an easy comparison later
+	bool dups = false ;
+	qsort (attr_ids, n, sizeof (AttributeID), _cmp_AttributeID) ;
+	for (uint i = 0; i < n - 1; i++) {
+		if (attr_ids [i] == attr_ids [i + 1]) {
+			dups = true ;
+			break ;
+		}
+	}
+
+	// duplicates found, fail operation
+	if (dups) {
+		*err_msg = "Properties cannot contain duplicates" ;
+		*status  = CONSTRAINT_ERROR ;
+		return NULL ;
+	}
+
+	// resolve canonical attribute names, aligned with (now sorted)
+	// attribute IDs array
+	//
+	// this must NOT overwrite the caller's 'props' array in place: callers
+	// may own that memory (e.g. effects apply frees each entry after this
+	// call returns), and 'props[i]' may already alias a GraphContext-owned
+	// name (e.g. re-announcement of an existing attribute) - clobbering it
+	// here would free live attribute-name storage out from under the schema
+	const char *names [n] ;
+	for (uint i = 0; i < n; i++) {
+		names[i] = GraphContext_GetAttributeName (gc, attr_ids [i]) ;
+	}
+
+	//--------------------------------------------------------------------------
+	// make sure schema exists
+	//--------------------------------------------------------------------------
+
+	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
+	Schema *s = GraphContext_GetSchema (gc, label, st) ;
+	if (s == NULL) {
+		s = GraphHub_AddSchema (gc, label, st, log) ;
+	}
+	int s_id = Schema_GetID (s) ;
+
+	//--------------------------------------------------------------------------
+	// check if constraint already exists
+	//--------------------------------------------------------------------------
+
+	Constraint c = Schema_GetConstraint (s, ct, attr_ids, n) ;
+
+	if (c != NULL) {
+		if (Constraint_GetStatus (c) != CT_FAILED) {
+			// constraint is either operational or being constructed
+			// this is a benign condition, not a hard error - e.g. it's the
+			// expected shape of the async re-announcement issued once a
+			// pending constraint becomes active (see Constraint_Replicate)
+			*err_msg = "Constraint already exists" ;
+			*status  = CONSTRAINT_ALREADY_EXISTS ;
+			return NULL ;
+		} else {
+			// previous constraint creation had failed
+			// remove constraint from schema
+			Schema_RemoveConstraint (s, c) ;
+
+			// free failed constraint
+			Constraint_Free (&c) ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// create constraint
+	//--------------------------------------------------------------------------
+
+	c = Constraint_New (gc, ct, s_id, attr_ids, names, n, et, err_msg) ;
+
+	// failed to add constraint
+	if (c == NULL) {
+		*status = CONSTRAINT_ERROR ;
+		return NULL ;
+	}
+
+	// add constraint to schema
+	Schema_AddConstraint (s, c) ;
+
+	//--------------------------------------------------------------------------
+	// emit constraint creation effect
+	//--------------------------------------------------------------------------
+
+	if (log == true) {
+		const AttributeID *out_ids ;
+		const char **out_names ;
+		uint8_t out_n = Constraint_GetAttributes (c, &out_ids, &out_names) ;
+
+		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
+		EffectsBuffer_AddCreateConstraintEffect (eb, ct, et, s_id, label,
+				out_ids, out_names, out_n) ;
+	}
+
+	return c ;
+}
+
+// drop a constraint
+bool GraphHub_DropConstraint
+(
+	GraphContext *gc,     // graph context
+	ConstraintType ct,    // constraint type (unique/mandatory)
+	GraphEntityType et,   // entity type (node/edge)
+	const char *label,    // label/relationship type
+	const char **props,   // constrained attribute names
+	uint8_t n,            // number of constrained attributes
+	bool log,             // should operation be logged
+	const char **err_msg  // [output] error message
+) {
+	ASSERT (n       >  0) ;
+	ASSERT (gc      != NULL) ;
+	ASSERT (label   != NULL) ;
+	ASSERT (props   != NULL) ;
+	ASSERT (err_msg != NULL) ;
+
+	//--------------------------------------------------------------------------
+	// try to get schema
+	//--------------------------------------------------------------------------
+
+	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
+	Schema *s = GraphContext_GetSchema (gc, label, st) ;
+	if (s == NULL) {
+		*err_msg = "Unable to drop constraint, no such constraint." ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// try to get attribute IDs
+	//--------------------------------------------------------------------------
+
+	AttributeID attrs [n] ;
+	for (uint8_t i = 0; i < n; i++) {
+		AttributeID id = GraphContext_GetAttributeID (gc, props [i]) ;
+
+		if (id == ATTRIBUTE_ID_NONE) {
+			// attribute missing
+			*err_msg = "Unable to drop constraint, no such constraint." ;
+			return false ;
+		}
+
+		attrs [i] = id ;
+	}
+
+	//--------------------------------------------------------------------------
+	// try to get constraint
+	//--------------------------------------------------------------------------
+
+	Constraint c = Schema_GetConstraint (s, ct, attrs, n) ;
+	if (c == NULL) {
+		*err_msg = "Unable to drop constraint, no such constraint." ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// emit constraint deletion effect
+	//--------------------------------------------------------------------------
+
+	if (log == true) {
+		const AttributeID *out_ids ;
+		const char **out_names ;
+		uint8_t out_n = Constraint_GetAttributes (c, &out_ids, &out_names) ;
+
+		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
+		EffectsBuffer_AddDropConstraintEffect (eb, ct, et, Schema_GetID (s),
+				label, out_ids, out_names, out_n) ;
+	}
+
+	//--------------------------------------------------------------------------
+	// remove constraint
+	//--------------------------------------------------------------------------
+
+	Schema_RemoveConstraint (s, c) ;
+
+	// asynchronously delete constraint
+	Indexer_DropConstraint (c, gc) ;
+
+	return true ;
 }
 

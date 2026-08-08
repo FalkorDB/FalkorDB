@@ -46,7 +46,6 @@
 #include "RG.h"
 #include "util/strutil.h"
 #include "../query_ctx.h"
-#include "../index/indexer.h"
 #include "../errors/errors.h"
 #include "../graph/graph_hub.h"
 #include "../util/thpool/pool.h"
@@ -118,16 +117,6 @@ static void GraphConstraintCtx_Free
 	rm_free (_ctx) ;
 
 	*ctx = NULL ;
-}
-
-static inline int _cmp_AttributeID
-(
-	const void *a,
-	const void *b
-) {
-	const AttributeID *_a = a;
-	const AttributeID *_b = b;
-	return *_a - *_b;
 }
 
 // parse command arguments, expecting:
@@ -259,8 +248,7 @@ static bool _Constraint_Drop
 	RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_DEBUG, "drop constraint") ;
 
 	bool res = true ;  // optimistic
-	AttributeID attrs [n] ;
-	RedisModuleString *prop_strs [n] ;
+	const char *error_msg = "Unable to drop constraint, no such constraint." ;
 
 	//--------------------------------------------------------------------------
 	// try to get graph
@@ -286,6 +274,10 @@ static bool _Constraint_Drop
 		return false ;
 	}
 
+	// set graph context in query context TLS, required for the effects
+	// buffer GraphHub_DropConstraint writes into
+	QueryCtx_SetGraphCtx (gc) ;
+
 	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
 
 	// acquire graph write lock
@@ -296,79 +288,26 @@ static bool _Constraint_Drop
 	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
-	// try to get schema
+	// drop constraint via GraphHub
 	//--------------------------------------------------------------------------
 
-	// determine schema type
-	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
-
-	Schema *s = GraphContext_GetSchema (gc, lbl, st) ;
-	if (s == NULL) {
-		res = false ;
+	res = GraphHub_DropConstraint (gc, ct, et, lbl, props, n, true, &error_msg) ;
+	if (res == false) {
 		goto cleanup ;
 	}
 
 	//--------------------------------------------------------------------------
-	// try to get attribute IDs
+	// replicate DROP to replicas and persistence layer via GRAPH.EFFECT
 	//--------------------------------------------------------------------------
 
-	for (uint8_t i = 0 ; i < n ; i++) {
-		const char *prop = props [i] ;
-
-		// try to get property ID
-		AttributeID id = GraphContext_GetAttributeID (gc, prop) ;
-
-		if (id == ATTRIBUTE_ID_NONE) {
-			// attribute missing
-			res = false ;
-			goto cleanup ;
-		}
-
-		attrs [i] = id ;
-	}
-
-	//--------------------------------------------------------------------------
-	// try to get constraint
-	//--------------------------------------------------------------------------
-
-	Constraint c = Schema_GetConstraint (s, ct, attrs, n) ;
-	if (c == NULL) {
-		res = false ;
-		goto cleanup ;
-	}
-
-	//--------------------------------------------------------------------------
-	// remove constraint
-	//--------------------------------------------------------------------------
-
-	Schema_RemoveConstraint (s, c) ;
-
-	// TODO: consider disallowing droping a pending constraint
-	// asynchronously delete constraint
-	Indexer_DropConstraint (c, gc) ;
-
-	//--------------------------------------------------------------------------
-	// replicate DROP to replicas and persistence layer
-	//--------------------------------------------------------------------------
-
+	size_t l = 0 ;
+	unsigned char *buf =
+		EffectsBuffer_Buffer (QueryCtx_GetEffectsBuffer (), &l) ;
 	const char *graph_name = GraphContext_GetName (gc) ;
-	const char *c_type = (ct == CT_UNIQUE)   ? "UNIQUE" : "MANDATORY" ;
-	const char *et_str = (et == GETYPE_NODE) ? "NODE"   : "RELATIONSHIP" ;
 
-	// resolve attribute IDs to names
-	for (uint8_t i = 0 ; i < n ; i++) {
-		const char *attr_name = GraphContext_GetAttributeName (gc, attrs [i]) ;
-		prop_strs [i] = RedisModule_CreateString (ctx, attr_name,
-				strlen (attr_name)) ;
-	}
+	RedisModule_Replicate (ctx, "GRAPH.EFFECT", "cb!", graph_name, buf, l) ;
 
-	RedisModule_Replicate (ctx, "GRAPH.CONSTRAINT", "cccccclv",
-			"DROP", graph_name, c_type, et_str, lbl,
-			"PROPERTIES", (long long)n, prop_strs, (size_t)n) ;
-
-	for (uint8_t i = 0 ; i < n ; i++) {
-		RedisModule_FreeString (ctx, prop_strs [i]) ;
-	}
+	rm_free (buf) ;
 
 cleanup:
 	// release graph R/W lock
@@ -379,9 +318,11 @@ cleanup:
 	}
 
 	if (res == false) {
-		RedisModule_ReplyWithError (ctx,
-				"Unable to drop constraint, no such constraint.") ;
+		RedisModule_ReplyWithError (ctx, error_msg) ;
 	}
+
+	QueryCtx_Free  () ;
+	ErrorCtx_Clear () ;
 
 	// decrease graph reference count
 	GraphContext_DecreaseRefCount (gc) ;
@@ -425,7 +366,8 @@ static bool _Constraint_Create
 	}
 
 	// set graph context in query context TLS
-	// this is required in case the undo-log needs to be applied
+	// this is required in case the undo-log needs to be applied, and for
+	// the effects buffer GraphHub_AddConstraint writes into
 	// TODO: find a better way
 	QueryCtx_SetGraphCtx (gc) ;
 
@@ -439,90 +381,12 @@ static bool _Constraint_Create
 	GraphContext_AcquireWriteLock (gc) ;
 
 	//--------------------------------------------------------------------------
-	// convert attribute name to attribute ID
+	// create constraint via GraphHub
 	//--------------------------------------------------------------------------
 
-	AttributeID attr_ids [n] ;
-	for (uint i = 0 ; i < n ; i++) {
-		attr_ids [i] = GraphHub_FindOrAddAttribute (gc, props [i], true) ;
-		if (attr_ids [i] == ATTRIBUTE_ID_NONE) {
-			error_msg = "Max number of attributes exceeded" ;
-			res = false ;
-			goto cleanup ;
-		}
-	}
-
-	//--------------------------------------------------------------------------
-	// check for duplicates
-	//--------------------------------------------------------------------------
-
-	// sort the properties for an easy comparison later
-	bool dups = false ;
-	qsort (attr_ids, n, sizeof (AttributeID), _cmp_AttributeID) ;
-	for (uint i = 0 ; i < n - 1 ; i++) {
-		if (attr_ids [i] == attr_ids [i+1]) {
-			dups = true ;
-			break ;
-		}
-	}
-
-	// duplicates found, fail operation
-	if (dups) {
-		error_msg = "Properties cannot contain duplicates" ;
-		res = false ;
-		goto cleanup ;
-	}
-
-	// re-construct attribute IDs array
-	// must be aligned with attribute names array
-	for (uint i = 0 ; i < n ; i++) {
-		// get attribute id for attribute name
-		AttributeID attr_id = attr_ids [i] ;
-
-		// update props to hold graph context's attribute name
-		props [i] = GraphContext_GetAttributeName (gc, attr_id) ;
-	}
-
-	//--------------------------------------------------------------------------
-	// make sure schema exists
-	//--------------------------------------------------------------------------
-
-	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE;
-	Schema *s = GraphContext_GetSchema (gc, lbl, st) ;
-	if (s == NULL) {
-		s = GraphHub_AddSchema (gc, lbl, st, true) ;
-	}
-	int s_id = Schema_GetID (s) ;
-
-	//--------------------------------------------------------------------------
-	// check if constraint already exists
-	//--------------------------------------------------------------------------
-
-	Constraint c = Schema_GetConstraint (s, ct, attr_ids, n) ;
-
-	if (c != NULL) {
-		// constraint already exists
-		if (Constraint_GetStatus (c) != CT_FAILED) {
-			// constraint is either operational or being constructed
-			res = false ;
-			error_msg = "Constraint already exists" ;
-			goto cleanup ;
-		} else {
-			// previous constraint creation had failed
-			// remove constrain from schema
-			Schema_RemoveConstraint (s, c) ;
-
-			// free failed constraint
-			Constraint_Free (&c) ;
-		}
-	}
-	
-	//--------------------------------------------------------------------------
-	// create constraint
-	//--------------------------------------------------------------------------
-
-	c = Constraint_New ((struct GraphContext *)gc, ct, s_id, attr_ids, props, n,
-			et, &error_msg) ;
+	ConstraintCreateStatus status ;
+	Constraint c = GraphHub_AddConstraint (gc, ct, et, lbl, props, n, true,
+			&status, &error_msg) ;
 
 	// failed to add constraint
 	if (c == NULL) {
@@ -530,11 +394,18 @@ static bool _Constraint_Create
 		goto cleanup ;
 	}
 
-	// add constraint to schema
-	Schema_AddConstraint (s, c) ;
+	//--------------------------------------------------------------------------
+	// replicate CREATE to replicas and persistence layer via GRAPH.EFFECT
+	//--------------------------------------------------------------------------
 
-	// replication requires the Redis global lock
-	Constraint_Replicate (ctx, c, gc) ;
+	size_t l = 0 ;
+	unsigned char *buf =
+		EffectsBuffer_Buffer (QueryCtx_GetEffectsBuffer (), &l) ;
+	const char *graph_name = GraphContext_GetName (gc) ;
+
+	RedisModule_Replicate (ctx, "GRAPH.EFFECT", "cb!", graph_name, buf, l) ;
+
+	rm_free (buf) ;
 
 cleanup:
 
@@ -582,21 +453,16 @@ static void Constraint_Op
 	// whatever job (query, constraint, ...) previously ran on it
 	ErrorCtx_Clear () ;
 
-	// build working props array — _Constraint_Create may overwrite elements
-	// with GraphContext-internal pointers, so keep ctx->props for cleanup
-	const char *props [ctx->prop_count] ;
-	for (uint8_t i = 0; i < ctx->prop_count; i++) {
-		props [i] = ctx->props [i] ;
-	}
-
 	bool success = false ;
 
 	if(ctx->op == CT_CREATE) {
 		success = _Constraint_Create (rm_ctx, ctx->graph_id, ctx->ct,
-				ctx->entity_type, ctx->label, ctx->prop_count, props) ;
+				ctx->entity_type, ctx->label, ctx->prop_count,
+				(const char **)ctx->props) ;
 	} else {
 		success = _Constraint_Drop (rm_ctx, ctx->graph_id, ctx->ct,
-				ctx->entity_type, ctx->label, ctx->prop_count, props) ;
+				ctx->entity_type, ctx->label, ctx->prop_count,
+				(const char **)ctx->props) ;
 	}
 
 	if (success) {

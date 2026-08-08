@@ -1175,6 +1175,10 @@ SIValue SIValue_FromBinary
 			v = SIVector_FromBinary(stream, t);
 			break;
 
+		case T_MAP:
+			v = Map_FromBinary (stream) ;
+			break;
+
 		case T_NULL:
 			v = SI_NullVal();
 			break;

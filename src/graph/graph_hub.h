@@ -175,11 +175,67 @@ AttributeID GraphHub_FindOrAddAttribute
 // create index
 Index GraphHub_AddIndex
 (
+	GraphContext *gc,    // graph context to add the index to
 	const char *label,   // label/relationship type
 	const char *attr,    // attribute to index
 	GraphEntityType et,  // entity type (node/edge)
 	IndexFieldType t,    // type of index (range/fulltext/vector)
 	SIValue options,     // index options
 	bool log
+);
+
+// drop index field
+int GraphHub_DropIndex
+(
+	GraphContext *gc,   // graph context
+	SchemaType st,      // schema type (node/edge)
+	const char *label,  // label/relationship type
+	const char *field,  // attribute to remove from index
+	IndexFieldType t,   // type of index (range/fulltext/vector)
+	bool log            // should operation be logged
+);
+
+// outcome of GraphHub_AddConstraint, distinguishing a benign no-op
+// (constraint already exists) from a real failure — needed so effect-apply
+// can tell an idempotent re-announcement (see Constraint_Replicate) apart
+// from genuine replica divergence
+typedef enum {
+	CONSTRAINT_CREATED,         // constraint created
+	CONSTRAINT_ALREADY_EXISTS,  // an equivalent, non-failed constraint already exists
+	CONSTRAINT_ERROR,           // hard failure (attribute limit, missing supporting index, ...)
+} ConstraintCreateStatus;
+
+// create a constraint
+// resolves/creates the backing schema and attributes, validates and
+// constructs the constraint, and adds it to the schema; does not enforce it
+// (caller is expected to call Constraint_Enforce on success)
+//
+// on return, props[i] is updated in place to a GraphContext-owned attribute
+// name, and may no longer be in the caller's original order
+Constraint GraphHub_AddConstraint
+(
+	GraphContext *gc,                // graph context
+	ConstraintType ct,               // constraint type (unique/mandatory)
+	GraphEntityType et,              // entity type (node/edge)
+	const char *label,               // label/relationship type
+	const char **props,              // constrained attribute names (mutated in place)
+	uint8_t n,                       // number of constrained attributes
+	bool log,                        // should operation be logged
+	ConstraintCreateStatus *status,  // [output] outcome
+	const char **err_msg             // [output] error message on CONSTRAINT_ERROR
+);
+
+// drop a constraint
+// returns false if no matching constraint/schema/attribute is found locally
+bool GraphHub_DropConstraint
+(
+	GraphContext *gc,     // graph context
+	ConstraintType ct,    // constraint type (unique/mandatory)
+	GraphEntityType et,   // entity type (node/edge)
+	const char *label,    // label/relationship type
+	const char **props,   // constrained attribute names
+	uint8_t n,            // number of constrained attributes
+	bool log,             // should operation be logged
+	const char **err_msg  // [output] error message on failure
 );
 

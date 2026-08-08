@@ -287,6 +287,28 @@ void Map_GetIdx
 	*value = SI_ShareValue (p.val) ;
 }
 
+// creates a map from its binary representation
+// this is the reverse of the map-writing side of SIValue_ToBinary /
+// EffectsBuffer_WriteSIValue, mirroring SIArray_FromBinary
+SIValue Map_FromBinary
+(
+	FILE *stream  // stream containing binary representation of a map
+) {
+	// read number of keys
+	uint32_t n ;
+	fread_assert (&n, sizeof (uint32_t), stream) ;
+
+	SIValue map = Map_New (n) ;
+
+	for (uint32_t i = 0; i < n; i++) {
+		SIValue key = SIValue_FromBinary (stream) ;
+		SIValue val = SIValue_FromBinary (stream) ;
+		Map_AddNoClone (&map, key, val) ;
+	}
+
+	return map ;
+}
+
 // checks if 'key' is in map
 bool Map_Contains
 (
