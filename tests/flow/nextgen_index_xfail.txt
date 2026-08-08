@@ -1,0 +1,104 @@
+# Flow tests that fail with `--features index-falkordb`.
+#
+# Under that flag the native index is the ONLY index: a predicate it cannot serve raises an
+# error instead of quietly reaching RediSearch, so every gap is visible here rather than masked
+# by a correct-looking result. This file is the inventory of those gaps.
+#
+# Format: one `<file>:<Class>.<test>` per line. `#` comments and blank lines are ignored.
+# A leading `!` marks a test the check ignores in BOTH directions — see the last section.
+#
+# The check is BIDIRECTIONAL and both directions fail the build:
+#   * a failure not listed here    -> a regression, or a gap nobody recorded
+#   * a listed test that now passes -> delete the line in the PR that fixed it
+# The second direction is what stops this file rotting into a list of things that quietly
+# started working. It also means closing a gap is a two-line change: the fix, and the deletion.
+#
+# Add an entry only with a reason, and put it in the group its ACTUAL error names — every entry
+# below was placed by reading the `native index cannot serve ...` message the run emitted, not by
+# reading the test's name. Three entries were previously in the wrong group because they were
+# grouped by name: two "cartesian product" tests that fail on a string bound, and one
+# "utilize_array" test that fails on a string union.
+#
+# Not everything unimplemented shows up here. `can_utilize_index(&q) == false` routes to a label
+# scan before the index is consulted at all, so `IN []`, `IN [NULL]`, List/Map/Point values and
+# ints above 2^53 still return correct results silently — as do several array tests (test_33,
+# test_34, test10, test17). Their passing is not evidence of native array support.
+
+# ---------------------------------------------------------------------------
+# STRING elements inside array-valued properties.
+#   error: "an array-contains on `samples` with a non-numeric value"
+#
+# Numeric array elements ARE served now: each one is a tuple in the column's separate array tree,
+# and `value IN n.prop` is a point lookup into it. `test_29_array_index` passes on that and has
+# been removed from this file.
+#
+# What is left is the string half. These tests index a list of strings and probe it, and there is
+# no native text kind — so this group closes with the text work, not with more array work.
+#
+# The two key spaces are separate on purpose: sharing one would make `WHERE n.v = 1` match a node
+# whose `v` is `[1, 2]`, and `Equal` has no post-filter to catch it.
+# ---------------------------------------------------------------------------
+test_index_scans:testIndexScanFlow.test_28_array_index
+test_index_scans:testIndexScanFlow.test_30_update_array_index
+test_index_scans:testIndexScanFlow.test_31_remove_array_index
+test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
+
+# ---------------------------------------------------------------------------
+# String and text predicates on a Range index — tags, stopwords, escaping, mixed-type columns.
+#   errors: "equality on `x` with a non-numeric value"
+#           "range on `x` with a non-numeric bound"
+#           "a union of N members on `x` that is not all-numeric"
+# RediSearch owns strings today; there is no native text kind yet (docs 10-13). This is by far the
+# largest group, and one text kind closes all of it.
+# ---------------------------------------------------------------------------
+test_index_scans:testIndexScanFlow.test02_cartesian_product_index_scans_only
+test_index_scans:testIndexScanFlow.test03_cartesian_product_reused_index
+test_index_scans:testIndexScanFlow.test05_test_in_operator_string_props
+test_index_scans:testIndexScanFlow.test06_tag_separator
+test_index_scans:testIndexScanFlow.test14_index_scan_utilize_array
+test_index_scans:testIndexScanFlow.test20_index_scan_stopwords
+test_index_scans:testIndexScanFlow.test_24_multitype_index
+test_index_scans:testIndexScanFlow.test_25_unescaped_string
+test_index_delete:testNodeIndexDeletionFlow.test_07_reset_order
+test_index_updates:testIndexUpdatesFlow.test04_node_deletion
+test_edge_index_updates:testEdgeIndexUpdatesFlow.test04_edge_deletion
+test_edge_index_scans:testEdgeByIndexScanFlow.test15_chained_optional_match_indexed_edge
+test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test17_child_var_reference_safety
+
+# ---------------------------------------------------------------------------
+# Conjunctions — CLOSED. Nothing left in this group.
+#
+# Three shapes used to land here and all three are served now:
+#   the same predicate twice          -> collapsed in `push_filters_down` (#2390)
+#   several bounds on ONE attribute   -> folded arithmetically into a single window
+#   bounds across TWO attributes      -> one column per attribute, intersected
+#
+# The same-key fold happens in the index rather than the planner because
+# `merge_range_queries` gives up whenever two conjuncts constrain the same side of the window —
+# at plan time the bounds may still be expressions it cannot compare, and by the time the index
+# sees them they are concrete values.
+#
+# The cross-attribute case is a **set probe, not a sorted merge**: `DocIter` yields docs in value
+# order, not id order, so the first attribute is materialised and the rest probe it. Verified
+# against the RediSearch build — same rows, different order, which Cypher permits without
+# `ORDER BY`.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# IGNORED in both directions (`!` prefix) — NOT a native-index gap.
+#
+# The check skips a `!` entry entirely: it is neither required to fail nor required to pass. That
+# is for a test that fails on some environments and passes on others, where either direction of
+# the normal check would be permanently red somewhere.
+#
+# There are none right now, and that is the preferred state. Use it sparingly and only with
+# evidence that the flag is not involved; removing the `!` turns an entry back into a normal
+# expected-failure.
+#
+# `test05_index_delete` lived here briefly. It was never an index problem: FalkorDB 1.6.2 declares
+# `redis>=7.1.0` with no upper bound, and redis-py 8.x connection pools carry kwargs that
+# `Redis.__init__` rejects (`himport_registry` on 8.1, `maint_notifications_pool_handler` on 8.0),
+# which the async cluster probe splats straight into a constructor. Pinning `redis<8` locally
+# fixed it and the whole flow suite along with it. If it reappears, check the client versions
+# before suspecting the index.
+# ---------------------------------------------------------------------------
