@@ -43,8 +43,6 @@ pub struct UnitSubqueryOp<'a> {
 }
 
 impl<'a> UnitSubqueryOp<'a> {
-    /// Builds the operator over `child`, the input rows, resolving the body
-    /// from child(1) of the plan node.
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -64,12 +62,6 @@ impl<'a> UnitSubqueryOp<'a> {
 impl<'a> Iterator for UnitSubqueryOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
-    /// Runs the body over the whole input batch, discards whatever it
-    /// produced, and yields the batch unchanged.
-    ///
-    /// The body is drained rather than short-circuited: its writes are the
-    /// reason it exists, and one that fans out internally performs them once
-    /// per row it produced.
     fn next(&mut self) -> Option<Self::Item> {
         let batch = match self.child.next()? {
             Ok(b) => b,
