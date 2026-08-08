@@ -16,6 +16,18 @@ class testAggregations():
         actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], expected_result[0][0], 0.0001)
 
+    def assert_rejected(self, graph, query, expected_message):
+        try:
+            result = graph.query(query)
+        except ResponseError as e:
+            if expected_message not in str(e):
+                raise AssertionError(
+                    f"{query!r} was rejected with {str(e)!r}, "
+                    f"which does not mention {expected_message!r}") from e
+            return
+        raise AssertionError(
+            f"{query!r} should have been rejected, returned {result.result_set!r}")
+
     # test aggregation default values
     # default values should be returned when the aggregation operation
     # was not given any data to process
@@ -260,3 +272,73 @@ class testAggregations():
         ]
 
         self.env.assertEqual(res, expected)
+
+    # a grouping key read outside the aggregation must produce its grouped
+    # value, whether it is written as the name the clause projects it as or in
+    # the original form the clause groups by
+    def test11_GroupingKeyReadOutsideAggregation(self):
+        g = self.db.select_graph("grouping_keys")
+        g.query("CREATE (:P {a: 10, b: 20}), (:P {a: 10, b: 30})")
+
+        for query, expected in [
+                # projected under its own name
+                ("MATCH (n:P) WITH n.a AS a RETURN a, a + count(*)",     [[10, 12]]),
+                # projected as a property, read as a property
+                ("MATCH (n:P) RETURN n.a, n.a + count(*)",               [[10, 12]]),
+                # the whole node is the grouping key
+                ("MATCH (n:P) RETURN n.a, count(*), n.a * 2",            [[10, 2, 20]]),
+                # a key read from inside a map, alongside an aggregation
+                ("MATCH (n:P) RETURN n.a AS a, {same: n.a = 10, kids: collect(n.b)} AS m",
+                 [[10, {'same': True, 'kids': [20, 30]}]]),
+                # no key involved at all
+                ("MATCH (n:P) RETURN 1 + count(*)",                      [[3]]),
+                ("MATCH (n:P) RETURN collect(n.a)[0]",                   [[10]]),
+                ("MATCH (n:P) RETURN max(n.a) - min(n.b)",               [[-10]]),
+        ]:
+            self.env.assertEqual(g.query(query).result_set, expected)
+
+        g.delete()
+
+    # reading a variable outside an aggregation without projecting it as a
+    # grouping key is an implicit grouping expression, which openCypher
+    # CIP2021-07-07 rejects; it used to silently evaluate to null and collapse
+    # the enclosing expression
+    def test12_ImplicitGroupingKeyIsRejected(self):
+        g = self.db.select_graph("grouping_keys")
+        g.query("CREATE (:P {a: 10, b: 20}), (:P {a: 10, b: 30})")
+
+        for query, read in [
+                ("MATCH (n:P) RETURN n.a + count(*)",                     "n.a"),
+                # n.a is a grouping key here, n.b is not
+                ("MATCH (n:P) RETURN n.a, n.b + count(*)",                "n.b"),
+                ("MATCH (n:P) WITH 0 AS i, n RETURN collect(n.a)[i]",     "i"),
+                ("UNWIND [1, 2] AS n WITH 2 AS paths, n "
+                 "RETURN CASE WHEN paths > 0 AND count(n) > 0 THEN 'PASS' ELSE 'FAIL' END",
+                 "paths"),
+                # the same read, one WITH earlier
+                ("MATCH (n:P) WITH n.b AS b, n WITH b + count(n) AS r RETURN r", "b"),
+        ]:
+            self.assert_rejected(
+                g, query, f"'{read}' is read outside an aggregation function")
+
+        g.delete()
+
+    # adding a column to the projection must not change what the other columns
+    # evaluate to
+    def test13_ProjectingAKeyDoesNotChangeOtherColumns(self):
+        g = self.db.select_graph("grouping_keys")
+        g.query("CREATE (a:N {id: 1, v: 0})-[:R]->(b:N {id: 2}), (b)-[:R]->(a)")
+
+        head = ("MATCH p = (n:N)-[:R*2..2]->(n) SET n.v = 1 "
+                "WITH count(p) AS paths MATCH (n:N {v: 1}) RETURN ")
+        tail = "CASE WHEN paths > 0 AND count(n) > 0 THEN 'PASS' ELSE 'FAIL' END AS v"
+
+        with_diagnostics = g.query(head + "paths, count(n) AS updated, " + tail).result_set
+        self.env.assertEqual(with_diagnostics, [[2, 2, 'PASS']])
+
+        # without `paths` projected the query is now rejected rather than
+        # quietly disagreeing with the row above
+        self.assert_rejected(
+            g, head + tail, "'paths' is read outside an aggregation function")
+
+        g.delete()
