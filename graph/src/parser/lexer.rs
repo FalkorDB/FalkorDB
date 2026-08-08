@@ -720,8 +720,12 @@ impl<'a> Lexer<'a> {
         is_float: bool,
     ) -> Result<Token, String> {
         if is_float {
+            // Only a literal too large to represent overflows. Subnormals are
+            // finite and representable, and arithmetic produces them anyway
+            // (`1.0e-307 / 10`), so rejecting them here only made the parser
+            // disagree with the evaluator.
             return match str.parse::<f64>() {
-                Ok(f) if f.is_finite() && !f.is_subnormal() => Ok(Token::Float(f)),
+                Ok(f) if f.is_finite() => Ok(Token::Float(f)),
                 Ok(_) => Err(format!("Float overflow '{str}'")),
                 Err(_) => Err(format!("Invalid input '{str}'")),
             };
@@ -850,5 +854,37 @@ mod tests {
         assert!(lex_all("$`abc").is_err());
         // A multi-byte char in the unterminated name must not panic either.
         assert!(lex_all("$`é").is_err());
+    }
+
+    // Regression: subnormals were rejected as "Float overflow" even though
+    // they are finite and representable, so the parser refused magnitudes the
+    // evaluator produces on its own (`1.0e-307 / 10`).
+    #[test]
+    fn subnormal_float_literals_are_accepted() {
+        // `5e-324` and `4.9e-324` are the smallest positive subnormal
+        for literal in ["2.2e-308", "1.0e-308", "5e-324", "4.9e-324"] {
+            let tokens =
+                lex_all(literal).unwrap_or_else(|e| panic!("{literal} should lex, got {e}"));
+            let [Token::Float(f)] = tokens.as_slice() else {
+                panic!("{literal} did not lex to a single float: {tokens:?}");
+            };
+            assert!(f.is_subnormal(), "{literal} lexed to {f}, not a subnormal");
+        }
+    }
+
+    #[test]
+    fn float_literals_beyond_the_representable_range_still_overflow() {
+        for literal in ["1e400", "1.8e308"] {
+            assert_eq!(
+                lex_all(literal).unwrap_err(),
+                format!("Float overflow '{literal}'")
+            );
+        }
+
+        // The largest normal is representable and must still lex.
+        assert!(matches!(
+            lex_all("1.7976931348623157e308").unwrap().as_slice(),
+            [Token::Float(f)] if f.is_normal()
+        ));
     }
 }
