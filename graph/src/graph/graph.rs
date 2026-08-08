@@ -105,6 +105,23 @@ use crate::{
     threadpool::spawn,
 };
 
+/// Measurement gate: `true` when `FALKORDB_INDEX_ONLY=1`, meaning the index
+/// numeric index should be the sole maintainer of node Range indexes and the
+/// redundant RediSearch feed is skipped on the write path. Read once and cached.
+///
+/// This exists only to benchmark the index-only write cost against RediSearch
+/// without the dark-launch double-write; it is not a shipping mode (it disables
+/// the string/geo fallback). P7 replaces it with a per-index coverage guard.
+#[cfg(feature = "index-falkordb")]
+fn index_only_writes() -> bool {
+    use std::sync::OnceLock;
+    static INDEX_ONLY: OnceLock<bool> = OnceLock::new();
+    *INDEX_ONLY.get_or_init(|| {
+        std::env::var("FALKORDB_INDEX_ONLY")
+            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    })
+}
+
 /// Result of query parsing and planning.
 ///
 /// Contains the execution plan along with metadata about parsing performance.
@@ -316,6 +333,12 @@ pub struct Graph {
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
     pub schema_version: u64,
+    /// FalkorDB numeric indexes, folded into the graph version: `new_version`
+    /// forks them copy-on-write and the committed-version swap publishes graph +
+    /// index atomically (PR2 · P3). Strictly gated — absent when the feature is
+    /// off.
+    #[cfg(feature = "index-falkordb")]
+    falkordb_index: crate::index::falkordb::falkordb_index::FalkorDbIndex,
 }
 
 /// Wrapper for plan trees to implement Send+Sync.
@@ -709,6 +732,8 @@ impl Graph {
             constraints: Vec::new(),
             version,
             schema_version: 0,
+            #[cfg(feature = "index-falkordb")]
+            falkordb_index: crate::index::falkordb::falkordb_index::FalkorDbIndex::new(),
         }
     }
 
@@ -785,6 +810,11 @@ impl Graph {
             constraints: Vec::new(),
             version: 0,
             schema_version,
+            // P3: an empty set on restore. RDB (de)serialization of the pages is
+            // a later, separately-versioned step (P-SER); until then a restored
+            // graph's index is rebuilt by the populate path.
+            #[cfg(feature = "index-falkordb")]
+            falkordb_index: crate::index::falkordb::falkordb_index::FalkorDbIndex::new(),
         }
     }
 
@@ -879,7 +909,25 @@ impl Graph {
             constraints: self.constraints.clone(),
             version: self.version + 1,
             schema_version: self.schema_version,
+            #[cfg(feature = "index-falkordb")]
+            falkordb_index: self.falkordb_index.clone(),
         }
+    }
+
+    /// Shared read access to this version's FalkorDB indexes.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn falkordb_index(&self) -> &crate::index::falkordb::falkordb_index::FalkorDbIndex {
+        &self.falkordb_index
+    }
+
+    /// Mutable access to this version's FalkorDB indexes, for the write path to
+    /// maintain them within the already-CoW-forked version.
+    #[cfg(feature = "index-falkordb")]
+    pub fn falkordb_index_mut(
+        &mut self
+    ) -> &mut crate::index::falkordb::falkordb_index::FalkorDbIndex {
+        &mut self.falkordb_index
     }
 
     #[must_use]
@@ -1373,7 +1421,46 @@ impl Graph {
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(usize, usize), String> {
+        // Index: collect maintenance BEFORE the overwrite, so the OLD value is still readable
+        // (that is the value-precise removal the tuple-keyed B-tree needs). Multi-SET in one txn is
+        // already collapsed by pending to `(first_old, final_new)`, so this sees exactly that pair.
+        // Fast path: with no native index columns, skip all staging (the per-attr Arc clone +
+        // old-value read the RediSearch path also avoids via `has_indices()`).
+        #[cfg(feature = "index-falkordb")]
+        let (index_removes, index_adds) = if self.falkordb_index.is_empty() {
+            (HashMap::new(), HashMap::new())
+        } else {
+            let mut removes: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> =
+                HashMap::new();
+            let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
+            let mut labels: Vec<u64> = Vec::new();
+            for (id, m) in attrs {
+                // Once per node — see `node_label_ids_into`. The old-value read is hoisted out of
+                // the label loop for the same reason: it does not vary with the label.
+                self.node_label_ids_into(*id, &mut labels);
+                for (attr_id, new_value) in m.iter() {
+                    // main now passes pre-resolved u16 attr ids; the index keys columns by name.
+                    let Some(attr) = self.node_attr_name(*attr_id) else {
+                        continue;
+                    };
+                    let old = self.get_node_attribute_by_idx(NodeId(*id), *attr_id);
+                    for &label_id in &labels {
+                        let label = &self.node_labels[label_id as usize];
+                        if let Some(old) = &old {
+                            self.stage_index_column(label, &attr, old, *id, &mut removes);
+                        }
+                        self.stage_index_column(label, &attr, new_value, *id, &mut adds);
+                    }
+                }
+            }
+            (removes, adds)
+        };
         let (nremoved, nset) = self.node_attrs.insert_attrs(attrs)?;
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            self.falkordb_index
+                .merge(EntityType::Node, index_adds, index_removes);
+        }
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
@@ -1407,6 +1494,32 @@ impl Graph {
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
         let nset = self.node_attrs.import_attrs(attrs);
+
+        // Index: new nodes are pure adds (no prior value). Fast path: skip staging with no columns.
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
+            for (id, m) in attrs {
+                // Labels come from `new_labels`, never from the matrix — that is the whole reason
+                // this function takes them. The index staging used to reach for
+                // `node_labels_matrix.iter` once per (node, attribute), reintroducing exactly the
+                // `wait`-forced delta merge the doc comment above says this path avoids.
+                let Some(label_ids) = new_labels.get(id) else {
+                    continue; // no labels this transaction — nothing routes to a column
+                };
+                for (attr_id, value) in m.iter() {
+                    let Some(attr) = self.node_attr_name(*attr_id) else {
+                        continue;
+                    };
+                    for &label_id in label_ids {
+                        let label = &self.node_labels[label_id as usize];
+                        self.stage_index_column(label, &attr, value, *id, &mut adds);
+                    }
+                }
+            }
+            self.falkordb_index
+                .merge(EntityType::Node, adds, HashMap::new());
+        }
 
         if self.node_indexer.has_indices() {
             for (id, attrs) in attrs {
@@ -1443,6 +1556,11 @@ impl Graph {
     /// silently stop indexing bulk-loaded rows.
     ///
     /// Tracking runs **before** the import because `import_attrs_resolved` drains `data`.
+    ///
+    /// The native index is deliberately NOT maintained here yet: this stages only the
+    /// RediSearch documents. Bulk-loading into a graph with a native column therefore
+    /// leaves it stale, which is why the native read path is still gated behind
+    /// `index-falkordb`. Porting this hook to the native side is tracked separately.
     pub fn import_node_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
@@ -1557,6 +1675,22 @@ impl Graph {
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
         let nset = self.relationship_attrs.import_attrs(attrs);
+
+        // Edge index: new edges are pure adds (no prior value). #51. Fast path: skip with no columns.
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
+            for (id, m) in attrs {
+                for (attr_id, value) in m.iter() {
+                    if let Some(attr) = self.rel_attr_name(*attr_id) {
+                        self.stage_index_edge(*id, &attr, value, &mut adds);
+                    }
+                }
+            }
+            self.falkordb_index
+                .merge(EntityType::Relationship, adds, HashMap::new());
+        }
+
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         nset
     }
@@ -1630,6 +1764,19 @@ impl Graph {
     ) {
         self.resize();
 
+        // Index: a node gaining a label indexes its current attrs under that label. (A fresh
+        // node has no attrs here — imported later — so this only fires for an existing node gaining a
+        // label; new nodes are handled by `import_node_attrs`.)
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
+            for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
+                self.stage_index_node_for_label(id, label_id, &mut adds);
+            }
+            self.falkordb_index
+                .merge(EntityType::Node, adds, HashMap::new());
+        }
+
         // Collect entries grouped by label for per-label matrices
         let num_labels = self.labels_matices.len();
         let mut by_label: Vec<Vec<u64>> = vec![Vec::new(); num_labels];
@@ -1661,6 +1808,20 @@ impl Graph {
     ) {
         self.resize();
 
+        // Index: a node losing a label drops its indexed attrs from that label's column,
+        // staged BEFORE the labels come off (attrs still present). Without this the tuples orphan and
+        // later resurrect on id reuse (review finding #2).
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            let mut removes: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> =
+                HashMap::new();
+            for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
+                self.stage_index_node_for_label(id, label_id, &mut removes);
+            }
+            self.falkordb_index
+                .merge(EntityType::Node, HashMap::new(), removes);
+        }
+
         for (&id, &label_id) in label_rows.iter().zip(label_cols.iter()) {
             self.node_labels_matrix.remove(id, label_id);
             self.labels_matices[label_id as usize].remove(id, id);
@@ -1676,6 +1837,26 @@ impl Graph {
         deleted_nodes: &RoaringTreemap,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(), String> {
+        // Index: remove each deleted node's indexed values while its attrs are still present
+        // (the graph tears them down below). Batched per column — the mass-delete path.
+        // Fast path: skip the per-node attr scan entirely with no native columns.
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            let mut removes: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> =
+                HashMap::new();
+            let mut labels: Vec<u64> = Vec::new();
+            for id in deleted_nodes {
+                self.node_label_ids_into(id, &mut labels); // once per node, not per attribute
+                for (attr, value) in self.get_node_all_attrs(NodeId(id)) {
+                    for &label_id in &labels {
+                        let label = &self.node_labels[label_id as usize];
+                        self.stage_index_column(label, &attr, &value, id, &mut removes);
+                    }
+                }
+            }
+            self.falkordb_index
+                .merge(EntityType::Node, HashMap::new(), removes);
+        }
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
@@ -2134,7 +2315,38 @@ impl Graph {
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(usize, usize), String> {
+        // Edge index: collect maintenance BEFORE the overwrite so the OLD value is still
+        // readable (value-precise removal the tuple-keyed B-tree needs). Mirrors
+        // `set_nodes_attributes`. #51.
+        // Fast path: skip staging (old-value read + Arc clone) with no native columns.
+        #[cfg(feature = "index-falkordb")]
+        let (index_removes, index_adds) = if self.falkordb_index.is_empty() {
+            (HashMap::new(), HashMap::new())
+        } else {
+            let mut removes: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> =
+                HashMap::new();
+            let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
+            for (id, m) in attrs {
+                for (attr_id, new_value) in m.iter() {
+                    let Some(attr) = self.rel_attr_name(*attr_id) else {
+                        continue;
+                    };
+                    if let Some(old) =
+                        self.get_relationship_attribute_by_idx(RelationshipId(*id), *attr_id)
+                    {
+                        self.stage_index_edge(*id, &attr, &old, &mut removes);
+                    }
+                    self.stage_index_edge(*id, &attr, new_value, &mut adds);
+                }
+            }
+            (removes, adds)
+        };
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            self.falkordb_index
+                .merge(EntityType::Relationship, index_adds, index_removes);
+        }
         self.track_edge_index_updates(attrs, index_add_edge_docs);
         Ok((nremoved, nset))
     }
@@ -2223,6 +2435,22 @@ impl Graph {
                     resolved.insert(edge_id);
                 }
             }
+        }
+
+        // Edge index: remove each resolved edge's indexed values while its attrs and type are
+        // still present (torn down below). Batched per column — the mass-delete path. #51.
+        // Fast path: skip the per-edge attr scan entirely with no native columns.
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            let mut removes: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> =
+                HashMap::new();
+            for id in &resolved {
+                for (attr, value) in self.get_relationship_all_attrs(RelationshipId(id)) {
+                    self.stage_index_edge(id, &attr, &value, &mut removes);
+                }
+            }
+            self.falkordb_index
+                .merge(EntityType::Relationship, HashMap::new(), removes);
         }
 
         // --- Phase 2: mutate state for the actually-resolved edges only ---
@@ -2379,6 +2607,21 @@ impl Graph {
                         .or_default()
                         .insert(edge_id, (src, dst));
                 }
+            }
+            // Edge index: remove this type's cascade-deleted edges before their attrs and type
+            // mapping are torn down below. Mirrors `delete_relationships`. #51.
+            // Fast path: skip the per-edge attr scan entirely with no native columns.
+            #[cfg(feature = "index-falkordb")]
+            if !self.falkordb_index.is_empty() {
+                let mut removes: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> =
+                    HashMap::new();
+                for &(edge_id, _, _) in &rels {
+                    for (attr, value) in self.get_relationship_all_attrs(RelationshipId(edge_id)) {
+                        self.stage_index_edge(edge_id, &attr, &value, &mut removes);
+                    }
+                }
+                self.falkordb_index
+                    .merge(EntityType::Relationship, HashMap::new(), removes);
             }
             self.relationship_type_matrix.remove_mask(&type_mask);
             self.relationship_attrs.remove_all(&del_keys);
@@ -2796,6 +3039,14 @@ impl Graph {
                     self.add_node_attribute_name(attr);
                 }
                 populate_index(IndexKind::Node, label.clone(), self.node_indexer.clone());
+                // Dark-launch the index alongside RediSearch. The column is built
+                // synchronously here, on the write thread, so CREATE INDEX returns with a
+                // column that already serves reads. A background build (which lets CREATE
+                // INDEX return before the pre-existing snapshot is in) is a separate change.
+                #[cfg(feature = "index-falkordb")]
+                if *index_type == IndexType::Range {
+                    self.populate_index_node(label, attrs);
+                }
             }
             EntityType::Relationship => {
                 // get-or-create the relationship type so that
@@ -2808,6 +3059,12 @@ impl Graph {
                     self.add_rel_attribute_name(attr);
                 }
                 populate_index(IndexKind::Edge, label.clone(), self.edge_indexer.clone());
+                // Dark-launch the edge index (#51): built synchronously here, same as the
+                // node branch above (docs are edge_ids).
+                #[cfg(feature = "index-falkordb")]
+                if *index_type == IndexType::Range {
+                    self.populate_index_edge(label, attrs);
+                }
             }
         }
         Ok(())
@@ -2815,6 +3072,14 @@ impl Graph {
 
     /// Create an index and populate it synchronously (for RDB load).
     /// Unlike `create_index`, this doesn't spawn async tasks.
+    ///
+    /// **The caller must reach `populate_indexes_sync` before publishing this version.** This
+    /// leaves the native column created but *empty*, and an empty column is indistinguishable
+    /// from one that legitimately matches nothing — a query reaching it would return no rows
+    /// rather than falling back. Every caller pairs the two inside one unpublished fork today
+    /// (`rebuild_indexes` + `populate_indexes_sync` in the decoder, and the `has_index_ops` arm
+    /// of `apply_effects`), so no reader can observe the gap; a new caller that skips the
+    /// populate would silently serve empty results.
     pub fn create_index_sync(
         &mut self,
         index_type: &IndexType,
@@ -2836,6 +3101,15 @@ impl Graph {
                 for attr in attrs {
                     self.add_node_attribute_name(attr);
                 }
+                // Create the index column now (empty); populate_indexes_sync
+                // fills it once all nodes are loaded (RDB/replica path). P4a.
+                #[cfg(feature = "index-falkordb")]
+                if *index_type == IndexType::Range {
+                    for attr in attrs {
+                        self.falkordb_index
+                            .create_numeric(EntityType::Node, label, attr);
+                    }
+                }
                 // Don't spawn async — caller will populate via populate_index_sync
             }
             EntityType::Relationship => {
@@ -2848,18 +3122,246 @@ impl Graph {
                 for attr in attrs {
                     self.add_rel_attribute_name(attr);
                 }
+                // Create the index edge column now (empty); populate_indexes_sync fills it once
+                // all edges are loaded (RDB/replica path). #51, mirrors the node branch above.
+                #[cfg(feature = "index-falkordb")]
+                if *index_type == IndexType::Range {
+                    for attr in attrs {
+                        self.falkordb_index
+                            .create_numeric(EntityType::Relationship, label, attr);
+                    }
+                }
             }
         }
         Ok(())
+    }
+
+    /// Collect the `(value, node_id)` entries for one node index column `(label, attr)` from the
+    /// current live nodes — shared-borrow only (label matrix + attribute store are `&self`).
+    #[cfg(feature = "index-falkordb")]
+    fn collect_node_index_entries(
+        &self,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Vec<(Value, u64)> {
+        let mut pairs = Vec::new();
+        if let (Some(lm), Some(idx)) = (
+            self.get_label_matrix(label),
+            self.get_node_attribute_id(attr),
+        ) {
+            let idx = idx as u16;
+            for (n, _) in lm.iter(0, u64::MAX) {
+                if let Some(value) = self.get_node_attribute_by_idx(NodeId(n), idx) {
+                    pairs.push((value, n));
+                }
+            }
+        }
+        pairs
+    }
+
+    /// Bulk-build the index for each of `attrs` on `label` from
+    /// the current live nodes, on the write thread. The folded index lives on
+    /// this graph version, so it MUST be filled here (with `&mut Graph`) and
+    /// never via the async RediSearch populate, which reads through the
+    /// `Indexer -> Graph` back-pointer this design rejects. A `(label, attr)`
+    /// with no live nodes or no numeric values yields an empty column.
+    #[cfg(feature = "index-falkordb")]
+    fn populate_index_node(
+        &mut self,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+    ) {
+        // Phase 1 — collect per attr (shared borrows only). Phase 2 — bulk-build the CoW columns.
+        let built: Vec<(Arc<String>, Vec<(Value, u64)>)> = attrs
+            .iter()
+            .map(|attr| (attr.clone(), self.collect_node_index_entries(label, attr)))
+            .collect();
+        for (attr, pairs) in built {
+            self.falkordb_index.build_numeric(
+                EntityType::Node,
+                label,
+                &attr,
+                pairs.iter().map(|(v, id)| (v, *id)),
+            );
+        }
+    }
+
+    /// Stage `(value, id)` into every index column `(label, attr)` the node `id` belongs to (a node
+    /// may carry several labels). Shared-borrow only — the caller applies the staged columns after.
+    #[cfg(feature = "index-falkordb")]
+    fn stage_index_column(
+        &self,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        value: &Value,
+        id: u64,
+        out: &mut HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>>,
+    ) {
+        if self
+            .falkordb_index
+            .has_column(EntityType::Node, label, attr)
+        {
+            out.entry((label.clone(), attr.clone()))
+                .or_default()
+                .push((value.clone(), id));
+        }
+    }
+
+    /// The node's label ids, reusing `out`'s allocation across nodes.
+    ///
+    /// Exists so callers resolve labels **once per node**. `node_labels_matrix.iter` carries a
+    /// `wait` that forces a pending-delta merge — O(accumulated delta) — and a node's label set
+    /// does not depend on which attribute is being written, so folding this into a per-attribute
+    /// helper multiplied that cost for nothing. Same defect, and same fix, as the edge path in
+    /// #2344. A caller that already knows the labels (`import_node_attrs` has them in
+    /// `new_labels`) must not call this at all.
+    #[cfg(feature = "index-falkordb")]
+    fn node_label_ids_into(
+        &self,
+        id: u64,
+        out: &mut Vec<u64>,
+    ) {
+        out.clear();
+        out.extend(self.node_labels_matrix.iter(id, id).map(|(_, l)| l));
+    }
+
+    /// Stage every indexed `(value, id)` the node `id` carries **under the single label `label_id`** —
+    /// for label add/remove, where only that one column changes. Reads the node's current attrs, so a
+    /// node with no attrs yet (a fresh node whose props import later) stages nothing.
+    #[cfg(feature = "index-falkordb")]
+    fn stage_index_node_for_label(
+        &self,
+        id: u64,
+        label_id: u64,
+        out: &mut HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>>,
+    ) {
+        let label = &self.node_labels[label_id as usize];
+        for (attr, value) in self.get_node_all_attrs(NodeId(id)) {
+            if self
+                .falkordb_index
+                .has_column(EntityType::Node, label, &attr)
+            {
+                out.entry((label.clone(), attr.clone()))
+                    .or_default()
+                    .push((value, id));
+            }
+        }
+    }
+
+    // ---- Edge (relationship) index maintenance (#51) ----
+    // The edge column stores `(value, edge_id)`; `(src, dst)` are recovered on read from the graph's
+    // own `edge_id → (src, dst)` reverse index (`endpoints_for_edge`), so nothing about endpoints is
+    // maintained here. An edge has exactly ONE type (immutable after create), so — unlike a node's
+    // many mutable labels — routing is a single `(type, attr)` lookup and there is no label-change churn.
+    //
+    // INVARIANT: every path that mutates an indexed edge attribute MUST route through these hooks
+    // (import_relationship_attrs / set_relationships_attributes / delete_relationships /
+    // delete_implicit_edges). The endpoint-liveness filter on read only hides *deleted-and-not-reused*
+    // edges; a mutation that bypasses these hooks would leak a stale tuple that surfaces once the
+    // edge_id is reused. Add the stage/apply hook to any new indexed-edge-attr write path.
+
+    /// Collect the `(value, edge_id)` entries for one edge index column `(type, attr)` from the
+    /// type's live edges — shared-borrow only.
+    #[cfg(feature = "index-falkordb")]
+    fn collect_edge_index_entries(
+        &self,
+        type_name: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Vec<(Value, u64)> {
+        let Some(idx) = self.get_relationship_attribute_id(attr) else {
+            return Vec::new();
+        };
+        let idx = idx as u16;
+        let edge_ids: Vec<u64> = self
+            .get_relationship_matrix(type_name)
+            .map_or_else(Vec::new, |t| {
+                t.iter(0, u64::MAX, false).map(|(_, _, eid)| eid).collect()
+            });
+        edge_ids
+            .into_iter()
+            .filter_map(|eid| {
+                self.get_relationship_attribute_by_idx(RelationshipId(eid), idx)
+                    .map(|value| (value, eid))
+            })
+            .collect()
+    }
+
+    /// Bulk-build the edge index for each of `attrs` on `type_name` from the type's
+    /// live edges, on the write thread. Mirrors [`populate_index_node`] for edges.
+    #[cfg(feature = "index-falkordb")]
+    fn populate_index_edge(
+        &mut self,
+        type_name: &Arc<String>,
+        attrs: &[Arc<String>],
+    ) {
+        let built: Vec<(Arc<String>, Vec<(Value, u64)>)> = attrs
+            .iter()
+            .map(|attr| {
+                (
+                    attr.clone(),
+                    self.collect_edge_index_entries(type_name, attr),
+                )
+            })
+            .collect();
+        for (attr, pairs) in built {
+            self.falkordb_index.build_numeric(
+                EntityType::Relationship,
+                type_name,
+                &attr,
+                pairs.iter().map(|(v, id)| (v, *id)),
+            );
+        }
+    }
+
+    /// Stage `(value, edge_id)` into the index column `(type, attr)` for the edge `id`'s single type,
+    /// if such a column exists. Shared-borrow only — the caller applies the staged columns after.
+    ///
+    /// Relies on `get_relationship_type_id` (which `.expect`s the edge is in the type matrix). Every
+    /// caller upholds this: create/SET touch a live edge, and both delete hooks stage removes BEFORE
+    /// they tear the type matrix down. The panic is a loud tripwire if a future caller violates it —
+    /// preferable to silently skipping maintenance and leaking a stale tuple.
+    #[cfg(feature = "index-falkordb")]
+    fn stage_index_edge(
+        &self,
+        id: u64,
+        attr: &Arc<String>,
+        value: &Value,
+        out: &mut HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>>,
+    ) {
+        let type_id = self.get_relationship_type_id(RelationshipId(id));
+        let type_name = &self.relationship_types[type_id.0];
+        if self
+            .falkordb_index
+            .has_column(EntityType::Relationship, type_name, attr)
+        {
+            out.entry((type_name.clone(), attr.clone()))
+                .or_default()
+                .push((value.clone(), id));
+        }
     }
 
     /// Synchronously populate all pending indexes.
     /// Used after RDB load when the graph is fully constructed.
     pub fn populate_indexes_sync(&mut self) {
         let node_snapshots = self.node_indexer.acquire_population_snapshots();
+        // Index numeric columns to (re)build after the RediSearch pass — collect
+        // just the names here, build after the loop to keep borrows simple. P4a.
+        #[cfg(feature = "index-falkordb")]
+        let mut index_todo: Vec<(Arc<String>, Vec<Arc<String>>)> = Vec::new();
         for snapshot in node_snapshots {
             let label = snapshot.ticket.label().clone();
             let attrs = snapshot.fields;
+            #[cfg(feature = "index-falkordb")]
+            {
+                let range_attrs: Vec<Arc<String>> = attrs
+                    .iter()
+                    .filter(|(_, fields)| fields.iter().any(|f| f.ty == IndexType::Range))
+                    .map(|(a, _)| a.clone())
+                    .collect();
+                if !range_attrs.is_empty() {
+                    index_todo.push((label.clone(), range_attrs));
+                }
+            }
             if let Some(lm) = self.get_label_matrix(&label) {
                 // Pre-resolve attribute indices to avoid string lookups per node
                 let resolved_attrs: Vec<(u16, Vec<_>)> = attrs
@@ -2898,6 +3400,11 @@ impl Graph {
                 .release_population_ticket(&snapshot.ticket);
         }
 
+        #[cfg(feature = "index-falkordb")]
+        for (label, attrs) in index_todo {
+            self.populate_index_node(&label, &attrs);
+        }
+
         // Edge indexes: symmetric to the node path, but walk the
         // relationship tensor and emit `Document::new_edge(src, dst, eid)`
         // so RediSearch keys stay the 24-byte `[src, dst, edge_id]`
@@ -2906,9 +3413,23 @@ impl Graph {
         // `(src, dst, eid)` triple for large relationship types on
         // RDB load.
         let edge_snapshots = self.edge_indexer.acquire_population_snapshots();
+        // Edge index numeric columns to (re)build after the RediSearch pass. #51.
+        #[cfg(feature = "index-falkordb")]
+        let mut edge_index_todo: Vec<(Arc<String>, Vec<Arc<String>>)> = Vec::new();
         for snapshot in edge_snapshots {
             let type_name = snapshot.ticket.label().clone();
             let attrs = snapshot.fields;
+            #[cfg(feature = "index-falkordb")]
+            {
+                let range_attrs: Vec<Arc<String>> = attrs
+                    .iter()
+                    .filter(|(_, fields)| fields.iter().any(|f| f.ty == IndexType::Range))
+                    .map(|(a, _)| a.clone())
+                    .collect();
+                if !range_attrs.is_empty() {
+                    edge_index_todo.push((type_name.clone(), range_attrs));
+                }
+            }
             if let Some(tensor) = self.get_relationship_matrix(&type_name) {
                 let mut batch = Vec::new();
                 for (src, dst, eid) in tensor.iter(0, u64::MAX, false) {
@@ -2936,6 +3457,11 @@ impl Graph {
             }
             self.edge_indexer
                 .release_population_ticket(&snapshot.ticket);
+        }
+
+        #[cfg(feature = "index-falkordb")]
+        for (type_name, attrs) in edge_index_todo {
+            self.populate_index_edge(&type_name, &attrs);
         }
     }
 
@@ -3077,6 +3603,21 @@ impl Graph {
             return;
         }
 
+        // MEASUREMENT GATE (not a shipping mode): with the index active,
+        // `FALKORDB_INDEX_ONLY=1` skips RediSearch node maintenance so the write path is
+        // index-only — isolating the index-vs-RediSearch write cost without the dark-launch
+        // double-write. The index column has already been maintained inline in the mutation
+        // hooks, so the tuples are safe; only the redundant RediSearch feed is
+        // dropped. This breaks string/geo reads on a Range index (they still expect RediSearch), so
+        // it is a benchmark instrument for all-numeric workloads. P7 productionizes the same skip
+        // behind a per-label "fully index-covered" guard + the xfail ledger.
+        #[cfg(feature = "index-falkordb")]
+        if matches!(kind, IndexKind::Node) && index_only_writes() {
+            index_add_docs.clear();
+            remove_docs.clear();
+            return;
+        }
+
         let (indexer, names, attr_store) = match kind {
             IndexKind::Node => (&self.node_indexer, &self.node_labels, &self.node_attrs),
             IndexKind::Edge => unreachable!("use commit_edge_index for edges"),
@@ -3165,6 +3706,16 @@ impl Graph {
 
         match reindex {
             Some((dropped, remaining)) if dropped > 0 => {
+                // Drop the native column(s) only now, after the indexer confirmed the drop.
+                // Doing it earlier meant the `no such index` arm below could leave RediSearch
+                // holding the index while the native columns were already gone — DROP INDEX
+                // reports failure but half the state is destroyed. O(1) each: releases the tree Arc.
+                #[cfg(feature = "index-falkordb")]
+                if *index_type == IndexType::Range {
+                    for attr in &effective_attrs {
+                        self.falkordb_index.drop_column(*entity_type, label, attr);
+                    }
+                }
                 if remaining > 0 {
                     indexer.recreate_index(label)?;
                     populate_index(kind, label.clone(), indexer.clone());
@@ -3204,6 +3755,57 @@ impl Graph {
         query: IndexQuery<Value>,
     ) -> impl Iterator<Item = NodeId> + use<> {
         self.node_indexer.query(label, query).map(NodeId)
+    }
+
+    /// Node ids for `query` from the index numeric column, or `None` to fall through to RediSearch
+    /// (non-numeric / composite / missing column). Wraps
+    /// [`FalkorDbIndex::query_numeric`], mapping raw ids to `NodeId` (whose constructor is
+    /// module-private). `use<>` keeps the returned iterator free of the `&self` borrow — it owns its
+    /// tree snapshot, so it outlives this borrow.
+    #[cfg(feature = "index-falkordb")]
+    pub fn query_index_numeric_nodes(
+        &self,
+        label: &Arc<String>,
+        query: &IndexQuery<Value>,
+    ) -> Option<impl Iterator<Item = NodeId> + use<>> {
+        self.falkordb_index()
+            .query_numeric(EntityType::Node, label, query)
+            .map(|iter| iter.map(NodeId))
+    }
+
+    /// Answer an EDGE numeric `Equal`/`Range` from the index column for `type_name`, yielding
+    /// `(src, dst, edge_id)` — endpoints recovered from the graph's `edge_id → (src, dst)` reverse
+    /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
+    /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
+    /// only holds a temporary graph borrow, so the result must not borrow `self`. `None` (fall back to
+    /// RediSearch) for non-numeric/composite predicates or a missing column. #51.
+    #[cfg(feature = "index-falkordb")]
+    pub fn query_index_numeric_edges(
+        &self,
+        type_name: &Arc<String>,
+        query: &IndexQuery<Value>,
+    ) -> Option<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>> {
+        let iter =
+            self.falkordb_index()
+                .query_numeric(EntityType::Relationship, type_name, query)?;
+        // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
+        // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
+        // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump and the decode
+        // is the same shift/mask `endpoints_for_edge` does. Laziness matters here — a range scan
+        // under a LIMIT should stop at the limit, not materialize every match first.
+        let endpoints = Arc::clone(&self.edge_endpoints);
+        Some(iter.filter_map(move |eid| {
+            endpoints
+                .get(eid as usize)
+                .filter(|&&key| key != EDGE_NO_ENDPOINT)
+                .map(|&key| {
+                    (
+                        NodeId(key >> 32),
+                        NodeId(key & 0xFFFF_FFFF),
+                        RelationshipId(eid),
+                    )
+                })
+        }))
     }
 
     #[must_use]
@@ -4086,5 +4688,299 @@ impl Graph {
             }
         }
         attrs
+    }
+}
+
+#[cfg(all(test, feature = "index-falkordb"))]
+mod falkordb_index_mvcc_tests {
+    use super::Graph;
+    use crate::entity_type::EntityType;
+    use crate::runtime::value::Value;
+    use roaring::RoaringTreemap;
+    use rustc_hash::FxHashMap;
+    use std::sync::Arc;
+
+    /// `Graph::new` builds GraphBLAS matrices, which need GraphBLAS initialized
+    /// first (done at Redis module-load in production, never from a bare unit
+    /// test).
+    ///
+    /// This MUST go through the crate-wide guard rather than its own `Once`:
+    /// GraphBLAS may be initialized exactly once per process, so a second `Once`
+    /// gets `GrB_INVALID_VALUE`, and when the loser is
+    /// `graphblas::test_init::ensure_init` its `unwrap` panics inside `call_once`,
+    /// poisoning that `Once` for every later GraphBLAS test.
+    fn ensure_graphblas() {
+        crate::graph::graphblas::test_init::ensure_init();
+    }
+
+    /// Folded-roots MVCC: `new_version` forks the FalkorDB index copy-on-write,
+    /// so mutating the writer's version leaves the committed version — the
+    /// snapshot a reader may still hold — untouched, riding one version bump.
+    #[test]
+    fn new_version_isolates_the_falkordb_index() {
+        ensure_graphblas();
+        let label = Arc::new("Person".to_string());
+        let attr = Arc::new("age".to_string());
+
+        let mut committed = Graph::new(64, 64, 10, 1, "t");
+        committed
+            .falkordb_index_mut()
+            .create_numeric(EntityType::Node, &label, &attr);
+        committed
+            .falkordb_index_mut()
+            .numeric_mut(EntityType::Node, &label, &attr)
+            .unwrap()
+            .add(&Value::Int(30), 1);
+
+        // A writer forks the next version and indexes another node.
+        let mut writer = committed.new_version();
+        writer
+            .falkordb_index_mut()
+            .numeric_mut(EntityType::Node, &label, &attr)
+            .unwrap()
+            .add(&Value::Int(40), 2);
+
+        let all = |g: &Graph| -> Vec<u64> {
+            g.falkordb_index()
+                .numeric(EntityType::Node, &label, &attr)
+                .unwrap()
+                .range(None, None, true, true)
+                .collect()
+        };
+        assert_eq!(all(&committed), vec![1], "committed snapshot is untouched");
+        assert_eq!(all(&writer), vec![1, 2], "writer sees its own write");
+        assert_eq!(writer.version, committed.version + 1);
+    }
+
+    /// `populate_index_node` bulk-builds the column from real graph state:
+    /// three `:Person {age}` nodes, then a range scan returns the right ids in
+    /// `(value, id)` order. Drives the populate reads (`get_label_matrix` →
+    /// `get_node_attribute_by_idx`) directly, bypassing `create_index`'s
+    /// RediSearch FFI (uninitialised in a unit test).
+    #[test]
+    fn populate_index_node_indexes_live_nodes() {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let label = Arc::new("Person".to_string());
+        let attr = Arc::new("age".to_string());
+
+        // Register the label and activate three nodes (ids 0,1,2 on a fresh graph).
+        let lid = g.get_label_id_mut("Person");
+        let ids: Vec<u64> = g.reserve_nodes(3).iter().map(|n| n.0).collect();
+        let mut set = RoaringTreemap::new();
+        for &id in &ids {
+            set.insert(id);
+        }
+        g.create_nodes(&set);
+
+        // Assign the :Person label to all three.
+        let label_cols: Vec<u64> = vec![lid.0 as u64; ids.len()];
+        g.set_nodes_labels_bulk(&ids, &label_cols, &mut FxHashMap::default());
+
+        // age = 10, 20, 30.
+        let aid = g.get_or_create_node_attr_id(&attr);
+        let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
+        for (i, &id) in ids.iter().enumerate() {
+            attrs.insert(id, vec![(aid, Value::Int(((i + 1) * 10) as i64))]);
+        }
+        g.set_nodes_attributes(&attrs, &mut FxHashMap::default())
+            .unwrap();
+
+        // Build the index numeric column from the live nodes.
+        g.populate_index_node(&label, std::slice::from_ref(&attr));
+
+        let scan = |lo: Option<i64>, hi: Option<i64>| -> Vec<u64> {
+            let lo = lo.map(Value::Int);
+            let hi = hi.map(Value::Int);
+            g.falkordb_index()
+                .numeric(EntityType::Node, &label, &attr)
+                .unwrap()
+                .range(lo.as_ref(), hi.as_ref(), true, true)
+                .collect()
+        };
+        // [15, 35] → age 20 (id 1), age 30 (id 2), in (value, id) order.
+        assert_eq!(scan(Some(15), Some(35)), vec![ids[1], ids[2]]);
+        // Unbounded → all three, value-ordered.
+        assert_eq!(scan(None, None), vec![ids[0], ids[1], ids[2]]);
+    }
+
+    // --- P4b write-path maintenance (the adversarial scenarios) ---
+
+    /// A graph with a index on `(:Person, v)` and `n` labeled Person nodes
+    /// (ids `0..n`), no attrs yet.
+    fn graph_with_index(n: usize) -> (Graph, Arc<String>, Arc<String>, Vec<u64>) {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let label = Arc::new("Person".to_string());
+        let attr = Arc::new("v".to_string());
+        g.falkordb_index_mut()
+            .create_numeric(EntityType::Node, &label, &attr);
+        let lid = g.get_label_id_mut("Person");
+        let ids: Vec<u64> = g.reserve_nodes(n).iter().map(|x| x.0).collect();
+        let mut set = RoaringTreemap::new();
+        for &id in &ids {
+            set.insert(id);
+        }
+        g.create_nodes(&set);
+        let cols = vec![lid.0 as u64; ids.len()];
+        g.set_nodes_labels_bulk(&ids, &cols, &mut FxHashMap::default());
+        (g, label, attr, ids)
+    }
+
+    /// Drive the existing-node SET path with one `(id, attr) = value`.
+    fn set_attr(
+        g: &mut Graph,
+        id: u64,
+        attr: &Arc<String>,
+        value: Value,
+    ) {
+        let aid = g.get_or_create_node_attr_id(attr);
+        let mut attrs = FxHashMap::default();
+        attrs.insert(id, vec![(aid, value)]);
+        g.set_nodes_attributes(&attrs, &mut FxHashMap::default())
+            .unwrap();
+    }
+
+    fn range_scan(
+        g: &Graph,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        lo: i64,
+        hi: i64,
+    ) -> Vec<u64> {
+        g.falkordb_index()
+            .numeric(EntityType::Node, label, attr)
+            .unwrap()
+            .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
+            .collect()
+    }
+
+    /// UPDATE must remove the old tuple — the reviewer's FAILURE 1.
+    #[test]
+    fn update_removes_the_old_tuple() {
+        let (mut g, label, attr, ids) = graph_with_index(1);
+        set_attr(&mut g, ids[0], &attr, Value::Int(5));
+        assert_eq!(range_scan(&g, &label, &attr, 4, 6), vec![ids[0]]);
+        set_attr(&mut g, ids[0], &attr, Value::Int(9)); // 5 -> 9
+        assert!(
+            range_scan(&g, &label, &attr, 4, 6).is_empty(),
+            "the stale value 5 must not surface after the update"
+        );
+        assert_eq!(range_scan(&g, &label, &attr, 8, 10), vec![ids[0]]);
+    }
+
+    /// SET x = null drops the entry (remove old, add nothing).
+    #[test]
+    fn set_null_removes_from_index() {
+        let (mut g, label, attr, ids) = graph_with_index(1);
+        set_attr(&mut g, ids[0], &attr, Value::Int(5));
+        set_attr(&mut g, ids[0], &attr, Value::Null);
+        assert!(range_scan(&g, &label, &attr, 0, 100).is_empty());
+    }
+
+    /// DELETE removes the node's tuple, leaving the others.
+    #[test]
+    fn delete_removes_from_index() {
+        let (mut g, label, attr, ids) = graph_with_index(2);
+        set_attr(&mut g, ids[0], &attr, Value::Int(5));
+        set_attr(&mut g, ids[1], &attr, Value::Int(6));
+        let mut del = RoaringTreemap::new();
+        del.insert(ids[0]);
+        g.delete_nodes(&del, &mut FxHashMap::default()).unwrap();
+        assert_eq!(range_scan(&g, &label, &attr, 0, 100), vec![ids[1]]);
+    }
+
+    /// Eager removal at delete means a reused id (same value) has no stale duplicate — the id-reuse
+    /// correctness the delete model relies on.
+    #[test]
+    fn delete_then_reuse_id_and_value_stays_correct() {
+        let (mut g, label, attr, ids) = graph_with_index(1);
+        set_attr(&mut g, ids[0], &attr, Value::Int(5));
+        let mut del = RoaringTreemap::new();
+        del.insert(ids[0]);
+        g.delete_nodes(&del, &mut FxHashMap::default()).unwrap();
+        assert!(range_scan(&g, &label, &attr, 4, 6).is_empty());
+
+        // Reclaim the freed id for a fresh node with the same value.
+        let reused: Vec<u64> = g.reserve_nodes(1).iter().map(|x| x.0).collect();
+        assert_eq!(reused[0], ids[0], "the deleted id should be reclaimed");
+        let mut set = RoaringTreemap::new();
+        set.insert(reused[0]);
+        g.create_nodes(&set);
+        let lid = g.get_label_id_mut("Person");
+        g.set_nodes_labels_bulk(&reused, &[lid.0 as u64], &mut FxHashMap::default());
+        set_attr(&mut g, reused[0], &attr, Value::Int(5));
+
+        // Exactly one entry — the reused node — no resurrected duplicate.
+        assert_eq!(range_scan(&g, &label, &attr, 4, 6), vec![reused[0]]);
+    }
+
+    /// A graph with the `(:Person, v)` index and one node that is NOT labeled `:Person`.
+    fn unlabeled_graph_with_index() -> (Graph, Arc<String>, Arc<String>, u64) {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let label = Arc::new("Person".to_string());
+        let attr = Arc::new("v".to_string());
+        g.falkordb_index_mut()
+            .create_numeric(EntityType::Node, &label, &attr);
+        let _lid = g.get_label_id_mut("Person"); // register the label matrix
+        let ids: Vec<u64> = g.reserve_nodes(1).iter().map(|x| x.0).collect();
+        let mut set = RoaringTreemap::new();
+        set.insert(ids[0]);
+        g.create_nodes(&set);
+        (g, label, attr, ids[0])
+    }
+
+    /// SET :Label indexes the node's already-present attrs — review finding #1.
+    #[test]
+    fn set_label_indexes_existing_attrs() {
+        let (mut g, label, attr, id) = unlabeled_graph_with_index();
+        set_attr(&mut g, id, &attr, Value::Int(5));
+        assert!(
+            range_scan(&g, &label, &attr, 4, 6).is_empty(),
+            "no :Person label yet ⇒ not indexed"
+        );
+        let lid = g.get_label_id_mut("Person");
+        g.set_nodes_labels_bulk(&[id], &[lid.0 as u64], &mut FxHashMap::default());
+        assert_eq!(
+            range_scan(&g, &label, &attr, 4, 6),
+            vec![id],
+            "SET :Person must index the existing attr"
+        );
+    }
+
+    /// REMOVE :Label drops the tuple, and no phantom resurrects when the id is reused with a
+    /// different value — review finding #2 (the worst case).
+    #[test]
+    fn remove_label_drops_tuple_and_no_resurrect_on_reuse() {
+        let (mut g, label, attr, ids) = graph_with_index(1);
+        set_attr(&mut g, ids[0], &attr, Value::Int(5));
+        assert_eq!(range_scan(&g, &label, &attr, 4, 6), vec![ids[0]]);
+
+        // REMOVE n:Person — the (:Person, v) tuple must be gone (without this hook it orphans).
+        let lid = g.get_label_id_mut("Person");
+        g.remove_nodes_labels(&[ids[0]], &[lid.0 as u64], &mut FxHashMap::default());
+        assert!(
+            range_scan(&g, &label, &attr, 4, 6).is_empty(),
+            "REMOVE :Person must drop the tuple"
+        );
+
+        // Delete the node and reuse its id for a fresh :Person with a DIFFERENT value.
+        let mut del = RoaringTreemap::new();
+        del.insert(ids[0]);
+        g.delete_nodes(&del, &mut FxHashMap::default()).unwrap();
+        let reused: Vec<u64> = g.reserve_nodes(1).iter().map(|x| x.0).collect();
+        assert_eq!(reused[0], ids[0]);
+        let mut set = RoaringTreemap::new();
+        set.insert(reused[0]);
+        g.create_nodes(&set);
+        g.set_nodes_labels_bulk(&reused, &[lid.0 as u64], &mut FxHashMap::default());
+        set_attr(&mut g, reused[0], &attr, Value::Int(99));
+
+        assert!(
+            range_scan(&g, &label, &attr, 4, 6).is_empty(),
+            "the old value 5 must not resurrect through the reused id"
+        );
+        assert_eq!(range_scan(&g, &label, &attr, 98, 100), vec![reused[0]]);
     }
 }
