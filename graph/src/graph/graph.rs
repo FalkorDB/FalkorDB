@@ -3039,13 +3039,18 @@ impl Graph {
                     self.add_node_attribute_name(attr);
                 }
                 populate_index(IndexKind::Node, label.clone(), self.node_indexer.clone());
-                // Dark-launch the index alongside RediSearch. The column is built
-                // synchronously here, on the write thread, so CREATE INDEX returns with a
-                // column that already serves reads. A background build (which lets CREATE
-                // INDEX return before the pre-existing snapshot is in) is a separate change.
+                // Dark-launch the index alongside RediSearch. CREATE INDEX returns
+                // immediately: the column is marked `Building` and the pre-existing
+                // snapshot is built off the write thread by the graph_core controller
+                // (which installs it via `commit_index_build`), flipping it `Ready`.
+                // Live writes maintain it meanwhile; reads scan-fall-back until ready.
+                // (`create_index_sync` — the RDB/replica path — stays synchronous.)
                 #[cfg(feature = "index-falkordb")]
                 if *index_type == IndexType::Range {
-                    self.populate_index_node(label, attrs);
+                    for attr in attrs {
+                        self.falkordb_index
+                            .create_building(EntityType::Node, label, attr);
+                    }
                 }
             }
             EntityType::Relationship => {
@@ -3059,11 +3064,14 @@ impl Graph {
                     self.add_rel_attribute_name(attr);
                 }
                 populate_index(IndexKind::Edge, label.clone(), self.edge_indexer.clone());
-                // Dark-launch the edge index (#51): built synchronously here, same as the
-                // node branch above (docs are edge_ids).
+                // Dark-launch the edge index (#51): mark `Building`, background-build
+                // off the write thread (docs are edge_ids). Same online-build path as nodes.
                 #[cfg(feature = "index-falkordb")]
                 if *index_type == IndexType::Range {
-                    self.populate_index_edge(label, attrs);
+                    for attr in attrs {
+                        self.falkordb_index
+                            .create_building(EntityType::Relationship, label, attr);
+                    }
                 }
             }
         }
@@ -3137,7 +3145,8 @@ impl Graph {
     }
 
     /// Collect the `(value, node_id)` entries for one node index column `(label, attr)` from the
-    /// current live nodes — shared-borrow only (label matrix + attribute store are `&self`).
+    /// current live nodes — shared-borrow only (label matrix + attribute store are `&self`). Reused
+    /// by the synchronous populate and by the background build (which reads a snapshot).
     #[cfg(feature = "index-falkordb")]
     fn collect_node_index_entries(
         &self,
@@ -3311,6 +3320,73 @@ impl Graph {
                 pairs.iter().map(|(v, id)| (v, *id)),
             );
         }
+    }
+
+    // ---- Background (online) index build — the pub seam the graph_core controller drives (#online). ----
+
+    /// Every `(entity, label, attr)` column currently building — the controller's work list,
+    /// read from a committed snapshot right after a `CREATE INDEX`.
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn building_index_columns(&self) -> Vec<(EntityType, Arc<String>, Arc<String>, u64)> {
+        self.falkordb_index.building_columns()
+    }
+
+    /// Build BASE for one building column from *this snapshot*, already encoded — everything the
+    /// install needs, computed off the write thread. Shared-borrow only and lock-free: the snapshot
+    /// is immutable, so writes committing after it are invisible to the scan by construction and
+    /// there is no scan-vs-write race to reason about.
+    ///
+    /// `None` if the column no longer exists (dropped mid-build).
+    #[cfg(feature = "index-falkordb")]
+    #[must_use]
+    pub fn collect_index_base_encoded(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<Vec<(u64, u64)>> {
+        let entries = match entity {
+            EntityType::Node => self.collect_node_index_entries(label, attr),
+            EntityType::Relationship => self.collect_edge_index_entries(label, attr),
+        };
+        self.falkordb_index
+            .encode_for_column(entity, label, attr, entries)
+    }
+
+    /// Install a background-built BASE and flip the column to `Ready` — **one commit**.
+    /// Returns whether it installed; `false` means the column is gone, already `Ready`, or on a
+    /// different epoch (dropped and re-created since the job started), and the caller should not
+    /// commit.
+    ///
+    /// `base` arrives already encoded, from [`collect_index_base_encoded`](Self::collect_index_base_encoded)
+    /// running off the write thread — the commit pays only the tree build and the TOMB/DELTA merge.
+    ///
+    /// The `deleted_*` filter here is a cheap backstop, not the real defence: those bitmaps are a
+    /// free list and are cleared when an id is reused, so an id recycled during the build is no
+    /// longer marked. TOMB is what actually makes the stale BASE safe; this just drops the easy
+    /// cases before the tree build.
+    #[cfg(feature = "index-falkordb")]
+    pub fn install_index_base(
+        &mut self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+        epoch: u64,
+        base: Vec<(u64, u64)>,
+    ) -> bool {
+        let survivors: Vec<(u64, u64)> = match entity {
+            EntityType::Node => base
+                .into_iter()
+                .filter(|(_, id)| !self.is_node_deleted(NodeId(*id)))
+                .collect(),
+            EntityType::Relationship => base
+                .into_iter()
+                .filter(|(_, id)| !self.is_relationship_deleted(RelationshipId(*id)))
+                .collect(),
+        };
+        self.falkordb_index
+            .install_base(entity, label, attr, epoch, survivors)
     }
 
     /// Stage `(value, edge_id)` into the index column `(type, attr)` for the edge `id`'s single type,
@@ -4711,6 +4787,155 @@ mod falkordb_index_mvcc_tests {
     /// poisoning that `Once` for every later GraphBLAS test.
     fn ensure_graphblas() {
         crate::graph::graphblas::test_init::ensure_init();
+    }
+
+    /// Online-build reconciliation (the scale-bug regression test): `CREATE INDEX` snapshots the
+    /// base, then a DELETE and a SET land while the build is pending, then the base installs. The
+    /// **validate-at-install** guard must drop the stale base entries for the deleted and re-valued
+    /// nodes — no resurrection — while the steady-state delta carries the new value. Deterministic,
+    /// exercises the real `delete_nodes` + `set_nodes_attributes` + `install_index_base_chunk` paths.
+    #[test]
+    fn online_build_install_validates_against_concurrent_writes() {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let label = Arc::new("Person".to_string());
+        let attr = Arc::new("v".to_string());
+        let lid = g.get_label_id_mut("Person");
+        let ids: Vec<u64> = g.reserve_nodes(6).iter().map(|x| x.0).collect();
+        let mut set = RoaringTreemap::new();
+        for &id in &ids {
+            set.insert(id);
+        }
+        g.create_nodes(&set);
+        let cols = vec![lid.0 as u64; ids.len()];
+        g.set_nodes_labels_bulk(&ids, &cols, &mut FxHashMap::default());
+        // values 10,20,30,40,50,60 — set BEFORE the index exists (no incremental maintenance yet).
+        for (i, &id) in ids.iter().enumerate() {
+            set_attr(&mut g, id, &attr, Value::Int(((i as i64) + 1) * 10));
+        }
+
+        // Begin an online build: mark Building + snapshot the base (all 6 pre-existing entries).
+        let epoch = g
+            .falkordb_index_mut()
+            .create_building(EntityType::Node, &label, &attr);
+        let base = g
+            .collect_index_base_encoded(EntityType::Node, &label, &attr)
+            .expect("column exists");
+        assert_eq!(base.len(), 6);
+
+        // Writes that land DURING the build (before the base installs): delete id1(20) & id3(40),
+        // update id4 50 -> 55. These go to the live delta via the real write hooks.
+        let mut del = RoaringTreemap::new();
+        del.insert(ids[1]);
+        del.insert(ids[3]);
+        g.delete_nodes(&del, &mut FxHashMap::default()).unwrap();
+        set_attr(&mut g, ids[4], &attr, Value::Int(55));
+
+        // One install commit. TOMB (the removes staged by the hooks above) is subtracted from the
+        // stale base before DELTA is replayed, so the dead entries never reach the column.
+        assert!(g.install_index_base(EntityType::Node, &label, &attr, epoch, base));
+
+        // Survivors, value-ordered: id0(10), id2(30), id4(55), id5(60).
+        let all: Vec<u64> = g
+            .falkordb_index()
+            .numeric(EntityType::Node, &label, &attr)
+            .unwrap()
+            .range(None, None, true, true)
+            .collect();
+        assert_eq!(all, vec![ids[0], ids[2], ids[4], ids[5]]);
+        assert!(
+            range_scan(&g, &label, &attr, 20, 20).is_empty(),
+            "deleted id1 must not resurrect"
+        );
+        assert!(
+            range_scan(&g, &label, &attr, 40, 40).is_empty(),
+            "deleted id3 must not resurrect"
+        );
+        assert!(
+            range_scan(&g, &label, &attr, 50, 50).is_empty(),
+            "updated-away value 50 must not resurrect"
+        );
+        assert_eq!(
+            range_scan(&g, &label, &attr, 55, 55),
+            vec![ids[4]],
+            "id4 has its new value"
+        );
+    }
+    /// Online-build reconciliation on the EDGE path — the #51 mirror of the node regression above.
+    /// `CREATE INDEX FOR ()-[r:R]->()` snapshots the base, then a `DELETE` and a `SET` on edges land
+    /// while the build is pending, then the base installs. Install-time reconciliation must drop the
+    /// stale base entries for the deleted and re-valued edges (via the authoritative
+    /// `deleted_relationships` backstop + the per-column `dirty` set) — no resurrection — while the
+    /// steady-state delta carries the new value. Exercises the real `delete_relationships` +
+    /// `set_relationships_attributes` + `install_index_base_chunk` edge paths end-to-end.
+    #[test]
+    fn online_build_edge_install_validates_against_concurrent_writes() {
+        ensure_graphblas();
+        let mut g = Graph::new(64, 64, 10, 1, "t");
+        let ty = Arc::new("R".to_string());
+        let attr = Arc::new("w".to_string());
+        let aid = g.get_or_create_rel_attr_id(&attr);
+
+        // 6 edges 0->1 with ids 0..6 and weights 10,20,30,40,50,60 — set BEFORE the index exists
+        // (no incremental maintenance yet), so `collect_index_entries` is the sole base source.
+        let ids: Vec<u64> = g.reserve_relationships(6).iter().map(|r| r.0).collect();
+        let srcs = vec![0u64; 6];
+        let dsts = vec![1u64; 6];
+        g.create_relationships_bulk(&ty, &srcs, &dsts, &ids);
+        let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
+        for (i, &id) in ids.iter().enumerate() {
+            attrs.insert(id, vec![(aid, Value::Int(((i as i64) + 1) * 10))]);
+        }
+        g.import_relationship_attrs(&attrs, &mut FxHashMap::default());
+
+        // Begin an online build: mark Building + snapshot the base (all 6 pre-existing entries).
+        let epoch = g
+            .falkordb_index_mut()
+            .create_building(EntityType::Relationship, &ty, &attr);
+        let base = g
+            .collect_index_base_encoded(EntityType::Relationship, &ty, &attr)
+            .expect("column exists");
+        assert_eq!(base.len(), 6);
+
+        // Writes that land DURING the build (before the base installs): delete id1(20) & id3(40),
+        // update id4 50 -> 55. These go to the live delta via the real edge write hooks, which also
+        // record the touched ids in the column's `dirty` set and (for deletes) `deleted_relationships`.
+        let mut del = RoaringTreemap::new();
+        del.insert(ids[1]);
+        del.insert(ids[3]);
+        g.delete_relationships(&del, &mut FxHashMap::default())
+            .unwrap();
+        let mut upd: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
+        upd.insert(ids[4], vec![(aid, Value::Int(55))]);
+        g.set_relationships_attributes(&upd, &mut FxHashMap::default())
+            .unwrap();
+
+        // Install the (now-stale) base, then finish. Reconciliation drops the dead/updated entries.
+        assert!(g.install_index_base(EntityType::Relationship, &ty, &attr, epoch, base));
+
+        // Survivors, value-ordered: id0(10), id2(30), id4(55), id5(60).
+        let all: Vec<u64> = g
+            .falkordb_index()
+            .numeric(EntityType::Relationship, &ty, &attr)
+            .unwrap()
+            .range(None, None, true, true)
+            .collect();
+        assert_eq!(all, vec![ids[0], ids[2], ids[4], ids[5]]);
+
+        let point = |v: i64| -> Vec<u64> {
+            g.falkordb_index()
+                .numeric(EntityType::Relationship, &ty, &attr)
+                .unwrap()
+                .range(Some(&Value::Int(v)), Some(&Value::Int(v)), true, true)
+                .collect()
+        };
+        assert!(point(20).is_empty(), "deleted edge id1 must not resurrect");
+        assert!(point(40).is_empty(), "deleted edge id3 must not resurrect");
+        assert!(
+            point(50).is_empty(),
+            "updated-away value 50 must not resurrect"
+        );
+        assert_eq!(point(55), vec![ids[4]], "edge id4 has its new value");
     }
 
     /// Folded-roots MVCC: `new_version` forks the FalkorDB index copy-on-write,
