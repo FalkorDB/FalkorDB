@@ -260,16 +260,21 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 // (touched ones recurse, untouched share by Arc), so the O(children) walk is unavoidable.)
                 let mut cursor = 0usize;
                 for (child_idx, child) in branch.children.iter().enumerate() {
-                    // Each child owns keys strictly below its right separator; the last child (no separator)
-                    // owns everything remaining.
-                    let child_upper = branch
-                        .seps
-                        .get(child_idx)
-                        .copied()
-                        .unwrap_or((u64::MAX, u64::MAX));
+                    // Each child owns keys strictly below its right separator; the last child (no
+                    // separator) owns everything remaining.
+                    //
+                    // The last child is handled by taking the rest of the batch outright, NOT by
+                    // comparing against a `(u64::MAX, u64::MAX)` sentinel: `<` against that
+                    // sentinel excludes an entry exactly equal to it, so the maximal tuple would
+                    // route nowhere and be silently dropped.
                     let start = cursor;
-                    while cursor < batch.len() && batch[cursor] < child_upper {
-                        cursor += 1;
+                    if child_idx + 1 == branch.children.len() {
+                        cursor = batch.len();
+                    } else {
+                        let child_upper = branch.seps[child_idx];
+                        while cursor < batch.len() && batch[cursor] < child_upper {
+                            cursor += 1;
+                        }
                     }
                     let for_child = &batch[start..cursor];
                     if for_child.is_empty() {
@@ -497,14 +502,17 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 let mut seps = branch.seps.clone();
                 let mut cursor = 0usize;
                 for (child_idx, child) in branch.children.iter().enumerate() {
-                    let child_upper = branch
-                        .seps
-                        .get(child_idx)
-                        .copied()
-                        .unwrap_or((u64::MAX, u64::MAX));
+                    // Last child takes the remainder outright — see the note in `apply_batch`: a
+                    // `<` against a `(u64::MAX, u64::MAX)` sentinel silently skips the maximal
+                    // tuple.
                     let start = cursor;
-                    while cursor < batch.len() && batch[cursor] < child_upper {
-                        cursor += 1;
+                    if child_idx + 1 == branch.children.len() {
+                        cursor = batch.len();
+                    } else {
+                        let child_upper = branch.seps[child_idx];
+                        while cursor < batch.len() && batch[cursor] < child_upper {
+                            cursor += 1;
+                        }
                     }
                     let for_child = &batch[start..cursor];
                     if for_child.is_empty() {

@@ -1340,7 +1340,26 @@ fn differential<const L: usize, const B: usize, const DOC_BYTES: usize>(
         rng = splitmix(rng);
         let doc = rng % key_space;
         rng = splitmix(rng);
-        if rng.is_multiple_of(3) && oracle.contains(&(key, doc)) {
+        if rng.is_multiple_of(7) && oracle.len() > 4 {
+            // Batch removal of a scattered subset of *live* tuples. The write path's mass-delete
+            // and mass-update columns go through `remove_batch`, not the single `remove`, and the
+            // two take completely different routes through the tree: one rebuilds each touched
+            // page once, the other descends per tuple. Only exercising the single path left the
+            // batch one covered by a single fixed dataset with no duplicate keys and one doc
+            // width — the two things an index actually produces.
+            let live: Vec<(u64, u64)> = oracle.iter().copied().collect();
+            let mut picks: Vec<(u64, u64)> = Vec::new();
+            for _ in 0..(1 + (rng as usize % 8)).min(live.len()) {
+                rng = splitmix(rng);
+                picks.push(live[rng as usize % live.len()]);
+            }
+            picks.sort_unstable();
+            picks.dedup(); // `remove_batch` requires sorted input; duplicates are meaningless
+            tree.remove_batch(&picks);
+            for p in &picks {
+                oracle.remove(p);
+            }
+        } else if rng.is_multiple_of(3) && oracle.contains(&(key, doc)) {
             tree.remove(key, doc);
             oracle.remove(&(key, doc));
         } else {
@@ -1473,4 +1492,73 @@ fn integrity_adversarial_ascending_then_cascade_delete() {
     }
     assert!(t.is_empty());
     assert_eq!(t.len(), 0);
+}
+
+/// `remove_batch` must handle the maximal tuple `(u64::MAX, u64::MAX)`.
+///
+/// The batch is routed to children by `batch[cursor] < child_upper`, where the last child has no
+/// separator and takes the sentinel `(u64::MAX, u64::MAX)` as its upper bound. A strict `<`
+/// against that sentinel never routes an entry *equal* to it, so the maximal tuple is silently
+/// skipped.
+///
+/// The tree must be deep enough to have a **branch** root — that routing loop only runs on a
+/// branch. A first version of this test used three entries with `LEAF_MAX = 4`, which fits in one
+/// leaf, so it passed without ever reaching the code under test.
+#[test]
+fn remove_batch_handles_the_maximal_tuple() {
+    // 8 filler entries at LEAF_MAX=4 force splits, so the root is a Branch and the maximal tuple
+    // lands in the last child.
+    let mut all: Vec<(u64, u64)> = (0..8u64).map(|i| (i, i)).collect();
+    all.push((u64::MAX, u64::MAX));
+    let build = || CowBTree::<4, 4, 8>::from_sorted(&all);
+
+    let t = build();
+    assert!(
+        t.root_is_branch(),
+        "the test needs a branch root or it does not exercise the routing loop"
+    );
+
+    let mut t = build();
+    t.remove_batch(&[(u64::MAX, u64::MAX)]);
+    assert_eq!(
+        tree_pairs(&t),
+        all[..8].to_vec(),
+        "the maximal tuple must be removable by batch, like any other"
+    );
+    check_invariants(&t, false);
+
+    // And as part of a wider batch, where it is the last entry.
+    let mut t = build();
+    t.remove_batch(&[(3, 3), (u64::MAX, u64::MAX)]);
+    let expected: Vec<(u64, u64)> = all[..8].iter().copied().filter(|&(k, _)| k != 3).collect();
+    assert_eq!(tree_pairs(&t), expected);
+
+    // Parity with the single-remove path, which does not use the sentinel routing.
+    let mut singly = build();
+    singly.remove(u64::MAX, u64::MAX);
+    let mut batched = build();
+    batched.remove_batch(&[(u64::MAX, u64::MAX)]);
+    assert_eq!(tree_pairs(&batched), tree_pairs(&singly));
+}
+
+/// The insert side has the identical sentinel routing, so it needs the identical check: the
+/// maximal tuple must be insertable into a tree whose root is a branch.
+#[test]
+fn insert_batch_handles_the_maximal_tuple() {
+    let base: Vec<(u64, u64)> = (0..8u64).map(|i| (i, i)).collect();
+    let mut t = CowBTree::<4, 4, 8>::from_sorted(&base);
+    assert!(
+        t.root_is_branch(),
+        "need a branch root to exercise the routing"
+    );
+
+    t.insert_batch(&[(u64::MAX, u64::MAX)]);
+    let mut expected = base.clone();
+    expected.push((u64::MAX, u64::MAX));
+    assert_eq!(
+        tree_pairs(&t),
+        expected,
+        "the maximal tuple must be insertable by batch, like any other"
+    );
+    check_invariants(&t, false);
 }
