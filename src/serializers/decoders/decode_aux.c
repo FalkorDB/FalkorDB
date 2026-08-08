@@ -7,10 +7,10 @@
 #include "decode_graph.h"
 #include "current/v19/decode_v19.h"
 
-void AUXLoad
+bool AUXLoad
 (
 	RedisModuleIO *io
 ) {
-	AUXLoadUDF_latest (io) ;
+	return AUXLoadUDF_latest (io) ;
 }
 

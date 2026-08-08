@@ -7,6 +7,7 @@
 #include "udf_ctx.h"
 #include "classes.h"
 #include "repository.h"
+#include "utils.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
 #include "../arithmetic/func_desc.h"
@@ -162,10 +163,32 @@ void UDF_RepoPopulateJSContext
 		UDFCtx_RegisterLibrary (lib_name) ;
 
 		// evaluate script
+		//
+		// this runs on the worker thread that first calls into the library,
+		// separately from the validation performed at registration, so it needs
+		// its own bound: without one a script that loops here pins the thread
+		JSRuntime *js_rt = JS_GetRuntime (js_ctx) ;
+		int64_t *deadline = UDF_ArmJSDeadline (js_rt) ;
+
 		JSValue val = JS_Eval (js_ctx, script, strlen (script), "<input>",
 				JS_EVAL_TYPE_GLOBAL) ;
 
-		ASSERT (!JS_IsException (val)) ;
+		UDF_DisarmJSDeadline (js_rt, deadline) ;
+
+		// an ASSERT here compiles out in release builds, leaving the library
+		// silently absent from this thread's context
+		if (JS_IsException (val)) {
+			JSValue exc = JS_GetException (js_ctx) ;
+			const char *msg = JS_ToCString (js_ctx, exc) ;
+
+			RedisModule_Log (NULL, "warning",
+					"UDF: failed to evaluate library '%s': %s",
+					lib_name, (msg != NULL) ? msg : "unknown error") ;
+
+			if (msg != NULL) JS_FreeCString (js_ctx, msg) ;
+			JS_FreeValue (js_ctx, exc) ;
+		}
+
 		JS_FreeValue (js_ctx, val) ;
 	}
 

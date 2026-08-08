@@ -99,7 +99,9 @@ SIValue AR_UDF
 	// setup interrupt handler
 	//--------------------------------------------------------------------------
 
-	// set timeout on UDF if timeout is configured and is not unlimited
+	// bound the call. A configured timeout of 0 means "no limit" for queries;
+	// for JS it falls back to UDF_JS_TIMEOUT_CAP_MS, since an unbounded script
+	// pins its thread forever and enough of them exhaust the pool
 	uint64_t timeout = 0 ;  // unlimited
 	int64_t *deadline_ms = NULL ;
 	if (Config_Option_get (Config_TIMEOUT_DEFAULT, &timeout) && timeout != 0) {
@@ -115,6 +117,8 @@ SIValue AR_UDF
 		*deadline_ms = _current_time_in_ms() + timeout - elapsed ;
 
 		JS_SetInterruptHandler (js_rt, js_interrupt_handler, deadline_ms) ;
+	} else {
+		deadline_ms = UDF_ArmJSDeadline (js_rt) ;
 	}
 
 	// invoke UDF

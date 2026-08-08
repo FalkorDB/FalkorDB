@@ -9,7 +9,7 @@
 #include "../serializers_include.h"
 
 // load AUX
-void AUXLoad
+bool AUXLoad
 (
 	RedisModuleIO *io
 );

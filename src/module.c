@@ -407,10 +407,13 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
+	// GRAPH.UDF LOAD mutates module state that is written into the RDB, so it
+	// is a write: without the flag a read-only replica accepts it and ends up
+	// holding libraries the primary does not have
 	if(RedisModule_CreateCommand(ctx,
 				"graph.UDF",
 				Graph_UDF,
-				"deny-script",
+				"write deny-oom deny-script",
 				0, 0, 0) == REDISMODULE_ERR) {
 		return REDISMODULE_ERR;
 	}

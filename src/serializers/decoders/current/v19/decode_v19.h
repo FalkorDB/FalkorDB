@@ -15,7 +15,7 @@ GraphContext *RdbLoadGraphContext_latest
 );
 
 // encode DB UDFs
-void AUXLoadUDF_latest
+bool AUXLoadUDF_latest
 (
 	RedisModuleIO *io  // IO
 );
