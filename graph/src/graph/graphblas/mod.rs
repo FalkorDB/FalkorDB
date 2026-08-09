@@ -86,6 +86,30 @@ pub(crate) mod test_init {
     pub fn ensure_init() {
         INIT.call_once(|| {
             super::matrix::init(Some(malloc), Some(calloc), Some(realloc), Some(free)).unwrap();
+            // libtest runs every test on its own freshly spawned thread. With
+            // libomp linked statically (the Linux toolchain image and CI —
+            // macOS resolves it dynamically, which is why this never
+            // reproduces there), the OpenMP runtime is torn down when the
+            // first GraphBLAS-using test's thread exits, leaving the
+            // jitifyer's `omp_lock_t` destroyed. The next test to reach a JIT
+            // kernel lookup then segfaults inside `__kmpc_set_lock`, called
+            // from `GB_jitifyer_load` — observed as
+            // `tensor::tests::bulk_remove_and_extract_edge_id_zero` dying
+            // under `GrB_transpose` whenever any other GraphBLAS test ran
+            // first. The shipped module never hits this: redis-server's main
+            // thread outlives every query, so the runtime is never torn down.
+            //
+            // `GxB_JIT_OFF` keeps the lookup from happening at all. Tests then
+            // exercise generic kernels rather than the vendored PreJIT ones —
+            // a correctness-equivalent path, and these are correctness tests.
+            let info = unsafe {
+                super::GrB_Global_set_INT32(
+                    super::GrB_GLOBAL,
+                    super::GxB_JIT_Control::GxB_JIT_OFF as i32,
+                    super::GxB_Option_Field::GxB_JIT_C_CONTROL as _,
+                )
+            };
+            assert_eq!(info, super::GrB_Info::GrB_SUCCESS, "JIT_OFF failed");
         });
     }
 }
