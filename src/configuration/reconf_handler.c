@@ -62,6 +62,10 @@ void reconf_handler(Config_Option_Field type) {
 
 		case Config_JS_HEAP_SIZE:
 		case Config_JS_STACK_SIZE:
+		// the JS evaluation deadline derives from the query timeout, so a
+		// library whose load was interrupted must be retried once the operator
+		// raises it; without this the cached failure outlives the change
+		case Config_TIMEOUT_DEFAULT:
 			{
 				UDF_RepoBumpVersion () ;
 			}

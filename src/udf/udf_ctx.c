@@ -25,6 +25,7 @@ typedef struct {
 typedef struct {
 	char *name;      // library name
 	UDFFunc *funcs;  // library's functions
+	char *err;       // why this library failed to load, NULL when healthy
 } UDFLib ;
 
 // TLS UDF context
@@ -96,6 +97,10 @@ static void _UDFCtx_ClearLibs
 
 		rm_free    (l->name)  ;
 		arr_free (l->funcs) ;
+
+		if (l->err != NULL) {
+			free (l->err) ;
+		}
 	}
 
 	arr_clear (ctx->libs) ;
@@ -117,7 +122,9 @@ static UDFCtx *_UDFCtx_GetCtx(void) {
 		// set context in TLS
 		pthread_setspecific (_tlsUDFCtx, ctx) ;
 
-		// populate JS context
+		// populate JS context; a library that fails to evaluate records the
+		// reason against itself, so the lookup can report that instead of the
+		// bare "unknown function" it would otherwise produce
 		UDF_RepoPopulateJSContext (ctx->js_ctx, &ctx->v) ;
 	}
 
@@ -237,7 +244,8 @@ void UDFCtx_RegisterLibrary
 	ASSERT (_UDFCtx_GetLib (ctx, lib_name) == NULL) ;
 
 	// add new library
-	UDFLib l = {.name = rm_strdup (lib_name), .funcs = arr_new (UDFFunc, 0)} ;
+	UDFLib l = {.name = rm_strdup (lib_name), .funcs = arr_new (UDFFunc, 0),
+			.err = NULL} ;
 	arr_append (ctx->libs, l) ;
 }
 
@@ -268,6 +276,51 @@ void UDFCtx_RegisterFunction
 }
 
 // get UDF function
+// records why `lib_name` failed to load into this thread's context
+// takes ownership of `err`
+void UDFCtx_SetLibraryError
+(
+	const char *lib_name,  // library that failed
+	char *err              // reason, ownership transferred
+) {
+	ASSERT (lib_name != NULL) ;
+
+	UDFCtx *ctx = _UDFCtx_GetCtx () ;
+	ASSERT (ctx != NULL) ;
+
+	UDFLib *lib = _UDFCtx_GetLib (ctx, lib_name) ;
+	if (lib == NULL) {
+		free (err) ;
+		return ;
+	}
+
+	if (lib->err != NULL) {
+		free (lib->err) ;
+	}
+
+	lib->err = err ;
+}
+
+// returns why `lib_name` failed to load into this thread's context, or NULL
+//
+// a library whose top-level code throws or is interrupted leaves its functions
+// absent from the context; without this the lookup failure is indistinguishable
+// from a function that was never registered. Held per library, so a genuinely
+// unknown function elsewhere is not attributed to it and every failed library
+// reports its own reason
+const char *UDFCtx_GetLoadError
+(
+	const char *lib_name  // library the caller was looking up
+) {
+	ASSERT (lib_name != NULL) ;
+
+	UDFCtx *ctx = _UDFCtx_GetCtx () ;
+	ASSERT (ctx != NULL) ;
+
+	UDFLib *lib = _UDFCtx_GetLib (ctx, lib_name) ;
+	return (lib != NULL) ? lib->err : NULL ;
+}
+
 JSValueConst *UDFCtx_GetFunction
 (
 	const char *lib_name,  // lib to search function in

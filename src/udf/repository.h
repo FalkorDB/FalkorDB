@@ -24,7 +24,7 @@ void UDF_RepoBumpVersion(void);
 UDF_RepoVersion UDF_RepoGetVersion(void);
 
 // populate the JSContext with registered libs
-void UDF_RepoPopulateJSContext
+bool UDF_RepoPopulateJSContext
 (
 	JSContext *js_ctx,  // context to populate
 	UDF_RepoVersion *v  // [output] repo version

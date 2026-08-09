@@ -136,7 +136,7 @@ UDF_RepoVersion UDF_RepoGetVersion(void) {
 }
 
 // populate the JSContext with registered libs
-void UDF_RepoPopulateJSContext
+bool UDF_RepoPopulateJSContext
 (
 	JSContext *js_ctx,  // context to populate
 	UDF_RepoVersion *v  // [output] repo version
@@ -144,6 +144,8 @@ void UDF_RepoPopulateJSContext
 	ASSERT (v        != NULL) ;
 	ASSERT (js_ctx   != NULL) ;
 	ASSERT (udf_repo != NULL) ;
+
+	bool res = true ;
 
 	// make sure context being populated is clear
 	ASSERT (UDFCtx_LibCount () == 0) ;
@@ -176,14 +178,14 @@ void UDF_RepoPopulateJSContext
 		UDF_DisarmJSDeadline (js_rt, deadline) ;
 
 		// an ASSERT here compiles out in release builds, leaving the library
-		// silently absent from this thread's context
+		// silently absent from this thread's context, with calls to it
+		// reported as "Unknown function" rather than the load failure
 		//
-		// logging is as far as this goes: the version was already recorded
-		// above, so this thread keeps a context missing the library and will
-		// not rebuild until the repo changes again, and AR_UDF reports the
-		// miss as "Unknown function" rather than the load failure. Reporting
-		// the real cause needs an error channel from this rebuild out to the
-		// query, which is worth doing separately
+		// the version is still recorded, so a library that fails every time is
+		// not re-evaluated on every call; the reason is kept against the
+		// library and carried out to the query instead. Configuration that
+		// changes the outcome, including the timeout this deadline derives
+		// from, bumps the repo version so the next call retries
 		if (JS_IsException (val)) {
 			JSValue exc = JS_GetException (js_ctx) ;
 			const char *msg = JS_ToCString (js_ctx, exc) ;
@@ -192,8 +194,17 @@ void UDF_RepoPopulateJSContext
 					"UDF: failed to evaluate library '%s': %s",
 					lib_name, (msg != NULL) ? msg : "unknown error") ;
 
+			// recorded against the library itself, so every failed library
+			// reports its own reason and a lookup elsewhere is unaffected
+			char *lib_err = NULL ;
+			asprintf (&lib_err, "Failed to load UDF library '%s': %s", lib_name,
+					(msg != NULL) ? msg : "unknown error") ;
+			UDFCtx_SetLibraryError (lib_name, lib_err) ;
+
 			if (msg != NULL) JS_FreeCString (js_ctx, msg) ;
 			JS_FreeValue (js_ctx, exc) ;
+
+			res = false ;
 		}
 
 		JS_FreeValue (js_ctx, val) ;
@@ -201,6 +212,8 @@ void UDF_RepoPopulateJSContext
 
 	// unlock
 	pthread_rwlock_unlock (&udf_repo->rwlock) ;
+
+	return res ;
 }
 
 // returns number of registered libs

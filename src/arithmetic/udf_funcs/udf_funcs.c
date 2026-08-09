@@ -74,7 +74,16 @@ SIValue AR_UDF
 	// locate function
 	JSValueConst *fn = UDFCtx_GetFunction (lib_name, func_name) ;
 	if (fn == NULL) {
-		// it is possible for the function to be missing
+		// the function may be missing because this library failed to load into
+		// this thread's context, e.g. its top-level code threw or was
+		// interrupted; report that rather than implying it was never registered
+		const char *load_err = UDFCtx_GetLoadError (lib_name) ;
+		if (load_err != NULL) {
+			ErrorCtx_SetError ("%s", load_err) ;
+			return SI_NullVal () ;
+		}
+
+		// otherwise it is genuinely absent
 		// this can happen if a query is trying to access a UDF as it is being
 		// removed via GRAPH.UDF DELETE
 		char *concat ;
