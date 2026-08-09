@@ -267,6 +267,29 @@ class testReplication(FlowTestsBase):
                     return 0
                 raise
 
+        def wait_for_replica_offset(timeout=30):
+            """Block until the replica has applied everything the master propagated.
+
+            WAIT is NOT usable for this. It blocks on the calling client's `woff`,
+            and Redis only advances `woff` when that client's *own* command
+            propagated something:
+
+                if (old_master_repl_offset != server.master_repl_offset)
+                    c->woff = server.master_repl_offset;      // server.c
+
+            The bulk batches are issued by the loader's worker process over its own
+            connection, so `source_con`'s `woff` never covers them — WAIT would take
+            the "already acked" fast path and return without waiting for the batches
+            at all. Compare offsets directly instead."""
+            target = source_con.info("replication")["master_repl_offset"]
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                if replica_con.info("replication").get("slave_repl_offset", -1) >= target:
+                    return
+                time.sleep(0.05)
+            raise AssertionError(
+                f"replica did not reach master offset {target} within {timeout}s")
+
         # Private directory, and the whole body runs inside it so the CSVs are
         # removed even when an assertion fails.
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -288,7 +311,12 @@ class testReplication(FlowTestsBase):
             # (master_link_status:down, master_repl_offset:0), and a replica that
             # attaches *after* the load gets the graph through a full RDB transfer —
             # which masks this bug completely, since the data then arrives no matter
-            # what the command path propagated. WAIT blocks until one replica acks.
+            # what the command path propagated.
+            #
+            # WAIT is the right tool for *this* gate: a client with woff 0 blocks
+            # until some replica reaches SLAVE_STATE_ONLINE and acks, which is
+            # exactly "the replica is attached". It is the wrong tool after the load
+            # — see wait_for_replica_offset.
             source_con.execute_command("WAIT", "1", "0")
 
             # Snapshot the full-sync counter so the assertions below can prove the
@@ -310,8 +338,8 @@ class testReplication(FlowTestsBase):
             buf.send_buffer()
             buf.wait_pool()
 
-            # the WAIT command forces master slave sync to complete
-            source_con.execute_command("WAIT", "1", "0")
+            # Block until the replica has actually applied both batches.
+            wait_for_replica_offset()
 
             src     = Graph(source_con, graphname)
             replica = Graph(replica_con, graphname)
