@@ -407,9 +407,38 @@ cleanup:
 	if (res == false && replace == true) {
 		// we've failed to replace the library
 		// restore previous version
+		//
+		// this re-evaluates the old script, so it is subject to the same
+		// deadline as any other load and can fail. An ASSERT here compiles out
+		// in release, which would leave the library removed and the caller told
+		// only that the replacement failed
+		char *restore_err = NULL ;
 		bool restore = UDF_Load (prev_script, strlen(prev_script), lib, lib_len,
-				false, NULL) ;
-		ASSERT (restore) ;
+				false, &restore_err) ;
+
+		if (!restore) {
+			RedisModule_Log (NULL, "warning",
+					"UDF: failed to restore library '%s' after a failed "
+					"replace, the library is no longer loaded: %s", lib,
+					(restore_err != NULL) ? restore_err : "unknown error") ;
+
+			// say that the old library is gone, not just that the replacement
+			// failed, since the two leave the server in very different states
+			if (err != NULL) {
+				char *combined = NULL ;
+				asprintf (&combined,
+						"%s. Restoring the previous version also failed: %s. "
+						"Library '%s' is no longer loaded",
+						(*err != NULL) ? *err : "Failed to replace UDF library",
+						(restore_err != NULL) ? restore_err : "unknown error",
+						lib) ;
+
+				if (*err != NULL) free (*err) ;
+				*err = combined ;
+			}
+		}
+
+		if (restore_err != NULL) free (restore_err) ;
 	}
 
 	UDF_LIB = NULL ;
