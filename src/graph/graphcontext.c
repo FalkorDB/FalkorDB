@@ -1264,11 +1264,6 @@ int GraphContext_DeleteIndex
 
 	if (s != NULL) {
 		res = Schema_RemoveIndex (s, field, t) ;
-		if (res == INDEX_OK) {
-			// update resultset statistics
-			ResultSet *result_set = QueryCtx_GetResultSet () ;
-			ResultSet_IndexDeleted (result_set, res) ;
-		}
 	}
 
 	return res ;

@@ -18,7 +18,7 @@
 #include "query_ctx.h"
 #include "udf/udf_ctx.h"
 #include "udf/classes.h"
-#include "util/roaring.h"
+#include "util/roaring_include.h"
 #include "index/indexer.h"
 #include "udf/repository.h"
 #include "udf/replication.h"

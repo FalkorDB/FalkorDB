@@ -5,6 +5,7 @@
  */
 
 #include "RG.h"
+#include "../query_ctx.h"
 #include "../errors/errors.h"
 #include "../effects/effects.h"
 #include "../graph/graphcontext_retrieve.h"
@@ -52,6 +53,12 @@ int Graph_Effect
 
 	RELEASE_ASSERT (gc != NULL) ;
 
+	// set the GraphCtx on the (lazily created) thread-local QueryCtx - some
+	// effect handlers (e.g. index creation) reach code paths that resolve
+	// their graph via the ambient QueryCtx rather than an explicit
+	// parameter, same as any regular query execution would provide
+	QueryCtx_SetGraphCtx (gc) ;
+
 	// lock graph for writing
 	GraphContext_AcquireWriteLock (gc) ;
 
@@ -96,6 +103,7 @@ cleanup:
 	// release GraphContext
 	GraphContext_DecreaseRefCount (gc) ;
 
+	QueryCtx_Free () ;
 	ErrorCtx_Clear () ;
 	return REDISMODULE_OK ;
 }

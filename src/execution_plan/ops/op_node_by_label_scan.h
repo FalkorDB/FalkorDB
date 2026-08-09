@@ -9,7 +9,7 @@
 #include "op.h"
 #include "../execution_plan.h"
 #include "../../graph/graph.h"
-#include "../../util/roaring.h"
+#include "../../util/roaring_include.h"
 #include "shared/scan_functions.h"
 #include "../../util/range/range.h"
 #include "../../graph/delta_matrix/delta_matrix_iter.h"

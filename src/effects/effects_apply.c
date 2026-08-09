@@ -6,9 +6,12 @@
 
 #include "RG.h"
 #include "effects.h"
+#include "../util/arr.h"
+#include "effects_internal.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
+#include <string.h>
 #include <inttypes.h>
 
 // read effect type from stream
@@ -161,9 +164,9 @@ static void ApplyCreateEdge
 	// attributes (id,value) pair
 	//--------------------------------------------------------------------------
 
-	int i = 0 ;                       // size of current batch
-	const size_t batch_size = 4096 ;  // max batch size
-	Edge edges[batch_size] ;          // edges
+	int i = 0 ;                     // size of current batch
+	enum { batch_size = 4096 } ;    // compile-time constant, avoids a VLA
+	Edge edges[batch_size] ;        // edges
 
 	Edge **batch = arr_new (Edge *, 1) ;  // batch, points to edges
 	AttributeSet *sets = arr_new (AttributeSet, 1) ;  // attribute-sets
@@ -435,7 +438,7 @@ static bool ApplyAddAttribute
 	fread_assert (&l, sizeof (l), stream) ;
 
 	// read attribute name
-	const char attr[l] ;
+	char attr[l] ;
 	fread_assert (attr, l, stream) ;
 
 	// attr should not exist
@@ -450,6 +453,76 @@ static bool ApplyAddAttribute
 	GraphHub_FindOrAddAttribute (gc, attr, false) ;
 
 	return true ;
+}
+
+// resolve & verify a schema referenced by an effect via its id+name pair
+// (see design principle #2 in the index/constraint effects: the id is
+// authoritative - it's only valid because every schema mutation is itself
+// an effect, applied in the same order on every replica - the name is a
+// cheap cross-check that surfaces divergence instead of silently trusting
+// a stale/incorrect id)
+//
+// returns NULL if the replica has diverged from the master (the id doesn't
+// resolve locally, or resolves to a schema with a different name)
+Schema *VerifySchema
+(
+	GraphContext *gc,   // graph to operate on
+	SchemaType st,      // schema type (node/edge)
+	int label_id,       // expected label/relationship-type id
+	const char *label   // expected label/relationship-type name
+) {
+	Schema *s = GraphContext_GetSchemaByID (gc, label_id, st) ;
+	if (s == NULL || strcmp (Schema_GetName (s), label) != 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT references label/relationship-type '%s' "
+				"(id %d) which doesn't match local schema state",
+				label, label_id) ;
+		return NULL ;
+	}
+
+	return s ;
+}
+
+// resolve & verify an attribute referenced by an effect via its id+name pair
+// returns false if the replica has diverged from the master
+bool VerifyAttribute
+(
+	GraphContext *gc,     // graph to operate on
+	AttributeID attr_id,  // expected attribute id
+	const char *attr      // expected attribute name
+) {
+	const char *local_name = GraphContext_GetAttributeName (gc, attr_id) ;
+	if (local_name == NULL || strcmp (local_name, attr) != 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT references attribute '%s' (id %u) which "
+				"doesn't match local attribute state", attr, attr_id) ;
+		return false ;
+	}
+
+	return true ;
+}
+
+// read (attribute id, attribute name) pairs off of stream, as encoded by
+// EffectsBuffer_AddCreateConstraintEffect / EffectsBuffer_AddDropConstraintEffect
+//
+// returns props attribute-name allocations via 'props' (caller must free each
+// entry with rm_free)
+void ReadConstraintAttributes
+(
+	FILE *stream,           // effects stream
+	uint8_t n,              // number of attributes
+	AttributeID *attr_ids,  // [output] attribute ids
+	char **props            // [output] mutable attribute-name view
+) {
+	for (uint8_t i = 0; i < n; i++) {
+		fread_assert (attr_ids + i, sizeof (AttributeID), stream) ;
+
+		size_t l ;
+		fread_assert (&l, sizeof (l), stream) ;
+		char *name = rm_malloc (l) ;
+		fread_assert (name, l, stream) ;
+		props [i] = name ;
+	}
 }
 
 // process Update_Edge effect
@@ -578,9 +651,9 @@ static bool ApplyDeleteNode
 	EntityID id;                             // node ID
 	Graph *g = GraphContext_GetGraph (gc) ;  // graph to delete node from
 
-	int i = 0 ;                      // size of batch
-	const size_t batch_size = 4096 ; // max batch size
-	Node nodes[batch_size] ;         // nodes
+	int i = 0 ;                    // size of batch
+	enum { batch_size = 4096 } ;   // compile-time constant, avoids a VLA
+	Node nodes[batch_size] ;       // nodes
 
 	while (true) {
 		Node *n = nodes + i ;
@@ -643,8 +716,8 @@ static bool ApplyDeleteEdge
 	//    dest ID
 	//--------------------------------------------------------------------------
 
-	int i = 0 ;                       // size of current batch
-	const size_t batch_size = 4096 ;  // max batch size
+	int i = 0 ;                     // size of current batch
+	enum { batch_size = 4096 } ;    // compile-time constant, avoids a VLA
 	Edge edges[batch_size] ;          // edges
 
 	// encoded edge struct
@@ -810,6 +883,22 @@ bool Effects_Apply
 
 			case EFFECT_ADD_ATTRIBUTE:
 				ok = ApplyAddAttribute (stream, gc) ;
+				break ;
+
+			case EFFECT_CREATE_INDEX:
+				ok = ApplyCreateIndex (stream, gc) ;
+				break ;
+
+			case EFFECT_DROP_INDEX:
+				ok = ApplyDropIndex (stream, gc) ;
+				break ;
+
+			case EFFECT_CREATE_CONSTRAINT:
+				ok = ApplyCreateConstraint (stream, gc) ;
+				break ;
+
+			case EFFECT_DROP_CONSTRAINT:
+				ok = ApplyDropConstraint (stream, gc) ;
 				break ;
 
 			default:
