@@ -624,12 +624,11 @@ pub fn graph_bulk_insert(
         .iter()
         .map(|rs| rs.as_slice().to_vec())
         .collect();
-    // `RedisString` is tied to the calling context, so carry the name as a
-    // plain `String` for the cleanup path to rebuild on the worker thread.
-    let graph_name = key_str.to_string();
-    // Carry the key as raw bytes too, for replication. `to_string` above goes
-    // through `to_string_lossy`, which would rewrite a non-UTF-8 graph name into
-    // replacement characters and address a different key on the replica.
+    // `RedisString` is tied to the calling context, so carry the key as raw bytes
+    // for the worker thread to rebuild — both to replicate it and to re-open it on
+    // the cleanup path. Raw bytes rather than a `String`: `to_string` goes through
+    // `to_string_lossy`, so a non-UTF-8 graph name would come back with replacement
+    // characters and address a *different* key than the one this batch created.
     let key_bytes: Vec<u8> = key_str.as_slice().to_vec();
     spawn(
         move || {
@@ -740,7 +739,7 @@ pub fn graph_bulk_insert(
                         // retake the GIL for this keyspace write.
                         let _gil = hold_gil();
                         let cleanup_ctx = Context::new(ts_ctx);
-                        let key_name = cleanup_ctx.create_string(graph_name.as_str());
+                        let key_name = cleanup_ctx.create_string(key_bytes.as_slice());
                         discard_created_graph(&cleanup_ctx, &key_name);
                     }
                     let cerr = ffi::sanitise_error(msg);
