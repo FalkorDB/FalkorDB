@@ -1007,6 +1007,68 @@ iterators are elided entirely when their layer is empty, which on a
 read-mostly workload avoids allocating and freeing two \texttt{GxB\_Iterator}
 objects per scan.
 
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  cell/.style={draw,minimum width=6.5mm,minimum height=5.5mm,inner sep=0pt,
+               font=\scriptsize,rounded corners=1pt},
+  mc/.style={cell,fill=blue!7},
+  pc/.style={cell,fill=green!13},
+  dc/.style={cell,fill=red!13},
+  oc/.style={cell,fill=black!7},
+  rl/.style={font=\scriptsize\itshape,anchor=east},
+  nt/.style={font=\scriptsize,align=center,black!65,inner sep=1pt}
+]
+\def\X{0.92}
+\def\LX{7.6}
+% column ruler
+\foreach \c in {1,...,7} {\node[font=\scriptsize,black!40] at (\c*\X,0.70) {\c};}
+\node[font=\scriptsize,black!40,anchor=east] at (0.55,0.70) {col};
+% layers
+\node[rl] at (0.55,0)     {$m$};
+\node[mc] at (1*\X,0)  {$a$};  \node[mc] at (3*\X,0)  {$b$};
+\node[mc] at (4*\X,0)  {$c$};  \node[mc] at (7*\X,0)  {$d$};
+\node[rl] at (0.55,-0.9)  {$dm$};
+\node[dc] at (3*\X,-0.9) {$\times$};
+\node[rl] at (0.55,-1.8)  {$dp$};
+\node[pc] at (2*\X,-1.8) {$e$};  \node[pc] at (4*\X,-1.8) {$f$};
+% output
+\node[rl] at (0.55,-2.9)  {emitted};
+\node[oc] at (1*\X,-2.9) {$a$};  \node[oc] at (2*\X,-2.9) {$e$};
+\node[oc] at (4*\X,-2.9) {$f$};  \node[oc] at (7*\X,-2.9) {$d$};
+% provenance
+\draw[->,black!55,>=Stealth] (1*\X,-0.30) -- (1*\X,-2.62);
+\draw[->,black!55,>=Stealth] (7*\X,-0.30) -- (7*\X,-2.62);
+\draw[->,black!55,>=Stealth] (2*\X,-2.10) -- (2*\X,-2.62);
+\draw[->,black!55,>=Stealth] (4*\X,-2.10) -- (4*\X,-2.62);
+% struck cells: m@3 deleted by the dm lookahead, m@4 suppressed by dp@4
+\draw[red!70,thick] (3*\X-0.36,0.30) -- (3*\X+0.36,-0.30);
+\draw[red!70,thick] (3*\X+0.36,0.30) -- (3*\X-0.36,-0.30);
+\draw[red!70,thick] (4*\X-0.36,0.30) -- (4*\X+0.36,-0.30);
+\draw[red!70,thick] (4*\X+0.36,0.30) -- (4*\X-0.36,-0.30);
+% call-outs
+\node[font=\scriptsize,black!60] at (3*\X,-0.45) {(1)};
+\node[font=\scriptsize,black!60] at (2*\X,-1.25) {(2)};
+\node[font=\scriptsize,black!60] at (4*\X,-0.45) {(3)};
+% legend, clear of the diagram
+\node[nt,anchor=north west,text width=6.2cm,align=left] at (\LX,0.45)
+  {(1) the $dm$ lookahead matches, so the $m$ entry is dropped\\[2pt]
+   (2) $dp$ has no $m$ counterpart, so it is interleaved in place\\[2pt]
+   (3) both layers hold column 4: $dp$ wins and suppresses $m$ ---
+       the shadow rule, and the only one a Boolean delta matrix
+       would not need};
+\end{tikzpicture}
+\caption{One row of the three-way merge. The three layer iterators are already
+ascending, so the merge is a single pass with two lookaheads and no
+intermediate matrix: a $dm$ entry deletes the $m$ entry it matches (column 3), a
+$dp$ entry with no $m$ counterpart is interleaved (column 2), and a $dp$ entry at
+an occupied column wins (column 4) --- which is the only rule a Boolean delta
+matrix would not need. The emitted row is the effective state
+$(m \setminus dm) \cup dp$, in ascending column order, each entry once.}
+\label{fig:merge}
+\end{figure}
+
 Two orientations are supported. Forward iteration streams inline values
 directly. Backward iteration streams the Boolean structure of $mt$ and
 recovers each pair's inline value with \textsc{EffGet}, paying one point
@@ -1035,6 +1097,75 @@ value is in $dp$:
 \textsc{Second} makes $dp$ win on the intersection, which is exactly the
 shadow semantics. By Invariant~\ref{inv:pure} the two folds are
 order-independent, so each layer carries its own decision.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  cell/.style={draw,minimum width=6mm,minimum height=5mm,inner sep=0pt,
+               font=\scriptsize,rounded corners=1pt},
+  mc/.style={cell,fill=blue!7},
+  pc/.style={cell,fill=green!13},
+  dc/.style={cell,fill=red!13},
+  rl/.style={font=\scriptsize\itshape,anchor=east},
+  >={Stealth[length=2mm]}
+]
+\def\X{0.72}
+% ---- (a) what the fold does to the layers, on Figure 4's example ----
+\node[font=\scriptsize\itshape,anchor=west] at (0.1,1.15) {(a) the layer effect};
+\node[rl] at (0.75,0.45)   {$m$};
+\node[mc] at (1*\X+0.9,0.45) {$a$}; \node[mc] at (3*\X+0.9,0.45) {$b$};
+\node[mc] at (4*\X+0.9,0.45) {$c$}; \node[mc] at (7*\X+0.9,0.45) {$d$};
+\node[rl] at (0.75,-0.2)   {$dm$};
+\node[dc] at (3*\X+0.9,-0.2) {$\times$};
+\node[rl] at (0.75,-0.85)  {$dp$};
+\node[pc] at (2*\X+0.9,-0.85) {$e$}; \node[pc] at (4*\X+0.9,-0.85) {$f$};
+\draw[->,black!65] (6.6,-0.2) -- (7.6,-0.2)
+  node[midway,above,font=\scriptsize,align=center,inner sep=1pt]{fold};
+\node[rl] at (8.35,0.45)   {$m$};
+\node[mc] at (1*\X+8.5,0.45) {$a$}; \node[mc] at (2*\X+8.5,0.45) {$e$};
+\node[mc] at (4*\X+8.5,0.45) {$f$}; \node[mc] at (7*\X+8.5,0.45) {$d$};
+\node[rl] at (8.35,-0.2)   {$dm$};
+\node[font=\scriptsize,black!50,anchor=west] at (8.6,-0.2) {empty};
+\node[rl] at (8.35,-0.85)  {$dp$};
+\node[font=\scriptsize,black!50,anchor=west] at (8.6,-0.85) {empty};
+\node[font=\scriptsize,black!65,anchor=north,align=center] at (7.1,-1.35)
+  {same effective row as Figure~\ref{fig:merge}, now with nothing to merge};
+
+% ---- (b) the cost trade-off ----
+\begin{scope}[yshift=-6.1cm,xshift=2.2cm]
+  \node[font=\scriptsize\itshape,anchor=west] at (-2.1,3.62)
+    {(b) why the threshold is a square root};
+  \node[font=\scriptsize,black!70,anchor=west] at (0.12,3.15) {cost per entry};
+  \draw[->,black!70] (0,0) -- (5.1,0) node[below,font=\scriptsize]{fold point $D$};
+  \draw[->,black!70] (0,0) -- (0,3.05);
+  % rewrite tax  c*D, c = 0.55
+  \draw[domain=0.0:4.6,samples=40,black!50,dashed] plot (\x,{0.55*\x});
+  \node[font=\scriptsize,black!55,anchor=west] at (4.05,2.42) {$wD/2t$};
+  % fold bill F/D, F = 1.2
+  \draw[domain=0.42:4.6,samples=90,black!50,dotted] plot (\x,{1.2/\x});
+  \node[font=\scriptsize,black!55,anchor=west] at (4.05,0.30) {$F/D$};
+  % total
+  \draw[domain=0.42:4.6,samples=120,thick,black] plot (\x,{0.55*\x + 1.2/\x});
+  \node[font=\scriptsize,anchor=south west] at (3.15,2.55) {total};
+  % minimum
+  \draw[dashed,black!55] (1.477,0) -- (1.477,1.625);
+  \fill (1.477,1.625) circle (1.3pt);
+  \node[font=\scriptsize,anchor=north,align=center] at (1.477,-0.12)
+    {$D^{\ast}=\sqrt{2(F/w)\,t}$};
+\end{scope}
+\end{tikzpicture}
+\caption{Folding. (a) Both deltas are merged into the base and cleared; readers
+see the same effective row before and after, which is why a fold is invisible
+(Figure~\ref{fig:fold} is the same statement at the level of states). (b) The
+two costs pull in opposite directions --- a delta left to grow taxes every later
+transaction, a delta folded too eagerly pays the fixed fold cost too often ---
+and their sum is least where they cross. That the crossing is at
+$\sqrt{2(F/w)t}$ rather than at a constant is the whole reason the rule depends
+on transaction size; the minimum is now machine-checked
+(\S\ref{sec:mechanised}).}
+\label{fig:foldcost}
+\end{figure}
 
 \paragraph{When to fold.} A fixed threshold is the obvious rule and the wrong
 one. The premise that sets the shape is that \emph{every write transaction
@@ -1353,21 +1484,34 @@ names are those in the artifact, so they can be checked with
 \label{tab:mechanised}
 \end{table}
 
-\paragraph{What this does not establish.} Two limits are worth stating plainly,
-because a mechanisation invites the assumption that everything is settled.
+\paragraph{What is, and is not, established about cost.} Two results speak to
+performance, and both are optimality \emph{relative to an explicit model} rather
+than statements about the machine.
 
-First, \emph{no cost claim is mechanised, and none could be usefully.} The
-development says what each operation computes, never how long it takes. Every
-performance statement in this paper --- the operation table of
-\S\ref{sec:cost}, the fold constants $F$ and $w$, the claim that the phase
-split of \S\ref{sec:insert} keeps insertion linear --- rests on the analytic
-model and on measurement, and would survive or fall entirely independently of
-the proofs. The one place the two meet is negative and useful:
-\texttt{edgesAt\_flush\_decision\_irrelevant} shows the fold policy cannot
-affect what the tensor denotes, which is what licenses tuning it against
-measurements without re-examining correctness.
+\texttt{foldPoint\_optimal} shows $D^{\ast} = \sqrt{2(F/w)t}$ minimises
+$wD/(2t) + F/D$ over all positive fold points, by AM--GM in the form that avoids
+calculus: the two terms have constant product, so their sum is least where they
+are equal, and the bound is attained. \texttt{sq\_ge\_iff\_ge\_sqrt} connects it
+to the code, whose \texttt{u64} predicate $d^2 \ge k \cdot t$ keeps a square root
+off the hot path while testing the same thing.
+\texttt{iterEdges\_output\_optimal} is output-sensitive optimality: every edge
+exactly once and nothing else, which is the least output any correct enumerator
+can produce.
 
-Second, the proofs bind a \emph{model}, and the model's correspondence to the
+Neither says the implementation is fast. $F$ and $w$ are measured, and if those
+measurements are wrong the theorem still holds and the policy is still
+miscalibrated; what the theorem buys is that the \emph{form} of the rule follows
+from the model, so re-tuning constants cannot invalidate it --- which matters
+precisely because the constants are expected to move. Everything else here ---
+the operation table of \S\ref{sec:cost}, the claim that the phase split of
+\S\ref{sec:insert} keeps insertion linear --- rests on the analytic model and on
+measurement, and would stand or fall independently of the proofs. The remaining
+meeting point is negative and useful:
+\texttt{edgesAt\_flush\_decision\_irrelevant} shows the fold policy cannot affect
+what the tensor denotes, which is what licenses tuning it against measurements
+without re-examining correctness at all.
+
+\paragraph{The proofs bind a model, not the binary.} The model's correspondence to the
 Rust is maintained by hand --- transcribed operation by operation, with the
 GraphBLAS calls read as set operations. That correspondence is the assumption
 the whole development rests on, and no proof inside it can discharge that.
@@ -1414,6 +1558,54 @@ allocated identifiers omits the per-entry base probe that keeps
 $\dom(dp) \cap \dom(m) = \emptyset$ for the Boolean layers; that omission is
 sound exactly under the freshness precondition, which is now an explicit
 hypothesis rather than a comment.
+
+% =====================================================================
+\subsection{How the proofs go}
+\label{sec:howproved}
+
+The arguments, one per algorithm, since a table of names says what is proved but
+not why any of it goes through.
+
+\begin{description}
+\item[Point reads.] A three-way case split on $\varepsilon$'s branch structure.
+  What makes it total rather than partial is Invariant~\ref{inv:masksub}: a
+  tombstone always has a committed entry beneath it, so ``masked'' and ``absent''
+  are distinguishable.
+\item[Bulk insertion.] Induction over the batch, with a step lemma that
+  re-establishes the invariants \emph{and} both batch preconditions at each
+  element --- the freshness hypothesis has to be carried inductively, because
+  inserting one edge changes what ``already stored'' means for the rest. The
+  write phase is a further case split on the three shapes of the queued value.
+\item[The batch map.] \texttt{retro\_promote\_agrees} computes both sides:
+  retroactively promoting a pair that repeats within a batch, and promoting it
+  sequentially, are shown to land in the same layer state --- including the case
+  where the second occurrence cancels a re-promotion back to clean.
+\item[Bulk deletion, flat path.] Pure set algebra on the layers, unlocked by the
+  hypothesis that no pair is multi-edge, which forces $me = \emptyset$ and
+  collapses the per-pair reasoning.
+\item[Bulk deletion, per-edge path.] Case analysis on $\varepsilon(p)$ ---
+  sentinel, matching inline identifier, or neither. The sentinel branch is where
+  \texttt{removeOne\_survivor} does the work: a cardinality argument (a sentinel
+  pair's row holds at least two identifiers) rules out the case the code used to
+  handle.
+\item[Iteration.] Membership by unfolding the multiset construction; absence of
+  duplicates from the two halves being disjoint --- the forward stream filters
+  the sentinel out, the $me$ half only carries sentinel pairs --- plus
+  injectivity of $\kappa$ so that distinct pairs cannot collide in $me$.
+\item[Folding.] The reusable device of the development: prove $\varepsilon$
+  agrees pointwise before and after, then obtain the invariants from a transfer
+  lemma rather than re-proving them. That lemma says an operation preserving the
+  denotation preserves \emph{every} invariant provided it discharges the two raw
+  side conditions, which is why each fold variant costs a few lines instead of
+  eleven clauses.
+\item[Cardinality.] Inclusion--exclusion for the pattern size, then a sum over
+  the effective domain split by whether the pair is a sentinel, using
+  injectivity of $\kappa$ to see the $me$ rows as a partition.
+\item[Rebuilding the transpose.] The materialised pattern equals the effective
+  domain, and transposition is injective, so the backward invariant follows.
+\item[Serialisation.] Round-trip by computation: decode-after-encode is
+  evaluated and compared to the original pointwise.
+\end{description}
 
 % =====================================================================
 \section{Two rules the host runtime imposes}
