@@ -1966,6 +1966,48 @@ design (A), and the promotion/demotion cost on workloads whose multiplicity
 oscillates around $2$ --- the one regime where (C) does strictly more work
 than either alternative.
 
+The obstacle looks like ``two of the three designs are not implemented,'' and for
+the comparison that matters most it is not.
+
+\emph{Design (B) needs no implementation, because (C) contains it.} (B)'s
+distinguishing cost is a second lookup on every single-edge read, and that is
+exactly the path (C) takes on a \emph{multi-edge} pair: probe the forward layers,
+find the sentinel, probe $me$. So the constant can be isolated within one tensor
+by reading an inline pair and a sentinel pair on the same graph and differencing.
+This bounds (B)'s penalty rather than measuring it --- the sentinel read also
+scans a row, so the difference is an upper bound, tightest when the pair holds
+exactly two identifiers --- but an upper bound on the quantity in question is
+worth more than an analytic argument, and it costs one query.
+
+\emph{Design (A) is available and already instrumented.} It is the C
+implementation, which is a shipped artifact rather than a hypothetical, and the
+repository's benchmark harness can run both engines side by side on the same
+queries. The caveat is granularity, and it is the real methodological problem
+here: that comparison measures two \emph{engines}, and the tensor is one
+component of each. Attributing a difference to edge storage requires either
+queries chosen so that edge storage dominates --- single-pair lookups in a loop,
+full scans over a simple graph --- or measurement at the data-structure boundary
+on both sides, which for (A) means writing a C harness.
+
+\emph{The oscillation regime needs a workload, not a design.} A pair driven
+repeatedly across the one-to-two boundary exercises promotion and demotion in the
+only case where (C) is strictly worse, and that is a Cypher script.
+
+What would make any of this credible is the same discipline the fold constants
+were measured under (\S\ref{sec:folding}): instruction counts rather than wall
+clock as the primary metric, since they are reproducible across machines and do
+not drift with load; capacity held fixed so that identifier reclamation does not
+confound the write paths; allocated bytes reported alongside, since the churn
+claim is about the allocator rather than about time; and only the multiplicity
+varying, per the sweep in \S\ref{sec:future}.
+
+Two things would remain unmeasured even so. The emulation above bounds (B)'s read
+constant but says nothing about its space or about its \emph{absence} of
+promotion cost, which is the whole of its case; and no amount of this settles
+whether the multiplicity distributions we assume --- dominated by $1$ --- describe
+the workloads anyone actually runs, which is a question about deployments rather
+than about data structures.
+
 % =====================================================================
 \section{Related work}
 \label{sec:related}
