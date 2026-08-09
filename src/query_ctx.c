@@ -466,6 +466,36 @@ bool QueryCtx_AcquireWriteLock (void) {
 			REDISMODULE_WRITE) ;
 	RedisModule_FreeString (redis_ctx, graphID) ;
 
+	//--------------------------------------------------------------------------
+	// re-validate pause / role now that the GIL is held
+	//--------------------------------------------------------------------------
+	// a write admitted before a replica-pause window opened (e.g. FAILOVER /
+	// CLIENT PAUSE) may reach this point after the pause started, or after
+	// this instance has been demoted to a replica. once the GIL is held,
+	// neither can change until we release it, so this check is race-free.
+	//
+	// commands applied from our own master's replication stream, or being
+	// replayed while loading AOF/RDB, are exempt: they were already
+	// committed elsewhere (or persisted locally) - our job is to mirror
+	// them, not re-authorize them
+
+	int ctx_flags = RedisModule_GetContextFlags (redis_ctx) ;
+	bool bypass_checks = (ctx_flags & REDISMODULE_CTX_FLAGS_REPLICATED)    ||
+	                      (ctx_flags & REDISMODULE_CTX_FLAGS_LOADING)       ||
+	                      (ctx_flags & REDISMODULE_CTX_FLAGS_ASYNC_LOADING) ;
+
+	if (!bypass_checks) {
+		if (RedisModule_AvoidReplicaTraffic ()) {
+			ErrorCtx_SetError (EMSG_REPLICA_TRAFFIC_PAUSED) ;
+			goto clean_up ;
+		}
+
+		if (ctx_flags & REDISMODULE_CTX_FLAGS_READONLY) {
+			ErrorCtx_SetError (EMSG_NOT_MASTER) ;
+			goto clean_up ;
+		}
+	}
+
 	if (RedisModule_KeyType (key) == REDISMODULE_KEYTYPE_EMPTY) {
 		ErrorCtx_SetError (EMSG_EMPTY_KEY, graph_name) ;
 		goto clean_up ;
