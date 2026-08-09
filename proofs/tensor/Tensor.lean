@@ -10,3 +10,4 @@ import Tensor.Flush
 import Tensor.Iter
 import Tensor.Codec
 import Tensor.States
+import Tensor.Cost
