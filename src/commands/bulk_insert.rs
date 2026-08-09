@@ -546,9 +546,28 @@ pub fn graph_bulk_insert(
         ));
     }
 
-    // Inside MULTI/EXEC: blocking commands are not allowed, run synchronously
-    // with RM_Yield to let Redis process PING between operations.
-    if ctx.get_flags().contains(ContextFlags::MULTI) {
+    // Contexts that cannot block run inline, with RM_Yield so Redis still handles
+    // PING between tokens. The predicate mirrors C's dispatcher
+    // (`cmd_dispatcher.c`), which is the reference for "this context must not
+    // block":
+    //   * REPLICATED — a replica has to apply the batch *before* the handler
+    //     returns. Blocking instead lets Redis advance the replication offset
+    //     while the write is still queued, so the master's WAIT reports the
+    //     replica in sync when it is not (same reasoning as `graph_core`).
+    //   * MULTI / LUA — Redis rejects blocking outright in both.
+    //   * DENY_BLOCKING / LOADING — AOF replay drives a fake client that carries
+    //     no CLIENT_MASTER, so REPLICATED is *not* set for it. Blocking that client
+    //     is not merely wrong, it is fatal: Redis asserts
+    //     `(fakeClient->flags & CLIENT_BLOCKED) == 0` (`aof.c`) while loading, so
+    //     any AOF-enabled server crashed on restart after a bulk load.
+    let flags = ctx.get_flags();
+    if flags.intersects(
+        ContextFlags::MULTI
+            | ContextFlags::REPLICATED
+            | ContextFlags::LUA
+            | ContextFlags::DENY_BLOCKING
+            | ContextFlags::LOADING,
+    ) {
         let tokens: Vec<&[u8]> = token_strings
             .iter()
             .map(redis_module::RedisString::as_slice)
@@ -608,6 +627,10 @@ pub fn graph_bulk_insert(
     // `RedisString` is tied to the calling context, so carry the name as a
     // plain `String` for the cleanup path to rebuild on the worker thread.
     let graph_name = key_str.to_string();
+    // Carry the key as raw bytes too, for replication. `to_string` above goes
+    // through `to_string_lossy`, which would rewrite a non-UTF-8 graph name into
+    // replacement characters and address a different key on the replica.
+    let key_bytes: Vec<u8> = key_str.as_slice().to_vec();
     spawn(
         move || {
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
@@ -668,7 +691,40 @@ pub fn graph_bulk_insert(
                 session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
                     .expect("writer mode after upgrade_to_write");
-                raw::replicate_verbatim(ts_ctx);
+                // Replicate by rebuilding the command, NOT verbatim.
+                //
+                // `RM_ReplicateVerbatim` propagates `ctx->client->argv`, and the
+                // client behind a thread-safe context is a *fake* pooled one — Redis
+                // says so inline: "we can't access it safely from another thread, so
+                // we use a fake client here". It carries no argv, so a verbatim call
+                // from this thread propagated a zero-argument command and silently
+                // dropped the entire batch (#2347).
+                //
+                // Rebuilding is what C does when it replicates from off the main
+                // thread (`QueryCtx_Replicate` calls `RM_Replicate`), and what
+                // `graph_core::replicate_effects` already does from this same
+                // position. `RM_Replicate` builds its own argv, so the fake client
+                // does not matter.
+                //
+                // Correct here because the writer session still holds the GIL:
+                // releasing it flushes the propagation. Replaying is deterministic —
+                // bulk assigns ids sequentially from the current reserved counts, and
+                // the replica parses identical token bytes in identical order.
+                let node_count_arg = node_count.to_string();
+                let edge_count_arg = edge_count.to_string();
+                let node_token_count_arg = node_token_count.to_string();
+                let rel_token_count_arg = rel_token_count.to_string();
+                let mut repl_args: Vec<&[u8]> = Vec::with_capacity(token_data.len() + 6);
+                repl_args.push(&key_bytes);
+                if begin {
+                    repl_args.push(b"BEGIN".as_slice());
+                }
+                repl_args.push(node_count_arg.as_bytes());
+                repl_args.push(edge_count_arg.as_bytes());
+                repl_args.push(node_token_count_arg.as_bytes());
+                repl_args.push(rel_token_count_arg.as_bytes());
+                repl_args.extend(token_data.iter().map(Vec::as_slice));
+                raw::replicate(ts_ctx, "GRAPH.BULK", repl_args.as_slice());
                 Ok(())
             };
             match result {
