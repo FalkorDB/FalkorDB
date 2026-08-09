@@ -639,6 +639,19 @@ impl<T> Matrix<T> {
             nrows >= r0 && ncols >= c0,
             "grown must not shrink: {r0}x{c0} -> {nrows}x{ncols}"
         );
+        // Same dimensions: the tile grid degenerates to 1x1, i.e. a plain copy,
+        // so take the copy directly rather than paying `concat`'s setup to do
+        // it. `dup` carries the source's sparsity control and orientation, and
+        // every matrix here is pinned at construction, so the copy is pinned
+        // too. It does report `has_pending` honestly rather than claiming it
+        // the way the concat path below does, so restore that claim: callers
+        // treat a `grown` result as pending until waited, and one no-op wait
+        // is cheaper than a postcondition that holds on only one path.
+        if nrows == r0 && ncols == c0 {
+            let out = self.dup();
+            out.has_pending.store(true, Ordering::Relaxed);
+            return out;
+        }
         unsafe {
             let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
             let info = GxB_Matrix_type(type_.as_mut_ptr(), *self.m);
