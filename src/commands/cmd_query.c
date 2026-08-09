@@ -411,7 +411,7 @@ void enter_writer_loop
 // GraphContext_GetGraph(NULL) when GraphContext_Retrieve fails.
 // The heavy inner functions (_ExecuteQuery, GraphContext_Retrieve, etc.)
 // are not affected by this attribute — only the orchestration shell is.
-__attribute__((optnone))
+OPTNONE
 void _query
 (
 	bool profile,

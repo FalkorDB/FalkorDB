@@ -11,7 +11,7 @@
 #include "../../graph/entities/node.h"
 #include "../../resultset/resultset_statistics.h"
 
-#include "../../util/roaring.h"
+#include "../../util/roaring_include.h"
 
 // deletes entities specified within the DELETE clause
 

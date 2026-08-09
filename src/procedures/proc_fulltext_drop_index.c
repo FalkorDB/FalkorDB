@@ -11,6 +11,7 @@
 #include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "../index/indexer.h"
+#include "../graph/graph_hub.h"
 #include "../graph/graphcontext.h"
 
 //------------------------------------------------------------------------------
@@ -49,19 +50,36 @@ ProcedureResult Proc_FulltextDropIndexInvoke
 		return PROCEDURE_ERR;
 	}
 
+	ResultSet *result_set = QueryCtx_GetResultSet () ;
+
 	const IndexField *fields = Index_GetFields(idx);
 	int n = arr_len((IndexField*)fields);
-	// drop only fulltext fields
-	for(int i = 0; i < n; i++) {
-		const IndexField *f = fields + i;
-		if(IndexField_GetType(f) & INDEX_FLD_FULLTEXT) {
-			int res = GraphContext_DeleteIndex(gc, SCHEMA_NODE, lbl,
-					IndexField_GetName(f), INDEX_FLD_FULLTEXT);
-			ASSERT(res == INDEX_OK);
+
+	// collect fulltext field names before dropping any of them:
+	// GraphHub_DropIndex may free the IndexField it operates on and
+	// reshuffle idx->fields (e.g. via arr_del_fast, when the index hasn't
+	// been activated yet and there's no active copy to clone off of before
+	// mutating) - identifying fields to drop must not be interleaved with
+	// actually dropping them
+	char **to_drop = arr_new (char*, 0) ;
+	for (int i = 0; i < n; i++) {
+		const IndexField *f = fields + i ;
+		if (IndexField_GetType (f) & INDEX_FLD_FULLTEXT) {
+			arr_append (to_drop, rm_strdup (IndexField_GetName (f))) ;
 		}
 	}
 
-	return PROCEDURE_OK;
+	int m = arr_len (to_drop) ;
+	for (int i = 0; i < m; i++) {
+		int res = GraphHub_DropIndex (gc, SCHEMA_NODE, lbl, to_drop [i],
+				INDEX_FLD_FULLTEXT, true) ;
+		ASSERT (res == INDEX_OK) ;
+		ResultSet_IndexDeleted (result_set, res) ;
+	}
+
+	arr_free_cb (to_drop, rm_free) ;
+
+	return PROCEDURE_OK ;
 }
 
 SIValue *Proc_FulltextDropIndexStep

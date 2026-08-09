@@ -345,7 +345,7 @@ static void _UndoLog_Rollback_Create_Index
 		UndoCreateIndexOp index_op = op->index_op;
 		int res = GraphContext_DeleteIndex(ctx->gc, index_op.st,
 				index_op.label, index_op.field, index_op.t);
-		ASSERT(res == INDEX_OK);
+		ASSERT (res == INDEX_OK) ;
 	}
 }
 
