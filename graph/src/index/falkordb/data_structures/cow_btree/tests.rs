@@ -1313,8 +1313,10 @@ fn integrity_differential_across_sizes() {
     differential::<32, 8, 8>(0x5555_5555, 3000, 80); // narrow branch, wide leaf
     differential::<256, 256, 8>(0x6666_6666, 4000, 800);
 
-    // Same sweep at the narrow (u32) doc width — the 12 B/entry AoS layout the
-    // tensor's EdgeIdStore uses. Docs are `rng % key_space` (well under u32), so
+    // Same sweep at the narrow (u32) doc width — a 12 B/entry AoS layout instead of 16.
+    // No production instantiation narrows today; this keeps the const generic honest so a
+    // future one cannot discover the width is only ever exercised at 8. Docs are
+    // `rng % key_space` (well under u32), so
     // this stresses split/merge/borrow/collapse + leaf round-trip at DOC_BYTES=4.
     differential::<4, 4, 4>(0x1111_2222, 3000, 30);
     differential::<5, 5, 4>(0x2222_3333, 3000, 30);

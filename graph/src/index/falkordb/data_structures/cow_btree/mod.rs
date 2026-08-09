@@ -281,8 +281,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
 
     /// The smallest doc stored under `key`, or `None`. A direct reference-descent
     /// to the leaf — unlike [`point`](Self::point) it clones no page `Arc`s and
-    /// allocates no cursor stack, so it's the cheap primitive for the hot
-    /// "one representative edge per pair" lookups (traversal / expand-into).
+    /// allocates no cursor stack, so it is the cheap way to ask "is there one, and
+    /// which" without building a cursor.
+    ///
+    /// Reached in production only through [`contains_key`](Self::contains_key).
     #[must_use]
     pub fn first_doc(
         &self,
@@ -330,8 +332,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     }
 
     /// Lazily iterate the full `(key, doc)` tuples whose key lies in `[lo, hi]`, in `(key, doc)` order.
-    /// Like [`range`](Self::range) but yields the key too — for consumers that must recover it (e.g. the
-    /// relationship tensor's edge-id store rebuilding `(src, dst, edge_id)`). Owns a snapshot.
+    /// Like [`range`](Self::range) but yields the key too, for a consumer that must recover the
+    /// indexed value and not just the entity. Owns a snapshot.
+    ///
+    /// No caller today — the numeric index reads docs only.
     #[must_use]
     pub fn range_tuples(
         &self,

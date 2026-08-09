@@ -8,10 +8,11 @@ use super::node::{Branch, Node};
 use super::read_width;
 
 /// What a [`RangeIter`] yields per entry. The default [`DocExtract`] yields the
-/// doc id only (the index's need); [`TupleExtract`] yields the full `(key, doc)`
-/// pair for consumers (e.g. the relationship tensor's edge-id store) that must
-/// recover the key. A doc-only cursor can skip reading the key on a wholly
-/// in-range leaf; a tuple cursor always reads it (`NEEDS_KEY`).
+/// doc id only, which is all the index needs; [`TupleExtract`] yields the full
+/// `(key, doc)` pair for a consumer that must recover the indexed value too.
+/// A doc-only cursor can skip reading the key on a wholly in-range leaf; a tuple
+/// cursor always reads it (`NEEDS_KEY`) — which is the whole reason the two are
+/// separate.
 pub trait Extract {
     type Item;
     /// Whether `next` must read the entry key even on a wholly-in-range leaf.
