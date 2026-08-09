@@ -389,6 +389,7 @@ requires; the rest of this paper is largely about that price.
 \label{sec:representation}
 
 \subsection{Components}
+\label{sec:components}
 
 \begin{lstlisting}
 pub struct Tensor {
@@ -1898,11 +1899,54 @@ GraphBLAS already imposes, so neither restricts anything reachable --- but
 they are assumptions that a future change to identifier allocation would have
 to preserve.
 
-\paragraph{\texttt{multi\_count} is incrementally maintained.}
-It cannot be recomputed in $O(1)$ (\S\ref{sec:invariants}), so
-Theorem~\ref{thm:count} depends on every mutation path updating it. A
-divergence would surface as a wrong --- possibly wrapped --- edge count rather
-than as corrupt data, but it would surface late.
+\paragraph{\texttt{multi\_count} is incrementally maintained --- but need not be.}
+Theorem~\ref{thm:count} depends on every mutation path updating the counter, and
+a divergence would surface as a wrong --- possibly wrapped --- edge count rather
+than as corrupt data, so it would surface late and far from its cause. In the
+artifact the exposure is concrete: seven call sites add or remove a row entry of
+$me$, and three of them adjust the counter.
+
+The premise that makes this look unavoidable is that the quantity cannot be
+recovered cheaply, and that premise is false. Invariant~\ref{inv:promotion} says
+$\varepsilon(p) = \M$ exactly when row $\kappa(p)$ of $me$ is non-empty, so
+\[
+  \textit{multi} \;=\; \bigl|\{\text{non-empty rows of } me\}\bigr| ,
+\]
+and a hypersparse matrix stores precisely its non-empty vectors --- so that count
+is metadata, not a scan. It is one read once $me$ is assembled, and at worst
+proportional to the number of multi-edge pairs while its deltas are live. Never
+proportional to $|E|$. The counter is therefore a \emph{cache} of a structural
+property of $me$, not independent state, which admits three repairs of
+increasing ambition.
+
+\emph{Make divergence loud rather than silent.} The subtractions in
+Theorem~\ref{thm:count} can only underflow if an invariant is already broken ---
+that is exactly what the mechanised \texttt{edgeCount\_no\_underflow} says --- so
+computing the identity in checked arithmetic converts a wrapped count into an
+error raised where it is detected. This costs nothing and removes the worst
+failure mode without addressing the cause.
+
+\emph{Check it, cheaply enough to leave on.} Comparing the counter against $me$'s
+vector count is $O(\textit{multi})$, so unlike the full Theorem~\ref{thm:count}
+audit against a scan --- which is $O(|E|)$ --- it can run at every commit rather
+than only in debug builds. That converts a late, remote symptom into an
+immediate, local one.
+
+\emph{Or remove the obligation.} Either compute the count on demand from $me$ at
+each \textsc{EdgeCount}, paying one metadata read on a path that is not hot; or
+keep the field and make forgetting it impossible by construction, bundling $me$
+with its counter in a type whose only mutators move both together. The second is
+the move the delta layers already make (\S\ref{sec:components}), and it is the
+one that generalises: it turns ``every mutation path must remember'' into ``two
+functions do it,'' which is a property a reviewer can check by reading a type
+rather than by auditing call sites.
+
+Note what the mechanisation does and does not settle here. Every operation in the
+model provably preserves Invariant~\ref{inv:counter}, so the \emph{algorithm} is
+not in question; what is unproved is that the Rust performs the same updates the
+model does. That is the correspondence assumption of \S\ref{sec:mechanised}, and
+the third repair is valuable precisely because it shrinks the surface over which
+that assumption has to hold.
 
 \paragraph{The transaction-local state space is genuinely larger.}
 Ten per-pair states with shadowing is more than the four a Boolean delta
@@ -1987,14 +2031,23 @@ block $0$, and what the crossover looks like on a graph whose multi-edge pairs
 are spread thinly across many blocks --- the case where per-transaction work
 becomes proportional to the number of live blocks rather than to one.
 
-\paragraph{Make \texttt{multi\_count} checkable at run time.} The invariant set
-is now proved (\S\ref{sec:mechanised}), but proofs bind the model, not the
-running process: a memory error, a decoder fed a corrupt blob, or a future edit
-to a path the model does not cover can still break an invariant in production.
-A debug-mode assertion of Theorem~\ref{thm:count} against an independent scan
-would catch that, at a cost paid only in debug builds. Mechanisation and
-run-time checking answer different questions and the first does not retire the
-second.
+\paragraph{Take the counter off the critical path.} The invariant set is now
+proved (\S\ref{sec:mechanised}), but proofs bind the model, not the running
+process: a memory error, a decoder fed a corrupt blob, or a future edit to a path
+the model does not cover can still break an invariant in production.
+Mechanisation and run-time checking answer different questions, and the first
+does not retire the second.
+
+The repairs in \S\ref{sec:limits} are what we would do first, and they are
+ordered by how much they change. Checked arithmetic in
+Theorem~\ref{thm:count} and a commit-time comparison against $me$'s vector count
+are both cheap enough to leave enabled in release, which is the interesting
+claim: the obvious audit --- asserting the identity against a full scan --- is
+$O(|E|)$ and therefore debug-only, whereas exploiting
+Invariant~\ref{inv:promotion} makes the check proportional to the number of
+multi-edge pairs. What we would want to measure before enabling it by default is
+the cost of that vector-count read while $me$ carries live deltas, since that is
+the one case where it is not a single metadata access.
 
 \paragraph{Close the two remaining modelling gaps.} Iteration is mechanised by
 its \emph{result} --- the effective set restricted to a row range --- rather
