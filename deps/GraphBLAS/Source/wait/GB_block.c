@@ -29,7 +29,7 @@ GrB_Info GB_block   // apply all pending computations if blocking mode enabled
     // wait if mode is blocking, or if too many pending tuples
     //--------------------------------------------------------------------------
 
-    if (!(GB_ANY_PENDING_WORK (A) || GB_hyper_hash_need (A)))
+    if (!GB_will_wait (A))
     { 
         // no pending work, so no need to block
         return (GrB_SUCCESS) ;

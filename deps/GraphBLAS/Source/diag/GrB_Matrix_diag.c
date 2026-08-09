@@ -10,6 +10,8 @@
 // Similar to GxB_Matrix_diag (C, v, k, NULL), except that C is constructed
 // as a new matrix, like GrB_Matrix_new.  C has the same type as v.
 
+// The matrix is allocated in arenas determined by the current Context.
+
 #include "diag/GB_diag.h"
 
 #define GB_FREE_ALL ;
@@ -34,8 +36,11 @@ GrB_Info GrB_Matrix_diag        // construct a diagonal matrix from a vector
     // C = diag (v,k)
     //--------------------------------------------------------------------------
 
+    int header_arena = GB_Context_header_arena ( ) ;
+    int data_arena = GB_Context_data_arena ( ) ;
+
     uint64_t n = v->vlen + GB_IABS (k) ;
-    GB_OK (GB_Matrix_new (C, v->type, n, n)) ;
+    GB_OK (GxB_Matrix_new_arena (C, v->type, n, n, header_arena, data_arena)) ;
     GB_OK (GB_Matrix_diag (*C, (GrB_Matrix) v, k, Werk)) ;
 
     GB_BURBLE_END ;

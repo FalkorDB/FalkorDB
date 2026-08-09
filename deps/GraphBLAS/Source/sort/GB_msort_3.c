@@ -193,7 +193,8 @@ GrB_Info GB_msort_3     // sort array A of size 3-by-n
     void *restrict A_2,         // size n array
     bool A2_is_32,              // if true: A_2 is uint32, else uint64
     const int64_t n,
-    int nthreads_max            // max # of threads to use
+    int nthreads_max,           // max # of threads to use
+    const int data_arena        // arena for workspace
 )
 {
 
@@ -219,22 +220,26 @@ GrB_Info GB_msort_3     // sort array A of size 3-by-n
         { 
             if (A2_is_32)
             { 
-                return (GB_msort_3_32_32_32 (A_0, A_1, A_2, n, nthreads)) ;
+                return (GB_msort_3_32_32_32 (A_0, A_1, A_2, n, nthreads,
+                    data_arena)) ;
             }
             else
             { 
-                return (GB_msort_3_32_32_64 (A_0, A_1, A_2, n, nthreads)) ;
+                return (GB_msort_3_32_32_64 (A_0, A_1, A_2, n, nthreads,
+                    data_arena)) ;
             }
         }
         else
         {
             if (A2_is_32)
             { 
-                return (GB_msort_3_32_64_32 (A_0, A_1, A_2, n, nthreads)) ;
+                return (GB_msort_3_32_64_32 (A_0, A_1, A_2, n, nthreads,
+                    data_arena)) ;
             }
             else
             { 
-                return (GB_msort_3_32_64_64 (A_0, A_1, A_2, n, nthreads)) ;
+                return (GB_msort_3_32_64_64 (A_0, A_1, A_2, n, nthreads,
+                    data_arena)) ;
             }
         }
     }
@@ -244,22 +249,26 @@ GrB_Info GB_msort_3     // sort array A of size 3-by-n
         { 
             if (A2_is_32)
             { 
-                return (GB_msort_3_64_32_32 (A_0, A_1, A_2, n, nthreads)) ;
+                return (GB_msort_3_64_32_32 (A_0, A_1, A_2, n, nthreads,
+                    data_arena)) ;
             }
             else
             { 
-                return (GB_msort_3_64_32_64 (A_0, A_1, A_2, n, nthreads)) ;
+                return (GB_msort_3_64_32_64 (A_0, A_1, A_2, n, nthreads,
+                    data_arena)) ;
             }
         }
         else
         {
             if (A2_is_32)
             { 
-                return (GB_msort_3_64_64_32 (A_0, A_1, A_2, n, nthreads)) ;
+                return (GB_msort_3_64_64_32 (A_0, A_1, A_2, n, nthreads,
+                    data_arena)) ;
             }
             else
             { 
-                return (GB_msort_3_64_64_64 (A_0, A_1, A_2, n, nthreads)) ;
+                return (GB_msort_3_64_64_64 (A_0, A_1, A_2, n, nthreads,
+                    data_arena)) ;
             }
         }
     }

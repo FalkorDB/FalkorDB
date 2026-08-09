@@ -14,7 +14,7 @@
 // CUDA_OK: like GB_OK but for calls to cuda* methods
 //------------------------------------------------------------------------------
 
-// FIXME: remove printfs
+// fixme: remove printfs
 
 #define CUDA_OK(cudaMethod)                                                 \
 {                                                                           \

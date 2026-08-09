@@ -30,6 +30,7 @@ GrB_Info GB_extract_vector_list // extract vector list from a matrix
     // input:
     bool is_32,                 // if true, J is 32-bit; else 64-bit
     const GrB_Matrix A,
+    const int data_arena,       // arena for workspace
     GB_Werk Werk
 )
 {
@@ -37,6 +38,8 @@ GrB_Info GB_extract_vector_list // extract vector list from a matrix
     //--------------------------------------------------------------------------
     // check inputs
     //--------------------------------------------------------------------------
+
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     ASSERT (J != NULL) ;
     ASSERT (A != NULL) ;
@@ -65,7 +68,7 @@ GrB_Info GB_extract_vector_list // extract vector list from a matrix
     // slice the entries for each task
     //--------------------------------------------------------------------------
 
-    GB_WERK_DECLARE (A_ek_slicing, int64_t) ;
+    GB_WERK_DECLARE (A_ek_slicing, int64_t, mem) ;
     int A_ntasks, A_nthreads ;
     GB_SLICE_MATRIX (A, 2) ;
 

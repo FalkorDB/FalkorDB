@@ -221,7 +221,7 @@ void GB_macrofy_monoid  // construct the macros for a monoid
         }
         else if (opcode == GB_TIMES_binop_code)
         { 
-            // #pragma omp simd reduction(^:z)
+            // #pragma omp simd reduction(*:z)
             redop = "*" ;
         }
         if (redop != NULL)

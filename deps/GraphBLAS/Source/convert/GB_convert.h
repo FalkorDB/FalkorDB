@@ -10,11 +10,6 @@
 #ifndef GB_CONVERT_H
 #define GB_CONVERT_H
 
-// these parameters define the hyper_switch needed to ensure matrix stays
-// either always hypersparse, or never hypersparse.
-#define GB_ALWAYS_HYPER (1.0)
-#define GB_NEVER_HYPER  (-1.0)
-
 // determine the sparsity_control for a matrix
 int GB_sparsity_control     // revised sparsity_control
 (
@@ -123,10 +118,11 @@ GrB_Info GB_convert_b2s   // extract CSC/CSR or triplets from bitmap
     int64_t *cnvec_nonempty,    // # of non-empty vectors
     // inputs: not modified
     const bool Cp_is_32,        // if true, Cp is uint32_t; otherwise uint64_t
-    const bool Ci_is_32,        // if true, Ci is uint32_t; otherwise uint64_t
     const bool Cj_is_32,        // if true, Cj is uint32_t; otherwise uint64_t
+    const bool Ci_is_32,        // if true, Ci is uint32_t; otherwise uint64_t
     const GrB_Type ctype,       // type of Cx
     const GrB_Matrix A,         // matrix to extract; not modified
+    const int data_arena,       // arena for workspace
     GB_Werk Werk
 ) ;
 
@@ -225,10 +221,11 @@ static inline bool GB_as_if_full
         // A is full; the pattern is not present
         return (true) ;
     }
-    if (GB_ANY_PENDING_WORK (A))
+    if (GB_ANY_PENDING_WORK (A))    // if true, A is not as-is-full
     { 
         // A has pending work and so cannot be treated as if full.
         // The existence of the hyper_hash is not considered in this test.
+        // A->data_arena is ignored.
         return (false) ;
     }
     // A is sparse, hyper, or bitmap: check if all entries present

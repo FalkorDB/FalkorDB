@@ -142,6 +142,16 @@ void **ThreadPool_GetTasksByHandler
 	return tasks;
 }
 
+// Block until all queued tasks have run and all workers are idle.
+void ThreadPool_Wait
+(
+	void
+) {
+	ASSERT(_thpool != NULL);
+
+	thpool_wait(_thpool);
+}
+
 // destroies threadpool, allows threads to exit gracefully
 void ThreadPool_Destroy
 (

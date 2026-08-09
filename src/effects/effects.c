@@ -6,7 +6,9 @@
 
 #include "RG.h"
 #include "effects.h"
+#include "effects_internal.h"
 #include "../query_ctx.h"
+#include "../datatypes/map.h"
 #include "../datatypes/vector.h"
 
 // determine block available space 
@@ -37,6 +39,13 @@ struct _EffectsBuffer {
 static void EffectsBuffer_WriteSIArray
 (
 	const SIValue *arr,  // array
+	EffectsBuffer *buff  // effect buffer
+);
+
+// write map to effects buffer
+static void EffectsBuffer_WriteSIMap
+(
+	const SIValue *map,  // map
 	EffectsBuffer *buff  // effect buffer
 );
 
@@ -100,7 +109,7 @@ static size_t EffectsBufferBlock_WriteBytes
 }
 
 // write n bytes from ptr into effects-buffer
-static void EffectsBuffer_WriteBytes
+void EffectsBuffer_WriteBytes
 (
 	const void *ptr,   // data to write
 	size_t n,          // number of bytes to write
@@ -127,7 +136,7 @@ static void EffectsBuffer_WriteBytes
 	}
 }
 
-static void EffectsBuffer_WriteString
+void EffectsBuffer_WriteString
 (
 	const char *str,
 	EffectsBuffer *eb
@@ -141,13 +150,13 @@ static void EffectsBuffer_WriteString
 }
 
 // writes a binary representation of v into Effect-Buffer
-static void EffectsBuffer_WriteSIValue
+void EffectsBuffer_WriteSIValue
 (
 	const SIValue *v,
 	EffectsBuffer *buff
 ) {
-	ASSERT(v != NULL);
-	ASSERT(buff != NULL);
+	ASSERT (v    != NULL) ;
+	ASSERT (buff != NULL) ;
 
 	// format:
 	//    type
@@ -211,6 +220,10 @@ static void EffectsBuffer_WriteSIValue
 			EffectsBuffer_WriteSIVector (v, buff) ;
 			break ;
 
+		case T_MAP:
+			EffectsBuffer_WriteSIMap (v, buff) ;
+			break ;
+
 		default:
 			assert (false && "unknown SIValue type") ;
 	}
@@ -235,6 +248,32 @@ static void EffectsBuffer_WriteSIArray
 	// write each element
 	for (uint32_t i = 0; i < len; i++) {
 		EffectsBuffer_WriteSIValue(elements + i, buff);
+	}
+}
+
+// writes a binary representation of map into Effect-Buffer
+static void EffectsBuffer_WriteSIMap
+(
+	const SIValue *map,  // map
+	EffectsBuffer *buff  // effect buffer
+) {
+	// format:
+	// number of pairs
+	// (key, value) pairs
+
+	uint32_t len = Map_KeyCount (*map) ;
+
+	// write number of pairs
+	EffectsBuffer_WriteBytes (&len, sizeof (uint32_t), buff) ;
+
+	// write each (key, value) pair
+	for (uint32_t i = 0; i < len; i++) {
+		SIValue key ;
+		SIValue val ;
+		Map_GetIdx (*map, i, &key, &val) ;
+
+		EffectsBuffer_WriteSIValue (&key, buff) ;
+		EffectsBuffer_WriteSIValue (&val, buff) ;
 	}
 }
 
@@ -296,7 +335,7 @@ static void EffectsBuffer_WriteAttributeSet
 	}
 }
 
-static inline void EffectsBuffer_IncEffectCount
+void EffectsBuffer_IncEffectCount
 (
 	EffectsBuffer *buff
 ) {

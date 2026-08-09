@@ -1,13 +1,14 @@
 //------------------------------------------------------------------------------
-// GB_memcpy: parallel memcpy
+// GB_memcpy: parallel memcpy on the CPU (not for CUDA)
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
 
-// Note that this function uses its own hard-coded chunk size.
+// This function uses its own hard-coded chunk size.
+// The work is always done on the CPU; CUDA requires its own memcpy method.
 
 #include "GB.h"
 
@@ -21,12 +22,6 @@ void GB_memcpy                  // parallel memcpy
     int nthreads                // max # of threads to use
 )
 {
-
-    // FIXME for CUDA: do (cpu,gpu) <= (cpu,gpu) memcpy's
-    //  cpu <- cpu (already done below)
-    //  cpu <- gpu (effectively done below but could be better)
-    //  gpu <- cpu (need this)
-    //  gpu <- gpu (need this)
 
     if (nthreads <= 1 || n <= GB_MEM_CHUNK)
     { 

@@ -1,10 +1,13 @@
-function gbtest35
+function gbtest35 (ghb)
 %GBTEST35 test reshape (built-in variant)
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default')
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 for m = 0:6
     for n = 0:10
@@ -14,7 +17,7 @@ for m = 0:6
             else
                 A = sprand (m, n, 0.3) ;
             end
-            G = GrB (A) ;
+            G = gtb (ghb, A) ;
             mn = m*n ;
             if (mn == 0)
                 C1 = reshape (A, n, m) ;
@@ -40,4 +43,5 @@ for m = 0:6
     end
 end
 
-fprintf ('gbtest35: all tests passed\n') ;
+fprintf ('gbtest35 (%d): all tests passed\n', ghb) ;
+

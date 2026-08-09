@@ -5,7 +5,6 @@
  */
 
 #include "RG.h"
-#include "module_event_handlers.h"
 #include "LAGraph.h"
 #include "globals.h"
 #include "util/uuid.h"
@@ -15,6 +14,8 @@
 #include "util/redis_version.h"
 #include "graph/graphcontext.h"
 #include "configuration/config.h"
+#include "module_event_handlers.h"
+#include "graph/graph_load_queue.h"
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
 
@@ -355,14 +356,52 @@ static void _ShutdownEventHandler
 	void *data
 ) {
 	if (!getenv("RS_GLOBAL_DTORS")) {  // used only with sanitizer or valgrind
-		return; 
+		return;
 	}
+
+	// drain any graph loads still parked waiting on another thread's load
+	GraphLoadQueue_Free () ;
 
 	// stop cron
 	Cron_Stop () ;
 
 	// stop indexer
 	Indexer_Stop () ;
+
+	//--------------------------------------------------------------------------
+	// release all GraphContexts so their indexes (and the RediSearch LLAPI
+	// IndexSpecs they own) get dropped cleanly before the underlying thread
+	// pools and RediSearch module state go away.
+	//
+	// Normally GraphContexts live as long as their Redis keys. At shutdown
+	// Redis exits without destroying keys, so without an explicit decref
+	// here the GraphContexts (and transitively every Index → rsIdx →
+	// RediSearch IndexSpec / RefManager) leak. The leak is otherwise
+	// invisible: it predates ASan instrumentation and stayed small.
+	// With RediSearch 8.6's LLAPI allocating a logCtx per vector field,
+	// LSan now reports it as a real finding in flow tests that create
+	// indexes (test_index_create, test_vecsim, test_index_delete,
+	// test_memory_usage).
+	//
+	// Order matters here:
+	//   * Indexer_Stop above already drained the indexer queue (our
+	//     _Indexer_DiscardTask fix releases the GC ref each queued task
+	//     was holding) and pthread_join'd the indexer thread.
+	//   * ThreadPool_Wait below blocks until every in-flight worker
+	//     task (cmd_query, populate, drop, ...) has finished. Each of
+	//     those tasks decrements its own GC ref on completion, so by
+	//     the time Wait returns the only remaining ref on each
+	//     GraphContext is the one Globals_AddGraph took when the
+	//     graph was registered.
+	//   * The decref loop then takes that last reference to zero and
+	//     _GraphContext_Free runs (sync, or async-dispatched onto the
+	//     still-alive pool — the destroy below drains it either way).
+	//
+	ThreadPool_Wait () ;
+
+	// drop each keyspace graph's registration reference so GraphContexts -- and
+	// the RediSearch indexes they own -- are freed at shutdown rather than leaked
+	Globals_DrainGraphs () ;
 
 	// stop threads before finalize GraphBLAS
 	ThreadPool_Destroy () ;

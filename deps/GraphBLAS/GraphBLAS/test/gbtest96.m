@@ -1,12 +1,17 @@
-function gbtest96
-%GBTEST96 test GrB.optype
+function gbtest96 (ghb)
+%GBTEST96 test [GrB,GhB].optype
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-fprintf ('Table of types of binary operators when inputs types are\n') ;
-fprintf ('are mixed (the type of C for C=A+B, for example).\n') ;
+fprintf ('Table of output types of binary ops when inputs have\n') ;
+fprintf ('mixed types (the type of C for C=A+B, for example).\n') ;
 fprintf ('\nLegend:\n') ;
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 types = gbtest_types ;
 order = [ 3:11 2 1 12:13 ] ;
@@ -29,15 +34,15 @@ for k1 = order
     fprintf ('%2s : ', gbterse (atype)) ;
     for k2 = order
         btype = types {k2} ;
-        ctype = GrB.optype (atype, btype) ;
+        ctype = gtb_optype (ghb, atype, btype) ;
         fprintf ('%2s ', gbterse (ctype)) ;
 
-        c2 = GrB.optype (btype, atype) ;
+        c2 = gtb_optype (ghb, btype, atype) ;
         assert (isequal (c2, ctype)) ;
 
-        A = GrB (1, atype) ;
-        B = GrB (1, btype) ;
-        c2 = GrB.optype (A, B) ;
+        A = gtb (ghb, 1, atype) ;
+        B = gtb (ghb, 1, btype) ;
+        c2 = gtb_optype (ghb, A, B) ;
         assert (isequal (c2, ctype)) ;
 
         if (isequal (atype, 'single complex'))
@@ -48,7 +53,7 @@ for k1 = order
             A = cast (1, atype) ;
         end
 
-        c2 = GrB.optype (A, B) ;
+        c2 = gtb_optype (ghb, A, B) ;
         assert (isequal (c2, ctype)) ;
 
         if (isequal (btype, 'single complex'))
@@ -59,7 +64,7 @@ for k1 = order
             B = cast (1, btype) ;
         end
 
-        c2 = GrB.optype (A, B) ;
+        c2 = gtb_optype (ghb, A, B) ;
         assert (isequal (c2, ctype)) ;
 
     end

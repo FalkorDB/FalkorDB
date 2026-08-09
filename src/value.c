@@ -936,7 +936,7 @@ int SIValue_Compare
 		if(disjointOrNull) *disjointOrNull = COMPARED_NULL;
 	} else {
 		// check if indication is required, and inform about disjoint comparison
-		if(disjointOrNull) *disjointOrNull = DISJOINT;
+		if(disjointOrNull) *disjointOrNull = SI_DISJOINT;
 	}
 
 	// return base type difference, ignoring intern flag (used for disjoint or null comparisons)
@@ -1173,6 +1173,10 @@ SIValue SIValue_FromBinary
 
 		case T_VECTOR_F32:
 			v = SIVector_FromBinary(stream, t);
+			break;
+
+		case T_MAP:
+			v = Map_FromBinary (stream) ;
 			break;
 
 		case T_NULL:

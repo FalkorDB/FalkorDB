@@ -83,6 +83,19 @@ static void _WriteUpdatesToEffectsBuffer
 	}
 }
 
+// _Graph_EntityIsDeleted is used as a pre check for candidate entities
+// prior to actually deleting them, the delete operation considers an entity to
+// be marked as deleted if:
+// 1. its attribute-set is NULL (cheap check)
+// 2. the datablock marked that entity as deleted
+static inline bool _Graph_EntityIsDeleted
+(
+	GraphEntity *e
+) {
+	ASSERT (e != NULL) ;
+	return (e->attributes == NULL || DataBlock_ItemIsDeleted (e->attributes)) ;
+}
+
 static void _ClearAttributeSet
 (
 	GraphEntity *e,
@@ -263,6 +276,9 @@ static bool _UpdateSetFromMap
 		// convert key to attribute-id, missing attributes will be created
 		attr_ids [attr_count] =
 			GraphHub_FindOrAddAttribute (gc, key.stringval, log) ;
+		if (unlikely (ErrorCtx_EncounteredError ())) {
+			return false ;
+		}
 		attr_count++ ;
 	}
 
@@ -630,6 +646,9 @@ static void _UpdateSchemas
 				// resolve attribute id
 				property->attr_id =
 					GraphHub_FindOrAddAttribute (gc, attr_name, log) ;
+				if (unlikely (ErrorCtx_EncounteredError ())) {
+					return ;
+				}
 			}
 		}
 
@@ -764,6 +783,9 @@ bool EvalUpdates
 	// can introduce graph schema changes
 
 	_UpdateSchemas (gc, descs, n_descs) ;
+	if (unlikely (ErrorCtx_EncounteredError ())) {
+		return false ;
+	}
 
 	// if we're converting a SET clause, NULL is acceptable
 	// as it indicates an attribute deletion
@@ -838,7 +860,9 @@ bool EvalUpdates
 
 			// a concurrently deleted entity is silently skipped
 			// deletion takes precedence over update
-			if (unlikely (Graph_EntityIsDeleted (entity))) {
+			// if attributes is NULL, the entity was deleted earlier in the
+			// query.
+			if (unlikely (_Graph_EntityIsDeleted(entity))) {
 				continue ;
 			}
 

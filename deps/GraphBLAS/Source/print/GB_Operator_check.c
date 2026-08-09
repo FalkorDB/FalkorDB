@@ -48,7 +48,7 @@ GrB_Info GB_Operator_check  // check a GraphBLAS operator
         return (GB_IndexUnaryOp_check ((GrB_IndexUnaryOp) op, name, pr, f)) ;
     }
     else if (GB_IS_INDEXBINARYOP_CODE (opcode))
-    {
+    { 
         return (GB_IndexBinaryOp_check ((GxB_IndexBinaryOp) op, name, pr, f)) ;
     }
     else if (GB_IS_SELECTOP_CODE (opcode))

@@ -1,8 +1,13 @@
-function gbtest5
-%GBTEST5 test GrB.descriptorinfo
+function gbtest5 (ghb)
+%GBTEST5 test GrB.descriptorinfo and GhB.descriptorinfo
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 list_out  = { [ ], 'default', 'replace' } ;
 list_in   = { [ ], 'default', 'transpose' } ;
@@ -67,7 +72,7 @@ for k1 = 1:length (list_out)
 %                               end
 
                                 d
-                                GrB.descriptorinfo (d) ;
+                                gtb_descriptorinfo (ghb, d) ;
                                 ntrials = ntrials + 1 ;
 %                           end
 %                       end
@@ -78,10 +83,8 @@ for k1 = 1:length (list_out)
     end
 end
 
-fprintf ('testing error handling (errors expected):\n') ;
+fprintf ('\n--------------- default descriptor:\n\n') ;
+gtb_descriptorinfo (ghb)
 
-GrB.descriptorinfo
-
-ntrials
-fprintf ('gbtest5: all tests passed\n') ;
+fprintf ('gbtest5 (%d): all tests passed\n', ghb) ;
 

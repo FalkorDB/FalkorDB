@@ -7,9 +7,14 @@
 #pragma once
 
 #define EMSG_GRAPH_EXISTS "Graph %s already exists"
+#define EMSG_GRAPH_LOAD_QUEUE_FULL "ERR too many queries waiting for graph: %s to finish loading"
+#define EMSG_MAX_PENDING_QUERIES "Max pending queries exceeded"
+#define EMSG_MAX_ATTRIBUTES_EXCEEDED "Max number of attributes exceeded, graph does not support more than %d unique attribute names"
 #define EMSG_EMPTY_KEY "Encountered an empty key when opened key %s"
 #define EMSG_NON_GRAPH_KEY "Encountered a non-graph value type when opened key %s"
 #define EMSG_DIFFERENT_VALUE "Encountered different graph value when opened key %s"
+#define EMSG_REPLICA_TRAFFIC_PAUSED "Write query aborted: replica traffic is currently paused"
+#define EMSG_NOT_MASTER "Write query aborted: this instance is not a master"
 #define EMSG_ACCESS_VAR "Attempted to access variable before it has been defined"
 #define EMSG_INVALID_NUMERIC "Invalid numeric value '%s'"
 #define EMSG_INTEGER_OVERFLOW "Integer overflow '%s'"
@@ -49,6 +54,7 @@
 #define EMSG_INVALID_USAGE_OF_DISTINCT_STAR_PARAMETER "Cannot specify both DISTINCT and * in COUNT(DISTINCT *)"
 #define EMSG_MISSING_EVAL_EXP_IN_REDUCE "No eval expression given in reduce"
 #define EMSG_UNHANDLED_TYPE_INLINE_PROPERTIES "Encountered unhandled type in inlined properties."
+#define EMSG_DUPLICATE_INLINE_PROPERTY "Duplicate property key '%s' in inline property map"
 #define EMSG_CREATE_DIRECTED_RELATIONSHIP "Only directed relationships are supported in CREATE"
 #define EMSG_SAME_ALIAS_NODE_RELATIONSHIP "The alias '%s' was specified for both a node and a relationship."
 #define EMSG_SAME_ALIAS_MULTIPLE_PATTERNS "Cannot use the same relationship variable '%s' for multiple patterns."

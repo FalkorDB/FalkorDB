@@ -24,7 +24,7 @@ bool GB_hyper_hash_need
 )
 {
 
-    if (A == NULL || !GB_IS_HYPERSPARSE (A) || A->no_hyper_hash)
+    if (A == NULL || !GB_IS_HYPERSPARSE (A) || A->no_hyper_hash || A->vdim <= 1)
     { 
         // only hypersparse matrices require a hyper_hash
         return (false) ;

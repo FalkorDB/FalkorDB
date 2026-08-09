@@ -195,6 +195,9 @@ static void _PropertyMap_CreateMissingAttributes
 		if (unlikely (map->attr_ids [i] == ATTRIBUTE_ID_NONE)) {
 			map->attr_ids [i] =
 				GraphHub_FindOrAddAttribute (gc, map->keys [i], true) ;
+			if (unlikely (ErrorCtx_EncounteredError ())) {
+				return ;
+			}
 		}
 	}
 }
@@ -223,6 +226,9 @@ void PendingCreations_CreateMissingSchemas
 		}
 
 		_PropertyMap_CreateMissingAttributes (gc, ctx->properties) ;
+		if (unlikely (ErrorCtx_EncounteredError ())) {
+			return ;
+		}
 	}
 
 	PendingEdgeCreations *edges = pending->edges ;
@@ -236,6 +242,9 @@ void PendingCreations_CreateMissingSchemas
 		}
 
 		_PropertyMap_CreateMissingAttributes (gc, ctx->properties) ;
+		if (unlikely (ErrorCtx_EncounteredError ())) {
+			return ;
+		}
 	}
 }
 

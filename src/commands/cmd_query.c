@@ -5,9 +5,9 @@
  */
 
 #include "RG.h"
+#include "commands.h"
 #include "../ast/ast.h"
 #include "cmd_context.h"
-#include "../util/arr.h"
 #include "cron/cron.h"
 #include "../globals.h"
 #include "../query_ctx.h"
@@ -20,6 +20,8 @@
 #include "../effects/effects.h"
 #include "../util/cache/cache.h"
 #include "../configuration/config.h"
+#include "../graph/graphcontext_retrieve.h"
+#include "../replication/divergence_guard.h"
 #include "../execution_plan/execution_plan.h"
 
 // GraphQueryCtx stores the allocations required to execute a query
@@ -159,6 +161,11 @@ static void _ExecuteQuery
 ) {
 	ASSERT (args != NULL) ;
 
+	// this may run on a writer thread that `_query` never touched
+	// (queries are queued and later drained by `enter_writer_loop`)
+	// so it needs its own entry-clear
+	ErrorCtx_Clear () ;
+
 	GraphQueryCtx  *gq_ctx      = args ;
 	QueryCtx       *query_ctx   = gq_ctx->query_ctx ;
 	GraphContext   *gc          = gq_ctx->graph_ctx ;
@@ -261,6 +268,16 @@ static void _ExecuteQuery
 		ResultSet_Clear (result_set) ;
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
 			query_ctx->status = QueryExecutionStatus_FAILURE;
+		}
+
+		// the master only ever replicates a command after it succeeded
+		// locally, so a replicated command failing here means this
+		// replica has diverged from the master
+		if (command_ctx->replicated_command) {
+			const char *detail = ErrorCtx_Get ()->error ;
+			DivergenceGuard_OnFailure (rm_ctx, GraphContext_GetName (gc),
+					command_ctx->command_name,
+					detail != NULL ? detail : "query execution failed") ;
 		}
 	} else {
 		// replicate if graph was modified
@@ -394,12 +411,16 @@ void enter_writer_loop
 // GraphContext_GetGraph(NULL) when GraphContext_Retrieve fails.
 // The heavy inner functions (_ExecuteQuery, GraphContext_Retrieve, etc.)
 // are not affected by this attribute — only the orchestration shell is.
-__attribute__((optnone))
+OPTNONE
 void _query
 (
 	bool profile,
 	void *args
 ) {
+	// clear any stale error left in this thread's TLS by a
+	// previously executed command
+	ErrorCtx_Clear () ;
+
 	CommandCtx *command_ctx = (CommandCtx *)args ;
 	RedisModuleCtx *ctx = CommandCtx_GetRedisCtx (command_ctx) ;
 	ExecutionCtx *exec_ctx = NULL ;
@@ -414,10 +435,60 @@ void _query
 	Globals_TrackCommandCtx (command_ctx) ;
 
 	if (gc == NULL) {
-		if (GraphContext_Retrieve (ctx, command_ctx->rm_graph_name, true, false,
-					true, &gc) != GraphRetrieve_RETRIEVED) {
+		GraphRetrieveStatus status ;
+
+		if (command_ctx->thread == EXEC_THREAD_MAIN) {
+			// main-thread commands (replicated / MULTI / LUA /
+			// DENY_BLOCKING / LOADING) have no blocked client to park
+			// behind another load and later resume via the thread pool -
+			// queueing here would silently never reply if parked, and for
+			// a replicated write, failing outright on mere contention with
+			// another load risks exactly the divergence
+			// GraphContext_RetrieveOrForce exists to prevent. Only a
+			// genuine failure (or a concurrent offload still in flight)
+			// reaches the failure branch below.
+			status = GraphContext_RetrieveOrForce (ctx,
+					command_ctx->rm_graph_name, true, false, &gc) ;
+		} else {
+			void (*handler) (void *) = profile ? Graph_Profile : Graph_Query ;
+			status = GraphContext_RetrieveOrQueue (ctx,
+					command_ctx->rm_graph_name, true, false, handler,
+					command_ctx, &gc) ;
+		}
+
+		if (status == GraphRetrieve_LOADING) {
+			// parked behind another thread's in-flight load of this graph
+			// (only reachable via the queueing path above); `handler` will
+			// be resubmitted once that load resolves - undo this attempt's
+			// thread-local setup, leave the CommandCtx / blocked client alone
+			Globals_UntrackCommandCtx (command_ctx) ;
+			QueryCtx_Free () ;
+			return ;
+		}
+
+		if (status != GraphRetrieve_RETRIEVED) {
+			if (command_ctx->replicated_command) {
+				// this write already applied on the master; silently
+				// failing to retrieve its graph here would let this
+				// replica's data diverge without either side noticing.
+				// Crashing is the safer failure mode: a replication resync
+				// (partial or full) on restart brings this replica back to
+				// a correct, consistent state. Use RELEASE_ASSERT, not
+				// ASSERT - the latter is a no-op in release builds, which
+				// would fall through to an undiagnosable crash instead.
+				RedisModule_Log (ctx, REDISMODULE_LOGLEVEL_WARNING,
+						"GRAPH.QUERY: failed to retrieve graph: %s while "
+						"replicating - crashing to force a replication "
+						"resync rather than risk silent master/replica "
+						"divergence",
+						RedisModule_StringPtrLen (command_ctx->rm_graph_name,
+							NULL)) ;
+				RELEASE_ASSERT (status == GraphRetrieve_RETRIEVED) ;
+			}
+
 			goto cleanup ;
 		}
+
 		CommandCtx_SetGraphContext (command_ctx, gc) ;
 	}
 

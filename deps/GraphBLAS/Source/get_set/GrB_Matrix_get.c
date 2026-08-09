@@ -114,6 +114,18 @@ GrB_Info GrB_Matrix_get_INT32
 
     GrB_Info info ;
     GB_CHECK_INIT ;
+
+#if 0
+    FUTURE: WILL_WAIT revisions for FalkorDB
+    GB_RETURN_IF_NULL (A) ;
+    if (field == GxB_WILL_WAIT)
+    {
+        #pragma omp atomic
+        *(value ) = A->will_wait_flag ;
+        return (GrB_SUCCES) ;
+    }
+#endif
+
     GB_RETURN_IF_NULL_OR_INVALID (A) ;
     GB_RETURN_IF_NULL (value) ;
     ASSERT_MATRIX_OK (A, "A to get option", GB0) ;
@@ -151,7 +163,7 @@ GrB_Info GrB_Matrix_get_SIZE
     // get the field
     //--------------------------------------------------------------------------
 
-    return (GB_matvec_name_size_get (A, value, field)) ;
+    return (GB_matvec_namesize_get (A, value, field)) ;
 }
 
 //------------------------------------------------------------------------------

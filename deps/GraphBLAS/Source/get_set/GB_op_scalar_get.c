@@ -26,7 +26,7 @@ GrB_Info GB_op_scalar_get
     {
         // get theta from an index binary op, or a binary op created from one
         if (op->theta == NULL)
-        {
+        { 
             // this op does not have a theta scalar
             return (GrB_INVALID_VALUE) ;
         }

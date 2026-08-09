@@ -2,11 +2,11 @@
 
 using namespace cooperative_groups ;
 
-// do not #include functions inside of other functions!
 #include "template/GB_cuda_ek_slice.cuh"
 
-#define log2_chunk_size 10
-#define chunk_size 1024
+// fixme: add these to GB_cuda_geometry:
+#define CHUNKSIZE 1024
+#define LOG2_CHUNKSIZE 10
 
 __global__ void GB_cuda_colscale_kernel
 (
@@ -55,13 +55,13 @@ __global__ void GB_cuda_colscale_kernel
     #else
         const int64_t anvec = A->nvec ;
         // sparse/hypersparse case (cuda_ek_slice only works for sparse/hypersparse)
-        for (int64_t pfirst = blockIdx.x << log2_chunk_size ;
-                    pfirst < anz ;
-                    pfirst += gridDim.x << log2_chunk_size )
+        for (int64_t pfirst = blockIdx.x << LOG2_CHUNKSIZE ;
+                     pfirst < anz ;
+                     pfirst += gridDim.x << LOG2_CHUNKSIZE )
             {
                 int64_t my_chunk_size, anvec_sub1, kfirst, klast ;
                 float slope ;
-                GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst, chunk_size,
+                GB_cuda_ek_slice_setup<GB_Ap_TYPE> (Ap, anvec, anz, pfirst, CHUNKSIZE,
                     &kfirst, &klast, &my_chunk_size, &anvec_sub1, &slope) ;
 
                 for (int64_t pdelta = threadIdx.x ; pdelta < my_chunk_size ; pdelta += blockDim.x)

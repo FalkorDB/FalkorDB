@@ -61,8 +61,13 @@ def _create_typed_index(graph, idx_type, entity_type, label, *properties, option
 def create_node_range_index(graph, label, *properties, sync=False):
     return _create_typed_index(graph, "RANGE", "NODE", label, *properties, sync=sync)
 
-def create_node_fulltext_index(graph, label, *properties, sync=False):
-    return _create_typed_index(graph, "FULLTEXT", "NODE", label, *properties, sync=sync)
+def create_node_fulltext_index(graph, label, *properties, language=None, stopwords=None, sync=False):
+    options = {}
+    if language is not None:
+        options['language'] = language
+    if stopwords is not None:
+        options['stopwords'] = stopwords
+    return _create_typed_index(graph, "FULLTEXT", "NODE", label, *properties, options=options or None, sync=sync)
 
 def create_node_vector_index(graph, label, *properties, dim=0, similarity_function="euclidean", m=16, efConstruction=200, efRuntime=10, sync=False):
     options = {'dimension': dim, 'similarityFunction': similarity_function, 'M': m, 'efConstruction': efConstruction, 'efRuntime': efRuntime}
@@ -71,8 +76,13 @@ def create_node_vector_index(graph, label, *properties, dim=0, similarity_functi
 def create_edge_range_index(graph, relation, *properties, sync=False):
     return _create_typed_index(graph, "RANGE", "EDGE", relation, *properties, sync=sync)
 
-def create_edge_fulltext_index(graph, relation, *properties, sync=False):
-    return _create_typed_index(graph, "FULLTEXT", "EDGE", relation, *properties, sync=sync)
+def create_edge_fulltext_index(graph, relation, *properties, language=None, stopwords=None, sync=False):
+    options = {}
+    if language is not None:
+        options['language'] = language
+    if stopwords is not None:
+        options['stopwords'] = stopwords
+    return _create_typed_index(graph, "FULLTEXT", "EDGE", relation, *properties, options=options or None, sync=sync)
 
 def create_edge_vector_index(graph, relation, *properties, dim, similarity_function="euclidean", m=16, efConstruction=200, efRuntime=10, sync=False):
     options = {'dimension': dim, 'similarityFunction': similarity_function, 'M': m, 'efConstruction': efConstruction, 'efRuntime': efRuntime}

@@ -9,8 +9,8 @@
 #include "../query_ctx.h"
 #include "execution_ctx.h"
 #include "../index/index.h"
-#include "../util/rmalloc.h"
 #include "../errors/errors.h"
+#include "../graph/graphcontext_retrieve.h"
 #include "../execution_plan/execution_plan.h"
 
 // builds an execution plan but does not execute it
@@ -18,6 +18,11 @@
 // Args:
 // argv[1] graph name
 // argv[2] query
+//
+// optnone: see the identical comment on _query in cmd_query.c - the same
+// "goto cleanup" / llvm.assume miscompilation risk applies here now that
+// this function also has a GraphContext_RetrieveOrQueue failure path
+OPTNONE
 void Graph_Explain
 (
 	void *args
@@ -29,8 +34,34 @@ void Graph_Explain
 	ExecutionCtx   *exec_ctx    = NULL ;
 	QueryCtx       *query_ctx   = QueryCtx_GetQueryCtx () ;
 
-	QueryCtx_SetGlobalExecutionCtx (command_ctx) ;
+	// graph.explain shouldn't be executing on the main thread
+	ASSERT (command_ctx->thread != EXEC_THREAD_MAIN) ;
+
 	Globals_TrackCommandCtx (command_ctx) ;
+
+	if (gc == NULL) {
+		GraphRetrieveStatus status = GraphContext_RetrieveOrQueue (ctx,
+				command_ctx->rm_graph_name, true, false, Graph_Explain,
+				command_ctx, &gc) ;
+
+		if (status == GraphRetrieve_LOADING) {
+			// parked behind another thread's in-flight load of this graph;
+			// Graph_Explain will be resubmitted once that load resolves -
+			// undo this attempt's thread-local setup, leave the CommandCtx /
+			// blocked client alone
+			Globals_UntrackCommandCtx (command_ctx) ;
+			QueryCtx_Free () ;
+			return ;
+		}
+
+		if (status != GraphRetrieve_RETRIEVED) {
+			goto cleanup ;
+		}
+
+		CommandCtx_SetGraphContext (command_ctx, gc) ;
+	}
+
+	QueryCtx_SetGlobalExecutionCtx (command_ctx) ;
 
 	// retrieve the required execution items and information:
 	// 1. Execution plan
@@ -79,7 +110,11 @@ cleanup:
 	}
 
 	ExecutionCtx_Free (exec_ctx) ;
-	GraphContext_DecreaseRefCount (gc) ;
+
+	if (gc) {
+		GraphContext_DecreaseRefCount (gc) ;
+	}
+
 	Globals_UntrackCommandCtx (command_ctx) ;
 	CommandCtx_UnblockClient (command_ctx) ;
 	CommandCtx_Free (command_ctx) ;

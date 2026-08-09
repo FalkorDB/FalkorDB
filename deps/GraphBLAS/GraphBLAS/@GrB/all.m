@@ -9,14 +9,12 @@ function C = all (G, option)
 %
 % See also GrB/any, GrB/nnz, GrB/prod, GrB.entries.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-
 if (nargin == 1)
-    C = GrB (gb_prod ('&.logical', 'logical', G)) ;
+    C = gb_prod (0, '&.logical', 'logical', G) ;
 else
-    C = GrB (gb_prod ('&.logical', 'logical', G, option)) ;
+    C = gb_prod (0, '&.logical', 'logical', G, option) ;
 end
 

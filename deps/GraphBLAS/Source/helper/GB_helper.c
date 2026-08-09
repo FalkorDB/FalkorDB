@@ -12,6 +12,10 @@
 
 #include "helper/GB_helper.h"
 
+//------------------------------------------------------------------------------
+// GB_factory_kernels_enabled : enable/disable factory kernels for testing only
+//------------------------------------------------------------------------------
+
 bool GB_factory_kernels_enabled = true ;
 
 //------------------------------------------------------------------------------
@@ -24,27 +28,10 @@ bool GB_factory_kernels_enabled = true ;
     int nthreads = GB_nthreads (work, chunk, nthreads_max) ;
 
 //------------------------------------------------------------------------------
-// GB_ALLOCATE_WORK: allocate per-thread workspace
-//------------------------------------------------------------------------------
-
-#define GB_ALLOCATE_WORK(work_type)                                         \
-    size_t Work_size ;                                                      \
-    work_type *Work = GB_MALLOC_MEMORY (nthreads, sizeof (work_type),       \
-        &Work_size) ;                                                       \
-    if (Work == NULL) return (false) ;
-
-//------------------------------------------------------------------------------
-// GB_FREE_WORKSPACE: free per-thread workspace
-//------------------------------------------------------------------------------
-
-#define GB_FREE_WORKSPACE                                                   \
-    GB_FREE_MEMORY (&Work, Work_size) ;
-
-//------------------------------------------------------------------------------
 // GB_helper5: construct pattern of S for gblogassign
 //------------------------------------------------------------------------------
 
-void GB_helper5             // construct pattern of S
+GrB_Info GB_helper5                 // construct pattern of S
 (
     // output:
     uint64_t *restrict Si,          // array of size anz
@@ -77,6 +64,8 @@ void GB_helper5             // construct pattern of S
         Si [k] = GBi_M (Mi, i, mvlen) ;
         Sj [k] = Mj [i] ;
     }
+
+    return (GrB_SUCCESS) ;
 }
 
 //------------------------------------------------------------------------------
@@ -85,7 +74,7 @@ void GB_helper5             // construct pattern of S
 
 // TODO: use GrB_apply with a positional operator instead
 
-void GB_helper7              // Kx = uint64 (0:mnz-1)
+GrB_Info GB_helper7                 // Kx = uint64 (0:mnz-1)
 (
     uint64_t *restrict Kx,           // array of size mnz
     const uint64_t mnz
@@ -100,6 +89,7 @@ void GB_helper7              // Kx = uint64 (0:mnz-1)
     {
         Kx [k] = k ;
     }
+    return (GrB_SUCCESS) ;
 }
 
 //------------------------------------------------------------------------------
@@ -114,8 +104,11 @@ void GB_helper7              // Kx = uint64 (0:mnz-1)
 //      INT64_MIN   (-inf)-norm, min (abs (x-y))
 //      other:      p-norm not yet computed
 
-double GB_helper10       // norm (x-y,p), or -1 on error
+GrB_Info GB_helper10       // norm (x-y,p), or -1 on error
 (
+    // output:
+    double *s_result,
+    // inputs:
     GB_void *x_arg,             // float or double, depending on type parameter
     bool x_iso,                 // true if x is iso
     GB_void *y_arg,             // same type as x, treat as zero if NULL
@@ -133,20 +126,24 @@ double GB_helper10       // norm (x-y,p), or -1 on error
     if (!(type == GrB_FP32 || type == GrB_FP64))
     {
         // type of x and y must be GrB_FP32 or GrB_FP64
-        return ((double) -1) ;
+        (*s_result) = (double) -1 ;
+        return (GrB_DOMAIN_MISMATCH) ;
     }
 
     if (n == 0)
     {
-        return ((double) 0) ;
+        (*s_result) = (double) 0 ;
+        return (GrB_SUCCESS) ;
     }
 
     //--------------------------------------------------------------------------
-    // allocate workspace and determine # of threads to use
+    // determine # of threads to use
     //--------------------------------------------------------------------------
 
     GB_NTHREADS_HELPER (n) ;
-    GB_ALLOCATE_WORK (double) ;
+    #define GB_HELPER10_MAX_NTHREADS 1024
+    nthreads = GB_IMIN (nthreads, GB_HELPER10_MAX_NTHREADS) ;
+    double Work [GB_HELPER10_MAX_NTHREADS] ;
 
     #define xx(k) x [x_iso ? 0 : k]
     #define yy(k) y [y_iso ? 0 : k]
@@ -409,77 +406,39 @@ double GB_helper10       // norm (x-y,p), or -1 on error
     }
 
     //--------------------------------------------------------------------------
-    // free workspace and return result
+    // return result
     //--------------------------------------------------------------------------
 
-    GB_FREE_WORKSPACE ;
-    return (s) ;
+    (*s_result) = s ;
+    return (GrB_SUCCESS) ;
 }
 
 //------------------------------------------------------------------------------
-// persistent Container
+// GB_helper11: nzmax for MATLAB/Octave
 //------------------------------------------------------------------------------
 
-static GxB_Container Container = NULL ;
+// For GrB.nzmax (A) and GhB.nzmax (A): storage allocated for entries in A.
 
-static GrB_Vector GB_helper_component (void)
+double GB_helper11 (GrB_Matrix A)
 {
-    size_t s = sizeof (struct GB_Vector_opaque) ;
-    GrB_Vector p = GB_Global_persistent_malloc (s) ;
-    if (p != NULL)
-    {
-        memset (p, 0, s) ;
-        p->header_size = s ;
-        p->type = GrB_BOOL ;
-        p->is_csc = true ;
-        p->plen = -1 ;
-        p->vdim = 1 ;
-        p->nvec = 1 ;
-        p->sparsity_control = GxB_FULL ;
-        p->magic = GB_MAGIC ;
+    double nheld = 0, npend = 0 ;
+    if (A == NULL || A->magic != GB_MAGIC || A->x == NULL)
+    { 
+        // A is NULL or not initialized: nzmax is zero
     }
-    ASSERT_VECTOR_OK (p, "container component", GB0) ;
-    return (p) ;
-}
-
-GxB_Container GB_helper_container (void)    // return the global Container
-{
-    return (Container) ;
-}
-
-void GB_helper_container_new (void)         // allocate the global Container
-{
-    // free any existing Container
-    GB_helper_container_free ( ) ;
-
-    // allocate a new Container
-    size_t s = sizeof (struct GxB_Container_struct) ;
-    Container = GB_Global_persistent_malloc (s) ;
-    if (Container != NULL)
-    {
-        memset (Container, 0, s) ;
-        Container->p = GB_helper_component ( ) ;
-        Container->h = GB_helper_component ( ) ;
-        Container->b = GB_helper_component ( ) ;
-        Container->i = GB_helper_component ( ) ;
-        Container->x = GB_helper_component ( ) ;
-
-        // clear the Container scalars
-        Container->nrows_nonempty = -1 ;
-        Container->ncols_nonempty = -1 ;
-        Container->format = GxB_FULL ;
-        Container->orientation = GrB_ROWMAJOR ;
+    else if (A->p != NULL)
+    { 
+        // A is sparse or hypersparse
+        // nheld = entries held, except pending tuples but including zombies
+        nheld = (double) (A->nvals) ;
+        // npend = space for pending tuples
+        npend = (double) ((A->Pending != NULL) ? A->Pending->nmax : 0) ;
     }
-}
-
-void GB_helper_container_free (void)        // free the global Container
-{
-    if (Container == NULL) return ;
-    GB_Global_persistent_free ((void **) &(Container->p)) ;
-    GB_Global_persistent_free ((void **) &(Container->h)) ;
-    GB_Global_persistent_free ((void **) &(Container->b)) ;
-    GB_Global_persistent_free ((void **) &(Container->i)) ;
-    GB_Global_persistent_free ((void **) &(Container->x)) ;
-    GB_Global_persistent_free ((void **) &(Container)) ;
+    else
+    { 
+        // A is bitmap or full: no pending tuples.  Just return nrows*ncols.
+        nheld = ((double) (A->vlen)) * ((double) (A->vdim)) ;
+    }
+    return (nheld + npend) ;
 }
 

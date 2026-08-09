@@ -15,6 +15,8 @@
 #include "../util/rmalloc.h"
 #include "graph_memoryUsage.h"
 #include "../util/thpool/pool.h"
+#include "../errors/errors.h"
+#include "../errors/error_msgs.h"
 #include "../constraint/constraint.h"
 #include "../util/identifier_limits.h"
 #include "../commands/execution_ctx.h"
@@ -1064,6 +1066,15 @@ AttributeID GraphContext_FindOrAddAttribute
 		arr_clone (gc->_attributes, gc->attributes) ;
 	}
 
+	// AttributeID is a 16-bit type and its top two values are reserved
+	// sentinels (ATTRIBUTE_ID_ALL, ATTRIBUTE_ID_NONE), so ATTRIBUTE_ID_ALL is
+	// the actual upper bound on the number of distinct attributes a graph
+	// can hold; refuse to mint an id that would collide with a sentinel
+	if (unlikely (arr_len (gc->_attributes) >= ATTRIBUTE_ID_ALL)) {
+		ErrorCtx_SetError (EMSG_MAX_ATTRIBUTES_EXCEEDED, ATTRIBUTE_ID_ALL) ;
+		return ATTRIBUTE_ID_NONE ;
+	}
+
 	id = arr_len (gc->_attributes) ;
 
 	arr_append (gc->_attributes, rm_strdup (attribute)) ;
@@ -1253,11 +1264,6 @@ int GraphContext_DeleteIndex
 
 	if (s != NULL) {
 		res = Schema_RemoveIndex (s, field, t) ;
-		if (res == INDEX_OK) {
-			// update resultset statistics
-			ResultSet *result_set = QueryCtx_GetResultSet () ;
-			ResultSet_IndexDeleted (result_set, res) ;
-		}
 	}
 
 	return res ;

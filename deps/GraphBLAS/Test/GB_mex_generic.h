@@ -197,6 +197,22 @@
 #define GxB_Monoid_new_FC64_(...)                   GrB_Monoid_new (__VA_ARGS__)
 #define GrB_Monoid_new_UDT_(...)                    GrB_Monoid_new (__VA_ARGS__)
 
+// GxB_Monoid_new_arena:
+#define GxB_Monoid_new_arena_BOOL_(...)             GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_INT8_(...)             GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_INT16_(...)            GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_INT32_(...)            GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_INT64_(...)            GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UINT8_(...)            GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UINT16_(...)           GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UINT32_(...)           GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UINT64_(...)           GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_FP32_(...)             GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_FP64_(...)             GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_FC32_(...)             GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_FC64_(...)             GxB_Monoid_new_arena (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UDT_(...)              GxB_Monoid_new_arena (__VA_ARGS__)
+
 // GxB_Monoid_terminal_new:
 #define GxB_Monoid_terminal_new_BOOL_(...)          GxB_Monoid_terminal_new (__VA_ARGS__)
 #define GxB_Monoid_terminal_new_INT8_(...)          GxB_Monoid_terminal_new (__VA_ARGS__)
@@ -212,6 +228,22 @@
 #define GxB_Monoid_terminal_new_FC32_(...)          GxB_Monoid_terminal_new (__VA_ARGS__)
 #define GxB_Monoid_terminal_new_FC64_(...)          GxB_Monoid_terminal_new (__VA_ARGS__)
 #define GxB_Monoid_terminal_new_UDT_(...)           GxB_Monoid_terminal_new (__VA_ARGS__)
+
+// GxB_Monoid_terminal_new_arena:
+#define GxB_Monoid_terminal_new_arena_BOOL_(...)    GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_INT8_(...)    GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_INT16_(...)   GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_INT32_(...)   GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_INT64_(...)   GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UINT8_(...)   GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UINT16_(...)  GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UINT32_(...)  GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UINT64_(...)  GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_FP32_(...)    GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_FP64_(...)    GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_FC32_(...)    GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_FC64_(...)    GxB_Monoid_terminal_new_arena (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UDT_(...)     GxB_Monoid_terminal_new_arena (__VA_ARGS__)
 
 // GrB_Scalar_setElement:
 #define GrB_Scalar_setElement_BOOL_(...)            GrB_Scalar_setElement (__VA_ARGS__)
@@ -945,6 +977,22 @@
 #define GxB_Monoid_new_FC64_(...)                   GxB_Monoid_new_FC64 (__VA_ARGS__)
 #define GrB_Monoid_new_UDT_(...)                    GrB_Monoid_new_UDT (__VA_ARGS__)
 
+// GxB_Monoid_new_arena:
+#define GxB_Monoid_new_arena_BOOL_(...)             GxB_Monoid_new_arena_BOOL (__VA_ARGS__)
+#define GxB_Monoid_new_arena_INT8_(...)             GxB_Monoid_new_arena_INT8 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_INT16_(...)            GxB_Monoid_new_arena_INT16 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_INT32_(...)            GxB_Monoid_new_arena_INT32 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_INT64_(...)            GxB_Monoid_new_arena_INT64 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UINT8_(...)            GxB_Monoid_new_arena_UINT8 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UINT16_(...)           GxB_Monoid_new_arena_UINT16 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UINT32_(...)           GxB_Monoid_new_arena_UINT32 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UINT64_(...)           GxB_Monoid_new_arena_UINT64 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_FP32_(...)             GxB_Monoid_new_arena_FP32 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_FP64_(...)             GxB_Monoid_new_arena_FP64 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_FC32_(...)             GxB_Monoid_new_arena_FC32 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_FC64_(...)             GxB_Monoid_new_arena_FC64 (__VA_ARGS__)
+#define GxB_Monoid_new_arena_UDT_(...)              GxB_Monoid_new_arena_UDT (__VA_ARGS__)
+
 // GxB_Monoid_terminal_new:
 #define GxB_Monoid_terminal_new_BOOL_(...)          GxB_Monoid_terminal_new_BOOL (__VA_ARGS__)
 #define GxB_Monoid_terminal_new_INT8_(...)          GxB_Monoid_terminal_new_INT8 (__VA_ARGS__)
@@ -960,6 +1008,22 @@
 #define GxB_Monoid_terminal_new_FC32_(...)          GxB_Monoid_terminal_new_FC32 (__VA_ARGS__)
 #define GxB_Monoid_terminal_new_FC64_(...)          GxB_Monoid_terminal_new_FC64 (__VA_ARGS__)
 #define GxB_Monoid_terminal_new_UDT_(...)           GxB_Monoid_terminal_new_UDT (__VA_ARGS__)
+
+// GxB_Monoid_terminal_new_arena:
+#define GxB_Monoid_terminal_new_arena_BOOL_(...)    GxB_Monoid_terminal_new_arena_BOOL (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_INT8_(...)    GxB_Monoid_terminal_new_arena_INT8 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_INT16_(...)   GxB_Monoid_terminal_new_arena_INT16 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_INT32_(...)   GxB_Monoid_terminal_new_arena_INT32 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_INT64_(...)   GxB_Monoid_terminal_new_arena_INT64 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UINT8_(...)   GxB_Monoid_terminal_new_arena_UINT8 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UINT16_(...)  GxB_Monoid_terminal_new_arena_UINT16 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UINT32_(...)  GxB_Monoid_terminal_new_arena_UINT32 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UINT64_(...)  GxB_Monoid_terminal_new_arena_UINT64 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_FP32_(...)    GxB_Monoid_terminal_new_arena_FP32 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_FP64_(...)    GxB_Monoid_terminal_new_arena_FP64 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_FC32_(...)    GxB_Monoid_terminal_new_arena_FC32 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_FC64_(...)    GxB_Monoid_terminal_new_arena_FC64 (__VA_ARGS__)
+#define GxB_Monoid_terminal_new_arena_UDT_(...)     GxB_Monoid_terminal_new_UDT (__VA_ARGS__)
 
 // GrB_Scalar_setElement:
 #define GrB_Scalar_setElement_BOOL_(...)            GrB_Scalar_setElement_BOOL (__VA_ARGS__)
