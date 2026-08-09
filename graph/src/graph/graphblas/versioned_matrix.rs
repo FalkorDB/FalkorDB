@@ -55,9 +55,10 @@
 //!
 //! ## Flush
 //!
-//! When delta matrices exceed 10,000 entries, [`flush`](VersionedMatrix::flush)
-//! merges them into the base matrix (`dp` via element-wise add, `dm` via
-//! masked removal) and clears the deltas.
+//! [`flush`](VersionedMatrix::flush) merges a delta into the base matrix (`dp`
+//! via element-wise add, `dm` via masked removal) and clears it. It executes
+//! only the folds already latched by the policy documented on
+//! [`WRITE_FOLD_K`], never deciding one itself.
 //!
 //! ## Iterator
 //!
@@ -78,7 +79,7 @@ use super::{
 };
 use crate::graph::{
     cow::Cow,
-    graphblas::matrix::{BoolExtract, IterExtract},
+    graphblas::matrix::{BoolExtract, IterExtract, MatrixType},
 };
 
 /// A delta layer is folded into the base once its size justifies a base
@@ -100,50 +101,46 @@ use crate::graph::{
 /// is quadratic in `D` and depends on `tx_added`. Dropping `tx_added` gets both
 /// ends wrong — at `tx_added = 1` on a big graph the delta grows until each
 /// write pays milliseconds, and at a bulk `tx_added` it folds every
-/// transaction. A flat absolute limit was measured against the sqrt rule and
-/// rejected for the same reason: on the read path at `tx_added = 1` a 4k limit
-/// costs 7.2x the per-write cost (102.5 µs vs 14.3 µs) and 14x the worst-case
-/// stall (206.5 µs vs ~14 µs).
+/// transaction. A flat absolute limit fails for the same reason, and measures
+/// worse than the sqrt rule on both per-write cost and worst-case stall.
 ///
-/// `F/w` is measured rather than modelled — see `fold_cost_bench`:
+/// `F/w` is measured rather than modelled; `fold_cost_bench` derives the two
+/// constants below on the target machine, and its output is what to re-read if
+/// they ever need retuning. Two properties of that measurement shape the rule:
 ///
-/// * `F`, the fold, is ~82% fixed cost — `1690 µs + 0.34 ns · nvals` — and
-///   independent of `nrows`: an empty fold costs 2.35 µs at nrows = 65k, 1M
-///   and 16.7M alike. So `F ≈ 2050 µs` for any base above ~1m entries and the
-///   balance point is *flat* in the base rather than growing like
-///   `sqrt(base)`. (An earlier revision used `base.nvals() + base.nrows()`
-///   on the theory that a fold rewrites the row-pointer structure. The
-///   measurement refutes it: the `+16%` instructions that motivated the
-///   `nrows` term came from fold *frequency*, which the measured `F` now
-///   fixes directly.)
-/// * `w` differs by **250x** between the two paths, which is what the
-///   write/read split below encodes. A write transaction nobody reads pays
-///   only the COW dup: `w_dup ≈ 0.2 ns/entry`, memcpy speed — and duping a
-///   *pending* matrix costs the same as an assembled one, so `dup` does not
-///   assemble. A transaction whose delta is also materialized pays the
-///   pending-tuple merge, `w_merge ≈ 50 ns/entry`. That merge is
-///   `O(|delta|)` no matter how little the transaction added: adding 1 entry
-///   to a 16k delta and adding 100 both measure ~900 µs.
+/// * `F`, the fold, is dominated by a fixed cost and is independent of `nrows`
+///   — an empty fold costs the same at nrows = 65k and at 16.7M. So `F` is
+///   effectively constant above a modest base and the balance point is *flat*
+///   in the base rather than growing like `sqrt(base)`. (An earlier revision
+///   used `base.nvals() + base.nrows()` on the theory that a fold rewrites the
+///   row-pointer structure. The measurement refutes it: the `+16%` instructions
+///   that motivated the `nrows` term came from fold *frequency*, which the
+///   measured `F` now fixes directly.)
+/// * `w` differs by two orders of magnitude between the two paths, which is
+///   what the write/read split below encodes. A write transaction nobody reads
+///   pays only the COW dup — memcpy speed, and duping a *pending* matrix costs
+///   the same as an assembled one, so `dup` does not assemble. A transaction
+///   whose delta is also materialized pays the pending-tuple merge, which is
+///   `O(|delta|)` no matter how little the transaction added.
 ///
-/// Since `D* ∝ 1/sqrt(w)`, the write path's balance point sits
-/// `sqrt(250) ≈ 16x` above the read path's. Reads keep paying for a lingering
-/// delta on every access, so [`should_fold_read`] — the policy for `wait`,
-/// which only runs when something reads the matrix — folds at the tighter
-/// point, promptly bounding the delta once a workload turns read-heavy.
+/// Since `D* ∝ 1/sqrt(w)`, the write path's balance point sits well above the
+/// read path's. Reads keep paying for a lingering delta on every access, so
+/// [`should_fold_read`] — the policy for `wait`, which only runs when something
+/// reads the matrix — folds at the tighter point, promptly bounding the delta
+/// once a workload turns read-heavy.
 ///
 /// A delta comparable to the base always folds (`2·|delta| ≥ base_nvals`): the
 /// fold then costs the same order as one delta touch, and without it a one-shot
 /// bulk transaction (whose huge `tx_added` defeats the sqrt term) can leave a
 /// base-sized delta taxing every later transaction. This is also what bounds
 /// the delta on a pure-write stream, where the write path deliberately lets it
-/// run large — an absolute cap there is not free: capping at 64k costs 3.5x
-/// bulk write throughput at `tx_added = 10k`, and capping at 16k costs 13.8x,
-/// against a one-time ~3 ms assembly for the first reader after the burst.
+/// run large — an absolute cap there is not free, costing multiples of bulk
+/// write throughput to save a one-time assembly for the first reader after the
+/// burst.
 const WRITE_FOLD_K: u64 = 20_500_000;
 
-/// `2 · F / w_merge` — the read path's `D*² / tx_added`. `w_merge ≈ 50 ns`
-/// per entry, 250x the dup cost, putting the balance point at
-/// `286 · sqrt(tx_added)` entries.
+/// `2 · F / w_merge` — the read path's `D*² / tx_added`, putting the balance
+/// point at `sqrt(READ_FOLD_K · tx_added)` entries.
 const READ_FOLD_K: u64 = 82_000;
 
 /// Deltas below this never fold: the fold would cost more than the tax it
@@ -181,9 +178,12 @@ fn fold_balance(
     base_nvals: u64,
     k: u64,
 ) -> bool {
+    // The `MIN_FOLD_DELTA` floor is applied once, here: `delta_dominates_base`
+    // re-checks it for its own callers, and repeating it in the disjunction
+    // would suggest the two arms had different floors.
     tx_added > 0
         && delta_nvals >= MIN_FOLD_DELTA
-        && (delta_dominates_base(delta_nvals, base_nvals)
+        && (delta_nvals.saturating_mul(2) >= base_nvals
             || delta_nvals.saturating_mul(delta_nvals) >= k.saturating_mul(tx_added))
 }
 
@@ -263,6 +263,12 @@ impl<T> Delta<T> {
         }
     }
 
+    /// This delta, transposed: same bookkeeping over the transposed layer, since
+    /// a transpose moves no entries.
+    pub(super) fn transposed(&self) -> Self {
+        self.relayer(Cow::new(self.transpose().into_hyper()))
+    }
+
     /// This delta's bookkeeping over a different layer of the same size (a
     /// clone, a transpose).
     fn relayer(
@@ -305,13 +311,16 @@ impl<T> Delta<T> {
         self.count.store(self.layer.nvals(), Ordering::Relaxed);
     }
 
-    /// Latch a fold decision on top of any already latched; returns the
-    /// resulting state.
+    /// Latch a fold decision. Latching is monotone within a version — a
+    /// decision already taken is never revoked — so a `false` decision is
+    /// simply nothing to record.
     pub(super) fn latch(
         &self,
         decision: bool,
-    ) -> bool {
-        self.fold.fetch_or(decision, Ordering::Relaxed) || decision
+    ) {
+        if decision {
+            self.fold.store(true, Ordering::Relaxed);
+        }
     }
 
     /// What `policy` ([`should_fold`] or [`should_fold_read`]) decides for this
@@ -326,15 +335,6 @@ impl<T> Delta<T> {
         let count = self.count();
         self.fold.load(Ordering::Relaxed)
             || policy(count, count.saturating_sub(self.tx_nvals), base)
-    }
-
-    /// [`Self::fold_decision`], latched onto this layer for a later `flush`.
-    pub(super) fn latch_policy(
-        &self,
-        policy: fn(u64, u64, u64) -> bool,
-        base: u64,
-    ) -> bool {
-        self.latch(self.fold_decision(policy, base))
     }
 
     /// Whether a fold is currently latched — i.e. whether a `flush` armed now
@@ -354,9 +354,12 @@ impl<T> Delta<T> {
     /// deep-copy a still-shared delta just to clear it.
     pub(super) fn clear(
         &mut self,
-        empty: Matrix<T>,
-    ) {
-        self.layer.replace(empty.into_hyper());
+        nrows: u64,
+        ncols: u64,
+    ) where
+        T: MatrixType,
+    {
+        self.layer.replace(T::new_matrix(nrows, ncols).into_hyper());
         *self.count.get_mut() = 0;
         self.tx_nvals = 0;
         *self.fold.get_mut() = false;
@@ -364,12 +367,23 @@ impl<T> Delta<T> {
 
     /// Swap in a layer holding the same entries at different dimensions (a
     /// grow), keeping the bookkeeping: a re-emit changes neither the entry count
-    /// nor whether a fold is due.
-    pub(super) fn regrow(
+    /// nor whether a fold is due. Named to line up with `m.replace`, which the
+    /// grow path calls alongside it.
+    pub(super) fn replace(
         &mut self,
         layer: Matrix<T>,
     ) {
         self.layer.replace(layer.into_hyper());
+    }
+
+    /// Resize the layer in place. A resize moves no entries between layers, so
+    /// the bookkeeping stands.
+    pub(super) fn resize(
+        &mut self,
+        nrows: u64,
+        ncols: u64,
+    ) {
+        self.layer_mut().resize(nrows, ncols);
     }
 
     /// The layer, mutably, *without* counting the mutation. For bulk callers
@@ -396,15 +410,41 @@ impl<T> Delta<T> {
 // `Matrix::set` is element-typed (`impl Matrix<bool>` / `impl Matrix<u64>`),
 // so the counted insert is too.
 impl Delta<bool> {
-    /// Add `(i, j)` and count it.
+    /// Add `(i, j)` and count it. A `bool` layer carries only a pattern — a
+    /// stored `false` reads as absent to the valued masks these layers are used
+    /// with — so there is no value to pass.
     pub(super) fn insert(
         &mut self,
         i: u64,
         j: u64,
-        value: bool,
     ) {
-        self.layer_mut().set(i, j, value);
+        self.layer_mut().set(i, j, true);
         *self.count.get_mut() += 1;
+    }
+
+    /// `self<mask> = mask ∩ base`: tombstone every committed entry the mask
+    /// selects, then resync. Keeps the resync with the bulk write that
+    /// invalidates the counter rather than leaving it to the caller.
+    pub(super) fn tombstone_masked<TV>(
+        &mut self,
+        mask: &Matrix<bool>,
+        base: &Matrix<TV>,
+    ) {
+        self.layer_mut()
+            .element_wise_multiply(Some(mask), Some(mask), Some(base), None);
+        self.resync();
+    }
+}
+
+impl<T> Delta<T> {
+    /// `self &= ¬mask`, then resync — the counterpart of
+    /// [`Delta::tombstone_masked`] for the pending-add layer.
+    pub(super) fn remove_all(
+        &mut self,
+        mask: &Matrix<bool>,
+    ) {
+        self.layer_mut().remove_all(mask);
+        self.resync();
     }
 }
 
@@ -516,8 +556,8 @@ impl<T> VersionedMatrix<T> {
         self.dp.resync();
         self.dm.resync();
         let base = self.m.nvals();
-        self.dp.latch_policy(should_fold_read, base);
-        self.dm.latch_policy(should_fold_read, base);
+        self.dp.latch(self.dp.fold_decision(should_fold_read, base));
+        self.dm.latch(self.dm.fold_decision(should_fold_read, base));
         // Deliberately NOT setting needs_flush: executing a fold mid-tx is
         // pathological — a create+delete transaction folds its own pending
         // adds into the base right before deleting them, leaving the base
@@ -629,8 +669,8 @@ impl VersionedMatrix<bool> {
             // A resize moves no entries between layers, so the delta counters
             // stand (a shrink that drops entries only adds to the drift
             // `resync` bounds).
-            self.dp.layer_mut().resize(nrows, ncols);
-            self.dm.layer_mut().resize(nrows, ncols);
+            self.dp.resize(nrows, ncols);
+            self.dm.resize(nrows, ncols);
             return;
         }
         // Growing: the base is COW-shared with the committed snapshot, so an
@@ -722,8 +762,8 @@ impl VersionedMatrix<bool> {
         nrows: u64,
         ncols: u64,
     ) {
-        self.dp.clear(Matrix::<bool>::new(nrows, ncols));
-        self.dm.clear(Matrix::<bool>::new(nrows, ncols));
+        self.dp.clear(nrows, ncols);
+        self.dm.clear(nrows, ncols);
         self.needs_flush.store(false, Ordering::Relaxed);
     }
 
@@ -743,7 +783,7 @@ impl VersionedMatrix<bool> {
     ) {
         self.flush();
         if self.m.get(i, j).is_some() {
-            self.dm.insert(i, j, true);
+            self.dm.insert(i, j);
         } else {
             self.dp.erase(i, j);
         }
@@ -769,20 +809,9 @@ impl VersionedMatrix<bool> {
         // cost scales with the smaller operand (the mask), not with |m|.
         // Existing dm entries survive: outside the mask they are untouched,
         // and inside the mask dm ⊆ m guarantees they are in the intersection.
-        self.dm
-            .layer_mut()
-            .element_wise_multiply(Some(mask), Some(mask), Some(&*self.m), None);
+        self.dm.tombstone_masked(mask, &self.m);
         // dp &= ~mask: remove entries from dp that exist in mask
-        self.dp.layer_mut().remove_all(mask);
-        // Resync the approximate counters to the exact counts. `nvals` would
-        // report them correctly on its own — `GrB_Matrix_nvals` completes any
-        // pending work internally — but the eWiseMult/remove_all above leave
-        // the wrapper's `has_pending` flag set, so without the wait inside
-        // `resync` the flag stays a lie: `is_synced()` keeps reporting false
-        // and every later read path pays a redundant `wait()`. That wait is a
-        // single early-returning atomic load per layer once already synced.
-        self.dm.resync();
-        self.dp.resync();
+        self.dp.remove_all(mask);
     }
 
     #[must_use]
@@ -821,7 +850,8 @@ impl VersionedMatrix<bool> {
         if self.m.get(i, j).is_some() {
             self.dm.erase(i, j);
         } else {
-            self.dp.insert(i, j, value);
+            debug_assert!(value, "bool layers store presence only");
+            self.dp.insert(i, j);
         }
     }
 
@@ -896,10 +926,10 @@ impl VersionedMatrix<bool> {
                 new_m.wait();
                 self.m.replace(new_m);
                 if fold_dp {
-                    self.dp.clear(Matrix::<bool>::new(nrows, ncols));
+                    self.dp.clear(nrows, ncols);
                 }
                 if fold_dm {
-                    self.dm.clear(Matrix::<bool>::new(nrows, ncols));
+                    self.dm.clear(nrows, ncols);
                 }
             }
             self.needs_flush.store(false, Ordering::Relaxed);
@@ -962,35 +992,17 @@ impl VersionedMatrix<bool> {
     /// re-added to `dp` (a fold or grow-resize may have moved it there since
     /// the caller last saw it), or a later `remove` finds it in both and the
     /// `nvals`/iter arithmetic double-counts it.
-    pub fn set_all(
-        &mut self,
-        entries: impl Iterator<Item = (u64, u64)>,
-    ) {
-        self.set_all_inner::<true>(entries);
-    }
-
-    /// [`Self::set_all`] for entries the caller guarantees are new — never
-    /// live in the committed base (fresh entity ids: a reclaimed id's stale
-    /// base entry always has a `dm` tombstone, which routes to the safe
-    /// per-entry path here). Skips the per-entry base lookup the general
-    /// path needs to keep `dp ∩ m = ∅`; entries with committed pairs (e.g.
-    /// the adjacency matrix, where two edges share one pair) must use
-    /// [`Self::set_all`] instead.
-    pub fn set_all_new(
-        &mut self,
-        entries: impl Iterator<Item = (u64, u64)>,
-    ) {
-        self.set_all_inner::<false>(entries);
-    }
-
-    /// Shared body of [`Self::set_all`] and [`Self::set_all_new`], which differ
-    /// only by `PROBE_BASE`: the per-entry `m` lookup that keeps
-    /// `dp ∩ m = ∅`, which the `_new` caller's freshness guarantee lets it
-    /// skip. Probing `m` is safe from either (unlike a delta, `m` is never
-    /// pending — see [`Self::wait`]), so the skipped check survives as a
-    /// `debug_assert` rather than being dropped for the reasons
-    /// [`Self::remove`] documents.
-    fn set_all_inner<const PROBE_BASE: bool>(
+    ///
+    /// `NEW` asserts the caller's entries are never live in the committed base
+    /// (fresh entity ids: a reclaimed id's stale base entry always has a `dm`
+    /// tombstone, which routes to the safe per-entry path here). It skips the
+    /// per-entry `m` lookup that otherwise keeps `dp ∩ m = ∅`; callers whose
+    /// entries can already be committed (e.g. the adjacency matrix, where two
+    /// edges share one pair) must pass `false`. Probing `m` is safe either way
+    /// (unlike a delta, `m` is never pending — see [`Self::wait`]), so the
+    /// skipped check survives as a `debug_assert` rather than being dropped for
+    /// the reasons [`Self::remove`] documents.
+    pub fn set_all<const NEW: bool>(
         &mut self,
         entries: impl Iterator<Item = (u64, u64)>,
     ) {
@@ -1004,17 +1016,15 @@ impl VersionedMatrix<bool> {
         self.dm.wait();
         if self.dm.nvals() == 0 {
             for (i, j) in entries {
-                if PROBE_BASE {
-                    if self.m.get(i, j).is_some() {
-                        continue;
-                    }
-                } else {
+                if NEW {
                     debug_assert!(
                         self.m.get(i, j).is_none(),
-                        "set_all_new on ({i}, {j}), which is live in the committed base"
+                        "set_all::<true> on ({i}, {j}), which is live in the committed base"
                     );
+                } else if self.m.get(i, j).is_some() {
+                    continue;
                 }
-                self.dp.insert(i, j, true);
+                self.dp.insert(i, j);
             }
         } else {
             for (i, j) in entries {
@@ -1061,8 +1071,8 @@ impl VersionedMatrix<bool> {
             m: Cow::new(self.m.transpose()),
             // A transpose moves no entries, so each delta keeps its
             // bookkeeping verbatim over the transposed layer.
-            dp: self.dp.relayer(Cow::new(self.dp.transpose().into_hyper())),
-            dm: self.dm.relayer(Cow::new(self.dm.transpose().into_hyper())),
+            dp: self.dp.transposed(),
+            dm: self.dm.transposed(),
             needs_flush: AtomicBool::new(self.needs_flush.load(Ordering::Relaxed)),
         }
     }
@@ -1090,13 +1100,14 @@ impl<V> Decode<19> for VersionedMatrix<V> {
         let base = m.nvals();
         let dp = Delta::new(dp);
         let dm = Delta::new(dm);
-        let fold_dp = dp.latch_policy(should_fold, base);
-        let fold_dm = dm.latch_policy(should_fold, base);
+        dp.latch(dp.fold_decision(should_fold, base));
+        dm.latch(dm.fold_decision(should_fold, base));
+        let needs_flush = dp.folding() || dm.folding();
         Ok(Self {
             m: Cow::new(m),
             dp,
             dm,
-            needs_flush: AtomicBool::new(fold_dp || fold_dm),
+            needs_flush: AtomicBool::new(needs_flush),
         })
     }
 }
@@ -1403,7 +1414,7 @@ mod tests {
                 0 => {
                     let batch: Vec<(u64, u64)> =
                         (0..16).map(|_| key(next_rand(&mut rng))).collect();
-                    v.set_all(batch.iter().copied());
+                    v.set_all::<false>(batch.iter().copied());
                     model.extend(batch);
                 }
                 // Bulk delete through the two-GraphBLAS-op mask path.
@@ -1471,7 +1482,7 @@ mod tests {
         ensure_init();
         let filler = 4 * MIN_FOLD_DELTA;
         let mut v = VersionedMatrix::<bool>::new(DIM, DIM);
-        v.set_all((0..filler).map(|i| (i % DIM, (i / DIM + 1) % DIM)));
+        v.set_all::<false>((0..filler).map(|i| (i % DIM, (i / DIM + 1) % DIM)));
         let probe = (7, 11);
         v.set(probe.0, probe.1, true);
 
