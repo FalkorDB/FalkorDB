@@ -1585,6 +1585,32 @@ impl Graph {
         label_ids: &[LabelId],
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
+        // Native index: bulk-loaded rows are pure adds, exactly as in
+        // `import_node_attrs`. This has to be here and not only in the RediSearch block below —
+        // they are two separate indexes, and a row missing from the native one does not error, it
+        // just fails to come back: `test13_bulk_append_into_indexed_graph` returned 0 rows instead
+        // of 100 with the flag on while passing with it off.
+        //
+        // Labels come from `label_ids`, the set the bulk token applies to every row, so this never
+        // touches `node_labels_matrix` — same reason as `import_node_attrs`.
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
+            for (id, attrs) in data.iter() {
+                for (attr_id, value) in attrs {
+                    let Some(attr) = self.node_attr_name(*attr_id) else {
+                        continue;
+                    };
+                    for label_id in label_ids {
+                        let label = &self.node_labels[label_id.0];
+                        self.stage_index_column(label, &attr, value, *id, &mut adds);
+                    }
+                }
+            }
+            self.falkordb_index
+                .merge(EntityType::Node, adds, HashMap::new());
+        }
+
         if self.node_indexer.has_indices() {
             for (id, attrs) in data.iter() {
                 for label_id in label_ids {
@@ -1662,6 +1688,24 @@ impl Graph {
         type_id: TypeId,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> usize {
+        // Native index: the edge half of the same gap the node path had. Bulk-loaded edges are
+        // pure adds; without this they are absent from the native edge column and an indexed
+        // edge query silently under-returns.
+        #[cfg(feature = "index-falkordb")]
+        if !self.falkordb_index.is_empty() {
+            let type_name = self.relationship_types[type_id.0].clone();
+            let mut adds: HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>> = HashMap::new();
+            for (id, attrs) in data.iter() {
+                for (attr_id, value) in attrs {
+                    if let Some(attr) = self.rel_attr_name(*attr_id) {
+                        self.stage_index_edge_of_type(&type_name, *id, &attr, value, &mut adds);
+                    }
+                }
+            }
+            self.falkordb_index
+                .merge(EntityType::Relationship, adds, HashMap::new());
+        }
+
         self.track_edge_index_updates_of_type(
             type_id,
             data.iter().map(|(id, attrs)| (id, attrs)),
@@ -3451,6 +3495,30 @@ impl Graph {
     ) {
         let type_id = self.get_relationship_type_id(RelationshipId(id));
         let type_name = &self.relationship_types[type_id.0];
+        if self
+            .falkordb_index
+            .has_column(EntityType::Relationship, type_name, attr)
+        {
+            out.entry((type_name.clone(), attr.clone()))
+                .or_default()
+                .push((value.clone(), id));
+        }
+    }
+
+    /// [`stage_index_edge`](Self::stage_index_edge) for a caller that already knows the type.
+    ///
+    /// A bulk token carries exactly one type for all its rows, so re-deriving it per edge would
+    /// pay `get_relationship_type_id`'s `relationship_type_matrix` scan — and that `iter`'s wait
+    /// on the pending delta — once per row. Same hoist as `track_edge_index_updates_of_type`.
+    #[cfg(feature = "index-falkordb")]
+    fn stage_index_edge_of_type(
+        &self,
+        type_name: &Arc<String>,
+        id: u64,
+        attr: &Arc<String>,
+        value: &Value,
+        out: &mut HashMap<(Arc<String>, Arc<String>), Vec<(Value, u64)>>,
+    ) {
         if self
             .falkordb_index
             .has_column(EntityType::Relationship, type_name, attr)
