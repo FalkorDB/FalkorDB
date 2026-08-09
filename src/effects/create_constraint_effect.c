@@ -114,15 +114,28 @@ bool ApplyCreateConstraint
 		Constraint c = GraphHub_AddConstraint (gc, ct, et, label,
 				(const char **)props, n, false, &status, &err_msg) ;
 
-		if (c != NULL) {
-			Constraint_Enforce (c, (struct GraphContext *)gc) ;
-			result = true ;
-		} else if (status == CONSTRAINT_ALREADY_EXISTS) {
-			result = true ;
-		} else {
-			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT CREATE_CONSTRAINT failed: %s",
-					err_msg != NULL ? err_msg : "unknown error") ;
+		switch (status) {
+			case CONSTRAINT_ALREADY_EXISTS:
+				result = true ;
+				break ;
+
+			case CONSTRAINT_CREATED:
+				ASSERT (c != NULL) ;
+				Constraint_Enforce (c, (struct GraphContext *)gc) ;
+				result = true ;
+				break ;
+
+			case CONSTRAINT_ERROR:
+				// error
+				RedisModule_Log (NULL, "warning",
+						"GRAPH.EFFECT CREATE_CONSTRAINT failed: %s",
+						err_msg != NULL ? err_msg : "unknown error") ;
+				break ;
+
+			default:
+				// should not get here
+				ASSERT (0) ;
+				break ;
 		}
 	}
 

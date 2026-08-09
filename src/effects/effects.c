@@ -258,12 +258,12 @@ static void EffectsBuffer_WriteSIMap
 	EffectsBuffer *buff  // effect buffer
 ) {
 	// format:
-	// number of keys
+	// number of pairs
 	// (key, value) pairs
 
 	uint32_t len = Map_KeyCount (*map) ;
 
-	// write number of keys
+	// write number of pairs
 	EffectsBuffer_WriteBytes (&len, sizeof (uint32_t), buff) ;
 
 	// write each (key, value) pair

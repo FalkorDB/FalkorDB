@@ -271,11 +271,11 @@ static uint64_t _DecodeTensors
 
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	Edge e;                           // current decoded edge
-	int       idx            = 0;    // batch index
-	uint64_t  decoded_edges  = 0;    // number of decoded edges
-	int       tensor_idx     = 0;    // tensors batch index
-	enum { BATCH_SIZE = 4096 };      // compile-time constant, avoids a VLA
+	Edge e;                       // current decoded edge
+	int       idx            = 0; // batch index
+	uint64_t  decoded_edges  = 0; // number of decoded edges
+	int       tensor_idx     = 0; // tensors batch index
+	enum { BATCH_SIZE = 4096 };   // compile-time constant, avoids a VLA
 
 	// single edge batch
 	EdgeID ids  [BATCH_SIZE];
