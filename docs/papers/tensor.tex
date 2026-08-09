@@ -109,13 +109,14 @@ committed value rather than only add to or subtract from a pattern --- and we
 give the resulting ten-state per-pair automaton, a closed-form cardinality
 identity, and a proof that the three-way sorted-merge iterator streams
 exactly the effective edge multiset in $(\text{src},\text{dst},\text{id})$
-order. We further analyse two classes of correctness hazard that arise from
-embedding a data structure in a non-blocking sparse-linear-algebra runtime:
-\emph{value typecasting}, where using a value-carrying operator instead of a
-pattern-only operator silently destroys the edge whose identifier is $0$; and
-\emph{deferred computation}, where a resize leaves the ``committed'' base with
-queued work and violates an invariant every read path depends on. Both were
-observed in practice and are now pinned by regression tests. We close with an
+order. We further state two rules that embedding such a
+structure in a non-blocking sparse-linear-algebra runtime imposes: keep
+operators pattern-only on identifier-carrying matrices, because a
+value-carrying operator typecasts the identifier $0$ into an entry that valued
+masks treat as absent; and discharge any ``this object is materialised''
+invariant by enumerating the calls that can queue work on it, including
+capacity changes that read as metadata. Both are cheap to follow, expensive to
+retrofit, and pinned by regression tests. We close with an
 analytic cost model, a comparison against the pointer-tagged
 container-per-cell design used by FalkorDB's C implementation, and a
 discussion of the domain restrictions the compound key imposes.
@@ -204,16 +205,16 @@ Rust storage engine. Specifically:
         three-way sorted merge emits each effective edge exactly once in
         lexicographic order without materialising an intermediate matrix
         (Theorem~\ref{thm:iter}).
-  \item \textbf{Two hazard classes from the host runtime}
-        (\S\ref{sec:hazards}). \emph{Value typecasting}: GraphBLAS
-        \texttt{eWiseAdd} propagates a single-sided operand's \emph{value},
-        so building a Boolean deletion mask from a \texttt{UINT64} matrix
-        turns the edge whose identifier is $0$ into a \texttt{false} entry,
-        which valued masks then treat as absent --- a silently lost deletion.
-        \emph{Deferred computation}: \texttt{GrB\_Matrix\_resize} may queue
-        pending work on the committed base, violating an invariant asserted by
-        every read path, and only in debug builds. Both are analysed and
-        pinned by tests.
+  \item \textbf{Two rules the host runtime imposes}
+        (\S\ref{sec:hazards}). \emph{Keep operators pattern-only on
+        identifier-carrying matrices}: a value-propagating operator typecasts
+        the \texttt{UINT64} identifier $0$ into a stored \texttt{false},
+        which valued masks treat as absent, so the densest-allocated
+        identifier in the graph is the one silently lost. \emph{Discharge
+        materialisation invariants by enumerating callers}: authorship is not
+        the same as queued work, and a capacity change that reads as metadata
+        can leave the committed base pending. We give the operator choices and
+        the call-site discipline that satisfy both.
   \item \textbf{An analytic cost and space model}
         (\S\ref{sec:cost}) and an explicit account of the design's
         \emph{domain restrictions} (\S\ref{sec:limits}), including the
@@ -392,27 +393,48 @@ requires; the rest of this paper is largely about that price.
 \begin{lstlisting}
 pub struct Tensor {
     m:  Cow<Matrix<u64>>,        // committed forward adjacency: src -> dst = edge id | MULTI
-    dp: Cow<Matrix<u64>>,        // pending additions / in-place value updates
-    dm: Cow<Matrix<bool>>,       // pending deletions (mask over m)
+    dp: Delta<u64>,              // pending additions / in-place value updates
+    dm: Delta<bool>,             // pending deletions (mask over m)
     mt: VersionedMatrix<bool>,   // backward adjacency: dst -> src, structure only
     me: VersionedMatrix<bool>,   // overflow: compound_key(src,dst) -> edge id
     multi_count: u64,            // number of pairs whose effective value is MULTI
+    needs_flush: AtomicBool,     // a latched fold is executable now
 }
+
+// One delta layer plus the bookkeeping the fold policy reads about it.
+struct Delta<T> {
+    layer: Cow<Matrix<T>>,
+    count: AtomicU64,            // approximate |layer|, maintained without GraphBLAS calls
+    tx_nvals: u64,               // count at version creation: count - tx_nvals is this tx's share
+    fold: AtomicBool,            // decision latched here, executed by the next flush
+}
+
 pub const MULTI_EDGE: u64 = u64::MAX;
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 \end{lstlisting}
 
-Two asymmetries are deliberate. First, the forward adjacency is \emph{not}
-wrapped in the generic \texttt{VersionedMatrix}; the tensor owns its three
-layers directly, because the delta semantics it needs (\S\ref{sec:deltas})
-are strictly richer than the Boolean ones and the edge-identifier meaning of
-the values must stay local to this module. Second, the backward matrix
+Three asymmetries are deliberate. First, the forward adjacency is \emph{not}
+wrapped in the generic \texttt{VersionedMatrix}; the tensor owns its layers
+directly, because the delta semantics it needs (\S\ref{sec:deltas}) are
+strictly richer than the Boolean ones and the edge-identifier meaning of the
+values must stay local to this module. Second, the backward matrix
 $mt$ is Boolean: it mirrors the effective forward \emph{structure} and stores
 no identifiers at all. Incoming-edge iteration recovers identifiers by
 looking the pair up in the forward layers. This trades one point lookup per
 backward pair for not duplicating every identifier in the graph --- a
 worthwhile trade given that the forward matrix is the authority and any
 duplicated copy would be a second thing to keep consistent.
+
+Third, each delta is bundled with its own fold bookkeeping rather than the
+owner carrying parallel \texttt{dp\_}/\texttt{dm\_} fields. That is what keeps
+the policy of \S\ref{sec:folding} out of the operations: a mutation moves
+\texttt{count} alongside the layer write, and nothing else in the tensor
+mentions folding. \texttt{count} is deliberately \emph{approximate} --- asking
+GraphBLAS for a delta's true size forces its pending tuples to merge, which is
+the $O(|\delta|)$ cost the policy exists to bound --- so it is reconciled to the
+exact size only when something materialises the layer anyway. Because the same
+type is used by the Boolean matrices, the two layers differ only in element
+type: \texttt{Delta<u64>} carries identifiers, \texttt{Delta<bool>} a mask.
 
 \begin{figure}[t]
 \centering
@@ -739,6 +761,7 @@ drawn on its own in Figure~\ref{fig:fold}, discussed in \S\ref{sec:folding}.
 \label{sec:algorithms}
 
 \subsection{Point reads}
+\label{sec:reads}
 
 \begin{algorithm}[H]
 \caption{Effective read and identifier enumeration}
@@ -1151,6 +1174,7 @@ live transaction can produce a shadow.}
 \end{figure}
 
 \subsection{Rebuilding the transpose}
+\label{sec:rebuild}
 
 $mt$ must equal the transpose of the effective forward \emph{structure}
 (Invariant~\ref{inv:mt}). It is tempting to transpose the three forward
@@ -1275,6 +1299,83 @@ second discharging the first's one abstraction boundary:
 No \texttt{sorry}, no \texttt{admit}, no bespoke axiom: every top-level result
 rests only on Lean's three standard axioms.
 
+Table~\ref{tab:mechanised} maps each algorithm of \S\ref{sec:algorithms} to the
+results that discharge it, so that a reader checking a particular operation
+knows what has been established about it and under which name.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{@{}llp{6.5cm}@{}}
+\toprule
+Algorithm & \S & Mechanised as \\
+\midrule
+Point reads       & \ref{sec:reads}  & \texttt{effGet\_of\_dp}, \texttt{effGet\_of\_m},
+                                       \texttt{mem\_effDom\_iff\_isSome}; identifier lists by
+                                       \texttt{getIds\_eq\_sort}, \texttt{getIds\_nodup},
+                                       \texttt{getIds\_pairwise\_lt} (ascending),
+                                       \texttt{getIds\_single} (allocation-free path) \\
+Bulk insertion    & \ref{sec:insert} & \texttt{inv\_addEdge} and \texttt{edgesAt\_addEdge\_self/\_ne}
+                                       for all three placement branches and all three write-phase
+                                       shapes; whole batch by \texttt{inv\_setAll},
+                                       \texttt{edgesAt\_setAll}; the batch map's retroactive
+                                       promotion by \texttt{retro\_promote\_agrees} \\
+Bulk deletion     & \ref{sec:delete} & flat path \texttt{inv\_removeFast},
+                                       \texttt{edgesAt\_removeFast\_mem/\_not\_mem}; per-edge path
+                                       \texttt{removeOne\_spec}, \texttt{removeOne\_emptied}
+                                       (a pair is reported iff that removal took its last edge),
+                                       \texttt{removeSlow\_spec}, \texttt{removeAll\_spec};
+                                       \texttt{removeOne\_survivor} \\
+Iteration         & \ref{sec:iter}   & \texttt{mem\_iterEdges} + \texttt{nodup\_iterEdges}
+                                       (every edge exactly once), \texttt{mem\_iterFwd},
+                                       \texttt{mem\_iterBwd} (range selects by destination),
+                                       \texttt{nodup\_iterFwd/\_iterBwd},
+                                       \texttt{iterBwd\_eff\_get\_isSome} \\
+Folding           & \ref{sec:folding}& \texttt{flush\_effGet}, \texttt{inv\_flush},
+                                       \texttt{edgesAt\_flush}, \texttt{edgeCount\_flush}, each for
+                                       an arbitrary decision; \texttt{edgesAt\_flush\_decision\_irrelevant} \\
+Rebuild transpose & \ref{sec:rebuild}& \texttt{inv\_rebuildBackward} --- \emph{establishes}
+                                       the $mt$ invariant from the core ones \\
+\midrule
+Cardinality (Thm.~\ref{thm:count}) & \ref{sec:correctness}
+                                   & \texttt{edgeCount\_eq\_sum}, \texttt{edgeCount\_no\_underflow} \\
+Compound key      & \ref{sec:compound}& \texttt{keyBits\_eq\_key} (bitwise $=$ arithmetic),
+                                       \texttt{key\_lt}, \texttt{key\_inj} \\
+Serialisation     & \ref{sec:codec}  & \texttt{edgesAt\_decode\_encode},
+                                       \texttt{inv\_decode\_encode}, \texttt{edgeCount\_roundTrip} \\
+Per-pair automaton& \ref{sec:automaton}& nine \texttt{trans\_*} lemmas, one per documented arrow \\
+\bottomrule
+\end{tabular}
+\caption{Each algorithm and the results that discharge it. Every row asserts
+both invariant preservation and the operation's action on the denotation; the
+names are those in the artifact, so they can be checked with
+\texttt{\#print axioms}.}
+\label{tab:mechanised}
+\end{table}
+
+\paragraph{What this does not establish.} Two limits are worth stating plainly,
+because a mechanisation invites the assumption that everything is settled.
+
+First, \emph{no cost claim is mechanised, and none could be usefully.} The
+development says what each operation computes, never how long it takes. Every
+performance statement in this paper --- the operation table of
+\S\ref{sec:cost}, the fold constants $F$ and $w$, the claim that the phase
+split of \S\ref{sec:insert} keeps insertion linear --- rests on the analytic
+model and on measurement, and would survive or fall entirely independently of
+the proofs. The one place the two meet is negative and useful:
+\texttt{edgesAt\_flush\_decision\_irrelevant} shows the fold policy cannot
+affect what the tensor denotes, which is what licenses tuning it against
+measurements without re-examining correctness.
+
+Second, the proofs bind a \emph{model}, and the model's correspondence to the
+Rust is maintained by hand --- transcribed operation by operation, with the
+GraphBLAS calls read as set operations. That correspondence is the assumption
+the whole development rests on, and no proof inside it can discharge that.
+Where the code is currently ahead of the model, we say so: iteration is
+mechanised by its result rather than as the three-way lookahead merge, and the
+serialised byte format is outside both layers (the round-trip theorems are
+about the abstract encode/decode pair).
+
 Three consequences are worth reporting, because they are the kind of thing a
 mechanisation buys that a proof on paper does not.
 
@@ -1315,83 +1416,85 @@ sound exactly under the freshness precondition, which is now an explicit
 hypothesis rather than a comment.
 
 % =====================================================================
-\section{Two hazards from the host runtime}
+\section{Two rules the host runtime imposes}
 \label{sec:hazards}
 
-Both hazards below were found empirically, both are now regression-tested in
-the artifact, and both generalise beyond this data structure: they are what
-happens when a data structure with its own invariants is layered on a runtime
-with typed operators and deferred execution.
+Building a structure with its own invariants on a runtime with typed operators
+and deferred execution costs two disciplines. Both are stated here as rules
+because both are cheap to follow and expensive to retrofit, and neither is
+specific to this data structure.
 
-\subsection{Value typecasting destroys the edge whose identifier is $0$}
+\subsection{Never let an operator read a value on an identifier-carrying matrix}
 \label{sec:hazard-zero}
 
-Consider building the Boolean deletion mask of
-Equation~\eqref{eq:dmmask} with the obvious operation: a masked
-\texttt{eWiseAdd} that copies the selected cells of the \texttt{UINT64} base
-$m$ into the \texttt{BOOL} matrix $dm$. \texttt{eWiseAdd} propagates cells
-present on only one side, \emph{typecasting} the value; the \texttt{UINT64}
-value $0$ becomes the \texttt{BOOL} value \texttt{false}. GraphBLAS
-distinguishes a stored \texttt{false} from an absent entry structurally, but a
-\emph{valued} mask --- the default --- treats a stored \texttt{false} as
-absent. Therefore:
-
 \begin{quote}
-Deleting the edge whose identifier is $0$ writes a stored \texttt{false} into
-$dm$; every later valued-mask use of $dm$ skips it; the deletion is silently
-lost, and the edge remains readable.
+\emph{When matrix values are identifiers rather than numbers, any operation
+that can read a value is an operation that can corrupt state. Use
+pattern-only operators by default, and justify a valued operator at the call
+site.}
 \end{quote}
 
-The bug is invisible in almost every test, because identifier $0$ is one
-value out of $2^{60}$ --- and unavoidable in production, because identifiers
-are allocated densely from $0$, so the \emph{first edge ever created} is the
-one affected. The fix is to use operations that provably never read operand
-values: \texttt{eWiseMult} over \texttt{GxB\_ANY\_PAIR\_BOOL} for the mask
-intersection, and \texttt{GrB\_Matrix\_apply} with \texttt{GxB\_ONE\_BOOL} for
-pattern unions (the artifact's \texttt{set\_pattern}). The artifact's
-regression test builds $10{,}000$ edges with identifiers $0 \ldots 9999$,
-folds them into the base so that identifier $0$ genuinely lives in the
-\texttt{UINT64} base, deletes identifier $0$ through the fast path with a
-non-zero control, and asserts on both the point read and the materialised
-pattern.
+The mechanism that makes this a rule rather than a preference is typecasting.
+An operator that propagates cells present on only one side --- \texttt{eWiseAdd}
+is the natural choice for copying selected cells of the \texttt{UINT64} base $m$
+into the \texttt{BOOL} mask $dm$ of Equation~\eqref{eq:dmmask} --- converts the
+value as it goes, and the \texttt{UINT64} value $0$ becomes the \texttt{BOOL}
+value \texttt{false}. GraphBLAS distinguishes a stored \texttt{false} from an
+absent entry structurally, but a \emph{valued} mask, which is the default,
+treats the two alike. A stored \texttt{false} therefore reads as no entry at
+all, and the identifier $0$ vanishes from any mask built this way.
 
-The general lesson is a typing discipline: \emph{in a system where matrix
-values are identifiers rather than numbers, an operation that can read a value
-is an operation that can corrupt state.} Pattern-only operators should be the
-default, and any valued operator on an identifier-carrying matrix should be
-justified at the call site.
+That $0$ is the exposed value is what makes the rule non-negotiable rather than
+a corner case: identifiers are allocated densely from zero, so the affected edge
+is the first one the graph ever creates, while a test using any other identifier
+sees nothing wrong.
 
-\subsection{Deferred computation breaks the ``base is never pending'' invariant}
+Concretely, on this runtime:
+
+\begin{itemize}
+\item mask intersection ($dm \mathrel{\langle mask\rangle} = mask \cap m$):
+  \texttt{eWiseMult} over \texttt{GxB\_ANY\_PAIR\_BOOL}, whose multiply reads
+  neither operand's value;
+\item pattern union into a Boolean matrix: \texttt{GrB\_Matrix\_apply} with
+  \texttt{GxB\_ONE\_BOOL}, which writes a constant;
+\item folding a valued delta into a valued base: \texttt{eWiseAdd} with
+  \texttt{SECOND} is correct \emph{and} value-reading, which is the point ---
+  both operands are \texttt{UINT64}, so nothing is cast, and the value is the
+  payload being preserved. This is what a justified valued operator looks like.
+\end{itemize}
+
+\subsection{Treat ``I did not write this object'' as saying nothing about queued work}
 \label{sec:hazard-resize}
 
-Every read path calls \textsc{WaitFwd}, which materialises the deltas and
-\emph{asserts} that the committed base is not pending. The assertion is
-justified by an argument about who writes the base: only a fold does, and a
-fold materialises. \texttt{GrB\_Matrix\_resize} is the counterexample. Growth
-that is large enough to change the internal representation leaves pending
-work on the base, after which every read path's assertion fires.
+\begin{quote}
+\emph{Under deferred execution, an invariant of the form ``object $X$ is
+materialised'' must be discharged by enumerating every call that can queue work
+on $X$ --- including the ones that look like metadata changes.}
+\end{quote}
 
-Two properties made this hazard nasty. It is \emph{debug-only}: the assertion
-compiles out in release, where the consequence is instead a base read
-without materialisation. And it is \emph{scale-dependent}: growing capacity
-from $10{,}001$ to $10{,}501$ queues nothing and the bug hides, whereas the
-growth to $114{,}688$ that a real workload produced --- creating and deleting
-$100{,}000$ temporary nodes against a graph loaded from a snapshot, which is
-what makes relationship tensors exist to be resized at all --- crashed the
-server through
-$\textsc{Commit} \to \textsc{DeleteImplicitEdges} \to \textsc{Iter}$.
+Every read path here relies on the committed base carrying no queued work, and
+the tempting justification is an argument about authorship: only a fold writes
+the base, and a fold materialises. That argument is not sound, because writing
+is not the only way to queue work. A capacity change is the case that breaks it:
+\texttt{GrB\_Matrix\_resize} reads as metadata, but growth large enough to change
+the internal representation leaves the base pending.
 
-The fix is to materialise immediately after resizing, at the one site that
-writes the base outside a fold. This costs nothing on hot paths --- resize
-happens only on capacity growth --- and the same hole existed, and was closed
-the same way, in the generic \texttt{VersionedMatrix}. The lesson generalises:
-\emph{when a runtime defers work, ``I did not write this object'' is not the
-same claim as ``this object has no queued work,''} and any invariant of the
-second form needs enumerating every call that can queue work, including the
-ones that look like metadata changes.
+Two properties of this failure mode argue for the rule rather than for
+vigilance. It is representation-dependent, so a small growth queues nothing and
+the invariant appears to hold; and where the guarantee is only asserted in debug
+builds, release builds do not fail loudly but instead read an unmaterialised
+base.
+
+The discipline is therefore to materialise at every site that writes or reshapes
+the base outside a fold, rather than to reason about which of them ``really''
+writes. It costs nothing measurable --- these are capacity-change paths, not hot
+paths --- and it replaces a whole-program argument with a local one. The same
+obligation applies to the generic \texttt{VersionedMatrix}, and is discharged
+the same way.
 
 % =====================================================================
 \section{Serialisation}
+\label{sec:codec}
 \label{sec:serialisation}
 
 The on-disk format (encoding version 19) must be readable by the C
@@ -1556,14 +1659,45 @@ $\kappa(s,d) < 2^{60}-1$, i.e.\
 \]
 a bound $16$ times tighter than the guard enforces. For a graph with a
 multi-edge pair whose source identifier exceeds $2^{28}$, the write to $me$
-is out of range. The gap is unreachable at present scales and only for
-multi-edge pairs --- a simple graph never indexes $me$ --- but it is a
-discrepancy between a checked precondition and an actual one, and the natural
-repair is to derive the guard from the storage: assert
-$\kappa(s,d) < \mathrm{nrows}(me)$, or widen $me$'s declared dimension. Since
-$me$ is hypersparse, widening costs nothing except that GraphBLAS's own index
-limit is $2^{60}$, so the real fix is a narrower packing (e.g.\ $30 + 30$
-bits) or a non-packed key.
+is out of range. The gap is reachable only for multi-edge pairs --- a simple
+graph never indexes $me$ --- but it is a discrepancy between a checked
+precondition and an actual one, so the guard should in any case be derived from
+the storage ($\kappa(s,d) < \mathrm{nrows}(me)$) rather than from $32$-bit
+packing, which turns silent out-of-range into a loud failure.
+
+Widening $me$ does not help: GraphBLAS's own index limit \emph{is} $2^{60}$, so
+$60$ bits is the entire budget and no packing of two $60$-bit node identifiers
+fits. Rebalancing to $30+30$ buys one bit over four ($\approx 10^9$ per side)
+and postpones rather than removes the ceiling.
+
+\paragraph{Removing the ceiling: a block-indexed overflow matrix.} The
+restriction is being lifted rather than merely documented, by making $\kappa$
+return a \emph{pair} --- a block index and a row within that block --- and
+holding $me$ as a collection of matrices keyed by block:
+\[
+  \kappa(s,d) \;=\; \bigl(\, s \gg k, \;\; ((s \bmod 2^{k}) \ll 32) \mathbin{|} d \,\bigr).
+\]
+With $k = 28$ the block index is $0$ for exactly the region that works today, so
+existing graphs keep a single block and an identical layout, while $s$ becomes
+bounded only by the adjacency matrix's own dimension.
+
+Three properties make this the preferable repair over the alternatives (a hashed
+row, or moving $me$ out of GraphBLAS into a keyed container). It stays
+\emph{invertible}: $s = (\text{block} \ll k) \mathbin{|} (\text{row} \gg 32)$
+and $d = \text{row} \bmod 2^{32}$, so whole-tensor enumeration still recovers
+$(s,d)$ from the key without consulting an external endpoint table. It
+preserves \emph{global order}: blocks ascend with $s$ and rows ascend with
+$(s,d)$ within a block, so concatenating the blocks' scans is still sorted, and
+the iteration theorems carry over unchanged. And it is \emph{migration-free},
+because the serialised form stores $s$ and $d$ separately and recomputes the key
+on load --- the packing is an in-memory detail, never a format.
+
+The costs are that per-transaction work must stay proportional to
+\emph{populated} blocks rather than to the block index range, which argues for
+a sparse map rather than a dense vector; and that the mechanised statement of
+$\kappa$'s injectivity has to be restated for pairs. That restatement is an
+improvement: the current bound $s < 2^{28}$ is a hypothesis of the key lemmas,
+and under a block-indexed key the corresponding fact holds unconditionally.
 
 \paragraph{Two values are reserved.}
 $\M = 2^{64}-1$ is removed from the identifier domain, and the $2^{63}$ bit is
@@ -1653,10 +1787,13 @@ throughput for (A), (B) and (C). The interesting region is $\mu$ slightly
 above $1$, where a small fraction of pairs forces promotions and (C) pays a
 transition that neither alternative has.
 
-\paragraph{Tighten the key.} Derive the compound-key guard from
-$\mathrm{nrows}(me)$ rather than from $32$-bit packing
-(\S\ref{sec:limits}), which removes the discrepancy and makes the bound
-self-documenting.
+\paragraph{Land the block-indexed key.} The design in \S\ref{sec:limits} that
+removes the node-identifier ceiling is settled but not yet implemented. Two
+things want measuring once it is: whether a sparse map over populated blocks
+costs anything against today's single matrix on a graph that only ever occupies
+block $0$, and what the crossover looks like on a graph whose multi-edge pairs
+are spread thinly across many blocks --- the case where per-transaction work
+becomes proportional to the number of live blocks rather than to one.
 
 \paragraph{Make \texttt{multi\_count} checkable at run time.} The invariant set
 is now proved (\S\ref{sec:mechanised}), but proofs bind the model, not the
@@ -1711,13 +1848,13 @@ pending layer must be able to shadow a live committed value --- which yields
 ten transaction-local per-pair states, a normalisation rule
 (cancel-to-clean) to keep them finite and counting exact, and a cardinality
 identity that is provable but arithmetically fragile. Layering all of it on a
-non-blocking runtime with typed operators adds two hazard classes that are
-easy to state after the fact and were not obvious before: a value-propagating
-operator silently destroys the edge whose identifier is $0$, and a resize
-leaves the ``committed'' base with queued work in violation of an assertion
-every read path makes. Both are the same underlying mistake --- assuming an
-operation does less than it does --- and both are the price of building a
-data structure with its own invariants inside someone else's execution model.
+non-blocking runtime with typed operators adds two disciplines that are easy to
+state and easy to omit: keep operators pattern-only where values are
+identities, and discharge every ``this is materialised'' claim by enumerating
+the calls that can queue work rather than by arguing about who writes. Both
+reduce to not assuming an operation does less than it does, and both are the
+standing price of putting a data structure with its own invariants inside
+someone else's execution model.
 
 % =====================================================================
 \section*{Availability}
