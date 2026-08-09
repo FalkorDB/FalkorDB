@@ -6,7 +6,7 @@ theorem for every operation of `tensor.rs`.
 * No `sorry`, no `admit`, no custom `axiom`. Every top-level theorem depends only
   on Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`) —
   verify with `#print axioms`.
-* ~3 950 lines, ~290 theorems; a clean rebuild of all 12 files takes ~15 s once the
+* ~4 100 lines, ~300 theorems; a clean rebuild takes ~20 s once the
   mathlib cache is in place.
 
 ## Build
@@ -52,6 +52,8 @@ it **preserves `Inv`**, and it **acts on `edgesAt` the way its doc comment says*
 | `has_multi_edge` | `hasMultiEdge_iff` (`me` non-empty ⟺ some pair has ≥ 2 edges) | `Reads.lean` |
 | `encode` / `decode` | `edgesAt_decode_encode`, `invCore_decode_encode`, `inv_decode_encode`, `edgeCount_roundTrip`, plus `msb_or` / `msb_and_eq_zero` / `msb_and_ne_zero` for the MSB tag | `Codec.lean` |
 | per-pair state diagram | 9 arrows of the documented `A`–`J` diagram, on the raw layers: `trans_A_add`, `trans_B_add`, `trans_D_add`, `trans_G_add_cancel`, `trans_G_add_other`, `trans_I_add_cancel`, `trans_D_del`, `trans_E_del`, `trans_F_del_cancel` | `States.lean` |
+| the fold *policy* (`should_fold`) | `foldPoint_optimal` — the square-root rule minimises the cost model it is derived from; `foldCost_foldPoint` (the minimum value); `sq_ge_iff_ge_sqrt` (the `u64` predicate `d² ≥ k·t` is the real test `d ≥ √(k·t)`) | `Cost.lean` |
+| `iter_edges`, as output | `iterEdges_output_optimal` — every edge exactly once and nothing else, i.e. the least output any correct enumerator can produce | `Cost.lean` |
 
 Two facts the proofs turned up that the code did not state — and, since they were
 found, no longer contains:
@@ -117,9 +119,18 @@ than assumed silently.
   four combinations. That is strictly stronger than modelling the policy: it says
   no choice of constants, and no drift in the counters that feed them, can change
   what the tensor denotes — `edgesAt_flush_decision_irrelevant` states exactly
-  that. The policy's *own* correctness claim is about throughput and memory, which
-  is a measurement question (`fold_cost_bench.rs`, and the benchmark numbers in
-  the PR), not a theorem.
+  that.
+
+  `Cost.lean` then proves the one thing about the policy that *is* a theorem:
+  granting the cost model, `sqrt(2Ft/w)` is where that model is minimised, and the
+  `u64` predicate the code evaluates is that test without the square root. Note
+  what this does and does not settle. It does not say the implementation is fast:
+  `F` and `w` are measured, and if the measurements are wrong the theorem still
+  holds and the policy is still miscalibrated. It says the *form* of the rule
+  follows from the model, so re-tuning the constants against new measurements
+  cannot invalidate it. Everything else about performance —
+  `fold_cost_bench.rs`, the benchmark tables — is measurement, and nothing in this
+  development speaks to running time.
 * Indices are `Nat`, not `u64`/`u32`. Where width matters the bound is proved
   rather than assumed: `key_lt` (the compound key fits a `u64`),
   `edgeCount_no_underflow` (the unsigned subtraction chain), `msb_*` (the
