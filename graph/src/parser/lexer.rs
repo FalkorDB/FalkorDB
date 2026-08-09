@@ -275,6 +275,7 @@ const MIN_I64: [&str; 5] = [
     "0x8000000000000000",                                                 // hex
 ];
 
+#[derive(Clone)]
 pub struct Lexer<'a> {
     pub str: &'a str,
     pos: usize,

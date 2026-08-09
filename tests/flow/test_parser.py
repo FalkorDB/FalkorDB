@@ -334,50 +334,78 @@ class testParser(FlowTestsBase):
         except:
             pass
 
-    def test_chained_unary_sign(self):
-        # signs chain, only the parity of the minus signs matters
-        # `-` is a single char token, so `--` is two signs, not a comment
-        for query, expected in [("RETURN - -5",     5),
-                                ("RETURN --5",      5),
-                                ("RETURN -(-5)",    5),
-                                ("RETURN ---5",    -5),
-                                ("RETURN - + -5",   5),
-                                ("RETURN -+5",     -5),
-                                ("RETURN +-5",     -5),
-                                ("RETURN 1 - -2",   3),
-                                ("RETURN 1 - - -2",-1),
-                                ("RETURN - -1.5",   1.5)]:
+    def test_unary_sign(self):
+        """Cypher allows one unary sign, and a numeric literal carries its own
+        optional minus, so at most two signs and only in that arrangement:
+
+            expression3   : expression2 | (PLUS | MINUS) expression2
+            numberLiteral : MINUS? ( DECIMAL_DOUBLE | UNSIGNED_DECIMAL_INTEGER | ... )
+        """
+
+        for query, expected in [("RETURN -5",        -5),
+                                ("RETURN +5",         5),
+                                # unary minus over a signed literal
+                                ("RETURN - -5",       5),
+                                ("RETURN --5",        5),
+                                ("RETURN - -1.5",     1.5),
+                                # unary plus over a signed literal
+                                ("RETURN + -5",      -5),
+                                ("RETURN +-5",       -5),
+                                # a sign on a non-number is the unary operator
+                                ("WITH 3 AS x RETURN -x",   -3),
+                                ("RETURN -(-5)",      5),
+                                # binary minus is unaffected
+                                ("RETURN 1 - 2",     -1),
+                                ("RETURN 1 - -2",     3),
+                                ("RETURN 1--2",       3),
+                                ("RETURN 1 - - -2",  -1),
+                                ("RETURN 3 * -2",    -6)]:
             actual = self.graph.query(query).result_set
             self.env.assertEqual(actual, [[expected]])
 
-    def test_chained_unary_sign_int_min(self):
-        # the smallest i64 is only reachable through an odd number of signs,
-        # an even number makes it 2^63 which does not fit
+    def test_unary_sign_beyond_the_grammar_is_rejected(self):
+        """Signs do not stack: the unary rule does not recurse, and only a
+        numeric literal may carry a second one, and only a minus."""
+
+        for query in ["RETURN - - -5",   # three signs
+                      "RETURN ---5",
+                      "RETURN + +5",     # a literal cannot carry a plus
+                      "RETURN - +5",
+                      "WITH 3 AS x RETURN - -x"]:  # x is not a number
+            try:
+                res = self.graph.query(query)
+            except ResponseError as e:
+                self.env.assertContains("Invalid input", str(e))
+                continue
+            raise AssertionError(
+                f"{query!r} should have been rejected, returned {res.result_set!r}")
+
+    def test_unary_sign_int_min(self):
+        # i64::MIN only fits with its sign attached, so it is a signed literal
+        # rather than a negation of 2^63
         min_i64 = -9223372036854775808
 
-        for query, expected in [("RETURN -9223372036854775808",     min_i64),
-                                ("RETURN - - -9223372036854775808", min_i64)]:
-            actual = self.graph.query(query).result_set
-            self.env.assertEqual(actual, [[expected]])
+        for query in ["RETURN -9223372036854775808",
+                      "RETURN -0x8000000000000000"]:
+            self.env.assertEqual(self.graph.query(query).result_set, [[min_i64]])
 
+        # 2^63 on its own does not fit, whether written bare or reached by
+        # negating the smallest i64. The first is caught while parsing, the
+        # second by the evaluator's checked negation
         for query in ["RETURN 9223372036854775808",
+                      "RETURN 0x8000000000000000",
                       "RETURN - -9223372036854775808"]:
             try:
-                self.graph.query(query)
-                self.env.assertTrue(False)
+                res = self.graph.query(query)
             except ResponseError as e:
-                self.env.assertContains("Integer overflow", str(e))
+                self.env.assertContains("overflow", str(e).lower())
+                continue
+            raise AssertionError(
+                f"{query!r} should have been rejected, returned {res.result_set!r}")
 
         # the sign is carried into the message of a literal the lexer rejects
         try:
-            self.graph.query("RETURN - -9223372036854775809")
-            self.env.assertTrue(False)
-        except ResponseError as e:
-            self.env.assertContains("Integer overflow '9223372036854775809'", str(e))
-
-        try:
-            self.graph.query("RETURN - - -9223372036854775809")
-            self.env.assertTrue(False)
+            self.graph.query("RETURN -9223372036854775809")
+            raise AssertionError("expected an overflow error")
         except ResponseError as e:
             self.env.assertContains("Integer overflow '-9223372036854775809'", str(e))
-
