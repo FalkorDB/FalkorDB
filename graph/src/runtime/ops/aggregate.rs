@@ -659,10 +659,41 @@ impl<'a> AggregateOp<'a> {
                     agg_columns.push(col);
                 }
                 Some(AggInputKind::Property { var, attr }) => {
-                    let node_ids = batch.extract_node_ids(var.id).ok_or(())?;
-                    let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
-                    let (col, nulls) = runtime.materialize_node_property(&active_ids, attr);
-                    agg_columns.push(column_to_values(&col, &nulls, active.len()));
+                    if let Some(node_ids) = batch.extract_node_ids(var.id) {
+                        let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
+                        let (col, nulls) = runtime.materialize_node_property(&active_ids, attr);
+                        agg_columns.push(column_to_values(&col, &nulls, active.len()));
+                    } else {
+                        // Not a node column. `sum(r.prop)` over a *relationship*
+                        // classifies as `Property` just as a node one does, but
+                        // the bulk materializer above is node-only, so this used
+                        // to fail the batch and send it to
+                        // `consume_batch_per_row` — which calls `to_owned_row()`
+                        // per row, allocating a `Vec` of every column for every
+                        // row. Measured at 1,260 instructions per edge on
+                        // `MATCH ()-[r:R]->() RETURN sum(r.k)`, which is why
+                        // wrapping the same property in any expression
+                        // (`sum(r.k * 2)`) was 40% *cheaper*: that classifies as
+                        // `Computed` and stays on this path, reading through a
+                        // borrowed `BatchRow`.
+                        //
+                        // Reading the column here per row keeps the batch
+                        // vectorized and costs one property lookup per row —
+                        // what the expression path already paid.
+                        let mut col = Vec::with_capacity(active.len());
+                        for &row in active {
+                            col.push(match batch.value_at(var.id, row) {
+                                Some(Value::Relationship(rel)) => runtime
+                                    .get_relationship_attribute(rel, attr)
+                                    .unwrap_or(Value::Null),
+                                Some(Value::Node(id)) => {
+                                    runtime.get_node_attribute(id, attr).unwrap_or(Value::Null)
+                                }
+                                _ => Value::Null,
+                            });
+                        }
+                        agg_columns.push(col);
+                    }
                 }
                 Some(AggInputKind::Computed { tree, idx }) => {
                     // Evaluated against `BatchRow` directly: the per-row path
