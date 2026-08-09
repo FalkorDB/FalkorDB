@@ -639,11 +639,6 @@ impl<T> Matrix<T> {
             nrows >= r0 && ncols >= c0,
             "grown must not shrink: {r0}x{c0} -> {nrows}x{ncols}"
         );
-        // Same dimensions: the tile grid degenerates to 1x1, i.e. a plain copy,
-        // so take the copy directly rather than paying `concat`'s setup to do it.
-        if nrows == r0 && ncols == c0 {
-            return self.dup();
-        }
         unsafe {
             let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
             let info = GxB_Matrix_type(type_.as_mut_ptr(), *self.m);
