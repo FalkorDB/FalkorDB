@@ -9,6 +9,7 @@
 #include "constraint.h"
 #include "../util/arr.h"
 #include "../index/indexer.h"
+#include "../effects/effects.h"
 #include "../graph/graphcontext.h"
 #include "../graph/entities/attribute_set.h"
 #include "../graph/delta_matrix/delta_matrix_iter.h"
@@ -240,17 +241,17 @@ uint8_t Constraint_GetAttributes
 	const AttributeID **attr_ids,  // array of constraint attribute IDs
 	const char ***attr_names       // array of constraint attribute names
 ) {
-	ASSERT(c != NULL);
+	ASSERT (c != NULL) ;
 
-	if(attr_ids != NULL) {
-		*attr_ids = c->attrs;
+	if (attr_ids != NULL) {
+		*attr_ids = c->attrs ;
 	}
 
-	if(attr_names != NULL) {
-		*attr_names = c->attr_names;
+	if (attr_names != NULL) {
+		*attr_names = c->attr_names ;
 	}
 
-	return c->n_attr;
+	return c->n_attr ;
 }
 
 // checks if constraint enforces attribute
@@ -318,65 +319,50 @@ void Constraint_DecPendingChanges
 	c->pending_changes--;
 }
 
-// replicate constraint to both persistency and replicas
+// replicate constraint to both persistency and replicas via GRAPH.EFFECT
+//
+// called both right after a constraint is created (from _Constraint_Create)
+// and again once async enforcement completes and the constraint becomes
+// active (from _indexer_enforce_constraint), to catch up replicas that raced
+// ahead via an RDB snapshot - which only encodes already-active constraints.
+// the latter case re-announces a constraint the replica may already have;
+// EFFECT_CREATE_CONSTRAINT's apply-side handles that as a benign no-op, not
+// divergence (see GraphHub_AddConstraint's CONSTRAINT_ALREADY_EXISTS status)
 void Constraint_Replicate
 (
 	RedisModuleCtx *ctx,           // redis module context
 	const Constraint c,            // constraint to replicate
 	const struct GraphContext *gc  // graph context
 ) {
-	// CREATE <key> UNIQUE/MANDATORY [NODE label / RELATIONSHIP type] PROPERTIES prop_count prop0, prop1...
+	GraphContext *_gc = (GraphContext*)gc ;
 
-	// command format
-	// 1. c - CREATE
-	// 2. c - graph_name
-	// 3. c - constraint type
-	// 4. c - entity type NODE/RELATIONSHIP
-	// 5. c - label
-	// 6. c - PROPERTIES
-	// 7. l - #props
-	// 8. v - [prop0, prop1, ...]
-	char *fmt = "cccccclv";
-
-	// graph name
-	GraphContext *_gc = (GraphContext*)gc;
-	const char *graph_name = GraphContext_GetName(_gc);
-
-	// constraint type
-	const char *c_type = (Constraint_GetType(c) == CT_UNIQUE) // constraint type
-		? "UNIQUE"
-		: "MANDATORY";
-
-	// entity type
-	char *et;
-	SchemaType st;
-	if(Constraint_GetEntityType(c) == GETYPE_NODE) {
-		et = "NODE";
-		st = SCHEMA_NODE;
-	} else {
-		et = "RELATIONSHIP";
-		st = SCHEMA_EDGE;
-	}
+	// entity / schema type
+	GraphEntityType et = Constraint_GetEntityType (c) ;
+	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
 
 	// label
-	Schema *s = GraphContext_GetSchemaByID(_gc, Constraint_GetSchemaID(c), st);
-	const char *label = Schema_GetName(s);
+	Schema *s = GraphContext_GetSchemaByID (_gc, Constraint_GetSchemaID (c), st) ;
+	const char *label = Schema_GetName (s) ;
+	int label_id = Schema_GetID (s) ;
 
-	// properties
-	RedisModuleString *attrs[c->n_attr];
-	for(uint i = 0; i < c->n_attr; i++) {
-		const char *attr = c->attr_names[i];
-		attrs[i] = RedisModule_CreateString(ctx, attr, strlen(attr));
-	}
+	// attributes
+	const AttributeID *attr_ids ;
+	const char **attr_names ;
+	uint8_t n = Constraint_GetAttributes (c, &attr_ids, &attr_names) ;
 
-	// replicate
-	RedisModule_Replicate(ctx, "GRAPH.CONSTRAINT", fmt, "CREATE", graph_name,
-			c_type, et, label, "PROPERTIES", (long long)c->n_attr, attrs, (size_t)c->n_attr);
+	// build a standalone effects buffer encoding the constraint creation
+	EffectsBuffer *eb = EffectsBuffer_New () ;
+	EffectsBuffer_AddCreateConstraintEffect (eb, Constraint_GetType (c), et,
+			label_id, label, attr_ids, attr_names, n) ;
 
-	// free strings
-	for(uint i = 0; i < c->n_attr; i++) {
-		RedisModule_FreeString(ctx, attrs[i]);
-	}
+	size_t l = 0 ;
+	unsigned char *buf = EffectsBuffer_Buffer (eb, &l) ;
+
+	const char *graph_name = GraphContext_GetName (_gc) ;
+	RedisModule_Replicate (ctx, "GRAPH.EFFECT", "cb!", graph_name, buf, l) ;
+
+	rm_free (buf) ;
+	EffectsBuffer_Free (eb) ;
 }
 
 // tries to enforce constraint
