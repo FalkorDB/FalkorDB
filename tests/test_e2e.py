@@ -1734,6 +1734,8 @@ def test_index():
     assert res.result_set == [
         [Node(4, labels=["Node"], properties={"vi": 5, "vs": "5"})]
     ]
+    # steps=2 above proves the plan uses the index; the timing check only
+    # guards against the index lookup silently degrading to scan-like cost.
     assert res.run_time_ms < runtime_ms / 10
 
     res = query("MATCH (n:Node {vs: '5'}) RETURN n", steps=2)
