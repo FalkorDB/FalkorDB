@@ -739,7 +739,6 @@ pub(super) fn select_scan_node(
                     transposed: true,
                     chain: Vec::new(),
                     optional: false,
-                    bind_relationship: true,
                 };
 
                 if is_leaf || child_is_planner_scan || arg_transparent {
@@ -853,7 +852,6 @@ pub(super) fn select_scan_node(
                         transposed,
                         chain: Vec::new(),
                         optional: false,
-                        bind_relationship: true,
                     },
                     subtree
                 );
@@ -951,7 +949,6 @@ pub(super) fn select_scan_node(
                         transposed: trans,
                         chain: Vec::new(),
                         optional: false,
-                        bind_relationship: true,
                     };
 
                     op.push_child_tree(scan_subtree);

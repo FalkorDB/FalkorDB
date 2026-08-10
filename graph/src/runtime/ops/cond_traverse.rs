@@ -134,13 +134,6 @@ pub struct CondTraverseOp<'a> {
     /// one row per (src, dst) pair (false). Set by the planner based on
     /// whether the edge is named or referenced in a named path.
     emit_relationship: bool,
-    /// False when nothing above this operator reads the edge alias, so the
-    /// per-row lookup that resolves a representative edge id is dead work and
-    /// the edge column is left unbound. Distinct from `emit_relationship`,
-    /// which governs row multiplicity only: an anonymous edge inside a named
-    /// path collapses to one row per pair yet still has to be bound, because
-    /// `PathBuilder` reads it. Lowered by the `reduce_bound_edge` pass.
-    bind_relationship: bool,
     /// Alias IDs of sibling relationship variables in the same MATCH clause.
     sibling_edges: &'a [u32],
     /// When true, from/to have been swapped by the optimizer relative to the
@@ -253,7 +246,6 @@ impl<'a> CondTraverseOp<'a> {
         transposed: bool,
         chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
         optional: bool,
-        bind_relationship: bool,
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
@@ -340,7 +332,6 @@ impl<'a> CondTraverseOp<'a> {
             emitter,
             pending_batches: VecDeque::new(),
             emit_relationship,
-            bind_relationship,
             sibling_edges,
             transposed,
             chain,
@@ -610,11 +601,6 @@ impl<'a> CondTraverseOp<'a> {
         // refuses to fuse when transposed differs), so `transposed` applies
         // only to the first hop and the final destination alias comes from
         // the last hop in `self.chain`.
-        let from_alias = if transposed {
-            &rp.to.alias
-        } else {
-            &rp.from.alias
-        };
         let (to_alias, dst_label_ids) = if let Some(last_hop) = self.chain.last() {
             (
                 &last_hop.to.alias,
@@ -625,14 +611,14 @@ impl<'a> CondTraverseOp<'a> {
         } else {
             (&rp.to.alias, state.fwd_dst_label_ids.as_slice())
         };
-        let chain_is_empty = self.chain.is_empty();
-        // A chain-less traverse binds the edge column, and getting a value for
-        // it costs a tensor lookup per surviving row. Skip both when nothing
-        // above reads the alias.
-        let bind_edge = chain_is_empty && self.bind_relationship;
+        // This path binds no edge column at all. `batched_eligible` requires
+        // `!emit_relationship`, and `emit_relationship` is false exactly when no
+        // ancestor reads the edge alias — including `PathBuilder`, since the
+        // planner's `emit_rel` treats an anonymous edge that appears in a named
+        // path's vars as emitting. So there is nothing here for a representative
+        // edge id to be read by, whether or not the traverse fuses a chain.
         let mut out_indices = Vec::new();
         let mut out_dest_ids = Vec::new();
-        let mut out_edge_ids = Vec::new();
         // Per-active-row match flags (indexed by active_subset position),
         // used to build the null-padded fallback batch for optional traverses.
         let mut matched = if self.optional {
@@ -660,62 +646,14 @@ impl<'a> CondTraverseOp<'a> {
                 continue;
             }
 
-            if bind_edge {
-                // Look up one representative edge id (mirrors expand_row's
-                // anonymous-edge fast path). Needed whenever the alias is read
-                // downstream — including by PathBuilder, which reads it even
-                // when emit_relationship is false, so `emit_relationship`
-                // alone cannot decide this. Storage matrix orientation:
-                // src=F's seed (matrix-src), dst=F*A result (matrix-dst),
-                // regardless of self.transposed (which only affects
-                // alias→storage mapping, not the underlying matrix orientation
-                // since build_relationship_matrix_unrestricted is
-                // non-transposed).
-                let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
-                    continue;
-                };
-                let mat_src = u64::from(src_id);
-                let mat_dst = u64::from(dest_id);
-                let mut found_id: Option<RelationshipId> = None;
-                for &tidx in &state.edge_type_indices {
-                    if let Some(raw_id) =
-                        g.relationship_tensors()[tidx].get(mat_src, mat_dst).next()
-                    {
-                        found_id = Some(RelationshipId::from(raw_id));
-                        break;
-                    }
-                }
-                if let Some(edge_id) = found_id {
-                    out_indices.push(row_idx);
-                    out_dest_ids.push(dest_id);
-                    out_edge_ids.push(edge_id);
-                    if self.optional {
-                        matched[row_i as usize] = true;
-                    }
-                }
-            } else {
-                // No edge column to fill: either a fused chain, whose per-hop
-                // edges are anonymous & unreferenced by construction (the
-                // fusion pass enforces it) and whose intermediate node aliases
-                // are not exposed, or a single hop whose alias nothing reads.
-                // Dropping the lookup also drops its `found_id` guard, which
-                // never fired: `f` is built from these same tensors, so every
-                // pair it yields has at least one edge in one of them.
-                out_indices.push(row_idx);
-                out_dest_ids.push(dest_id);
-                if self.optional {
-                    matched[row_i as usize] = true;
-                }
+            out_indices.push(row_idx);
+            out_dest_ids.push(dest_id);
+            if self.optional {
+                matched[row_i as usize] = true;
             }
 
             if out_indices.len() >= BATCH_SIZE {
                 let mut out_batch = batch.gather(&out_indices);
-                if bind_edge {
-                    out_batch.set_column(
-                        rp.alias.id,
-                        Column::RelIds(std::mem::take(&mut out_edge_ids)),
-                    );
-                }
                 out_batch.set_column(
                     to_alias.id,
                     Column::NodeIds(std::mem::take(&mut out_dest_ids)),
@@ -727,9 +665,6 @@ impl<'a> CondTraverseOp<'a> {
 
         if !out_indices.is_empty() {
             let mut out_batch = batch.gather(&out_indices);
-            if bind_edge {
-                out_batch.set_column(rp.alias.id, Column::RelIds(out_edge_ids));
-            }
             out_batch.set_column(to_alias.id, Column::NodeIds(out_dest_ids));
             out_pending.push_back(out_batch);
         }

@@ -94,7 +94,6 @@ fn can_fuse(
             transposed: p_trans,
             chain: _p_chain,
             optional: p_opt,
-            bind_relationship: true,
         },
         IR::CondTraverse {
             relationship: c_rel,
@@ -103,7 +102,6 @@ fn can_fuse(
             transposed: c_trans,
             chain: c_chain,
             optional: c_opt,
-            bind_relationship: true,
         },
     ) = (parent_ct, child_ct)
     else {
@@ -271,7 +269,6 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             transposed: false,
             chain: merged_chain,
             optional: false,
-            bind_relationship: true,
         };
         // Attach the original grandchildren under the merged op (now parent
         // has [child_CT, g1, g2, ...]).
