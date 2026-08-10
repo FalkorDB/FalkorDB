@@ -954,20 +954,53 @@ fn rewrite_until_stable<F>(
     }
 }
 
-/// Match `Filter(expr) → scan-source` at `idx`. Returns the subject,
-/// the filter expression, and the subject's metadata. Returns `None`
-/// when the scan source doesn't match, when its labels/types are empty,
-/// or when there's no `Filter` parent (including when the scan is at
-/// the plan root — parent is absent rather than panicking).
+/// Find the `Filter` governing the scan at `idx`, looking through a
+/// single-child `IncludePending` wrapper.
+///
+/// A MERGE match branch is `Filter → IncludePending → Scan`
+/// (`Planner::set_include_pending_on_scans`, and `make_scan_subtree` in
+/// `select_scan_node`), and `push_filters_down` will not descend through
+/// `IncludePending`, so the `Filter` never becomes the scan's immediate
+/// parent there. Requiring adjacency meant no MERGE pattern could ever be
+/// served by an index through this path.
+///
+/// Reports whether an `IncludePending` was skipped, because that decides
+/// whether the `Filter` may be removed once its conjuncts are pushed into
+/// the index. It may not: `IncludePending` unions in nodes created earlier
+/// in the same query, which are by construction *not* in the index, so the
+/// index scan cannot have filtered them. Drop the `Filter` and those rows
+/// reach the operator unchecked — `MERGE (p1:person {age: 40}) MERGE
+/// (p2:person {age: 41})` then matches the pending `p1` for `p2` and
+/// creates one node instead of two.
+fn governing_filter(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<(NodeIdx<Dyn<IR>>, QueryExpr<Variable>, bool)> {
+    let mut node = plan.node(idx).parent()?;
+    let mut over_pending = false;
+    if matches!(node.data(), IR::IncludePending { .. }) && node.num_children() == 1 {
+        node = node.parent()?;
+        over_pending = true;
+    }
+    let IR::Filter(filter) = node.data() else {
+        return None;
+    };
+    Some((node.idx(), filter.clone(), over_pending))
+}
+
+/// Match `Filter(expr) → [IncludePending →] scan-source` at `idx`. Returns
+/// the subject, the filter expression and its index in the plan, and the
+/// subject's metadata. Returns `None` when the scan source doesn't match,
+/// when its labels/types are empty, or when no `Filter` governs it
+/// (including when the scan is at the plan root — parent is absent rather
+/// than panicking).
 fn match_scan_with_filter<T: IndexSubject>(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
-) -> Option<(T, QueryExpr<Variable>, T::Metadata)> {
+) -> Option<(T, QueryExpr<Variable>, NodeIdx<Dyn<IR>>, bool, T::Metadata)> {
     let (subject, metadata) = T::match_scan_source(plan.node(idx).data())?;
-    let IR::Filter(filter) = plan.node(idx).parent()?.data() else {
-        return None;
-    };
-    Some((subject, filter.clone(), metadata))
+    let (filter_idx, filter, over_pending) = governing_filter(plan, idx)?;
+    Some((subject, filter, filter_idx, over_pending, metadata))
 }
 
 /// Reorders the subject's labels so the indexed label is first.
@@ -1000,17 +1033,22 @@ fn apply_filter_pushdown<T: IndexSubject>(
     query: IndexQuery<QueryExpr<Variable>>,
     remaining: Vec<DynTree<ExprIR<Variable>>>,
     original_filter: &QueryExpr<Variable>,
+    filter_idx: NodeIdx<Dyn<IR>>,
+    over_pending: bool,
     metadata: T::Metadata,
 ) {
-    let keep_filter = needs_post_filter(original_filter, subject.alias().id);
+    // `over_pending`: rows injected by `IncludePending` bypass the index, so
+    // the filter has to stay and re-check them. See `governing_filter`.
+    let keep_filter = over_pending || needs_post_filter(original_filter, subject.alias().id);
     let subject = reorder_subject_labels(subject, &index);
     let scan_ir = subject.build_scan_ir(index, Arc::new(query), metadata);
-    let mut op = plan.node_mut(idx);
-    *op.data_mut() = scan_ir;
+    *plan.node_mut(idx).data_mut() = scan_ir;
 
+    // Target the Filter by index rather than as the scan's parent: an
+    // `IncludePending` may sit between them (see `governing_filter`).
     if remaining.is_empty() {
         if !keep_filter {
-            op.parent_mut().unwrap().take_out();
+            plan.node_mut(filter_idx).take_out();
         }
         // else: leave the original filter as a runtime safety net.
     } else if keep_filter {
@@ -1020,14 +1058,14 @@ fn apply_filter_pushdown<T: IndexSubject>(
         // when the scan falls back to a label/type iterator — not
         // just the unpushed conjuncts (which would let false
         // positives through).
-        *op.parent_mut().unwrap().data_mut() = IR::Filter(original_filter.clone());
+        *plan.node_mut(filter_idx).data_mut() = IR::Filter(original_filter.clone());
     } else {
         let remaining_filter = if remaining.len() == 1 {
             Arc::new(remaining.into_iter().next().unwrap())
         } else {
             Arc::new(tree!(ExprIR::And; remaining))
         };
-        *op.parent_mut().unwrap().data_mut() = IR::Filter(remaining_filter);
+        *plan.node_mut(filter_idx).data_mut() = IR::Filter(remaining_filter);
     }
 }
 
@@ -1065,11 +1103,21 @@ fn try_index_rewrite<T: IndexSubject>(
     idx: NodeIdx<Dyn<IR>>,
     graph: &Graph,
 ) -> bool {
-    if let Some((subject, filter, metadata)) = match_scan_with_filter::<T>(plan, idx)
+    if let Some((subject, filter, filter_idx, over_pending, metadata)) =
+        match_scan_with_filter::<T>(plan, idx)
         && let Some((label, query, remaining)) = try_filter_pushdown(&subject, &filter, graph)
     {
         apply_filter_pushdown(
-            plan, idx, subject, label, query, remaining, &filter, metadata,
+            plan,
+            idx,
+            subject,
+            label,
+            query,
+            remaining,
+            &filter,
+            filter_idx,
+            over_pending,
+            metadata,
         );
         return true;
     }

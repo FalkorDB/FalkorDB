@@ -100,6 +100,32 @@ class testInlinePatternAttributes(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, [[2]])
 
+    # `utilize_index` reaches a MERGE branch's scan through `IncludePending`.
+    # The Filter above it must survive that pushdown: `IncludePending` unions
+    # in nodes created earlier in the same query, which are not in the index,
+    # so the index scan cannot have filtered them. Without the Filter the
+    # second MERGE matches the first's pending node and creates nothing.
+    def test11_merge_index_pushdown_still_filters_pending(self):
+        g = self.db.select_graph(GRAPH_ID + "_pending")
+        g.query("CREATE INDEX FOR (p:P) ON (p.age)")
+        result = g.query("MERGE (a:P {age: 40}) MERGE (b:P {age: 41})")
+        self.env.assertEqual(result.nodes_created, 2)
+
+        plan = str(g.explain("MERGE (a:P {age: 40}) MERGE (b:P {age: 41})"))
+        self.env.assertEqual(plan.count("Node By Index Scan"), 2)
+
+        # Re-running must match both, not create more.
+        result = g.query("MERGE (a:P {age: 40}) MERGE (b:P {age: 41})")
+        self.env.assertEqual(result.nodes_created, 0)
+
+        # Three distinct values in one query: every pending row has to be
+        # re-checked, not just the first.
+        result = g.query("MERGE (c:P {age: 1}) MERGE (d:P {age: 2}) MERGE (e:P {age: 3})")
+        self.env.assertEqual(result.nodes_created, 3)
+        actual = g.query("MATCH (p:P) RETURN p.age ORDER BY p.age")
+        self.env.assertEqual(actual.result_set, [[1], [2], [3], [40], [41]])
+        g.delete()
+
     # Inline attrs on a MERGE pattern are a constructor, not a predicate: the
     # created node must carry them.
     def test10_merge_pattern_attrs_are_constructed(self):
