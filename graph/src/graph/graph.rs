@@ -1311,13 +1311,23 @@ impl Graph {
         let available = deleted_len.saturating_sub(self.reserved_node_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted nodes
+        // First reclaim from deleted nodes.
+        //
+        // One ordered walk, not a rank lookup per id: `RoaringTreemap::select(i)`
+        // restarts at the first container every call, summing cardinalities until
+        // it reaches `i` and then scanning words inside that container, so a
+        // batch of N reclaims costs O(N * position) rather than O(pool). It was
+        // the hottest single leaf in the module on a create-after-delete profile.
+        // `skip` walks the same iterator once, so the whole batch is one pass.
         let base = self.reserved_node_count;
         self.reserved_node_count += reclaimed;
-        for i in base..base + reclaimed {
-            let id = self.deleted_nodes.select(i).unwrap();
-            ids.push(NodeId(id));
-        }
+        ids.extend(
+            self.deleted_nodes
+                .iter()
+                .skip(base as usize)
+                .take(reclaimed as usize)
+                .map(NodeId),
+        );
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -1349,7 +1359,7 @@ impl Graph {
         self.resize();
 
         self.all_nodes_matrix
-            .set_all(nodes.iter().map(|id| (id, id)));
+            .set_all::<true>(nodes.iter().map(|id| (id, id)));
     }
 
     #[must_use]
@@ -1622,11 +1632,17 @@ impl Graph {
     }
 
     /// Bulk set node labels using parallel row/col slices (2 FFI calls per matrix).
+    ///
+    /// `all_new` asserts every `(node, label)` pair is fresh — the node was
+    /// created in this transaction — allowing the unchecked delta insert.
+    /// `SET n:Label` on pre-existing nodes may re-add a committed pair, which
+    /// must go through the checked path to keep `dp ∩ m = ∅`.
     pub fn set_nodes_labels_bulk(
         &mut self,
         label_rows: &[u64],
         label_cols: &[u64],
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        all_new: bool,
     ) {
         self.resize();
 
@@ -1643,12 +1659,21 @@ impl Graph {
             }
         }
 
-        self.node_labels_matrix
-            .set_all(label_rows.iter().copied().zip(label_cols.iter().copied()));
+        let pairs = label_rows.iter().copied().zip(label_cols.iter().copied());
+        if all_new {
+            self.node_labels_matrix.set_all::<true>(pairs);
+        } else {
+            self.node_labels_matrix.set_all::<false>(pairs);
+        }
 
         for (lid, ids) in by_label.into_iter().enumerate() {
             if !ids.is_empty() {
-                self.labels_matices[lid].set_all(ids.iter().map(|&id| (id, id)));
+                let diag = ids.iter().map(|&id| (id, id));
+                if all_new {
+                    self.labels_matices[lid].set_all::<true>(diag);
+                } else {
+                    self.labels_matices[lid].set_all::<false>(diag);
+                }
             }
         }
     }
@@ -1679,37 +1704,55 @@ impl Graph {
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
-        // Build a diagonal mask matrix from all deleted node IDs
-        let n = self.node_cap;
-        let mut diag_mask = Matrix::<bool>::new(n, n);
+        // Every removal below is a per-entity tombstone, and every lookup below
+        // is a row seek. Nothing here touches an entry that does not belong to a
+        // deleted node, so the cost is O(|deleted|) rather than O(graph).
+        //
+        // It used to build diagonal mask matrices and hand them to `remove_mask`,
+        // whose `element_wise_multiply` takes `m` as an operand: GraphBLAS then
+        // walks the base matrix's vectors, so a delete of any size cost O(graph).
+        // Deleting one node from a 200,000-node graph spent ~240M instructions,
+        // against ~564k in the C implementation, which is flat in graph size.
+        // `VersionedMatrix::remove` marks the same tombstone one entry at a time
+        // (`dm[i,j] = true` when `m` holds the pair, else drop it from `dp`),
+        // which is what `remove_nodes_labels` already does for label removal.
+        //
+        // The two are equivalent because `dp ∩ m = ∅` holds for
+        // `VersionedMatrix<bool>`: its `set` clears the `dm` tombstone when `m`
+        // already holds the pair instead of writing a shadowing `dp` entry. So
+        // `remove_mask`'s two effects — tombstone `mask ∩ m`, drop `mask ∩ dp` —
+        // can never both apply to one entry, which is exactly the choice `remove`
+        // makes per entry. (The valued matrices *do* allow `dp` to shadow `m`;
+        // `remove` is defined only on the boolean ones.)
+        //
+        // That invariant is covered by
+        // `delta_invariants_hold_across_mutation_sequences`, and this specific
+        // substitution is machine-checked as
+        // `eff_removeMask_eq_foldl_remove` in `proofs/versioned_matrix`.
         for id in deleted_nodes {
-            diag_mask.set(id, id, true);
+            self.all_nodes_matrix.remove(id, id);
         }
 
-        // Bulk-remove from all_nodes_matrix
-        self.all_nodes_matrix.remove_mask(&diag_mask);
-
-        // Build per-label masks and nlm_mask using a single scan of the
-        // node_labels_matrix instead of one iterator per deleted node.
-        let num_labels = self.labels_matices.len();
-        let mut label_masks: Vec<Option<Matrix<bool>>> = vec![None; num_labels];
-        let mut nlm_mask = Matrix::<bool>::new(
-            self.node_labels_matrix.nrows().max(1),
-            self.node_labels_matrix
-                .ncols()
-                .max(num_labels as u64)
-                .max(1),
-        );
-
-        // Single scan: iterate all entries in node_labels_matrix and filter
-        // by deleted_nodes membership (O(1) bitmap check per entry).
-        for (node_id, label_id) in self.node_labels_matrix.iter(0, n) {
-            if !deleted_nodes.contains(node_id) {
-                continue;
+        // Which labels each deleted node carries. Collected first because the
+        // iterator borrows `node_labels_matrix` for the duration and the removals
+        // below need it mutably.
+        //
+        // `seek` is a row jump (`GxB_rowIterator_seekRow`), so one iterator
+        // re-seeked per deleted row replaces both the previous full scan and the
+        // per-node iterator construction that the full scan had replaced. There
+        // is no size threshold: this is O(|deleted|) for every delete, so there
+        // is no shape of input the old whole-matrix scan would win.
+        let mut pairs: Vec<(u64, u64)> = Vec::with_capacity(deleted_nodes.len() as usize);
+        {
+            let mut it = self.node_labels_matrix.iter(0, self.node_cap);
+            for node_id in deleted_nodes {
+                it.seek(node_id, node_id);
+                pairs.extend(it.by_ref());
             }
+        }
+
+        for (node_id, label_id) in pairs {
             let lid = label_id as usize;
-            let lm = label_masks[lid].get_or_insert_with(|| Matrix::<bool>::new(n, n));
-            lm.set(node_id, node_id, true);
 
             let label = &self.node_labels[lid];
             if self.node_indexer.has_index(label) {
@@ -1721,19 +1764,8 @@ impl Graph {
                 }
             }
 
-            nlm_mask.set(node_id, label_id, true);
-        }
-
-        // Bulk-remove from per-label matrices
-        for (lid, mask_opt) in label_masks.into_iter().enumerate() {
-            if let Some(mask) = mask_opt {
-                self.labels_matices[lid].remove_mask(&mask);
-            }
-        }
-
-        // Bulk-remove from node_labels_matrix
-        if nlm_mask.nvals() > 0 {
-            self.node_labels_matrix.remove_mask(&nlm_mask);
+            self.labels_matices[lid].remove(node_id, node_id);
+            self.node_labels_matrix.remove(node_id, label_id);
         }
 
         self.node_attrs.remove_all(deleted_nodes);
@@ -2000,13 +2032,18 @@ impl Graph {
         let available = deleted_len.saturating_sub(self.reserved_relationship_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted relationships
+        // First reclaim from deleted relationships. One ordered walk rather than a
+        // rank lookup per id — see `reserve_nodes` for why `select` per id is
+        // quadratic across a batch.
         let base = self.reserved_relationship_count;
         self.reserved_relationship_count += reclaimed;
-        for i in base..base + reclaimed {
-            let id = self.deleted_relationships.select(i).unwrap();
-            ids.push(RelationshipId(id));
-        }
+        ids.extend(
+            self.deleted_relationships
+                .iter()
+                .skip(base as usize)
+                .take(reclaimed as usize)
+                .map(RelationshipId),
+        );
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -2072,26 +2109,63 @@ impl Graph {
         }
 
         self.adjacancy_matrix
-            .set_all(srcs.iter().copied().zip(dsts.iter().copied()));
+            .set_all::<false>(srcs.iter().copied().zip(dsts.iter().copied()));
 
         let type_id = type_idx as u64;
         let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
-            .set_all(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+            .set_all::<true>(rel_ids.iter().copied().zip(type_ids.iter().copied()));
     }
 
-    /// Flush delta-plus into base for all shared matrices.
-    /// Reduces dp accumulation across multiple GRAPH.BULK commands.
+    /// Fold oversized delta-plus into the base for all shared matrices at
+    /// the end of a GRAPH.BULK command, preventing dp accumulation across
+    /// commands. `fold_latched` latches the fold decision (via `wait`) and
+    /// executes it immediately — mutations are done here, so the mid-tx
+    /// fold pathology cannot occur, and deferring to the next version's
+    /// `dup`/`flush` would leave the final command's deltas unfolded.
     pub fn flush_for_bulk(&mut self) {
-        self.all_nodes_matrix.flush();
-        self.node_labels_matrix.flush();
+        self.all_nodes_matrix.fold_latched();
+        self.node_labels_matrix.fold_latched();
         for m in &mut self.labels_matices {
-            m.flush();
+            m.fold_latched();
         }
-        self.adjacancy_matrix.flush();
-        self.relationship_type_matrix.flush();
+        self.adjacancy_matrix.fold_latched();
+        self.relationship_type_matrix.fold_latched();
         for t in &mut self.relationship_matrices {
-            t.flush();
+            t.fold_latched();
+        }
+    }
+
+    /// Prepare a just-committed version for publication: fold every delta that
+    /// has grown comparable to its base into that base, then materialize the
+    /// committed base (`m`) layer of every matrix and tensor.
+    ///
+    /// Folding bounds a committed version's delta memory; see
+    /// [`VersionedMatrix::fold_oversized`] for why the sub-hatch deltas are
+    /// deliberately left for the next `flush`.
+    ///
+    /// Waiting the bases is what makes publication safe: readers reach bases
+    /// lock-free (dp/dm reads go through the mutex-guarded `Matrix::wait`), so
+    /// a pending base in a visible snapshot lets concurrent readers corrupt
+    /// GrB state. No-op per matrix when already synced, and it has to run
+    /// after the fold, which leaves the base pending.
+    pub fn fold_oversized_deltas(&mut self) {
+        self.zero_matrix.wait_base();
+        self.adjacancy_matrix.fold_oversized();
+        self.adjacancy_matrix.wait_base();
+        self.node_labels_matrix.fold_oversized();
+        self.node_labels_matrix.wait_base();
+        self.relationship_type_matrix.fold_oversized();
+        self.relationship_type_matrix.wait_base();
+        self.all_nodes_matrix.fold_oversized();
+        self.all_nodes_matrix.wait_base();
+        for m in &mut self.labels_matices {
+            m.fold_oversized();
+            m.wait_base();
+        }
+        for t in &mut self.relationship_matrices {
+            t.fold_oversized();
+            t.wait_base();
         }
     }
 
@@ -2457,6 +2531,10 @@ impl Graph {
             super::graphblas::tensor::Tensor::extract,
         );
         for relationship_matrix in iter {
+            // The raw fwd layers may hold pending work; set_pattern's GrB ops
+            // would finish it internally, racing other readers on the shared
+            // handles. No-op when already synced.
+            relationship_matrix.wait_fwd();
             m.set_pattern(
                 Some(relationship_matrix.fwd_dm()),
                 relationship_matrix.fwd_m(),
@@ -3749,6 +3827,13 @@ impl Graph {
     ) -> Matrix<bool> {
         if rel_types.is_empty() {
             self.adjacancy_matrix.extract()
+        } else if let [rel_type] = rel_types {
+            // Single type: the extract already materializes an owned bool
+            // matrix; skip the extra new + eWiseAdd pass.
+            self.get_type_id(rel_type).map_or_else(
+                || Matrix::<bool>::new(self.node_cap, self.node_cap),
+                |type_id| self.relationship_matrices[usize::from(type_id)].extract(),
+            )
         } else {
             let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
             for rel_type in rel_types {
