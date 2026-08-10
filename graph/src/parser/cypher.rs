@@ -1635,14 +1635,17 @@ impl<'a> Parser<'a> {
     ///
     /// A number the lexer rejects counts too: reporting it with the sign the
     /// query author wrote is the more useful error.
-    fn number_follows_sign(&self) -> bool {
-        let mut lookahead = self.lexer.clone();
-        lookahead.next();
+    fn number_follows_sign(&mut self) -> bool {
+        let pos = self.lexer.pos(true);
+        self.lexer.next();
 
-        matches!(
-            lookahead.current(),
+        let is_number = matches!(
+            self.lexer.current(),
             Ok(Token::Integer(_) | Token::Float(_)) | Err(_)
-        )
+        );
+
+        self.lexer.set_pos(pos);
+        is_number
     }
 
     /// Parses a numeric literal carrying its own leading minus, per Cypher's
@@ -1657,24 +1660,28 @@ impl<'a> Parser<'a> {
     fn parse_signed_number_literal(
         &mut self
     ) -> Result<Option<DynTree<ExprIR<Arc<String>>>>, String> {
-        let mut lookahead = self.lexer.clone();
-        lookahead.next();
+        let pos = self.lexer.pos(true);
+        self.lexer.next();
 
         // `i64::MIN` only fits once the sign is applied, so the lexer hands it
         // back already negated and a bare occurrence is the overflow case
-        let literal = match lookahead.current() {
+        let literal = match self.lexer.current() {
             Ok(Token::Integer(i64::MIN)) => Value::Int(i64::MIN),
             Ok(Token::Integer(i)) => Value::Int(-i),
             Ok(Token::Float(f)) => Value::Float(-f),
             // an overflowing literal reports itself with the sign the query
-            // author wrote
+            // author wrote. Restored first so this leaves the lexer where it
+            // found it on every path, not only the ones that currently recover
             Err(e) => {
+                self.lexer.set_pos(pos);
                 return Err(e.replace("Integer overflow '", "Integer overflow '-"));
             }
-            _ => return Ok(None),
+            _ => {
+                self.lexer.set_pos(pos);
+                return Ok(None);
+            }
         };
 
-        self.lexer = lookahead;
         self.lexer.next();
 
         Ok(Some(tree!(ExprIR::Constant(literal))))
