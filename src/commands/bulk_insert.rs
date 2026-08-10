@@ -218,52 +218,40 @@ fn discard_created_graph(
     let _ = key.delete();
 }
 
-/// Owned handles on the argument strings this batch has to replicate.
+/// A command, held so a worker thread can replicate it after the calling context is
+/// gone. `argv[0]` is the command name, as with any Redis argument vector.
 ///
-/// Replication cannot be verbatim from the worker thread: `RM_ReplicateVerbatim`
-/// propagates `ctx->client->argv`, and a thread-safe context's client is a fake pooled
-/// one with no argv at all (Redis substitutes it because a real client is main-thread
-/// state). So the command is rebuilt with `RM_Replicate` — but rebuilt *from the
-/// client's own strings*, held here, rather than from bytes.
+/// Replication cannot be verbatim from a worker: `RM_ReplicateVerbatim` propagates
+/// `ctx->client->argv`, and a thread-safe context's client is a fake pooled one with no
+/// argv at all (Redis substitutes it because a real client is main-thread state). So the
+/// command goes out through `RM_Replicate` — but from *the client's own strings*, held
+/// here, rather than from bytes.
 ///
 /// That distinction is the point of this type. Handing `RM_Replicate` byte slices makes
-/// it allocate a fresh string per argument, duplicating the whole token payload — up to
-/// the loader's batch size, 64 MB by default and 1 GB if `--max-buffer-size` is raised.
-/// Holding the originals means propagation only bumps refcounts.
+/// it allocate a fresh string per argument, duplicating the whole payload — for
+/// `GRAPH.BULK` that is a batch, 64 MB by default and 1 GB if `--max-buffer-size` is
+/// raised. Holding the originals means propagation only bumps refcounts.
 struct HeldArgs {
-    /// The command name, spelled as the client spelled it. `RM_Replicate` takes this
-    /// separately from the vector and as a NUL-terminated C string — it calls
-    /// `lookupCommandByCString` on it, then builds argv[0] from it itself — so this is
-    /// the one argument that cannot be a held `RedisModuleString`. Copied from
-    /// `args[0]` rather than hardcoded, so it can never drift from the name the command
-    /// is registered under, and so the client's casing survives into the stream.
-    cmd: CString,
-    /// The arguments after the command name, in the order they must be propagated.
     argv: Vec<*mut raw::RedisModuleString>,
 }
 
 // SAFETY: every entry is an immutable, refcounted `robj` this struct owns a reference
 // to, so nothing can free one while it is held. Redis requires the GIL for access to
-// strings that came from client command arguments; both accesses here satisfy that —
-// the replicate call runs inside the writer session, and `Drop` takes the GIL itself.
+// strings that came from client command arguments; every access here satisfies that —
+// `replicate` runs inside the writer session, and `Drop` takes the GIL itself.
 unsafe impl Send for HeldArgs {}
 
 impl HeldArgs {
-    /// Hold the whole command: `args[0]` is its name, `args[1..]` is already the exact
-    /// vector to propagate, in order. Call on the main thread, while the command's own
-    /// context still owns those strings.
+    /// Hold an entire argument vector, command name included. Call on the main thread,
+    /// while the calling context still owns those strings.
     ///
-    /// Because the arguments are the client's own strings, the propagated command carries
-    /// the client's exact bytes: nothing is re-serialized, so a count written as `010` is
-    /// replayed as `010` rather than normalized to `10`.
+    /// Because these are the client's own strings, whatever is propagated from them
+    /// carries the client's exact bytes: nothing is re-serialized, so a count written as
+    /// `010` replays as `010` rather than normalized to `10`.
     fn hold(args: &[RedisString]) -> Self {
-        // A command name cannot contain an interior NUL: Redis matched these bytes
-        // against the registered name to dispatch here in the first place.
-        let cmd = CString::new(args[0].as_slice())
-            .expect("a dispatched command name has no interior NUL");
         // SAFETY: called on the main thread inside the command, so the GIL is held and
         // every argument string is still alive.
-        let argv = args[1..]
+        let argv = args
             .iter()
             .map(|a| unsafe {
                 let held = ffi::hold_string(a.inner);
@@ -271,7 +259,34 @@ impl HeldArgs {
                 held
             })
             .collect();
-        Self { cmd, argv }
+        Self { argv }
+    }
+
+    /// Propagate this command to replicas and the AOF.
+    ///
+    /// The name is split back out here rather than stored apart: `RM_Replicate` wants it
+    /// as a NUL-terminated `const char *`, calls `lookupCommandByCString` on it, and then
+    /// builds argv[0] from it itself — so passing the full vector as well would emit the
+    /// name twice and shift every argument by one. Taking it from `argv[0]` instead of a
+    /// literal means it cannot drift from the name the command is registered under, and
+    /// the client's casing reaches the stream.
+    ///
+    /// # Safety
+    /// `ctx` must be a valid module context, and the GIL must be held — both because
+    /// these strings came from client command arguments and because propagation is
+    /// flushed when the GIL is released.
+    unsafe fn replicate(
+        &self,
+        ctx: *mut raw::RedisModuleCtx,
+    ) {
+        let mut len = 0;
+        let name = raw::string_ptr_len(self.argv[0], &raw mut len);
+        // SAFETY: `name`/`len` describe the command name's bytes, valid while it is held.
+        let name = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), len) };
+        // A dispatched command name has no interior NUL: Redis matched these very bytes
+        // against the registered name to reach this handler.
+        let cmd = CString::new(name).expect("a dispatched command name has no interior NUL");
+        unsafe { ffi::replicate_argv(ctx, &cmd, &self.argv[1..]) };
     }
 }
 
@@ -809,7 +824,7 @@ pub fn graph_bulk_insert(
                 // SAFETY: `ts_ctx` is this worker's context, every entry of `held.argv`
                 // is a string this closure owns a reference to, and the session holds
                 // the GIL.
-                unsafe { ffi::replicate_argv(ts_ctx, &held.cmd, &held.argv) };
+                unsafe { held.replicate(ts_ctx) };
                 Ok(())
             };
             match result {
