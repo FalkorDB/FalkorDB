@@ -45,3 +45,10 @@ apt-get install -y --no-install-recommends \
   references and no LaTeX warnings. If no TeX is installed locally,
   `docker run --rm -v "$PWD:/w" -w /w texlive/texlive:latest pdflatex
   -interaction=nonstopmode tensor.tex` needs no host toolchain.
+
+## Open work
+
+[`OPEN_WORK.md`](OPEN_WORK.md) expands the paper's Future work section into
+actionable form: for each open item, the design, how to know it worked, and what
+could go wrong. It also records what the evaluation deliberately does not settle,
+so that scope does not have to be re-derived from the paper's prose.

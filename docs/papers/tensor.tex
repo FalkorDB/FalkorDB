@@ -2733,6 +2733,10 @@ ever stored inside data the runtime owns and may copy.
 \section{Future work}
 \label{sec:future}
 
+Each item below is expanded in \texttt{docs/papers/OPEN\_WORK.md} in the
+repository, which carries the design, the acceptance criteria and the known
+risks for each --- this section says what is open, that says how to close it.
+
 \paragraph{Land the block-indexed key.} The design in \S\ref{sec:limits} that
 removes the node-identifier ceiling is settled but not yet implemented. Two
 things want measuring once it is: whether a sparse map over populated blocks
@@ -2748,24 +2752,70 @@ the model does not cover can still break an invariant in production.
 Mechanisation and run-time checking answer different questions, and the first
 does not retire the second.
 
-The repairs in \S\ref{sec:limits} are what we would do first, and they are
-ordered by how much they change. Checked arithmetic in
-Theorem~\ref{thm:count} and a commit-time comparison against $me$'s vector count
-are both cheap enough to leave enabled in release, which is the interesting
-claim: the obvious audit --- asserting the identity against a full scan --- is
-$O(|E|)$ and therefore debug-only, whereas exploiting
-Invariant~\ref{inv:promotion} makes the check proportional to the number of
-multi-edge pairs. What we would want to measure before enabling it by default is
-the cost of that vector-count read while $me$ carries live deltas, since that is
-the one case where it is not a single metadata access.
+Two of the three repairs in \S\ref{sec:limits} have been prototyped, and doing so
+answered the question this paragraph previously left open --- in the negative,
+which is the useful outcome.
 
-\paragraph{Close the two remaining modelling gaps.} Iteration is mechanised by
-its \emph{result} --- the effective set restricted to a row range --- rather
-than as the three-way lookahead merge that computes it, and the
-\texttt{Encode}/\texttt{Decode} blob format is outside the model on both
-layers. Those are the two places where the code is ahead of the proof, and the
-merge is the one with delicate index reasoning, so it is the more valuable of
-the two to close.
+\emph{Checked arithmetic is free and should simply be done.} Computing
+Theorem~\ref{thm:count} with checked operations turns a wrapped count near
+$2^{64}$ into a detectable failure. It matters more than it sounds: the count
+reaches a \texttt{Vec} pre-allocation in one graph algorithm, so a wrapped value
+is an allocation abort rather than a wrong answer.
+
+\emph{The cheap check is cheap only when $me$ is assembled.} Recovering
+$\textit{multi}$ from $me$'s vector count costs a flat $125$--$250$\,ns once $me$
+is assembled, and $\approx\!26$\,ns per multi-edge pair while its deltas are
+live --- $70\,\mu$s at $1{,}000$ pairs and $5.2$\,ms at $200{,}000$. Five
+milliseconds is not a price to pay on every commit, so the check must run only in
+the assembled case and skip otherwise. That loses little: the fold at commit
+leaves $me$ assembled most of the time, so drift is still caught within a commit
+or two of the mutation that caused it.
+
+\emph{The vector count is a screen, not an authority.} \texttt{GxB\_rowIterator\_kount}
+is specified as an \emph{upper} bound on the non-empty rows: implicit rows are
+guaranteed empty and excluded, but an explicit row is not guaranteed non-empty.
+SuiteSparse prunes emptied vectors on \texttt{wait}, so the two coincide in
+practice --- verified directly, demotions included --- but relying on that would
+invert the check's purpose, since an over-counting screen would ``repair'' a
+correct counter into a wrong one. A mismatch must therefore be confirmed by the
+exact walk before anything is changed, which is affordable precisely because it
+runs only when something is already believed to be wrong.
+
+Which leaves the third repair as the one worth landing. Rather than police the
+counter, remove the obligation: seal $me$ and its counter into one type whose only
+mutators move both together, as \S\ref{sec:components}'s delta layers already do
+with their own counts and fold latches. Every mutation of $me$'s rows is already
+confined to the tensor's own module, and the single external reader is read-only,
+so the encapsulation is available today. It converts ``every mutation path must
+remember'' into ``two functions do it'' --- checkable by reading a type instead of
+auditing call sites --- and it subsumes the run-time check rather than
+complementing it. Checked arithmetic still earns its place afterwards, since
+encapsulation cannot defend against a corrupt decoded blob.
+
+\paragraph{Close the modelling gaps.} Three places where the code is ahead of
+the proof. Iteration is mechanised by its \emph{result} --- the effective set
+restricted to a row range --- rather than as the three-way lookahead merge that
+computes it, and the merge is where the delicate index reasoning lives. The
+\texttt{Encode}/\texttt{Decode} blob format is outside the model on both layers;
+the half of that worth having is not round-tripping but the guarantee that a
+malformed blob is rejected rather than decoded into a tensor violating the
+invariants, since a corrupt blob is one of the two ways a proved invariant can
+still break in a running process.
+
+The third is newer and the most urgent, because it is the one where the code
+moved after the proof was written. The model composes deletion as per-edge
+transitions --- \texttt{removeOne} and its three reachable shapes --- folded over
+the batch. To make demotion linear in the batch (\S\ref{sec:evalosc}) the
+implementation now reads each pair's $me$ row once, replays that pair's
+transitions into a plan, and applies the plan in a separate write phase. The
+decisions are intended to be identical, so the invariants are believed intact,
+but ``batching by pair and replaying is equivalent to the sequential per-edge
+fold'' is an obligation the model does not state, and it is currently supported
+by regression tests rather than by a proof. Closing it means proving the
+per-pair plan agrees with \texttt{foldl removeOne} restricted to that pair, and
+that plans for distinct pairs commute --- which they should, since they touch
+disjoint $me$ rows and disjoint forward cells, and that disjointness is exactly
+what makes the two-phase split sound.
 
 \paragraph{Demotion policy.} Demotion is currently eager: the moment a pair
 drops to one edge, its identifier returns inline and its $me$ row is emptied.
