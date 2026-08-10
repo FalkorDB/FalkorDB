@@ -1585,6 +1585,66 @@ impl<'a> Runtime<'a> {
         values
     }
 
+    /// Bulk-read `attr` for `rel_ids`, the relationship counterpart of
+    /// [`materialize_node_property`](Self::materialize_node_property). Same
+    /// shape, same reason: on the read-only path a single batched attribute-store
+    /// call covers every id, instead of one lookup per row.
+    pub fn materialize_relationship_property(
+        &self,
+        rel_ids: &[RelationshipId],
+        attr: &Arc<String>,
+    ) -> (Column, NullBitmap) {
+        classify_column(self.materialize_relationship_property_values(rel_ids, attr))
+    }
+
+    /// Like
+    /// [`materialize_relationship_property`](Self::materialize_relationship_property)
+    /// but returns the raw per-relationship values without classifying them
+    /// into a typed column, for callers that must preserve exact value types.
+    pub fn materialize_relationship_property_values(
+        &self,
+        rel_ids: &[RelationshipId],
+        attr: &Arc<String>,
+    ) -> Vec<Value> {
+        let g = self.g.borrow();
+        let attr_idx = self.rel_attr_id(&g, attr);
+
+        let deleted = self.deleted_relationships.borrow();
+        let pending = self.pending.borrow();
+
+        let mut values = Vec::with_capacity(rel_ids.len());
+        if deleted.is_empty() && !pending.has_relationship_attrs() {
+            // Hot read-only path: a single batch call covers all relationship ids.
+            if let Some(idx) = attr_idx {
+                g.get_relationship_attributes_by_idx(rel_ids, idx, &Value::Null, &mut values);
+            } else {
+                values.resize(rel_ids.len(), Value::Null);
+            }
+        } else {
+            for &id in rel_ids {
+                let val = deleted.get(&id).map_or_else(
+                    || {
+                        attr_idx
+                            .and_then(|idx| {
+                                pending
+                                    .get_relationship_attribute(id, idx)
+                                    .cloned()
+                                    .or_else(|| g.get_relationship_attribute_by_idx(id, idx))
+                            })
+                            .unwrap_or(Value::Null)
+                    },
+                    |dr| dr.attrs.get(attr).cloned().unwrap_or(Value::Null),
+                );
+                values.push(val);
+            }
+        }
+        drop(g);
+        drop(deleted);
+        drop(pending);
+
+        values
+    }
+
     pub fn get_node_labels(
         &self,
         id: NodeId,
