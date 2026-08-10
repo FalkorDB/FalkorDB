@@ -1302,6 +1302,19 @@ impl<'a> Batch<'a> {
             _ => None,
         }
     }
+
+    /// Extracts relationship IDs for a given variable from this batch.
+    /// Returns `None` if the variable doesn't hold relationship values.
+    #[must_use]
+    pub fn extract_rel_ids(
+        &self,
+        var_id: u32,
+    ) -> Option<Vec<RelationshipId>> {
+        match self.column(var_id) {
+            Column::RelIds(ids) => Some(ids.clone()),
+            _ => None,
+        }
+    }
 }
 
 /// A borrowed view of a single row of a [`Batch`], implementing [`RowView`]

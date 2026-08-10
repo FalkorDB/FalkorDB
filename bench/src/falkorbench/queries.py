@@ -328,6 +328,12 @@ QUERIES = [
 
     # ---- round 3: multi-edges, UDF type round-trips, deletes, comparisons --
     Q("multi-edge read",     False, "MATCH (:MEnd {id: 0})-[r:MULTI]->(:MEnd {id: 1}) RETURN count(r), collect(r.k)"),
+    # Aggregate over an *edge* property. Guards the aggregate operator's
+    # vectorized path: `sum(r.prop)` classifies as AggInputKind::Property, whose
+    # bulk materializer is node-only, so a regression there silently drops the
+    # whole batch to the per-row path (an owned Row per row). Uses the existing
+    # MULTI corpus so no other row's numbers move.
+    Q("multi-edge agg",      False, "MATCH ()-[r:MULTI]->() RETURN sum(r.k)"),
     Q("multi-edge undirected", False, "MATCH (a:MEnd {id: 0})-[r:MULTI]-(b) RETURN count(r)"),
     Q("multi-edge demote/promote", True, "MATCH (a:MEnd {id: 0})-[r:MULTI]->(b:MEnd {id: 1}) WHERE r.k > 1 DELETE r WITH DISTINCT a, b CREATE (a)-[:MULTI {k: 2}]->(b), (a)-[:MULTI {k: 3}]->(b)", 500),
     Q("UDF echo scalars",    False, "UNWIND range(0, 99) AS i RETURN count(bench.echo(i) + bench.echo(1.5)), bench.echo(true), bench.echo(null), bench.echo('s')"),
