@@ -1311,13 +1311,23 @@ impl Graph {
         let available = deleted_len.saturating_sub(self.reserved_node_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted nodes
+        // First reclaim from deleted nodes.
+        //
+        // One ordered walk, not a rank lookup per id: `RoaringTreemap::select(i)`
+        // restarts at the first container every call, summing cardinalities until
+        // it reaches `i` and then scanning words inside that container, so a
+        // batch of N reclaims costs O(N * position) rather than O(pool). It was
+        // the hottest single leaf in the module on a create-after-delete profile.
+        // `skip` walks the same iterator once, so the whole batch is one pass.
         let base = self.reserved_node_count;
         self.reserved_node_count += reclaimed;
-        for i in base..base + reclaimed {
-            let id = self.deleted_nodes.select(i).unwrap();
-            ids.push(NodeId(id));
-        }
+        ids.extend(
+            self.deleted_nodes
+                .iter()
+                .skip(base as usize)
+                .take(reclaimed as usize)
+                .map(NodeId),
+        );
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -2022,13 +2032,18 @@ impl Graph {
         let available = deleted_len.saturating_sub(self.reserved_relationship_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted relationships
+        // First reclaim from deleted relationships. One ordered walk rather than a
+        // rank lookup per id — see `reserve_nodes` for why `select` per id is
+        // quadratic across a batch.
         let base = self.reserved_relationship_count;
         self.reserved_relationship_count += reclaimed;
-        for i in base..base + reclaimed {
-            let id = self.deleted_relationships.select(i).unwrap();
-            ids.push(RelationshipId(id));
-        }
+        ids.extend(
+            self.deleted_relationships
+                .iter()
+                .skip(base as usize)
+                .take(reclaimed as usize)
+                .map(RelationshipId),
+        );
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
