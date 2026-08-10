@@ -50,6 +50,7 @@ mod eliminate_true_filters;
 mod fuse_anonymous_traverse;
 mod fuse_optional_traverse;
 mod push_filters_down;
+mod reduce_bound_edge;
 mod reduce_count;
 mod reduce_expand_into;
 mod reduce_var_len_path;
@@ -76,6 +77,7 @@ use eliminate_true_filters::eliminate_true_filters;
 use fuse_anonymous_traverse::fuse_anonymous_traverse;
 use fuse_optional_traverse::fuse_optional_traverse;
 use push_filters_down::push_filters_down;
+use reduce_bound_edge::reduce_bound_edge;
 use reduce_count::reduce_count;
 use reduce_expand_into::reduce_expand_into;
 use reduce_var_len_path::reduce_var_len_path;
@@ -148,6 +150,10 @@ pub fn optimize(
 
     // Runs last so no earlier pass has to reason about optional traverses.
     fuse_optional_traverse(&mut optimized_plan);
+
+    // After every pass that rebuilds a CondTraverse or moves its ancestors, so
+    // the "does anything read this edge" answer is the final plan's.
+    reduce_bound_edge(&mut optimized_plan);
 
     optimized_plan
 }
