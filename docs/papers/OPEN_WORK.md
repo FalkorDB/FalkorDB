@@ -16,79 +16,43 @@ claim is about the allocator.
 
 ---
 
-## 1. Seal the counter with the structure it caches
+## 1. The counter — done, by deletion
 
-**Status:** open. A prototype of the *weaker* repair (a run-time check) exists and
-is described below as the road not taken.
+**Status:** closed by #2439 (stacked on #2431). Recorded here because the route
+taken was not the one this document first recommended, and the reason is useful.
 
-**Problem.** `multi_count` is a cache of a structural property of `me` — by
-promotion completeness, `ε(p) = MULTI` exactly when row `κ(p)` of `me` is
-non-empty. Seven call sites add or remove a row of `me`; three maintain the
-counter. Nothing makes the fourth-to-seventh wrong today, but nothing stops an
-eighth from forgetting. The failure is quiet and remote: `Tensor::edge_count`
-subtracts the counter, so drift surfaces as a wrong edge count in some later
-query, and an underflow surfaces as a value near `2^64` — which reaches
-`Vec::with_capacity` in `algo_procedures.rs`, i.e. an allocation abort rather
-than a wrong answer.
+The plan was to seal `me` and `multi_count` into one type so no call site could
+forget to move both. What landed instead deletes the field and derives the
+quantity at each `edge_count()`, which is stronger: there is no cache to keep
+honest, so there is no obligation to encapsulate.
 
-**Design.** Move `me` and `multi_count` into one type — call it `EdgeOverflow` —
-whose only mutators are the transitions, so the two cannot move independently:
+Two properties of the artifact made that viable, neither of which was obvious
+until checked:
 
-```rust
-struct EdgeOverflow {
-    me: VersionedMatrix<bool>,
-    multi: u64,
-}
+- `has_multi_edge()` never used the counter — it already asks `me.nvals() != 0`.
+- `Decode` never read the counter from the blob; it derived it from the tensor
+  section's own counts. **The on-disk format is unaffected**, which is what made
+  this a refactor rather than a format migration.
 
-impl EdgeOverflow {
-    /// A pair gains its second edge: both ids move in, `multi` goes up.
-    fn promote(&mut self, key: u64, first: u64, second: u64);
-    /// A multi pair gains a further edge: `multi` unchanged.
-    fn add(&mut self, key: u64, id: u64);
-    /// A multi pair loses an id. Returns the survivor when this demotes it,
-    /// in which case `multi` goes down.
-    fn remove(&mut self, key: u64, id: u64) -> Option<u64>;
-    /// Read-only projections the rest of the tensor needs.
-    fn ids(&self, key: u64) -> impl Iterator<Item = u64>;
-    fn multi(&self) -> u64;
-}
-```
+The derivation is ordered by cost: a graph with no multi-edge pair answers from
+`nvals`; an assembled `me` answers from its vector count, which is metadata; only
+an `me` carrying live deltas needs an `O(multi)` walk. The walk was the reason to
+expect trouble, and measurement disposed of it — commit folds `me`, so no query
+shape reaches that case. Suite instructions came out at 0.9961x and 1.0018x over
+two independent before/after pairs.
 
-The counter stops being independent state and becomes a private field only four
-functions can touch. This is the move the delta layers already made: `Delta<T>`
-bundles a layer with its approximate count and its fold latch precisely so no
-caller has to remember to update them together.
+**Still worth doing:** checked arithmetic in the cardinality identity. Deriving
+the count removes the way a *mutation path* can break the identity, not the ways
+a corrupt decoded blob or a memory error can, and the subtractions reach a `Vec`
+pre-allocation in `algo_procedures`. Ten lines, no behaviour change.
 
-**Why it is available now.** Every mutation of `me`'s rows is inside
-`tensor.rs`, and the one external reader — `algo_procedures.rs`, which builds a
-row-reduction over `me.m()`, `me.dp()`, `me.dm()` — is strictly read-only. So
-the encapsulation needs no changes outside the module beyond keeping that
-read-only projection available.
-
-**Acceptance.** `multi_count` no longer appears outside the new type;
-`cargo test -p graph` and the flow suite unchanged; the multiplicity sweep
-unchanged within noise (this is a refactor, not an optimisation).
-
-**Risks.** The promote path is entangled with the batch map in
-`set_all_from_slices`, which retroactively promotes a pair whose second edge
-arrives later in the same batch — the new type has to express that without
-leaking its internals back out. Keep checked arithmetic in the cardinality
-identity regardless: encapsulation defends against a forgetful call site, not
-against a corrupt decoded blob or a memory error.
-
-**Effort.** A day, mostly in `set_all_from_slices` and `remove_all`.
-
-**The road not taken.** A commit-time check that recovers the count from `me`
-and repairs the counter. It works, and it measured free at the commit level, but
-it only makes the drift loud instead of impossible, and it carries two
-subtleties that the encapsulation removes entirely: the recovery is
-`O(multi)` rather than a metadata read whenever `me` carries live deltas
-(5.2 ms at 200,000 pairs, so the check has to skip that case), and
-`GxB_rowIterator_kount` is only an *upper* bound on non-empty rows, so it can
-serve as a screen but never as the authority — an over-counting screen would
-"repair" a correct counter into a wrong one. Prefer the type.
-
----
+**What not to bother with:** the run-time check this document previously
+described (recover the count at commit, compare, repair). It is redundant now.
+Its two subtleties are recorded only because they would resurface for anyone
+tempted to reintroduce a cache: recovery is `O(multi)` rather than metadata
+whenever `me` has live deltas, and `GxB_rowIterator_kount` is only an *upper*
+bound on non-empty rows, so it can screen but never adjudicate — an over-counting
+screen would "repair" a correct counter into a wrong one.
 
 ## 2. Land the block-indexed compound key
 

@@ -2781,16 +2781,33 @@ correct counter into a wrong one. A mismatch must therefore be confirmed by the
 exact walk before anything is changed, which is affordable precisely because it
 runs only when something is already believed to be wrong.
 
-Which leaves the third repair as the one worth landing. Rather than police the
-counter, remove the obligation: seal $me$ and its counter into one type whose only
-mutators move both together, as \S\ref{sec:components}'s delta layers already do
-with their own counts and fold latches. Every mutation of $me$'s rows is already
-confined to the tensor's own module, and the single external reader is read-only,
-so the encapsulation is available today. It converts ``every mutation path must
-remember'' into ``two functions do it'' --- checkable by reading a type instead of
-auditing call sites --- and it subsumes the run-time check rather than
-complementing it. Checked arithmetic still earns its place afterwards, since
-encapsulation cannot defend against a corrupt decoded blob.
+Which left the third repair, and it turned out to be the one to take --- though
+not in the form anticipated. The obligation can be removed outright rather than
+sealed behind a type: $\textit{multi}$ is derived from $me$ at each
+\textsc{EdgeCount} and the field deleted. Two properties of the artifact made
+that cheaper than the analysis above suggests. \texttt{has\_multi\_edge} never
+consulted the counter --- it already asks whether $me$ is non-empty --- and the
+decoder never read the counter from the blob, deriving it from the tensor
+section's own counts, so the on-disk format is unaffected. That leaves
+\textsc{EdgeCount} as the sole consumer, and it is reached from planning, the
+introspection procedures and two graph algorithms, never per row.
+
+The derivation has three cases, and the ordering matters. A graph with no
+multi-edge pair --- the case the whole design is built around --- answers from
+$|me|$. An assembled $me$ answers from its vector count, which is metadata. Only
+an $me$ carrying live deltas needs the $O(\textit{multi})$ walk, and measurement
+shows that case is not reached by any query shape: the fold at commit leaves $me$
+assembled, so a later count takes the metadata path. Across the benchmark suite
+the change measures $0.9961\times$ and $1.0018\times$ instructions over two
+independent before/after pairs, with the promoting and demoting write paths flat;
+a metadata count query over a graph of exclusively multi-edge pairs costs
+$1.03$--$1.12\times$ the counter's at $10^4$ and $10^5$ pairs.
+
+So the field is gone, and with it the obligation that made \S\ref{sec:limits}
+list this as a hazard at all. What remains worth doing is the checked arithmetic:
+deriving the quantity removes the way a \emph{mutation path} can break the
+identity, but not the ways a corrupt decoded blob or a memory error can, and the
+identity's subtractions still reach a pre-allocation in one graph algorithm.
 
 \paragraph{Close the modelling gaps.} Three places where the code is ahead of
 the proof. Iteration is mechanised by its \emph{result} --- the effective set
