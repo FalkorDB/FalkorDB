@@ -866,6 +866,7 @@ impl<'a> Runtime<'a> {
                 transposed,
                 chain,
                 optional,
+                bind_relationship,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -880,6 +881,7 @@ impl<'a> Runtime<'a> {
                     *transposed,
                     chain,
                     *optional,
+                    *bind_relationship,
                     idx,
                     record_cap,
                 )))
