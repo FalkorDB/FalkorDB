@@ -4,7 +4,9 @@ Long-form design write-ups of FalkorDB internals, in arXiv preprint form.
 
 | File | Subject |
 | --- | --- |
-| `tensor.tex` | `Tensor`, the per-relationship-type edge store (`graph/src/graph/graphblas/tensor.rs`) — inline edge identifiers with sentinel promotion, the MVCC delta algebra for value-carrying layers, the square-root fold policy and its measured constants, the two hazard classes that come from building on a non-blocking GraphBLAS runtime, and the Lean 4 mechanisation of the invariant set. |
+| `tensor.tex` | `Tensor`, the per-relationship-type edge store (`graph/src/graph/graphblas/tensor.rs`) — inline edge identifiers with sentinel promotion, the MVCC delta algebra for value-carrying layers, the square-root fold policy and its measured constants, the measured
+multiplicity sweep against the C container-per-cell implementation and what it
+refutes, the two hazard classes that come from building on a non-blocking GraphBLAS runtime, and the Lean 4 mechanisation of the invariant set. |
 
 ## Building
 
