@@ -97,8 +97,8 @@ use super::{
     GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS,
     GxB_ONE_BOOL, GxB_Option_Field, GxB_Print_Level, GxB_SPARSE, GxB_init,
     GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
-    GxB_rowIterator_getRowIndex, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
-    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_kount, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -572,6 +572,56 @@ impl<T> Matrix<T> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self
+    }
+
+    /// Number of vectors (rows) the storage holds — for a hypersparse matrix,
+    /// the number of non-empty rows, read from the data structure rather than
+    /// counted.
+    ///
+    /// Two caveats, both measured rather than assumed:
+    ///
+    /// * `GxB_rowIterator_kount` is documented only as an *upper* bound: "if A
+    ///   is hypersparse, kount is the # of vectors held in the data structure,
+    ///   some of which may be empty". SuiteSparse in fact prunes emptied
+    ///   vectors on `wait`, so for an assembled hypersparse matrix the two
+    ///   coincide — verified directly, including after removals that empty a
+    ///   row, which is the case that matters. For a sparse, bitmap or full
+    ///   matrix kount is `nrows`, which is why this returns `None` unless the
+    ///   storage is hypersparse: at `me`'s dimensions `nrows` is meaningless as
+    ///   a row count and a caller must not silently compare against it.
+    /// * attaching an iterator materializes pending work, so `self` must
+    ///   already be waited. Callers reach this through
+    ///   [`Tensor::multi_pairs_in_me`], which waits first.
+    #[must_use]
+    pub fn hyper_vector_count(&self) -> Option<u64> {
+        debug_assert!(
+            !self.has_pending.load(Ordering::Relaxed),
+            "hyper_vector_count on a pending matrix: the attach below would \
+             materialize it, which is unsound on a shared layer"
+        );
+        let mut sparsity: i32 = 0;
+        let info = unsafe {
+            GrB_Matrix_get_INT32(
+                *self.m,
+                &raw mut sparsity,
+                GxB_Option_Field::GxB_SPARSITY_STATUS as _,
+            )
+        };
+        debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        if sparsity != GxB_HYPERSPARSE as i32 {
+            return None;
+        }
+        unsafe {
+            let mut it: GxB_Iterator = null_mut();
+            let info = GxB_Iterator_new(&raw mut it);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let info = GxB_rowIterator_attach(it, *self.m, null_mut());
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            let kount = GxB_rowIterator_kount(it);
+            let info = GxB_Iterator_free(&raw mut it);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            Some(kount)
+        }
     }
 
     /// Transposes the matrix.
