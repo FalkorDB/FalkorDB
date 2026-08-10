@@ -41,15 +41,15 @@ fn main() {
         std::env::var("GRAPHBLAS_LIB_DIR").unwrap_or_else(|_| "/usr/local/lib".to_string());
     println!("cargo:rerun-if-env-changed=GRAPHBLAS_LIB_DIR");
     println!("cargo:rustc-link-search={graphblas_lib_dir}");
-    println!("cargo:rustc-link-lib=static=graphblas");
 
     // LAGraph static libraries
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let lagraph_dir = std::path::Path::new(&manifest_dir).join("../lagraph_lib");
     println!("cargo:rustc-link-search=native={}", lagraph_dir.display());
     println!("cargo:rustc-link-search=native=/data/lagraph_lib");
-    println!("cargo:rustc-link-lib=static=lagraph");
     println!("cargo:rustc-link-lib=static=lagraphx");
+    println!("cargo:rustc-link-lib=static=lagraph");
+    println!("cargo:rustc-link-lib=static=graphblas");
 
     // omp must come AFTER graphblas/lagraph: GNU ld resolves static archives
     // left-to-right, and those archives reference __kmpc_* symbols. The wrong

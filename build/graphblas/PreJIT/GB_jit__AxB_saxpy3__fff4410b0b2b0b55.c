@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jit__subassign_08n__07fc004111121110.c
+// GB_jit__AxB_saxpy3__fff4410b0b2b0b55.c
 //------------------------------------------------------------------------------
 // SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
@@ -10,51 +10,52 @@
 
 #include "include/GB_jit_kernel.h"
 
-// subassign: C<M,struct> any= A 
-#define GB_ASSIGN_KIND GB_SUBASSIGN
-#define GB_SCALAR_ASSIGN 0
-#define GB_I_KIND GB_ALL
-#define GB_J_KIND GB_ALL
-#define GB_I_TYPE uint64_t
-#define GB_J_TYPE uint64_t
-#define GB_I_IS_32 0
-#define GB_J_IS_32 0
-#define GB_C_REPLACE 0
+// semiring: (plus, second, double)
 
-// accum: (any, bool)
+// monoid:
+#define GB_Z_TYPE double
+#define GB_ADD(z,x,y) z = (x) + (y)
+#define GB_UPDATE(z,y) z += y
+#define GB_DECLARE_IDENTITY(z) double z = 0
+#define GB_DECLARE_IDENTITY_CONST(z) const double z = 0
+#define GB_HAS_IDENTITY_BYTE 1
+#define GB_IDENTITY_BYTE 0x00
+#define GB_PRAGMA_SIMD_REDUCTION_MONOID(z) GB_PRAGMA_SIMD_REDUCTION (+,z)
+#define GB_Z_IGNORE_OVERFLOW 1
+#define GB_Z_SIZE  8
+#define GB_Z_NBITS 64
+#define GB_Z_ATOMIC_BITS 64
+#define GB_Z_HAS_ATOMIC_UPDATE 1
+#define GB_Z_HAS_OMP_ATOMIC_UPDATE 1
+#define GB_Z_HAS_CUDA_ATOMIC_BUILTIN 1
+#define GB_Z_CUDA_ATOMIC GB_cuda_atomic_add
+#define GB_Z_CUDA_ATOMIC_TYPE double
 
-// accum operator types:
-#define GB_Z_TYPE bool
-#define GB_X_TYPE bool
-#define GB_Y_TYPE bool
-#define GB_DECLAREZ(zwork) bool zwork
-#define GB_DECLAREX(xwork) bool xwork
-#define GB_DECLAREY(ywork) bool ywork
+// multiplicative operator:
+#define GB_X_TYPE void
+#define GB_Y_TYPE double
+#define GB_MULT(z,x,y,i,k,j) z = y
 
-// accum operator:
-#define GB_ACCUM_OP(z,x,y) z = y
-#define GB_UPDATE(z,y) z = y
-#define GB_ACCUMULATE_aij(Cx,pC,Ax,pA,A_iso,ywork,C_iso) \
-{                                          \
-    GB_UPDATE (Cx [pC], Ax [pA]) ;          \
-}
-#define GB_ACCUMULATE_scalar(Cx,pC,ywork,C_iso) /* unused */
+// multiply-add operator:
+#define GB_MULTADD(z,x,y,i,k,j) z += y
 
-// C matrix: hypersparse
-#define GB_C_IS_HYPER  1
-#define GB_C_IS_SPARSE 0
+// special cases:
+
+// C matrix: sparse
+#define GB_C_IS_HYPER  0
+#define GB_C_IS_SPARSE 1
 #define GB_C_IS_BITMAP 0
 #define GB_C_IS_FULL   0
 #define GBp_C(Cp,k,vlen) Cp [k]
-#define GBh_C(Ch,k)      Ch [k]
+#define GBh_C(Ch,k)      (k)
 #define GBi_C(Ci,p,vlen) Ci [p]
 #define GBb_C(Cb,p)      1
 #define GB_C_NVALS(e) int64_t e = C->nvals
 #define GB_C_NHELD(e) GB_C_NVALS(e)
 #define GB_C_ISO 0
 #define GB_C_IN_ISO 0
-#define GB_C_TYPE bool
-#define GB_PUTC(zwork,Cx,p) Cx [p] = zwork
+#define GB_C_TYPE double
+#define GB_PUTC(c,Cx,p) Cx [p] = c
 #define GB_Cp_TYPE uint32_t
 #define GB_Cj_TYPE uint32_t
 #define GB_Cj_SIGNED_TYPE int32_t
@@ -63,13 +64,6 @@
 #define GB_Cp_BITS 32
 #define GB_Cj_BITS 32
 #define GB_Ci_BITS 32
-#define GB_DECLAREC(cwork) bool cwork
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
-#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso) \
-    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso)
-#define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [p]
-#define GB_COPY_cwork_to_C(Cx,pC,cwork,C_iso) /* unused */
-#define GB_COPY_scalar_to_cwork(cwork,scalar) /* unused */
 
 // M matrix: sparse
 #define GB_M_IS_HYPER  0
@@ -98,22 +92,23 @@
 #define GB_Mj_BITS 32
 #define GB_Mi_BITS 32
 
-// A matrix: hypersparse
-#define GB_A_IS_HYPER  1
-#define GB_A_IS_SPARSE 0
+// A matrix: sparse
+#define GB_A_IS_HYPER  0
+#define GB_A_IS_SPARSE 1
 #define GB_A_IS_BITMAP 0
 #define GB_A_IS_FULL   0
 #define GBp_A(Ap,k,vlen) Ap [k]
-#define GBh_A(Ah,k)      Ah [k]
+#define GBh_A(Ah,k)      (k)
 #define GBi_A(Ai,p,vlen) Ai [p]
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
 #define GB_A_NHELD(e) GB_A_NVALS(e)
-#define GB_A_ISO 0
-#define GB_A_TYPE bool
-#define GB_A2TYPE bool
-#define GB_DECLAREA(a) bool a
-#define GB_GETA(a,Ax,p,iso) a = Ax [p]
+#define GB_A_ISO 1
+#define GB_A_IS_PATTERN 1
+#define GB_A_TYPE void
+#define GB_A2TYPE void
+#define GB_DECLAREA(a)
+#define GB_GETA(a,Ax,p,iso)
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
 #define GB_Aj_SIGNED_TYPE int32_t
@@ -122,22 +117,42 @@
 #define GB_Ap_BITS 32
 #define GB_Aj_BITS 32
 #define GB_Ai_BITS 32
-#define GB_COPY_aij_to_ywork(ywork,Ax,pA,A_iso) GB_GETA (ywork, Ax, pA, A_iso)
-#define GB_COPY_scalar_to_ywork(ywork,scalar) /* unused */
 
-// S matrix: not constructed
-#define GB_S_CONSTRUCTED 0
+// B matrix: sparse
+#define GB_B_IS_HYPER  0
+#define GB_B_IS_SPARSE 1
+#define GB_B_IS_BITMAP 0
+#define GB_B_IS_FULL   0
+#define GBp_B(Bp,k,vlen) Bp [k]
+#define GBh_B(Bh,k)      (k)
+#define GBi_B(Bi,p,vlen) Bi [p]
+#define GBb_B(Bb,p)      1
+#define GB_B_NVALS(e) int64_t e = B->nvals
+#define GB_B_NHELD(e) GB_B_NVALS(e)
+#define GB_B_ISO 0
+#define GB_B_TYPE double
+#define GB_B2TYPE double
+#define GB_DECLAREB(b) double b
+#define GB_GETB(b,Bx,p,iso) b = Bx [p]
+#define GB_Bp_TYPE uint32_t
+#define GB_Bj_TYPE uint32_t
+#define GB_Bj_SIGNED_TYPE int32_t
+#define GB_Bi_TYPE uint32_t
+#define GB_Bi_SIGNED_TYPE int32_t
+#define GB_Bp_BITS 32
+#define GB_Bj_BITS 32
+#define GB_Bi_BITS 32
 
-#include "include/GB_assign_shared_definitions.h"
+#include "include/GB_mxm_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__subassign_08n__07fc004111121110
-#define GB_jit_query  GB_jit__subassign_08n__07fc004111121110_query
+#define GB_jit_kernel GB_jit__AxB_saxpy3__fff4410b0b2b0b55
+#define GB_jit_query  GB_jit__AxB_saxpy3__fff4410b0b2b0b55_query
 #endif
-#include "template/GB_jit_kernel_subassign_08n.c"
+#include "template/GB_jit_kernel_AxB_saxpy3.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xba1a86e5dc94087e ;
+    (*hash) = 0x0d286a5082324a70 ;
     v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
