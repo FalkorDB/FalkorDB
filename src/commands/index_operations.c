@@ -139,36 +139,46 @@ static bool index_delete
 	// lock
 	QueryCtx_AcquireWriteLock () ;
 
-	if(is_node) {
+	ResultSet *result_set = QueryCtx_GetResultSet () ;
+
+	if (is_node) {
 		// try deleting node index
-		s = GraphContext_GetSchema(gc, lbl, SCHEMA_NODE);
-		if(s != NULL) {
-			if(Schema_GetIndex(s, &attr_id, 1, idx_type, true) != NULL) {
+		s = GraphContext_GetSchema (gc, lbl, SCHEMA_NODE) ;
+		if (s != NULL) {
+			if (Schema_GetIndex (s, &attr_id, 1, idx_type, true) != NULL) {
 				// try deleting a node index
 				// operation may fail if this index supports a constraint
-				return GraphContext_DeleteIndex(gc, SCHEMA_NODE, lbl, attr,
-						idx_type);
+				int res = GraphHub_DropIndex (gc, SCHEMA_NODE, lbl, attr,
+						idx_type, true) ;
+				if (res == INDEX_OK) {
+					ResultSet_IndexDeleted (result_set, res) ;
+				}
+				return res == INDEX_OK ;
 			}
 		}
 	}
 
-	if(is_relation) {
+	if (is_relation) {
 		// try deleting edge index
-		s = GraphContext_GetSchema(gc, lbl, SCHEMA_EDGE);
-		if(s != NULL) {
-			if(Schema_GetIndex(s, &attr_id, 1, idx_type, true) != NULL) {
+		s = GraphContext_GetSchema (gc, lbl, SCHEMA_EDGE) ;
+		if (s != NULL) {
+			if (Schema_GetIndex (s, &attr_id, 1, idx_type, true) != NULL) {
 				// try deleting an edge index
 				// operation may fail if this index supports a constraint
-				return GraphContext_DeleteIndex(gc, SCHEMA_EDGE, lbl, attr,
-						idx_type);
+				int res = GraphHub_DropIndex (gc, SCHEMA_EDGE, lbl, attr,
+						idx_type, true) ;
+				if (res == INDEX_OK) {
+					ResultSet_IndexDeleted (result_set, res) ;
+				}
+				return res == INDEX_OK ;
 			}
 		}
 	}
 
 	// no matching index
-	ErrorCtx_SetError(EMSG_UNABLE_TO_DROP_INDEX, lbl, attr);
+	ErrorCtx_SetError (EMSG_UNABLE_TO_DROP_INDEX, lbl, attr) ;
 
-	return false;
+	return false ;
 }
 
 // extract index information from AST provided in the new format
@@ -315,34 +325,36 @@ static void parse_old_format
 }
 
 // extract index level configuration from options map
-static bool extract_index_level_config
+bool IndexOperation_ExtractLevelConfig
 (
 	char ***stopwords,  // index stopwods
 	char **language,    // index language
 	SIValue options     // options map
 ) {
-	ASSERT(language  != NULL);
-	ASSERT(stopwords != NULL);
+	ASSERT (language  != NULL) ;
+	ASSERT (stopwords != NULL) ;
 
 	// set default values
-	*language  = NULL;
-	*stopwords = NULL;
+	*language  = NULL ;
+	*stopwords = NULL ;
 
-	if(SI_TYPE(options) != T_MAP) return false;
+	if (SI_TYPE (options) != T_MAP) {
+		return false ;
+	}
 
 	//--------------------------------------------------------------------------
 	// extract language
 	//--------------------------------------------------------------------------
 
-	SIValue language_val;
-	bool language_specified = MAP_GET(options, "language", language_val);
+	SIValue language_val ;
+	bool language_specified = MAP_GET (options, "language", language_val) ;
 
-	if(language_specified) {
-		if(SI_TYPE(language_val) != T_STRING) {
-			ErrorCtx_SetError("Index configuration error");
-			return false;
+	if (language_specified) {
+		if(SI_TYPE (language_val) != T_STRING) {
+			ErrorCtx_SetError ("Index configuration error") ;
+			return false ;
 		} else {
-			*language = language_val.stringval;
+			*language = language_val.stringval ;
 		}
 	}
 
@@ -350,30 +362,30 @@ static bool extract_index_level_config
 	// extract stopwords
 	//--------------------------------------------------------------------------
 
-	SIValue stopwords_val;
-	bool stopwords_specified = MAP_GET(options, "stopwords", stopwords_val);
+	SIValue stopwords_val ;
+	bool stopwords_specified = MAP_GET (options, "stopwords", stopwords_val) ;
 
-	if(stopwords_specified) {
+	if (stopwords_specified) {
 		// validate stopwords is an array of strings
-		if(SI_TYPE(stopwords_val) != T_ARRAY) {
-			ErrorCtx_SetError("Index configuration error");
-			return false;
+		if(SI_TYPE (stopwords_val) != T_ARRAY) {
+			ErrorCtx_SetError ("Index configuration error") ;
+			return false ;
 		}
 
-		if(!SIArray_AllOfType(stopwords_val, T_STRING)) {
-			ErrorCtx_SetError("Index configuration error");
-			return false;
+		if(!SIArray_AllOfType (stopwords_val, T_STRING)) {
+			ErrorCtx_SetError ("Index configuration error") ;
+			return false ;
 		}
 
-		uint nstopwords = SIArray_Length(stopwords_val);
-		*stopwords = arr_new(char*, nstopwords);
-		for(uint i = 0; i < nstopwords; i++) {
-			SIValue stopword = SIArray_Get(stopwords_val, i);
-			arr_append((*stopwords), rm_strdup(stopword.stringval));
+		uint nstopwords = SIArray_Length (stopwords_val) ;
+		*stopwords = arr_new (char*, nstopwords) ;
+		for (uint i = 0; i < nstopwords; i++) {
+			SIValue stopword = SIArray_Get (stopwords_val, i) ;
+			arr_append ((*stopwords), rm_strdup (stopword.stringval)) ;
 		}
 	}
 
-	return true;
+	return true ;
 }
 
 // create index
@@ -419,7 +431,7 @@ static void index_create
 
 	char *language   = NULL;
 	char **stopwords = NULL;
-	if(!extract_index_level_config(&stopwords, &language, options)) {
+	if(!IndexOperation_ExtractLevelConfig(&stopwords, &language, options)) {
 		// failed to extract index level configuration
 		goto cleanup;
 	}
@@ -442,7 +454,7 @@ static void index_create
 	ASSERT(result_set != NULL);
 
 	for(uint i = 0; i < nfields; i++) {
-		idx = GraphHub_AddIndex(label, fields[i], et, idx_type, options, true);
+		idx = GraphHub_AddIndex(gc, label, fields[i], et, idx_type, options, true);
 		if(idx != NULL) {
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {
@@ -478,10 +490,6 @@ cleanup:
 	if(fields    != NULL) rm_free(fields);
 	if(stopwords != NULL) arr_free_cb(stopwords, rm_free);
 	SIValue_Free(options);
-
-	// make sure no effects were generated
-	// as index creation isn't replicated via effects
-	ASSERT(EffectsBuffer_Length(QueryCtx_GetEffectsBuffer()) == 0);
 }
 
 // handle index creation/deletion

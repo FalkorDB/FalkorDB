@@ -213,7 +213,8 @@ bool UDF_Delete
 
 	// locate library
 	if (!UDF_RepoGetLib (lib, &functions, NULL)) {
-		asprintf (err, "Library %s does not exist", lib) ;
+		int rc = asprintf (err, "Library %s does not exist", lib) ;
+		ASSERT (rc != -1) ;
 		return false ;
 	}
 
@@ -223,7 +224,8 @@ bool UDF_Delete
 	for (int i = 0; i < n; i++) {
 		// concat lib and function name
 		char *udf;
-		asprintf (&udf, "%s.%s", lib, functions[i]) ;
+		int rc = asprintf (&udf, "%s.%s", lib, functions[i]) ;
+		ASSERT (rc != -1) ;
 
 		removed = AR_FuncRemoveUDF (udf) ;
 		ASSERT (removed == true) ;
@@ -300,9 +302,10 @@ bool UDF_Load
 
 	if (lib_exists && replace == false) {
 		if (err != NULL) {
-			asprintf (err,
+			int rc = asprintf (err,
 					"Failed to register, UDF Library '%s' already registered",
 					lib) ;
+			ASSERT (rc != -1) ;
 		}
 		return false ;
 	}

@@ -584,6 +584,32 @@ class testConstraintNodes():
         drop_node_range_index(self.g, "Author", "nickname")
         drop_node_range_index(self.g, "Author", "birthdate")
 
+    def test09_drop_multi_prop_constraint_argument_order(self):
+        # regression test: dropping a multi-property constraint must succeed
+        # regardless of the order properties are supplied in, even when that
+        # order differs from how the underlying attribute IDs happen to sort.
+        # GraphHub_DropConstraint used to look up the constraint using the
+        # caller's property order verbatim, while GraphHub_AddConstraint
+        # always sorts by attribute ID before storing - since
+        # Schema_GetConstraint compares attribute arrays positionally, a
+        # mismatched order caused a false "no such constraint" on drop.
+
+        def widget_constraints():
+            return [c for c in list_constraints(self.g) if c.label == "Widget"]
+
+        # 'zulu' is introduced first (lower attribute ID), 'alpha' second
+        # (higher attribute ID) - the reverse of the order used below
+        create_node_range_index(self.g, "Widget", "zulu", "alpha")
+
+        # create the constraint listing properties in 'alpha' then 'zulu'
+        # order - the reverse of their attribute-ID order
+        create_constraint(self.g, "unique", "node", "Widget", "alpha", "zulu")
+        self.env.assertEqual(len(widget_constraints()), 1)
+
+        # drop using the exact same property order used at creation time
+        drop_unique_node_constraint(self.g, "Widget", "alpha", "zulu")
+        self.env.assertEqual(len(widget_constraints()), 0)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
@@ -1027,7 +1053,10 @@ class testConstraintReplication():
             with self.replica.monitor() as m:
                 MONITOR_ATTACHED = True
                 for cmd in m.listen():
-                    if 'GRAPH.CONSTRAINT' in cmd['command']:
+                    # constraints replicate via GRAPH.EFFECT (an encoded
+                    # EFFECT_CREATE_CONSTRAINT), not a verbatim GRAPH.CONSTRAINT
+                    # command - see GraphHub_AddConstraint / Constraint_Replicate
+                    if 'GRAPH.EFFECT' in cmd['command']:
                         self.monitor.append(cmd)
         except:
             pass
@@ -1057,18 +1086,28 @@ class testConstraintReplication():
         for c in constraints:
             self.env.assertEqual(c.status, 'OPERATIONAL')
 
-        # each constraint should be replicated twice from source to replica:
+        # each constraint should be replicated twice from source to replica,
+        # each time as a GRAPH.EFFECT command encoding EFFECT_CREATE_CONSTRAINT:
         # 1. upon creation
         # 2. upon constraint becoming activate
+        # that's 6 constraints * 2 = 12 GRAPH.EFFECT commands.
+        #
+        # on top of that, EFFECTS_THRESHOLD defaults to 0 (always replicate
+        # via effects), so the RANGE index each UNIQUE constraint creates to
+        # support itself (see create_unique_node/edge_constraint) also
+        # replicates as its own GRAPH.EFFECT command (EFFECT_CREATE_INDEX)
+        # instead of a verbatim GRAPH.QUERY: one each for Person.height,
+        # Person.name, Person.age, Person.loc and Knows.since - 5 more,
+        # for a total of 17.
         self.source.execute_command("WAIT", 1, 0)
 
-        # wait for all 12 GRAPH.CONSTRAINT commands to be replicated
+        # wait for all 17 GRAPH.EFFECT commands to be replicated
         elapsed = 10
-        while len(self.monitor) < 12 and elapsed > 0:
+        while len(self.monitor) < 17 and elapsed > 0:
             time.sleep(0.2)
             elapsed -= 0.2
 
-        self.env.assertEqual(len(self.monitor), 12)
+        self.env.assertEqual(len(self.monitor), 17)
 
     def test_02_constraint_introduces_new_schema_and_attr(self):
         # every constraint created so far targeted a label/relationship-type
@@ -1191,14 +1230,15 @@ class testConstraintAOF():
         g.query("MATCH (a{name: 'Mike'}), (b{name:'Tim'}) CREATE (a)-[:Knows {since: 2000, weight: 1}]->(b)")
 
     def test01_aof_load_constraints(self):
-        # this test exercises GRAPH.CONSTRAINT CREATE and DROP commands being
-        # replayed as part of AOF loading (as opposed to being issued by a
-        # regular client)
+        # this test exercises constraint creation/deletion effects
+        # (EFFECT_CREATE_CONSTRAINT/EFFECT_DROP_CONSTRAINT, encoded as
+        # GRAPH.EFFECT commands) being replayed as part of AOF loading (as
+        # opposed to being issued by a regular client)
         #
         # a constraint of every UNIQUE/MANDATORY x NODE/RELATIONSHIP
         # combination is created, an additional constraint of every
         # combination is created and then dropped, so the AOF contains both
-        # GRAPH.CONSTRAINT CREATE and DROP commands for every combination
+        # create and drop constraint effects for every combination
 
         g = self.g
 
@@ -1213,7 +1253,7 @@ class testConstraintAOF():
 
         #-----------------------------------------------------------------------
         # constraints that get dropped before the reload, to make sure
-        # GRAPH.CONSTRAINT DROP commands are present in the AOF as well
+        # drop-constraint effects are present in the AOF as well
         #-----------------------------------------------------------------------
 
         create_unique_node_constraint    (g, 'Person', 'height', sync=True)
@@ -1233,7 +1273,7 @@ class testConstraintAOF():
 
         #-----------------------------------------------------------------------
         # restart the server; on start-up the whole AOF command log,
-        # including every GRAPH.CONSTRAINT CREATE/DROP issued above, is
+        # including the create/drop constraint effects issued above, is
         # replayed while the module is executing under
         # REDISMODULE_CTX_FLAGS_LOADING
         #-----------------------------------------------------------------------
@@ -1312,8 +1352,8 @@ class testConstraintAOF():
         # the constraint was created. this test makes sure a constraint
         # created against a brand new label, relationship-type and
         # attribute(s) - ones no query has ever referenced before - survives
-        # an AOF reload: the GRAPH.CONSTRAINT CREATE command replayed from the
-        # AOF must itself recreate the missing schema and attribute ID(s),
+        # an AOF reload: the create-constraint effect replayed from the AOF
+        # must itself recreate the missing schema and attribute ID(s),
         # rather than relying on some earlier CREATE query in the AOF to have
         # introduced them first
 
@@ -1327,8 +1367,8 @@ class testConstraintAOF():
 
         #-----------------------------------------------------------------------
         # restart the server, forcing the whole AOF command log - including
-        # the two GRAPH.CONSTRAINT CREATE commands above - to be replayed
-        # while the module is executing under REDISMODULE_CTX_FLAGS_LOADING
+        # the two create-constraint effects above - to be replayed while the
+        # module is executing under REDISMODULE_CTX_FLAGS_LOADING
         #-----------------------------------------------------------------------
 
         self.env.stop()

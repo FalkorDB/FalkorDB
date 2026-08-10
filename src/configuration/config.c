@@ -961,7 +961,8 @@ static void _Config_SetToDefaults(void)
 	config.max_info_queries_count = CMD_INFO_QUERIES_MAX_COUNT_DEFAULT;
 
 	// replicate effects if avg change time μs > effects_threshold μs
-	config.effects_threshold = 300;
+	// 0 means always replicate via GRAPH.EFFECT
+	config.effects_threshold = 0;
 
 	// index entities as they're being decoded
 	config.delay_indexing = DELAY_INDEXING_DEFAULT;

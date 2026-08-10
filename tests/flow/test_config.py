@@ -41,7 +41,7 @@ class testConfig(FlowTestsBase):
                 ("NODE_CREATION_BUFFER", 16384),
                 ("CMD_INFO", 1),
                 ("MAX_INFO_QUERIES", 1000),
-                ("EFFECTS_THRESHOLD", 300),
+                ("EFFECTS_THRESHOLD", 0),
                 ("DELAY_INDEXING", 0),
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),

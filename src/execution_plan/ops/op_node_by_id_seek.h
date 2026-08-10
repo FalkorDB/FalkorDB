@@ -9,7 +9,7 @@
 #include "op.h"
 #include "../execution_plan.h"
 #include "../../graph/graph.h"
-#include "../../util/roaring.h"
+#include "../../util/roaring_include.h"
 #include "../../util/range/range.h"
 
 // Node by ID seek locates an entity by its ID
