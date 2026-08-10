@@ -127,7 +127,18 @@ WORKDIR /data
 
 RUN python3 -m venv venv
 
-RUN venv/bin/pip install behave falkordb falkordb-bulk-loader hypothesis pytest RLTest
+# `redis<8.1` is a pin against falkordb-py, not a preference: redis-py 8.1.0
+# puts `himport_registry` into `ConnectionPool.connection_kwargs`, and
+# falkordb-py 1.6.2's async `Is_Cluster` forwards those kwargs verbatim to the
+# *sync* `Redis(**kwargs)`, which rejects it —
+# `TypeError: Redis.__init__() got an unexpected keyword argument
+# 'himport_registry'`. Every flow test that builds its own pool
+# (test_cache, test_concurrent_query, test_timeout, test_slowlog,
+# test_index_create, test_query_mem_limit, test_pending_queries_limit) dies on
+# it. The pin only bites when this image is rebuilt, which is why it surfaced
+# on a PR touching build/graphblas rather than on trunk. Drop it once
+# falkordb-py releases a fix.
+RUN venv/bin/pip install behave falkordb 'redis<8.1' falkordb-bulk-loader hypothesis pytest RLTest
 
 # Build SuiteSparse:GraphBLAS v10.3.1 + LAGraph v1.2.1 with the FalkorDB-
 # specific tweaks: GB_control.h patch, vendored PreJIT kernels from the
