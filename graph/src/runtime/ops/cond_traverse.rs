@@ -299,20 +299,23 @@ impl<'a> CondTraverseOp<'a> {
             };
 
         // For fused chains the batched path is the ONLY correct path —
-        // expand_row only handles single-hop. The planner inserts a Filter
-        // for any non-empty inline attrs, so attribute predicates are
-        // enforced by surrounding Filter nodes regardless of which path runs.
-        // Single-hop ops keep the existing strict check (expand_row applies
-        // attrs redundantly, but the Filter is still the source of truth).
+        // expand_row only handles single-hop.
+        //
+        // The endpoints' inline attrs no longer gate this. The planner lowers
+        // both endpoints of every traverse into a Filter unconditionally, so
+        // the predicate is enforced whichever path runs, and expand_row's own
+        // check on them is redundant.
+        //
+        // The edge's attrs still gate it: with `emit_relationship` false,
+        // expand_batch binds one representative edge per (src, dst) pair, so a
+        // predicate that tells parallel edges apart has to be applied during
+        // the per-row scan, which iterates all of them.
         let chain_is_empty = chain.is_empty();
         let batched_eligible = !emit_relationship
             && !rp.bidirectional
             && bidir_dedup.is_none()
             && sibling_edges.is_empty()
-            && (!chain_is_empty
-                || (attrs_is_static_empty(&rp.attrs)
-                    && attrs_is_static_empty(&rp.from.attrs)
-                    && attrs_is_static_empty(&rp.to.attrs)))
+            && (!chain_is_empty || attrs_is_static_empty(&rp.attrs))
             && chain.iter().all(|hop| !hop.bidirectional);
 
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
