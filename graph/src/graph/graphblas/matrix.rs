@@ -280,6 +280,36 @@ impl EWiseAdd for u64 {
     }
 }
 
+/// Element types a [`Matrix`] can be constructed for.
+///
+/// `Matrix::<T>::new` is written per element type because it names a GraphBLAS
+/// type handle, which leaves generic code with no way to make an empty layer of
+/// its own type. This bridges that, in the same shape as [`EWiseAdd`] above.
+pub trait MatrixType: Sized {
+    fn new_matrix(
+        nrows: u64,
+        ncols: u64,
+    ) -> Matrix<Self>;
+}
+
+impl MatrixType for bool {
+    fn new_matrix(
+        nrows: u64,
+        ncols: u64,
+    ) -> Matrix<bool> {
+        Matrix::<bool>::new(nrows, ncols)
+    }
+}
+
+impl MatrixType for u64 {
+    fn new_matrix(
+        nrows: u64,
+        ncols: u64,
+    ) -> Matrix<u64> {
+        Matrix::<u64>::new(nrows, ncols)
+    }
+}
+
 impl From<Descriptor> for GrB_Descriptor {
     fn from(descriptor: Descriptor) -> Self {
         unsafe {
@@ -609,6 +639,19 @@ impl<T> Matrix<T> {
             nrows >= r0 && ncols >= c0,
             "grown must not shrink: {r0}x{c0} -> {nrows}x{ncols}"
         );
+        // Same dimensions: the tile grid degenerates to 1x1, i.e. a plain copy,
+        // so take the copy directly rather than paying `concat`'s setup to do
+        // it. `dup` carries the source's sparsity control and orientation, and
+        // every matrix here is pinned at construction, so the copy is pinned
+        // too. It does report `has_pending` honestly rather than claiming it
+        // the way the concat path below does, so restore that claim: callers
+        // treat a `grown` result as pending until waited, and one no-op wait
+        // is cheaper than a postcondition that holds on only one path.
+        if nrows == r0 && ncols == c0 {
+            let out = self.dup();
+            out.has_pending.store(true, Ordering::Relaxed);
+            return out;
+        }
         unsafe {
             let mut type_: MaybeUninit<GrB_Type> = MaybeUninit::uninit();
             let info = GxB_Matrix_type(type_.as_mut_ptr(), *self.m);
@@ -1624,5 +1667,20 @@ mod tests {
         ensure_init();
         let src = Matrix::<bool>::new(64, 64);
         let _ = src.grown(32, 64);
+    }
+
+    /// `Matrix::<bool>::build` uses `GxB_Matrix_build_Scalar`, which takes no
+    /// `dup` operator. Callers do produce duplicate coordinates (adjacency
+    /// removal candidates accumulated across relationship types), so pin the
+    /// semantics: duplicates collapse into one entry rather than failing.
+    #[test]
+    fn build_bool_tolerates_duplicate_pairs() {
+        ensure_init();
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.build(&[1, 3, 1, 3, 1], &[2, 4, 2, 4, 2]);
+        m.wait();
+        assert_eq!(m.nvals(), 2);
+        assert_eq!(m.get(1, 2), Some(true));
+        assert_eq!(m.get(3, 4), Some(true));
     }
 }

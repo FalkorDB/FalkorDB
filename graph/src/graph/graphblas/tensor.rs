@@ -259,8 +259,8 @@ impl Tensor {
         self.dp.resync();
         self.dm.resync();
         let base = self.m.nvals();
-        self.dp.latch_policy(should_fold_read, base);
-        self.dm.latch_policy(should_fold_read, base);
+        self.dp.latch(self.dp.fold_decision(should_fold_read, base));
+        self.dm.latch(self.dm.fold_decision(should_fold_read, base));
         // Not setting needs_flush: see `VersionedMatrix::wait` — mid-tx fold
         // execution is pathological for create+delete transactions; `dup`
         // carries the latched decision into the next version instead.
@@ -475,22 +475,9 @@ impl Tensor {
             // masks then skip); dp &= ¬mask: drop pending adds (including the
             // shadow value of any in-place-updated pair, whose committed entry
             // the dm update just masked — keeping `dp ∩ dm = ∅`).
-            self.dm.layer_mut().element_wise_multiply(
-                Some(&m_mask),
-                Some(&m_mask),
-                Some(&*self.m),
-                None,
-            );
-            self.dp.layer_mut().remove_all(&m_mask);
+            self.dm.tombstone_masked(&m_mask, &self.m);
+            self.dp.remove_all(&m_mask);
             self.mt.remove_mask(&mt_mask);
-            // Resync the approximate counters to the exact counts. The
-            // eWiseMult/remove_all above leave the wrapper's `has_pending` flag
-            // set, so `resync`'s wait is what stops that flag being a lie —
-            // otherwise `is_synced()` keeps reporting false and every later read
-            // path pays a redundant `wait()` (same reasoning as
-            // `VersionedMatrix::remove_mask`).
-            self.dm.resync();
-            self.dp.resync();
             return rels.iter().map(|&(_, src, dst)| (src, dst)).collect();
         }
 
@@ -537,7 +524,7 @@ impl Tensor {
                 Some(inline_id) if inline_id == id => {
                     self.dp.erase(src, dst);
                     if self.m.contains(src, dst) {
-                        self.dm.insert(src, dst, true);
+                        self.dm.insert(src, dst);
                     }
                     self.mt.remove(dst, src);
                     emptied.push((src, dst));
@@ -564,8 +551,8 @@ impl Tensor {
             // A resize moves no entries between layers, so the delta counters
             // stand (a shrink that drops entries only adds to the drift
             // `resync` bounds).
-            self.dp.layer_mut().resize(nrows, ncols);
-            self.dm.layer_mut().resize(nrows, ncols);
+            self.dp.resize(nrows, ncols);
+            self.dm.resize(nrows, ncols);
             self.mt.resize(ncols, nrows);
             return;
         }
@@ -608,13 +595,13 @@ impl Tensor {
         } else {
             Matrix::<u64>::new(nrows, ncols)
         };
-        self.dp.regrow(new_dp);
+        self.dp.replace(new_dp);
         let new_dm = if self.dm.nvals() > 0 {
             self.dm.grown(nrows, ncols)
         } else {
             Matrix::<bool>::new(nrows, ncols)
         };
-        self.dm.regrow(new_dm);
+        self.dm.replace(new_dm);
         self.mt.resize(ncols, nrows);
     }
 
@@ -668,10 +655,10 @@ impl Tensor {
                 new_m.wait();
                 self.m.replace(new_m);
                 if fold_dp {
-                    self.dp.clear(Matrix::<u64>::new(nrows, ncols));
+                    self.dp.clear(nrows, ncols);
                 }
                 if fold_dm {
-                    self.dm.clear(Matrix::<bool>::new(nrows, ncols));
+                    self.dm.clear(nrows, ncols);
                 }
             }
             self.needs_flush.store(false, Ordering::Relaxed);

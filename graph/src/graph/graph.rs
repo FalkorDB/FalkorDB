@@ -1311,13 +1311,23 @@ impl Graph {
         let available = deleted_len.saturating_sub(self.reserved_node_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted nodes
+        // First reclaim from deleted nodes.
+        //
+        // One ordered walk, not a rank lookup per id: `RoaringTreemap::select(i)`
+        // restarts at the first container every call, summing cardinalities until
+        // it reaches `i` and then scanning words inside that container, so a
+        // batch of N reclaims costs O(N * position) rather than O(pool). It was
+        // the hottest single leaf in the module on a create-after-delete profile.
+        // `skip` walks the same iterator once, so the whole batch is one pass.
         let base = self.reserved_node_count;
         self.reserved_node_count += reclaimed;
-        for i in base..base + reclaimed {
-            let id = self.deleted_nodes.select(i).unwrap();
-            ids.push(NodeId(id));
-        }
+        ids.extend(
+            self.deleted_nodes
+                .iter()
+                .skip(base as usize)
+                .take(reclaimed as usize)
+                .map(NodeId),
+        );
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -1349,7 +1359,7 @@ impl Graph {
         self.resize();
 
         self.all_nodes_matrix
-            .set_all_new(nodes.iter().map(|id| (id, id)));
+            .set_all::<true>(nodes.iter().map(|id| (id, id)));
     }
 
     #[must_use]
@@ -1651,18 +1661,18 @@ impl Graph {
 
         let pairs = label_rows.iter().copied().zip(label_cols.iter().copied());
         if all_new {
-            self.node_labels_matrix.set_all_new(pairs);
+            self.node_labels_matrix.set_all::<true>(pairs);
         } else {
-            self.node_labels_matrix.set_all(pairs);
+            self.node_labels_matrix.set_all::<false>(pairs);
         }
 
         for (lid, ids) in by_label.into_iter().enumerate() {
             if !ids.is_empty() {
                 let diag = ids.iter().map(|&id| (id, id));
                 if all_new {
-                    self.labels_matices[lid].set_all_new(diag);
+                    self.labels_matices[lid].set_all::<true>(diag);
                 } else {
-                    self.labels_matices[lid].set_all(diag);
+                    self.labels_matices[lid].set_all::<false>(diag);
                 }
             }
         }
@@ -2022,13 +2032,18 @@ impl Graph {
         let available = deleted_len.saturating_sub(self.reserved_relationship_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted relationships
+        // First reclaim from deleted relationships. One ordered walk rather than a
+        // rank lookup per id — see `reserve_nodes` for why `select` per id is
+        // quadratic across a batch.
         let base = self.reserved_relationship_count;
         self.reserved_relationship_count += reclaimed;
-        for i in base..base + reclaimed {
-            let id = self.deleted_relationships.select(i).unwrap();
-            ids.push(RelationshipId(id));
-        }
+        ids.extend(
+            self.deleted_relationships
+                .iter()
+                .skip(base as usize)
+                .take(reclaimed as usize)
+                .map(RelationshipId),
+        );
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -2094,12 +2109,12 @@ impl Graph {
         }
 
         self.adjacancy_matrix
-            .set_all(srcs.iter().copied().zip(dsts.iter().copied()));
+            .set_all::<false>(srcs.iter().copied().zip(dsts.iter().copied()));
 
         let type_id = type_idx as u64;
         let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
-            .set_all_new(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+            .set_all::<true>(rel_ids.iter().copied().zip(type_ids.iter().copied()));
     }
 
     /// Fold oversized delta-plus into the base for all shared matrices at
@@ -2121,38 +2136,35 @@ impl Graph {
         }
     }
 
-    /// Fold every delta that has grown comparable to its base into that base,
-    /// bounding a committed version's delta memory. Called at MVCC commit,
-    /// before `wait_bases`; see [`VersionedMatrix::fold_oversized`] for why
-    /// the sub-hatch deltas are deliberately left for the next `flush`.
+    /// Prepare a just-committed version for publication: fold every delta that
+    /// has grown comparable to its base into that base, then materialize the
+    /// committed base (`m`) layer of every matrix and tensor.
+    ///
+    /// Folding bounds a committed version's delta memory; see
+    /// [`VersionedMatrix::fold_oversized`] for why the sub-hatch deltas are
+    /// deliberately left for the next `flush`.
+    ///
+    /// Waiting the bases is what makes publication safe: readers reach bases
+    /// lock-free (dp/dm reads go through the mutex-guarded `Matrix::wait`), so
+    /// a pending base in a visible snapshot lets concurrent readers corrupt
+    /// GrB state. No-op per matrix when already synced, and it has to run
+    /// after the fold, which leaves the base pending.
     pub fn fold_oversized_deltas(&mut self) {
+        self.zero_matrix.wait_base();
         self.adjacancy_matrix.fold_oversized();
+        self.adjacancy_matrix.wait_base();
         self.node_labels_matrix.fold_oversized();
+        self.node_labels_matrix.wait_base();
         self.relationship_type_matrix.fold_oversized();
+        self.relationship_type_matrix.wait_base();
         self.all_nodes_matrix.fold_oversized();
+        self.all_nodes_matrix.wait_base();
         for m in &mut self.labels_matices {
             m.fold_oversized();
+            m.wait_base();
         }
         for t in &mut self.relationship_matrices {
             t.fold_oversized();
-        }
-    }
-
-    /// Materialize only the committed base (`m`) layer of every versioned
-    /// matrix and tensor. Called at MVCC commit before publishing: readers
-    /// reach bases lock-free (dp/dm reads go through the mutex-guarded
-    /// `Matrix::wait`), so a pending base in a visible snapshot lets
-    /// concurrent readers corrupt GrB state. No-op per matrix when synced.
-    pub fn wait_bases(&self) {
-        self.zero_matrix.wait_base();
-        self.adjacancy_matrix.wait_base();
-        self.node_labels_matrix.wait_base();
-        self.relationship_type_matrix.wait_base();
-        self.all_nodes_matrix.wait_base();
-        for m in &self.labels_matices {
-            m.wait_base();
-        }
-        for t in &self.relationship_matrices {
             t.wait_base();
         }
     }
