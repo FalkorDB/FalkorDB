@@ -124,13 +124,19 @@ masks treat as absent; and discharge any ``this object is materialised''
 invariant by enumerating the calls that can queue work on it, including
 capacity changes that read as metadata. Both are cheap to follow, expensive to
 retrofit, and pinned by regression tests. We close with an
-analytic cost model and a measured multiplicity sweep against the
-pointer-tagged container-per-cell design used by FalkorDB's C implementation,
-which confirms the design's read, write and allocator claims --- and refutes our
-own prediction that its distinguishing promotion cost is a small constant: it is
-a small constant in the C implementation and is, in ours, currently
-super-linear in the number of pairs one transaction promotes. We report that,
-its issue number, and the domain restrictions the compound key imposes.
+analytic cost model and an empirical evaluation against the pointer-tagged
+container-per-cell design used by FalkorDB's C implementation, measured both as
+whole queries and at the data-structure boundary on both sides. Inline-first
+costs a quarter as much to promote a pair and a quarter as many bytes per edge
+once a pair holds two edges; its per-edge iteration is slightly \emph{worse}, so the
+engine-level scan advantage belongs to the engine and not to edge storage. Two
+of our own engine-level attributions turn out to overstate storage cost by
+$1.8\times$ and $5.1\times$, which is the sharpest argument we can offer for
+measuring at the boundary. The design's distinguishing promotion/demotion
+transition, predicted to be a small constant, was a quadratic in our
+implementation; we give the diagnosis, the fix, and the residual constant factor
+of about three that remains. We close with the domain restrictions the compound
+key imposes.
 \end{abstract}
 
 \noindent\textbf{Keywords:} property graphs, multigraphs, GraphBLAS, sparse
@@ -227,14 +233,18 @@ Rust storage engine. Specifically:
         can leave the committed base pending. We give the operator choices and
         the call-site discipline that satisfy both.
   \item \textbf{An analytic cost and space model} (\S\ref{sec:cost})
-        \textbf{and a measured multiplicity sweep against the
-        container-per-cell implementation} (\S\ref{sec:eval}). Instruction
-        counts at fixed $|E|$ over $\mu \in \{1, 1.1, 2, 4, 16\}$, with the
-        read path additionally decomposed --- by varying only the number of
-        edges per pair --- into an inline read, a fixed charge for the
-        multi-edge path, and a per-identifier slope. Scans, inserts and allocator behaviour come out as the design
-        predicts; the promotion/demotion transition does not, and we report the
-        failure and its issue number rather than the prediction.
+        \textbf{an empirical evaluation against the container-per-cell
+        implementation at two grains} (\S\ref{sec:eval}). A multiplicity sweep
+        of whole queries at fixed $|E|$, and both structures measured as
+        structures --- a C harness linked against the shipped archive with no
+        stubs, and Rust measurement tests. Promotion and multi-edge space come
+        out as the design predicts ($0.24\times$ and $0.25\times$); iteration
+        does not, being slightly worse per edge, so the engine-level scan
+        advantage is not edge storage; and two of our own engine-level
+        attributions overstate storage cost by $1.8\times$ and $5.1\times$. The
+        promotion/demotion transition, predicted to be a small constant, was a
+        quadratic in our implementation: we give the measurement, the
+        instrumented cause, the fix, and the $3\times$ residual.
   \item \textbf{An explicit account of the design's \emph{domain
         restrictions}} (\S\ref{sec:limits}), including the
         observation that although the compound-key guard admits node
@@ -249,15 +259,17 @@ commits given under Availability. Our cost model (\S\ref{sec:cost}) is
 analytic --- space and operation costs derived from the storage formats and the
 GraphBLAS operations invoked --- and \S\ref{sec:eval} measures it, because the
 design's central claim, that inline-first is cheaper for the common case, is a
-claim about constants and constants deserve measurement. That evaluation is a
-multiplicity sweep against design (A) as shipped in FalkorDB's C
-implementation, plus a controlled decomposition of the read
-path. It confirms the read and write claims, and it refutes the paper's own
-prediction about the promotion/demotion transition: the design says a small
-constant, our implementation currently pays a cost that grows with the size of
-the batch (\S\ref{sec:evalosc}). Two of the three designs remain
-unimplemented, and \S\ref{sec:limits} is precise about what that leaves
-unmeasured. The fold policy of \S\ref{sec:folding} rested on measured constants
+claim about constants and constants deserve measurement. That evaluation has two grains: a
+multiplicity sweep of whole queries against design (A) as shipped in FalkorDB's
+C implementation, and both structures measured as structures, with a C harness
+linked against the shipped archive. The second grain corrects the first in
+places, which we report as a finding rather than as errata. It confirms the
+space and promotion claims, shows the scan advantage is not edge storage, and
+refutes the paper's own prediction about the promotion/demotion transition,
+which was a quadratic in our implementation until the fix of
+\S\ref{sec:evalosc} made it a constant still about $3\times$ (A)'s. Design (B)
+remains unimplemented, so every (B) figure here is a bound or a model, and
+\S\ref{sec:limits} is precise about what that leaves unmeasured. The fold policy of \S\ref{sec:folding} rested on measured constants
 already, for the separate reason that the rule they determine is sensitive to
 them.
 
@@ -408,8 +420,11 @@ transition, which (A) and (B) do not have.}
 Table~\ref{tab:designspace} summarises. Design (C) buys the common case at
 the price of a state transition and the invariant discipline that transition
 requires; the rest of this paper is largely about that price, and
-\S\ref{sec:eval} measures it --- where it turns out to be, in our
-implementation, far larger than this table's ``two auxiliary writes'' suggests.
+\S\ref{sec:eval} measures it --- where it turns out to be, even after a defect
+fix, about three times what (A) pays for the same logical change, and where the
+row of this table it most decisively confirms is instead the \emph{absence} of
+(A)'s heap container: $0.24\times$ its promotion cost and $0.25\times$ its space
+per multi-edge pair.
 
 % =====================================================================
 \section{Representation}
@@ -1873,20 +1888,27 @@ The previous section's costs are analytic. This section measures the sweep they
 call for: hold $|E|$ fixed, vary $\mu$, and compare design (C) --- the Rust
 engine --- against design (A) --- the C implementation, a shipped artifact ---
 on the four quantities the design is supposed to move: full-scan cost,
-single-pair lookup cost, bulk-insert cost and resident size. We then descend
-from whole queries to the read path itself, because the sweep alone turned out
-not to support the reading we first gave it.
+single-pair lookup cost, bulk-insert cost and resident size.
 
-Two of the design's predictions survive. Inline-first is cheaper on the common
-case, by margins that are largest exactly where the design says they should be
-and vanish exactly where it says they should vanish; and the absence of
-per-pair heap containers shows up as an allocator curve that does not have
-(A)'s hump. The third prediction fails, and it fails against us: (C)'s
-distinguishing cost is the promotion/demotion transition, which the design
-says is a small constant --- and which \emph{is} a small constant in (A), and
-is in our implementation a cost that grows with the number of pairs a single
-query moves across the boundary. That is \S\ref{sec:evalosc}, and it is
-reported there rather than around it.
+It then descends twice. First from whole queries to the read path, because the
+sweep alone turned out not to support the reading we first gave it; then from
+queries altogether to the two structures measured as structures
+(\S\ref{sec:evalboundary}), because two of the attributions we had made at
+engine level turn out to be wrong there --- one of them by a factor of five, and
+both in our own favour.
+
+The design's predictions come out mixed, and it is worth stating the scoreboard
+before the tables. What survives: the absence of per-pair heap containers, which
+shows up as a quarter of (A)'s promotion cost, a quarter of its bytes per edge
+once a pair holds two edges, a sixth of what it costs (A) for a pair to become
+multi-edge at all, and an allocator curve with no hump. What does not: per-edge
+iteration, which is slightly \emph{worse} in (C), so the sweep's large scan
+advantage belongs to the engine around the tensor rather than to edge storage.
+And the prediction the paper itself nominated as its weak spot --- that the
+promotion/demotion transition is a small constant --- failed outright: it was a
+quadratic in our implementation. \S\ref{sec:evalosc} gives the measurement, the
+instrumented cause, the fix that landed, and the constant factor of about three
+that still separates us from (A).
 
 \subsection{Method}
 \label{sec:evalmethod}
@@ -1907,9 +1929,10 @@ before and after the queries under measurement. This is the discipline the fold
 constants of \S\ref{sec:folding} were measured under, and for the same reason:
 instruction counts are reproducible across machines and do not drift with load
 or with what else the machine is doing, whereas the differences at stake here
-are tens of percent on queries that run in milliseconds. Wall clock was
-recorded and is consistent with every ordering reported below, but it is not
-what we report.
+are tens of percent on queries that run in milliseconds. That property is what
+this evaluation ended up relying on: some runs overlapped other work on the
+machine, so the wall-clock and cycle figures those runs produced are not
+trustworthy and are not reported. No claim in this section is a latency claim.
 
 \paragraph{Capacity fixed; allocated bytes alongside.} Each graph is built to
 its final size and left there, so that identifier reclamation does not confound
@@ -1926,14 +1949,24 @@ that costs hundreds of thousands, so a per-query count would measure the
 pipeline. Each lookup query performs $1{,}000$ bound-pair reads and is repeated
 $20$ times; we report instructions per pair throughout.
 
-\paragraph{Granularity, which is the real methodological problem.} These are
-\emph{engine-level} measurements, and the tensor is one component of each
-engine. The queries are chosen so that edge storage dominates --- a full scan
-of one relationship type, bound-pair lookups in a loop --- but a ratio here is
-a ratio between two engines, not between two data structures.
-\S\ref{sec:evaldecomp} is where this stops being a caveat and becomes a
-finding: one row of the sweep invites an explanation in terms of the tensor,
-and a controlled measurement at the read path shows that explanation is wrong.
+\paragraph{Two grains, because one was not enough.} Most of what follows is
+\emph{engine-level}: a Cypher query, counted at the server. \S\ref{sec:evalboundary}
+and \S\ref{sec:evalspace} instead measure the two structures directly, through a
+C harness linked against the shipped static archive and Rust measurement tests in
+the style of \S\ref{sec:folding}'s fold constants. The boundary fixtures are
+stated there; they are built identically on both sides, so the comparison is
+between two implementations of one structure rather than between two engines.
+
+\paragraph{Granularity, which is the real methodological problem.} Engine-level
+measurements are measurements of engines, and the tensor is one component of
+each. The queries are chosen so that edge storage dominates --- a full scan
+of one relationship type, bound-pair lookups in a loop --- but a ratio at that grain is
+a ratio between two engines, not between two data structures. This stops being a
+caveat and becomes a finding twice over: in \S\ref{sec:evaldecomp}, where one
+row of the sweep invites an explanation in terms of the tensor and a controlled
+measurement shows that explanation is wrong, and again in
+\S\ref{sec:evalboundary}, where two quantities we had attributed to edge
+storage turn out to be overstated by $1.8\times$ and $5.1\times$.
 
 \subsection{Reads: full scan and single-pair lookup}
 \label{sec:evalread}
@@ -2123,10 +2156,13 @@ inline read against a sentinel read on the sweep graph at $\mu = 1.1$ gives
 $4{,}262 - 3{,}253 = 1{,}009$ per pair for (A) and $5{,}434 - 2{,}320 = 3{,}114$
 for (C); (A)'s figure is confirmed independently by the $1{,}013$ above, but
 (C)'s came from a sweep graph sitting in the high state described above, and
-$1{,}993$ at equal $k$ is the figure to use. Both remain upper
-bounds on (B) rather than measurements of it, for the reason
-\S\ref{sec:limits} gives: a sentinel read also scans a row, and (B) is not
-implemented.
+$1{,}993$ at equal $k$ is the figure to use at this grain.
+\S\ref{sec:evalboundary} then measures the same constant at the boundary and
+puts it lower again, at $1{,}707$, which is the figure to prefer and which makes
+the engine-level charge $17\%$ high; \S\ref{sec:evalspace} adds the one thing
+none of these reach, a model of (B)'s space. All of them remain bounds and
+models rather than measurements of (B), for the reason \S\ref{sec:limits}
+gives: a sentinel read also scans a row, and (B) is not implemented.
 
 \subsection{Writes and resident size}
 \label{sec:evalwrite}
@@ -2187,14 +2223,199 @@ whole-megabyte reporting is coarse at $8$--$29$\,MB. Where they disagree we
 read the allocator figure, since it is the one the churn claim is about, and we
 note the disagreement rather than quoting whichever is more flattering.
 
-\subsection{The oscillation regime, where the design's own prediction fails}
+\subsection{At the data-structure boundary, on both sides}
+\label{sec:evalboundary}
+
+Everything above measures queries. This subsection measures the two structures
+themselves: a C harness linked against the shipped static archive, and
+Rust measurement tests in the style the fold constants of \S\ref{sec:folding}
+already used. The C side links with no stubs at all --- $323$ of the archive's
+$392$ members are pulled in, \texttt{tensor.c.o} among them --- so what it
+measures is the shipped implementation rather than a reconstruction of it. The
+fixture is rebuilt identically on both sides: $200{,}000$ pairs on the
+diagonal, one pair per row, $10^6$ reads per repetition, three repetitions,
+run-to-run spread under $0.1\%$ except where noted.
+
+\begin{table}[!ht]
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Per operation & (C) inline-first & (A) container/cell & (C)/(A) \\
+\midrule
+memory, $1$ edge/pair                    & $25.0$\,B/edge & $24.0$\,B/edge  & $1.04$ \\
+memory, $2$ edges/pair                   & $36.8$\,B/edge & $148.0$\,B/edge & $0.25$ \\
+\midrule
+point read $+$ first id, $1$ edge/pair   & $536$          & $553$           & $0.97$ \\
+point read $+$ all ids, $1$ edge/pair    & $566$          & $553$           & $1.02$ \\
+point read $+$ all ids, $2$ edges/pair   & $2{,}502$      & $751$           & $3.33$ \\
+\midrule
+full scan, per edge, $1$ edge/pair       & $163$          & $149$           & $1.09$ \\
+full scan, per edge, $2$ edges/pair      & $250$          & $186$           & $1.34$ \\
+\midrule
+promote (add a $2$nd edge), per pair      & $2{,}735$      & $11{,}548$      & $0.24$ \\
+\bottomrule
+\end{tabular}
+\caption{Both structures measured as structures, instructions per operation
+except where bytes are stated. Identical fixtures on both sides: $200{,}000$
+diagonal pairs, $10^6$ reads per repetition, three repetitions. Spread is under
+$0.1\%$ except the multi-edge point read, which moved $2.7\%$ between whole
+runs ($2{,}502$ against $2{,}570$); ratios at that row should be read to one
+digit. Compare \emph{every} row against its engine-level counterpart above ---
+several disagree, and \S\ref{sec:evalboundary} is about which of the two grains
+is entitled to the attribution.}
+\label{tab:evalboundary}
+\end{table}
+
+\paragraph{The engine-level bounds overstated edge storage, on both sides.}
+This is the measurement that settles what \S\ref{sec:evalmethod} could only
+warn about. The quantity in question is the price of a read taking the
+multi-edge path instead of finding its identifier inline --- design (B)'s
+distinguishing cost, and (C)'s cost on a promoted pair. Differencing at engine
+level put it at $+3{,}114$ instructions for (C) and $+1{,}009$ for (A)
+(\S\ref{sec:evaldecomp}). At the boundary it is $+1{,}707$ for (C) and $+198$
+for (A). The engine-level figures overstate the storage-attributable penalty by
+$1.8\times$ for (C) and $5.1\times$ for (A). The equal-$k$ decomposition did
+better than raw differencing for (C) --- its $1{,}993$ is only $17\%$ above the
+boundary --- and no better at all for (A), whose $1{,}013$ is the same
+$5.1\times$ high. So the caveat was not pro forma: an engine-level difference
+attributed to a data structure was wrong by a factor of five on one of the two
+sides, and in the direction that flatters neither design consistently.
+
+Two component measurements say where (A)'s $553$ actually goes, and they are
+worth reporting because they are the opposite of what the design-space table
+would lead one to expect. Reading a \emph{tagged-pointer} cell costs (A) exactly
+what reading an inline cell costs --- $424.0$ against $424.0$ instructions --- so
+the container tax is entirely in walking the container, not in discriminating
+the tag. And $64\%$ of that $424$ is (A)'s delta layers probing matrices that
+are \emph{empty}: about $271$ instructions per read spent establishing that
+there is no pending state, on a structure whose edge storage is the remaining
+third. Neither figure is about tensors. Both are the sort of thing only a
+boundary measurement can see.
+
+\paragraph{How this composes with \S\ref{sec:evaldecomp}, which it does not
+contradict.} Table~\ref{tab:evalboundary} puts (C) at $3.33\times$ (A) for
+reading both identifiers of a two-edge pair, while the equal-$k$ decomposition
+put the two at parity at $k = 2$. Both are right, and they compose once one sees
+which part of the curve each measures. The boundary's $1 \to 2$ jump is the
+\emph{entry} charge for the multi-edge path --- $+1{,}707$ for (C) against
+$+198$ for (A) --- and the boundary did not measure $k > 2$, so entry is all it
+captures. The decomposition's slope is the cost of each \emph{additional}
+identifier from $k = 2$ to $k = 8$: $448$ for (C) against $854$ for (A). (C)
+pays a large entry and then walks cheaply; (A) pays a small entry and then walks
+expensively. The crossover is what the decomposition already reported, and the
+boundary locates its left endpoint far lower than engine-level measurement could
+see.
+
+\paragraph{The scan advantage in Table~\ref{tab:evalread} is not edge storage
+either.} Iteration per edge costs (C) $163$ instructions against (A)'s $149$ at
+$k = 1$, and $250$ against $186$ at $k = 2$: at the boundary (C)'s scan is
+$9\%$ and $34\%$ \emph{worse}. The sweep has (C) winning the same workload by
+$0.43\times$ at $\mu = 1$. Both are measurements, and the honest reading is
+that (C)'s engine-level scan advantage comes from the engine around the tensor
+--- the pipeline, the projection, the aggregation --- and not from inline-first
+storage, which is slightly behind on raw iteration. Design (C)'s case on scans
+is therefore that it does not \emph{lose}, and the whole-query win belongs to
+another part of the system.
+
+\paragraph{Promotion, and why only the boundary could price it.} Promotion is
+where (C) is furthest ahead: $2{,}735$ instructions per pair against (A)'s
+$11{,}548$, a factor of $4.2$. About $99\%$ of (A)'s is the container itself ---
+\texttt{GrB\_Vector\_new}, two sets, a wait and a free cost $11{,}466$
+instructions in isolation against $11{,}537$ for the whole promotion in that run
+--- which is the pointer-tagged design's per-pair heap object appearing as
+instructions rather than as bytes. (A) also avoids it entirely on bulk paths:
+\texttt{Tensor\_SetElements} collapses within-batch duplicates and builds the
+container directly, so a batch insert never promotes at all, and
+Table~\ref{tab:evalwrite}'s insert column should not be read as containing this
+cost.
+
+It is worth recording how hard this number was to obtain at engine level,
+because the failure is instructive rather than merely inconvenient. Isolating a
+promotion by differencing requires a control query that does the same work
+\emph{without} transitioning, and every engine-level candidate is contaminated.
+Differencing against fresh pairs yields $-16{,}300$ instructions per promotion
+for (A) and $+2{,}448$ for (C); differencing against already-multi pairs yields
+$-21{,}294$ for (A) and $-1{,}619$ for (C). Three of the four are negative,
+which is not a cost, and the reason is that growing the adjacency matrix by
+$500{,}000$ pairs costs more than promoting $500{,}000$ pairs --- the control is
+dearer than the thing it is supposed to isolate. The same control fails at
+(A)'s \emph{boundary} too, at $23{,}099$ against $11{,}548$, because appending
+an identifier to an existing \texttt{GrB\_Vector} re-materialises the whole
+vector. Differencing isolates a transition only where the non-transitioning
+control is genuinely cheaper, which among these four settings is only (C)'s
+boundary; there it gives $1{,}574$ instructions per pair on one fixture and
+$1{,}571$ on an unrelated geometry, agreeing to $0.2\%$. The surviving
+engine-level estimate, $+2{,}448$, is $56\%$ high.
+
+\subsection{Space: becoming multi-edge, and a model for design (B)}
+\label{sec:evalspace}
+
+Table~\ref{tab:evalwrite} reports resident size for whole graphs, where the two
+engines' accounting differs. Two finer measurements say where the difference
+lives, and they agree with each other --- which is worth stating explicitly,
+since the read-path grains did not.
+
+At engine level, on $500{,}000$ pairs over $2{,}500$ nodes with property-free
+edges, reading \texttt{relation\allowbreak\_matrices\allowbreak\_sz\allowbreak\_mb} and identical across all
+three repetitions on both engines: an all-inline graph costs $23.1$ bytes per
+pair on \emph{both} designs, so at $\mu = 1$ there is nothing to choose between
+them. Turning a pair multi-edge costs (A) $272.6$ bytes and (C) $46.1$, a factor
+of $5.9$. Each identifier \emph{after} the second costs $8.04$ bytes in (A) and
+$9.09$ in (C) --- (A) is marginally cheaper per identifier. So the entire space
+difference between the designs is a fixed per-pair charge, not a per-identifier
+one, which is exactly the shape \S\ref{sec:cost} predicted from the container
+object and is not what a reader would guess from
+Table~\ref{tab:evalwrite}'s whole-graph megabytes. The boundary confirms it to
+the byte: (A)'s container costs $+272.00$ bytes for the second identifier and
+$+8.00$ for each one after it.
+
+\paragraph{Design (B)'s space, as a model over measured components.} (B) is
+still not implemented, so this is a model --- but a model whose terms are
+measured rather than derived. On the Rust side, at $100{,}000$ entries each: an
+auxiliary matrix holding one identifier per row in $me$'s exact geometry
+(\texttt{GrB\_INDEX\_MAX} square, compound keys) costs $38.63$ bytes per
+identifier; a \texttt{UINT64} adjacency matrix costs $12.01$ bytes per entry;
+a \texttt{BOOL} adjacency matrix costs $4.01$. $me$'s cost per identifier falls
+steeply as its rows fill --- $24.32$ bytes at $k = 2$, $16.66$ at $4$, $12.83$
+at $8$, $10.91$ at $16$ --- which is the hypersparse row overhead being
+amortised, and the reason (B)'s penalty is worst exactly where (B) is supposed
+to be uniform.
+
+Composing them for a simple graph, where every pair holds one edge:
+\[
+  \begin{aligned}
+    \text{(B)} \;&:\;
+      \underbrace{4.01}_{\text{\textsc{bool} adjacency}}
+      \;+\; \underbrace{38.63}_{\text{one id per row in } me\text{'s geometry}}
+      \;=\; 42.64 \ \text{B/edge},
+    \\[2pt]
+    \text{(C)} \;&:\;
+      \underbrace{12.01}_{\text{\textsc{uint64} adjacency}}
+      \;+\; \underbrace{0}_{me \text{ empty; } 768\,\text{B fixed}}
+      \;=\; 12.01 \ \text{B/edge},
+  \end{aligned}
+\]
+a ratio of $3.55$. What the model assumes is that such an implementation would
+reuse these same GraphBLAS matrices at these dimensions with this key encoding;
+a (B) built on a narrower key or a different structure would land elsewhere. It
+excludes the backward matrix, which both designs need equally. With those
+caveats it is the first quantitative statement this paper can make about (B)'s
+space rather than about its read path, and it is the largest gap between any two
+of the three designs on any axis measured here.
+
+\subsection{The oscillation regime: the defect, the fix, and the residual}
 \label{sec:evalosc}
 
 \S\ref{sec:designspace} says (C)'s distinguishing cost is the
 promotion/demotion transition that (A) and (B) do not have, and
 Table~\ref{tab:designspace} prices it at two auxiliary writes --- a small
 constant. This is the paper's own nomination of its weak spot, so it is the
-measurement that matters most, and it is the one that comes out badly.
+measurement that matters most, and it is the one that came out worst. It also
+has the longest story: the transition was measured, found to be not a constant
+at all but a quadratic, diagnosed to a specific call pattern, and fixed. We give
+all four stages, because the first is what the design predicted, the second is
+what our code actually did, and the fourth still does not reach (A).
 
 The experiment isolates the transition by holding everything else equal: the
 same \texttt{DELETE} query over the same number of rows, run once where each
@@ -2215,9 +2436,10 @@ nothing else.
 (C) Rust & $228{,}765$ & $8{,}810$ & $219{,}955$ & & $52{,}715$ & $228{,}784$ \\
 \bottomrule
 \end{tabular}
-\caption{The transition, isolated (left) and as a function of how many pairs
-one query demotes (right; instructions per pair for the demoting delete, the
-same quantity as the first column). Both engines pay essentially the same price
+\caption{The transition as originally measured, before the fix described
+below: isolated (left) and as a function of how many pairs one query demotes
+(right; instructions per pair for the demoting delete, the same quantity as the
+first column). Both engines pay essentially the same price
 to empty a one-edge pair, so the transition column is the promotion/demotion
 cost with the delete's own cost removed. The right block's $1{,}000$-pair column repeats
 the left block's demote measurement in a separate run: $10{,}712$ against
@@ -2226,13 +2448,14 @@ which is well under $1\%$ and far below the effect.}
 \label{tab:evalosc}
 \end{table}
 
-Table~\ref{tab:evalosc} gives it. Emptying a one-edge pair costs the two
-engines almost the same ($8{,}390$ against $8{,}810$), which is the control
-working: the delete machinery is not what separates them. The transition costs
-(A) $2{,}322$ instructions per pair --- a small constant, as the design says it
-should be --- and costs (C) $219{,}955$, roughly $95\times$ more.
+Table~\ref{tab:evalosc} gives what that first measurement found. Emptying a
+one-edge pair costs the two engines almost the same ($8{,}390$ against
+$8{,}810$), which is the control working: the delete machinery is not what
+separates them. The transition costs (A) $2{,}322$ instructions per pair --- a
+small constant, as the design says it should be --- and cost (C) $219{,}955$,
+roughly $95\times$ more.
 
-Worse, it is not even a constant. Growing the number of pairs a single query
+Worse, it was not even a constant. Growing the number of pairs a single query
 demotes from $125$ to $1{,}000$ --- eight times the work --- raises (C)'s
 \emph{per-pair} cost from $52{,}715$ to $228{,}784$, a factor of $4.3$, so the
 query's total cost grows about $35\times$ for $8\times$ the pairs. A per-pair
@@ -2240,26 +2463,64 @@ cost that itself rises with the pair count is the signature of a quadratic, and
 it is the opposite of what the same axis does to (A), whose per-pair cost
 \emph{falls} from $23{,}029$ to $10{,}773$ as its fixed overheads amortise.
 The cost is, however, flat in the size of the overflow matrix: the same
-demotion measured while $|me|$ grows $17\times$ moves only from $162{,}919$ to
-$166{,}353$ per pair. So the blow-up is driven by the number of demotions in
-the batch, not by how much has overflowed --- which is what one would expect if
-the batch's demotions are being processed in a way that is quadratic in their
-count rather than streamed.
+demotion measured while $|me|$ grows $17\times$ moved only from $162{,}919$ to
+$166{,}353$ per pair. So the blow-up was driven by the number of demotions in
+the batch and not by how much had overflowed --- which is what one would expect
+if the batch's demotions were being processed in a way quadratic in their count
+rather than streamed, and is what the diagnosis below confirms.
 
-We claim this as an implementation defect and not a property of the design, and
-the claim is falsifiable in the obvious way: the design demotes a pair with two
-auxiliary writes, (A) implements the same logical transition for a constant
-$2{,}322$ instructions, and (C)'s own cost is independent of $|me|$ and
-therefore not paying for the structure the design puts it in. It is tracked as
-FalkorDB issue \#2429
-(\url{https://github.com/FalkorDB/FalkorDB/issues/2429}). Until it is fixed,
-the honest statement of the design's position is the one this section measures
-rather than the one \S\ref{sec:designspace} predicts: inline-first buys the
-common case at the price of a transition, that price is a small constant in a
-mature implementation of the alternative, and in ours it is currently
-super-linear in the size of the batch that pays it. A workload that drives many
-pairs across the one-to-two boundary in single transactions is, today, the
-workload to keep away from this engine.
+We claimed this as an implementation defect rather than a property of the
+design, on the falsifiable grounds that the design demotes a pair with two
+auxiliary writes, that (A) implements the same logical transition for a constant
+$2{,}322$ instructions, and that (C)'s own cost is independent of $|me|$ and so
+is not paying for the structure the design puts it in. It was filed as FalkorDB
+issue \#2429 (\url{https://github.com/FalkorDB/FalkorDB/issues/2429}).
+
+\paragraph{The cause, instrumented rather than inferred.} Counting per call site
+rather than reasoning about the shape put it in one place: a read-after-write on
+a delta layer \emph{inside} the per-edge loop. \texttt{me.remove} dirties the
+delta and the next \texttt{me.iter} waits on it, so every edge in the batch
+forces a materialisation of everything the batch has written so far --- $|\delta|$
+work per edge, $\Theta(n^2)$ per query. The $me$ path dominates; the
+forward-delta path accounts for only about $22\%$. This is precisely the hazard
+Table~\ref{tab:ops} names and \S\ref{sec:insert} was built around ---
+materialisation count, not FFI count, is what turns a linear operation
+quadratic --- and the deletion path simply had not been given the phase split
+that insertion already had. The paper's own analysis identified the class of bug
+and the code contained an instance of it, which is a fair summary of how much
+protection an analysis offers on its own.
+
+\paragraph{The fix, and what remains.} Splitting deletion into read and write
+phases --- the shape \texttt{set\_all\_from\_slices} already used for inserts ---
+is in PR \#2431, which closes \#2429. Independently reproduced, before and
+after:
+
+\begin{center}
+\small
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+ & transition & $1{,}000$-pair delete, per pair & trend with batch size \\
+\midrule
+(C) before & $221{,}233$ & $228{,}855$ & rising \\
+(C) after  & $7{,}421$   & $16{,}299$  & falling \\
+(A)        & $2{,}355$   & $10{,}878$  & falling \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+The transition drops by a factor of $30$ and, more importantly, changes shape:
+per-pair cost now \emph{falls} with batch size on both engines, so the quadratic
+is gone rather than merely reduced. What is left is a constant factor. The
+transition costs (C) $7{,}421$ instructions against (A)'s $2{,}355$, still
+$3.2\times$, and the whole thousand-pair delete costs $1.5\times$ (A)'s. So the
+honest statement of the design's position is neither the one
+\S\ref{sec:designspace} predicts nor the one this subsection opened with:
+inline-first buys the common case at the price of a transition; that price was a
+quadratic in our implementation, is now a constant, and remains about three
+times what the container-per-cell design pays for the same logical change. The
+before-column above is retained deliberately, since a reader holding the earlier
+revision of this paper should be able to see which numbers moved and why.
 
 % =====================================================================
 \section{Limitations and domain restrictions}
@@ -2382,41 +2643,39 @@ adjacency matrix Boolean would need none of it --- and would carry design
 read, forever.
 
 \paragraph{What the evaluation does not settle.}
-\S\ref{sec:eval} measures designs (A) and (C) against each other; four gaps
-remain, and they are not small.
+\S\ref{sec:eval} measures (A) and (C) as engines and as data structures, so the
+gaps that remain are narrower than in the previous revision --- the boundary
+measurement and (B)'s space have both closed --- but they are specific and worth
+naming.
 
-\emph{Design (B) is emulated, not implemented.} What
-\S\ref{sec:evaldecomp} isolates is the fixed charge for taking the multi-edge
-path, which is the constant (B) would pay on every read; that bounds (B)'s read
-cost from above and says nothing at all about its space, and nothing about its
-\emph{absence} of promotion cost --- which, given \S\ref{sec:evalosc}, is the
-whole of (B)'s case. A design whose distinguishing weakness is a second lookup
-we have now priced at $1{,}993$ instructions deserves a better answer than an
-upper bound derived from its competitor.
+\emph{Design (B) exists nowhere.} Every (B) number here is a bound or a model:
+its read constant is bounded by what (C) pays to enter the multi-edge path
+(\S\ref{sec:evalboundary}), and its space is a composition of measured
+GraphBLAS components under an assumption about how (B) would be built
+(\S\ref{sec:evalspace}). Nothing measures (B)'s \emph{absence} of promotion
+cost, which is the whole of its case against (C).
 
-\emph{Nothing is measured at the data-structure boundary on (A)'s side.}
-Every number in \S\ref{sec:eval} comes from a query against a whole engine, and
-the tensor is one component of each. Differences are therefore attributable to
-two engines, of which edge storage is one part, and the decomposition of
-\S\ref{sec:evaldecomp} narrows that only for (C), by varying $k$ on otherwise
-identical graphs rather than by instrumenting the structure itself. Closing this
-properly means a C harness around \texttt{src/graph/tensor/} on \texttt{master},
-measuring the same operations as calls rather than as queries. Issue \#2430 is
-what happens when one does not have that: an engine-level number pointed at the
-wrong component, and it took a controlled experiment to see it.
+\emph{Fan-out beyond $k = 2$ is not measured at the boundary} for reads or
+iteration --- the boundary fixtures are one and two edges per pair, and the
+crossover above $k = 2$ rests on the engine-level slope of
+\S\ref{sec:evaldecomp}. Memory is the exception, covered to $k = 16$.
 
-\emph{The oscillation figure measures a defect, not the design.}
-\S\ref{sec:evalosc} reports what our implementation currently costs on the
-one-to-two boundary. It does not report what inline-first costs there, and the
-two differ by roughly two orders of magnitude. Until \#2429 is fixed, that row
-of the comparison is unavailable.
+\emph{All reads are warm and sequential.} Cold-cache behaviour and random access
+order are unmeasured, and a design that trades a pointer dereference for a
+second matrix probe is exactly the kind whose ranking could change under either.
+Transposed iteration and several C entry points are also unmeasured.
+
+\emph{Only instruction counts are trustworthy here.} Some runs overlapped other
+work on the machine, so wall clock and cycles are not reported, and no claim in
+\S\ref{sec:eval} should be read as a latency result. Everything is macOS on
+arm64, with the C side pinned to SuiteSparse:GraphBLAS v10.3.1; Linux and CI are
+unmeasured.
 
 \emph{And the multiplicity distribution is an assumption throughout.} The
 premise that $\mu$ is dominated by $1$ --- which is what makes the common case
 common, and which the sweep parameterises rather than tests --- is a claim about
 the workloads people run, not about data structures. Nothing here, and nothing
-measurable on a synthetic sweep, settles it. One machine, one platform and one
-relationship type is also the whole of the evidence.
+measurable on a synthetic sweep, settles it.
 
 % =====================================================================
 \section{Related work}
@@ -2507,10 +2766,12 @@ drops to one edge, its identifier returns inline and its $me$ row is emptied.
 A workload that oscillates across the boundary pays a promotion and a
 demotion per oscillation. Hysteresis --- keeping a pair in $me$ until the
 transaction ends --- would trade a little space for stability, and it is not
-obvious which wins. That question is downstream of \#2429
-(\S\ref{sec:evalosc}), though: while a batch's demotions cost more than linearly
-in their number, the policy choice is not what dominates, and a measurement of
-hysteresis would mostly measure the defect.
+obvious which wins. That question was downstream of \#2429
+(\S\ref{sec:evalosc}) --- while a batch's demotions cost more than linearly in
+their number, the policy choice was not what dominated, and any measurement of
+hysteresis would mostly have measured the defect. With that fixed, and the
+residual transition now a constant $3.2\times$ (A)'s, the comparison is worth
+running.
 
 \paragraph{Generalising the pattern.} Inline-first with sentinel promotion is
 not specific to edge identifiers. Any sparse-matrix-backed store whose cell
@@ -2549,6 +2810,21 @@ reduce to not assuming an operation does less than it does, and both are the
 standing price of putting a data structure with its own invariants inside
 someone else's execution model.
 
+Measurement (\S\ref{sec:eval}) largely bears that out and corrects it in two
+places. It bears it out on space and on promotion, where removing the heap
+container is worth a factor of four to six and shows up as an allocator curve
+without the container design's hump. It corrects it on iteration, which is
+slightly cheaper in the container design, so the engine-level scan advantage we
+might have claimed belongs to the engine and not to this structure. And it
+corrects it on the transition, the cost the design nominated as its own: that
+cost was a quadratic in our implementation until we instrumented and fixed it,
+and even now it is about three times what a container costs to allocate. The
+general lesson is less about tensors than about grain. Two of the attributions
+we made from whole-query measurements were wrong by factors of $1.8$ and $5.1$
+once the structures were measured as structures, always in the direction that
+flattered the conclusion we already had --- which is the argument for measuring
+at the boundary even when the engine-level number is the one a user feels.
+
 % =====================================================================
 \section*{Availability}
 
@@ -2572,12 +2848,16 @@ under \texttt{src/graph/tensor/}.
 The measurements of \S\ref{sec:eval} were taken with the repository's benchmark
 harness under \texttt{bench/}, whose instruction counting is
 \texttt{proc\_pid\_rusage} against the server process
-(\texttt{counters.py} in that tree); both engines were release builds
-on one macOS arm64 host. The sweep driver itself is not yet committed on either
-branch above, so \S\ref{sec:evalmethod} states the construction of each
-configuration in enough detail to rebuild it. The two anomalies the evaluation
-reports are FalkorDB issues \#2429 (batch demotion cost) and \#2430 (the
-two-state point-read cost).
+(\texttt{counters.py} in that tree); both engines were release builds on one
+macOS arm64 host, with the C side built against SuiteSparse:GraphBLAS v10.3.1.
+The boundary harnesses of \S\ref{sec:evalboundary} and \S\ref{sec:evalspace}
+are committed at \texttt{bench/studies/edge\_storage/} and
+\texttt{graph/src/graph/graphblas/tensor\_cost\_bench.rs} on the
+\texttt{measure/design-b-and-boundary} branch; the C harness there links the
+shipped static archive directly, with no stubbed symbols.
+Of the anomalies this evaluation found, the batch demotion cost is FalkorDB issue
+\#2429, fixed by PR \#2431, and the two-state point-read cost is \#2430, open
+with no identified cause.
 
 Built against SuiteSparse:GraphBLAS v10.3.1 and LAGraph v1.2.1; the proofs
 against Lean 4 v4.32.0 with mathlib v4.32.0, pinned in the project's
