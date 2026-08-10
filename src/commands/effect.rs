@@ -172,7 +172,7 @@ fn apply_effects(
 
                 // Apply labels
                 if label_count > 0 {
-                    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
+                    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs, true);
                 }
 
                 // Attributes
@@ -242,7 +242,7 @@ fn apply_effects(
                     label_rows.push(node_id);
                     label_cols.push(label_id as u64);
                 }
-                g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs);
+                g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs, false);
             }
 
             EFFECT_REMOVE_LABELS => {
