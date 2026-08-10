@@ -1,0 +1,80 @@
+# CodeQL for the Rust engine (this branch).
+#
+# Replaces GitHub's *default setup*, which analysed the same four languages
+# with the same "extended" suite on the same weekly cadence but offers no way
+# to exclude a path: `paths-ignore` is only read from a config file, and a
+# config file is only read by advanced setup. The generated GraphBLAS PreJIT
+# kernels under build/graphblas/PreJIT/ are what needed excluding — see
+# .github/codeql/codeql-config.yml for why.
+#
+# IMPORTANT: default setup must be turned off (Settings -> Advanced Security ->
+# Code scanning, or `gh api -X PATCH repos/FalkorDB/FalkorDB/code-scanning/
+# default-setup -f state=not-configured`) when this lands. Until then both
+# configurations run, and the default-setup analysis keeps raising the alerts
+# this config exists to suppress.
+#
+# `master` has its own codeql-analysis.yml for the C engine; it is branch-
+# filtered to master and the release branches, so the two never overlap.
+
+name: "CodeQL"
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, matching the cadence default setup was configured with. Offset
+    # from master's Monday 05:33 scan so the two do not contend for runners.
+    - cron: "47 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Every language is analysed without building. That is what default
+          # setup did (its c-cpp job finished in 55s, well inside a GraphBLAS
+          # build), and `paths-ignore` only applies to codebases analysed
+          # without a build — so a build mode here would silently drop the
+          # exclusion this workflow exists for.
+          - language: actions
+            build-mode: none
+          - language: c-cpp
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: rust
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
+        with:
+          category: "/language:${{ matrix.language }}"
