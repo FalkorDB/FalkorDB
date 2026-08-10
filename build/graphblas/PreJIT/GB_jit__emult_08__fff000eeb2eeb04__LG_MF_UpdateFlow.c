@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GB_jit__add__e3f001111111900.c
+// GB_jit__emult_08__fff000eeb2eeb04__LG_MF_UpdateFlow.c
 //------------------------------------------------------------------------------
 // SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
@@ -10,17 +10,28 @@
 
 #include "include/GB_jit_kernel.h"
 
-// op: (any, bool)
+// op: LG_MF_UpdateFlow, ztype: LG_MF_flowEdge, xtype: LG_MF_flowEdge, ytype: double
+
+typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
+#define GB_LG_MF_flowEdge_USER_DEFN \
+"typedef struct{ double capacity; double flow; } LG_MF_flowEdge;"
 
 // binary operator types:
-#define GB_Z_TYPE bool
-#define GB_X_TYPE bool
-#define GB_Y_TYPE bool
+#define GB_Z_TYPE LG_MF_flowEdge
+#define GB_X_TYPE LG_MF_flowEdge
+#define GB_Y_TYPE double
 
 // binary operator:
-#define GB_BINOP(z,x,y,i,j) z = y
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
-#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso) Cx [pC] = ((Bx [pB]) != 0)
+#ifndef GB_GUARD_LG_MF_UpdateFlow_DEFINED
+#define GB_GUARD_LG_MF_UpdateFlow_DEFINED
+GB_STATIC_INLINE
+void LG_MF_UpdateFlow(LG_MF_flowEdge *z, const LG_MF_flowEdge *x, const double *y) { z->capacity = x->capacity; z->flow = x->flow + (*y); }
+#define GB_LG_MF_UpdateFlow_USER_DEFN \
+"void LG_MF_UpdateFlow(LG_MF_flowEdge *z, const LG_MF_flowEdge *x, const double *y) { z->capacity = x->capacity; z->flow = x->flow + (*y); }"
+#endif
+#define GB_BINOP(z,x,y,i,j)  LG_MF_UpdateFlow (&(z), &(x), &(y))
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
+#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso)
 
 // C matrix: hypersparse
 #define GB_C_IS_HYPER  1
@@ -35,7 +46,7 @@
 #define GB_C_NHELD(e) GB_C_NVALS(e)
 #define GB_C_ISO 0
 #define GB_C_IN_ISO 0
-#define GB_C_TYPE bool
+#define GB_C_TYPE LG_MF_flowEdge
 #define GB_PUTC(c,Cx,p) Cx [p] = c
 #define GB_Cp_TYPE uint32_t
 #define GB_Cj_TYPE uint32_t
@@ -47,36 +58,47 @@
 #define GB_Ci_BITS 32
 #define GB_EWISEOP(Cx,p,aij,bij,i,j) GB_BINOP (Cx [p], aij, bij, i, j)
 
-// M matrix: none (complemented):
+// M matrix: hypersparse
+#define GB_M_IS_HYPER  1
+#define GB_M_IS_SPARSE 0
+#define GB_M_IS_BITMAP 0
+#define GB_M_IS_FULL   0
+#define GBp_M(Mp,k,vlen) Mp [k]
+#define GBh_M(Mh,k)      Mh [k]
+#define GBi_M(Mi,p,vlen) Mi [p]
+#define GBb_M(Mb,p)      1
+// structural mask:
 #define GB_M_TYPE void
 #define GB_MCAST(Mx,p,msize) 1
 #define GB_MASK_STRUCT 1
-#define GB_MASK_COMP   1
-#define GB_NO_MASK     1
-#define GB_Mp_TYPE uint64_t
-#define GB_Mj_TYPE uint64_t
-#define GB_Mj_SIGNED_TYPE int64_t
-#define GB_Mi_TYPE uint64_t
-#define GB_Mi_SIGNED_TYPE int64_t
-#define GB_Mp_BITS 64
-#define GB_Mj_BITS 64
-#define GB_Mi_BITS 64
+#define GB_MASK_COMP   0
+#define GB_NO_MASK     0
+#define GB_M_NVALS(e) int64_t e = M->nvals
+#define GB_M_NHELD(e) GB_M_NVALS(e)
+#define GB_Mp_TYPE uint32_t
+#define GB_Mj_TYPE uint32_t
+#define GB_Mj_SIGNED_TYPE int32_t
+#define GB_Mi_TYPE uint32_t
+#define GB_Mi_SIGNED_TYPE int32_t
+#define GB_Mp_BITS 32
+#define GB_Mj_BITS 32
+#define GB_Mi_BITS 32
 
-// A matrix: hypersparse
-#define GB_A_IS_HYPER  1
-#define GB_A_IS_SPARSE 0
+// A matrix: sparse
+#define GB_A_IS_HYPER  0
+#define GB_A_IS_SPARSE 1
 #define GB_A_IS_BITMAP 0
 #define GB_A_IS_FULL   0
 #define GBp_A(Ap,k,vlen) Ap [k]
-#define GBh_A(Ah,k)      Ah [k]
+#define GBh_A(Ah,k)      (k)
 #define GBi_A(Ai,p,vlen) Ai [p]
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
 #define GB_A_NHELD(e) GB_A_NVALS(e)
 #define GB_A_ISO 0
-#define GB_A_TYPE bool
-#define GB_A2TYPE bool
-#define GB_DECLAREA(a) bool a
+#define GB_A_TYPE LG_MF_flowEdge
+#define GB_A2TYPE LG_MF_flowEdge
+#define GB_DECLAREA(a) LG_MF_flowEdge a
 #define GB_GETA(a,Ax,p,iso) a = Ax [p]
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
@@ -99,10 +121,10 @@
 #define GB_B_NVALS(e) int64_t e = B->nvals
 #define GB_B_NHELD(e) GB_B_NVALS(e)
 #define GB_B_ISO 0
-#define GB_B_TYPE uint64_t
-#define GB_B2TYPE bool
-#define GB_DECLAREB(b) bool b
-#define GB_GETB(b,Bx,p,iso) b = ((Bx [p]) != 0)
+#define GB_B_TYPE double
+#define GB_B2TYPE double
+#define GB_DECLAREB(b) double b
+#define GB_GETB(b,Bx,p,iso) b = Bx [p]
 #define GB_Bp_TYPE uint32_t
 #define GB_Bj_TYPE uint32_t
 #define GB_Bj_SIGNED_TYPE int32_t
@@ -114,19 +136,19 @@
 
 #include "include/GB_ewise_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__add__e3f001111111900
-#define GB_jit_query  GB_jit__add__e3f001111111900_query
+#define GB_jit_kernel GB_jit__emult_08__fff000eeb2eeb04__LG_MF_UpdateFlow
+#define GB_jit_query  GB_jit__emult_08__fff000eeb2eeb04__LG_MF_UpdateFlow_query
 #endif
-#include "template/GB_jit_kernel_add.c"
+#include "template/GB_jit_kernel_emult_08.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xaf5752a03202bc31 ;
+    (*hash) = 0x73cbbe2a43bd4c39 ;
     v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
-    defn [0] = NULL ;
+    defn [0] = GB_LG_MF_UpdateFlow_USER_DEFN ;
     defn [1] = NULL ;
-    defn [2] = NULL ;
-    defn [3] = NULL ;
+    defn [2] = GB_LG_MF_flowEdge_USER_DEFN ;
+    defn [3] = defn [2] ;
     defn [4] = NULL ;
     return (true) ;
 }

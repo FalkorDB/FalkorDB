@@ -54,6 +54,10 @@ use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter
 /// are `bool`; traversal only consumes the sparsity pattern (`ANY_PAIR`
 /// semiring), so both traverse identically. Cloning either variant is cheap
 /// (`Arc` handle clones, no data copy).
+// One instance lives per traversal operator (never in collections), so the
+// size gap between the variants costs nothing; boxing would add indirection
+// on the hot traversal path instead.
+#[allow(clippy::large_enum_variant)]
 enum TraversalMatrix {
     Bool(VersionedMatrix<bool>),
     /// A single relationship `Tensor` (shallow clone, shared handles); only
