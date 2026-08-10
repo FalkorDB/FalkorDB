@@ -317,7 +317,7 @@ fn process_node_token(
     g.create_nodes(&nodes_bitmap);
     unsafe { maybe_yield(raw_ctx) };
 
-    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes);
+    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes, true);
     unsafe { maybe_yield(raw_ctx) };
 
     // `import_node_attrs_resolved` marks these nodes for indexing, collecting into the
