@@ -166,3 +166,33 @@ def query_exception(query: str, message: str, params=None):
         assert False, "Expected an error"
     except ResponseError as e:
         assert message in str(e)
+
+def test_struct_constructor_extra_args_does_not_crash():
+    """A temporal constructor called with more arguments than it accepts must
+    not take the binder's positional fast path.
+
+    `rewrite_struct_constructor` only rewrites a call with one Map argument, and
+    then emits exactly one child per slot. The evaluator used to infer "this was
+    rewritten" from `num_children > 1`, so a genuine two-argument call — accepted
+    because these constructors are declared var-arg — reached a `struct_fn`
+    expecting `slots.len()` values and indexed past the end of a 2-slice. In a
+    release build that killed the server outright; found by the fuzzer.
+    """
+    for query in [
+        # the fuzzer's input, reduced
+        """WITH localdatetime({year: 1980, month: 12, day: 11, hour: 12,
+                              minute: 31, second: 14}) AS x,
+                localdatetime({year: 1984, month: 10, day: 11, hour: 12},
+                              {list: [6], fd: 645876123}) AS d
+           RETURN x = d""",
+        "RETURN localdatetime({year: 1984}, {x: 1})",
+        "RETURN localtime({hour: 1}, {x: 1})",
+        "RETURN date({year: 1984}, {x: 1})",
+    ]:
+        # Either a value or an error is acceptable; a dead server is not.
+        try:
+            common.g.query(query)
+        except ResponseError:
+            pass
+        assert common.g.query("RETURN 1").result_set == [[1]], \
+            f"server did not survive: {query}"
