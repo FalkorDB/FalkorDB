@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::{FIELD, doc_le_bytes, read_u64, read_width};
+use super::{FIELD, doc_le_bytes};
 
 mod aos;
 mod compact;
@@ -238,38 +238,6 @@ impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
     /// Decode to the owned `(key, doc)` pairs the mutation paths (insert/remove/merge) work in.
     pub(super) fn to_pairs(&self) -> Vec<(u64, u64)> {
         self.iter().collect()
-    }
-
-    /// Call `f(key, doc)` for every entry in stored order. Unlike [`Leaf::iter`], the format is matched
-    /// **once per leaf** (not per entry), and the common AoS page reads its contiguous `(key, doc)` tuples
-    /// in a tight loop — so a bulk full-scan (`CowBTree::for_each_tuple`) avoids the per-entry enum dispatch
-    /// and per-item `Iterator::next` overhead the lazy cursor pays. Hot path for `iter_edges` / MSF rebuild.
-    pub(super) fn for_each_tuple<F: FnMut(u64, u64)>(
-        &self,
-        mut f: F,
-    ) {
-        match self {
-            Self::Aos(l) => {
-                let b = &l.0;
-                let n = b.len() / (FIELD + DOC_BYTES);
-                for i in 0..n {
-                    f(
-                        read_u64(b, i * (FIELD + DOC_BYTES)),
-                        read_width(b, i * (FIELD + DOC_BYTES) + FIELD, DOC_BYTES),
-                    );
-                }
-            }
-            Self::Compact(l) => {
-                for i in 0..l.count() {
-                    f(l.key(i), l.doc(i));
-                }
-            }
-            Self::CompactIndexed(l) => {
-                for i in 0..l.count() {
-                    f(l.key(i), l.doc(i));
-                }
-            }
-        }
     }
 
     /// Build a leaf from sorted `(key, doc)` pairs, choosing [`LeafFormat::Aos`] or [`LeafFormat::Compact`]

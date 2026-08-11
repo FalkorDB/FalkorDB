@@ -136,6 +136,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> Def
                 LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
                 "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
             );
+            assert!(
+                DOC_BYTES >= 1 && DOC_BYTES <= FIELD,
+                "DOC_BYTES must be 1..=8: it is the AoS doc field width, and doc_le_bytes slices u64::to_le_bytes() at it (0 stores no doc at all; > 8 indexes past the array)"
+            );
         }
         Self {
             root: Node::Leaf(Leaf::from_pairs(&[])),
@@ -154,6 +158,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
                 "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
             );
+            assert!(
+                DOC_BYTES >= 1 && DOC_BYTES <= FIELD,
+                "DOC_BYTES must be 1..=8: it is the AoS doc field width, and doc_le_bytes slices u64::to_le_bytes() at it (0 stores no doc at all; > 8 indexes past the array)"
+            );
         }
         Self::default()
     }
@@ -167,6 +175,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
             assert!(
                 LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
                 "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
+            );
+            assert!(
+                DOC_BYTES >= 1 && DOC_BYTES <= FIELD,
+                "DOC_BYTES must be 1..=8: it is the AoS doc field width, and doc_le_bytes slices u64::to_le_bytes() at it (0 stores no doc at all; > 8 indexes past the array)"
             );
         }
         // Enforced in all builds (not just `debug`): a violation silently corrupts the tree — the
@@ -345,31 +357,6 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         RangeIter::new(&self.root, (lo, 0), hi)
     }
 
-    /// Call `f(key, doc)` for every tuple in the tree, in `(key, doc)` order. A bulk full-scan that
-    /// matches each leaf's format once and runs a tight inner loop — faster than collecting the lazy
-    /// [`range_tuples`](Self::range_tuples) cursor when the whole tree is consumed (`iter_edges`, the MSF
-    /// rebuild). No allocation, no per-entry `Iterator::next` dispatch.
-    pub fn for_each_tuple<F: FnMut(u64, u64)>(
-        &self,
-        mut f: F,
-    ) {
-        fn walk<
-            F: FnMut(u64, u64),
-            const LEAF_MAX: usize,
-            const BRANCH_MAX: usize,
-            const DOC_BYTES: usize,
-        >(
-            node: &Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
-            f: &mut F,
-        ) {
-            match node {
-                Node::Leaf(leaf) => leaf.for_each_tuple(&mut *f),
-                Node::Branch(branch) => branch.children.iter().for_each(|c| walk(c, f)),
-            }
-        }
-        walk(&self.root, &mut f);
-    }
-
     /// Approximate resident heap bytes: the sum of every leaf's byte blob plus branch child/separator
     /// vectors. Walks all pages (`O(pages)`), so call it off hot paths (memory reporting).
     #[must_use]
@@ -379,12 +366,15 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
             acc: &mut usize,
         ) {
             match node {
+                // A leaf blob is an `Arc<[u8]>` — exact-sized, so its length *is* its allocation.
                 Node::Leaf(leaf) => *acc += leaf.raw().len(),
                 Node::Branch(branch) => {
-                    // `seps` is `Vec<(u64, u64)>` — each separator is a full
+                    // `capacity`, not `len`: what is resident is what was allocated, and unlike the
+                    // leaves these are `Vec`s — a branch that has split or absorbed inserts keeps
+                    // spare slots. `seps` is `Vec<(u64, u64)>` — each separator is a full
                     // `(key, doc)` pair, not a bare key.
-                    *acc += branch.seps.len() * std::mem::size_of::<(u64, u64)>()
-                        + branch.children.len()
+                    *acc += branch.seps.capacity() * std::mem::size_of::<(u64, u64)>()
+                        + branch.children.capacity()
                             * std::mem::size_of::<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>();
                     branch.children.iter().for_each(|c| walk(c, acc));
                 }
