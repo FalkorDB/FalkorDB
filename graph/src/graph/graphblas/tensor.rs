@@ -207,6 +207,24 @@ pub struct Tensor {
 /// collide with it (they are bounded by [`GrB_INDEX_MAX`]).
 pub const MULTI_EDGE: u64 = u64::MAX;
 
+/// What [`Tensor::remove_all`]'s read phase has worked out about one
+/// `(src, dst)` pair: the state it is in after replaying the batch's removals
+/// against the state the layers still hold, and hence what the write phase owes
+/// it. Named after the per-pair states in the [module docs](self).
+enum PairPlan {
+    /// Effective inline value is [`MULTI_EDGE`]: the ids still left in the
+    /// pair's `me` row, ascending. At least two — reaching one demotes the pair.
+    Multi(Vec<u64>),
+    /// One edge left, held inline. `demoted` marks the id as having arrived
+    /// there by a demotion in this batch, which the write phase must still put
+    /// in the inline slot; otherwise the pair was already single and untouched.
+    Single { id: u64, demoted: bool },
+    /// Emptied by this batch: its last edge was removed.
+    Emptied,
+    /// No edges when the batch reached it (absent, or deleted earlier).
+    Absent,
+}
+
 /// Shallow clone sharing the underlying GraphBLAS handles (no data copy),
 /// same semantics as `VersionedMatrix`'s `Clone`. Use [`Tensor::dup`] to
 /// create a new MVCC version instead.
@@ -485,53 +503,133 @@ impl Tensor {
         //  - single-edge pair: delete the pair.
         //  - multi-edge pair (inline == MULTI_EDGE): drop the id from `me`;
         //    when exactly one id remains, demote it back into the inline slot.
+        //
+        // Split into a read phase and a write phase, for the same reason as
+        // `set_all_from_slices`. Mutating a layer *and* reading it back in the
+        // same iteration is what makes a batch quadratic: a `set`/`remove`
+        // leaves GraphBLAS tuples pending, and the next iteration's read has to
+        // materialize them — an `O(|layer|)` merge (plus an OpenMP fan-out) per
+        // edge. Measured on a 1,000-pair demote batch: 9.9 ms of the 13.2 ms
+        // spent in this function went to the `me.iter` right after `me.remove`,
+        // and another 2.9 ms to the `eff_get` right after the `dp` write.
+        //
+        // So the read phase reads `dp`/`dm`/`me` and writes none of them: it
+        // replays each touched pair's transitions in `plans` and buffers the
+        // `me` removals. The write phase then writes without reading those
+        // layers back (probing only the committed bases, which never carry
+        // pending work).
+        self.wait_fwd();
+        let mut plans: FxHashMap<(u64, u64), PairPlan> = FxHashMap::default();
+        // `me` entries to drop, in discovery order.
+        let mut me_del: Vec<(u64, u64)> = Vec::new();
         let mut emptied = Vec::new();
         for &(id, src, dst) in rels {
             let key = compound_key(src, dst);
-            match self.eff_get(src, dst) {
-                Some(MULTI_EDGE) => {
-                    self.me.remove(key, id);
-                    let mut it = self.me.iter(key, key);
-                    let survivor = it.next();
-                    let still_multi = it.next().is_some();
-                    drop(it);
-                    if still_multi {
+            let plan = match plans.entry((src, dst)) {
+                Entry::Occupied(e) => e.into_mut(),
+                Entry::Vacant(e) => e.insert(match self.eff_get(src, dst) {
+                    // All of a MULTI pair's ids live in `me`; read the row once
+                    // and take every removal for this pair out of that list
+                    // instead of re-reading a row we are about to dirty.
+                    Some(MULTI_EDGE) => {
+                        let ids: Vec<u64> = self.me.iter(key, key).map(|(_, id)| id).collect();
+                        debug_assert!(
+                            ids.windows(2).all(|w| w[0] < w[1]),
+                            "`me` row ({src}, {dst}) not ascending; the search below needs it"
+                        );
+                        PairPlan::Multi(ids)
+                    }
+                    Some(inline) => PairPlan::Single {
+                        id: inline,
+                        demoted: false,
+                    },
+                    None => PairPlan::Absent,
+                }),
+            };
+            match plan {
+                PairPlan::Multi(ids) => {
+                    // Unknown id (another pair's, or already removed by an
+                    // earlier duplicate in this batch): nothing to remove.
+                    let Ok(pos) = ids.binary_search(&id) else {
                         continue;
-                    }
-                    // A MULTI pair keeps *all* of its ids in `me` and has at
-                    // least two of them, so removing one always leaves a
-                    // survivor and this pair cannot empty here — a
-                    // single-edge pair holds its id inline and is handled by
-                    // the arm below. Machine-checked as `removeOne_survivor`
-                    // in `proofs/tensor`, which is also what retired the
-                    // "all ids removed at once" branch this replaced.
-                    let Some((_, last)) = survivor else {
-                        unreachable!("MULTI pair ({src}, {dst}) held one id in `me`")
                     };
-                    self.multi_count -= 1;
-                    // Demote: the surviving id returns inline. If it *is* the
-                    // committed value, the deltas cancel and the pair returns
-                    // clean; otherwise `dp` shadows `m` with the live value
-                    // (no `dm` mask).
-                    self.me.remove(key, last);
-                    if self.m.get(src, dst) == Some(last) {
-                        self.dp.erase(src, dst);
-                    } else {
-                        self.dp.insert(src, dst, last);
+                    ids.remove(pos);
+                    me_del.push((key, id));
+                    match ids.len() {
+                        // A MULTI pair keeps *all* of its ids in `me` and has
+                        // at least two of them, so removing one always leaves
+                        // a survivor and this pair cannot empty here — a
+                        // single-edge pair holds its id inline and is handled
+                        // by the arm below. Machine-checked as
+                        // `removeOne_survivor` in `proofs/tensor`, which is
+                        // also what retired the "all ids removed at once"
+                        // branch this replaced.
+                        0 => unreachable!("MULTI pair ({src}, {dst}) held one id in `me`"),
+                        // Down to one edge: the pair demotes. Its `me` row
+                        // empties and the survivor goes back inline (in the
+                        // write phase); a later removal of that survivor now
+                        // sees a single-edge pair, exactly as if the demotion
+                        // had already been written.
+                        1 => {
+                            let last = ids[0];
+                            me_del.push((key, last));
+                            self.multi_count -= 1;
+                            *plan = PairPlan::Single {
+                                id: last,
+                                demoted: true,
+                            };
+                        }
+                        _ => {}
                     }
-                    // mt structure already has (dst, src); the pair survives.
                 }
-                Some(inline_id) if inline_id == id => {
+                PairPlan::Single { id: inline, .. } if *inline == id => {
+                    *plan = PairPlan::Emptied;
+                    emptied.push((src, dst));
+                }
+                // Unknown id, or a pair already emptied / never there.
+                PairPlan::Single { .. } | PairPlan::Emptied | PairPlan::Absent => {}
+            }
+        }
+
+        // Write phase: `me` first, then the forward/backward layers. Every
+        // probe here reads a committed base (`m`, and `me`/`mt`'s own bases,
+        // which `VersionedMatrix::remove` is careful to be the only thing it
+        // reads) — never a layer this phase writes, so no write materializes
+        // another write's pending tuples. `dp` erases are batched ahead of
+        // `dp` inserts for the same reason: a `GrB_Matrix_removeElement` that
+        // finds nothing may finish the matrix to be sure.
+        for &(key, id) in &me_del {
+            self.me.remove(key, id);
+        }
+        let mut dp_set: Vec<(u64, u64, u64)> = Vec::new();
+        for (&(src, dst), plan) in &plans {
+            match plan {
+                PairPlan::Emptied => {
                     self.dp.erase(src, dst);
                     if self.m.contains(src, dst) {
                         self.dm.insert(src, dst);
                     }
                     self.mt.remove(dst, src);
-                    emptied.push((src, dst));
                 }
-                // Unknown id or absent pair: nothing to remove.
-                _ => {}
+                // Demote: the surviving id returns inline. If it *is* the
+                // committed value, the deltas cancel and the pair returns
+                // clean; otherwise `dp` shadows `m` with the live value (no
+                // `dm` mask). `mt` already holds (dst, src): the pair survives.
+                PairPlan::Single { id, demoted: true } => {
+                    if self.m.get(src, dst) == Some(*id) {
+                        self.dp.erase(src, dst);
+                    } else {
+                        dp_set.push((src, dst, *id));
+                    }
+                }
+                // Untouched: still multi, or a single-edge pair whose inline
+                // id this batch never named.
+                PairPlan::Multi(_) | PairPlan::Single { demoted: false, .. } | PairPlan::Absent => {
+                }
             }
+        }
+        for &(src, dst, id) in &dp_set {
+            self.dp.insert(src, dst, id);
         }
         emptied
     }
@@ -1312,5 +1410,139 @@ mod tests {
         assert_eq!(t.fwd_m().nvals(), 0, "base kept its deleted entries");
         assert_eq!(t.fwd_dm().nvals(), 0, "tombstones kept alongside the base");
         assert!(t.get(0, 1).next().is_none(), "deleted edge still readable");
+    }
+
+    /// Enough entries for the fold policy's [`MIN_FOLD_DELTA`] floor, so a
+    /// `fold_oversized` really does move the deltas into the bases.
+    const FOLDABLE: u64 = 512;
+
+    /// A tensor whose every pair `(i, i + 1)` has two committed edges,
+    /// `2i` and `2i + 1`, with `me` and the `MULTI_EDGE` sentinels in the base.
+    fn committed_pairs(n: u64) -> Tensor {
+        let mut t = Tensor::new(n + 1, n + 1);
+        let srcs: Vec<u64> = (0..n).flat_map(|i| [i, i]).collect();
+        let dsts: Vec<u64> = (0..n).flat_map(|i| [i + 1, i + 1]).collect();
+        let ids: Vec<u64> = (0..n).flat_map(|i| [2 * i, 2 * i + 1]).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        // Commit: fold the pending adds into the bases, so the batch below
+        // demotes *committed* multi pairs (state E of the module's diagram).
+        t.fold_oversized();
+        t.wait();
+        assert_eq!(t.fwd_m().nvals(), n, "sentinels not folded into the base");
+        t.dup()
+    }
+
+    /// One batch that demotes many multi-edge pairs must leave every survivor
+    /// inline and every pair still there. Regression test for the read-after-
+    /// write in the per-edge slow path (issue #2429): each demotion wrote `me`
+    /// and `dp` and the next edge read them straight back, so GraphBLAS had to
+    /// materialize the tuples just queued — 95x C per demoted pair, growing
+    /// with the batch. Buffering those writes has to replay the same state
+    /// machine the old loop got for free by re-reading its own writes.
+    #[test]
+    fn batch_demote_leaves_every_survivor_inline() {
+        ensure_init();
+        const N: u64 = FOLDABLE;
+        let mut t = committed_pairs(N);
+
+        // Delete the odd id of every pair: each demotes 2 -> 1 edges.
+        let emptied = t.remove_all(&(0..N).map(|i| (2 * i + 1, i, i + 1)).collect::<Vec<_>>());
+
+        assert!(emptied.is_empty(), "demoted pairs reported as emptied");
+        assert_eq!(t.edge_count(), N, "edge count after demoting every pair");
+        assert_eq!(t.multi_count, 0, "multi_count not decremented per demotion");
+        assert_eq!(t.me.nvals(), 0, "`me` still holds ids of demoted pairs");
+        for i in 0..N {
+            assert_eq!(
+                t.get(i, i + 1).collect::<Vec<_>>(),
+                vec![2 * i],
+                "pair ({i}, {}) lost its surviving edge",
+                i + 1
+            );
+        }
+    }
+
+    /// The same batch may take a pair all the way down: the demotion is only
+    /// buffered, so the edge that removes the survivor has to see the pair as
+    /// single — not as the multi pair the layers still say it is. Foreign and
+    /// repeated ids in the batch must change nothing.
+    #[test]
+    fn batch_can_demote_and_then_empty_the_same_pair() {
+        ensure_init();
+        const N: u64 = FOLDABLE;
+        let mut t = committed_pairs(N);
+
+        let mut rels: Vec<(u64, u64, u64)> = Vec::new();
+        for i in 0..N {
+            rels.push((2 * i + 1, i, i + 1)); // demotes the pair
+            rels.push((2 * i + 1, i, i + 1)); // repeat: already gone
+            rels.push((7 * N + i, i, i + 1)); // id of no edge of this pair
+            rels.push((2 * i, i, i + 1)); // removes the survivor: pair empties
+            rels.push((2 * i, i, i + 1)); // repeat: pair already empty
+        }
+        let mut emptied = t.remove_all(&rels);
+        emptied.sort_unstable();
+
+        assert_eq!(
+            emptied,
+            (0..N).map(|i| (i, i + 1)).collect::<Vec<_>>(),
+            "every pair should be reported emptied exactly once"
+        );
+        assert_eq!(t.edge_count(), 0, "edges left after removing all of them");
+        assert_eq!(t.multi_count, 0, "multi_count not decremented per demotion");
+        assert_eq!(t.me.nvals(), 0, "`me` still holds ids of emptied pairs");
+        t.mt.wait();
+        assert_eq!(
+            t.mt.extract().nvals(),
+            0,
+            "backward adjacency kept the pairs"
+        );
+        for i in 0..N {
+            assert!(
+                t.get(i, i + 1).next().is_none(),
+                "pair ({i}, {}) still readable",
+                i + 1
+            );
+        }
+    }
+
+    /// Demoting back to the committed value must cancel the deltas to clean,
+    /// not leave `dp` shadowing `m` with the value `m` already holds (state F
+    /// -> D of the module's diagram). The write phase decides this from the
+    /// committed base, which the buffered `dp` writes must not disturb.
+    #[test]
+    fn demoting_to_the_committed_value_cancels_to_clean() {
+        ensure_init();
+        const N: u64 = FOLDABLE;
+        let mut t = Tensor::new(N + 1, N + 1);
+        let srcs: Vec<u64> = (0..N).collect();
+        let dsts: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        let ids: Vec<u64> = (0..N).map(|i| i + 1).collect();
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        t.fold_oversized();
+        t.wait();
+        assert_eq!(t.fwd_m().get(0, 1), Some(1), "single edge not committed");
+
+        // Promote in this version (m = 1, dp = M, me = {1, 9}), then remove the
+        // new edge again: the survivor is the committed 1.
+        let mut t = t.dup();
+        t.set_all_from_slices(&[0], &[1], &[9]);
+        let emptied = t.remove_all(&[(9, 0, 1)]);
+
+        assert!(emptied.is_empty(), "surviving pair reported as emptied");
+        t.wait();
+        assert_eq!(
+            t.fwd_dp().nvals(),
+            0,
+            "dp still shadows m with m's own value"
+        );
+        assert_eq!(t.fwd_dm().nvals(), 0, "demotion left a tombstone");
+        assert_eq!(t.me.nvals(), 0, "`me` not emptied by the demotion");
+        assert_eq!(t.edge_count(), N, "edge count after promote + demote");
+        assert_eq!(
+            t.get(0, 1).collect::<Vec<_>>(),
+            vec![1],
+            "committed edge lost"
+        );
     }
 }
