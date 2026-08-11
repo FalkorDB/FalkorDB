@@ -74,6 +74,7 @@ tests/flow/test_path.py
 tests/flow/test_path_algorithms.py
 tests/flow/test_path_filter
 tests/flow/test_path_projections.py
+tests/flow/test_pause_replication_race.py
 tests/flow/test_pending_queries_limit.py
 tests/flow/test_persistency.py
 tests/flow/test_point
@@ -87,6 +88,7 @@ tests/flow/test_redundant_ops
 tests/flow/test_relation_patterns.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
+tests/flow/test_role_change_race.py
 tests/flow/test_results.py
 tests/flow/test_reversed_patterns
 tests/flow/test_ro_query.py

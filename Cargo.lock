@@ -330,6 +330,7 @@ dependencies = [
  "rustc-hash",
  "ryu",
  "thin-vec",
+ "thiserror",
 ]
 
 [[package]]
