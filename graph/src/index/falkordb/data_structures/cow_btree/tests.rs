@@ -78,7 +78,9 @@ fn assert_first_doc_matches<const L: usize, const B: usize, const D: usize>(
             t.point(k).next(),
             "first_doc({k}) vs cursor"
         );
-        for kk in [k.wrapping_sub(1), k + 1] {
+        // Both neighbours wrap: `k + 1` panics in debug builds the moment a caller
+        // puts `u64::MAX` in the oracle, which `first_doc_handles_max_key` does.
+        for kk in [k.wrapping_sub(1), k.wrapping_add(1)] {
             if !keys.contains(&kk) {
                 assert_eq!(
                     t.first_doc(kk),
@@ -92,6 +94,40 @@ fn assert_first_doc_matches<const L: usize, const B: usize, const D: usize>(
         t.first_doc(u64::MAX),
         ref_first(u64::MAX),
         "first_doc(u64::MAX)"
+    );
+}
+
+/// `u64::MAX` as a **present** key, not just the absent sentinel every other caller probes. The
+/// maximum key has no upper neighbour, so deriving one has to wrap — this is the case that would
+/// have tripped `assert_first_doc_matches`'s neighbour probe. Covers it both as a lone entry and
+/// sharing its key with a second doc, so the "smallest doc under this key" path runs at the very
+/// top of the tree.
+#[test]
+fn first_doc_handles_max_key() {
+    let mut t = CowBTree::<4, 4, 8>::new();
+    let mut r = BTreeSet::new();
+    for (k, d) in [
+        (0u64, 0u64),
+        (1, 1),
+        (2, 2),
+        (7, 7),
+        (u64::MAX - 1, 5),
+        (u64::MAX, 9),
+        (u64::MAX, 3),
+    ] {
+        assert!(t.insert(k, d), "fresh tuple ({k}, {d}) should be new");
+        r.insert((k, d));
+    }
+    assert!(
+        t.leaves().len() > 1,
+        "test needs a branch root to exercise the descent, not a single leaf"
+    );
+    check_invariants(&t, true);
+    assert_first_doc_matches(&t, &r);
+    assert_eq!(
+        t.first_doc(u64::MAX),
+        Some(3),
+        "smallest doc under the max key"
     );
 }
 
@@ -1331,7 +1367,8 @@ fn integrity_from_sorted_well_formed_across_sizes() {
     // Bulk build must produce a valid tree at every size + boundary count. `min_fill` off: the last leaf
     // may be short by construction (`chunks(LEAF_MAX)`).
     fn build<const L: usize, const B: usize, const DOC_BYTES: usize>(n: u64) {
-        let t = CowBTree::<L, B>::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
+        let t =
+            CowBTree::<L, B, DOC_BYTES>::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
         assert_eq!(t.len() as u64, n, "len != n for n={n}");
         check_invariants(&t, false);
         // from_sorted builds every leaf via from_pairs, so each page must be byte-identical to
@@ -1353,6 +1390,11 @@ fn integrity_from_sorted_well_formed_across_sizes() {
         build::<8, 8, 8>(n);
         build::<16, 4, 8>(n);
         build::<256, 256, 8>(n);
+        // The narrow doc width goes through the same bulk build. Keys here are `0..n`, so the docs
+        // (also `0..n`) stay inside 4 bytes for every `n` in the sweep.
+        build::<4, 4, 4>(n);
+        build::<16, 4, 4>(n);
+        build::<256, 256, 4>(n);
     }
 }
 
