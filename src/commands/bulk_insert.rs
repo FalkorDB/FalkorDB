@@ -15,6 +15,7 @@ use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
+use std::ffi::CString;
 use std::sync::Arc;
 
 // Binary property type markers (matching Python bulk loader's TYPE enum)
@@ -215,6 +216,95 @@ fn discard_created_graph(
     telemetry::delete_stream(ctx, &key_str.to_string());
     let key = ctx.open_key_writable(key_str);
     let _ = key.delete();
+}
+
+/// A command, held so a worker thread can replicate it after the calling context is
+/// gone. `argv[0]` is the command name, as with any Redis argument vector.
+///
+/// Replication cannot be verbatim from a worker: `RM_ReplicateVerbatim` propagates
+/// `ctx->client->argv`, and a thread-safe context's client is a fake pooled one with no
+/// argv at all (Redis substitutes it because a real client is main-thread state). So the
+/// command goes out through `RM_Replicate` — but from *the client's own strings*, held
+/// here, rather than from bytes.
+///
+/// That distinction is the point of this type. Handing `RM_Replicate` byte slices makes
+/// it allocate a fresh string per argument, duplicating the whole payload — for
+/// `GRAPH.BULK` that is a batch, 64 MB by default and 1 GB if `--max-buffer-size` is
+/// raised. Holding the originals means propagation only bumps refcounts.
+struct HeldArgs {
+    argv: Vec<*mut raw::RedisModuleString>,
+}
+
+// SAFETY: every entry is an immutable, refcounted `robj` this struct owns a reference
+// to, so nothing can free one while it is held. Redis requires the GIL for access to
+// strings that came from client command arguments; every access here satisfies that —
+// `replicate` runs inside the writer session, and `Drop` takes the GIL itself.
+unsafe impl Send for HeldArgs {}
+
+impl HeldArgs {
+    /// Hold an entire argument vector, command name included. Call on the main thread,
+    /// while the calling context still owns those strings.
+    ///
+    /// Because these are the client's own strings, whatever is propagated from them
+    /// carries the client's exact bytes: nothing is re-serialized, so a count written as
+    /// `010` replays as `010` rather than normalized to `10`.
+    fn hold(args: &[RedisString]) -> Self {
+        // SAFETY: called on the main thread inside the command, so the GIL is held and
+        // every argument string is still alive.
+        let argv = args
+            .iter()
+            .map(|a| unsafe {
+                let held = ffi::hold_string(a.inner);
+                ffi::trim_string_allocation(held);
+                held
+            })
+            .collect();
+        Self { argv }
+    }
+
+    /// Propagate this command to replicas and the AOF.
+    ///
+    /// The name is split back out here rather than stored apart: `RM_Replicate` wants it
+    /// as a NUL-terminated `const char *`, calls `lookupCommandByCString` on it, and then
+    /// builds argv[0] from it itself — so passing the full vector as well would emit the
+    /// name twice and shift every argument by one. Taking it from `argv[0]` instead of a
+    /// literal means it cannot drift from the name the command is registered under, and
+    /// the client's casing reaches the stream.
+    ///
+    /// # Safety
+    /// `ctx` must be a valid module context, and the GIL must be held — both because
+    /// these strings came from client command arguments and because propagation is
+    /// flushed when the GIL is released.
+    unsafe fn replicate(
+        &self,
+        ctx: *mut raw::RedisModuleCtx,
+    ) {
+        let mut len = 0;
+        let name = raw::string_ptr_len(self.argv[0], &raw mut len);
+        // SAFETY: `name`/`len` describe the command name's bytes, valid while it is held.
+        let name = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), len) };
+        // A dispatched command name has no interior NUL: Redis matched these very bytes
+        // against the registered name to reach this handler.
+        let cmd = CString::new(name).expect("a dispatched command name has no interior NUL");
+        unsafe { ffi::replicate_argv(ctx, &cmd, &self.argv[1..]) };
+    }
+}
+
+impl Drop for HeldArgs {
+    fn drop(&mut self) {
+        // Freeing decrements a refcount on a string that came from client command
+        // arguments, which Redis requires the GIL for. By the time this runs the writer
+        // session has already released the GIL on the success path, and the error paths
+        // never took it at all — so acquire it here. `hold_gil` is reentrancy-aware and
+        // no-ops if this thread already holds it, which keeps every path correct.
+        let _gil = hold_gil();
+        // SAFETY: each pointer came from `hold_string` and is freed exactly once, here.
+        unsafe {
+            for a in &self.argv {
+                ffi::free_string(*a);
+            }
+        }
+    }
 }
 
 /// Yield to Redis if running on the main thread (non-null context).
@@ -480,6 +570,38 @@ pub fn graph_bulk_insert(
         return Err(redis_module::RedisError::WrongArity);
     }
 
+    // Contexts that cannot block run inline, with RM_Yield so Redis still handles
+    // PING between tokens. The predicate mirrors C's dispatcher
+    // (`cmd_dispatcher.c`), which is the reference for "this context must not
+    // block":
+    //   * REPLICATED — a replica has to apply the batch *before* the handler
+    //     returns. Blocking instead lets Redis advance the replication offset
+    //     while the write is still queued, so the master's WAIT reports the
+    //     replica in sync when it is not (same reasoning as `graph_core`).
+    //   * MULTI / LUA — Redis rejects blocking outright in both.
+    //   * DENY_BLOCKING / LOADING — AOF replay drives a fake client that carries
+    //     no CLIENT_MASTER, so REPLICATED is *not* set for it. Blocking that client
+    //     is not merely wrong, it is fatal: Redis asserts
+    //     `(fakeClient->flags & CLIENT_BLOCKED) == 0` (`aof.c`) while loading, so
+    //     any AOF-enabled server crashed on restart after a bulk load.
+    //
+    // Decided up front, before the argument vector is consumed, so the background
+    // path can hold the arguments while they are still to hand.
+    let inline = ctx.get_flags().intersects(
+        ContextFlags::MULTI
+            | ContextFlags::REPLICATED
+            | ContextFlags::LUA
+            | ContextFlags::DENY_BLOCKING
+            | ContextFlags::LOADING,
+    );
+
+    // Hold everything after the command name for replication (see `HeldArgs`). No
+    // inspection or reassembly: the argument vector is already exactly what has to be
+    // propagated, in order. Only the background path needs it — the inline path
+    // replicates verbatim off the real command context — and holding is not free,
+    // since each string is trimmed as it is held.
+    let held = (!inline).then(|| HeldArgs::hold(&args));
+
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
 
@@ -546,9 +668,10 @@ pub fn graph_bulk_insert(
         ));
     }
 
-    // Inside MULTI/EXEC: blocking commands are not allowed, run synchronously
-    // with RM_Yield to let Redis process PING between operations.
-    if ctx.get_flags().contains(ContextFlags::MULTI) {
+    // Run inline on this thread; `inline` is decided above, before the arguments were
+    // consumed. Replication here is verbatim: this is the real command context, so
+    // `ctx->client->argv` is the client's own vector.
+    if inline {
         let tokens: Vec<&[u8]> = token_strings
             .iter()
             .map(redis_module::RedisString::as_slice)
@@ -605,9 +728,12 @@ pub fn graph_bulk_insert(
         .iter()
         .map(|rs| rs.as_slice().to_vec())
         .collect();
-    // `RedisString` is tied to the calling context, so carry the name as a
-    // plain `String` for the cleanup path to rebuild on the worker thread.
-    let graph_name = key_str.to_string();
+    let held = held.expect("held on the background path, which is the only path here");
+    // The cleanup path re-opens the key by name, so it also needs the exact bytes:
+    // `to_string` goes through `to_string_lossy`, and a non-UTF-8 graph name would come
+    // back with replacement characters and delete a *different* key than the one this
+    // batch created.
+    let key_bytes: Vec<u8> = key_str.as_slice().to_vec();
     spawn(
         move || {
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
@@ -668,7 +794,37 @@ pub fn graph_bulk_insert(
                 session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
                     .expect("writer mode after upgrade_to_write");
-                raw::replicate_verbatim(ts_ctx);
+                // Replicate the client's own argument strings.
+                //
+                // `RM_ReplicateVerbatim` cannot be used from here. It propagates
+                // `ctx->client->argv`, and a thread-safe context's client is a *fake*
+                // pooled one — Redis substitutes it because a real client is main-thread
+                // state ("we can't access it safely from another thread, so we use a
+                // fake client here"). It carries no argv, so the verbatim call that used
+                // to be here propagated a zero-argument command: replicas skipped the
+                // frame and the AOF became unparseable (#2347). Redis only ever binds
+                // the real client to a context on the main thread, so from a worker
+                // there is no argv to replicate from, by construction.
+                //
+                // `RM_Replicate` takes an explicit vector instead, which is also what C
+                // does when it replicates off the main thread (`QueryCtx_Replicate`).
+                // Passing `held` — the arguments as the client sent them — keeps this
+                // equivalent to verbatim in both respects that matter: the propagated
+                // bytes are the client's own, and propagation only increments refcounts
+                // rather than copying the payload.
+                //
+                // Deliberately still inside the writer session: commit and replicate
+                // have to stay atomic against other writers, or a later query could
+                // replicate ahead of this batch and reach the replica referencing nodes
+                // it has not created yet. Releasing the session flushes the propagation.
+                //
+                // Replay is deterministic — bulk assigns ids sequentially from the
+                // current reserved counts, and the replica parses identical token bytes
+                // in identical order.
+                // SAFETY: `ts_ctx` is this worker's context, every entry of `held.argv`
+                // is a string this closure owns a reference to, and the session holds
+                // the GIL.
+                unsafe { held.replicate(ts_ctx) };
                 Ok(())
             };
             match result {
@@ -684,7 +840,7 @@ pub fn graph_bulk_insert(
                         // retake the GIL for this keyspace write.
                         let _gil = hold_gil();
                         let cleanup_ctx = Context::new(ts_ctx);
-                        let key_name = cleanup_ctx.create_string(graph_name.as_str());
+                        let key_name = cleanup_ctx.create_string(key_bytes.as_slice());
                         discard_created_graph(&cleanup_ctx, &key_name);
                     }
                     let cerr = ffi::sanitise_error(msg);
