@@ -73,6 +73,7 @@ pub struct ExpandIntoOp<'a> {
 }
 
 impl<'a> ExpandIntoOp<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
