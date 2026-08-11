@@ -18,6 +18,7 @@
 //! deadlock: the handler holds the GIL while waiting for the graph read lock, and a
 //! committing write holds the write lock while waiting for the GIL (issue #726).
 
+use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
     commands::EMPTY_KEY_ERR,
@@ -27,9 +28,7 @@ use crate::{
 use graph::{graph::graph::Plan, threadpool::spawn};
 use orx_tree::{Dfs, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{
-    Context, ContextFlags, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw,
-};
+use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
 use std::{os::raw::c_char, sync::Arc};
 
 /// Acquire the graph read lock, build the plan, reply the linearized tree. Runs on a
@@ -72,12 +71,9 @@ pub fn graph_explain(
     };
     let graph = graph.clone();
 
-    // Blocking clients are not allowed inside MULTI/EXEC, and replicated
-    // commands must complete before the handler returns (same rules as
-    // GRAPH.QUERY) — run synchronously in those cases.
-    if ctx.get_flags().contains(ContextFlags::MULTI)
-        || ctx.get_flags().contains(ContextFlags::REPLICATED)
-    {
+    // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
+    // `must_run_inline`.
+    if must_run_inline(ctx) {
         return explain(ctx, &graph, query);
     }
 

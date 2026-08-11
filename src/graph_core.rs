@@ -74,6 +74,7 @@ use std::{
 use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
 };
+use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 
 /// Global registry of all live graph instances.
@@ -923,14 +924,13 @@ pub fn query_mut(
         }
     }
 
-    // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
-    // Also run replicated commands synchronously on the main thread (matches
-    // FalkorDB C): otherwise the replica's handler returns NoReply before the
-    // query actually executes, Redis advances the replication offset, and
-    // master's WAIT reports the replica in-sync while writes are still queued.
-    if ctx.get_flags().contains(ContextFlags::MULTI)
-        || ctx.get_flags().contains(ContextFlags::REPLICATED)
-    {
+    // Contexts that cannot block run inline on this thread — see `must_run_inline` for
+    // why each flag is in the set. Two of them are load-bearing here: a replica has to
+    // apply the query before the handler returns, or Redis advances the replication
+    // offset while the write is still queued and the master's WAIT reports the replica
+    // in-sync when it is not; and an AOF-replay client must never be blocked, which
+    // used to crash the server on restart (#2421).
+    if must_run_inline(ctx) {
         return query_sync(
             ctx,
             graph,
@@ -1236,11 +1236,9 @@ pub fn profile_mut(
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
-    // Inside MULTI/EXEC: execute synchronously.
-    // Also run replicated commands synchronously (see query_mut for rationale).
-    if ctx.get_flags().contains(ContextFlags::MULTI)
-        || ctx.get_flags().contains(ContextFlags::REPLICATED)
-    {
+    // Contexts that cannot block run inline (see `query_mut` for the rationale, and
+    // `must_run_inline` for the flag set).
+    if must_run_inline(ctx) {
         return profile_sync(ctx, graph, query, key_name, per_query_timeout);
     }
 
