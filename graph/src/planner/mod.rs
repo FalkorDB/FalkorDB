@@ -209,20 +209,21 @@ pub enum IR {
         /// `true` at planning time; lowered to `false` by the
         /// `reduce_bound_edge` optimizer pass.
         bind_relationship: bool,
-        /// True when the edge pattern carried inline attributes, which the
-        /// planner has lowered into a `Filter` above this operator.
+        /// Predicate on the edge, applied per candidate edge during
+        /// iteration. `None` until `absorb_edge_filters_into_traverse` moves
+        /// the `Filter` above this operator into it, which it does only after
+        /// `utilize_index` has had its chance at that Filter.
         ///
-        /// A third fact, distinct from the two above. `emit_relationship`
-        /// answers "how many rows"; `bind_relationship` answers "does anything
-        /// read the edge". This one answers "are individual parallel edges
-        /// distinguishable here" — and only it licenses iterating them. With
-        /// `emit_relationship` false the runtime otherwise collapses a
-        /// (src, dst) pair to one representative edge, and a predicate on the
-        /// edge would then be tested against an arbitrary member of the group,
-        /// dropping rows whose match is a sibling. `MATCH p = (a)-[:R]->(b)
-        /// RETURN p` binds its edge too, yet must keep collapsing, so
-        /// `bind_relationship` cannot stand in for this.
-        edge_predicate: bool,
+        /// Its presence is also the third fact this operator needs about its
+        /// edge, alongside `emit_relationship` ("how many rows") and
+        /// `bind_relationship` ("does anything read it"): whether individual
+        /// parallel edges are distinguishable. With `emit_relationship` false
+        /// the runtime otherwise collapses a (src, dst) pair to one
+        /// representative edge, and a predicate would then be tested against
+        /// an arbitrary member of the group. `MATCH p = (a)-[:R]->(b) RETURN p`
+        /// binds its edge yet must keep collapsing, so `bind_relationship`
+        /// cannot stand in for this.
+        edge_filter: Option<QueryExpr<Variable>>,
     },
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse {
@@ -260,9 +261,17 @@ pub enum IR {
         /// Alias IDs of other relationship variables in the same MATCH clause
         /// component. Only these are checked for relationship uniqueness.
         sibling_edges: Vec<u32>,
-        /// True when the edge pattern carried inline attributes, now lowered
-        /// into a `Filter` above this operator. See the same field on
-        /// [`IR::CondTraverse`] — it stops the parallel-edge collapse.
+        /// True when a `Filter` above this operator constrains its edge.
+        ///
+        /// Unlike `CondTraverse` this operator keeps the `Filter` rather than
+        /// absorbing it — it verifies an edge between two already-bound
+        /// endpoints instead of expanding the row set, so there is little
+        /// wasted materialization to avoid and `FilterOp`'s vectorized kernels
+        /// beat a scalar per-edge eval (see
+        /// `absorb_edge_filters_into_traverse`). But it still must not collapse
+        /// a (src, dst) pair to one representative edge, or the predicate would
+        /// be tested against an arbitrary member of the group. Hence a flag and
+        /// not the expression.
         edge_predicate: bool,
     },
     /// Build path objects from matched patterns
@@ -788,7 +797,7 @@ fn strip_node_attrs(
 ///
 /// Every operator that can carry an edge pattern now lowers its attrs:
 /// `CondTraverse` and `ExpandInto` into a `Filter` above themselves (with
-/// `edge_predicate` set so they stop collapsing parallel edges), and
+/// the operator told not to collapse parallel edges), and
 /// `CondVarLenTraverse` and `AllShortestPaths` into their `edge_filter`
 /// field, which is applied per edge during the walk.
 fn strip_rel_attrs(
@@ -2044,12 +2053,14 @@ impl Planner {
                     chain: Vec::new(),
                     optional: false,
                     bind_relationship: true,
-                    edge_predicate: has_edge_pred,
+                    edge_filter: None,
                 })
             };
             // CondTraverse and ExpandInto enforce the edge predicate with a
-            // Filter above them, now that `edge_predicate` stops them
-            // collapsing parallel edges to one representative. CVLT and
+            // Filter above them; `absorb_edge_filters_into_traverse` later
+            // moves the CondTraverse one into the operator so it prunes per
+            // edge, while ExpandInto keeps its Filter and only records that it
+            // must not collapse parallel edges. CVLT and
             // AllShortestPaths already took it into `edge_filter`, which prunes
             // per edge during the walk — a Filter above those could only test
             // an assembled path.
@@ -2184,7 +2195,7 @@ impl Planner {
                             chain: Vec::new(),
                             optional: false,
                             bind_relationship: true,
-                            edge_predicate: has_edge_pred,
+                            edge_filter: None,
                         },
                         res
                     )

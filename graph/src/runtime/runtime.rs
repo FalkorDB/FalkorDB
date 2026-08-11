@@ -870,7 +870,7 @@ impl<'a> Runtime<'a> {
                 chain,
                 optional,
                 bind_relationship,
-                edge_predicate,
+                edge_filter,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -886,7 +886,7 @@ impl<'a> Runtime<'a> {
                     chain,
                     *optional,
                     *bind_relationship,
-                    *edge_predicate,
+                    edge_filter.as_ref(),
                     idx,
                     record_cap,
                 )))

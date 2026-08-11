@@ -94,12 +94,7 @@ fn can_fuse(
             chain: _p_chain,
             optional: p_opt,
             bind_relationship: true,
-            // A lowered edge predicate means parallel edges are
-            // distinguishable, and a fused chain binds no per-hop edge to
-            // test one against. Refusing to fuse replaces the old
-            // `rel_attrs_empty` veto, which read the attrs this now stands in
-            // for.
-            edge_predicate: false,
+            ..
         },
         IR::CondTraverse {
             relationship: c_rel,
@@ -109,7 +104,7 @@ fn can_fuse(
             chain: c_chain,
             optional: c_opt,
             bind_relationship: true,
-            edge_predicate: false,
+            ..
         },
     ) = (parent_ct, child_ct)
     else {
@@ -182,6 +177,17 @@ fn can_fuse(
     // anywhere may still read it.
     if !intermediate_unreferenced(plan, intermediate.alias.id, intermediate.alias.scope_id) {
         return false;
+    }
+    // Neither may the edges. A fused chain binds no per-hop edge, so a
+    // predicate on one has nothing left to test — an inline `-[{k: 1}]->` is a
+    // Filter above the hop at this point (it only moves into the operator
+    // after this pass has run), and that Filter is what this check sees. This
+    // replaces the old `rel_attrs_empty` probe, which read the attrs directly
+    // back when they were still on the pattern.
+    for edge in [&p_rel.alias, &c_rel.alias] {
+        if !intermediate_unreferenced(plan, edge.id, edge.scope_id) {
+            return false;
+        }
     }
     true
 }
@@ -271,7 +277,7 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             chain: merged_chain,
             optional: false,
             bind_relationship: true,
-            edge_predicate: false,
+            edge_filter: None,
         };
         // Attach the original grandchildren under the merged op (now parent
         // has [child_CT, g1, g2, ...]).

@@ -45,6 +45,7 @@
 //! if the tree structure changed. This avoids issues with invalidated indices
 //! after in-place tree mutations.
 
+mod absorb_edge_filters_into_traverse;
 mod absorb_edge_filters_into_vlt;
 mod eliminate_true_filters;
 mod fuse_anonymous_traverse;
@@ -61,18 +62,18 @@ mod utilize_index;
 mod utilize_node_by_id;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use crate::{
     graph::graph::Graph,
-    parser::ast::{ExprIR, QueryNode, QueryRelationship, Variable},
+    parser::ast::{ExprIR, Variable},
     runtime::value::Value,
 };
 
 use super::IR;
 
+use absorb_edge_filters_into_traverse::absorb_edge_filters_into_traverse;
 use absorb_edge_filters_into_vlt::absorb_edge_filters_into_vlt;
 use eliminate_true_filters::eliminate_true_filters;
 use fuse_anonymous_traverse::fuse_anonymous_traverse;
@@ -156,6 +157,12 @@ pub fn optimize(
     // the "does anything read this edge" answer is the final plan's.
     reduce_bound_edge(&mut optimized_plan);
 
+    // Last: `utilize_index` needs the edge Filter still above the traverse to
+    // turn it into an EdgeByIndexScan, and `reduce_bound_edge` needs it to see
+    // that something reads the edge. Only once both have run can it move into
+    // the operator, where it prunes per edge instead of per output row.
+    absorb_edge_filters_into_traverse(&mut optimized_plan);
+
     debug_assert_no_pattern_attrs(&optimized_plan);
 
     optimized_plan
@@ -176,6 +183,9 @@ pub fn optimize(
 /// `runtime/ops/create.rs` and `runtime/ops/merge.rs`.
 #[cfg(debug_assertions)]
 fn debug_assert_no_pattern_attrs(plan: &DynTree<IR>) {
+    use crate::parser::ast::{QueryNode, QueryRelationship};
+    use std::sync::Arc;
+
     fn node_is_clean(node: &QueryNode<Arc<String>, Variable>) -> bool {
         node.attrs.root().num_children() == 0
     }

@@ -50,9 +50,10 @@ pub struct ExpandIntoOp<'a> {
     /// Whether to emit one row per edge (true) or collapse multi-edges into
     /// one row per (src, dst) pair (false). Set by the planner.
     emit_relationship: bool,
-    /// True when a predicate on the edge sits above this operator, so the
-    /// collapse to one representative edge per (src, dst) pair would test an
-    /// arbitrary member of the group. See `IR::CondTraverse::edge_predicate`.
+    /// True when a `Filter` above this operator constrains its edge, so the
+    /// collapse to one representative edge per (src, dst) pair is unsound.
+    /// The predicate itself stays in that Filter — see
+    /// `IR::ExpandInto::edge_predicate`.
     edge_predicate: bool,
     /// Alias IDs of sibling relationship variables in the same MATCH clause.
     sibling_edges: &'a [u32],
@@ -170,9 +171,8 @@ impl<'a> ExpandIntoOp<'a> {
         }
 
         let env = BatchRow::new(batch, row_idx);
-        // The predicate itself is the Filter the planner put above this
-        // operator; the flag only says parallel edges are distinguishable, so
-        // this path must yield every candidate rather than one per pair.
+        // The predicate itself is applied by the Filter above; all this owes it
+        // is every candidate edge rather than one representative per pair.
         let has_edge_filter = edge_predicate;
 
         // Edge directions to probe: forward, plus reverse when the pattern is
