@@ -773,21 +773,13 @@ impl<'a> CondTraverseOp<'a> {
     ) -> Result<(), String> {
         let env = BatchRow::new(batch, row_idx);
 
+        // Only the edge's attrs are evaluated here. A MATCH pattern's endpoint
+        // attrs are lowered to a Filter by the planner and stripped from the
+        // pattern, so re-checking them per row would be evaluating an empty
+        // map three times over.
         let filter_attrs = ExprEval::from_runtime(runtime).eval(
             &rp.attrs,
             rp.attrs.root().idx(),
-            Some(&env),
-            None,
-        )?;
-        let from_node_attrs = ExprEval::from_runtime(runtime).eval(
-            &rp.from.attrs,
-            rp.from.attrs.root().idx(),
-            Some(&env),
-            None,
-        )?;
-        let to_node_attrs = ExprEval::from_runtime(runtime).eval(
-            &rp.to.attrs,
-            rp.to.attrs.root().idx(),
             Some(&env),
             None,
         )?;
@@ -882,8 +874,6 @@ impl<'a> CondTraverseOp<'a> {
                 transposed,
                 from_id,
                 to_id,
-                &from_node_attrs,
-                &to_node_attrs,
                 &filter_attrs,
                 &g,
                 rp,
@@ -929,8 +919,6 @@ impl<'a> CondTraverseOp<'a> {
                 !transposed,
                 from_id,
                 to_id,
-                &from_node_attrs,
-                &to_node_attrs,
                 &filter_attrs,
                 &g,
                 rp,
@@ -983,8 +971,6 @@ impl<'a> CondTraverseOp<'a> {
         is_reverse: bool,
         from_id: Option<crate::graph::graph::NodeId>,
         to_id: Option<crate::graph::graph::NodeId>,
-        from_node_attrs: &Value,
-        to_node_attrs: &Value,
         filter_attrs: &Value,
         g: &crate::graph::graph::Graph,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -1019,42 +1005,6 @@ impl<'a> CondTraverseOp<'a> {
             }
             if to_id.is_some() && to_id.unwrap() != to_node {
                 continue;
-            }
-            // Check from node attrs
-            if let Value::Map(attrs) = from_node_attrs
-                && !attrs.is_empty()
-            {
-                let mut skip = false;
-                for (attr, avalue) in attrs.iter() {
-                    match g.get_node_attribute(from_node, attr) {
-                        Some(pvalue) if pvalue == *avalue => {}
-                        _ => {
-                            skip = true;
-                            break;
-                        }
-                    }
-                }
-                if skip {
-                    continue;
-                }
-            }
-            // Check to node attrs
-            if let Value::Map(attrs) = to_node_attrs
-                && !attrs.is_empty()
-            {
-                let mut skip = false;
-                for (attr, avalue) in attrs.iter() {
-                    match g.get_node_attribute(to_node, attr) {
-                        Some(pvalue) if pvalue == *avalue => {}
-                        _ => {
-                            skip = true;
-                            break;
-                        }
-                    }
-                }
-                if skip {
-                    continue;
-                }
             }
             // When emit_relationship is false (anonymous edge not in a named
             // path) and there are no edge attribute filters, skip per-edge

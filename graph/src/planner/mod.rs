@@ -729,6 +729,63 @@ fn lower_inline_attrs(
     inline_attrs_to_filter(alias, attrs)
 }
 
+/// Returns `node` with its inline attributes removed, for embedding in a
+/// match-side IR operator once [`lower_inline_attrs`] has turned them into a
+/// `Filter`.
+///
+/// The predicate then has exactly one representation in the plan. Leaving a
+/// second copy on the pattern invites every pass that touches it to re-derive
+/// the filter — which is how the plan ended up with `And(p, p)` — and lets the
+/// two disagree.
+///
+/// Returns the same `Arc` when there is nothing to strip, so the common case
+/// allocates nothing.
+///
+/// Never call this on a CREATE or MERGE pattern: there `attrs` is the property
+/// template for the entity being built, not a predicate.
+fn strip_node_attrs(
+    node: &Arc<QueryNode<Arc<String>, Variable>>
+) -> Arc<QueryNode<Arc<String>, Variable>> {
+    if node.attrs.root().num_children() == 0 {
+        return node.clone();
+    }
+    Arc::new(QueryNode::new(
+        node.alias.clone(),
+        node.labels.clone(),
+        Arc::new(tree!(ExprIR::Map)),
+    ))
+}
+
+/// Returns `rel` with both endpoints' inline attributes removed. See
+/// [`strip_node_attrs`].
+///
+/// The relationship's *own* attrs stay. Only `CondTraverse` has them lowered
+/// to a Filter; `ExpandInto`, `CondVarLenTraverse` and `AllShortestPaths` get
+/// no edge-attr Filter from the planner at all, and their runtime `rp.attrs`
+/// read is the only thing enforcing `-[{k: 1}]->`. Stripping the edge as well
+/// needs those three to lower it first.
+fn strip_rel_endpoint_attrs(
+    rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
+) -> Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+    let from = strip_node_attrs(&rel.from);
+    let to = strip_node_attrs(&rel.to);
+    if Arc::ptr_eq(&from, &rel.from) && Arc::ptr_eq(&to, &rel.to) {
+        return rel.clone();
+    }
+    let mut stripped = QueryRelationship::new(
+        rel.alias.clone(),
+        rel.types.clone(),
+        rel.attrs.clone(),
+        from,
+        to,
+        rel.bidirectional,
+        rel.min_hops,
+        rel.max_hops,
+    );
+    stripped.all_shortest_paths = rel.all_shortest_paths;
+    Arc::new(stripped)
+}
+
 /// Build a `hasLabels(var, [label1, label2, ...])` filter expression.
 fn has_labels_filter(
     var: &Variable,
@@ -1774,13 +1831,14 @@ impl Planner {
                         lower_inline_attrs(&mut lowered_attrs, &node.alias, &node.attrs);
                     // The binder's post-processing already set the full
                     // accumulated label set on each QueryNode directly.
+                    let scan_node = strip_node_attrs(&node);
                     let mut res = if node.labels.is_empty() {
-                        tree!(IR::AllNodeScan(node.clone()))
+                        tree!(IR::AllNodeScan(scan_node))
                     } else {
                         // Multi-label node: the runtime's get_nodes()
                         // intersects all label matrices, so we can pass
                         // all labels directly to NodeByLabelScan.
-                        tree!(IR::NodeByLabelScan { node: node.clone() })
+                        tree!(IR::NodeByLabelScan { node: scan_node })
                     };
                     if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
@@ -1829,8 +1887,11 @@ impl Planner {
                 })
                 .map(|r| r.alias.id)
                 .collect();
+            // Inline attrs are lowered to Filters below; the operator embeds the
+            // stripped pattern so the predicate has one representation only.
+            let rel = strip_rel_endpoint_attrs(relationship);
             let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths(relationship.clone()))
+                tree!(IR::AllShortestPaths(rel.clone()))
             } else if relationship.min_hops.is_some() {
                 // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
                 // Build scan child for the from-node when it's not yet visited
@@ -1847,11 +1908,11 @@ impl Planner {
                     // scan. Emitting it here too would duplicate it, and the
                     // copy on the scan is the one `select_var_len_scan_node`
                     // discards when it prunes and rebuilds.
-                    Some(if relationship.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    Some(if rel.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(rel.from.clone()))
                     } else {
                         tree!(IR::NodeByLabelScan {
-                            node: relationship.from.clone(),
+                            node: rel.from.clone(),
                         })
                     })
                 };
@@ -1865,7 +1926,7 @@ impl Planner {
                 scan_child.map_or_else(
                     || {
                         tree!(IR::CondVarLenTraverse {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             edge_filter: None,
                             emit_path: true,
                             path_var: None,
@@ -1875,7 +1936,7 @@ impl Planner {
                     |scan| {
                         tree!(
                             IR::CondVarLenTraverse {
-                                relationship: relationship.clone(),
+                                relationship: rel.clone(),
                                 edge_filter: None,
                                 emit_path: true,
                                 path_var: None,
@@ -1894,21 +1955,21 @@ impl Planner {
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
                 if already_bound {
                     tree!(IR::ExpandInto {
-                        relationship: relationship.clone(),
+                        relationship: rel.clone(),
                         emit_relationship: emit_rel(relationship),
                         sibling_edges: sibling_edges.clone()
                     })
                 } else {
-                    let scan = if relationship.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    let scan = if rel.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(rel.from.clone()))
                     } else {
                         tree!(IR::NodeByLabelScan {
-                            node: relationship.from.clone(),
+                            node: rel.from.clone(),
                         })
                     };
                     tree!(
                         IR::ExpandInto {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             emit_relationship: emit_rel(relationship),
                             sibling_edges: sibling_edges.clone()
                         },
@@ -1926,7 +1987,7 @@ impl Planner {
                 // by the endpoint blocks below, which no longer skip visited
                 // aliases.
                 tree!(IR::ExpandInto {
-                    relationship: relationship.clone(),
+                    relationship: rel.clone(),
                     emit_relationship: emit_rel(relationship),
                     sibling_edges: sibling_edges.clone()
                 })
@@ -1937,7 +1998,7 @@ impl Planner {
                     &relationship.attrs,
                 );
                 let mut ct = tree!(IR::CondTraverse {
-                    relationship: relationship.clone(),
+                    relationship: rel.clone(),
                     emit_relationship: emit_rel(relationship),
                     sibling_edges: sibling_edges.clone(),
                     transposed: false,
@@ -1980,8 +2041,9 @@ impl Planner {
             // Chain remaining relationships in the component, each one
             // stacking on top of the previous result using the same logic.
             for relationship in iter {
+                let rel = strip_rel_endpoint_attrs(relationship);
                 res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(IR::AllShortestPaths(relationship.clone()), res)
+                    tree!(IR::AllShortestPaths(rel.clone()), res)
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
                         && self.visited.contains(&(
@@ -1993,7 +2055,7 @@ impl Planner {
                             .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));
                     tree!(
                         IR::CondVarLenTraverse {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             edge_filter: None,
                             emit_path: true,
                             path_var: None,
@@ -2008,23 +2070,23 @@ impl Planner {
                     if already_bound {
                         tree!(
                             IR::ExpandInto {
-                                relationship: relationship.clone(),
+                                relationship: rel.clone(),
                                 emit_relationship: emit_rel(relationship),
                                 sibling_edges: sibling_edges.clone()
                             },
                             res
                         )
                     } else {
-                        let scan = if relationship.from.clone().labels.is_empty() {
-                            tree!(IR::AllNodeScan(relationship.from.clone()))
+                        let scan = if rel.from.clone().labels.is_empty() {
+                            tree!(IR::AllNodeScan(rel.from.clone()))
                         } else {
                             tree!(IR::NodeByLabelScan {
-                                node: relationship.from.clone(),
+                                node: rel.from.clone(),
                             })
                         };
                         tree!(
                             IR::ExpandInto {
-                                relationship: relationship.clone(),
+                                relationship: rel.clone(),
                                 emit_relationship: emit_rel(relationship),
                                 sibling_edges: sibling_edges.clone()
                             },
@@ -2041,7 +2103,7 @@ impl Planner {
                 {
                     tree!(
                         IR::ExpandInto {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             emit_relationship: emit_rel(relationship),
                             sibling_edges: sibling_edges.clone()
                         },
@@ -2055,7 +2117,7 @@ impl Planner {
                     );
                     let mut ct = tree!(
                         IR::CondTraverse {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             emit_relationship: emit_rel(relationship),
                             sibling_edges: sibling_edges.clone(),
                             transposed: false,

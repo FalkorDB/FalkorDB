@@ -105,9 +105,6 @@ trait IndexSubject: Clone {
     /// label/type match.
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_>;
 
-    /// Inline property attributes (e.g. `{age: 30}` on the pattern).
-    fn inline_attrs(&self) -> &DynTree<ExprIR<Variable>>;
-
     /// Look up the appropriate indexer (node vs edge) on the graph.
     fn is_indexed(
         graph: &Graph,
@@ -160,9 +157,6 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
     }
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_> {
         Box::new(self.labels.iter())
-    }
-    fn inline_attrs(&self) -> &DynTree<ExprIR<Variable>> {
-        &self.attrs
     }
     fn is_indexed(
         graph: &Graph,
@@ -230,9 +224,6 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
     }
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_> {
         Box::new(self.types.iter())
-    }
-    fn inline_attrs(&self) -> &DynTree<ExprIR<Variable>> {
-        &self.attrs
     }
     fn is_indexed(
         graph: &Graph,
@@ -713,39 +704,6 @@ fn try_single_filter_scan<T: IndexSubject>(
     }
 }
 
-/// Checks whether an inline property attribute on a pattern
-/// (e.g. `(n:Person {name: 'Alice'})` or `[r:KNOWS {since: 2020}]`) is
-/// covered by a range index and, if so, returns the subject, the label
-/// or type that carries the index, the indexed attribute, and an
-/// equivalent `attr = value` filter tree for the index scan.
-fn get_inline_attr_index<T: IndexSubject>(
-    graph: &Graph,
-    subject: &T,
-) -> Option<(T, Arc<String>, Arc<String>, DynTree<ExprIR<Variable>>)> {
-    for label in subject.all_labels() {
-        for attr in subject.inline_attrs().root().children() {
-            if let ExprIR::Constant(Value::String(attr_str)) = attr.data()
-                && T::is_indexed(graph, label, attr_str, &IndexType::Range)
-            {
-                return Some((
-                    subject.clone(),
-                    label.clone(),
-                    attr_str.clone(),
-                    tree!(
-                        ExprIR::Eq,
-                        tree!(
-                            ExprIR::Property(attr_str.clone()),
-                            tree!(ExprIR::Variable(subject.alias().clone()))
-                        ),
-                        attr.child(0).as_cloned_subtree()
-                    ),
-                ));
-            }
-        }
-    }
-    None
-}
-
 /// Result of pushing a whole `Filter` predicate into a single index
 /// scan: the label/type the index lives on, the merged index query and
 /// any conjuncts that couldn't be indexed and must stay as a reduced
@@ -888,18 +846,6 @@ fn needs_post_filter(
         }
         is_non_indexable_subexpr(filter.node(i).data(), Some(scan_alias_id))
     })
-}
-
-/// Same as `needs_post_filter`, but applied to the value subtree of an
-/// inline-attribute equality filter (the RHS of `attr = value`). For a
-/// bare constant literal the index handles it exactly and no filter is
-/// needed.
-fn needs_inline_post_filter(filter: &DynTree<ExprIR<Variable>>) -> bool {
-    let value_idx = filter.root().child(1).idx();
-    filter
-        .node(value_idx)
-        .indices::<Bfs>()
-        .any(|i| is_non_indexable_subexpr(filter.node(i).data(), None))
 }
 
 /// Returns true when the given `ExprIR` describes a value that the
@@ -1069,31 +1015,6 @@ fn apply_filter_pushdown<T: IndexSubject>(
     }
 }
 
-/// Apply an inline-attr rewrite: replace the scan with an equality
-/// index scan, optionally prefixed with a post-filter when the inline
-/// value expression isn't a bare constant.
-#[allow(clippy::needless_pass_by_value)]
-fn apply_inline_rewrite<T: IndexSubject>(
-    plan: &mut DynTree<IR>,
-    idx: NodeIdx<Dyn<IR>>,
-    subject: T,
-    label: Arc<String>,
-    attr: Arc<String>,
-    inline_filter: DynTree<ExprIR<Variable>>,
-    metadata: T::Metadata,
-) {
-    if needs_inline_post_filter(&inline_filter) {
-        plan.node_mut(idx)
-            .push_parent(IR::Filter(Arc::new(inline_filter.clone())));
-    }
-    let query = Arc::new(IndexQuery::Equal {
-        key: attr,
-        value: Arc::new(inline_filter.root().child(1).clone_as_tree()),
-    });
-    let subject = reorder_subject_labels(subject, &label);
-    *plan.node_mut(idx).data_mut() = subject.build_scan_ir(label, query, metadata);
-}
-
 /// Attempt an index rewrite at `idx` for subject kind `T`. Tries the
 /// filter-pushdown path first (scan under a `Filter`), then the
 /// inline-attr path (pattern with inline `{attr: value}`). Returns
@@ -1119,13 +1040,6 @@ fn try_index_rewrite<T: IndexSubject>(
             over_pending,
             metadata,
         );
-        return true;
-    }
-
-    if let Some((subject, metadata)) = T::match_scan_source(plan.node(idx).data())
-        && let Some((_, label, attr, inline_filter)) = get_inline_attr_index(graph, &subject)
-    {
-        apply_inline_rewrite(plan, idx, subject, label, attr, inline_filter, metadata);
         return true;
     }
 

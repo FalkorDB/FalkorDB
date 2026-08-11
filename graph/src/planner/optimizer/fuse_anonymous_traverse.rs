@@ -51,31 +51,30 @@ fn rel_attrs_empty(
     matches!(root.data(), ExprIR::Map) && root.children().next().is_none()
 }
 
-fn node_attrs_empty(
-    node: &crate::parser::ast::QueryNode<std::sync::Arc<String>, crate::parser::ast::Variable>
-) -> bool {
-    use crate::parser::ast::ExprIR;
-    let root = node.attrs.root();
-    matches!(root.data(), ExprIR::Map) && root.children().next().is_none()
-}
-
-/// True when no ancestor of `idx` (excluding the parent CondTraverse if any)
-/// references the variable `(var_id, scope_id)`. We reuse the per-IR-node
-/// reference check from `reduce_expand_into`'s helper.
+/// True when no operator anywhere in the plan references the variable
+/// `(var_id, scope_id)`. Reuses the per-IR-node reference check from
+/// `reduce_expand_into`'s helper, which reports false for the traversal
+/// operators themselves, so the two hops being fused never veto their own
+/// intermediate.
+///
+/// Whole-plan rather than the ancestor spine. The predicate that must not be
+/// dropped is the intermediate's own inline attrs, and the planner emits that
+/// Filter directly above the operator that binds it — i.e. *between* the two
+/// hops, which is below the parent, not above it. Walking upwards from the
+/// parent would miss it. Fusion happens to be blocked in that case anyway,
+/// because the pass requires the child to be a direct CondTraverse child and
+/// the interposed Filter breaks the adjacency, but that is a structural
+/// accident: it protects the plan only for as long as nobody teaches this pass
+/// to see through Filters. Checking the whole plan states the requirement
+/// instead of relying on the shape.
 fn intermediate_unreferenced(
     plan: &DynTree<IR>,
-    idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
     var_id: u32,
     scope_id: u32,
 ) -> bool {
-    let mut cur = idx;
-    while let Some(parent) = plan.node(cur).parent() {
-        if reduce_expand_into::ir_references_variable(parent.data(), var_id, scope_id) {
-            return false;
-        }
-        cur = parent.idx();
-    }
-    true
+    !plan.root().indices::<Bfs>().any(|idx| {
+        reduce_expand_into::ir_references_variable(plan.node(idx).data(), var_id, scope_id)
+    })
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)
@@ -160,28 +159,21 @@ fn can_fuse(
     if !intermediate.labels.is_empty() {
         return false;
     }
-    if !node_attrs_empty(intermediate) {
-        return false;
-    }
-    // Endpoint inline attrs on entry hop's `from` and final `to` are
-    // handled by surrounding Filter nodes (planner emits them above the CT),
-    // so we only need to check the relationships and intermediate here.
+    // The intermediate's own inline attrs no longer live on the pattern; if it
+    // had any they are a Filter now, which the reference check below catches.
+    //
+    // Endpoint inline attrs on the entry hop's `from` and the final `to` are
+    // handled by the surrounding Filter nodes the planner emits, and those
+    // endpoints survive fusion, so they need no check here.
     // The child's `from` and parent's `to` are external to the fused chain.
     // Already-fused chain entries on the child stay storage-direction by
     // construction (the pass only ever inserts non-transposed hops).
     let _ = c_chain;
+    let _ = parent_idx;
 
-    // Intermediate must not be referenced by any ancestor of the parent CT,
-    // since after fusion it disappears from the binding set. (Filters that
-    // reference the intermediate sit between parent and grandparent — those
-    // ancestors are skipped by intermediate_unreferenced's BFS walk, so we
-    // explicitly check the parent's siblings/ancestors via the same helper.)
-    if !intermediate_unreferenced(
-        plan,
-        parent_idx,
-        intermediate.alias.id,
-        intermediate.alias.scope_id,
-    ) {
+    // The intermediate disappears from the binding set on fusion, so nothing
+    // anywhere may still read it.
+    if !intermediate_unreferenced(plan, intermediate.alias.id, intermediate.alias.scope_id) {
         return false;
     }
     true
