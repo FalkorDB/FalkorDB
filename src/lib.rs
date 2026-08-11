@@ -41,6 +41,7 @@
 mod allocator;
 mod commands;
 mod config;
+mod dispatch;
 mod graph_core;
 mod module_init;
 mod query_session;

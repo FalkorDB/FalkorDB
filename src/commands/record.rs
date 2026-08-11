@@ -18,6 +18,7 @@
 //! Like `GRAPH.QUERY`, execution happens on the thread pool with the client
 //! blocked; the main thread only resolves (or creates) the graph key.
 
+use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
@@ -36,9 +37,7 @@ use graph::{
 };
 use orx_tree::{Bfs, Collection, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{
-    Context, ContextFlags, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw,
-};
+use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
 use std::{collections::HashMap, os::raw::c_char, sync::Arc};
 
 #[inline]
@@ -241,12 +240,9 @@ pub fn graph_record(
         graph
     };
 
-    // Blocking clients are not allowed inside MULTI/EXEC, and replicated
-    // commands must complete before the handler returns (same rules as
-    // GRAPH.QUERY) — run synchronously in those cases.
-    if ctx.get_flags().contains(ContextFlags::MULTI)
-        || ctx.get_flags().contains(ContextFlags::REPLICATED)
-    {
+    // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
+    // `must_run_inline`.
+    if must_run_inline(ctx) {
         return record_mut(ctx, &graph, &key_name, query);
     }
 
