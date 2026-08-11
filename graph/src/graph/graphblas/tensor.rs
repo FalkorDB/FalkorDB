@@ -63,10 +63,11 @@
 //!   particular `dp = M` never shadows `m = M`).
 //! - A pair has ≥ 2 edges iff its effective inline value is the
 //!   [`MULTI_EDGE`] sentinel `M`; then *all* its ids live in `me` and the
-//!   pair is counted by `multi_count`. Otherwise its single id is inline and
+//!   pair is one of `multi_pairs()`. Otherwise its single id is inline and
 //!   `me` has no row for it.
 //! - `mt` mirrors the effective forward structure (BOOL, no ids).
-//! - `edge_count = |m| + |dp| − |dm| − |dp ∩ m| − multi_count + |me|`.
+//! - `edge_count = |m| + |dp| − |dm| − |dp ∩ m| − multi_pairs() + |me|`,
+//!   where `multi_pairs()` is read from `me`'s row structure, not tracked.
 //!
 //! ## Per-Pair State Diagram
 //!
@@ -195,8 +196,6 @@ pub struct Tensor {
     /// (BOOL). Holds *all* ids of pairs with more than one edge; empty
     /// otherwise.
     me: VersionedMatrix<bool>,
-    /// Number of pairs whose effective inline value is [`MULTI_EDGE`].
-    multi_count: u64,
     /// Whether the fold decisions latched on `dp`/`dm` are executable now; see
     /// `VersionedMatrix`'s field of the same name.
     needs_flush: AtomicBool,
@@ -236,7 +235,6 @@ impl Clone for Tensor {
             dm: self.dm.clone(),
             mt: self.mt.clone(),
             me: self.me.clone(),
-            multi_count: self.multi_count,
             needs_flush: AtomicBool::new(self.needs_flush.load(Ordering::Relaxed)),
         }
     }
@@ -254,7 +252,6 @@ impl Tensor {
             dm: Delta::new(Matrix::<bool>::new(nrows, ncols)),
             mt: VersionedMatrix::<bool>::new(ncols, nrows),
             me: VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX),
-            multi_count: 0,
             needs_flush: AtomicBool::new(false),
         }
     }
@@ -375,7 +372,6 @@ impl Tensor {
                         // pending inline slot in place.
                         self.me.set(key, m_ids[idx], true);
                         m_ids[idx] = MULTI_EDGE;
-                        self.multi_count += 1;
                         e.insert(usize::MAX);
                     }
                     self.me.set(key, id, true);
@@ -396,7 +392,6 @@ impl Tensor {
                         Some(cur_id) => {
                             self.me.set(key, cur_id, true);
                             self.me.set(key, id, true);
-                            self.multi_count += 1;
                             e.insert(usize::MAX);
                             m_srcs.push(s);
                             m_dsts.push(d);
@@ -573,7 +568,6 @@ impl Tensor {
                         1 => {
                             let last = ids[0];
                             me_del.push((key, last));
-                            self.multi_count -= 1;
                             *plan = PairPlan::Single {
                                 id: last,
                                 demoted: true,
@@ -847,7 +841,6 @@ impl Tensor {
             dm: self.dm.new_version(fold_dm),
             mt: self.mt.dup(),
             me: self.me.dup(),
-            multi_count: self.multi_count,
             needs_flush: AtomicBool::new(fold_dp || fold_dm),
         }
     }
@@ -912,7 +905,7 @@ impl Tensor {
     }
 
     /// Total number of edges. Each effective forward entry is one edge,
-    /// except `MULTI_EDGE` sentinels (counted by `multi_count`), whose real
+    /// except `MULTI_EDGE` sentinels (see [`Self::multi_pairs`]), whose real
     /// ids all live in `me`. Effective nvals is `|m| + |dp| − |dm| − |dp ∩ m|`
     /// (`dp` may shadow `m`; `dm ⊆ m` is disjoint from `dp`).
     #[must_use]
@@ -923,7 +916,7 @@ impl Tensor {
         } else {
             self.dp.intersection_nvals(&self.m)
         };
-        self.m.nvals() + self.dp.nvals() - self.dm.nvals() - shadow - self.multi_count
+        self.m.nvals() + self.dp.nvals() - self.dm.nvals() - shadow - self.multi_pairs()
             + self.me.nvals()
     }
 
@@ -956,6 +949,57 @@ impl Tensor {
         transpose: bool,
     ) -> Iter<'_> {
         Iter::new(self, min_row, max_row, transpose)
+    }
+
+    /// How many pairs are multi-edge, computed from `me` rather than tracked.
+    ///
+    /// Promotion completeness makes this a structural property of `me`:
+    /// `ε(p) = MULTI_EDGE` exactly when row `κ(p)` of `me` is non-empty. A
+    /// hypersparse matrix stores its non-empty vectors and nothing else, so once
+    /// `me` is assembled the answer is a metadata read rather than a count.
+    ///
+    /// While `me` carries live deltas the effective row set spans three layers
+    /// and has to be walked, which is `O(multi)` — never `O(|E|)`. That is the
+    /// price of not maintaining a counter, and the reason this is called from
+    /// [`Self::edge_count`] (statistics, planning, two graph algorithms) and not
+    /// from anything per-row.
+    #[cfg(test)]
+    fn eff_get_for_test(
+        &self,
+        src: u64,
+        dst: u64,
+    ) -> Option<u64> {
+        self.eff_get(src, dst)
+    }
+
+    #[cfg(test)]
+    fn fwd_me_nvals_for_test(&self) -> u64 {
+        self.me.nvals()
+    }
+
+    #[must_use]
+    pub fn multi_pairs(&self) -> u64 {
+        // A graph with no multi-edge pair anywhere — the dominant case, and the
+        // one the whole design is built around — answers from `nvals` without
+        // waiting `me` or attaching an iterator to it.
+        if self.me.nvals() == 0 {
+            return 0;
+        }
+        self.me.wait();
+        if self.me.dp().nvals() == 0 && self.me.dm().nvals() == 0 {
+            if let Some(kount) = self.me.m().hyper_vector_count() {
+                return kount;
+            }
+        }
+        let mut rows = 0u64;
+        let mut last: Option<u64> = None;
+        for (key, _) in self.me.iter(0, u64::MAX) {
+            if last != Some(key) {
+                rows += 1;
+                last = Some(key);
+            }
+        }
+        rows
     }
 
     /// Whether this tensor has any (src, dst) pair with more than one edge.
@@ -1110,7 +1154,6 @@ impl Decode<19> for Tensor {
         // the tensor section.
         let mut m = Matrix::<u64>::new(nrows, ncols);
         let mut me = VersionedMatrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
-        let mut multi_count: u64 = 0;
 
         let dm_empty = fwd_dm.nvals() == 0;
         for (src, dst, value) in fwd_m.iter(0, u64::MAX) {
@@ -1138,7 +1181,6 @@ impl Decode<19> for Tensor {
             // multi-edge pair lands in `me`; the inline value stays MULTI_EDGE.
             for _ in 0..2 {
                 let count = r.read_unsigned()?;
-                multi_count += count;
                 for _ in 0..count {
                     let src = r.read_unsigned()?;
                     let dst = r.read_unsigned()?;
@@ -1165,7 +1207,6 @@ impl Decode<19> for Tensor {
             dm: Delta::new(Matrix::<bool>::new(nrows, ncols)),
             mt: VersionedMatrix::<bool>::new(0, 0),
             me,
-            multi_count,
             needs_flush: AtomicBool::new(false),
         })
     }
@@ -1303,6 +1344,95 @@ mod tests {
     /// u64 edge id instead of reading only the sparsity pattern turns id 0
     /// into a `false` entry, which valued masks then treat as absent — the
     /// deletion is silently lost.
+    /// The bulk loader puts a pair's duplicate edges in ONE batch, which takes
+    /// `set_all_from_slices`' retro-promotion path rather than the plain promote.
+    #[test]
+    fn multi_pairs_after_within_batch_duplicates() {
+        ensure_init();
+        for &(pairs, dup) in &[(64u64, 2u64), (1_000, 2), (1_000, 4)] {
+            let n = pairs + 1;
+            let mut t = Tensor::new(n, n);
+            // one batch, each pair repeated `dup` times consecutively
+            let mut srcs = Vec::new();
+            let mut dsts = Vec::new();
+            let mut ids = Vec::new();
+            let mut next_id = 0u64;
+            for i in 0..pairs {
+                for _ in 0..dup {
+                    srcs.push(i);
+                    dsts.push(i + 1);
+                    ids.push(next_id);
+                    next_id += 1;
+                }
+            }
+            t.set_all_from_slices(&srcs, &dsts, &ids);
+            t.wait_fwd();
+            let sentinels = (0..pairs)
+                .filter(|&i| t.eff_get_for_test(i, i + 1) == Some(MULTI_EDGE))
+                .count() as u64;
+            let derived = t.multi_pairs();
+            let edges: u64 = (0..pairs).map(|i| t.get(i, i + 1).count() as u64).sum();
+            println!(
+                "one batch: pairs={pairs:>5} dup={dup}  sentinels={sentinels:>5} \
+                 derived={derived:>5} edge_count={:>7} true_edges={edges:>7}",
+                t.edge_count()
+            );
+            assert_eq!(
+                derived, sentinels,
+                "multi_pairs disagrees (within-batch dups)"
+            );
+            assert_eq!(
+                t.edge_count(),
+                edges,
+                "edge_count disagrees with a full scan"
+            );
+        }
+    }
+
+    /// Ground truth for `multi_pairs`: count the forward cells whose effective
+    /// value is the sentinel, which is what the quantity means, and compare
+    /// against the derivation from `me`'s row structure.
+    #[test]
+    fn multi_pairs_matches_the_sentinel_count() {
+        ensure_init();
+        for &(pairs, dup) in &[(64u64, 2u64), (1_000, 2), (1_000, 3), (5_000, 2)] {
+            let n = pairs + 1;
+            let mut t = Tensor::new(n, n);
+            let srcs: Vec<u64> = (0..pairs).collect();
+            let dsts: Vec<u64> = (0..pairs).map(|i| i + 1).collect();
+            // `dup` edges on every pair, inserted as separate batches
+            for round in 0..dup {
+                let ids: Vec<u64> = (0..pairs).map(|i| round * pairs + i).collect();
+                t.set_all_from_slices(&srcs, &dsts, &ids);
+            }
+            // ground truth: effective forward cells holding MULTI_EDGE
+            t.wait_fwd();
+            let mut sentinels = 0u64;
+            for (src, dst) in (0..pairs).map(|i| (i, i + 1)) {
+                if t.eff_get_for_test(src, dst) == Some(MULTI_EDGE) {
+                    sentinels += 1;
+                }
+            }
+            let derived = t.multi_pairs();
+            let edges: u64 = (0..pairs).map(|i| t.get(i, i + 1).count() as u64).sum();
+            println!(
+                "pairs={pairs:>5} dup={dup}  sentinels={sentinels:>5} \
+                 derived={derived:>5} me_nvals={:>6} edge_count={:>7} true_edges={edges:>7}",
+                t.fwd_me_nvals_for_test(),
+                t.edge_count()
+            );
+            assert_eq!(
+                derived, sentinels,
+                "multi_pairs disagrees with the sentinel count"
+            );
+            assert_eq!(
+                t.edge_count(),
+                edges,
+                "edge_count disagrees with a full scan"
+            );
+        }
+    }
+
     #[test]
     fn bulk_remove_and_extract_edge_id_zero() {
         ensure_init();
@@ -1450,7 +1580,7 @@ mod tests {
 
         assert!(emptied.is_empty(), "demoted pairs reported as emptied");
         assert_eq!(t.edge_count(), N, "edge count after demoting every pair");
-        assert_eq!(t.multi_count, 0, "multi_count not decremented per demotion");
+        assert_eq!(t.multi_pairs(), 0, "a demoted pair still counts as multi");
         assert_eq!(t.me.nvals(), 0, "`me` still holds ids of demoted pairs");
         for i in 0..N {
             assert_eq!(
@@ -1489,7 +1619,7 @@ mod tests {
             "every pair should be reported emptied exactly once"
         );
         assert_eq!(t.edge_count(), 0, "edges left after removing all of them");
-        assert_eq!(t.multi_count, 0, "multi_count not decremented per demotion");
+        assert_eq!(t.multi_pairs(), 0, "a demoted pair still counts as multi");
         assert_eq!(t.me.nvals(), 0, "`me` still holds ids of emptied pairs");
         t.mt.wait();
         assert_eq!(
