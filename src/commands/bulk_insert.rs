@@ -1,7 +1,7 @@
 use crate::query_session::{QuerySession, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    graph_core::{BlockedClient, ThreadedGraph, ffi, register_graph},
     redis_type::GRAPH_TYPE,
     telemetry,
 };
@@ -190,8 +190,12 @@ fn parse_header(
     // Read property count (4 bytes)
     let prop_count = read_u32_ne(data, idx)? as usize;
 
-    // Read property names
-    let mut prop_names = Vec::with_capacity(prop_count);
+    // Read property names. Cap the pre-allocation to the bytes that remain, exactly as
+    // `read_property` does for `BI_ARRAY` above: `prop_count` is 4 raw bytes of client
+    // input, so a declared count of `u32::MAX` would otherwise request ~34GB of `Arc`
+    // slots before the first name is even read.
+    let cap = prop_count.min(data.len().saturating_sub(*idx));
+    let mut prop_names = Vec::with_capacity(cap);
     for _ in 0..prop_count {
         let name = read_cstring(data, idx)?;
         validate_identifier_len(name, "Property name")?;
@@ -511,8 +515,8 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count);
-    let rel_ids = g.reserve_relationships(edge_count);
+    let node_ids = g.reserve_nodes(node_count)?;
+    let rel_ids = g.reserve_relationships(edge_count)?;
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
@@ -541,8 +545,8 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count);
-    let rel_ids = g.reserve_relationships(edge_count);
+    let node_ids = g.reserve_nodes(node_count)?;
+    let rel_ids = g.reserve_relationships(edge_count)?;
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
@@ -560,6 +564,62 @@ fn bulk_insert_sync_yield(
     // Flush delta-plus into base to prevent O(N²) dp accumulation across commands
     g.flush_for_bulk();
     Ok(())
+}
+
+/// Parse one of `GRAPH.BULK`'s four count arguments the way C's
+/// `RedisModule_StringToLongLong` (`string2ll`) does — canonical decimal only.
+///
+/// Negatives are the one deliberate divergence: C accepts them, truncates to `uint`, and
+/// reports the original value back. Refusing them keeps a nonsense count from ever
+/// reaching a reservation.
+fn parse_count(s: &str) -> Option<usize> {
+    // The empty string, which `string2ll` rejects on its length check.
+    if s.is_empty() {
+        return None;
+    }
+    // Any non-digit byte anywhere: sign (`+10`, `-5`), radix point and exponent (`1.5`,
+    // `1e1`), hex (`0x0a`), leading or trailing space. `string2ll` gets this from its
+    // digit-only scan plus its "not all bytes were used" check.
+    if !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    // Leading zeros (`010`, `00`): `string2ll` special-cases a lone `0`, then requires the
+    // first digit to be 1-9.
+    if s.len() > 1 && s.starts_with('0') {
+        return None;
+    }
+    // Through `i64` so the accepted range is `string2ll`'s and not `usize`'s — 2^63 is 19
+    // canonical digits that C rejects.
+    usize::try_from(s.parse::<i64>().ok()?).ok()
+}
+
+/// Bytes an edge record spends on its endpoints before any properties: the two
+/// `read_u64_ne` reads at the top of `process_edge_token`'s loop. Node records have no
+/// such fixed part.
+const EDGE_ENDPOINTS_LEN: usize = 16;
+
+/// Largest number of records `token` can describe, from the same arithmetic its reader uses.
+///
+/// Every property occupies at least its 1-byte type marker — `BI_NULL` is exactly that, and
+/// the bulk loader emits it for every empty CSV field — so a record costs at least
+/// `endpoints_len + P` bytes, where `P` is the property count in the token header. A node
+/// token whose header declares no properties describes no records at all: its record body is
+/// empty, so `process_node_token`'s `while idx < data.len()` loop never runs.
+///
+/// Parsing the header here also validates its identifier lengths before any graph state is
+/// touched, which is the order C uses (`_BulkInsert_ValidateTokens` in `bulk_insert.c`).
+fn max_records(
+    token: &[u8],
+    entity: &str,
+    endpoints_len: usize,
+) -> Result<usize, String> {
+    let mut idx = 0;
+    let (_, prop_names) = parse_header(token, &mut idx, entity)?;
+    let per_record = endpoints_len + prop_names.len();
+    if per_record == 0 {
+        return Ok(0);
+    }
+    Ok(token.len().saturating_sub(idx) / per_record)
 }
 
 pub fn graph_bulk_insert(
@@ -613,52 +673,45 @@ pub fn graph_bulk_insert(
         (false, next)
     };
 
-    // Get or create graph. The key handle is scoped to this block so a later
-    // failure can re-open the key to delete it (see `discard_created_graph`)
-    // without a second live handle to the same key.
-    let graph = {
+    // Resolve the graph without writing to the keyspace yet: reading the key first keeps
+    // the argument errors below from reporting ahead of "already exists" / "empty key",
+    // which is the order C uses (it retrieves the GraphContext before parsing the counts).
+    // Creating nothing until the whole batch has been validated is what lets a rejected
+    // batch leave no key behind, so the client can re-run the corrected one instead of
+    // tripping the "already exists" guard. The key handle is scoped to this block so the
+    // creation below — and `discard_created_graph` on the failure paths — can re-open the
+    // key without a second live handle to it.
+    let existing = {
         let key = ctx.open_key_writable(&key_str);
+        let found = key
+            .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+            .cloned();
         if begin {
-            if key
-                .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
-                .is_some()
-            {
+            if found.is_some() {
                 return Err(redis_module::RedisError::String(format!(
                     "Graph with name '{key_str}' cannot be created, as key '{key_str}' already exists."
                 )));
             }
-            let g = Arc::new(RwLock::new(ThreadedGraph::new(
-                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-                &key_str.to_string(),
-            )));
-            key.set_value(&GRAPH_TYPE, g.clone())?;
-            crate::graph_core::register_graph(key_str.to_string(), g.clone());
-            g
-        } else if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-            g.clone()
-        } else {
+        } else if found.is_none() {
             return Err(redis_module::RedisError::Str(
                 "ERR Invalid graph operation on empty key",
             ));
         }
+        found
     };
 
     // Parse counts
-    let node_count: usize = node_count_str
-        .parse()
-        .map_err(|_| redis_module::RedisError::Str("Error parsing node count."))?;
-    let edge_count: usize = args
-        .next_str()?
-        .parse()
-        .map_err(|_| redis_module::RedisError::Str("Error parsing relation count."))?;
-    let node_token_count: usize = args
-        .next_str()?
-        .parse()
-        .map_err(|_| redis_module::RedisError::Str("Error parsing node token count."))?;
-    let rel_token_count: usize = args
-        .next_str()?
-        .parse()
-        .map_err(|_| redis_module::RedisError::Str("Error parsing relation token count."))?;
+    let node_count = parse_count(node_count_str)
+        .ok_or(redis_module::RedisError::Str("Error parsing node count."))?;
+    let edge_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+        "Error parsing relation count.",
+    ))?;
+    let node_token_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+        "Error parsing node token count.",
+    ))?;
+    let rel_token_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+        "Error parsing relation token count.",
+    ))?;
 
     // Collect remaining binary token args
     let token_strings: Vec<RedisString> = args.collect();
@@ -667,6 +720,63 @@ pub fn graph_bulk_insert(
             "Bulk insert format error, token count mismatch.",
         ));
     }
+
+    //--------------------------------------------------------------------------
+    // Bound the declared counts by what the payload can describe.
+    //
+    // `node_count` and `edge_count` are pure client input, and they size a `Vec` of ids
+    // directly in `Graph::reserve_nodes` / `reserve_relationships`. Unbounded, that is a
+    // crash: `GRAPH.BULK g BEGIN 9223372036854775807 0 0 0` carries no payload at all, and
+    // the capacity overflow aborted the whole process (#2426). Below the overflow threshold
+    // it is a memory-amplification vector, since the reservation really happens.
+    //
+    // The sections are positional — the first `node_token_count` tokens hold nodes and the
+    // rest hold edges, the same split `bulk_insert_sync` iterates with — so each count is
+    // bounded by the records its own section describes.
+    //--------------------------------------------------------------------------
+    // A malformed header reports exactly what it reports when the insert itself trips over
+    // it below — only sooner, before any graph state exists to roll back.
+    let header_err =
+        |e: String| redis_module::RedisError::String(format!("ERR bulk insert failed: {e}"));
+    let (node_tokens, rel_tokens) = token_strings.split_at(node_token_count);
+
+    let mut node_ceiling = 0usize;
+    for token in node_tokens {
+        node_ceiling += max_records(token.as_slice(), "Label name", 0).map_err(header_err)?;
+    }
+    if node_count > node_ceiling {
+        return Err(redis_module::RedisError::String(format!(
+            "Bulk insert format error, declared node count {node_count} exceeds the \
+             {node_ceiling} node records the payload describes."
+        )));
+    }
+
+    let mut edge_ceiling = 0usize;
+    for token in rel_tokens {
+        edge_ceiling += max_records(token.as_slice(), "Relationship type", EDGE_ENDPOINTS_LEN)
+            .map_err(header_err)?;
+    }
+    if edge_count > edge_ceiling {
+        return Err(redis_module::RedisError::String(format!(
+            "Bulk insert format error, declared relation count {edge_count} exceeds the \
+             {edge_ceiling} edge records the payload describes."
+        )));
+    }
+
+    // Every argument checks out, so it is safe to put a graph in the keyspace.
+    let graph = match existing {
+        Some(g) => g,
+        None => {
+            let key = ctx.open_key_writable(&key_str);
+            let g = Arc::new(RwLock::new(ThreadedGraph::new(
+                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+                &key_str.to_string(),
+            )));
+            key.set_value(&GRAPH_TYPE, g.clone())?;
+            register_graph(key_str.to_string(), g.clone());
+            g
+        }
+    };
 
     // Run inline on this thread; `inline` is decided above, before the arguments were
     // consumed. Replication here is verbatim: this is the real command context, so
