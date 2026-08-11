@@ -283,7 +283,10 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     relationship: query_relationship,
                     ..
                 }
-                | IR::AllShortestPaths(query_relationship)
+                | IR::AllShortestPaths {
+                    relationship: query_relationship,
+                    ..
+                }
                 | IR::ExpandInto {
                     relationship: query_relationship,
                     ..
@@ -867,6 +870,7 @@ impl<'a> Runtime<'a> {
                 chain,
                 optional,
                 bind_relationship,
+                edge_predicate,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -882,6 +886,7 @@ impl<'a> Runtime<'a> {
                     chain,
                     *optional,
                     *bind_relationship,
+                    *edge_predicate,
                     idx,
                     record_cap,
                 )))
@@ -890,6 +895,7 @@ impl<'a> Runtime<'a> {
                 relationship: relationship_pattern,
                 emit_relationship,
                 sibling_edges,
+                edge_predicate,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -900,6 +906,7 @@ impl<'a> Runtime<'a> {
                     Box::new(child),
                     relationship_pattern,
                     *emit_relationship,
+                    *edge_predicate,
                     sibling_edges,
                     idx,
                     record_cap,
@@ -1206,12 +1213,16 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::AllShortestPaths(relationship_pattern) => {
+            IR::AllShortestPaths {
+                relationship: relationship_pattern,
+                edge_filter,
+            } => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::AllShortestPaths(AllShortestPathsOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
+                    edge_filter.as_ref(),
                     idx,
                 )))
             }

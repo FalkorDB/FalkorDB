@@ -35,9 +35,8 @@ use crate::graph::graph::{LabelId, NodeId, RelationshipId};
 use crate::graph::graphblas::matrix::Matrix;
 use crate::graph::graphblas::tensor::Tensor;
 use crate::graph::graphblas::versioned_matrix::{Iter, VersionedMatrix};
-use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
+use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp, BatchRow, Column},
     row::RowView,
@@ -45,7 +44,7 @@ use crate::runtime::{
     value::Value,
 };
 use itertools::Either;
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, NodeIdx};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
@@ -141,6 +140,11 @@ pub struct CondTraverseOp<'a> {
     /// path collapses to one row per pair yet still has to be bound, because
     /// `PathBuilder` reads it. Lowered by the `reduce_bound_edge` pass.
     bind_relationship: bool,
+    /// True when a predicate on the edge sits above this operator, so parallel
+    /// edges between one (src, dst) pair are individually distinguishable and
+    /// the collapse to a single representative is unsound. Set by the planner
+    /// when it lowers the pattern's inline edge attributes.
+    edge_predicate: bool,
     /// Alias IDs of sibling relationship variables in the same MATCH clause.
     sibling_edges: &'a [u32],
     /// When true, from/to have been swapped by the optimizer relative to the
@@ -234,14 +238,6 @@ fn build_transposed_iter(
     Some(VersionedMatrix::from_matrix(merged.transpose()).iter(0, u64::MAX))
 }
 
-/// Returns true when an inline-attributes tree is structurally an empty
-/// `Map` literal (`{}`). Such expressions never reference outer variables,
-/// so the F·A batched path can skip evaluating them per row.
-fn attrs_is_static_empty(attrs: &QueryExpr<Variable>) -> bool {
-    let root = attrs.root();
-    matches!(root.data(), ExprIR::Map) && root.children().next().is_none()
-}
-
 impl<'a> CondTraverseOp<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -254,6 +250,7 @@ impl<'a> CondTraverseOp<'a> {
         chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
         optional: bool,
         bind_relationship: bool,
+        edge_predicate: bool,
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
@@ -306,7 +303,7 @@ impl<'a> CondTraverseOp<'a> {
         // the predicate is enforced whichever path runs, and expand_row's own
         // check on them is redundant.
         //
-        // The edge's attrs still gate it: with `emit_relationship` false,
+        // An edge predicate still gates it: with `emit_relationship` false,
         // expand_batch binds one representative edge per (src, dst) pair, so a
         // predicate that tells parallel edges apart has to be applied during
         // the per-row scan, which iterates all of them.
@@ -315,7 +312,7 @@ impl<'a> CondTraverseOp<'a> {
             && !rp.bidirectional
             && bidir_dedup.is_none()
             && sibling_edges.is_empty()
-            && (!chain_is_empty || attrs_is_static_empty(&rp.attrs))
+            && (!chain_is_empty || !edge_predicate)
             && chain.iter().all(|hop| !hop.bidirectional);
 
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
@@ -344,6 +341,7 @@ impl<'a> CondTraverseOp<'a> {
             pending_batches: VecDeque::new(),
             emit_relationship,
             bind_relationship,
+            edge_predicate,
             sibling_edges,
             transposed,
             chain,
@@ -762,6 +760,7 @@ impl<'a> CondTraverseOp<'a> {
         runtime: &Runtime,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         emit_relationship: bool,
+        edge_predicate: bool,
         sibling_edges: &[u32],
         transposed: bool,
         state_cell: &std::cell::RefCell<Option<CtState>>,
@@ -772,17 +771,6 @@ impl<'a> CondTraverseOp<'a> {
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
     ) -> Result<(), String> {
         let env = BatchRow::new(batch, row_idx);
-
-        // Only the edge's attrs are evaluated here. A MATCH pattern's endpoint
-        // attrs are lowered to a Filter by the planner and stripped from the
-        // pattern, so re-checking them per row would be evaluating an empty
-        // map three times over.
-        let filter_attrs = ExprEval::from_runtime(runtime).eval(
-            &rp.attrs,
-            rp.attrs.root().idx(),
-            Some(&env),
-            None,
-        )?;
 
         let from_id = env.value_at(rp.from.alias.id).and_then(|v| match v {
             Value::Node(id) => Some(id),
@@ -874,7 +862,7 @@ impl<'a> CondTraverseOp<'a> {
                 transposed,
                 from_id,
                 to_id,
-                &filter_attrs,
+                edge_predicate,
                 &g,
                 rp,
                 batch,
@@ -919,7 +907,7 @@ impl<'a> CondTraverseOp<'a> {
                 !transposed,
                 from_id,
                 to_id,
-                &filter_attrs,
+                edge_predicate,
                 &g,
                 rp,
                 batch,
@@ -971,7 +959,7 @@ impl<'a> CondTraverseOp<'a> {
         is_reverse: bool,
         from_id: Option<crate::graph::graph::NodeId>,
         to_id: Option<crate::graph::graph::NodeId>,
-        filter_attrs: &Value,
+        edge_predicate: bool,
         g: &crate::graph::graph::Graph,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         batch: &Batch<'a>,
@@ -1011,7 +999,7 @@ impl<'a> CondTraverseOp<'a> {
             // iteration and emit one row per (src, dst) pair.  The outer
             // `get_relationships` iterator already returns unique matrix-level
             // pairs, so one representative edge per pair is sufficient.
-            let has_edge_filter = matches!(filter_attrs, Value::Map(m) if !m.is_empty());
+            let has_edge_filter = edge_predicate;
             let mat_src = u64::from(src);
             let mat_dst = u64::from(dst);
             if !emit_relationship && !has_edge_filter {
@@ -1044,25 +1032,9 @@ impl<'a> CondTraverseOp<'a> {
                     if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                         continue;
                     }
-                    if let Value::Map(filter_map) = filter_attrs
-                        && !filter_map.is_empty()
-                    {
-                        let mut matches = true;
-                        for (attr, avalue) in filter_map.iter() {
-                            if let Some(pvalue) = g.get_relationship_attribute(id, attr) {
-                                if *avalue == pvalue {
-                                    continue;
-                                }
-                                matches = false;
-                                break;
-                            }
-                            matches = false;
-                            break;
-                        }
-                        if !matches {
-                            continue;
-                        }
-                    }
+                    // The predicate itself is the Filter above this operator;
+                    // all this path owes it is every candidate edge rather than
+                    // one representative per pair.
                     out.push((from_node, to_node, id));
                 }
             }
@@ -1148,6 +1120,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
         let emit_relationship = self.emit_relationship;
+        let edge_predicate = self.edge_predicate;
         let sibling_edges = self.sibling_edges;
         let transposed = self.transposed;
         let state_cell = &self.state;
@@ -1175,6 +1148,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     runtime,
                     rp,
                     emit_relationship,
+                    edge_predicate,
                     sibling_edges,
                     transposed,
                     state_cell,

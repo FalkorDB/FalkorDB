@@ -94,6 +94,12 @@ fn can_fuse(
             chain: _p_chain,
             optional: p_opt,
             bind_relationship: true,
+            // A lowered edge predicate means parallel edges are
+            // distinguishable, and a fused chain binds no per-hop edge to
+            // test one against. Refusing to fuse replaces the old
+            // `rel_attrs_empty` veto, which read the attrs this now stands in
+            // for.
+            edge_predicate: false,
         },
         IR::CondTraverse {
             relationship: c_rel,
@@ -103,6 +109,7 @@ fn can_fuse(
             chain: c_chain,
             optional: c_opt,
             bind_relationship: true,
+            edge_predicate: false,
         },
     ) = (parent_ct, child_ct)
     else {
@@ -264,6 +271,7 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             chain: merged_chain,
             optional: false,
             bind_relationship: true,
+            edge_predicate: false,
         };
         // Attach the original grandchildren under the merged op (now parent
         // has [child_CT, g1, g2, ...]).

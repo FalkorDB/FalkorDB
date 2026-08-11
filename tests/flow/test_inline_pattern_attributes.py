@@ -126,6 +126,70 @@ class testInlinePatternAttributes(FlowTestsBase):
         self.env.assertEqual(actual.result_set, [[1], [2], [3], [40], [41]])
         g.delete()
 
+    # Inline attrs on an *edge*. Each operator enforces them differently:
+    # CondTraverse and ExpandInto via a Filter above themselves, with the
+    # collapse of parallel edges disabled; CondVarLenTraverse and
+    # AllShortestPaths via their edge_filter, applied per edge during the walk.
+    def test12_edge_attrs_parallel_edges(self):
+        g = self.db.select_graph(GRAPH_ID + "_edges")
+        # Two parallel edges between the same pair, distinguished only by `k`.
+        g.query(
+            "CREATE (a:E {n: 'a'}), (b:E {n: 'b'}), "
+            "(a)-[:R {k: 1}]->(b), (a)-[:R {k: 2}]->(b)"
+        )
+
+        # An anonymous edge with a predicate must not collapse to one
+        # representative edge: whichever were picked, the other is the match.
+        for k in (1, 2):
+            actual = g.query("MATCH (a:E)-[{k: %d}]->(b:E) RETURN count(*)" % k)
+            self.env.assertEqual(actual.result_set, [[1]])
+
+        # Contrast: with no predicate on the edge, an anonymous traverse still
+        # collapses the pair to a single representative edge, so this counts 1
+        # rather than 2. That is long-standing behaviour, independent of this
+        # file — it is here to pin the boundary the predicate cases rely on.
+        actual = g.query("MATCH (a:E)-[]->(b:E) RETURN count(*)")
+        self.env.assertEqual(actual.result_set, [[1]])
+
+        # ExpandInto: both endpoints already bound.
+        actual = g.query(
+            "MATCH (a:E {n: 'a'}), (b:E {n: 'b'}) WITH a, b "
+            "MATCH (a)-[{k: 2}]->(b) RETURN count(*)"
+        )
+        self.env.assertEqual(actual.result_set, [[1]])
+        g.delete()
+
+    def test13_edge_attrs_var_len_and_shortest_paths(self):
+        g = self.db.select_graph(GRAPH_ID + "_edgewalk")
+        g.query(
+            "CREATE (a:W {n: 1}), (b:W {n: 2}), (c:W {n: 3}), "
+            "(a)-[:R {k: 1}]->(b), (b)-[:R {k: 1}]->(c), (a)-[:R {k: 9}]->(c)"
+        )
+
+        # Var-length: the k=9 shortcut is pruned, so 3 is reached in two hops.
+        actual = g.query(
+            "MATCH (a:W {n: 1})-[:R*1..2 {k: 1}]->(x:W) RETURN x.n ORDER BY x.n"
+        )
+        self.env.assertEqual(actual.result_set, [[2], [3]])
+
+        # Without the predicate the one-hop shortcut is available.
+        actual = g.query("MATCH (a:W {n: 1})-[:R*1..1]->(x:W) RETURN x.n ORDER BY x.n")
+        self.env.assertEqual(actual.result_set, [[2], [3]])
+
+        # allShortestPaths: pruning the shortcut makes the shortest path 2 hops.
+        actual = g.query(
+            "MATCH (a:W {n: 1}), (c:W {n: 3}) WITH a, c "
+            "MATCH p = allShortestPaths((a)-[:R* {k: 1}]->(c)) RETURN length(p)"
+        )
+        self.env.assertEqual(actual.result_set, [[2]])
+
+        actual = g.query(
+            "MATCH (a:W {n: 1}), (c:W {n: 3}) WITH a, c "
+            "MATCH p = allShortestPaths((a)-[:R*]->(c)) RETURN length(p)"
+        )
+        self.env.assertEqual(actual.result_set, [[1]])
+        g.delete()
+
     # Inline attrs on a MERGE pattern are a constructor, not a predicate: the
     # created node must carry them.
     def test10_merge_pattern_attrs_are_constructed(self):
