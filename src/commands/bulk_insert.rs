@@ -1,3 +1,4 @@
+use crate::dispatch::must_run_inline;
 use crate::query_session::{QuerySession, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
@@ -12,7 +13,7 @@ use graph::{
     threadpool::spawn,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
+use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::ffi::CString;
@@ -570,30 +571,12 @@ pub fn graph_bulk_insert(
         return Err(redis_module::RedisError::WrongArity);
     }
 
-    // Contexts that cannot block run inline, with RM_Yield so Redis still handles
-    // PING between tokens. The predicate mirrors C's dispatcher
-    // (`cmd_dispatcher.c`), which is the reference for "this context must not
-    // block":
-    //   * REPLICATED — a replica has to apply the batch *before* the handler
-    //     returns. Blocking instead lets Redis advance the replication offset
-    //     while the write is still queued, so the master's WAIT reports the
-    //     replica in sync when it is not (same reasoning as `graph_core`).
-    //   * MULTI / LUA — Redis rejects blocking outright in both.
-    //   * DENY_BLOCKING / LOADING — AOF replay drives a fake client that carries
-    //     no CLIENT_MASTER, so REPLICATED is *not* set for it. Blocking that client
-    //     is not merely wrong, it is fatal: Redis asserts
-    //     `(fakeClient->flags & CLIENT_BLOCKED) == 0` (`aof.c`) while loading, so
-    //     any AOF-enabled server crashed on restart after a bulk load.
+    // Contexts that cannot block run inline, with RM_Yield so Redis still handles PING
+    // between tokens — see `must_run_inline` for the flag set and why each one is in it.
     //
-    // Decided up front, before the argument vector is consumed, so the background
-    // path can hold the arguments while they are still to hand.
-    let inline = ctx.get_flags().intersects(
-        ContextFlags::MULTI
-            | ContextFlags::REPLICATED
-            | ContextFlags::LUA
-            | ContextFlags::DENY_BLOCKING
-            | ContextFlags::LOADING,
-    );
+    // Decided up front, before the argument vector is consumed, so the background path
+    // can hold the arguments while they are still to hand.
+    let inline = must_run_inline(ctx);
 
     // Hold everything after the command name for replication (see `HeldArgs`). No
     // inspection or reassembly: the argument vector is already exactly what has to be
