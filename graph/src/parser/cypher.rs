@@ -198,7 +198,7 @@ impl<'a> Parser<'a> {
             if id.as_str() == "CYPHER" {
                 self.lexer.next();
                 let mut state = self.save_state();
-                while let Ok(id) = self.parse_ident() {
+                while let Some(id) = self.try_parse_ident() {
                     if !optional_match_token!(self.lexer, Equal) {
                         self.restore_state(state);
                         break;
@@ -1062,7 +1062,7 @@ impl<'a> Parser<'a> {
         let mut query_graph = QueryGraph::default();
         let mut nodes_alias = HashSet::new();
         loop {
-            if let Ok(ident) = self.parse_ident() {
+            if let Some(ident) = self.try_parse_ident() {
                 match_token!(self.lexer, Equal);
 
                 // Check for shortestPath/allShortestPaths in MATCH clause
@@ -1469,7 +1469,7 @@ impl<'a> Parser<'a> {
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (rel_types, min_hops, max_hops, has_edge_filter) = if has_details {
             // Optional alias (ignored)
-            let _alias = self.parse_ident().ok();
+            let _alias = self.try_parse_ident();
 
             // Relationship types
             let mut types = Vec::new();
@@ -2291,6 +2291,23 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// [`Self::parse_ident`] for speculative parses, which discard the error.
+    ///
+    /// Formatting a message nobody reads is pure cost, and the alternatives a
+    /// parser probes for are the common case, not the exception: `[` alone
+    /// asks this twice before settling on a plain list literal.
+    fn try_parse_ident(&mut self) -> Option<Arc<String>> {
+        match self.lexer.current() {
+            Ok(Token::IdentifierOrKeyword { ident: id, .. })
+                if validate_identifier_len(id.as_str(), "Identifier").is_ok() =>
+            {
+                self.lexer.next();
+                Some(id)
+            }
+            _ => None,
+        }
+    }
+
     fn parse_property_name(&mut self) -> Result<Arc<String>, String> {
         match self.lexer.current() {
             Ok(Token::IdentifierOrKeyword { ident: id, .. }) => {
@@ -2382,7 +2399,7 @@ impl<'a> Parser<'a> {
         let saved = self.save_state();
 
         // 1) Try list comprehension: [var IN ...]
-        if let Ok(var) = self.parse_ident()
+        if let Some(var) = self.try_parse_ident()
             && optional_match_token!(self.lexer => In)
         {
             return Ok((
@@ -2393,7 +2410,7 @@ impl<'a> Parser<'a> {
         self.restore_state(saved);
 
         // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
-        if let Ok(var) = self.parse_ident()
+        if let Some(var) = self.try_parse_ident()
             && optional_match_token!(self.lexer, Equal)
             && self.lexer.current()? == Token::LParen
             && let Ok(result) = self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
@@ -2522,7 +2539,7 @@ impl<'a> Parser<'a> {
 
     fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
-        let alias = if let Ok(id) = self.parse_ident() {
+        let alias = if let Some(id) = self.try_parse_ident() {
             id
         } else {
             let name = Arc::new(format!("_anon_{}", self.anon_counter));
@@ -2558,7 +2575,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (alias, types, attrs, var_len) = if has_details {
-            let alias = if let Ok(id) = self.parse_ident() {
+            let alias = if let Some(id) = self.try_parse_ident() {
                 id
             } else {
                 let name = Arc::new(format!("_anon_{}", self.anon_counter));
@@ -3025,5 +3042,70 @@ impl<'a> Parser<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `CYPHER batch=[{v:[..]}, ..]` - the shape a bulk loader sends, one list
+    /// literal per row on top of the outer one.
+    fn list_heavy_params(rows: usize) -> String {
+        let vec = std::iter::repeat_n("0.123456", 200).join(",");
+        let rows = (0..rows)
+            .map(|i| format!("{{`id`:{i},`v`:[{vec}]}}"))
+            .join(",");
+        format!("CYPHER `batch`=[{rows}] RETURN 1")
+    }
+
+    // Regression: `[` sends the parser probing for a list comprehension and a
+    // pattern comprehension before it settles on a plain list literal, and both
+    // probes used to build - then discard - an error message quoting the whole
+    // query. That made parsing quadratic in the payload: doubling the rows
+    // below took ~32x longer, so a 6.7MB bulk-load batch spent 1.7s in the
+    // parser alone. Time must now grow with the input, not with its square.
+    #[test]
+    fn list_literals_parse_in_linear_time() {
+        let small = list_heavy_params(250);
+        let large = list_heavy_params(2000);
+        let parse = |q: &str| Parser::new(q).parse_parameters().map(|(p, _)| p.len());
+
+        // Warm the allocator so the first parse is not charged for it.
+        assert_eq!(parse(&small).unwrap(), 1);
+
+        let t = std::time::Instant::now();
+        parse(&small).unwrap();
+        let small_elapsed = t.elapsed();
+
+        let t = std::time::Instant::now();
+        parse(&large).unwrap();
+        let large_elapsed = t.elapsed();
+
+        // 8x the input. Linear lands near 8x, the quadratic bug near 64x; the
+        // bound sits between the two with room for a noisy CI machine.
+        assert!(
+            large_elapsed < small_elapsed * 24,
+            "parse time grew super-linearly: {small_elapsed:?} for 250 rows \
+             vs {large_elapsed:?} for 2000",
+        );
+    }
+
+    // The speculative-ident path must still recognise what it probes for.
+    #[test]
+    fn bracket_alternatives_still_parse() {
+        for query in [
+            "RETURN [1, 2, 3] AS l",
+            "RETURN [x IN [1, 2] | x + 1] AS l",
+            "MATCH (a) RETURN [(a)-->(b) | b] AS l",
+            "MATCH (a) RETURN [p = (a)-->(b) | p] AS l",
+            "MATCH (n)-[r:R]->(m) RETURN n, r, m",
+            "MATCH ()-[:R]->() RETURN 1",
+        ] {
+            assert!(
+                Parser::new(query).parse().is_ok(),
+                "failed to parse: {query}"
+            );
+        }
     }
 }
