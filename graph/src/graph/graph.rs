@@ -1301,12 +1301,21 @@ impl Graph {
         self.reserved_node_count += 1;
     }
 
+    /// Reserve `count` node ids, failing instead of aborting when `count` cannot be
+    /// allocated.
+    ///
+    /// `GRAPH.BULK` reserves from a client-declared count, so the allocation size is
+    /// attacker-influenced: `Vec::with_capacity` panicked on the capacity overflow, and the
+    /// panic hook (`src/module_init.rs`) exits the process, so it took the server down
+    /// (#2426). `try_reserve_exact` turns that into an error the command can report.
     pub fn reserve_nodes(
         &mut self,
         count: usize,
-    ) -> Vec<NodeId> {
+    ) -> Result<Vec<NodeId>, String> {
+        let mut ids = Vec::new();
+        ids.try_reserve_exact(count)
+            .map_err(|_| format!("failed to reserve {count} node ids"))?;
         let count = count as u64;
-        let mut ids = Vec::with_capacity(count as usize);
         let deleted_len = self.deleted_nodes.len();
         let available = deleted_len.saturating_sub(self.reserved_node_count);
         let reclaimed = count.min(available);
@@ -1335,7 +1344,7 @@ impl Graph {
         self.reserved_node_count += remaining;
         ids.extend((start..start + remaining).map(NodeId));
 
-        ids
+        Ok(ids)
     }
 
     pub fn create_nodes(
@@ -2022,12 +2031,16 @@ impl Graph {
         self.reserved_relationship_count += 1;
     }
 
+    /// Reserve `count` relationship ids. Fallible for the same reason as
+    /// [`Self::reserve_nodes`]: `GRAPH.BULK` sizes this from a client-declared count.
     pub fn reserve_relationships(
         &mut self,
         count: usize,
-    ) -> Vec<RelationshipId> {
+    ) -> Result<Vec<RelationshipId>, String> {
+        let mut ids = Vec::new();
+        ids.try_reserve_exact(count)
+            .map_err(|_| format!("failed to reserve {count} relationship ids"))?;
         let count = count as u64;
-        let mut ids = Vec::with_capacity(count as usize);
         let deleted_len = self.deleted_relationships.len();
         let available = deleted_len.saturating_sub(self.reserved_relationship_count);
         let reclaimed = count.min(available);
@@ -2051,7 +2064,7 @@ impl Graph {
         self.reserved_relationship_count += remaining;
         ids.extend((start..start + remaining).map(RelationshipId));
 
-        ids
+        Ok(ids)
     }
 
     /// Create relationships of a single type using flat arrays.
