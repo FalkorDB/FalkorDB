@@ -1288,12 +1288,19 @@ impl AttributeStore {
     /// Decode `count` entity spans, dropping any attribute whose id is not in the
     /// graph's dictionary.
     ///
-    /// `attr_limit` is the dictionary's length. It is a parameter because the store no
-    /// longer owns the dictionary and [`Decode::decode_with_count`]'s signature cannot
-    /// carry it — which is exactly the seam that has to stay honest: without a real
-    /// limit a malformed RDB can store an id resolving to no name, and that reads back
-    /// as a **silently absent attribute** rather than an error. `decode_with_count`
-    /// therefore refuses rather than defaulting the limit; see its comment.
+    /// `attr_limit` is the dictionary's length, and it is the only way to decode a
+    /// store: `AttributeStore` deliberately does **not** implement [`Decode`].
+    ///
+    /// It cannot implement it honestly. `Decode::decode_with_count`'s signature has
+    /// nowhere to put the dictionary length, and an earlier revision satisfied the
+    /// trait by passing `usize::MAX` — which silently disabled this bound on two of
+    /// the three load paths, including the multi-key one, i.e. every graph large
+    /// enough to be split across virtual keys. Without a real bound a malformed RDB
+    /// stores an id resolving to no name, and that reads back as a **silently absent
+    /// attribute** rather than an error.
+    ///
+    /// Omitting the impl makes that mistake a compile error rather than something a
+    /// reviewer has to notice.
     pub fn decode_entities(
         &mut self,
         r: &mut dyn Reader,
@@ -1320,31 +1327,6 @@ impl AttributeStore {
             }
         }
         Ok(())
-    }
-}
-
-impl Decode<19> for AttributeStore {
-    fn decode(_r: &mut dyn Reader) -> Result<Self, String> {
-        unimplemented!("use decode_with_count for AttributeStore")
-    }
-
-    fn decode_with_count(
-        &mut self,
-        _r: &mut dyn Reader,
-        _count: u64,
-    ) -> Result<(), String> {
-        // Deliberately refuses instead of passing `usize::MAX` as the limit.
-        //
-        // Delegating with no limit is what an earlier revision did, and it silently
-        // disabled the id bounds check on two of the three load paths — including the
-        // multi-key one, i.e. every graph large enough to be split across virtual keys.
-        // The trait signature cannot carry the dictionary length, so the only safe
-        // behaviour here is to make the omission impossible to reach by accident.
-        Err(
-            "AttributeStore must be decoded via decode_entities, which takes the \
-             attribute dictionary's length as the id bound"
-                .to_string(),
-        )
     }
 }
 
@@ -1932,18 +1914,6 @@ mod tests {
             store.get_all_attrs_by_id(7).count(),
             1,
             "only the in-range attribute should have been stored"
-        );
-    }
-
-    #[test]
-    fn decode_with_count_refuses_rather_than_skipping_the_bound() {
-        let mut store = AttributeStore::default();
-        let mut r = span_stream(7, &[(0, Value::Int(10))]);
-        let err = <AttributeStore as Decode<19>>::decode_with_count(&mut store, &mut r, 1)
-            .expect_err("must refuse: the trait signature cannot carry the id bound");
-        assert!(
-            err.contains("decode_entities"),
-            "the error should name the method that takes the bound, got: {err}"
         );
     }
 }
