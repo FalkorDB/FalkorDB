@@ -341,11 +341,15 @@ class testIndexScanFlow():
         # such a range to the index used to hang the server, and later to
         # segfault it inside the index iterator.
         # https://github.com/FalkorDB/FalkorDB/issues/291
-        q = """MATCH (r:restaurant)
-        WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) < -20000
-        RETURN r"""
-        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
-        self.env.assertEqual(self.graph.query(q).result_set, [])
+        # the optimizer accepts the point on either side of distance(), and the
+        # report is written with the literal first, so cover both orders
+        for dist in ["distance(r.location, point({latitude:30.27822306, longitude:-97.75134723}))",
+                     "distance(point({latitude:30.27822306, longitude:-97.75134723}), r.location)"]:
+            q = f"""MATCH (r:restaurant)
+            WHERE {dist} < -20000
+            RETURN r"""
+            self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+            self.env.assertEqual(self.graph.query(q).result_set, [])
 
         # the same when the negative bound is computed rather than a literal
         # https://github.com/FalkorDB/FalkorDB/issues/281
@@ -355,8 +359,17 @@ class testIndexScanFlow():
         self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
         self.env.assertEqual(self.graph.query(q).result_set, [])
 
-        # zero radius is the boundary: still no match, the point is not at
-        # distance 0 from a different point
+        # #281 reproduced against an empty index too, which is a different path
+        # through the iterator than one holding an entry
+        self.graph.query("MATCH (r:restaurant) DELETE r")
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # restore the node the remaining assertions match against
+        self.graph.query("CREATE (:restaurant {location: point({latitude:30.27822306, longitude:-97.75134723})})")
+
+        # a bound of exactly zero is the boundary case: distance is never
+        # negative, so '< 0' cannot match however close the two points are
         q = """MATCH (r:restaurant)
         WHERE distance(r.location, point({latitude:40.4, longitude:30.3})) < 0
         RETURN r"""
