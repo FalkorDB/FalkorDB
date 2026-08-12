@@ -7,7 +7,7 @@ use std::ffi::CString;
 use std::sync::{Arc, LazyLock};
 
 use graph::entity_type::EntityType;
-use graph::graph::attribute_store::AttributeStore;
+use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
@@ -69,6 +69,9 @@ pub struct PendingGraph {
     pub cache_size: usize,
     pub header: Header,
     pub schema: Schema,
+    /// The graph's one attribute dictionary, carried across keys so every key's spans
+    /// are decoded against the same numbering.
+    pub attrs_name: AttrNameMap,
     pub node_attrs: AttributeStore,
     pub rel_attrs: AttributeStore,
     pub deleted_nodes: RoaringTreemap,
