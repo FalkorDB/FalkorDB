@@ -143,8 +143,18 @@ class testReduce():
         q = "RETURN [x IN [1] | reduce(s=0, x IN [1] | s + [x IN [1] | x][0])][0]"
         self.env.assertEqual(self.graph.query(q).result_set, [[1]])
 
-        # three levels deep, shadowing both the accumulator and the iterator
-        q = """RETURN reduce(s=0, x IN [0] | s + reduce(s=0, x IN [0] | s + 1))"""
+        # three reduce() scopes deep, shadowing both the accumulator and
+        # the iterator at every level
+        q = """RETURN reduce(s=0, x IN [0] |
+                      s + reduce(s=0, x IN [0] |
+                          s + reduce(s=0, x IN [0] | s + 1)))"""
+        self.env.assertEqual(self.graph.query(q).result_set, [[1]])
+
+        # the same depth wrapped in a list comprehension, which adds a
+        # fourth scope shadowing the iterator
+        q = """RETURN [x IN [0] | reduce(s=0, x IN [0] |
+                          s + reduce(s=0, x IN [0] |
+                              s + reduce(s=0, x IN [0] | s + 1)))][0]"""
         self.env.assertEqual(self.graph.query(q).result_set, [[1]])
 
         # the shadowed form is still a non-boolean expression in a WHERE
