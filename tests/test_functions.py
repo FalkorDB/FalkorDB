@@ -1,3 +1,4 @@
+import datetime
 from itertools import product
 from random import choice
 import string
@@ -166,3 +167,74 @@ def query_exception(query: str, message: str, params=None):
         assert False, "Expected an error"
     except ResponseError as e:
         assert message in str(e)
+
+def test_struct_constructor_extra_args_rejected():
+    """A temporal constructor called with more arguments than it accepts is
+    refused by arity validation, with the message the C implementation gives.
+
+    These constructors were declared `var_arg` so the zero-argument "now" form
+    would validate, which also let *any* arity through. That mattered because
+    `rewrite_struct_constructor` only rewrites a call with one Map argument and
+    emits exactly one child per slot, while the evaluator inferred "this was
+    rewritten" from `num_children > 1` — so a genuine two-argument call reached
+    a `struct_fn` expecting `slots.len()` values and indexed past the end of a
+    2-slice. A debug assertion in test builds; in release, a read past the end
+    that killed the server. Found by the fuzzer.
+
+    Capping the arity is what makes the bad call unreachable, and matches C,
+    which rejects every one of these. The `== struct_slots.len()` guard in
+    eval.rs is the second line of defence behind it.
+    """
+    for query, message in [
+        # the fuzzer's input, reduced
+        ("""WITH localdatetime({year: 1980, month: 12, day: 11, hour: 12,
+                               minute: 31, second: 14}) AS x,
+                 localdatetime({year: 1984, month: 10, day: 11, hour: 12},
+                               {list: [6], fd: 645876123}) AS d
+            RETURN x = d""",
+         "Received 2 arguments to function 'localdatetime', expected at most 1"),
+        ("RETURN localdatetime({year: 1984}, {x: 1})",
+         "Received 2 arguments to function 'localdatetime', expected at most 1"),
+        ("RETURN localdatetime({year: 1984}, {x: 1}, {y: 2})",
+         "Received 3 arguments to function 'localdatetime', expected at most 1"),
+        # a non-Map second argument takes the same path
+        ("RETURN localdatetime({year: 1984}, 7)",
+         "Received 2 arguments to function 'localdatetime', expected at most 1"),
+        ("RETURN localtime({hour: 1}, {x: 1})",
+         "Received 2 arguments to function 'localtime', expected at most 1"),
+        ("RETURN date({year: 1984}, {x: 1})",
+         "Received 2 arguments to function 'date', expected at most 1"),
+        # duration and point already capped their arity; they must stay capped
+        ("RETURN duration({days: 1}, {x: 1})",
+         "Received 2 arguments to function 'duration', expected at most 1"),
+        ("RETURN point({x: 1, y: 2}, {x: 1})",
+         "Received 2 arguments to function 'point', expected at most 1"),
+    ]:
+        query_exception(query, message)
+        assert common.g.query("RETURN 1").result_set == [[1]], \
+            f"server did not survive: {query}"
+
+def test_struct_constructor_accepted_arities():
+    """Capping the arity must leave the two forms that are meant to work: the
+    zero-argument "now" form the loose signature existed for, and the single-Map
+    constructor the binder rewrites into positional slots."""
+    for query in [
+        "RETURN localdatetime() IS NOT NULL",
+        "RETURN localtime() IS NOT NULL",
+        "RETURN date() IS NOT NULL",
+    ]:
+        assert common.g.query(query).result_set == [[True]], query
+
+    for query, expected in [
+        ("RETURN localdatetime({year: 1984, month: 10, day: 11})",
+         datetime.datetime(1984, 10, 11, tzinfo=datetime.timezone.utc)),
+        ("RETURN date({year: 1984, month: 10, day: 11})",
+         datetime.date(1984, 10, 11)),
+        ("RETURN localtime({hour: 12, minute: 31})",
+         datetime.time(12, 31)),
+    ]:
+        assert common.g.query(query).result_set[0][0] == expected, query
+
+    # duration decodes to a relativedelta, which compares cleanly to its parts
+    duration = common.g.query("RETURN duration({days: 1, hours: 2})").result_set[0][0]
+    assert (duration.days, duration.hours) == (1, 2)

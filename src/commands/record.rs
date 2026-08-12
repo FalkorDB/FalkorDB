@@ -29,16 +29,13 @@ use crate::{
 use graph::{
     graph::graph::Plan,
     planner::IR,
-    runtime::{
-        eval::evaluate_param,
-        runtime::{GetVariables, Runtime},
-    },
+    runtime::runtime::{GetVariables, Runtime},
     threadpool::spawn,
 };
 use orx_tree::{Bfs, Collection, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
-use std::{collections::HashMap, os::raw::c_char, sync::Arc};
+use std::{os::raw::c_char, sync::Arc};
 
 #[inline]
 fn record_mut(
@@ -57,11 +54,6 @@ fn record_mut(
         plan, parameters, ..
     } = session
         .with_graph(|tg| tg.graph.read().borrow().get_plan(query))
-        .map_err(RedisError::String)?;
-    let parameters = parameters
-        .into_iter()
-        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-        .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
     let is_write = plan.iter().any(|n| {
         matches!(
