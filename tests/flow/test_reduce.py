@@ -137,6 +137,31 @@ class testReduce():
         actual = self.graph.query(q).result_set[0][0]
         self.env.assertEqual(actual, expected)
 
+        # nesting reduce() inside a list comprehension while shadowing the
+        # iterator names in the inner scopes used to corrupt the outer
+        # scope's references and crash the server
+        q = "RETURN [x IN [1] | reduce(s=0, x IN [1] | s + [x IN [1] | x][0])][0]"
+        self.env.assertEqual(self.graph.query(q).result_set, [[1]])
+
+        # three levels deep, shadowing both the accumulator and the iterator
+        q = """RETURN reduce(s=0, x IN [0] | s + reduce(s=0, x IN [0] | s + 1))"""
+        self.env.assertEqual(self.graph.query(q).result_set, [[1]])
+
+        # the shadowed form is still a non-boolean expression in a WHERE
+        # clause, so it must be rejected rather than evaluated
+        self.graph.query("CREATE (:Node)")
+        q = """MATCH (n)
+               WHERE [x IN [0] | reduce(s=0, x IN [0] | s + reduce(s=0, x IN [0] | s + 1))][0]
+               RETURN 1"""
+        try:
+            self.graph.query(q)
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("Expected boolean predicate", str(e))
+
+        # the server survived and the outer scope is uncorrupted
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
+
     def test_empty_reduction(self):
         # 1 + nothing is 1
         q = "RETURN reduce(sum=1, n in [] | sum + n)"
