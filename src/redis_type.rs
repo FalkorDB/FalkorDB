@@ -145,7 +145,11 @@ unsafe extern "C" fn graph_rdb_load(
             Box::into_raw(boxed).cast()
         }
         Err(e) => {
-            eprintln!("graph rdb_load error: {e}");
+            // Must go to the *Redis* log, not stderr: Redis answers a failed module load
+            // with "Check for modules log above for additional clues", and a daemonized
+            // server with --logfile discards stderr entirely — so an `eprintln!` here left
+            // every rejected RDB unattributable.
+            log_warning(format!("graph rdb_load rejected the payload: {e}"));
             null_mut()
         }
     }
@@ -863,7 +867,7 @@ unsafe extern "C" fn graphmeta_rdb_load(
             Box::into_raw(Box::new(0u8)).cast()
         }
         Err(e) => {
-            eprintln!("graphmeta rdb_load error: {e}");
+            log_warning(format!("graphmeta rdb_load rejected the payload: {e}"));
             null_mut()
         }
     }
