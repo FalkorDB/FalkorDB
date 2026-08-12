@@ -100,3 +100,37 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
             self.env.assertEqual(actual_result.properties_set, 4)
             self.env.assertEqual(actual_result.nodes_created, 7)
 
+    # A cartesian product must stream its right-hand branches rather than
+    # cross-multiplying them into one materialized set: over N nodes a 4-way
+    # product holds 3N rows, not N^3. Materializing the product happened inside
+    # a single next() call, so the query neither honored its deadline nor
+    # bounded its memory — a 1 ms timeout over 1001 nodes ran for minutes and
+    # allocated ~20 GB.
+    def test07_multi_branch_cartesian_product_is_streamed(self):
+        g = self.db.select_graph("multi_pattern_stream")
+        g.query("UNWIND range(0, 1000) AS x CREATE ({v: x})")
+
+        q = "MATCH (a), (b), (c), (d) RETURN *"
+
+        start = time.time()
+        try:
+            # 1001^4 rows: the query must hit its deadline, not run to completion
+            g.query(q, timeout=1)
+            self.env.assertTrue(False)
+        except ResponseError as error:
+            self.env.assertContains("Query timed out", str(error))
+        # Generous bound: streaming gives up in single-digit milliseconds, while
+        # materializing the branches took over two minutes.
+        self.env.assertLess(time.time() - start, 10)
+
+        # Nor may LIMIT pay for the product before emitting a row. Each branch is
+        # still materialized in full (3 x 1001 rows), but only the combinations
+        # actually consumed are ever merged, so one row costs one merge instead
+        # of 1001^3 of them.
+        start = time.time()
+        res = g.query(q + " LIMIT 1")
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertLess(time.time() - start, 10)
+
+        g.delete()
+
