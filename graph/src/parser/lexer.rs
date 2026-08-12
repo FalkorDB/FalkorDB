@@ -770,39 +770,22 @@ impl<'a> Lexer<'a> {
     /// The slice of the query quoted back in an error message: everything when
     /// the query is short, otherwise a window around the error position.
     fn err_ctx(&self) -> Cow<'a, str> {
+        // Both round away from `pos` to a char boundary, and both clamp to the
+        // string's length, so a window that runs off either end is still a
+        // slice this can take.
         let pos = self.pos.min(self.str.len());
-        let start = Self::floor_char_boundary(self.str, pos.saturating_sub(Self::ERR_CTX_WINDOW));
-        let end = Self::ceil_char_boundary(self.str, pos.saturating_add(Self::ERR_CTX_WINDOW));
+        let start = self
+            .str
+            .floor_char_boundary(pos.saturating_sub(Self::ERR_CTX_WINDOW));
+        let end = self
+            .str
+            .ceil_char_boundary(pos.saturating_add(Self::ERR_CTX_WINDOW));
         if start == 0 && end == self.str.len() {
             return Cow::Borrowed(self.str);
         }
         let prefix = if start == 0 { "" } else { "..." };
         let suffix = if end == self.str.len() { "" } else { "..." };
         Cow::Owned(format!("{prefix}{}{suffix}", &self.str[start..end]))
-    }
-
-    /// Largest char boundary `<= i`. `str::floor_char_boundary` is unstable.
-    fn floor_char_boundary(
-        str: &str,
-        i: usize,
-    ) -> usize {
-        let mut i = i.min(str.len());
-        while !str.is_char_boundary(i) {
-            i -= 1;
-        }
-        i
-    }
-
-    /// Smallest char boundary `>= i`. `str::ceil_char_boundary` is unstable.
-    fn ceil_char_boundary(
-        str: &str,
-        i: usize,
-    ) -> usize {
-        let mut i = i.min(str.len());
-        while !str.is_char_boundary(i) {
-            i += 1;
-        }
-        i
     }
 
     #[must_use]
