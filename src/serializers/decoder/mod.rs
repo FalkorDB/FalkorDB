@@ -235,13 +235,15 @@ fn decode_payloads_into_pending(
     for (state, count) in payloads {
         match *state {
             EncodeState::Nodes => {
-                pg.node_attrs.decode_with_count(r, *count)?;
+                let attr_limit = pg.attrs_name.len();
+                pg.node_attrs.decode_entities(r, *count, attr_limit)?;
             }
             EncodeState::DeletedNodes => {
                 pg.deleted_nodes.decode_with_count(r, *count)?;
             }
             EncodeState::Edges => {
-                pg.rel_attrs.decode_with_count(r, *count)?;
+                let attr_limit = pg.attrs_name.len();
+                pg.rel_attrs.decode_entities(r, *count, attr_limit)?;
             }
             EncodeState::DeletedEdges => {
                 pg.deleted_rels.decode_with_count(r, *count)?;
@@ -439,13 +441,13 @@ fn load_graph_from_reader(
     for (state, count) in &payloads {
         match *state {
             EncodeState::Nodes => {
-                node_attrs.decode_with_count(r, *count)?;
+                node_attrs.decode_entities(r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedNodes => {
                 deleted_nodes.decode_with_count(r, *count)?;
             }
             EncodeState::Edges => {
-                rel_attrs.decode_with_count(r, *count)?;
+                rel_attrs.decode_entities(r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedEdges => {
                 deleted_rels.decode_with_count(r, *count)?;

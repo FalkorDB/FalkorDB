@@ -1308,11 +1308,12 @@ impl AttributeStore {
     /// Decode `count` entity spans, dropping any attribute whose id is not in the
     /// graph's dictionary.
     ///
-    /// The id check needs the dictionary, which the store no longer owns, and
-    /// [`Decode::decode_with_count`] cannot take an extra parameter — so the real load
-    /// path calls this and the trait impl delegates with no limit. Without a limit a
-    /// malformed RDB can store an id that resolves to no name, which then reads back as
-    /// a silently absent attribute rather than an error.
+    /// `attr_limit` is the dictionary's length. It is a parameter because the store no
+    /// longer owns the dictionary and [`Decode::decode_with_count`]'s signature cannot
+    /// carry it — which is exactly the seam that has to stay honest: without a real
+    /// limit a malformed RDB can store an id resolving to no name, and that reads back
+    /// as a **silently absent attribute** rather than an error. `decode_with_count`
+    /// therefore refuses rather than defaulting the limit; see its comment.
     pub fn decode_entities(
         &mut self,
         r: &mut dyn Reader,
@@ -1349,12 +1350,21 @@ impl Decode<19> for AttributeStore {
 
     fn decode_with_count(
         &mut self,
-        r: &mut dyn Reader,
-        count: u64,
+        _r: &mut dyn Reader,
+        _count: u64,
     ) -> Result<(), String> {
-        // No dictionary here, so no id filtering — see `decode_entities`, which the
-        // load path uses precisely so the check keeps happening.
-        self.decode_entities(r, count, usize::MAX)
+        // Deliberately refuses instead of passing `usize::MAX` as the limit.
+        //
+        // Delegating with no limit is what an earlier revision did, and it silently
+        // disabled the id bounds check on two of the three load paths — including the
+        // multi-key one, i.e. every graph large enough to be split across virtual keys.
+        // The trait signature cannot carry the dictionary length, so the only safe
+        // behaviour here is to make the omission impossible to reach by accident.
+        Err(
+            "AttributeStore must be decoded via decode_entities, which takes the \
+             attribute dictionary's length as the id bound"
+                .to_string(),
+        )
     }
 }
 
@@ -1798,5 +1808,152 @@ mod tests {
         let store = store_with(&[(far_id, &[("a", Value::Int(42))])]);
         assert_eq!(store.get_attr(far_id, &name("a")), Some(Value::Int(42)));
         assert_eq!(store.get_attr(far_id - 1, &name("a")), None);
+    }
+
+    // ── RDB id bounds ──
+    //
+    // The store no longer owns the attribute dictionary, so the id bound is a
+    // parameter. That seam is easy to leave open: an earlier revision satisfied
+    // `Decode::decode_with_count` by delegating with `usize::MAX`, which silently
+    // disabled the check on the multi-key load path — every graph large enough to be
+    // split across virtual keys. These pin both halves of the current behaviour.
+
+    /// Records the calls a [`Writer`] receives, so a stream can be replayed into a
+    /// [`Reader`] without this test knowing how `Value` encodes itself.
+    #[derive(Default)]
+    struct Recorder {
+        ops: Vec<Op>,
+    }
+
+    #[derive(Clone)]
+    enum Op {
+        Unsigned(u64),
+        Signed(i64),
+        Double(f64),
+        Buffer(Vec<u8>),
+    }
+
+    impl Writer for Recorder {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.ops.push(Op::Unsigned(val));
+        }
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.ops.push(Op::Signed(val));
+        }
+        fn write_double(
+            &mut self,
+            val: f64,
+        ) {
+            self.ops.push(Op::Double(val));
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.ops.push(Op::Buffer(data.to_vec()));
+        }
+    }
+
+    struct Replay {
+        ops: std::collections::VecDeque<Op>,
+    }
+
+    impl Replay {
+        fn next(&mut self) -> Result<Op, String> {
+            self.ops
+                .pop_front()
+                .ok_or_else(|| "replay: end".to_string())
+        }
+    }
+
+    impl Reader for Replay {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            match self.next()? {
+                Op::Unsigned(v) => Ok(v),
+                _ => Err("replay: expected unsigned".to_string()),
+            }
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            match self.next()? {
+                Op::Signed(v) => Ok(v),
+                _ => Err("replay: expected signed".to_string()),
+            }
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            match self.next()? {
+                Op::Double(v) => Ok(v),
+                _ => Err("replay: expected double".to_string()),
+            }
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            match self.next()? {
+                Op::Buffer(v) => Ok(v),
+                _ => Err("replay: expected buffer".to_string()),
+            }
+        }
+    }
+
+    /// One entity span carrying `(attr_id, value)` pairs, in the layout
+    /// `decode_entities` expects.
+    fn span_stream(
+        entity_id: u64,
+        attrs: &[(u16, Value)],
+    ) -> Replay {
+        let mut rec = Recorder::default();
+        rec.write_unsigned(entity_id);
+        rec.write_unsigned(attrs.len() as u64);
+        for (attr_id, value) in attrs {
+            rec.write_unsigned(u64::from(*attr_id));
+            value.encode(&mut rec);
+        }
+        Replay {
+            ops: rec.ops.into(),
+        }
+    }
+
+    #[test]
+    fn decode_entities_drops_ids_beyond_the_dictionary() {
+        let mut store = AttributeStore::default();
+        let mut r = span_stream(7, &[(0, Value::Int(10)), (5, Value::Int(20))]);
+
+        // A dictionary holding a single name: id 0 is real, id 5 resolves to nothing.
+        let mut dict = AttrNameMap::default();
+        dict.insert(Arc::new("a".to_string()));
+        store.decode_entities(&mut r, 1, dict.len()).unwrap();
+
+        assert_eq!(
+            store.get_attr(&dict, 7, &Arc::new("a".to_string())),
+            Some(Value::Int(10)),
+            "an id inside the dictionary must be kept and reachable by name"
+        );
+        assert_eq!(
+            store.get_attr_by_idx(7, 5),
+            None,
+            "an id past the end of the dictionary must be dropped, not stored: it \
+             resolves to no name and would read back as a silently absent attribute"
+        );
+        assert_eq!(
+            store.get_all_attrs_by_id(7).count(),
+            1,
+            "only the in-range attribute should have been stored"
+        );
+    }
+
+    #[test]
+    fn decode_with_count_refuses_rather_than_skipping_the_bound() {
+        let mut store = AttributeStore::default();
+        let mut r = span_stream(7, &[(0, Value::Int(10))]);
+        let err = <AttributeStore as Decode<19>>::decode_with_count(&mut store, &mut r, 1)
+            .expect_err("must refuse: the trait signature cannot carry the id bound");
+        assert!(
+            err.contains("decode_entities"),
+            "the error should name the method that takes the bound, got: {err}"
+        );
     }
 }
