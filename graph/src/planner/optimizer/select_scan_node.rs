@@ -66,6 +66,7 @@ use crate::{
 };
 
 use super::super::{IR, inline_attrs_to_filter};
+use super::{collect_expr_variables, collect_subtree_variables};
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
@@ -820,52 +821,134 @@ pub(super) fn select_scan_node(
                 }
             };
 
-            // Reverse the chain and swap from/to on each relationship.
-            rels.reverse();
-            let mut new_rels: Vec<(
+            // Order and orient the hops for the reversed plan.
+            //
+            // Reversing the chain wholesale and marking every hop `transposed`
+            // only describes a simple path. It gets two things wrong otherwise.
+            // Order: the hop that must sit directly on the new scan is the one
+            // touching `best_node`, and reversing the *rebuild* order as well
+            // put the far hop there instead — a hop with neither endpoint bound
+            // by anything below it, which the runtime can only answer by
+            // enumerating every edge of the type once per input row. That read
+            // as 34.4M instructions for
+            // `MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c {id: 1})` against 419k for
+            // the same query on the C engine. Direction: as soon as the pattern
+            // branches — `(a)-->(b)-->(c), (b)-->(d)` — the hop leaving the
+            // branch point still runs in storage direction, so `transposed`
+            // cannot be a property of the chain.
+            //
+            // Order greedily instead: repeatedly take a hop with an endpoint
+            // already bound, orient it to start from that endpoint, and mark
+            // its other end bound. `transposed` then carries the meaning the
+            // runtime reads — "start from `to`" — per hop.
+            let initial_bound: HashSet<u32> = {
+                let mut b = HashSet::new();
+                b.insert(best_node.alias.id);
+                if let Some(child) = &existing_child {
+                    b.extend(collect_subtree_variables(&child.root()));
+                }
+                b
+            };
+            let mut bound = initial_bound.clone();
+            let mut pending_hops: Vec<
+                Option<(
+                    Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+                    bool,
+                    Vec<u32>,
+                )>,
+            > = rels.into_iter().map(Some).collect();
+            let hop_count = pending_hops.len();
+            let mut ordered: Vec<(
                 Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
                 bool,
                 Vec<u32>,
                 bool, // transposed
-            )> = Vec::new();
-
-            for (rel, emit, edges) in &rels {
-                let new_from = rel.to.clone();
-                let new_to = rel.from.clone();
-                let new_rel = swap_relationship(rel, new_from, new_to);
-                new_rels.push((new_rel, *emit, edges.clone(), true));
+            )> = Vec::with_capacity(hop_count);
+            let mut orderable = true;
+            while ordered.len() < hop_count {
+                let pick = pending_hops.iter().position(|slot| {
+                    slot.as_ref().is_some_and(|(rel, ..)| {
+                        bound.contains(&rel.from.alias.id) || bound.contains(&rel.to.alias.id)
+                    })
+                });
+                // No hop can start from what is bound so far: this chain is not
+                // one the reversal can describe, so leave the plan alone rather
+                // than emit an operator whose source nothing binds.
+                let Some(i) = pick else {
+                    orderable = false;
+                    break;
+                };
+                let (rel, emit, edges) = pending_hops[i].take().expect("position found a hop");
+                // Storage direction when `from` is bound (no transpose needed);
+                // otherwise start from `to` and let the runtime walk the
+                // relationship matrix backwards.
+                let (new_rel, transposed) = if bound.contains(&rel.from.alias.id) {
+                    (rel, false)
+                } else {
+                    let swapped = swap_relationship(&rel, rel.to.clone(), rel.from.clone());
+                    (swapped, true)
+                };
+                bound.insert(new_rel.to.alias.id);
+                bound.insert(new_rel.alias.id);
+                ordered.push((new_rel, emit, edges, transposed));
             }
 
-            // Build the new subtree bottom-up, inserting inter-CT filters at
-            // the correct hop.  `new_rels.into_iter().rev()` yields hops
-            // corresponding to original chain positions 0, 1, …, n-1.
-            // A filter collected at original position `i` should be inserted
-            // right after the hop for original chain[i] is wrapped around the
-            // subtree (and before the next hop wraps it).
-            let mut subtree = existing_child
-                .unwrap_or_else(|| make_scan_subtree(&best_node, in_merge, preserved_argument));
-            for (step, (rel, emit, edges, transposed)) in new_rels.into_iter().rev().enumerate() {
-                subtree = tree!(
-                    IR::CondTraverse {
-                        relationship: rel,
-                        emit_relationship: emit,
-                        sibling_edges: edges,
-                        transposed,
-                        chain: Vec::new(),
-                        optional: false,
-                        bind_relationship: true,
-                    },
-                    subtree
-                );
-                // The original chain position for this step is `step`.
-                // Apply any inter-CT filters that were between chain[step]
-                // and chain[step+1] in the original (pre-reversal) chain.
-                for (orig_pos, filter_tree) in &inter_ct_filters {
-                    if *orig_pos == step {
-                        let filter_data = filter_tree.root().data().clone();
-                        subtree = tree!(filter_data, subtree);
+            // Inter-CT filters are keyed by the variables they read rather than
+            // by their old chain position, so each one lands as soon as its
+            // inputs are bound — "as early as possible" survives reordering.
+            let mut pending_filters: Vec<(HashSet<u32>, DynTree<IR>)> = inter_ct_filters
+                .into_iter()
+                .map(|(_, filter_tree)| {
+                    let vars = match filter_tree.root().data() {
+                        IR::Filter(expr) => collect_expr_variables(expr),
+                        _ => HashSet::new(),
+                    };
+                    (vars, filter_tree)
+                })
+                .collect();
+
+            // Build the new subtree bottom-up. Nothing below mutates the plan,
+            // so an unplaceable filter can still abandon the rewrite.
+            let mut subtree = existing_child.clone().unwrap_or_else(|| {
+                make_scan_subtree(&best_node, in_merge, preserved_argument.clone())
+            });
+            if orderable {
+                let mut placed_bound = initial_bound;
+                for (rel, emit, edges, transposed) in ordered {
+                    let dest_alias = rel.to.alias.id;
+                    let edge_alias = rel.alias.id;
+                    subtree = tree!(
+                        IR::CondTraverse {
+                            relationship: rel,
+                            emit_relationship: emit,
+                            sibling_edges: edges,
+                            transposed,
+                            chain: Vec::new(),
+                            optional: false,
+                            bind_relationship: true,
+                        },
+                        subtree
+                    );
+                    placed_bound.insert(dest_alias);
+                    placed_bound.insert(edge_alias);
+                    let mut f = 0;
+                    while f < pending_filters.len() {
+                        if pending_filters[f].0.is_subset(&placed_bound) {
+                            let (_, filter_tree) = pending_filters.remove(f);
+                            subtree = tree!(filter_tree.root().data().clone(), subtree);
+                        } else {
+                            f += 1;
+                        }
                     }
                 }
+                // A filter left over reads something no hop binds; dropping it
+                // would silently widen the match, so abandon the rewrite.
+                if !pending_filters.is_empty() {
+                    orderable = false;
+                }
+            }
+            if !orderable {
+                continue;
             }
 
             // Replace the chain in the plan. Each `prune` below can trigger
