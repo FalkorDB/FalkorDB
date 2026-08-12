@@ -190,6 +190,38 @@ class testInlinePatternAttributes(FlowTestsBase):
         self.env.assertEqual(actual.result_set, [[1]])
         g.delete()
 
+    # An inline attribute on a traversal endpoint must be servable by the index,
+    # with nothing left over as a Filter. This is the payoff of lowering it
+    # once: the shape used to plan `a.p = 1` twice, and two conjuncts on one key
+    # become an IndexQuery::And.
+    #
+    # It does NOT detect a returning duplicate, and is not the guard for one.
+    # Verified by ablation: with the endpoint filter deliberately emitted twice,
+    # this plan is byte-identical, because `utilize_index` folds
+    # `And(a.p = 1, a.p = 1)` back into a single index query. The duplicate is
+    # observable only under `--features index-falkordb`, where an unserviceable
+    # `And` is a hard error rather than a silent fold. What actually prevents it
+    # is `debug_assert_no_pattern_attrs`: with the attrs stripped there is
+    # nothing left for a downstream pass to re-derive a second copy from.
+    def test14_inline_attr_is_served_by_the_index(self):
+        g = self.db.select_graph(GRAPH_ID + "_once")
+        g.query("CREATE (a:L {p: 1})-[:R]->(b:L {p: 2})")
+        g.query("CREATE INDEX FOR (n:L) ON (n.p)")
+
+        plan = str(g.explain("MATCH (a:L {p: 1})-[:R]->(b) RETURN b"))
+        self.env.assertContains("Node By Index Scan", plan)
+        self.env.assertEqual(plan.count("Filter"), 0)
+
+        # Both endpoints constrained: two distinct predicates, one served by the
+        # index and one left as a Filter — not collapsed into each other.
+        plan = str(g.explain("MATCH (a:L {p: 1})-[:R]->(b:L {p: 2}) RETURN b"))
+        self.env.assertContains("Node By Index Scan", plan)
+        self.env.assertEqual(plan.count("Filter"), 1)
+
+        actual = g.query("MATCH (a:L {p: 1})-[:R]->(b:L {p: 2}) RETURN b.p")
+        self.env.assertEqual(actual.result_set, [[2]])
+        g.delete()
+
     # Inline attrs on a MERGE pattern are a constructor, not a predicate: the
     # created node must carry them.
     def test10_merge_pattern_attrs_are_constructed(self):
