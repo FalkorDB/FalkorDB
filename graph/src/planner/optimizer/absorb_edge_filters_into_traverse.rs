@@ -87,12 +87,16 @@ pub(super) fn absorb_edge_filters_into_traverse(optimized_plan: &mut DynTree<IR>
             let filter = filter.clone();
             let child_idx = child.idx();
             match optimized_plan.node_mut(child_idx).data_mut() {
-                IR::CondTraverse { edge_filter, .. } => {
-                    // Nothing else writes this field, so there is never an
-                    // existing predicate to merge with.
-                    debug_assert!(edge_filter.is_none());
-                    *edge_filter = Some(filter);
-                }
+                // Matching only on `None` is what bounds the outer loop. The
+                // loop repeats while anything was absorbed, so termination
+                // would otherwise depend on the `take_out` below actually
+                // consuming the Filter — remove that line and the same Filter
+                // is rediscovered forever, wedging `optimize`. Ask for the
+                // empty field instead, and the pass cannot loop regardless.
+                IR::CondTraverse {
+                    edge_filter: slot @ None,
+                    ..
+                } => *slot = Some(filter),
                 _ => continue,
             }
             optimized_plan.node_mut(idx).take_out();
