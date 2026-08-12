@@ -775,20 +775,22 @@ fn reply_profile(
     plan: &orx_tree::DynTree<IR>,
 ) {
     let all_ops: Vec<_> = plan.root().indices::<Dfs>().collect();
-    // Filter out Commit nodes and adjust depth accordingly.
-    let ops: Vec<_> = all_ops
-        .iter()
-        .filter(|idx| !matches!(plan.node(**idx).data(), IR::Commit))
-        .collect();
+    // Filter out Commit nodes, and Filters folded whole into the traverse
+    // below them (those build no operator), adjusting depth accordingly.
+    let hidden = |idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>| {
+        matches!(plan.node(idx).data(), IR::Commit)
+            || graph::planner::filter_is_fused_away(plan, idx)
+    };
+    let ops: Vec<_> = all_ops.iter().filter(|idx| !hidden(**idx)).collect();
     let profile_data = runtime.profile_data.borrow();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
     for idx in ops {
         let node = plan.node(*idx);
-        // Calculate effective depth (subtract number of Commit ancestors).
+        // Effective depth: subtract the hidden ancestors.
         let mut depth = node.depth();
         let mut cur = *idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if matches!(parent.data(), IR::Commit) {
+            if hidden(parent.idx()) {
                 depth -= 1;
             }
             cur = parent.idx();

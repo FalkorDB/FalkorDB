@@ -42,7 +42,7 @@ use crate::{
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
-    planner::IR,
+    planner::{IR, absorbed_into_child, fused_edge_predicate, parent_filters_edge},
     runtime::{
         batch::{Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column},
         ops::{
@@ -60,6 +60,7 @@ use crate::{
         row::{Row, RowView},
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
+    tree,
 };
 use atomic_refcell::AtomicRefCell;
 use chrono::{DateTime, Utc};
@@ -283,10 +284,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     relationship: query_relationship,
                     ..
                 }
-                | IR::AllShortestPaths {
-                    relationship: query_relationship,
-                    ..
-                }
+                | IR::AllShortestPaths(query_relationship)
                 | IR::ExpandInto {
                     relationship: query_relationship,
                     ..
@@ -738,12 +736,36 @@ impl<'a> Runtime<'a> {
             }
             IR::Filter(tree) => {
                 let child = pop_or_once(&mut children);
-                Ok(BatchOp::Filter(FilterOp::new(
-                    self,
-                    Box::new(child),
-                    tree,
-                    idx,
-                )))
+                // The traverse below may have folded some of these conjuncts
+                // into itself (see `split_edge_filter`). Only what it left
+                // behind needs an operator — and if it took everything, this
+                // node produces no operator at all: that is the fusion, two
+                // plan nodes becoming one physical operator.
+                //
+                // `ExpandInto` is excluded there and takes nothing, so its
+                // Filter is always built.
+                match absorbed_into_child(&self.plan, idx) {
+                    Some(remainder) if remainder.is_empty() => Ok(child),
+                    Some(remainder) => {
+                        let kept = if remainder.len() == 1 {
+                            Arc::new(remainder.into_iter().next().unwrap())
+                        } else {
+                            Arc::new(tree!(ExprIR::And; remainder))
+                        };
+                        Ok(BatchOp::Filter(FilterOp::new(
+                            self,
+                            Box::new(child),
+                            kept,
+                            idx,
+                        )))
+                    }
+                    None => Ok(BatchOp::Filter(FilterOp::new(
+                        self,
+                        Box::new(child),
+                        tree.clone(),
+                        idx,
+                    ))),
+                }
             }
             IR::Project {
                 exprs: trees,
@@ -870,7 +892,6 @@ impl<'a> Runtime<'a> {
                 chain,
                 optional,
                 bind_relationship,
-                edge_filter,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -886,7 +907,7 @@ impl<'a> Runtime<'a> {
                     chain,
                     *optional,
                     *bind_relationship,
-                    edge_filter.as_ref(),
+                    fused_edge_predicate(&self.plan, idx),
                     idx,
                     record_cap,
                 )))
@@ -895,7 +916,6 @@ impl<'a> Runtime<'a> {
                 relationship: relationship_pattern,
                 emit_relationship,
                 sibling_edges,
-                edge_predicate,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -906,7 +926,7 @@ impl<'a> Runtime<'a> {
                     Box::new(child),
                     relationship_pattern,
                     *emit_relationship,
-                    *edge_predicate,
+                    parent_filters_edge(&self.plan, idx),
                     sibling_edges,
                     idx,
                     record_cap,
@@ -1197,32 +1217,44 @@ impl<'a> Runtime<'a> {
             }
             IR::CondVarLenTraverse {
                 relationship: relationship_pattern,
-                edge_filter,
                 emit_path,
                 path_var,
                 ..
             } => {
                 let child = pop_or_once(&mut children);
+                let edge_filter = fused_edge_predicate(&self.plan, idx);
+                // A var-length walk's edge predicate is not a filter on its
+                // output: `r` binds a *list* of edges, so testing `r.w` above
+                // the walk is not the same question as pruning per edge. If a
+                // predicate on this alias failed to fuse we would be building a
+                // plan that asks the wrong one.
+                debug_assert!(
+                    edge_filter.is_some() || !parent_filters_edge(&self.plan, idx),
+                    "a var-length edge predicate must fuse into the walk"
+                );
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
-                    edge_filter.as_ref(),
+                    edge_filter,
                     *emit_path,
                     path_var.as_ref().map(|v| v.id),
                     idx,
                 )))
             }
-            IR::AllShortestPaths {
-                relationship: relationship_pattern,
-                edge_filter,
-            } => {
+            IR::AllShortestPaths(relationship_pattern) => {
                 let child = pop_or_once(&mut children);
+                let edge_filter = fused_edge_predicate(&self.plan, idx);
+                // See `CondVarLenTraverse` above.
+                debug_assert!(
+                    edge_filter.is_some() || !parent_filters_edge(&self.plan, idx),
+                    "an allShortestPaths edge predicate must fuse into the walk"
+                );
                 Ok(BatchOp::AllShortestPaths(AllShortestPathsOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
-                    edge_filter.as_ref(),
+                    edge_filter,
                     idx,
                 )))
             }

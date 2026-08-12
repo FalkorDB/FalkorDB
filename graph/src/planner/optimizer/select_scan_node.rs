@@ -771,7 +771,6 @@ pub(super) fn select_scan_node(
                 relationship,
                 emit_relationship,
                 sibling_edges,
-                edge_filter,
                 ..
             } = optimized_plan.node(ct_idx).data()
             {
@@ -780,7 +779,6 @@ pub(super) fn select_scan_node(
                 let new_rel = swap_relationship(relationship, new_from, new_to);
                 let emit = *emit_relationship;
                 let edges = sibling_edges.clone();
-                let edge_pred = edge_filter.clone();
                 let scan_node = relationship.to.clone();
 
                 // Check if child is a planner-added scan before mutating, and
@@ -832,7 +830,6 @@ pub(super) fn select_scan_node(
                     chain: Vec::new(),
                     optional: false,
                     bind_relationship: true,
-                    edge_filter: edge_pred,
                 };
 
                 if is_leaf || child_is_planner_scan || arg_transparent {
@@ -849,7 +846,6 @@ pub(super) fn select_scan_node(
                 Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
                 bool,
                 Vec<u32>,
-                Option<crate::parser::ast::QueryExpr<Variable>>, // edge_filter
             )> = Vec::new();
             // Also collect Filter nodes between CTs (keyed by destination alias).
             // These are inline attribute filters on destination nodes.
@@ -859,7 +855,6 @@ pub(super) fn select_scan_node(
                     relationship,
                     emit_relationship,
                     sibling_edges,
-                    edge_filter,
                     ..
                 } = optimized_plan.node(ct_idx).data()
                 {
@@ -867,7 +862,6 @@ pub(super) fn select_scan_node(
                         relationship.clone(),
                         *emit_relationship,
                         sibling_edges.clone(),
-                        edge_filter.clone(),
                     ));
                 }
                 // Collect Filter nodes between this CT and the next CT in chain.
@@ -922,15 +916,14 @@ pub(super) fn select_scan_node(
                 Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
                 bool,
                 Vec<u32>,
-                Option<crate::parser::ast::QueryExpr<Variable>>, // edge_filter
-                bool,                                            // transposed
+                bool, // transposed
             )> = Vec::new();
 
-            for (rel, emit, edges, edge_pred) in &rels {
+            for (rel, emit, edges) in &rels {
                 let new_from = rel.to.clone();
                 let new_to = rel.from.clone();
                 let new_rel = swap_relationship(rel, new_from, new_to);
-                new_rels.push((new_rel, *emit, edges.clone(), edge_pred.clone(), true));
+                new_rels.push((new_rel, *emit, edges.clone(), true));
             }
 
             // Build the new subtree bottom-up, inserting inter-CT filters at
@@ -942,9 +935,7 @@ pub(super) fn select_scan_node(
             let mut subtree = existing_child.unwrap_or_else(|| {
                 make_scan_subtree(&best_node, in_merge, preserved_argument, vec![])
             });
-            for (step, (rel, emit, edges, edge_pred, transposed)) in
-                new_rels.into_iter().rev().enumerate()
-            {
+            for (step, (rel, emit, edges, transposed)) in new_rels.into_iter().rev().enumerate() {
                 subtree = tree!(
                     IR::CondTraverse {
                         relationship: rel,
@@ -954,7 +945,6 @@ pub(super) fn select_scan_node(
                         chain: Vec::new(),
                         optional: false,
                         bind_relationship: true,
-                        edge_filter: edge_pred,
                     },
                     subtree
                 );
@@ -1008,14 +998,12 @@ pub(super) fn select_scan_node(
                     emit_relationship,
                     sibling_edges,
                     transposed,
-                    edge_filter,
                     ..
                 } = optimized_plan.node(ct_idx).data()
                 {
                     let emit = *emit_relationship;
                     let edges = sibling_edges.clone();
                     let trans = *transposed;
-                    let edge_pred = edge_filter.clone();
 
                     // Remove the old child if it was a planner-added scan or
                     // a transparent Argument (re-attached beneath the new
@@ -1068,7 +1056,6 @@ pub(super) fn select_scan_node(
                         chain: Vec::new(),
                         optional: false,
                         bind_relationship: true,
-                        edge_filter: edge_pred,
                     };
 
                     op.push_child_tree(scan_subtree);

@@ -44,7 +44,7 @@ type CachedPredicate = Option<Option<VectorizablePredicate>>;
 pub struct FilterOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    tree: &'a QueryExpr<Variable>,
+    tree: QueryExpr<Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily-initialized vectorizable predicate cache.
     vectorized: CachedPredicate,
@@ -54,7 +54,7 @@ impl<'a> FilterOp<'a> {
     pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        tree: &'a QueryExpr<Variable>,
+        tree: QueryExpr<Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -111,7 +111,7 @@ impl<'a> FilterOp<'a> {
         for row in batch.active_indices() {
             let view = BatchRow::new(&batch, row);
             match ExprEval::from_runtime(self.runtime).eval(
-                self.tree,
+                &self.tree,
                 self.tree.root().idx(),
                 Some(&view),
                 None,
@@ -227,7 +227,7 @@ impl<'a> Iterator for FilterOp<'a> {
         // Lazily analyze the expression on the first call.
         if self.vectorized.is_none() {
             self.vectorized = Some(try_extract_vectorizable_predicate(
-                self.tree,
+                &self.tree,
                 &self.runtime.parameters,
             ));
         }

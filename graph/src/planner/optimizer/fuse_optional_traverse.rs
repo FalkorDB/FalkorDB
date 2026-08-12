@@ -85,7 +85,6 @@ fn fused_traverse(sub: &DynNode<IR>) -> IR {
         sibling_edges,
         transposed,
         chain,
-        edge_filter,
         ..
     } = sub.data()
     {
@@ -97,7 +96,6 @@ fn fused_traverse(sub: &DynNode<IR>) -> IR {
             chain: chain.clone(),
             optional: true,
             bind_relationship: true,
-            edge_filter: edge_filter.clone(),
         }
     } else {
         unreachable!();

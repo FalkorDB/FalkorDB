@@ -277,7 +277,6 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             chain: merged_chain,
             optional: false,
             bind_relationship: true,
-            edge_filter: None,
         };
         // Attach the original grandchildren under the merged op (now parent
         // has [child_CT, g1, g2, ...]).

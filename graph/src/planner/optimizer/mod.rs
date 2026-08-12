@@ -45,8 +45,6 @@
 //! if the tree structure changed. This avoids issues with invalidated indices
 //! after in-place tree mutations.
 
-mod absorb_edge_filters_into_traverse;
-mod absorb_edge_filters_into_vlt;
 mod eliminate_true_filters;
 mod fuse_anonymous_traverse;
 mod fuse_optional_traverse;
@@ -73,8 +71,6 @@ use crate::{
 
 use super::IR;
 
-use absorb_edge_filters_into_traverse::absorb_edge_filters_into_traverse;
-use absorb_edge_filters_into_vlt::absorb_edge_filters_into_vlt;
 use eliminate_true_filters::eliminate_true_filters;
 use fuse_anonymous_traverse::fuse_anonymous_traverse;
 use fuse_optional_traverse::fuse_optional_traverse;
@@ -138,7 +134,6 @@ pub fn optimize(
     push_filters_down(&mut optimized_plan);
     fuse_anonymous_traverse(&mut optimized_plan);
     replace_cartesian_with_hash_join(&mut optimized_plan);
-    absorb_edge_filters_into_vlt(&mut optimized_plan);
     // Re-run path reduction: folding an edge-only filter into a
     // CondVarLenTraverse can remove the last ancestor that consumed the path
     // alias, so a path kept by the first pass may now be skippable. Safe here
@@ -156,12 +151,6 @@ pub fn optimize(
     // After every pass that rebuilds a CondTraverse or moves its ancestors, so
     // the "does anything read this edge" answer is the final plan's.
     reduce_bound_edge(&mut optimized_plan);
-
-    // Last: `utilize_index` needs the edge Filter still above the traverse to
-    // turn it into an EdgeByIndexScan, and `reduce_bound_edge` needs it to see
-    // that something reads the edge. Only once both have run can it move into
-    // the operator, where it prunes per edge instead of per output row.
-    absorb_edge_filters_into_traverse(&mut optimized_plan);
 
     debug_assert_no_pattern_attrs(&optimized_plan);
 
@@ -203,8 +192,8 @@ fn debug_assert_no_pattern_attrs(plan: &DynTree<IR>) {
             | IR::NodeByIdSeek { node, .. } => ("node scan", node_is_clean(node)),
             IR::EdgeByIndexScan { relationship, .. }
             | IR::CondVarLenTraverse { relationship, .. }
-            | IR::AllShortestPaths { relationship, .. }
             | IR::ExpandInto { relationship, .. } => ("traverse", rel_is_clean(relationship)),
+            IR::AllShortestPaths(relationship) => ("traverse", rel_is_clean(relationship)),
             IR::CondTraverse {
                 relationship,
                 chain,

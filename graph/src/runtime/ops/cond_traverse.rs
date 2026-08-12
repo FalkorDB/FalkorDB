@@ -146,7 +146,7 @@ pub struct CondTraverseOp<'a> {
     /// so a rejected edge never becomes an output row. Its presence also means
     /// parallel edges are individually distinguishable, so the collapse to one
     /// representative per (src, dst) pair is unsound.
-    edge_filter: Option<&'a QueryExpr<Variable>>,
+    edge_filter: Option<QueryExpr<Variable>>,
     /// Alias IDs of sibling relationship variables in the same MATCH clause.
     sibling_edges: &'a [u32],
     /// When true, from/to have been swapped by the optimizer relative to the
@@ -252,7 +252,7 @@ impl<'a> CondTraverseOp<'a> {
         chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
         optional: bool,
         bind_relationship: bool,
-        edge_filter: Option<&'a QueryExpr<Variable>>,
+        edge_filter: Option<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
@@ -1143,7 +1143,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
         let emit_relationship = self.emit_relationship;
-        let edge_filter = self.edge_filter;
+        let edge_filter = self.edge_filter.as_ref();
         let sibling_edges = self.sibling_edges;
         let transposed = self.transposed;
         let state_cell = &self.state;

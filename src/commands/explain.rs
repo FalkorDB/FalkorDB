@@ -25,7 +25,7 @@ use crate::{
     graph_core::{BlockedClient, ThreadedGraph, ffi},
     redis_type::GRAPH_TYPE,
 };
-use graph::{graph::graph::Plan, threadpool::spawn};
+use graph::{graph::graph::Plan, planner::filter_is_fused_away, threadpool::spawn};
 use orx_tree::{Dfs, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
@@ -46,11 +46,26 @@ fn explain(
         session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))
     }
     .map_err(RedisError::String)?;
-    let ops = plan.root().indices::<Dfs>().collect::<Vec<_>>();
+    // A Filter whose predicate was folded whole into the traverse below it
+    // builds no operator, so it is not part of the plan that runs — showing it
+    // would report a cost that does not exist. Its descendants move up a level,
+    // the same way Commit nodes are elided from GRAPH.PROFILE.
+    let ops = plan
+        .root()
+        .indices::<Dfs>()
+        .filter(|idx| !filter_is_fused_away(&plan, *idx))
+        .collect::<Vec<_>>();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
     for idx in ops {
         let node = plan.node(idx);
-        let depth = node.depth();
+        let mut depth = node.depth();
+        let mut cur = idx;
+        while let Some(parent) = plan.node(cur).parent() {
+            if filter_is_fused_away(&plan, parent.idx()) {
+                depth -= 1;
+            }
+            cur = parent.idx();
+        }
         let str = format!("{}{}", " ".repeat(depth * 4), plan.node(idx).data());
         raw::reply_with_string_buffer(ctx.ctx, str.as_ptr().cast::<c_char>(), str.len());
     }

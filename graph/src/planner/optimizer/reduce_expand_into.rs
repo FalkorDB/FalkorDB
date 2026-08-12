@@ -34,11 +34,12 @@ use super::super::IR;
 /// function compiling until someone classifies it.
 ///
 /// This matters more than it looks, because `IR::Filter` is not the only place
-/// a predicate lives. `utilize_index` moves conjuncts into an index scan's
-/// `query`, `utilize_node_by_id` into `NodeByIdSeek`'s `filter`, and
-/// `absorb_edge_filters_into_vlt` / `absorb_edge_filters_into_traverse` into a
-/// traverse's `edge_filter`. Those are the same predicate, relocated — they
-/// reference variables exactly as they did while they were Filters.
+/// a predicate lives: `utilize_index` moves conjuncts into an index scan's
+/// `query` and `utilize_node_by_id` into `NodeByIdSeek`'s `filter`. Those are
+/// the same predicate, relocated — they reference variables exactly as they did
+/// while they were Filters. Edge predicates stay in `IR::Filter`; the traverses
+/// only absorb them when the runtime builds its operators, which is after every
+/// caller of this function has run.
 pub(super) fn ir_references_variable(
     ir: &IR,
     var_id: u32,
@@ -100,23 +101,9 @@ pub(super) fn ir_references_variable(
         IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => filter
             .iter()
             .any(|(expr, _)| expr_references_variable(expr, var_id, scope_id)),
-        IR::CondTraverse { edge_filter, .. } | IR::AllShortestPaths { edge_filter, .. } => {
-            edge_filter
-                .as_ref()
-                .is_some_and(|f| expr_references_variable(f, var_id, scope_id))
-        }
-        IR::CondVarLenTraverse {
-            edge_filter,
-            path_var,
-            ..
-        } => {
-            edge_filter
-                .as_ref()
-                .is_some_and(|f| expr_references_variable(f, var_id, scope_id))
-                || path_var
-                    .as_ref()
-                    .is_some_and(|v| v.id == var_id && v.scope_id == scope_id)
-        }
+        IR::CondVarLenTraverse { path_var, .. } => path_var
+            .as_ref()
+            .is_some_and(|v| v.id == var_id && v.scope_id == scope_id),
         IR::NodeByFulltextScan { label, query, .. }
         | IR::EdgeByFulltextScan { label, query, .. } => {
             expr_references_variable(label, var_id, scope_id)
@@ -160,6 +147,8 @@ pub(super) fn ir_references_variable(
         | IR::NodeByLabelScan { .. }
         | IR::IncludePending { .. }
         | IR::ExpandInto { .. }
+        | IR::CondTraverse { .. }
+        | IR::AllShortestPaths(_)
         | IR::CartesianProduct
         | IR::Apply
         | IR::SemiApply
