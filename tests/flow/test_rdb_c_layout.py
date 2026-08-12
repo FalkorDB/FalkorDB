@@ -204,3 +204,31 @@ class testRdbCLayout():
                     f"would load it as active because its format has no field to "
                     f"say otherwise")
         graph.delete()
+
+    def test04_udf_strings_are_nul_terminated(self):
+        # UDF libraries are not in the graph key at all -- they are a module-level
+        # AUX field written with raw RedisModule_Save* calls rather than the tagged
+        # writer everything above uses, so nothing else here covers them.
+        #
+        # C writes `strlen(s) + 1`, including the terminator, and reads the buffers
+        # back as C strings. The Rust helper writes `s.len()`. A library saved
+        # without its terminator loaded on C as `XLibte` -- the name ran into
+        # whatever followed it in the RDB -- and none of its functions could be
+        # found. `GRAPH.UDF LIST` still reported a library, so it failed quietly.
+        #
+        # Only the *writing* half needs asserting here. The reading half cannot
+        # regress unnoticed: since we now write the terminator, a reader that stops
+        # stripping it cannot load its own output, and the whole of test_udf fails
+        # to run. Ablating each half separately is what established that.
+        self._reset()
+        lib = "NulTermLib"
+        self.db.udf_load(lib, "function double (x) { return x * 2; }\n"
+                              f"falkor.register ('double', double);", True)
+        # A graph must exist for the keyspace to be worth saving.
+        self.db.select_graph(GRAPH_ID + "_udf").query("RETURN 1")
+
+        blob = self._dump_bytes()
+        self.env.assertTrue(lib.encode() + b"\x00" in blob,
+            message=f"the UDF library name must be written NUL-terminated, as C's "
+                    f"`AUXSaveUDF_latest` does; found {lib!r} without a terminator, "
+                    f"which C reads as that name plus whatever bytes follow it")
