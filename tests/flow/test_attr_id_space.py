@@ -24,7 +24,9 @@ class testAttributeIdSpace(FlowTestsBase):
         if os.getenv("FALKORDB_USE_SERVICE"):
             Environment.skip(None)
 
-        self.env, self.db = Env(env='oss', useSlaves=True)
+        # enableDebugCommand: test02 reloads via DEBUG RELOAD, which redis refuses
+        # by default.
+        self.env, self.db = Env(env='oss', useSlaves=True, enableDebugCommand=True)
 
     def test01_effect_after_full_sync_lands_on_the_right_attribute(self):
         # Regression for #2457.
@@ -112,3 +114,141 @@ class testAttributeIdSpace(FlowTestsBase):
             sleep(0.5)
             timeout -= 0.5
         raise RuntimeError("replica never reached master_link_status:up")
+
+    # ── schema id stability ──────────────────────────────────────────────────
+    #
+    # Attribute, label and relationship-type ids all travel as bare integers in a
+    # GRAPH.EFFECT — there is no name beside them to check against. So an id has to
+    # mean the same thing after a reload, and on a replica seeded by full sync, as it
+    # did on the master that stamped it. #2457 was the case where that stopped being
+    # true for attributes; labels and types ride the same way ("label id N out of
+    # range" is what a replica reports when it isn't true for them).
+    #
+    # The ids are not directly observable from a client, but they are exactly the row
+    # order of these three procedures: each iterates its id-ordered vector.
+
+    # Deliberately not alphabetical, and not creation-sorted by name. If any of the
+    # three procedures ever started sorting its output, the order assertion in
+    # `_schema_order` would stop reflecting ids — these names make that visible
+    # instead of silently weakening the test.
+    LABELS = ["Zeta", "Alpha", "Mid"]
+    TYPES = ["ZLINK", "ALINK", "MLINK"]
+    ATTRS = ["zprop", "aprop", "mprop"]
+
+    def _schema_order(self, graph, expect_creation_order=False):
+        """The three schema vectors in id order, as the procedures report them."""
+        def col(proc, field):
+            return [r[0] for r in graph.ro_query(
+                f"CALL {proc}() YIELD {field} RETURN {field}").result_set]
+
+        order = {
+            "labels": col("db.labels", "label"),
+            "types": col("db.relationshipTypes", "relationshipType"),
+            "attrs": col("db.propertyKeys", "propertyKey"),
+        }
+
+        if expect_creation_order:
+            # Proves the row order really is id order rather than something sorted:
+            # these names were created in an order alphabetical sorting would not
+            # reproduce.
+            self.env.assertEquals(order["labels"], self.LABELS,
+                message=f"db.labels() must report ids in creation order, not sorted; "
+                        f"got {order['labels']}")
+            self.env.assertEquals(order["types"], self.TYPES,
+                message=f"db.relationshipTypes() must report ids in creation order; "
+                        f"got {order['types']}")
+            # Attributes include the ones the edges carry, appended after the node
+            # ones, so compare only the prefix this test controls.
+            self.env.assertEquals(order["attrs"][:len(self.ATTRS)], self.ATTRS,
+                message=f"db.propertyKeys() must report ids in creation order; "
+                        f"got {order['attrs']}")
+        return order
+
+    def _build_schema(self, graph):
+        """Register labels, types and attributes in a known, non-alphabetical order."""
+        for i, label in enumerate(self.LABELS):
+            graph.query(f"CREATE (:{label} {{{self.ATTRS[i]}: {i}}})")
+        for i, rel in enumerate(self.TYPES):
+            graph.query(f"MATCH (a:{self.LABELS[0]}), (b:{self.LABELS[1]}) "
+                        f"CREATE (a)-[:{rel} {{w: {i}}}]->(b)")
+
+    def test02_schema_ids_survive_a_reload(self):
+        # The RDB carries names as flat, ordered lists and the loader rebuilds the
+        # numbering by reading them in order. If the encoder and decoder ever
+        # disagreed on that order, every id already stamped into an effect — or into
+        # an entity's stored span — would resolve to a different name after a reload.
+        graph = self.db.select_graph(GRAPH_ID + "_reload")
+        self._build_schema(graph)
+        before = self._schema_order(graph, expect_creation_order=True)
+
+        self.env.dumpAndReload()
+
+        after = self._schema_order(graph)
+        self.env.assertEquals(after, before,
+            message=f"schema ids shifted across a reload: before {before}, after "
+                    f"{after}. An id is meaningless on its own, so a shift silently "
+                    f"repoints every effect and every stored span")
+        # And the data still reads back through those ids.
+        for i, label in enumerate(self.LABELS):
+            self.env.assertEquals(
+                graph.ro_query(f"MATCH (n:{label}) RETURN n.{self.ATTRS[i]}")
+                    .result_set[0][0], i,
+                message=f"{label}.{self.ATTRS[i]} did not survive the reload")
+        graph.delete()
+
+    def test03_schema_ids_match_on_a_replica_after_full_sync(self):
+        # Same invariant across the wire rather than across a restart: a replica
+        # builds its tables from the RDB the master sends, so master and replica must
+        # agree on the numbering before any effect referencing an id arrives.
+        #
+        # Detaching and emptying the replica first is what makes this a full-sync
+        # test. Written the obvious way it is not one: test01 leaves the replica
+        # attached, so the schema created below reaches it through the live
+        # replication stream — where the numbering is rebuilt by replaying
+        # ADD_ATTRIBUTE in order and the RDB decoder never runs. Ablating the
+        # decoder's ordering left that version of this test passing.
+        graph = self.db.select_graph(GRAPH_ID + "_sync")
+        replica_con = self.env.getSlaveConnection()
+
+        replica_con.execute_command("REPLICAOF", "NO", "ONE")
+        replica_con.execute_command("FLUSHALL")
+        # `sync_full` counts syncs a server has *served*, so it lives on the master.
+        master_con = self.env.getConnection()
+        syncs_before = self._full_sync_count(master_con)
+
+        self._build_schema(graph)
+        master = self._schema_order(graph, expect_creation_order=True)
+
+        # Nothing on the replica yet, so whatever it reports afterwards came from the
+        # sync rather than from having been there all along.
+        self.env.assertEquals(replica_con.execute_command("KEYS", "*"), [],
+            message="replica must start empty for this to be a full-sync test")
+
+        replica_con.execute_command("REPLICAOF", "localhost", str(self.env.port))
+        self._wait_for_sync(replica_con)
+
+        self.env.assertGreater(self._full_sync_count(master_con), syncs_before,
+            message="no full sync was performed, so this test would be measuring the "
+                    "effect-replay path instead of the RDB decoder")
+
+        replica = self._schema_order(Graph(replica_con, GRAPH_ID + "_sync"))
+        self.env.assertEquals(replica, master,
+            message=f"replica disagrees with master on schema ids after full sync: "
+                    f"master {master}, replica {replica}. Every subsequent effect "
+                    f"carries these ids with no name to verify against")
+        graph.delete()
+
+    @staticmethod
+    def _full_sync_count(con):
+        """`sync_full` from INFO stats — how many full syncs this server has served.
+
+        Master-side: a replica serves none of its own, so reading this off the replica
+        always returns 0 and the assertion below would be vacuous.
+        """
+        info = con.execute_command("INFO", "stats")
+        if isinstance(info, dict):
+            return int(info.get("sync_full", 0))
+        for line in str(info).splitlines():
+            if line.startswith("sync_full:"):
+                return int(line.split(":", 1)[1])
+        return 0
