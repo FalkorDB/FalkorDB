@@ -455,6 +455,11 @@ pub fn enqueue_entry(
     graph_name: &Arc<str>,
     entry: TelemetryEntry,
 ) {
+    // `CMD_INFO no` means "do not log finished queries", which is exactly this
+    // path — and it is the only way to opt out of what logging one costs.
+    if !LOG_QUERIES.load(Ordering::Relaxed) {
+        return;
+    }
     // Skip on replicas: the master's XADDs are replicated to us, so writing
     // here would duplicate entries (and direct writes to a replica must not
     // create a stream).
@@ -472,6 +477,21 @@ pub fn enqueue_entry(
 /// Tracks whether this Redis instance is currently a replica. Updated on
 /// module load and on `RedisModuleEvent_ReplicationRoleChanged` notifications.
 static IS_REPLICA: AtomicBool = AtomicBool::new(false);
+
+/// Mirror of the `CMD_INFO` configuration, which decides whether finished
+/// queries are logged to a graph's telemetry stream.
+///
+/// A mirror rather than a read of `CONFIGURATION_CMD_INFO` itself, because that
+/// one lives behind a `RedisGILGuard` and this is read on a worker thread that
+/// holds no GIL — taking it there is exactly the contention the whole telemetry
+/// channel exists to avoid. `CMD_INFO` is registered `IMMUTABLE`, so the value
+/// is settled at module load and one store at init is enough.
+static LOG_QUERIES: AtomicBool = AtomicBool::new(true);
+
+/// Publish the effective `CMD_INFO` value for the query path to read.
+pub fn set_log_queries(enabled: bool) {
+    LOG_QUERIES.store(enabled, Ordering::Relaxed);
+}
 
 /// Update the cached replica state. Called from module init and the role
 /// change event handler.

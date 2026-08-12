@@ -485,6 +485,36 @@ class testGraphInfo():
             for t in threads:
                 t.join()
 
+class testGraphInfoCmdInfoDisabled():
+    """`CMD_INFO no` must actually stop logging finished queries.
+
+    The config was registered and reported by `GRAPH.CONFIG GET`, but nothing
+    consulted it, so queries were logged regardless — and logging one is not
+    free: ~83k instructions per query measured on an M3 Pro, against ~11k on the
+    C engine, on a query (`RETURN 1`) that costs ~150k in total with logging off.
+    """
+
+    def __init__(self):
+        self.env, self.db = Env(moduleArgs="CMD_INFO no")
+        self.conn = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    def test01_config_reports_disabled(self):
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "GET", "CMD_INFO"), ["CMD_INFO", 0]
+        )
+
+    def test02_no_queries_logged(self):
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+        for i in range(20):
+            self.graph.query(f"RETURN {i}")
+        # The flusher wakes on a 5ms timer; a full second is far longer than it
+        # needs, so an empty stream here means nothing was ever enqueued.
+        time.sleep(1)
+        self.env.assertEqual(self.conn.type(stream), "none")
+        self.env.assertEqual(self.conn.xlen(stream), 0)
+
 #class testGraphInfoReplication():
 #    def __init__(self):
 #        self.env, self.db = Env(env='oss', useSlaves=True)

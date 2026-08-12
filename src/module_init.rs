@@ -23,10 +23,11 @@
 //! can reject loading an incomplete module.
 
 use crate::config::{
-    CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
-    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
-    TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    CONFIGURATION_CMD_INFO, CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE,
+    CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER,
+    DELTA_MAX_PENDING_CHANGES, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT,
+    QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
+    normalize_node_creation_buffer,
 };
 use crate::redis_type::on_persistence;
 use crate::telemetry;
@@ -387,6 +388,12 @@ pub fn graph_init(
             }
         }
     }
+
+    // Publish CMD_INFO for the query path to read. The config was registered
+    // and reported by `GRAPH.CONFIG GET`, but nothing consulted it — so
+    // `CMD_INFO no` kept logging every finished query, and logging one costs
+    // ~83k instructions here against ~11k on the C engine, which honours it.
+    telemetry::set_log_queries(*CONFIGURATION_CMD_INFO.lock(ctx));
 
     // Start the background telemetry flusher: workers enqueue entries
     // lock-free; this thread batches them and writes XADDs under a single
