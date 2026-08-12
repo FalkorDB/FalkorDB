@@ -460,6 +460,5 @@ class testPathFilter(FlowTestsBase):
             self.env.assertContains("Type mismatch", str(e))
 
         # the server is still usable after all of the above
-        self.env.assertEqual(
-                self.graph.query("MATCH (n) RETURN count(n)").result_set,
-                [[2]])
+        query = "MATCH (n) RETURN count(n)"
+        self.env.assertEqual(self.graph.query(query).result_set, [[2]])
