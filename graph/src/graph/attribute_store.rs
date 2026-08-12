@@ -1064,17 +1064,6 @@ impl AttributeStore {
     // ---- read path --------------------------------------------------------
 
     #[must_use]
-    pub fn get_attr(
-        &self,
-        names: &AttrNameMap,
-        key: u64,
-        attr: &Arc<String>,
-    ) -> Option<Value> {
-        let idx = names.get_index_of(attr)? as u16;
-        self.get_attr_by_idx(key, idx)
-    }
-
-    #[must_use]
     pub fn get_attr_by_idx(
         &self,
         key: u64,
@@ -1126,27 +1115,18 @@ impl AttributeStore {
         self.data.get(key).map_or(0, SpanRef::heap_bytes)
     }
 
-    pub fn get_attrs<'a>(
-        &'a self,
-        names: &'a AttrNameMap,
+    /// The attribute ids an entity carries.
+    ///
+    /// Reads only the span's ids, so it stays cheaper than [`Self::get_all_attrs_by_id`]
+    /// when the values are not wanted.
+    pub fn get_attr_ids(
+        &self,
         key: u64,
-    ) -> impl Iterator<Item = Arc<String>> + 'a {
-        self.data.get(key).into_iter().flat_map(move |span| {
-            span.entries()
-                .iter()
-                .filter_map(move |attr| names.get(attr.id as usize).cloned())
-        })
-    }
-
-    pub fn get_all_attrs<'a>(
-        &'a self,
-        names: &'a AttrNameMap,
-        key: u64,
-    ) -> impl Iterator<Item = (Arc<String>, Value)> + 'a {
-        self.data.get(key).into_iter().flat_map(move |span| {
-            span.iter()
-                .filter_map(|(idx, value)| names.get(idx as usize).map(|n| (n.clone(), value)))
-        })
+    ) -> impl Iterator<Item = u16> + '_ {
+        self.data
+            .get(key)
+            .into_iter()
+            .flat_map(|span| span.entries().iter().map(|attr| attr.id))
     }
 
     pub fn get_all_attrs_by_id(
@@ -1421,14 +1401,19 @@ mod tests {
             key: u64,
             attr: &Arc<String>,
         ) -> Option<Value> {
-            self.store.get_attr(&self.names, key, attr)
+            let idx = self.names.get_index_of(attr)? as u16;
+            self.store.get_attr_by_idx(key, idx)
         }
 
         fn get_all_attrs(
             &self,
             key: u64,
         ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
-            self.store.get_all_attrs(&self.names, key)
+            self.store
+                .get_all_attrs_by_id(key)
+                .filter_map(|(id, value)| self.names.get(id as usize).map(|n| (n.clone(), value)))
+                .collect::<Vec<_>>()
+                .into_iter()
         }
     }
 
@@ -1928,9 +1913,14 @@ mod tests {
         store.decode_entities(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
-            store.get_attr(&dict, 7, &Arc::new("a".to_string())),
+            store.get_attr_by_idx(7, 0),
             Some(Value::Int(10)),
-            "an id inside the dictionary must be kept and reachable by name"
+            "an id inside the dictionary must be kept"
+        );
+        assert_eq!(
+            dict.get(0).cloned(),
+            Some(Arc::new("a".to_string())),
+            "and that id must be the one the dictionary resolves to a name"
         );
         assert_eq!(
             store.get_attr_by_idx(7, 5),
