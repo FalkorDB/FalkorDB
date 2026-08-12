@@ -567,6 +567,13 @@ QUERIES = [
     Q("rel attr match none", False, "MATCH (a:Person)-[:RATED {w: 11}]->(b) RETURN count(b)"),
     Q("rel attr match 10pct", False, "MATCH (a:Person)-[:RATED {w: 5}]->(b) RETURN count(b)"),
     Q("rel attr match all",  False, "MATCH (a:Person)-[:RATED {c: 1}]->(b) RETURN count(b)"),
+
+    # allShortestPaths with an inline edge predicate. Uses :RATED, not :KNOWS —
+    # :KNOWS carries no properties, so a predicate on it is unsatisfiable rather
+    # than selective and would measure the walk never starting. `c` is constant,
+    # so every edge passes and the per-edge check runs on the whole walk, which
+    # is the case that actually costs.
+    Q("allShortestPaths edge attr", False, "MATCH (a:Person {id: 0}), (b:Person {id: 3}) WITH a, b MATCH p = allShortestPaths((a)-[:RATED* {c: 1}]->(b)) RETURN count(p)"),
     # Two lower bounds on the same attribute: merge_range_queries falls back
     # to IndexQuery::And (can't compare expr values at plan time).
     Q("index same-bound and", False, "MATCH (p:Person) WHERE p.id > 10 AND p.id >= 20 RETURN count(p)"),
