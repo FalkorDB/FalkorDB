@@ -669,9 +669,9 @@ pub struct GraphFn {
     /// without needing a [`Runtime`]. Used for Map/String constructor forms
     /// (e.g. `date('2020-01-01')`). The binder only invokes `pure_fn` when
     /// the arguments match `pure_args_type` — this matters because
-    /// constructor functions are registered with a loose `var_arg` signature
-    /// to accept zero-arg "now"-style invocations, while `pure_fn` only
-    /// handles the single-argument constructor shape.
+    /// constructor functions take an *optional* argument so the zero-arg
+    /// "now"-style invocation validates, while `pure_fn` only handles the
+    /// single-argument constructor shape.
     pub pure_fn: Option<fn(&[Value]) -> Result<Value, String>>,
     /// Argument types `pure_fn` accepts (positional, one entry per arg).
     /// Empty when `pure_fn` is `None`.
@@ -681,8 +681,9 @@ pub struct GraphFn {
     /// positional children, which eval.rs evaluates into a stack-allocated
     /// `[Value; 10]` array and dispatches here — bypassing the
     /// `ThinVec<Value>` heap alloc, `validate_args_type` walk, and the
-    /// `RuntimeFn` dispatch hop used by the general `func` path. Only
-    /// invoked when `num_children > 1`.
+    /// `RuntimeFn` dispatch hop used by the general `func` path. Only invoked
+    /// when the child count equals `struct_slots.len()`, which is what the
+    /// rewrite always emits — any other arity did not come from it.
     pub struct_fn: Option<fn(&[Value]) -> Result<Value, String>>,
     /// Slot names that drive the binder rewrite — the order matches the
     /// positional children produced for `struct_fn`. Set in lockstep with

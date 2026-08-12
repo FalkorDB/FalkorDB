@@ -99,9 +99,9 @@ use crate::{
         Field,
         indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
     },
-    parser::{ast::ExprIR, cypher::Parser},
+    parser::cypher::Parser,
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
-    runtime::{eval::evaluate_param, orderset::OrderSet, value::Value, vec_distance},
+    runtime::{orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
 
@@ -113,8 +113,8 @@ pub struct Plan {
     pub plan: Arc<DynTree<IR>>,
     /// Whether this plan was retrieved from cache
     pub cached: bool,
-    /// Query parameters extracted from CYPHER prefix
-    pub parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
+    /// Query parameters extracted from CYPHER prefix, already evaluated
+    pub parameters: HashMap<String, Value>,
     /// Time spent parsing the query
     pub parse_duration: Duration,
     /// Time spent planning/optimizing the query
@@ -205,7 +205,7 @@ impl Plan {
     pub const fn new(
         plan: Arc<DynTree<IR>>,
         cached: bool,
-        parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
+        parameters: HashMap<String, Value>,
         parse_duration: Duration,
         plan_duration: Duration,
         params_offset: usize,
@@ -1104,11 +1104,8 @@ impl Graph {
         let params_offset = query.len() - query_no_params.len();
         let query = query_no_params;
 
-        // Evaluate parameter expressions to values for the optimizer.
-        let param_values: HashMap<String, Value> = parameters
-            .iter()
-            .filter_map(|(k, v)| evaluate_param(&v.root()).ok().map(|val| (k.clone(), val)))
-            .collect();
+        // The optimizer wants the same values the runtime will see.
+        let param_values = parameters.clone();
 
         let current_udf_version = crate::runtime::functions::udf_version();
 
@@ -1301,12 +1298,21 @@ impl Graph {
         self.reserved_node_count += 1;
     }
 
+    /// Reserve `count` node ids, failing instead of aborting when `count` cannot be
+    /// allocated.
+    ///
+    /// `GRAPH.BULK` reserves from a client-declared count, so the allocation size is
+    /// attacker-influenced: `Vec::with_capacity` panicked on the capacity overflow, and the
+    /// panic hook (`src/module_init.rs`) exits the process, so it took the server down
+    /// (#2426). `try_reserve_exact` turns that into an error the command can report.
     pub fn reserve_nodes(
         &mut self,
         count: usize,
-    ) -> Vec<NodeId> {
+    ) -> Result<Vec<NodeId>, String> {
+        let mut ids = Vec::new();
+        ids.try_reserve_exact(count)
+            .map_err(|_| format!("failed to reserve {count} node ids"))?;
         let count = count as u64;
-        let mut ids = Vec::with_capacity(count as usize);
         let deleted_len = self.deleted_nodes.len();
         let available = deleted_len.saturating_sub(self.reserved_node_count);
         let reclaimed = count.min(available);
@@ -1335,7 +1341,7 @@ impl Graph {
         self.reserved_node_count += remaining;
         ids.extend((start..start + remaining).map(NodeId));
 
-        ids
+        Ok(ids)
     }
 
     pub fn create_nodes(
@@ -2022,12 +2028,16 @@ impl Graph {
         self.reserved_relationship_count += 1;
     }
 
+    /// Reserve `count` relationship ids. Fallible for the same reason as
+    /// [`Self::reserve_nodes`]: `GRAPH.BULK` sizes this from a client-declared count.
     pub fn reserve_relationships(
         &mut self,
         count: usize,
-    ) -> Vec<RelationshipId> {
+    ) -> Result<Vec<RelationshipId>, String> {
+        let mut ids = Vec::new();
+        ids.try_reserve_exact(count)
+            .map_err(|_| format!("failed to reserve {count} relationship ids"))?;
         let count = count as u64;
-        let mut ids = Vec::with_capacity(count as usize);
         let deleted_len = self.deleted_relationships.len();
         let available = deleted_len.saturating_sub(self.reserved_relationship_count);
         let reclaimed = count.min(available);
@@ -2051,7 +2061,7 @@ impl Graph {
         self.reserved_relationship_count += remaining;
         ids.extend((start..start + remaining).map(RelationshipId));
 
-        ids
+        Ok(ids)
     }
 
     /// Create relationships of a single type using flat arrays.

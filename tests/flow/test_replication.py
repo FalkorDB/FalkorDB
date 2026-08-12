@@ -1,6 +1,9 @@
 from common import *
 from index_utils import wait_for_indices_to_sync
 from constraint_utils import *
+import csv
+import os
+import tempfile
 import time
 
 GRAPH_ID = "replication"
@@ -223,4 +226,133 @@ class testReplication(FlowTestsBase):
         origin_result = list_constraints(src)
         replica_result = list_constraints(replica)
         env.assertEqual(replica_result, origin_result)
+
+    # GRAPH.BULK must reach replicas too.
+    #
+    # Regression for #2347: the background-writer path replicated with
+    # RM_ReplicateVerbatim on a *thread-safe* context. That API propagates
+    # ctx->client->argv, and the client behind a thread-safe context is a fake
+    # pooled one carrying no argv, so a zero-argument command was propagated and
+    # the entire batch was dropped — silently, with a healthy replication link and
+    # no error anywhere. Every bulk load into a replicated deployment diverged, and
+    # the data was lost on failover.
+    #
+    # Both bulk paths are covered because they take different branches: the BEGIN
+    # batch that creates the graph, and an append batch (no BEGIN) into the graph
+    # that batch just made. The loader CLI only ever produces the former, so the
+    # append path is driven the way test_bulk_insertion.py does it — by reusing the
+    # loader's own serialization with the BEGIN token suppressed.
+    def test_bulk_replication(self):
+        from falkordb_bulk_loader.bulk_insert import parse_schemas, process_entities
+        from falkordb_bulk_loader.query_buffer import QueryBuffer
+        from falkordb_bulk_loader.config import Config
+        from falkordb_bulk_loader.label import Label
+
+        env = self.env
+        source_con = env.getConnection()
+        replica_con = env.getSlaveConnection()
+        graphname = "bulk_replication"
+
+        def node_count(graph, label):
+            """Count of :label nodes, reporting a wholly absent graph as 0.
+
+            With the bug the replica never receives the BEGIN batch, so the key does
+            not exist there at all and GRAPH.RO_QUERY errors. Map that to 0 so the
+            failure reads as a count mismatch instead of a ResponseError."""
+            try:
+                q = f"MATCH (n:{label}) RETURN count(n)"
+                return graph.ro_query(q).result_set[0][0]
+            except ResponseError as e:
+                if "empty key" in str(e):
+                    return 0
+                raise
+
+        def wait_for_replica_offset(timeout=30):
+            """Block until the replica has applied everything the master propagated.
+
+            WAIT is NOT usable for this. It blocks on the calling client's `woff`,
+            and Redis only advances `woff` when that client's *own* command
+            propagated something:
+
+                if (old_master_repl_offset != server.master_repl_offset)
+                    c->woff = server.master_repl_offset;      // server.c
+
+            The bulk batches are issued by the loader's worker process over its own
+            connection, so `source_con`'s `woff` never covers them — WAIT would take
+            the "already acked" fast path and return without waiting for the batches
+            at all. Compare offsets directly instead."""
+            target = source_con.info("replication")["master_repl_offset"]
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                if replica_con.info("replication").get("slave_repl_offset", -1) >= target:
+                    return
+                time.sleep(0.05)
+            raise AssertionError(
+                f"replica did not reach master offset {target} within {timeout}s")
+
+        # Private directory, and the whole body runs inside it so the CSVs are
+        # removed even when an assertion fails.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            begin_csv  = os.path.join(tmp_dir, 'begin.csv')
+            append_csv = os.path.join(tmp_dir, 'append.csv')
+            with open(begin_csv, mode='w') as csv_file:
+                out = csv.writer(csv_file)
+                out.writerow(["v"])
+                for i in range(100):
+                    out.writerow([i])
+            with open(append_csv, mode='w') as csv_file:
+                out = csv.writer(csv_file)
+                out.writerow(["v"])
+                for i in range(100, 150):
+                    out.writerow([i])
+
+            # The replica MUST be attached and in sync before the first bulk batch.
+            # RLTest's replica is still handshaking when the class starts
+            # (master_link_status:down, master_repl_offset:0), and a replica that
+            # attaches *after* the load gets the graph through a full RDB transfer —
+            # which masks this bug completely, since the data then arrives no matter
+            # what the command path propagated.
+            #
+            # WAIT is the right tool for *this* gate: a client with woff 0 blocks
+            # until some replica reaches SLAVE_STATE_ONLINE and acks, which is
+            # exactly "the replica is attached". It is the wrong tool after the load
+            # — see wait_for_replica_offset.
+            source_con.execute_command("WAIT", "1", "0")
+
+            # Snapshot the full-sync counter so the assertions below can prove the
+            # rows travelled as replicated commands rather than in an RDB snapshot.
+            sync_full_before = source_con.info("stats")["sync_full"]
+
+            config = Config(store_node_identifiers=True)
+
+            # BEGIN path — creates the graph
+            buf = QueryBuffer(graphname, self.db.connection, config)
+            process_entities(parse_schemas(Label, buf, [], [('N', begin_csv)], config))
+            buf.send_buffer()
+            buf.wait_pool()
+
+            # append path — no BEGIN, into the graph the batch above created
+            buf = QueryBuffer(graphname, self.db.connection, config)
+            buf.initial_query = False
+            process_entities(parse_schemas(Label, buf, [], [('M', append_csv)], config))
+            buf.send_buffer()
+            buf.wait_pool()
+
+            # Block until the replica has actually applied both batches.
+            wait_for_replica_offset()
+
+            src     = Graph(source_con, graphname)
+            replica = Graph(replica_con, graphname)
+
+            # No full resync happened, so anything the replica has, it got from the
+            # replication stream. Pin this first: without it a re-synced replica
+            # would satisfy the count assertions below with the fix reverted.
+            env.assertEqual(source_con.info("stats")["sync_full"], sync_full_before)
+
+            # Assert the absolute counts, not just master == replica. With the bug
+            # both batches are missing on the replica, and a bare equality check
+            # would also pass the day the master stops receiving the rows.
+            for label, expected in (('N', 100), ('M', 50)):
+                env.assertEqual(node_count(src, label), expected)
+                env.assertEqual(node_count(replica, label), expected)
 
