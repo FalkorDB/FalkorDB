@@ -324,9 +324,65 @@ class testWithClause(FlowTestsBase):
                                  [['Alice', 'Alice'], ['Alice', 'Bob'],
                                   ['Bob', 'Alice'], ['Bob', 'Bob']])
 
+            # the same re-match without a WHERE - no alias to resolve, yet it
+            # still crashed the server outright
+            # https://github.com/FalkorDB/FalkorDB/issues/1281
+            res = g.query("""MATCH (n), (n1)
+                             OPTIONAL MATCH (n), (n1)
+                             RETURN n.name, n1.name
+                             ORDER BY n.name, n1.name""")
+            self.env.assertEqual(res.result_set,
+                                 [['Alice', 'Alice'], ['Alice', 'Bob'],
+                                  ['Bob', 'Alice'], ['Bob', 'Bob']])
+
             # re-matching a single variable kept working throughout
             res = g.query("""MATCH (a:Person {name: 'Alice'})
                              WITH a MATCH (a) RETURN a.name AS name""")
             self.env.assertEqual(res.result_set, [['Alice']])
+        finally:
+            g.delete()
+
+    def test14_rematch_filtering_a_projected_scalar_alias(self):
+        # The alias a WITH carries into a later MATCH need not be a node - a
+        # projected *scalar* used as the WHERE predicate hit a separate
+        # resolution path and failed with "Unable to resolve filtered alias".
+        # https://github.com/FalkorDB/FalkorDB/issues/1301
+        g = self.db.select_graph("with_rematch_scalar_alias")
+
+        try:
+            g.query("""CREATE (:T {name: 'n1'})<-[:E]-(:T {name: 'n0', k1: true})
+                              <-[:E]-(:T {name: 'n2'})""")
+
+            # the reported repro - alias0 is n0.k1, a boolean, and drives the
+            # filter of a MATCH that re-binds variables the WITH carried
+            res = g.query("""MATCH p0 = (n1)<-[]-(n0)<-[]-(n2)
+                             WITH *, n0.k1 AS alias0, n1
+                             MATCH (n2), (n1)
+                             WHERE alias0
+                             RETURN n1.name, n2.name, alias0""")
+            self.env.assertEqual(res.result_set, [['n1', 'n2', True]])
+
+            # negating the same alias keeps it resolvable and filters the row
+            # out, proving the predicate is really evaluated rather than
+            # dropped
+            res = g.query("""MATCH p0 = (n1)<-[]-(n0)<-[]-(n2)
+                             WITH *, n0.k1 AS alias0, n1
+                             MATCH (n2), (n1)
+                             WHERE NOT alias0
+                             RETURN n1.name""")
+            self.env.assertEqual(res.result_set, [])
+
+            # a non-boolean projected alias must still resolve - the failure
+            # has to be the type of the predicate, never the alias lookup
+            g.query("MATCH (t:T {name: 'n0'}) SET t.k1 = 7")
+            try:
+                g.query("""MATCH p0 = (n1)<-[]-(n0)<-[]-(n2)
+                           WITH *, n0.k1 AS alias0, n1
+                           MATCH (n2), (n1)
+                           WHERE alias0
+                           RETURN n1.name""")
+                assert(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("Type mismatch", str(e))
         finally:
             g.delete()
