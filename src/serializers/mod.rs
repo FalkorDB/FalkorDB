@@ -333,19 +333,27 @@ fn encode_schema_index_block(
         w.write_buffer(&null_terminated(sw));
     }
 
+    // Pair each field with the attribute name it indexes. `f.name` is the
+    // *RediSearch* field name, which carries a type prefix (`range:age`,
+    // `vector:embedding`); C writes the bare attribute name and encodes the type
+    // in the separate word below. Writing the prefixed name crashed C on load:
+    // its `_RdbLoadConstraint` asks for the exact-match index supporting a UNIQUE
+    // constraint, found none under `name` because ours was called `range:name`,
+    // and dereferenced the NULL that `Constraint_New` returned.
     let all_fields: Vec<_> = infos
         .iter()
         .flat_map(|info| {
-            info.field_order
-                .iter()
-                .filter_map(move |attr| info.fields.get(attr))
-                .flatten()
+            info.field_order.iter().filter_map(move |attr| {
+                info.fields
+                    .get(attr)
+                    .map(|fields| fields.iter().map(move |f| (attr, f)))
+            })
         })
+        .flatten()
         .collect();
     w.write_unsigned(all_fields.len() as u64);
-    for f in &all_fields {
-        let name = f.name.to_str().unwrap_or("");
-        w.write_buffer(&null_terminated(name));
+    for (attr, f) in &all_fields {
+        w.write_buffer(&null_terminated(attr));
 
         let field_type = match f.ty {
             IndexType::Fulltext => index_field_type::INDEX_FLD_FULLTEXT,
@@ -389,26 +397,37 @@ fn encode_schema_index_block(
     }
 }
 
-/// Write the constraint block for a schema entry.
-/// Format per constraint: constraint_type (u64), status (u64), field_count (u64), then attr_id (u64) per field.
+/// Write the constraint block for a schema entry, in C's v19 layout.
+///
+/// Per constraint: `constraint_type` (u64), `field_count` (u64), then one `attr_id` (u64) per
+/// field — matching `_RdbSaveConstraint` in `src/serializers/encoder/v19/encode_schema.c` on
+/// `master`.
+///
+/// Two things this deliberately does *not* do, both of which it used to:
+///
+/// * **No status word.** C never writes one, so a reader expecting it runs one field out of
+///   step for the rest of the block. A single constraint could still parse by luck; two could
+///   not, so a C-written RDB carrying two constraints was refused outright.
+/// * **Only active constraints.** C filters to `CT_ACTIVE` and writes the *filtered* count,
+///   which is what makes the status word redundant rather than merely absent: an RDB cannot
+///   contain an unfinished constraint. Writing all of them would hand C one we still consider
+///   under construction, with no field left to say so.
 fn encode_constraint_block(
     w: &mut dyn Writer,
     constraints: &[&Constraint],
     attribute_names: &[Arc<String>],
 ) {
-    w.write_unsigned(constraints.len() as u64);
-    for c in constraints {
+    let active = constraints
+        .iter()
+        .filter(|c| matches!(c.status, ConstraintStatus::Operational));
+
+    w.write_unsigned(active.clone().count() as u64);
+    for c in active {
         let ct = match c.ct {
             ConstraintType::Unique => 0u64,
             ConstraintType::Mandatory => 1u64,
         };
         w.write_unsigned(ct);
-        let status = match c.status {
-            ConstraintStatus::Operational => 0u64,
-            ConstraintStatus::UnderConstruction => 1u64,
-            ConstraintStatus::Failed => 2u64,
-        };
-        w.write_unsigned(status);
         w.write_unsigned(c.properties.len() as u64);
         for prop in &c.properties {
             let attr_id = attribute_names
@@ -546,12 +565,8 @@ fn decode_schema_entry(
             0 => ConstraintType::Unique,
             _ => ConstraintType::Mandatory,
         };
-        let status_id = r.read_unsigned()?;
-        let status = match status_id {
-            1 => ConstraintStatus::UnderConstruction,
-            2 => ConstraintStatus::Failed,
-            _ => ConstraintStatus::Operational,
-        };
+        // No status field: see `encode_constraint_block`. Both engines write only active
+        // constraints, so anything present here is operational by construction.
         let fields_count = r.read_unsigned()?;
         let mut properties = Vec::with_capacity(fields_count as usize);
         for _ in 0..fields_count {
@@ -569,7 +584,10 @@ fn decode_schema_entry(
             Arc::new(schema_name.clone()),
             properties,
         );
-        c.status = status;
+        // `Constraint::new` starts at `UnderConstruction`, which is right for a constraint
+        // being created but wrong for one being loaded — it is already enforced on the data
+        // we are reading. C's `_RdbLoadConstraint` does the same thing explicitly.
+        c.status = ConstraintStatus::Operational;
         constraints.push(c);
     }
 
