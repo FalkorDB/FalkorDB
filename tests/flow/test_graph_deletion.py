@@ -575,6 +575,7 @@ class testGraphDeletionFlow(FlowTestsBase):
         expected_undirected = self.graph.query(
                 "MATCH ()-[m]-() RETURN count(m)").result_set[0][0]
         self.env.assertEqual(expected, 2)
+        self.env.assertEqual(expected_undirected, expected)
 
         # the same query with x deleted a second time must be equivalent
         self.graph.delete()
