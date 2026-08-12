@@ -32,14 +32,32 @@ updates:
     default-days: 7
 # Python test dependencies for the e2e / TCK / flow suites.
 #
-# `redis<8.1` in tests/requirements.txt is a deliberate pin with a documented
-# reason (falkordb-py 1.6.2 forwards `himport_registry` to the sync client).
-# Dependabot honours declared constraints and will not widen it, so the pin
-# holds until someone edits it by hand.
+# `redis` is ignored here deliberately. tests/requirements.txt pins `redis<8.1`
+# because redis-py 8.1.0 adds `himport_registry` to
+# ConnectionPool.connection_kwargs, which falkordb-py 1.6.2 forwards to the
+# sync Redis() constructor; every flow test that builds its own pool fails with
+# a TypeError. The identical pin is duplicated in build/Dockerfile and the two
+# are documented as having to move together.
+#
+# An earlier revision of this comment claimed Dependabot would not widen the
+# constraint. That is wrong: the pip ecosystem defaults to
+# `versioning-strategy: auto`, which raises a `<` ceiling rather than treating
+# it as a hard bound. It opened #2476 to move the ceiling to `<8.2`, which
+# would have re-admitted the broken redis-py release and desynced
+# tests/requirements.txt from build/Dockerfile. CI would not have caught it:
+# no workflow installs tests/requirements.txt -- the flow suites run inside
+# the ghcr.io/falkordb/falkordb-build image, which bakes its own copy of the
+# pin -- so the change is invisible to CI and only breaks local/non-container
+# runs.
+#
+# Remove this ignore when falkordb-py ships a fix and both pins are dropped
+# together.
 - directory: /tests
   package-ecosystem: pip
   schedule:
     interval: weekly
+  ignore:
+  - dependency-name: "redis"
   groups:
     python-test-deps:
       patterns:
