@@ -1,15 +1,13 @@
 // Dependency version duplicates are from transitive dependencies.
 #![allow(clippy::multiple_crate_versions)]
 
-use std::collections::HashMap;
-
 use graph::{
     graph::{
         graph::Plan,
         graphblas::{GrB_Mode, GrB_init},
         mvcc_graph::MvccGraph,
     },
-    runtime::{eval::evaluate_param, functions::init_functions, runtime::Runtime},
+    runtime::{functions::init_functions, runtime::Runtime},
 };
 
 #[macro_use]
@@ -37,13 +35,6 @@ fn main() {
             let Ok(Plan {
                 plan, parameters, ..
             }) = g.read().borrow().get_plan(query)
-            else {
-                return;
-            };
-            let Ok(parameters) = parameters
-                .into_iter()
-                .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-                .collect::<Result<HashMap<_, _>, String>>()
             else {
                 return;
             };
