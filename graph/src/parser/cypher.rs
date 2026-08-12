@@ -109,7 +109,9 @@ use crate::tree;
 use crate::{
     parser::lexer::Token::RParen,
     runtime::{
+        eval::evaluate_param,
         functions::{FnType, get_functions},
+        ordermap::OrderMap,
         value::Value,
     },
 };
@@ -117,9 +119,25 @@ use itertools::Itertools;
 use orx_tree::{DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use thin_vec::ThinVec;
 /// Opening of every rejection [`Parser::too_deep`] produces, and what
 /// [`is_too_deep`] recognises.
 const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
+
+/// Rejections [`evaluate_param`] produces for a value that is not a literal.
+///
+/// Each already names the parameter problem exactly, so like
+/// [`is_identifier_too_long`] they survive the "Failed to parse the value of
+/// parameter" summary that would otherwise replace them.
+const PARAM_VALUE_ERRORS: [&str; 3] = [
+    "Invalid parameter expression.",
+    "Map parameter key must be a string",
+    "ArgumentError: integer overflow in unary minus",
+];
+
+fn is_param_value_error(err: &str) -> bool {
+    PARAM_VALUE_ERRORS.contains(&err)
+}
 
 /// Whether `err` is a rejection produced by [`Parser::too_deep`].
 ///
@@ -258,9 +276,7 @@ impl<'a> Parser<'a> {
     ///
     /// Handles queries like: `CYPHER param1=value1 param2=value2 MATCH ...`
     /// Returns the parameters map and the remaining query string.
-    pub fn parse_parameters(
-        &mut self
-    ) -> Result<(HashMap<String, DynTree<ExprIR<Arc<String>>>>, &'a str), String> {
+    pub fn parse_parameters(&mut self) -> Result<(HashMap<String, Value>, &'a str), String> {
         let mut params = HashMap::new();
         while let Ok(Token::IdentifierOrKeyword {
             ident: id,
@@ -275,13 +291,14 @@ impl<'a> Parser<'a> {
                         self.restore_state(state);
                         break;
                     }
-                    let value = self.parse_expr(false).map_err(|e| {
+                    let value = self.parse_param_value().map_err(|e| {
                         // An over-long map key or too-deep nesting inside the
                         // value names the exact thing to fix, so it survives; a
                         // syntax error inside a parameter is more useful
                         // reported as the parameter that failed (see
                         // test_params).
-                        if is_identifier_too_long(&e) || is_too_deep(&e) {
+                        if is_identifier_too_long(&e) || is_too_deep(&e) || is_param_value_error(&e)
+                        {
                             e
                         } else {
                             format!("Failed to parse the value of parameter '{}'", id.as_str())
@@ -295,6 +312,123 @@ impl<'a> Parser<'a> {
             }
         }
         Ok((params, &self.lexer.str[self.lexer.pos(true)..]))
+    }
+
+    /// Parses one `CYPHER name=<value>` value.
+    ///
+    /// A parameter is a literal - [`evaluate_param`] accepts nothing else - so
+    /// the common case is read straight into a [`Value`], skipping the
+    /// expression tree that used to be built and then walked twice (once for
+    /// the optimizer, once for the runtime). On a bulk-loader payload that
+    /// tree is one node per literal, which dominated the whole query.
+    ///
+    /// Anything the fast path does not recognise, or that turns out to be an
+    /// expression rather than a literal, is handed back to `parse_expr` so its
+    /// result and its error message are exactly what they were before.
+    fn parse_param_value(&mut self) -> Result<Value, String> {
+        let state = self.save_state();
+        if let Ok(value) = self.parse_literal()
+            // A literal that runs into an operator (`p=1+2`) or an index
+            // (`p=[1,2][0]`) was never a literal; only an identifier - the
+            // next `name=` or the start of the query - or the end of input
+            // means the value stopped here.
+            && matches!(
+                self.lexer.current(),
+                Ok(Token::IdentifierOrKeyword { .. } | Token::EndOfFile)
+            )
+        {
+            return Ok(value);
+        }
+        self.restore_state(state);
+        evaluate_param(&self.parse_expr(false)?.root())
+    }
+
+    /// Reads a literal: `null`, a boolean, a number, a string, a list, a map,
+    /// or one of those negated.
+    fn parse_literal(&mut self) -> Result<Value, String> {
+        if optional_match_token!(self.lexer, Dash) {
+            // One `-` only: `--1` is not a literal, and was rejected before.
+            return Ok(match self.parse_unsigned_literal()? {
+                // `-9223372036854775808` is the one integer whose negation is
+                // itself; the lexer already hands back i64::MIN for the digits.
+                Value::Int(i64::MIN) => Value::Int(i64::MIN),
+                Value::Int(i) => Value::Int(i.checked_neg().ok_or_else(|| {
+                    String::from("ArgumentError: integer overflow in unary minus")
+                })?),
+                Value::Float(f) => Value::Float(-f),
+                // Negating anything else is Null, as `evaluate_param` had it.
+                _ => Value::Null,
+            });
+        }
+        let value = self.parse_unsigned_literal()?;
+        if matches!(value, Value::Int(i64::MIN)) {
+            // Unnegated, those digits were i64::MAX + 1.
+            return Err(format!(
+                "Integer overflow '{}'",
+                9_223_372_036_854_775_808_u64
+            ));
+        }
+        Ok(value)
+    }
+
+    fn parse_unsigned_literal(&mut self) -> Result<Value, String> {
+        let value = match self.lexer.current()? {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Null),
+                ..
+            } => Value::Null,
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::True),
+                ..
+            } => Value::Bool(true),
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::False),
+                ..
+            } => Value::Bool(false),
+            Token::Integer(i) => Value::Int(i),
+            Token::Float(f) => Value::Float(f),
+            Token::String(s) => Value::String(s),
+            // Nesting recurses, so it is bounded like every other descent.
+            Token::LBrace => return self.nested(Self::parse_literal_list),
+            Token::LBracket => return self.nested(Self::parse_literal_map),
+            token => {
+                return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
+            }
+        };
+        self.lexer.next();
+        Ok(value)
+    }
+
+    fn parse_literal_list(&mut self) -> Result<Value, String> {
+        self.lexer.next(); // '['
+        let mut items = ThinVec::new();
+        if optional_match_token!(self.lexer, RBrace) {
+            return Ok(Value::List(Arc::new(items)));
+        }
+        loop {
+            items.push(self.parse_literal()?);
+            if optional_match_token!(self.lexer, RBrace) {
+                return Ok(Value::List(Arc::new(items)));
+            }
+            match_token!(self.lexer, Comma);
+        }
+    }
+
+    fn parse_literal_map(&mut self) -> Result<Value, String> {
+        self.lexer.next(); // '{'
+        let mut entries = OrderMap::default();
+        if optional_match_token!(self.lexer, RBracket) {
+            return Ok(Value::Map(Arc::new(entries)));
+        }
+        loop {
+            let key = self.parse_ident()?;
+            match_token!(self.lexer, Colon);
+            entries.insert(key, self.parse_literal()?);
+            if optional_match_token!(self.lexer, RBracket) {
+                return Ok(Value::Map(Arc::new(entries)));
+            }
+            match_token!(self.lexer, Comma);
+        }
     }
 
     /// Consumes any trailing semicolons, then verifies end-of-file.
@@ -3365,6 +3499,125 @@ mod tests {
         );
         let err = Parser::new(&q).parse_parameters().unwrap_err();
         assert!(is_too_deep(&err), "wrapper hid the reason: {err}");
+    }
+
+    /// Parameter values that the fast literal path must handle, and that the
+    /// old `parse_expr` + `evaluate_param` path handled before it.
+    const LITERAL_PARAMS: [&str; 27] = [
+        "1",
+        "-1",
+        "0",
+        "-0",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "1.5",
+        "-1.5",
+        "1e3",
+        "-1e-3",
+        ".5",
+        "-.5",
+        "0x1f",
+        "0o17",
+        "0b101",
+        "true",
+        "false",
+        "null",
+        "\"hi\"",
+        "'hi'",
+        "\"a\\nb\\tc\"",
+        "\"h\u{e9}llo\u{2192}\"",
+        "[]",
+        "[1,2,3]",
+        "[1,\"a\",true,null,1.5,-2,[3,[4]]]",
+        "{}",
+        "{`a`:1,`b`:{`c`:[1,-2]},`d`:null,`e`:\"x\"}",
+    ];
+
+    fn param_of(value: &str) -> Result<Value, String> {
+        Parser::new(&format!("CYPHER `p`={value} RETURN 1"))
+            .parse_parameters()
+            .map(|(mut p, _)| p.remove("p").expect("parameter p"))
+    }
+
+    /// The old path, kept as the oracle: parse the value as an expression and
+    /// evaluate it, which is what every parameter used to go through.
+    fn param_via_expr(value: &str) -> Result<Value, String> {
+        evaluate_param(&Parser::new(value).parse_expr(false)?.root())
+    }
+
+    // The fast literal path exists only to be faster - never to decide
+    // anything differently. Compared on `Debug` rather than `PartialEq`, which
+    // is Cypher's comparison and would call two nulls unequal.
+    #[test]
+    fn literal_params_match_the_expression_path() {
+        for value in LITERAL_PARAMS {
+            let fast = param_of(value);
+            let slow = param_via_expr(value);
+            assert_eq!(
+                fast.as_ref().map(|v| format!("{v:?}")),
+                slow.as_ref().map(|v| format!("{v:?}")),
+                "parameter `{value}` differs between the fast and expression paths",
+            );
+        }
+    }
+
+    // Negation of a non-number is Null, and i64::MIN negates to itself. Both
+    // were `evaluate_param`'s behaviour and both are easy to lose.
+    #[test]
+    fn negated_param_edge_cases() {
+        assert_eq!(
+            format!("{:?}", param_of("-9223372036854775808").unwrap()),
+            format!("{:?}", Value::Int(i64::MIN))
+        );
+        for value in ["-true", "-'a'", "-[1]", "-{`a`:1}", "-null"] {
+            assert_eq!(
+                format!("{:?}", param_of(value).unwrap()),
+                "Null",
+                "negating {value} should be Null"
+            );
+        }
+        // Unnegated, those digits are i64::MAX + 1 and must still be refused.
+        assert!(param_of("9223372036854775808").is_err());
+        // A second `-` is not part of a literal, and never parsed before.
+        assert!(param_of("--1").is_err());
+    }
+
+    // A value that is not a literal falls back to the expression path, so it
+    // must fail exactly the way it used to - including the message, which
+    // `parse_parameters` would otherwise replace with its own summary.
+    #[test]
+    fn non_literal_params_report_what_they_did_before() {
+        for value in ["1+2", "abs(-1)", "x", "$a", "[1,2][0]"] {
+            assert_eq!(
+                param_of(value).unwrap_err(),
+                "Invalid parameter expression.",
+                "parameter `{value}`",
+            );
+        }
+    }
+
+    // Malformed literals are parse errors, named by the parameter that failed.
+    #[test]
+    fn malformed_params_name_the_parameter() {
+        for value in ["[1,2", "{`a`:1", "{1:2}", "[1,]", "[,]", "{`a`}"] {
+            let err = param_of(value).unwrap_err();
+            assert!(
+                err.starts_with("Failed to parse the value of parameter 'p'"),
+                "parameter `{value}` gave: {err}",
+            );
+        }
+    }
+
+    // Several parameters, later ones shadowing earlier ones, and the query
+    // text that follows must all survive being read straight into values.
+    #[test]
+    fn parameters_and_remaining_query() {
+        let (params, rest) = Parser::new("CYPHER a=1 b=[2] a=3 MATCH (n) RETURN n")
+            .parse_parameters()
+            .unwrap();
+        assert_eq!(rest.trim_start(), "MATCH (n) RETURN n");
+        assert_eq!(format!("{:?}", params["a"]), format!("{:?}", Value::Int(3)));
+        assert_eq!(params.len(), 2);
     }
 
     // The speculative-ident path must still recognise what it probes for.
