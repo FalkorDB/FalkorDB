@@ -274,3 +274,59 @@ class testWithClause(FlowTestsBase):
         query = """WITH 1 AS x MATCH (a:label_a), (b:label_b) RETURN a.v, b.v"""
         actual_result = self.graph.query(query)
         self.env.assertEqual(len(actual_result.result_set), 36)
+
+    def test13_rematch_multiple_carried_variables(self):
+        # Re-MATCHing several variables that a WITH already bound used to
+        # either crash the server or fail to resolve the alias the WHERE
+        # referred to. Re-matching a single variable always worked, so the
+        # regression only shows up from the second carried variable onwards.
+        # https://github.com/FalkorDB/FalkorDB/issues/1949
+        # https://github.com/FalkorDB/FalkorDB/issues/2004
+        g = self.db.select_graph("with_rematch_bound")
+
+        try:
+            g.query("""CREATE (:Person {name: 'Alice', age: 30}),
+                              (:Person {name: 'Bob', age: 25})""")
+
+            # the reported repro - re-matching both carried variables
+            res = g.query("""MATCH (a:Person {name: 'Alice'}),
+                                   (b:Person {name: 'Bob'})
+                             WITH a, b
+                             MATCH (a), (b)
+                             RETURN a.name AS name, b.name AS name2""")
+            self.env.assertEqual(res.result_set, [['Alice', 'Bob']])
+
+            # the same with a WHERE filtering both re-matched aliases
+            res = g.query("""MATCH (a:Person), (b:Person)
+                             WITH a, b
+                             MATCH (a), (b)
+                             WHERE a.age > 25 AND b.age < 30
+                             RETURN a.name AS a, b.name AS b""")
+            self.env.assertEqual(res.result_set, [['Alice', 'Bob']])
+
+            # a variable carried under an alias by WITH * is re-matchable too
+            # https://github.com/FalkorDB/FalkorDB/issues/1280
+            res = g.query("""OPTIONAL MATCH (n0)
+                             WITH *, n0 AS alias4
+                             MATCH (n0), (alias4)
+                             RETURN n0.name, alias4.name ORDER BY n0.name""")
+            self.env.assertEqual(res.result_set,
+                                 [['Alice', 'Alice'], ['Bob', 'Bob']])
+
+            # re-matching inside OPTIONAL MATCH, filtering a bound alias
+            # https://github.com/FalkorDB/FalkorDB/issues/1300
+            res = g.query("""MATCH (n1), (n0)
+                             OPTIONAL MATCH (n0), (n1)
+                             WHERE n0
+                             RETURN n0.name, n1.name
+                             ORDER BY n0.name, n1.name""")
+            self.env.assertEqual(res.result_set,
+                                 [['Alice', 'Alice'], ['Alice', 'Bob'],
+                                  ['Bob', 'Alice'], ['Bob', 'Bob']])
+
+            # re-matching a single variable kept working throughout
+            res = g.query("""MATCH (a:Person {name: 'Alice'})
+                             WITH a MATCH (a) RETURN a.name AS name""")
+            self.env.assertEqual(res.result_set, [['Alice']])
+        finally:
+            g.delete()
