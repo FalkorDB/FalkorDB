@@ -781,8 +781,6 @@ class testGraphMergeFlow():
         self.env.assertEqual(edge.properties['created'], True)
         self.env.assertEqual(edge.properties['matched'], True)
 
-
-
     def test38_merge_referencing_deleted_entity(self):
         """
         a MERGE pattern that references an entity deleted earlier in the same
@@ -809,7 +807,7 @@ class testGraphMergeFlow():
                 self.env.assertTrue(False)
             except redis.ResponseError as e:
                 # Expecting an error.
-                assert("endpoint was not found" in str(e))
+                self.env.assertContains("endpoint was not found", str(e))
 
             # no relationship may have been created either way
             actual = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
@@ -839,3 +837,8 @@ class testGraphMergeFlow():
 
             # no edge carries the property, the deleted edge must not be written
             self.env.assertEqual(self.graph.query(q).result_set, [[0]])
+
+            # the MERGE itself must still have run - without this the count
+            # above would also be satisfied by the pattern being skipped
+            actual = self.graph.query("MATCH ()-[r:C]->() RETURN count(r)")
+            self.env.assertEqual(actual.result_set, [[1]])
