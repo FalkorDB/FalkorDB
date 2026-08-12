@@ -878,13 +878,18 @@ impl<'a> ExprEval<'a> {
                     // child values into a stack array and dispatch the
                     // slice-based struct_fn directly. Bypasses the per-row
                     // ThinVec<Value> heap alloc, the validate_args_type walk,
-                    // and the Arc<RuntimeFn> dispatch hop. The
-                    // `num_children > 1` guard distinguishes the rewritten
-                    // positional form from the regular `duration({...})` call
-                    // with a single Map argument. Max 10 slots
+                    // and the Arc<RuntimeFn> dispatch hop. Max 10 slots
                     // (matches `localdatetime`).
+                    //
+                    // The rewrite always emits exactly one child per slot, so
+                    // matching that count is what identifies the rewritten
+                    // form. A looser "more than one child" test would also
+                    // catch a user-written `date(a, b)` — the constructors are
+                    // registered `var_arg` to allow the zero-arg "now" form,
+                    // so arity validation does not reject it — and hand
+                    // `struct_fn` fewer values than it indexes.
                     if let Some(struct_fn) = func.struct_fn
-                        && node.num_children() > 1
+                        && node.num_children() == func.struct_slots.len()
                     {
                         let n = node.num_children();
                         debug_assert!(n <= 10);

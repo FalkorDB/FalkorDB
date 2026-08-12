@@ -841,7 +841,22 @@ impl GraphFn {
                     }
                 }
             }
-            FnArguments::VarLength(_) => {}
+            // A var-length signature still declares the type each argument
+            // must have. Leaving it unchecked made the declared type purely
+            // decorative and let values the function never expects reach it —
+            // the constructors (`date`, `localtime`, `localdatetime`) narrow
+            // to Map/String/Null and then `unreachable!()` on anything else,
+            // so an unvalidated argument aborted the process rather than
+            // returning an error.
+            FnArguments::VarLength(arg_type) => {
+                for arg in args {
+                    if let Some((actual, expected)) = arg.borrow().value_of_type(arg_type) {
+                        return Err(format!(
+                            "Type mismatch: expected {expected} but was {actual}"
+                        ));
+                    }
+                }
+            }
         }
         Ok(())
     }

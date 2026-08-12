@@ -646,3 +646,90 @@ class testTemporalDuration(FlowTestsBase):
             self.env.assertFalse(True)
         except Exception:
             pass
+
+class testTemporalConstructorArity(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    # The struct constructors are dispatched through a fast path that reads
+    # one value per named slot. `date`, `localtime` and `localdatetime` used
+    # to be registered with a var-length signature so that the zero-argument
+    # "now" form would bind, which meant a call carrying more arguments than
+    # the constructor accepts reached that fast path and read past the values
+    # it was given, killing the server.
+    def test_extra_arguments_are_rejected(self):
+        cases = [
+            ("RETURN date('2020-01-01', 'x')",                      "date",          2),
+            ("RETURN date({year: 2020}, 'x')",                      "date",          2),
+            ("RETURN date('2020-01-01', 'a', 'b', 'c', 'd', 'e')",  "date",          6),
+            ("RETURN localtime(1, 2)",                              "localtime",     2),
+            ("RETURN localtime('12:00', 'a', 'b')",                 "localtime",     3),
+            ("RETURN localdatetime(1, 2)",                          "localdatetime", 2),
+        ]
+
+        for query, name, count in cases:
+            try:
+                self.graph.query(query)
+                assert(False)
+            except redis.ResponseError as e:
+                self.env.assertContains(
+                    f"Received {count} arguments to function '{name}', expected at most 1",
+                    str(e))
+
+        # the server must still be answering: the read ran off the end of the
+        # slot array only once the reply had been handed back
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
+
+    # A var-length signature still names the type each argument must have.
+    # That type went unchecked, so a value the constructor never expects
+    # reached code that treats it as unreachable and aborts.
+    def test_wrongly_typed_argument_is_rejected(self):
+        for name in ["date", "localtime", "localdatetime"]:
+            for arg in ["1", "1.5", "true", "[1]"]:
+                try:
+                    self.graph.query(f"RETURN {name}({arg})")
+                    assert(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains("Type mismatch", str(e))
+
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
+
+    # the forms that must keep working - the zero-argument "now" reading, the
+    # string form and the map form that the slot fast path exists to serve
+    def test_supported_arities_still_construct(self):
+        for query in ["RETURN date()", "RETURN localtime()", "RETURN localdatetime()"]:
+            self.env.assertEqual(len(self.graph.query(query).result_set), 1)
+
+        cases = [
+            ("RETURN date('2020-01-01')",                            '2020-01-01'),
+            ("RETURN date({year: 1984, month: 10, day: 11})",        '1984-10-11'),
+            ("RETURN localtime('12:31:14')",                         '12:31:14'),
+            ("RETURN localtime({hour: 12, minute: 31, second: 14})", '12:31:14'),
+            ("RETURN localdatetime({year: 1984, month: 10, day: 11, hour: 12, minute: 31, second: 14})",
+             '1984-10-11 12:31:14+00:00'),
+        ]
+        for query, expected in cases:
+            actual = str(self.graph.query(query).result_set[0][0])
+            self.env.assertEqual(actual, expected)
+
+        # null propagates rather than being treated as a missing argument
+        for name in ["date", "localtime", "localdatetime"]:
+            res = self.graph.query(f"RETURN {name}(null)")
+            self.env.assertEqual(res.result_set, [[None]])
+
+    # the fixed-arity constructors already refused a second argument - they
+    # are asserted here so the two groups cannot drift apart
+    def test_fixed_arity_constructors_are_unchanged(self):
+        for query, name in [("RETURN duration(1, 2)", "duration"),
+                            ("RETURN point(1, 2)",    "point")]:
+            try:
+                self.graph.query(query)
+                assert(False)
+            except redis.ResponseError as e:
+                self.env.assertContains(
+                    f"Received 2 arguments to function '{name}', expected at most 1",
+                    str(e))
+
+        res = self.graph.query("RETURN duration({months: 3, days: 2})")
+        self.env.assertEqual(res.result_set[0][0], relativedelta(months=3, days=2))
