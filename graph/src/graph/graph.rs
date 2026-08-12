@@ -4166,3 +4166,87 @@ impl Graph {
         self.attrs_name.iter().cloned().collect()
     }
 }
+
+#[cfg(test)]
+mod attr_id_space_tests {
+    use super::super::graphblas::test_init::ensure_init;
+    use super::*;
+
+    fn attr(s: &str) -> Arc<String> {
+        Arc::new(s.to_string())
+    }
+
+    /// A name has one id, whichever kind of entity introduced it.
+    ///
+    /// This is the invariant behind #2457. With a dictionary per store, `since` was
+    /// registered only in the relationship table, so it got relationship-local id 0 —
+    /// colliding with the *node* attribute already holding node-local id 0. Effects put a
+    /// bare id on the wire, so a replica whose dictionary came from an RDB (one unified
+    /// table) resolved that 0 to the wrong attribute.
+    #[test]
+    fn one_id_per_name_across_entity_kinds() {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "attr_id_space");
+
+        // Node attributes first, so a per-store numbering would start relationships back
+        // at 0 and collide with `a`.
+        let a = g.get_or_create_node_attr_id(&attr("a"));
+        let b = g.get_or_create_node_attr_id(&attr("b"));
+        // Then a relationship-only attribute.
+        let since = g.get_or_create_rel_attr_id(&attr("since"));
+
+        assert_eq!(a, 0);
+        assert_eq!(b, 1);
+        // The bug: this was 0 — the relationship table's first slot.
+        assert_eq!(
+            since, 2,
+            "a relationship attribute must not restart numbering"
+        );
+
+        // Every accessor agrees, because there is only one dictionary to disagree about.
+        for (name, expected) in [("a", 0usize), ("b", 1), ("since", 2)] {
+            let n = attr(name);
+            assert_eq!(g.get_node_attribute_id(&n), Some(expected));
+            assert_eq!(g.get_relationship_attribute_id(&n), Some(expected));
+            assert_eq!(g.get_global_attribute_id(&n), Some(expected));
+        }
+
+        // Re-registering under the other entity kind must not mint a second id.
+        assert_eq!(g.get_or_create_rel_attr_id(&attr("a")), 0);
+        assert_eq!(g.get_or_create_node_attr_id(&attr("since")), 2);
+        assert_eq!(g.build_global_attrs().len(), 3);
+    }
+
+    /// The RDB's flat list and the live dictionary are the same numbering.
+    ///
+    /// A full sync seeds a replica from `build_global_attrs()`. If that list disagreed
+    /// with the ids the master stamps into effects, the replica would misresolve them —
+    /// which is exactly how #2457 manifested.
+    #[test]
+    fn rdb_attr_list_matches_live_ids() {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "attr_id_rdb");
+        g.get_or_create_node_attr_id(&attr("a"));
+        let since = g.get_or_create_rel_attr_id(&attr("since"));
+        g.get_or_create_node_attr_id(&attr("b"));
+
+        let list = g.build_global_attrs();
+
+        // The load-bearing one: an id the master stamps into an effect has to index the
+        // same name in the list a replica is seeded from. Split numbering broke exactly
+        // this — `since` was relationship-local 0, and position 0 of the list is `a`.
+        assert_eq!(
+            list.get(since as usize).map(|s| s.as_str()),
+            Some("since"),
+            "the id put on the wire does not index its own name in the RDB list"
+        );
+
+        for (id, name) in list.iter().enumerate() {
+            assert_eq!(
+                g.get_global_attribute_id(name),
+                Some(id),
+                "RDB position {id} disagrees with the live id for {name}"
+            );
+        }
+    }
+}
