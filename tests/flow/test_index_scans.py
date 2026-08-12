@@ -344,6 +344,7 @@ class testIndexScanFlow():
         q = """MATCH (r:restaurant)
         WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) < -20000
         RETURN r"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
         self.env.assertEqual(self.graph.query(q).result_set, [])
 
         # the same when the negative bound is computed rather than a literal
@@ -351,6 +352,7 @@ class testIndexScanFlow():
         q = """MATCH (r:restaurant)
         WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) <= -(round(0.7784249186515808))
         RETURN r"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
         self.env.assertEqual(self.graph.query(q).result_set, [])
 
         # zero radius is the boundary: still no match, the point is not at
@@ -358,6 +360,7 @@ class testIndexScanFlow():
         q = """MATCH (r:restaurant)
         WHERE distance(r.location, point({latitude:40.4, longitude:30.3})) < 0
         RETURN r"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
         self.env.assertEqual(self.graph.query(q).result_set, [])
 
         # the crash was asynchronous - the reply arrived and the server died
@@ -365,6 +368,7 @@ class testIndexScanFlow():
         q = """MATCH (r:restaurant)
         WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) < 1000
         RETURN count(r)"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
         self.env.assertEqual(self.graph.query(q).result_set, [[1]])
 
     def test14_index_scan_utilize_array(self):
