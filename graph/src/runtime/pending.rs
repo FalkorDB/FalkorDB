@@ -898,8 +898,15 @@ impl Pending {
         }
         if !self.set_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.set_labels);
+            // Pairs for nodes created in this transaction cannot already be
+            // committed (fresh ids; a reclaimed id's stale entries carry dm
+            // tombstones), so a pure-create batch takes the unchecked insert.
+            let all_new = self
+                .set_labels
+                .keys()
+                .all(|id| self.created_nodes.contains(*id));
             g.borrow_mut()
-                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_add_docs);
+                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_add_docs, all_new);
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);

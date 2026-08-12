@@ -74,6 +74,7 @@ use std::{
 use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
 };
+use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 
 /// Global registry of all live graph instances.
@@ -214,7 +215,7 @@ pub enum ProfileDetect {
 /// keeps call sites free of `unwrap()` noise.
 pub mod ffi {
     use redis_module::raw;
-    use std::ffi::CString;
+    use std::ffi::{CStr, CString};
     use std::os::raw::c_char;
     use std::ptr::null_mut;
 
@@ -348,6 +349,76 @@ pub mod ffi {
         if let Some(f) = unsafe { raw::RedisModule_BlockedClientMeasureTimeEnd } {
             unsafe { f(bc) };
         }
+    }
+
+    /// Take an owned reference on `s`, independent of any command context.
+    ///
+    /// A NULL context is deliberate: `RM_HoldString` only registers the string in a
+    /// context's auto-memory when one is passed, and such a string is freed when that
+    /// command's context is destroyed — i.e. out from under a worker thread still
+    /// holding it. With NULL the caller owns the reference and must
+    /// [`free_string`] it.
+    ///
+    /// # Safety
+    /// `s` must be a valid `RedisModuleString`, and the GIL must be held (the main
+    /// thread holds it implicitly inside a command).
+    pub unsafe fn hold_string(s: *mut raw::RedisModuleString) -> *mut raw::RedisModuleString {
+        let f = unsafe { raw::RedisModule_HoldString }.expect(MSG);
+        unsafe { f(null_mut(), s) }
+    }
+
+    /// Release a reference taken by [`hold_string`].
+    ///
+    /// # Safety
+    /// `s` must have come from [`hold_string`] and not been freed already. The GIL
+    /// must be held: these strings originate from client command arguments, and
+    /// Redis requires the GIL for any access to those.
+    pub unsafe fn free_string(s: *mut raw::RedisModuleString) {
+        let f = unsafe { raw::RedisModule_FreeString }.expect(MSG);
+        unsafe { f(null_mut(), s) };
+    }
+
+    /// Trim a held string's spare allocation.
+    ///
+    /// Mandatory, not an optimisation, for any string a background thread will
+    /// reference: Redis may auto-trim retained strings when the command returns, and
+    /// its own docs call that auto-trim "not thread safe … could result with data
+    /// corruption" if a worker touches the string concurrently. Trimming up front
+    /// leaves nothing for the auto-trim to do.
+    ///
+    /// # Safety
+    /// `s` must be a valid string held by the caller, with the GIL held.
+    pub unsafe fn trim_string_allocation(s: *mut raw::RedisModuleString) {
+        let f = unsafe { raw::RedisModule_TrimStringAllocation }.expect(MSG);
+        unsafe { f(s) };
+    }
+
+    /// Replicate `cmd` with a pre-built argument vector.
+    ///
+    /// Unlike `Context::replicate`, this does *not* build new strings from byte
+    /// slices — `argv` is propagated by reference (Redis increments each refcount),
+    /// so a large payload is not duplicated. `RM_Replicate`'s `"v"` format takes the
+    /// vector and its length.
+    ///
+    /// # Safety
+    /// `ctx` must be a valid module context and every entry of `argv` a valid string.
+    /// The GIL must be held: propagation is flushed when it is released.
+    pub unsafe fn replicate_argv(
+        ctx: *mut raw::RedisModuleCtx,
+        cmd: &CStr,
+        argv: &[*mut raw::RedisModuleString],
+    ) {
+        const FMT: &[u8] = b"v\0";
+        let f = unsafe { raw::RedisModule_Replicate }.expect(MSG);
+        unsafe {
+            f(
+                ctx,
+                cmd.as_ptr(),
+                FMT.as_ptr().cast::<c_char>(),
+                argv.as_ptr(),
+                argv.len(),
+            )
+        };
     }
 }
 
@@ -853,14 +924,13 @@ pub fn query_mut(
         }
     }
 
-    // Inside MULTI/EXEC: execute synchronously (blocking commands not allowed).
-    // Also run replicated commands synchronously on the main thread (matches
-    // FalkorDB C): otherwise the replica's handler returns NoReply before the
-    // query actually executes, Redis advances the replication offset, and
-    // master's WAIT reports the replica in-sync while writes are still queued.
-    if ctx.get_flags().contains(ContextFlags::MULTI)
-        || ctx.get_flags().contains(ContextFlags::REPLICATED)
-    {
+    // Contexts that cannot block run inline on this thread — see `must_run_inline` for
+    // why each flag is in the set. Two of them are load-bearing here: a replica has to
+    // apply the query before the handler returns, or Redis advances the replication
+    // offset while the write is still queued and the master's WAIT reports the replica
+    // in-sync when it is not; and an AOF-replay client must never be blocked, which
+    // used to crash the server on restart (#2421).
+    if must_run_inline(ctx) {
         return query_sync(
             ctx,
             graph,
@@ -1166,11 +1236,9 @@ pub fn profile_mut(
     key_name: &Arc<str>,
     per_query_timeout: Option<i64>,
 ) -> RedisResult {
-    // Inside MULTI/EXEC: execute synchronously.
-    // Also run replicated commands synchronously (see query_mut for rationale).
-    if ctx.get_flags().contains(ContextFlags::MULTI)
-        || ctx.get_flags().contains(ContextFlags::REPLICATED)
-    {
+    // Contexts that cannot block run inline (see `query_mut` for the rationale, and
+    // `must_run_inline` for the flag set).
+    if must_run_inline(ctx) {
         return profile_sync(ctx, graph, query, key_name, per_query_timeout);
     }
 
