@@ -13,18 +13,15 @@
 //!
 //! It runs twice. The first run (before the filter-movement passes) sees every
 //! original path consumer (Project/Filter/Sort/Aggregate/PathBuilder/...) as a
-//! direct ancestor. The second run catches paths whose last consumer moved. The
-//! second run is safe because `ir_references_variable` inspects `ValueHashJoin`
-//! keys — the only new path consumer `replace_cartesian_with_hash_join` can
-//! introduce in between.
-//!
-//! An edge-only `Filter` directly above the traverse is skipped either run: it
-//! is fused into the walk when the operators are built, so it tests one edge at
-//! a time and never reads the relationship list.
+//! direct ancestor. A second run after `absorb_edge_filters_into_vlt` catches
+//! paths whose last consumer was an edge-only filter that the absorption pass
+//! folded into the traversal. The second run is safe because
+//! `ir_references_variable` inspects `ValueHashJoin` keys — the only new path
+//! consumer `replace_cartesian_with_hash_join` can introduce in between.
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
-use super::super::{IR, filter_is_fused_away};
+use super::super::IR;
 use super::reduce_expand_into::ir_references_variable;
 
 pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
@@ -40,21 +37,10 @@ pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
         };
 
         // Walk ancestors to check if the path alias is referenced.
-        //
-        // A `Filter` that will be folded whole into this traverse when the
-        // operators are built is not a consumer: its predicate runs per edge
-        // inside the walk, against a single edge, and never reads the
-        // materialized relationship list. Counting it would keep `emit_path`
-        // true and make the walk build a `Value::Path` per row that nothing
-        // reads — which is what `MATCH (a)-[e:R*1..2]->(b) WHERE e.w = 1
-        // RETURN b.v` used to avoid back when the absorption happened as an IR
-        // rewrite and deleted the node outright.
         let mut referenced = false;
         let mut cur = idx;
         while let Some(parent) = plan.node(cur).parent() {
-            if !filter_is_fused_away(plan, parent.idx())
-                && ir_references_variable(parent.data(), alias_id, alias_scope_id)
-            {
+            if ir_references_variable(parent.data(), alias_id, alias_scope_id) {
                 referenced = true;
                 break;
             }
@@ -73,6 +59,7 @@ pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
 mod tests {
     use orx_tree::{Bfs, DynTree, NodeRef};
 
+    use super::super::absorb_edge_filters_into_vlt::absorb_edge_filters_into_vlt;
     use super::super::replace_cartesian_with_hash_join::replace_cartesian_with_hash_join;
     use super::reduce_var_len_path;
     use crate::parser::cypher::Parser;
@@ -92,6 +79,7 @@ mod tests {
 
         reduce_var_len_path(&mut plan);
         replace_cartesian_with_hash_join(&mut plan);
+        absorb_edge_filters_into_vlt(&mut plan);
         reduce_var_len_path(&mut plan);
         plan
     }
@@ -114,9 +102,9 @@ mod tests {
 
     #[test]
     fn absorbed_edge_filter_lets_unused_path_be_skipped() {
-        // `e` is consumed only by the edge-only filter `e.w = 1`, which is
-        // fused into the traversal when the operators are built, so it never
-        // reads the relationship list: emit_path must be reduced to false.
+        // `e` is consumed only by the edge-only filter `e.w = 1`. Once
+        // `absorb_edge_filters_into_vlt` folds that filter into the traversal,
+        // the second pass run must reduce emit_path to false.
         let plan = optimized_varlen_plan("MATCH (a)-[e:R*1..2]->(b) WHERE e.w = 1 RETURN b.v");
         assert_eq!(emit_paths(&plan), vec![false]);
     }
@@ -124,7 +112,7 @@ mod tests {
     #[test]
     fn consumed_path_is_kept_despite_absorption() {
         // The relationship list `e` is also returned, so even though `e.w = 1`
-        // is fusable, emit_path must stay true.
+        // is absorbable, emit_path must stay true.
         let plan = optimized_varlen_plan("MATCH (a)-[e:R*1..2]->(b) WHERE e.w = 1 RETURN e");
         assert!(emit_paths(&plan).into_iter().all(|kept| kept));
     }

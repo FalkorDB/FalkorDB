@@ -101,9 +101,21 @@ pub(super) fn ir_references_variable(
         IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => filter
             .iter()
             .any(|(expr, _)| expr_references_variable(expr, var_id, scope_id)),
-        IR::CondVarLenTraverse { path_var, .. } => path_var
+        IR::CondVarLenTraverse {
+            edge_filter,
+            path_var,
+            ..
+        } => {
+            edge_filter
+                .as_ref()
+                .is_some_and(|f| expr_references_variable(f, var_id, scope_id))
+                || path_var
+                    .as_ref()
+                    .is_some_and(|v| v.id == var_id && v.scope_id == scope_id)
+        }
+        IR::AllShortestPaths { edge_filter, .. } => edge_filter
             .as_ref()
-            .is_some_and(|v| v.id == var_id && v.scope_id == scope_id),
+            .is_some_and(|f| expr_references_variable(f, var_id, scope_id)),
         IR::NodeByFulltextScan { label, query, .. }
         | IR::EdgeByFulltextScan { label, query, .. } => {
             expr_references_variable(label, var_id, scope_id)
@@ -148,7 +160,6 @@ pub(super) fn ir_references_variable(
         | IR::IncludePending { .. }
         | IR::ExpandInto { .. }
         | IR::CondTraverse { .. }
-        | IR::AllShortestPaths(_)
         | IR::CartesianProduct
         | IR::Apply
         | IR::SemiApply

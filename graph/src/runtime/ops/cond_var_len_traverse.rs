@@ -83,10 +83,10 @@ struct VarLenIter<'a> {
     rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
     /// WHERE-clause per-hop edge filter plus the owned input row used as its
     /// evaluation environment (only cloned when a filter is present).
-    edge_filter: Option<(QueryExpr<Variable>, Row)>,
+    edge_filter: Option<(&'a QueryExpr<Variable>, Row)>,
     /// `@prev(<id>)` marker variable inside the edge filter; bound per frame
     /// to the edge that led to the current node (Null on the first hop).
-    prev_var: Option<Variable>,
+    prev_var: Option<&'a Variable>,
     emit_path: bool,
     /// Evaluated inline edge-attribute filter (`{k: v}`), shared by all hops.
     reversed: bool,
@@ -222,7 +222,7 @@ impl VarLenIter<'_> {
 
             // Bind the previous-edge marker for this frame: the edge used to
             // reach `current`, Null when starting out.
-            if let Some(prev_var) = self.prev_var.as_ref()
+            if let Some(prev_var) = self.prev_var
                 && let Some((_, filter_env)) = &mut self.edge_filter
             {
                 let prev_val = used_edges
@@ -401,11 +401,10 @@ pub struct CondVarLenTraverseOp<'a> {
     /// a batch that produces more than `BATCH_SIZE` results never drops rows.
     pub(crate) emitter: BatchedResultEmitter<'a, VarLenResult>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-    /// Per-edge predicate, folded in from the `Filter` above this operator when
-    /// the runtime built it (`Runtime::split_edge_filter`).
-    edge_filter: Option<QueryExpr<Variable>>,
+    /// Optional per-hop edge filter expression (absorbed from WHERE clause by the optimizer).
+    edge_filter: Option<&'a QueryExpr<Variable>>,
     /// `@prev(<id>)` marker variable found in `edge_filter`, if any.
-    prev_var: Option<Variable>,
+    prev_var: Option<&'a Variable>,
     /// When false, the path/relationship-list binding is never read downstream,
     /// so `expand_row` skips building the per-row `Value::Path` (see the
     /// `reduce_var_len_path` optimizer pass).
@@ -423,7 +422,7 @@ impl<'a> CondVarLenTraverseOp<'a> {
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-        edge_filter: Option<QueryExpr<Variable>>,
+        edge_filter: Option<&'a QueryExpr<Variable>>,
         emit_path: bool,
         path_var: Option<u32>,
         idx: NodeIdx<Dyn<IR>>,
@@ -439,14 +438,12 @@ impl<'a> CondVarLenTraverseOp<'a> {
         });
         // Locate the `@prev(<id>)` marker variable (previous-edge reference
         // rewritten by the binder) inside the absorbed edge filter, if any.
-        let prev_var = edge_filter.as_ref().and_then(|filter| {
+        let prev_var = edge_filter.and_then(|filter| {
             filter
                 .root()
                 .indices::<orx_tree::Bfs>()
                 .find_map(|idx| match filter.node(idx).data() {
-                    ExprIR::Variable(var) if var.as_str().starts_with("@prev(") => {
-                        Some(var.clone())
-                    }
+                    ExprIR::Variable(var) if var.as_str().starts_with("@prev(") => Some(var),
                     _ => None,
                 })
         });
@@ -474,8 +471,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
     fn expand_row(
         runtime: &'a Runtime<'a>,
         rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-        edge_filter: Option<QueryExpr<Variable>>,
-        prev_var: Option<Variable>,
+        edge_filter: Option<&'a QueryExpr<Variable>>,
+        prev_var: Option<&'a Variable>,
         emit_path: bool,
         error: &Rc<RefCell<Option<String>>>,
         batch: &Batch,
@@ -574,8 +571,8 @@ impl<'a> Iterator for CondVarLenTraverseOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
-        let edge_filter = self.edge_filter.clone();
-        let prev_var = self.prev_var.clone();
+        let edge_filter = self.edge_filter;
+        let prev_var = self.prev_var;
         let emit_path = self.emit_path;
         let error = Rc::clone(&self.error);
         loop {
@@ -598,8 +595,8 @@ impl<'a> Iterator for CondVarLenTraverseOp<'a> {
                 Self::expand_row(
                     runtime,
                     rp,
-                    edge_filter.clone(),
-                    prev_var.clone(),
+                    edge_filter,
+                    prev_var,
                     emit_path,
                     &error,
                     batch,

@@ -56,7 +56,7 @@ pub struct AllShortestPathsOp<'a> {
     /// edge attributes. Applied during the BFS so a failing edge prunes the
     /// frontier; a `Filter` above this operator could only reject an assembled
     /// path, which is both later and a different question.
-    edge_filter: Option<QueryExpr<Variable>>,
+    edge_filter: Option<&'a QueryExpr<Variable>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -65,7 +65,7 @@ impl<'a> AllShortestPathsOp<'a> {
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-        edge_filter: Option<QueryExpr<Variable>>,
+        edge_filter: Option<&'a QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -310,7 +310,7 @@ impl<'a> Iterator for AllShortestPathsOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
-        let edge_filter = self.edge_filter.as_ref();
+        let edge_filter = self.edge_filter;
         loop {
             // Enumerate each active parent row's shortest paths (the BFS +
             // DFS-backtrack borrows the graph, so it runs eagerly) and let the

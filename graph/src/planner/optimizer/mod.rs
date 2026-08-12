@@ -45,6 +45,7 @@
 //! if the tree structure changed. This avoids issues with invalidated indices
 //! after in-place tree mutations.
 
+mod absorb_edge_filters_into_vlt;
 mod eliminate_true_filters;
 mod fuse_anonymous_traverse;
 mod fuse_optional_traverse;
@@ -71,6 +72,7 @@ use crate::{
 
 use super::IR;
 
+use absorb_edge_filters_into_vlt::absorb_edge_filters_into_vlt;
 use eliminate_true_filters::eliminate_true_filters;
 use fuse_anonymous_traverse::fuse_anonymous_traverse;
 use fuse_optional_traverse::fuse_optional_traverse;
@@ -134,6 +136,7 @@ pub fn optimize(
     push_filters_down(&mut optimized_plan);
     fuse_anonymous_traverse(&mut optimized_plan);
     replace_cartesian_with_hash_join(&mut optimized_plan);
+    absorb_edge_filters_into_vlt(&mut optimized_plan);
     // Re-run path reduction: folding an edge-only filter into a
     // CondVarLenTraverse can remove the last ancestor that consumed the path
     // alias, so a path kept by the first pass may now be skippable. Safe here
@@ -193,7 +196,7 @@ fn debug_assert_no_pattern_attrs(plan: &DynTree<IR>) {
             IR::EdgeByIndexScan { relationship, .. }
             | IR::CondVarLenTraverse { relationship, .. }
             | IR::ExpandInto { relationship, .. } => ("traverse", rel_is_clean(relationship)),
-            IR::AllShortestPaths(relationship) => ("traverse", rel_is_clean(relationship)),
+            IR::AllShortestPaths { relationship, .. } => ("traverse", rel_is_clean(relationship)),
             IR::CondTraverse {
                 relationship,
                 chain,

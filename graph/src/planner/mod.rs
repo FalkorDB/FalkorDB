@@ -213,6 +213,15 @@ pub enum IR {
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        /// Predicate every edge on the walk must satisfy.
+        ///
+        /// Unlike the fixed-length traverses, this is not an absorbed `Filter`
+        /// and is not fused when operators are built. `r` binds a *list* of
+        /// edges, so `Filter(r.w = 1)` above the walk asks a different question
+        /// than pruning per edge — the predicate is part of what this operator
+        /// computes, like `min_hops`. Set by the planner from inline attrs, or
+        /// by `absorb_edge_filters_into_vlt` from a WHERE clause.
+        edge_filter: Option<QueryExpr<Variable>>,
         /// When false, the path/relationship-list binding (`relationship.alias`)
         /// is not consumed by any ancestor, so the operator skips materializing
         /// the per-row `Value::Path`. Conservatively `true` at planning time;
@@ -228,7 +237,12 @@ pub enum IR {
         expand_into: bool,
     },
     /// All shortest paths between two known nodes
-    AllShortestPaths(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    AllShortestPaths {
+        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        /// See [`IR::CondVarLenTraverse::edge_filter`]: pruned per edge during
+        /// the BFS, not fused from a `Filter`.
+        edge_filter: Option<QueryExpr<Variable>>,
+    },
     /// Check relationship between two known nodes.
     /// `emit_relationship`: when false, anonymous edge optimization applies.
     ExpandInto {
@@ -623,7 +637,9 @@ impl Display for IR {
                 };
                 write!(f, "{name} | {}", fmt_var_len_rel(rel))
             }
-            Self::AllShortestPaths(rel) => write!(f, "All Shortest Paths | {rel}"),
+            Self::AllShortestPaths { relationship, .. } => {
+                write!(f, "All Shortest Paths | {relationship}")
+            }
             Self::ExpandInto {
                 relationship: rel, ..
             } => {
@@ -741,9 +757,9 @@ pub fn traverse_edge_alias(
             chain,
             ..
         } if chain.is_empty() => Some(&relationship.alias),
-        IR::CondVarLenTraverse { relationship, .. }
-        | IR::AllShortestPaths(relationship)
-        | IR::ExpandInto { relationship, .. } => Some(&relationship.alias),
+        // Only the fixed-length traverses fuse. The walks own their predicate
+        // in `edge_filter`; there is no `Filter` above them to take.
+        IR::ExpandInto { relationship, .. } => Some(&relationship.alias),
         _ => None,
     }
 }
@@ -2025,7 +2041,10 @@ impl Planner {
             let edge_pred =
                 lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs);
             let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths(rel.clone()))
+                tree!(IR::AllShortestPaths {
+                    relationship: rel.clone(),
+                    edge_filter: edge_pred.clone().map(Arc::new),
+                })
             } else if relationship.min_hops.is_some() {
                 // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
                 // Build scan child for the from-node when it's not yet visited
@@ -2061,6 +2080,7 @@ impl Planner {
                     || {
                         tree!(IR::CondVarLenTraverse {
                             relationship: rel.clone(),
+                            edge_filter: edge_pred.clone().map(Arc::new),
                             emit_path: true,
                             path_var: None,
                             expand_into,
@@ -2070,6 +2090,7 @@ impl Planner {
                         tree!(
                             IR::CondVarLenTraverse {
                                 relationship: rel.clone(),
+                                edge_filter: edge_pred.clone().map(Arc::new),
                                 emit_path: true,
                                 path_var: None,
                                 expand_into,
@@ -2134,12 +2155,16 @@ impl Planner {
                     bind_relationship: true,
                 })
             };
-            // An edge predicate is a `Filter` above the operator, whichever
-            // operator it is. That keeps the plan's one representation of a
-            // predicate in `IR::Filter`, where every pass can see it; whether
-            // the runtime evaluates it as its own operator or folds it into the
-            // traverse is decided when the operators are built, not here.
-            if let Some(filter_expr) = edge_pred {
+            // Fixed-length traverses take the predicate as a `Filter`, which
+            // the runtime folds into the operator when it builds it. The walks
+            // above already took it into `edge_filter`, where it prunes per
+            // edge — a `Filter` there would test an assembled path instead.
+            if let Some(filter_expr) = edge_pred
+                && matches!(
+                    res.root().data(),
+                    IR::CondTraverse { .. } | IR::ExpandInto { .. }
+                )
+            {
                 res = tree!(IR::Filter(Arc::new(filter_expr)), res);
             }
             // Lower both endpoints' inline attributes (e.g. `(b {val: 'v2'})`)
@@ -2179,7 +2204,13 @@ impl Planner {
                     &relationship.attrs,
                 );
                 res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(IR::AllShortestPaths(rel.clone()), res)
+                    tree!(
+                        IR::AllShortestPaths {
+                            relationship: rel.clone(),
+                            edge_filter: edge_pred.clone().map(Arc::new),
+                        },
+                        res
+                    )
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
                         && self.visited.contains(&(
@@ -2192,6 +2223,7 @@ impl Planner {
                     tree!(
                         IR::CondVarLenTraverse {
                             relationship: rel.clone(),
+                            edge_filter: edge_pred.clone().map(Arc::new),
                             emit_path: true,
                             path_var: None,
                             expand_into,
@@ -2259,7 +2291,12 @@ impl Planner {
                     )
                 };
                 // See the same block above the chained loop.
-                if let Some(filter_expr) = edge_pred {
+                if let Some(filter_expr) = edge_pred
+                    && matches!(
+                        res.root().data(),
+                        IR::CondTraverse { .. } | IR::ExpandInto { .. }
+                    )
+                {
                     res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                 }
                 // Both endpoints, unconditionally — see the same block above the
@@ -2821,7 +2858,7 @@ impl Planner {
                     | IR::OrApplyMultiplexer(_)
                     | IR::CondTraverse { .. }
                     | IR::CondVarLenTraverse { .. }
-                    | IR::AllShortestPaths(_)
+                    | IR::AllShortestPaths { .. }
                     | IR::ExpandInto { .. }
                     | IR::EdgeByIndexScan { .. }
                     | IR::PathBuilder(_)))
@@ -2882,7 +2919,7 @@ impl Planner {
                 | IR::NodeByLabelAndIdScan { .. }
                 | IR::CondTraverse { .. }
                 | IR::CondVarLenTraverse { .. }
-                | IR::AllShortestPaths(_)
+                | IR::AllShortestPaths { .. }
                 | IR::ExpandInto { .. }
                 | IR::EdgeByIndexScan { .. }
                 | IR::CartesianProduct

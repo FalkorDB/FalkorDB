@@ -284,7 +284,10 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     relationship: query_relationship,
                     ..
                 }
-                | IR::AllShortestPaths(query_relationship)
+                | IR::AllShortestPaths {
+                    relationship: query_relationship,
+                    ..
+                }
                 | IR::ExpandInto {
                     relationship: query_relationship,
                     ..
@@ -1217,44 +1220,32 @@ impl<'a> Runtime<'a> {
             }
             IR::CondVarLenTraverse {
                 relationship: relationship_pattern,
+                edge_filter,
                 emit_path,
                 path_var,
                 ..
             } => {
                 let child = pop_or_once(&mut children);
-                let edge_filter = fused_edge_predicate(&self.plan, idx);
-                // A var-length walk's edge predicate is not a filter on its
-                // output: `r` binds a *list* of edges, so testing `r.w` above
-                // the walk is not the same question as pruning per edge. If a
-                // predicate on this alias failed to fuse we would be building a
-                // plan that asks the wrong one.
-                debug_assert!(
-                    edge_filter.is_some() || !parent_filters_edge(&self.plan, idx),
-                    "a var-length edge predicate must fuse into the walk"
-                );
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
-                    edge_filter,
+                    edge_filter.as_ref(),
                     *emit_path,
                     path_var.as_ref().map(|v| v.id),
                     idx,
                 )))
             }
-            IR::AllShortestPaths(relationship_pattern) => {
+            IR::AllShortestPaths {
+                relationship: relationship_pattern,
+                edge_filter,
+            } => {
                 let child = pop_or_once(&mut children);
-                let edge_filter = fused_edge_predicate(&self.plan, idx);
-                // See `CondVarLenTraverse` above.
-                debug_assert!(
-                    edge_filter.is_some() || !parent_filters_edge(&self.plan, idx),
-                    "an allShortestPaths edge predicate must fuse into the walk"
-                );
                 Ok(BatchOp::AllShortestPaths(AllShortestPathsOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
-                    edge_filter,
+                    edge_filter.as_ref(),
                     idx,
                 )))
             }
