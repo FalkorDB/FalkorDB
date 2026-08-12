@@ -3,13 +3,17 @@
 * Licensed under the Server Side Public License v1 (SSPLv1).
 */
 
+#include "utils.h"
 #include "quickjs.h"
 #include "classes.h"
 #include "repository.h"
 #include "../util/arr.h"
+#include "../util/rmalloc.h"
 #include "../errors/errors.h"
 #include "../configuration/config.h"
 #include "../arithmetic/func_desc.h"
+
+#include <time.h>
 
 extern JSClassID js_node_class_id;        // JS Node class
 extern JSClassID js_edge_class_id;        // JS Edge class
@@ -17,6 +21,64 @@ extern JSClassID js_path_class_id;        // JS Path class
 extern JSClassID js_attributes_class_id;  // JS Attributes class
 
 const char *UDF_LIB = NULL ;              // global register library name
+
+// milliseconds since the epoch, for JS evaluation deadlines
+static int64_t _UDF_NowMs (void) {
+	struct timespec ts ;
+	clock_gettime (CLOCK_MONOTONIC, &ts) ;
+	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000 ;
+}
+
+// QuickJS calls this periodically; returning non-zero aborts the running
+// script with an "interrupted" exception
+static int _UDF_InterruptHandler
+(
+	JSRuntime *js_rt,  // runtime being interrupted
+	void *opaque       // deadline, milliseconds
+) {
+	return (_UDF_NowMs () > *(int64_t*)opaque) ? 1 : 0 ;
+}
+
+// arm an interrupt handler bounding a single JS evaluation on js_rt
+//
+// memory is capped by JS_SetMemoryLimit, but nothing caps CPU: a script
+// containing an unterminating loop pins its thread forever, and enough of them
+// exhaust the pool. The budget is the configured query timeout, bounded by
+// UDF_JS_TIMEOUT_CAP_MS so that a timeout of 0, which means "no limit" for
+// queries, still cannot let a script hold a thread indefinitely
+//
+// returns the deadline, to be passed to UDF_DisarmJSDeadline
+int64_t *UDF_ArmJSDeadline
+(
+	JSRuntime *js_rt  // runtime to bound
+) {
+	ASSERT (js_rt != NULL) ;
+
+	uint64_t timeout = 0 ;  // unlimited
+	Config_Option_get (Config_TIMEOUT_DEFAULT, &timeout) ;
+
+	int64_t budget = (timeout > 0 && timeout < UDF_JS_TIMEOUT_CAP_MS)
+		? (int64_t)timeout
+		: (int64_t)UDF_JS_TIMEOUT_CAP_MS ;
+
+	int64_t *deadline_ms = rm_malloc (sizeof (int64_t)) ;
+	*deadline_ms = _UDF_NowMs () + budget ;
+
+	JS_SetInterruptHandler (js_rt, _UDF_InterruptHandler, deadline_ms) ;
+
+	return deadline_ms ;
+}
+
+// clear the interrupt handler once the evaluation completes, so a deadline set
+// for one evaluation cannot fire during the next
+void UDF_DisarmJSDeadline
+(
+	JSRuntime *js_rt,     // runtime to release
+	int64_t *deadline_ms  // deadline returned by UDF_ArmJSDeadline
+) {
+	JS_SetInterruptHandler (js_rt, NULL, NULL) ;
+	rm_free (deadline_ms) ;
+}
 
 // allocate and return a new JavaScript runtime for UDF operations
 // each call creates an independent runtime
@@ -281,8 +343,10 @@ bool UDF_Load
 	JSRuntime *js_rt  = UDF_GetJSRuntime () ;
 	JSContext *js_ctx = UDF_GetValidationJSContext (js_rt) ;
 
+	int64_t *deadline = UDF_ArmJSDeadline (js_rt) ;
 	JSValue val = JS_Eval (js_ctx, script, script_len, "<input>",
 			JS_EVAL_TYPE_GLOBAL) ;
+	UDF_DisarmJSDeadline (js_rt, deadline) ;
 
     // report exception
     if (JS_IsException (val)) {
@@ -318,7 +382,9 @@ bool UDF_Load
 
 	// re-evaluate the script this time with the 'register' function actually
 	// adding UDF functions to the UDF repository
+	deadline = UDF_ArmJSDeadline (js_rt) ;
 	val = JS_Eval (js_ctx, script, script_len, "<input>", JS_EVAL_TYPE_GLOBAL) ;
+	UDF_DisarmJSDeadline (js_rt, deadline) ;
 
 	// although we've passed validation we can still fail registering the lib
 	// this can happen if the scripts tried to register the same function
@@ -344,9 +410,38 @@ cleanup:
 	if (res == false && replace == true) {
 		// we've failed to replace the library
 		// restore previous version
+		//
+		// this re-evaluates the old script, so it is subject to the same
+		// deadline as any other load and can fail. An ASSERT here compiles out
+		// in release, which would leave the library removed and the caller told
+		// only that the replacement failed
+		char *restore_err = NULL ;
 		bool restore = UDF_Load (prev_script, strlen(prev_script), lib, lib_len,
-				false, NULL) ;
-		ASSERT (restore) ;
+				false, &restore_err) ;
+
+		if (!restore) {
+			RedisModule_Log (NULL, "warning",
+					"UDF: failed to restore library '%s' after a failed "
+					"replace, the library is no longer loaded: %s", lib,
+					(restore_err != NULL) ? restore_err : "unknown error") ;
+
+			// say that the old library is gone, not just that the replacement
+			// failed, since the two leave the server in very different states
+			if (err != NULL) {
+				char *combined = NULL ;
+				asprintf (&combined,
+						"%s. Restoring the previous version also failed: %s. "
+						"Library '%s' is no longer loaded",
+						(*err != NULL) ? *err : "Failed to replace UDF library",
+						(restore_err != NULL) ? restore_err : "unknown error",
+						lib) ;
+
+				if (*err != NULL) free (*err) ;
+				*err = combined ;
+			}
+		}
+
+		if (restore_err != NULL) free (restore_err) ;
 	}
 
 	UDF_LIB = NULL ;

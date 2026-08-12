@@ -43,5 +43,18 @@ JSValueConst *UDFCtx_GetFunction
 );
 
 // free UDF context
+// records why `lib_name` failed to load; takes ownership of `err`
+void UDFCtx_SetLibraryError
+(
+	const char *lib_name,  // library that failed
+	char *err              // reason, ownership transferred
+) ;
+
+// returns why `lib_name` failed to load into this thread's context, or NULL
+const char *UDFCtx_GetLoadError
+(
+	const char *lib_name  // library the caller was looking up
+) ;
+
 void UDFCtx_Free(void) ;
 

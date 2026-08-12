@@ -15,6 +15,25 @@ typedef enum {
 	UDF_FUNC_REG_MODE_GLOBAL     // register UDF functions in global functions repository
 } UDF_JSCtxRegisterFuncMode ;
 
+// absolute ceiling on a single JS evaluation, in milliseconds
+//
+// a query timeout of 0 means "no limit" for queries; for JS it falls back to
+// this, so a script can never hold a thread indefinitely
+#define UDF_JS_TIMEOUT_CAP_MS 30000
+
+// arm an interrupt handler bounding a single JS evaluation
+int64_t *UDF_ArmJSDeadline
+(
+	JSRuntime *js_rt  // runtime to bound
+) ;
+
+// clear the interrupt handler once the evaluation completes
+void UDF_DisarmJSDeadline
+(
+	JSRuntime *js_rt,     // runtime to release
+	int64_t *deadline_ms  // deadline returned by UDF_ArmJSDeadline
+) ;
+
 // allocate and return a new JavaScript runtime for UDF operations
 // each call creates an independent runtime
 // the caller owns the runtime and is responsible for freeing it via

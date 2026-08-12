@@ -92,7 +92,11 @@ static int _GraphContextType_AuxLoad
 	int when
 ) {
 	if (when == REDISMODULE_AUX_BEFORE_RDB) {
-		AUXLoad (rdb) ;
+		// a library that fails to load must fail the load rather than leave the
+		// server up reporting success with the library missing
+		if (!AUXLoad (rdb)) {
+			return REDISMODULE_ERR;
+		}
 		ModuleEventHandler_AUXBeforeKeyspaceEvent();
 	} else {
 		RedisModule_LoadUnsigned (rdb) ;

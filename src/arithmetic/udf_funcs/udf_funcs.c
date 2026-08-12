@@ -74,7 +74,16 @@ SIValue AR_UDF
 	// locate function
 	JSValueConst *fn = UDFCtx_GetFunction (lib_name, func_name) ;
 	if (fn == NULL) {
-		// it is possible for the function to be missing
+		// the function may be missing because this library failed to load into
+		// this thread's context, e.g. its top-level code threw or was
+		// interrupted; report that rather than implying it was never registered
+		const char *load_err = UDFCtx_GetLoadError (lib_name) ;
+		if (load_err != NULL) {
+			ErrorCtx_SetError ("%s", load_err) ;
+			return SI_NullVal () ;
+		}
+
+		// otherwise it is genuinely absent
 		// this can happen if a query is trying to access a UDF as it is being
 		// removed via GRAPH.UDF DELETE
 		char *concat ;
@@ -99,7 +108,9 @@ SIValue AR_UDF
 	// setup interrupt handler
 	//--------------------------------------------------------------------------
 
-	// set timeout on UDF if timeout is configured and is not unlimited
+	// bound the call. A configured timeout of 0 means "no limit" for queries;
+	// for JS it falls back to UDF_JS_TIMEOUT_CAP_MS, since an unbounded script
+	// pins its thread forever and enough of them exhaust the pool
 	uint64_t timeout = 0 ;  // unlimited
 	int64_t *deadline_ms = NULL ;
 	if (Config_Option_get (Config_TIMEOUT_DEFAULT, &timeout) && timeout != 0) {
@@ -115,6 +126,8 @@ SIValue AR_UDF
 		*deadline_ms = _current_time_in_ms() + timeout - elapsed ;
 
 		JS_SetInterruptHandler (js_rt, js_interrupt_handler, deadline_ms) ;
+	} else {
+		deadline_ms = UDF_ArmJSDeadline (js_rt) ;
 	}
 
 	// invoke UDF
