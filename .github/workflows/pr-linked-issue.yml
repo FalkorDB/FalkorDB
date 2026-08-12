@@ -8,8 +8,16 @@
 #   2. `edited` is in the trigger list, so re-titling/re-describing a PR
 #      re-evaluates the verdict rather than leaving a stale one.
 #
-# There are no exemptions: bot PRs (dependabot, batch-backport) must also close
-# an issue. That is a deliberate policy choice, not an oversight.
+# Dependabot is the one exemption. Its PRs are opened mechanically by the
+# Dependabot app, which cannot attach an issue through the Development sidebar,
+# and its runs get a read-only Dependabot-scoped token — so the assert could
+# never be satisfied and every dependency bump was permanently blocked (see
+# run 31624938048 on PR #2474). The exemption is applied INSIDE the step rather
+# than as a job-level `if:`, so the required check still reports a conclusion
+# instead of leaving the PR waiting on a status that never arrives.
+#
+# Every other bot (batch-backport included) must still close an issue. That is a
+# deliberate policy choice, not an oversight.
 #
 # WHY THE DEVELOPMENT SIDEBAR, NOT `Closes #N` KEYWORDS: GitHub only registers a
 # closing link from a body keyword when the PR targets the repository's DEFAULT
@@ -54,8 +62,23 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PR: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
+          # Dependabot cannot link an issue: its PRs are opened by the app, which
+          # has no access to the Development sidebar, and cannot be asked to file
+          # an issue first. Pass the check for it instead of blocking every
+          # dependency bump forever.
+          if [ "${PR_AUTHOR:-}" = "dependabot[bot]" ] || [ "${PR_AUTHOR:-}" = "dependabot-preview[bot]" ]; then
+            echo "PR #${PR} is authored by ${PR_AUTHOR}; exempt from the linked-issue requirement."
+            {
+              echo "### PR closes an issue"
+              echo ""
+              echo "Skipped: \`${PR_AUTHOR}\` PRs are exempt from the linked-issue requirement."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
           # closingIssuesReferences is the only source that covers BOTH a
           # `Closes #N` keyword in the PR body AND an issue attached through the
           # PR's "Development" sidebar. REST exposes neither.
