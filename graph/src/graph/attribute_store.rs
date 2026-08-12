@@ -121,6 +121,11 @@ use rustc_hash::FxHashMap;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::value::Value;
 
+/// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
+/// (`USHRT_MAX`, `src/graph/entities/attribute_set.h`). Never a valid id, so an id
+/// this large in an RDB is malformed rather than merely out of our range.
+pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
+
 /// Insertion-ordered map of attribute names to attribute indices.
 ///
 /// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
@@ -1313,11 +1318,16 @@ impl AttributeStore {
 
             let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_count as usize);
             for _ in 0..attr_count {
-                let attr_id = r.read_unsigned()? as u16;
+                // Validate before narrowing. Casting first defeats the bound: an
+                // encoded id of 65536 truncates to 0, which then passes any nonempty
+                // `attr_limit` and lands on whatever attribute 0 happens to be.
+                let raw_attr_id = r.read_unsigned()?;
                 let value = Value::decode(r)?;
 
-                if (attr_id as usize) < attr_limit && !matches!(value, Value::Null) {
-                    entries.push((attr_id, value));
+                let in_range =
+                    raw_attr_id < attr_limit as u64 && raw_attr_id < u64::from(ATTRIBUTE_ID_NONE);
+                if in_range && !matches!(value, Value::Null) {
+                    entries.push((raw_attr_id as u16, value));
                 }
             }
 

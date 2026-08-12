@@ -75,9 +75,9 @@ class testRdbCLayout():
             keys = [k for k in self.con.execute_command("KEYS", "*")
                     if not str(k).startswith("telemetry")]
             self.env.assertEquals(len(keys), 1,
-                message=f"exactly one user graph should exist while dumping; found "
+                message="exactly one user graph should exist while dumping; found "
                         f"{keys}. Another graph with the same label would be "
-                        f"anchored on too")
+                        "anchored on too")
         self.con.execute_command("SAVE")
         directory = self.con.execute_command("CONFIG", "GET", "dir")[1]
         filename = self.con.execute_command("CONFIG", "GET", "dbfilename")[1]
@@ -132,6 +132,10 @@ class testRdbCLayout():
             message="a `range:`-prefixed field name reached the RDB; C reads that "
                     "name literally and can then no longer match a constraint to "
                     "its supporting index")
+        self.env.assertTrue(b"embedding\x00" in blob,
+            message="the bare vector field name must be written — asserting only the "
+                    "absence of the prefixed form would also pass if the encoder "
+                    "dropped the field altogether")
         self.env.assertFalse(b"vector:embedding\x00" in blob,
             message="a `vector:`-prefixed field name reached the RDB")
         graph.delete()
@@ -158,13 +162,13 @@ class testRdbCLayout():
 
         matches = [ws for ws in found if ws[:len(expected)] == expected]
         self.env.assertEquals(len(matches), 1,
-            message=f"expected exactly one schema entry reading "
+            message="expected exactly one schema entry reading "
                     f"{expected} (has_index, constraint count, type, field count); "
                     f"got {found}. A zero word between the type and the field count "
-                    f"is the status field, which C never writes -- it leaves C's "
-                    f"reader one field out of step for the rest of the block, which "
-                    f"is why C refused a two-constraint RDB outright while a "
-                    f"one-constraint RDB parsed by luck")
+                    "is the status field, which C never writes -- it leaves C's "
+                    "reader one field out of step for the rest of the block, which "
+                    "is why C refused a two-constraint RDB outright while a "
+                    "one-constraint RDB parsed by luck")
         if matches:
             ids = matches[0][len(expected):len(expected) + n]
             self.env.assertEquals(sorted(ids), list(range(n)),
@@ -191,18 +195,18 @@ class testRdbCLayout():
         statuses = [r[0] for r in graph.query(
             "CALL db.constraints() YIELD status RETURN status").result_set]
         self.env.assertEquals(statuses, ["FAILED"],
-            message=f"this test needs a FAILED constraint to be meaningful; "
+            message="this test needs a FAILED constraint to be meaningful; "
                     f"got {statuses}")
 
         found = self._schema_words(self._dump_bytes(LABEL), LABEL)
         # has_index=false, then a constraint count of zero.
         matches = [ws for ws in found if ws[:2] == [0, 0]]
         self.env.assertEquals(len(matches), 1,
-            message=f"expected the schema to encode zero constraints, reading "
+            message="expected the schema to encode zero constraints, reading "
                     f"[0, 0] for (has_index, constraint count); got {found}. A "
-                    f"count of 1 means the FAILED constraint was encoded, and C "
-                    f"would load it as active because its format has no field to "
-                    f"say otherwise")
+                    "count of 1 means the FAILED constraint was encoded, and C "
+                    "would load it as active because its format has no field to "
+                    "say otherwise")
         graph.delete()
 
     def test04_udf_strings_are_nul_terminated(self):
@@ -222,13 +226,30 @@ class testRdbCLayout():
         # to run. Ablating each half separately is what established that.
         self._reset()
         lib = "NulTermLib"
-        self.db.udf_load(lib, "function double (x) { return x * 2; }\n"
-                              f"falkor.register ('double', double);", True)
+        # Kept under 64 bytes *including* the terminator on purpose: redis encodes a
+        # string that short with a single-byte length, which the assertion below reads
+        # directly. Longer strings switch to a multi-byte encoding.
+        script = "function d (x) { return x*2; } falkor.register('d', d);"
+        assert len(script) + 1 < 64, "script must stay in redis' 6-bit length encoding"
+        self.db.udf_load(lib, script, True)
         # A graph must exist for the keyspace to be worth saving.
         self.db.select_graph(GRAPH_ID + "_udf").query("RETURN 1")
 
         blob = self._dump_bytes()
         self.env.assertTrue(lib.encode() + b"\x00" in blob,
-            message=f"the UDF library name must be written NUL-terminated, as C's "
+            message="the UDF library name must be written NUL-terminated, as C's "
                     f"`AUXSaveUDF_latest` does; found {lib!r} without a terminator, "
-                    f"which C reads as that name plus whatever bytes follow it")
+                    "which C reads as that name plus whatever bytes follow it")
+        # The script needs the same treatment — C reads it as a C string too — but
+        # searching for `script + NUL` does not test it: whatever follows the script in
+        # the RDB is often a zero byte anyway, so that assertion passes with the
+        # terminator removed (confirmed by ablation). What does distinguish the two is
+        # the *length prefix* redis writes before the bytes: it must count the
+        # terminator.
+        idx = blob.find(script.encode())
+        self.env.assertNotEqual(idx, -1, message="the UDF script must be in the RDB")
+        self.env.assertEquals(blob[idx - 1], len(script) + 1,
+            message=f"the UDF script's length prefix must count its NUL terminator: "
+                    f"expected {len(script) + 1}, found {blob[idx - 1]}. A prefix of "
+                    f"{len(script)} means the script was written unterminated, and C "
+                    f"reads it as a C string")

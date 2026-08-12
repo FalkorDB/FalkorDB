@@ -47,7 +47,6 @@ class testAttributeIdSpace(FlowTestsBase):
         #      full sync rather than from replayed ADD_ATTRIBUTE effects;
         #   3. the write is replicated as an effect, not verbatim.
         env = self.env
-        master = env.getConnection()
         replica_con = env.getSlaveConnection()
         graph = self.db.select_graph(GRAPH_ID)
         # Read the replica through the same parsed client the master uses, or the two
@@ -86,7 +85,7 @@ class testAttributeIdSpace(FlowTestsBase):
 
         env.assertEquals(replica_props, master_props,
             message=f"replica diverged: master {master_props}, replica {replica_props} "
-                    f"— an effect's attribute id resolved to a different attribute")
+                    "— an effect's attribute id resolved to a different attribute")
 
         # State the failure directly too, so a regression names itself rather than
         # showing up as a dict comparison.
@@ -152,15 +151,15 @@ class testAttributeIdSpace(FlowTestsBase):
             # these names were created in an order alphabetical sorting would not
             # reproduce.
             self.env.assertEquals(order["labels"], self.LABELS,
-                message=f"db.labels() must report ids in creation order, not sorted; "
+                message="db.labels() must report ids in creation order, not sorted; "
                         f"got {order['labels']}")
             self.env.assertEquals(order["types"], self.TYPES,
-                message=f"db.relationshipTypes() must report ids in creation order; "
+                message="db.relationshipTypes() must report ids in creation order; "
                         f"got {order['types']}")
             # Attributes include the ones the edges carry, appended after the node
             # ones, so compare only the prefix this test controls.
             self.env.assertEquals(order["attrs"][:len(self.ATTRS)], self.ATTRS,
-                message=f"db.propertyKeys() must report ids in creation order; "
+                message="db.propertyKeys() must report ids in creation order; "
                         f"got {order['attrs']}")
         return order
 
@@ -187,7 +186,7 @@ class testAttributeIdSpace(FlowTestsBase):
         self.env.assertEquals(after, before,
             message=f"schema ids shifted across a reload: before {before}, after "
                     f"{after}. An id is meaningless on its own, so a shift silently "
-                    f"repoints every effect and every stored span")
+                    "repoints every effect and every stored span")
         # And the data still reads back through those ids.
         for i, label in enumerate(self.LABELS):
             self.env.assertEquals(
@@ -233,9 +232,9 @@ class testAttributeIdSpace(FlowTestsBase):
 
         replica = self._schema_order(Graph(replica_con, GRAPH_ID + "_sync"))
         self.env.assertEquals(replica, master,
-            message=f"replica disagrees with master on schema ids after full sync: "
+            message="replica disagrees with master on schema ids after full sync: "
                     f"master {master}, replica {replica}. Every subsequent effect "
-                    f"carries these ids with no name to verify against")
+                    "carries these ids with no name to verify against")
         graph.delete()
 
     @staticmethod
