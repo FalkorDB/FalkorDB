@@ -337,6 +337,36 @@ class testIndexScanFlow():
         plan = str(self.graph.explain(q))
         self.env.assertNotContains("Node By Index Scan", plan)
 
+        # a negative radius can never match: no distance is below zero. Handing
+        # such a range to the index used to hang the server, and later to
+        # segfault it inside the index iterator.
+        # https://github.com/FalkorDB/FalkorDB/issues/291
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) < -20000
+        RETURN r"""
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # the same when the negative bound is computed rather than a literal
+        # https://github.com/FalkorDB/FalkorDB/issues/281
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) <= -(round(0.7784249186515808))
+        RETURN r"""
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # zero radius is the boundary: still no match, the point is not at
+        # distance 0 from a different point
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:40.4, longitude:30.3})) < 0
+        RETURN r"""
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # the crash was asynchronous - the reply arrived and the server died
+        # afterwards - so the index must still be queryable
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) < 1000
+        RETURN count(r)"""
+        self.env.assertEqual(self.graph.query(q).result_set, [[1]])
+
     def test14_index_scan_utilize_array(self):
         # Querying indexed properties using IN a constant array should utilize indexes.
         query = "MATCH (a:person) WHERE a.age IN [34, 33] RETURN a.name ORDER BY a.name"
