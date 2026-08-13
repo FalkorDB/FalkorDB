@@ -1,4 +1,4 @@
-use crate::query_session::QuerySession;
+use crate::query_session::{QuerySession, WriteFacts};
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::ConstraintType;
@@ -187,34 +187,23 @@ pub fn graph_constraint(
                     // concurrent `db.constraints()` still sees the constraint UNDER
                     // CONSTRUCTION.
                     //
-                    // `begin_preauthorized`: escalation must NOT re-authorize this
-                    // write (#2371). It publishes no replication of its own, and it runs
-                    // on the replica too — applying the master's replicated
-                    // GRAPH.CONSTRAINT — where a read-only check would reject it and
-                    // leave the constraint stuck UNDER CONSTRUCTION, diverging from the
-                    // master.
+                    // `replicates: false` — this thread emits no replication of its
+                    // own, so no pause window can be propagated into. #2419 adds a
+                    // GRAPH.EFFECT re-announce here, and must flip this to `true` in
+                    // the same commit.
                     //
-                    // Both reasons expire with #2419, which re-announces the finished
-                    // constraint as a GRAPH.EFFECT from this very thread — making it a
-                    // background mutate-*and-replicate* path, the exact shape that kills
-                    // a master inside a CLIENT PAUSE / failover window — and installs the
-                    // primary's outcome on the replica instead of recomputing it.
-                    //
-                    // Its fix is to not reach here at all when mirrored, adapting C's
-                    // `sync = LOADING || REPLICATED` routing (`cmd_constraint.c:575-585`):
-                    // validate inline before the commit when the command is replicated or
-                    // replayed, and spawn only for a client's own write, which is then an
-                    // ordinary `begin`. `LOADING` matters as much as `REPLICATED` here —
-                    // a legacy AOF still holds the doubled verbatim GRAPH.CONSTRAINT
-                    // CREATE, which reaches this on a non-primary with `LOADING` set and
-                    // `REPLICATED` clear.
-                    //
-                    // What must not happen is this staying a plain `begin` while the
-                    // thread both replicates and still runs on a non-primary. The async
-                    // path needs >10_000 entities (`Graph::create_constraint`), so no
-                    // existing test would have caught that; `testConstraintReplication::
-                    // test_02_async_validation_reaches_operational_on_replica` now does.
-                    let session = QuerySession::begin_preauthorized(&graph_clone);
+                    // `originated_here: false` — it also runs on a replica, applying
+                    // the master's replicated GRAPH.CONSTRAINT, where a READONLY
+                    // rejection would strand the constraint UNDER CONSTRUCTION and
+                    // diverge. Covered by testConstraintReplication::
+                    // test_02_async_validation_reaches_operational_on_replica.
+                    let session = QuerySession::begin_with(
+                        &graph_clone,
+                        WriteFacts {
+                            replicates: false,
+                            originated_here: false,
+                        },
+                    );
                     let results = session.with_graph(|tg| {
                         tg.graph
                             .read()

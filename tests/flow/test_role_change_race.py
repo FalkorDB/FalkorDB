@@ -1,6 +1,6 @@
 import time
 import threading
-from common import *
+from common import Env, Environment, FlowTestsBase, ResponseError, SANITIZER
 
 GRAPH_ID = "role_change_race"
 
@@ -93,6 +93,9 @@ class testRoleChangeRace(FlowTestsBase):
         try:
             self.env.getConnection().execute_command("REPLICAOF", "NO", "ONE")
         except Exception:
+            # Best-effort: a test that crashed the server, or left it mid
+            # transition, may leave nothing reachable to restore. Raising here
+            # would replace the real failure with a teardown error.
             pass
 
     def test01_demotion_during_inflight_write_does_not_crash_master(self):
@@ -163,10 +166,10 @@ class testRoleChangeRace(FlowTestsBase):
         confirmed = sum(create_counts) + 1  # +1 for the CREATE just above
         ambiguous = sum(unblocked_counts)
         actual = graph.query("MATCH (n:P) RETURN count(n)").result_set[0][0]
-        env.assertTrue(actual >= confirmed,
+        env.assertGreaterEqual(actual, confirmed,
             message=f"writes were lost: {actual} nodes for {confirmed} successful "
                     f"replies")
-        env.assertTrue(actual <= confirmed + ambiguous,
+        env.assertLessEqual(actual, confirmed + ambiguous,
             message=f"writes were duplicated: {actual} nodes exceeds "
                     f"{confirmed} successful replies plus {ambiguous} "
                     f"force-unblocked writes of unknown outcome")
@@ -191,6 +194,11 @@ class testRoleChangeRace(FlowTestsBase):
         graph.query("CREATE (:P {v: 1})")
         time.sleep(0.5)
         before = conn.execute_command("XLEN", stream)
+        # Positive control: without this, a build with telemetry disabled would
+        # satisfy every assertion below with an always-empty stream.
+        env.assertGreater(before, 0,
+            message="telemetry stream is empty before the pause - the flusher "
+                    "never dispatched, so this test would pass vacuously")
 
         # PAUSE WRITE sets PAUSE_ACTION_REPLICA, so the flusher holds its batch.
         # Reads still run, and every query enqueues a telemetry entry.

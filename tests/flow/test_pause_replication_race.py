@@ -1,6 +1,6 @@
 import time
 import threading
-from common import *
+from common import Env, Environment, FlowTestsBase, Graph, ResponseError, SANITIZER
 
 GRAPH_ID = "pause_replication_race"
 
@@ -24,15 +24,19 @@ _EXPECTED_WRITE_ERRORS = (
 stop_event = threading.Event()
 
 
-def _writer(env, idx, create_counts):
+def _writer(env, idx, create_counts, unexpected):
     conn = env.getConnection()
     while not stop_event.is_set():
         try:
             conn.execute_command("GRAPH.QUERY", GRAPH_ID, "CREATE (n:P) RETURN 1")
             create_counts[idx] += 1
         except ResponseError as e:
-            if any(msg in str(e) for msg in _EXPECTED_WRITE_ERRORS):
+            msg = str(e)
+            if any(m in msg for m in _EXPECTED_WRITE_ERRORS):
                 continue
+            # anything else means the write path is broken in a new way; record
+            # it so an adaptive expected_count can't quietly absorb it
+            unexpected.append(msg)
             return
         except Exception:
             # a real connection-level failure - most likely the master
@@ -104,7 +108,9 @@ class testPauseReplicationRace(FlowTestsBase):
         probe_conn = env.getConnection()
 
         create_counts = [0] * WRITER_THREADS
-        writers = [threading.Thread(target=_writer, args=(env, i, create_counts),
+        unexpected = []
+        writers = [threading.Thread(target=_writer,
+                                    args=(env, i, create_counts, unexpected),
                                     daemon=True)
                    for i in range(WRITER_THREADS)]
         pauser = threading.Thread(target=_pauser, args=(env,), daemon=True)
@@ -141,7 +147,10 @@ class testPauseReplicationRace(FlowTestsBase):
         # applied around a rejected commit) or lost (dropped despite a
         # success reply) under the pause/race stress
         expected_count = sum(create_counts)
-        env.assertTrue(expected_count > 0,
+        env.assertEqual(unexpected, [],
+            message=f"writers saw unexpected errors: {unexpected[:3]}")
+
+        env.assertGreater(expected_count, 0,
             message="no writes ever succeeded - the stress loop isn't "
                     "exercising the write path")
 

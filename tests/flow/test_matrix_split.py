@@ -9,9 +9,6 @@ A file goes to `spawn_files` if ANY Env() invocation passes one of:
   - env='oss-cluster' — needs a multi-node cluster
   - shardsCount      — same as above
 
-…or if it is listed in SPAWN_ONLY_FILES, for tests whose *behaviour* — rather
-than their Env() arguments — makes a shared instance unsafe.
-
 NOT spawn-forcing (the services job handles these directly):
   - enableDebugCommand — services container is launched with
                          REDIS_ARGS=--enable-debug-command yes
@@ -30,21 +27,6 @@ import json
 import os
 import re
 import sys
-
-# Files that must never ride a shared service container, for reasons the Env()
-# arguments don't reveal. Keyed by path exactly as written in
-# flow_tests_done.txt. Keep each entry's reason with it.
-SPAWN_ONLY_FILES = {
-    # Pulses CLIENT PAUSE against the whole server and asserts the master
-    # survives. On a shared container that pause stalls every other class in
-    # the cell, and a regression takes them all down with it.
-    "tests/flow/test_pause_replication_race.py",
-    # Demotes the server with REPLICAOF mid-test. On a shared container every
-    # other class in the cell would find itself writing to a read-only replica,
-    # and a failure that skips the restore leaves it that way for the rest of
-    # the run.
-    "tests/flow/test_role_change_race.py",
-}
 
 # Cluster topology forces spawn regardless of moduleArgs.
 CLUSTER_RE = re.compile(
@@ -121,9 +103,6 @@ def files_for_entry(entry):
 
 def needs_spawn(paths):
     for p in paths:
-        # Behavioural opt-out — nothing in the Env() call reveals these.
-        if p in SPAWN_ONLY_FILES:
-            return True
         try:
             with open(p, encoding="utf-8") as f:
                 content = f.read()

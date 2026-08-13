@@ -1,5 +1,5 @@
 use crate::dispatch::must_run_inline;
-use crate::query_session::{QuerySession, hold_gil};
+use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{BlockedClient, ThreadedGraph, ffi, register_graph},
@@ -824,17 +824,20 @@ pub fn graph_bulk_insert(
     // would diverge us. Decided here, on the main thread, because the worker's detached
     // context cannot see REPLICATED.
     //
-    // Down to one flag. `REPLICATED` and `LOADING` used to need capturing here too, but
-    // `must_run_inline` (#2420, widened to C's full dispatcher set in #2421) now routes
-    // both inline, so neither can reach this worker at all.
+    // `must_run_inline` (#2420, widened to C's full dispatcher set in #2421) routes
+    // REPLICATED and LOADING inline, so neither reaches this worker. ASYNC_LOADING is
+    // the exception: it is in C's *authorization* bypass but in neither C's dispatcher
+    // predicate nor ours, so such a batch still spawns a worker — and that worker can
+    // escalate after the loading window has closed, where a live read would reject a
+    // write that was already authorized and persisted.
     //
-    // `ASYNC_LOADING` is the exception, and deliberately so: it is in C's *authorization*
-    // bypass (`query_ctx.c`) but in neither C's dispatcher predicate nor ours, so a batch
-    // admitted during a diskless swapdb load still spawns a worker. It has to be captured
-    // rather than read live in `reauthorize_write`, because that worker can escalate after
-    // the loading window has closed, and the live read would then abort a write that was
-    // already authorized and persisted.
-    let preauthorized = ctx.get_flags().contains(ContextFlags::ASYNC_LOADING);
+    // Narrower than C, deliberately: C bypasses authorization wholesale on
+    // ASYNC_LOADING, dropping the pause check with it. This worker does replicate
+    // (phase 2 below), so it keeps `replicates: true` and only waives the role check.
+    let facts = WriteFacts {
+        replicates: true,
+        originated_here: !ctx.get_flags().contains(ContextFlags::ASYNC_LOADING),
+    };
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let token_data: Vec<Vec<u8>> = token_strings
         .iter()
@@ -852,11 +855,7 @@ pub fn graph_bulk_insert(
             // Build, commit and replicate under one session, which releases its locks
             // when this block ends — before the client is unblocked below.
             let result: Result<(), String> = 'phase: {
-                let session = if preauthorized {
-                    QuerySession::begin_preauthorized(&graph)
-                } else {
-                    QuerySession::begin(&graph)
-                };
+                let session = QuerySession::begin_with(&graph, facts);
                 // Phase 1: build the new version as a reader, GIL-free. What we take
                 // here is the MVCC *write slot* — the single-writer marker on
                 // `MvccGraph`, not a lock — so if another writer holds it, fail with a
