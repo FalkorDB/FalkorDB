@@ -485,6 +485,35 @@ class testGraphInfo():
             for t in threads:
                 t.join()
 
+class testGraphInfoStaleEntry():
+    """A queued telemetry entry belongs to the graph that produced it, not to that
+       graph's name.
+
+       Entries are written by a background thread a few milliseconds later, so a
+       name can be flushed and rebound to a different graph while one is still in
+       flight. Writing it then attributes one graph's query to another's stream and
+       recreates a stream key `FLUSHALL` removed — on the master only, since a
+       key-API write does not replicate, which is what made
+       `test_replication_states` fail: it compares master and replica keyspaces.
+       The C engine cannot get this wrong because its queries log is owned by the
+       GraphContext and is freed with it."""
+
+    def __init__(self):
+        self.env, self.db = Env()
+        self.conn = self.env.getConnection()
+
+    def test01_stale_entry_not_written_to_a_new_graph(self):
+        g = self.db.select_graph("stale")
+        g.query("CREATE (:N {v: 1})")          # queues an entry for this graph
+        payload = self.conn.dump("stale")      # dump/restore keep the payload binary
+        self.conn.flushall()                   # that graph, and its stream, are gone
+        self.conn.restore("stale", 0, payload) # same name, new graph
+        # well past the flusher's window: whatever was going to be written, was
+        time.sleep(1)
+        self.env.assertEqual(self.conn.type(StreamName(g)), "none")
+        keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
+        self.env.assertEqual(keys, ["stale"])
+
 class testGraphInfoCmdInfoDisabled():
     """`CMD_INFO no` must actually stop logging finished queries.
 

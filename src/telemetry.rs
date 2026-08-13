@@ -196,33 +196,6 @@ impl StreamTemplate {
     }
 }
 
-/// Does the graph key itself still exist? The GIL must be held.
-fn graph_exists(
-    ctx: *mut raw::RedisModuleCtx,
-    graph_name: &str,
-) -> bool {
-    let name = create_detached_string(graph_name);
-    let key = unsafe {
-        let f = raw::RedisModule_OpenKey.expect("RedisModule_OpenKey");
-        f(ctx, name, raw::REDISMODULE_READ as c_int)
-    };
-    let exists = if key.is_null() {
-        false
-    } else {
-        let key_type = unsafe {
-            let f = raw::RedisModule_KeyType.expect("RedisModule_KeyType");
-            f(key)
-        };
-        unsafe {
-            let f = raw::RedisModule_CloseKey.expect("RedisModule_CloseKey");
-            f(key);
-        }
-        key_type != raw::REDISMODULE_KEYTYPE_EMPTY as c_int
-    };
-    free_detached_string(name);
-    exists
-}
-
 /// A `RedisModuleString` owned by us rather than by a command's auto-memory.
 fn create_detached_string(s: &str) -> *mut raw::RedisModuleString {
     unsafe {
@@ -254,16 +227,6 @@ fn stream_entries(
     entries: &[PreparedEntry],
     max_len: i64,
 ) {
-    // Only log for a graph that still exists. The C engine gets this for free:
-    // its cron task iterates the graphs currently in the keyspace and drains the
-    // buffer hanging off each one, so queries logged against a graph that has
-    // since been deleted or flushed are dropped with it. Writing by name has no
-    // such link, and would recreate the stream key of a graph that is gone —
-    // visible as a key appearing after a `FLUSHALL`, on the master only, since a
-    // key-API write does not replicate.
-    if !graph_exists(ctx, graph_name) {
-        return;
-    }
     let key_name = create_detached_string(&stream_name(graph_name));
     let key = unsafe {
         let f = raw::RedisModule_OpenKey.expect("RedisModule_OpenKey");
@@ -582,6 +545,15 @@ const FLUSH_LINGER: Duration = Duration::from_millis(5);
 
 struct PendingEntry {
     graph_name: Arc<str>,
+    /// The graph this query ran on, weakly.
+    ///
+    /// Not the name: a name can be flushed and rebound to a *different* graph
+    /// while an entry is still queued, and writing it then attributes one
+    /// graph's query to another's stream — and resurrects a stream key that
+    /// `FLUSHALL` removed. The C engine cannot get this wrong because its
+    /// queries log is owned by the `GraphContext`, so flushing the graph frees
+    /// the pending entries with it; this handle reproduces that ownership.
+    graph: std::sync::Weak<parking_lot::RwLock<crate::graph_core::ThreadedGraph>>,
     entry: TelemetryEntry,
 }
 
@@ -600,6 +572,7 @@ static FLUSHER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 /// Push a telemetry entry to the background channel. Lock-free hot path.
 pub fn enqueue_entry(
     graph_name: &Arc<str>,
+    graph: &Arc<parking_lot::RwLock<crate::graph_core::ThreadedGraph>>,
     entry: TelemetryEntry,
 ) {
     // `CMD_INFO no` means "do not log finished queries", which is exactly this
@@ -616,6 +589,7 @@ pub fn enqueue_entry(
     if let Some(tx) = SENDER.lock().as_ref() {
         let _ = tx.send(PendingEntry {
             graph_name: Arc::clone(graph_name),
+            graph: Arc::downgrade(graph),
             entry,
         });
     }
@@ -730,7 +704,19 @@ fn flusher_loop() {
         // below only creates the `RedisModuleString`s and appends.
         let max_len = MAX_INFO_QUERIES.load(Ordering::Relaxed);
         #[allow(clippy::iter_with_drain)]
-        let mut prepared: Vec<PreparedEntry> = batch.drain(..).map(prepare_entry).collect();
+        let mut prepared: Vec<PreparedEntry> = batch
+            .drain(..)
+            // Drop what belongs to a graph that is gone, or whose name now
+            // refers to a different graph — the pointer check is what
+            // distinguishes "still the same graph" from "same name, new graph
+            // after a FLUSHALL and RESTORE".
+            .filter(|pe| {
+                pe.graph
+                    .upgrade()
+                    .is_some_and(|arc| crate::graph_core::graph_is_registered(&arc))
+            })
+            .map(prepare_entry)
+            .collect();
         // Group by graph so each stream key is opened and trimmed once per batch
         // rather than once per entry. Sorting is enough: entries of one graph end
         // up in one run, and it keeps arrival order within a graph, which is the

@@ -1080,7 +1080,7 @@ pub fn query_mut(
                             is_write: false,
                             timed_out: read_result.timed_out,
                         };
-                        telemetry::enqueue_entry(&key_name, entry);
+                        telemetry::enqueue_entry(&key_name, &graph, entry);
                         drop(bc);
                         unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     }
@@ -1177,7 +1177,7 @@ fn query_sync(
                             is_write: true,
                             timed_out: false,
                         };
-                        telemetry::enqueue_entry(key_name, entry);
+                        telemetry::enqueue_entry(key_name, graph, entry);
                     }
                     Err(err) => {
                         // execute_query_write already released the MVCC write
@@ -1205,7 +1205,7 @@ fn query_sync(
                     is_write: false,
                     timed_out: read_result.timed_out,
                 };
-                telemetry::enqueue_entry(key_name, entry);
+                telemetry::enqueue_entry(key_name, graph, entry);
             }
         }
         Err(err) => {
@@ -1496,7 +1496,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     is_write: true,
                     timed_out: false,
                 };
-                telemetry::enqueue_entry(&key_name, entry);
+                telemetry::enqueue_entry(&key_name, graph, entry);
                 drop(bc);
             }
             Err(err) => {
