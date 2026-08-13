@@ -28,6 +28,16 @@
 //! length, and have no inline attribute predicates. Both ops must have empty
 //! `sibling_edges` and `transposed = false`. When any condition fails the
 //! pair is left alone and the fast/slow paths run as before.
+//!
+//! ## Why fusion is restricted to existence tests
+//!
+//! The fused chain runs as a single boolean matrix product, so its result
+//! says only *whether* a destination is reachable — not how many distinct
+//! paths reach it. On a diamond (`a->b1->c`, `a->b2->c`) the two paths
+//! collapse into one row, which is wrong for a plain `MATCH`: Cypher
+//! requires one row per distinct pair of relationships. Fusing is therefore
+//! only applied under a `SemiApply`/`AntiSemiApply` right branch, where the
+//! rows are discarded and only their existence is consulted.
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
@@ -76,6 +86,37 @@ fn intermediate_unreferenced(
         cur = parent.idx();
     }
     true
+}
+
+/// True when the rows this traverse produces only ever feed an existence
+/// test, so collapsing distinct paths cannot change the query's answer.
+///
+/// `SemiApply`/`AntiSemiApply` run their right branch purely to learn
+/// whether it yields *at least one* row and discard the rows themselves.
+/// Everywhere else the row count is observable — it is the cardinality of
+/// the result set, and it feeds `count(*)` and every other aggregate — so
+/// fusing would silently drop the duplicate rows that distinct paths
+/// through the intermediate node are supposed to produce.
+fn feeds_existence_only(
+    plan: &DynTree<IR>,
+    idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
+) -> bool {
+    let mut cur = idx;
+    while let Some(parent) = plan.node(cur).parent() {
+        match parent.data() {
+            // Row-preserving operators: they neither observe nor alter the
+            // number of paths, so keep walking towards the consumer.
+            IR::CondTraverse { .. } | IR::Filter(_) => {}
+            IR::SemiApply | IR::AntiSemiApply => {
+                // Child 0 is the driving stream, whose rows are emitted and
+                // therefore counted; child 1 is the existence test.
+                return parent.num_children() > 1 && parent.child(1).idx() == cur;
+            }
+            _ => return false,
+        }
+        cur = parent.idx();
+    }
+    false
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)
@@ -170,6 +211,14 @@ fn can_fuse(
     // Already-fused chain entries on the child stay storage-direction by
     // construction (the pass only ever inserts non-transposed hops).
     let _ = c_chain;
+
+    // The fused chain is evaluated as a single boolean matrix product, which
+    // records only *whether* the destination is reachable, not how many
+    // distinct paths reach it. That is only acceptable where the row count
+    // is not observable.
+    if !feeds_existence_only(plan, parent_idx) {
+        return false;
+    }
 
     // Intermediate must not be referenced by any ancestor of the parent CT,
     // since after fusion it disappears from the binding set. (Filters that
