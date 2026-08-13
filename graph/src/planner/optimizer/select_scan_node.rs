@@ -783,9 +783,11 @@ pub(super) fn select_scan_node(
 
                 // Check if child is a planner-added scan before mutating, and
                 // capture any Argument leaf it carries so the rebuilt scan
-                // keeps replaying outer rows.
-                let (child_is_planner_scan, preserved_argument) = if is_leaf {
-                    (false, None)
+                // keeps replaying outer rows. Whatever `Filter`s the subtree
+                // carried are salvaged too, for the same reason: it is about to
+                // be discarded, and they may be the predicate's only copy.
+                let (child_is_planner_scan, preserved_argument, salvaged_filters) = if is_leaf {
+                    (false, None, vec![])
                 } else {
                     let child_idx = optimized_plan.node(ct_idx).child(0).idx();
                     let is_scan = is_planner_scan_subtree(optimized_plan, child_idx);
@@ -796,7 +798,14 @@ pub(super) fn select_scan_node(
                     } else {
                         None
                     };
-                    (is_scan, arg)
+                    // Only when the subtree is actually discarded below; if it
+                    // is kept, its Filters stay with it.
+                    let salvaged = if is_scan || arg_transparent {
+                        filters_of(optimized_plan, child_idx)
+                    } else {
+                        vec![]
+                    };
+                    (is_scan, arg, salvaged)
                 };
 
                 // Remove the old child if it was a planner-added scan or a
@@ -814,15 +823,17 @@ pub(super) fn select_scan_node(
                     ct_idx
                 };
 
-                // Chain reversal: the pruned subtree's Filters constrain the
-                // *old* scan endpoint, which this traverse now binds instead of
-                // scanning, so they cannot move onto the new scan. The planner's
-                // copy above the operator still enforces them.
+                // Reversal moves the scan to the opposite endpoint, so the
+                // salvaged Filters cannot ride along inside the new scan
+                // subtree: they constrain the *old* scan endpoint, which this
+                // traverse now binds rather than scans. Below the traverse
+                // their variable is still unbound. They go back above it, where
+                // it is bound; `push_filters_down` then lowers them as far as
+                // is legal.
                 let scan_subtree =
                     make_scan_subtree(&scan_node, in_merge, preserved_argument, vec![]);
 
-                let mut op = optimized_plan.node_mut(ct_idx);
-                *op.data_mut() = IR::CondTraverse {
+                let new_ct = IR::CondTraverse {
                     relationship: new_rel,
                     emit_relationship: emit,
                     sibling_edges: edges,
@@ -832,11 +843,29 @@ pub(super) fn select_scan_node(
                     bind_relationship: true,
                 };
 
-                if is_leaf || child_is_planner_scan || arg_transparent {
-                    // Add scan subtree (with optional attr filter) as child.
-                    op.push_child_tree(scan_subtree);
+                if salvaged_filters.is_empty() {
+                    let mut op = optimized_plan.node_mut(ct_idx);
+                    *op.data_mut() = new_ct;
+                    if is_leaf || child_is_planner_scan || arg_transparent {
+                        // Add scan subtree (with optional attr filter) as child.
+                        op.push_child_tree(scan_subtree);
+                    }
+                    // else: child is from outer context, keep it.
+                } else {
+                    // Non-empty only when the old child was pruned just above,
+                    // so this node has no children left to preserve.
+                    let mut wrapped = tree!(new_ct, scan_subtree);
+                    // Innermost first, so the original nesting order survives.
+                    for filter in salvaged_filters.into_iter().rev() {
+                        wrapped = tree!(filter, wrapped);
+                    }
+                    let root = wrapped.root();
+                    *optimized_plan.node_mut(ct_idx).data_mut() = root.data().clone();
+                    for child in root.children() {
+                        let child_tree: DynTree<IR> = child.clone_as_tree();
+                        optimized_plan.node_mut(ct_idx).push_child_tree(child_tree);
+                    }
                 }
-                // else: child is from outer context, keep it.
             }
         } else if need_swap && chain.len() > 1 {
             // Best is at a parent CT (best_pos > 0). Reverse the chain.
@@ -893,6 +922,10 @@ pub(super) fn select_scan_node(
             // Argument (those get replaced by a new scan for best_node). When
             // it is replaced, carry over any Argument leaf it held.
             let mut preserved_argument = None;
+            // Filters on the discarded subtree's spine, re-attached above the
+            // reversed chain — see the single-CT path for why they cannot ride
+            // along inside the new scan subtree.
+            let mut salvaged_filters = vec![];
             let existing_child = if is_leaf {
                 None
             } else {
@@ -904,6 +937,7 @@ pub(super) fn select_scan_node(
                     } else {
                         argument_leaf_of(optimized_plan, child_idx)
                     };
+                    salvaged_filters = filters_of(optimized_plan, child_idx);
                     None // Will create a new scan for best_node instead
                 } else {
                     Some(optimized_plan.node_mut(child_idx).clone_as_tree())
@@ -957,6 +991,12 @@ pub(super) fn select_scan_node(
                         subtree = tree!(filter_data, subtree);
                     }
                 }
+            }
+
+            // The whole chain is reversed, so the salvaged predicates' variable
+            // is bound at the top of it. Innermost first, preserving order.
+            for filter in salvaged_filters.into_iter().rev() {
+                subtree = tree!(filter, subtree);
             }
 
             // Replace the chain in the plan. Each `prune` below can trigger

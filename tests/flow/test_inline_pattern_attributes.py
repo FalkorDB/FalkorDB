@@ -100,6 +100,46 @@ class testInlinePatternAttributes(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEqual(actual_result.result_set, [[2]])
 
+    # A predicate from an *earlier* clause sits on the spine of the scan
+    # subtree that gets stitched under the next clause's traverse. When
+    # `select_scan_node` decides the far endpoint is the better scan root, it
+    # prunes that subtree and rebuilds it — and the predicate has to come with
+    # it, above the traverse rather than under the new scan: reversal means the
+    # traverse now *binds* the constrained variable instead of scanning it, so
+    # below the traverse that variable is still unbound.
+    #
+    # Both paths are covered because they salvage separately: one CondTraverse
+    # swaps in place, a longer chain is rebuilt bottom-up. Verified by ablation
+    # — zeroing either path's salvage returns the unfiltered row too.
+    def test15_earlier_clause_predicate_survives_single_swap(self):
+        g = self.db.select_graph(GRAPH_ID + "_salvage1")
+        g.query("CREATE (:B {rn: 'A'})-[:H]->(:C {t: 5}), (:B {rn: 'Z'})-[:H]->(:C {t: 5})")
+        # `c` is filtered from above and labelled, so it outscores `b`, whose
+        # predicate is already down on the stitched scan — the chain reverses.
+        actual = g.query(
+            """MATCH (b:B) WHERE b.rn IN ['A']
+               MATCH (b)-[:H]->(c:C) WHERE c.t = 5
+               RETURN b.rn ORDER BY b.rn"""
+        )
+        self.env.assertEqual(actual.result_set, [['A']])
+        g.delete()
+
+    def test16_earlier_clause_predicate_survives_chain_reversal(self):
+        g = self.db.select_graph(GRAPH_ID + "_salvage2")
+        g.query(
+            "CREATE (:A {p: 'x'})-[:R]->(:M)-[:S]->(:Z {q: 1}), "
+            "(:A {p: 'y'})-[:R]->(:M)-[:S]->(:Z {q: 1})"
+        )
+        # Two hops, so the best endpoint is at a parent CondTraverse and the
+        # whole chain is reversed rather than a single traverse swapped.
+        actual = g.query(
+            """MATCH (a:A) WHERE a.p IN ['x']
+               MATCH (a)-[:R]->(m)-[:S]->(z:Z) WHERE z.q = 1
+               RETURN a.p ORDER BY a.p"""
+        )
+        self.env.assertEqual(actual.result_set, [['x']])
+        g.delete()
+
     # `utilize_index` reaches a MERGE branch's scan through `IncludePending`.
     # The Filter above it must survive that pushdown: `IncludePending` unions
     # in nodes created earlier in the same query, which are not in the index,
