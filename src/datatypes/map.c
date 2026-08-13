@@ -383,7 +383,7 @@ int Map_Compare
 		// key lookup succeeded; compare values
 		order = SIValue_Compare(A[i].val, B[i].val, disjointOrNull);
 		if(disjointOrNull && (*disjointOrNull == COMPARED_NULL ||
-							  *disjointOrNull == DISJOINT)) {
+							  *disjointOrNull == SI_DISJOINT)) {
 			return 0;
 		}
 

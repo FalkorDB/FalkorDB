@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 21 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -46,7 +46,8 @@ class testConfig(FlowTestsBase):
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
                 ("JS_HEAP_SIZE", 256 * 1024 * 1024),
-                ("JS_STACK_SIZE", 1024 * 1024)
+                ("JS_STACK_SIZE", 1024 * 1024),
+                ("RS_INDEX_WORKER_THREADS", 0)
         ]
 
         for i, config in enumerate(response):
@@ -170,6 +171,22 @@ class testConfig(FlowTestsBase):
         except redis.exceptions.ResponseError as e:
             assert("Unknown subcommand for GRAPH.CONFIG" in str(e))
             pass
+
+    def test12_index_worker_threads_immutable(self):
+        # RS_INDEX_WORKER_THREADS is a load-time only configuration; it must
+        # default to 0 and reject runtime GRAPH.CONFIG SET.
+        response = self.db.config_get("RS_INDEX_WORKER_THREADS")
+        self.env.assertEqual(response, 0)
+
+        try:
+            self.redis_con.execute_command("GRAPH.CONFIG SET RS_INDEX_WORKER_THREADS 8")
+            raise AssertionError("GRAPH.CONFIG SET RS_INDEX_WORKER_THREADS should fail at runtime")
+        except redis.exceptions.ResponseError as e:
+            assert("This configuration parameter cannot be set at run-time" in str(e))
+
+        # value must remain unchanged
+        response = self.db.config_get("RS_INDEX_WORKER_THREADS")
+        self.env.assertEqual(response, 0)
 
     def test08_config_reset_to_defaults(self):
         # Revert memory limit to default

@@ -480,10 +480,17 @@ void DateTime_toString
 		*buf = rm_realloc(*buf, sizeof(char) * *bufferLen);
 	}
 
-	// get a tm object from time_t
+	// get a tm object from time_t.
+	// gmtime_r outside assert(): assert() is a no-op under NDEBUG (Release),
+	// which would drop the call and leave `time` uninitialized.
 	struct tm time;
 	time_t rawtime = datetime->datetimeval;
-	assert(gmtime_r(&rawtime, &time) != NULL);
+	if (gmtime_r(&rawtime, &time) == NULL) {
+		// unrepresentable year (see date.c): catch in debug, empty in release.
+		ASSERT(false);
+		(*buf)[*bytesWritten] = '\0';
+		return;
+	}
 
 	// format the date and time up to seconds: 2025-04-14T06:08:21
 	*bytesWritten += strftime(*buf + *bytesWritten, *bufferLen,

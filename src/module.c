@@ -146,6 +146,47 @@ static int GraphBLAS_Init (RedisModuleCtx *ctx) {
 	return REDISMODULE_OK ;
 }
 
+// Initialize the embedded RediSearch library: bring up the LLAPI, restore the
+// legacy TFIDF default scorer, and configure the index worker pool. Must be
+// called after Config_Init -- the worker-thread count is read from config.
+static int _InitRediSearch(RedisModuleCtx *ctx) {
+	if(RediSearch_Init(ctx, REDISEARCH_INIT_LIBRARY) != REDISMODULE_OK) {
+		return REDISMODULE_ERR;
+	}
+
+	// RediSearch 8.6 changed the default scorer from TFIDF to BM25STD.
+	// FalkorDB callers comparing absolute fulltext scores depend on the
+	// legacy TFIDF magnitudes, so opt back in.
+	if(RediSearch_SetDefaultScorer("TFIDF") != REDISMODULE_OK) {
+		RedisModule_Log(ctx, "warning",
+				"Failed to set RediSearch default scorer to TFIDF");
+	}
+
+	// Configure RediSearch's index worker pool from RS_INDEX_WORKER_THREADS.
+	// Default 0: we make no call and RediSearch keeps its worker pool disabled,
+	// so VecSim TIERED indexes run in in-place write mode -- the writer thread
+	// inserts directly into the HNSW graph, single-threaded and in a
+	// deterministic order (approximate KNN, but reproducible). Raising this
+	// enables async background HNSW promotion (concurrent, scales, but with a
+	// nondeterministic insertion order). On a failed call we reset the stored
+	// value to 0 so GRAPH.CONFIG GET reflects the effective (disabled) state.
+	uint64_t rsIndexWorkerThreads;
+	Config_Option_get(Config_RS_INDEX_WORKER_THREADS, &rsIndexWorkerThreads);
+	if(rsIndexWorkerThreads > 0) {
+		if(RediSearch_SetNumWorkerThreads(rsIndexWorkerThreads) != REDISMODULE_OK) {
+			RedisModule_Log(ctx, "warning",
+					"Failed to set RediSearch worker thread count to %" PRIu64
+					"; reporting RS_INDEX_WORKER_THREADS as 0 to match what is in "
+					"effect", rsIndexWorkerThreads);
+			// reflect the effective (disabled) state in GRAPH.CONFIG GET
+			char *cfg_err = NULL;
+			Config_Option_set(Config_RS_INDEX_WORKER_THREADS, "0", &cfg_err);
+		}
+	}
+
+	return REDISMODULE_OK;
+}
+
 int RedisModule_OnLoad
 (
 	RedisModuleCtx *ctx,
@@ -184,10 +225,6 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
-	if(RediSearch_Init(ctx, REDISEARCH_INIT_LIBRARY) != REDISMODULE_OK) {
-		return REDISMODULE_ERR;
-	}
-
 	RedisModule_Log(ctx, "notice", "Starting up FalkorDB version %d.%d.%d.",
 					FALKOR_VERSION_MAJOR, FALKOR_VERSION_MINOR, FALKOR_VERSION_PATCH);
 
@@ -200,6 +237,11 @@ int RedisModule_OnLoad
 	Config_Subscribe_Changes (reconf_handler) ;
 	if (Config_Init (ctx, argv, argc) != REDISMODULE_OK) {
 		return REDISMODULE_ERR ;
+	}
+
+	// bring up the embedded RediSearch library (reads worker-thread config)
+	if(_InitRediSearch(ctx) != REDISMODULE_OK) {
+		return REDISMODULE_ERR;
 	}
 
 	RegisterEventHandlers(ctx);
