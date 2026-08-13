@@ -424,4 +424,12 @@ class testTraversalConstruction():
         self.env.assertContains("fused hop", str(g.explain(not_exists)))
         self.env.assertEqual(g.query(not_exists).result_set, [[0]])
 
+        # an OR of pattern predicates is served by the Or Apply Multiplexer,
+        # whose branches are existence tests too, so fusion holds there as well
+        or_exists = """MATCH (a:A)
+                       WHERE (a)-[:R]->()-[:R]->() OR (a)-[:Q]->()-[:Q]->()
+                       RETURN count(*)"""
+        self.env.assertContains("fused hop", str(g.explain(or_exists)))
+        self.env.assertEqual(g.query(or_exists).result_set, [[1]])
+
         g.delete()

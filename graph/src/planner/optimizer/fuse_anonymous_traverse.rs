@@ -112,6 +112,12 @@ fn feeds_existence_only(
                 // therefore counted; child 1 is the existence test.
                 return parent.num_children() > 1 && parent.child(1).idx() == cur;
             }
+            IR::OrApplyMultiplexer(_) => {
+                // Same shape, one branch per disjunct: child 0 drives, and
+                // children 1..N are existence branches whose rows only feed a
+                // "did anything arrive" test before being discarded.
+                return (1..parent.num_children()).any(|i| parent.child(i).idx() == cur);
+            }
             _ => return false,
         }
         cur = parent.idx();
