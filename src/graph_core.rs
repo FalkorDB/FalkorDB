@@ -50,7 +50,6 @@ use graph::{
     },
     planner::{IR, plan_is_non_deterministic},
     runtime::{
-        eval::evaluate_param,
         pending::{
             EFFECT_CREATE_INDEX, EFFECT_DROP_INDEX, EFFECTS_VERSION, write_string, write_u16,
         },
@@ -492,10 +491,6 @@ pub fn execute_query(
         params_offset,
         ..
     } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
-    let parameters = parameters
-        .into_iter()
-        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-        .collect::<Result<HashMap<_, _>, String>>()?;
     // Single pass over the plan: index DDL (CREATE/DROP INDEX) and a Commit
     // node both mean this is a write. Writes escalate to writer mode lazily
     // during execution (see `crate::query_session`), so no further plan
@@ -583,10 +578,6 @@ pub fn execute_profile(
     if is_write {
         return Ok(ProfileDetect::Write);
     }
-    let parameters = parameters
-        .into_iter()
-        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-        .collect::<Result<HashMap<_, _>, String>>()?;
     let g = session.with_graph(|tg| tg.graph.read());
     let timeout_ms = compute_effective_timeout(per_query_timeout, false)?;
     let runtime = Runtime::new(
@@ -640,10 +631,6 @@ pub fn execute_query_write(
         ..
     } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
     let cached = first_cached;
-    let parameters = parameters
-        .into_iter()
-        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-        .collect::<Result<HashMap<_, _>, String>>()?;
     debug_assert!(plan.iter().any(|n| matches!(
         n,
         IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
