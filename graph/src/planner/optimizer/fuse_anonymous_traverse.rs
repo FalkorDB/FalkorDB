@@ -83,7 +83,6 @@ fn can_fuse(
     parent_ct: &IR,
     child_ct: &IR,
     plan: &DynTree<IR>,
-    parent_idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
 ) -> bool {
     let (
         IR::CondTraverse {
@@ -171,7 +170,6 @@ fn can_fuse(
     // Already-fused chain entries on the child stay storage-direction by
     // construction (the pass only ever inserts non-transposed hops).
     let _ = c_chain;
-    let _ = parent_idx;
 
     // The intermediate disappears from the binding set on fusion, so nothing
     // anywhere may still read it.
@@ -209,7 +207,7 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
             if !matches!(child_node.data(), IR::CondTraverse { .. }) {
                 continue;
             }
-            if can_fuse(parent_node.data(), child_node.data(), plan, idx) {
+            if can_fuse(parent_node.data(), child_node.data(), plan) {
                 fuse_target = Some(idx);
                 break;
             }
