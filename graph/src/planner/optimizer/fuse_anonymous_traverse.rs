@@ -337,3 +337,87 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
         plan.node_mut(child_idx).prune();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use orx_tree::{Bfs, DynTree, NodeRef};
+
+    use super::super::eliminate_true_filters::eliminate_true_filters;
+    use super::super::push_filters_down::push_filters_down;
+    use super::super::reduce_expand_into::reduce_expand_into;
+    use super::super::reduce_var_len_path::reduce_var_len_path;
+    use super::fuse_anonymous_traverse;
+    use crate::parser::cypher::Parser;
+    use crate::planner::{IR, Planner, binder::Binder};
+    use crate::runtime::functions::init_functions;
+    use std::collections::HashMap;
+
+    /// Compiles `query` through parse → bind → plan, then runs the Graph-free
+    /// prefix of the optimizer in pipeline order up to and including
+    /// `fuse_anonymous_traverse`. The skipped passes (`reduce_count`,
+    /// `select_scan_node`, `utilize_index`) need a live GraphBLAS context and
+    /// do not affect whether a CondTraverse pair is fusable.
+    fn optimized_plan(query: &str) -> DynTree<IR> {
+        let _ = init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let mut plan = Planner::new(scope_vars).plan(ir);
+
+        reduce_expand_into(&mut plan);
+        reduce_var_len_path(&mut plan);
+        eliminate_true_filters(&mut plan, &HashMap::new());
+        push_filters_down(&mut plan);
+        fuse_anonymous_traverse(&mut plan);
+        plan
+    }
+
+    /// Number of CondTraverse ops carrying at least one fused hop.
+    fn fused_ops(plan: &DynTree<IR>) -> usize {
+        plan.root()
+            .indices::<Bfs>()
+            .filter(|idx| {
+                matches!(plan.node(*idx).data(),
+                    IR::CondTraverse { chain, .. } if !chain.is_empty())
+            })
+            .count()
+    }
+
+    #[test]
+    fn plain_match_does_not_fuse() {
+        // The row count is observable here, and a boolean matrix product
+        // would lose one row per extra path through the intermediate.
+        let plan = optimized_plan("MATCH (a:A)-[:R]->()-[:R]->(c:C) RETURN count(*)");
+        assert_eq!(fused_ops(&plan), 0);
+    }
+
+    #[test]
+    fn named_intermediate_does_not_fuse() {
+        let plan = optimized_plan("MATCH (a:A)-[:R]->(m)-[:R]->(c:C) RETURN m");
+        assert_eq!(fused_ops(&plan), 0);
+    }
+
+    #[test]
+    fn pattern_predicate_fuses() {
+        // SemiApply consults only whether a row arrives, so collapsing the
+        // paths cannot change the answer.
+        let plan = optimized_plan("MATCH (a:A) WHERE (a)-[:R]->()-[:R]->() RETURN a");
+        assert_eq!(fused_ops(&plan), 1);
+    }
+
+    #[test]
+    fn negated_pattern_predicate_fuses() {
+        let plan = optimized_plan("MATCH (a:A) WHERE NOT (a)-[:R]->()-[:R]->() RETURN a");
+        assert_eq!(fused_ops(&plan), 1);
+    }
+
+    #[test]
+    fn or_of_pattern_predicates_fuses_every_branch() {
+        // Or Apply Multiplexer branches are existence tests too.
+        let plan = optimized_plan(
+            "MATCH (a:A) WHERE (a)-[:R]->()-[:R]->() OR (a)-[:Q]->()-[:Q]->() RETURN a",
+        );
+        assert_eq!(fused_ops(&plan), 2);
+    }
+}
