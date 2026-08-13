@@ -7,7 +7,8 @@
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::Mutex;
-use redis_module::{CallOptions, CallOptionsBuilder, Context, RedisString, RedisValue, raw};
+use redis_module::{Context, RedisValue, raw};
+use std::os::raw::{c_char, c_int};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
@@ -73,28 +74,42 @@ pub struct TelemetryEntry {
     pub timed_out: bool,
 }
 
-/// Pre-formatted XADD arguments for one telemetry entry.
+/// The ten formatted values of one telemetry entry, in field order.
 ///
-/// Built **outside** the Redis module lock so that the only work performed
-/// while the GIL is held is `create_string` + `RM_Call("XADD")`. The pure-Rust
-/// formatting (`format!`, float parsing, stream-key construction) happens off
-/// the critical section, shrinking the window during which the main thread is
-/// stalled.
-struct PreparedXadd {
-    /// Alternating XADD argument tokens (stream key, MAXLEN, fields, values).
-    /// Field names are `'static` borrows; only values are owned.
-    args: Vec<std::borrow::Cow<'static, str>>,
+/// Built **outside** the Redis module lock, so the only work done while the GIL
+/// is held is creating the `RedisModuleString`s and the `StreamAdd` itself. The
+/// field *names* are not here: they are created once and reused, the way the C
+/// engine keeps them in its `_event` template.
+struct PreparedEntry {
+    graph_name: Arc<str>,
+    /// Same order as [`FIELD_NAMES`].
+    values: [String; FIELD_COUNT],
 }
 
-/// Build the XADD argument list for one entry. Pure Rust — no GIL required.
-/// Consumes the entry so the query/params strings are moved, not cloned.
-fn prepare_xadd(
-    pe: PendingEntry,
-    max_len: &str,
-) -> PreparedXadd {
-    use std::borrow::Cow;
+/// Field names of a telemetry entry, in the order they are written.
+///
+/// Kept as one list so the names and the values below cannot drift apart, and
+/// so the `RedisModuleString`s built from them can be created once per flusher
+/// thread rather than per entry.
+const FIELD_NAMES: [&str; FIELD_COUNT] = [
+    "Received at",
+    "Query",
+    "Query parameters",
+    "Total duration",
+    "Wait duration",
+    "Execution duration",
+    "Report duration",
+    "Utilized cache",
+    "Write",
+    "Timeout",
+];
+
+const FIELD_COUNT: usize = 10;
+
+/// Format one entry's values. Pure Rust — no GIL required. Consumes the entry so
+/// the query/params strings are moved, not cloned.
+fn prepare_entry(pe: PendingEntry) -> PreparedEntry {
     let entry = pe.entry;
-    let received = entry.received_at.to_string();
     let wait = format!("{:.6}", entry.wait_duration_ms);
     let exec = format!("{:.6}", entry.execution_duration_ms);
     let report = format!("{:.6}", entry.report_duration_ms);
@@ -105,65 +120,184 @@ fn prepare_xadd(
         + report.parse::<f64>().unwrap_or(0.0)
         + entry.wait_duration_ms
         + 5e-7;
-    let total = format!("{total_raw:.6}");
-    let cache_flag = if entry.utilized_cache { "1" } else { "0" };
-    let write_flag = if entry.is_write { "1" } else { "0" };
-    let timeout_flag = if entry.timed_out { "1" } else { "0" };
-
-    // XADD telemetry{graph} MAXLEN ~ <max> * field value ...
-    PreparedXadd {
-        args: vec![
-            Cow::Owned(stream_name(&pe.graph_name)),
-            Cow::Borrowed("MAXLEN"),
-            Cow::Borrowed("~"),
-            Cow::Owned(max_len.to_owned()),
-            Cow::Borrowed("*"),
-            Cow::Borrowed("Received at"),
-            Cow::Owned(received),
-            Cow::Borrowed("Query"),
-            Cow::Owned(entry.query),
-            Cow::Borrowed("Query parameters"),
-            Cow::Owned(entry.params),
-            Cow::Borrowed("Total duration"),
-            Cow::Owned(total),
-            Cow::Borrowed("Wait duration"),
-            Cow::Owned(wait),
-            Cow::Borrowed("Execution duration"),
-            Cow::Owned(exec),
-            Cow::Borrowed("Report duration"),
-            Cow::Owned(report),
-            Cow::Borrowed("Utilized cache"),
-            Cow::Borrowed(cache_flag),
-            Cow::Borrowed("Write"),
-            Cow::Borrowed(write_flag),
-            Cow::Borrowed("Timeout"),
-            Cow::Borrowed(timeout_flag),
+    PreparedEntry {
+        graph_name: pe.graph_name,
+        values: [
+            entry.received_at.to_string(),
+            entry.query,
+            entry.params,
+            format!("{total_raw:.6}"),
+            wait,
+            exec,
+            report,
+            String::from(if entry.utilized_cache { "1" } else { "0" }),
+            String::from(if entry.is_write { "1" } else { "0" }),
+            String::from(if entry.timed_out { "1" } else { "0" }),
         ],
     }
 }
 
-/// Issue the XADD for a pre-formatted entry. Must be called with the GIL held.
-fn dispatch_xadd(
-    ctx: &Context,
-    prepared: &PreparedXadd,
-    call_options: &CallOptions,
-) {
-    let args: Vec<RedisString> = prepared
-        .args
-        .iter()
-        .map(|s| ctx.create_string(s.as_ref()))
-        .collect();
-    let _: redis_module::CallResult = ctx.call_ext(
-        "XADD",
-        call_options,
-        args.iter().collect::<Vec<_>>().as_slice(),
-    );
+/// The reusable half of a stream write: the field-name strings, created once.
+///
+/// This is the port of the C engine's `_event` template
+/// (`cron/tasks/stream_finished_queries.c`), and the reason it exists is cost.
+/// Writing an entry with `RM_Call("XADD", ...)` pays Redis's command lookup,
+/// argument vector, call dispatch and reply machinery — 25,534 instructions a
+/// query measured on an M3 Pro — plus 2,395 more to propagate each XADD to
+/// replicas, plus a fresh `RedisModuleString` for all 25 tokens including the
+/// ten constant field names. Writing through the key API pays none of that.
+///
+/// Strings are created with a NULL context, so Redis does not tie them to a
+/// command's auto-memory pool; the flusher thread owns them for its lifetime.
+struct StreamTemplate {
+    /// `[name0, value0, name1, value1, …]` — `StreamAdd` takes field/value pairs
+    /// flattened, and the value slots are refilled per entry.
+    argv: Vec<*mut raw::RedisModuleString>,
 }
 
-/// CallOptions used by the flusher: replicate the XADD to attached replicas
-/// so the telemetry stream stays mirrored across master/replica.
-fn replicated_call_options() -> CallOptions {
-    CallOptionsBuilder::new().replicate().build()
+impl StreamTemplate {
+    fn new() -> Self {
+        let mut argv = vec![std::ptr::null_mut(); FIELD_COUNT * 2];
+        for (i, name) in FIELD_NAMES.iter().enumerate() {
+            argv[i * 2] = create_detached_string(name);
+        }
+        Self { argv }
+    }
+
+    /// Write one entry into `key`. The GIL must be held.
+    fn add(
+        &mut self,
+        key: *mut raw::RedisModuleKey,
+        entry: &PreparedEntry,
+    ) {
+        for (i, value) in entry.values.iter().enumerate() {
+            self.argv[i * 2 + 1] = create_detached_string(value);
+        }
+        unsafe {
+            let f = raw::RedisModule_StreamAdd.expect("RedisModule_StreamAdd");
+            f(
+                key,
+                raw::REDISMODULE_STREAM_ADD_AUTOID as c_int,
+                std::ptr::null_mut(),
+                self.argv.as_mut_ptr(),
+                FIELD_COUNT as i64,
+            );
+        }
+        // Values are per-entry; the names stay. Freeing here keeps the peak at
+        // one entry's worth of strings however long the batch is.
+        for i in 0..FIELD_COUNT {
+            let slot = &mut self.argv[i * 2 + 1];
+            unsafe {
+                let f = raw::RedisModule_FreeString.expect("RedisModule_FreeString");
+                f(std::ptr::null_mut(), *slot);
+            }
+            *slot = std::ptr::null_mut();
+        }
+    }
+}
+
+/// Does the graph key itself still exist? The GIL must be held.
+fn graph_exists(
+    ctx: *mut raw::RedisModuleCtx,
+    graph_name: &str,
+) -> bool {
+    let name = create_detached_string(graph_name);
+    let key = unsafe {
+        let f = raw::RedisModule_OpenKey.expect("RedisModule_OpenKey");
+        f(ctx, name, raw::REDISMODULE_READ as c_int)
+    };
+    let exists = if key.is_null() {
+        false
+    } else {
+        let key_type = unsafe {
+            let f = raw::RedisModule_KeyType.expect("RedisModule_KeyType");
+            f(key)
+        };
+        unsafe {
+            let f = raw::RedisModule_CloseKey.expect("RedisModule_CloseKey");
+            f(key);
+        }
+        key_type != raw::REDISMODULE_KEYTYPE_EMPTY as c_int
+    };
+    free_detached_string(name);
+    exists
+}
+
+/// A `RedisModuleString` owned by us rather than by a command's auto-memory.
+fn create_detached_string(s: &str) -> *mut raw::RedisModuleString {
+    unsafe {
+        let f = raw::RedisModule_CreateString.expect("RedisModule_CreateString");
+        f(std::ptr::null_mut(), s.as_ptr().cast::<c_char>(), s.len())
+    }
+}
+
+fn free_detached_string(s: *mut raw::RedisModuleString) {
+    unsafe {
+        let f = raw::RedisModule_FreeString.expect("RedisModule_FreeString");
+        f(std::ptr::null_mut(), s);
+    }
+}
+
+/// Append every entry of one graph to its telemetry stream, then cap it.
+///
+/// One key open per graph per batch, mirroring the C cron task: it opens the
+/// stream once, adds the whole circular buffer, trims once, closes.
+///
+/// Unlike the `RM_Call(..., replicate)` this replaces, a key-API write is **not
+/// propagated to replicas** — which is also true of the C engine, whose cron
+/// task writes the same way. A replica's telemetry now reflects the queries that
+/// replica served, not the master's.
+fn stream_entries(
+    ctx: *mut raw::RedisModuleCtx,
+    template: &mut StreamTemplate,
+    graph_name: &str,
+    entries: &[PreparedEntry],
+    max_len: i64,
+) {
+    // Only log for a graph that still exists. The C engine gets this for free:
+    // its cron task iterates the graphs currently in the keyspace and drains the
+    // buffer hanging off each one, so queries logged against a graph that has
+    // since been deleted or flushed are dropped with it. Writing by name has no
+    // such link, and would recreate the stream key of a graph that is gone —
+    // visible as a key appearing after a `FLUSHALL`, on the master only, since a
+    // key-API write does not replicate.
+    if !graph_exists(ctx, graph_name) {
+        return;
+    }
+    let key_name = create_detached_string(&stream_name(graph_name));
+    let key = unsafe {
+        let f = raw::RedisModule_OpenKey.expect("RedisModule_OpenKey");
+        f(ctx, key_name, raw::REDISMODULE_WRITE as c_int)
+    };
+    if key.is_null() {
+        free_detached_string(key_name);
+        return;
+    }
+    // A key of some other type is not ours to write to. The C engine makes the
+    // same check and leaves such a key alone.
+    let key_type = unsafe {
+        let f = raw::RedisModule_KeyType.expect("RedisModule_KeyType");
+        f(key)
+    };
+    let writable = key_type == raw::REDISMODULE_KEYTYPE_STREAM as c_int
+        || key_type == raw::REDISMODULE_KEYTYPE_EMPTY as c_int;
+    if writable {
+        for entry in entries {
+            template.add(key, entry);
+        }
+        if max_len > 0 {
+            unsafe {
+                let f =
+                    raw::RedisModule_StreamTrimByLength.expect("RedisModule_StreamTrimByLength");
+                f(key, raw::REDISMODULE_STREAM_TRIM_APPROX as c_int, max_len);
+            }
+        }
+    }
+    unsafe {
+        let f = raw::RedisModule_CloseKey.expect("RedisModule_CloseKey");
+        f(key);
+    }
+    free_detached_string(key_name);
 }
 
 /// Delete the telemetry stream for a graph.
@@ -433,6 +567,19 @@ const FLUSH_BATCH_MAX: usize = 256;
 /// How long the flusher waits for the first entry before parking again.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(5);
 
+/// How long the flusher keeps collecting after the *first* entry of a batch
+/// arrives, before writing what it has.
+///
+/// Without it the batching amortizes nothing under the load it was built for:
+/// `recv_timeout` returns as soon as one entry is queued, and a serial client
+/// produces exactly one entry per query, so every query got its own wakeup, its
+/// own GIL acquisition and its own single-entry batch. It costs up to this much
+/// delay before an entry is visible in the stream — invisible next to the
+/// consumer-side polling in `GRAPH.INFO`'s own tests (10ms interval, 30s budget),
+/// and next to the C engine, whose cron task streams finished queries on its own
+/// schedule rather than per query.
+const FLUSH_LINGER: Duration = Duration::from_millis(5);
+
 struct PendingEntry {
     graph_name: Arc<str>,
     entry: TelemetryEntry,
@@ -546,6 +693,8 @@ fn flusher_loop() {
     };
 
     let mut batch: Vec<PendingEntry> = Vec::with_capacity(FLUSH_BATCH_MAX);
+    let mut template = StreamTemplate::new();
+    let mut disconnected = false;
 
     loop {
         // Block until at least one entry is available (or the channel closes).
@@ -554,32 +703,64 @@ fn flusher_loop() {
             Err(crossfire::RecvTimeoutError::Timeout) => continue,
             Err(crossfire::RecvTimeoutError::Disconnected) => break,
         }
-        // Drain any additional entries non-blockingly, up to the batch cap.
+        // Let the window elapse, then take everything that arrived during it.
+        //
+        // A *blocking* wait here would return the moment an entry is queued, so
+        // the thread would still wake once per query and only the flush would be
+        // batched — and waking is most of what an entry costs. Asleep, a sender's
+        // push is an atomic with nobody to wake, which is the position the C
+        // engine is in: its cron task runs on a timer and the query thread only
+        // appends to a per-graph buffer.
+        thread::sleep(FLUSH_LINGER);
         while batch.len() < FLUSH_BATCH_MAX {
             match rx.try_recv() {
                 Ok(pe) => batch.push(pe),
-                Err(_) => break,
+                Err(crossfire::TryRecvError::Empty) => break,
+                Err(crossfire::TryRecvError::Disconnected) => {
+                    // Flush what we have and then leave: entries already accepted
+                    // from a client should still reach the stream, and
+                    // `shutdown_flusher_thread` is waiting on this thread.
+                    disconnected = true;
+                    break;
+                }
             }
         }
 
-        // Format every entry's XADD arguments *outside* the GIL so the
-        // critical section below only does string creation + RM_Call.
-        let max_len = MAX_INFO_QUERIES.load(Ordering::Relaxed).to_string();
-        let call_options = replicated_call_options();
+        // Format every entry's values *outside* the GIL, so the critical section
+        // below only creates the `RedisModuleString`s and appends.
+        let max_len = MAX_INFO_QUERIES.load(Ordering::Relaxed);
         #[allow(clippy::iter_with_drain)]
-        let prepared: Vec<PreparedXadd> = batch
-            .drain(..)
-            .map(|pe| prepare_xadd(pe, &max_len))
-            .collect();
+        let mut prepared: Vec<PreparedEntry> = batch.drain(..).map(prepare_entry).collect();
+        // Group by graph so each stream key is opened and trimmed once per batch
+        // rather than once per entry. Sorting is enough: entries of one graph end
+        // up in one run, and it keeps arrival order within a graph, which is the
+        // order consumers read.
+        prepared.sort_by(|a, b| a.graph_name.cmp(&b.graph_name));
 
         // Single GIL acquisition for the whole batch, through the same guard queries
         // use, so every acquisition in the process funnels through one place.
         {
             let _gil = crate::query_session::hold_gil();
-            let ctx = Context::new(tsc);
-            for p in &prepared {
-                dispatch_xadd(&ctx, p, &call_options);
+            let mut run_start = 0;
+            while run_start < prepared.len() {
+                let name = Arc::clone(&prepared[run_start].graph_name);
+                let mut run_end = run_start + 1;
+                while run_end < prepared.len() && prepared[run_end].graph_name == name {
+                    run_end += 1;
+                }
+                stream_entries(
+                    tsc,
+                    &mut template,
+                    &name,
+                    &prepared[run_start..run_end],
+                    max_len,
+                );
+                run_start = run_end;
             }
+        }
+
+        if disconnected {
+            break;
         }
     }
 
