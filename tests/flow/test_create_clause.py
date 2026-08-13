@@ -113,3 +113,58 @@ class testCreateClause():
         self.env.assertEqual(v, 2)
         self.env.assertEqual(d, "B")
 
+    def test04_named_path_projection(self):
+        # CREATE-defined named paths should be available to projections.
+
+        q = """CREATE p=(n {v:1})
+               RETURN length(p), size(nodes(p)), size(relationships(p)),
+                      nodes(p)[0].v"""
+        res = self.g.query(q)
+        self.env.assertEquals(res.nodes_created, 1)
+        self.env.assertEqual(res.result_set, [[0, 1, 0, 1]])
+        self.g.delete()
+
+        q = """CREATE p=(a {v:1})-[r:R {v:2}]->(b {v:3})
+               RETURN length(p), size(nodes(p)), size(relationships(p)),
+                      nodes(p)[0].v, relationships(p)[0].v, nodes(p)[1].v"""
+        res = self.g.query(q)
+        self.env.assertEquals(res.nodes_created, 2)
+        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEqual(res.result_set, [[1, 2, 1, 1, 2, 3]])
+        self.g.delete()
+
+        q = """CREATE p=(a)-[:R1]->(b)-[:R2]->(c)
+               RETURN length(p), size(nodes(p)), size(relationships(p))"""
+        res = self.g.query(q)
+        self.env.assertEquals(res.nodes_created, 3)
+        self.env.assertEquals(res.relationships_created, 2)
+        self.env.assertEqual(res.result_set, [[2, 3, 2]])
+        self.g.delete()
+
+        q = """CREATE p=(a {v:1})-[:R]->(b {v:2})
+               WITH p
+               RETURN length(p), nodes(p)[0].v, nodes(p)[1].v"""
+        res = self.g.query(q)
+        self.env.assertEquals(res.nodes_created, 2)
+        self.env.assertEquals(res.relationships_created, 1)
+        self.env.assertEqual(res.result_set, [[1, 1, 2]])
+        self.g.delete()
+
+        q = """CREATE p=(a)-[:R]->(b), q=(c)-[:S]->(d)
+               RETURN length(p), length(q), size(nodes(q))"""
+        res = self.g.query(q)
+        self.env.assertEquals(res.nodes_created, 4)
+        self.env.assertEquals(res.relationships_created, 2)
+        self.env.assertEqual(res.result_set, [[1, 1, 2]])
+
+        try:
+            self.g.query("CREATE p=(a), p=(b)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertTrue("Variable `p` already declared" in str(e))
+
+        try:
+            self.g.query("CREATE (n) RETURN p")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertTrue("'p' not defined" in str(e))
