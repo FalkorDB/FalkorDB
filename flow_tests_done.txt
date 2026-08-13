@@ -82,6 +82,7 @@ tests/flow/test_procedures.py
 tests/flow/test_profile.py
 tests/flow/test_query_mem_limit.py
 tests/flow/test_query_validation
+tests/flow/test_rdb_c_layout.py
 tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
 tests/flow/test_redundant_ops
