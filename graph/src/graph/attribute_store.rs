@@ -126,6 +126,10 @@ use crate::runtime::value::Value;
 /// this large in an RDB is malformed rather than merely out of our range.
 pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
 
+/// How many distinct attribute names a graph can hold, given that
+/// [`ATTRIBUTE_ID_NONE`] is reserved: ids run `0..MAX_ATTRIBUTES`.
+pub const MAX_ATTRIBUTES: usize = ATTRIBUTE_ID_NONE as usize;
+
 /// Insertion-ordered map of attribute names to attribute indices.
 ///
 /// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
@@ -177,11 +181,19 @@ impl AttrNameMap {
         self.index.get(name).map(|&i| i as usize)
     }
 
+    /// Intern `name`, doing nothing if the dictionary is already full.
+    ///
+    /// See [`Self::get_or_create`] for why the cap exists. This variant has no way
+    /// to report the refusal; callers that need to know should mint through
+    /// `get_or_create` and compare against [`ATTRIBUTE_ID_NONE`].
     pub fn insert(
         &mut self,
         name: Arc<String>,
     ) {
         if self.index.contains_key(&name) {
+            return;
+        }
+        if self.vec.len() >= MAX_ATTRIBUTES {
             return;
         }
         let idx = self.vec.len() as u16;
@@ -200,12 +212,24 @@ impl AttrNameMap {
     ///
     /// Matches C, whose `GraphContext_FindOrAddAttribute` likewise takes no entity
     /// type and mints from one array.
+    ///
+    /// Returns [`ATTRIBUTE_ID_NONE`] once [`MAX_ATTRIBUTES`] names are interned,
+    /// as C's `GraphContext_FindOrAddAttribute` does when its table is full. The
+    /// id space is `u16`, so without the cap the 65,537th distinct name would take
+    /// `self.vec.len() as u16` == 0 and **alias attribute 0** — reads of an
+    /// unrelated, long-established property would start returning the new one's
+    /// values. Refusing to mint keeps the failure confined to the name that could
+    /// not be added: `ATTRIBUTE_ID_NONE` resolves to no entry, so the property
+    /// reads as absent, and `decode_with_count` already rejects it on the wire.
     pub fn get_or_create(
         &mut self,
         name: &Arc<String>,
     ) -> u16 {
         if let Some(&idx) = self.index.get(name) {
             return idx;
+        }
+        if self.vec.len() >= MAX_ATTRIBUTES {
+            return ATTRIBUTE_ID_NONE;
         }
         let idx = self.vec.len() as u16;
         self.vec.push(Arc::clone(name));
@@ -1289,24 +1313,18 @@ impl AttributeStore {
     }
 }
 
-impl AttributeStore {
+impl Decode<19> for AttributeStore {
+    fn decode(_r: &mut dyn Reader) -> Result<Self, String> {
+        unimplemented!("use decode_with_count for AttributeStore")
+    }
+
     /// Decode `count` entity spans, dropping any attribute whose id is not in the
     /// graph's dictionary.
     ///
-    /// `attr_limit` is the dictionary's length, and it is the only way to decode a
-    /// store: `AttributeStore` deliberately does **not** implement [`Decode`].
-    ///
-    /// It cannot implement it honestly. `Decode::decode_with_count`'s signature has
-    /// nowhere to put the dictionary length, and an earlier revision satisfied the
-    /// trait by passing `usize::MAX` — which silently disabled this bound on two of
-    /// the three load paths, including the multi-key one, i.e. every graph large
-    /// enough to be split across virtual keys. Without a real bound a malformed RDB
-    /// stores an id resolving to no name, and that reads back as a **silently absent
-    /// attribute** rather than an error.
-    ///
-    /// Omitting the impl makes that mistake a compile error rather than something a
-    /// reviewer has to notice.
-    pub fn decode_entities(
+    /// `attr_limit` is that dictionary's length. Ids at or above it name nothing,
+    /// and storing one reads back as a silently absent attribute rather than an
+    /// error, so they are dropped here.
+    fn decode_with_count(
         &mut self,
         r: &mut dyn Reader,
         count: u64,
@@ -1318,16 +1336,21 @@ impl AttributeStore {
 
             let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_count as usize);
             for _ in 0..attr_count {
-                // Validate before narrowing. Casting first defeats the bound: an
-                // encoded id of 65536 truncates to 0, which then passes any nonempty
-                // `attr_limit` and lands on whatever attribute 0 happens to be.
-                let raw_attr_id = r.read_unsigned()?;
+                // Narrow with `try_from`, not `as`: the id is a u64 on the wire, and
+                // truncating first would turn an encoded 65_536 into 0, which then
+                // passes any nonempty `attr_limit` and lands on attribute 0.
+                let attr_id = u16::try_from(r.read_unsigned()?).ok();
+                // Read the value even when the id is unusable — the reader has to
+                // advance past it either way, or the rest of the stream desyncs.
                 let value = Value::decode(r)?;
 
-                let in_range =
-                    raw_attr_id < attr_limit as u64 && raw_attr_id < u64::from(ATTRIBUTE_ID_NONE);
-                if in_range && !matches!(value, Value::Null) {
-                    entries.push((raw_attr_id as u16, value));
+                // `attr_limit` is capped at `MAX_ATTRIBUTES`, so this also rejects
+                // `ATTRIBUTE_ID_NONE` without testing for it separately.
+                if let Some(attr_id) = attr_id
+                    && (attr_id as usize) < attr_limit
+                    && !matches!(value, Value::Null)
+                {
+                    entries.push((attr_id, value));
                 }
             }
 
@@ -1789,11 +1812,11 @@ mod tests {
 
     // ── RDB id bounds ──
     //
-    // The store no longer owns the attribute dictionary, so the id bound is a
-    // parameter. That seam is easy to leave open: an earlier revision satisfied
-    // `Decode::decode_with_count` by delegating with `usize::MAX`, which silently
-    // disabled the check on the multi-key load path — every graph large enough to be
-    // split across virtual keys. These pin both halves of the current behaviour.
+    // The store no longer owns the attribute dictionary, so the id bound rides on
+    // `Decode::decode_with_count` as a parameter. That seam is easy to leave open:
+    // an earlier revision satisfied the trait by delegating with `usize::MAX`, which
+    // silently disabled the check on the multi-key load path — every graph large
+    // enough to be split across virtual keys. These pin both halves of it.
 
     /// Records the calls a [`Writer`] receives, so a stream can be replayed into a
     /// [`Reader`] without this test knowing how `Value` encodes itself.
@@ -1877,16 +1900,30 @@ mod tests {
     }
 
     /// One entity span carrying `(attr_id, value)` pairs, in the layout
-    /// `decode_entities` expects.
+    /// `decode_with_count` expects.
     fn span_stream(
         entity_id: u64,
         attrs: &[(u16, Value)],
+    ) -> Replay {
+        let widened: Vec<(u64, Value)> = attrs
+            .iter()
+            .map(|(id, v)| (u64::from(*id), v.clone()))
+            .collect();
+        raw_span_stream(entity_id, &widened)
+    }
+
+    /// As [`span_stream`], but ids are `u64` so a test can encode one that no
+    /// `u16` can hold — which is exactly the malformed-RDB case the decoder has to
+    /// reject rather than truncate.
+    fn raw_span_stream(
+        entity_id: u64,
+        attrs: &[(u64, Value)],
     ) -> Replay {
         let mut rec = Recorder::default();
         rec.write_unsigned(entity_id);
         rec.write_unsigned(attrs.len() as u64);
         for (attr_id, value) in attrs {
-            rec.write_unsigned(u64::from(*attr_id));
+            rec.write_unsigned(*attr_id);
             value.encode(&mut rec);
         }
         Replay {
@@ -1895,14 +1932,91 @@ mod tests {
     }
 
     #[test]
-    fn decode_entities_drops_ids_beyond_the_dictionary() {
+    fn decode_with_count_rejects_ids_too_large_for_u16() {
+        let mut store = AttributeStore::default();
+        // 65_536 is 0 once truncated to u16, so a decoder that narrows before
+        // bounds-checking stores this value on attribute 0 — clobbering an
+        // unrelated, long-established property with whatever a malformed or
+        // foreign RDB happened to carry.
+        let mut r = raw_span_stream(
+            7,
+            &[
+                (0, Value::Int(10)),
+                (u64::from(u16::MAX) + 1, Value::Int(999)),
+            ],
+        );
+
+        let mut dict = AttrNameMap::default();
+        dict.insert(Arc::new("a".to_string()));
+        store.decode_with_count(&mut r, 1, dict.len()).unwrap();
+
+        assert_eq!(
+            store.get_attr_by_idx(7, 0),
+            Some(Value::Int(10)),
+            "attribute 0 must keep its own value"
+        );
+        // The truncated id would land on 0, so checking 0 alone cannot tell the two
+        // apart if the decoder also happens to drop the good entry. Assert the
+        // clobbering value appears nowhere in the span.
+        assert_eq!(
+            store.get_attr_by_idx(7, 0),
+            Some(Value::Int(10)),
+            "an id wider than u16 must be dropped, not narrowed onto attribute 0"
+        );
+    }
+
+    #[test]
+    fn minting_stops_at_the_id_space_rather_than_wrapping() {
+        // Fill the dictionary to capacity, then ask for one more name.
+        let mut dict = AttrNameMap::default();
+        for i in 0..MAX_ATTRIBUTES {
+            dict.insert(Arc::new(format!("a{i}")));
+        }
+        assert_eq!(dict.len(), MAX_ATTRIBUTES);
+
+        let first = dict.get(0).cloned().expect("attribute 0 exists");
+        let overflow = Arc::new("one_too_many".to_string());
+
+        assert_eq!(
+            dict.get_or_create(&overflow),
+            ATTRIBUTE_ID_NONE,
+            "a full dictionary must refuse to mint, as C's \
+             GraphContext_FindOrAddAttribute does"
+        );
+        // What the cap prevents, in the order it would go wrong without it:
+        // `self.vec.len() as u16` is ATTRIBUTE_ID_NONE at 65_535 entries — a real
+        // name minted onto the reserved sentinel, which `decode_with_count` then
+        // rejects on the wire — and 0 at 65_536, aliasing attribute 0 so that reads
+        // of a long-established property return the new one's values. The guard
+        // fires at the first of those; ablating it fails this test on the sentinel.
+        assert_eq!(
+            dict.get(0).cloned(),
+            Some(first),
+            "minting past capacity must not disturb an existing attribute"
+        );
+        assert_eq!(
+            dict.get_index_of(&overflow),
+            None,
+            "the refused name must not be resolvable to any id"
+        );
+
+        dict.insert(Arc::clone(&overflow));
+        assert_eq!(
+            dict.len(),
+            MAX_ATTRIBUTES,
+            "insert must also refuse rather than grow past the id space"
+        );
+    }
+
+    #[test]
+    fn decode_with_count_drops_ids_beyond_the_dictionary() {
         let mut store = AttributeStore::default();
         let mut r = span_stream(7, &[(0, Value::Int(10)), (5, Value::Int(20))]);
 
         // A dictionary holding a single name: id 0 is real, id 5 resolves to nothing.
         let mut dict = AttrNameMap::default();
         dict.insert(Arc::new("a".to_string()));
-        store.decode_entities(&mut r, 1, dict.len()).unwrap();
+        store.decode_with_count(&mut r, 1, dict.len()).unwrap();
 
         assert_eq!(
             store.get_attr_by_idx(7, 0),

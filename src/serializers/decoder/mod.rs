@@ -161,16 +161,16 @@ pub fn rdb_load_graph(
     for (state, count) in &payloads {
         match *state {
             EncodeState::Nodes => {
-                node_attrs.decode_entities(&mut r, *count, attrs_name.len())?;
+                node_attrs.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedNodes => {
-                deleted_nodes.decode_with_count(&mut r, *count)?;
+                deleted_nodes.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::Edges => {
-                rel_attrs.decode_entities(&mut r, *count, attrs_name.len())?;
+                rel_attrs.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedEdges => {
-                deleted_rels.decode_with_count(&mut r, *count)?;
+                deleted_rels.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
                 let count = r.read_unsigned()?;
@@ -236,17 +236,19 @@ fn decode_payloads_into_pending(
         match *state {
             EncodeState::Nodes => {
                 let attr_limit = pg.attrs_name.len();
-                pg.node_attrs.decode_entities(r, *count, attr_limit)?;
+                pg.node_attrs.decode_with_count(r, *count, attr_limit)?;
             }
             EncodeState::DeletedNodes => {
-                pg.deleted_nodes.decode_with_count(r, *count)?;
+                pg.deleted_nodes
+                    .decode_with_count(r, *count, pg.attrs_name.len())?;
             }
             EncodeState::Edges => {
                 let attr_limit = pg.attrs_name.len();
-                pg.rel_attrs.decode_entities(r, *count, attr_limit)?;
+                pg.rel_attrs.decode_with_count(r, *count, attr_limit)?;
             }
             EncodeState::DeletedEdges => {
-                pg.deleted_rels.decode_with_count(r, *count)?;
+                pg.deleted_rels
+                    .decode_with_count(r, *count, pg.attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
                 let count = r.read_unsigned()?;
@@ -441,16 +443,16 @@ fn load_graph_from_reader(
     for (state, count) in &payloads {
         match *state {
             EncodeState::Nodes => {
-                node_attrs.decode_entities(r, *count, attrs_name.len())?;
+                node_attrs.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedNodes => {
-                deleted_nodes.decode_with_count(r, *count)?;
+                deleted_nodes.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::Edges => {
-                rel_attrs.decode_entities(r, *count, attrs_name.len())?;
+                rel_attrs.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedEdges => {
-                deleted_rels.decode_with_count(r, *count)?;
+                deleted_rels.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
                 let count = r.read_unsigned()?;

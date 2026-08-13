@@ -944,16 +944,14 @@ impl Graph {
     }
 
     /// Number of distinct property keys across nodes and relationships.
+    ///
+    /// Just the dictionary's length: there is one table per graph and it is keyed
+    /// by name, so entries are distinct by construction. This used to union two
+    /// per-store tables through a `HashSet`; after they were merged the union
+    /// became the same table twice.
     #[must_use]
-    pub fn property_key_count(&self) -> usize {
-        let mut seen = std::collections::HashSet::new();
-        for name in &self.attrs_name {
-            seen.insert(name.as_str());
-        }
-        for name in &self.attrs_name {
-            seen.insert(name.as_str());
-        }
-        seen.len()
+    pub const fn property_key_count(&self) -> usize {
+        self.attrs_name.len()
     }
 
     #[must_use]
