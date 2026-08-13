@@ -363,3 +363,24 @@ class testOptionalFlow(FlowTestsBase):
 
         self.env.assertEquals(len(res), 10)
 
+    def test28_optional_conditional_traverse_label_scan_switch(self):
+        # Cost-based label switching should also handle Optional Conditional
+        # Traverse, one of the traversal op types called out in issue #636.
+        self.graph.delete()
+
+        q = """CREATE (:A), (:A), (:A), (:A:B)-[:R]->(:C)"""
+        res = self.graph.query(q)
+        self.env.assertEquals(res.nodes_created, 5)
+        self.env.assertEquals(res.relationships_created, 1)
+
+        q = """MATCH (a:A:B)
+               OPTIONAL MATCH (a)-[]->(b)
+               RETURN count(a), count(b)"""
+
+        plan = str(self.graph.explain(q))
+        self.env.assertIn("Optional Conditional Traverse | (a)->(b)", plan)
+        self.env.assertIn("Conditional Traverse | (a:A)->(a:A)", plan)
+        self.env.assertIn("Node By Label Scan | (a:B)", plan)
+
+        res = self.graph.query(q)
+        self.env.assertEquals(res.result_set, [[1, 1]])
