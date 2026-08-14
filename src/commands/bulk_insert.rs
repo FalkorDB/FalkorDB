@@ -1,5 +1,5 @@
 use crate::dispatch::must_run_inline;
-use crate::query_session::{QuerySession, hold_gil};
+use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{BlockedClient, ThreadedGraph, ffi, register_graph},
@@ -13,7 +13,7 @@ use graph::{
     threadpool::spawn,
 };
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue, raw};
+use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::ffi::CString;
@@ -816,6 +816,28 @@ pub fn graph_bulk_insert(
 
     // Block the client and process on a background thread so the main
     // Redis thread stays free to handle PING and other commands.
+    //
+    // The background thread commits and replicates long after Redis authorized the
+    // command here, so escalation must re-authorize it against the pause state and role
+    // that are live then (#2371) — unless this insert arrived over the replication link,
+    // in which case it mirrors a write the master already committed and rejecting it
+    // would diverge us. Decided here, on the main thread, because the worker's detached
+    // context cannot see REPLICATED.
+    //
+    // `must_run_inline` (#2420, widened to C's full dispatcher set in #2421) routes
+    // REPLICATED and LOADING inline, so neither reaches this worker. ASYNC_LOADING is
+    // the exception: it is in C's *authorization* bypass but in neither C's dispatcher
+    // predicate nor ours, so such a batch still spawns a worker — and that worker can
+    // escalate after the loading window has closed, where a live read would reject a
+    // write that was already authorized and persisted.
+    //
+    // Narrower than C, deliberately: C bypasses authorization wholesale on
+    // ASYNC_LOADING, dropping the pause check with it. This worker does replicate
+    // (phase 2 below), so it keeps `replicates: true` and only waives the role check.
+    let facts = WriteFacts {
+        replicates: true,
+        originated_here: !ctx.get_flags().contains(ContextFlags::ASYNC_LOADING),
+    };
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let token_data: Vec<Vec<u8>> = token_strings
         .iter()
@@ -833,7 +855,7 @@ pub fn graph_bulk_insert(
             // Build, commit and replicate under one session, which releases its locks
             // when this block ends — before the client is unblocked below.
             let result: Result<(), String> = 'phase: {
-                let session = QuerySession::begin(&graph);
+                let session = QuerySession::begin_with(&graph, facts);
                 // Phase 1: build the new version as a reader, GIL-free. What we take
                 // here is the MVCC *write slot* — the single-writer marker on
                 // `MvccGraph`, not a lock — so if another writer holds it, fail with a
@@ -870,7 +892,7 @@ pub fn graph_bulk_insert(
                     // clear it, so skipping this leaves the graph permanently
                     // unwritable.
                     session.with_graph(|tg| tg.graph.rollback());
-                    break 'phase Err(e);
+                    break 'phase Err(e.to_string());
                 }
                 // Publish the index documents inside the writer scope, matching
                 // `CommitOp`: the index is not MVCC, so readers must be excluded while
