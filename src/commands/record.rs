@@ -49,6 +49,12 @@ fn record_mut(
     // private MVCC version), then commit and replicate exactly like `GRAPH.QUERY`.
     // RECORD adds the operator trace to a normal write; it does not turn it into a dry
     // run, so effects land and reach replicas.
+    //
+    // Plain `begin`, for both callers. The background path needs escalation
+    // re-authorized, since it commits long after Redis admitted the command. The inline
+    // caller (MULTI / replication stream, on the main thread) reaches the same check but
+    // returns early from it, because the main thread holds the GIL implicitly and there
+    // is no window to re-check.
     let session = QuerySession::begin(graph);
     let Plan {
         plan, parameters, ..

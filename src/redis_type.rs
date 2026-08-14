@@ -145,7 +145,11 @@ unsafe extern "C" fn graph_rdb_load(
             Box::into_raw(boxed).cast()
         }
         Err(e) => {
-            eprintln!("graph rdb_load error: {e}");
+            // Must go to the *Redis* log, not stderr: Redis answers a failed module load
+            // with "Check for modules log above for additional clues", and a daemonized
+            // server with --logfile discards stderr entirely — so an `eprintln!` here left
+            // every rejected RDB unattributable.
+            log_warning(format!("graph rdb_load rejected the payload: {e}"));
             null_mut()
         }
     }
@@ -201,19 +205,51 @@ unsafe extern "C" fn graph_rdb_save(
 // aux_save / aux_load
 // ---------------------------------------------------------------------------
 
+/// Write a NUL-terminated string, matching C's
+/// `RedisModule_SaveStringBuffer(io, s, strlen(s) + 1)`.
+///
+/// `save_string` writes exactly `s.len()` bytes. C reads these buffers back as C
+/// strings, so one arriving without its terminator leaves C reading whatever
+/// follows it in the RDB: a library saved here as `XLib` loaded there as
+/// `XLibte`, and none of its functions could be found afterwards. The listing
+/// still showed a library, so it failed quietly.
+fn save_string_nul(
+    rdb: *mut RedisModuleIO,
+    s: &str,
+) {
+    let mut buf = String::with_capacity(s.len() + 1);
+    buf.push_str(s);
+    buf.push('\0');
+    save_string(rdb, &buf);
+}
+
+/// Drop the trailing NUL that both engines now write.
+///
+/// Without this a name read back from C is `"XLib\0"`, which registers nothing
+/// findable and makes `deserialize` fail — and a failed aux load is not a
+/// degraded load, it aborts the whole RDB: Redis reported
+/// `Short read or OOM loading DB. Unrecoverable error, aborting now.` and the
+/// server refused to start. One NUL is stripped rather than all trailing ones, so
+/// a name that legitimately ends in NUL bytes is not silently altered further.
+fn strip_trailing_nul(buf: &[u8]) -> String {
+    let end = buf.strip_suffix(b"\0").unwrap_or(buf);
+    String::from_utf8_lossy(end).to_string()
+}
+
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graph_aux_save(
     rdb: *mut RedisModuleIO,
     when: i32,
 ) {
     if when == raw::Aux::Before as i32 {
-        // BEFORE_RDB: Save UDF libraries.
+        // BEFORE_RDB: Save UDF libraries. C's `AUXSave` writes exactly this —
+        // count, then a NUL-terminated (name, script) per library.
         let repo = get_udf_repo();
         let libs = repo.serialize();
         save_unsigned(rdb, libs.len() as u64);
         for (name, code) in &libs {
-            save_string(rdb, name);
-            save_string(rdb, code);
+            save_string_nul(rdb, name);
+            save_string_nul(rdb, code);
         }
     } else {
         // AFTER_RDB: Write placeholder so aux_load(AFTER_RDB) has something to read.
@@ -237,11 +273,11 @@ unsafe extern "C" fn graph_aux_load(
         let mut libs = Vec::with_capacity(count as usize);
         for _ in 0..count {
             let name = match load_string_buffer(rdb) {
-                Ok(buf) => String::from_utf8_lossy(buf.as_ref()).to_string(),
+                Ok(buf) => strip_trailing_nul(buf.as_ref()),
                 Err(_) => return 1,
             };
             let code = match load_string_buffer(rdb) {
-                Ok(buf) => String::from_utf8_lossy(buf.as_ref()).to_string(),
+                Ok(buf) => strip_trailing_nul(buf.as_ref()),
                 Err(_) => return 1,
             };
             libs.push((name, code));
@@ -863,7 +899,7 @@ unsafe extern "C" fn graphmeta_rdb_load(
             Box::into_raw(Box::new(0u8)).cast()
         }
         Err(e) => {
-            eprintln!("graphmeta rdb_load error: {e}");
+            log_warning(format!("graphmeta rdb_load rejected the payload: {e}"));
             null_mut()
         }
     }
