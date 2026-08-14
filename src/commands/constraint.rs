@@ -1,4 +1,4 @@
-use crate::query_session::QuerySession;
+use crate::query_session::{QuerySession, WriteFacts};
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::ConstraintType;
@@ -186,7 +186,24 @@ pub fn graph_constraint(
                     // Phase 1: the long-running validation runs as a reader, so
                     // concurrent `db.constraints()` still sees the constraint UNDER
                     // CONSTRUCTION.
-                    let session = QuerySession::begin(&graph_clone);
+                    //
+                    // `replicates: false` — this thread emits no replication of its
+                    // own, so no pause window can be propagated into. #2419 adds a
+                    // GRAPH.EFFECT re-announce here, and must flip this to `true` in
+                    // the same commit.
+                    //
+                    // `originated_here: false` — it also runs on a replica, applying
+                    // the master's replicated GRAPH.CONSTRAINT, where a READONLY
+                    // rejection would strand the constraint UNDER CONSTRUCTION and
+                    // diverge. Covered by testConstraintReplication::
+                    // test_02_async_validation_reaches_operational_on_replica.
+                    let session = QuerySession::begin_with(
+                        &graph_clone,
+                        WriteFacts {
+                            replicates: false,
+                            originated_here: false,
+                        },
+                    );
                     let results = session.with_graph(|tg| {
                         tg.graph
                             .read()
