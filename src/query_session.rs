@@ -23,7 +23,7 @@
 use crate::graph_core::{ThreadedGraph, ffi};
 use graph::locks::WriteEscalation;
 use parking_lot::{ArcRwLockReadGuard, ArcRwLockWriteGuard, RawRwLock, RwLock};
-use redis_module::raw;
+use redis_module::{Context, ContextFlags, raw};
 use std::{cell::Cell, cell::RefCell, marker::PhantomData, ptr::NonNull, sync::Arc};
 
 /// Which lock(s) a query holds.
@@ -39,6 +39,26 @@ enum Mode {
     },
 }
 
+/// Why an escalation to writer mode was refused.
+///
+/// The first two `Display` strings are byte-identical to C's `EMSG_REPLICA_TRAFFIC_PAUSED`
+/// and `EMSG_NOT_MASTER` (`src/errors/error_msgs.h`, PR #2372), so a client or a test can
+/// match either engine. Keeping them in one place is the point of the type: they are a
+/// compatibility contract, not incidental text, and they were previously written inline at
+/// their single use site each.
+#[derive(Debug, thiserror::Error)]
+pub enum WriteAbort {
+    /// A `CLIENT PAUSE` / `FAILOVER` window is open. Committing would propagate inside it.
+    #[error("Write query aborted: replica traffic is currently paused")]
+    ReplicaTrafficPaused,
+    /// This instance is a read-only replica now, whatever it was at admission.
+    #[error("Write query aborted: this instance is not a master")]
+    NotAMaster,
+    /// The graph key was deleted or replaced while no per-graph lock was held.
+    #[error("graph was deleted or replaced while the query was running, aborting")]
+    GraphUnregistered,
+}
+
 /// The locks held by one query, on one thread. Not `Send`, because the GIL must be
 /// released by the thread that took it.
 pub struct QuerySession {
@@ -48,14 +68,65 @@ pub struct QuerySession {
     /// the only misuse is escalating inside a [`Self::with_graph`] closure, which
     /// panics loudly instead of dangling.
     mode: RefCell<Option<Mode>>,
+    /// What this write does and where it came from — see [`WriteFacts`]. Moot unless
+    /// the session escalates, so it is unread for a reader and for
+    /// [`Self::begin_writer`].
+    facts: WriteFacts,
+}
+
+/// The two facts about a write that decide which re-checks apply when it escalates.
+///
+/// Both are properties of the *write*, not of the checks, so a call site can answer them
+/// without knowing what the guard does with them — and a path that later starts
+/// replicating flips the field named after replication.
+///
+/// They have to be carried rather than read at the check: escalation runs on a worker
+/// whose only context is the detached one [`Gil::acquire`] made, which has no client
+/// behind it, so `REPLICATED` always reads false there. C reads it straight off the
+/// command's own context instead.
+///
+/// `docs/write-authorization.md` has the states, the coverage table and the call sites.
+#[derive(Clone, Copy, Debug)]
+pub struct WriteFacts {
+    /// It can reach the replication stream from this thread, so a replica-pause window
+    /// open at commit time would be propagated into.
+    pub replicates: bool,
+    /// This instance decided this write, rather than replaying one decided elsewhere.
+    /// Only our own decisions require that we are still a writable master; rejecting a
+    /// replayed one would diverge us from our master.
+    pub originated_here: bool,
+}
+
+impl WriteFacts {
+    /// A client's own write, which will replicate: both re-checks apply. The default,
+    /// and the right answer for every path that has no reason to differ.
+    pub const CLIENT: Self = Self {
+        replicates: true,
+        originated_here: true,
+    };
 }
 
 impl QuerySession {
     /// Enter **reader** mode: take the per-graph read lock.
+    ///
+    /// Assumes [`WriteFacts::CLIENT`] — if this session escalates, the write is
+    /// re-authorized against live server state. Use [`Self::begin_with`] for a write
+    /// that differs on either fact.
     pub fn begin(graph: &Arc<RwLock<ThreadedGraph>>) -> Self {
+        Self::begin_with(graph, WriteFacts::CLIENT)
+    }
+
+    /// Enter **reader** mode for a write that is not a plain client write — see
+    /// [`WriteFacts`] for the two questions and `docs/write-authorization.md` for how
+    /// each caller answers them.
+    pub fn begin_with(
+        graph: &Arc<RwLock<ThreadedGraph>>,
+        facts: WriteFacts,
+    ) -> Self {
         Self {
             graph: Arc::clone(graph),
             mode: RefCell::new(Some(Mode::Reader(RwLock::read_arc(graph)))),
+            facts,
         }
     }
 
@@ -70,6 +141,10 @@ impl QuerySession {
                 guard: RwLock::write_arc(graph),
                 _gil: gil,
             })),
+            // Moot: already a writer, so `escalate` never runs and this is never read.
+            // These are the inline main-thread paths anyway, where Redis's own dispatch
+            // gated the command and no pause or role-change window can open mid-command.
+            facts: WriteFacts::CLIENT,
         }
     }
 
@@ -131,18 +206,18 @@ impl QuerySession {
     /// owns the single MVCC write slot for its whole lifetime, so no other writer
     /// can commit, and it has not yet touched the shared index — a reader entering
     /// the window sees a consistent older state.
-    pub fn upgrade_to_write(&self) -> Result<(), String> {
+    pub fn upgrade_to_write(&self) -> Result<(), WriteAbort> {
         if self.escalate() {
             // The key could have been deleted in the window where we held no
             // per-graph lock, so re-verify the graph is still reachable before
             // mutating it — as C does by re-opening the key under WRITE. The locks
             // stay held; the caller aborts the query and `Drop` releases them.
             if !crate::graph_core::graph_is_registered(&self.graph) {
-                return Err(
-                    "graph was deleted or replaced while the query was running, aborting"
-                        .to_string(),
-                );
+                return Err(WriteAbort::GraphUnregistered);
             }
+            // Same window, the other half of what C re-validates here: this instance
+            // may no longer be allowed to originate a write at all.
+            reauthorize_write(self.facts)?;
         }
         Ok(())
     }
@@ -170,9 +245,68 @@ impl QuerySession {
     }
 }
 
+/// Re-check, under the GIL, that this instance may still originate a write.
+///
+/// A write is admitted on the Redis main thread, where the `write` command flag makes
+/// Redis's own dispatch postpone it while `CLIENT PAUSE ... WRITE` is in effect and
+/// reject it on a read-only replica. But it mutates and replicates much later, from a
+/// worker thread — so a `FAILOVER` / `CLIENT PAUSE` window can have opened, or this
+/// instance can have been demoted, in between. Replicating then trips Redis's
+/// `propagateNow()` invariant (`server.c`,
+/// `!(isPausedActions(PAUSE_ACTION_REPLICA) && !server.client_pause_in_transaction)`)
+/// and kills the master — the crash reported in #2359.
+///
+/// Holding the GIL is what makes this race-free: neither the pause state nor the role
+/// can change until it is released. Mirrors C's `QueryCtx_AcquireWriteLock`
+/// (`src/query_ctx.c` on `master`, PR #2372); the first two messages are byte-identical
+/// to its `EMSG_REPLICA_TRAFFIC_PAUSED` / `EMSG_NOT_MASTER` so clients and tests can
+/// match either engine.
+fn reauthorize_write(facts: WriteFacts) -> Result<(), WriteAbort> {
+    // Off the main thread the GIL is held through the detached context `Gil::acquire`
+    // just created. On the main thread there is none — and nothing to re-check either,
+    // since Redis gated the command at dispatch and no window can open mid-command.
+    let Some(ctx) = GIL_CTX.get() else {
+        return Ok(());
+    };
+    // SAFETY: `ctx` is the context this thread locked in `Gil::acquire` and still
+    // holds. `Context` is a borrowing wrapper with no `Drop`, so it frees nothing —
+    // the same construction `telemetry`'s flush thread uses under `hold_gil`.
+    let ctx = Context::new(ctx.as_ptr());
+    let flags = ctx.get_flags();
+
+    // `LOADING` cannot reach here: `dispatch::must_run_inline` contains it, so a command
+    // replaying from AOF/RDB runs inline and never escalates. Assert rather than bypass,
+    // so narrowing that predicate surfaces here instead of silently changing which writes
+    // get authorized.
+    debug_assert!(
+        !flags.contains(ContextFlags::LOADING),
+        "escalated with LOADING set: must_run_inline no longer routes replay inline"
+    );
+
+    if facts.replicates && ctx.avoid_replication_traffic() {
+        return Err(WriteAbort::ReplicaTrafficPaused);
+    }
+    // `READONLY`, not `MASTER`: a replica running `replica-read-only no` accepts writes,
+    // and rejecting them there would break replica-divergence testing. C corrected this
+    // the same way in PR #2372.
+    //
+    // No check for a role that flipped away and back (master -> replica -> master)
+    // between admission and here: the only such flip that matters resynced from the new
+    // master, which frees and re-registers the graph key, so `graph_is_registered` above
+    // has already aborted this write. A flip that resynced nothing left the data
+    // unchanged and the write is still valid.
+    if facts.originated_here && flags.contains(ContextFlags::READONLY) {
+        return Err(WriteAbort::NotAMaster);
+    }
+    Ok(())
+}
+
 impl WriteEscalation for QuerySession {
     fn upgrade_to_write(&self) -> Result<(), String> {
-        Self::upgrade_to_write(self)
+        // `graph::locks::WriteEscalation` is defined in the `graph` crate, which knows
+        // nothing about Redis roles or pauses, so its contract stays a plain message and
+        // the typed reason is flattened here at the boundary.
+        Self::upgrade_to_write(self).map_err(|e| e.to_string())
     }
 }
 

@@ -7,7 +7,9 @@
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::Mutex;
-use redis_module::{CallOptions, CallOptionsBuilder, Context, RedisString, RedisValue, raw};
+use redis_module::{
+    CallOptions, CallOptionsBuilder, Context, ContextFlags, RedisString, RedisValue, raw,
+};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
@@ -433,6 +435,12 @@ const FLUSH_BATCH_MAX: usize = 256;
 /// How long the flusher waits for the first entry before parking again.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(5);
 
+/// Cap on XADDs held back while replica traffic is paused (see `flusher_loop`).
+/// Beyond this the oldest are dropped: the telemetry stream is already lossy —
+/// `MAX_INFO_QUERIES` trims it on every XADD — so bounding memory matters more
+/// than keeping every entry across a long failover pause.
+const DEFERRED_XADD_MAX: usize = 4 * FLUSH_BATCH_MAX;
+
 struct PendingEntry {
     graph_name: Arc<str>,
     entry: TelemetryEntry,
@@ -526,12 +534,21 @@ fn flusher_loop() {
     };
 
     let mut batch: Vec<PendingEntry> = Vec::with_capacity(FLUSH_BATCH_MAX);
+    // XADDs prepared but not yet dispatched because replica traffic was paused when
+    // their turn came. Retried on a later iteration — see the pause check below.
+    let mut deferred: Vec<PreparedXadd> = Vec::new();
 
     loop {
         // Block until at least one entry is available (or the channel closes).
         match rx.recv_timeout(FLUSH_INTERVAL) {
             Ok(first) => batch.push(first),
-            Err(crossfire::RecvTimeoutError::Timeout) => continue,
+            // Nothing new — but entries held back by a pause still need a retry, so
+            // only park again once there is genuinely nothing to do.
+            Err(crossfire::RecvTimeoutError::Timeout) => {
+                if deferred.is_empty() {
+                    continue;
+                }
+            }
             Err(crossfire::RecvTimeoutError::Disconnected) => break,
         }
         // Drain any additional entries non-blockingly, up to the batch cap.
@@ -551,14 +568,49 @@ fn flusher_loop() {
             .drain(..)
             .map(|pe| prepare_xadd(pe, &max_len))
             .collect();
+        deferred.extend(prepared);
+        // Oldest-first drop, so a long pause bounds memory instead of growing without
+        // limit. The stream is trimmed on every XADD anyway, so the entries most worth
+        // keeping are the newest.
+        if deferred.len() > DEFERRED_XADD_MAX {
+            deferred.drain(..deferred.len() - DEFERRED_XADD_MAX);
+        }
 
         // Single GIL acquisition for the whole batch, through the same guard queries
         // use, so every acquisition in the process funnels through one place.
         {
             let _gil = crate::query_session::hold_gil();
             let ctx = Context::new(tsc);
-            for p in &prepared {
-                dispatch_xadd(&ctx, p, &call_options);
+            // Both checks are read here, under the GIL, rather than trusted from when the
+            // entries were enqueued: a role change arrives as a server event on the main
+            // thread and a pause is opened from it, so neither can move while we hold the
+            // GIL. `enqueue_entry`'s `IS_REPLICA` check is on the producing thread and
+            // says nothing about what is true now, at dispatch.
+            if ctx.get_flags().contains(ContextFlags::SLAVE) {
+                // We have become a replica since these were enqueued. Discard rather than
+                // hold: our master is replicating its own telemetry to us, so dispatching
+                // here would both duplicate its entries and write directly to a replica —
+                // which is exactly what `enqueue_entry` refuses to do on the hot path.
+                //
+                // This interleaving is the *likely* one, not a corner case, and the pause
+                // check below is what makes it so: a FAILOVER opens a pause window, the
+                // batch is held for its duration, and the window closes at the moment this
+                // instance has become a replica. Without this the whole held batch would
+                // then be dispatched, from a replica.
+                deferred.clear();
+            } else if !ctx.avoid_replication_traffic() {
+                // These XADDs are replicated (`replicated_call_options`), so releasing the
+                // GIL below propagates them. Doing that while replica traffic is paused
+                // trips Redis's `propagateNow()` invariant and kills the master — the same
+                // #2359 crash the write path guards against in
+                // `query_session::reauthorize_write`, reached here from a timer-like
+                // background thread instead. Avoiding exactly this is what
+                // `RedisModule_AvoidReplicaTraffic` is documented for, so hold the batch
+                // and retry once the pause window closes.
+                for p in &deferred {
+                    dispatch_xadd(&ctx, p, &call_options);
+                }
+                deferred.clear();
             }
         }
     }

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use graph::entity_type::EntityType;
-use graph::graph::attribute_store::AttributeStore;
+use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::graph::Graph;
 use graph::graph::graphblas::serialization::{Decode, Reader};
 use graph::graph::graphblas::tensor::Tensor;
@@ -52,14 +52,16 @@ pub fn rdb_load_graph(
 
         if is_first_key {
             // First key: initialize the pending graph.
-            let node_attrs = AttributeStore::new();
-            let mut rel_attrs = AttributeStore::new();
+            let node_attrs_init = AttributeStore::new();
+            let rel_attrs = AttributeStore::new();
 
-            // Set attribute names on the stores now -- they are the same across all keys.
-            let mut node_attrs_init = node_attrs;
+            // The RDB's flat `attribute_names` list *is* the graph's dictionary: index is
+            // the id. Previously this seeded a copy into each store, which is what gave an
+            // RDB-loaded replica different numbering from a master that had never been
+            // reloaded (#2457).
+            let mut attrs_name = AttrNameMap::default();
             for name in &schema.attribute_names {
-                node_attrs_init.attrs_name.insert(name.clone());
-                rel_attrs.attrs_name.insert(name.clone());
+                attrs_name.insert(name.clone());
             }
 
             let pg = PendingGraph {
@@ -83,6 +85,7 @@ pub fn rdb_load_graph(
                     indexes: schema.indexes,
                     constraints: schema.constraints,
                 },
+                attrs_name,
                 node_attrs: node_attrs_init,
                 rel_attrs,
                 deleted_nodes: RoaringTreemap::new(),
@@ -142,9 +145,10 @@ pub fn rdb_load_graph(
     let mut node_attrs = AttributeStore::new();
     let mut rel_attrs = AttributeStore::new();
 
+    // One dictionary, shared by both stores — see the multi-key path above.
+    let mut attrs_name = AttrNameMap::default();
     for name in &schema.attribute_names {
-        node_attrs.attrs_name.insert(name.clone());
-        rel_attrs.attrs_name.insert(name.clone());
+        attrs_name.insert(name.clone());
     }
 
     let mut deleted_nodes = RoaringTreemap::new();
@@ -157,16 +161,16 @@ pub fn rdb_load_graph(
     for (state, count) in &payloads {
         match *state {
             EncodeState::Nodes => {
-                node_attrs.decode_with_count(&mut r, *count)?;
+                node_attrs.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedNodes => {
-                deleted_nodes.decode_with_count(&mut r, *count)?;
+                deleted_nodes.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::Edges => {
-                rel_attrs.decode_with_count(&mut r, *count)?;
+                rel_attrs.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedEdges => {
-                deleted_rels.decode_with_count(&mut r, *count)?;
+                deleted_rels.decode_with_count(&mut r, *count, attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
                 let count = r.read_unsigned()?;
@@ -206,6 +210,7 @@ pub fn rdb_load_graph(
         relationship_tensors,
         schema.node_labels,
         schema.relationship_types,
+        attrs_name,
         node_attrs,
         rel_attrs,
     );
@@ -230,16 +235,20 @@ fn decode_payloads_into_pending(
     for (state, count) in payloads {
         match *state {
             EncodeState::Nodes => {
-                pg.node_attrs.decode_with_count(r, *count)?;
+                let attr_limit = pg.attrs_name.len();
+                pg.node_attrs.decode_with_count(r, *count, attr_limit)?;
             }
             EncodeState::DeletedNodes => {
-                pg.deleted_nodes.decode_with_count(r, *count)?;
+                pg.deleted_nodes
+                    .decode_with_count(r, *count, pg.attrs_name.len())?;
             }
             EncodeState::Edges => {
-                pg.rel_attrs.decode_with_count(r, *count)?;
+                let attr_limit = pg.attrs_name.len();
+                pg.rel_attrs.decode_with_count(r, *count, attr_limit)?;
             }
             EncodeState::DeletedEdges => {
-                pg.deleted_rels.decode_with_count(r, *count)?;
+                pg.deleted_rels
+                    .decode_with_count(r, *count, pg.attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
                 let count = r.read_unsigned()?;
@@ -268,6 +277,7 @@ fn decode_payloads_into_pending(
 
 /// Finalize a pending multi-key graph: build Graph, rebuild derived matrices.
 pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
+    let attrs_name = pg.attrs_name;
     let node_attrs = pg.node_attrs;
     let rel_attrs = pg.rel_attrs;
 
@@ -286,6 +296,7 @@ pub fn finalize_pending_graph(pg: PendingGraph) -> Graph {
         pg.relationship_tensors,
         pg.schema.node_labels,
         pg.schema.relationship_types,
+        attrs_name,
         node_attrs,
         rel_attrs,
     );
@@ -416,9 +427,10 @@ fn load_graph_from_reader(
     let mut node_attrs = AttributeStore::new();
     let mut rel_attrs = AttributeStore::new();
 
+    // One dictionary, shared by both stores — see the other decode paths above.
+    let mut attrs_name = AttrNameMap::default();
     for name in &schema.attribute_names {
-        node_attrs.attrs_name.insert(name.clone());
-        rel_attrs.attrs_name.insert(name.clone());
+        attrs_name.insert(name.clone());
     }
 
     let mut deleted_nodes = RoaringTreemap::new();
@@ -431,16 +443,16 @@ fn load_graph_from_reader(
     for (state, count) in &payloads {
         match *state {
             EncodeState::Nodes => {
-                node_attrs.decode_with_count(r, *count)?;
+                node_attrs.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedNodes => {
-                deleted_nodes.decode_with_count(r, *count)?;
+                deleted_nodes.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::Edges => {
-                rel_attrs.decode_with_count(r, *count)?;
+                rel_attrs.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::DeletedEdges => {
-                deleted_rels.decode_with_count(r, *count)?;
+                deleted_rels.decode_with_count(r, *count, attrs_name.len())?;
             }
             EncodeState::LabelsMatrices => {
                 let count = r.read_unsigned()?;
@@ -480,6 +492,7 @@ fn load_graph_from_reader(
         relationship_tensors,
         schema.node_labels,
         schema.relationship_types,
+        attrs_name,
         node_attrs,
         rel_attrs,
     );

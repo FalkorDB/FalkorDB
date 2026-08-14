@@ -1,8 +1,6 @@
 // #![feature(c_variadic)]
 #![no_main]
 
-use std::collections::HashMap;
-
 // use libc::{atexit, calloc, free, malloc, realloc, strdup};
 
 use graph::{
@@ -22,7 +20,7 @@ use graph::{
     //         RedisModuleString,
     //     },
     // },
-    runtime::{eval::evaluate_param, functions::init_functions, runtime::Runtime},
+    runtime::{functions::init_functions, runtime::Runtime},
 };
 use libfuzzer_sys::{Corpus, fuzz_target};
 
@@ -126,13 +124,6 @@ fuzz_target!(init: {
         let Ok(Plan {
             plan, parameters, ..
         }) = g.read().borrow().get_plan(query)
-        else {
-            return Corpus::Reject;
-        };
-        let Ok(parameters) = parameters
-            .into_iter()
-            .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-            .collect::<Result<HashMap<_, _>, String>>()
         else {
             return Corpus::Reject;
         };

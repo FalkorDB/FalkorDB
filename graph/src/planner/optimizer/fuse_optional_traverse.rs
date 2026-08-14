@@ -46,6 +46,7 @@ fn fusable_traverse(
         transposed,
         chain,
         optional: false,
+        bind_relationship: true,
         ..
     } = sub.data()
     else {
@@ -94,6 +95,7 @@ fn fused_traverse(sub: &DynNode<IR>) -> IR {
             transposed: *transposed,
             chain: chain.clone(),
             optional: true,
+            bind_relationship: true,
         }
     } else {
         unreachable!();

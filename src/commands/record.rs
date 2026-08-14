@@ -18,6 +18,7 @@
 //! Like `GRAPH.QUERY`, execution happens on the thread pool with the client
 //! blocked; the main thread only resolves (or creates) the graph key.
 
+use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
@@ -28,18 +29,13 @@ use crate::{
 use graph::{
     graph::graph::Plan,
     planner::IR,
-    runtime::{
-        eval::evaluate_param,
-        runtime::{GetVariables, Runtime},
-    },
+    runtime::runtime::{GetVariables, Runtime},
     threadpool::spawn,
 };
 use orx_tree::{Bfs, Collection, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{
-    Context, ContextFlags, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw,
-};
-use std::{collections::HashMap, os::raw::c_char, sync::Arc};
+use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw};
+use std::{os::raw::c_char, sync::Arc};
 
 #[inline]
 fn record_mut(
@@ -53,16 +49,17 @@ fn record_mut(
     // private MVCC version), then commit and replicate exactly like `GRAPH.QUERY`.
     // RECORD adds the operator trace to a normal write; it does not turn it into a dry
     // run, so effects land and reach replicas.
+    //
+    // Plain `begin`, for both callers. The background path needs escalation
+    // re-authorized, since it commits long after Redis admitted the command. The inline
+    // caller (MULTI / replication stream, on the main thread) reaches the same check but
+    // returns early from it, because the main thread holds the GIL implicitly and there
+    // is no window to re-check.
     let session = QuerySession::begin(graph);
     let Plan {
         plan, parameters, ..
     } = session
         .with_graph(|tg| tg.graph.read().borrow().get_plan(query))
-        .map_err(RedisError::String)?;
-    let parameters = parameters
-        .into_iter()
-        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-        .collect::<Result<HashMap<_, _>, String>>()
         .map_err(RedisError::String)?;
     let is_write = plan.iter().any(|n| {
         matches!(
@@ -241,12 +238,9 @@ pub fn graph_record(
         graph
     };
 
-    // Blocking clients are not allowed inside MULTI/EXEC, and replicated
-    // commands must complete before the handler returns (same rules as
-    // GRAPH.QUERY) — run synchronously in those cases.
-    if ctx.get_flags().contains(ContextFlags::MULTI)
-        || ctx.get_flags().contains(ContextFlags::REPLICATED)
-    {
+    // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
+    // `must_run_inline`.
+    if must_run_inline(ctx) {
         return record_mut(ctx, &graph, &key_name, query);
     }
 
