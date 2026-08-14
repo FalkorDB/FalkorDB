@@ -7,7 +7,7 @@
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::Mutex;
-use redis_module::{Context, RedisValue, raw};
+use redis_module::{Context, ContextFlags, RedisValue, raw};
 use std::os::raw::{c_char, c_int};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -82,6 +82,11 @@ pub struct TelemetryEntry {
 /// engine keeps them in its `_event` template.
 struct PreparedEntry {
     graph_name: Arc<str>,
+    /// The graph this entry belongs to — carried through formatting because
+    /// liveness is checked immediately before the write, not here. See
+    /// [`PendingEntry::graph`] for why the handle rather than the name, and
+    /// `flusher_loop` for why the check has to be that late.
+    graph: std::sync::Weak<parking_lot::RwLock<crate::graph_core::ThreadedGraph>>,
     /// Same order as [`FIELD_NAMES`].
     values: [String; FIELD_COUNT],
 }
@@ -122,6 +127,7 @@ fn prepare_entry(pe: PendingEntry) -> PreparedEntry {
         + 5e-7;
     PreparedEntry {
         graph_name: pe.graph_name,
+        graph: pe.graph,
         values: [
             entry.received_at.to_string(),
             entry.query,
@@ -543,6 +549,12 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(5);
 /// schedule rather than per query.
 const FLUSH_LINGER: Duration = Duration::from_millis(5);
 
+/// Cap on entries held back while replica traffic is paused (see `flusher_loop`).
+/// Beyond this the oldest are dropped: the telemetry stream is already lossy —
+/// `MAX_INFO_QUERIES` trims it on every write — so bounding memory matters more
+/// than keeping every entry across a long failover pause.
+const DEFERRED_XADD_MAX: usize = 4 * FLUSH_BATCH_MAX;
+
 struct PendingEntry {
     graph_name: Arc<str>,
     /// The graph this query ran on, weakly.
@@ -669,12 +681,21 @@ fn flusher_loop() {
     let mut batch: Vec<PendingEntry> = Vec::with_capacity(FLUSH_BATCH_MAX);
     let mut template = StreamTemplate::new();
     let mut disconnected = false;
+    // Entries formatted but not yet written because replica traffic was paused when
+    // their turn came. Retried on a later iteration — see the pause check below.
+    let mut deferred: Vec<PreparedEntry> = Vec::new();
 
     loop {
         // Block until at least one entry is available (or the channel closes).
         match rx.recv_timeout(FLUSH_INTERVAL) {
             Ok(first) => batch.push(first),
-            Err(crossfire::RecvTimeoutError::Timeout) => continue,
+            // Nothing new — but entries held back by a pause still need a retry, so
+            // only park again once there is genuinely nothing to do.
+            Err(crossfire::RecvTimeoutError::Timeout) => {
+                if deferred.is_empty() {
+                    continue;
+                }
+            }
             Err(crossfire::RecvTimeoutError::Disconnected) => break,
         }
         // Let the window elapse, then take everything that arrived during it.
@@ -685,17 +706,22 @@ fn flusher_loop() {
         // push is an atomic with nobody to wake, which is the position the C
         // engine is in: its cron task runs on a timer and the query thread only
         // appends to a per-graph buffer.
-        thread::sleep(FLUSH_LINGER);
-        while batch.len() < FLUSH_BATCH_MAX {
-            match rx.try_recv() {
-                Ok(pe) => batch.push(pe),
-                Err(crossfire::TryRecvError::Empty) => break,
-                Err(crossfire::TryRecvError::Disconnected) => {
-                    // Flush what we have and then leave: entries already accepted
-                    // from a client should still reach the stream, and
-                    // `shutdown_flusher_thread` is waiting on this thread.
-                    disconnected = true;
-                    break;
+        //
+        // Skipped when nothing arrived: this iteration is then only a retry of a
+        // held batch, and there is no arrival to collect neighbours for.
+        if !batch.is_empty() {
+            thread::sleep(FLUSH_LINGER);
+            while batch.len() < FLUSH_BATCH_MAX {
+                match rx.try_recv() {
+                    Ok(pe) => batch.push(pe),
+                    Err(crossfire::TryRecvError::Empty) => break,
+                    Err(crossfire::TryRecvError::Disconnected) => {
+                        // Flush what we have and then leave: entries already accepted
+                        // from a client should still reach the stream, and
+                        // `shutdown_flusher_thread` is waiting on this thread.
+                        disconnected = true;
+                        break;
+                    }
                 }
             }
         }
@@ -704,44 +730,85 @@ fn flusher_loop() {
         // below only creates the `RedisModuleString`s and appends.
         let max_len = MAX_INFO_QUERIES.load(Ordering::Relaxed);
         #[allow(clippy::iter_with_drain)]
-        let mut prepared: Vec<PreparedEntry> = batch
-            .drain(..)
-            // Drop what belongs to a graph that is gone, or whose name now
-            // refers to a different graph — the pointer check is what
-            // distinguishes "still the same graph" from "same name, new graph
-            // after a FLUSHALL and RESTORE".
-            .filter(|pe| {
-                pe.graph
-                    .upgrade()
-                    .is_some_and(|arc| crate::graph_core::graph_is_registered(&arc))
-            })
-            .map(prepare_entry)
-            .collect();
-        // Group by graph so each stream key is opened and trimmed once per batch
-        // rather than once per entry. Sorting is enough: entries of one graph end
-        // up in one run, and it keeps arrival order within a graph, which is the
-        // order consumers read.
-        prepared.sort_by(|a, b| a.graph_name.cmp(&b.graph_name));
+        let prepared: Vec<PreparedEntry> = batch.drain(..).map(prepare_entry).collect();
+        deferred.extend(prepared);
+        // Oldest-first drop, so a long pause bounds memory instead of growing without
+        // limit. The stream is trimmed on every write anyway, so the entries most worth
+        // keeping are the newest.
+        if deferred.len() > DEFERRED_XADD_MAX {
+            deferred.drain(..deferred.len() - DEFERRED_XADD_MAX);
+        }
+
+        // Drop what belongs to a graph that is gone, or whose name now refers to a
+        // different graph — the pointer check is what distinguishes "still the same
+        // graph" from "same name, new graph after a FLUSHALL and RESTORE".
+        //
+        // Here, immediately before the write, rather than as entries are formatted:
+        // the pause check below can hold a batch for the whole pause window, and a
+        // graph dropped during it would otherwise have its stream key recreated when
+        // the window closes. Outside the GIL block because it needs only the graph
+        // registry's own lock.
+        deferred.retain(|pe| {
+            pe.graph
+                .upgrade()
+                .is_some_and(|arc| crate::graph_core::graph_is_registered(&arc))
+        });
 
         // Single GIL acquisition for the whole batch, through the same guard queries
         // use, so every acquisition in the process funnels through one place.
         {
             let _gil = crate::query_session::hold_gil();
-            let mut run_start = 0;
-            while run_start < prepared.len() {
-                let name = Arc::clone(&prepared[run_start].graph_name);
-                let mut run_end = run_start + 1;
-                while run_end < prepared.len() && prepared[run_end].graph_name == name {
-                    run_end += 1;
+            let ctx = Context::new(tsc);
+            // Both checks are read here, under the GIL, rather than trusted from when the
+            // entries were enqueued: a role change arrives as a server event on the main
+            // thread and a pause is opened from it, so neither can move while we hold the
+            // GIL. `enqueue_entry`'s `IS_REPLICA` check is on the producing thread and
+            // says nothing about what is true now, at dispatch.
+            if ctx.get_flags().contains(ContextFlags::SLAVE) {
+                // We have become a replica since these were enqueued. Discard rather than
+                // hold: writing here would create stream keys directly on a replica, which
+                // is exactly what `enqueue_entry` refuses to do on the hot path — and they
+                // would not survive the next full resync anyway.
+                //
+                // This interleaving is the *likely* one, not a corner case, and the pause
+                // check below is what makes it so: a FAILOVER opens a pause window, the
+                // batch is held for its duration, and the window closes at the moment this
+                // instance has become a replica. Without this the whole held batch would
+                // then be written, on a replica.
+                deferred.clear();
+            } else if !ctx.avoid_replication_traffic() {
+                // Held for the pause window even though `stream_entries` writes through
+                // the key API, which is *not* propagated the way the `RM_Call(..., replicate)`
+                // it replaced was — so it can no longer trip the `propagateNow()` invariant
+                // that killed the master in #2359 (the crash `query_session::reauthorize_write`
+                // guards the write path against). What a replica pause still asks for is
+                // that the dataset stay fixed until it lapses, and a telemetry entry is
+                // dataset; holding is also what makes the demotion above a reliable
+                // interleaving rather than a race, which is how `test_role_change_race`
+                // pins this behaviour.
+                //
+                // Group by graph so each stream key is opened and trimmed once per batch
+                // rather than once per entry. Sorting is enough: entries of one graph end
+                // up in one run, and being stable it keeps arrival order within a graph,
+                // which is the order consumers read.
+                deferred.sort_by(|a, b| a.graph_name.cmp(&b.graph_name));
+                let mut run_start = 0;
+                while run_start < deferred.len() {
+                    let name = Arc::clone(&deferred[run_start].graph_name);
+                    let mut run_end = run_start + 1;
+                    while run_end < deferred.len() && deferred[run_end].graph_name == name {
+                        run_end += 1;
+                    }
+                    stream_entries(
+                        tsc,
+                        &mut template,
+                        &name,
+                        &deferred[run_start..run_end],
+                        max_len,
+                    );
+                    run_start = run_end;
                 }
-                stream_entries(
-                    tsc,
-                    &mut template,
-                    &name,
-                    &prepared[run_start..run_end],
-                    max_len,
-                );
-                run_start = run_end;
+                deferred.clear();
             }
         }
 

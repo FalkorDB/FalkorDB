@@ -1460,6 +1460,11 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // The session lives only for this block, so its locks are released — the read
         // lock, or the GIL + write lock if the query escalated — on every path out,
         // including the error returns, and before the reply below.
+        //
+        // Plain `begin`: a client sent this write to this instance, so escalation
+        // re-authorizes it against the pause state and role that are live *then* — both
+        // can have changed since it was admitted and queued. Replicated commands never
+        // reach here; they run inline (see `query_mut`).
         let res = execute_query_write(
             QuerySession::begin(graph),
             &ctx,

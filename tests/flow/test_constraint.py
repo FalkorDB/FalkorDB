@@ -1069,3 +1069,37 @@ class testConstraintReplication():
             elapsed -= 0.2
 
         self.env.assertEqual(len(self.monitor), 12)
+
+    def test_02_async_validation_reaches_operational_on_replica(self):
+        # Regression guard for the pause/role re-check added in #2371.
+        #
+        # Constraint validation above the async threshold runs on a spawned
+        # thread that escalates to writer. That escalation is deliberately NOT
+        # re-authorized (`QuerySession::begin_preauthorized`), because the thread
+        # runs on the replica too -- applying the master's replicated
+        # GRAPH.CONSTRAINT -- where a read-only check would reject it and strand
+        # the constraint at UNDER CONSTRUCTION while the master reports
+        # OPERATIONAL. Nothing else covers the async path with a replica.
+        #
+        # Needs > 10_000 entities: below that `Graph::create_constraint`
+        # validates synchronously on the main thread and never spawns.
+        lbl = 'AsyncValidated'
+        self.g.query(f"UNWIND range(1, 10500) AS x CREATE (:{lbl} {{v: x}})")
+        self.source.execute_command("WAIT", 1, 0)
+
+        create_mandatory_node_constraint(self.g, lbl, 'v', sync=True)
+
+        replica_g = Graph(self.replica, GRAPH_ID)
+        deadline = time.time() + 30
+        c = None
+        while time.time() < deadline:
+            self.source.execute_command("WAIT", 1, 0)
+            c = get_constraint(replica_g, 'MANDATORY', 'NODE', lbl, 'v')
+            if c is not None and c.status != 'UNDER CONSTRUCTION':
+                break
+            time.sleep(0.25)
+
+        master_c = get_constraint(self.g, 'MANDATORY', 'NODE', lbl, 'v')
+        self.env.assertEqual(master_c.status, 'OPERATIONAL')
+        self.env.assertIsNotNone(c)
+        self.env.assertEqual(c.status, 'OPERATIONAL')
