@@ -1,6 +1,7 @@
 tests/flow/test_access_del_entity
 tests/flow/test_aggregation
 tests/flow/test_all_shortest_paths.py
+tests/flow/test_attr_id_space.py
 tests/flow/test_aof.py
 tests/flow/test_betweenness.py
 tests/flow/test_bfs.py
@@ -82,6 +83,7 @@ tests/flow/test_procedures.py
 tests/flow/test_profile.py
 tests/flow/test_query_mem_limit.py
 tests/flow/test_query_validation
+tests/flow/test_rdb_c_layout.py
 tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
 tests/flow/test_redundant_ops
