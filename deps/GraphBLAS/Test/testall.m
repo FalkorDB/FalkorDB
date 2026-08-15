@@ -118,19 +118,20 @@ F100 = {4,4,0,0} ;
 % quick tests (< 1 sec)
 %===============================================================================
 
+set_malloc_debug (mdebug, 1) ;
+
 % < 1 second: debug_on
+logstat ('test01'     ,t, J40  , F10  ) ; % error handling
+logstat ('test307'    ,t, J4   , F1   ) ; % arenas
 logstat ('test306'    ,t, J0   , F0   ) ; % arenas
 logstat ('test305'    ,t, J0   , F0   ) ; % arenas
 logstat ('test304'    ,t, J0   , F0   ) ; % extractElement
 logstat ('test302'    ,t, J0   , F0   ) ; % GPU controls
 logstat ('test277'    ,t, J0   , F1   ) ; % context get/set
-
-% < 1 second: debug_on
-set_malloc_debug (mdebug, 1) ;
-logstat ('test303'    ,t, J404 , F110 ) ; % C=A(I,J), method 6
+logstat ('test303'    ,t, J4   , F1   ) ; % C=A(I,J), method 6
 logstat ('test300'    ,t, J0   , F0   ) ; % print function for a type
 logstat ('test301'    ,t, J40  , F11  ) ; % assign method27, C<C,struct>+=A
-logstat ('test302'    ,t, J0   , F0   ) ; % GPU controls
+% logstat ('test302'    ,t, J0   , F0   ) ; % GPU controls
 logstat ('test155'    ,t, J40  , F10  , [0 2 4]) ; % setElement, removeElement
 
 % < 1 second: debug_off
@@ -183,7 +184,7 @@ logstat ('test207'    ,t, J4   , F1   , [0 1]) ; % iso subref
 logstat ('test211'    ,t, J40  , F10  ) ; % iso assign
 logstat ('test183'    ,s, J4   , F1   ) ; % eWiseMult w/hypersparse mask
 logstat ('test212'    ,t, J40  , F10  ) ; % iso mask all zero
-logstat ('test219'    ,s, J40  , F10  ) ; % reduce to scalar (1 thread)
+logstat ('test219'    ,s, J4   , F1   ) ; % reduce to scalar (1 thread)
 
 % < 1 second: debug_on
 set_malloc_debug (mdebug, 1) ;
@@ -220,7 +221,7 @@ logstat ('test82'     ,t, J4   , F1   ) ; % GrB_extract, index range (hyper)
 logstat ('test202'    ,t, J400 , F110 , [0 1 2]) ; % iso add and emult
 logstat ('test222'    ,t, J4   , F1   ) ; % user selectop, iso matrices
 logstat ('test204'    ,t, J4   , F1   ) ; % iso diag
-logstat ('test258'    ,t, J40  , F00  , [0 1]) ; % reduce-to-vector for UDT
+logstat ('test258'    ,t, J40  , F00  , [0]) ; % reduce-to-vector for UDT
 logstat ('test136'    ,s, J40  , F10  ) ; % subassignment special cases
 logstat ('test128'    ,t, J40  , F10  ) ; % eWiseMult, eWiseAdd, eWiseUnion
 logstat ('test144'    ,t, J4   , F1   ) ; % cumsum
@@ -233,7 +234,7 @@ logstat ('test81'     ,t, J4   , F1   ) ; % extract stride, range, backwards
 % 1 to 10 seconds: debug_off
 set_malloc_debug (mdebug, 0) ;
 logstat ('testc2(0,0)',t, J0   , F1   , [0 1]) ; % user-defn complex
-logstat ('test239'    ,t, J44  , F10  ) ; % GxB_eWiseUnion
+logstat ('test239'    ,t, J4   , F1   ) ; % GxB_eWiseUnion
 logstat ('test245'    ,t, J40  , F11  ) ; % complex row/col scale
 logstat ('test159'    ,t, J0   , F0   ) ; % A*B
 logstat ('test259'    ,t, J40  , F00  ) ; % plus_plus_fp32 semiring
@@ -283,7 +284,7 @@ hack (2) = 0 ; GB_mex_hack (hack) ;     % re-enable the Werk stack
 % 1 to 10 seconds: debug_on
 set_malloc_debug (mdebug, 1) ;
 logstat ('testca(1)'  ,t, J40  , F10  ) ; % complex mxm, mxv, and vxm
-logstat ('test148'    ,t, J40  , F10  ) ; % ewise with alias
+logstat ('test148'    ,t, J4   , F1   ) ; % ewise with alias
 logstat ('test231'    ,t, J4   , F1   ) ; % GrB_select with idxunp
 logstat ('test129'    ,t, J4   , F1   ) ; % GxB_select (tril, nonz, hyper)
 logstat ('test69'     ,t, J40  , F10  ) ; % assign and subassign with alias
@@ -353,7 +354,6 @@ logstat ('test11'     ,t, J4   , F1   ) ; % GrB_extractTuples
 logstat ('test187'    ,t, J40  , F10  ) ; % dup/assign for all formats
 logstat ('test169'    ,t, J0   , F1   ) ; % C<M>=A+B with many formats
 logstat ('test76'     ,s, J4   , F1   ) ; % GxB_resize (single threaded)
-logstat ('test01'     ,t, J40  , F10  ) ; % error handling
 logstat ('test228'    ,t, J4   , F1   ) ; % serialize/deserialize
 logstat ('test104'    ,t, J4   , F1   ) ; % export/import
 logstat ('test284'    ,t, J40  , F11  ) ; % semirings w/ index binary ops

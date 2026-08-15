@@ -117,7 +117,14 @@ pull_index:
 		while((doc_key = RediSearch_ResultsIteratorNext(op->iter, rsIdx, &len))
 				!= NULL) {
 			EntityID nodeId;
-			if(!IndexDocKey_DecodeNode(doc_key, len, &nodeId)) continue;
+			if(!IndexDocKey_DecodeNode(doc_key, len, &nodeId)) {
+				// Log corruption if doc key decode fails. This indicates index
+				// corruption or RediSearch internal bug. We skip this result but
+				// warn to aid debugging.
+				RedisModule_Log(NULL, "warning",
+					"Failed to decode node doc key at index scan");
+				continue;
+			}
 			// populate record with node
 			_UpdateRecord(op, op->child_record, nodeId);
 			// apply unresolved filters

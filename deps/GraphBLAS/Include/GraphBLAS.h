@@ -3,7 +3,7 @@
 // GraphBLAS.h: definitions for the GraphBLAS package
 //------------------------------------------------------------------------------
 
-// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+// SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
@@ -286,7 +286,7 @@
 
 // The version of this implementation, and the GraphBLAS API version:
 #define GxB_IMPLEMENTATION_NAME "SuiteSparse:GraphBLAS"
-#define GxB_IMPLEMENTATION_DATE "July 31, 2026"
+#define GxB_IMPLEMENTATION_DATE "Aug 7, 2026"
 #define GxB_IMPLEMENTATION_MAJOR 10
 #define GxB_IMPLEMENTATION_MINOR 4
 #define GxB_IMPLEMENTATION_SUB   0
@@ -302,12 +302,12 @@
 
 // The 'about' string the describes this particular implementation of GraphBLAS:
 #define GxB_IMPLEMENTATION_ABOUT \
-"SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved." \
+"SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved." \
 "\nhttp://suitesparse.com  Dept of Computer Sci. & Eng, Texas A&M University.\n"
 
 // The GraphBLAS license for this particular implementation of GraphBLAS:
 #define GxB_IMPLEMENTATION_LICENSE \
-"SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved." \
+"SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved." \
 "\nLicensed under the Apache License, Version 2.0 (the \"License\"); you may\n"\
 "not use SuiteSparse:GraphBLAS except in compliance with the License.  You\n"  \
 "may obtain a copy of the License at\n\n"                                      \
@@ -560,10 +560,6 @@ typedef struct GB_Scalar_opaque *GxB_Scalar ;       // use GrB_Scalar
 // arena control
 #define GxB_ARENA_DATA   7105
 #define GxB_ARENA_HEADER 7106
-
-// pre-defined arenas
-// #define GrB_DEFAULT (0): default arena for header and data: 0
-#define GxB_ARENA_RMM     1     /* arena 1 reserved for CUDA Rapids */
 #endif
 
 typedef enum    // GrB_Desc_Field ;
@@ -2891,8 +2887,7 @@ GrB_Info GxB_finalized      // determine if GraphBLAS is finalized
 
 //      GxB_arena_init (arena, malloc, calloc, realloc, free) ;
 
-// where the arena is an integer in the range 2 to GxB_NARENAS-1.
-// Arena 1 is reserved for future use by the CUDA kernels in GraphBLAS.
+// where the arena is an integer in the range 1 to GxB_NARENAS-1.
 
 // Matrices, vectors, and scalars can use two different arenas: one for their
 // header and one for their data.  The header is the value of A for the
@@ -2995,11 +2990,19 @@ GrB_Info GxB_finalized      // determine if GraphBLAS is finalized
 GrB_Info GxB_arena_init     // create a new arena
 (
     // input
-    int arena,              // 2 to GxB_NARENAS-1
+    int arena,              // 1 to GxB_NARENAS-1
     void * (* user_malloc_function  ) (size_t),         // required
     void * (* user_calloc_function  ) (size_t, size_t), // not used
     void * (* user_realloc_function ) (void *, size_t), // optional, can be NULL
     void   (* user_free_function    ) (void *)          // required
+) ;
+
+GrB_Info GxB_arena_initialized  // determine if arena has been initialized
+(
+    // output
+    int *flag,              // returns true if the arena has been initialized
+    // input
+    int arena               // 0 to GxB_NARENAS-1
 ) ;
 
 // GxB_[Matrix,Vector,Scalar]_set_arenas: change the header and data arena:

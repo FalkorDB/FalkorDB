@@ -17,6 +17,8 @@
 #include "binaryop/GB_binop.h"
 #include "jitifyer/GB_stringify.h"
 
+#define GB_FREE_ALL GB_Op_free ((GB_Operator *) &op) ;
+
 GrB_Info GxB_BinaryOp_new_arena
 (
     GrB_BinaryOp *op_handle,        // handle for the new binary operator
@@ -34,12 +36,15 @@ GrB_Info GxB_BinaryOp_new_arena
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (op_handle) ;
     (*op_handle) = NULL ;
+    GrB_BinaryOp op = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (ztype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (xtype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (ytype) ;
+    GB_OK (GB_check_arena (header_arena)) ;
 
     //--------------------------------------------------------------------------
     // allocate the binary op
@@ -47,8 +52,7 @@ GrB_Info GxB_BinaryOp_new_arena
 
     uint64_t mem = GB_mem (header_arena, 0) ;
     uint64_t header_mem = mem ;
-    GrB_BinaryOp op = GB_CALLOC_MEMORY (1, sizeof (struct GB_BinaryOp_opaque),
-        &header_mem) ;
+    op = GB_CALLOC_MEMORY (1, sizeof (struct GB_BinaryOp_opaque), &header_mem) ;
     if (op == NULL)
     { 
         // out of memory
@@ -60,14 +64,8 @@ GrB_Info GxB_BinaryOp_new_arena
     // create the binary op
     //--------------------------------------------------------------------------
 
-    GrB_Info info = GB_binop_new (op, function, ztype, xtype, ytype,
-        binop_name, binop_defn, GB_USER_binop_code, header_arena) ;
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory
-        GB_FREE_MEMORY (&op, header_mem) ;
-        return (info) ;
-    }
+    GB_OK (GB_binop_new (op, function, ztype, xtype, ytype,
+        binop_name, binop_defn, GB_USER_binop_code, header_arena)) ;
 
     //--------------------------------------------------------------------------
     // create the function pointer, if NULL
@@ -81,7 +79,7 @@ GrB_Info GxB_BinaryOp_new_arena
         if (info != GrB_SUCCESS)
         { 
             // unable to construct the function pointer
-            GB_Op_free ((GB_Operator *) &op) ;
+            GB_FREE_ALL ;
             // If the JIT fails, it returns GrB_NO_VALUE or GxB_JIT_ERROR.
             // Convert GrB_NO_VALUE to GrB_NULL_POINTER (the function is NULL
             // and cannot be compiled by the JIT).

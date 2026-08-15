@@ -210,23 +210,11 @@ static GB_Global_struct GB_Global =
 
     // malloc/realloc/free functions: default to C11 functions in arena 0.
     // The user application can change arena 0 only using GxB_init.
-    // Arena 1 cannot be changed (GxB_ARENA_RMM, reserved for Rapids).
-    // MATLAB/Octave uses arena 2 for mxMalloc/mxCalloc/mxRealloc/mxFree.
-    #ifdef GRAPHBLAS_HAS_CUDA
-    // CUDA available: use GB_rmm_malloc/GB_rmm_free for arena 1
-    .malloc_function  = { malloc , GB_rmm_malloc,
-                          NULL, NULL, NULL, NULL, NULL, NULL },
+    // MATLAB/Octave uses arena 1 for mxMalloc/mxCalloc/mxRealloc/mxFree.
+    .malloc_function  = { malloc , NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     .calloc_function  = { calloc , NULL, NULL, NULL, NULL, NULL, NULL, NULL },
     .realloc_function = { realloc, NULL, NULL, NULL, NULL, NULL, NULL, NULL },
-    .free_function    = { free   , GB_rmm_free  ,
-                          NULL, NULL, NULL, NULL, NULL, NULL },
-    #else
-    // CUDA not available: use malloc/free for arena 1
-    .malloc_function  = { malloc , malloc, NULL, NULL, NULL, NULL, NULL, NULL },
-    .calloc_function  = { calloc , NULL  , NULL, NULL, NULL, NULL, NULL, NULL },
-    .realloc_function = { realloc, NULL  , NULL, NULL, NULL, NULL, NULL, NULL },
-    .free_function    = { free   , free  , NULL, NULL, NULL, NULL, NULL, NULL },
-    #endif
+    .free_function    = { free   , NULL, NULL, NULL, NULL, NULL, NULL, NULL },
 
     // malloc tracking, for testing, statistics, and debugging only
     .malloc_tracking = false,

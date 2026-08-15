@@ -34,6 +34,7 @@
 
 // If the mode is GxB_BLOCKING_GPU or GxB_NONBLOCKING_GPU, the 4 function
 // pointers are ignored, and GB_rmm_malloc/GB_rmm_free are used instead.
+// fixme for CUDA: this will change, to use a new arena for CUDA.
 
 #define GB_FREE_ALL                                         \
     GrB_finalize ( ) ;
@@ -94,8 +95,7 @@ GrB_Info GB_init            // start up GraphBLAS
     //--------------------------------------------------------------------------
 
     #if defined ( GRAPHBLAS_HAS_CUDA )
-    // fixme arena for CUDA: use GB_rmm_malloc etc for GxB_ARENA_RMM,
-    // which is reserved and cannot be modified by the user.
+    // fixme arena for CUDA: currently using GB_rmm_malloc etc for arena 0
     GB_Global_gpu_count_set (true) ;
     int gpu_count = GB_Global_gpu_count_get ( ) ;
     printf ("GB_init: gpu_count: %d\n", gpu_count) ;

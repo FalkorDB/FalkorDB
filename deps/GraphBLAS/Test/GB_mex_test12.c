@@ -74,13 +74,20 @@ void mexFunction
     CHECK (!GB_arenas_will_wait (NULL)) ;
     OK (GB_wait_arenas (A)) ;
     OK (GB_wait_arenas (NULL)) ;
+    ERR (GxB_arena_initialized (NULL, 99)) ;
 
     expected = GrB_INVALID_VALUE ;
     ERR (GxB_arena_init (99, malloc, calloc, realloc, free)) ;
+    int flag = true ;
+    ERR (GxB_arena_initialized (&flag, 99)) ;
+    CHECK (flag == false) ;
     ERR (GxB_Matrix_set_arenas (&A, 99, 0)) ;
     GB_malloc_function_t func = NULL ;
     ERR (GrB_Global_get_VOID_ (GrB_GLOBAL, (void *) &func,
         GxB_ARENA_MALLOC + 99)) ;
+
+    OK (GxB_arena_initialized (&flag, 0)) ;
+    CHECK (flag == true) ;
 
     int save = A->data_arena ;
     OK (GxB_Matrix_fprint (A, "A ok", 5, NULL)) ;

@@ -210,8 +210,6 @@ __global__ void GB_cuda_AxB_dot3_phase3_dndn_kernel
             }
         }
 
-        // __syncthreads ( ) ;
-
         if( threadIdx.x ==0 && zc > 0)
         {
             GB_cuda_atomic_add <uint64_t>( &(C->nzombies), zc) ;

@@ -58,6 +58,7 @@ GrB_Info GB_get_arena_alias
     ASSERT (Chandle != NULL) ;
     ASSERT ((*Chandle) == NULL) ;
     ASSERT_MATRIX_OK (A, "A for get_arena_alias", GB0) ;
+    GB_OK (GB_check_arena (new_header_arena)) ;
 
     //--------------------------------------------------------------------------
     // copy the header

@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// GraphBLAS/CUDA/jit_kernels/GB_jit_cuda_reduce.cu
+// GraphBLAS/CUDA/reduce/template/GB_jit_kernel_cuda_reduce.cu
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
@@ -48,6 +48,34 @@ __global__ void GB_cuda_reduce_kernel
     int64_t anz     // # of entries in A
 )
 {
+
+    #if 0
+    if GB_MONOID_IS_TERMINAL
+    (in progress)
+
+    thread_block_tile<GB_CUDA_TILE_SIZE> tile =
+        tiled_partition<GB_CUDA_TILE_SIZE> (this_thread_block()) ;
+
+    int32_t shared_flag = 0 ;
+    int threadId_in_tile = threadIdx.x & (GB_CUDA_TILE_SIZE-1) ;
+
+    if (threadId_in_tile == 0)
+    {
+        // if alarm has been raised, tell the rest of the threadblock
+        if (atomicAdd (global_flag, 0))
+        {
+            // use cg: broadcast to shared_flag
+            shared_flag = shfl (tile, 1, 0) ;
+        }
+    }
+
+    tile.sync () ;
+
+    if (shared_flag)
+    {
+        return ;
+    }
+    #endif
 
     //--------------------------------------------------------------------------
     // initializations
@@ -167,6 +195,15 @@ __global__ void GB_cuda_reduce_kernel
             GB_Z_TYPE *Vx = (GB_Z_TYPE *) V->x ;
             Vx [blockIdx.x] = zmine ;
 
+        #endif
+
+        #if 0
+        if GB_MONOID_IS_TERMINAL
+        (in progress)
+        if zmine is a terminal value
+        {
+            ...raise atomicExch
+        }
         #endif
     }
 }

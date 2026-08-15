@@ -20,6 +20,8 @@
 #include "GB.h"
 #include "jitifyer/GB_stringify.h"
 
+#define GB_FREE_ALL GB_Op_free ((GB_Operator *) &op) ;
+
 GrB_Info GxB_IndexUnaryOp_new_arena // create a named user-created IndexUnaryOp
 (
     GrB_IndexUnaryOp *op_handle,    // handle for the new IndexUnary operator
@@ -37,12 +39,15 @@ GrB_Info GxB_IndexUnaryOp_new_arena // create a named user-created IndexUnaryOp
     // check inputs
     //--------------------------------------------------------------------------
 
+    GrB_Info info ;
     GB_CHECK_INIT ;
     GB_RETURN_IF_NULL (op_handle) ;
     (*op_handle) = NULL ;
+    GrB_IndexUnaryOp op = NULL ;
     GB_RETURN_IF_NULL_OR_FAULTY (ztype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (xtype) ;
     GB_RETURN_IF_NULL_OR_FAULTY (ytype) ;
+    GB_OK (GB_check_arena (header_arena)) ;
 
     //--------------------------------------------------------------------------
     // allocate the index_unary op
@@ -50,8 +55,7 @@ GrB_Info GxB_IndexUnaryOp_new_arena // create a named user-created IndexUnaryOp
 
     uint64_t mem = GB_mem (header_arena, 0) ;
     uint64_t header_mem = mem ;
-    GrB_IndexUnaryOp
-        op = GB_CALLOC_MEMORY (1, sizeof (struct GB_IndexUnaryOp_opaque),
+    op = GB_CALLOC_MEMORY (1, sizeof (struct GB_IndexUnaryOp_opaque),
             &header_mem) ;
     if (op == NULL)
     { 
@@ -89,17 +93,11 @@ GrB_Info GxB_IndexUnaryOp_new_arena // create a named user-created IndexUnaryOp
         (xtype->hash != UINT64_MAX) &&
         (ytype->hash != UINT64_MAX) ;
 
-    GrB_Info info = GB_op_name_and_defn (
+    GB_OK (GB_op_name_and_defn (
         // output:
         op->name, &(op->name_len), &(op->hash), &(op->defn), &(op->defn_mem),
         // input:
-        idxop_name, idxop_defn, true, jitable, header_arena) ;
-    if (info != GrB_SUCCESS)
-    { 
-        // out of memory
-        GB_FREE_MEMORY (&op, header_mem) ;
-        return (info) ;
-    }
+        idxop_name, idxop_defn, true, jitable, header_arena)) ;
 
     //--------------------------------------------------------------------------
     // create the function pointer, if NULL
@@ -113,7 +111,7 @@ GrB_Info GxB_IndexUnaryOp_new_arena // create a named user-created IndexUnaryOp
         if (info != GrB_SUCCESS)
         {
             // unable to construct the function pointer
-            GB_Op_free ((GB_Operator *) &op) ;
+            GB_FREE_ALL ;
             // If the JIT fails, it returns GrB_NO_VALUE or GxB_JIT_ERROR.
             // Convert GrB_NO_VALUE to GrB_NULL_POINTER (the function is NULL
             // and cannot be compiled by the JIT).

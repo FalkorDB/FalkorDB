@@ -232,7 +232,14 @@ pull_index:
 		while ((doc_key = RediSearch_ResultsIteratorNext (op->iter, rsIdx, &len))
 				!= NULL) {
 			EdgeIndexKey edgeKey ;
-			if (!IndexDocKey_DecodeEdge (doc_key, len, &edgeKey)) continue ;
+			if (!IndexDocKey_DecodeEdge (doc_key, len, &edgeKey)) {
+				// Log corruption if doc key decode fails. This indicates index
+				// corruption or RediSearch internal bug. We skip this result but
+				// warn to aid debugging.
+				RedisModule_Log(NULL, "warning",
+					"Failed to decode edge doc key at index scan");
+				continue ;
+			}
 			// populate record with edge
 			_UpdateRecord (op, op->child_record, &edgeKey) ;
 			// apply unresolved filters

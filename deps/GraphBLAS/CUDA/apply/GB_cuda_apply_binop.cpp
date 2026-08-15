@@ -32,7 +32,8 @@ GrB_Info GB_cuda_apply_binop
 {
     GrB_Info info ;
     GB_void *scalarx_cuda = NULL ;
-    uint64_t scalarx_cuda_mem = GB_mem (GB_ARENA_RMM, 0) ;
+    int data_arena = GrB_DEFAULT ;  // FIXME: will depend on device id
+    uint64_t scalarx_cuda_mem = GB_mem (data_arena, 0) ;
 
     cudaStream_t stream = nullptr ;
     GB_OK (GB_cuda_stream_pool_acquire (&stream)) ;

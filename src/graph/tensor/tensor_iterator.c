@@ -39,7 +39,7 @@ static bool _ScalarIter
 	if(x)      *x      = it->x;
 	if(row)    *row    = it->row;
 	if(col)    *col    = it->col;
-	if(tensor) *tensor = !SCALAR_ENTRY(it->x);
+	if(tensor) *tensor = IS_VECTOR_ENTRY(it->x);
 
 	// set iterator as depleted
 	it->iter_func = _DepletedIter;
@@ -121,7 +121,7 @@ vector_consume:
 		info = Delta_Matrix_extractElement_UINT64(&it->x, it->T, it->row, it->col);
 		ASSERT(info == GrB_SUCCESS);
 
-		if(SCALAR_ENTRY(it->x)) {
+		if(IS_SCALAR_ENTRY(it->x)) {
 			// set outputs
 			if(x)      *x      = it->x;
 			if(row)    *row    = it->row;
@@ -189,7 +189,7 @@ vector_consume:
 	// trying to advance to the next vector
 	info = Delta_MatrixTupleIter_next_UINT64(&it->a_it, &it->row, &it->col, &it->x);
 	if(info == GrB_SUCCESS) {
-		if(SCALAR_ENTRY(it->x)) {
+		if(IS_SCALAR_ENTRY(it->x)) {
 			// set outputs
 			if(x)      *x      = it->x;
 			if(row)    *row    = it->row;
@@ -242,7 +242,7 @@ void TensorIterator_ScanEntry
 	GrB_Info info = Delta_Matrix_extractElement_UINT64(&it->x, it->T, row, col);
 
 	if(info == GrB_SUCCESS) {
-		if(SCALAR_ENTRY(it->x)) {
+		if(IS_SCALAR_ENTRY(it->x)) {
 			it->iter_func = _ScalarIter;
 		} else {
 			// iterate over vector

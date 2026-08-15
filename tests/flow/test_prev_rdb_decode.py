@@ -12,7 +12,9 @@ VERSIONS = [
         {'decoder_version': 14, 'tag': 'falkordb/falkordb:v4.0.7'},
         {'decoder_version': 15, 'tag': 'falkordb/falkordb:v4.2.2'},
         {'decoder_version': 16, 'tag': 'falkordb/falkordb:v4.8.5'},
-        {'decoder_version': 17, 'tag': 'falkordb/falkordb:v4.10.3'}
+        {'decoder_version': 17, 'tag': 'falkordb/falkordb:v4.10.3'},
+        {'decoder_version': 18, 'tag': 'falkordb/falkordb:v4.16.9'},
+        {'decoder_version': 19, 'tag': 'falkordb/falkordb:v4.20.1'}
         ]
 
 QUERIES = [
@@ -178,5 +180,25 @@ class test_prev_rdb_decode():
             return
 
         decoder_id = 17
+        self._test_decode(decoder_id)
+
+    def test_v18_decode(self):
+        # under sanitizer we're seeing:
+        # Unhandled exception: DUMP payload version or checksum are wrong
+        if SANITIZER:
+            self.env.skip()
+            return
+
+        decoder_id = 18
+        self._test_decode(decoder_id)
+
+    def test_v19_decode(self):
+        # under sanitizer we're seeing:
+        # Unhandled exception: DUMP payload version or checksum are wrong
+        if SANITIZER:
+            self.env.skip()
+            return
+
+        decoder_id = 19
         self._test_decode(decoder_id)
 

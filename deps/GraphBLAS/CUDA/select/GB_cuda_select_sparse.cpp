@@ -34,6 +34,8 @@ GrB_Info GB_cuda_select_sparse
     ASSERT (C != NULL) ;
     ASSERT (A != NULL) ;
 
+    int data_arena = GrB_DEFAULT ;  // FIXME: will depend on device id
+
     GBURBLE ("(select sparse on cuda) ") ;
     printf ("\nblockdim1: %d chunksize1: %d\n",
         GB_CUDA_SELECT_SPARSE_BLOCKDIM1,
@@ -64,7 +66,7 @@ GrB_Info GB_cuda_select_sparse
     GB_OK (GB_new (&C, // sparse or hyper (from A), existing header
         A->type, A->vlen, A->vdim, GB_ph_calloc, A->is_csc,
         csparsity, A->hyper_switch, /* C->plen: revised later: */ 1,
-        Cp_is_32, Cj_is_32, Ci_is_32, GB_ARENA_RMM, GB_ARENA_RMM)) ;
+        Cp_is_32, Cj_is_32, Ci_is_32, data_arena, data_arena)) ;
 
     C->iso = C_iso ;
 
