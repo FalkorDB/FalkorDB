@@ -1,5 +1,9 @@
 from common import *
-from index_utils import *
+from index_utils import (
+    create_edge_range_index,
+    create_node_range_index,
+    wait_for_indices_to_sync,
+)
 
 
 class testRdbLoad():
@@ -118,6 +122,8 @@ class testRdbLoad():
 
         self.env.assertContains('Node By Index Scan',
                                 str(graph.explain("MATCH (n:N) WHERE n.v = 1 RETURN n")))
+        self.env.assertContains('Edge By Index Scan',
+                                str(graph.explain("MATCH ()-[e:R]->() WHERE e.w = 2 RETURN e")))
 
         # data survived the replace
         self.env.assertEqual(
