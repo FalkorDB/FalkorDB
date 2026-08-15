@@ -370,66 +370,68 @@ class testOptionalFlow(FlowTestsBase):
         # use a fresh graph
         g = self.db.select_graph("optional_match_filter_after_with")
 
-        # X node which does not satisfy the optional match pattern
-        g.query("CREATE (:X {id: 1, klist: [9]})")
+        try:
+            # X node which does not satisfy the optional match pattern
+            g.query("CREATE (:X {id: 1, klist: [9]})")
 
-        # the filter must be evaluated above the Optional operation
-        plan = str(g.explain(
-            """OPTIONAL MATCH (n:X {id: 4})
-               WITH *
-               WHERE n IS NOT NULL
-               RETURN n"""))
-        self.env.assertContains("Filter", plan)
+            # the filter must be evaluated above the Optional operation
+            plan = str(g.explain(
+                """OPTIONAL MATCH (n:X {id: 4})
+                   WITH *
+                   WHERE n IS NOT NULL
+                   RETURN n"""))
+            self.env.assertContains("Filter", plan)
 
-        # every one of these predicates references the optional variable and
-        # must discard the all-NULL row
-        discarding = [
-            # original report
-            """OPTIONAL MATCH (n:X {id: 4})
-               WHERE 0 IN n.klist
-               WITH *
-               WHERE n IS NOT NULL
-               RETURN n""",
+            # every one of these predicates references the optional variable and
+            # must discard the all-NULL row
+            discarding = [
+                # original report
+                """OPTIONAL MATCH (n:X {id: 4})
+                   WHERE 0 IN n.klist
+                   WITH *
+                   WHERE n IS NOT NULL
+                   RETURN n""",
 
-            # same query, alias chain broken by collect / UNWIND
-            """OPTIONAL MATCH (n:X {id: 4})
-               WHERE 0 IN n.klist
-               WITH {n: n} AS row
-               WITH collect(row) AS rows
-               UNWIND rows AS row
-               WITH row.n AS n
-               WITH *
-               WHERE n IS NOT NULL
-               RETURN n""",
+                # same query, alias chain broken by collect / UNWIND
+                """OPTIONAL MATCH (n:X {id: 4})
+                   WHERE 0 IN n.klist
+                   WITH {n: n} AS row
+                   WITH collect(row) AS rows
+                   UNWIND rows AS row
+                   WITH row.n AS n
+                   WITH *
+                   WHERE n IS NOT NULL
+                   RETURN n""",
 
-            "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE n IS NOT NULL RETURN n",
-            "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE n.id IS NOT NULL RETURN n",
-            "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE n.id = 4 RETURN n",
-            "OPTIONAL MATCH (n:X {id: 4}) WITH n WHERE n IS NOT NULL RETURN n",
-            "OPTIONAL MATCH (n:X {id: 4}) WITH n AS m WHERE m IS NOT NULL RETURN m",
-            "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE false RETURN n",
-        ]
+                "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE n IS NOT NULL RETURN n",
+                "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE n.id IS NOT NULL RETURN n",
+                "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE n.id = 4 RETURN n",
+                "OPTIONAL MATCH (n:X {id: 4}) WITH n WHERE n IS NOT NULL RETURN n",
+                "OPTIONAL MATCH (n:X {id: 4}) WITH n AS m WHERE m IS NOT NULL RETURN m",
+                "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE false RETURN n",
+            ]
 
-        for q in discarding:
-            self.env.assertEqual(g.query(q).result_set, [])
+            for q in discarding:
+                self.env.assertEqual(g.query(q).result_set, [])
 
-        # the all-NULL row is retained when the predicate accepts NULL
-        q = "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE n IS NULL RETURN n"
-        self.env.assertEqual(g.query(q).result_set, [[None]])
+            # the all-NULL row is retained when the predicate accepts NULL
+            q = "OPTIONAL MATCH (n:X {id: 4}) WITH * WHERE n IS NULL RETURN n"
+            self.env.assertEqual(g.query(q).result_set, [[None]])
 
-        # aggregation over the filtered stream sees no rows
-        q = """OPTIONAL MATCH (n:X {id: 4})
-               WITH *
-               WHERE n IS NOT NULL
-               RETURN count(n)"""
-        self.env.assertEqual(g.query(q).result_set, [[0]])
+            # aggregation over the filtered stream sees no rows
+            q = """OPTIONAL MATCH (n:X {id: 4})
+                   WITH *
+                   WHERE n IS NOT NULL
+                   RETURN count(n)"""
+            self.env.assertEqual(g.query(q).result_set, [[0]])
 
-        # a matching node is not discarded by the same filter
-        q = """OPTIONAL MATCH (n:X {id: 1})
-               WHERE 9 IN n.klist
-               WITH *
-               WHERE n IS NOT NULL
-               RETURN n.id"""
-        self.env.assertEqual(g.query(q).result_set, [[1]])
+            # a matching node is not discarded by the same filter
+            q = """OPTIONAL MATCH (n:X {id: 1})
+                   WHERE 9 IN n.klist
+                   WITH *
+                   WHERE n IS NOT NULL
+                   RETURN n.id"""
+            self.env.assertEqual(g.query(q).result_set, [[1]])
 
-        g.delete()
+        finally:
+            g.delete()
