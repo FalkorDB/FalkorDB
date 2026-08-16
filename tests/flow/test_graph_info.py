@@ -485,6 +485,30 @@ class testGraphInfo():
             for t in threads:
                 t.join()
 
+    def test08_no_sections_reports_everything(self):
+        """a bare GRAPH.INFO reports every section, as the C engine does"""
+
+        res = self.conn.execute_command("GRAPH.INFO")
+
+        # same sections, in the same order, as asking for all of them
+        self.env.assertEqual(res,
+                             self.conn.execute_command("GRAPH.INFO",
+                                                       "RunningQueries",
+                                                       "WaitingQueries",
+                                                       "ObjectPool"))
+
+        self.env.assertEqual(len(res), 6)
+        self.env.assertEqual(res[0], "# Running queries")
+        self.env.assertEqual(res[2], "# Waiting queries")
+        self.env.assertEqual(res[4], "Object Pool")
+
+        # an unknown section is still rejected
+        try:
+            self.conn.execute_command("GRAPH.INFO", "NoSuchSection")
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Unknown section", str(e))
+
 #class testGraphInfoReplication():
 #    def __init__(self):
 #        self.env, self.db = Env(env='oss', useSlaves=True)

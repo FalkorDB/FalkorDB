@@ -6,7 +6,8 @@
 //! ```
 //!
 //! Returns information about currently running and/or waiting queries
-//! across all graphs, plus string-pool stats.
+//! across all graphs, plus string-pool stats. With no section given, every
+//! section is reported, same as the C engine.
 
 use crate::telemetry;
 use graph::runtime::string_pool;
@@ -23,13 +24,13 @@ pub fn graph_info(
         .map(|a| a.to_string_lossy())
         .collect();
 
-    if args.is_empty() {
-        return Err(RedisError::WrongArity);
-    }
+    // no section asked for means all of them: clients such as the node
+    // client's `db.info()` send a bare GRAPH.INFO
+    let all = args.is_empty();
 
-    let mut want_running = false;
-    let mut want_waiting = false;
-    let mut want_object_pool = false;
+    let mut want_running = all;
+    let mut want_waiting = all;
+    let mut want_object_pool = all;
 
     for arg in &args {
         match arg.to_ascii_lowercase().as_str() {
