@@ -321,7 +321,24 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // so we don't rebuild the full-type Vec per row.
                 let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if Self::can_utilize_index(&q) {
-                        Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
+                        let g = self.runtime.g.borrow();
+                        // Edge index: a numeric Equal/Range on a column we own is served
+                        // by the CoW B-tree (endpoints recovered from the graph's reverse index);
+                        // string/geo/composite or a missing column falls through to RediSearch during
+                        // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
+                        #[cfg(feature = "index-falkordb")]
+                        let it: Box<
+                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
+                        > = if let Some(hit) = g.query_index_numeric_edges(label, &q) {
+                            Box::new(hit)
+                        } else {
+                            Box::new(g.get_indexed_edges(label, q))
+                        };
+                        #[cfg(not(feature = "index-falkordb"))]
+                        let it: Box<
+                            dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>,
+                        > = Box::new(g.get_indexed_edges(label, q));
+                        it
                     } else {
                         let cached = {
                             let mut cache = self.all_edges_cache.borrow_mut();
