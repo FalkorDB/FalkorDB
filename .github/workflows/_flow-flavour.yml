@@ -135,13 +135,12 @@ jobs:
             echo "::error::unable to find coverage service containers"
             exit 1
           fi
-          RUNNING_SERVICE_IDS=$(docker ps -q --filter "ancestor=$COV_IMAGE")
-          if [ -n "$RUNNING_SERVICE_IDS" ]; then
-            docker stop --time 10 $RUNNING_SERVICE_IDS >/dev/null
-          fi
           # Every container uses PID 1 and the same module hash, so copy each
           # profile directory separately to avoid filename collisions.
           for service_id in $SERVICE_IDS; do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$service_id")" = "true" ]; then
+              docker stop --time 60 "$service_id" >/dev/null
+            fi
             profile_dir="${GITHUB_WORKSPACE}/cov/${service_id}"
             mkdir -p "$profile_dir"
             docker cp "${service_id}:/var/lib/falkordb/cov/." "$profile_dir"
