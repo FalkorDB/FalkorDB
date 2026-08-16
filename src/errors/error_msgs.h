@@ -119,6 +119,7 @@
 #define EMSG_UNIQUE_CONSTRAINT_VIOLATION_EDGE "unique constraint violation, on edge of relationship-type %s"
 #define EMSG_SPPATH_REQUIRED "sourceNode and targetNode are required"
 #define EMSG_SPPATH_INVALID_TYPE "sourceNode and targetNode must be of type Node"
+#define EMSG_ASTAR_LATLON_REQUIRED "latitudeProperty and longitudeProperty are required"
 #define EMSG_REL_DIRECTION "relDirection values must be 'incoming', 'outgoing' or 'both'"
 #define EMSG_SSPATH_REQUIRED "sourceNode is required"
 #define EMSG_SSPATH_INVALID_TYPE "sourceNode must be of type Node"

@@ -47,6 +47,7 @@ void Proc_Register() {
 	_procRegister("algo.maxFlow",            Proc_MaxFlowCtx)     ;
 	_procRegister("algo.pageRank",           Proc_PagerankCtx);
 	_procRegister("algo.SPpaths",            Proc_SPpathCtx);
+	_procRegister("algo.AStar",              Proc_AStarPathCtx);
 	_procRegister("algo.SSpaths",            Proc_SSpathCtx);
 	_procRegister("algo.betweenness",        Proc_BetweennessCtx);
 	_procRegister("algo.HarmonicCentrality", Proc_HarmonicCentralityCtx);
