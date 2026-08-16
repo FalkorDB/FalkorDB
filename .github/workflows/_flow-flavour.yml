@@ -82,11 +82,6 @@ jobs:
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-        # Keep primary and replica profiles separate: both containers run
-        # Redis as PID 1 with the same module hash, so a shared directory
-        # would make their LLVM_PROFILE_FILE names collide.
-        volumes:
-          - ${{ github.workspace }}/cov/falkordb:/var/lib/falkordb/cov
         env:
           # Empty FALKORDB_ARGS overrides the image's compiled-in default
           # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
@@ -99,8 +94,6 @@ jobs:
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-        volumes:
-          - ${{ github.workspace }}/cov/replica:/var/lib/falkordb/cov
         env:
           FALKORDB_ARGS: ""
           REDIS_ARGS: "--replicaof falkordb 6379 --enable-debug-command yes"
@@ -125,9 +118,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Prepare coverage dirs
         if: inputs.collect_coverage
-        run: |
-          mkdir -p "${GITHUB_WORKSPACE}/cov/falkordb" "${GITHUB_WORKSPACE}/cov/replica"
-          chmod 0777 "${GITHUB_WORKSPACE}/cov" "${GITHUB_WORKSPACE}/cov/falkordb" "${GITHUB_WORKSPACE}/cov/replica"
+        run: mkdir -p "${GITHUB_WORKSPACE}/cov/falkordb" "${GITHUB_WORKSPACE}/cov/replica"
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
@@ -165,6 +156,11 @@ jobs:
               docker stop --time 10 "$service_id" >/dev/null
             fi
           done
+          # Copy each service's internal profile directory separately. Both
+          # Redis processes are PID 1 with the same module hash, so merging
+          # them into one directory would overwrite one profile filename.
+          docker cp "${FALKORDB_SERVICE_ID}:/var/lib/falkordb/cov/." "${GITHUB_WORKSPACE}/cov/falkordb"
+          docker cp "${REPLICA_SERVICE_ID}:/var/lib/falkordb/cov/." "${GITHUB_WORKSPACE}/cov/replica"
           CID=$(docker create "$COV_IMAGE")
           docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
           docker rm "$CID" >/dev/null
