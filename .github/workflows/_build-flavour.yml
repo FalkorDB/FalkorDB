@@ -46,6 +46,11 @@ on:
         description: "JSON array of build cells — see header for shape"
         required: true
         type: string
+      cargo_features:
+        description: "Cargo features to build with (e.g. index-falkordb). Empty = default build."
+        required: false
+        type: string
+        default: ""
       dockerfile:
         description: "Dockerfile path"
         required: false
@@ -128,6 +133,7 @@ jobs:
           build-args: |
             BROWSER_TAG=${{ inputs.browser_tag }}
             BUILD_IMAGE=${{ inputs.build_image }}
+            CARGO_FEATURES=${{ inputs.cargo_features }}
           # When create_manifest=true (release), push per-arch tags so the
           # manifest job below can combine them. When false (instrumented),
           # push directly to the bare tag — single-arch images don't need
