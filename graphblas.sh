@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build SuiteSparse:GraphBLAS v10.3.1 + LAGraph v1.2.1 for FalkorDB.
+# Build SuiteSparse:GraphBLAS v10.5.0-beta.1 + LAGraph v1.3.x for FalkorDB.
 #
 # Single script for both deps because LAGraph statically links against the
 # graphblas archive we just installed; keeping them together avoids drift in
@@ -23,7 +23,7 @@
 #     GxB_JIT_RUN; at RUN, GraphBLAS attempts cache loads for un-covered
 #     ops and errors out when the cache is empty / no compiler is available.
 #
-# Two extras vs. plain upstream v10.3.1:
+# Two extras vs. plain upstream v10.5.0-beta.1:
 #
 #   1. Apply build/graphblas/GB_control.patch — disables FP32/FP64/FC32/FC64
 #      FactoryKernel families that FalkorDB query plans never hit. Matches the
@@ -68,7 +68,7 @@ for arg in "$@"; do
 done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GRAPHBLAS_VERSION="${GRAPHBLAS_VERSION:-v10.3.1}"
+GRAPHBLAS_VERSION="${GRAPHBLAS_VERSION:-v10.5.0-beta.1}"
 LAGRAPH_VERSION="${LAGRAPH_VERSION:-v1.3.x}"
 
 # Pinned FalkorDB C SHA — no longer used; kept here to mark the source of
@@ -141,10 +141,11 @@ fi
 #                                       drops the stack-canary epilogue from
 #                                       hot loops.
 #   -Wno-incompatible-pointer-types  : clang-22 promoted this from warning to
-#                                       error by default. v10.3.1's
-#                                       GB_I_inverse.c trips it; LAGraph
-#                                       stays quiet today but the flag is
-#                                       harmless.
+#                                       error by default. GraphBLAS's
+#                                       Source/extract/GB_I_inverse.c trips it
+#                                       (still present at v10.5.0-beta.1);
+#                                       LAGraph stays quiet today but the flag
+#                                       is harmless.
 COMMON_C_FLAGS="-O3 -g -DNDEBUG -fPIC -fno-stack-protector -Wno-incompatible-pointer-types"
 if [ -n "${INCLUDE_FLAG}" ]; then
     COMMON_C_FLAGS="${COMMON_C_FLAGS} ${INCLUDE_FLAG}"

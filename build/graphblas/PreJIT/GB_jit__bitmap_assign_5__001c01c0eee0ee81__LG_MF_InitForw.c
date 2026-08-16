@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__bitmap_assign_5__000011c0eee0ee82__LG_MF_InitForw.c
+// GB_jit__bitmap_assign_5__001c01c0eee0ee81__LG_MF_InitForw.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -47,7 +47,7 @@ void LG_MF_InitForw(LG_MF_flowEdge * z, const LG_MF_flowEdge * x, const LG_MF_fl
 #define GB_UPDATE(z,y) GB_ACCUM_OP(z,z,y)
 #define GB_ACCUMULATE_aij(Cx,pC,Ax,pA,A_iso,ywork,C_iso) \
 {                                          \
-    GB_UPDATE (Cx [pC], ywork) ;          \
+    GB_UPDATE (Cx [pC], Ax [pA]) ;          \
 }
 #define GB_ACCUMULATE_scalar(Cx,pC,ywork,C_iso) /* unused */
 
@@ -75,9 +75,10 @@ void LG_MF_InitForw(LG_MF_flowEdge * z, const LG_MF_flowEdge * x, const LG_MF_fl
 #define GB_Cj_BITS 64
 #define GB_Ci_BITS 64
 #define GB_DECLAREC(cwork) LG_MF_flowEdge cwork
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [0]
-#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso) Cx [pC] = cwork
-#define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [0]
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso) \
+    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [p]
 #define GB_COPY_cwork_to_C(Cx,pC,cwork,C_iso) /* unused */
 #define GB_COPY_scalar_to_cwork(cwork,scalar) /* unused */
 
@@ -96,30 +97,30 @@ void LG_MF_InitForw(LG_MF_flowEdge * z, const LG_MF_flowEdge * x, const LG_MF_fl
 #define GB_Mj_BITS 64
 #define GB_Mi_BITS 64
 
-// A matrix: bitmap
+// A matrix: sparse
 #define GB_A_IS_HYPER  0
-#define GB_A_IS_SPARSE 0
-#define GB_A_IS_BITMAP 1
+#define GB_A_IS_SPARSE 1
+#define GB_A_IS_BITMAP 0
 #define GB_A_IS_FULL   0
-#define GBp_A(Ap,k,vlen) ((k) * (vlen))
+#define GBp_A(Ap,k,vlen) Ap [k]
 #define GBh_A(Ah,k)      (k)
-#define GBi_A(Ai,p,vlen) ((p) % (vlen))
-#define GBb_A(Ab,p)      Ab [p]
+#define GBi_A(Ai,p,vlen) Ai [p]
+#define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
-#define GB_A_NHELD(e) int64_t e = (A->vlen * A->vdim)
-#define GB_A_ISO 1
+#define GB_A_NHELD(e) GB_A_NVALS(e)
+#define GB_A_ISO 0
 #define GB_A_TYPE LG_MF_flowEdge
 #define GB_A2TYPE LG_MF_flowEdge
 #define GB_DECLAREA(a) LG_MF_flowEdge a
-#define GB_GETA(a,Ax,p,iso) a = Ax [0]
-#define GB_Ap_TYPE uint64_t
-#define GB_Aj_TYPE uint64_t
-#define GB_Aj_SIGNED_TYPE int64_t
-#define GB_Ai_TYPE uint64_t
-#define GB_Ai_SIGNED_TYPE int64_t
-#define GB_Ap_BITS 64
-#define GB_Aj_BITS 64
-#define GB_Ai_BITS 64
+#define GB_GETA(a,Ax,p,iso) a = Ax [p]
+#define GB_Ap_TYPE uint32_t
+#define GB_Aj_TYPE uint32_t
+#define GB_Aj_SIGNED_TYPE int32_t
+#define GB_Ai_TYPE uint32_t
+#define GB_Ai_SIGNED_TYPE int32_t
+#define GB_Ap_BITS 32
+#define GB_Aj_BITS 32
+#define GB_Ai_BITS 32
 #define GB_COPY_aij_to_ywork(ywork,Ax,pA,A_iso) GB_GETA (ywork, Ax, pA, A_iso)
 #define GB_COPY_scalar_to_ywork(ywork,scalar) /* unused */
 
@@ -128,15 +129,15 @@ void LG_MF_InitForw(LG_MF_flowEdge * z, const LG_MF_flowEdge * x, const LG_MF_fl
 
 #include "include/GB_assign_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__bitmap_assign_5__000011c0eee0ee82__LG_MF_InitForw
-#define GB_jit_query  GB_jit__bitmap_assign_5__000011c0eee0ee82__LG_MF_InitForw_query
+#define GB_jit_kernel GB_jit__bitmap_assign_5__001c01c0eee0ee81__LG_MF_InitForw
+#define GB_jit_query  GB_jit__bitmap_assign_5__001c01c0eee0ee81__LG_MF_InitForw_query
 #endif
 #include "template/GB_jit_kernel_bitmap_assign_5.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xc27845c8274b231b ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    (*hash) = 0xa64c57e3e28a3da9 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = GB_LG_MF_InitForw_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = GB_LG_MF_flowEdge_USER_DEFN ;

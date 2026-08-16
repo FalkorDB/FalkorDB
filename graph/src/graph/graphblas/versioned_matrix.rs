@@ -687,10 +687,11 @@ impl VersionedMatrix<bool> {
         // (observed as GrB_INVALID_OBJECT / heap corruption under stress).
         self.wait_all();
         // With nothing to fold there is no merge to do, only a copy of `m` at
-        // the new dims — which `GxB_Matrix_concat` does as one bulk block copy
-        // instead of a tuple round-trip (`grow_cost_concat_vs_rebuild`: 1.2 ms
-        // vs 7.6-8.4 ms at 1m entries). This is the common shape, since a grow
-        // typically follows a commit that already folded.
+        // the new dims, which `grown` does as a `dup` plus a `GrB_Matrix_resize`
+        // — 0.47 ms against the tuple round-trip's 3.7 ms at 262k entries and
+        // 0.81 ms against 9.0 ms at 1m (`grow_cost_rebuild_vs_resize`). This is
+        // the common shape, since a grow typically follows a commit that already
+        // folded.
         if self.dp.nvals() == 0 && self.dm.nvals() == 0 {
             let new_m = self.m.grown(nrows, ncols);
             new_m.wait();

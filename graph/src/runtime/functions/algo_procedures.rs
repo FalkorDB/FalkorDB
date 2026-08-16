@@ -483,6 +483,55 @@ fn active_node_set(g: &Graph) -> FxHashSet<u64> {
     g.get_nodes(&empty, 0).map(u64::from).collect()
 }
 
+/// Bulk-fill an empty BOOL matrix with an all-`true` coordinate pattern, as an
+/// **iso** matrix — one value shared by the whole pattern.
+///
+/// `GxB_Matrix_build_Scalar` rather than `GrB_Matrix_build_BOOL` over a
+/// `vec![true; n]`, because since GraphBLAS 10.5.0 the two are no longer
+/// equivalent: `GrB_Matrix_build_*` "always build a non-iso matrix"
+/// (`Source/builder/GB_build.c`), the post-iso check that used to notice an
+/// all-identical value array having been dropped, while `GxB_Matrix_build_Scalar`
+/// is documented in that same file as always iso. Non-iso costs a byte per
+/// entry — measured at 37,108 against 33,020 bytes for a 4,096-entry pattern —
+/// and takes LAGraph off the iso fast paths its algorithms select on. The
+/// scalar form also needs no values array at all, which was the only reason to
+/// materialize one.
+///
+/// Duplicate coordinates still collapse to a single entry, exactly as they did
+/// under the `GxB_ANY_BOOL` dup operator this replaces: an iso build discards
+/// duplicates. The symmetric caller relies on that for self-loops, which it
+/// pushes from both directions.
+///
+/// # Safety
+/// `m` must be a valid, empty, BOOL-typed matrix whose dimensions cover every
+/// coordinate in `rows` and `cols`, which must be the same length.
+unsafe fn build_bool_pattern(
+    m: crate::graph::graphblas::GrB_Matrix,
+    rows: &[crate::graph::graphblas::GrB_Index],
+    cols: &[crate::graph::graphblas::GrB_Index],
+) {
+    use crate::graph::graphblas::{
+        GrB_BOOL, GrB_Index, GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new,
+        GrB_Scalar_setElement_BOOL, GxB_Matrix_build_Scalar,
+    };
+
+    debug_assert_eq!(rows.len(), cols.len());
+    if rows.is_empty() {
+        return;
+    }
+    let mut scalar: GrB_Scalar = null_mut();
+    GrB_Scalar_new(&raw mut scalar, GrB_BOOL);
+    GrB_Scalar_setElement_BOOL(scalar, true);
+    GxB_Matrix_build_Scalar(
+        m,
+        rows.as_ptr(),
+        cols.as_ptr(),
+        scalar,
+        rows.len() as GrB_Index,
+    );
+    GrB_Scalar_free(&raw mut scalar);
+}
+
 /// Build compact adjacency directly from relationship tensors.
 /// Avoids materializing the full node_cap × node_cap matrix.
 /// Returns (compact_matrix_handle, id_to_compact, compact_to_id, n).
@@ -497,9 +546,7 @@ unsafe fn build_compact_adj_from_tensors(
     Vec<u64>,
     u64,
 ) {
-    use crate::graph::graphblas::{
-        GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_build_BOOL, GrB_Matrix_new, GxB_ANY_BOOL,
-    };
+    use crate::graph::graphblas::{GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_new};
 
     // Build mapping: original_id -> compact_id
     let mut sorted_ids: Vec<u64> = active.iter().copied().collect();
@@ -547,15 +594,7 @@ unsafe fn build_compact_adj_from_tensors(
     // Build compact matrix in one bulk call
     let mut compact: GrB_Matrix = null_mut();
     GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
-    let xvals = vec![true; ri.len()];
-    GrB_Matrix_build_BOOL(
-        compact,
-        ri.as_ptr(),
-        ci.as_ptr(),
-        xvals.as_ptr(),
-        ri.len() as GrB_Index,
-        GxB_ANY_BOOL,
-    );
+    build_bool_pattern(compact, &ri, &ci);
 
     (compact, id_to_compact, sorted_ids, n)
 }
@@ -573,9 +612,7 @@ unsafe fn build_compact_adj_symmetric_from_tensors(
     Vec<u64>,
     u64,
 ) {
-    use crate::graph::graphblas::{
-        GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_build_BOOL, GrB_Matrix_new, GxB_ANY_BOOL,
-    };
+    use crate::graph::graphblas::{GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_new};
 
     // Build mapping: original_id -> compact_id
     let mut sorted_ids: Vec<u64> = active.iter().copied().collect();
@@ -627,15 +664,7 @@ unsafe fn build_compact_adj_symmetric_from_tensors(
     // Build compact matrix in one bulk call
     let mut compact: GrB_Matrix = null_mut();
     GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
-    let xvals = vec![true; ri.len()];
-    GrB_Matrix_build_BOOL(
-        compact,
-        ri.as_ptr(),
-        ci.as_ptr(),
-        xvals.as_ptr(),
-        ri.len() as GrB_Index,
-        GxB_ANY_BOOL,
-    );
+    build_bool_pattern(compact, &ri, &ci);
 
     (compact, id_to_compact, sorted_ids, n)
 }
