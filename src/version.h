@@ -6,9 +6,9 @@
 
 #pragma once
 
-#define FALKOR_VERSION_MAJOR 4
-#define FALKOR_VERSION_MINOR 20
-#define FALKOR_VERSION_PATCH 3
+#define FALKOR_VERSION_MAJOR 99
+#define FALKOR_VERSION_MINOR 99
+#define FALKOR_VERSION_PATCH 99
 
 #define FALKOR_SEMANTIC_VERSION(major, minor, patch) \
   (major * 10000 + minor * 100 + patch)
