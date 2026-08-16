@@ -10,13 +10,25 @@ pub mod data_structures;
 pub mod build_registry;
 
 #[cfg(feature = "index-falkordb")]
+pub mod doc_iter;
+
+#[cfg(feature = "index-falkordb")]
 pub mod encode;
 
 #[cfg(feature = "index-falkordb")]
 pub mod falkordb_index;
 
 #[cfg(feature = "index-falkordb")]
+pub mod geo;
+
+#[cfg(feature = "index-falkordb")]
 pub mod numeric;
+
+#[cfg(feature = "index-falkordb")]
+pub mod range;
+
+#[cfg(feature = "index-falkordb")]
+pub mod tag;
 
 /// The error a scan raises when the native index cannot serve a predicate.
 ///
@@ -49,45 +61,48 @@ pub fn unsupported_by_native_index(
 fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Value>) -> String {
     use crate::index::IndexQuery as Q;
     match query {
-        // Test encodability rather than assuming it. At top level a declined `Equal` is
-        // necessarily non-numeric, but the same arm is reached through `And`/`Or`, where the
-        // child may be perfectly servable and the *combination* is what is not — reporting it as
-        // "non-numeric" there sends the reader after a missing value kind that is not the problem.
-        Q::Equal { key, value } => {
-            if encode::encode_numeric(value).is_some() {
-                format!("equality on `{key}`")
-            } else {
-                format!("equality on `{key}` with a non-numeric value")
-            }
-        }
+        // Name the operand's type rather than calling it "non-numeric": numbers, strings and
+        // points all have a kind now, so what is left is a type no kind holds (a list, a map, a
+        // vector). At top level a declined `Equal` is necessarily one of those, but the same arm
+        // is reached through `And`/`Or`, where the child may be perfectly servable and the
+        // *combination* is what is not — reporting the child as unindexable there sends the reader
+        // after a missing value kind that is not the problem.
+        Q::Equal { key, value } => match indexable_type(value) {
+            true => format!("equality on `{key}`"),
+            false => format!("equality on `{key}` with a {} value", value.name()),
+        },
         Q::Range { key, min, max, .. } => {
-            let encodable = |v: &Option<crate::runtime::value::Value>| {
-                v.as_ref()
-                    .is_none_or(|v| encode::encode_numeric(v).is_some())
-            };
-            if encodable(min) && encodable(max) {
-                format!("range on `{key}`")
-            } else {
-                format!("range on `{key}` with a non-numeric bound")
+            let unindexable = [min, max]
+                .into_iter()
+                .flatten()
+                .find(|v| !indexable_type(v));
+            match unindexable {
+                None => format!("range on `{key}`"),
+                Some(v) => format!("range on `{key}` with a {} bound", v.name()),
             }
         }
         // Two reasons a union is declined, and naming the wrong one sends whoever reads the
         // ledger entry looking for a missing value kind that isn't the problem. A union spanning
-        // attributes needs a real cross-column intersection/merge; one with a non-numeric member
-        // needs that member's index kind.
+        // attributes needs a real cross-column merge; one with an unindexable member needs a kind
+        // that can hold that type. A union that has neither problem is servable on its own and is
+        // only being described because it sits inside something that is not — so it must not be
+        // reported as broken.
         Q::Or(children) => {
             let mut keys = Vec::new();
             let all_same_key = union_keys(children, &mut keys)
                 && keys.first().is_some_and(|f| keys.iter().all(|k| k == f));
             let n = children.len();
             let plural = if n == 1 { "" } else { "s" };
-            if all_same_key {
-                format!(
-                    "a union of {n} member{plural} on `{}` that is not all-numeric",
-                    keys[0]
-                )
-            } else {
-                format!("a union of {n} member{plural} spanning more than one attribute")
+            if !all_same_key {
+                return format!("a union of {n} member{plural} spanning more than one attribute");
+            }
+            match union_unindexable(children) {
+                Some(v) => format!(
+                    "a union of {n} member{plural} on `{}` including a {} value",
+                    keys[0],
+                    v.name()
+                ),
+                None => format!("a union of {n} member{plural} on `{}`", keys[0]),
             }
         }
         // Name the children, not just the count. "a conjunction of 2 predicates" cannot
@@ -105,14 +120,62 @@ fn describe_predicate(query: &crate::index::IndexQuery<crate::runtime::value::Va
         ),
         Q::InList { key, .. } => format!("an IN list on `{key}`"),
         Q::Point { key, .. } => format!("a geo predicate on `{key}`"),
+        // The array trees hold numbers and strings, mirroring RediSearch's `numeric:arr` and
+        // `string:arr` sub-fields. Nothing indexes a point (or a nested list) inside a list, so
+        // that probe names its own type.
         Q::ArrayContains { key, value } => {
-            if encode::encode_numeric(value).is_some() {
+            if matches!(
+                value,
+                crate::runtime::value::Value::Int(_)
+                    | crate::runtime::value::Value::Float(_)
+                    | crate::runtime::value::Value::Bool(_)
+                    | crate::runtime::value::Value::String(_)
+            ) {
                 format!("an array-contains on `{key}`")
             } else {
-                format!("an array-contains on `{key}` with a non-numeric value")
+                format!("an array-contains on `{key}` with a {} value", value.name())
             }
         }
     }
+}
+
+/// The first member of a (possibly nested) union whose value no kind can hold — the thing that
+/// makes the union itself unservable, as opposed to its context.
+#[cfg(feature = "index-falkordb")]
+fn union_unindexable(
+    children: &[crate::index::IndexQuery<crate::runtime::value::Value>]
+) -> Option<&crate::runtime::value::Value> {
+    use crate::index::IndexQuery as Q;
+    children.iter().find_map(|child| match child {
+        // A `NULL` member is not a gap: it matches nothing and drops out of the union.
+        Q::Equal { value, .. }
+            if !indexable_type(value) && !matches!(value, crate::runtime::value::Value::Null) =>
+        {
+            Some(value)
+        }
+        Q::Or(nested) => union_unindexable(nested),
+        _ => None,
+    })
+}
+
+/// Whether some kind in a Range column can hold a value of this type: numbers (including the
+/// temporals and booleans that coerce to one), strings, and points. `NULL`, lists, maps and
+/// vectors have no kind — a predicate over one is what a decline names.
+#[cfg(feature = "index-falkordb")]
+fn indexable_type(value: &crate::runtime::value::Value) -> bool {
+    use crate::runtime::value::Value as V;
+    matches!(
+        value,
+        V::Int(_)
+            | V::Float(_)
+            | V::Bool(_)
+            | V::Datetime(_)
+            | V::Date(_)
+            | V::Time(_)
+            | V::Duration(_)
+            | V::String(_)
+            | V::Point(_)
+    )
 }
 
 /// Collect the attributes a (possibly nested) union's `Equal` members target. `false` when a
@@ -157,16 +220,31 @@ mod tests {
     /// cross-column merge — so reporting one as the other sends the reader after the wrong thing.
     #[test]
     fn a_declined_union_says_which_reason_applies() {
-        let mixed = Q::Or(vec![
+        // A member of a type no kind holds. A *string* member no longer belongs here: the tag
+        // kind holds those, and `n.v IN [1, 'a']` is served from both kinds at once.
+        let unindexable = Q::Or(vec![
+            eq("a", 1),
+            Q::Equal {
+                key: Arc::new("a".to_string()),
+                value: Value::List(Arc::new(Default::default())),
+            },
+        ]);
+        let msg = describe_predicate(&unindexable);
+        assert!(msg.contains("including a List value"), "{msg}");
+        assert!(msg.contains('a'), "names the attribute: {msg}");
+
+        // A union of servable members is described as what it is. It only shows up in a message at
+        // all because something *around* it was declined — saying it holds an unindexable value
+        // would send the reader hunting for a missing kind that is not missing.
+        let servable = Q::Or(vec![
             eq("a", 1),
             Q::Equal {
                 key: Arc::new("a".to_string()),
                 value: Value::String(Arc::new("x".to_string())),
             },
         ]);
-        let msg = describe_predicate(&mixed);
-        assert!(msg.contains("not all-numeric"), "{msg}");
-        assert!(msg.contains('a'), "names the attribute: {msg}");
+        let msg = describe_predicate(&servable);
+        assert_eq!(msg, "a union of 2 members on `a`", "{msg}");
 
         let cross = Q::Or(vec![eq("a", 1), eq("b", 2)]);
         let msg = describe_predicate(&cross);

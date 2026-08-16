@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use crate::graph::graph::{NodeId, RelationshipId};
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{falkordb_index::NumericAnswer, unsupported_by_native_index};
+use crate::index::falkordb::{falkordb_index::IndexAnswer, unsupported_by_native_index};
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryRelationship, Variable};
 use crate::planner::IR;
@@ -327,17 +327,17 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 let indexed: Option<Box<dyn Iterator<Item = EdgeRow>>> =
                     if Self::can_utilize_index(&q) {
                         let g = self.runtime.g.borrow();
-                        // Edge index: a numeric Equal/Range on a column we own is served
+                        // Edge index: a predicate on a column we own is served
                         // by the CoW B-tree (endpoints recovered from the graph's reverse index);
                         // string/geo/composite or a missing column falls through to RediSearch during
                         // the dark-launch. #51, mirrors `NodeByIndexScanOp`.
                         #[cfg(feature = "index-falkordb")]
                         let it: Option<Box<dyn Iterator<Item = EdgeRow>>> = match g
-                            .query_index_numeric_edges(label, &q)
+                            .query_index_edges(label, &q)
                         {
-                            Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
+                            Some(IndexAnswer::Rows(rows)) => Some(Box::new(rows)),
                             // Still building — scan, do not error.
-                            Some(NumericAnswer::NotReady) => None,
+                            Some(IndexAnswer::NotReady) => None,
                             None => {
                                 // See node_by_index_scan: native is the only index under this
                                 // flag, so an unserviceable predicate is a loud error.
