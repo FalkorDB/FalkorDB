@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::config::MAX_INFO_QUERIES;
+use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
 
 /// Maximum stored string length for query/params in telemetry entries.
 const STR_MAX_LEN: usize = 2048;
@@ -463,6 +463,12 @@ pub fn enqueue_entry(
     graph_name: &Arc<str>,
     entry: TelemetryEntry,
 ) {
+    // Query logging is switched off. C gates the equivalent cron task on the
+    // same config, so flipping CMD_INFO back on resumes streaming — entries
+    // produced while off are dropped, not buffered.
+    if !CONFIGURATION_CMD_INFO.load(Ordering::Relaxed) {
+        return;
+    }
     // Skip on replicas: the master's XADDs are replicated to us, so writing
     // here would duplicate entries (and direct writes to a replica must not
     // create a stream).

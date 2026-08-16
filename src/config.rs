@@ -14,7 +14,8 @@
 //! | VKEY_MAX_ENTITY_COUNT         |    | RESULTSET_SIZE             |
 //! | IMPORT_FOLDER / TEMP_FOLDER   |    | QUERY_MEM_CAPACITY         |
 //! | JS_HEAP_SIZE / JS_STACK_SIZE  |    | DELTA_MAX_PENDING_CHANGES  |
-//! | CMD_INFO / DELAY_INDEXING     |    | OMP_THREAD_COUNT ...       |
+//! | DELAY_INDEXING                |    | CMD_INFO                   |
+//! |                               |    | OMP_THREAD_COUNT ...       |
 //! +-------------------------------+    +----------------------------+
 //!       |                                      |
 //!       | requires Redis GIL to read           | lock-free atomic reads
@@ -27,16 +28,17 @@
 //!   These are immutable after module load (flagged `IMMUTABLE` in the
 //!   `redis_module!` macro).
 //!
-//! - **Atomic configs** use `AtomicI64` / `AtomicU64` for lock-free
-//!   concurrent reads from worker threads. Some are runtime-configurable
-//!   through `GRAPH.CONFIG SET`; others are read-only after init.
+//! - **Atomic configs** use `AtomicI64` / `AtomicU64` / `AtomicBool` for
+//!   lock-free concurrent reads from worker threads. Some are
+//!   runtime-configurable through `GRAPH.CONFIG SET`; others are read-only
+//!   after init.
 //!
 //! `CONFIG_NAMES` provides the ordered list of all configuration keys,
 //! used by `GRAPH.CONFIG GET *` to enumerate settings.
 
 use lazy_static::lazy_static;
 use redis_module::RedisGILGuard;
-use std::sync::atomic::{AtomicI64, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64};
 
 // ── Redis module-level configurations (set via moduleArgs) ──
 
@@ -54,7 +56,6 @@ lazy_static! {
         RedisGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
     pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
         RedisGILGuard::new(100_000.into());
-    pub static ref CONFIGURATION_CMD_INFO: RedisGILGuard<bool> = RedisGILGuard::new(true);
     pub static ref CONFIGURATION_DELAY_INDEXING: RedisGILGuard<bool> = RedisGILGuard::new(false);
     pub static ref CONFIGURATION_TEMP_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/tmp".into());
@@ -74,6 +75,10 @@ pub static RESULTSET_SIZE: AtomicI64 = AtomicI64::new(-1);
 pub static QUERY_MEM_CAPACITY: AtomicI64 = AtomicI64::new(0);
 pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
 pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
+/// Toggles the telemetry stream that backs `GRAPH.INFO`. Atomic rather than
+/// GIL-guarded because the query hot path reads it off the main thread, and
+/// because C lets `GRAPH.CONFIG SET CMD_INFO yes|no` flip it at runtime.
+pub static CONFIGURATION_CMD_INFO: AtomicBool = AtomicBool::new(true);
 
 // ── Read-only runtime configs ──
 

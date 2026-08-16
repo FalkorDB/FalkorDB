@@ -509,6 +509,50 @@ class testGraphInfo():
         except redis.exceptions.ResponseError as e:
             self.env.assertContains("Unknown section", str(e))
 
+    def test09_cmd_info_runtime_toggle(self):
+        """CMD_INFO is settable at run-time, and gates query logging"""
+
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+
+        # on by default: a query shows up in the telemetry stream
+        self.graph.query("RETURN 1")
+        pollUntil(lambda: self.conn.xlen(stream), "a logged query")
+
+        #-----------------------------------------------------------------------
+        # turn logging off
+        #-----------------------------------------------------------------------
+
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no"), "OK")
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
+
+        n = self.conn.xlen(stream)
+        self.graph.query("RETURN 2")
+        # the flusher wakes every 5ms; half a second is well past the point
+        # where an entry would have landed had logging still been on
+        time.sleep(0.5)
+        self.env.assertEqual(self.conn.xlen(stream), n)
+
+        #-----------------------------------------------------------------------
+        # and back on
+        #-----------------------------------------------------------------------
+
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes"), "OK")
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 1)
+
+        self.graph.query("RETURN 3")
+        pollUntil(lambda: self.conn.xlen(stream) > n, "query logging to resume")
+
+        # a non-boolean value is rejected, leaving the config untouched
+        try:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "maybe")
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Failed to set config value CMD_INFO to maybe", str(e))
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 1)
+
 #class testGraphInfoReplication():
 #    def __init__(self):
 #        self.env, self.db = Env(env='oss', useSlaves=True)

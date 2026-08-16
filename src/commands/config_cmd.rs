@@ -14,11 +14,12 @@
 //! Runtime-settable (via SET):
 //!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
 //!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
-//!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE, EFFECTS_THRESHOLD
+//!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE, EFFECTS_THRESHOLD,
+//!   CMD_INFO
 //!
 //! Read-only (SET returns an error):
 //!   THREAD_COUNT, OMP_THREAD_COUNT, CACHE_SIZE, ASYNC_DELETE,
-//!   NODE_CREATION_BUFFER, CMD_INFO, MAX_INFO_QUERIES,
+//!   NODE_CREATION_BUFFER, MAX_INFO_QUERIES,
 //!   BOLT_PORT, DELAY_INDEXING, IMPORT_FOLDER, TEMP_FOLDER
 //!
 //! ## Multi-SET semantics
@@ -74,7 +75,9 @@ fn config_get_one(
         "NODE_CREATION_BUFFER" => RedisValue::Integer(normalize_node_creation_buffer(
             *CONFIGURATION_NODE_CREATION_BUFFER.lock(ctx),
         )),
-        "CMD_INFO" => RedisValue::Integer(i64::from(*CONFIGURATION_CMD_INFO.lock(ctx))),
+        "CMD_INFO" => {
+            RedisValue::Integer(i64::from(CONFIGURATION_CMD_INFO.load(Ordering::Relaxed)))
+        }
         "MAX_INFO_QUERIES" => RedisValue::Integer(MAX_INFO_QUERIES.load(Ordering::Relaxed)),
         "EFFECTS_THRESHOLD" => RedisValue::Integer(EFFECTS_THRESHOLD.load(Ordering::Relaxed)),
         "BOLT_PORT" => RedisValue::Integer(BOLT_PORT.load(Ordering::Relaxed)),
@@ -112,7 +115,8 @@ fn validate_config_set(
             }
             Ok(ConfigValue::Int(v))
         }
-        "ASYNC_DELETE" => {
+        // Runtime-settable boolean configs
+        "ASYNC_DELETE" | "CMD_INFO" => {
             let v = match value.to_lowercase().as_str() {
                 "yes" | "1" | "true" => 1i64,
                 "no" | "0" | "false" => 0i64,
@@ -159,7 +163,6 @@ fn validate_config_set(
         | "OMP_THREAD_COUNT"
         | "CACHE_SIZE"
         | "NODE_CREATION_BUFFER"
-        | "CMD_INFO"
         | "MAX_INFO_QUERIES"
         | "BOLT_PORT"
         | "DELAY_INDEXING"
@@ -235,6 +238,7 @@ fn apply_config_set(
         }
         "EFFECTS_THRESHOLD" => EFFECTS_THRESHOLD.store(val.as_i64(), Ordering::Relaxed),
         "ASYNC_DELETE" => ASYNC_DELETE.store(val.as_i64(), Ordering::Relaxed),
+        "CMD_INFO" => CONFIGURATION_CMD_INFO.store(val.as_i64() != 0, Ordering::Relaxed),
         "VKEY_MAX_ENTITY_COUNT" => {
             *CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(ctx) = val.as_i64();
         }

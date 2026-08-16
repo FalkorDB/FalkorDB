@@ -108,7 +108,7 @@ redis_module! {
             ["TEMP_FOLDER", &*CONFIGURATION_TEMP_FOLDER, "/tmp", ConfigurationFlags::IMMUTABLE, None],
         ],
         bool: [
-            ["CMD_INFO", &*CONFIGURATION_CMD_INFO, true, ConfigurationFlags::IMMUTABLE, None],
+            ["CMD_INFO", &CONFIGURATION_CMD_INFO, true, ConfigurationFlags::DEFAULT, None],
             ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::IMMUTABLE, None],
         ],
         enum: [],
