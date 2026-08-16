@@ -189,6 +189,13 @@ pub struct Parser<'a> {
     anon_counter: u32,
     /// Nesting level of the two recursive descents, see [`Parser::MAX_NESTING`].
     depth: u32,
+    /// Height of the tree the last [`Parser::parse_expr_inner`] returned, see
+    /// [`Parser::MAX_TREE_DEPTH`].
+    expr_height: usize,
+    /// Tallest expression [`Parser::parse_expr`] has returned since
+    /// [`Parser::with_child_height`] last cleared it, so a helper that embeds
+    /// those expressions in a tree of its own can account for their height.
+    max_child_height: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -208,10 +215,10 @@ impl<'a> Parser<'a> {
     /// How deep an expression tree may get.
     ///
     /// Constructs that build on [`Parser::parse_expr_inner`]'s own stack
-    /// (`[[..]]`, `-(-(..))`, `x[0][0]`) cost no call frames here, but the
-    /// binder, planner and evaluator all walk the result recursively, so the
-    /// tree still has to be bounded - just by what those stages can walk
-    /// rather than by what this one can.
+    /// (`[[..]]`, `-(-(..))`, `x[0][0]`, `(1+(1+(1+..)))`) cost no call frames
+    /// here, but the binder, planner and evaluator all walk the result
+    /// recursively, so the tree still has to be bounded - just by what those
+    /// stages can walk rather than by what this one can.
     ///
     /// Looser than [`Self::MAX_NESTING`] for that reason, and deliberately so:
     /// `(((1)))` collapses to `1` and test_parentheses pins 10000 of them,
@@ -222,6 +229,14 @@ impl<'a> Parser<'a> {
     /// for `-(-(..))`), leaving room for builds with fatter frames.
     const MAX_TREE_DEPTH: usize = 256;
 
+    /// Levels [`Parser::parse_primary_expr`] may add above the expressions it
+    /// parses, e.g. the `FuncInvocation` and `Distinct` of `count(DISTINCT x)`.
+    ///
+    /// Heights are tracked to keep a tree from outgrowing what later stages can
+    /// walk, so an estimate a level or two out either way is harmless - what
+    /// matters is that each nesting level is charged for.
+    const PRIMARY_LEVELS: usize = 2;
+
     /// Creates a new parser for the given query string.
     #[must_use]
     pub fn new(str: &'a str) -> Self {
@@ -229,6 +244,8 @@ impl<'a> Parser<'a> {
             lexer: Lexer::new(str),
             anon_counter: 0,
             depth: 0,
+            expr_height: 0,
+            max_child_height: 0,
         }
     }
 
@@ -238,6 +255,49 @@ impl<'a> Parser<'a> {
         limit: usize,
     ) -> String {
         self.lexer.format_error(&format!("{TOO_DEEP} {limit}"))
+    }
+
+    /// Fails once a tree being built has passed [`Self::MAX_TREE_DEPTH`].
+    ///
+    /// Called wherever a height grows rather than on the finished tree,
+    /// because every wrap copies the tree it wraps: a query that nests a
+    /// million levels would spend that copying quadratically long before a
+    /// check on the result could reject it.
+    fn check_depth(
+        &self,
+        height: usize,
+    ) -> Result<(), String> {
+        if height > Self::MAX_TREE_DEPTH {
+            return Err(self.too_deep(Self::MAX_TREE_DEPTH));
+        }
+        Ok(())
+    }
+
+    /// Runs `parse`, reporting the tallest expression it parsed alongside its
+    /// result, so a helper's caller can charge itself for what it nested.
+    ///
+    /// The surrounding tally is restored afterwards, leaving each helper
+    /// measuring only its own expressions.
+    fn with_child_height<T>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<(T, usize), String> {
+        let outer = std::mem::take(&mut self.max_child_height);
+        let res = parse(self);
+        let height = std::mem::replace(&mut self.max_child_height, outer);
+        res.map(|res| (res, height))
+    }
+
+    /// Height of `tree`, walked iteratively so measuring a deep one cannot
+    /// overflow the stack the measurement exists to protect.
+    fn tree_height(tree: &DynTree<ExprIR<Arc<String>>>) -> usize {
+        let mut pending = vec![(tree.root(), 1)];
+        let mut height = 0;
+        while let Some((node, depth)) = pending.pop() {
+            height = height.max(depth);
+            pending.extend(node.children().map(|child| (child, depth + 1)));
+        }
+        height
     }
 
     /// Runs `descend` one nesting level down, or fails if that is too deep.
@@ -2065,7 +2125,9 @@ impl<'a> Parser<'a> {
         &mut self,
         allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        self.nested(|s| s.parse_expr_inner(allow_pattern_predicate))
+        let res = self.nested(|s| s.parse_expr_inner(allow_pattern_predicate))?;
+        self.max_child_height = self.max_child_height.max(self.expr_height);
+        Ok(res)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2074,21 +2136,21 @@ impl<'a> Parser<'a> {
         &mut self,
         allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>)];
+        let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>, 0usize)];
         // Stack heights at which a tree level is still open. Constructs that
         // nest on `stack` rather than the call stack are invisible to
         // `nested`, so their depth is counted here instead. A level closes
         // when the frame that opened it is popped, which is what the prune
         // below detects.
         let mut open: Vec<usize> = Vec::new();
-        while let Some((current, res)) = stack.pop() {
+        while let Some((current, res, height)) = stack.pop() {
             while open.last().is_some_and(|&at| at >= stack.len()) {
                 open.pop();
             }
             let Some(res) = res else {
                 if current < 3 || (current > 3 && current < 9) || current == 10 {
-                    stack.push((current, None));
-                    stack.push((current + 1, None));
+                    stack.push((current, None, 0));
+                    stack.push((current + 1, None, 0));
                 } else if current == 3 {
                     // Not
                     let mut not_count = 0;
@@ -2100,13 +2162,13 @@ impl<'a> Parser<'a> {
                         self.lexer.next();
                         not_count += 1;
                     }
-                    let res = if not_count % 2 == 1 {
-                        Some(tree!(ExprIR::Not))
+                    let (res, height) = if not_count % 2 == 1 {
+                        (Some(tree!(ExprIR::Not)), 1)
                     } else {
-                        None
+                        (None, 0)
                     };
-                    stack.push((current, res));
-                    stack.push((current + 1, None));
+                    stack.push((current, res, height));
+                    stack.push((current + 1, None, 0));
                 } else if current == 9 {
                     // unary add or subtract
                     optional_match_token!(self.lexer, Plus);
@@ -2117,22 +2179,23 @@ impl<'a> Parser<'a> {
                         return Err(err.replace("Integer overflow '", "Integer overflow '-"));
                     }
 
-                    let res = if is_negate {
+                    let (res, height) = if is_negate {
                         // `-(-(-1))` keeps a Negate per level even though the
                         // parens around it collapse, so this is a real level.
                         if open.len() >= Self::MAX_TREE_DEPTH {
                             return Err(self.too_deep(Self::MAX_TREE_DEPTH));
                         }
                         open.push(stack.len());
-                        Some(tree!(ExprIR::Negate))
+                        (Some(tree!(ExprIR::Negate)), 1)
                     } else {
-                        None
+                        (None, 0)
                     };
-                    stack.push((current, res));
-                    stack.push((current + 1, None));
+                    stack.push((current, res, height));
+                    stack.push((current + 1, None, 0));
                 } else {
                     // primary expression
-                    let (res, recurse) = self.parse_primary_expr(allow_pattern_predicate)?;
+                    let ((res, recurse), child_height) =
+                        self.with_child_height(|s| s.parse_primary_expr(allow_pattern_predicate))?;
                     if recurse {
                         // A list keeps a node per level; a parenthesis does
                         // not - `(((1)))` collapses to `1` however deep it
@@ -2143,35 +2206,42 @@ impl<'a> Parser<'a> {
                             }
                             open.push(stack.len());
                         }
-                        stack.push((current, Some(res)));
-                        stack.push((0, None));
+                        // What follows is parsed into this still-empty node,
+                        // so it is one level tall for now.
+                        stack.push((current, Some(res), 1));
+                        stack.push((0, None, 0));
                         continue;
                     }
-                    parse_expr_return!(stack, res);
+                    // A complete expression, built around whatever
+                    // sub-expressions it parsed.
+                    let height = child_height + Self::PRIMARY_LEVELS;
+                    self.check_depth(height)?;
+                    parse_expr_return!(self, stack, res, height);
                 }
                 continue;
             };
             match current {
                 0 => {
                     // Or
-                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Or), .. } => Or);
+                    parse_operators!(self, stack, res, height, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Or), .. } => Or);
                 }
                 1 => {
                     // Xor
-                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Xor), .. } => Xor);
+                    parse_operators!(self, stack, res, height, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Xor), .. } => Xor);
                 }
                 2 => {
                     // And
-                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::And), .. } => And);
+                    parse_operators!(self, stack, res, height, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::And), .. } => And);
                 }
                 3 => {
                     // Not
-                    parse_expr_return!(stack, res);
+                    parse_expr_return!(self, stack, res, height);
                 }
                 4 => {
                     // Comparison with chained-range desugaring.
                     // Cypher `a < b <= c` means `a < b AND b <= c`.
                     let mut res = res;
+                    let mut height = height;
                     let cmp_op = match self.lexer.current()? {
                         Token::Equal => Some(ExprIR::Eq),
                         Token::NotEqual => Some(ExprIR::Neq),
@@ -2215,34 +2285,34 @@ impl<'a> Parser<'a> {
                             };
                             let middle_clone: DynTree<ExprIR<Arc<String>>> =
                                 last_cmp_node.children().last().unwrap().clone_as_tree();
+                            // The clone already costs a walk of that operand,
+                            // so measuring it costs nothing extra.
+                            let middle_height = Self::tree_height(&middle_clone);
                             // Wrap in And if not already from a prior step.
                             if !matches!(res.root().data(), ExprIR::And) {
                                 res = tree!(ExprIR::And, res);
+                                height += 1;
                             }
                             let new_cmp = tree!(op, middle_clone);
-                            stack.push((current, Some(res)));
-                            stack.push((current, Some(new_cmp)));
+                            self.check_depth(height.max(middle_height + 1))?;
+                            stack.push((current, Some(res), height));
+                            stack.push((current, Some(new_cmp), middle_height + 1));
                         } else {
                             res = tree!(op, res);
-                            stack.push((current, Some(res)));
+                            height += 1;
+                            self.check_depth(height)?;
+                            stack.push((current, Some(res), height));
                         }
-                        stack.push((current + 1, None));
+                        stack.push((current + 1, None, 0));
                         continue;
                     }
 
-                    match &mut stack.last_mut() {
-                        Some((_, Some(expr))) => {
-                            expr.root_mut().push_child_tree(res);
-                        }
-                        Some((_, expr)) => {
-                            *expr = Some(res);
-                        }
-                        _ => return Ok(res),
-                    }
+                    parse_expr_return!(self, stack, res, height);
                 }
                 5 => {
                     // String, List, Null predicates
                     let mut res = res;
+                    let mut height = height;
                     match self.lexer.current()? {
                         Token::IdentifierOrKeyword {
                             keyword: Some(Keyword::In),
@@ -2307,6 +2377,10 @@ impl<'a> Parser<'a> {
                                     optional_match_token!(self.lexer => Not)
                                 )));
                                 match_token!(self.lexer => Null);
+                                // Each `IS NULL` wraps the last, so a repeated
+                                // one leans a level deeper every time.
+                                height += 1;
+                                self.check_depth(height)?;
                                 res = tree!(
                                     ExprIR::FuncInvocation(
                                         get_functions().get("is_null", &FnType::Internal)?
@@ -2315,7 +2389,7 @@ impl<'a> Parser<'a> {
                                     res
                                 );
                             }
-                            parse_expr_return!(stack, res);
+                            parse_expr_return!(self, stack, res, height);
                             continue;
                         }
                         // Negated predicates: peek after NOT to decide
@@ -2344,7 +2418,7 @@ impl<'a> Parser<'a> {
                                     ..
                                 } => {
                                     self.lexer.next();
-                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    stack.push((current, Some(tree!(ExprIR::Not)), 1));
                                     res = tree!(ExprIR::In, res);
                                 }
                                 // name NOT STARTS WITH 'A'
@@ -2354,7 +2428,7 @@ impl<'a> Parser<'a> {
                                 } => {
                                     self.lexer.next();
                                     match_token!(self.lexer => With);
-                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    stack.push((current, Some(tree!(ExprIR::Not)), 1));
                                     res = tree!(
                                         ExprIR::FuncInvocation(
                                             get_functions()
@@ -2370,7 +2444,7 @@ impl<'a> Parser<'a> {
                                 } => {
                                     self.lexer.next();
                                     match_token!(self.lexer => With);
-                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    stack.push((current, Some(tree!(ExprIR::Not)), 1));
                                     res = tree!(
                                         ExprIR::FuncInvocation(
                                             get_functions().get("ends_with", &FnType::Internal)?,
@@ -2384,7 +2458,7 @@ impl<'a> Parser<'a> {
                                     ..
                                 } => {
                                     self.lexer.next();
-                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    stack.push((current, Some(tree!(ExprIR::Not)), 1));
                                     res = tree!(
                                         ExprIR::FuncInvocation(
                                             get_functions().get("contains", &FnType::Internal)?,
@@ -2402,24 +2476,28 @@ impl<'a> Parser<'a> {
                             }
                         }
                         _ => {
-                            parse_expr_return!(stack, res);
+                            parse_expr_return!(self, stack, res, height);
                             continue;
                         }
                     }
-                    stack.push((current, Some(res)));
-                    stack.push((current + 1, None));
+                    // Every predicate above wraps its left-hand side, so each
+                    // one leans a level deeper.
+                    height += 1;
+                    self.check_depth(height)?;
+                    stack.push((current, Some(res), height));
+                    stack.push((current + 1, None, 0));
                 }
                 6 => {
                     // Add, Sub
-                    parse_operators!(self, stack, res, current, Token::Plus => Add, Token::Dash => Sub);
+                    parse_operators!(self, stack, res, height, current, Token::Plus => Add, Token::Dash => Sub);
                 }
                 7 => {
                     // Mul, Div, Modulo
-                    parse_operators!(self, stack, res, current, Token::Star => Mul, Token::Slash => Div, Token::Modulo => Modulo);
+                    parse_operators!(self, stack, res, height, current, Token::Star => Mul, Token::Slash => Div, Token::Modulo => Modulo);
                 }
                 8 => {
                     // Power
-                    parse_operators!(self, stack, res, current, Token::Power => Pow);
+                    parse_operators!(self, stack, res, height, current, Token::Power => Pow);
                 }
                 9 => {
                     // unary add or subtract
@@ -2430,7 +2508,7 @@ impl<'a> Parser<'a> {
                         )
                     {
                         let res = tree!(ExprIR::Constant(Value::Int(i64::MIN)));
-                        parse_expr_return!(stack, res);
+                        parse_expr_return!(self, stack, res, 1);
                         continue;
                     } else if matches!(res.root().data(), ExprIR::Constant(Value::Int(i64::MIN))) {
                         // This case should not happen with proper error handling
@@ -2440,11 +2518,12 @@ impl<'a> Parser<'a> {
                             9_223_372_036_854_775_808_u64
                         ));
                     }
-                    parse_expr_return!(stack, res);
+                    parse_expr_return!(self, stack, res, height);
                 }
                 10 => {
                     // None arithmetic operators
                     let mut res = res;
+                    let mut height = height;
                     // Each postfix step wraps what came before, so a chain
                     // like `x[0][0][0]...` leans one level deeper per step
                     // while the brackets stay balanced and this stack stays
@@ -2460,18 +2539,26 @@ impl<'a> Parser<'a> {
                         match self.lexer.current()? {
                             Token::LBrace => {
                                 self.lexer.next();
-                                res = self.parse_list_operator_expression(res)?;
+                                let (next, index_height) = self
+                                    .with_child_height(|s| s.parse_list_operator_expression(res))?;
+                                res = next;
+                                height = (height + 1).max(index_height + 1);
                             }
                             Token::Dot => {
                                 self.lexer.next();
                                 res = self.parse_property_lookup(res)?;
+                                height += 1;
                             }
                             Token::LBracket => {
                                 self.lexer.next();
-                                res = self.parse_map_projection(res)?;
+                                let (next, value_height) =
+                                    self.with_child_height(|s| s.parse_map_projection(res))?;
+                                res = next;
+                                height = (height + 1).max(value_height + 2);
                             }
                             _ => break,
                         }
+                        self.check_depth(height)?;
                     }
                     if self.lexer.current()? == Token::Colon {
                         let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::Constant(Value::String(l)))));
@@ -2482,26 +2569,32 @@ impl<'a> Parser<'a> {
                             res,
                             labels
                         );
+                        height = (height + 1).max(3);
+                        self.check_depth(height)?;
                     }
-                    parse_expr_return!(stack, res);
+                    parse_expr_return!(self, stack, res, height);
                 }
                 11 => {
                     // primary expression
                     let mut res = res;
+                    let mut height = height;
                     if matches!(res.root().data(), ExprIR::Paren) {
                         match_token!(self.lexer, RParen);
                         if matches!(res.root().child(0).data(), ExprIR::Paren) {
                             res.root_mut().child_mut(0).take_out();
+                            // `((x))` is the same tree as `(x)`, one shorter
+                            // than what was built.
+                            height = height.saturating_sub(1);
                         }
                     } else if matches!(res.root().data(), ExprIR::List) {
                         if optional_match_token!(self.lexer, Comma) {
-                            stack.push((current, Some(res)));
-                            stack.push((0, None));
+                            stack.push((current, Some(res), height));
+                            stack.push((0, None, 0));
                             continue;
                         }
                         match_token!(self.lexer, RBrace);
                     }
-                    parse_expr_return!(stack, res);
+                    parse_expr_return!(self, stack, res, height);
                 }
                 _ => unreachable!(),
             }
@@ -3359,7 +3452,7 @@ mod tests {
     /// (`[[..]]`, `-(-(..))`), and left-leaning postfix chains (`x[0][0]`) -
     /// so each needs its own guard, and each is listed here.
     fn nesting_shapes(n: usize) -> Vec<(&'static str, String)> {
-        vec![
+        let mut shapes = vec![
             (
                 "map",
                 format!(
@@ -3417,6 +3510,36 @@ mod tests {
                 "map projection",
                 format!("MATCH (a) RETURN {}a{{.k}}{}", "[".repeat(n), "]".repeat(n)),
             ),
+        ];
+        // The same nesting an expression can hide, wrapped in a clause.
+        shapes.extend(
+            nesting_expressions(n)
+                .into_iter()
+                .map(|(name, expr)| (name, format!("RETURN {expr}"))),
+        );
+        shapes
+    }
+
+    /// Nesting that shows only in the height of the expression tree: the
+    /// query stays flat, and so does the parser's own stack.
+    fn nesting_expressions(n: usize) -> Vec<(&'static str, String)> {
+        vec![
+            // Parentheses that cannot collapse, one operator per level - the
+            // shape of issue #2531.
+            (
+                "paren arithmetic",
+                format!("{}1{}", "(".repeat(n), "+1)".repeat(n)),
+            ),
+            (
+                "nested operand",
+                format!("{}1{}", "1+(".repeat(n), ")".repeat(n)),
+            ),
+            // Operators only nest where they alternate: a run of the same one
+            // flattens into a single n-ary node.
+            ("alternating operators", format!("1{}", "+1-1".repeat(n))),
+            ("is null", format!("1{}", " IS NULL".repeat(n))),
+            // `a < b < c` desugars to `a < b AND b < c`, one And per step.
+            ("comparison chain", format!("1{}", "<2".repeat(n))),
         ]
     }
 
@@ -3450,6 +3573,28 @@ mod tests {
                 "{name}: took {:?} to reject - it is building the tree first",
                 t.elapsed(),
             );
+        }
+    }
+
+    // Rejecting the deep shapes is only half of it: whatever the parser does
+    // accept has to stay inside the cap, because it is the height of the tree
+    // - not the shape of the query - that the binder, planner and evaluator
+    // pay for. #2531 nested parentheses that cannot collapse, one operator
+    // per level, and the tree they built outgrew the stack that walks it.
+    #[test]
+    fn accepted_expressions_stay_within_the_cap() {
+        with_functions();
+        for n in [1, 2, 3, 16, 100, 127, 128, 255, 256, 512] {
+            for (name, expr) in nesting_expressions(n) {
+                let Ok(tree) = Parser::new(&expr).parse_expr(false) else {
+                    continue;
+                };
+                let height = Parser::tree_height(&tree);
+                assert!(
+                    height <= Parser::MAX_TREE_DEPTH,
+                    "{name}: {n} levels were accepted as a tree {height} deep",
+                );
+            }
         }
     }
 
