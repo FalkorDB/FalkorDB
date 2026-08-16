@@ -198,7 +198,7 @@ EXPOSE 6379/tcp
 ENTRYPOINT ["/var/lib/falkordb/bin/run.sh"]
 
 FROM falkordb/falkordb-browser:$BROWSER_TAG AS browser
-FROM node:24-bookworm-slim AS node
+FROM node:26-bookworm-slim AS node
 
 FROM server AS full
 ENV FALKORDB_BROWSER_PATH=/var/lib/falkordb/browser \
