@@ -54,3 +54,4 @@ simsimd = "6.5"
 smallvec = "1.15.2"
 thin-vec = "0.2.18"
 thiserror = "2"
+geo = { version = "0.33", default-features = false }

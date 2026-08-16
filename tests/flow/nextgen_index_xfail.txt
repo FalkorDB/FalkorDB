@@ -13,77 +13,39 @@
 # The second direction is what stops this file rotting into a list of things that quietly
 # started working. It also means closing a gap is a two-line change: the fix, and the deletion.
 #
-# Add an entry only with a reason, and put it in the group its ACTUAL error names — every entry
-# below was placed by reading the `native index cannot serve ...` message the run emitted, not by
-# reading the test's name. Three entries were previously in the wrong group because they were
-# grouped by name: two "cartesian product" tests that fail on a string bound, and one
-# "utilize_array" test that fails on a string union.
-#
-# Not everything unimplemented shows up here. `can_utilize_index(&q) == false` routes to a label
-# scan before the index is consulted at all, so `IN []`, `IN [NULL]`, List/Map/Point values and
-# ints above 2^53 still return correct results silently — as do several array tests (test_33,
-# test_34, test10, test17). Their passing is not evidence of native array support.
-
 # ---------------------------------------------------------------------------
-# STRING elements inside array-valued properties.
-#   error: "an array-contains on `samples` with a non-numeric value"
+# THE LEDGER IS EMPTY. Every group has closed.
 #
-# Numeric array elements ARE served now: each one is a tuple in the column's separate array tree,
-# and `value IN n.prop` is a point lookup into it. `test_29_array_index` passes on that and has
-# been removed from this file.
+# It stays in the tree because the first direction of the check still matters: with no entries,
+# any failure in the six index suites is an unrecorded gap or a regression, and the job goes red.
 #
-# What is left is the string half. These tests index a list of strings and probe it, and there is
-# no native text kind — so this group closes with the text work, not with more array work.
+# What closed each group, for the archaeology:
 #
-# The two key spaces are separate on purpose: sharing one would make `WHERE n.v = 1` match a node
-# whose `v` is `[1, 2]`, and `Equal` has no post-filter to catch it.
-# ---------------------------------------------------------------------------
-test_index_scans:testIndexScanFlow.test_28_array_index
-test_index_scans:testIndexScanFlow.test_30_update_array_index
-test_index_scans:testIndexScanFlow.test_31_remove_array_index
-test_index_scans:testIndexScanFlow.test_32_multiple_array_indexed_entities
-
-# ---------------------------------------------------------------------------
-# String and text predicates on a Range index — tags, stopwords, escaping, mixed-type columns.
-#   errors: "equality on `x` with a non-numeric value"
-#           "range on `x` with a non-numeric bound"
-#           "a union of N members on `x` that is not all-numeric"
-# RediSearch owns strings today; there is no native text kind yet (docs 10-13). This is by far the
-# largest group, and one text kind closes all of it.
-# ---------------------------------------------------------------------------
-test_index_scans:testIndexScanFlow.test02_cartesian_product_index_scans_only
-test_index_scans:testIndexScanFlow.test03_cartesian_product_reused_index
-test_index_scans:testIndexScanFlow.test05_test_in_operator_string_props
-test_index_scans:testIndexScanFlow.test06_tag_separator
-test_index_scans:testIndexScanFlow.test14_index_scan_utilize_array
-test_index_scans:testIndexScanFlow.test20_index_scan_stopwords
-test_index_scans:testIndexScanFlow.test_24_multitype_index
-test_index_scans:testIndexScanFlow.test_25_unescaped_string
-test_index_delete:testNodeIndexDeletionFlow.test_07_reset_order
-test_index_updates:testIndexUpdatesFlow.test04_node_deletion
-test_edge_index_updates:testEdgeIndexUpdatesFlow.test04_edge_deletion
-test_edge_index_scans:testEdgeByIndexScanFlow.test15_chained_optional_match_indexed_edge
-test_edge_index_scans:testEdgeByIndexScanRegressionsFlow.test17_child_var_reference_safety
-
-# ---------------------------------------------------------------------------
-# Conjunctions — CLOSED. Nothing left in this group.
+#   numeric arrays (4)      -> a separate array tree per column; `value IN n.prop` is a point
+#                              lookup into it (#2453)
+#   conjunctions (3)        -> same-attribute bounds fold arithmetically into one window;
+#                              cross-attribute ones intersect a column per attribute (#2453)
+#   strings and tags (13)   -> the tag kind: a per-column dictionary interning each distinct
+#                              string to a dense id, with the tree keyed by that id. Exact and
+#                              case-sensitive, because `utilize_index` keeps no filter over a
+#                              string equality. Lexicographic ranges resolve through the
+#                              dictionary rather than the key, so tokenizer-hostile strings
+#                              (separators, whitespace, backslashes) need no encoding at all —
+#                              which is what closed `test06_tag_separator`,
+#                              `test20_index_scan_stopwords` and `test_25_unescaped_string`.
 #
-# Three shapes used to land here and all three are served now:
-#   the same predicate twice          -> collapsed in `push_filters_down` (#2390)
-#   several bounds on ONE attribute   -> folded arithmetically into a single window
-#   bounds across TWO attributes      -> one column per attribute, intersected
+# Two shapes reached the index during that work that no column could answer alone, and both are
+# now combined across columns rather than declined: a conjunction of unions
+# (`p.name IN [..] AND p.age IN [..]`) intersects, and a union across attributes
+# (`p.name IN [..] OR p.age = 33`) unions — materialised, since a doc satisfying both members is
+# one row in Cypher, not two.
 #
-# The same-key fold happens in the index rather than the planner because
-# `merge_range_queries` gives up whenever two conjuncts constrain the same side of the window —
-# at plan time the bounds may still be expressions it cannot compare, and by the time the index
-# sees them they are concrete values.
+# Not everything unimplemented shows up here, and an empty ledger does not mean the native index
+# is complete. `can_utilize_index(&q) == false` routes to a label scan before the index is
+# consulted at all, so `IN []`, `IN [NULL]`, Map values and ints above 2^53 still return correct
+# results without the index being asked. Fulltext and Vector indexes are not this index's job:
+# they are still RediSearch's, and their procedures still query it.
 #
-# The cross-attribute case is a **set probe, not a sorted merge**: `DocIter` yields docs in value
-# order, not id order, so the first attribute is materialised and the rest probe it. Verified
-# against the RediSearch build — same rows, different order, which Cypher permits without
-# `ORDER BY`.
-# ---------------------------------------------------------------------------
-
 # ---------------------------------------------------------------------------
 # IGNORED in both directions (`!` prefix) — NOT a native-index gap.
 #

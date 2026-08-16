@@ -24,7 +24,7 @@ use std::sync::Arc;
 
 use crate::graph::graph::NodeId;
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{falkordb_index::NumericAnswer, unsupported_by_native_index};
+use crate::index::falkordb::{falkordb_index::IndexAnswer, unsupported_by_native_index};
 use crate::index::indexer::IndexQuery;
 use crate::parser::ast::{QueryExpr, QueryNode, Variable};
 use crate::planner::IR;
@@ -302,12 +302,12 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                         // the failure is diagnosable rather than a bare "no rows".
                         #[cfg(feature = "index-falkordb")]
                         let it: Option<Box<dyn Iterator<Item = NodeId>>> = match g
-                            .query_index_numeric_nodes(self.index, &q)
+                            .query_index_nodes(self.index, &q)
                         {
-                            Some(NumericAnswer::Rows(rows)) => Some(Box::new(rows)),
+                            Some(IndexAnswer::Rows(rows)) => Some(Box::new(rows)),
                             // The column exists and will serve this once its build installs
                             // the base; until then the scan below is the correct answer.
-                            Some(NumericAnswer::NotReady) => None,
+                            Some(IndexAnswer::NotReady) => None,
                             None => {
                                 return Err(unsupported_by_native_index("node", self.index, &q));
                             }

@@ -84,7 +84,7 @@ use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::{falkordb_index::NumericAnswer, numeric::EncodedTuples};
+use crate::index::falkordb::{falkordb_index::IndexAnswer, range::EncodedTuples};
 use crate::{
     entity_type::EntityType,
     graph::{
@@ -369,7 +369,7 @@ pub struct Graph {
     pub version: u64,
     /// Schema version (incremented only on schema changes: new labels, relationship types, or attributes)
     pub schema_version: u64,
-    /// FalkorDB numeric indexes, folded into the graph version: `new_version`
+    /// FalkorDB native indexes, folded into the graph version: `new_version`
     /// forks them copy-on-write and the committed-version swap publishes graph +
     /// index atomically (PR2 · P3). Strictly gated — absent when the feature is
     /// off.
@@ -3306,7 +3306,7 @@ impl Graph {
                 if *index_type == IndexType::Range {
                     for attr in attrs {
                         self.falkordb_index
-                            .create_numeric(EntityType::Node, label, attr);
+                            .create_column(EntityType::Node, label, attr);
                     }
                 }
                 // Don't spawn async — caller will populate via populate_index_sync
@@ -3327,7 +3327,7 @@ impl Graph {
                 if *index_type == IndexType::Range {
                     for attr in attrs {
                         self.falkordb_index
-                            .create_numeric(EntityType::Relationship, label, attr);
+                            .create_column(EntityType::Relationship, label, attr);
                     }
                 }
             }
@@ -3364,7 +3364,7 @@ impl Graph {
     /// this graph version, so it MUST be filled here (with `&mut Graph`) and
     /// never via the async RediSearch populate, which reads through the
     /// `Indexer -> Graph` back-pointer this design rejects. A `(label, attr)`
-    /// with no live nodes or no numeric values yields an empty column.
+    /// with no live nodes, or none carrying an indexable value, yields an empty column.
     #[cfg(feature = "index-falkordb")]
     fn populate_index_node(
         &mut self,
@@ -3377,7 +3377,7 @@ impl Graph {
             .map(|attr| (attr.clone(), self.collect_node_index_entries(label, attr)))
             .collect();
         for (attr, pairs) in built {
-            self.falkordb_index.build_numeric(
+            self.falkordb_index.build_column(
                 EntityType::Node,
                 label,
                 &attr,
@@ -3504,7 +3504,7 @@ impl Graph {
             })
             .collect();
         for (attr, pairs) in built {
-            self.falkordb_index.build_numeric(
+            self.falkordb_index.build_column(
                 EntityType::Relationship,
                 type_name,
                 &attr,
@@ -3632,7 +3632,7 @@ impl Graph {
     /// Used after RDB load when the graph is fully constructed.
     pub fn populate_indexes_sync(&mut self) {
         let node_snapshots = self.node_indexer.acquire_population_snapshots();
-        // Index numeric columns to (re)build after the RediSearch pass — collect
+        // Index columns to (re)build after the RediSearch pass — collect
         // just the names here, build after the loop to keep borrows simple. P4a.
         #[cfg(feature = "index-falkordb")]
         let mut index_todo: Vec<(Arc<String>, Vec<Arc<String>>)> = Vec::new();
@@ -3701,7 +3701,7 @@ impl Graph {
         // `(src, dst, eid)` triple for large relationship types on
         // RDB load.
         let edge_snapshots = self.edge_indexer.acquire_population_snapshots();
-        // Edge index numeric columns to (re)build after the RediSearch pass. #51.
+        // Edge index columns to (re)build after the RediSearch pass. #51.
         #[cfg(feature = "index-falkordb")]
         let mut edge_index_todo: Vec<(Arc<String>, Vec<Arc<String>>)> = Vec::new();
         for snapshot in edge_snapshots {
@@ -4039,37 +4039,37 @@ impl Graph {
         self.node_indexer.query(label, query).map(NodeId)
     }
 
-    /// Node ids for `query` from the index numeric column. Wraps [`FalkorDbIndex::query_numeric`],
+    /// Node ids for `query` from the native index column. Wraps [`FalkorDbIndex::query_column`],
     /// mapping raw docs to `NodeId` (whose constructor is module-private) and preserving its
     /// three-way answer: rows, `NotReady` (column still building — scan), or `None` (cannot be
     /// served). `use<>` keeps the returned iterator free of the `&self` borrow — it owns its tree
     /// snapshot, so it outlives this borrow.
     #[cfg(feature = "index-falkordb")]
-    pub fn query_index_numeric_nodes(
+    pub fn query_index_nodes(
         &self,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<NumericAnswer<impl Iterator<Item = NodeId> + use<>>> {
+    ) -> Option<IndexAnswer<impl Iterator<Item = NodeId> + use<>>> {
         self.falkordb_index()
-            .query_numeric(EntityType::Node, label, query)
+            .query_column(EntityType::Node, label, query)
             .map(|answer| answer.map_rows(|rows| rows.map(NodeId)))
     }
 
-    /// Answer an EDGE numeric `Equal`/`Range` from the index column for `type_name`, yielding
+    /// Answer an EDGE predicate from the index column for `type_name`, yielding
     /// `(src, dst, edge_id)` — endpoints recovered from the graph's `edge_id → (src, dst)` reverse
     /// index (`endpoints_for_edge`), like RediSearch's edge read (which instead reads them from its
     /// 24-byte key). Endpoints are resolved eagerly into an owned iterator because the edge scan op
     /// only holds a temporary graph borrow, so the result must not borrow `self`. Three-way answer
     /// as for nodes: rows, `NotReady` (still building — scan), `None` (not servable). #51.
     #[cfg(feature = "index-falkordb")]
-    pub fn query_index_numeric_edges(
+    pub fn query_index_edges(
         &self,
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<NumericAnswer<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>>> {
+    ) -> Option<IndexAnswer<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>>> {
         let answer =
             self.falkordb_index()
-                .query_numeric(EntityType::Relationship, type_name, query)?;
+                .query_column(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump and the decode
@@ -5239,10 +5239,10 @@ mod falkordb_index_mvcc_tests {
         let mut committed = Graph::new(64, 64, 10, 1, "t");
         committed
             .falkordb_index_mut()
-            .create_numeric(EntityType::Node, &label, &attr);
+            .create_column(EntityType::Node, &label, &attr);
         committed
             .falkordb_index_mut()
-            .numeric_mut(EntityType::Node, &label, &attr)
+            .column_mut(EntityType::Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(30), 1);
 
@@ -5250,7 +5250,7 @@ mod falkordb_index_mvcc_tests {
         let mut writer = committed.new_version();
         writer
             .falkordb_index_mut()
-            .numeric_mut(EntityType::Node, &label, &attr)
+            .column_mut(EntityType::Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(40), 2);
 
@@ -5300,7 +5300,7 @@ mod falkordb_index_mvcc_tests {
         g.set_nodes_attributes(&attrs, &mut FxHashMap::default())
             .unwrap();
 
-        // Build the index numeric column from the live nodes.
+        // Build the index column from the live nodes.
         g.populate_index_node(&label, std::slice::from_ref(&attr));
 
         let scan = |lo: Option<i64>, hi: Option<i64>| -> Vec<u64> {
@@ -5328,7 +5328,7 @@ mod falkordb_index_mvcc_tests {
         let label = Arc::new("Person".to_string());
         let attr = Arc::new("v".to_string());
         g.falkordb_index_mut()
-            .create_numeric(EntityType::Node, &label, &attr);
+            .create_column(EntityType::Node, &label, &attr);
         let lid = g.get_label_id_mut("Person");
         let ids: Vec<u64> = g.reserve_nodes(n).unwrap().iter().map(|x| x.0).collect();
         let mut set = RoaringTreemap::new();
@@ -5436,7 +5436,7 @@ mod falkordb_index_mvcc_tests {
         let label = Arc::new("Person".to_string());
         let attr = Arc::new("v".to_string());
         g.falkordb_index_mut()
-            .create_numeric(EntityType::Node, &label, &attr);
+            .create_column(EntityType::Node, &label, &attr);
         let _lid = g.get_label_id_mut("Person"); // register the label matrix
         let ids: Vec<u64> = g.reserve_nodes(1).unwrap().iter().map(|x| x.0).collect();
         let mut set = RoaringTreemap::new();
