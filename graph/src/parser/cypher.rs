@@ -2121,6 +2121,10 @@ impl<'a> Parser<'a> {
     /// Precedence climbing itself runs on `stack` and costs no call frames;
     /// the level is spent by the sub-expressions inside maps, lists, calls and
     /// comprehensions, which re-enter here.
+    ///
+    /// How tall the result is carries over to the caller through
+    /// [`Self::with_child_height`], so nesting spread over several of these
+    /// calls is still counted as the one tree it becomes.
     fn parse_expr(
         &mut self,
         allow_pattern_predicate: bool,
