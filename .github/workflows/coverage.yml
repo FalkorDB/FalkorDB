@@ -48,7 +48,7 @@ jobs:
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
       with:
         path: ./bin/linux-x64-release-cov/libcypher-parser
-        key: parser-coverage-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
+        key: parser-coverage-llvm-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c', './deps/libcypher-parser/lib/src/operators.c') }}
 
     # The RediSearch submodule gitlink SHA is part of the cache key so that
     # advancing the fork pin invalidates the cache even when src/version.h is

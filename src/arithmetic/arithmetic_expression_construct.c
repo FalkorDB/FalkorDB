@@ -208,6 +208,7 @@ static AR_ExpNode *_AR_EXP_FromPropertyExpression(const cypher_astnode_t *expr) 
 	return root;
 }
 
+
 static SIValue _AR_EXP_FromIntegerString(const char *value_str) {
 	char *endptr = NULL;
 	errno = 0;
@@ -946,4 +947,3 @@ AR_ExpNode *AR_EXP_FromASTNode(const cypher_astnode_t *expr) {
 
 	return root;
 }
-

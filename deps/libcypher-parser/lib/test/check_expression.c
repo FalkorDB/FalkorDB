@@ -695,6 +695,60 @@ START_TEST (parse_subscript_list_with_in_operator)
 }
 END_TEST
 
+START_TEST (parse_value_operators_before_predicates)
+{
+    struct cypher_input_position last = cypher_input_position_zero;
+    result = cypher_parse(
+            "RETURN a + b CONTAINS c AS r, a + (b CONTAINS c) AS s, "
+            "a IN b + c AS t",
+            &last, NULL, 0);
+    ck_assert_ptr_ne(result, NULL);
+    ck_assert_int_eq(last.offset, 70);
+
+    const cypher_astnode_t *ast = cypher_parse_result_get_directive(result, 0);
+    const cypher_astnode_t *query = cypher_ast_statement_get_body(ast);
+    const cypher_astnode_t *clause = cypher_ast_query_get_clause(query, 0);
+    ck_assert_int_eq(cypher_astnode_type(clause), CYPHER_AST_RETURN);
+    ck_assert_int_eq(cypher_ast_return_nprojections(clause), 3);
+
+    const cypher_astnode_t *proj = cypher_ast_return_get_projection(clause, 0);
+    const cypher_astnode_t *exp = cypher_ast_projection_get_expression(proj);
+    ck_assert_int_eq(cypher_astnode_type(exp), CYPHER_AST_BINARY_OPERATOR);
+    ck_assert_ptr_eq(cypher_ast_binary_operator_get_operator(exp),
+            CYPHER_OP_CONTAINS);
+
+    const cypher_astnode_t *arg = cypher_ast_binary_operator_get_argument1(exp);
+    ck_assert_int_eq(cypher_astnode_type(arg), CYPHER_AST_BINARY_OPERATOR);
+    ck_assert_ptr_eq(cypher_ast_binary_operator_get_operator(arg),
+            CYPHER_OP_PLUS);
+    arg = cypher_ast_binary_operator_get_argument2(exp);
+    ck_assert_int_eq(cypher_astnode_type(arg), CYPHER_AST_IDENTIFIER);
+    ck_assert_str_eq(cypher_ast_identifier_get_name(arg), "c");
+
+    proj = cypher_ast_return_get_projection(clause, 1);
+    exp = cypher_ast_projection_get_expression(proj);
+    ck_assert_int_eq(cypher_astnode_type(exp), CYPHER_AST_BINARY_OPERATOR);
+    ck_assert_ptr_eq(cypher_ast_binary_operator_get_operator(exp),
+            CYPHER_OP_PLUS);
+
+    arg = cypher_ast_binary_operator_get_argument2(exp);
+    ck_assert_int_eq(cypher_astnode_type(arg), CYPHER_AST_BINARY_OPERATOR);
+    ck_assert_ptr_eq(cypher_ast_binary_operator_get_operator(arg),
+            CYPHER_OP_CONTAINS);
+
+    proj = cypher_ast_return_get_projection(clause, 2);
+    exp = cypher_ast_projection_get_expression(proj);
+    ck_assert_int_eq(cypher_astnode_type(exp), CYPHER_AST_BINARY_OPERATOR);
+    ck_assert_ptr_eq(cypher_ast_binary_operator_get_operator(exp),
+            CYPHER_OP_IN);
+
+    arg = cypher_ast_binary_operator_get_argument2(exp);
+    ck_assert_int_eq(cypher_astnode_type(arg), CYPHER_AST_BINARY_OPERATOR);
+    ck_assert_ptr_eq(cypher_ast_binary_operator_get_operator(arg),
+            CYPHER_OP_PLUS);
+}
+END_TEST
+
 TCase* expression_tcase(void)
 {
     TCase *tc = tcase_create("expression");
@@ -708,5 +762,6 @@ TCase* expression_tcase(void)
     tcase_add_test(tc, parse_subscript);
     tcase_add_test(tc, parse_slice);
     tcase_add_test(tc, parse_subscript_list_with_in_operator);
+    tcase_add_test(tc, parse_value_operators_before_predicates);
     return tc;
 }
