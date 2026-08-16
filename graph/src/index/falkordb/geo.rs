@@ -3,18 +3,30 @@
 //!
 //! # The key
 //!
-//! A point is two `f32`s, which is exactly 64 bits — so the key is a **lossless** bijection, not a
-//! quantisation. Each coordinate goes through the same monotone `f32 -> u32` transform the numeric
-//! kind uses on `f64`, and the two 32-bit images are bit-interleaved into a Morton (Z-order) code:
+//! Each coordinate is quantised **uniformly** onto a `u32` — latitude across `[-90, 90]`, longitude
+//! across `[-180, 180]` — and the two grids are bit-interleaved into a Morton (Z-order) code:
 //!
 //! ```text
-//!   key = spread(enc(lat)) | spread(enc(lon)) << 1
+//!   key = spread(quantise(lat)) | spread(quantise(lon)) << 1
 //! ```
 //!
-//! Losslessness buys exactness on `n.loc = point(...)`: the key identifies the point, so equality
-//! is a plain point lookup and needs no re-check. Interleaving buys locality: any rectangle in
-//! (lat, lon) is a union of Morton intervals, because the code is a depth-32 quadtree address and
-//! a quadtree cell's codes are contiguous.
+//! Uniformity is the whole point, and it is worth saying why the obvious alternative fails. A point
+//! is two `f32`s, which is exactly 64 bits, so interleaving the *bit patterns* gives a lossless
+//! key — and a useless index. Float spacing is exponential: a 10 km box straddling the origin spans
+//! nearly half of that encoded axis, because every value between 1e-38 and 0.09 lives in there.
+//! Measured on the bench's `distance index scan geo` corpus, the lossless key returned **100
+//! candidates for 7 real hits** — a full scan wearing an index's clothes. The uniform grid puts
+//! 2³² steps across 180°, so a cell is a real square on the ground (~4.7 mm at the equator) and the
+//! same query narrows to its neighbourhood.
+//!
+//! What uniformity costs is exactness: two points within one grid step share a key, so
+//! `n.loc = point(...)` answers a **superset**. That is safe here for the same reason the radius
+//! search is — a point operand is always a `point(...)` call, a parameter, or a variable, and
+//! `needs_post_filter` treats all three as unresolvable, so the filter is retained and the runtime
+//! rechecks. A `Point` cannot be written as a bare literal in Cypher, so there is no fourth case.
+//!
+//! Interleaving buys locality: any rectangle in (lat, lon) is a union of Morton intervals, because
+//! the code is a depth-32 quadtree address and a quadtree cell's codes are contiguous.
 //!
 //! # The search
 //!
@@ -63,8 +75,12 @@ const EARTH_RADIUS_M: f64 = 6_378_140.0;
 /// cell whole, which widens the superset rather than dropping anything.
 const MAX_RANGES: usize = 32;
 
-/// IEEE-754 sign bit of an `f32`.
-const SIGN32: u32 = 0x8000_0000;
+/// The quantisation grid: latitude spans 180°, longitude 360°, each across the whole `u32` range.
+/// One step is ~4.2e-8° — about 4.7 mm of latitude.
+const LAT_LO: f64 = -90.0;
+const LAT_SPAN: f64 = 180.0;
+const LON_LO: f64 = -180.0;
+const LON_SPAN: f64 = 360.0;
 
 /// A geo property index over one `(label, attribute)`: entity ids keyed by the Morton code of
 /// their point.
@@ -164,8 +180,9 @@ impl GeoIndex {
         self.tree.remove_batch(tuples);
     }
 
-    /// Entity ids whose point equals `value` exactly. The key is a bijection, so this needs no
-    /// re-check.
+    /// Entity ids whose point quantises to the same grid cell as `value` — a **superset** of the
+    /// points equal to it, narrowed by the caller's retained filter (see the module docs on why a
+    /// point operand always keeps one).
     #[must_use]
     pub fn point(
         &self,
@@ -211,25 +228,28 @@ impl GeoIndex {
     pub(super) fn key_of(value: &Value) -> Option<u64> {
         match value {
             Value::Point(p) if p.latitude.is_nan() || p.longitude.is_nan() => None,
-            Value::Point(p) => Some(morton(enc_f32(p.latitude), enc_f32(p.longitude))),
+            Value::Point(p) => Some(morton(
+                quantise(f64::from(p.latitude), LAT_LO, LAT_SPAN),
+                quantise(f64::from(p.longitude), LON_LO, LON_SPAN),
+            )),
             _ => None,
         }
     }
 }
 
-/// Monotone total order over non-`NaN` `f32`, as a `u32` — the `f32` twin of
-/// [`encode_f64`](super::encode::encode_f64), and monotone for the same reason: non-negatives get
-/// the sign bit set so they sort above every negative, negatives are bit-inverted so
-/// more-negative sorts lower, and `-0.0` collapses into `+0.0`.
+/// A degree coordinate on its uniform `u32` grid. Monotone, and saturating rather than wrapping:
+/// a coordinate outside its range (which the parser rejects, but a decoded RDB might not) pins to
+/// an edge of the grid instead of folding round to the far side of the planet.
 #[must_use]
-fn enc_f32(x: f32) -> u32 {
-    let x = if x == 0.0 { 0.0 } else { x };
-    let bits = x.to_bits();
-    if bits & SIGN32 == 0 {
-        bits | SIGN32
-    } else {
-        !bits
-    }
+fn quantise(
+    v: f64,
+    lo: f64,
+    span: f64,
+) -> u32 {
+    let t = ((v - lo) / span).clamp(0.0, 1.0);
+    // `round` rather than `floor`: the grid step is the quantisation error either way, and
+    // rounding halves its magnitude.
+    (t * f64::from(u32::MAX)).round() as u32
 }
 
 /// Spread the 32 bits of `x` into the even positions of a `u64` (`b31..b0` -> `b62,b60,..,b0`).
@@ -336,16 +356,14 @@ fn bounding_rect(
         }
     };
 
-    // The box is computed in `f64` and compared against `f32` keys, so the narrowing cast can
-    // round an edge *inwards* and clip a point that genuinely lies on it. Widen each edge by a
-    // relative slack well above the `f32` step before casting: the box is already a superset, and
-    // a hair more of it costs the filter a row it would have rejected anyway.
-    let pad = |v: f64, dir: f64| (v + dir * v.abs().mul_add(1e-6, 1e-6)) as f32;
+    // Quantisation rounds to the nearest grid step, so an edge can land one step inside the box
+    // and clip a point sitting exactly on it. Widen by that one step: the box is already a
+    // superset, and 4.7 mm more of it costs the filter a row it would have rejected anyway.
     Some(grid_rect(
-        enc_f32(pad(lat_lo, -1.0)),
-        enc_f32(pad(lat_hi, 1.0)),
-        enc_f32(pad(lon_lo, -1.0)),
-        enc_f32(pad(lon_hi, 1.0)),
+        quantise(lat_lo, LAT_LO, LAT_SPAN).saturating_sub(1),
+        quantise(lat_hi, LAT_LO, LAT_SPAN).saturating_add(1),
+        quantise(lon_lo, LON_LO, LON_SPAN).saturating_sub(1),
+        quantise(lon_hi, LON_LO, LON_SPAN).saturating_add(1),
     ))
 }
 
@@ -394,36 +412,30 @@ fn cover(q: &GridRect) -> Vec<(u64, u64)> {
 
     // **Largest cell first**, not depth-first. A depth-first walk spends its whole budget on the
     // first corner of the box and then has to emit whatever cell it is standing in — near the root
-    // that cell is a quarter of the planet, so a 20km search would return a continent. Splitting
-    // the biggest overlapping cell each round instead keeps the coarse cells from surviving: the
-    // budget is spent where it removes the most area.
-    let mut cells = vec![Cell {
+    // that cell is a quarter of the planet, so a 20km search would return a continent. Refining the
+    // biggest overlapping cell first spends the budget where it removes the most area.
+    //
+    // Breadth-first *is* largest-first here, and for free: a child is always one level smaller than
+    // its parent, so a FIFO hands cells back in non-increasing size. The alternative — rescanning a
+    // list for its largest member each round — re-tests every surviving cell against the query on
+    // every round, which measured as the bulk of a small radius search's cost.
+    let root = Cell {
         lat_base: 0,
         lon_base: 0,
         bits: 32,
-    }];
-    if !cells[0].rect().intersects(q) {
+    };
+    if !root.rect().intersects(q) {
         return Vec::new();
     }
-    // Bounded so a degenerate query cannot spin: every round either splits a cell (at most 32
-    // levels deep per branch) or stops.
-    for _ in 0..1024 {
-        // The largest cell that is not already wholly inside the box — the one worth refining.
-        let Some(i) = cells
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.bits > 0 && !q.contains(&c.rect()))
-            .max_by_key(|(_, c)| c.bits)
-            .map(|(i, _)| i)
-        else {
-            break; // every cell is inside the box, or is a single point
-        };
-        // Splitting replaces one cell with up to four. Stop before overrunning the budget: the
-        // cover stays valid, just coarser.
-        if cells.len() + 3 > MAX_RANGES {
-            break;
+    let mut queue = std::collections::VecDeque::from([root]);
+    let mut cells: Vec<Cell> = Vec::with_capacity(MAX_RANGES);
+    while let Some(c) = queue.pop_front() {
+        // Final: wholly inside the box, or a single grid point — nothing to gain by splitting.
+        // Also final once the budget is spent: the cover stays valid, just coarser.
+        if c.bits == 0 || q.contains(&c.rect()) || cells.len() + queue.len() + 4 > MAX_RANGES {
+            cells.push(c);
+            continue;
         }
-        let c = cells.swap_remove(i);
         let bits = c.bits - 1;
         let step = 1u32 << bits;
         for (dlat, dlon) in [(0, 0), (0, step), (step, 0), (step, step)] {
@@ -433,7 +445,7 @@ fn cover(q: &GridRect) -> Vec<(u64, u64)> {
                 bits,
             };
             if child.rect().intersects(q) {
-                cells.push(child);
+                queue.push_back(child);
             }
         }
     }
@@ -468,35 +480,83 @@ mod tests {
         v.sort_unstable();
         v
     }
-
-    /// The key is a bijection on non-`NaN` points: distinct points never share a key, so equality
-    /// is exact without a re-check.
+    /// Distinct points get distinct keys down to the grid step, and the grid step is small enough
+    /// that no realistic pair of places collides. Points closer than ~5 mm share a cell — which is
+    /// why equality answers a superset and the filter is retained.
     #[test]
-    fn the_key_is_lossless() {
+    fn the_grid_separates_distinct_places() {
         let pts = [
             (0.0f32, 0.0f32),
-            (-0.0, 0.0),
-            (0.0, -0.0),
             (51.5074, -0.1278),
             (-33.8688, 151.2093),
             (90.0, 180.0),
             (-90.0, -180.0),
-            (f32::MIN_POSITIVE, -f32::MIN_POSITIVE),
+            (0.000_01, 0.000_01),
         ];
         let mut seen = std::collections::HashMap::new();
         for &(lat, lon) in &pts {
             let k = GeoIndex::key_of(&p(lat, lon)).unwrap();
-            // -0.0 and +0.0 are the same coordinate and must share a key; everything else differs.
-            let canonical = (
-                if lat == 0.0 { 0.0f32 } else { lat }.to_bits(),
-                if lon == 0.0 { 0.0f32 } else { lon }.to_bits(),
+            assert!(
+                seen.insert(k, (lat, lon)).is_none(),
+                "({lat}, {lon}) collided with {:?}",
+                seen[&k]
             );
-            if let Some(prev) = seen.insert(k, canonical) {
-                assert_eq!(prev, canonical, "two distinct points collided on key {k}");
-            }
         }
+        // Both zeros are the same coordinate and must land in the same cell.
+        assert_eq!(
+            GeoIndex::key_of(&p(0.0, 0.0)),
+            GeoIndex::key_of(&p(-0.0, -0.0))
+        );
+        // The grid is uniform: 0.001° is the same number of steps at the origin as at 51°N. On a
+        // float-bit key those two differ by ~10^7 steps, which is exactly why it could not index.
+        let steps = |a: f64, b: f64| {
+            i64::from(quantise(b, LAT_LO, LAT_SPAN)) - i64::from(quantise(a, LAT_LO, LAT_SPAN))
+        };
+        assert!(
+            (steps(0.0, 0.001) - steps(51.5, 51.501)).abs() <= 1,
+            "a uniform grid must not spend its resolution near zero: {} vs {}",
+            steps(0.0, 0.001),
+            steps(51.5, 51.501)
+        );
+
         assert_eq!(GeoIndex::key_of(&p(f32::NAN, 0.0)), None);
         assert_eq!(GeoIndex::key_of(&Value::Int(1)), None);
+    }
+
+    /// The property the uniform grid exists for, pinned on the exact corpus that exposed the
+    /// float-bit key: 100 points on the diagonal from (0,0), a 10 km search from the origin.
+    ///
+    /// The lossless key returned all 100 as candidates because the encoded box straddling zero
+    /// spanned half the axis. A cover that cannot narrow is a full scan with extra steps, so this
+    /// asserts selectivity, not just correctness.
+    #[test]
+    fn a_search_near_the_origin_narrows_to_its_neighbourhood() {
+        let mut idx = GeoIndex::new();
+        for i in 0..100u64 {
+            let c = i as f32 / 100.0;
+            idx.add(&p(c, c), i);
+        }
+        let centre = Point::new(0.0, 0.0);
+        let truth: Vec<u64> = (0..100u64)
+            .filter(|i| {
+                let c = *i as f32 / 100.0;
+                Point::new(c, c).distance(&centre) < 10_000.0
+            })
+            .collect();
+        let candidates = ids(idx.within(&centre, 10_000.0));
+
+        for t in &truth {
+            assert!(
+                candidates.contains(t),
+                "id {t} is inside the circle but was missed"
+            );
+        }
+        assert!(
+            candidates.len() <= truth.len() * 3,
+            "{} candidates for {} hits — the cover is not narrowing",
+            candidates.len(),
+            truth.len()
+        );
     }
 
     /// A cover must contain every point of its rectangle. Checked exhaustively against a brute
@@ -512,7 +572,10 @@ mod tests {
             for j in 0..40 {
                 let lat = 51.5 + (f64::from(i) - 20.0) * 0.002;
                 let lon = -0.12 + (f64::from(j) - 20.0) * 0.002;
-                let (elat, elon) = (enc_f32(lat as f32), enc_f32(lon as f32));
+                let (elat, elon) = (
+                    quantise(lat, LAT_LO, LAT_SPAN),
+                    quantise(lon, LON_LO, LON_SPAN),
+                );
                 let inside = rect.contains(&coord! { x: elon, y: elat });
                 let key = morton(elat, elon);
                 let covered = ranges.iter().any(|&(lo, hi)| key >= lo && key <= hi);
@@ -645,14 +708,17 @@ mod tests {
         );
     }
 
-    /// Equality on a point is exact — the key is a bijection.
+    /// Equality answers the grid cell, which is a superset of the points equal to the operand.
+    /// Places metres apart still separate; places millimetres apart share a cell and are told
+    /// apart by the retained filter, never by this.
     #[test]
-    fn point_equality_is_exact() {
+    fn point_equality_answers_the_grid_cell() {
         let mut idx = GeoIndex::new();
         idx.add(&p(1.0, 2.0), 1);
-        idx.add(&p(1.0, 2.000_001), 2);
-        assert_eq!(ids(idx.point(&p(1.0, 2.0))), vec![1]);
-        assert_eq!(ids(idx.point(&p(1.0, 2.000_001))), vec![2]);
+        idx.add(&p(1.0, 2.000_1), 2); // ~11 m east: a different cell
+        idx.add(&p(1.0, 2.000_000_01), 3); // ~1 mm east: the SAME cell as id 1
+        assert_eq!(ids(idx.point(&p(1.0, 2.0))), vec![1, 3]);
+        assert_eq!(ids(idx.point(&p(1.0, 2.000_1))), vec![2]);
         assert!(ids(idx.point(&p(2.0, 1.0))).is_empty());
     }
 

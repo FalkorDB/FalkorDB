@@ -254,6 +254,22 @@ impl TagIndex {
         }
     }
 
+    /// Append the tuples one `(value, id)` contributes, reusing `ids` as scratch — the streaming
+    /// half of the batch path, mirroring the numeric kind's.
+    pub(super) fn encode_into(
+        &self,
+        value: &Value,
+        id: u64,
+        out: &mut KeyTuples,
+        ids: &mut Vec<u64>,
+    ) {
+        let dest = match self.encode_stored(value, ids) {
+            StoredIds::Scalar => &mut out.scalar,
+            StoredIds::Array => &mut out.array,
+        };
+        dest.extend(ids.iter().map(|&k| (k, id)));
+    }
+
     /// Encode `(value, id)` entries to `(tag id, doc)` tuples, dropping values that hold no
     /// strings. Interning happens here, so a background build encoding BASE off the write thread
     /// shares the numbering with the live column.
