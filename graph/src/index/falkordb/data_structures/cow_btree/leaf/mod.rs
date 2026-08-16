@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::{FIELD, STRIDE};
+use super::{FIELD, doc_le_bytes};
 
 mod aos;
 mod compact;
@@ -148,24 +148,24 @@ fn merge_walk(
 /// is [`Leaf::from_parts`] — a copy, never a (de)serialization. These newtypes are the one place that knows
 /// the byte layout; the enum dispatches to them, so a tree may freely mix the formats.
 #[derive(Clone)]
-pub(super) enum Leaf<const LEAF_MAX: usize> {
-    Aos(AosLeaf),
+pub(super) enum Leaf<const LEAF_MAX: usize, const DOC_BYTES: usize> {
+    Aos(AosLeaf<DOC_BYTES>),
     Compact(CompactLeaf),
     CompactIndexed(CompactIndexedLeaf),
 }
 
 /// Outcome of inserting into a single leaf: the replacement leaf if it still fits, or the two halves plus
 /// their separator if it overflowed and split. (`None` from [`Leaf::insert`] means the tuple was present.)
-pub(super) enum LeafInsert<const LEAF_MAX: usize> {
-    Fit(Leaf<LEAF_MAX>),
+pub(super) enum LeafInsert<const LEAF_MAX: usize, const DOC_BYTES: usize> {
+    Fit(Leaf<LEAF_MAX, DOC_BYTES>),
     Split {
-        left: Leaf<LEAF_MAX>,
+        left: Leaf<LEAF_MAX, DOC_BYTES>,
         sep: (u64, u64),
-        right: Leaf<LEAF_MAX>,
+        right: Leaf<LEAF_MAX, DOC_BYTES>,
     },
 }
 
-impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
+impl<const LEAF_MAX: usize, const DOC_BYTES: usize> Leaf<LEAF_MAX, DOC_BYTES> {
     /// This leaf's serialized encoding (carried out of band, see [`LeafFormat`]). The two compact in-RAM
     /// types share one on-disk format — index presence lives in the buffer — so both map to `Compact`.
     /// Test-only for now (paired with [`CowBTree::leaves`]); the durable-write path re-exposes it on disk.
@@ -213,7 +213,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     /// The doc array's `(base, stride, width)` — read once per leaf by the cursor's per-entry doc reads.
     pub(super) fn doc_layout(&self) -> (usize, usize, usize) {
         match self {
-            Self::Aos(_) => (FIELD, STRIDE, FIELD),
+            Self::Aos(_) => (FIELD, FIELD + DOC_BYTES, DOC_BYTES),
             Self::Compact(l) => l.doc_layout(),
             Self::CompactIndexed(l) => l.doc_layout(),
         }
@@ -245,7 +245,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     ///
     /// The choice is a closed-form size comparison; the widths are always one of {1, 2, 4, 8}, so the only
     /// free variables are `count` and the data:
-    /// - AoS:                `count·STRIDE`
+    /// - AoS:                `count·(FIELD + DOC_BYTES)`
     /// - compact, no-dedup:  `BODY_OFFSET + count·value_width + count·doc_width`
     /// - compact, dedup:     `BODY_OFFSET + distinct·value_width + count (index) + count·doc_width`
     ///
@@ -261,7 +261,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
     pub(super) fn from_pairs(pairs: &[(u64, u64)]) -> Self {
         let count = pairs.len();
         if count == 0 {
-            return Self::Aos(AosLeaf::build(pairs));
+            return Self::Aos(AosLeaf::<DOC_BYTES>::build(pairs));
         }
         // One pass for the two data-dependent inputs — the distinct-value count (runs, since sorted) and the
         // max doc. (The value range needs no scan; it's read O(1) from the sorted ends just below.)
@@ -285,7 +285,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
             + distinct_count * value_width
             + if deduplicated { count } else { 0 }
             + count * doc_width;
-        let aos_size = count * STRIDE;
+        let aos_size = count * (FIELD + DOC_BYTES);
         // Pick compact only when it saves at least COMPACT_MIN_SAVING_BPE bytes *per entry* over AoS — the
         // floor (see the const) skips marginal wins whose extra build cost isn't worth the memory saved.
         if compact_size + COMPACT_MIN_SAVING_BPE * count <= aos_size {
@@ -308,7 +308,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
                 ))
             }
         } else {
-            Self::Aos(AosLeaf::build(pairs))
+            Self::Aos(AosLeaf::<DOC_BYTES>::build(pairs))
         }
     }
 
@@ -374,7 +374,7 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         &self,
         key: u64,
         doc: u64,
-    ) -> Option<LeafInsert<LEAF_MAX>> {
+    ) -> Option<LeafInsert<LEAF_MAX, DOC_BYTES>> {
         let count = self.count();
         let pos = self.lower_bound_entry(key, doc);
         if pos < count && self.key(pos) == key && self.doc(pos) == doc {
@@ -385,11 +385,11 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
             // `count + 1 <= LEAF_MAX`, so the result still fits one page.
             match self {
                 Self::Aos(aos) => {
-                    let cut = pos * STRIDE; // memcpy prefix + tuple + suffix; data at byte 0 (tag-free)
-                    let mut buf = Vec::with_capacity(aos.0.len() + STRIDE);
+                    let cut = pos * (FIELD + DOC_BYTES); // memcpy prefix + tuple + suffix; data at byte 0 (tag-free)
+                    let mut buf = Vec::with_capacity(aos.0.len() + (FIELD + DOC_BYTES));
                     buf.extend_from_slice(&aos.0[..cut]);
                     buf.extend_from_slice(&key.to_le_bytes());
-                    buf.extend_from_slice(&doc.to_le_bytes());
+                    buf.extend_from_slice(&doc_le_bytes::<DOC_BYTES>(doc));
                     buf.extend_from_slice(&aos.0[cut..]);
                     return Some(LeafInsert::Fit(Self::Aos(AosLeaf(Arc::from(
                         buf.as_slice(),
@@ -443,10 +443,10 @@ impl<const LEAF_MAX: usize> Leaf<LEAF_MAX> {
         let new_count = count - 1;
         let leaf = match self {
             Self::Aos(aos) => {
-                let cut = pos * STRIDE; // data at byte 0 (tag-free)
-                let mut buf = Vec::with_capacity(aos.0.len() - STRIDE);
+                let cut = pos * (FIELD + DOC_BYTES); // data at byte 0 (tag-free)
+                let mut buf = Vec::with_capacity(aos.0.len() - (FIELD + DOC_BYTES));
                 buf.extend_from_slice(&aos.0[..cut]);
-                buf.extend_from_slice(&aos.0[cut + STRIDE..]);
+                buf.extend_from_slice(&aos.0[cut + (FIELD + DOC_BYTES)..]);
                 Self::Aos(AosLeaf(Arc::from(buf.as_slice())))
             }
             // Cut the entry in place (no decode). Indexed leaves only when the result stays validly indexed

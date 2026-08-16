@@ -4,43 +4,43 @@
 use std::sync::Arc;
 
 use super::leaf::{AosLeaf, Leaf, LeafInsert};
-use super::{FIELD, STRIDE, read_u64};
+use super::{FIELD, read_u64, read_width};
 
 /// A tree node: either a leaf (a byte blob of sorted tuples) or an internal branch.
 ///
 /// Both variants are `Arc`-wrapped, so cloning a node — and therefore a whole tree version — is an
 /// `O(1)` reference-count bump that shares all underlying pages.
 #[derive(Clone)]
-pub(super) enum Node<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
+pub(super) enum Node<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> {
     /// A leaf page of sorted `(key, doc)` tuples — see [`Leaf`].
-    Leaf(Leaf<LEAF_MAX>),
-    Branch(Arc<Branch<LEAF_MAX, BRANCH_MAX>>),
+    Leaf(Leaf<LEAF_MAX, DOC_BYTES>),
+    Branch(Arc<Branch<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>),
 }
 
 /// An internal node: separator keys plus child pointers. `seps[i]` is the minimum `(key, doc)` of
 /// `children[i + 1]`, so `seps.len() == children.len() - 1`.
 #[derive(Clone)]
-pub(super) struct Branch<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
+pub(super) struct Branch<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> {
     pub(super) seps: Vec<(u64, u64)>,
-    pub(super) children: Vec<Node<LEAF_MAX, BRANCH_MAX>>,
+    pub(super) children: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
 }
 
 // ---- node-operation results ------------------------------------------------------------------
 
 /// A node that split under an insert: the new right sibling plus the separator promoted to the parent.
-pub(super) struct Split<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
+pub(super) struct Split<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> {
     pub(super) sep: (u64, u64),
-    pub(super) right: Node<LEAF_MAX, BRANCH_MAX>,
+    pub(super) right: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
 }
 
 /// Outcome of combining two siblings: a single merged node, or two re-balanced nodes plus their new
 /// separator.
-enum Combined<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
-    One(Node<LEAF_MAX, BRANCH_MAX>),
+enum Combined<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> {
+    One(Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>),
     Two(
-        Node<LEAF_MAX, BRANCH_MAX>,
+        Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
         (u64, u64),
-        Node<LEAF_MAX, BRANCH_MAX>,
+        Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
     ),
 }
 
@@ -53,9 +53,9 @@ enum Combined<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
 /// later delete that underflowed its only child could not rebalance it (see [`Branch::rebalance`]). The
 /// only way `chunks(BRANCH_MAX)` would leave a singleton is a trailing remainder of exactly 1, i.e. an
 /// input length of `BRANCH_MAX + 1`; that case is split as `BRANCH_MAX - 1` + `2` instead.
-fn pack_branches<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    children: &[Node<LEAF_MAX, BRANCH_MAX>]
-) -> Vec<Node<LEAF_MAX, BRANCH_MAX>> {
+fn pack_branches<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    children: &[Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>]
+) -> Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> {
     // One branch per chunk of up to `BRANCH_MAX` children, so the count is known up front.
     let mut packed = Vec::with_capacity(children.len().div_ceil(BRANCH_MAX));
     let mut rest = children;
@@ -87,9 +87,9 @@ fn pack_branches<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
 
 /// Stitch a flat list of node fragments into a single root, packing branch levels bottom-up until
 /// one node remains. An empty list becomes an empty leaf.
-pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    mut fragments: Vec<Node<LEAF_MAX, BRANCH_MAX>>
-) -> Node<LEAF_MAX, BRANCH_MAX> {
+pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    mut fragments: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>
+) -> Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
     while fragments.len() > 1 {
         fragments = pack_branches(&fragments);
     }
@@ -98,7 +98,9 @@ pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
         .unwrap_or_else(|| Node::Leaf(Leaf::from_pairs(&[])))
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Branch<LEAF_MAX, BRANCH_MAX> {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
+    Branch<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     /// Index of the child that an entry `(key, doc)` routes into — the number of separators `<=` it.
     pub(super) fn child_index(
         &self,
@@ -150,9 +152,15 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Branch<LEAF_MAX, BRANCH_MAX
     }
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
+    Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     /// The minimum `(key, doc)` in this subtree — walk the left spine down to its first leaf.
-    fn min(&self) -> (u64, u64) {
+    ///
+    /// Panics on an empty subtree. That is the tree's invariant, not an assumption: `strip_empty`
+    /// drops emptied children along with their separator, so only a whole-tree root leaf is ever
+    /// empty, and a root leaf is never reached through a branch.
+    pub(super) fn min(&self) -> (u64, u64) {
         let mut node = self;
         loop {
             match node {
@@ -220,32 +228,39 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     /// cloned into a private copy before it is mutated (see [`make_private`]), so the committed version a
     /// reader may hold is never disturbed. Returns `Some(Split)` when the node split (the parent must take
     /// in the new right sibling), else `None`. Idempotent: inserting an already-present tuple is a no-op.
+    ///
+    /// Returns `(inserted, split)`: `inserted` is `false` when the tuple was already present (a no-op
+    /// on content), so callers can maintain an exact live count; `split` is `Some` when the node split.
     pub(super) fn insert_one(
         &mut self,
         key: u64,
         doc: u64,
-    ) -> Option<Split<LEAF_MAX, BRANCH_MAX>> {
+    ) -> (bool, Option<Split<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>) {
         match self {
             // The leaf owns the encoding-specific work (an AoS leaf splices its bytes; see [`Leaf::insert`]).
-            Self::Leaf(leaf) => match leaf.insert(key, doc)? {
-                LeafInsert::Fit(new) => {
+            Self::Leaf(leaf) => match leaf.insert(key, doc) {
+                None => (false, None), // already present
+                Some(LeafInsert::Fit(new)) => {
                     *leaf = new;
-                    None
+                    (true, None)
                 }
-                LeafInsert::Split { left, sep, right } => {
+                Some(LeafInsert::Split { left, sep, right }) => {
                     *leaf = left;
-                    Some(Split {
-                        sep,
-                        right: Self::Leaf(right),
-                    })
+                    (
+                        true,
+                        Some(Split {
+                            sep,
+                            right: Self::Leaf(right),
+                        }),
+                    )
                 }
             },
             Self::Branch(branch_arc) => {
                 let branch = make_private(branch_arc); // CoW: clone the shared branch, mutate the copy
                 let child_idx = branch.child_index(key, doc);
-                let Some(Split { sep, right }) = branch.children[child_idx].insert_one(key, doc)
-                else {
-                    return None; // absorbed below — nothing to insert here
+                let (inserted, child_split) = branch.children[child_idx].insert_one(key, doc);
+                let Some(Split { sep, right }) = child_split else {
+                    return (inserted, None); // absorbed below — nothing to insert here
                 };
                 // The child split — take in the promoted separator and the new right sibling beside it.
                 branch.seps.insert(child_idx, sep);
@@ -253,7 +268,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 #[cfg(test)]
                 cow_gate::park_if(key); // test-only: parks AFTER the working copy is mutated
                 if branch.children.len() <= BRANCH_MAX {
-                    None
+                    (inserted, None)
                 } else {
                     // This branch overflowed in turn: keep the left half, promote the middle
                     // separator (it moves up, into neither side), hand the right half up.
@@ -261,13 +276,16 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                     let right_children = branch.children.split_off(mid);
                     let right_seps = branch.seps.split_off(mid);
                     let promoted = branch.seps.pop().unwrap(); // the separator between the two halves
-                    Some(Split {
-                        sep: promoted,
-                        right: Self::Branch(Arc::new(Branch {
-                            seps: right_seps,
-                            children: right_children,
-                        })),
-                    })
+                    (
+                        inserted,
+                        Some(Split {
+                            sep: promoted,
+                            right: Self::Branch(Arc::new(Branch {
+                                seps: right_seps,
+                                children: right_children,
+                            })),
+                        }),
+                    )
                 }
             }
         }
@@ -280,7 +298,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
         &self,
         sep: (u64, u64),
         right: &Self,
-    ) -> Combined<LEAF_MAX, BRANCH_MAX> {
+    ) -> Combined<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         match (self, right) {
             (Self::Leaf(left_leaf), Self::Leaf(right_leaf)) => {
                 // Two AoS leaves are tag-free `[(key, doc) × n]` and the siblings are ordered, so the join
@@ -337,21 +355,24 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
 
     /// Join two ordered AoS sibling leaves. Their buffers are tag-free `[(key, doc) × n]` and `left`
     /// precedes `right`, so the merge is a plain byte concat — no decode. If the result overflows
-    /// `LEAF_MAX` we split at the midpoint entry; the fixed `STRIDE` makes that a balanced split (both
+    /// `LEAF_MAX` we split at the midpoint entry; the fixed `(FIELD + DOC_BYTES)` makes that a balanced split (both
     /// halves `>= LEAF_MAX / 2`), and `mid_sep` (the first entry of the right half) is the new separator.
     fn aos_combine(
-        left: &AosLeaf,
-        right: &AosLeaf,
-    ) -> Combined<LEAF_MAX, BRANCH_MAX> {
+        left: &AosLeaf<DOC_BYTES>,
+        right: &AosLeaf<DOC_BYTES>,
+    ) -> Combined<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         let mut buf = Vec::with_capacity(left.0.len() + right.0.len());
         buf.extend_from_slice(&left.0);
         buf.extend_from_slice(&right.0);
         let leaf = |bytes: Vec<u8>| Self::Leaf(Leaf::Aos(AosLeaf(bytes.into())));
-        if buf.len() / STRIDE <= LEAF_MAX {
+        if buf.len() / (FIELD + DOC_BYTES) <= LEAF_MAX {
             Combined::One(leaf(buf))
         } else {
-            let split = buf.len() / STRIDE / 2 * STRIDE;
-            let mid_sep = (read_u64(&buf, split), read_u64(&buf, split + FIELD));
+            let split = buf.len() / (FIELD + DOC_BYTES) / 2 * (FIELD + DOC_BYTES);
+            let mid_sep = (
+                read_u64(&buf, split),
+                read_width(&buf, split + FIELD, DOC_BYTES),
+            );
             let right_buf = buf.split_off(split);
             Combined::Two(leaf(buf), mid_sep, leaf(right_buf))
         }

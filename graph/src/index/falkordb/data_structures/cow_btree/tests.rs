@@ -1,3 +1,7 @@
+// Many tests drive `insert`/`remove` (now `#[must_use]` for their exact-count
+// bool) purely for their side effect and assert on the tree afterwards.
+#![allow(unused_must_use)]
+
 use super::*;
 use std::collections::BTreeSet;
 
@@ -9,8 +13,8 @@ fn splitmix(mut z: u64) -> u64 {
 }
 
 /// Sorted doc ids the tree yields for `[lo, hi]`.
-fn tree_range<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    t: &CowBTree<LEAF_MAX, BRANCH_MAX>,
+fn tree_range<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    t: &CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
     lo: u64,
     hi: u64,
 ) -> Vec<u64> {
@@ -32,13 +36,13 @@ fn ref_range(
 /// The full `(key, doc)` multiset the tree stores, decoded straight from the leaf bytes (so it verifies
 /// the *value* column, not just docs — a full-range cursor scan skips key reads on interior leaves).
 /// Generic over `LEAF_MAX` so the const-generic parity test can drive a non-default leaf size through it.
-fn tree_pairs<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    t: &CowBTree<LEAF_MAX, BRANCH_MAX>
+fn tree_pairs<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    t: &CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
 ) -> Vec<(u64, u64)> {
     let mut v: Vec<(u64, u64)> = t
         .leaves()
         .into_iter()
-        .flat_map(|(fmt, bytes)| Leaf::<LEAF_MAX>::from_parts(fmt, bytes).to_pairs())
+        .flat_map(|(fmt, bytes)| Leaf::<LEAF_MAX, DOC_BYTES>::from_parts(fmt, bytes).to_pairs())
         .collect();
     v.sort_unstable();
     v
@@ -53,6 +57,150 @@ fn empty_and_single() {
     assert_eq!(t.len(), 1);
     assert_eq!(t.point(5).collect::<Vec<_>>(), vec![50]);
     assert_eq!(t.point(6).count(), 0);
+}
+
+/// `first_doc(k)` must equal the smallest doc for `k` in the `BTreeSet` oracle
+/// (independent of the cursor, so a shared bug can't hide both), and also agree
+/// with the range cursor — for every present key plus its absent neighbours and
+/// the `u64::MAX` sentinel. Shared across the format-specific tests so the cheap
+/// representative-edge lookup is exercised on AoS, Compact, and CompactIndexed
+/// leaves at both doc widths.
+fn assert_first_doc_matches<const L: usize, const B: usize, const D: usize>(
+    t: &CowBTree<L, B, D>,
+    r: &BTreeSet<(u64, u64)>,
+) {
+    let ref_first = |k: u64| r.range((k, 0)..=(k, u64::MAX)).next().map(|&(_, d)| d);
+    let keys: BTreeSet<u64> = r.iter().map(|&(k, _)| k).collect();
+    for &k in &keys {
+        assert_eq!(t.first_doc(k), ref_first(k), "first_doc({k}) vs oracle");
+        assert_eq!(
+            t.first_doc(k),
+            t.point(k).next(),
+            "first_doc({k}) vs cursor"
+        );
+        // Both neighbours wrap: `k + 1` panics in debug builds the moment a caller
+        // puts `u64::MAX` in the oracle, which `first_doc_handles_max_key` does.
+        for kk in [k.wrapping_sub(1), k.wrapping_add(1)] {
+            if !keys.contains(&kk) {
+                assert_eq!(
+                    t.first_doc(kk),
+                    ref_first(kk),
+                    "first_doc({kk}) absent vs oracle"
+                );
+            }
+        }
+    }
+    assert_eq!(
+        t.first_doc(u64::MAX),
+        ref_first(u64::MAX),
+        "first_doc(u64::MAX)"
+    );
+}
+
+/// `u64::MAX` as a **present** key, not just the absent sentinel every other caller probes. The
+/// maximum key has no upper neighbour, so deriving one has to wrap — this is the case that would
+/// have tripped `assert_first_doc_matches`'s neighbour probe. Covers it both as a lone entry and
+/// sharing its key with a second doc, so the "smallest doc under this key" path runs at the very
+/// top of the tree.
+#[test]
+fn first_doc_handles_max_key() {
+    let mut t = CowBTree::<4, 4, 8>::new();
+    let mut r = BTreeSet::new();
+    for (k, d) in [
+        (0u64, 0u64),
+        (1, 1),
+        (2, 2),
+        (7, 7),
+        (u64::MAX - 1, 5),
+        (u64::MAX, 9),
+        (u64::MAX, 3),
+    ] {
+        assert!(t.insert(k, d), "fresh tuple ({k}, {d}) should be new");
+        r.insert((k, d));
+    }
+    assert!(
+        t.leaves().len() > 1,
+        "test needs a branch root to exercise the descent, not a single leaf"
+    );
+    check_invariants(&t, true);
+    assert_first_doc_matches(&t, &r);
+    assert_eq!(
+        t.first_doc(u64::MAX),
+        Some(3),
+        "smallest doc under the max key"
+    );
+}
+
+/// A branch separator is a *routing* boundary, not a live `min(right child)`. Remove a child's
+/// minimum without underflowing it and the separator keeps naming the removed tuple — so a lookup
+/// that reads a doc straight out of the separator returns an entry that is no longer in the tree.
+///
+/// Two full leaves, separator `(1, 1)`. Removing `(1, 1)` leaves the right leaf with three entries,
+/// which is above `min_fill`, so nothing rebalances and nothing rewrites the separator.
+#[test]
+fn first_doc_does_not_return_a_removed_separator() {
+    let mut t = CowBTree::<4, 4, 8>::from_sorted(&[
+        (0, 0),
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (1, 1),
+        (1, 2),
+        (1, 3),
+        (1, 4),
+    ]);
+    assert_eq!(t.first_doc(1), Some(1));
+
+    t.remove(1, 1);
+    assert_eq!(
+        t.first_doc(1),
+        Some(2),
+        "first_doc must not hand back the doc named by a stale separator"
+    );
+    assert_eq!(t.first_doc(1), t.point(1).next(), "vs the cursor");
+    assert!(t.contains_key(1));
+
+    // And the same key going empty must report absent, not the last separator standing.
+    for doc in [2, 3, 4] {
+        t.remove(1, doc);
+    }
+    assert_eq!(t.first_doc(1), None);
+    assert!(!t.contains_key(1));
+}
+
+#[test]
+fn first_doc_matches_reference_across_configs() {
+    // Empty + single-entry edge cases.
+    assert_first_doc_matches(&CowBTree::<4, 4, 8>::new(), &BTreeSet::new());
+    let mut one = CowBTree::<4, 4, 4>::new();
+    one.insert(7, 42);
+    assert_first_doc_matches(&one, &[(7u64, 42u64)].into_iter().collect());
+
+    // Small fan-out => deep trees with many leaf/branch boundaries; heavy key
+    // collisions => multi-doc keys; docs strictly > 0 to exercise the case where
+    // a key's first entry is the min of a child (the boundary path a naive
+    // stackless descent gets wrong). Both doc widths (incl. the store's u32).
+    for seed in 0..10u64 {
+        let mut z = seed.wrapping_add(1);
+        let mut pairs = Vec::new();
+        for _ in 0..600 {
+            z = splitmix(z);
+            let k = z % 80;
+            z = splitmix(z);
+            let d = (z % 400) + 1;
+            pairs.push((k, d));
+        }
+        let mut r: BTreeSet<(u64, u64)> = BTreeSet::new();
+        let mut t8 = CowBTree::<4, 4, 8>::new();
+        let mut t4 = CowBTree::<4, 4, 4>::new();
+        for &(k, d) in &pairs {
+            t8.insert(k, d);
+            t4.insert(k, d);
+            r.insert((k, d));
+        }
+        assert_first_doc_matches(&t8, &r);
+        assert_first_doc_matches(&t4, &r);
+    }
 }
 
 #[test]
@@ -246,7 +394,7 @@ fn leaf_bytes_round_trip_through_a_byte_store() {
     let want = 1234u64;
     let mut found = None;
     for (fmt, blob) in &store {
-        let leaf = Leaf::<256>::from_parts(*fmt, Arc::from(blob.as_slice())); // re-wrap — proving they're usable as-is
+        let leaf = Leaf::<256, 8>::from_parts(*fmt, Arc::from(blob.as_slice())); // re-wrap — proving they're usable as-is
         if leaf.count() > 0 && leaf.key(0) <= want && leaf.key(leaf.count() - 1) >= want {
             let i = leaf.lower_bound(want);
             if i < leaf.count() && leaf.key(i) == want {
@@ -275,7 +423,7 @@ fn leaf_format_roundtrip() {
         pairs: &[(u64, u64)],
         want: Option<&Want>,
     ) {
-        let leaf = Leaf::<256>::from_pairs(pairs);
+        let leaf = Leaf::<256, 8>::from_pairs(pairs);
         assert_eq!(leaf.count(), pairs.len(), "count for {pairs:?}");
         assert_eq!(leaf.to_pairs(), pairs, "to_pairs for {pairs:?}");
         for (i, &(k, d)) in pairs.iter().enumerate() {
@@ -284,7 +432,7 @@ fn leaf_format_roundtrip() {
         }
         let blob = leaf.bytes();
         assert_eq!(
-            Leaf::<256>::from_parts(leaf.format(), blob).to_pairs(),
+            Leaf::<256, 8>::from_parts(leaf.format(), blob).to_pairs(),
             pairs,
             "bytes round-trip for {pairs:?}"
         );
@@ -617,7 +765,9 @@ fn cow_writer_shares_committed_nodes_then_privatizes_on_write() {
     // node is always shared, so make_mut would copy anyway — see `node::make_private`.)
     use super::node::Node;
     use std::sync::Arc;
-    fn root_rc<const L: usize, const B: usize>(t: &CowBTree<L, B>) -> usize {
+    fn root_rc<const L: usize, const B: usize, const DOC_BYTES: usize>(
+        t: &CowBTree<L, B, DOC_BYTES>
+    ) -> usize {
         match &t.root {
             Node::Branch(b) => Arc::strong_count(b),
             Node::Leaf(_) => panic!("test needs a multi-level tree"),
@@ -678,6 +828,7 @@ fn compact_splice_arms_parity() {
         // doc parity via the cursor, *and* full (key, doc) parity decoded from the leaf bytes
         assert_eq!(tree_range(t, 0, u64::MAX), ref_range(r, 0, u64::MAX));
         assert_eq!(tree_pairs(t), r.iter().copied().collect::<Vec<_>>());
+        assert_first_doc_matches(t, r); // first_doc on Compact leaves
     };
 
     // insert: existing distinct value (no distinct-table change), new doc within width.
@@ -747,7 +898,7 @@ fn no_index_compact_splice_arms() {
     let no_index = |t: &CowBTree| {
         t.leaves()
             .into_iter()
-            .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::Compact(_)))
+            .all(|(f, b)| matches!(Leaf::<256, 8>::from_parts(f, b), Leaf::Compact(_)))
     };
     assert!(
         no_index(&t),
@@ -756,6 +907,7 @@ fn no_index_compact_splice_arms() {
     let check = |t: &CowBTree, r: &BTreeSet<(u64, u64)>| {
         assert_eq!(t.len(), r.len());
         assert_eq!(tree_pairs(t), r.iter().copied().collect::<Vec<_>>());
+        assert_first_doc_matches(t, r); // first_doc on CompactIndexed leaves
     };
     // new value (fits widths) ⇒ stays no-index.
     t.insert(250, 250);
@@ -810,7 +962,7 @@ fn block_copy_merge_parity() {
     assert!(
         t.leaves()
             .into_iter()
-            .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::CompactIndexed(_))),
+            .all(|(f, b)| matches!(Leaf::<256, 8>::from_parts(f, b), Leaf::CompactIndexed(_))),
         "setup should be a single indexed leaf"
     );
     // B = 8 (< 200/4), keys all existing distinct (0/1000/2000/3000), docs fit. (2000,102) is a
@@ -838,7 +990,7 @@ fn block_copy_merge_parity() {
     assert!(
         t.leaves()
             .into_iter()
-            .all(|(f, b)| matches!(Leaf::<256>::from_parts(f, b), Leaf::CompactIndexed(_))),
+            .all(|(f, b)| matches!(Leaf::<256, 8>::from_parts(f, b), Leaf::CompactIndexed(_))),
         "block-copy merge must keep the leaf indexed"
     );
     // A *large* all-existing-distinct batch (no size guard now — galloping keeps block-copy ≥ the walk).
@@ -1011,14 +1163,14 @@ fn const_generic_branch_size_parity() {
 /// Walk the whole tree and assert every structural invariant. `min_fill` gates the occupancy check: pass
 /// `true` for trees grown by `insert`/`remove` from empty (splits + rebalance keep non-root pages at least
 /// half full), `false` for a fresh `from_sorted` bulk build (whose last leaf may be short by construction).
-fn check_invariants<const L: usize, const B: usize>(
-    t: &CowBTree<L, B>,
+fn check_invariants<const L: usize, const B: usize, const DOC_BYTES: usize>(
+    t: &CowBTree<L, B, DOC_BYTES>,
     min_fill: bool,
 ) {
     use super::node::Node;
     // Returns (subtree min (key,doc), subtree max (key,doc), depth, entry count).
-    fn walk<const L: usize, const B: usize>(
-        node: &Node<L, B>,
+    fn walk<const L: usize, const B: usize, const DOC_BYTES: usize>(
+        node: &Node<L, B, DOC_BYTES>,
         is_root: bool,
         min_fill: bool,
     ) -> ((u64, u64), (u64, u64), usize, usize) {
@@ -1049,7 +1201,7 @@ fn check_invariants<const L: usize, const B: usize>(
                     "to_pairs disagrees with key/doc accessors"
                 );
                 assert_eq!(
-                    Leaf::<L>::from_pairs(&pairs).to_pairs(),
+                    Leaf::<L, DOC_BYTES>::from_pairs(&pairs).to_pairs(),
                     pairs,
                     "leaf encoder round-trip mismatch"
                 );
@@ -1119,12 +1271,12 @@ fn check_invariants<const L: usize, const B: usize>(
 /// Drive random mixed insert/remove against a `BTreeSet<(key, doc)>` oracle, asserting content parity,
 /// read-path (`range`/`point`) parity, AND every structural invariant after each op — the core integrity
 /// harness, run below at several sizes.
-fn differential<const L: usize, const B: usize>(
+fn differential<const L: usize, const B: usize, const DOC_BYTES: usize>(
     seed: u64,
     ops: usize,
     key_space: u64,
 ) {
-    let mut tree: CowBTree<L, B> = CowBTree::new();
+    let mut tree: CowBTree<L, B, DOC_BYTES> = CowBTree::new();
     let mut oracle: BTreeSet<(u64, u64)> = BTreeSet::new();
     let mut rng = seed;
     for _ in 0..ops {
@@ -1167,41 +1319,65 @@ fn differential<const L: usize, const B: usize>(
         let mut pt: Vec<u64> = tree.point(k).collect();
         pt.sort_unstable();
         assert_eq!(pt, ref_range(&oracle, k, k), "point {k} diverged");
+        // `first_doc` takes a *different* path to the same answer — a stackless reference descent
+        // rather than the cursor — so it needs its own parity check under removal. Reusing the
+        // point query's key and oracle makes it free.
+        assert_eq!(
+            tree.first_doc(k),
+            pt.first().copied(),
+            "first_doc {k} diverged"
+        );
     }
     assert_eq!(
         tree_range(&tree, 0, u64::MAX),
         ref_range(&oracle, 0, u64::MAX),
         "range scan diverged"
     );
+    // Every key, its absent neighbours, and the sentinel — after a run of interleaved
+    // inserts and removes, which is the state the per-op sampling may not have landed on.
+    assert_first_doc_matches(&tree, &oracle);
 }
 
 #[test]
 fn integrity_differential_across_sizes() {
     // Tiny capacities make split/merge/borrow/collapse fire on almost every op (at 256 the FIRST split
     // needs 257 inserts, so structural code is otherwise unexercised); the default confirms production width.
-    differential::<4, 4>(0x1111_1111, 3000, 30);
-    differential::<5, 5>(0x2222_2222, 3000, 30);
-    differential::<8, 8>(0x3333_3333, 3000, 50);
-    differential::<8, 32>(0x4444_4444, 3000, 50); // wide branch, narrow leaf
-    differential::<32, 8>(0x5555_5555, 3000, 80); // narrow branch, wide leaf
-    differential::<256, 256>(0x6666_6666, 4000, 800);
+    differential::<4, 4, 8>(0x1111_1111, 3000, 30);
+    differential::<5, 5, 8>(0x2222_2222, 3000, 30);
+    differential::<8, 8, 8>(0x3333_3333, 3000, 50);
+    differential::<8, 32, 8>(0x4444_4444, 3000, 50); // wide branch, narrow leaf
+    differential::<32, 8, 8>(0x5555_5555, 3000, 80); // narrow branch, wide leaf
+    differential::<256, 256, 8>(0x6666_6666, 4000, 800);
+
+    // Same sweep at the narrow (u32) doc width — a 12 B/entry AoS layout instead of 16.
+    // No production instantiation narrows today; this keeps the const generic honest so a
+    // future one cannot discover the width is only ever exercised at 8. Docs are
+    // `rng % key_space` (well under u32), so
+    // this stresses split/merge/borrow/collapse + leaf round-trip at DOC_BYTES=4.
+    differential::<4, 4, 4>(0x1111_2222, 3000, 30);
+    differential::<5, 5, 4>(0x2222_3333, 3000, 30);
+    differential::<8, 8, 4>(0x3333_4444, 3000, 50);
+    differential::<8, 32, 4>(0x4444_5555, 3000, 50);
+    differential::<32, 8, 4>(0x5555_6666, 3000, 80);
+    differential::<256, 256, 4>(0x6666_7777, 4000, 800);
 }
 
 #[test]
 fn integrity_from_sorted_well_formed_across_sizes() {
     // Bulk build must produce a valid tree at every size + boundary count. `min_fill` off: the last leaf
     // may be short by construction (`chunks(LEAF_MAX)`).
-    fn build<const L: usize, const B: usize>(n: u64) {
-        let t = CowBTree::<L, B>::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
+    fn build<const L: usize, const B: usize, const DOC_BYTES: usize>(n: u64) {
+        let t =
+            CowBTree::<L, B, DOC_BYTES>::from_sorted(&(0..n).map(|i| (i, i)).collect::<Vec<_>>());
         assert_eq!(t.len() as u64, n, "len != n for n={n}");
         check_invariants(&t, false);
         // from_sorted builds every leaf via from_pairs, so each page must be byte-identical to
         // re-encoding its own contents — proving the encoding is deterministic AND the smaller (AoS vs
         // compact) format was chosen.
         for (fmt, bytes) in t.leaves() {
-            let pairs = Leaf::<L>::from_parts(fmt, bytes.clone()).to_pairs();
+            let pairs = Leaf::<L, DOC_BYTES>::from_parts(fmt, bytes.clone()).to_pairs();
             assert_eq!(
-                Leaf::<L>::from_pairs(&pairs).bytes(),
+                Leaf::<L, DOC_BYTES>::from_pairs(&pairs).bytes(),
                 bytes,
                 "from_sorted leaf not byte-identical to its from_pairs re-encode (n={n})"
             );
@@ -1210,10 +1386,15 @@ fn integrity_from_sorted_well_formed_across_sizes() {
     for &n in &[
         0u64, 1, 2, 3, 7, 8, 9, 15, 16, 17, 63, 64, 65, 256, 257, 1000,
     ] {
-        build::<4, 4>(n);
-        build::<8, 8>(n);
-        build::<16, 4>(n);
-        build::<256, 256>(n);
+        build::<4, 4, 8>(n);
+        build::<8, 8, 8>(n);
+        build::<16, 4, 8>(n);
+        build::<256, 256, 8>(n);
+        // The narrow doc width goes through the same bulk build. Keys here are `0..n`, so the docs
+        // (also `0..n`) stay inside 4 bytes for every `n` in the sweep.
+        build::<4, 4, 4>(n);
+        build::<16, 4, 4>(n);
+        build::<256, 256, 4>(n);
     }
 }
 
