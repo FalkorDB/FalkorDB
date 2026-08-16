@@ -82,12 +82,11 @@ jobs:
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-        # Bind-mount the host cov/ dir so coverage cells can collect the
-        # profraw files the instrumented .so writes to /var/lib/falkordb/cov
-        # (via LLVM_PROFILE_FILE in Dockerfile.coverage). Harmless for non-
-        # coverage cells — only the coverage image emits profraw.
+        # Keep primary and replica profiles separate: both containers run
+        # Redis as PID 1 with the same module hash, so a shared directory
+        # would make their LLVM_PROFILE_FILE names collide.
         volumes:
-          - ${{ github.workspace }}/cov:/var/lib/falkordb/cov
+          - ${{ github.workspace }}/cov/falkordb:/var/lib/falkordb/cov
         env:
           # Empty FALKORDB_ARGS overrides the image's compiled-in default
           # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
@@ -101,7 +100,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
         volumes:
-          - ${{ github.workspace }}/cov:/var/lib/falkordb/cov
+          - ${{ github.workspace }}/cov/replica:/var/lib/falkordb/cov
         env:
           FALKORDB_ARGS: ""
           REDIS_ARGS: "--replicaof falkordb 6379 --enable-debug-command yes"
@@ -124,9 +123,11 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Pre-create cov dir (coverage flavour only)
+      - name: Prepare coverage dirs
         if: inputs.collect_coverage
-        run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/cov/falkordb" "${GITHUB_WORKSPACE}/cov/replica"
+          chmod 0777 "${GITHUB_WORKSPACE}/cov" "${GITHUB_WORKSPACE}/cov/falkordb" "${GITHUB_WORKSPACE}/cov/replica"
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
@@ -139,13 +140,38 @@ jobs:
           COV_IMAGE: ${{ inputs.image }}
         run: |
           set -euo pipefail
+          # LLVM flushes the instrumented module's profile when Redis exits.
+          # GitHub otherwise stops service containers only after all steps.
+          find_service() {
+            alias=$1
+            for cid in $(docker ps -aq --filter "ancestor=$COV_IMAGE"); do
+              if docker inspect -f '{{range .NetworkSettings.Networks}}{{range .Aliases}}{{println .}}{{end}}{{end}}' "$cid" | grep -qx "$alias"; then
+                echo "$cid"
+                return 0
+              fi
+            done
+            return 1
+          }
+          REPLICA_SERVICE_ID=$(find_service replica) || {
+            echo "::error::unable to find replica service container"
+            exit 1
+          }
+          FALKORDB_SERVICE_ID=$(find_service falkordb) || {
+            echo "::error::unable to find FalkorDB service container"
+            exit 1
+          }
+          for service_id in "$REPLICA_SERVICE_ID" "$FALKORDB_SERVICE_ID"; do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$service_id")" = "true" ]; then
+              docker stop --time 10 "$service_id" >/dev/null
+            fi
+          done
           CID=$(docker create "$COV_IMAGE")
           docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
           docker rm "$CID" >/dev/null
-          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -name "*.profraw" 2>/dev/null || true)
+          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -type f -name "*.profraw" -size +0c 2>/dev/null || true)
           if [ -z "$PROFRAW" ]; then
-            echo "::warning::no profraw files produced — skipping coverage export"
-            exit 0
+            echo "::error::no profraw files produced"
+            exit 1
           fi
           llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
@@ -155,6 +181,8 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov.txt
+          disable_search: true
       - name: Capture service container logs on failure
         if: failure()
         run: |
@@ -227,10 +255,10 @@ jobs:
           CID=$(docker create "$COV_IMAGE")
           docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
           docker rm "$CID" >/dev/null
-          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -name "*.profraw" 2>/dev/null || true)
+          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -type f -name "*.profraw" -size +0c 2>/dev/null || true)
           if [ -z "$PROFRAW" ]; then
-            echo "::warning::no profraw files produced — skipping coverage export"
-            exit 0
+            echo "::error::no profraw files produced"
+            exit 1
           fi
           llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
@@ -240,6 +268,8 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov.txt
+          disable_search: true
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
