@@ -1,11 +1,11 @@
 //! Scan node selection optimizer pass.
 //!
 //! Selects the optimal starting endpoint for chains of `CondTraverse`
-//! operators and inserts (or replaces) the leaf scan accordingly. If the
-//! best endpoint is on the opposite side of the chain from the current leaf,
-//! the entire chain is reversed and each `CondTraverse` is marked
-//! `transposed = true` so the runtime knows to transpose the relationship
-//! matrix scan.
+//! operators and inserts (or replaces) the leaf scan accordingly. The chain
+//! is then re-ordered to start from that endpoint, each hop oriented to run
+//! from whichever of its endpoints is already bound — `transposed = true`
+//! when that is the `to`, so the runtime transposes the relationship matrix
+//! scan.
 //!
 //! ## Endpoint Scoring
 //!
@@ -30,11 +30,14 @@
 //!                                 NodeByLabelScan(:Person)
 //! ```
 //!
-//! ## Chain Reversal
+//! ## Hop Ordering
 //!
-//! For chains of CondTraverse operators (CT_0 -> CT_1 -> ... -> CT_n), if
-//! the best endpoint is at the top of the chain, the entire chain order is
-//! reversed and each relationship's from/to is swapped:
+//! For chains of CondTraverse operators (CT_0 -> CT_1 -> ... -> CT_n), the
+//! hops are re-ordered greedily from the chosen endpoint: each round takes a
+//! hop with an endpoint already bound (preferring one with *both* bound, then
+//! the best-scoring newly bound endpoint) and orients it to start there. On a
+//! simple path whose best endpoint sits at the top, that reverses the chain
+//! and swaps every relationship's from/to:
 //!
 //! ```text
 //! Before:                          After:
@@ -51,8 +54,14 @@
 //!                                  NodeByLabelScan(:D)
 //! ```
 //!
+//! Once the pattern branches — `(a)-->(b)-->(c), (b)-->(d)` — the hops
+//! leaving the branch point no longer share a direction, so orientation is
+//! decided per hop rather than for the chain. A chain no ordering can cover
+//! is left as it is.
+//!
 //! Inter-chain Filter nodes (inline attribute filters on intermediate
-//! destination nodes) are preserved and reattached after reversal.
+//! destination nodes) are preserved and reattached as soon as the variables
+//! they reference are bound.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -718,14 +727,9 @@ pub(super) fn select_scan_node(
                 // Walk from next_ct -> ... -> current_ct, collect Filters.
                 let mut walk = optimized_plan.node(next_ct_idx).child(0).idx();
                 while walk != ct_idx {
-                    let walk_data = optimized_plan.node(walk).data();
-                    if matches!(walk_data, IR::Filter(_)) {
-                        // Clone just the Filter node (without its children)
-                        let filter_expr = match walk_data {
-                            IR::Filter(expr) => expr.clone(),
-                            _ => unreachable!(),
-                        };
-                        inter_ct_filters.push((i, tree!(IR::Filter(filter_expr))));
+                    // Clone just the Filter node (without its children)
+                    if let IR::Filter(expr) = optimized_plan.node(walk).data() {
+                        inter_ct_filters.push((i, tree!(IR::Filter(expr.clone()))));
                     }
                     if optimized_plan.node(walk).num_children() > 0 {
                         walk = optimized_plan.node(walk).child(0).idx();
@@ -758,26 +762,20 @@ pub(super) fn select_scan_node(
             }
         };
 
-        // Order and orient the hops for the reversed plan.
+        // Order and orient the hops.
         //
-        // Reversing the chain wholesale and marking every hop `transposed`
-        // only describes a simple path. It gets two things wrong otherwise.
-        // Order: the hop that must sit directly on the new scan is the one
-        // touching `best_node`, and reversing the *rebuild* order as well
-        // put the far hop there instead — a hop with neither endpoint bound
-        // by anything below it, which the runtime can only answer by
-        // enumerating every edge of the type once per input row. That read
-        // as 34.4M instructions for
-        // `MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c {id: 1})` against 419k for
-        // the same query on the C engine. Direction: as soon as the pattern
-        // branches — `(a)-->(b)-->(c), (b)-->(d)` — the hop leaving the
-        // branch point still runs in storage direction, so `transposed`
-        // cannot be a property of the chain.
+        // A hop is runnable only from an endpoint that something below it
+        // already binds; a hop with neither endpoint bound stays correct but
+        // costs the runtime every edge of the relationship type, once per
+        // input row. And `transposed` — "start from `to`" — is a property of
+        // a hop, not of the chain: where the pattern branches, as in
+        // `(a)-->(b)-->(c), (b)-->(d)`, the two hops leaving `b` run in
+        // opposite directions. So neither reversing the chain wholesale nor
+        // keeping pattern order describes anything but a simple path.
         //
         // Order greedily instead: repeatedly take a hop with an endpoint
-        // already bound, orient it to start from that endpoint, and mark
-        // its other end bound. `transposed` then carries the meaning the
-        // runtime reads — "start from `to`" — per hop.
+        // already bound, orient it to start from that endpoint, and mark its
+        // other end bound. The chain is left alone if no such order exists.
         let initial_bound: HashSet<u32> = {
             let mut b = HashSet::new();
             b.insert(best_node.alias.id);
@@ -787,13 +785,10 @@ pub(super) fn select_scan_node(
             b
         };
         let mut bound = initial_bound.clone();
-        let mut pending_hops: Vec<
-            Option<(
-                Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-                bool,
-                Vec<u32>,
-            )>,
-        > = rels.into_iter().map(Some).collect();
+        // Hops still to be placed, in pattern order. Each round removes the
+        // one it picks, so what is left is both the candidate set and the
+        // tiebreak order.
+        let mut pending_hops = rels;
         let hop_count = pending_hops.len();
         let mut ordered: Vec<(
             Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
@@ -818,16 +813,11 @@ pub(super) fn select_scan_node(
             //    breaking ties.
             //
             // Pattern order decides nothing but ties, so a selective hop
-            // prunes before an unselective one fans out. Measured on a
-            // 200-node branch where one side reaches 50 nodes and the other
-            // a single labelled one, taking the selective side first is
-            // 780,735 instructions against 1,712,085 — the gap the C engine
-            // gets from its label-cardinality tiebreak.
+            // prunes before an unselective one fans out.
             let pick = pending_hops
                 .iter()
                 .enumerate()
-                .filter_map(|(i, slot)| {
-                    let (rel, ..) = slot.as_ref()?;
+                .filter_map(|(i, (rel, ..))| {
                     let from_bound = bound.contains(&rel.from.alias.id);
                     let to_bound = bound.contains(&rel.to.alias.id);
                     if !from_bound && !to_bound {
@@ -848,14 +838,13 @@ pub(super) fn select_scan_node(
                         .then_with(|| b.0.cmp(&a.0)) // stable: earlier hop wins ties
                 })
                 .map(|(i, ..)| i);
-            // No hop can start from what is bound so far: this chain is not
-            // one the reversal can describe, so leave the plan alone rather
-            // than emit an operator whose source nothing binds.
+            // No hop can start from what is bound so far: leave the plan
+            // alone rather than emit an operator whose source nothing binds.
             let Some(i) = pick else {
                 orderable = false;
                 break;
             };
-            let (rel, emit, edges) = pending_hops[i].take().expect("position found a hop");
+            let (rel, emit, edges) = pending_hops.remove(i);
             // Storage direction when `from` is bound (no transpose needed);
             // otherwise start from `to` and let the runtime walk the
             // relationship matrix backwards.
@@ -871,10 +860,9 @@ pub(super) fn select_scan_node(
         }
 
         // Rebuild only when the arrangement actually changes. Every multi-hop
-        // chain now goes through the ordering above, but plans whose order the
-        // scoring leaves alone must not be pruned and reconstructed for nothing:
-        // that churn would put every existing multi-hop plan through a rebuild
-        // path for no gain.
+        // chain goes through the ordering above, so a plan whose order the
+        // scoring leaves alone would otherwise be pruned and reconstructed
+        // into the shape it already had.
         let order_changed = orderable
             && ordered.len() == rels_snapshot.len()
             && ordered.iter().zip(rels_snapshot.iter()).any(
