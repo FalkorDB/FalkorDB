@@ -122,6 +122,51 @@ impl NumericIndex {
             .collect()
     }
 
+    /// Build directly from already-encoded `(key, doc)` tuples, in any order — how the
+    /// install adopts a background-built BASE without re-encoding or re-sorting it per row.
+    #[must_use]
+    pub fn from_encoded(mut pairs: Vec<(u64, u64)>) -> Self {
+        pairs.sort_unstable();
+        pairs.dedup();
+        Self {
+            tree: Tree::from_sorted(&pairs),
+        }
+    }
+
+    /// Encode `(value, id)` entries to tree tuples, dropping non-numeric / `NaN`.
+    /// Public so a background build can encode BASE off the write thread.
+    #[must_use]
+    pub fn encode_entries(entries: Vec<(Value, u64)>) -> Vec<(u64, u64)> {
+        Self::encode_pairs(entries)
+    }
+
+    /// Every `(key, doc)` tuple, in key order — the install's DELTA/TOMB enumeration.
+    /// `O(n)`; intended for build-sized artifacts, not a populated column.
+    #[must_use]
+    pub fn encoded_tuples(&self) -> Vec<(u64, u64)> {
+        self.tree.range_tuples(0, u64::MAX).collect()
+    }
+
+    /// Add already-encoded tuples. Used by the install to replay DELTA onto BASE, where the
+    /// tuples come straight out of another tree and must not be re-encoded — re-encoding a
+    /// decoded key would be a second trip through a many-to-one map.
+    pub fn add_encoded(
+        &mut self,
+        pairs: &mut Vec<(u64, u64)>,
+    ) {
+        pairs.sort_unstable();
+        self.tree.insert_batch(pairs);
+    }
+
+    /// Remove already-encoded tuples — the install subtracting TOMB from BASE.
+    pub fn remove_encoded(
+        &mut self,
+        pairs: &mut Vec<(u64, u64)>,
+    ) {
+        pairs.sort_unstable();
+        self.tree.remove_batch(pairs);
+    }
+
     /// Whether the index holds no tuples.
     #[must_use]
     pub fn is_empty(&self) -> bool {
