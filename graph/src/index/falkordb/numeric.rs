@@ -129,6 +129,22 @@ impl NumericIndex {
         self.array_tree.remove_batch(&t.array);
     }
 
+    /// Append the tuples one `(value, id)` contributes, reusing `keys` as scratch. The streaming
+    /// half of the batch path: the column runs every kind over the same entry, so materialising a
+    /// per-kind copy of the batch first would be one pass and one allocation too many.
+    pub(super) fn encode_into(
+        value: &Value,
+        id: u64,
+        out: &mut KeyTuples,
+        keys: &mut Vec<u64>,
+    ) {
+        let dest = match encode_stored(value, keys) {
+            StoredKeys::Scalar => &mut out.scalar,
+            StoredKeys::Array => &mut out.array,
+        };
+        dest.extend(keys.iter().map(|&k| (k, id)));
+    }
+
     /// Encode `(value, id)` entries to `(key, id)` tree tuples, dropping non-numeric / `NaN` values.
     fn encode_pairs(entries: impl IntoIterator<Item = (Value, u64)>) -> KeyTuples {
         let mut out = KeyTuples::default();
@@ -160,9 +176,22 @@ impl NumericIndex {
 
     /// Encode `(value, id)` entries to tree tuples, dropping non-numeric / `NaN`.
     /// Public so a background build can encode BASE off the write thread.
+    ///
+    /// Borrows rather than consumes: the column runs one encoder per kind over the same batch, and
+    /// a `Vec`-consuming signature made each of them clone every `Value` first — which measured as
+    /// the whole of the write path's regression against the RediSearch build.
     #[must_use]
-    pub fn encode_entries(entries: Vec<(Value, u64)>) -> KeyTuples {
-        Self::encode_pairs(entries)
+    pub fn encode_entries(entries: &[(Value, u64)]) -> KeyTuples {
+        let mut out = KeyTuples::default();
+        let mut keys = Vec::new();
+        for (v, id) in entries {
+            let dest = match encode_stored(v, &mut keys) {
+                StoredKeys::Scalar => &mut out.scalar,
+                StoredKeys::Array => &mut out.array,
+            };
+            dest.extend(keys.iter().map(|&k| (k, *id)));
+        }
+        out
     }
 
     /// Every `(key, doc)` tuple, in key order — the install's DELTA/TOMB enumeration.

@@ -196,8 +196,7 @@ impl RangeIndex {
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
     ) {
-        let entries: Vec<(Value, u64)> = entries.into_iter().collect();
-        let mut t = self.encode_entries_slice(&entries);
+        let mut t = self.encode_stream(entries);
         self.add_encoded(&mut t);
     }
 
@@ -206,9 +205,30 @@ impl RangeIndex {
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
     ) {
-        let entries: Vec<(Value, u64)> = entries.into_iter().collect();
-        let mut t = self.encode_entries_slice(&entries);
+        let mut t = self.encode_stream(entries);
         self.remove_encoded(&mut t);
+    }
+
+    /// Encode an owned batch in **one pass**, offering each entry to every kind in turn.
+    ///
+    /// The per-kind slice pass ([`encode_entries`](Self::encode_entries)) exists for the background
+    /// build, which is handed a materialised BASE anyway. The write path is not: routing through
+    /// the slice version made every commit materialise the batch first, for no gain — a kind that
+    /// cannot represent a value costs one `match` arm either way.
+    fn encode_stream(
+        &self,
+        entries: impl IntoIterator<Item = (Value, u64)>,
+    ) -> EncodedTuples {
+        let mut out = EncodedTuples::default();
+        let mut scratch = Vec::new();
+        for (v, id) in entries {
+            NumericIndex::encode_into(&v, id, &mut out.numeric, &mut scratch);
+            self.tag.encode_into(&v, id, &mut out.tag, &mut scratch);
+            if let Some(k) = GeoIndex::key_of(&v) {
+                out.geo.push((k, id));
+            }
+        }
+        out
     }
 
     /// Encode `(value, id)` entries under every kind — how a background build produces BASE off
@@ -227,7 +247,7 @@ impl RangeIndex {
         entries: &[(Value, u64)],
     ) -> EncodedTuples {
         EncodedTuples {
-            numeric: NumericIndex::encode_entries(entries.to_vec()),
+            numeric: NumericIndex::encode_entries(entries),
             tag: self.tag.encode_entries(entries),
             geo: GeoIndex::encode_entries(entries),
         }
