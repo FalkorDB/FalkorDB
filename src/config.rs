@@ -25,8 +25,9 @@
 //!
 //! - **GIL-guarded configs** are declared via `lazy_static` and wrapped in
 //!   `RedisGILGuard`, ensuring safe access from the Redis main thread.
-//!   These are immutable after module load (flagged `IMMUTABLE` in the
-//!   `redis_module!` macro).
+//!   Most are immutable after module load (flagged `IMMUTABLE` in the
+//!   `redis_module!` macro); the ones C also lets change at run-time are
+//!   flagged `DEFAULT` and accepted by `GRAPH.CONFIG SET`.
 //!
 //! - **Atomic configs** use `AtomicI64` / `AtomicU64` / `AtomicBool` for
 //!   lock-free concurrent reads from worker threads. Some are
@@ -79,13 +80,18 @@ pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
 /// GIL-guarded because the query hot path reads it off the main thread, and
 /// because C lets `GRAPH.CONFIG SET CMD_INFO yes|no` flip it at runtime.
 pub static CONFIGURATION_CMD_INFO: AtomicBool = AtomicBool::new(true);
+/// Cap on the telemetry stream's length, used as the XADD `MAXLEN`.
+pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(MAX_INFO_QUERIES_CAP);
 
 // ── Read-only runtime configs ──
 
 pub static OMP_THREAD_COUNT: AtomicI64 = AtomicI64::new(0);
 pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
-pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(1000);
 pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
+
+/// Highest accepted `MAX_INFO_QUERIES`, and its default. Larger values are
+/// clamped rather than rejected, matching C's `Config_cmd_info_max_queries_set`.
+pub const MAX_INFO_QUERIES_CAP: i64 = 1000;
 
 pub fn get_thread_count(ctx: &redis_module::Context) -> i64 {
     let val = *CONFIGURATION_THREAD_COUNT.lock(ctx);

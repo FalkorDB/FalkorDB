@@ -15,12 +15,11 @@
 //!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
 //!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
 //!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE, EFFECTS_THRESHOLD,
-//!   CMD_INFO
+//!   CMD_INFO, MAX_INFO_QUERIES, DELAY_INDEXING
 //!
 //! Read-only (SET returns an error):
 //!   THREAD_COUNT, OMP_THREAD_COUNT, CACHE_SIZE, ASYNC_DELETE,
-//!   NODE_CREATION_BUFFER, MAX_INFO_QUERIES,
-//!   BOLT_PORT, DELAY_INDEXING, IMPORT_FOLDER, TEMP_FOLDER
+//!   NODE_CREATION_BUFFER, BOLT_PORT, IMPORT_FOLDER, TEMP_FOLDER
 //!
 //! ## Multi-SET semantics
 //! When multiple name-value pairs are provided in a single SET, all pairs are
@@ -34,9 +33,9 @@ use crate::config::{
     CONFIGURATION_DELAY_INDEXING, CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_INDEX_WORKER_THREADS,
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER,
     CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_THRESHOLD, MAX_INFO_QUERIES, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY,
-    RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
-    normalize_node_creation_buffer,
+    EFFECTS_THRESHOLD, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
+    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+    get_thread_count, normalize_node_creation_buffer,
 };
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
@@ -116,7 +115,7 @@ fn validate_config_set(
             Ok(ConfigValue::Int(v))
         }
         // Runtime-settable boolean configs
-        "ASYNC_DELETE" | "CMD_INFO" => {
+        "ASYNC_DELETE" | "CMD_INFO" | "DELAY_INDEXING" => {
             let v = match value.to_lowercase().as_str() {
                 "yes" | "1" | "true" => 1i64,
                 "no" | "0" | "false" => 0i64,
@@ -146,6 +145,17 @@ fn validate_config_set(
                 .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
             Ok(ConfigValue::Int(v))
         }
+        "MAX_INFO_QUERIES" => {
+            let v: i64 = value
+                .parse()
+                .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
+            if v < 0 {
+                return Err(format!("Failed to set config value {name} to {value}"));
+            }
+            // C clamps to the cap instead of failing, so a too-large value is
+            // accepted and reported back as the cap
+            Ok(ConfigValue::Int(v.min(MAX_INFO_QUERIES_CAP)))
+        }
         "JS_HEAP_SIZE" | "JS_STACK_SIZE" => {
             let v: i64 = value
                 .parse()
@@ -163,9 +173,7 @@ fn validate_config_set(
         | "OMP_THREAD_COUNT"
         | "CACHE_SIZE"
         | "NODE_CREATION_BUFFER"
-        | "MAX_INFO_QUERIES"
         | "BOLT_PORT"
-        | "DELAY_INDEXING"
         | "IMPORT_FOLDER"
         | "TEMP_FOLDER" => {
             Err("This configuration parameter cannot be set at run-time".to_string())
@@ -239,6 +247,10 @@ fn apply_config_set(
         "EFFECTS_THRESHOLD" => EFFECTS_THRESHOLD.store(val.as_i64(), Ordering::Relaxed),
         "ASYNC_DELETE" => ASYNC_DELETE.store(val.as_i64(), Ordering::Relaxed),
         "CMD_INFO" => CONFIGURATION_CMD_INFO.store(val.as_i64() != 0, Ordering::Relaxed),
+        "MAX_INFO_QUERIES" => MAX_INFO_QUERIES.store(val.as_i64(), Ordering::Relaxed),
+        "DELAY_INDEXING" => {
+            *CONFIGURATION_DELAY_INDEXING.lock(ctx) = val.as_i64() != 0;
+        }
         "VKEY_MAX_ENTITY_COUNT" => {
             *CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(ctx) = val.as_i64();
         }

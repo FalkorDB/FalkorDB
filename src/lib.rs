@@ -109,7 +109,7 @@ redis_module! {
         ],
         bool: [
             ["CMD_INFO", &CONFIGURATION_CMD_INFO, true, ConfigurationFlags::DEFAULT, None],
-            ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::IMMUTABLE, None],
+            ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::DEFAULT, None],
         ],
         enum: [],
         module_args_as_configuration: true,

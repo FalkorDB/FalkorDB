@@ -25,8 +25,9 @@
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
-    TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    EFFECTS_THRESHOLD, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
+    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+    get_thread_count, normalize_node_creation_buffer,
 };
 use crate::redis_type::on_persistence;
 use crate::telemetry;
@@ -182,6 +183,23 @@ pub fn graph_init(
                     continue;
                 }
                 ctx.log_warning(&format!("Invalid value for {name} module argument"));
+                return Status::Err;
+            }
+            if name == "MAX_INFO_QUERIES" {
+                // Clamped rather than rejected, the same way C's setter caps it
+                // and the same way GRAPH.CONFIG SET does at run-time.
+                if i + 1 < args_str.len()
+                    && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    && v >= 0
+                {
+                    MAX_INFO_QUERIES.store(
+                        v.min(MAX_INFO_QUERIES_CAP),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    i += 2;
+                    continue;
+                }
+                ctx.log_warning("Invalid value for MAX_INFO_QUERIES module argument");
                 return Status::Err;
             }
             if name == "MAX_QUEUED_QUERIES" {
