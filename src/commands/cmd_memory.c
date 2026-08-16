@@ -28,6 +28,11 @@ static void _Replay
 	MemoryUsageResult result,
 	GraphContext *gc
 ) {
+	ASSERT (rm_ctx != NULL) ;
+
+	//--------------------------------------------------------------------------
+	// reply to caller
+	//--------------------------------------------------------------------------
 	// reply structure:
 	// {
 	//    total_graph_sz_mb: <total_graph_sz_mb>
@@ -38,24 +43,16 @@ static void _Replay
 	//
 	//    amortized_node_sz_mb: <node_sz_mb>
 	//
-	//    amortized_node_attributes_by_label_sz_mb: {
-	//        <label_name>: <node_sz_mb>
-	//        ...
-	//    }
-	//
-	//    amortized_unlabeled_nodes_sz_mb: <unlabeled_nodes_sz_mb>
+	//    amortized_node_attributes_sz_mb: <amortized_node_attributes_sz_mb>
 	//
 	//    amortized_edge_sz_mb: <edge_sz_mb>
 	//
-	//    amortized_edge_attributes_by_type_sz_mb: {
-	//        <relation_name>: <edge_sz_mb>
-	//        ...
-	//    }
+	//    amortized_edge_attributes_sz_mb: <amortized_edge_attributes_sz_mb>
 	//
 	//    indices_sz_mb: <indices_sz_mb>
 	// }
 
-	RedisModule_ReplyWithMap (rm_ctx, 9) ;
+	RedisModule_ReplyWithMap (rm_ctx, 8) ;
 
 	// total_graph_sz_mb
 	RedisModule_ReplyWithCString  (rm_ctx, "total_graph_sz_mb") ;
@@ -73,36 +70,17 @@ static void _Replay
 	RedisModule_ReplyWithCString  (rm_ctx, "amortized_node_block_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.node_block_storage_sz) ;
 
-	// amortized_node_by_label_sz_mb
-	RedisModule_ReplyWithCString (rm_ctx, "amortized_node_attributes_by_label_sz_mb") ;
-	RedisModule_ReplyWithMap     (rm_ctx, arr_len(result.node_attr_by_label_sz)) ;
-
-	for (size_t i = 0 ; i < arr_len (result.node_attr_by_label_sz) ; i++) {
-		Schema *s = GraphContext_GetSchemaByID (gc, i, SCHEMA_NODE) ;
-		ASSERT (s != NULL) ;
-
-		RedisModule_ReplyWithCString  (rm_ctx, Schema_GetName (s)) ;
-		RedisModule_ReplyWithLongLong (rm_ctx, result.node_attr_by_label_sz [i]) ;
-	}
-
-	// amortized_unlabeled_nodes_sz_mb
-	RedisModule_ReplyWithCString  (rm_ctx, "amortized_unlabeled_nodes_attributes_sz_mb") ;
-	RedisModule_ReplyWithLongLong (rm_ctx, result.unlabeled_node_attr_sz) ;
+	// amortized_node_attributes_sz_mb
+	RedisModule_ReplyWithCString (rm_ctx, "amortized_node_attributes_sz_mb") ;
+	RedisModule_ReplyWithLongLong (rm_ctx, result.node_attr_sz) ;
 
 	// amortized_edge_sz_mb
 	RedisModule_ReplyWithCString  (rm_ctx, "amortized_edge_block_sz_mb") ;
 	RedisModule_ReplyWithLongLong (rm_ctx, result.edge_block_storage_sz) ;
 
-	// amortized_edge_attributes_by_type_sz_mb
-	RedisModule_ReplyWithCString (rm_ctx, "amortized_edge_attributes_by_type_sz_mb") ;
-	RedisModule_ReplyWithMap (rm_ctx, arr_len (result.edge_attr_by_type_sz)) ;
-	for (size_t i = 0 ; i < arr_len (result.edge_attr_by_type_sz) ; i++) {
-		Schema *s = GraphContext_GetSchemaByID (gc, i, SCHEMA_EDGE) ;
-		ASSERT (s != NULL) ;
-
-		RedisModule_ReplyWithCString (rm_ctx, Schema_GetName (s)) ;
-		RedisModule_ReplyWithLongLong (rm_ctx, result.edge_attr_by_type_sz [i]) ;
-	}
+	// amortized_edge_attributes_sz_mb
+	RedisModule_ReplyWithCString (rm_ctx, "amortized_edge_attributes_sz_mb") ;
+	RedisModule_ReplyWithLongLong (rm_ctx, result.edge_attr_sz) ;
 
 	// indices_sz_mb
 	RedisModule_ReplyWithCString  (rm_ctx, "indices_sz_mb") ;
@@ -164,9 +142,6 @@ static void _Graph_Memory
 		goto cleanup ;
 	}
 
-	result.edge_attr_by_type_sz  = arr_new (size_t, 0) ;
-	result.node_attr_by_label_sz = arr_new (size_t, 0) ;
-
 	// acquire read lock
 	GraphContext_AcquireReadLock (gc) ;
 
@@ -192,8 +167,6 @@ cleanup:
 
 	// free command context
 	rm_free (ctx) ;
-	arr_free (result.edge_attr_by_type_sz) ;
-	arr_free (result.node_attr_by_label_sz) ;
 }
 
 // GRAPH.MEMORY USAGE <key> command reports the number of bytes that a graph

@@ -249,9 +249,7 @@ uint64_t GraphContext_MemoryUsage
 ) ;
 
 // returns the amortized memory consumption of a graph (all fields in MB on return)
-// samples attribute-sets for nodes/edges and measures index memory
-// result->node_attr_by_label_sz and result->edge_attr_by_type_sz must be
-// initialised with arr_new(size_t, 0) by the caller; arr_free them after use
+// samples node/edge attribute-sets over their datablocks and measures index memory
 // caller must hold at least the graph read lock
 void GraphContext_EstimateMemoryUsage
 (
