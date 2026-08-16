@@ -84,7 +84,7 @@ use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
 
 #[cfg(feature = "index-falkordb")]
-use crate::index::falkordb::falkordb_index::NumericAnswer;
+use crate::index::falkordb::{falkordb_index::NumericAnswer, numeric::EncodedTuples};
 use crate::{
     entity_type::EntityType,
     graph::{
@@ -3536,7 +3536,7 @@ impl Graph {
         entity: EntityType,
         label: &Arc<String>,
         attr: &Arc<String>,
-    ) -> Option<Vec<(u64, u64)>> {
+    ) -> Option<EncodedTuples> {
         let entries = match entity {
             EntityType::Node => self.collect_node_index_entries(label, attr),
             EntityType::Relationship => self.collect_edge_index_entries(label, attr),
@@ -3564,20 +3564,17 @@ impl Graph {
         label: &Arc<String>,
         attr: &Arc<String>,
         epoch: u64,
-        base: Vec<(u64, u64)>,
+        mut base: EncodedTuples,
     ) -> bool {
-        let survivors: Vec<(u64, u64)> = match entity {
-            EntityType::Node => base
-                .into_iter()
-                .filter(|(_, id)| !self.is_node_deleted(NodeId(*id)))
-                .collect(),
-            EntityType::Relationship => base
-                .into_iter()
-                .filter(|(_, id)| !self.is_relationship_deleted(RelationshipId(*id)))
-                .collect(),
-        };
+        // Both key spaces, or a node deleted during the build survives in its array half.
+        match entity {
+            EntityType::Node => base.retain_docs(|id| !self.is_node_deleted(NodeId(id))),
+            EntityType::Relationship => {
+                base.retain_docs(|id| !self.is_relationship_deleted(RelationshipId(id)));
+            }
+        }
         self.falkordb_index
-            .install_base(entity, label, attr, epoch, survivors)
+            .install_base(entity, label, attr, epoch, base)
     }
 
     /// Stage `(value, edge_id)` into the index column `(type, attr)` for the edge `id`'s single type,
