@@ -116,9 +116,6 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Prepare coverage dirs
-        if: inputs.collect_coverage
-        run: mkdir -p "${GITHUB_WORKSPACE}/cov/falkordb" "${GITHUB_WORKSPACE}/cov/replica"
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
@@ -133,34 +130,22 @@ jobs:
           set -euo pipefail
           # LLVM flushes the instrumented module's profile when Redis exits.
           # GitHub otherwise stops service containers only after all steps.
-          find_service() {
-            alias=$1
-            for cid in $(docker ps -aq --filter "ancestor=$COV_IMAGE"); do
-              if docker inspect -f '{{range .NetworkSettings.Networks}}{{range .Aliases}}{{println .}}{{end}}{{end}}' "$cid" | grep -qx "$alias"; then
-                echo "$cid"
-                return 0
-              fi
-            done
-            return 1
-          }
-          REPLICA_SERVICE_ID=$(find_service replica) || {
-            echo "::error::unable to find replica service container"
+          SERVICE_IDS=$(docker ps -aq --filter "ancestor=$COV_IMAGE")
+          if [ -z "$SERVICE_IDS" ]; then
+            echo "::error::unable to find coverage service containers"
             exit 1
-          }
-          FALKORDB_SERVICE_ID=$(find_service falkordb) || {
-            echo "::error::unable to find FalkorDB service container"
-            exit 1
-          }
-          for service_id in "$REPLICA_SERVICE_ID" "$FALKORDB_SERVICE_ID"; do
-            if [ "$(docker inspect -f '{{.State.Running}}' "$service_id")" = "true" ]; then
-              docker stop --time 10 "$service_id" >/dev/null
-            fi
+          fi
+          RUNNING_SERVICE_IDS=$(docker ps -q --filter "ancestor=$COV_IMAGE")
+          if [ -n "$RUNNING_SERVICE_IDS" ]; then
+            docker stop --time 10 $RUNNING_SERVICE_IDS >/dev/null
+          fi
+          # Every container uses PID 1 and the same module hash, so copy each
+          # profile directory separately to avoid filename collisions.
+          for service_id in $SERVICE_IDS; do
+            profile_dir="${GITHUB_WORKSPACE}/cov/${service_id}"
+            mkdir -p "$profile_dir"
+            docker cp "${service_id}:/var/lib/falkordb/cov/." "$profile_dir"
           done
-          # Copy each service's internal profile directory separately. Both
-          # Redis processes are PID 1 with the same module hash, so merging
-          # them into one directory would overwrite one profile filename.
-          docker cp "${FALKORDB_SERVICE_ID}:/var/lib/falkordb/cov/." "${GITHUB_WORKSPACE}/cov/falkordb"
-          docker cp "${REPLICA_SERVICE_ID}:/var/lib/falkordb/cov/." "${GITHUB_WORKSPACE}/cov/replica"
           CID=$(docker create "$COV_IMAGE")
           docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
           docker rm "$CID" >/dev/null
