@@ -213,7 +213,14 @@ pub enum IR {
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-        /// Optional per-hop edge filter absorbed from a WHERE clause by the optimizer.
+        /// Predicate every edge on the walk must satisfy.
+        ///
+        /// Unlike the fixed-length traverses, this is not an absorbed `Filter`
+        /// and is not fused when operators are built. `r` binds a *list* of
+        /// edges, so `Filter(r.w = 1)` above the walk asks a different question
+        /// than pruning per edge — the predicate is part of what this operator
+        /// computes, like `min_hops`. Set by the planner from inline attrs, or
+        /// by `absorb_edge_filters_into_vlt` from a WHERE clause.
         edge_filter: Option<QueryExpr<Variable>>,
         /// When false, the path/relationship-list binding (`relationship.alias`)
         /// is not consumed by any ancestor, so the operator skips materializing
@@ -230,7 +237,12 @@ pub enum IR {
         expand_into: bool,
     },
     /// All shortest paths between two known nodes
-    AllShortestPaths(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
+    AllShortestPaths {
+        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
+        /// See [`IR::CondVarLenTraverse::edge_filter`]: pruned per edge during
+        /// the BFS, not fused from a `Filter`.
+        edge_filter: Option<QueryExpr<Variable>>,
+    },
     /// Check relationship between two known nodes.
     /// `emit_relationship`: when false, anonymous edge optimization applies.
     ExpandInto {
@@ -625,7 +637,9 @@ impl Display for IR {
                 };
                 write!(f, "{name} | {}", fmt_var_len_rel(rel))
             }
-            Self::AllShortestPaths(rel) => write!(f, "All Shortest Paths | {rel}"),
+            Self::AllShortestPaths { relationship, .. } => {
+                write!(f, "All Shortest Paths | {relationship}")
+            }
             Self::ExpandInto {
                 relationship: rel, ..
             } => {
@@ -691,6 +705,231 @@ pub(super) fn inline_attrs_to_filter(
     } else {
         Some(tree!(ExprIR::And; filters))
     }
+}
+
+/// Lowers a MATCH pattern element's inline attributes to a predicate, at most
+/// once per (alias, attrs map) pair.
+///
+/// The planner reaches the same pattern element from several branches — a
+/// relationship endpoint is visible as `rel.from`/`rel.to` and again in the
+/// component's node list — and every branch used to lower it independently.
+/// Two copies of the same predicate survive as `And(p, p)` once
+/// `push_filters_down` merges the stacked filters, and that shape is not
+/// servable by an index, so the query silently drops to a scan.
+///
+/// Identity, not equality, is the right question here: the binder builds a
+/// fresh enriched clone for each occurrence that writes its own attrs
+/// (`binder.rs`, the `has_extra_attrs` paths), so `(a {x:1})-->(c), (a {y:2})-->(d)`
+/// legitimately carries two distinct maps for one alias and both must be
+/// lowered. Reaching one map twice must not.
+///
+/// Keying on the address is sound because every attrs map reachable here is
+/// owned by the `&QueryGraph` being planned — nodes and relationships hold
+/// their `Arc`s for the whole call — so none can be freed and its address
+/// reused while the set is alive.
+///
+/// Only ever call this for predicate positions. Inline attrs on a CREATE or
+/// MERGE pattern are a *constructor* — `runtime/ops/create.rs` builds the
+/// property template from them and `runtime/ops/merge.rs` builds the merge
+/// lookup hash key — and those patterns never pass through here.
+fn lower_inline_attrs(
+    lowered: &mut HashSet<(u32, u32, usize)>,
+    alias: &Variable,
+    attrs: &QueryExpr<Variable>,
+) -> Option<DynTree<ExprIR<Variable>>> {
+    if !lowered.insert((alias.id, alias.scope_id, Arc::as_ptr(attrs) as usize)) {
+        return None;
+    }
+    inline_attrs_to_filter(alias, attrs)
+}
+
+/// The edge alias of the traverse at `idx`, if it is one that can take a
+/// predicate on its edge.
+pub fn traverse_edge_alias(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<&Variable> {
+    match plan.node(idx).data() {
+        // A fused chain binds no per-hop edge, so there is nothing for a
+        // predicate to test against.
+        IR::CondTraverse {
+            relationship,
+            chain,
+            ..
+        } if chain.is_empty() => Some(&relationship.alias),
+        // Only the fixed-length traverses fuse. The walks own their predicate
+        // in `edge_filter`; there is no `Filter` above them to take.
+        IR::ExpandInto { relationship, .. } => Some(&relationship.alias),
+        _ => None,
+    }
+}
+
+/// Splits the `Filter` directly above `idx` into the conjuncts that
+/// constrain only that traverse's edge and the ones that do not.
+///
+/// This is where an edge predicate is fused into a traverse. It is
+/// deliberately *not* an optimizer pass: the plan keeps one representation
+/// of a predicate — an `IR::Filter` — so every pass can see it, and folding
+/// it into the operator is a decision about physical execution, taken here
+/// while the operators are built. Doing it as an IR rewrite meant every
+/// future pass had to know that predicates also hide in operator fields.
+///
+/// Fusing here is also the only place it cannot be undone or reordered
+/// away, which matters because for a var-length walk it is not an
+/// optimization: `r` binds a list of edges, so a `Filter` above the walk
+/// asks a different question than pruning per edge.
+pub fn split_edge_filter(
+    plan: &DynTree<IR>,
+    traverse_idx: NodeIdx<Dyn<IR>>,
+) -> Option<(Option<QueryExpr<Variable>>, Vec<DynTree<ExprIR<Variable>>>)> {
+    let alias = traverse_edge_alias(plan, traverse_idx)?;
+    let parent = plan.node(traverse_idx).parent()?;
+    let IR::Filter(filter) = parent.data() else {
+        return None;
+    };
+    let constrains_only_edge = |e: &DynTree<ExprIR<Variable>>| {
+        let vars = collect_expr_variables(e);
+        vars.len() == 1 && vars.contains(&alias.id)
+    };
+    let conjuncts: Vec<DynTree<ExprIR<Variable>>> = if matches!(filter.root().data(), ExprIR::And) {
+        filter
+            .root()
+            .children()
+            .map(|c| c.clone_as_tree())
+            .collect()
+    } else {
+        vec![DynTree::clone(filter)]
+    };
+    let (mine, theirs): (Vec<_>, Vec<_>) =
+        conjuncts.into_iter().partition(|c| constrains_only_edge(c));
+    let fused = match mine.len() {
+        0 => None,
+        1 => Some(Arc::new(mine.into_iter().next().unwrap())),
+        _ => Some(Arc::new(tree!(ExprIR::And; mine))),
+    };
+    Some((fused, theirs))
+}
+
+/// The predicate to hand the traverse at `idx`, folded from the `Filter`
+/// above it. See [`Self::split_edge_filter`].
+pub fn fused_edge_predicate(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<QueryExpr<Variable>> {
+    split_edge_filter(plan, idx)?.0
+}
+
+/// What the `Filter` at `idx` still has to evaluate, given the traverse
+/// beneath it folded in the conjuncts that constrain only its edge.
+///
+/// `None` when there is nothing beneath it to fuse with, so the Filter is
+/// built unchanged. `Some(rest)` when fusion happened — an empty `rest`
+/// meaning the operator is not needed at all.
+pub fn absorbed_into_child(
+    plan: &DynTree<IR>,
+    filter_idx: NodeIdx<Dyn<IR>>,
+) -> Option<Vec<DynTree<ExprIR<Variable>>>> {
+    let node = plan.node(filter_idx);
+    if node.num_children() != 1 {
+        return None;
+    }
+    let child_idx = node.child(0).idx();
+    // ExpandInto keeps its Filter: it reads only the fact that a predicate
+    // exists, so the predicate itself still needs evaluating.
+    if matches!(plan.node(child_idx).data(), IR::ExpandInto { .. }) {
+        return None;
+    }
+    let (fused, theirs) = split_edge_filter(plan, child_idx)?;
+    fused.is_some().then_some(theirs)
+}
+
+/// Whether a `Filter` above `idx` constrains its edge at all.
+///
+/// `ExpandInto` needs only this much: it keeps the `Filter`, because it
+/// verifies an edge between two bound endpoints rather than expanding the
+/// row set, so there is little wasted materialization to avoid and
+/// `FilterOp`'s vectorized kernels beat a scalar per-edge evaluation. But it
+/// must still stop collapsing a (src, dst) pair to one representative edge,
+/// or the `Filter` would test an arbitrary member of the group.
+pub fn parent_filters_edge(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> bool {
+    split_edge_filter(plan, idx).is_some_and(|(fused, _)| fused.is_some())
+}
+
+/// Whether the `Filter` at `idx` is fused away entirely — its whole predicate
+/// folded into the traverse below it, so no `FilterOp` is built.
+///
+/// `GRAPH.EXPLAIN` and `GRAPH.PROFILE` hide such a node: it describes no
+/// operator, and showing a `Filter` that never runs misreads as a cost.
+#[must_use]
+pub fn filter_is_fused_away(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> bool {
+    matches!(plan.node(idx).data(), IR::Filter(_))
+        && absorbed_into_child(plan, idx).is_some_and(|rest| rest.is_empty())
+}
+
+/// Returns `node` with its inline attributes removed, for embedding in a
+/// match-side IR operator once [`lower_inline_attrs`] has turned them into a
+/// `Filter`.
+///
+/// The predicate then has exactly one representation in the plan. Leaving a
+/// second copy on the pattern invites every pass that touches it to re-derive
+/// the filter — which is how the plan ended up with `And(p, p)` — and lets the
+/// two disagree.
+///
+/// Returns the same `Arc` when there is nothing to strip, so the common case
+/// allocates nothing.
+///
+/// Never call this on a CREATE or MERGE pattern: there `attrs` is the property
+/// template for the entity being built, not a predicate.
+fn strip_node_attrs(
+    node: &Arc<QueryNode<Arc<String>, Variable>>
+) -> Arc<QueryNode<Arc<String>, Variable>> {
+    if node.attrs.root().num_children() == 0 {
+        return node.clone();
+    }
+    Arc::new(QueryNode::new(
+        node.alias.clone(),
+        node.labels.clone(),
+        Arc::new(tree!(ExprIR::Map)),
+    ))
+}
+
+/// Returns `rel` with its own and both endpoints' inline attributes removed.
+/// See [`strip_node_attrs`].
+///
+/// Every operator that can carry an edge pattern now lowers its attrs:
+/// `CondTraverse` and `ExpandInto` into a `Filter` above themselves (with
+/// the operator told not to collapse parallel edges), and
+/// `CondVarLenTraverse` and `AllShortestPaths` prune per edge during the walk.
+/// Which of those the runtime does is decided when operators are built.
+fn strip_rel_attrs(
+    rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
+) -> Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+    let from = strip_node_attrs(&rel.from);
+    let to = strip_node_attrs(&rel.to);
+    if rel.attrs.root().num_children() == 0
+        && Arc::ptr_eq(&from, &rel.from)
+        && Arc::ptr_eq(&to, &rel.to)
+    {
+        return rel.clone();
+    }
+    let mut stripped = QueryRelationship::new(
+        rel.alias.clone(),
+        rel.types.clone(),
+        Arc::new(tree!(ExprIR::Map)),
+        from,
+        to,
+        rel.bidirectional,
+        rel.min_hops,
+        rel.max_hops,
+    );
+    stripped.all_shortest_paths = rel.all_shortest_paths;
+    Arc::new(stripped)
 }
 
 /// Build a `hasLabels(var, [label1, label2, ...])` filter expression.
@@ -1618,6 +1857,9 @@ impl Planner {
         // filters rather than as plan components, so they don't interfere
         // with stitching.
         let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
+        // Inline attrs already lowered to a Filter in this clause, keyed by
+        // (alias, attrs map identity). See `lower_inline_attrs`.
+        let mut lowered_attrs: HashSet<(u32, u32, usize)> = HashSet::new();
         for component in pattern.connected_components() {
             let relationships = component.relationships();
             // Endpoints already bound by earlier clauses may carry labels
@@ -1684,7 +1926,8 @@ impl Planner {
                 if self.visited.contains(&(node.alias.id, node.alias.scope_id)) {
                     // Already bound: check for inline property constraints and
                     // additional labels that need verifying.
-                    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
+                    let attr_filter =
+                        lower_inline_attrs(&mut lowered_attrs, &node.alias, &node.attrs);
                     if let Some(filter_expr) = attr_filter {
                         bound_filters.push(filter_expr);
                     }
@@ -1723,23 +1966,25 @@ impl Planner {
                             IR::ExpandInto {
                                 relationship: rel,
                                 emit_relationship: false,
-                                sibling_edges: vec![]
+                                sibling_edges: vec![],
                             },
                             tree!(IR::Argument(None))
                         ));
                         self.mark_labels_verified(&node.alias, node.labels.iter());
                     }
                 } else {
-                    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
+                    let attr_filter =
+                        lower_inline_attrs(&mut lowered_attrs, &node.alias, &node.attrs);
                     // The binder's post-processing already set the full
                     // accumulated label set on each QueryNode directly.
+                    let scan_node = strip_node_attrs(&node);
                     let mut res = if node.labels.is_empty() {
-                        tree!(IR::AllNodeScan(node.clone()))
+                        tree!(IR::AllNodeScan(scan_node))
                     } else {
                         // Multi-label node: the runtime's get_nodes()
                         // intersects all label matrices, so we can pass
                         // all labels directly to NodeByLabelScan.
-                        tree!(IR::NodeByLabelScan { node: node.clone() })
+                        tree!(IR::NodeByLabelScan { node: scan_node })
                     };
                     if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
@@ -1788,8 +2033,18 @@ impl Planner {
                 })
                 .map(|r| r.alias.id)
                 .collect();
+            // Inline attrs are lowered to Filters below; the operator embeds the
+            // stripped pattern so the predicate has one representation only.
+            let rel = strip_rel_attrs(relationship);
+            // One lowering for the edge's own attrs; each operator below takes
+            // it in whichever form it can enforce.
+            let edge_pred =
+                lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs);
             let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths(relationship.clone()))
+                tree!(IR::AllShortestPaths {
+                    relationship: rel.clone(),
+                    edge_filter: edge_pred.clone().map(Arc::new),
+                })
             } else if relationship.min_hops.is_some() {
                 // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
                 // Build scan child for the from-node when it's not yet visited
@@ -1800,19 +2055,19 @@ impl Planner {
                 {
                     None
                 } else {
-                    let from_attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    let mut scan = if relationship.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    // No inline-attr Filter here: the endpoint blocks below
+                    // lower both endpoints unconditionally, and
+                    // `push_filters_down` lands the predicate back on this
+                    // scan. Emitting it here too would duplicate it, and the
+                    // copy on the scan is the one `select_var_len_scan_node`
+                    // discards when it prunes and rebuilds.
+                    Some(if rel.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(rel.from.clone()))
                     } else {
                         tree!(IR::NodeByLabelScan {
-                            node: relationship.from.clone(),
+                            node: rel.from.clone(),
                         })
-                    };
-                    if let Some(filter_expr) = from_attr_filter {
-                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
-                    }
-                    Some(scan)
+                    })
                 };
                 // Both endpoints already bound (and distinct): the traverse only
                 // verifies reachability between two known nodes.
@@ -1824,8 +2079,8 @@ impl Planner {
                 scan_child.map_or_else(
                     || {
                         tree!(IR::CondVarLenTraverse {
-                            relationship: relationship.clone(),
-                            edge_filter: None,
+                            relationship: rel.clone(),
+                            edge_filter: edge_pred.clone().map(Arc::new),
                             emit_path: true,
                             path_var: None,
                             expand_into,
@@ -1834,8 +2089,8 @@ impl Planner {
                     |scan| {
                         tree!(
                             IR::CondVarLenTraverse {
-                                relationship: relationship.clone(),
-                                edge_filter: None,
+                                relationship: rel.clone(),
+                                edge_filter: edge_pred.clone().map(Arc::new),
                                 emit_path: true,
                                 path_var: None,
                                 expand_into,
@@ -1852,35 +2107,24 @@ impl Planner {
                     .visited
                     .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
                 if already_bound {
-                    let attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    let mut ei = tree!(IR::ExpandInto {
-                        relationship: relationship.clone(),
+                    tree!(IR::ExpandInto {
+                        relationship: rel.clone(),
                         emit_relationship: emit_rel(relationship),
-                        sibling_edges: sibling_edges.clone()
-                    });
-                    if let Some(filter_expr) = attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                    }
-                    ei
+                        sibling_edges: sibling_edges.clone(),
+                    })
                 } else {
-                    let attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    let mut scan = if relationship.from.clone().labels.is_empty() {
-                        tree!(IR::AllNodeScan(relationship.from.clone()))
+                    let scan = if rel.from.clone().labels.is_empty() {
+                        tree!(IR::AllNodeScan(rel.from.clone()))
                     } else {
                         tree!(IR::NodeByLabelScan {
-                            node: relationship.from.clone(),
+                            node: rel.from.clone(),
                         })
                     };
-                    if let Some(filter_expr) = attr_filter {
-                        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
-                    }
                     tree!(
                         IR::ExpandInto {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone()
+                            sibling_edges: sibling_edges.clone(),
                         },
                         scan
                     )
@@ -1892,64 +2136,53 @@ impl Planner {
                     .visited
                     .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
             {
-                let mut ei = tree!(IR::ExpandInto {
-                    relationship: relationship.clone(),
+                // Both endpoints already bound; their inline attrs are lowered
+                // by the endpoint blocks below, which no longer skip visited
+                // aliases.
+                tree!(IR::ExpandInto {
+                    relationship: rel.clone(),
                     emit_relationship: emit_rel(relationship),
-                    sibling_edges: sibling_edges.clone()
-                });
-                // Both endpoints already bound — check for inline attrs
-                // that need filtering (e.g. reversed patterns where attrs
-                // appear on a later occurrence of an already-bound node).
-                let from_attr_filter =
-                    inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                if let Some(filter_expr) = from_attr_filter {
-                    ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                }
-                let to_attr_filter =
-                    inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
-                if let Some(filter_expr) = to_attr_filter {
-                    ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                }
-                ei
+                    sibling_edges: sibling_edges.clone(),
+                })
             } else {
-                let edge_attr_filter =
-                    inline_attrs_to_filter(&relationship.alias, &relationship.attrs);
-                let mut ct = tree!(IR::CondTraverse {
-                    relationship: relationship.clone(),
+                tree!(IR::CondTraverse {
+                    relationship: rel.clone(),
                     emit_relationship: emit_rel(relationship),
                     sibling_edges: sibling_edges.clone(),
                     transposed: false,
                     chain: Vec::new(),
                     optional: false,
                     bind_relationship: true,
-                });
-                if let Some(filter_expr) = edge_attr_filter {
-                    ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
-                }
-                ct
+                })
             };
-            // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
-            // and add a Filter if present.
-            if !self
-                .visited
-                .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
+            // Fixed-length traverses take the predicate as a `Filter`, which
+            // the runtime folds into the operator when it builds it. The walks
+            // above already took it into `edge_filter`, where it prunes per
+            // edge — a `Filter` there would test an assembled path instead.
+            if let Some(filter_expr) = edge_pred
+                && matches!(
+                    res.root().data(),
+                    IR::CondTraverse { .. } | IR::ExpandInto { .. }
+                )
             {
-                let to_attr_filter =
-                    inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
-                if let Some(filter_expr) = to_attr_filter {
-                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
-                }
+                res = tree!(IR::Filter(Arc::new(filter_expr)), res);
             }
-            // Check source node for inline attributes and add a Filter above
-            // the CT. This is needed so the optimizer's chain reversal can
-            // see and reposition these filters properly.
-            if !self
-                .visited
-                .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-            {
-                let from_attr_filter =
-                    inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                if let Some(filter_expr) = from_attr_filter {
+            // Lower both endpoints' inline attributes (e.g. `(b {val: 'v2'})`)
+            // into Filters above the operator. Both are lowered whether or not
+            // the alias is already visited: an endpoint bound by an earlier
+            // clause can still carry attrs on this occurrence
+            // (`MATCH (a:A) MATCH (a {x:1})-[:R]->(b)`), and only `CondTraverse`
+            // re-checks them at runtime — `CondVarLenTraverse` and
+            // `AllShortestPaths` read the edge's attrs only, so skipping the
+            // lowering there dropped the predicate outright.
+            //
+            // Above the operator rather than on the scan, so the optimizer's
+            // chain reversal can see and reposition them; `push_filters_down`
+            // lands them back on the scan afterwards.
+            for endpoint in [&relationship.to, &relationship.from] {
+                let attr_filter =
+                    lower_inline_attrs(&mut lowered_attrs, &endpoint.alias, &endpoint.attrs);
+                if let Some(filter_expr) = attr_filter {
                     res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                 }
             }
@@ -1964,8 +2197,20 @@ impl Planner {
             // Chain remaining relationships in the component, each one
             // stacking on top of the previous result using the same logic.
             for relationship in iter {
+                let rel = strip_rel_attrs(relationship);
+                let edge_pred = lower_inline_attrs(
+                    &mut lowered_attrs,
+                    &relationship.alias,
+                    &relationship.attrs,
+                );
                 res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(IR::AllShortestPaths(relationship.clone()), res)
+                    tree!(
+                        IR::AllShortestPaths {
+                            relationship: rel.clone(),
+                            edge_filter: edge_pred.clone().map(Arc::new),
+                        },
+                        res
+                    )
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
                         && self.visited.contains(&(
@@ -1975,70 +2220,42 @@ impl Planner {
                         && self
                             .visited
                             .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id));
-                    let mut cvlt = tree!(
+                    tree!(
                         IR::CondVarLenTraverse {
-                            relationship: relationship.clone(),
-                            edge_filter: None,
+                            relationship: rel.clone(),
+                            edge_filter: edge_pred.clone().map(Arc::new),
                             emit_path: true,
                             path_var: None,
                             expand_into,
                         },
                         res
-                    );
-                    if !self
-                        .visited
-                        .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id))
-                    {
-                        let from_attr_filter = inline_attrs_to_filter(
-                            &relationship.from.alias,
-                            &relationship.from.attrs,
-                        );
-                        if let Some(filter_expr) = from_attr_filter {
-                            cvlt = tree!(IR::Filter(Arc::new(filter_expr)), cvlt);
-                        }
-                    }
-                    cvlt
+                    )
                 } else if relationship.from.alias.id == relationship.to.alias.id {
                     let already_bound = self
                         .visited
                         .contains(&(relationship.from.alias.id, relationship.from.alias.scope_id));
                     if already_bound {
-                        let attr_filter = inline_attrs_to_filter(
-                            &relationship.from.alias,
-                            &relationship.from.attrs,
-                        );
-                        let mut ei = tree!(
-                            IR::ExpandInto {
-                                relationship: relationship.clone(),
-                                emit_relationship: emit_rel(relationship),
-                                sibling_edges: sibling_edges.clone()
-                            },
-                            res
-                        );
-                        if let Some(filter_expr) = attr_filter {
-                            ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                        }
-                        ei
-                    } else {
-                        let attr_filter = inline_attrs_to_filter(
-                            &relationship.from.alias,
-                            &relationship.from.attrs,
-                        );
-                        let mut scan = if relationship.from.clone().labels.is_empty() {
-                            tree!(IR::AllNodeScan(relationship.from.clone()))
-                        } else {
-                            tree!(IR::NodeByLabelScan {
-                                node: relationship.from.clone(),
-                            })
-                        };
-                        if let Some(filter_expr) = attr_filter {
-                            scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
-                        }
                         tree!(
                             IR::ExpandInto {
-                                relationship: relationship.clone(),
+                                relationship: rel.clone(),
                                 emit_relationship: emit_rel(relationship),
-                                sibling_edges: sibling_edges.clone()
+                                sibling_edges: sibling_edges.clone(),
+                            },
+                            res
+                        )
+                    } else {
+                        let scan = if rel.from.clone().labels.is_empty() {
+                            tree!(IR::AllNodeScan(rel.from.clone()))
+                        } else {
+                            tree!(IR::NodeByLabelScan {
+                                node: rel.from.clone(),
+                            })
+                        };
+                        tree!(
+                            IR::ExpandInto {
+                                relationship: rel.clone(),
+                                emit_relationship: emit_rel(relationship),
+                                sibling_edges: sibling_edges.clone(),
                             },
                             scan,
                             res
@@ -2051,31 +2268,18 @@ impl Planner {
                         .visited
                         .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
                 {
-                    let mut ei = tree!(
+                    tree!(
                         IR::ExpandInto {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone()
+                            sibling_edges: sibling_edges.clone(),
                         },
                         res
-                    );
-                    let from_attr_filter =
-                        inline_attrs_to_filter(&relationship.from.alias, &relationship.from.attrs);
-                    if let Some(filter_expr) = from_attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                    }
-                    let to_attr_filter =
-                        inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
-                    if let Some(filter_expr) = to_attr_filter {
-                        ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
-                    }
-                    ei
+                    )
                 } else {
-                    let edge_attr_filter =
-                        inline_attrs_to_filter(&relationship.alias, &relationship.attrs);
-                    let mut ct = tree!(
+                    tree!(
                         IR::CondTraverse {
-                            relationship: relationship.clone(),
+                            relationship: rel.clone(),
                             emit_relationship: emit_rel(relationship),
                             sibling_edges: sibling_edges.clone(),
                             transposed: false,
@@ -2084,21 +2288,28 @@ impl Planner {
                             bind_relationship: true,
                         },
                         res
-                    );
-                    if let Some(filter_expr) = edge_attr_filter {
-                        ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
-                    }
-                    ct
+                    )
                 };
-                // Check destination node for inline attributes (e.g., (b {val: 'v2'}))
-                // and add a Filter if present.
-                if !self
-                    .visited
-                    .contains(&(relationship.to.alias.id, relationship.to.alias.scope_id))
+                // See the same block above the chained loop.
+                if let Some(filter_expr) = edge_pred
+                    && matches!(
+                        res.root().data(),
+                        IR::CondTraverse { .. } | IR::ExpandInto { .. }
+                    )
                 {
-                    let to_attr_filter =
-                        inline_attrs_to_filter(&relationship.to.alias, &relationship.to.attrs);
-                    if let Some(filter_expr) = to_attr_filter {
+                    res = tree!(IR::Filter(Arc::new(filter_expr)), res);
+                }
+                // Both endpoints, unconditionally — see the same block above the
+                // chained loop. The `from` endpoint had no lowering here at all,
+                // so in `MATCH (a)-[:R]->(b)-[:R]->(c), (b {x:1})-[:S]->(d)` the
+                // third hop's `b.x = 1` reached the plan only as `rp.from.attrs`
+                // on the CondTraverse, enforced by its per-row re-check. That
+                // still gave the right answer; it just left the predicate
+                // invisible to the optimizer.
+                for endpoint in [&relationship.to, &relationship.from] {
+                    let attr_filter =
+                        lower_inline_attrs(&mut lowered_attrs, &endpoint.alias, &endpoint.attrs);
+                    if let Some(filter_expr) = attr_filter {
                         res = tree!(IR::Filter(Arc::new(filter_expr)), res);
                     }
                 }
@@ -2647,7 +2858,7 @@ impl Planner {
                     | IR::OrApplyMultiplexer(_)
                     | IR::CondTraverse { .. }
                     | IR::CondVarLenTraverse { .. }
-                    | IR::AllShortestPaths(_)
+                    | IR::AllShortestPaths { .. }
                     | IR::ExpandInto { .. }
                     | IR::EdgeByIndexScan { .. }
                     | IR::PathBuilder(_)))
@@ -2708,7 +2919,7 @@ impl Planner {
                 | IR::NodeByLabelAndIdScan { .. }
                 | IR::CondTraverse { .. }
                 | IR::CondVarLenTraverse { .. }
-                | IR::AllShortestPaths(_)
+                | IR::AllShortestPaths { .. }
                 | IR::ExpandInto { .. }
                 | IR::EdgeByIndexScan { .. }
                 | IR::CartesianProduct

@@ -465,3 +465,65 @@ fn rebuild_with_cp_split(
         remaining_conjuncts,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use orx_tree::{Bfs, NodeRef};
+
+    use super::push_filters_down;
+    use crate::parser::ast::ExprIR;
+    use crate::parser::cypher::Parser;
+    use crate::planner::{IR, Planner, binder::Binder};
+
+    /// Plans `query` and merges its stacked filters, returning the number of
+    /// conjuncts left in each surviving `Filter`.
+    ///
+    /// Only the Graph-free part of the pipeline runs. `push_filters_down` is
+    /// the pass that flattens stacked filters into one `And`, which is where a
+    /// duplicated predicate would become visible.
+    fn conjuncts_per_filter(query: &str) -> Vec<usize> {
+        // Binding a call resolves it against the process-global registry.
+        let _ = crate::runtime::functions::init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let mut plan = Planner::new(scope_vars).plan(ir);
+        push_filters_down(&mut plan);
+
+        plan.root()
+            .indices::<Bfs>()
+            .filter_map(|idx| match plan.node(idx).data() {
+                IR::Filter(f) => Some(if matches!(f.root().data(), ExprIR::And) {
+                    f.root().num_children()
+                } else {
+                    1
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Both endpoints carrying attrs is two distinct predicates, not a
+    /// duplicate — the guard above must not be satisfied by dropping one.
+    #[test]
+    fn distinct_endpoint_attrs_both_survive() {
+        let conjuncts: usize =
+            conjuncts_per_filter("MATCH (a:L {p: 1})-[:R]->(b:L {q: 2}) RETURN b")
+                .iter()
+                .sum();
+        assert_eq!(conjuncts, 2, "distinct predicates must both survive");
+    }
+
+    /// A user-written duplicate is legal Cypher and must be left alone: it is
+    /// the planner's duplicates this file cares about, and the merge point
+    /// cannot tell the two apart — another reason the check lives in a test.
+    #[test]
+    fn user_written_duplicate_is_not_touched() {
+        let conjuncts: usize =
+            conjuncts_per_filter("MATCH (a:L) WHERE a.p = 1 AND a.p = 1 RETURN a")
+                .iter()
+                .sum();
+        assert_eq!(conjuncts, 2, "the pass must not rewrite user predicates");
+    }
+}

@@ -45,6 +45,7 @@ tests/flow/test_index_create
 tests/flow/test_index_delete.py
 tests/flow/test_index_scans.py
 tests/flow/test_index_updates.py
+tests/flow/test_inline_pattern_attributes.py
 tests/flow/test_intern_string.py
 tests/flow/test_keyspace_accesses.py
 tests/flow/test_label_update

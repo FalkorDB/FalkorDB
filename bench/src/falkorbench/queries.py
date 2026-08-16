@@ -19,6 +19,13 @@ SETUP = [
     "CREATE INDEX FOR (p:Person) ON (p.id)",
     "UNWIND range(0, 9999) AS i CREATE (:Person {id: i, name: 'p' + toString(i)})",
     "UNWIND range(0, 9999) AS i MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 10000}) CREATE (a)-[:KNOWS]->(b)",
+    # A second ring carrying edge properties, so an inline edge predicate can be
+    # measured across a selectivity range at constant fan-out. `w` spreads
+    # 0..9 (1,000 edges each, 10%); `c` is constant, so `{c: 1}` matches every
+    # edge and `{w: 11}` matches none. :KNOWS deliberately carries no
+    # properties, which makes it useless for this — a predicate on it is not
+    # 0%-selective, it is unsatisfiable against a property that does not exist.
+    "UNWIND range(0, 9999) AS i MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 10000}) CREATE (a)-[:RATED {w: i % 10, c: 1}]->(b)",
     "MATCH (p:Person) SET p.age = p.id % 80, p.score = p.id * 1.5",
     # ---- Doc corpus for coverage features (fulltext / vector / edge index /
     # constraints). Kept on separate labels/types so the Person/KNOWS perf
@@ -551,6 +558,22 @@ QUERIES = [
     # Upper-bound-only index ranges (Le on node index, Lt on edge index).
     Q("index le range",       False, "MATCH (p:Person) WHERE p.id <= 50 RETURN count(p)"),
     Q("edge index lt range",  False, "MATCH ()-[r:SIMILAR]->() WHERE r.weight < 5 RETURN count(r)"),
+
+    # ---- inline edge predicate, swept by selectivity -----------------------
+    # `absorb_edge_filters_into_traverse` moves these into the CondTraverse so
+    # they reject during edge iteration instead of after the row is built. The
+    # win should scale with how much the predicate rejects, so measure the ends
+    # and the middle rather than one point.
+    Q("rel attr match none", False, "MATCH (a:Person)-[:RATED {w: 11}]->(b) RETURN count(b)"),
+    Q("rel attr match 10pct", False, "MATCH (a:Person)-[:RATED {w: 5}]->(b) RETURN count(b)"),
+    Q("rel attr match all",  False, "MATCH (a:Person)-[:RATED {c: 1}]->(b) RETURN count(b)"),
+
+    # allShortestPaths with an inline edge predicate. Uses :RATED, not :KNOWS —
+    # :KNOWS carries no properties, so a predicate on it is unsatisfiable rather
+    # than selective and would measure the walk never starting. `c` is constant,
+    # so every edge passes and the per-edge check runs on the whole walk, which
+    # is the case that actually costs.
+    Q("allShortestPaths edge attr", False, "MATCH (a:Person {id: 0}), (b:Person {id: 3}) WITH a, b MATCH p = allShortestPaths((a)-[:RATED* {c: 1}]->(b)) RETURN count(p)"),
     # Two lower bounds on the same attribute: merge_range_queries falls back
     # to IndexQuery::And (can't compare expr values at plan time).
     Q("index same-bound and", False, "MATCH (p:Person) WHERE p.id > 10 AND p.id >= 20 RETURN count(p)"),

@@ -42,7 +42,7 @@ use crate::{
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
-    planner::IR,
+    planner::{IR, absorbed_into_child, fused_edge_predicate, parent_filters_edge},
     runtime::{
         batch::{Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap, classify_column},
         ops::{
@@ -60,6 +60,7 @@ use crate::{
         row::{Row, RowView},
         value::{DeletedNode, DeletedRelationship, Value, ValuesDeduper},
     },
+    tree,
 };
 use atomic_refcell::AtomicRefCell;
 use chrono::{DateTime, Utc};
@@ -283,7 +284,10 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     relationship: query_relationship,
                     ..
                 }
-                | IR::AllShortestPaths(query_relationship)
+                | IR::AllShortestPaths {
+                    relationship: query_relationship,
+                    ..
+                }
                 | IR::ExpandInto {
                     relationship: query_relationship,
                     ..
@@ -735,12 +739,36 @@ impl<'a> Runtime<'a> {
             }
             IR::Filter(tree) => {
                 let child = pop_or_once(&mut children);
-                Ok(BatchOp::Filter(FilterOp::new(
-                    self,
-                    Box::new(child),
-                    tree,
-                    idx,
-                )))
+                // The traverse below may have folded some of these conjuncts
+                // into itself (see `split_edge_filter`). Only what it left
+                // behind needs an operator — and if it took everything, this
+                // node produces no operator at all: that is the fusion, two
+                // plan nodes becoming one physical operator.
+                //
+                // `ExpandInto` is excluded there and takes nothing, so its
+                // Filter is always built.
+                match absorbed_into_child(&self.plan, idx) {
+                    Some(remainder) if remainder.is_empty() => Ok(child),
+                    Some(remainder) => {
+                        let kept = if remainder.len() == 1 {
+                            Arc::new(remainder.into_iter().next().unwrap())
+                        } else {
+                            Arc::new(tree!(ExprIR::And; remainder))
+                        };
+                        Ok(BatchOp::Filter(FilterOp::new(
+                            self,
+                            Box::new(child),
+                            kept,
+                            idx,
+                        )))
+                    }
+                    None => Ok(BatchOp::Filter(FilterOp::new(
+                        self,
+                        Box::new(child),
+                        tree.clone(),
+                        idx,
+                    ))),
+                }
             }
             IR::Project {
                 exprs: trees,
@@ -882,6 +910,7 @@ impl<'a> Runtime<'a> {
                     chain,
                     *optional,
                     *bind_relationship,
+                    fused_edge_predicate(&self.plan, idx),
                     idx,
                     record_cap,
                 )))
@@ -900,6 +929,7 @@ impl<'a> Runtime<'a> {
                     Box::new(child),
                     relationship_pattern,
                     *emit_relationship,
+                    parent_filters_edge(&self.plan, idx),
                     sibling_edges,
                     idx,
                     record_cap,
@@ -1206,12 +1236,16 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::AllShortestPaths(relationship_pattern) => {
+            IR::AllShortestPaths {
+                relationship: relationship_pattern,
+                edge_filter,
+            } => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::AllShortestPaths(AllShortestPathsOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
+                    edge_filter.as_ref(),
                     idx,
                 )))
             }

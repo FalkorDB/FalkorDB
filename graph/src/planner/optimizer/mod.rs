@@ -155,5 +155,67 @@ pub fn optimize(
     // the "does anything read this edge" answer is the final plan's.
     reduce_bound_edge(&mut optimized_plan);
 
+    debug_assert_no_pattern_attrs(&optimized_plan);
+
     optimized_plan
 }
+
+/// Asserts that no match-side operator still carries inline attributes on its
+/// pattern.
+///
+/// A MATCH pattern's `{k: v}` is a predicate, and the planner lowers it into
+/// exactly one place: an `IR::Filter` for nodes and for the fixed-length
+/// traverses, or `edge_filter` for the walks, which cannot express it as a
+/// Filter. Anything left on the pattern is a second source of truth. That is
+/// not hypothetical — the two used to disagree, `push_filters_down` merged the
+/// duplicates into `And(p, p)`, and no index could serve the result.
+///
+/// `IR::Create` and `IR::Merge` are exempt and must stay so: there the attrs
+/// are the property template for the entity being built, read by
+/// `runtime/ops/create.rs` and `runtime/ops/merge.rs`.
+#[cfg(debug_assertions)]
+fn debug_assert_no_pattern_attrs(plan: &DynTree<IR>) {
+    use crate::parser::ast::{QueryNode, QueryRelationship};
+    use std::sync::Arc;
+
+    fn node_is_clean(node: &QueryNode<Arc<String>, Variable>) -> bool {
+        node.attrs.root().num_children() == 0
+    }
+    fn rel_is_clean(rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>) -> bool {
+        rel.attrs.root().num_children() == 0 && node_is_clean(&rel.from) && node_is_clean(&rel.to)
+    }
+
+    for idx in plan.root().indices::<Bfs>() {
+        let (what, clean) = match plan.node(idx).data() {
+            IR::AllNodeScan(node)
+            | IR::NodeByLabelScan { node }
+            | IR::IncludePending { node }
+            | IR::NodeByIndexScan { node, .. }
+            | IR::NodeByLabelAndIdScan { node, .. }
+            | IR::NodeByIdSeek { node, .. } => ("node scan", node_is_clean(node)),
+            IR::EdgeByIndexScan { relationship, .. }
+            | IR::CondVarLenTraverse { relationship, .. }
+            | IR::ExpandInto { relationship, .. } => ("traverse", rel_is_clean(relationship)),
+            IR::AllShortestPaths { relationship, .. } => ("traverse", rel_is_clean(relationship)),
+            IR::CondTraverse {
+                relationship,
+                chain,
+                ..
+            } => (
+                "traverse",
+                rel_is_clean(relationship) && chain.iter().all(|hop| rel_is_clean(hop)),
+            ),
+            _ => continue,
+        };
+        debug_assert!(
+            clean,
+            "{what} still carries inline pattern attrs after planning; they must be \
+             lowered exactly once (Filter, or edge_filter for the walks) and stripped: \
+             {}",
+            plan.node(idx).data()
+        );
+    }
+}
+
+#[cfg(not(debug_assertions))]
+const fn debug_assert_no_pattern_attrs(_plan: &DynTree<IR>) {}

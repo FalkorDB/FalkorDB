@@ -13,8 +13,8 @@
 //!
 //! 1. **Bound** (score 3) -- already provided by a child operator (e.g.
 //!    Project, Aggregate, Argument from an outer Apply)
-//! 2. **Filtered** (score 2) -- referenced by a Filter ancestor above the
-//!    chain, or has inline property attributes ({name: 'Alice'})
+//! 2. **Filtered** (score 2) -- referenced by a Filter around the chain
+//!    (inline pattern attributes are lowered to Filters by the planner)
 //! 3. **Labeled** (score 1) -- has at least one label
 //! 4. **Cardinality** (tiebreaker) -- label with fewer nodes wins
 //!
@@ -65,34 +65,46 @@ use crate::{
     tree,
 };
 
-use super::super::{IR, inline_attrs_to_filter};
+use super::super::IR;
 
 /// Scores a candidate scan endpoint for the scan node selection optimizer.
 ///
+/// Returns `(score, filter_runs_late, cardinality)`.
+///
 /// Higher score = better starting point. Priority:
 /// - Bound variable (provided by child operator): score 3
-/// - Filtered variable (referenced by a Filter ancestor): score 2
+/// - Filtered variable (referenced by any Filter around the chain): score 2
 /// - Labeled variable: score 1
 /// - Neither: score 0
 ///
-/// When scores are equal, the endpoint with fewer label nodes is preferred.
+/// `filter_runs_late` breaks ties between equally-constrained endpoints: it is
+/// true when the endpoint's predicate sits *above* the chain, so it currently
+/// runs only after the whole traversal. Scanning from there moves it to the
+/// front, which is the larger win — `MATCH (A:L {v:1})-->(B)-->(C), (B)-->(D:L
+/// {v:1})` should reach `D` before expanding to the unconstrained `C`. An
+/// endpoint whose Filter already sits mid-chain gains much less from being
+/// scanned first, and without this it would win on the chain-position tiebreak
+/// purely for being nearer the leaf.
+///
+/// When those are equal, the endpoint with fewer label nodes is preferred.
 fn score_endpoint(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
-    filtered_vars: &HashSet<u32>,
+    filtered_vars: &FilteredVars,
     bound_vars: &HashSet<u32>,
     graph: &Graph,
-) -> (u32, u64) {
+) -> (u32, bool, u64) {
     let mut score = 0u32;
     if bound_vars.contains(&node.alias.id) {
         score += 3;
     }
-    if filtered_vars.contains(&node.alias.id) {
+    // Inline attrs (e.g. `{name: 'Nicolas Cage'}`) are lowered to Filters by
+    // the planner and stripped from the pattern, so they arrive here through
+    // `filtered_vars` like any other predicate rather than being counted
+    // separately — which used to score such an endpoint twice.
+    if filtered_vars.all.contains(&node.alias.id) {
         score += 2;
     }
-    // Node attribute filters (e.g. {name: "Nicolas Cage"}) also count as filters.
-    if node.attrs.root().num_children() > 0 {
-        score += 2;
-    }
+    let filter_runs_late = filtered_vars.above.contains(&node.alias.id);
     if !node.labels.is_empty() {
         score += 1;
     }
@@ -107,50 +119,93 @@ fn score_endpoint(
             .min()
             .unwrap_or(u64::MAX)
     };
-    (score, cardinality)
+    (score, filter_runs_late, cardinality)
 }
 
-/// Collects variable IDs referenced by Filter nodes that are ancestors of
-/// the given node index, up to the first non-Filter/non-CondTraverse ancestor.
+/// Collects variable IDs referenced by Filter nodes around the chain at
+/// `start_idx`: ancestors above it, and the inter-operator Filters within the
+/// chain below it.
+///
+/// The downward half matters because the planner emits an endpoint's
+/// inline-attr Filter directly above the operator that binds it, so in
+/// `MATCH (a)-[]->(b {x:1})-[]->(c:C)` the Filter on `b` sits *between* the two
+/// traverses — below `start_idx`, which is the top of the chain. Looking only
+/// upwards misses it, and `b` then scores as if it had no predicate at all.
+/// Variables constrained by Filters around a chain, split by where the Filter
+/// sits — see [`score_endpoint`], which ranks the two differently.
+struct FilteredVars {
+    /// Referenced by a Filter *above* the chain: the predicate runs only after
+    /// the whole traversal.
+    above: HashSet<u32>,
+    /// `above` plus the variables referenced by Filters between the chain's
+    /// own operators, whose predicates already run mid-traversal.
+    all: HashSet<u32>,
+}
+
 fn collect_filtered_vars(
     plan: &DynTree<IR>,
     start_idx: NodeIdx<Dyn<IR>>,
-) -> HashSet<u32> {
-    let mut vars = HashSet::new();
+) -> FilteredVars {
+    fn collect(
+        filter: &crate::parser::ast::QueryExpr<Variable>,
+        vars: &mut HashSet<u32>,
+    ) {
+        for idx in filter.root().indices::<Bfs>() {
+            if let ExprIR::Variable(v) = filter.node(idx).data() {
+                vars.insert(v.id);
+            }
+        }
+    }
+
+    let mut above = HashSet::new();
     let mut current = start_idx;
     while let Some(parent) = plan.node(current).parent() {
         match parent.data() {
-            IR::Filter(filter) => {
-                for idx in filter.root().indices::<Bfs>() {
-                    if let ExprIR::Variable(v) = filter.node(idx).data() {
-                        vars.insert(v.id);
-                    }
-                }
-            }
+            IR::Filter(filter) => collect(filter, &mut above),
             // Walk through transparent operators to find filters higher up
             IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
             _ => break,
         }
         current = parent.idx();
     }
-    // Also check the node at current if it has a parent that is a filter
-    // (the loop above moves through parents)
-    vars
+
+    // Descend the chain's single-child spine for the Filters the planner
+    // parked between operators — an endpoint bound mid-chain has its
+    // inline-attr Filter emitted directly above the operator that binds it, so
+    // in `MATCH (a)-[]->(b {x:1})-[]->(c:C)` the Filter on `b` is below
+    // `start_idx` and invisible to the upward walk. Without it `b` would score
+    // as though nothing constrained it.
+    let mut all = above.clone();
+    let mut node = plan.node(start_idx);
+    loop {
+        match node.data() {
+            IR::Filter(filter) => collect(filter, &mut all),
+            IR::CondTraverse { .. } | IR::CondVarLenTraverse { .. } | IR::PathBuilder(_) => {}
+            _ => break,
+        }
+        if node.num_children() != 1 {
+            break;
+        }
+        node = node.child(0);
+    }
+    FilteredVars { above, all }
 }
 
-/// Creates a scan subtree for the given node, with an optional inline attr
-/// filter. Shape: `[Filter →] [IncludePending →] Scan [→ Argument]`.
+/// Creates a scan subtree for the given node. Shape:
+/// `[Filter →] [IncludePending →] Scan [→ Argument]`.
 ///
 /// `include_pending` wraps the scan with `IncludePending`, required inside
 /// MERGE match branches so the scan sees in-flight mutations. `argument`
 /// attaches an `Argument` leaf below the scan, so correlated rows keep
-/// flowing when the scan replaces a bare `Argument` child.
+/// flowing when the scan replaces a bare `Argument` child. `filters` are the
+/// `Filter` operators salvaged from the subtree this one replaces — see
+/// [`filters_of`].
 fn make_scan_subtree(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
     include_pending: bool,
     argument: Option<IR>,
+    filters: Vec<IR>,
 ) -> DynTree<IR> {
-    let attr_filter = inline_attrs_to_filter(&node.alias, &node.attrs);
     let mut scan = if node.labels.is_empty() {
         DynTree::new(IR::AllNodeScan(node.clone()))
     } else {
@@ -163,10 +218,39 @@ fn make_scan_subtree(
     if include_pending {
         scan = tree!(IR::IncludePending { node: node.clone() }, scan);
     }
-    if let Some(filter_expr) = attr_filter {
-        scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
+    // Innermost first, so the original nesting order is preserved.
+    for filter in filters.into_iter().rev() {
+        scan = tree!(filter, scan);
     }
     scan
+}
+
+/// Returns the `Filter` operators on a scan subtree's single-child spine,
+/// outermost first.
+///
+/// The sibling of [`argument_leaf_of`]: whatever the spine carried has to come
+/// along when the subtree is pruned and rebuilt. This pass used to re-derive an
+/// inline-attr filter from the rebuilt node's own `attrs`, but a MATCH
+/// pattern's attrs are stripped once the planner has lowered them, so these
+/// `Filter` nodes are now the predicate's only representation. Dropping one
+/// drops the predicate — `MATCH (a:A {x:1}) MATCH (a)-[:R]->(b)` stitches
+/// clause 1's `Filter → NodeByLabelScan` in as the traverse's child, and this
+/// pass prunes and rebuilds it.
+fn filters_of(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Vec<IR> {
+    let mut filters = vec![];
+    let mut node = plan.node(idx);
+    loop {
+        if matches!(node.data(), IR::Filter(_)) {
+            filters.push(node.data().clone());
+        }
+        if node.num_children() != 1 {
+            return filters;
+        }
+        node = node.child(0);
+    }
 }
 
 /// Returns the `Argument` leaf of a scan subtree, if it has one.
@@ -426,20 +510,17 @@ fn select_var_len_scan_node(
         }
 
         let filtered_vars = collect_filtered_vars(optimized_plan, idx);
-        // Both endpoints' inline attributes are enforced by Filters the planner
-        // placed above this traverse, so replacing the scan subtree cannot lose
-        // them — but only reverse once those Filters are confirmed present.
-        // `push_filters_down` then lands the `to` one back onto the new scan.
-        if [&from, &to]
-            .iter()
-            .any(|n| n.attrs.root().num_children() > 0 && !filtered_vars.contains(&n.alias.id))
-        {
-            continue;
-        }
-
+        // This used to refuse the reversal unless every endpoint carrying
+        // inline attrs also had a Filter above the traverse — a cross-check
+        // that the two representations agreed. There is only one
+        // representation now: the planner lowers the attrs and strips them, so
+        // the check could only ever be vacuously true. Replacing the scan
+        // subtree still cannot lose the predicate, because it lives in a Filter
+        // above this traverse and `push_filters_down` lands it back on the new
+        // scan.
         let bound = HashSet::new();
-        let (from_score, _) = score_endpoint(&from, &filtered_vars, &bound, graph);
-        let (to_score, _) = score_endpoint(&to, &filtered_vars, &bound, graph);
+        let (from_score, _, _) = score_endpoint(&from, &filtered_vars, &bound, graph);
+        let (to_score, _, _) = score_endpoint(&to, &filtered_vars, &bound, graph);
         // A tie keeps the pattern's own direction.
         if to_score <= from_score {
             continue;
@@ -647,10 +728,15 @@ pub(super) fn select_scan_node(
 
         // Score each candidate and find the best.
         let best = candidates.iter().max_by(|a, b| {
-            let (score_a, card_a) = score_endpoint(&a.0, &filtered_vars, &bound_vars, graph);
-            let (score_b, card_b) = score_endpoint(&b.0, &filtered_vars, &bound_vars, graph);
+            let (score_a, late_a, card_a) =
+                score_endpoint(&a.0, &filtered_vars, &bound_vars, graph);
+            let (score_b, late_b, card_b) =
+                score_endpoint(&b.0, &filtered_vars, &bound_vars, graph);
             score_a
                 .cmp(&score_b)
+                // Equally constrained: prefer the one whose predicate runs last
+                // today, since scanning from it moves that filter to the front.
+                .then_with(|| late_a.cmp(&late_b))
                 .then_with(|| card_b.cmp(&card_a)) // lower cardinality = better
                 // Prefer leaf position (0) and `from` side to preserve
                 // the original traversal direction when all else is equal.
@@ -728,8 +814,12 @@ pub(super) fn select_scan_node(
                     ct_idx
                 };
 
-                // Build scan subtree before taking mutable borrow
-                let scan_subtree = make_scan_subtree(&scan_node, in_merge, preserved_argument);
+                // Chain reversal: the pruned subtree's Filters constrain the
+                // *old* scan endpoint, which this traverse now binds instead of
+                // scanning, so they cannot move onto the new scan. The planner's
+                // copy above the operator still enforces them.
+                let scan_subtree =
+                    make_scan_subtree(&scan_node, in_merge, preserved_argument, vec![]);
 
                 let mut op = optimized_plan.node_mut(ct_idx);
                 *op.data_mut() = IR::CondTraverse {
@@ -842,8 +932,9 @@ pub(super) fn select_scan_node(
             // A filter collected at original position `i` should be inserted
             // right after the hop for original chain[i] is wrapped around the
             // subtree (and before the next hop wraps it).
-            let mut subtree = existing_child
-                .unwrap_or_else(|| make_scan_subtree(&best_node, in_merge, preserved_argument));
+            let mut subtree = existing_child.unwrap_or_else(|| {
+                make_scan_subtree(&best_node, in_merge, preserved_argument, vec![])
+            });
             for (step, (rel, emit, edges, transposed)) in new_rels.into_iter().rev().enumerate() {
                 subtree = tree!(
                     IR::CondTraverse {
@@ -930,6 +1021,15 @@ pub(super) fn select_scan_node(
                     } else {
                         None
                     };
+                    // Not a swap: the rebuilt scan is for the same node that
+                    // was pruned, so its Filters belong on it and are now the
+                    // only copy of any inline-attr predicate.
+                    let preserved_filters = if has_planner_scan {
+                        let child_idx = optimized_plan.node(ct_idx).child(0).idx();
+                        filters_of(optimized_plan, child_idx)
+                    } else {
+                        vec![]
+                    };
 
                     let ct_idx = if has_planner_scan || arg_transparent {
                         let child_idx = optimized_plan.node(ct_idx).child(0).idx();
@@ -940,8 +1040,12 @@ pub(super) fn select_scan_node(
                         ct_idx
                     };
 
-                    // Build scan subtree with optional attr filter
-                    let scan_subtree = make_scan_subtree(&scan_node, in_merge, preserved_argument);
+                    let scan_subtree = make_scan_subtree(
+                        &scan_node,
+                        in_merge,
+                        preserved_argument,
+                        preserved_filters,
+                    );
 
                     let mut op = optimized_plan.node_mut(ct_idx);
                     *op.data_mut() = IR::CondTraverse {
