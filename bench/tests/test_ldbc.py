@@ -244,6 +244,39 @@ def _numeric(name: str) -> bool:
     return name.endswith(("Id", "Date", "Year")) or name in ("month", "durationDays")
 
 
+class _StubGraph:
+    """Enough of a graph for sample() to run: canned columns and a date span."""
+
+    LO, HI = 1_262_808_638_903, 1_347_528_281_121
+
+    def ro_query(self, cypher, params=None):
+        if "min(m.creationDate)" in cypher:
+            rows = [[self.LO, self.HI]]
+        else:
+            n = (params or {}).get("n", 2)
+            rows = [
+                [f"v{i}"] if "Person)" not in cypher or "firstName" in cypher else [i]
+                for i in range(n)
+            ]
+            if "MATCH (p:Person)-[:KNOWS]" in cypher or "p.id" in cypher:
+                rows = [[1000 + i] for i in range(n)]
+        return SimpleNamespace(result_set=rows)
+
+
+def test_ic3_gets_a_far_wider_date_window_than_the_other_queries():
+    """A 30-day window returns nothing for IC3 at SF0.1 on both engines, so a
+    sampled run would report it as instant while measuring nothing."""
+    param_set = params_mod.sample(
+        SimpleNamespace(graph=_StubGraph()), count=3, seed=1, echo=lambda *a: None
+    )
+    span = _StubGraph.HI - _StubGraph.LO
+    for ic3, ic4 in zip(param_set.for_query(3), param_set.for_query(4), strict=True):
+        ic3_width = ic3["endDate"] - ic3["startDate"]
+        assert ic3_width > 365 * 86_400_000, "IC3 needs at least a year to match anything"
+        assert ic3_width == span - span // 4
+        assert ic3_width > (ic4["endDate"] - ic4["startDate"]) * 10
+
+
 def test_sampled_parameters_are_labelled_as_not_comparable():
     """The caveat is the point: sampled numbers are not LDBC results.
 

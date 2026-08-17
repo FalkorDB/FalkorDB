@@ -222,6 +222,22 @@ def sample(
         start = rng.randrange(floor, max(floor + 1, hi - 30 * _DAY_MS))
         return start, start + 30 * _DAY_MS
 
+    def wide_window() -> tuple[int, int]:
+        """IC3's window, which has to be far wider than the other queries'.
+
+        IC3 counts friends who are *not* resident in either country yet posted
+        from both of them inside the window. That conjunction is rare: at SF0.1,
+        anchored on the most-connected person and the two densest countries, a
+        30-day window returns 0 rows, 90 days returns 0, 365 returns 1 and 730
+        returns 2 — measured on the C engine, which agrees with Rust here, so
+        this is a property of the dataset rather than of either engine.
+        `durationDays` is an explicit LDBC parameter, so widening it stays
+        within the query's own contract; LDBC's curated parameter sets pick
+        values that guarantee a non-empty result, and sampling cannot.
+        """
+        start = lo + (hi - lo) // 4
+        return start, hi
+
     def max_date() -> int:
         """A cut-off with history behind it.
 
@@ -239,13 +255,14 @@ def sample(
         )
         rows[1].append({"personId": person(), "firstName": rng.choice(names)})
         rows[2].append({"personId": person(), "maxDate": max_date()})
+        ic3_start, ic3_end = wide_window()
         rows[3].append(
             {
                 "personId": person(),
                 "countryXName": two_countries[0],
                 "countryYName": two_countries[1],
-                "startDate": start,
-                "endDate": end,
+                "startDate": ic3_start,
+                "endDate": ic3_end,
             }
         )
         rows[4].append({"personId": person(), "startDate": start, "endDate": end})
