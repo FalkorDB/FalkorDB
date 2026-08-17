@@ -146,6 +146,7 @@ locally against a real base build.
 | `src/falkorbench/flow.py` | per-flow-test-file measurement |
 | `src/falkorbench/cli.py` | the `bench` command |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
+| `src/falkorbench/ldbc/` | LDBC SNB Interactive v1 — dataset fetch/prepare, loader, parameters, runner, and the vendored query texts |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
 | `pmc_tool.c` | Apple Silicon PMU counters (kperf/kperfdata private frameworks) |
 | `tests/` | the guards above, over CSV fixtures |
@@ -222,7 +223,65 @@ Three deliberate deviations:
 CLAUDE.md) is p99 latency. `redis-benchmark` computes a latency distribution and
 this harness currently discards it, so the p99 bar is not measured here yet.
 
-## Known gaps
+## LDBC SNB (Interactive v1)
+
+A second, complementary workload: the 14 **complex reads** of the LDBC Social
+Network Benchmark, run against the real SNB dataset. The micro-benchmark set
+above measures narrow operations on a synthetic ring; these measure whole
+realistic queries — multi-hop traversals, aggregation, `OPTIONAL MATCH`,
+variable-length paths — on a graph with realistic degree skew. A planner
+regression that a single-op query cannot see tends to show up here.
+
+```bash
+bench ldbc fetch --sf 0.1                 # download + prepare (~18 MB)
+bench ldbc run --sf 0.1                   # load, then measure all 14
+bench ldbc run --sf 1 IC1 IC13            # a subset, at SF1 (~230 MB)
+bench ldbc run --params ./substitution_parameters   # official parameters
+```
+
+Results go to `results/ldbc_sf<SF>.csv` (p50/p95/p99 per query) and are
+deliberately **not** merged into `results/current.csv`: LDBC's metric is
+response time, and mixing it into the file the `compare` thresholds gate would
+distort the micro-benchmark gate.
+
+### This is not an auditable LDBC result
+
+Do not publish these as an "LDBC score". A real result requires the official
+Java driver with its validation and workload-generation phases, LDBC
+membership, and an audit commissioned from a certified auditor. What this gives
+you is an internal, repeatable number on a standard dataset and standard
+queries.
+
+### Four queries differ from the reference text
+
+Each departure is annotated in the `.cypher` file next to the line it replaced,
+and listed in `ldbc/queries.py::REWRITES` so a run always prints them. All four
+were confirmed against a running engine:
+
+| query | why it could not run as written |
+|---|---|
+| IC1, IC13 | `MATCH path = shortestPath(...)` → *"FalkorDB currently only supports shortestPaths in WITH or RETURN clauses"*. Moved into `WITH`. |
+| IC14 | `allShortestPaths()` with inline endpoint patterns → *"Source and destination must already be resolved"*. Endpoints pre-bound in a preceding `MATCH`. |
+| IC10 | `datetime({epochMillis: ...}).month` → *"Unknown function 'datetime'"*. The loader derives `birthdayMonth`/`birthdayDay` instead. |
+
+`CREATE CONSTRAINT ... ASSERT n.id IS UNIQUE` is also unsupported, so upstream's
+`indices.cypher` becomes `GRAPH.CONSTRAINT CREATE` calls — each of which
+additionally requires its exact-match index to already exist, and validates
+asynchronously (the loader waits for `OPERATIONAL` rather than assuming it).
+
+### Substitution parameters
+
+LDBC generates parameters chosen so the queries hit a representative spread of
+the data; the cost of these queries varies by orders of magnitude with how
+well-connected the chosen person is, so the parameter set matters as much as the
+query text. Pass an official set with `--params DIR`.
+
+Without it, the harness samples the loaded graph with a fixed seed. Those runs
+are deterministic and comparable **to each other**, but not to published LDBC
+numbers — the CSV and the console output both say which source was used, and
+that caveat should travel with any number taken from it.
+
+
 
 One structural gap is worth recording because closing it needs a design decision
 rather than a patch: the MVCC copy-on-write `GrB_Matrix_dup` of delta matrices in

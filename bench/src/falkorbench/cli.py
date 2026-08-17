@@ -24,11 +24,20 @@ from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
 from falkorbench.counters import select_backend
+from falkorbench.ldbc import dataset as ldbc_dataset
+from falkorbench.ldbc import loader as ldbc_loader
+from falkorbench.ldbc import params as ldbc_params
+from falkorbench.ldbc import queries as ldbc_queries
+from falkorbench.ldbc import runner as ldbc_runner
 
 # bench/ is the project root; the repo is its parent.
 BENCH_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = BENCH_DIR.parent
 RESULTS = BENCH_DIR / "results"
+#: Where LDBC datasets are downloaded and extracted. Also the server's
+#: IMPORT_FOLDER for an LDBC run, since `LOAD CSV` resolves `file://` against
+#: it — a dataset outside this tree is not reachable by the server.
+LDBC_CACHE = BENCH_DIR / "ldbc-data"
 
 
 def _select(names: tuple[str, ...], *, cg_only: bool = False):
@@ -449,6 +458,129 @@ def flow(module, out, baseline, current, names):
     finally:
         if tmp is not None:
             tmp.cleanup()
+
+
+# --- ldbc --------------------------------------------------------------------
+
+
+@cli.group()
+def ldbc() -> None:
+    """LDBC SNB Interactive v1 complex reads.
+
+    Internal instrument, not an auditable LDBC result: that needs the official
+    Java driver, LDBC membership and a commissioned audit.
+    """
+
+
+@ldbc.command("fetch")
+@click.option("--sf", default="0.1", show_default=True, help="scale factor (0.1 or 1)")
+@click.option("--cache", default=None, type=click.Path(), help="dataset cache directory")
+def ldbc_fetch(sf, cache):
+    """Download, extract and prepare the SNB dataset."""
+    cache_dir = Path(cache) if cache else LDBC_CACHE
+    try:
+        root = ldbc_dataset.fetch(cache_dir, sf, echo=click.echo)
+        ldbc_dataset.prepare(root, echo=click.echo)
+    except ldbc_dataset.DatasetError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(f"dataset ready: {root}")
+
+
+@ldbc.command("run")
+@common_options
+@click.option("--sf", default="0.1", show_default=True, help="scale factor (0.1 or 1)")
+@click.option("--cache", default=None, type=click.Path(), help="dataset cache directory")
+@click.option("--out", default=None, type=click.Path(), help="CSV output path")
+@click.option(
+    "--params",
+    "params_dir",
+    default=None,
+    type=click.Path(exists=True),
+    help="official LDBC substitution parameter directory",
+)
+@click.option(
+    "--param-count",
+    default=25,
+    show_default=True,
+    help="sampled parameter rows per query, when --params is not given",
+)
+@click.option("--seed", default=1, show_default=True, help="sampling seed")
+@click.option("--reuse", is_flag=True, help="attach to a server already on --port")
+@click.option(
+    "--load/--no-load", "do_load", default=None, help="load the dataset (implied unless --reuse)"
+)
+@click.option("--keep-server", is_flag=True, help="leave the server running afterwards")
+@click.argument("names", nargs=-1)
+def ldbc_run(
+    module, port, sf, cache, out, params_dir, param_count, seed, reuse, do_load, keep_server, names
+):
+    """Load the dataset and measure the complex reads.
+
+    NAMES selects a subset, e.g. `bench ldbc run IC1 IC13`.
+    """
+    cache_dir = (Path(cache) if cache else LDBC_CACHE).resolve()
+    out_path = Path(out) if out else RESULTS / f"ldbc_sf{sf}.csv"
+    try:
+        selected = ldbc_queries.select(names)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    try:
+        root = ldbc_dataset.fetch(cache_dir, sf, echo=click.echo)
+        ldbc_dataset.prepare(root, echo=click.echo)
+    except ldbc_dataset.DatasetError as e:
+        raise click.ClickException(str(e)) from e
+
+    # As with `measure`, --reuse means "do not start a server" and must not
+    # silently also mean "do not load", or this measures an empty database.
+    should_load = (not reuse) if do_load is None else do_load
+
+    server = client_mod.Server(port=port)
+    if reuse:
+        if not client_mod.is_server_up(port):
+            raise click.ClickException(f"--reuse given but nothing answers on :{port}")
+    else:
+        if client_mod.is_server_up(port):
+            raise click.ClickException(f"port {port} already in use; use --reuse or another --port")
+        module_path = client_mod.find_module(module, REPO_ROOT)
+        if not module_path.exists():
+            raise click.ClickException(f"module not found: {module_path}")
+        server = client_mod.start_server(module_path, port, RESULTS / "ldbc_server_dir", cache_dir)
+
+    try:
+        bench = client_mod.connect(server)
+        bench.graph_name = f"ldbc_sf{sf}"
+        if should_load:
+            click.echo(f"loading {root.name}...")
+            ldbc_loader.load(bench, root, import_root=cache_dir, echo=click.echo)
+
+        param_set = ldbc_params.load(
+            bench,
+            directory=Path(params_dir) if params_dir else None,
+            count=param_count,
+            seed=seed,
+            echo=click.echo,
+        )
+        click.echo(f"\nparameters: {param_set.caveat()}")
+        ldbc_queries.rewrite_note(click.echo)
+        click.echo("")
+
+        results = ldbc_runner.run(bench, selected, param_set, echo=click.echo)
+        ldbc_runner.write_csv(out_path, results)
+        click.echo(f"\nwrote {out_path}")
+    except (client_mod.SetupFailed, ldbc_loader.LoadError, ldbc_params.ParamError) as e:
+        raise click.ClickException(str(e)) from e
+    finally:
+        if server.proc is not None and not keep_server:
+            server.stop()
+        elif server.proc is not None:
+            click.echo(f"server left running on :{port} (pid {server.proc.pid})")
+
+    if issues := ldbc_runner.problems(results):
+        click.echo("\nrun completed with problems:")
+        for issue in issues:
+            click.echo(f"  {issue}")
+        raise SystemExit(1)
 
 
 def main() -> int:
