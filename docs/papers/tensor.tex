@@ -2036,13 +2036,28 @@ a tool that has since been corrected. Live bytes are summed from the
 \texttt{bins:} and \texttt{large:} tables of \texttt{MEMORY MALLOC-STATS}, and
 the harness parsed those fixed-width tables by splitting on whitespace, which
 fuses two fields whenever a size class exceeds ten million allocations per
-second. The harness now slices by the header's own column ranges. The failure is
-not a small bias but a catastrophic one --- a fused field moves the parsed total
-by $\approx\!7\times10^{16}$ bytes, so an affected reading is off by orders of
-magnitude rather than by percent --- and no figure in
-Table~\ref{tab:evalwrite} is of that character. We report the numbers as
-measured and note that the shape of the failure is what licenses trusting them,
-rather than a re-run under the corrected parse.
+second. The harness now slices by the header's own column ranges.
+
+We re-measured the space columns under the corrected parse rather than argue
+that the failure mode was too coarse to have mattered. The sweep driver itself
+was not kept, so this is a reconstruction from the method above rather than a
+re-run of the original script, and it is comparable on space alone: its build
+path differs enough that its instruction counts are an order of magnitude away
+from Table~\ref{tab:evalwrite}'s, which is why only the space claim is restated
+here. On space it lands where the table does. (A)'s \texttt{GRAPH.MEMORY} column
+reproduces exactly --- $8$, $12$, $29$, $17$, $8$\,MB --- which is the evidence
+that the graphs being compared are the same ones. (A)'s live-byte hump
+reproduces in shape and sits uniformly $1.5$--$2.2$\,MB below the reported
+figures ($17.4$, $21.0$, $40.9$, $26.5$, $15.6$\,MB), a constant offset rather
+than a distortion of the curve. And the ratio column reproduces its shape: a
+minimum at $\mu = 2$ and a crossing above $1$ at $\mu = 16$
+($1.07$, $0.95$, $0.53$, $0.63$, $1.13$ against the table's $0.90$, $0.77$,
+$0.47$, $0.69$, $1.17$). So the parse defect did not manufacture the finding
+this table is quoted for; what it would have done, had it fired, is unmissable
+rather than subtle.
+
+Two things the re-measurement does \emph{not} confirm are noted where they
+belong, below.
 
 \paragraph{Point reads are amortised over the query that carries them.} A
 single point read costs a few thousand instructions inside a query pipeline
@@ -2275,23 +2290,28 @@ gives: a sentinel read also scans a row, and (B) is not implemented.
 \begin{table}[!ht]
 \centering
 \small
-\begin{tabular}{@{}lrrrcrrcrr@{}}
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{@{}lrrrcrrrcrr@{}}
 \toprule
- & \multicolumn{3}{c}{Bulk insert, instructions} & & \multicolumn{2}{c}{live bytes} & & \multicolumn{2}{c}{\texttt{GRAPH.MEMORY}} \\
-\cmidrule(lr){2-4}\cmidrule(lr){6-7}\cmidrule(lr){9-10}
-$\mu$ & (A) C & (C) Rust & (C)/(A) & & (A) & (C) & & (A) & (C) \\
+ & \multicolumn{3}{c}{Bulk insert, instructions} & & \multicolumn{3}{c}{live bytes} & & \multicolumn{2}{c}{\texttt{GRAPH.MEMORY}} \\
+\cmidrule(lr){2-4}\cmidrule(lr){6-8}\cmidrule(lr){10-11}
+$\mu$ & (A) C & (C) Rust & (C)/(A) & & (A) & (C) & (C)/(A) & & (A) & (C) \\
 \midrule
-$1.0$  & $6{,}957{,}009{,}801$ & $1{,}643{,}493{,}402$ & $0.24$ & & $18{,}904{,}728$ & $17{,}106{,}496$ & & $8$\,MB  & $10$\,MB \\
-$1.1$  & $6{,}530{,}671{,}571$ & $1{,}605{,}780{,}449$ & $0.25$ & & $22{,}440{,}928$ & $17{,}206{,}176$ & & $12$\,MB & $10$\,MB \\
-$2.0$  & $4{,}690{,}043{,}030$ & $1{,}549{,}215{,}127$ & $0.33$ & & $42{,}521{,}760$ & $19{,}855{,}248$ & & $29$\,MB & $11$\,MB \\
-$4.0$  & $2{,}895{,}288{,}180$ & $1{,}273{,}515{,}766$ & $0.44$ & & $28{,}908{,}296$ & $19{,}910{,}864$ & & $17$\,MB & $9$\,MB \\
-$16.0$ & $1{,}934{,}337{,}954$ & $\phantom{0}993{,}911{,}383$ & $0.51$ & & $17{,}801{,}784$ & $20{,}786{,}536$ & & $8$\,MB  & $8$\,MB \\
+$1.0$  & $6{,}957{,}009{,}801$ & $1{,}643{,}493{,}402$ & $0.24$ & & $18{,}904{,}728$ & $17{,}106{,}496$ & $0.90$ & & $8$\,MB  & $10$\,MB \\
+$1.1$  & $6{,}530{,}671{,}571$ & $1{,}605{,}780{,}449$ & $0.25$ & & $22{,}440{,}928$ & $17{,}206{,}176$ & $0.77$ & & $12$\,MB & $10$\,MB \\
+$2.0$  & $4{,}690{,}043{,}030$ & $1{,}549{,}215{,}127$ & $0.33$ & & $42{,}521{,}760$ & $19{,}855{,}248$ & $0.47$ & & $29$\,MB & $11$\,MB \\
+$4.0$  & $2{,}895{,}288{,}180$ & $1{,}273{,}515{,}766$ & $0.44$ & & $28{,}908{,}296$ & $19{,}910{,}864$ & $0.69$ & & $17$\,MB & $9$\,MB  \\
+$16.0$ & $1{,}934{,}337{,}954$ & $\phantom{0}993{,}911{,}383$ & $0.51$ & & $17{,}801{,}784$ & $20{,}786{,}536$ & $1.17$ & & $8$\,MB  & $8$\,MB  \\
 \bottomrule
 \end{tabular}
 \caption{The sweep, write and space side. Insert is the whole build of the same
 $176{,}000$ edges. Live bytes are jemalloc allocated minus deallocated after
-the build; \texttt{GRAPH.MEMORY} reports whole megabytes, which is coarse at
-this scale. Note (A)'s non-monotonic space curve, peaking at $\mu = 2$.}
+the build. Ratios below $1$ favour (C); \texttt{GRAPH.MEMORY} is given without
+one, because whole-megabyte reporting at $8$--$29$\,MB makes a two-digit ratio
+read as more precise than its inputs. The live-bytes ratio is deliberately
+\emph{not} monotonic in $\mu$ and does not need to be: it traces (A)'s container
+hump, reaching $0.47$ at $\mu = 2$ where almost every pair holds a container,
+and inverting only at $\mu = 16$, where (C) is the dearer of the two.}
 \label{tab:evalwrite}
 \end{table}
 
@@ -2304,22 +2324,37 @@ gap is widest where (C) allocates no auxiliary structure whatsoever and closes
 steadily as more pairs are promoted, which is the ordering the design predicts
 and not one that a difference elsewhere in the write path would produce.
 
-Resident size is comparable overall, better for (C) in the middle of the range,
-and slightly worse at the top. The line worth a sentence of its own is (A)'s,
+Resident size is comparable overall and clearly better for (C) in the middle of
+the range; at the extremes the two are close enough that the ordering depends on
+which run one reads, for which see below. The line worth a sentence of its own is (A)'s,
 which is \emph{not monotonic}: $18.9$\,MB live at $\mu = 1$, rising to
 $42.5$\,MB at $\mu = 2$, then falling back to $17.8$\,MB at $\mu = 16$. That
 hump is the container count. With $|E|$ fixed, the number of heap containers
 (A) holds is the number of multi-edge pairs, which is near zero at $\mu = 1$,
 maximal around $\mu = 2$ where almost every pair is multi-edge and every
 container is tiny, and small again at $\mu = 16$ where $|E|/16$ containers each
-hold sixteen identifiers. (C) has no such term: promotion moves identifiers
-into a matrix that was already allocated, and its live bytes rise gently and
-monotonically across the whole sweep, $17.1$\,MB to $20.8$\,MB. This is the
-allocator-pressure claim of \S\ref{sec:cost} showing up as the shape of a
-curve, which is stronger evidence for it than any single point would be. At
-$\mu = 16$ (C) is the worse of the two on live bytes ($20.8$ against $17.8$),
-and we do not have an account of that beyond the wasted sentinel-holding
-forward cell per promoted pair that Table~\ref{tab:space} predicts.
+hold sixteen identifiers. That hump is the claim of \S\ref{sec:cost} showing up
+as the shape of a curve, which is stronger evidence for it than any single point
+would be, and it is the part of this table that reproduced most cleanly when the
+space columns were re-measured (\S\ref{sec:evalmethod}). (C) has no such term:
+promotion moves identifiers into a matrix that was already allocated. Its curve
+stays inside a $17$--$23$\,MB band across the whole sweep against (A)'s
+$16$--$43$, which is the claim that matters.
+
+Two cautions about (C)'s curve, both from the re-measurement and both against
+the reading we first gave it. We had described it as rising gently and
+monotonically, $17.1$ to $20.8$\,MB, and read the $\mu = 16$ endpoint as (C)
+being the worse of the two ($20.8$ against $17.8$) for want of an account beyond
+the wasted sentinel-holding forward cell of Table~\ref{tab:space}. Re-measured,
+\emph{monotonicity does not survive}: (C) rises to $\mu = 2$ and then falls
+away, ending at $17.6$\,MB. The direction of the correction favours (C), which
+is why it is worth flagging rather than quietly adopting --- a monotonic rise is
+what one would predict from a wasted cell per promoted pair, and the fall says
+that term is not what dominates. \emph{And (C) is the less stable of the two
+across runs}: (A) reproduced bit-for-bit at every multiplicity, while (C) moved
+$8\%$ at $\mu = 2$ between whole runs ($21.5$ against $23.2$\,MB). Neither the
+monotonicity nor the endpoint should therefore be read as more than a band, and
+we do not claim the $\mu = 16$ ordering in either direction.
 
 The two space metrics disagree at the ends of the range --- at $\mu = 1$ (A)
 reports the smaller \texttt{GRAPH.MEMORY} while holding the larger number of
@@ -3062,15 +3097,27 @@ SuiteSparse:GraphBLAS v10.3.1 with LAGraph v1.2.1. Trunk has since moved to
 v10.5.0 and LAGraph v1.3, so reproducing the numbers exactly means pinning the
 older library rather than building trunk as it stands.
 
-The boundary harnesses of \S\ref{sec:evalboundary} and \S\ref{sec:evalspace} ---
-\texttt{bench/studies/\allowbreak edge\_storage/} and
-\texttt{graph/\allowbreak src/\allowbreak graph/\allowbreak graphblas/\allowbreak tensor\_cost\_bench.rs},
-the C side of which
-links the shipped static archive directly with no stubbed symbols --- are
-\emph{not} on any published branch at the time of writing. Until they are, the
-boundary results of \S\ref{sec:evalboundary} should be read as reported rather
-than as reproducible, which is a weaker standing than the rest of the evaluation
-has and one we would rather state than paper over.
+The boundary measurements of \S\ref{sec:evalboundary} and \S\ref{sec:evalspace}
+have two halves, and they are not equally available. (C)'s half is
+\texttt{graph/\allowbreak src/\allowbreak graph/\allowbreak graphblas/\allowbreak tensor\_cost\_bench.rs}
+in this tree --- \texttt{\#[ignore]}d measurement tests in the same style as
+\texttt{fold\_cost\_bench.rs}, run with
+
+\begin{quote}
+\footnotesize
+\texttt{cargo test --release -p graph tensor\_cost --}\\
+\texttt{\phantom{cargo }--ignored --nocapture --test-threads=1}
+\end{quote}
+
+\noindent
+where \texttt{--test-threads=1} is not optional, because
+\texttt{proc\_pid\_rusage} is a whole-process counter and a concurrent test lands
+in the reading. \texttt{tensor\_cost\_c\_comparable} is the fixture
+Table~\ref{tab:evalboundary} reports. (A)'s half is a standalone C harness
+linking the shipped static archive with no stubbed symbols, and it is \emph{not}
+on any published branch at the time of writing, so (A)'s boundary column should
+be read as reported rather than as reproducible --- a weaker standing than the
+rest of the evaluation has, and one we would rather state than pass over.
 
 The proofs are checked against Lean 4 v4.32.0 with mathlib v4.32.0, pinned in
 \texttt{lean-toolchain} and \texttt{lakefile.toml}.

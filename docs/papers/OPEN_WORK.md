@@ -241,12 +241,26 @@ what was and was not measured.
   sentinel 2,502 → 2,938, promote 2,735 → 2,965), so the entry charge rises from
   1,936 to 2,317. What remains unmeasured is the C side at 10.5.0 and the whole
   engine-level multiplicity sweep, which is what any *ratio* would need.
-- **The live-bytes column's parse.** The space figures were collected through a
-  `MEMORY MALLOC-STATS` parser whose whitespace split fused adjacent fixed-width
-  fields at high allocation rates (#2492, since fixed). The failure mode is
-  catastrophic rather than subtle — an affected row lands in the petabytes — so
-  the reported figures are almost certainly unaffected, but they have not been
-  re-collected under the corrected parse.
+- **The live-bytes column's parse — re-measured, and it holds.** The space
+  figures were collected through a `MEMORY MALLOC-STATS` parser whose whitespace
+  split fused adjacent fixed-width fields at high allocation rates (#2492, since
+  fixed). Both engines' space columns have now been re-collected under the
+  corrected parse. (A)'s `GRAPH.MEMORY` column reproduces exactly (8/12/29/17/8
+  MB), its live-byte hump reproduces in shape 1.5–2.2 MB low, and the ratio
+  column reproduces its shape (min at mu = 2, crossing 1 at mu = 16). The parse
+  defect did not manufacture the finding.
+
+  Two things did *not* reproduce, and the paper now says so: (C)'s live bytes are
+  **not** monotonic in mu — they fall after mu = 2 rather than rising, which is
+  the favourable direction and therefore worth flagging — and (C) is the less
+  stable engine across runs, moving 8% at mu = 2 where (A) reproduced
+  bit-for-bit.
+
+  **Still open here:** the *instruction* columns. The original sweep driver was
+  not kept, and the reconstruction's build path is different enough that its C-side
+  instruction counts are ~11x the reported ones, so it can only speak to space.
+  Anyone re-running the insert column needs to rebuild the driver so that the
+  build path matches, not just the final graph.
 - **Whether multiplicity distributions dominated by 1 describe real
   deployments.** A question about deployments, not data structures, and the one
   assumption the whole design rests on.

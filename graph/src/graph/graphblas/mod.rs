@@ -75,6 +75,8 @@ pub mod lagraphx_bindings;
 pub mod matrix;
 pub mod serialization;
 pub mod tensor;
+#[cfg(test)]
+mod tensor_cost_bench;
 pub mod vector;
 pub mod versioned_matrix;
 
