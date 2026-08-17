@@ -902,11 +902,16 @@ impl Tensor {
     ///
     /// # Panics
     ///
-    /// If a subtraction would go negative, which cannot happen while the delta
-    /// invariants hold. `dm ⊆ m` bounds the second term, `dp ∩ dm = ∅` the
-    /// third, and promotion-completeness the fourth; the Lean development proves
-    /// each of the three stays non-negative (`edgeCount_no_underflow` in
-    /// `proofs/tensor/Tensor/Count.lean`).
+    /// If any step leaves the range of a `u64`, which cannot happen while the
+    /// delta invariants hold. The three subtractions are the interesting case:
+    /// `dm ⊆ m` bounds the second term, `dp ∩ dm = ∅` the third, and
+    /// promotion-completeness the fourth, and the Lean development proves each
+    /// stays non-negative (`edgeCount_no_underflow` in
+    /// `proofs/tensor/Tensor/Count.lean`). The two additions can overflow only
+    /// if an `nvals` is not a real matrix size — reachable the same way, through
+    /// memory corruption rather than through any operation here. Each step says
+    /// which of those it hit, since sending a reader after the wrong term costs
+    /// more than the branch does.
     ///
     /// The arithmetic is checked because the identity is *unsigned* and this is
     /// a reachable failure mode even though the algorithm is proved: a proof
@@ -933,21 +938,44 @@ impl Tensor {
             self.multi_pairs(),
             self.me.nvals(),
         );
-        // Evaluated left to right, exactly as the identity is stated, so the
-        // operand a broken invariant implicates is the one that trips.
-        m.checked_add(dp)
-            .and_then(|acc| acc.checked_sub(dm))
-            .and_then(|acc| acc.checked_sub(shadow))
-            .and_then(|acc| acc.checked_sub(multi))
-            .and_then(|acc| acc.checked_add(me))
-            .unwrap_or_else(|| {
-                panic!(
-                    "Tensor::edge_count underflow: |m|={m} |dp|={dp} |dm|={dm} \
-                     |dp∩m|={shadow} multi={multi} |me|={me}. A delta invariant \
-                     is broken; see the tensor module docs for which term bounds \
-                     which subtraction."
-                )
-            })
+        // Evaluated left to right, exactly as the identity is stated, and each
+        // step reports what failed and which invariant bounds it. The two
+        // additions can only overflow and the three subtractions can only
+        // underflow, so a single shared message would have to guess at one or
+        // the other — and guessing wrong sends the reader after the wrong term.
+        let broken = |what: &str, why: &str| -> u64 {
+            panic!(
+                "Tensor::edge_count: {what} ({why}). \
+                 |m|={m} |dp|={dp} |dm|={dm} |dp∩m|={shadow} multi={multi} |me|={me}"
+            )
+        };
+        let acc = m.checked_add(dp).unwrap_or_else(|| {
+            broken(
+                "|m| + |dp| overflowed",
+                "an nvals is not a real matrix size",
+            )
+        });
+        let acc = acc
+            .checked_sub(dm)
+            .unwrap_or_else(|| broken("|dm| exceeds |m| + |dp|", "dm ⊆ m is broken"));
+        let acc = acc.checked_sub(shadow).unwrap_or_else(|| {
+            broken(
+                "|dp ∩ m| exceeds the running total",
+                "dp ∩ dm = ∅ is broken, so the pattern size is wrong",
+            )
+        });
+        let acc = acc.checked_sub(multi).unwrap_or_else(|| {
+            broken(
+                "multi exceeds the effective pattern",
+                "promotion-completeness is broken",
+            )
+        });
+        acc.checked_add(me).unwrap_or_else(|| {
+            broken(
+                "adding |me| overflowed",
+                "an nvals is not a real matrix size",
+            )
+        })
     }
 
     /// Iterate every `(src, dst, edge_id)` triple in the tensor.
@@ -1395,9 +1423,11 @@ mod tests {
     /// This forges the one input the Lean proof rules out — a tombstone with no
     /// committed entry beneath it, which is `dm ⊆ m` violated, the shape a
     /// corrupt decoded blob produces — and pins that the count now stops loudly
-    /// at the subtraction instead of returning a number near `2^64`.
+    /// at the subtraction instead of returning a number near `2^64`. It asserts
+    /// on the *diagnosis* rather than on the word "underflow", so the message
+    /// has to keep naming the invariant that broke.
     #[test]
-    #[should_panic(expected = "edge_count underflow")]
+    #[should_panic(expected = "dm ⊆ m is broken")]
     fn edge_count_underflow_panics_instead_of_wrapping() {
         ensure_init();
         let mut t = Tensor::new(16, 16);
