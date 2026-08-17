@@ -143,7 +143,7 @@ costs a quarter as much to promote a pair and a quarter as many bytes per edge
 once a pair holds two edges; its per-edge iteration is slightly \emph{worse}, so the
 engine-level scan advantage belongs to the engine and not to edge storage. Two
 of our own engine-level attributions turn out to overstate storage cost by
-$1.8\times$ and $5.1\times$, which is the sharpest argument we can offer for
+$1.6\times$ and $5.1\times$, which is the sharpest argument we can offer for
 measuring at the boundary. The design's distinguishing promotion/demotion
 transition, predicted to be a small constant, was a quadratic in our
 implementation; we give the diagnosis, the fix, and the residual constant factor
@@ -261,7 +261,7 @@ Rust storage engine. Specifically:
         out as the design predicts ($0.24\times$ and $0.25\times$); iteration
         does not, being slightly worse per edge, so the engine-level scan
         advantage is not edge storage; and two of our own engine-level
-        attributions overstate storage cost by $1.8\times$ and $5.1\times$. The
+        attributions overstate storage cost by $1.6\times$ and $5.1\times$. The
         promotion/demotion transition, predicted to be a small constant, was a
         quadratic in our implementation: we give the measurement, the
         instrumented cause, the fix, and the $3\times$ residual.
@@ -2067,7 +2067,7 @@ caveat and becomes a finding twice over: in \S\ref{sec:evaldecomp}, where one
 row of the sweep invites an explanation in terms of the tensor and a controlled
 measurement shows that explanation is wrong, and again in
 \S\ref{sec:evalboundary}, where two quantities we had attributed to edge
-storage turn out to be overstated by $1.8\times$ and $5.1\times$.
+storage turn out to be overstated by $1.6\times$ and $5.1\times$.
 
 \subsection{Reads: full scan and single-pair lookup}
 \label{sec:evalread}
@@ -2261,8 +2261,10 @@ for (C); (A)'s figure is confirmed independently by the $1{,}013$ above, but
 (C)'s came from a sweep graph sitting in the high state described above, and
 $1{,}993$ at equal $k$ is the figure to use at this grain.
 \S\ref{sec:evalboundary} then measures the same constant at the boundary and
-puts it lower again, at $1{,}707$, which is the figure to prefer and which makes
-the engine-level charge $17\%$ high; \S\ref{sec:evalspace} adds the one thing
+puts it at $1{,}936$ --- which is to say it \emph{confirms} the equal-$k$
+figure, $1{,}993$ being $3\%$ above it, where raw differencing was $61\%$ above.
+That agreement is itself the argument for the equal-$k$ method;
+\S\ref{sec:evalspace} adds the one thing
 none of these reach, a model of (B)'s space. All of them remain bounds and
 models rather than measurements of (B), for the reason \S\ref{sec:limits}
 gives: a sentinel read also scans a row, and (B) is not implemented.
@@ -2376,14 +2378,20 @@ warn about. The quantity in question is the price of a read taking the
 multi-edge path instead of finding its identifier inline --- design (B)'s
 distinguishing cost, and (C)'s cost on a promoted pair. Differencing at engine
 level put it at $+3{,}114$ instructions for (C) and $+1{,}009$ for (A)
-(\S\ref{sec:evaldecomp}). At the boundary it is $+1{,}707$ for (C) and $+198$
-for (A). The engine-level figures overstate the storage-attributable penalty by
-$1.8\times$ for (C) and $5.1\times$ for (A). The equal-$k$ decomposition did
-better than raw differencing for (C) --- its $1{,}993$ is only $17\%$ above the
-boundary --- and no better at all for (A), whose $1{,}013$ is the same
-$5.1\times$ high. So the caveat was not pro forma: an engine-level difference
-attributed to a data structure was wrong by a factor of five on one of the two
-sides, and in the direction that flatters neither design consistently.
+(\S\ref{sec:evaldecomp}). At the boundary it is $+1{,}936$ for (C) --- the two
+read rows of Table~\ref{tab:evalboundary}, $2{,}502$ against $566$ --- and
+$+198$ for (A). Raw differencing therefore overstates the storage-attributable
+penalty by $1.6\times$ for (C) and $5.1\times$ for (A).
+
+The two sides fail differently, and that is the useful part. For (C) the
+equal-$k$ decomposition already fixed most of it: its $1{,}993$ is $3\%$ above
+the boundary, so controlling for $k$ recovers nearly the whole quantity and only
+uncontrolled differencing was badly wrong. For (A) it fixes nothing --- $1{,}013$
+is the same $5.1\times$ high as $1{,}009$ --- because (A)'s error is not about
+$k$ at all but about what else a query does around the read. So the caveat was
+not pro forma: an engine-level difference attributed to a data structure was
+wrong by a factor of five on one of the two sides, and the method that rescued
+the other side did not touch it.
 
 Two component measurements say where (A)'s $553$ actually goes, and they are
 worth reporting because they are the opposite of what the design-space table
@@ -2401,7 +2409,7 @@ contradict.} Table~\ref{tab:evalboundary} puts (C) at $3.33\times$ (A) for
 reading both identifiers of a two-edge pair, while the equal-$k$ decomposition
 put the two at parity at $k = 2$. Both are right, and they compose once one sees
 which part of the curve each measures. The boundary's $1 \to 2$ jump is the
-\emph{entry} charge for the multi-edge path --- $+1{,}707$ for (C) against
+\emph{entry} charge for the multi-edge path --- $+1{,}936$ for (C) against
 $+198$ for (A) --- and the boundary did not measure $k > 2$, so entry is all it
 captures. The decomposition's slope is the cost of each \emph{additional}
 identifier from $k = 2$ to $k = 8$: $448$ for (C) against $854$ for (A). (C)
@@ -2777,9 +2785,18 @@ work on the machine, so wall clock and cycles are not reported, and no claim in
 arm64, with both sides built against SuiteSparse:GraphBLAS v10.3.1; Linux and CI
 are unmeasured. The Rust engine's trunk has since moved to v10.5.0, which
 changes kernel selection and the iso-build rule of \S\ref{sec:cost} but no
-algorithm in this paper; nothing here has been re-measured against it, so the
-numbers should be read as of the commit under Availability rather than as of
-\texttt{main}.
+algorithm in this paper. We re-ran (C)'s half of the boundary fixture against
+it, and the answer is split: \emph{space and iteration are unmoved} --- $25.0$
+and $36.8$ bytes per edge, $24.3$ bytes per identifier in $me$, $163$ and $250$
+instructions per edge scanned, every one of them reproducing the reported figure
+to three digits --- while \emph{point reads and promotion are dearer}, an inline
+read going $566 \to 621$, a sentinel read $2{,}502 \to 2{,}938$ and a promotion
+$2{,}735 \to 2{,}965$. The entry charge for the multi-edge path therefore rises
+from $1{,}936$ to $2{,}317$ on the newer library. (A) was not re-run, so no
+\emph{ratio} in \S\ref{sec:eval} can be restated from this; what it establishes
+is that the structural claims --- bytes and scan cost --- survive the upgrade
+and the read constants do not. Every ratio here should still be read as of the
+commit under Availability rather than as of \texttt{main}.
 
 \emph{And the multiplicity distribution is an assumption throughout.} The
 premise that $\mu$ is dominated by $1$ --- which is what makes the common case
@@ -3001,7 +3018,7 @@ way: it was a quadratic in our implementation until we instrumented and fixed
 it, and even now it is about three times what the container design pays for the
 same logical change. The
 general lesson is less about tensors than about grain. Two of the attributions
-we made from whole-query measurements were wrong by factors of $1.8$ and $5.1$
+we made from whole-query measurements were wrong by factors of $1.6$ and $5.1$
 once the structures were measured as structures, always in the direction that
 flattered the conclusion we already had --- which is the argument for measuring
 at the boundary even when the engine-level number is the one a user feels.
@@ -3015,9 +3032,9 @@ commit \texttt{e5d4936}, the branch of PR \#2433, which is \texttt{main} plus
 this paper and the proofs. \texttt{master} carries the C implementation compared
 against as design (A), under \texttt{src/graph/tensor/}. An earlier revision of
 this paper cited a \texttt{fold-policy} branch at \texttt{6458a2a} and a
-\texttt{tensor-proof} branch at \texttt{0a10c93}; both have since been deleted,
-their work having landed on \texttt{main}, so a reader holding that PDF should
-look here rather than for those branches.
+\texttt{tensor-proof} branch at \texttt{0a10c93}. Both have since been deleted:
+the fold policy merged as PR \#2349 and the proofs are in this tree, so a reader
+holding that PDF should look on \texttt{main} rather than for those branches.
 
 The implementation is \texttt{Tensor} in
 \texttt{graph/src/graph/graphblas/tensor.rs}, with supporting code in

@@ -232,11 +232,15 @@ what was and was not measured.
 - **Linux and CI.** Everything is macOS/arm64, with both sides built against
   GraphBLAS 10.3.1. The engines' relative standing on the CI architecture is
   unmeasured.
-- **GraphBLAS 10.5.0.** Trunk moved from 10.3.1 to 10.5.0 after these
-  measurements (#2523), which regenerates every PreJIT kernel and changes the
-  iso-build rule the paper's space model leans on. Nothing has been re-measured
-  against it. Re-running the multiplicity sweep on 10.5.0 is the cheapest way to
-  find out whether any of the read/write columns moved.
+- **GraphBLAS 10.5.0, on the C side and at engine level.** Trunk moved from
+  10.3.1 to 10.5.0 after these measurements (#2523), which regenerates every
+  PreJIT kernel and changes the iso-build rule the paper's space model leans on.
+  (C)'s half of the boundary fixture *has* been re-run against it: space and
+  iteration reproduce to three digits (25.0 and 36.8 B/edge, 24.3 B/id, 163 and
+  250 instr/edge), while point reads and promotion are dearer (inline 566 → 621,
+  sentinel 2,502 → 2,938, promote 2,735 → 2,965), so the entry charge rises from
+  1,936 to 2,317. What remains unmeasured is the C side at 10.5.0 and the whole
+  engine-level multiplicity sweep, which is what any *ratio* would need.
 - **The live-bytes column's parse.** The space figures were collected through a
   `MEMORY MALLOC-STATS` parser whose whitespace split fused adjacent fixed-width
   fields at high allocation rates (#2492, since fixed). The failure mode is
