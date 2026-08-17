@@ -623,6 +623,10 @@ struct PendingEntry {
     entry: TelemetryEntry,
 }
 
+/// One distinct graph of a flush batch: a strong reference to it, and the key it is
+/// registered under once [`resolve_current_names`] has looked that up.
+type BatchGraph = (Arc<RwLock<ThreadedGraph>>, Option<Arc<str>>);
+
 /// Re-key every entry to the Redis key its graph is registered under *now*, dropping
 /// entries whose graph is no longer registered at all.
 ///
@@ -637,36 +641,51 @@ struct PendingEntry {
 /// One registry lock for the whole batch rather than one per entry: at flush rates the
 /// per-entry version was tens of thousands of acquisitions a second on a mutex that
 /// `register_graph`, `rename_graph`, `graph_free` and the pre-fork sync all need.
+///
+/// Called with the GIL held, so that the name this settles on and the keyspace
+/// [`key_holds_graph`] then checks it against cannot disagree: a `RENAME` runs on the
+/// main thread, which cannot run a command callback while the flusher holds the GIL.
+/// Resolving outside it left a window where a rename between resolution and the write
+/// made the confirmation fail, and the entry was dropped — the very case this exists
+/// to carry across a rename.
 fn resolve_current_names(deferred: &mut Vec<PendingEntry>) {
     // The distinct graphs of the batch — almost always one or two, so a linear scan
-    // beats hashing. Upgraded first: the address of a freed graph could otherwise be
-    // matched against a new graph that reused the allocation.
-    let mut graphs: Vec<(usize, Option<Arc<str>>)> = Vec::new();
+    // beats hashing. Each is *held*, not just noted: an address is only a valid
+    // identity for as long as the allocation behind it lives, and keeping a strong
+    // reference for the whole function is what stops one being freed and reused by
+    // another graph between the registry scan and the match below.
+    let mut graphs: Vec<BatchGraph> = Vec::new();
     for pe in deferred.iter() {
-        if let Some(arc) = pe.graph.upgrade() {
-            let ptr = arc.data_ptr() as usize;
-            if !graphs.iter().any(|(p, _)| *p == ptr) {
-                graphs.push((ptr, None));
-            }
+        let Some(arc) = pe.graph.upgrade() else {
+            continue;
+        };
+        if !graphs.iter().any(|(g, _)| g.data_ptr() == arc.data_ptr()) {
+            graphs.push((arc, None));
         }
     }
     if !graphs.is_empty() {
         let registry = GRAPH_REGISTRY.lock();
         for (name, arc) in registry.iter() {
-            let ptr = arc.data_ptr() as usize;
-            if let Some((_, slot)) = graphs.iter_mut().find(|(p, _)| *p == ptr) {
+            if let Some((_, slot)) = graphs
+                .iter_mut()
+                .find(|(g, _)| g.data_ptr() == arc.data_ptr())
+            {
                 *slot = Some(Arc::from(name.as_str()));
             }
         }
     }
     deferred.retain_mut(|pe| {
+        // Upgraded rather than compared as a raw address: a `Weak` whose graph has been
+        // freed still carries the address it had, and matching that against a live
+        // graph that reused the allocation would file this entry under someone else's
+        // name. Holding a strong reference is the proof the address still means us.
         let Some(arc) = pe.graph.upgrade() else {
             return false;
         };
-        let ptr = arc.data_ptr() as usize;
-        let Some((_, Some(name))) = graphs.iter().find(|(p, _)| *p == ptr) else {
-            // Not registered under any key: the graph was deleted, or flushed and
-            // replaced. Either way it has no stream to be written to.
+        let Some((_, Some(name))) = graphs.iter().find(|(g, _)| g.data_ptr() == arc.data_ptr())
+        else {
+            // Alive but registered under no key: deleted, or flushed and replaced.
+            // Either way it has no stream to be written to.
             return false;
         };
         if pe.graph_name != *name {
@@ -963,21 +982,11 @@ fn flusher_loop() {
             deferred.drain(..deferred.len() - DEFERRED_XADD_MAX);
         }
 
-        // Address each entry to the key its graph answers to now, and drop the entries
-        // whose graph is gone — the graph a query ran on is what an entry belongs to,
-        // and its key can have moved (`RENAME`) or been rebound to another graph
-        // (`FLUSHALL` then `RESTORE`) in the milliseconds since.
-        //
-        // Here, immediately before the write, rather than as entries are queued: the
-        // pause check below can hold a batch for a whole pause window, and a graph
-        // dropped or renamed during it would otherwise have its stream key recreated
-        // when the window closes. Outside the GIL block because it needs only the
-        // graph registry's own lock; the keyspace half of the check is below, where
-        // the GIL makes reading the keyspace legal.
-        resolve_current_names(&mut deferred);
-        // Nothing left to write: the whole batch was for graphs that have since gone.
-        // Worth its own check, because the alternative is taking the GIL to sort an
-        // empty vec.
+        // Entries whose graph has been dropped outright have nowhere to go. Checking it
+        // here costs one atomic load each and takes no lock at all, so a batch that is
+        // entirely dead — a graph deleted while its last queries were still queued —
+        // never reaches the point of acquiring the GIL to write nothing.
+        deferred.retain(|pe| pe.graph.strong_count() > 0);
         if deferred.is_empty() {
             continue;
         }
@@ -1015,6 +1024,19 @@ fn flusher_loop() {
                 // interleaving rather than a race, which is how `test_role_change_race`
                 // pins this behaviour.
                 //
+                // Address each entry to the key its graph answers to *now*, and drop the
+                // entries whose graph is registered under no key at all: the graph a
+                // query ran on is what an entry belongs to, and its key can have moved
+                // (`RENAME`) or been rebound to another graph (`FLUSHALL` then `RESTORE`)
+                // in the milliseconds since.
+                //
+                // Under the GIL, and immediately before the write, so that nothing can
+                // move between resolving a name and confirming it: the pause branch can
+                // hold a batch for a whole pause window, and every path that deletes or
+                // re-keys a graph runs on the main thread, which cannot execute a command
+                // callback while this thread holds the GIL.
+                resolve_current_names(&mut deferred);
+
                 // Group by graph so each stream key is opened and trimmed once per batch
                 // rather than once per entry. Sorting is enough: entries of one graph end
                 // up in one run, and being stable it keeps arrival order within a graph,

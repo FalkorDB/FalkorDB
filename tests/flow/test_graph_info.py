@@ -542,6 +542,19 @@ class testGraphInfo():
             self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no"), "OK")
         self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
 
+        # Take the baseline only once the stream has stopped growing. With logging off
+        # nothing new can be enqueued, so the stream reaches a fixed point — but an
+        # entry enqueued while it was still on (this class runs queries from threads
+        # two tests earlier) can still be in flight, and reading `n` before it lands
+        # blames the arrival on the config that was already off. Observed as a rare
+        # `2 == 1` here under a parallel run.
+        def settled():
+            before = self.conn.xlen(stream)
+            time.sleep(0.1)
+            return before == self.conn.xlen(stream)
+
+        pollUntil(settled, "the telemetry stream to stop growing")
+
         n = self.conn.xlen(stream)
         self.graph.query("RETURN 2")
         # the flusher wakes every 5ms; half a second is well past the point
@@ -580,6 +593,10 @@ class testGraphInfo():
         stream = StreamName(self.graph)
         self.conn.delete(stream)
 
+        # restored rather than reset to the default, so this test cannot quietly
+        # change the cap for whatever runs after it
+        previous = self.db.config_get("MAX_INFO_QUERIES")
+
         self.env.assertEqual(
             self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", "0"), "OK")
         self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 0)
@@ -594,7 +611,7 @@ class testGraphInfo():
             xlen = self.conn.xlen(stream) if self.conn.exists(stream) else 0
             self.env.assertLess(xlen, 200)
         finally:
-            self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", "1000")
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", str(previous))
             self.conn.delete(stream)
 
 class testGraphInfoStaleEntry():
@@ -639,18 +656,45 @@ class testGraphInfoStaleEntry():
            C does: its cron task takes the stream name from the `GraphContext`, and
            `GraphContext_Rename` deletes the old stream and rebuilds that name.
            Dropping the entry instead loses every query in flight across a blue/green
-           key swap."""
-        self.conn.flushall()
-        g = self.db.select_graph("before")
-        g.query("CREATE (:N {v: 1})")          # queues an entry naming "before"
-        self.conn.rename("before", "after")    # deletes telemetry{before}
-        pollUntil(lambda: self.conn.type("telemetry{after}") == "stream",
-                  "the in-flight entry to be written under the new key")
-        self.env.assertEqual(self.conn.xlen("telemetry{after}"), 1)
-        # the stream the rename deleted stays deleted
-        self.env.assertEqual(self.conn.type("telemetry{before}"), "none")
-        keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
-        self.env.assertEqual(keys, ["after", "telemetry{after}"])
+           key swap.
+
+           The query and the `RENAME` are pipelined, because "in flight" is a race the
+           test has to win: the entry is written a linger window (5ms) after the query
+           finishes, so a client round trip in between can lose it — the entry then
+           lands in telemetry{before} and the rename deletes it, leaving nothing to
+           follow. Pipelining removes the round trip, leaving only the microseconds
+           Redis takes to unblock the client, and the attempt is retried on the rare
+           occasion that is not enough. The invariant that holds either way — that the
+           stream the rename deleted stays deleted — is asserted on every attempt."""
+
+        attempts = 20
+        for attempt in range(attempts):
+            self.conn.flushall()
+            before, after = f"before{attempt}", f"after{attempt}"
+
+            pipe = self.conn.pipeline(transaction=False)
+            pipe.execute_command("GRAPH.QUERY", before, "CREATE (:N {v: 1})")
+            pipe.rename(before, after)
+            pipe.execute()
+
+            # well past the flusher's window: whatever was going to be written, was
+            time.sleep(0.5)
+
+            # the stream the rename deleted stays deleted, whoever won the race
+            self.env.assertEqual(self.conn.type(f"telemetry{{{before}}}"), "none")
+
+            keys = sorted(k.decode() if isinstance(k, bytes) else k
+                          for k in self.conn.keys("*"))
+            if keys == [after, f"telemetry{{{after}}}"]:
+                # the entry was still queued at the rename and followed the graph
+                self.env.assertEqual(self.conn.xlen(f"telemetry{{{after}}}"), 1)
+                return
+            # the flusher got there first, so there was nothing in flight to carry
+            self.env.assertEqual(keys, [after])
+
+        raise AssertionError(
+            f"in {attempts} attempts the flusher was never still holding an entry when "
+            "the rename landed, so the behaviour under test was never exercised")
 
 class testGraphInfoCmdInfoDisabled():
     """`CMD_INFO no` at *load time* must stop logging finished queries.
