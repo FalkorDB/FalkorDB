@@ -323,7 +323,7 @@ fn tensor_cost_c_comparable() {
     const REPS: u32 = 3;
     const READS: u64 = 1_000_000;
 
-    for k in [1u64, 2] {
+    for k in [1u64, 2, 4, 8, 16] {
         let t = built_diag(k);
         let edges = t.edge_count();
         println!(
@@ -406,6 +406,51 @@ fn tensor_cost_c_comparable() {
                 "full iteration /edge (pair-order)",
                 b.fmt_instr(),
                 b.us * 1_000.0
+            );
+        }
+        // Transposed iteration. `mt` carries structure only, so each incoming
+        // pair costs a forward `eff_get` to recover its ids — the deliberate
+        // price of not storing every id twice. This is the row the paper had
+        // listed as unmeasured.
+        for _ in 0..REPS {
+            let c = measure(edges, || {
+                let mut n = 0u64;
+                for (_, _, id) in t.iter(0, u64::MAX, true) {
+                    n = n.wrapping_add(id);
+                }
+                std::hint::black_box(n);
+            });
+            println!(
+                "{:>34}  {:>12}  {:>10.1}",
+                "full iteration /edge (transposed)",
+                c.fmt_instr(),
+                c.us * 1_000.0
+            );
+        }
+        // Point reads in a scattered order rather than ascending. Every read
+        // figure above walks pairs sequentially and warm, which flatters any
+        // design whose next lookup is adjacent to the last; this reads the same
+        // pairs through an order-`XN` multiplicative stride, so consecutive
+        // probes land far apart in the index arrays without changing the set of
+        // pairs read or their count.
+        for _ in 0..REPS {
+            let c = measure(READS, || {
+                let mut acc = 0u64;
+                let mut p = 1u64;
+                for _ in 0..READS {
+                    // 48271 is a primitive root mod 2^31-1 (MINSTD); reduced
+                    // into range it visits pairs in a scattered, repeatable order.
+                    p = p.wrapping_mul(48_271) % 2_147_483_647;
+                    let q = p % XN;
+                    acc = acc.wrapping_add(t.get(q, q).next().unwrap_or(0));
+                }
+                std::hint::black_box(acc);
+            });
+            println!(
+                "{:>34}  {:>12}  {:>10.1}",
+                "point read + first id (scattered)",
+                c.fmt_instr(),
+                c.us * 1_000.0
             );
         }
     }

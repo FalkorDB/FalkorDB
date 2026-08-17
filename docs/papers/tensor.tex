@@ -2495,6 +2495,107 @@ boundary; there it gives $1{,}574$ instructions per pair on one fixture and
 $1{,}571$ on an unrelated geometry, agreeing to $0.2\%$. The surviving
 engine-level estimate, $+2{,}448$, is $56\%$ high.
 
+\subsection{Fan-out, transposed iteration, and access order}
+\label{sec:evalfanout}
+
+Three quantities \S\ref{sec:limits} listed as unmeasured are measurable now that
+(C)'s boundary harness is in the tree, and one of them changes a number this
+paper quotes. All of this subsection is (C) alone, on the diagonal fixture of
+\S\ref{sec:evalboundary} extended to $k \in \{1,2,4,8,16\}$, and on
+SuiteSparse:GraphBLAS v10.5.0 rather than the v10.3.1 of
+Table~\ref{tab:evalboundary} --- so read it against itself, not against (A)'s
+column. Three repetitions, median reported, spread under $0.1\%$ on
+instructions.
+
+\begin{table}[!ht]
+\centering
+\small
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+per edge or per read, instructions & $k=1$ & $k=2$ & $k=4$ & $k=8$ & $k=16$ \\
+\midrule
+point read, first id only        & $592$ & $2{,}684$ & $2{,}684$ & $2{,}684$ & $2{,}684$ \\
+point read, all ids              & $624$ & $2{,}940$ & $3{,}188$ & $3{,}684$ & $4{,}676$ \\
+\midrule
+iteration, \textsc{IterEdges}    & $163$ & $250$ & $201$ & $176$ & $163$ \\
+iteration, pair order            & $195$ & $1{,}270$ & $716$ & $440$ & $301$ \\
+iteration, transposed            & $786$ & $1{,}566$ & $864$ & $514$ & $338$ \\
+\quad transposed / forward       & $4.8$ & $6.3$ & $4.3$ & $2.9$ & $2.1$ \\
+\midrule
+point read, scattered order      & $603$ & $2{,}693$ & $2{,}693$ & $2{,}693$ & $2{,}693$ \\
+\quad ns/read, sequential        & $25.5$ & $133$ & $134$ & $140$ & $136$ \\
+\quad ns/read, scattered         & $26.1$ & $199$ & $216$ & $240$ & $258$ \\
+\midrule
+bytes per edge                   & $25.0$ & $36.8$ & $22.9$ & $16.0$ & $12.5$ \\
+bytes per id in $me$             & ---   & $24.3$ & $16.7$ & $12.8$ & $10.9$ \\
+\bottomrule
+\end{tabular}
+\caption{Design (C) at the boundary as fan-out grows. The entry charge for the
+multi-edge path is flat in $k$ to four figures; the per-identifier slope is
+$124$ instructions, well under the $448$ the engine-level decomposition
+attributed to it. Transposed iteration is measured here for the first time and is
+the design's most expensive read shape at low $k$. Scattered access moves
+instruction counts by under $2\%$ and wall clock by up to $89\%$.}
+\label{tab:evalfanout}
+\end{table}
+
+\paragraph{The per-identifier slope was overstated too, by $3.6\times$.}
+\S\ref{sec:evaldecomp} put (C)'s cost per additional identifier at $448$
+instructions, from an engine-level fit over $k \in [2,8]$. At the boundary the
+same slope is $124$. This is the \emph{third} instance of the pattern
+\S\ref{sec:evalboundary} reports twice: an engine-level attribution to edge
+storage, measured against the structure itself, comes out high --- here by
+$3.6\times$, where the entry charge came out high by $1.6\times$ for (C) and
+$5.1\times$ for (A). We had presented that pattern as a caveat about two
+numbers; with a third instance and no counterexample, the honest generalisation
+is that engine-level differencing systematically overstates what edge storage
+costs, because the pipeline work it fails to hold constant scales with the
+quantity being varied. Note which direction this cuts: the slope is (C)'s
+advantage over (A) in Table~\ref{tab:evaldecomp}, so a smaller true slope makes
+the crossover above $k = 2$ steeper, not shallower --- but we cannot say by how
+much, because (A)'s slope was measured at engine level too and is presumably
+overstated by its own factor.
+
+\paragraph{The entry charge does not grow with fan-out, and iteration returns to
+its inline cost.} Reading the first identifier of a promoted pair costs $2{,}684$
+instructions at $k = 2$ and the same $2{,}684$ at $k = 16$: the sentinel probe
+plus the first row entry is flat, which is what hypersparse row access is
+supposed to buy and the same invariance \S\ref{sec:evaldecomp} found against
+$|me|$. Iteration is the more interesting row. It peaks at $k = 2$ ($250$ per
+edge) --- the worst case, one row scan amortised over two identifiers --- and
+falls back to exactly the all-inline $163$ by $k = 16$. So (C)'s iteration
+deficit against (A) ($1.09\times$ at $k=1$, $1.34\times$ at $k=2$) is a
+low-multiplicity phenomenon that the design predicted and that closes as rows
+lengthen. \S\ref{sec:evalboundary}'s verdict --- that (C)'s case on scans is that
+it does not lose --- was drawn from the two worst columns of this row.
+
+\paragraph{Transposed iteration costs what not duplicating identifiers costs.}
+\S\ref{sec:components} trades one point lookup per incoming pair for not storing
+every identifier twice, and this is that trade priced: $786$ instructions per
+edge against forward iteration's $163$ at $k = 1$, a factor of $4.8$. It
+amortises as fan-out grows --- the lookup is per \emph{pair}, so at $k = 16$ it
+is $2.1\times$ --- but at the multiplicity the design is built for it is the
+most expensive read shape (C) has, and a workload dominated by incoming-edge
+traversal is one this design serves worst. What it buys is roughly half the
+identifier storage; whether that is the right trade is a question about
+workloads, and we have not measured a design that makes the other choice.
+
+\paragraph{Access order barely moves instructions and moves time a great deal.}
+\S\ref{sec:limits} warns that all reads here are warm and sequential, and that a
+design trading a pointer dereference for a second matrix probe is exactly the
+kind whose ranking could change under a different access order. Reading the same
+pairs through a multiplicative stride instead of ascending answers half of that.
+Instruction counts move by $1.9\%$ at $k = 1$ and $0.3\%$ above it --- the work
+is the same work. Wall clock moves by up to $89\%$, and increasingly with $k$
+($1.5\times$ at $k=2$, $1.9\times$ at $k=16$), because a longer row is more to
+miss on. Two conclusions, pulling opposite ways. The instruction-count metric
+this paper relies on is \emph{robust} to access order, which is a point in its
+favour and one we could not previously claim. And it is therefore blind to a real
+effect: the cache behaviour that separates these designs in time is invisible in
+the metric we chose, so the ranking question \S\ref{sec:limits} raises remains
+open and would need cycles on a quiet machine to settle.
+
 \subsection{Space: becoming multi-edge, and a model for design (B)}
 \label{sec:evalspace}
 

@@ -234,11 +234,25 @@ what was and was not measured.
   bound or a model over measured components. Implementing it — Boolean adjacency
   plus an always-materialised overflow matrix — is the only way to replace them,
   and it is a research prototype rather than a change to ship.
-- **Fan-out beyond `k = 2` at the data-structure boundary** for reads and
-  iteration. Memory is covered to `k = 16`; reads are not.
-- **Cold-cache and random access order.** Every point read measured walks pairs
-  sequentially and warm. Real traversals do neither.
-- **Transposed iteration**, and on the C side `Tensor_ClearElements`,
+- ~~**Fan-out beyond `k = 2` at the data-structure boundary**~~ — **done** for
+  (C), `k` to 16. Two results: the entry charge is flat in `k` to four figures
+  (2,684 instructions at `k` = 2 and at `k` = 16), and the per-identifier slope is
+  **124** instructions against the 448 the engine-level decomposition attributed
+  to it — a third instance of engine-level differencing overstating edge storage.
+  Iteration peaks at `k` = 2 (250/edge) and returns to the all-inline 163 by
+  `k` = 16. **Still open:** the same sweep on (A), which is what any *ratio* past
+  `k` = 2 would need.
+- ~~**Cold-cache and random access order**~~ — **partly done**. Scattered reads
+  (multiplicative stride over the same pairs) move instruction counts by 1.9% at
+  `k` = 1 and 0.3% above, and wall clock by up to 89%, rising with `k`. So the
+  instruction metric is robust to access order — worth knowing — and blind to the
+  cache effect that actually separates designs in time. **Still open:** genuine
+  cold-cache (this is warm-but-scattered), and cycles on a quiet host.
+- ~~**Transposed iteration**~~ — **done** for (C): 786 instructions/edge against
+  forward iteration's 163 at `k` = 1, a factor of 4.8 falling to 2.1 at `k` = 16.
+  That is the price of `mt` carrying structure only, and it makes
+  incoming-edge-dominated traversal the shape this design serves worst. **Still
+  open:** on the C side, `Tensor_ClearElements`,
   `Tensor_RemoveElements_Flat`, `Tensor_SetEdges`, row and column degree.
 - **Wall clock and cycles.** Some runs shared the machine, so no claim in the
   paper is a latency claim. Re-running a quiet host would let that change.
