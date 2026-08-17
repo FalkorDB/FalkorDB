@@ -92,10 +92,11 @@ def create_constraints(
     """Create the unique constraints and wait for them to become OPERATIONAL.
 
     FalkorDB rejects `CREATE CONSTRAINT ... ASSERT`, so these go through
-    GRAPH.CONSTRAINT, which returns PENDING and validates in the background. A
-    constraint still PENDING is not yet enforcing anything, and one that ends
-    FAILED means the data violated it — both would otherwise pass unnoticed,
-    since the create call itself succeeded.
+    GRAPH.CONSTRAINT, which replies PENDING and validates in the background —
+    reporting itself as `UNDER CONSTRUCTION` in `db.constraints()` until it
+    settles. A constraint still under construction is not yet enforcing
+    anything, and one that ends FAILED means the data violated it; both would
+    otherwise pass unnoticed, since the create call itself succeeded.
     """
     for label in schema.UNIQUE_CONSTRAINTS:
         try:
@@ -129,7 +130,15 @@ def create_constraints(
 
 
 def _constraint_states(client: BenchClient) -> tuple[list[str], list[str]]:
-    """(pending, failed) constraint labels, from `db.constraints()`."""
+    """(pending, failed) constraint labels, from `db.constraints()`.
+
+    The engine's three statuses are `UNDER CONSTRUCTION`, `OPERATIONAL` and
+    `FAILED` (`ConstraintStatus`'s Display impl). It is *not* `PENDING` — that
+    is only what the `GRAPH.CONSTRAINT CREATE` call itself replies. An
+    in-progress status can also carry a progress prefix, as in
+    `[Indexing] 3/9: UNDER CONSTRUCTION`, so match on substring rather than
+    equality or the poll would call a healthy constraint failed.
+    """
     res = client.graph.ro_query("CALL db.constraints()")
     headers = [h[1] if isinstance(h, (list, tuple)) else h for h in (res.header or [])]
     try:
@@ -141,9 +150,9 @@ def _constraint_states(client: BenchClient) -> tuple[list[str], list[str]]:
     failed: list[str] = []
     for row in res.result_set:
         status = str(row[status_i]).upper()
-        if status == "PENDING":
+        if "UNDER CONSTRUCTION" in status:
             pending.append(str(row[label_i]))
-        elif status != "OPERATIONAL":
+        elif "OPERATIONAL" not in status:
             failed.append(f"{row[label_i]} ({status})")
     return pending, failed
 
@@ -177,6 +186,12 @@ def _load_nodes(client: BenchClient, rel: Path, node: schema.NodeFile, *, echo: 
     return created
 
 
+#: The pipe-separated dataset read with a header row. `FIELDTERMINATOR` is
+#: standard Cypher and goes *after* `AS row`; FalkorDB has no `DELIMITER`
+#: keyword (`Invalid input 'DELIMITER': expected From`).
+_LOAD_PREFIX = "LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|' "
+
+
 def _assert_types_covered(
     client: BenchClient,
     node: schema.NodeFile,
@@ -188,11 +203,13 @@ def _assert_types_covered(
     Without this an unrecognised `type` value would simply not be loaded, and
     the first symptom would be a query quietly returning fewer rows.
     """
-    res = client.graph.query(
-        "LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row "
-        f"RETURN collect(DISTINCT row.{node.type_column})",
-        {"file": _url(rel, node.file)},
-    )
+    try:
+        res = client.graph.query(
+            f"{_LOAD_PREFIX}WITH row.{node.type_column} AS t RETURN collect(DISTINCT t)",
+            {"file": _url(rel, node.file)},
+        )
+    except ResponseError as e:
+        raise LoadError(f"{node.file}: {e}") from e
     found = {str(v) for v in (res.result_set[0][0] or [])}
     if unknown := found - known:
         raise LoadError(f"{node.file}: unmapped {node.type_column} value(s): {sorted(unknown)}")
@@ -230,7 +247,7 @@ def _run_load(
     compared against the rows it was actually supposed to create.
     """
     url = _url(rel, name)
-    prefix = "LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row "
+    prefix = _LOAD_PREFIX
     if where:
         prefix += f"WITH row WHERE {where} "
     try:
@@ -239,7 +256,9 @@ def _run_load(
     except ResponseError as e:
         raise LoadError(f"{name}: {e}") from e
 
-    created = res.nodes_created + res.relationships_created
+    # The client reports these as floats; keep them integral so a count reads
+    # as "1,460" rather than "1,460.0" and compares exactly against count(row).
+    created = int(res.nodes_created) + int(res.relationships_created)
     if created != expected:
         raise LoadError(
             f"{name}: created {created} of {expected} rows — "

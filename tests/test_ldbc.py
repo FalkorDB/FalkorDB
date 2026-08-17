@@ -389,7 +389,7 @@ def test_load_csv():
     for file in node_files:
         common.g.query(f"CREATE INDEX FOR (n:{file['label']}) ON (n.id)")
         query = f"""
-            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
+            LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|'
             RETURN count(row)
             """
         res = common.g.query(
@@ -403,7 +403,7 @@ def test_load_csv():
             f"{key}: {value}" for key, value in file["properties"].items()
         )
         query = f"""
-            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
+            LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|'
             CREATE (:{file['label']} {{{properties_str}}})
             """
         res = common.g.query(
@@ -422,7 +422,7 @@ def test_load_csv():
                 f"data/{base_path}/{file['file']}", file["from_id"], file["to_id"]
             )
         query = f"""
-            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
+            LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|'
             RETURN count(row)
             """
         res = common.g.query(
@@ -436,7 +436,7 @@ def test_load_csv():
             f"{key}: {value}" for key, value in file["properties"].items()
         )
         query = f"""
-            LOAD CSV WITH HEADERS DELIMITER '|' FROM $file AS row
+            LOAD CSV WITH HEADERS FROM $file AS row FIELDTERMINATOR '|'
             MATCH (f:{file['from_label']} {{id: toInteger(row.`{file['from_id']}`)}})
             WITH f, row
             MATCH (t:{file['to_label']} {{id: toInteger(row.`{file['to_id']}`)}})
