@@ -218,68 +218,59 @@ not of the byte stream: framing, lengths and endianness are still outside. That
 is the weaker half of what this item originally asked for, and deliberately so —
 the half that carries the safety argument is the validation, and it is done.
 
-## 4. Demotion policy: is hysteresis worth it?
+## 4. Demotion policy: hysteresis — measured, and the upside is small
 
-**Status:** open, and now measurable. It was blocked: while a batch's demotions
-cost more than linearly in their number, any hysteresis measurement would have
-measured that defect instead of the policy. With the defect fixed and the
-residual transition a constant, the comparison is worth running.
+**Status:** answered without implementing it. `graph/.../oscillation_bench.rs`.
 
-**Problem.** Demotion is eager — the instant a pair drops to one edge its id
-returns inline and its `me` row empties. A workload oscillating across the
-one-to-two boundary pays a promotion and a demotion per oscillation.
+Eager demotion means a workload oscillating across the one-to-two boundary pays a
+promotion *and* a demotion per cycle. The question was whether deferring demotion
+to end-of-transaction is worth the space. The measurement that decides it is what
+one oscillation costs today, split into the part hysteresis could remove and the
+part it could not — 50,000 pairs, three repetitions, spread under 0.1%:
 
-**Design.** Defer demotion to end of transaction: mark the pair, keep its ids in
-`me`, and settle at commit. A pair that re-promotes within the same transaction
-then pays nothing. Cost is space — an `me` row outliving its need — and one more
-piece of per-transaction state. Note that item 1 removed the last such cache
-rather than encapsulating it, so the bar for adding one back is that the
-quantity genuinely cannot be derived from `me`; a deferred-demotion set cannot
-be, which is what would justify it.
+| phase | instr/pair |
+| --- | --- |
+| promote (+1 edge, crosses the boundary) | 2,967 |
+| demote (−1 edge, crosses back) | 6,518 |
+| **full oscillation** | **9,486** |
+| control: +1/−1 on 3-edge pairs, no crossing | 7,106 |
+| **transition-attributable** | **2,380** |
 
-**Acceptance.** A Cypher script driving pairs across the boundary repeatedly, at
-several oscillation rates, measuring instructions per cycle and resident bytes
-for eager against deferred. Also measure the *non*-oscillating workloads, since
-deferral must not cost anything there. The honest outcome may be "eager wins";
-the paper says it is not obvious which does, and that remains true.
+**So hysteresis can save at most 2,380 instructions per oscillation — 25% of the
+cycle — and costs 46.2 B per oscillating pair held to commit.** Three quarters of
+an oscillation is the delete machinery, which hysteresis does not touch: even the
+non-crossing control delete costs 5,894.
 
----
+**Recommendation: don't build it yet.** A 25% ceiling on a workload that has to
+oscillate hard to matter, against a permanent space cost and a new piece of
+per-transaction state, is a poor trade. Revisit if a real workload shows up that
+oscillates; the bench is committed, so re-deriving the number is one command.
 
-## 5. Explain the two-state point-read cost (issue #2430)
+## 5. The two-state point-read cost (#2430) — localised, outside edge storage
 
-**Status:** open, cause unknown.
+**Status:** cause not named, but the search space is cut decisively.
+`graph/.../issue_2430_bench.rs`.
 
-**Problem.** A bound multi-edge point read lands in one of two cost states —
-about 4.35k or about 5.5k instructions per pair — selected non-monotonically by
-graph size, crossing at least twice between 1,000 and 121,000 populated pairs.
-The low state is at parity with the C engine; the high state is 1.27–1.29x it.
-Both of the largest sizes measured sit in the high state, so this is where an
-ordinary graph lands. Three hypotheses are refuted in the issue: scaling with
-`|me|`, a lingering delta the read path latches but never flushes, and simply
-walking more ids.
+Both remaining candidates were tested and one is refuted:
 
-**Next candidates, in order.** A storage-format or capacity threshold inside
-GraphBLAS is the obvious one — matrix dimensions step with node capacity, and
-sparse/hypersparse selection depends on the ratio of populated vectors to
-dimension, so print the sparsity status and the hyper-switch for every matrix on
-the read path at both a low-state and a high-state size and diff them.
+**Candidate 1, a GraphBLAS format or capacity threshold: refuted.** Every matrix
+on the read path keeps the same storage format across every size where the
+engine-level cost is known to flip — `m` sparse, `dp`/`dm`/`me` hypersparse at
+1,000 / 11,000 / 41,000 / 88,000 / 121,000 / 160,000 pairs. Nothing switches.
 
-Both tools this needs now exist, which they did not when this was written:
-`Matrix::sparsity_status()` (added by #2523) returns
-`hypersparse`/`sparse`/`bitmap`/`full` directly, and `tensor_cost_bench.rs` is in
-the tree, so a point read can be reproduced without a query pipeline around it —
-which is also the cheapest way to tell whether the extra cost is inside the
-tensor at all. Do that second step first if the sparsity diff comes back empty:
-the paper's boundary numbers say a sentinel read is a flat cost, so a two-state
-*engine-level* read with a one-state boundary read would locate the defect
-outside edge storage and change who owns the issue.
+**Candidate 2, something outside edge storage: confirmed.** The same read with no
+query pipeline around it is **flat at 2,769 instructions per pair across all six
+sizes** — including the sizes the issue reports as the low state (~4.35k) and the
+high state (~5.5k). The tensor's read does not have two states.
 
-**Acceptance.** Either a cause and a fix that puts the high-state sizes at the
-low-state cost, or a documented explanation of why the two states are inherent.
-"Reproducible, cause unknown" is where it stands; naming the cause is progress
-even without a fix.
+**So the defect is not in edge storage,** and #2430 should move to whoever owns
+the pipeline around a bound point read. That also retires the paper's worry that
+Table 4's lookup column might be a cost of inline-first representation: it is not,
+and now for a second and stronger reason than §evaldecomp gave.
 
----
+**What is still open:** *which* pipeline stage, and why the selection is
+non-monotonic in graph size. Re-run the engine-level table with the stage
+boundaries instrumented; the tensor can be excluded from the search.
 
 ## 6. What the evaluation still does not settle
 
@@ -290,40 +281,44 @@ what was and was not measured.
   bound or a model over measured components. Implementing it — Boolean adjacency
   plus an always-materialised overflow matrix — is the only way to replace them,
   and it is a research prototype rather than a change to ship.
-- ~~**Fan-out beyond `k = 2` at the data-structure boundary**~~ — **done** for
-  (C), `k` to 16. Two results: the entry charge is flat in `k` to four figures
-  (2,684 instructions at `k` = 2 and at `k` = 16), and the per-identifier slope is
-  **124** instructions against the 448 the engine-level decomposition attributed
-  to it — a third instance of engine-level differencing overstating edge storage.
-  Iteration peaks at `k` = 2 (250/edge) and returns to the all-inline 163 by
-  `k` = 16. **Still open:** the same sweep on (A), which is what any *ratio* past
-  `k` = 2 would need.
+- ~~**Fan-out beyond `k = 2` at the data-structure boundary**~~ — **done, both
+  sides, and it inverted a claim.** The engine-level decomposition fitted 448
+  instructions per additional id for (C) against 854 for (A), and concluded (C)
+  walks a row more cheaply than (A) walks a container. At the boundary the slopes
+  are **124 for (C) and 33 for (A)** — both engine-level figures high, by 3.6x and
+  26x, so their *ratio* came out backwards. There is no crossover: (C)'s read is
+  3.8–3.9x (A)'s at every `k ≥ 2` measured. This is the third instance of
+  engine-level differencing overstating a storage cost and the first where the
+  error flips an ordering, which is why the paper now states it as a limit of the
+  method rather than a caveat about two numbers.
+- ~~**Transposed iteration**~~ — **done, both sides.** (C) 786 instr/edge against
+  (A) 562 at `k` = 1 (1.40x), and 3.7–4.0x for every `k ≥ 2`. That is the price of
+  `mt` carrying structure only, and it makes incoming-edge-dominated traversal the
+  shape this design serves worst.
 - ~~**Cold-cache and random access order**~~ — **partly done**. Scattered reads
   (multiplicative stride over the same pairs) move instruction counts by 1.9% at
   `k` = 1 and 0.3% above, and wall clock by up to 89%, rising with `k`. So the
   instruction metric is robust to access order — worth knowing — and blind to the
   cache effect that actually separates designs in time. **Still open:** genuine
   cold-cache (this is warm-but-scattered), and cycles on a quiet host.
-- ~~**Transposed iteration**~~ — **done** for (C): 786 instructions/edge against
-  forward iteration's 163 at `k` = 1, a factor of 4.8 falling to 2.1 at `k` = 16.
-  That is the price of `mt` carrying structure only, and it makes
-  incoming-edge-dominated traversal the shape this design serves worst. **Still
-  open:** on the C side, `Tensor_ClearElements`,
-  `Tensor_RemoveElements_Flat`, `Tensor_SetEdges`, row and column degree.
+- **The C-side entry points** `Tensor_ClearElements`, `Tensor_RemoveElements_Flat`,
+  `Tensor_SetEdges`, row and column degree remain unmeasured. The harness now
+  builds and runs from a `master` worktree plus the shipped archive, so adding
+  them is a C edit and a rebuild, not a setup problem.
 - **Wall clock and cycles.** Some runs shared the machine, so no claim in the
   paper is a latency claim. Re-running a quiet host would let that change.
 - **Linux and CI.** Everything is macOS/arm64, with both sides built against
   GraphBLAS 10.3.1. The engines' relative standing on the CI architecture is
   unmeasured.
-- **GraphBLAS 10.5.0, on the C side and at engine level.** Trunk moved from
-  10.3.1 to 10.5.0 after these measurements (#2523), which regenerates every
-  PreJIT kernel and changes the iso-build rule the paper's space model leans on.
-  (C)'s half of the boundary fixture *has* been re-run against it: space and
-  iteration reproduce to three digits (25.0 and 36.8 B/edge, 24.3 B/id, 163 and
-  250 instr/edge), while point reads and promotion are dearer (inline 566 → 621,
-  sentinel 2,502 → 2,938, promote 2,735 → 2,965), so the entry charge rises from
-  1,936 to 2,317. What remains unmeasured is the C side at 10.5.0 and the whole
-  engine-level multiplicity sweep, which is what any *ratio* would need.
+- **GraphBLAS versions are not aligned across the two sides.** Trunk moved to
+  10.5.0 (#2523). (C)'s boundary fixture has been re-run against it — space and
+  iteration reproduce to three digits, point reads and promotion are dearer
+  (inline 566 → 621, sentinel 2,502 → 2,938, promote 2,735 → 2,965). The C side's
+  shipped archive is built against **10.4.0**, not the 10.3.1 the paper's Table 8
+  cites, and its rows reproduce that table to within 1%, so the minor version is
+  not what moves those numbers. Aligning both sides on one version would need a
+  full C rebuild against 10.5.0 and is the remaining gap for any cross-version
+  claim. **Also still open:** the whole engine-level multiplicity sweep on 10.5.0.
 - **The live-bytes column's parse — re-measured, and it holds.** The space
   figures were collected through a `MEMORY MALLOC-STATS` parser whose whitespace
   split fused adjacent fixed-width fields at high allocation rates (#2492, since

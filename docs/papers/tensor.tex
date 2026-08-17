@@ -2189,15 +2189,22 @@ read, $2{,}583$ against $3{,}576$ ($0.72$), which is the single-edge claim
 measured at the read path rather than inferred from a query. (C)'s charge for
 taking the multi-edge path \emph{at all} is about twice (A)'s, $1{,}993$
 against $1{,}013$ --- a real cost of routing through a second matrix instead of
-dereferencing a tagged pointer. And (C)'s cost per additional identifier is
-about half (A)'s, $448$ against $854$, because scanning a hypersparse row is
-cheaper per identifier than walking a container.
+dereferencing a tagged pointer. And (C)'s cost per additional identifier comes out at
+about half (A)'s, $448$ against $854$ --- which \S\ref{sec:evalfanout} measures
+at the boundary and finds \emph{inverted}: $124$ for (C) against $33$ for (A).
+Both engine-level slopes are high, and not by the same factor, so their ratio is
+not merely imprecise but backwards. The two rows below are reported as measured
+and should be read with that correction in hand.
 
-Those numbers arrange themselves neatly. (C)'s inline advantage, $993$
-instructions, almost exactly funds its excess fixed charge, $980$; the two
-cancel at $k = 2$ ($4{,}576$ against $4{,}589$, parity to $0.3\%$), and from
-$k = 3$ upward the slope advantage compounds and (C) wins outright --- $0.92$
-at $k = 3$, $0.75$ at $k = 8$. We also checked that the fixed charge is not
+Those numbers arrange themselves neatly, which is part of why we believed them.
+(C)'s inline advantage, $993$ instructions, almost exactly funds its excess fixed
+charge, $980$; the two cancel at $k = 2$ ($4{,}576$ against $4{,}589$, parity to
+$0.3\%$), and from $k = 3$ upward the apparent slope advantage compounds into an
+outright win --- $0.92$ at $k = 3$, $0.75$ at $k = 8$. That crossover is an
+artifact: \S\ref{sec:evalfanout} finds no crossover at the boundary, where (C)'s
+read stays $3.8$--$3.9\times$ (A)'s at every $k \ge 2$. A tidy arithmetic
+coincidence at engine level turns out not to survive measurement of the
+structures. We also checked that the fixed charge is not
 secretly a function of the overflow matrix's size, by reading the same
 $1{,}000$ two-edge pairs while growing $|me|$ $41\times$, from $2{,}000$ to
 $82{,}000$ identifiers: (C) went $4{,}633 \to 4{,}552$ and (A) went
@@ -2459,11 +2466,12 @@ which part of the curve each measures. The boundary's $1 \to 2$ jump is the
 \emph{entry} charge for the multi-edge path --- $+1{,}936$ for (C) against
 $+198$ for (A) --- and the boundary did not measure $k > 2$, so entry is all it
 captures. The decomposition's slope is the cost of each \emph{additional}
-identifier from $k = 2$ to $k = 8$: $448$ for (C) against $854$ for (A). (C)
-pays a large entry and then walks cheaply; (A) pays a small entry and then walks
-expensively. The crossover is what the decomposition already reported, and the
-boundary locates its left endpoint far lower than engine-level measurement could
-see.
+identifier, which at engine level read $448$ for (C) against $854$ for (A) ---
+(C) paying a large entry and then walking cheaply. \S\ref{sec:evalfanout}
+measures both slopes at the boundary and reverses them, $124$ against $33$: (C)
+pays a large entry \emph{and} walks about four times more expensively per
+identifier. So the two grains do not compose into a crossover; the crossover was
+the engine-level fit's, and it is not there.
 
 \paragraph{The scan advantage in Table~\ref{tab:evalread} is not edge storage
 either.} Iteration per edge costs (C) $163$ instructions against (A)'s $149$ at
@@ -2509,88 +2517,84 @@ engine-level estimate, $+2{,}448$, is $56\%$ high.
 \subsection{Fan-out, transposed iteration, and access order}
 \label{sec:evalfanout}
 
-Three quantities \S\ref{sec:limits} listed as unmeasured are measurable now that
-(C)'s boundary harness is in the tree, and one of them changes a number this
-paper quotes. All of this subsection is (C) alone, on the diagonal fixture of
-\S\ref{sec:evalboundary} extended to $k \in \{1,2,4,8,16\}$, and on
-SuiteSparse:GraphBLAS v10.5.0 rather than the v10.3.1 of
-Table~\ref{tab:evalboundary} --- so read it against itself, not against (A)'s
-column. Three repetitions, median reported, spread under $0.1\%$ on
-instructions.
+Three quantities \S\ref{sec:limits} listed as unmeasured are measurable at the
+boundary on both sides. One of them corrects a claim \S\ref{sec:evaldecomp}
+makes, and corrects it against us.
+
+The fixture is \S\ref{sec:evalboundary}'s diagonal, extended to
+$k \in \{1,2,4,8,16\}$, three repetitions, median reported, instruction spread
+under $0.2\%$. (C) runs on SuiteSparse:GraphBLAS v10.5.0 and (A) on the v10.4.0
+its shipped archive is built against, so the \emph{ratios} below are across a
+minor-version gap; the shapes are not, and the shapes are what the section turns
+on. (A)'s rows at $k \le 2$ reproduce Table~\ref{tab:evalboundary} to within
+$1\%$, which is the check that the two runs are comparable at all.
 
 \begin{table}[!ht]
 \centering
 \small
-\setlength{\tabcolsep}{5pt}
-\begin{tabular}{@{}lrrrrr@{}}
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{@{}lrrrcrrrcrrr@{}}
 \toprule
-per edge or per read, instructions & $k=1$ & $k=2$ & $k=4$ & $k=8$ & $k=16$ \\
+ & \multicolumn{3}{c}{point read, all ids} & & \multicolumn{3}{c}{iteration, per edge}
+ & & \multicolumn{3}{c}{transposed, per edge} \\
+\cmidrule(lr){2-4}\cmidrule(lr){6-8}\cmidrule(lr){10-12}
+$k$ & (A) & (C) & (C)/(A) & & (A) & (C) & (C)/(A) & & (A) & (C) & (C)/(A) \\
 \midrule
-point read, first id only        & $592$ & $2{,}684$ & $2{,}684$ & $2{,}684$ & $2{,}684$ \\
-point read, all ids              & $624$ & $2{,}940$ & $3{,}188$ & $3{,}684$ & $4{,}676$ \\
+$1$  & $558$ & $624$   & $1.12$ & & $149$ & $163$ & $1.09$ & & $562$ & $786$   & $1.40$ \\
+$2$  & $756$ & $2{,}940$ & $3.89$ & & $186$ & $250$ & $1.35$ & & $392$ & $1{,}566$ & $3.99$ \\
+$4$  & $822$ & $3{,}188$ & $3.88$ & & $117$ & $201$ & $1.71$ & & $221$ & $864$   & $3.92$ \\
+$8$  & $954$ & $3{,}684$ & $3.86$ & & $83$  & $176$ & $2.11$ & & $135$ & $514$   & $3.81$ \\
+$16$ & $1{,}220$ & $4{,}676$ & $3.83$ & & $66$ & $163$ & $2.47$ & & $92$ & $338$ & $3.68$ \\
 \midrule
-iteration, \textsc{IterEdges}    & $163$ & $250$ & $201$ & $176$ & $163$ \\
-iteration, pair order            & $195$ & $1{,}270$ & $716$ & $440$ & $301$ \\
-iteration, transposed            & $786$ & $1{,}566$ & $864$ & $514$ & $338$ \\
-\quad transposed / forward       & $4.8$ & $6.3$ & $4.3$ & $2.9$ & $2.1$ \\
-\midrule
-point read, scattered order      & $603$ & $2{,}693$ & $2{,}693$ & $2{,}693$ & $2{,}693$ \\
-\quad ns/read, sequential        & $25.5$ & $133$ & $134$ & $140$ & $136$ \\
-\quad ns/read, scattered         & $26.1$ & $199$ & $216$ & $240$ & $258$ \\
-\midrule
-bytes per edge                   & $25.0$ & $36.8$ & $22.9$ & $16.0$ & $12.5$ \\
-bytes per id in $me$             & ---   & $24.3$ & $16.7$ & $12.8$ & $10.9$ \\
+\multicolumn{12}{@{}l@{}}{\emph{per additional identifier, fitted over $k \in [2,16]$:}
+\quad (A) $33$ \quad (C) $124$ \quad ---
+against the engine-level fit's (A) $854$, (C) $448$.}\\
 \bottomrule
 \end{tabular}
-\caption{Design (C) at the boundary as fan-out grows. The entry charge for the
-multi-edge path is flat in $k$ to four figures; the per-identifier slope is
-$124$ instructions, well under the $448$ the engine-level decomposition
-attributed to it. Transposed iteration is measured here for the first time and is
-the design's most expensive read shape at low $k$. Scattered access moves
-instruction counts by under $2\%$ and wall clock by up to $89\%$.}
+\caption{Both structures as fan-out grows. Every ratio favours (A), and two of
+the three worsen with $k$. The slope row is the one that matters: measured at the
+boundary, (C) pays about four times (A) per additional identifier, where the
+engine-level decomposition had it paying about half.}
 \label{tab:evalfanout}
 \end{table}
 
-\paragraph{The per-identifier slope was overstated too, by $3.6\times$.}
-\S\ref{sec:evaldecomp} put (C)'s cost per additional identifier at $448$
-instructions, from an engine-level fit over $k \in [2,8]$. At the boundary the
-same slope is $124$. This is the \emph{third} instance of the pattern
-\S\ref{sec:evalboundary} reports twice: an engine-level attribution to edge
-storage, measured against the structure itself, comes out high --- here by
-$3.6\times$, where the entry charge came out high by $1.6\times$ for (C) and
-$5.1\times$ for (A). We had presented that pattern as a caveat about two
-numbers; with a third instance and no counterexample, the honest generalisation
-is that engine-level differencing systematically overstates what edge storage
-costs, because the pipeline work it fails to hold constant scales with the
-quantity being varied. Note which direction this cuts: the slope is (C)'s
-advantage over (A) in Table~\ref{tab:evaldecomp}, so a smaller true slope makes
-the crossover above $k = 2$ steeper, not shallower --- but we cannot say by how
-much, because (A)'s slope was measured at engine level too and is presumably
-overstated by its own factor.
+\paragraph{The slope claim was not merely overstated; it was inverted.}
+\S\ref{sec:evaldecomp} fitted, at engine level, $448$ instructions per additional
+identifier for (C) against $854$ for (A), and concluded that ``scanning a
+hypersparse row is cheaper per identifier than walking a container'' --- the
+mechanism by which (C) was supposed to overtake (A) from $k = 3$ upward. At the
+boundary the same two slopes are $124$ for (C) and $33$ for (A). Both engine-level
+figures were high, as \S\ref{sec:evalboundary} would predict; but they were high
+by $3.6\times$ and $26\times$ respectively, and the ordering does not survive the
+correction. Walking a \texttt{GrB\_Vector} of identifiers is about four times
+cheaper per identifier than scanning a hypersparse row of them.
 
-\paragraph{The entry charge does not grow with fan-out, and iteration returns to
-its inline cost.} Reading the first identifier of a promoted pair costs $2{,}684$
-instructions at $k = 2$ and the same $2{,}684$ at $k = 16$: the sentinel probe
-plus the first row entry is flat, which is what hypersparse row access is
-supposed to buy and the same invariance \S\ref{sec:evaldecomp} found against
-$|me|$. Iteration is the more interesting row. It peaks at $k = 2$ ($250$ per
-edge) --- the worst case, one row scan amortised over two identifiers --- and
-falls back to exactly the all-inline $163$ by $k = 16$. So (C)'s iteration
-deficit against (A) ($1.09\times$ at $k=1$, $1.34\times$ at $k=2$) is a
-low-multiplicity phenomenon that the design predicted and that closes as rows
-lengthen. \S\ref{sec:evalboundary}'s verdict --- that (C)'s case on scans is that
-it does not lose --- was drawn from the two worst columns of this row.
+We had two instances of engine-level differencing overstating a storage cost and
+called the pattern a caveat. This is a third instance, and it is the one that
+shows the caveat was too weak: the errors are not a common factor that cancels in
+a ratio, so a ratio of two engine-level differences can come out backwards. The
+crossover of \S\ref{sec:evaldecomp} is an artifact of that, and there is no
+crossover at the boundary --- (C)'s read is $3.8$--$3.9\times$ (A)'s at every
+$k \ge 2$ measured, and the gap is flat rather than closing.
 
-\paragraph{Transposed iteration costs what not duplicating identifiers costs.}
+\paragraph{And the scan deficit widens rather than closing.}
+(C)'s per-edge iteration returns to its all-inline cost as rows lengthen
+($250$ at $k=2$ back to $163$ at $k=16$), which read on its own looks like the
+low-multiplicity penalty amortising away. It is not: (A) improves faster over the
+same range ($186$ to $66$), so the ratio moves the wrong way, $1.35\times$ at
+$k=2$ to $2.47\times$ at $k=16$. \S\ref{sec:evalboundary}'s verdict --- that (C)'s
+case on scans is that it does not lose --- holds only at $\mu \approx 1$, which is
+where the design is aimed; at high multiplicity (C) loses on iteration and the
+margin grows.
+
+\paragraph{Transposed iteration, priced.}
 \S\ref{sec:components} trades one point lookup per incoming pair for not storing
-every identifier twice, and this is that trade priced: $786$ instructions per
-edge against forward iteration's $163$ at $k = 1$, a factor of $4.8$. It
-amortises as fan-out grows --- the lookup is per \emph{pair}, so at $k = 16$ it
-is $2.1\times$ --- but at the multiplicity the design is built for it is the
-most expensive read shape (C) has, and a workload dominated by incoming-edge
-traversal is one this design serves worst. What it buys is roughly half the
-identifier storage; whether that is the right trade is a question about
-workloads, and we have not measured a design that makes the other choice.
+every identifier twice. That trade costs $786$ instructions per edge against
+forward iteration's $163$ at $k = 1$, and against (A)'s transposed $562$ it is
+$1.40\times$ --- rising to $3.7$--$4\times$ for every $k \ge 2$. A workload
+dominated by incoming-edge traversal is the one this design serves worst, and it
+buys roughly half the identifier storage for it. Whether that is the right trade
+is a question about workloads; the price is now known.
 
 \paragraph{Access order barely moves instructions and moves time a great deal.}
 \S\ref{sec:limits} warns that all reads here are warm and sequential, and that a
@@ -3211,8 +3215,9 @@ SuiteSparse:GraphBLAS v10.3.1 with LAGraph v1.2.1. Trunk has since moved to
 v10.5.0 and LAGraph v1.3, so reproducing the numbers exactly means pinning the
 older library rather than building trunk as it stands.
 
-The boundary measurements of \S\ref{sec:evalboundary} and \S\ref{sec:evalspace}
-have two halves, and they are not equally available. (C)'s half is
+The boundary measurements of \S\ref{sec:evalboundary},
+\S\ref{sec:evalfanout} and \S\ref{sec:evalspace} have two halves, and they are
+not equally available. (C)'s half is
 \texttt{graph/\allowbreak src/\allowbreak graph/\allowbreak graphblas/\allowbreak tensor\_cost\_bench.rs}
 in this tree --- \texttt{\#[ignore]}d measurement tests in the same style as
 \texttt{fold\_cost\_bench.rs}, run with
@@ -3227,11 +3232,14 @@ in this tree --- \texttt{\#[ignore]}d measurement tests in the same style as
 where \texttt{--test-threads=1} is not optional, because
 \texttt{proc\_pid\_rusage} is a whole-process counter and a concurrent test lands
 in the reading. \texttt{tensor\_cost\_c\_comparable} is the fixture
-Table~\ref{tab:evalboundary} reports. (A)'s half is a standalone C harness
-linking the shipped static archive with no stubbed symbols, and it is \emph{not}
-on any published branch at the time of writing, so (A)'s boundary column should
-be read as reported rather than as reproducible --- a weaker standing than the
-rest of the evaluation has, and one we would rather state than pass over.
+Table~\ref{tab:evalboundary} reports. (A)'s half is a standalone C harness linking the
+shipped static archive with no stubbed symbols. It is \emph{not} on any published
+branch at the time of writing, so (A)'s boundary columns should be read as
+reported rather than as reproducible --- a weaker standing than the rest of the
+evaluation has, and one we would rather state than pass over. It does build and
+run from a \texttt{master} worktree plus that archive, which is how
+\S\ref{sec:evalfanout}'s (A) columns were obtained; what is missing is
+publication, not the artifact.
 
 The proofs are checked against Lean 4 v4.32.0 with mathlib v4.32.0, pinned in
 \texttt{lean-toolchain} and \texttt{lakefile.toml}.

@@ -70,9 +70,13 @@
 
 #[cfg(test)]
 mod fold_cost_bench;
+#[cfg(test)]
+mod issue_2430_bench;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;
+#[cfg(test)]
+mod oscillation_bench;
 pub mod serialization;
 pub mod tensor;
 #[cfg(test)]
