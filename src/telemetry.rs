@@ -6,15 +6,18 @@
 
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
+use redis_module::logging::log_warning;
 use redis_module::{Context, ContextFlags, RedisValue, raw};
 use std::os::raw::{c_char, c_int};
-use std::sync::Arc;
+use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::MAX_INFO_QUERIES;
+use crate::graph_core::{ThreadedGraph, graph_is_registered_as};
 
 /// Maximum stored string length for query/params in telemetry entries.
 const STR_MAX_LEN: usize = 2048;
@@ -74,28 +77,11 @@ pub struct TelemetryEntry {
     pub timed_out: bool,
 }
 
-/// The ten formatted values of one telemetry entry, in field order.
-///
-/// Built **outside** the Redis module lock, so the only work done while the GIL
-/// is held is creating the `RedisModuleString`s and the `StreamAdd` itself. The
-/// field *names* are not here: they are created once and reused, the way the C
-/// engine keeps them in its `_event` template.
-struct PreparedEntry {
-    graph_name: Arc<str>,
-    /// The graph this entry belongs to — carried through formatting because
-    /// liveness is checked immediately before the write, not here. See
-    /// [`PendingEntry::graph`] for why the handle rather than the name, and
-    /// `flusher_loop` for why the check has to be that late.
-    graph: std::sync::Weak<parking_lot::RwLock<crate::graph_core::ThreadedGraph>>,
-    /// Same order as [`FIELD_NAMES`].
-    values: [String; FIELD_COUNT],
-}
-
 /// Field names of a telemetry entry, in the order they are written.
 ///
-/// Kept as one list so the names and the values below cannot drift apart, and
-/// so the `RedisModuleString`s built from them can be created once per flusher
-/// thread rather than per entry.
+/// Kept as one list so the names and the values written beside them cannot drift
+/// apart, and so the `RedisModuleString`s built from them can be created once for
+/// the whole process rather than per entry.
 const FIELD_NAMES: [&str; FIELD_COUNT] = [
     "Received at",
     "Query",
@@ -111,39 +97,24 @@ const FIELD_NAMES: [&str; FIELD_COUNT] = [
 
 const FIELD_COUNT: usize = 10;
 
-/// Format one entry's values. Pure Rust — no GIL required. Consumes the entry so
-/// the query/params strings are moved, not cloned.
-fn prepare_entry(pe: PendingEntry) -> PreparedEntry {
-    let entry = pe.entry;
-    let wait = format!("{:.6}", entry.wait_duration_ms);
-    let exec = format!("{:.6}", entry.execution_duration_ms);
-    let report = format!("{:.6}", entry.report_duration_ms);
-    // Add half-ULP (5e-7) so that after formatting to 6 decimal places,
-    // float(total_str) >= float(exec_str) + float(report_str) always
-    // holds despite floating-point addition rounding in consumers.
-    let total_raw = exec.parse::<f64>().unwrap_or(0.0)
-        + report.parse::<f64>().unwrap_or(0.0)
-        + entry.wait_duration_ms
-        + 5e-7;
-    PreparedEntry {
-        graph_name: pe.graph_name,
-        graph: pe.graph,
-        values: [
-            entry.received_at.to_string(),
-            entry.query,
-            entry.params,
-            format!("{total_raw:.6}"),
-            wait,
-            exec,
-            report,
-            String::from(if entry.utilized_cache { "1" } else { "0" }),
-            String::from(if entry.is_write { "1" } else { "0" }),
-            String::from(if entry.timed_out { "1" } else { "0" }),
-        ],
-    }
-}
+/// The ten constant field-name `RedisModuleString`s, shared by every write.
+///
+/// A pointer is not `Send`, but these are: created once on the main thread during
+/// module init, then only ever read. `RM_StreamAdd` copies the field bytes into
+/// the stream's listpack rather than retaining the object, so no refcount is
+/// touched and no synchronisation is needed past the initial publication.
+struct FieldNameStrings([*mut raw::RedisModuleString; FIELD_COUNT]);
 
-/// The reusable half of a stream write: the field-name strings, created once.
+// SAFETY: see the type's documentation — write-once on the init thread, read-only
+// thereafter, and the pointees are immutable for their whole lifetime.
+unsafe impl Send for FieldNameStrings {}
+unsafe impl Sync for FieldNameStrings {}
+
+/// Created by [`start_flusher_thread`] and freed by [`shutdown_flusher_thread`],
+/// so an unload/reload cycle neither leaks them nor reuses freed ones.
+static FIELD_NAME_STRINGS: Mutex<Option<FieldNameStrings>> = Mutex::new(None);
+
+/// The reusable half of a stream write: field names paired with per-entry values.
 ///
 /// This is the port of the C engine's `_event` template
 /// (`cron/tasks/stream_finished_queries.c`), and the reason it exists is cost.
@@ -154,50 +125,109 @@ fn prepare_entry(pe: PendingEntry) -> PreparedEntry {
 /// ten constant field names. Writing through the key API pays none of that.
 ///
 /// Strings are created with a NULL context, so Redis does not tie them to a
-/// command's auto-memory pool; the flusher thread owns them for its lifetime.
+/// command's auto-memory pool.
 struct StreamTemplate {
     /// `[name0, value0, name1, value1, …]` — `StreamAdd` takes field/value pairs
-    /// flattened, and the value slots are refilled per entry.
-    argv: Vec<*mut raw::RedisModuleString>,
+    /// flattened. The name slots are borrowed from [`FIELD_NAME_STRINGS`] and
+    /// never freed here; the value slots are refilled and freed per entry.
+    argv: [*mut raw::RedisModuleString; FIELD_COUNT * 2],
+    /// `StreamAdd` calls that returned `REDISMODULE_ERR`, reported once per batch
+    /// rather than per entry so a broken stream cannot flood the log.
+    failed: usize,
 }
 
 impl StreamTemplate {
-    fn new() -> Self {
-        let mut argv = vec![std::ptr::null_mut(); FIELD_COUNT * 2];
-        for (i, name) in FIELD_NAMES.iter().enumerate() {
-            argv[i * 2] = create_detached_string(name);
+    /// Borrows the shared field-name strings. Returns `None` before
+    /// [`start_flusher_thread`] has published them.
+    fn new() -> Option<Self> {
+        let names = FIELD_NAME_STRINGS.lock();
+        let names = names.as_ref()?;
+        let mut argv = [ptr::null_mut(); FIELD_COUNT * 2];
+        for (i, name) in names.0.iter().enumerate() {
+            argv[i * 2] = *name;
         }
-        Self { argv }
+        Some(Self { argv, failed: 0 })
     }
 
-    /// Write one entry into `key`. The GIL must be held.
+    /// Format and append one entry to `key`. The GIL must be held.
+    ///
+    /// Formatting happens here rather than in a pre-pass outside the GIL, so that a
+    /// queued entry has exactly one representation all the way to the stream. It is
+    /// seven `format!` calls per entry, beside the ten `RM_CreateString`s that were
+    /// inside the critical section either way. Measured: `redis-benchmark -n 20000
+    /// -c 1 GRAPH.QUERY g "RETURN 1"` on an M3 Pro gives a median 28,694 ops/s with
+    /// the pre-pass and 28,450 without it (spread within each ≈4%), p50/p95/p99
+    /// identical at 0.031/0.039/0.047 ms — so the move is not measurable, while the
+    /// feature as a whole costs ~3% against the 29,300 ops/s of `CMD_INFO no`.
     fn add(
         &mut self,
         key: *mut raw::RedisModuleKey,
-        entry: &PreparedEntry,
+        pe: &PendingEntry,
     ) {
-        for (i, value) in entry.values.iter().enumerate() {
+        let entry = &pe.entry;
+        let received = entry.received_at.to_string();
+        let wait = format!("{:.6}", entry.wait_duration_ms);
+        let exec = format!("{:.6}", entry.execution_duration_ms);
+        let report = format!("{:.6}", entry.report_duration_ms);
+        // Add half-ULP (5e-7) so that after formatting to 6 decimal places,
+        // float(total_str) >= float(exec_str) + float(report_str) always
+        // holds despite floating-point addition rounding in consumers.
+        let total_raw = exec.parse::<f64>().unwrap_or(0.0)
+            + report.parse::<f64>().unwrap_or(0.0)
+            + entry.wait_duration_ms
+            + 5e-7;
+        let total = format!("{total_raw:.6}");
+        let flag = |b: bool| if b { "1" } else { "0" };
+        // Same order as `FIELD_NAMES`.
+        let values: [&str; FIELD_COUNT] = [
+            &received,
+            &entry.query,
+            &entry.params,
+            &total,
+            &wait,
+            &exec,
+            &report,
+            flag(entry.utilized_cache),
+            flag(entry.is_write),
+            flag(entry.timed_out),
+        ];
+        for (i, value) in values.iter().enumerate() {
             self.argv[i * 2 + 1] = create_detached_string(value);
         }
-        unsafe {
+        let status = unsafe {
             let f = raw::RedisModule_StreamAdd.expect("RedisModule_StreamAdd");
             f(
                 key,
                 raw::REDISMODULE_STREAM_ADD_AUTOID as c_int,
-                std::ptr::null_mut(),
+                ptr::null_mut(),
                 self.argv.as_mut_ptr(),
                 FIELD_COUNT as i64,
-            );
+            )
+        };
+        if status != raw::REDISMODULE_OK as c_int {
+            self.failed += 1;
         }
-        // Values are per-entry; the names stay. Freeing here keeps the peak at
-        // one entry's worth of strings however long the batch is.
+        // Values are per-entry; the names are shared and outlive us. Freeing here
+        // keeps the peak at one entry's worth of strings however long the batch is.
         for i in 0..FIELD_COUNT {
             let slot = &mut self.argv[i * 2 + 1];
-            unsafe {
-                let f = raw::RedisModule_FreeString.expect("RedisModule_FreeString");
-                f(std::ptr::null_mut(), *slot);
-            }
-            *slot = std::ptr::null_mut();
+            free_detached_string(*slot);
+            *slot = ptr::null_mut();
+        }
+    }
+
+    /// Report the batch's write failures, if any, and reset the count.
+    fn report_failures(
+        &mut self,
+        graph_name: &str,
+    ) {
+        if self.failed > 0 {
+            log_warning(format!(
+                "telemetry: {} entr{} for graph '{graph_name}' could not be appended to its stream",
+                self.failed,
+                if self.failed == 1 { "y" } else { "ies" },
+            ));
+            self.failed = 0;
         }
     }
 }
@@ -206,14 +236,14 @@ impl StreamTemplate {
 fn create_detached_string(s: &str) -> *mut raw::RedisModuleString {
     unsafe {
         let f = raw::RedisModule_CreateString.expect("RedisModule_CreateString");
-        f(std::ptr::null_mut(), s.as_ptr().cast::<c_char>(), s.len())
+        f(ptr::null_mut(), s.as_ptr().cast::<c_char>(), s.len())
     }
 }
 
 fn free_detached_string(s: *mut raw::RedisModuleString) {
     unsafe {
         let f = raw::RedisModule_FreeString.expect("RedisModule_FreeString");
-        f(std::ptr::null_mut(), s);
+        f(ptr::null_mut(), s);
     }
 }
 
@@ -224,13 +254,14 @@ fn free_detached_string(s: *mut raw::RedisModuleString) {
 ///
 /// Unlike the `RM_Call(..., replicate)` this replaces, a key-API write is **not
 /// propagated to replicas** — which is also true of the C engine, whose cron
-/// task writes the same way. A replica's telemetry now reflects the queries that
-/// replica served, not the master's.
+/// task writes the same way. Telemetry is therefore local to the instance that
+/// wrote it; [`enqueue_entry`] still declines to write any on a replica, so a
+/// replica's stream is whatever its last full resync brought over.
 fn stream_entries(
     ctx: *mut raw::RedisModuleCtx,
     template: &mut StreamTemplate,
     graph_name: &str,
-    entries: &[PreparedEntry],
+    entries: &[PendingEntry],
     max_len: i64,
 ) {
     let key_name = create_detached_string(&stream_name(graph_name));
@@ -254,11 +285,21 @@ fn stream_entries(
         for entry in entries {
             template.add(key, entry);
         }
+        template.report_failures(graph_name);
         if max_len > 0 {
-            unsafe {
+            // Returns the number of entries deleted, or -1 with `errno` set.
+            let deleted = unsafe {
                 let f =
                     raw::RedisModule_StreamTrimByLength.expect("RedisModule_StreamTrimByLength");
-                f(key, raw::REDISMODULE_STREAM_TRIM_APPROX as c_int, max_len);
+                f(key, raw::REDISMODULE_STREAM_TRIM_APPROX as c_int, max_len)
+            };
+            // A failed trim is not a lost entry, but it does mean the stream is
+            // growing past MAX_INFO_QUERIES unbounded, which is worth saying out
+            // loud rather than discovering as memory growth.
+            if deleted < 0 {
+                log_warning(format!(
+                    "telemetry: failed to trim the stream of graph '{graph_name}' to {max_len} entries"
+                ));
             }
         }
     }
@@ -556,16 +597,21 @@ const FLUSH_LINGER: Duration = Duration::from_millis(5);
 const DEFERRED_XADD_MAX: usize = 4 * FLUSH_BATCH_MAX;
 
 struct PendingEntry {
+    /// The Redis key this query addressed, and so the stream the entry belongs in.
     graph_name: Arc<str>,
     /// The graph this query ran on, weakly.
     ///
-    /// Not the name: a name can be flushed and rebound to a *different* graph
-    /// while an entry is still queued, and writing it then attributes one
+    /// Not the name alone: a name can be flushed and rebound to a *different*
+    /// graph while an entry is still queued, and writing it then attributes one
     /// graph's query to another's stream — and resurrects a stream key that
     /// `FLUSHALL` removed. The C engine cannot get this wrong because its
     /// queries log is owned by the `GraphContext`, so flushing the graph frees
     /// the pending entries with it; this handle reproduces that ownership.
-    graph: std::sync::Weak<parking_lot::RwLock<crate::graph_core::ThreadedGraph>>,
+    ///
+    /// Checked *together with* `graph_name`, not on its own: after a `RENAME` the
+    /// graph is still registered, but under another key, and this entry's stream
+    /// was deleted with the rename. See `flusher_loop`.
+    graph: Weak<RwLock<ThreadedGraph>>,
     entry: TelemetryEntry,
 }
 
@@ -584,7 +630,7 @@ static FLUSHER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 /// Push a telemetry entry to the background channel. Lock-free hot path.
 pub fn enqueue_entry(
     graph_name: &Arc<str>,
-    graph: &Arc<parking_lot::RwLock<crate::graph_core::ThreadedGraph>>,
+    graph: &Arc<RwLock<ThreadedGraph>>,
     entry: TelemetryEntry,
 ) {
     // `CMD_INFO no` means "do not log finished queries", which is exactly this
@@ -592,9 +638,14 @@ pub fn enqueue_entry(
     if !LOG_QUERIES.load(Ordering::Relaxed) {
         return;
     }
-    // Skip on replicas: the master's XADDs are replicated to us, so writing
-    // here would duplicate entries (and direct writes to a replica must not
-    // create a stream).
+    // Skip on replicas: a replica must not create keys of its own, and the stream
+    // it has is the master's, brought over by the last full resync.
+    //
+    // Note this is no longer about duplicates. The writes were replicated when they
+    // went through `RM_Call("XADD", ..., replicate)`; they no longer are, so having
+    // each instance log the queries it actually served — which is what the C engine
+    // does — is now merely a behaviour change rather than a source of double
+    // entries. Making it is deliberately out of scope here.
     if IS_REPLICA.load(Ordering::Relaxed) {
         return;
     }
@@ -645,6 +696,17 @@ pub fn start_flusher_thread() {
     }
     *RECEIVER.lock() = Some(rx);
 
+    // Here rather than on the flusher thread: this runs on the main thread during
+    // module init, where calling into the module API is unambiguously safe, and the
+    // ten strings are then shared by every write for the module's whole lifetime
+    // instead of being rebuilt per flusher thread.
+    {
+        let mut names = FIELD_NAME_STRINGS.lock();
+        if names.is_none() {
+            *names = Some(FieldNameStrings(FIELD_NAMES.map(create_detached_string)));
+        }
+    }
+
     let handle = thread::Builder::new()
         .name("falkordb-telemetry".to_string())
         .spawn(flusher_loop)
@@ -663,6 +725,12 @@ pub fn shutdown_flusher_thread() {
     if let Some(h) = handle {
         let _ = h.join();
     }
+    // Only after the join: the flusher's template borrows these.
+    if let Some(names) = FIELD_NAME_STRINGS.lock().take() {
+        for name in names.0 {
+            free_detached_string(name);
+        }
+    }
 }
 
 fn flusher_loop() {
@@ -675,15 +743,16 @@ fn flusher_loop() {
     // hold the module lock while issuing XADDs.
     let tsc = unsafe {
         let f = raw::RedisModule_GetThreadSafeContext.expect("RedisModule_GetThreadSafeContext");
-        f(std::ptr::null_mut())
+        f(ptr::null_mut())
     };
 
     let mut batch: Vec<PendingEntry> = Vec::with_capacity(FLUSH_BATCH_MAX);
-    let mut template = StreamTemplate::new();
+    let mut template =
+        StreamTemplate::new().expect("flusher started before the field names were published");
     let mut disconnected = false;
-    // Entries formatted but not yet written because replica traffic was paused when
-    // their turn came. Retried on a later iteration — see the pause check below.
-    let mut deferred: Vec<PreparedEntry> = Vec::new();
+    // Entries not yet written because replica traffic was paused when their turn
+    // came. Retried on a later iteration — see the pause check below.
+    let mut deferred: Vec<PendingEntry> = Vec::new();
 
     loop {
         // Block until at least one entry is available (or the channel closes).
@@ -726,12 +795,8 @@ fn flusher_loop() {
             }
         }
 
-        // Format every entry's values *outside* the GIL, so the critical section
-        // below only creates the `RedisModuleString`s and appends.
         let max_len = MAX_INFO_QUERIES.load(Ordering::Relaxed);
-        #[allow(clippy::iter_with_drain)]
-        let prepared: Vec<PreparedEntry> = batch.drain(..).map(prepare_entry).collect();
-        deferred.extend(prepared);
+        deferred.append(&mut batch);
         // Oldest-first drop, so a long pause bounds memory instead of growing without
         // limit. The stream is trimmed on every write anyway, so the entries most worth
         // keeping are the newest.
@@ -739,19 +804,23 @@ fn flusher_loop() {
             deferred.drain(..deferred.len() - DEFERRED_XADD_MAX);
         }
 
-        // Drop what belongs to a graph that is gone, or whose name now refers to a
-        // different graph — the pointer check is what distinguishes "still the same
-        // graph" from "same name, new graph after a FLUSHALL and RESTORE".
+        // Keep only entries whose graph is *still the graph registered under the name
+        // the entry names*. Both halves earn their place:
         //
-        // Here, immediately before the write, rather than as entries are formatted:
-        // the pause check below can hold a batch for the whole pause window, and a
-        // graph dropped during it would otherwise have its stream key recreated when
-        // the window closes. Outside the GIL block because it needs only the graph
-        // registry's own lock.
+        // - the handle rules out "same name, a different graph after a FLUSHALL and
+        //   RESTORE", which a name-only check would write to the wrong stream;
+        // - the name rules out "same graph, a different name after a RENAME", which a
+        //   handle-only check would write to the stream the rename just deleted.
+        //
+        // Here, immediately before the write, rather than as entries are queued: the
+        // pause check below can hold a batch for the whole pause window, and a graph
+        // dropped or renamed during it would otherwise have its stream key recreated
+        // when the window closes. Outside the GIL block because it needs only the
+        // graph registry's own lock.
         deferred.retain(|pe| {
             pe.graph
                 .upgrade()
-                .is_some_and(|arc| crate::graph_core::graph_is_registered(&arc))
+                .is_some_and(|arc| graph_is_registered_as(&pe.graph_name, &arc))
         });
 
         // Single GIL acquisition for the whole batch, through the same guard queries

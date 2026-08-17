@@ -514,13 +514,44 @@ class testGraphInfoStaleEntry():
         keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
         self.env.assertEqual(keys, ["stale"])
 
+    def test02_stale_entry_not_written_under_a_renamed_key(self):
+        """The other half: same graph, different name.
+
+           A `RENAME` re-keys the graph and deletes the stream of the old key, so a
+           still-queued entry naming that key must not recreate it. The graph itself
+           is very much alive, which is why liveness alone is not the question —
+           the entry has to belong to the graph registered under *its* name."""
+        self.conn.flushall()
+        g = self.db.select_graph("before")
+        g.query("CREATE (:N {v: 1})")          # queues an entry naming "before"
+        self.conn.rename("before", "after")    # deletes telemetry{before}
+        time.sleep(1)
+        self.env.assertEqual(self.conn.type("telemetry{before}"), "none")
+        keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
+        self.env.assertEqual(keys, ["after"])
+
 class testGraphInfoCmdInfoDisabled():
     """`CMD_INFO no` must actually stop logging finished queries.
 
     The config was registered and reported by `GRAPH.CONFIG GET`, but nothing
-    consulted it, so queries were logged regardless — and logging one is not
-    free: ~83k instructions per query measured on an M3 Pro, against ~11k on the
-    C engine, on a query (`RETURN 1`) that costs ~150k in total with logging off.
+    consulted it, so queries were logged regardless — and logging one is not free.
+    On an M3 Pro, `RETURN 1` costs ~150k instructions with logging off; logging it
+    cost a further ~83k, against ~11k on the C engine. Where the 7-8x went:
+
+      ~49k  waking the flusher once per query — a blocking wait returned the
+            moment an entry was queued, so nothing was batched but the flush
+            itself, and the wakeup is most of what an entry costs. C's cron task
+            runs on a timer instead and the query thread only appends to a buffer.
+      ~26k  `RM_Call("XADD", ...)`: command lookup, dispatch, reply machinery.
+      ~6k   a fresh `RedisModuleString` for all 25 argument tokens, including the
+            ten constant field names, per entry.
+      ~2k   replicating each XADD — which C never did.
+
+    Fixed by writing the way C does: `StreamAdd` on an opened key, shared field-name
+    strings, one key open and trim per graph per batch, and a batch window the
+    flusher sleeps out. That leaves ~14k, or 1.28x of C. This test covers only the
+    remaining escape hatch: with `CMD_INFO no` the cost is zero because nothing is
+    enqueued at all.
     """
 
     def __init__(self):
