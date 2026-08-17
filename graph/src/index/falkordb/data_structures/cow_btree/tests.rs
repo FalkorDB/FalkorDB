@@ -1481,14 +1481,14 @@ fn integrity_adversarial_ascending_then_cascade_delete() {
     for i in 0..300u64 {
         t.insert(i, i);
         oracle.insert((i, i));
-        check_invariants(&t, false);
+        check_invariants(&t, true);
     }
     for i in 0..300u64 {
         let k = (i * 7) % 300; // gcd(7, 300) == 1 ⇒ a permutation of 0..300
         t.remove(k, k);
         oracle.remove(&(k, k));
         assert_eq!(tree_pairs(&t), oracle.iter().copied().collect::<Vec<_>>());
-        check_invariants(&t, false);
+        check_invariants(&t, true);
     }
     assert!(t.is_empty());
     assert_eq!(t.len(), 0);
