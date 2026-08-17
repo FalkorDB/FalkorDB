@@ -288,6 +288,10 @@ what was and was not measured.
   bound or a model over measured components. Implementing it — Boolean adjacency
   plus an always-materialised overflow matrix — is the only way to replace them,
   and it is a research prototype rather than a change to ship.
+- ~~**(A)'s boundary harness is unpublished**~~ — **done**: it ships with the
+  paper at `bench/studies/edge_storage/`, with its two out-of-tree inputs
+  (a `master` checkout, a C build tree) overridable rather than hardcoded. Both
+  halves of the boundary measurement are now reproducible from this branch.
 - ~~**Fan-out beyond `k = 2` at the data-structure boundary**~~ — **done, both
   sides, and it inverted a claim.** The engine-level decomposition fitted 448
   instructions per additional id for (C) against 854 for (A), and concluded (C)

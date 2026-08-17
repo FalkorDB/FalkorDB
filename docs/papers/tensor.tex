@@ -3232,14 +3232,26 @@ in this tree --- \texttt{\#[ignore]}d measurement tests in the same style as
 where \texttt{--test-threads=1} is not optional, because
 \texttt{proc\_pid\_rusage} is a whole-process counter and a concurrent test lands
 in the reading. \texttt{tensor\_cost\_c\_comparable} is the fixture
-Table~\ref{tab:evalboundary} reports. (A)'s half is a standalone C harness linking the
-shipped static archive with no stubbed symbols. It is \emph{not} on any published
-branch at the time of writing, so (A)'s boundary columns should be read as
-reported rather than as reproducible --- a weaker standing than the rest of the
-evaluation has, and one we would rather state than pass over. It does build and
-run from a \texttt{master} worktree plus that archive, which is how
-\S\ref{sec:evalfanout}'s (A) columns were obtained; what is missing is
-publication, not the artifact.
+Table~\ref{tab:evalboundary} reports. (A)'s half is a standalone C harness at
+\texttt{bench/\allowbreak studies/\allowbreak edge\_storage/}, which links the
+shipped static archive with no stubbed symbols --- $323$ of its $392$ members,
+\texttt{tensor.c.o} among them --- so what it measures is the shipped
+implementation rather than a reconstruction of it. It needs two inputs from
+outside the tree, a \texttt{master} checkout for the sources and a C build tree
+for the archive, both overridable:
+
+\begin{quote}
+\footnotesize
+\texttt{git worktree add /tmp/cmaster master}\\
+\texttt{SRC=/tmp/cmaster BIN=\$PWD/bin/macos-arm64v8-release ./build.sh}\\
+\texttt{OMP\_NUM\_THREADS=1 ./tensor\_bench}
+\end{quote}
+
+\noindent
+\texttt{OMP\_NUM\_THREADS=1} is not incidental: the C side is measured
+single-threaded while the Rust side uses GraphBLAS's default thread count, which
+is why this comparison is stated in instructions and why the bulk-build rows are
+the ones to trust least.
 
 The proofs are checked against Lean 4 v4.32.0 with mathlib v4.32.0, pinned in
 \texttt{lean-toolchain} and \texttt{lakefile.toml}.
