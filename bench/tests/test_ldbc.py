@@ -14,6 +14,7 @@ row.
 
 import csv
 import re
+from types import SimpleNamespace
 
 import pytest
 
@@ -74,11 +75,15 @@ def test_the_known_dialect_gaps_are_the_rewritten_ones():
     """Pins which queries depart from upstream, and why.
 
     Each was verified against a running engine: shortestPath() is rejected
-    inside MATCH, allShortestPaths() needs pre-bound endpoints, and there is no
-    datetime(). If a future engine version accepts the original, this test is
-    the prompt to drop the rewrite rather than carry it forever.
+    inside MATCH, allShortestPaths() needs pre-bound endpoints, there is no
+    datetime(), a traversal pattern is not a boolean in a projection, and a
+    pattern comprehension's WHERE cannot see an outer list-comprehension
+    variable. IC6 is the odd one out — it works around a Rust-only wrong-result
+    bug (FalkorDB/FalkorDB#2556) rather than a dialect gap. If a future engine
+    version accepts the original, this test is the prompt to drop the rewrite
+    rather than carry it forever.
     """
-    assert set(query_mod.REWRITES) == {1, 10, 13, 14}
+    assert set(query_mod.REWRITES) == {1, 6, 7, 9, 10, 13, 14}
 
 
 def _code(cypher: str) -> str:
@@ -286,6 +291,29 @@ def test_a_query_with_no_measurement_is_a_problem():
     failed = runner.QueryResult(name="IC14", rewritten=True)
     failed.failures = ["timeout"]
     assert runner.problems([failed]) == ["IC14: produced no measurement (timeout)"]
+
+
+def test_the_per_query_timeout_reaches_the_server():
+    """IC3 needs a cap above the default to produce a number at all while
+    https://github.com/FalkorDB/FalkorDB/issues/2558 is open, so the override
+    has to actually reach ro_query rather than being accepted and dropped."""
+    seen = []
+
+    class _Graph:
+        def ro_query(self, cypher, params, timeout):
+            seen.append(timeout)
+            return SimpleNamespace(result_set=[[1]])
+
+    client = SimpleNamespace(graph=_Graph())
+    query = query_mod.ComplexRead(number=3, cypher="RETURN 1")
+    param_set = params_mod.ParamSet(rows={3: [{"personId": 1}]}, official=False, source="sampled")
+
+    runner.run(client, [query], param_set, warmup=1, timeout_ms=900_000, echo=lambda *a: None)
+    assert seen == [900_000, 900_000]
+
+    seen.clear()
+    runner.run(client, [query], param_set, warmup=0, echo=lambda *a: None)
+    assert seen == [runner.DEFAULT_TIMEOUT_MS]
 
 
 def test_result_csv_is_written_with_the_declared_columns(tmp_path):

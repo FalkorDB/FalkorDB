@@ -29,11 +29,19 @@ COMPLEX_READS = tuple(range(1, 15))
 #: without reading the diff.
 REWRITES: dict[int, str] = {
     1: "shortestPath() moved from MATCH into WITH (unsupported in MATCH)",
+    6: "inline id filter on :Tag moved into WHERE (works around a wrong-result "
+    "bug under UNWIND; see the note in the query)",
+    7: "not(<traversal pattern>) replaced by size(<pattern>) = 0 "
+    "(a pattern is not a boolean-valued expression in a projection)",
+    9: "collect(distinct ...) + UNWIND replaced by WITH DISTINCT (works around "
+    "a silent zero-rows bug; see the note in the query)",
     10: "datetime({epochMillis: ...}).month/.day replaced by loader-derived "
     "birthdayMonth/birthdayDay properties (no temporal type)",
     13: "shortestPath() moved from MATCH into WITH (unsupported in MATCH)",
-    14: "allShortestPaths() endpoints pre-bound in a preceding MATCH "
-    "(endpoints must already be resolved)",
+    14: "allShortestPaths() endpoints pre-bound in a preceding MATCH, and the "
+    "per-relationship weights hoisted out of the pattern comprehensions "
+    "(a pattern comprehension's WHERE cannot see an outer list-comprehension "
+    "variable)",
 }
 
 #: Parameter names each query takes, in the order the upstream header declares

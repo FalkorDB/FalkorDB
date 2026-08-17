@@ -43,6 +43,14 @@ CSV_FIELDS = (
 )
 
 
+#: Per-query server-side cap, overridable with ``--timeout``. IC14 at SF1 on a
+#: cold index can run for minutes, and a hung query should be reported as a
+#: failure rather than stalling the run. IC3 needs a cap well above this one to
+#: produce a number at all while https://github.com/FalkorDB/FalkorDB/issues/2558
+#: is open.
+DEFAULT_TIMEOUT_MS = 120_000
+
+
 @dataclass
 class QueryResult:
     """One query's timings across its whole parameter set."""
@@ -95,6 +103,7 @@ def run(
     param_set: params_mod.ParamSet,
     *,
     warmup: int = 1,
+    timeout_ms: int = DEFAULT_TIMEOUT_MS,
     echo: Echo = print,
 ) -> list[QueryResult]:
     """Run each query once per parameter row, returning per-query results."""
@@ -112,12 +121,12 @@ def run(
         # carries a one-off cost that has nothing to do with the query.
         for row in rows[:warmup]:
             with contextlib.suppress(ResponseError, OSError):
-                client.graph.ro_query(query.cypher, dict(row), timeout=_TIMEOUT_MS)
+                client.graph.ro_query(query.cypher, dict(row), timeout=timeout_ms)
 
         for row in rows:
             started = time.perf_counter()
             try:
-                res = client.graph.ro_query(query.cypher, dict(row), timeout=_TIMEOUT_MS)
+                res = client.graph.ro_query(query.cypher, dict(row), timeout=timeout_ms)
             except (ResponseError, OSError) as e:
                 # Recorded per parameter row rather than aborting: one bad
                 # parameter row must not cost the other thirteen queries.
@@ -133,11 +142,6 @@ def run(
         echo(_summary_line(result))
         results.append(result)
     return results
-
-
-#: Per-query server-side cap. IC14 at SF1 on a cold index can run for minutes,
-#: and a hung query should be reported as a failure rather than stalling the run.
-_TIMEOUT_MS = 120_000
 
 
 def _summary_line(result: QueryResult) -> str:

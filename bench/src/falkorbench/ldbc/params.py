@@ -210,9 +210,25 @@ def sample(
         return int(rng.choice(people))
 
     def window() -> tuple[int, int]:
-        """A start date and a 30-day end date inside the corpus' date range."""
-        start = rng.randrange(lo, max(lo + 1, hi - 30 * _DAY_MS))
+        """A start date and a 30-day end date, drawn from the dense end of the corpus.
+
+        Messages accumulate over the simulated period, so a window drawn
+        uniformly across the whole span usually lands in the sparse early
+        history and matches nothing. That is the same failure mode as an
+        isolated person: it returns instantly and measures none of the work the
+        query exists to measure. Draw from the last quarter, where the data is.
+        """
+        floor = hi - (hi - lo) // 4
+        start = rng.randrange(floor, max(floor + 1, hi - 30 * _DAY_MS))
         return start, start + 30 * _DAY_MS
+
+    def max_date() -> int:
+        """A cut-off with history behind it.
+
+        IC2 and IC9 select the most recent messages *before* maxDate, so a
+        cut-off early in the corpus leaves nothing to find.
+        """
+        return rng.randrange(hi - (hi - lo) // 4, hi + 1)
 
     rows: dict[int, list[dict[str, Any]]] = {n: [] for n in query_mod.COMPLEX_READS}
     for _ in range(count):
@@ -222,7 +238,7 @@ def sample(
             rng.sample(countries, 2) if len(countries) >= 2 else [countries[0], countries[0]]
         )
         rows[1].append({"personId": person(), "firstName": rng.choice(names)})
-        rows[2].append({"personId": person(), "maxDate": end})
+        rows[2].append({"personId": person(), "maxDate": max_date()})
         rows[3].append(
             {
                 "personId": person(),
@@ -237,7 +253,7 @@ def sample(
         rows[6].append({"personId": person(), "tagName": rng.choice(tags)})
         rows[7].append({"personId": person()})
         rows[8].append({"personId": person()})
-        rows[9].append({"personId": person(), "maxDate": end})
+        rows[9].append({"personId": person(), "maxDate": max_date()})
         rows[10].append({"personId": person(), "month": rng.randint(1, 12)})
         rows[11].append(
             {
