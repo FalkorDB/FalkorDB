@@ -110,6 +110,49 @@ transition, prove it agrees with `foldl removeOne` restricted to that pair, and
 prove that plans for distinct pairs commute (they touch disjoint `me` rows and
 disjoint forward cells, which is what makes the two-phase split sound).
 
+**The shape to model, read off `Tensor::remove_all` so nobody has to re-derive
+it.** The read phase keeps one `PairPlan` per touched pair, initialised from
+`eff_get` at first sight and then advanced per named edge:
+
+```text
+PairPlan = Multi (ids : sorted list)      -- initialised from the me row, read once
+         | Single { id, demoted : Bool }
+         | Emptied
+         | Absent
+
+init t p     = MULTI      -> Multi (meRow (key p) as an ascending list)
+             | some inline -> Single { id := inline, demoted := false }
+             | none        -> Absent
+
+step (Multi ids) id  | id ∉ ids   = (Multi ids, none)        -- unknown / already gone
+                     | ids' = ids.erase id, ids'.length = 1  = (Single { ids'[0], demoted := true }, none)
+                     | otherwise                              = (Multi ids', none)
+step (Single {id} ) id' | id' = id = (Emptied, some p)        -- reports the pair
+                        | otherwise = (Single .., none)
+step Emptied _ = (Emptied, none)      step Absent _ = (Absent, none)
+```
+
+Two details are load-bearing and easy to miss. `Multi` *cannot* step to a plan
+with an empty id list — that is `removeOne_survivor`, already proved, and the Rust
+carries an `unreachable!()` there. And the `demoted := true` case is what makes a
+*later* removal of the survivor in the same batch behave as if the demotion had
+already been written: the plan is `Single`, so it takes the `Emptied` arm. That is
+precisely the interleaving the equivalence theorem has to get right, and the one
+a per-pair-then-apply formulation could plausibly get wrong.
+
+So the theorem wants three parts, in this order:
+
+1. `planFold` over one pair's named ids agrees with `foldl removeOne` restricted
+   to that pair — including the demote-then-remove-the-survivor sequence above.
+2. Plans for distinct pairs commute, from disjointness of `me` rows (`key_inj`)
+   and of forward cells.
+3. The write phase's `me`-first-then-forward order is irrelevant to the result,
+   which is the same disjointness argument once (1) and (2) hold.
+
+**Effort.** This is a real development, not an edit: a new inductive, a fold, and
+the interleaving argument in (1). Budget it like `Remove.lean` itself (~780 lines)
+rather than like the counter removal.
+
 ### 3b. Iteration as the merge that computes it
 
 Iteration is mechanised by its *result* — the effective set restricted to a row
