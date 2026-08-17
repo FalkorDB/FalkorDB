@@ -73,16 +73,7 @@ twitter_thread.md
 .claude/worktrees/
 local-build.so
 bench/tests/flow/.ci-tmp/
+# LDBC datasets, downloaded on demand by `bench ldbc fetch` (18 MB at SF0.1,
+# 230 MB at SF1, and several GB once extracted).
+bench/ldbc-data/
 bin/
-# The effects v3 conformance corpus is an artifact, not source: it lives on
-# its own branch. Checked out here with
-#   git worktree add tests/fixtures/effects_v3 origin/effects-v3-corpus
-# so it must not read as untracked noise.
-tests/fixtures/effects_v3/
-
-# Scratch CSVs a bulk-insert flow test writes at the repo root.
-/node_*.csv
-/edge_*.csv
-
-# native-deps per-checkout locks and restore journals
-deps/.native-deps/

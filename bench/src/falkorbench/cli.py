@@ -28,14 +28,20 @@ from falkorbench import profile as profile_mod
 from falkorbench import queries as query_set
 from falkorbench import report as report_mod
 from falkorbench.counters import select_backend
-from falkorbench.nightly import merge as nightly_merge
-from falkorbench.nightly import missed_run
-from falkorbench.nightly import report as nightly_report
+from falkorbench.ldbc import dataset as ldbc_dataset
+from falkorbench.ldbc import loader as ldbc_loader
+from falkorbench.ldbc import params as ldbc_params
+from falkorbench.ldbc import queries as ldbc_queries
+from falkorbench.ldbc import runner as ldbc_runner
 
 # bench/ is the project root; the repo is its parent.
 BENCH_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = BENCH_DIR.parent
 RESULTS = BENCH_DIR / "results"
+#: Where LDBC datasets are downloaded and extracted. Also the server's
+#: IMPORT_FOLDER for an LDBC run, since `LOAD CSV` resolves `file://` against
+#: it — a dataset outside this tree is not reachable by the server.
+LDBC_CACHE = BENCH_DIR / "ldbc-data"
 
 
 def _select(names: tuple[str, ...], *, cg_only: bool = False):
@@ -521,109 +527,127 @@ def flow(module, out, baseline, current, names):
             tmp.cleanup()
 
 
-# --- pokec -------------------------------------------------------------------
-
-
-@cli.command(
-    context_settings={
-        "ignore_unknown_options": True,
-        "allow_extra_args": True,
-        "help_option_names": [],
-    },
-    add_help_option=False,
-)
-@click.argument("argv", nargs=-1, type=click.UNPROCESSED)
-def pokec(argv):
-    """The pokec check: FalkorDB/benchmark on Pokec, candidate against baseline.
-
-    Takes the contract's flags (`bench pokec --help` lists them) and always writes
-    <out>/result.json; exits 0 whenever it did. See src/falkorbench/pokec/README.md.
-    """
-    from falkorbench.pokec import check as pokec_check  # its flags are argparse's (kit.add_args)
-
-    raise SystemExit(pokec_check.main(list(argv)))
-
-
-# --- validate ----------------------------------------------------------------
-
-
-@cli.command()
-@click.option(
-    "--kind",
-    type=click.Choice(["result", "nightly"]),
-    default=None,
-    help="skip shape detection",
-)
-@click.argument("files", nargs=-1, required=True)
-def validate(kind, files):
-    """Check perf result.json / nightly.json files against the result contract.
-
-    Prints each problem as <file>: <code>: <path>: <message>, or <file>: ok
-    (<kind>); exits 1 if any file has a problem.
-    """
-    if contract.check_files(files, kind, echo=click.echo):
-        raise SystemExit(1)
+# --- ldbc --------------------------------------------------------------------
 
 
 @cli.group()
-def nightly() -> None:
-    """The nightly perf pipeline: merge the checks, report the night, alarm on a missed one."""
+def ldbc() -> None:
+    """LDBC SNB Interactive v1 complex reads.
 
-
-@nightly.command("report")
-@click.option(
-    "--nightly",
-    "path",
-    required=True,
-    type=click.Path(path_type=Path),
-    help="the night's nightly.json",
-)
-def nightly_report_command(path):
-    """One line to Chat ($PERF_CHAT_WEBHOOK), the details to $GITHUB_STEP_SUMMARY.
-
-    Exits 0 when the night was reported, whatever its status; 1 when it could not be.
+    Internal instrument, not an auditable LDBC result: that needs the official
+    Java driver, LDBC membership and a commissioned audit.
     """
-    raise SystemExit(nightly_report.run(path, os.environ))
 
 
-@nightly.command("missed-run")
+@ldbc.command("fetch")
+@click.option("--sf", default="0.1", show_default=True, help="scale factor (0.1 or 1)")
+@click.option("--cache", default=None, type=click.Path(), help="dataset cache directory")
+def ldbc_fetch(sf, cache):
+    """Download, extract and prepare the SNB dataset."""
+    cache_dir = Path(cache) if cache else LDBC_CACHE
+    try:
+        root = ldbc_dataset.fetch(cache_dir, sf, echo=click.echo)
+        ldbc_dataset.prepare(root, echo=click.echo)
+    except ldbc_dataset.DatasetError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(f"dataset ready: {root}")
+
+
+@ldbc.command("run")
+@common_options
+@click.option("--sf", default="0.1", show_default=True, help="scale factor (0.1 or 1)")
+@click.option("--cache", default=None, type=click.Path(), help="dataset cache directory")
+@click.option("--out", default=None, type=click.Path(), help="CSV output path")
 @click.option(
-    "--date",
-    "night",
+    "--params",
+    "params_dir",
     default=None,
-    type=click.DateTime(["%Y-%m-%d"]),
-    help="the night to check (UTC); default: the night a scheduled run was created for, else today",
+    type=click.Path(exists=True),
+    help="official LDBC substitution parameter directory",
 )
-@click.option("--workflow", default="perf-nightly.yml", show_default=True)
-@click.option("--branch", default="main", show_default=True)
-@click.option("--event", default="schedule", show_default=True, help="the runs' trigger")
-@click.option("--artifact", default="perf-nightly", show_default=True)
-def missed_run_command(night, workflow, branch, event, artifact):
-    """Alarm (and exit 1) when the night's scheduled run left no perf-nightly artifact."""
-    raise SystemExit(
-        missed_run.run(
-            os.environ,
-            night.date() if night else None,
-            workflow=workflow,
-            branch=branch,
-            event=event,
-            artifact=artifact,
+@click.option(
+    "--param-count",
+    default=25,
+    show_default=True,
+    help="sampled parameter rows per query, when --params is not given",
+)
+@click.option("--seed", default=1, show_default=True, help="sampling seed")
+@click.option("--reuse", is_flag=True, help="attach to a server already on --port")
+@click.option(
+    "--load/--no-load", "do_load", default=None, help="load the dataset (implied unless --reuse)"
+)
+@click.option("--keep-server", is_flag=True, help="leave the server running afterwards")
+@click.argument("names", nargs=-1)
+def ldbc_run(
+    module, port, sf, cache, out, params_dir, param_count, seed, reuse, do_load, keep_server, names
+):
+    """Load the dataset and measure the complex reads.
+
+    NAMES selects a subset, e.g. `bench ldbc run IC1 IC13`.
+    """
+    cache_dir = (Path(cache) if cache else LDBC_CACHE).resolve()
+    out_path = Path(out) if out else RESULTS / f"ldbc_sf{sf}.csv"
+    try:
+        selected = ldbc_queries.select(names)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    try:
+        root = ldbc_dataset.fetch(cache_dir, sf, echo=click.echo)
+        ldbc_dataset.prepare(root, echo=click.echo)
+    except ldbc_dataset.DatasetError as e:
+        raise click.ClickException(str(e)) from e
+
+    # As with `measure`, --reuse means "do not start a server" and must not
+    # silently also mean "do not load", or this measures an empty database.
+    should_load = (not reuse) if do_load is None else do_load
+
+    server = client_mod.Server(port=port)
+    if reuse:
+        if not client_mod.is_server_up(port):
+            raise click.ClickException(f"--reuse given but nothing answers on :{port}")
+    else:
+        if client_mod.is_server_up(port):
+            raise click.ClickException(f"port {port} already in use; use --reuse or another --port")
+        module_path = client_mod.find_module(module, REPO_ROOT)
+        if not module_path.exists():
+            raise click.ClickException(f"module not found: {module_path}")
+        server = client_mod.start_server(module_path, port, RESULTS / "ldbc_server_dir", cache_dir)
+
+    try:
+        bench = client_mod.connect(server)
+        bench.graph_name = f"ldbc_sf{sf}"
+        if should_load:
+            click.echo(f"loading {root.name}...")
+            ldbc_loader.load(bench, root, import_root=cache_dir, echo=click.echo)
+
+        param_set = ldbc_params.load(
+            bench,
+            directory=Path(params_dir) if params_dir else None,
+            count=param_count,
+            seed=seed,
+            echo=click.echo,
         )
-    )
+        click.echo(f"\nparameters: {param_set.caveat()}")
+        ldbc_queries.rewrite_note(click.echo)
+        click.echo("")
 
+        results = ldbc_runner.run(bench, selected, param_set, echo=click.echo)
+        ldbc_runner.write_csv(out_path, results)
+        click.echo(f"\nwrote {out_path}")
+    except (client_mod.SetupFailed, ldbc_loader.LoadError, ldbc_params.ParamError) as e:
+        raise click.ClickException(str(e)) from e
+    finally:
+        if server.proc is not None and not keep_server:
+            server.stop()
+        elif server.proc is not None:
+            click.echo(f"server left running on :{port} (pid {server.proc.pid})")
 
-@nightly.command(
-    "merge",
-    context_settings={
-        "ignore_unknown_options": True,
-        "allow_extra_args": True,
-        "help_option_names": [],
-    },
-)
-@click.argument("args", nargs=-1, type=click.UNPROCESSED)
-def nightly_merge_command(args):
-    """The night's bookkeeping: plan | context | results | conclude (each takes --help)."""
-    raise SystemExit(nightly_merge.main(list(args)))
+    if issues := ldbc_runner.problems(results):
+        click.echo("\nrun completed with problems:")
+        for issue in issues:
+            click.echo(f"  {issue}")
+        raise SystemExit(1)
 
 
 def main() -> int:
