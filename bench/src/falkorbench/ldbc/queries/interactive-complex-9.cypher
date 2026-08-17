@@ -5,10 +5,16 @@
   1289908800000 AS maxDate
 }
 */
+// FalkorDB rewrite: this one works around a *bug*, not a dialect gap. A WHERE
+// predicate on a node matched from an UNWIND-bound anchor silently returns
+// zero rows — upstream's `collect(distinct friend)` + `UNWIND` + `WHERE
+// message.creationDate < $maxDate` yields nothing at all. The C engine returns
+// the correct result. `WITH DISTINCT friend` expresses the same de-duplication
+// without the UNWIND.
+// Tracked as FalkorDB/FalkorDB#2557 — revert this when that is fixed.
 MATCH (root:Person {id: $personId })-[:KNOWS*1..2]-(friend:Person)
 WHERE NOT friend = root
-WITH collect(distinct friend) as friends
-UNWIND friends as friend
+WITH DISTINCT friend
     MATCH (friend)<-[:HAS_CREATOR]-(message:Message)
     WHERE message.creationDate < $maxDate
 RETURN

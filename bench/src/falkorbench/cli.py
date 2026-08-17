@@ -505,6 +505,13 @@ def ldbc_fetch(sf, cache):
     help="sampled parameter rows per query, when --params is not given",
 )
 @click.option("--seed", default=1, show_default=True, help="sampling seed")
+@click.option(
+    "--timeout",
+    "timeout_ms",
+    default=ldbc_runner.DEFAULT_TIMEOUT_MS,
+    show_default=True,
+    help="per-query server-side cap, in milliseconds",
+)
 @click.option("--reuse", is_flag=True, help="attach to a server already on --port")
 @click.option(
     "--load/--no-load", "do_load", default=None, help="load the dataset (implied unless --reuse)"
@@ -512,7 +519,19 @@ def ldbc_fetch(sf, cache):
 @click.option("--keep-server", is_flag=True, help="leave the server running afterwards")
 @click.argument("names", nargs=-1)
 def ldbc_run(
-    module, port, sf, cache, out, params_dir, param_count, seed, reuse, do_load, keep_server, names
+    module,
+    port,
+    sf,
+    cache,
+    out,
+    params_dir,
+    param_count,
+    seed,
+    timeout_ms,
+    reuse,
+    do_load,
+    keep_server,
+    names,
 ):
     """Load the dataset and measure the complex reads.
 
@@ -565,7 +584,9 @@ def ldbc_run(
         ldbc_queries.rewrite_note(click.echo)
         click.echo("")
 
-        results = ldbc_runner.run(bench, selected, param_set, echo=click.echo)
+        results = ldbc_runner.run(
+            bench, selected, param_set, timeout_ms=timeout_ms, echo=click.echo
+        )
         ldbc_runner.write_csv(out_path, results)
         click.echo(f"\nwrote {out_path}")
     except (client_mod.SetupFailed, ldbc_loader.LoadError, ldbc_params.ParamError) as e:

@@ -223,6 +223,27 @@ Three deliberate deviations:
 CLAUDE.md) is p99 latency. `redis-benchmark` computes a latency distribution and
 this harness currently discards it, so the p99 bar is not measured here yet.
 
+One structural gap is worth recording because closing it needs a design decision
+rather than a patch: the MVCC copy-on-write `GrB_Matrix_dup` of delta matrices in
+`create_nodes` / `set_nodes_labels_bulk` waits on pending work first, so it scales
+with the accumulated delta (up to the 10k flush threshold, avg ~5k) per query,
+independent of batch size. C never merges pending tuples on the write path. That
+is what keeps the create/delete rows above 1.0x against C.
+
+**A ranked Rust-vs-C table is deliberately not kept here.** It goes stale the
+moment anything merges, and a stale ranking is worse than none — it sends people
+to work on rows that are already fixed. Generate it from a live run using the
+recipe above.
+
+**Coverage**: the query set covers **74.8%** of graph-crate lines
+(28,869/38,573, excluding the generated `GraphBLAS.rs` FFI; measured in CI on
+2026-08-05). The 0%-coverage areas need infrastructure a Cypher
+query cannot reach from this graph: `cow_btree` (~750 lines, appears unwired),
+`string_pool`, `vec_distance`, and most of `algo_procedures.rs`. For the hot paths
+this set targets (runtime, expressions, planner, matrices), coverage is high.
+`bench coverage` reports the number but does not enforce a floor — it is a
+validator of the query set, not a coverage gate.
+
 ## LDBC SNB (Interactive v1)
 
 A second, complementary workload: the 14 **complex reads** of the LDBC Social
@@ -252,22 +273,37 @@ membership, and an audit commissioned from a certified auditor. What this gives
 you is an internal, repeatable number on a standard dataset and standard
 queries.
 
-### Four queries differ from the reference text
+### Seven queries differ from the reference text
 
 Each departure is annotated in the `.cypher` file next to the line it replaced,
-and listed in `ldbc/queries.py::REWRITES` so a run always prints them. All four
-were confirmed against a running engine:
+and listed in `ldbc/queries.py::REWRITES` so a run always prints them. All seven
+were confirmed against a running engine, and each was checked against the C
+engine too so that a genuine bug is not filed away as a dialect gap:
 
 | query | why it could not run as written |
 |---|---|
 | IC1, IC13 | `MATCH path = shortestPath(...)` → *"FalkorDB currently only supports shortestPaths in WITH or RETURN clauses"*. Moved into `WITH`. |
-| IC14 | `allShortestPaths()` with inline endpoint patterns → *"Source and destination must already be resolved"*. Endpoints pre-bound in a preceding `MATCH`. |
+| IC14 | `allShortestPaths()` with inline endpoint patterns → *"Source and destination must already be resolved"*. Endpoints pre-bound in a preceding `MATCH`. Also, a pattern comprehension's `WHERE` cannot see the enclosing list comprehension's variable, so the per-relationship weights are computed over `UNWIND`ed relationships with their endpoints hoisted into plain variables. |
 | IC10 | `datetime({epochMillis: ...}).month` → *"Unknown function 'datetime'"*. The loader derives `birthdayMonth`/`birthdayDay` instead. |
+| IC7 | `not((liker)-[:KNOWS]-(person))` → *"Type mismatch: expected Boolean or Null but was List"*. A traversal pattern is not a boolean-valued expression in a projection, and `exists()` explicitly refuses traversal patterns, so this becomes `size(<pattern>) = 0`. |
+| IC6 | **A bug, not a dialect gap.** An inline property filter on a pattern followed by further patterns fails under `UNWIND` with *"Type mismatch: expected Map, Node, Edge, ... but was List"*; the C engine runs it correctly. The filter moves into `WHERE`. Tracked as [#2556](https://github.com/FalkorDB/FalkorDB/issues/2556) — revert when fixed. |
+| IC9 | **A bug, not a dialect gap.** A `WHERE` on a node reached from an `UNWIND`-bound anchor silently returns zero rows — no error, just nothing, while the same query without the `WHERE` returns 81,897. The C engine is correct. `WITH DISTINCT` in place of `collect(DISTINCT ...)` + `UNWIND` avoids it. Tracked as [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) — revert when fixed. |
+
+IC1, IC7, IC13 and IC14 fail identically on the C engine, so those four are
+dialect gaps rather than regressions. IC6 and IC9 look like the same kind of
+thing and are not: both run correctly on C. That distinction only exists because
+every failure was re-checked against `falkordb/falkordb-server:edge-c` before
+being classified — without that step two real regressions would have been
+written off as dialect gaps, and two dialect gaps filed as false bugs.
 
 `CREATE CONSTRAINT ... ASSERT n.id IS UNIQUE` is also unsupported, so upstream's
 `indices.cypher` becomes `GRAPH.CONSTRAINT CREATE` calls — each of which
 additionally requires its exact-match index to already exist, and validates
-asynchronously (the loader waits for `OPERATIONAL` rather than assuming it).
+asynchronously (the loader waits for `OPERATIONAL` rather than assuming it;
+note `db.constraints()` reports `UNDER CONSTRUCTION`, never `PENDING`).
+
+The CSVs are pipe-separated. FalkorDB has no `DELIMITER` keyword — the
+standard-Cypher spelling is `FIELDTERMINATOR`, and it goes *after* `AS <var>`.
 
 ### Substitution parameters
 
@@ -281,25 +317,42 @@ are deterministic and comparable **to each other**, but not to published LDBC
 numbers — the CSV and the console output both say which source was used, and
 that caveat should travel with any number taken from it.
 
+Sampling deliberately draws from where the data is dense: people from the
+most-connected end of the `KNOWS` degree distribution, and dates from the last
+quarter of the corpus. A uniformly drawn person is usually isolated and a
+uniformly drawn date window usually lands in the sparse early history; either
+returns nothing in microseconds, which would report the benchmark as fast while
+measuring almost none of the work it exists to measure. `runner.problems()`
+treats "returned zero rows on every run" as a failure for the same reason.
 
+### What the first run found
 
-One structural gap is worth recording because closing it needs a design decision
-rather than a patch: the MVCC copy-on-write `GrB_Matrix_dup` of delta matrices in
-`create_nodes` / `set_nodes_labels_bulk` waits on pending work first, so it scales
-with the accumulated delta (up to the 10k flush threshold, avg ~5k) per query,
-independent of batch size. C never merges pending tuples on the write path. That
-is what keeps the create/delete rows above 1.0x against C.
+Running the 14 complex reads against SF0.1 was worth doing for the bugs alone.
+Thirteen of the fourteen measure; every one of those is in the same order of
+magnitude as the C engine or faster, and four (IC1, IC10, IC13, IC14) do not run
+on C at all. Four defects came out of the exercise, each confirmed against the C
+engine before being filed:
 
-**A ranked Rust-vs-C table is deliberately not kept here.** It goes stale the
-moment anything merges, and a stale ranking is worse than none — it sends people
-to work on rows that are already fixed. Generate it from a live run using the
-recipe above.
+| issue | what |
+|---|---|
+| [#2555](https://github.com/FalkorDB/FalkorDB/issues/2555) | aggregation over a bare map property returns empty — `collect`→`[]`, `count`→`0`, silently |
+| [#2556](https://github.com/FalkorDB/FalkorDB/issues/2556) | inline property filter under `UNWIND` raises a spurious type mismatch |
+| [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) | `WHERE` on a node matched from an `UNWIND`-bound anchor silently returns zero rows |
+| [#2558](https://github.com/FalkorDB/FalkorDB/issues/2558) | a variable-length traversal loses its indexed anchor when the `MATCH` has a second pattern — 19,000x |
 
-**Coverage**: the query set covers **74.8%** of graph-crate lines
-(28,869/38,573, excluding the generated `GraphBLAS.rs` FFI; measured in CI on
-2026-08-05). The 0%-coverage areas need infrastructure a Cypher
-query cannot reach from this graph: `cow_btree` (~750 lines, appears unwired),
-`string_pool`, `vec_distance`, and most of `algo_procedures.rs`. For the hot paths
-this set targets (runtime, expressions, planner, matrices), coverage is high.
-`bench coverage` reports the number but does not enforce a floor — it is a
-validator of the query set, not a coverage gate.
+**#2558 is the one that matters.** It is the sole reason IC3 does not complete
+inside a 120 s timeout where C takes 174 ms, and the reason IC10 takes 86 s. Both
+plans abandon a unique-index seed in favour of scanning the unbound side. No
+other measured query is affected, so a single planner decision accounts for the
+entire Rust-vs-C gap on this workload.
+
+Three of the four are **silent** — wrong or empty results with no error. They
+were caught only because the runner treats "zero rows on every run" as a failure
+rather than as a fast query. A harness that reported latency alone would have
+called that run a success.
+
+Following the file-level convention above, a ranked latency table is not kept
+here; regenerate it from a live run. `results/ldbc_sf<SF>.csv` is written per run
+and deliberately not merged into `current.csv` — these runtimes are orders of
+magnitude larger than the micro-benchmark's and would distort its regression
+thresholds.
