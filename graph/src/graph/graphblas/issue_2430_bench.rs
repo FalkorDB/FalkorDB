@@ -57,22 +57,35 @@ fn read_instr() -> Option<u64> {
     None
 }
 
-/// `pairs` populated adjacency rows, of which the first `multi` are two-edge.
-/// Mirrors the fixture the issue's table was taken on: the *read* is always the
-/// same 1,000 two-edge pairs; only how much else the graph holds varies.
+/// The issue's fixture, and the detail that matters: **rows are held at
+/// `ROWS`** while the pair count grows, so a bigger graph means *longer rows*,
+/// not more of them. An earlier version of this file gave every pair its own row
+/// and so held row length at 1 at every size — which is why it saw a flat cost
+/// and wrongly cleared edge storage. `GrB_Matrix_extractElement` searches within
+/// a row, so row length is exactly the variable a point read can be sensitive
+/// to.
+///
+/// The first `multi` pairs of row 0.. are two-edge and are the ones read.
+const ROWS: u64 = 1_000;
+
 fn built(
     pairs: u64,
     multi: u64,
 ) -> Tensor {
-    let n = pairs + 2;
-    let mut t = Tensor::new(n, n);
+    let mut t = Tensor::new(ROWS + 2, ROWS + 2);
     let (mut srcs, mut dsts, mut ids) = (Vec::new(), Vec::new(), Vec::new());
     let mut next = 0u64;
     for i in 0..pairs {
+        // spread over ROWS rows: row length grows as `pairs` does
+        let (s, d) = if i < multi {
+            (i % ROWS, (i + 1) % ROWS)
+        } else {
+            (i % ROWS, (i * 7 + 3) % ROWS)
+        };
         let k = if i < multi { 2 } else { 1 };
         for _ in 0..k {
-            srcs.push(i);
-            dsts.push(i + 1);
+            srcs.push(s);
+            dsts.push(d);
             ids.push(next);
             next += 1;
         }
@@ -90,14 +103,14 @@ const REPS: u64 = 20;
 fn probe_cost(t: &Tensor) -> (f64, f64) {
     // warm
     for i in 0..PROBES {
-        std::hint::black_box(t.get(i, i + 1).count());
+        std::hint::black_box(t.get(i % ROWS, (i + 1) % ROWS).count());
     }
     let i0 = read_instr();
     let t0 = Instant::now();
     let mut acc = 0usize;
     for _ in 0..REPS {
         for i in 0..PROBES {
-            acc += t.get(i, i + 1).count();
+            acc += t.get(i % ROWS, (i + 1) % ROWS).count();
         }
     }
     let el = t0.elapsed();
