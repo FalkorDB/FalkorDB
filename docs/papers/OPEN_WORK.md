@@ -86,9 +86,12 @@ version bump and a round-trip test against blobs written by the current code.
 
 ---
 
-## 3. Close the modelling gaps
+## 3. Close the modelling gaps — done
 
-**Status:** open. Three gaps, in the order they are worth closing.
+**Status:** closed. All four sub-items below are proved; the only place the code
+is still ahead of the model is the serialised **byte stream** (framing, lengths,
+endianness), noted under 3c. Kept in full because each records something the
+attempt turned up that the next person would otherwise re-derive.
 
 ### 3a. Batch-plan equivalence for deletion — done
 
