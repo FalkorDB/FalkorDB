@@ -319,7 +319,12 @@ that caveat should travel with any number taken from it.
 
 Sampling deliberately draws from where the data is dense: people from the
 most-connected end of the `KNOWS` degree distribution, and dates from the last
-quarter of the corpus. A uniformly drawn person is usually isolated and a
+quarter of the corpus. IC3 gets a much wider window than the rest — it counts
+friends who are *not* resident in either country yet posted from both inside the
+window, and at SF0.1 a 30-day window returns 0 rows where 365 returns 1 and 730
+returns 2. Both engines agree on those counts, so it is a property of the
+dataset, not of either engine; `durationDays` is an explicit LDBC parameter, so
+widening it stays inside the query's own contract. A uniformly drawn person is usually isolated and a
 uniformly drawn date window usually lands in the sparse early history; either
 returns nothing in microseconds, which would report the benchmark as fast while
 measuring almost none of the work it exists to measure. `runner.problems()`
