@@ -96,8 +96,10 @@ CVSS
 md
 LLM
 Github
+Homebrew
 txt
 GenAI
+macOS
 GraphRAG
 LLMs
 Embeddings
