@@ -18,6 +18,7 @@ import re
 import pytest
 
 from falkorbench.ldbc import dataset
+from falkorbench.ldbc import loader as loader_mod
 from falkorbench.ldbc import params as params_mod
 from falkorbench.ldbc import queries as query_mod
 from falkorbench.ldbc import runner
@@ -151,6 +152,19 @@ def test_every_unique_constraint_has_a_supporting_index():
     indexed = {(label, prop) for label, prop in schema.INDICES}
     for label in schema.UNIQUE_CONSTRAINTS:
         assert (label, "id") in indexed, label
+
+
+def test_load_uses_fieldterminator_not_delimiter():
+    """FalkorDB has no `DELIMITER` keyword; the LDBC CSVs are pipe-separated.
+
+    `LOAD CSV WITH HEADERS DELIMITER '|' FROM ...` is rejected outright with
+    `Invalid input 'DELIMITER': expected From`, and the standard-Cypher
+    spelling is `FIELDTERMINATOR`, placed *after* `AS <var>`. Getting this
+    wrong fails every single load, so pin the exact shape.
+    """
+    prefix = loader_mod._LOAD_PREFIX
+    assert "DELIMITER" not in prefix
+    assert re.search(r"AS\s+row\s+FIELDTERMINATOR\s+'\|'", prefix), prefix
 
 
 def test_every_edge_endpoint_label_is_loadable_and_indexed():
