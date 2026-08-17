@@ -98,41 +98,63 @@ pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize, const D
         .unwrap_or_else(|| Node::Leaf(Leaf::from_pairs(&[])))
 }
 
+/// Repair one under-full child by combining it with an adjacent sibling, returning the index to
+/// examine next. The single shared step behind both removal paths: [`Branch::rebalance`] applies it
+/// once to a known child, [`merge_underfull`] loops it until every child is min-full.
+///
+/// The caller must guarantee `children.len() >= 2` — with no sibling there is nothing to combine, and
+/// the under-flow has to propagate to the parent instead.
+///
+/// [`Node::combine`] re-splits the pair in sorted order, so the merged / new-left node keeps the
+/// pair's minimum (`min(new left) == min(old left)`). That is why only the **inter-pair** separator
+/// `seps[left]` is ever touched: the separators bracketing the pair from outside
+/// (`seps[left - 1] == min(left)`, and `seps[right]`) still point at unchanged minima, so they stay
+/// valid without being rewritten.
+fn combine_with_sibling<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    children: &mut Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
+    seps: &mut Vec<(u64, u64)>,
+    child_idx: usize,
+) -> usize {
+    debug_assert!(children.len() >= 2, "combine needs a sibling to pair with");
+    // Pair the under-full child with its right neighbour, or its left when it is the last.
+    let (left, right) = if child_idx + 1 < children.len() {
+        (child_idx, child_idx + 1)
+    } else {
+        (child_idx - 1, child_idx)
+    };
+    match children[left].combine(seps[left], &children[right]) {
+        Combined::One(merged) => {
+            // Merge: the inter-pair separator vanishes along with the absorbed right child.
+            children[left] = merged;
+            children.remove(right);
+            seps.remove(left);
+            left // the merged node may still be under-full — re-check it
+        }
+        Combined::Two(new_left, sep, new_right) => {
+            // Borrow: only the inter-pair separator moves — to the rebalanced right node's new min.
+            children[left] = new_left;
+            children[right] = new_right;
+            seps[left] = sep;
+            right // `new_left` is now min-full
+        }
+    }
+}
+
 /// Merge under-full adjacent children left-to-right (re-checking a merged node) so the child list
-/// regains minimum fill after a batch removal — the batch analog of [`Branch::rebalance`]. Each
-/// [`Node::combine`] either fuses the pair into one node (dropping the inter-pair separator) or
-/// rebalances them into two (updating it). A merge that itself stays under-full (a nearly-empty
-/// subtree draining) shrinks the list further and, if the whole branch drops below minimum, propagates
-/// up as this branch's own underflow — resolved by the parent's merge or the root-level level-collapse.
+/// regains minimum fill after a batch removal — the batch analog of [`Branch::rebalance`], over the
+/// same [`combine_with_sibling`] step. A merge that itself stays under-full (a nearly-empty subtree
+/// draining) shrinks the list further and, if the whole branch drops below minimum, propagates up as
+/// this branch's own underflow — resolved by the parent's merge or the root-level level-collapse.
 fn merge_underfull<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
     children: &mut Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
     seps: &mut Vec<(u64, u64)>,
 ) {
     let mut i = 0;
     while children.len() > 1 && i < children.len() {
-        if !children[i].is_underfull() {
-            i += 1;
-            continue;
-        }
-        // Pair the under-full child with its right neighbour, or its left when it is the last.
-        let (left, right) = if i + 1 < children.len() {
-            (i, i + 1)
+        if children[i].is_underfull() {
+            i = combine_with_sibling(children, seps, i);
         } else {
-            (i - 1, i)
-        };
-        match children[left].combine(seps[left], &children[right]) {
-            Combined::One(merged) => {
-                children[left] = merged;
-                children.remove(right);
-                seps.remove(left);
-                i = left; // the merged node may still be under-full — re-check it
-            }
-            Combined::Two(new_left, sep, new_right) => {
-                children[left] = new_left;
-                children[right] = new_right;
-                seps[left] = sep;
-                i = right; // `new_left` is now min-full
-            }
+            i += 1;
         }
     }
 }
@@ -169,6 +191,13 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         self.seps.partition_point(|&sep| sep <= (key, doc))
     }
 
+    /// Whether this branch dropped below its minimum fan-out, so a parent must merge it. The one
+    /// definition of the branch threshold — [`Node::is_underfull`] and [`Node::remove_one`] both
+    /// report through here rather than restating `BRANCH_MAX / 2`.
+    fn is_underfull(&self) -> bool {
+        self.children.len() < BRANCH_MAX / 2
+    }
+
     /// Repair this branch **in place** after its child `child_idx` underflowed, by combining that
     /// child with an adjacent sibling — either merging the pair into one node (dropping a separator)
     /// or re-balancing them into two (updating the separator).
@@ -183,31 +212,10 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
         if self.children.len() < 2 {
             return;
         }
-        // Pair the underflowed child with its right neighbour when there is one, otherwise its left.
-        let (left_idx, right_idx) = if child_idx + 1 < self.children.len() {
-            (child_idx, child_idx + 1)
-        } else {
-            (child_idx - 1, child_idx)
-        };
-        // `combine` re-splits the pair in sorted order, so the merged / new-left node keeps the pair's
-        // minimum (`min(new left) == min(old left)`). That is why only the **inter-pair** separator
-        // `seps[left_idx]` is ever touched below: the separators bracketing the pair from outside
-        // (`seps[left_idx - 1] == min(left)` and `seps[right_idx]`, untouched) still point at unchanged
-        // minima, so they stay valid without being rewritten.
-        match self.children[left_idx].combine(self.seps[left_idx], &self.children[right_idx]) {
-            Combined::One(merged) => {
-                // Merge: the inter-pair separator vanishes along with the absorbed right child.
-                self.children[left_idx] = merged;
-                self.children.remove(right_idx);
-                self.seps.remove(left_idx);
-            }
-            Combined::Two(left, sep, right) => {
-                // Borrow: only the inter-pair separator moves — to the rebalanced right node's new min.
-                self.children[left_idx] = left;
-                self.children[right_idx] = right;
-                self.seps[left_idx] = sep;
-            }
-        }
+        // One repair, then stop: the single-key path removes one tuple, so at most one child can have
+        // underflowed. The batch path loops the same step (see [`merge_underfull`]) because a batch can
+        // underflow several children at once, and fusing a pair can leave the result under-full again.
+        let _ = combine_with_sibling(&mut self.children, &mut self.seps, child_idx);
     }
 }
 
@@ -462,7 +470,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
                 if branch.children[child_idx].remove_one(key, doc)? {
                     branch.rebalance(child_idx);
                 }
-                Some(branch.children.len() < BRANCH_MAX / 2)
+                Some(branch.is_underfull())
             }
         }
     }
@@ -538,7 +546,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
     fn is_underfull(&self) -> bool {
         match self {
             Node::Leaf(leaf) => leaf.count() < LEAF_MAX / 2,
-            Node::Branch(branch) => branch.children.len() < BRANCH_MAX / 2,
+            Node::Branch(branch) => branch.is_underfull(),
         }
     }
 
