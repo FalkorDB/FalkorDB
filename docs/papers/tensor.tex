@@ -1263,11 +1263,23 @@ their crossing. A ratio is right when each entry is rewritten $O(1)$
 times between merges; here every transaction re-touches the \emph{whole}
 delta, so the accumulated tax is quadratic in $D$ and depends on $t$.
 
-$F$ and $w$ are measured rather than modelled. The fold is $\approx 82\%$
-fixed cost and independent of $\mathrm{nrows}$ --- an empty fold costs
-$2.35\,\mu\text{s}$ at $\mathrm{nrows} = 65\text{k}$, $1\text{M}$ and
-$16.7\text{M}$ alike --- so $F$ is flat in the base above about $10^6$
-entries, and the balance point does not track base size. And $w$ differs by
+$F$ and $w$ are measured rather than modelled. Two properties of $F$ are what
+let the rule ignore the base. It is independent of $\mathrm{nrows}$: an empty
+fold costs $2.0$--$2.5\,\mu\text{s}$ at $\mathrm{nrows} = 65\text{k}$,
+$1\text{M}$ and $16.7\text{M}$ alike, which is the measurement that retired an
+earlier policy's $\mathrm{nvals} + \mathrm{nrows}$ base term. And against
+$\mathrm{nvals}$ it is strongly \emph{sub}-linear --- $\approx\!2\,\mu\text{s}$
+empty, $707\,\mu\text{s}$ at $16\text{k}$ ($43$\,ns/entry),
+$2{,}174\,\mu\text{s}$ at $1\text{M}$ ($2$\,ns/entry) --- which is two format
+regimes rather than one line, since a delta at $1.5\%$ density is hypersparse
+and one at $95\%$ is sparse or bitmap, and \texttt{eWiseAdd} vectorises only in
+the latter. Fitting a straight line across that curve yields an apparent fixed
+cost of $\approx\!1.7$\,ms, and we flag it as an artifact of the regime change
+rather than a constant term, because a policy calibrated on it would be
+calibrated on a fit. What the rule actually needs is $F$ near the operating
+point, and there it moves $1.2\times$ for $4\times$ the entries between $262$k
+and $1$M --- flat enough that the balance point does not track base size. And
+$w$ differs by
 $250\times$ between the two paths: a write nobody reads pays only the dup
 ($w_{\text{dup}} \approx 0.2\,\text{ns}$/entry, memcpy speed), while a
 transaction whose delta is also materialised pays the pending-tuple merge
@@ -2645,8 +2657,10 @@ packing, which turns silent out-of-range into a loud failure.
 
 Widening $me$ does not help: GraphBLAS's own index limit \emph{is} $2^{60}$, so
 $60$ bits is the entire budget and no packing of two $60$-bit node identifiers
-fits. Rebalancing to $30+30$ buys one bit over four ($\approx 10^9$ per side)
-and postpones rather than removes the ceiling.
+fits. Rebalancing to $30+30$ buys the source two bits --- $2^{30} \approx 10^9$
+against today's $2^{28}$, a factor of four --- and pays for them out of the
+destination, which falls from $2^{32}$ to the same $2^{30}$. It postpones the
+ceiling rather than removing it.
 
 \paragraph{Removing the ceiling: a block-indexed overflow matrix.} The
 restriction is being lifted rather than merely documented, by making $\kappa$
