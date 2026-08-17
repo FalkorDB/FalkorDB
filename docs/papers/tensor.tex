@@ -2254,31 +2254,59 @@ the two rows where (C) loses single-pair lookup in Table~\ref{tab:evalread} are
 the high state appearing in the sweep --- $1.27$--$1.29\times$ here against
 $1.28$--$1.29\times$ there --- and not a cost of the sentinel path.
 
-We do not know what selects the state, and prefer to say so rather than offer a
-plausible story. Three hypotheses are refuted. It is not the sentinel charge
-scaling with the overflow matrix: that is flat across a $41\times$ change in
-$|me|$, measured above. It is not walking more identifiers: $k$ is pinned at
-$2$. And it is not a lingering delta that a read-path fold decision latches but
-never flushes: an unrelated write, which would flush it, does not move the
-number. It is filed as FalkorDB issue \#2430
-(\url{https://github.com/FalkorDB/FalkorDB/issues/2430}) with the table above
-and those refutations recorded. Two things follow. It is not an exotic corner:
-both of the largest sizes measured sit in the high state, so a graph of ordinary
-size pays the higher price, which makes this worth fixing rather than
-cataloguing. And the result that matters for this paper is negative --- the
-sweep's lookup penalty is not localised to edge storage, so
-Table~\ref{tab:evalread}'s lookup column should not be read as a cost of
-inline-first representation.
+What selects the state is a resident delta on $me$. When the overflow matrix
+carries \emph{any} pending entries, a multi-edge row read consults the delta
+layer rather than reading the committed base alone, at a flat cost of about
+$1{,}200$ instructions --- and flat is meant literally: one pending identifier
+costs what eight thousand do. That accounts for all three of the puzzles at once.
+The states are two because a delta is either empty or it is not. Size selects
+between them because size decides where the fold policy last fired relative to
+the final write. And the selection is non-monotonic because \emph{that} is not a
+function of size.
 
-\paragraph{This is the methodology caveat, earned.} \S\ref{sec:evalmethod} warns
-that an engine-level ratio is evidence about engines. Here that warning cashed
-out against us rather than for us: we had a tensor-shaped explanation ready for
-a tensor-shaped number --- a second probe into $me$ that a short row cannot
-amortise --- and it was wrong, and only a controlled measurement of the read
-path itself established that. A reader is entitled to apply the same discount to the numbers
-in this section that we did not apply to that one, which is why the insert
-result of \S\ref{sec:evalwrite} is stated as a claim about an ordering rather
-than about a factor.
+The diagnosis is causal rather than circumstantial: adding a single pending
+identifier to $me$, on a pair the probes never read, moves the measured read from
+$2{,}851$ to $4{,}050$ instructions. Storage format, the hypersparse hyper-hash,
+index widths and the forward deltas were each eliminated first, and the issue's
+own recorded refutation of the lingering-delta hypothesis --- that an unrelated
+write does not move the number --- turns out to be too weak a test, because the
+fold policy is size-based and a delta of one entry never meets its threshold.
+
+Two things follow, and the first is about method rather than about tensors. Our
+own first attempt at this diagnosis concluded the opposite, that the cost was not
+in edge storage at all, on the strength of a boundary fixture that read a flat
+cost at every size. That fixture built its tensor in one batch --- which is
+exactly the condition that leaves $me$'s delta empty and the read in the low
+state. \emph{A fixture that cannot reproduce a bug will exonerate whatever it is
+pointed at}, and the way out was to build the tensor as the engine does, by
+accumulation, rather than to build what the engine holds.
+
+The second is the paper's own stake. The lookup column of
+Table~\ref{tab:evalread} \emph{is} a cost of this design, though not of
+inline-first representation as such: it is the cost of reaching identifiers
+through a second delta-layered matrix, which is the price (C) pays for keeping
+them out of the adjacency cell. It is not an exotic corner --- both of the
+largest sizes measured sit in the high state --- and it is fixable without
+touching the representation. \S\ref{sec:future} says how.
+
+\paragraph{This is the methodology caveat, earned twice, in opposite
+directions.} \S\ref{sec:evalmethod} warns that an engine-level ratio is evidence
+about engines, and the warning cashed out against us the first time: we had a
+tensor-shaped explanation ready for a tensor-shaped number --- a second probe
+into $me$ that a short row cannot amortise --- and a controlled measurement of
+the read path refuted it. It then cashed out against us a second time and the
+other way. The controlled measurement that did the refuting was itself
+uncontrolled in a variable nobody had thought to hold: how the tensor was
+\emph{built}. Built in one batch it reads flat; built by accumulation, as the
+engine builds it, it reproduces both states. The first measurement was right that
+the effect is not a per-identifier walk, and wrong that it is not edge storage.
+
+The general lesson is not that engine-level numbers are untrustworthy and
+boundary numbers are not. It is that a fixture is a claim about which variables
+matter, and a fixture that cannot reproduce the phenomenon has already assumed
+its conclusion. A reader is entitled to apply that discount to every number in
+this section, which is why the insert result of \S\ref{sec:evalwrite} is stated
+as a claim about an ordering rather than about a factor.
 
 \paragraph{The constant that design (B) would pay.} This decomposition is also the
 number the (B)-versus-(C) argument actually wants, and a better one than the
@@ -3107,6 +3135,23 @@ per-pair plan agrees with \texttt{foldl removeOne} restricted to that pair, and
 that plans for distinct pairs commute --- which they should, since they touch
 disjoint $me$ rows and disjoint forward cells, and that disjointness is exactly
 what makes the two-phase split sound.
+
+\paragraph{Give the fold policy a read-side term.} \S\ref{sec:evaldecomp}'s
+two-state read is a resident delta on $me$ making every multi-edge read consult a
+layer it could skip. The targeted repair is one probe: $me$'s delta is
+hypersparse and keyed by $(\kappa, e)$, so ``does the delta touch this row'' is
+far cheaper than building a merged iterator, and a delta is small by construction
+so nearly every row would take the base path. \textsc{EffGet} already does
+exactly this for $dm$ (\S\ref{sec:reads}); the multi-edge path simply never
+learned the trick.
+
+The more interesting repair is the fold policy itself. The square-root rule of
+\S\ref{sec:folding} is derived entirely from what a delta costs \emph{writers}
+--- the rewrite tax $wD/(2t)$ against the fold bill $F/D$ --- and has no term at
+all for what a resident delta costs \emph{readers}. This defect is a direct
+consequence: a one-entry delta is nearly free to fold and, measured, expensive to
+keep, and no threshold derived from write amortisation will ever fold it. What
+the model is missing is a term in the read rate.
 
 \paragraph{Demotion policy.} Demotion is currently eager: the moment a pair
 drops to one edge, its identifier returns inline and its $me$ row is emptied.

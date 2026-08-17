@@ -1,47 +1,66 @@
-# Issue #2430: the two-state multi-edge point read
+# Issue #2430: the two-state multi-edge point read — cause found
 
-A bound multi-edge point read lands in one of two cost states, selected by graph
-size. Three hypotheses are refuted in the issue itself (scaling with `|me|`, more
-ids walked, a latched-but-unflushed delta). This directory narrows what is left.
+A bound multi-edge point read lands in one of two cost states, selected
+non-monotonically by graph size.
 
-Two measurements, deliberately at different grains:
+**Cause: `me`'s delta-plus is non-empty.** When the multi-edge id matrix carries
+any pending entries, every multi-edge row read must consult the delta layer
+instead of reading the committed base alone. That costs a flat **~1,200
+instructions per read**, and the cost does not depend on how much the delta
+holds — one pending id costs the same as eight thousand.
 
-| | what it runs | result |
-| --- | --- | --- |
-| `engine_two_states.py` | the whole query, per pair | 8,725 → 9,943 instructions: a **step** of ~1,150 between 41k and 88k pairs |
-| `graph/.../issue_2430_bench.rs` | the same read with no pipeline around it | 2,771 → 2,879: a **smooth drift** of ~108 across the same range |
+That accounts for all three of the issue's puzzles:
 
-**The fixture detail both depend on.** Node count is held at 1,000 while pairs
-grow, so a bigger graph means *longer adjacency rows*, not more of them. An
-earlier version of the Rust bench gave every pair its own row — holding row
-length at 1 at every size — and so measured a perfectly flat cost and wrongly
-cleared edge storage outright. Row length is exactly the variable a point read
-can be sensitive to, since `GrB_Matrix_extractElement` searches within a row.
+| observation | explanation |
+| --- | --- |
+| two states, not a curve | the delta is empty or it isn't — binary |
+| selected by graph size | size decides where the fold policy last fired relative to the final write |
+| *non-monotonically* | which is not a function of size, so neither is the state |
 
-## What this establishes
+## The evidence, in order
 
-Edge storage is **not** where the two states come from, on two independent
-grounds:
+| measurement | what it showed |
+| --- | --- |
+| `engine_two_states.py` | the two states reproduce on `main`: 8,725 → 9,943 instr/pair, a step of ~1,150 |
+| `stage_isolation.py` | the entire step is inside `ExpandInto` (base is flat at ~3,940); and it vanishes when the filler edges use a *different* relationship type, so it is a property of the tensor being read |
+| `issue_2430_build_path` | the same logical tensor built incrementally vs in one batch differs by ~1,300 — non-monotonically — and the `me.dp` column is non-zero in exactly the high rows |
+| `issue_2430_one_pending_id` | **causal**: adding one pending id to `me`, on a pair the probes never touch, costs ~1,200 per read at every size |
 
-1. **Magnitude.** The tensor's contribution across the whole range is ~108
-   instructions; the engine-level effect is ~1,150. Edge storage accounts for at
-   most a tenth of it.
-2. **Shape.** The tensor's cost *drifts* smoothly and roughly logarithmically —
-   which is what a binary search inside a lengthening row should do. The
-   engine-level cost *steps*. A drift cannot produce a step.
+Ruled out along the way: storage format (identical, `m` sparse / `me` hypersparse
+at every size), hyper-hash (forcing `GrB_Matrix_wait(MATERIALIZE)` does not move
+it), index widths (identical), and the forward deltas (`dp`/`dm` are empty
+throughout).
 
-And the storage format is constant throughout — `m` sparse, `dp`/`dm`/`me`
-hypersparse at every size — so a GraphBLAS format switch is not the cause either.
-That was the leading remaining hypothesis and it is now refuted.
+## Why the issue's third hypothesis looked refuted
 
-## What is still open
+The issue records "a lingering delta that a read-path fold decision latches but
+never flushes" as refuted, because *an unrelated write did not move the number*.
+That test is too weak. The fold policy is size-based: a delta of one entry never
+meets the threshold, so a write is not obliged to fold `me` and generally will
+not. The hypothesis was right; the experiment could not see it.
 
-Which pipeline stage steps, and why the selection is not monotonic in graph size
-(the issue reports low/high/low/high/high; this fixture reproduces a single
-crossing, so the non-monotonicity is fixture-sensitive and worth pinning down).
-The tensor can be excluded from that search.
+## What a fix looks like
 
-Run both:
+`eff_get` already short-circuits the `dm` probe when `dm` is empty — the same
+trick is missing one level down, where a multi-edge row read consults `me`'s
+delta. Two candidates, in increasing ambition:
 
-    python3 bench/studies/issue_2430/engine_two_states.py target/release/libfalkordb.dylib 6650
-    cargo test --release -p graph issue_2430 -- --ignored --nocapture --test-threads=1
+1. **Skip the delta per row.** `me.dp` is hypersparse and keyed by
+   `(compound_key, id)`, so "does the delta touch this row" is one cheap probe
+   against building a merged iterator. Rows the delta does not touch — nearly all
+   of them, since a delta is small by construction — then read at base cost.
+2. **Fold `me` when its delta is trivially small.** The square-root policy is
+   tuned for *write* amortisation and has no term for what a resident delta costs
+   *readers*. A tiny delta is nearly free to fold and, as measured here,
+   expensive to keep.
+
+(1) is the targeted fix; (2) is a question about the fold policy's cost model,
+which currently prices only the write side.
+
+## Running these
+
+```sh
+python3 bench/studies/issue_2430/engine_two_states.py target/release/libfalkordb.dylib 6650
+python3 bench/studies/issue_2430/stage_isolation.py  target/release/libfalkordb.dylib 6660
+cargo test --release -p graph issue_2430 -- --ignored --nocapture --test-threads=1
+```

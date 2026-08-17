@@ -963,6 +963,14 @@ impl Tensor {
         self.eff_get(src, dst)
     }
 
+    /// Fold `me`'s deltas into its base unconditionally, bypassing the fold
+    /// policy's size threshold. Diagnostic hook for #2430.
+    #[cfg(test)]
+    pub fn fold_me_for_test(&mut self) {
+        self.me.flush();
+        self.me.wait();
+    }
+
     #[cfg(test)]
     fn fwd_me_nvals_for_test(&self) -> u64 {
         self.me.nvals()

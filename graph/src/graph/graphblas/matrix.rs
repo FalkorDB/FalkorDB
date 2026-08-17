@@ -778,6 +778,49 @@ impl<T> Matrix<T> {
         }
     }
 
+    /// The integer widths GraphBLAS v10 picked for this matrix's index and
+    /// offset arrays. Diagnostic hook for #2430: the width is chosen per matrix
+    /// from its dimensions and can differ between two matrices holding the same
+    /// content, which changes what a row search costs.
+    #[cfg(test)]
+    pub fn integer_bits_for_test(&self) -> (i32, i32, i32) {
+        let mut row = 0i32;
+        let mut col = 0i32;
+        let mut off = 0i32;
+        unsafe {
+            GrB_Matrix_get_INT32(
+                *self.m,
+                &raw mut row,
+                GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS as _,
+            );
+            GrB_Matrix_get_INT32(
+                *self.m,
+                &raw mut col,
+                GxB_Option_Field::GxB_COLINDEX_INTEGER_BITS as _,
+            );
+            GrB_Matrix_get_INT32(
+                *self.m,
+                &raw mut off,
+                GxB_Option_Field::GxB_OFFSET_INTEGER_BITS as _,
+            );
+        }
+        (row, col, off)
+    }
+
+    /// Call `GrB_Matrix_wait(MATERIALIZE)` unconditionally, bypassing the
+    /// `has_pending` short-circuit. Diagnostic hook for #2430: `has_pending`
+    /// tracks pending *tuples*, and a hypersparse matrix can also be waiting on
+    /// its hyper-hash, which is a different condition entirely.
+    #[cfg(test)]
+    pub fn force_materialize_for_test(&self) {
+        let lock = self.lock.lock();
+        unsafe {
+            let info = GrB_Matrix_wait(*self.m, GrB_WaitMode::GrB_MATERIALIZE as _);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        drop(lock);
+    }
+
     pub fn wait(&self) {
         if !self.has_pending.load(Ordering::Acquire) {
             return;

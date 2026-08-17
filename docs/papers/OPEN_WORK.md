@@ -250,38 +250,53 @@ oscillate hard to matter, against a permanent space cost and a new piece of
 per-transaction state, is a poor trade. Revisit if a real workload shows up that
 oscillates; the bench is committed, so re-deriving the number is one command.
 
-## 5. The two-state point-read cost (#2430) — localised, outside edge storage
+## 5. The two-state point-read cost (#2430) — cause found
 
-**Status:** cause not named, but the search space is cut decisively.
-`graph/.../issue_2430_bench.rs` and `bench/studies/issue_2430/`.
+**Status:** diagnosed, not yet fixed. `bench/studies/issue_2430/` and
+`graph/.../issue_2430_bench.rs`.
 
-Measured at both grains, on the issue's fixture — node count held at 1,000 while
-pairs grow, so a bigger graph means **longer adjacency rows**, not more of them:
+**Cause: `me`'s delta-plus is non-empty.** When the multi-edge id matrix carries
+pending entries, every multi-edge row read consults the delta layer instead of
+reading the committed base alone — a flat **~1,200 instructions per read**,
+independent of how much the delta holds. One pending id costs the same as eight
+thousand.
 
-| grain | 1,000 pairs | 121k–160k pairs | shape |
-| --- | --- | --- | --- |
-| whole query | 8,725 | 9,943 | **step** of ~1,150 between 41k and 88k |
-| the read alone | 2,771 | 2,879 | **drift** of ~108, roughly logarithmic |
+That accounts for all three puzzles: the states are two because a delta is empty
+or it isn't; size selects between them because size decides where the fold policy
+last fired relative to the final write; and the selection is non-monotonic
+because *that* is not a function of size.
 
-**Edge storage is not the cause, on two independent grounds.** Magnitude: the
-tensor contributes at most a tenth of the effect. Shape: the tensor drifts
-smoothly — which is what a binary search inside a lengthening row should do — and
-a drift cannot produce a step. Storage format is constant throughout (`m` sparse,
-`dp`/`dm`/`me` hypersparse at every size), which also refutes the leading
-remaining hypothesis, a GraphBLAS format switch.
+Evidence, in order: the step is entirely inside `ExpandInto` and vanishes when
+the filler edges use a different relationship type (so it is the tensor being
+read); the same logical tensor built incrementally vs in one batch differs by
+~1,300 in exactly the rows where `me.dp` is non-zero; and — causally — adding one
+pending id to `me`, on a pair the probes never touch, costs ~1,200 per read at
+every size. Ruled out: storage format, hyper-hash, index widths, forward deltas.
 
-**A correction worth keeping.** The first version of this measurement gave every
-pair its own row, pinning row length at 1 at every size, and so reported the read
-as perfectly *flat* and cleared edge storage outright. That was an artifact of
-the fixture. Row length is precisely the variable a point read is sensitive to;
-the corrected fixture does show the tensor responding to it, just far too little
-and in the wrong shape to be the effect. The conclusion survived, the evidence
-for it did not.
+**A correction, and a lesson about the evidence.** An earlier round of this
+concluded the opposite — "not edge storage" — on two grounds that both turned out
+to be artifacts of how it was measured. The first fixture gave every pair its own
+row, pinning row length at 1. The second held row length right but built the
+tensor in one batch, which is precisely the condition that leaves `me.dp` empty
+and the read in the *low* state. A synthetic fixture that never reproduces the
+bug will always exonerate whatever it is pointed at. What broke the deadlock was
+building the tensor the way the engine does — incrementally, one fold per batch —
+rather than building what it holds.
 
-**What is still open:** which pipeline stage steps, and why the selection is not
-monotonic in graph size (the issue reports low/high/low/high/high; this fixture
-reproduces a single crossing, so the non-monotonicity is fixture-sensitive). The
-tensor can be excluded from that search.
+**Why the issue's own third hypothesis looked refuted.** It records "a lingering
+delta ... an unrelated write, which would flush it, does not move the number".
+The fold policy is size-based, so a delta of one entry never meets the threshold
+and a write is not obliged to fold `me`. The hypothesis was right; the experiment
+could not see it.
+
+**The fix, not yet written.** `eff_get` already short-circuits the `dm` probe
+when `dm` is empty; the same trick is missing one level down. `me.dp` is
+hypersparse and keyed by `(compound_key, id)`, so "does the delta touch this row"
+is one cheap probe against building a merged iterator — and a delta is small by
+construction, so nearly every row would take the base path. The more ambitious
+version is a fold policy that prices what a resident delta costs *readers*: the
+square-root rule of §folding is derived entirely from write amortisation and has
+no term for the read side, which this bug is a direct consequence of.
 
 ## 6. What the evaluation still does not settle
 
