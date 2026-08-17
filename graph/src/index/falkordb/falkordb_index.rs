@@ -70,9 +70,10 @@ impl IndexColumn {
     pub fn add_batch(
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
+        scratch: &mut Vec<(u64, u64)>,
     ) {
         match self {
-            Self::Numeric(idx) => idx.add_batch(entries),
+            Self::Numeric(idx) => idx.add_batch(entries, scratch),
         }
     }
 
@@ -80,9 +81,10 @@ impl IndexColumn {
     pub fn remove_batch(
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
+        scratch: &mut Vec<(u64, u64)>,
     ) {
         match self {
-            Self::Numeric(idx) => idx.remove_batch(entries),
+            Self::Numeric(idx) => idx.remove_batch(entries, scratch),
         }
     }
 
@@ -281,14 +283,18 @@ impl FalkorDbIndex {
         removes: StagedColumns,
     ) {
         let columns = self.columns_mut(entity);
+        // One encode buffer for the whole merge. Each column's staged entries are encoded into it
+        // and consumed before the next column reuses the capacity, so a commit touching many
+        // columns allocates once instead of twice per column.
+        let mut scratch: Vec<(u64, u64)> = Vec::new();
         for (key, entries) in removes {
             if let Some(entry) = columns.get_mut(&key) {
-                entry.column.remove_batch(entries);
+                entry.column.remove_batch(entries, &mut scratch);
             }
         }
         for (key, entries) in adds {
             if let Some(entry) = columns.get_mut(&key) {
-                entry.column.add_batch(entries);
+                entry.column.add_batch(entries, &mut scratch);
             }
         }
     }

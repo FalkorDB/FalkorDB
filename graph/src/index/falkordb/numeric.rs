@@ -91,35 +91,49 @@ impl NumericIndex {
     }
 
     /// Add a batch of `(value, id)` entries, consuming any iterator (the runtime's columnar batch).
-    /// Non-numeric / `NaN` are dropped. Collects + sorts internally — the tree's `insert_batch` needs
-    /// a sorted slice — so callers never have to pre-materialize; cheaper than repeated
-    /// [`add`](Self::add).
+    /// Non-numeric / `NaN` are dropped, and the encoded tuples are sorted here because the tree's
+    /// `insert_batch` needs a sorted slice. Cheaper than repeated [`add`](Self::add).
+    ///
+    /// `scratch` is the caller's encode buffer and its contents are replaced. Taking it rather than
+    /// allocating internally lets a commit that touches many columns allocate once and reuse the
+    /// capacity, instead of a fresh `Vec` per column.
     pub fn add_batch(
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
+        scratch: &mut Vec<(u64, u64)>,
     ) {
-        let mut pairs = Self::encode_pairs(entries);
-        pairs.sort_unstable();
-        self.tree.insert_batch(&pairs);
+        Self::encode_pairs_into(entries, scratch);
+        scratch.sort_unstable();
+        self.tree.insert_batch(scratch);
     }
 
-    /// Remove a batch of `(value, id)` entries, consuming any iterator. Non-numeric / `NaN` dropped;
-    /// collect + sort internally — for the write path's mass-delete / mass-update column.
+    /// Remove a batch of `(value, id)` entries, consuming any iterator — the write path's
+    /// mass-delete / mass-update column. Non-numeric / `NaN` dropped, encoded tuples sorted here.
+    ///
+    /// `scratch` is the caller's encode buffer — see [`add_batch`](Self::add_batch).
     pub fn remove_batch(
         &mut self,
         entries: impl IntoIterator<Item = (Value, u64)>,
+        scratch: &mut Vec<(u64, u64)>,
     ) {
-        let mut pairs = Self::encode_pairs(entries);
-        pairs.sort_unstable();
-        self.tree.remove_batch(&pairs);
+        Self::encode_pairs_into(entries, scratch);
+        scratch.sort_unstable();
+        self.tree.remove_batch(scratch);
     }
 
-    /// Encode `(value, id)` entries to `(key, id)` tree tuples, dropping non-numeric / `NaN` values.
-    fn encode_pairs(entries: impl IntoIterator<Item = (Value, u64)>) -> Vec<(u64, u64)> {
-        entries
-            .into_iter()
-            .filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id)))
-            .collect()
+    /// Encode `(value, id)` entries to `(key, id)` tree tuples in `out` (cleared first), dropping
+    /// non-numeric / `NaN` values.
+    ///
+    /// Takes the buffer rather than returning one so a caller applying many columns in a row
+    /// allocates once and reuses the capacity, instead of one `Vec` per column per commit.
+    fn encode_pairs_into(
+        entries: impl IntoIterator<Item = (Value, u64)>,
+        out: &mut Vec<(u64, u64)>,
+    ) {
+        out.clear();
+        let entries = entries.into_iter();
+        out.reserve(entries.size_hint().0);
+        out.extend(entries.filter_map(|(v, id)| encode_numeric(&v).map(|k| (k, id))));
     }
 
     /// Whether the index holds no tuples.
@@ -381,7 +395,7 @@ mod tests {
 
         // add_batch == repeated add
         let mut batched = NumericIndex::new();
-        batched.add_batch(entries.iter().cloned());
+        batched.add_batch(entries.iter().cloned(), &mut Vec::new());
         let mut singly = NumericIndex::new();
         for (v, id) in &entries {
             singly.add(v, *id);
@@ -394,7 +408,7 @@ mod tests {
             (Value::Int(30), 1),
             (Value::Int(99), 7),
         ];
-        batched.remove_batch(removes.iter().cloned());
+        batched.remove_batch(removes.iter().cloned(), &mut Vec::new());
         for (v, id) in &removes {
             singly.remove(v, *id);
         }

@@ -3792,16 +3792,17 @@ impl Graph {
         label: &Arc<String>,
         attrs: &[Arc<String>],
     ) {
-        // Phase 1 — collect per attr (shared borrows only). Phase 2 — bulk-build the CoW columns.
-        let built: Vec<(Arc<String>, Vec<(Value, u64)>)> = attrs
-            .iter()
-            .map(|attr| (attr.clone(), self.collect_node_index_entries(label, attr)))
-            .collect();
-        for (attr, pairs) in built {
+        // One attribute at a time: collect under a shared borrow, build under a mutable one, then
+        // drop the entries before moving on. Collecting *all* attributes up front (which an earlier
+        // version did, to end the shared borrow before any `&mut`) held one owned `Value` per live
+        // node per attribute simultaneously — `attrs.len()` times the peak for no benefit, since
+        // the shared borrow already ends when `collect_node_index_entries` returns.
+        for attr in attrs {
+            let pairs = self.collect_node_index_entries(label, attr);
             self.falkordb_index.build_numeric(
                 EntityType::Node,
                 label,
-                &attr,
+                attr,
                 pairs.iter().map(|(v, id)| (v, *id)),
             );
         }
@@ -3915,20 +3916,14 @@ impl Graph {
         type_name: &Arc<String>,
         attrs: &[Arc<String>],
     ) {
-        let built: Vec<(Arc<String>, Vec<(Value, u64)>)> = attrs
-            .iter()
-            .map(|attr| {
-                (
-                    attr.clone(),
-                    self.collect_edge_index_entries(type_name, attr),
-                )
-            })
-            .collect();
-        for (attr, pairs) in built {
+        // One attribute at a time — see [`populate_index_node`] for why collecting them all up
+        // front multiplied peak memory by `attrs.len()` for no benefit.
+        for attr in attrs {
+            let pairs = self.collect_edge_index_entries(type_name, attr);
             self.falkordb_index.build_numeric(
                 EntityType::Relationship,
                 type_name,
-                &attr,
+                attr,
                 pairs.iter().map(|(v, id)| (v, *id)),
             );
         }
