@@ -198,12 +198,18 @@ walking more ids.
 **Next candidates, in order.** A storage-format or capacity threshold inside
 GraphBLAS is the obvious one — matrix dimensions step with node capacity, and
 sparse/hypersparse selection depends on the ratio of populated vectors to
-dimension, so print `GxB_SPARSITY_STATUS` and the hyper-switch for every matrix
-on the read path at both a low-state and a high-state size and diff them. Failing
-that, differential instruction counting at the boundary: the Rust `Tensor`
-measurement tests in `tensor_cost_bench.rs` can reproduce a point read without a
-query pipeline around it, which is the cheapest way to tell whether the extra
-cost is even inside the tensor.
+dimension, so print the sparsity status and the hyper-switch for every matrix on
+the read path at both a low-state and a high-state size and diff them.
+
+Both tools this needs now exist, which they did not when this was written:
+`Matrix::sparsity_status()` (added by #2523) returns
+`hypersparse`/`sparse`/`bitmap`/`full` directly, and `tensor_cost_bench.rs` is in
+the tree, so a point read can be reproduced without a query pipeline around it —
+which is also the cheapest way to tell whether the extra cost is inside the
+tensor at all. Do that second step first if the sparsity diff comes back empty:
+the paper's boundary numbers say a sentinel read is a flat cost, so a two-state
+*engine-level* read with a one-state boundary read would locate the defect
+outside edge storage and change who owns the issue.
 
 **Acceptance.** Either a cause and a fix that puts the high-state sizes at the
 low-state cost, or a documented explanation of why the two states are inherent.
