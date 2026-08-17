@@ -41,10 +41,14 @@ expect trouble, and measurement disposed of it — commit folds `me`, so no quer
 shape reaches that case. Suite instructions came out at 0.9961x and 1.0018x over
 two independent before/after pairs.
 
-**Still worth doing:** checked arithmetic in the cardinality identity. Deriving
-the count removes the way a *mutation path* can break the identity, not the ways
-a corrupt decoded blob or a memory error can, and the subtractions reach a `Vec`
-pre-allocation in `algo_procedures`. Ten lines, no behaviour change.
+~~**Still worth doing:** checked arithmetic in the cardinality identity.~~ —
+**done in #2565**, which also stopped the identity guessing at the failure
+direction: each step names what it hit (`|dm| exceeds |m| + |dp|`) and which
+invariant bounds it (`dm ⊆ m is broken`). Deriving the count had removed the way
+a *mutation path* can break the identity but not the ways a corrupt blob or a
+memory error can, and unchecked those reached `Vec::with_capacity` in
+`algo_procedures` — so a storage corruption surfaced as an allocation abort. With
+3c landed, that was the last unguarded path from a bad blob to a bad allocation.
 
 **What not to bother with:** the run-time check this document previously
 described (recover the count at commit, compare, repair). It is redundant now.
