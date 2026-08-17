@@ -485,6 +485,74 @@ class testGraphInfo():
             for t in threads:
                 t.join()
 
+    def test08_no_sections_reports_everything(self):
+        """a bare GRAPH.INFO reports every section, as the C engine does"""
+
+        res = self.conn.execute_command("GRAPH.INFO")
+
+        # same sections, in the same order, as asking for all of them
+        self.env.assertEqual(res,
+                             self.conn.execute_command("GRAPH.INFO",
+                                                       "RunningQueries",
+                                                       "WaitingQueries",
+                                                       "ObjectPool"))
+
+        self.env.assertEqual(len(res), 6)
+        self.env.assertEqual(res[0], "# Running queries")
+        self.env.assertEqual(res[2], "# Waiting queries")
+        self.env.assertEqual(res[4], "Object Pool")
+
+        # an unknown section is still rejected
+        try:
+            self.conn.execute_command("GRAPH.INFO", "NoSuchSection")
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Unknown section", str(e))
+
+    def test09_cmd_info_runtime_toggle(self):
+        """CMD_INFO is settable at run-time, and gates query logging"""
+
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+
+        # on by default: a query shows up in the telemetry stream
+        self.graph.query("RETURN 1")
+        pollUntil(lambda: self.conn.xlen(stream), "a logged query")
+
+        #-----------------------------------------------------------------------
+        # turn logging off
+        #-----------------------------------------------------------------------
+
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no"), "OK")
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
+
+        n = self.conn.xlen(stream)
+        self.graph.query("RETURN 2")
+        # the flusher wakes every 5ms; half a second is well past the point
+        # where an entry would have landed had logging still been on
+        time.sleep(0.5)
+        self.env.assertEqual(self.conn.xlen(stream), n)
+
+        #-----------------------------------------------------------------------
+        # and back on
+        #-----------------------------------------------------------------------
+
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes"), "OK")
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 1)
+
+        self.graph.query("RETURN 3")
+        pollUntil(lambda: self.conn.xlen(stream) > n, "query logging to resume")
+
+        # a non-boolean value is rejected, leaving the config untouched
+        try:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "maybe")
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Failed to set config value CMD_INFO to maybe", str(e))
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 1)
+
 class testGraphInfoStaleEntry():
     """A queued telemetry entry belongs to the graph that produced it, not to that
        graph's name.
@@ -531,7 +599,10 @@ class testGraphInfoStaleEntry():
         self.env.assertEqual(keys, ["after"])
 
 class testGraphInfoCmdInfoDisabled():
-    """`CMD_INFO no` must actually stop logging finished queries.
+    """`CMD_INFO no` at *load time* must stop logging finished queries.
+
+    `test09_cmd_info_runtime_toggle` covers `GRAPH.CONFIG SET`; this covers the
+    module argument, which reaches the same atomic by a different route.
 
     The config was registered and reported by `GRAPH.CONFIG GET`, but nothing
     consulted it, so queries were logged regardless — and logging one is not free.

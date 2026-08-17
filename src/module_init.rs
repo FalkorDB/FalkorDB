@@ -23,11 +23,11 @@
 //! can reject loading an incomplete module.
 
 use crate::config::{
-    CONFIGURATION_CMD_INFO, CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE,
-    CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER,
-    DELTA_MAX_PENDING_CHANGES, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT,
-    QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
-    normalize_node_creation_buffer,
+    CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
+    CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
+    EFFECTS_THRESHOLD, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
+    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+    get_thread_count, normalize_node_creation_buffer,
 };
 use crate::redis_type::on_persistence;
 use crate::telemetry;
@@ -183,6 +183,23 @@ pub fn graph_init(
                     continue;
                 }
                 ctx.log_warning(&format!("Invalid value for {name} module argument"));
+                return Status::Err;
+            }
+            if name == "MAX_INFO_QUERIES" {
+                // Clamped rather than rejected, the same way C's setter caps it
+                // and the same way GRAPH.CONFIG SET does at run-time.
+                if i + 1 < args_str.len()
+                    && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    && v >= 0
+                {
+                    MAX_INFO_QUERIES.store(
+                        v.min(MAX_INFO_QUERIES_CAP),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    i += 2;
+                    continue;
+                }
+                ctx.log_warning("Invalid value for MAX_INFO_QUERIES module argument");
                 return Status::Err;
             }
             if name == "MAX_QUEUED_QUERIES" {
@@ -389,20 +406,17 @@ pub fn graph_init(
         }
     }
 
-    // Publish CMD_INFO for the query path to read. The config was registered
-    // and reported by `GRAPH.CONFIG GET`, but nothing consulted it — so
-    // `CMD_INFO no` kept logging every finished query, and logging one costs
-    // ~83k instructions here against ~11k on the C engine, which honours it.
-    telemetry::set_log_queries(*CONFIGURATION_CMD_INFO.lock(ctx));
-
     // Start the background telemetry flusher: workers enqueue entries
     // lock-free; this thread batches them and writes XADDs under a single
-    // GIL acquisition per batch.
+    // GIL acquisition per batch. `CMD_INFO` needs no publishing step: it is an
+    // atomic that the config registration and `GRAPH.CONFIG SET` both write, so
+    // `enqueue_entry` reads the live value straight off the main thread.
     telemetry::start_flusher_thread();
 
-    // Initialize cached replica state and subscribe to role-change events
-    // so telemetry is suppressed when this instance is a replica (master's
-    // XADDs replicate to us automatically).
+    // Initialize cached replica state and subscribe to role-change events so
+    // telemetry is suppressed when this instance is a replica: a replica must not
+    // create keys of its own, and its stream is the master's, brought over by the
+    // last full resync.
     telemetry::set_is_replica(ctx.get_flags().contains(ContextFlags::SLAVE));
     unsafe {
         let res = RedisModule_SubscribeToServerEvent.unwrap()(

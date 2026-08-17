@@ -16,7 +16,7 @@ use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::config::MAX_INFO_QUERIES;
+use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
 use crate::graph_core::{ThreadedGraph, graph_is_registered_as};
 
 /// Maximum stored string length for query/params in telemetry entries.
@@ -634,8 +634,10 @@ pub fn enqueue_entry(
     entry: TelemetryEntry,
 ) {
     // `CMD_INFO no` means "do not log finished queries", which is exactly this
-    // path — and it is the only way to opt out of what logging one costs.
-    if !LOG_QUERIES.load(Ordering::Relaxed) {
+    // path, and it is the only way to opt out of what logging one costs. C gates
+    // the equivalent cron task on the same config, so entries produced while off
+    // are dropped rather than buffered, and turning it back on resumes streaming.
+    if !CONFIGURATION_CMD_INFO.load(Ordering::Relaxed) {
         return;
     }
     // Skip on replicas: a replica must not create keys of its own, and the stream
@@ -661,21 +663,6 @@ pub fn enqueue_entry(
 /// Tracks whether this Redis instance is currently a replica. Updated on
 /// module load and on `RedisModuleEvent_ReplicationRoleChanged` notifications.
 static IS_REPLICA: AtomicBool = AtomicBool::new(false);
-
-/// Mirror of the `CMD_INFO` configuration, which decides whether finished
-/// queries are logged to a graph's telemetry stream.
-///
-/// A mirror rather than a read of `CONFIGURATION_CMD_INFO` itself, because that
-/// one lives behind a `RedisGILGuard` and this is read on a worker thread that
-/// holds no GIL — taking it there is exactly the contention the whole telemetry
-/// channel exists to avoid. `CMD_INFO` is registered `IMMUTABLE`, so the value
-/// is settled at module load and one store at init is enough.
-static LOG_QUERIES: AtomicBool = AtomicBool::new(true);
-
-/// Publish the effective `CMD_INFO` value for the query path to read.
-pub fn set_log_queries(enabled: bool) {
-    LOG_QUERIES.store(enabled, Ordering::Relaxed);
-}
 
 /// Update the cached replica state. Called from module init and the role
 /// change event handler.
