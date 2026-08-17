@@ -249,28 +249,35 @@ oscillates; the bench is committed, so re-deriving the number is one command.
 ## 5. The two-state point-read cost (#2430) — localised, outside edge storage
 
 **Status:** cause not named, but the search space is cut decisively.
-`graph/.../issue_2430_bench.rs`.
+`graph/.../issue_2430_bench.rs` and `bench/studies/issue_2430/`.
 
-Both remaining candidates were tested and one is refuted:
+Measured at both grains, on the issue's fixture — node count held at 1,000 while
+pairs grow, so a bigger graph means **longer adjacency rows**, not more of them:
 
-**Candidate 1, a GraphBLAS format or capacity threshold: refuted.** Every matrix
-on the read path keeps the same storage format across every size where the
-engine-level cost is known to flip — `m` sparse, `dp`/`dm`/`me` hypersparse at
-1,000 / 11,000 / 41,000 / 88,000 / 121,000 / 160,000 pairs. Nothing switches.
+| grain | 1,000 pairs | 121k–160k pairs | shape |
+| --- | --- | --- | --- |
+| whole query | 8,725 | 9,943 | **step** of ~1,150 between 41k and 88k |
+| the read alone | 2,771 | 2,879 | **drift** of ~108, roughly logarithmic |
 
-**Candidate 2, something outside edge storage: confirmed.** The same read with no
-query pipeline around it is **flat at 2,769 instructions per pair across all six
-sizes** — including the sizes the issue reports as the low state (~4.35k) and the
-high state (~5.5k). The tensor's read does not have two states.
+**Edge storage is not the cause, on two independent grounds.** Magnitude: the
+tensor contributes at most a tenth of the effect. Shape: the tensor drifts
+smoothly — which is what a binary search inside a lengthening row should do — and
+a drift cannot produce a step. Storage format is constant throughout (`m` sparse,
+`dp`/`dm`/`me` hypersparse at every size), which also refutes the leading
+remaining hypothesis, a GraphBLAS format switch.
 
-**So the defect is not in edge storage,** and #2430 should move to whoever owns
-the pipeline around a bound point read. That also retires the paper's worry that
-Table 4's lookup column might be a cost of inline-first representation: it is not,
-and now for a second and stronger reason than §evaldecomp gave.
+**A correction worth keeping.** The first version of this measurement gave every
+pair its own row, pinning row length at 1 at every size, and so reported the read
+as perfectly *flat* and cleared edge storage outright. That was an artifact of
+the fixture. Row length is precisely the variable a point read is sensitive to;
+the corrected fixture does show the tensor responding to it, just far too little
+and in the wrong shape to be the effect. The conclusion survived, the evidence
+for it did not.
 
-**What is still open:** *which* pipeline stage, and why the selection is
-non-monotonic in graph size. Re-run the engine-level table with the stage
-boundaries instrumented; the tensor can be excluded from the search.
+**What is still open:** which pipeline stage steps, and why the selection is not
+monotonic in graph size (the issue reports low/high/low/high/high; this fixture
+reproduces a single crossing, so the non-monotonicity is fixture-sensitive). The
+tensor can be excluded from that search.
 
 ## 6. What the evaluation still does not settle
 
