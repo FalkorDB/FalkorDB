@@ -333,9 +333,10 @@ treats "returned zero rows on every run" as a failure for the same reason.
 ### What the first run found
 
 Running the 14 complex reads against SF0.1 was worth doing for the bugs alone.
-Thirteen of the fourteen measure; every one of those is in the same order of
-magnitude as the C engine or faster, and four (IC1, IC10, IC13, IC14) do not run
-on C at all. Four defects came out of the exercise, each confirmed against the C
+All fourteen now produce a measurement — IC3 needs `--timeout` above the default
+— and four of them (IC1, IC10, IC13, IC14) do not run on the C engine at all.
+Every query except IC3 and IC10 is in the same order of magnitude as C or
+faster. Four defects came out of the exercise, each confirmed against the C
 engine before being filed:
 
 | issue | what |
@@ -345,11 +346,11 @@ engine before being filed:
 | [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) | `WHERE` on a node matched from an `UNWIND`-bound anchor silently returns zero rows |
 | [#2558](https://github.com/FalkorDB/FalkorDB/issues/2558) | a variable-length traversal loses its indexed anchor when the `MATCH` has a second pattern — 19,000x |
 
-**#2558 is the one that matters.** It is the sole reason IC3 does not complete
-inside a 120 s timeout where C takes 174 ms, and the reason IC10 takes 86 s. Both
-plans abandon a unique-index seed in favour of scanning the unbound side. No
-other measured query is affected, so a single planner decision accounts for the
-entire Rust-vs-C gap on this workload.
+**#2558 is the one that matters.** On the same parameter row, returning the
+identical 2 rows, IC3 takes **136.72 ms** on C and **271,817.66 ms** on Rust —
+1,988x — and IC10 takes 86 s. Both plans abandon a unique-index seed in favour
+of scanning the unbound side. No other measured query is affected, so a single
+planner decision accounts for the entire Rust-vs-C gap on this workload.
 
 Three of the four are **silent** — wrong or empty results with no error. They
 were caught only because the runner treats "zero rows on every run" as a failure
