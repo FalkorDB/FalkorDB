@@ -25,33 +25,9 @@
 
 use std::time::Instant;
 
+use super::instr::read_instr;
 use super::tensor::Tensor;
 use super::test_init::ensure_init;
-
-#[cfg(target_os = "macos")]
-fn read_instr() -> Option<u64> {
-    use std::os::raw::{c_int, c_void};
-    unsafe extern "C" {
-        fn proc_pid_rusage(
-            pid: c_int,
-            flavor: c_int,
-            buffer: *mut c_void,
-        ) -> c_int;
-        fn getpid() -> c_int;
-    }
-    let mut buf = [0u8; 512];
-    let rc = unsafe { proc_pid_rusage(unsafe { getpid() }, 4, buf.as_mut_ptr().cast()) };
-    if rc != 0 {
-        return None;
-    }
-    let off = 16 + 29 * 8;
-    Some(u64::from_le_bytes(buf[off..off + 8].try_into().unwrap()))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn read_instr() -> Option<u64> {
-    None
-}
 
 const N: u64 = 50_000;
 

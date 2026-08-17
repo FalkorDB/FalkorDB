@@ -325,18 +325,80 @@ what was and was not measured.
   (A) 562 at `k` = 1 (1.40x), and 3.7–4.0x for every `k ≥ 2`. That is the price of
   `mt` carrying structure only, and it makes incoming-edge-dominated traversal the
   shape this design serves worst.
-- ~~**Cold-cache and random access order**~~ — **partly done**. Scattered reads
-  (multiplicative stride over the same pairs) move instruction counts by 1.9% at
-  `k` = 1 and 0.3% above, and wall clock by up to 89%, rising with `k`. So the
-  instruction metric is robust to access order — worth knowing — and blind to the
-  cache effect that actually separates designs in time. **Still open:** genuine
-  cold-cache (this is warm-but-scattered), and cycles on a quiet host.
-- **The C-side entry points** `Tensor_ClearElements`, `Tensor_RemoveElements_Flat`,
-  `Tensor_SetEdges`, row and column degree remain unmeasured. The harness now
-  builds and runs from a `master` worktree plus the shipped archive, so adding
-  them is a C edit and a rebuild, not a setup problem.
+- ~~**Cold-cache and random access order**~~ — **done, both sides, and the
+  instruction metric errs in *both* directions.** Access order was the easy half
+  and was already covered: scattered reads move instruction counts by 1.9% at
+  `k` = 1 and 0.3% above, and wall clock by up to 89%. But 200,000 pairs fits in
+  cache whichever order it is read in, so that measured order, not residency.
+  Residency is now measured properly — a working-set sweep from 10^4 to 8x10^6
+  pairs (0.2 MB to 558 MB), scrambled probe order, both engines, in
+  `tensor_cost_cold_cache` and the C harness's `bench_sweep`.
+
+  The instruction columns are the control and are flat: (A) within 0.04% across
+  the whole range, (C) within 0.9% (`k`=1) and 3.6% (`k`=2). So the sweep changed
+  residency and not work. The times are the result:
+
+  | pairs | `k`=1 (A) | (C) | (C)/(A) | `k`=2 (A) | (C) | (C)/(A) |
+  |---|---|---|---|---|---|---|
+  | 10^4    |  21.9 |  34.3 | 1.57 |  40.4 | 188.8 | 4.67 |
+  | 10^5    |  23.0 |  29.9 | 1.30 |  83.8 | 219.8 | 2.62 |
+  | 5x10^5  |  24.5 |  30.7 | 1.25 | 246.3 | 274.4 | 1.11 |
+  | 2x10^6  |  81.2 |  98.9 | 1.22 | 360.6 | 566.6 | 1.57 |
+  | 4x10^6  | 103.1 | 166.7 | 1.62 | 368.8 | 651.9 | 1.77 |
+  | 8x10^6  | 117.7 | 202.5 | 1.72 | 391.4 | 736.9 | 1.88 |
+
+  At `k`=2 instructions say (C) costs 3.8–4.0x (A) at every size; time says 4.67x
+  in cache and 1.88x out of it, because **(A) leaves the cache first**. That is
+  not a guess: item 5's space constants (295.7 B per multi-edge pair for (A),
+  69.2 for (C)) put (A) past 100 MB at ~3.4x10^5 pairs and (C) at ~1.5x10^6, and
+  the measured cliffs bracket both predictions. **(C)'s space advantage is also a
+  latency advantage**, and no instruction count can see it.
+
+  At `k`=1 it runs the other way — instructions say 1.15x flat, time says 1.30x
+  warm and 1.72x cold — and this one has no footprint explanation, since both
+  designs measure 23.1 B per all-inline pair. Unexplained, 85 ns at the largest
+  size, and stated as such in the paper.
+
+  So the metric overstates (C)'s multi-edge deficit by ~2x out of cache and
+  understates its single-edge deficit by ~1.5x. The two do not cancel; they act
+  on exactly the two regimes the design trades between. **Still open:** cycles on
+  a quiet host, and whether the magnitudes hold on another cache hierarchy (the
+  `k`=2 *direction* is anchored by the space constants and should; the `k`=1
+  direction rests on the measurement alone).
+- ~~**The C-side entry points**~~ — **done, both sides**, in `bench_degrees`,
+  `bench_remove_flat`, `bench_clear_elements`, `bench_set_edges` and Rust's
+  `tensor_cost_entry_points`. The bulk paths are close: flat bulk delete 1,121 (A)
+  / 1,279 (C) = 1.14x, batch insert 1,487 / 1,737 = 1.17x.
+
+  Degree is not, and it produced a **new finding and a fixable defect**:
+
+  | | (A) | (C) | (C)/(A) |
+  |---|---|---|---|
+  | row degree, `k`=1 | 1,011 | 1,983 | 1.96 |
+  | row degree, `k`=2 | 1,160 | 4,886 | 4.21 |
+  | col degree, `k`=1 | 1,432 | 2,573 | 1.80 |
+  | col degree, `k`=2 | 1,581 | 5,475 | 3.46 |
+
+  `Tensor_RowDegree` scans the row's *cells* and adds `GrB_Vector_nvals(V)` for a
+  tagged one — constant time per pair, independent of `k` (hence 1,011 -> 1,160
+  for twice the edges). (C) has **no degree entry point at all**:
+  `Graph::get_node_outdegree` counts a full one-row iteration, materialising every
+  id only to discard it, so its cost is proportional to *edges* and the ratio
+  grows with `k`.
+
+  **The fix is clear and not implemented.** The count (A) reads in constant time
+  is available in (C) as the cardinality of the pair's row in `me`; a degree that
+  reads the forward cell and, on the sentinel, takes that cardinality without
+  materialising would have (A)'s shape. Blast radius is bounded — these four
+  functions back Cypher's `indegree`/`outdegree` built-ins and nothing else;
+  traversal does not route through them — which is why this is recorded rather
+  than rushed into the arxiv branch.
 - **Wall clock and cycles.** Some runs shared the machine, so no claim in the
-  paper is a latency claim. Re-running a quiet host would let that change.
+  paper is a latency claim — with one deliberate exception, the residency sweep
+  above, where a latency result is the whole point and no instruction count could
+  substitute. It carries its own weaker method (minimum of three rather than
+  median, ratios rather than magnitudes) and warrants nothing else. Re-running a
+  quiet host, with cycles alongside, would let that change.
 - **Linux and CI.** Everything is macOS/arm64, with both sides built against
   GraphBLAS 10.3.1. The engines' relative standing on the CI architecture is
   unmeasured.

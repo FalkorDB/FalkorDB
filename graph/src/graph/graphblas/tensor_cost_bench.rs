@@ -120,52 +120,13 @@
 
 use std::time::Instant;
 
+use super::instr::read_instr;
 use super::matrix::Matrix;
 use super::tensor::{GrB_INDEX_MAX, Tensor, compound_key};
 use super::test_init::ensure_init;
 use super::versioned_matrix::VersionedMatrix;
 
 // --- process instruction counter ---------------------------------------------
-
-/// Running instruction total for this process, or `None` where the platform
-/// has no cheap equivalent.
-///
-/// macOS exposes `proc_pid_rusage(RUSAGE_INFO_V4)` to any caller for its own
-/// pid with no privileges; `ri_instructions` is `u64` field 29 of the struct
-/// body, which starts after the 16-byte `ri_uuid`. Same offsets as
-/// `bench/src/falkorbench/counters.py::read_rusage`, which is where the
-/// engine-level numbers this file is meant to be compared against come from —
-/// keeping them identical is the point.
-#[cfg(target_os = "macos")]
-fn read_instr() -> Option<u64> {
-    const RUSAGE_INFO_V4: i32 = 4;
-    const RI_INSTRUCTIONS_OFF: usize = 16 + 29 * 8;
-
-    unsafe extern "C" {
-        fn proc_pid_rusage(
-            pid: i32,
-            flavor: i32,
-            buffer: *mut u8,
-        ) -> i32;
-        fn getpid() -> i32;
-    }
-    let mut buf = [0u8; 1024];
-    // SAFETY: `buf` is 1024 bytes, far larger than `struct rusage_info_v4`
-    // (~0x150 bytes), and the kernel writes at most that flavor's size.
-    if unsafe { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, buf.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    Some(u64::from_le_bytes(
-        buf[RI_INSTRUCTIONS_OFF..RI_INSTRUCTIONS_OFF + 8]
-            .try_into()
-            .expect("8 bytes"),
-    ))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn read_instr() -> Option<u64> {
-    None
-}
 
 /// Per-operation cost of one measured block.
 struct Cost {
@@ -277,6 +238,29 @@ fn probes(
 /// be read against (`scratchpad/tensor_bench/tensor_bench.c`): 200,000 pairs on
 /// the **diagonal**, one pair per row.
 const XN: u64 = 200_000;
+
+/// A committed diagonal tensor of `n` pairs, `k` edges each. [`built_diag`] is
+/// this at `n = XN`; the sweep in [`tensor_cost_cold_cache`] needs other sizes.
+fn built_n(
+    n: u64,
+    k: u64,
+) -> Tensor {
+    let mut t = Tensor::new(n + 1, n + 1);
+    let (mut srcs, mut dsts, mut ids) = (Vec::new(), Vec::new(), Vec::new());
+    for i in 0..n {
+        for j in 0..k {
+            srcs.push(i);
+            dsts.push(i);
+            ids.push(i * k + j);
+        }
+    }
+    t.set_all_from_slices(&srcs, &dsts, &ids);
+    let mut t = t.dup();
+    t.flush();
+    t.wait();
+    assert_eq!(t.fwd_m().nvals(), n, "diagonal fixture not committed");
+    t
+}
 
 /// A committed diagonal tensor: pairs `(i, i)` for `i < XN`, `k` edges each.
 fn built_diag(k: u64) -> Tensor {
@@ -1051,4 +1035,169 @@ fn tensor_cost_space() {
     // Guard the fixture the model rests on: a simple graph really does leave
     // `me` empty, so its whole auxiliary cost is what the model adds back.
     assert_eq!(simple.edge_versioned().nvals(), 0);
+}
+
+/// The entry points the paper listed as unmeasured on the Rust side, plus the
+/// cold-cache case the scattered-order test explicitly did *not* answer.
+///
+/// Degrees have no dedicated method here: `Graph::get_node_outdegree` counts a
+/// one-row iteration, and the in-degree the transposed one, so that is what is
+/// measured. The C side calls `Tensor_RowDegree` / `Tensor_ColDegree`.
+#[test]
+#[ignore]
+fn tensor_cost_entry_points() {
+    ensure_init();
+    const REPS: u32 = 3;
+    const OPS: u64 = 200_000;
+
+    for k in [1u64, 2] {
+        let t = built_diag(k);
+        println!("\n=== entry points, {XN} pairs x {k} edge(s) ===");
+        println!("{:>38}  {:>12}  {:>10}", "operation", "instr/op", "ns/op");
+
+        for _ in 0..REPS {
+            let c = measure(OPS, || {
+                let mut n = 0usize;
+                for i in 0..OPS {
+                    n += t.iter(i % XN, i % XN, false).count();
+                }
+                std::hint::black_box(n);
+            });
+            println!(
+                "{:>38}  {:>12}  {:>10.1}",
+                "row degree (one-row iter)",
+                c.fmt_instr(),
+                c.us * 1_000.0
+            );
+        }
+        for _ in 0..REPS {
+            let c = measure(OPS, || {
+                let mut n = 0usize;
+                for i in 0..OPS {
+                    n += t.iter(i % XN, i % XN, true).count();
+                }
+                std::hint::black_box(n);
+            });
+            println!(
+                "{:>38}  {:>12}  {:>10.1}",
+                "col degree (transposed one-row)",
+                c.fmt_instr(),
+                c.us * 1_000.0
+            );
+        }
+    }
+
+    // The flat removal path: every pair single-edge, so `remove_all` takes the
+    // three-bulk-op fast path rather than the per-edge one.
+    println!("\n=== bulk removal, {XN} single-edge pairs ===");
+    println!("{:>38}  {:>12}  {:>10}", "operation", "instr/op", "ns/op");
+    for _ in 0..REPS {
+        let mut t = built_diag(1);
+        let rels: Vec<(u64, u64, u64)> = (0..XN).map(|i| (i, i, i)).collect();
+        let c = measure(XN, || {
+            t.remove_all(&rels);
+        });
+        println!(
+            "{:>38}  {:>12}  {:>10.1}",
+            "remove_all, flat path (per pair)",
+            c.fmt_instr(),
+            c.us * 1_000.0
+        );
+    }
+
+    // The bulk insert path, against C's `batch insert n new inline pairs`.
+    println!("\n=== bulk insert, {XN} new inline pairs ===");
+    println!("{:>38}  {:>12}  {:>10}", "operation", "instr/op", "ns/op");
+    let srcs: Vec<u64> = (0..XN).collect();
+    let ids: Vec<u64> = (0..XN).collect();
+    for _ in 0..REPS {
+        let mut t = Tensor::new(XN + 1, XN + 1);
+        let c = measure(XN, || {
+            t.set_all_from_slices(&srcs, &srcs, &ids);
+        });
+        t.wait();
+        assert_eq!(t.fwd_m().nvals() + t.fwd_dp().nvals(), XN);
+        println!(
+            "{:>38}  {:>12}  {:>10.1}",
+            "batch insert, inline (per edge)",
+            c.fmt_instr(),
+            c.us * 1_000.0
+        );
+    }
+}
+
+/// **Cold cache.** Every read measured elsewhere here is warm: `XN` pairs is a
+/// working set small enough to sit in cache, and the scattered-order test
+/// changed the probe *order* without changing that. So it found instruction
+/// counts almost unmoved and wall clock only mildly up — which is the right
+/// answer to the question it asked, and not an answer about residency.
+///
+/// This asks about residency, by sweeping the working set from far inside the
+/// cache to far outside it and probing in a scrambled order at every size. Below
+/// the cache the reads hit; above it they miss, and nothing about the code path
+/// has changed in between.
+///
+/// The instruction column is reported and is, by construction, the *wrong*
+/// metric here: a cache miss retires no extra instruction. Its flatness is the
+/// control — it shows the sweep changes residency and not work. The nanoseconds
+/// are the measurement.
+///
+/// An eviction-sweep design was tried first and abandoned: streaming a buffer
+/// large enough to evict costs milliseconds, and subtracting milliseconds to
+/// recover a ~100 ns read is not a measurement.
+#[test]
+#[ignore]
+fn tensor_cost_cold_cache() {
+    ensure_init();
+    const REPS: u32 = 3;
+    const PROBES: u64 = 200_000;
+    // 10k pairs is inside L2; 8M is far past any last level on this class of
+    // machine. The interesting region is somewhere in between and the sweep
+    // does not assume where.
+    const SIZES: [u64; 6] = [10_000, 100_000, 500_000, 2_000_000, 4_000_000, 8_000_000];
+
+    for k in [1u64, 2] {
+        println!("\n=== working-set sweep, {k} edge(s) per pair, scrambled probe order ===");
+        println!(
+            "{:>12}  {:>10}  {:>12}  {:>10}",
+            "pairs", "MB", "instr/op", "ns/op"
+        );
+        for n in SIZES {
+            let t = built_n(n, k);
+            let mb = t.memory_usage() as f64 / (1 << 20) as f64;
+            // an odd multiplier coprime to `n` walks every row in an order with
+            // no useful locality, without needing a stored permutation (which
+            // would itself dominate the working set)
+            let step = 0x9E37_79B9_7F4A_7C15u64;
+            let mut best = f64::MAX;
+            let mut instr = None;
+            for _ in 0..REPS {
+                let c = measure(PROBES, || {
+                    let mut acc = 0u64;
+                    let mut x = 1u64;
+                    for _ in 0..PROBES {
+                        x = x.wrapping_mul(step).wrapping_add(1);
+                        let p = (x >> 32) % n;
+                        // consume every id, matching the C harness's
+                        // `TensorIterator_ScanEntry` drain
+                        for id in t.get(p, p) {
+                            acc = acc.wrapping_add(id);
+                        }
+                    }
+                    std::hint::black_box(acc);
+                });
+                if c.us < best {
+                    best = c.us;
+                    instr = c.instr;
+                }
+            }
+            println!(
+                "{:>12}  {:>10.1}  {:>12}  {:>10.1}",
+                n,
+                mb,
+                instr.map_or_else(|| "-".to_string(), |i| format!("{i:.1}")),
+                best * 1_000.0
+            );
+        }
+    }
 }

@@ -45,7 +45,7 @@ least.
 
 | file | what it does |
 | --- | --- |
-| `tensor_bench.c` | the harness: point reads, iteration (forward and transposed), fan-out to `k = 16`, promote/demote, build paths, space |
+| `tensor_bench.c` | the harness: point reads, iteration (forward and transposed), fan-out to `k = 16`, row/column degree, bulk insert/delete/clear, the working-set sweep, promote/demote, build paths, space |
 | `calib.c` | measures the instruction-counter overhead the harness subtracts |
 | `engine_space_and_transition.py` | the *engine-level* companion: `relation_matrices_sz_mb` across `k`, and the build-order gap that isolates a transition |
 | `build.sh` | compiles and links the above against `$BIN` |
@@ -60,6 +60,16 @@ least.
   last run on, where the Rust side is on 10.5.0. The `k <= 2` rows reproduce the
   paper's table to within 1%, so the minor version is not what moves them, but
   any cross-version claim needs both sides rebuilt on one.
-- **Warm and sequential.** Every read here walks pairs in ascending order with
-  the data hot. The Rust side measures a scattered-order variant; cold-cache
-  behaviour is measured nowhere yet.
+- **Warm and sequential, except where it is not.** Every read here walks pairs in
+  ascending order with the data hot, which is what makes the instruction counts
+  comparable. `bench_sweep` is the exception: it grows the working set from 10^4
+  to 8x10^6 pairs and probes in a scrambled order, so above the cache the reads
+  genuinely miss. Its instruction column is a *control* — it should be flat, and
+  is, since a cache miss retires no extra instruction — and its nanoseconds are
+  the result. The Rust counterpart is `tensor_cost_cold_cache`; run both to get
+  the ratio, since the absolute times are not comparable across processes.
+- **`bench_sweep`'s times are minima, not medians.** Every other measurement here
+  reports three repetitions and the paper takes the median. The sweep takes the
+  minimum of three, because on a machine that is not quiet every sample is an
+  upper bound and the minimum is the least contaminated. Compare ratios between
+  the two engines rather than magnitudes.

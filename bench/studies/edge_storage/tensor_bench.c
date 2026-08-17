@@ -668,6 +668,168 @@ static void report_space_vs_k(uint64_t n) {
 	fflush(stdout);
 }
 
+// ---- the remaining entry points -------------------------------------------
+//
+// Degrees, the flat removal path and the mask-based clear were the C-side rows
+// the paper listed as unmeasured. All four are per-pair or per-row costs the
+// Rust side has direct counterparts for.
+
+static void bench_degrees(Tensor T, const char *what, uint64_t reps) {
+	{
+		Result r = { .name = "row degree", .ops = reps };
+		char nm[96]; snprintf(nm, sizeof nm, "row degree, %s", what); r.name = nm;
+		for(int rep = 0; rep < 3; rep++) {
+			uint64_t i0 = read_instructions(); double t0 = now_sec();
+			uint64_t acc = 0;
+			for(uint64_t i = 0; i < reps; i++) acc += Tensor_RowDegree(T, i % N);
+			double t1 = now_sec(); uint64_t i1 = read_instructions();
+			g_sink += acc;
+			r.instr_per_op[rep] = (double)(i1 - i0) / reps;
+			r.sec_per_op[rep]   = (t1 - t0) / reps;
+		}
+		report(&r);
+	}
+	{
+		Result r = { .name = "col degree", .ops = reps };
+		char nm[96]; snprintf(nm, sizeof nm, "col degree, %s", what); r.name = nm;
+		for(int rep = 0; rep < 3; rep++) {
+			uint64_t i0 = read_instructions(); double t0 = now_sec();
+			uint64_t acc = 0;
+			for(uint64_t i = 0; i < reps; i++) acc += Tensor_ColDegree(T, i % N);
+			double t1 = now_sec(); uint64_t i1 = read_instructions();
+			g_sink += acc;
+			r.instr_per_op[rep] = (double)(i1 - i0) / reps;
+			r.sec_per_op[rep]   = (t1 - t0) / reps;
+		}
+		report(&r);
+	}
+}
+
+// `Tensor_RemoveElements_Flat` is the fast path: it assumes every entry is a
+// scalar, so it can drop whole pairs without inspecting containers. Only valid
+// on an all-single-edge tensor, which is the case it exists for.
+static void bench_remove_flat(uint64_t n) {
+	Result r = { .name = "remove_elements_flat (per pair)", .ops = n };
+	Edge *es = calloc(n, sizeof(Edge));
+	for(int rep = 0; rep < 3; rep++) {
+		Tensor T = build(n, 1);
+		for(uint64_t i = 0; i < n; i++) {
+			memset(&es[i], 0, sizeof(Edge));
+			es[i].src_id = i; es[i].dest_id = i; es[i].id = i;
+		}
+		uint64_t i0 = read_instructions(); double t0 = now_sec();
+		Tensor_RemoveElements_Flat(T, es, n);
+		double t1 = now_sec(); uint64_t i1 = read_instructions();
+		r.instr_per_op[rep] = (double)(i1 - i0) / n;
+		r.sec_per_op[rep]   = (t1 - t0) / n;
+		Tensor_free(&T);
+	}
+	free(es);
+	report(&r);
+}
+
+// `Tensor_ClearElements` takes a mask matrix and its transpose rather than an
+// edge list, so its cost is a bulk matrix op rather than per pair. Measured per
+// pair cleared so it lines up with the row above.
+static void bench_clear_elements(uint64_t n, int edges_per_pair) {
+	Result r = { .name = "clear_elements (per pair)", .ops = n };
+	char nm[96];
+	snprintf(nm, sizeof nm, "clear_elements, k=%d (per pair)", edges_per_pair);
+	r.name = nm;
+	for(int rep = 0; rep < 3; rep++) {
+		Tensor T = build(n, edges_per_pair);
+		GrB_Matrix A, AT;
+		GrB_Matrix_new(&A,  GrB_BOOL, n + 1, n + 1);
+		GrB_Matrix_new(&AT, GrB_BOOL, n + 1, n + 1);
+		for(uint64_t i = 0; i < n; i++) {
+			GrB_Matrix_setElement_BOOL(A,  true, i, i);
+			GrB_Matrix_setElement_BOOL(AT, true, i, i);
+		}
+		GrB_Matrix_wait(A,  GrB_MATERIALIZE);
+		GrB_Matrix_wait(AT, GrB_MATERIALIZE);
+		uint64_t i0 = read_instructions(); double t0 = now_sec();
+		Tensor_ClearElements(T, A, AT);
+		double t1 = now_sec(); uint64_t i1 = read_instructions();
+		r.instr_per_op[rep] = (double)(i1 - i0) / n;
+		r.sec_per_op[rep]   = (t1 - t0) / n;
+		GrB_Matrix_free(&A); GrB_Matrix_free(&AT);
+		Tensor_free(&T);
+	}
+	report(&r);
+}
+
+// `Tensor_SetEdges` takes an array of Edge pointers rather than parallel
+// coordinate arrays, so it is the path a query's CREATE takes rather than the
+// bulk loader's.
+static void bench_set_edges(uint64_t n) {
+	Result r = { .name = "set_edges (per edge)", .ops = n };
+	Edge **ptrs = malloc(n * sizeof(Edge *));
+	Edge  *es   = calloc(n, sizeof(Edge));
+	for(uint64_t i = 0; i < n; i++) {
+		es[i].src_id = i; es[i].dest_id = i; es[i].id = i;
+		ptrs[i] = &es[i];
+	}
+	for(int rep = 0; rep < 3; rep++) {
+		Tensor T = Tensor_new(n + 1, n + 1);
+		uint64_t i0 = read_instructions(); double t0 = now_sec();
+		Tensor_SetEdges(T, (const Edge **)ptrs, n);
+		double t1 = now_sec(); uint64_t i1 = read_instructions();
+		r.instr_per_op[rep] = (double)(i1 - i0) / n;
+		r.sec_per_op[rep]   = (t1 - t0) / n;
+		Tensor_free(&T);
+	}
+	free(ptrs); free(es);
+	report(&r);
+}
+
+// ---- working-set sweep (residency) ----------------------------------------
+
+// Every other read here is warm: N pairs sits inside cache, so what they price
+// is the code path, not the memory system.  This sweeps the working set from
+// far inside the cache to far outside it, probing in a scrambled order so that
+// above the cache the reads genuinely miss.
+//
+// The instruction column is the control and is expected to be flat: a cache
+// miss retires no extra instruction.  The nanoseconds are the measurement.
+static void bench_sweep(int edges_per_pair) {
+	static const uint64_t sizes[] = {
+		10000, 100000, 500000, 2000000, 4000000, 8000000
+	};
+	const uint64_t probes = 200000;
+	printf("\n=== working-set sweep, %d edge(s) per pair, scrambled probe order ===\n",
+	       edges_per_pair);
+	printf("%12s  %12s  %10s\n", "pairs", "instr/op", "ns/op");
+	for(size_t si = 0; si < sizeof(sizes) / sizeof(sizes[0]); si++) {
+		uint64_t n = sizes[si];
+		Tensor T = build(n, edges_per_pair);
+		double best_ns = 1e300, best_instr = 0;
+		for(int rep = 0; rep < 3; rep++) {
+			uint64_t i0 = read_instructions();
+			double t0 = now_sec();
+			uint64_t acc = 0, x = 1;
+			for(uint64_t j = 0; j < probes; j++) {
+				// odd multiplier: walks the rows with no useful locality and
+				// without a stored permutation, which would itself sit in cache
+				x = x * 0x9E3779B97F4A7C15ull + 1;
+				GrB_Index p = (x >> 32) % n;
+				TensorIterator it;
+				TensorIterator_ScanEntry(&it, T, p, p);
+				uint64_t v;
+				while(TensorIterator_next(&it, NULL, NULL, &v, NULL)) acc += v;
+			}
+			double t1 = now_sec();
+			uint64_t i1 = read_instructions();
+			g_sink += acc;
+			double ns = 1e9 * (t1 - t0) / probes;
+			if(ns < best_ns) { best_ns = ns; best_instr = (double)(i1 - i0) / probes; }
+		}
+		printf("%12llu  %12.1f  %10.1f\n",
+		       (unsigned long long)n, best_instr, best_ns);
+		fflush(stdout);
+		Delta_Matrix_free(&T);
+	}
+}
+
 int main(int argc, char **argv) {
 	if(argc > 1) N = strtoull(argv[1], NULL, 10);
 	uint64_t reps = 1000000;
@@ -735,6 +897,26 @@ int main(int argc, char **argv) {
 		bench_iterate_t(Tk, nm3, N * k, pk);
 		Tensor_free(&Tk);
 	}
+
+	//--------------------------------------------------------------------------
+	// the entry points the paper listed as unmeasured on this side
+	//--------------------------------------------------------------------------
+	printf("\n-- remaining entry points --\n");
+	{
+		Tensor D1 = build(N, 1);
+		Tensor D2 = build(N, 2);
+		bench_degrees(D1, "single-edge", reps);
+		bench_degrees(D2, "2-edge", reps);
+		Tensor_free(&D1);
+		Tensor_free(&D2);
+	}
+	bench_remove_flat(N);
+	bench_clear_elements(N, 1);
+	bench_clear_elements(N, 2);
+	bench_set_edges(N);
+
+	bench_sweep(1);
+	bench_sweep(2);
 
 	bench_promote_demote(N);
 

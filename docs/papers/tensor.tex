@@ -2636,8 +2636,159 @@ miss on. Two conclusions, pulling opposite ways. The instruction-count metric
 this paper relies on is \emph{robust} to access order, which is a point in its
 favour and one we could not previously claim. And it is therefore blind to a real
 effect: the cache behaviour that separates these designs in time is invisible in
-the metric we chose, so the ranking question \S\ref{sec:limits} raises remains
-open and would need cycles on a quiet machine to settle.
+the metric we chose. Changing the order was only half the question, though ---
+$200{,}000$ pairs is a working set that fits in cache whichever order it is read
+in. \S\ref{sec:evalcold} changes the working set instead, and finds that the
+blindness runs in \emph{both} directions.
+
+\subsection{The remaining entry points}
+\label{sec:evalentry}
+
+Everything priced so far is a read or a bulk mutation. Three entry points the
+host runtime also calls had not been measured on both sides, and one of them is
+the worst ratio in this paper.
+
+\begin{table}[!ht]
+\centering
+\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+ & (A) & (C) & (C)/(A) \\
+\midrule
+row degree, $k=1$              & $1{,}011$ & $1{,}983$ & $1.96$ \\
+row degree, $k=2$              & $1{,}160$ & $4{,}886$ & $4.21$ \\
+column degree, $k=1$           & $1{,}432$ & $2{,}573$ & $1.80$ \\
+column degree, $k=2$           & $1{,}581$ & $5{,}475$ & $3.46$ \\
+\addlinespace
+bulk delete, all-inline (per pair) & $1{,}121$ & $1{,}279$ & $1.14$ \\
+bulk insert, all-inline (per edge) & $1{,}487$ & $1{,}737$ & $1.17$ \\
+\bottomrule
+\end{tabular}
+\caption{Instructions per operation at the data-structure boundary, same
+fixture and method as Table~\ref{tab:evalfanout}. The bulk paths are within
+$17\%$; degree is not, and the reason is an entry point (C) does not have.}
+\label{tab:evalentry}
+\end{table}
+
+\paragraph{Degree is the one place (C) pays for a missing entry point rather
+than for its representation.} (A) implements degree as a scan of the row's
+\emph{cells}: a scalar cell contributes one, and a tagged cell contributes
+\texttt{GrB\_Vector\_nvals} of the container it points at --- a constant-time
+read of a length that is already stored. Its cost is therefore proportional to
+the number of pairs in the row and independent of $k$, which
+Table~\ref{tab:evalentry} shows directly ($1{,}011 \to 1{,}160$ from $k=1$ to
+$k=2$, a $15\%$ rise for twice the edges).
+
+(C) has no degree entry point at all. Degree is computed one level up, in
+\texttt{Graph::get\_node\_outdegree}, by counting a full single-row iteration ---
+which materialises every identifier in the row only to discard it. Its cost is
+therefore proportional to the number of \emph{edges}, and the ratio grows with
+$k$: $1.96\times$ at $k=1$, $4.21\times$ at $k=2$, and by construction worse
+above that.
+
+This is a fixable gap rather than a property of inline-first storage. The
+information (A) reads in constant time --- the number of identifiers held for a
+pair --- is equally available in (C) as the cardinality of the pair's row in
+$me$, and a degree that reads the forward cell and, on the sentinel, takes that
+cardinality without materialising the row would have (A)'s shape. We have not
+implemented it, so the table reports what the engine does today.
+
+Its blast radius is bounded and worth stating so the number is not read as worse
+than it is: these four functions back Cypher's \texttt{indegree} and
+\texttt{outdegree} built-ins and nothing else. Traversal does not route through
+them. A workload that never calls those built-ins never pays this.
+
+\subsection{Residency: the same reads out of cache}
+\label{sec:evalcold}
+
+\S\ref{sec:limits} warns that every read in this paper is warm, and the
+access-order measurement above could not lift that warning: it changed the order
+in which $200{,}000$ pairs were read, not whether they fit in cache. This sweeps
+the working set from far inside the cache to far outside it --- $10^4$ to
+$8 \times 10^6$ pairs, $0.2$ to $558$\,MB resident --- probing in a scrambled
+order at every size, on both engines, with the same fixture and drain semantics.
+Because this is the one measurement here whose result \emph{is} a time, it is
+reported as the minimum of three runs rather than the median: the host is not
+quiet (\S\ref{sec:limits}), so every sample is an upper bound and the minimum is
+the least contaminated one available. The absolute nanoseconds should be read as
+upper bounds; the ratios, taken between two engines measured back to back under
+the same contention, are the claim.
+
+The instruction column is the control rather than the result. A cache miss
+retires no extra instruction, so if the sweep is changing residency and not work,
+instructions must stay flat. They do: (A) varies by under $0.04\%$ across the
+whole range at both $k$, and (C) by $0.9\%$ at $k=1$ and $3.6\%$ at $k=2$ ---
+the latter being $me$'s hypersparse row search deepening as it grows to
+$1.6\times 10^7$ entries. The nanoseconds are the measurement.
+
+\begin{table}[!ht]
+\centering
+\small
+\setlength{\tabcolsep}{4.5pt}
+\begin{tabular}{@{}lrrrcrrr@{}}
+\toprule
+ & \multicolumn{3}{c}{$k=1$, ns per read} & & \multicolumn{3}{c}{$k=2$, ns per read} \\
+\cmidrule(lr){2-4}\cmidrule(lr){6-8}
+pairs & (A) & (C) & (C)/(A) & & (A) & (C) & (C)/(A) \\
+\midrule
+$10^4$              & $21.9$  & $34.3$  & $1.57$ & & $40.4$  & $188.8$ & $4.67$ \\
+$10^5$              & $23.0$  & $29.9$  & $1.30$ & & $83.8$  & $219.8$ & $2.62$ \\
+$5\times10^5$       & $24.5$  & $30.7$  & $1.25$ & & $246.3$ & $274.4$ & $1.11$ \\
+$2\times10^6$       & $81.2$  & $98.9$  & $1.22$ & & $360.6$ & $566.6$ & $1.57$ \\
+$4\times10^6$       & $103.1$ & $166.7$ & $1.62$ & & $368.8$ & $651.9$ & $1.77$ \\
+$8\times10^6$       & $117.7$ & $202.5$ & $1.72$ & & $391.4$ & $736.9$ & $1.88$ \\
+\midrule
+\multicolumn{8}{@{}l@{}}{\emph{instructions, flat across the sweep:}\quad
+$k=1$: (A) $559$, (C) $640$--$646$ \quad
+$k=2$: (A) $757$, (C) $2{,}905$--$3{,}008$}\\
+\bottomrule
+\end{tabular}
+\caption{The same point read as $k$ is held fixed and the working set grows past
+the cache. At $k=2$ the instruction metric says (C) costs $3.8$--$4.0\times$ (A)
+at every size; time says $4.67\times$ in cache and $1.88\times$ out of it.}
+\label{tab:evalcold}
+\end{table}
+
+\paragraph{At $k=2$ the instruction count overstates (C)'s disadvantage, by about
+twofold at the largest size measured.} Instructions put (C) at $3.8$--$4.0\times$
+(A) and put it there at every working-set size. Time agrees only in cache. As the
+working set grows the ratio falls monotonically after $10^5$ --- $2.62$, then
+$1.11$, then back to $1.88$ --- because (A) leaves the cache first and by a wide
+margin. Between $10^5$ and $5\times10^5$ pairs (A)'s read slows by $2.9\times$
+while (C)'s slows by $1.25\times$; past that both are memory-bound and the ratio
+recovers toward, but does not reach, the instruction ratio.
+
+\paragraph{The crossing point is predicted by \S\ref{sec:evalspace}'s space
+constants, which is the check that this is a footprint effect.} A multi-edge pair
+costs (A) $295.7$ bytes and (C) $69.2$, using the engine-level per-pair figures
+of \S\ref{sec:evalspace}. Those constants put (A) past $100$\,MB at about
+$3.4\times10^5$ pairs and (C) at about $1.5\times10^6$. The measured cliffs sit
+between $10^5$ and $5\times10^5$ for (A), and between $5\times10^5$ and
+$2\times10^6$ for (C) --- both bracketing the prediction, from an independent
+measurement. So the $5.9\times$ space penalty \S\ref{sec:evalspace} reports for
+(A)'s containers is not only a memory-footprint result. It is also a latency
+result, and it is the reason (C)'s read closes most of a $4\times$ instruction
+deficit at scale.
+
+\paragraph{At $k=1$ it runs the other way.} Instructions put (C) at $1.15\times$
+(A) flat. Time puts it at $1.30\times$ at $10^5$ pairs and $1.72\times$ at
+$8\times10^6$ --- the deficit widens as residency drops. This one cannot be a
+footprint effect: \S\ref{sec:evalspace} measures both designs at $23.1$ bytes per
+all-inline pair, equal to three significant figures, and our own
+\texttt{memory\_usage} reports $23.8$ across the sweep. We do not have a
+decomposition of the residual, which is $85$\,ns at the largest size; the honest
+statement is that it exists and that the instruction metric does not see it.
+
+\paragraph{What this does to the paper's method.} \S\ref{sec:eval} chose
+instruction counts for reproducibility and defended the choice on the grounds
+that they measure work rather than machine. That defence stands --- the flat
+control columns are it --- but the cost is now quantified rather than
+hypothesised, and it is not a conservative bias in one direction. The metric
+overstates (C)'s multi-edge deficit by about $2\times$ out of cache and
+understates its single-edge deficit by about $1.5\times$. A reader should not
+treat any instruction ratio in this paper as a proxy for time at graph sizes past
+cache, in either direction. The two effects do not cancel; they act on the two
+regimes the design is meant to trade between.
 
 \subsection{Space: becoming multi-edge, and a model for design (B)}
 \label{sec:evalspace}
@@ -2950,19 +3101,32 @@ GraphBLAS components under an assumption about how (B) would be built
 (\S\ref{sec:evalspace}). Nothing measures (B)'s \emph{absence} of promotion
 cost, which is the whole of its case against (C).
 
-\emph{Fan-out beyond $k = 2$ is not measured at the boundary} for reads or
-iteration --- the boundary fixtures are one and two edges per pair, and the
-crossover above $k = 2$ rests on the engine-level slope of
-\S\ref{sec:evaldecomp}. Memory is the exception, covered to $k = 16$.
+\emph{Fan-out is measured at the boundary only to $k = 16$}
+(\S\ref{sec:evalfanout}), which is where this revision closed the gap the
+previous one named here --- and closed it against us, by inverting the slope
+claim. Above $16$ nothing is measured on either engine. Degree
+(\S\ref{sec:evalentry}) is the exception in the other direction: it is priced
+only at $k \in \{1, 2\}$, and its ratio is the one that grows with $k$, so
+$4.21\times$ should be read as a floor rather than a figure.
 
-\emph{All reads are warm and sequential.} Cold-cache behaviour and random access
-order are unmeasured, and a design that trades a pointer dereference for a
-second matrix probe is exactly the kind whose ranking could change under either.
-Transposed iteration and several C entry points are also unmeasured.
+\emph{Residency is measured on one machine only.} The previous revision listed
+warm sequential reads as the limitation; access order (\S\ref{sec:evalfanout}),
+residency (\S\ref{sec:evalcold}), transposed iteration, and the remaining entry
+points (\S\ref{sec:evalentry}) are now all measured on both engines. What that
+leaves is narrower and harder: the residency result is a wall-clock result, taken
+on one macOS arm64 machine with one cache hierarchy, and its magnitudes are the
+part most likely to move on different hardware. Its \emph{direction} at $k=2$ is
+anchored by \S\ref{sec:evalspace}'s space constants, which are machine-independent
+and predict the crossing point; its direction at $k=1$ is not anchored by
+anything and rests on the measurement alone.
 
-\emph{Only instruction counts are trustworthy here.} Some runs overlapped other
-work on the machine, so wall clock and cycles are not reported, and no claim in
-\S\ref{sec:eval} should be read as a latency result. Everything is macOS on
+\emph{Only instruction counts are trustworthy here, with one deliberate
+exception.} Some runs overlapped other work on the machine, so wall clock and
+cycles are not reported, and no claim in \S\ref{sec:eval} should be read as a
+latency result --- except \S\ref{sec:evalcold}, where a latency result is the
+whole point and no instruction count could substitute for it. That subsection
+carries its own method (minimum of three, ratios rather than magnitudes) and its
+own weaker warrant; it is not evidence for any other number here. Everything is macOS on
 arm64, with both sides built against SuiteSparse:GraphBLAS v10.3.1; Linux and CI
 are unmeasured. The Rust engine's trunk has since moved to v10.5.0, which
 changes kernel selection and the iso-build rule of \S\ref{sec:cost} but no
