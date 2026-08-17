@@ -272,10 +272,10 @@ pub fn reply_compact_value(
                 raw::reply_with_array(ctx.ctx, bg.get_relationship_attr_count(*rel) as _);
                 for (key, value) in attrs {
                     raw::reply_with_array(ctx.ctx, 3);
-                    raw::reply_with_long_long(
-                        ctx.ctx,
-                        bg.rel_attr_id_to_global(key).unwrap_or(0) as _,
-                    );
+                    // The span's id is already the graph-wide id — one dictionary, shared
+                    // by both stores — so there is nothing to translate. This used to call
+                    // `rel_attr_id_to_global`, an O(N) scan per property.
+                    raw::reply_with_long_long(ctx.ctx, key as _);
                     reply_compact_value(ctx, runtime, &value);
                 }
                 drop(bg);

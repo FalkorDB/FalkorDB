@@ -73,7 +73,7 @@ fn encode_graph(
     }
 
     for p in payloads {
-        graph.encode_payload(w, p, global_attrs);
+        graph.encode_payload(w, p);
     }
 }
 

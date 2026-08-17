@@ -335,6 +335,13 @@ QUERIES = [
     # MULTI corpus so no other row's numbers move.
     Q("multi-edge agg",      False, "MATCH ()-[r:MULTI]->() RETURN sum(r.k)"),
     Q("multi-edge undirected", False, "MATCH (a:MEnd {id: 0})-[r:MULTI]-(b) RETURN count(r)"),
+    # Return whole *relationship entities*, not scalars off them, so the compact reply
+    # path serializes a relationship's property map (`reply.rs`, Value::Relationship)
+    # rather than a single value. `entities` also returns `r`; this row is distinct in
+    # returning property-bearing :SIMILAR edges, so the map it serializes is populated
+    # — :KNOWS has no edge properties, and returning those would frame an empty map and
+    # measure nothing. Every other edge query here returns `r.prop` or an aggregate.
+    Q("rel entity return",   False, "MATCH ()-[r:SIMILAR]->() RETURN r"),
     Q("multi-edge demote/promote", True, "MATCH (a:MEnd {id: 0})-[r:MULTI]->(b:MEnd {id: 1}) WHERE r.k > 1 DELETE r WITH DISTINCT a, b CREATE (a)-[:MULTI {k: 2}]->(b), (a)-[:MULTI {k: 3}]->(b)", 500),
     Q("UDF echo scalars",    False, "UNWIND range(0, 99) AS i RETURN count(bench.echo(i) + bench.echo(1.5)), bench.echo(true), bench.echo(null), bench.echo('s')"),
     Q("UDF echo bigint",     False, "RETURN bench.echo(9007199254740993)"),
