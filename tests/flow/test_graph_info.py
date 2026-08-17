@@ -485,6 +485,167 @@ class testGraphInfo():
             for t in threads:
                 t.join()
 
+    def test08_no_sections_reports_everything(self):
+        """a bare GRAPH.INFO reports every section, as the C engine does"""
+
+        res = self.conn.execute_command("GRAPH.INFO")
+
+        # same sections, in the same order, as asking for all of them
+        self.env.assertEqual(res,
+                             self.conn.execute_command("GRAPH.INFO",
+                                                       "RunningQueries",
+                                                       "WaitingQueries",
+                                                       "ObjectPool"))
+
+        self.env.assertEqual(len(res), 6)
+        self.env.assertEqual(res[0], "# Running queries")
+        self.env.assertEqual(res[2], "# Waiting queries")
+        self.env.assertEqual(res[4], "Object Pool")
+
+        # an unknown section is still rejected
+        try:
+            self.conn.execute_command("GRAPH.INFO", "NoSuchSection")
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Unknown section", str(e))
+
+    def test09_cmd_info_runtime_toggle(self):
+        """CMD_INFO is settable at run-time, and gates query logging"""
+
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+
+        # on by default: a query shows up in the telemetry stream
+        self.graph.query("RETURN 1")
+        pollUntil(lambda: self.conn.xlen(stream), "a logged query")
+
+        #-----------------------------------------------------------------------
+        # turn logging off
+        #-----------------------------------------------------------------------
+
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no"), "OK")
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
+
+        n = self.conn.xlen(stream)
+        self.graph.query("RETURN 2")
+        # the flusher wakes every 5ms; half a second is well past the point
+        # where an entry would have landed had logging still been on
+        time.sleep(0.5)
+        self.env.assertEqual(self.conn.xlen(stream), n)
+
+        #-----------------------------------------------------------------------
+        # and back on
+        #-----------------------------------------------------------------------
+
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "yes"), "OK")
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 1)
+
+        self.graph.query("RETURN 3")
+        pollUntil(lambda: self.conn.xlen(stream) > n, "query logging to resume")
+
+        # a non-boolean value is rejected, leaving the config untouched
+        try:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "maybe")
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Failed to set config value CMD_INFO to maybe", str(e))
+        self.env.assertEqual(self.db.config_get("CMD_INFO"), 1)
+
+class testGraphInfoStaleEntry():
+    """A queued telemetry entry belongs to the graph that produced it, not to that
+       graph's name.
+
+       Entries are written by a background thread a few milliseconds later, so a
+       name can be flushed and rebound to a different graph while one is still in
+       flight. Writing it then attributes one graph's query to another's stream and
+       recreates a stream key `FLUSHALL` removed — on the master only, since a
+       key-API write does not replicate, which is what made
+       `test_replication_states` fail: it compares master and replica keyspaces.
+       The C engine cannot get this wrong because its queries log is owned by the
+       GraphContext and is freed with it."""
+
+    def __init__(self):
+        self.env, self.db = Env()
+        self.conn = self.env.getConnection()
+
+    def test01_stale_entry_not_written_to_a_new_graph(self):
+        g = self.db.select_graph("stale")
+        g.query("CREATE (:N {v: 1})")          # queues an entry for this graph
+        payload = self.conn.dump("stale")      # dump/restore keep the payload binary
+        self.conn.flushall()                   # that graph, and its stream, are gone
+        self.conn.restore("stale", 0, payload) # same name, new graph
+        # well past the flusher's window: whatever was going to be written, was
+        time.sleep(1)
+        self.env.assertEqual(self.conn.type(StreamName(g)), "none")
+        keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
+        self.env.assertEqual(keys, ["stale"])
+
+    def test02_stale_entry_not_written_under_a_renamed_key(self):
+        """The other half: same graph, different name.
+
+           A `RENAME` re-keys the graph and deletes the stream of the old key, so a
+           still-queued entry naming that key must not recreate it. The graph itself
+           is very much alive, which is why liveness alone is not the question —
+           the entry has to belong to the graph registered under *its* name."""
+        self.conn.flushall()
+        g = self.db.select_graph("before")
+        g.query("CREATE (:N {v: 1})")          # queues an entry naming "before"
+        self.conn.rename("before", "after")    # deletes telemetry{before}
+        time.sleep(1)
+        self.env.assertEqual(self.conn.type("telemetry{before}"), "none")
+        keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
+        self.env.assertEqual(keys, ["after"])
+
+class testGraphInfoCmdInfoDisabled():
+    """`CMD_INFO no` at *load time* must stop logging finished queries.
+
+    `test09_cmd_info_runtime_toggle` covers `GRAPH.CONFIG SET`; this covers the
+    module argument, which reaches the same atomic by a different route.
+
+    The config was registered and reported by `GRAPH.CONFIG GET`, but nothing
+    consulted it, so queries were logged regardless — and logging one is not free.
+    On an M3 Pro, `RETURN 1` costs ~150k instructions with logging off; logging it
+    cost a further ~83k, against ~11k on the C engine. Where the 7-8x went:
+
+      ~49k  waking the flusher once per query — a blocking wait returned the
+            moment an entry was queued, so nothing was batched but the flush
+            itself, and the wakeup is most of what an entry costs. C's cron task
+            runs on a timer instead and the query thread only appends to a buffer.
+      ~26k  `RM_Call("XADD", ...)`: command lookup, dispatch, reply machinery.
+      ~6k   a fresh `RedisModuleString` for all 25 argument tokens, including the
+            ten constant field names, per entry.
+      ~2k   replicating each XADD — which C never did.
+
+    Fixed by writing the way C does: `StreamAdd` on an opened key, shared field-name
+    strings, one key open and trim per graph per batch, and a batch window the
+    flusher sleeps out. That leaves ~14k, or 1.28x of C. This test covers only the
+    remaining escape hatch: with `CMD_INFO no` the cost is zero because nothing is
+    enqueued at all.
+    """
+
+    def __init__(self):
+        self.env, self.db = Env(moduleArgs="CMD_INFO no")
+        self.conn = self.env.getConnection()
+        self.graph = self.db.select_graph(GRAPH_ID)
+
+    def test01_config_reports_disabled(self):
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "GET", "CMD_INFO"), ["CMD_INFO", 0]
+        )
+
+    def test02_no_queries_logged(self):
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+        for i in range(20):
+            self.graph.query(f"RETURN {i}")
+        # The flusher wakes on a 5ms timer; a full second is far longer than it
+        # needs, so an empty stream here means nothing was ever enqueued.
+        time.sleep(1)
+        self.env.assertEqual(self.conn.type(stream), "none")
+        self.env.assertEqual(self.conn.xlen(stream), 0)
+
 #class testGraphInfoReplication():
 #    def __init__(self):
 #        self.env, self.db = Env(env='oss', useSlaves=True)

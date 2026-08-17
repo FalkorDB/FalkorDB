@@ -86,7 +86,7 @@ use roaring::RoaringTreemap;
 use crate::{
     entity_type::EntityType,
     graph::{
-        attribute_store::AttributeStore,
+        attribute_store::{AttrNameMap, AttributeStore},
         constraint::{Constraint, ConstraintStatus, ConstraintType},
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
@@ -296,6 +296,16 @@ pub struct Graph {
     /// version pays one `Arc::make_mut` deep clone, node-only writes pay
     /// nothing. Empty/deleted slots hold [`EDGE_NO_ENDPOINT`].
     edge_endpoints: Arc<Vec<u64>>,
+    /// The graph's one attribute-name dictionary: name → id and id → name, shared by
+    /// both stores below so an id means the same attribute everywhere it appears — in a
+    /// span, the RDB, a `GRAPH.EFFECT`, or a compact reply.
+    ///
+    /// Deliberately *not* per store. Two dictionaries numbered the same name
+    /// differently for nodes and relationships, and because effects put a bare id on
+    /// the wire, an RDB-seeded replica resolved it against different numbering and wrote
+    /// to the wrong attribute (#2457). C has the same shape: one `attributes` array on
+    /// `GraphContext`, two `DataBlock`s.
+    attrs_name: AttrNameMap,
     /// Node property storage
     node_attrs: AttributeStore,
     /// Relationship property storage
@@ -697,6 +707,7 @@ impl Graph {
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Arc::new(Vec::new()),
+            attrs_name: AttrNameMap::default(),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
@@ -733,6 +744,7 @@ impl Graph {
         relationship_matrices: Vec<Tensor>,
         node_labels: Vec<Arc<String>>,
         relationship_types: Vec<Arc<String>>,
+        attrs_name: AttrNameMap,
         node_attrs: AttributeStore,
         relationship_attrs: AttributeStore,
     ) -> Self {
@@ -773,6 +785,7 @@ impl Graph {
             labels_matices,
             relationship_matrices,
             edge_endpoints: Arc::new(edge_endpoints),
+            attrs_name,
             node_attrs,
             relationship_attrs,
             node_indexer: Indexer::default(),
@@ -838,6 +851,8 @@ impl Graph {
     pub fn new_version(&self) -> Self {
         debug_assert_eq!(self.reserved_node_count, 0);
         debug_assert_eq!(self.reserved_relationship_count, 0);
+        // One dictionary clone per version instead of the two the split tables cost.
+        let attrs_name = self.attrs_name.clone();
         let node_attrs = self.node_attrs.new_version();
         let relationship_attrs = self.relationship_attrs.new_version();
 
@@ -869,6 +884,7 @@ impl Graph {
                 .collect(),
             relationship_matrices,
             edge_endpoints: self.edge_endpoints.clone(),
+            attrs_name,
             node_attrs,
             relationship_attrs,
             node_indexer: self.node_indexer.clone(),
@@ -928,16 +944,14 @@ impl Graph {
     }
 
     /// Number of distinct property keys across nodes and relationships.
+    ///
+    /// Just the dictionary's length: there is one table per graph and it is keyed
+    /// by name, so entries are distinct by construction. This used to union two
+    /// per-store tables through a `HashSet`; after they were merged the union
+    /// became the same table twice.
     #[must_use]
-    pub fn property_key_count(&self) -> usize {
-        let mut seen = std::collections::HashSet::new();
-        for name in &self.node_attrs.attrs_name {
-            seen.insert(name.as_str());
-        }
-        for name in &self.relationship_attrs.attrs_name {
-            seen.insert(name.as_str());
-        }
-        seen.len()
+    pub const fn property_key_count(&self) -> usize {
+        self.attrs_name.len()
     }
 
     #[must_use]
@@ -976,18 +990,13 @@ impl Graph {
         self.relationship_types.get(id.0).cloned()
     }
 
+    /// The graph's attribute names in id order; position is the id.
+    ///
+    /// Was a deduplicated union of two per-store tables, walked once per property on the
+    /// relationship reply path. With one dictionary it is a plain iteration and the
+    /// per-call `HashSet` is gone.
     pub fn get_attrs(&self) -> impl Iterator<Item = &Arc<String>> + '_ {
-        // Deduplicate by borrowed `&str` rather than owned `String`: this
-        // iterator is walked once per property on the relationship reply path
-        // (via `get_global_attribute_id` / `rel_attr_id_to_global`), so a
-        // per-attribute heap allocation here shows up as O(props * attrs)
-        // allocations when serializing results.
-        let mut seen = std::collections::HashSet::<&str>::new();
-        self.node_attrs
-            .attrs_name
-            .iter()
-            .chain(self.relationship_attrs.attrs_name.iter())
-            .filter(move |a| seen.insert(a.as_str()))
+        self.attrs_name.iter()
     }
 
     pub fn get_label_id_mut(
@@ -1230,12 +1239,12 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.node_attrs.get_attr_id(attr)
+        self.attrs_name.get_index_of(attr)
     }
 
     #[must_use]
     pub const fn node_attribute_count(&self) -> usize {
-        self.node_attrs.attrs_name.len()
+        self.attrs_name.len()
     }
 
     #[must_use]
@@ -1243,27 +1252,20 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.relationship_attrs.get_attr_id(attr)
+        self.attrs_name.get_index_of(attr)
     }
 
-    /// Return the global property ID for `attr`, matching the index in `get_attrs()`.
-    /// Node attrs come first; relationship-only attrs follow.
+    /// The id for `attr`, or `None` if this graph has never seen the name.
+    ///
+    /// Was an O(N) scan over a union of two per-store tables, per property serialized.
+    /// There is one dictionary now, so it is the dictionary's own lookup — and node,
+    /// relationship and "global" ids are the same thing.
     #[must_use]
     pub fn get_global_attribute_id(
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.get_attrs().position(|a| a == attr)
-    }
-
-    /// Convert a relationship-local attribute ID to the global property ID.
-    #[must_use]
-    pub fn rel_attr_id_to_global(
-        &self,
-        local_id: u16,
-    ) -> Option<usize> {
-        let name = self.relationship_attrs.attrs_name.get(local_id as usize)?;
-        self.get_attrs().position(|a| a == name)
+        self.attrs_name.get_index_of(attr)
     }
 
     pub fn return_node_id(
@@ -1396,7 +1398,7 @@ impl Graph {
                 for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
                     let label = &self.node_labels[label_id as usize];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -1432,7 +1434,7 @@ impl Graph {
                 for &label_id in label_ids {
                     let label = &self.node_labels[label_id as usize];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -1470,7 +1472,7 @@ impl Graph {
                 for label_id in label_ids {
                     let label = &self.node_labels[label_id.0];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -1491,7 +1493,7 @@ impl Graph {
         &mut self,
         attr: &Arc<String>,
     ) -> u16 {
-        self.node_attrs.get_or_create_attr_id(attr)
+        self.attrs_name.get_or_create(attr)
     }
 
     /// Resolve a node attribute name to its index, if it exists.
@@ -1500,10 +1502,7 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<u16> {
-        self.node_attrs
-            .attrs_name
-            .get_index_of(attr)
-            .map(|i| i as u16)
+        self.attrs_name.get_index_of(attr).map(|i| i as u16)
     }
 
     /// Node attribute name for an index.
@@ -1512,7 +1511,7 @@ impl Graph {
         &self,
         attr_id: u16,
     ) -> Option<Arc<String>> {
-        self.node_attrs.attrs_name.get(attr_id as usize).cloned()
+        self.attrs_name.get(attr_id as usize).cloned()
     }
 
     /// Resolve a relationship attribute name to its index, if it exists.
@@ -1521,10 +1520,7 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<u16> {
-        self.relationship_attrs
-            .attrs_name
-            .get_index_of(attr)
-            .map(|i| i as u16)
+        self.attrs_name.get_index_of(attr).map(|i| i as u16)
     }
 
     /// Relationship attribute name for an index.
@@ -1533,10 +1529,7 @@ impl Graph {
         &self,
         attr_id: u16,
     ) -> Option<Arc<String>> {
-        self.relationship_attrs
-            .attrs_name
-            .get(attr_id as usize)
-            .cloned()
+        self.attrs_name.get(attr_id as usize).cloned()
     }
 
     /// Import pre-resolved relationship attributes directly into the cache.
@@ -1564,7 +1557,7 @@ impl Graph {
         &mut self,
         attr: &Arc<String>,
     ) -> u16 {
-        self.relationship_attrs.get_or_create_attr_id(attr)
+        self.attrs_name.get_or_create(attr)
     }
 
     pub fn import_relationship_attrs(
@@ -1599,7 +1592,7 @@ impl Graph {
         let type_name = &self.relationship_types[type_id.0];
         for (id, attrs) in attrs {
             for (attr_id, _) in attrs {
-                let Some(key) = self.relationship_attrs.attrs_name.get(*attr_id as usize) else {
+                let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                     continue;
                 };
                 if self.edge_indexer.has_indexed_attr(type_name, key) {
@@ -1624,7 +1617,7 @@ impl Graph {
             let type_id = self.get_relationship_type_id(RelationshipId(*id));
             let type_name = &self.relationship_types[type_id.0];
             for (attr_id, _) in attrs {
-                let Some(key) = self.relationship_attrs.attrs_name.get(*attr_id as usize) else {
+                let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                     continue;
                 };
                 if self.edge_indexer.has_indexed_attr(type_name, key) {
@@ -1762,7 +1755,7 @@ impl Graph {
 
             let label = &self.node_labels[lid];
             if self.node_indexer.has_index(label) {
-                for attr in self.node_attrs.get_attrs(node_id) {
+                for attr in self.attr_names(&self.node_attrs, node_id) {
                     if self.node_indexer.has_indexed_attr(label, &attr) {
                         remove_docs.entry(label_id).or_default().insert(node_id);
                         break;
@@ -1978,7 +1971,7 @@ impl Graph {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        self.node_attrs.get_attr(id.0, attr)
+        self.attr_by_name(&self.node_attrs, id.0, attr)
     }
 
     /// Fetches a node attribute using a pre-resolved attribute index.
@@ -2719,7 +2712,7 @@ impl Graph {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        self.relationship_attrs.get_attr(id.0, attr)
+        self.attr_by_name(&self.relationship_attrs, id.0, attr)
     }
 
     /// Fetches a relationship attribute using a pre-resolved attribute
@@ -2801,11 +2794,53 @@ impl Graph {
         }
     }
 
+    // ---- attribute name resolution ----------------------------------------
+    //
+    // `AttributeStore` is an id-keyed structure and does not own the name table;
+    // the graph does. These three resolve between the two, so the store's API stays
+    // honest about what it can answer on its own and no caller has to pass the
+    // graph's dictionary back into it.
+
+    /// Value of a named attribute on an entity in `store`.
+    fn attr_by_name(
+        &self,
+        store: &AttributeStore,
+        key: u64,
+        attr: &Arc<String>,
+    ) -> Option<Value> {
+        let idx = self.attrs_name.get_index_of(attr)? as u16;
+        store.get_attr_by_idx(key, idx)
+    }
+
+    /// Names of the attributes an entity in `store` carries.
+    fn attr_names<'a>(
+        &'a self,
+        store: &'a AttributeStore,
+        key: u64,
+    ) -> impl Iterator<Item = Arc<String>> + 'a {
+        store
+            .get_attr_ids(key)
+            .filter_map(move |id| self.attrs_name.get(id as usize).cloned())
+    }
+
+    /// Name/value pairs for an entity in `store`, in one storage pass.
+    fn attr_pairs<'a>(
+        &'a self,
+        store: &'a AttributeStore,
+        key: u64,
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + 'a {
+        store
+            .get_all_attrs_by_id(key)
+            .filter_map(move |(id, value)| {
+                self.attrs_name.get(id as usize).map(|n| (n.clone(), value))
+            })
+    }
+
     pub fn get_node_attrs(
         &self,
         id: NodeId,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
-        self.node_attrs.get_attrs(id.0)
+        self.attr_names(&self.node_attrs, id.0)
     }
 
     /// Get all attribute names and values for a node in a single storage pass.
@@ -2813,7 +2848,7 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
-        self.node_attrs.get_all_attrs(id.0)
+        self.attr_pairs(&self.node_attrs, id.0)
     }
 
     pub fn get_node_all_attrs_by_id(
@@ -2836,7 +2871,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
-        self.relationship_attrs.get_attrs(id.0)
+        self.attr_names(&self.relationship_attrs, id.0)
     }
 
     /// Get all attribute names and values for a relationship in a single storage pass.
@@ -2844,7 +2879,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
-        self.relationship_attrs.get_all_attrs(id.0)
+        self.attr_pairs(&self.relationship_attrs, id.0)
     }
 
     pub fn get_relationship_all_attrs_by_id(
@@ -3003,7 +3038,8 @@ impl Graph {
                     // create+free churn).
                     let mut doc: Option<Document> = None;
                     for (attr, fields) in &attrs {
-                        if let Some(value) = self.relationship_attrs.get_attr(eid, attr) {
+                        if let Some(value) = self.attr_by_name(&self.relationship_attrs, eid, attr)
+                        {
                             let doc = doc.get_or_insert_with(|| Document::new_edge(src, dst, eid));
                             for field in fields {
                                 doc.set(field, &value);
@@ -3124,7 +3160,7 @@ impl Graph {
                 };
                 let mut doc = Document::new_edge(src, dst, id);
                 for (key, fields) in &fields {
-                    if let Some(value) = self.relationship_attrs.get_attr(id, key) {
+                    if let Some(value) = self.attr_by_name(&self.relationship_attrs, id, key) {
                         for field in fields {
                             doc.set(field, &value);
                         }
@@ -3176,7 +3212,7 @@ impl Graph {
             for id in ids {
                 let mut doc = Document::new(id);
                 for (key, fields) in &fields {
-                    if let Some(value) = attr_store.get_attr(id, key) {
+                    if let Some(value) = self.attr_by_name(attr_store, id, key) {
                         for field in fields {
                             doc.set(field, &value);
                         }
@@ -4071,7 +4107,6 @@ impl Graph {
         &self,
         w: &mut dyn Writer,
         p: &PayloadEntry,
-        global_attrs: &[Arc<String>],
     ) {
         match p.state {
             EncodeState::Nodes => {
@@ -4079,7 +4114,6 @@ impl Graph {
                     w,
                     &self.deleted_nodes,
                     self.max_node_id(),
-                    global_attrs,
                     p.count,
                     p.offset,
                 );
@@ -4092,7 +4126,6 @@ impl Graph {
                     w,
                     &self.deleted_relationships,
                     self.max_relationship_id(),
-                    global_attrs,
                     p.count,
                     p.offset,
                 );
@@ -4125,13 +4158,13 @@ impl Graph {
     /// Get node attribute names.
     #[must_use]
     pub fn get_node_attribute_names(&self) -> Vec<Arc<String>> {
-        self.node_attrs.attrs_name.iter().cloned().collect()
+        self.attrs_name.iter().cloned().collect()
     }
 
     /// Get relationship attribute names.
     #[must_use]
     pub fn get_relationship_attribute_names(&self) -> Vec<Arc<String>> {
-        self.relationship_attrs.attrs_name.iter().cloned().collect()
+        self.attrs_name.iter().cloned().collect()
     }
 
     /// Register a node attribute name (get-or-create). Used by effect
@@ -4141,8 +4174,8 @@ impl Graph {
         name: &str,
     ) {
         let arc = Arc::new(name.to_string());
-        if self.node_attrs.attrs_name.get_index_of(&arc).is_none() {
-            self.node_attrs.attrs_name.insert(arc);
+        if self.attrs_name.get_index_of(&arc).is_none() {
+            self.attrs_name.insert(arc);
         }
     }
 
@@ -4152,32 +4185,103 @@ impl Graph {
         &mut self,
         name: &str,
     ) {
-        let arc = Arc::new(name.to_string());
-        if self
-            .relationship_attrs
-            .attrs_name
-            .get_index_of(&arc)
-            .is_none()
-        {
-            self.relationship_attrs.attrs_name.insert(arc);
-        }
+        // Identical to `add_node_attribute_name` now that there is one dictionary. Both
+        // are kept because the effects wire still carries an ATTR_NODE/ATTR_REL
+        // discriminator, which is vestigial from here on and is removed with the
+        // `EFFECTS_VERSION` bump in #2419.
+        self.attrs_name.insert(Arc::new(name.to_string()));
     }
 
-    /// Build the unified global attribute list (node attrs ∪ relationship attrs, in order).
+    /// The graph's attribute names, in id order — index *is* the id.
+    ///
+    /// Was a node ∪ relationship union over two dictionaries; with one dictionary it is
+    /// simply that dictionary's contents, and the RDB's flat table is the same list.
     #[must_use]
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
-        let mut attrs = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for name in &self.node_attrs.attrs_name {
-            if seen.insert(name.clone()) {
-                attrs.push(name.clone());
-            }
+        self.attrs_name.iter().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod attr_id_space_tests {
+    use super::super::graphblas::test_init::ensure_init;
+    use super::*;
+
+    fn attr(s: &str) -> Arc<String> {
+        Arc::new(s.to_string())
+    }
+
+    /// A name has one id, whichever kind of entity introduced it.
+    ///
+    /// This is the invariant behind #2457. With a dictionary per store, `since` was
+    /// registered only in the relationship table, so it got relationship-local id 0 —
+    /// colliding with the *node* attribute already holding node-local id 0. Effects put a
+    /// bare id on the wire, so a replica whose dictionary came from an RDB (one unified
+    /// table) resolved that 0 to the wrong attribute.
+    #[test]
+    fn one_id_per_name_across_entity_kinds() {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "attr_id_space");
+
+        // Node attributes first, so a per-store numbering would start relationships back
+        // at 0 and collide with `a`.
+        let a = g.get_or_create_node_attr_id(&attr("a"));
+        let b = g.get_or_create_node_attr_id(&attr("b"));
+        // Then a relationship-only attribute.
+        let since = g.get_or_create_rel_attr_id(&attr("since"));
+
+        assert_eq!(a, 0);
+        assert_eq!(b, 1);
+        // The bug: this was 0 — the relationship table's first slot.
+        assert_eq!(
+            since, 2,
+            "a relationship attribute must not restart numbering"
+        );
+
+        // Every accessor agrees, because there is only one dictionary to disagree about.
+        for (name, expected) in [("a", 0usize), ("b", 1), ("since", 2)] {
+            let n = attr(name);
+            assert_eq!(g.get_node_attribute_id(&n), Some(expected));
+            assert_eq!(g.get_relationship_attribute_id(&n), Some(expected));
+            assert_eq!(g.get_global_attribute_id(&n), Some(expected));
         }
-        for name in &self.relationship_attrs.attrs_name {
-            if seen.insert(name.clone()) {
-                attrs.push(name.clone());
-            }
+
+        // Re-registering under the other entity kind must not mint a second id.
+        assert_eq!(g.get_or_create_rel_attr_id(&attr("a")), 0);
+        assert_eq!(g.get_or_create_node_attr_id(&attr("since")), 2);
+        assert_eq!(g.build_global_attrs().len(), 3);
+    }
+
+    /// The RDB's flat list and the live dictionary are the same numbering.
+    ///
+    /// A full sync seeds a replica from `build_global_attrs()`. If that list disagreed
+    /// with the ids the master stamps into effects, the replica would misresolve them —
+    /// which is exactly how #2457 manifested.
+    #[test]
+    fn rdb_attr_list_matches_live_ids() {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "attr_id_rdb");
+        g.get_or_create_node_attr_id(&attr("a"));
+        let since = g.get_or_create_rel_attr_id(&attr("since"));
+        g.get_or_create_node_attr_id(&attr("b"));
+
+        let list = g.build_global_attrs();
+
+        // The load-bearing one: an id the master stamps into an effect has to index the
+        // same name in the list a replica is seeded from. Split numbering broke exactly
+        // this — `since` was relationship-local 0, and position 0 of the list is `a`.
+        assert_eq!(
+            list.get(since as usize).map(|s| s.as_str()),
+            Some("since"),
+            "the id put on the wire does not index its own name in the RDB list"
+        );
+
+        for (id, name) in list.iter().enumerate() {
+            assert_eq!(
+                g.get_global_attribute_id(name),
+                Some(id),
+                "RDB position {id} disagrees with the live id for {name}"
+            );
         }
-        attrs
     }
 }
