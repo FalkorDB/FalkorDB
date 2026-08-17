@@ -115,7 +115,6 @@ def decode (e : Encoded) : Tensor where
   dm := ∅
   mt := ∅
   me := loadGroup (loadGroup ∅ e.groupBase) e.groupDelta
-  multiCount := e.groupBase.length + e.groupDelta.length
   nrows := e.nrows
   ncols := e.ncols
 
@@ -261,7 +260,7 @@ theorem invCore_decode_encode (h : Inv t) : InvCore (decode (encode t)) := by
     rw [mem_effDom_iff_isSome, mem_effDom_iff_isSome, effGet_decode_encode h]
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
            row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
-           multi_count_eq := ?_, valid_ids := ?_ }
+           valid_ids := ?_ }
   · simp [decode]
   · simp [decode]
   · intro r hr; simp [decode] at hr
@@ -290,14 +289,6 @@ theorem invCore_decode_encode (h : Inv t) : InvCore (decode (encode t)) := by
     rcases Finset.mem_union.mp hr' with h1 | h1
     · exact Finset.mem_union_left _ (Finset.mem_sdiff.mp h1).1
     · exact Finset.mem_union_right _ h1
-  · show (encode t).groupBase.length + (encode t).groupDelta.length = _
-    have hlen : (encode t).groupBase.length = t.multiPairs.card := by
-      simp [encode, Finset.length_toList]
-    have hmp : (decode (encode t)).multiPairs = t.multiPairs := by
-      ext r
-      simp only [mem_multiPairs, hdom, effGet_decode_encode h]
-    rw [hlen, hmp, show (encode t).groupDelta = [] from rfl]
-    simp
   · intro r i hi
     rw [edgesAt_decode_encode h] at hi
     exact h.valid_ids r i hi

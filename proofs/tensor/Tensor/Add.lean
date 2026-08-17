@@ -52,11 +52,6 @@ variable {mm : Option Nat}
   · simp [writeInline]
   · by_cases hc : c = id <;> simp [writeInline, hc]
 
-@[simp] theorem writeInline_multiCount : (writeInline t p id mm).multiCount = t.multiCount := by
-  rcases mm with _ | c
-  · simp [writeInline]
-  · by_cases hc : c = id <;> simp [writeInline, hc]
-
 @[simp] theorem writeInline_nrows : (writeInline t p id mm).nrows = t.nrows := by
   rcases mm with _ | c
   · simp [writeInline]
@@ -222,8 +217,7 @@ theorem addEdge_multi_def (hv : t.effGet p = some MULTI) :
 theorem addEdge_promote_def {v : Nat} (hv : t.effGet p = some v) (hM : v ≠ MULTI) :
     addEdge t p id =
       writeInline
-        { t with me := insert (key p, v) (insert (key p, id) t.me),
-                 multiCount := t.multiCount + 1 }
+        { t with me := insert (key p, v) (insert (key p, id) t.me) }
         p MULTI (if (t.dp.get p).isSome then t.m.get p else none) := by
   simp [addEdge, hv, hM]
 
@@ -265,10 +259,6 @@ private theorem multi_effDom (hv : t.effGet p = some MULTI) :
     (addEdge t p id).effDom = t.effDom := by
   rw [addEdge_multi_def hv]; rfl
 
-private theorem multi_multiCount (hv : t.effGet p = some MULTI) :
-    (addEdge t p id).multiCount = t.multiCount := by
-  rw [addEdge_multi_def hv]
-
 private theorem multi_meRow_self (hv : t.effGet p = some MULTI) :
     (addEdge t p id).meRow (key p) = insert id (t.meRow (key p)) := by
   rw [addEdge_multi_def hv]; simp [meRow]
@@ -301,7 +291,7 @@ theorem inv_addEdge_multi (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
   have hpdom : p ∈ t.effDom := mem_effDom_iff_isSome.mpr (by simp [hv])
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
            row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
-           multi_count_eq := ?_, valid_ids := ?_,
+           valid_ids := ?_,
            mt_eq := by rw [multi_effDom hv, addEdge_multi_def hv]; exact h.mt_eq }
   · rw [addEdge_multi_def hv]; exact h.dm_sub_m
   · rw [addEdge_multi_def hv]; exact h.dp_disj_dm
@@ -330,8 +320,6 @@ theorem inv_addEdge_multi (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
       exact ⟨q, hbq, by rw [multi_effDom hv]; exact hqdom, hqk⟩
   · rw [multi_effDom hv]; exact h.bounded
   · rw [addEdge_multi_def hv]; exact h.in_range
-  · rw [multi_multiCount hv, h.multi_count_eq]
-    exact congrArg Finset.card (multiPairs_congr (multi_effDom hv) (multi_effGet hv)).symm
   · intro q i hi
     by_cases hqp : q = p
     · subst hqp
@@ -407,7 +395,7 @@ theorem inv_addEdge_first (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
   rw [← addEdge_first_def hv] at hsub hdisj hcc
   refine { dm_sub_m := hsub, dp_disj_dm := hdisj, cancel_clean := hcc, multi_iff := ?_,
            row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
-           multi_count_eq := ?_, valid_ids := ?_,
+           valid_ids := ?_,
            mt_eq := mt_eq_insert h.mt_eq (first_effDom hv)
              (by rw [addEdge_first_def hv]; exact writeInline_mt) }
   · intro q hq
@@ -442,13 +430,6 @@ theorem inv_addEdge_first (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
     · rcases Finset.mem_insert.mp (writeInline_dp_dom_subset hq') with rfl | hq''
       · exact ⟨hbp.2.1, hbp.2.2⟩
       · exact h.in_range q (Finset.mem_union_right _ hq'')
-  · have hmc : (addEdge t p id).multiCount = t.multiCount := by
-      rw [addEdge_first_def hv]; exact writeInline_multiCount
-    rw [hmc, h.multi_count_eq]
-    refine congrArg Finset.card (multiPairs_eq_of_not_multi hpdom (first_effDom hv) ?_
-      (fun q hq => first_effGet_ne hv hq)).symm
-    rw [first_effGet_self hv]
-    exact fun hc => hid.ne_multi (Option.some_inj.mp hc)
   · intro q i hi
     by_cases hqp : q = p
     · subst hqp
@@ -473,11 +454,11 @@ section Promote
 
 variable {v : Nat}
 
-/-- The intermediate state: `me` and `multi_count` updated, forward layers still
-untouched (the read phase writes `me` eagerly). -/
+/-- The intermediate state: `me` updated, forward layers still untouched (the
+read phase writes `me` eagerly).  There is no counter to bump: `multiCount` is
+derived from `me`, so inserting the pair's two ids *is* the increment. -/
 private def promoted (t : Tensor) (p : Pair) (id v : Nat) : Tensor :=
-  { t with me := insert (key p, v) (insert (key p, id) t.me),
-           multiCount := t.multiCount + 1 }
+  { t with me := insert (key p, v) (insert (key p, id) t.me) }
 
 @[simp] private theorem promoted_m : (promoted t p id v).m = t.m := rfl
 @[simp] private theorem promoted_dm : (promoted t p id v).dm = t.dm := rfl
@@ -485,8 +466,6 @@ private def promoted (t : Tensor) (p : Pair) (id v : Nat) : Tensor :=
 @[simp] private theorem promoted_mt : (promoted t p id v).mt = t.mt := rfl
 @[simp] private theorem promoted_nrows : (promoted t p id v).nrows = t.nrows := rfl
 @[simp] private theorem promoted_ncols : (promoted t p id v).ncols = t.ncols := rfl
-@[simp] private theorem promoted_multiCount :
-    (promoted t p id v).multiCount = t.multiCount + 1 := rfl
 @[simp] private theorem promoted_me :
     (promoted t p id v).me = insert (key p, v) (insert (key p, id) t.me) := rfl
 
@@ -548,10 +527,6 @@ private theorem promote_me (hv : t.effGet p = some v) (hM : v ≠ MULTI) :
     (addEdge t p id).me = insert (key p, v) (insert (key p, id) t.me) := by
   rw [addEdge_promote_def' hv hM, writeInline_me]; rfl
 
-private theorem promote_multiCount (hv : t.effGet p = some v) (hM : v ≠ MULTI) :
-    (addEdge t p id).multiCount = t.multiCount + 1 := by
-  rw [addEdge_promote_def' hv hM, writeInline_multiCount]; rfl
-
 /-- The old row was empty (the pair was single-edge), so after promotion the row
 holds exactly the two ids. -/
 private theorem promote_meRow_self (h : Inv t) (hbp : InBounds t p) (hv : t.effGet p = some v)
@@ -599,7 +574,7 @@ theorem inv_addEdge_promote (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
   rw [← addEdge_promote_def' hv hM] at hsub hdisj hcc
   refine { dm_sub_m := hsub, dp_disj_dm := hdisj, cancel_clean := hcc, multi_iff := ?_,
            row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
-           multi_count_eq := ?_, valid_ids := ?_,
+           valid_ids := ?_,
            mt_eq := mt_eq_insert (p := p) h.mt_eq
              (by rw [promote_effDom hv hM, Finset.insert_eq_self.mpr hpdom])
              (by rw [addEdge_promote_def' hv hM, writeInline_mt]; rfl) }
@@ -637,11 +612,6 @@ theorem inv_addEdge_promote (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
     · rcases Finset.mem_insert.mp (writeInline_dp_dom_subset hq') with rfl | hq''
       · exact ⟨hbp.2.1, hbp.2.2⟩
       · exact h.in_range q (Finset.mem_union_right _ (by simpa using hq''))
-  · rw [promote_multiCount hv hM, h.multi_count_eq,
-      multiPairs_eq_insert (t := t) (t' := addEdge t p id)
-        (by rw [promote_effDom hv hM, Finset.insert_eq_self.mpr hpdom])
-        (promote_effGet_self hv hM) (fun q hq => promote_effGet_ne hv hM hq),
-      Finset.card_insert_of_notMem (not_mem_multiPairs_of_ne (by rw [hv]; simpa using hM))]
   · intro q i hi
     by_cases hqp : q = p
     · subst hqp
@@ -787,6 +757,49 @@ theorem edgesAt_setAll {l : List (Pair × Nat)} (h : Inv t) (hb : WritableBatch 
       simp only [Finset.mem_union, Finset.mem_insert]
       tauto
     · rw [edgesAt_addEdge_ne h hbe hqe, batchIds_cons_ne hqe]
+
+/-! ## How the multi-edge pair count moves
+
+`multiCount` is `multiPairs.card`, derived from the effective view rather than
+stored (`Model.lean`), so "the count went up by one" is a statement about which
+pairs read as `MULTI` and not about bookkeeping. An earlier revision asserted the
+same three facts about a `multi_count` *field* that every operation had to
+remember to move; #2439 deleted the field from `tensor.rs` and these replace it.
+
+Only promotion moves the count on the insert side, which is exactly the
+design claim: adding an edge to a pair that is already multi-edge is a write to
+`me` alone, and the first edge of an absent pair never involves `me`. -/
+
+theorem multiPairs_addEdge_promote (hv : t.effGet p = some v) (hM : v ≠ MULTI) :
+    (addEdge t p id).multiPairs = insert p t.multiPairs := by
+  have hpdom : p ∈ t.effDom := mem_effDom_iff_isSome.mpr (by rw [hv]; rfl)
+  exact multiPairs_eq_insert (by rw [promote_effDom hv hM, Finset.insert_eq_self.mpr hpdom])
+    (promote_effGet_self hv hM) (fun q hq => promote_effGet_ne hv hM hq)
+
+theorem notMem_multiPairs_of_single (hv : t.effGet p = some v) (hM : v ≠ MULTI) :
+    p ∉ t.multiPairs :=
+  not_mem_multiPairs_of_ne (by rw [hv]; simpa using hM)
+
+/-- `D → F` / `B → C`: promoting a single-edge pair adds it to `multiPairs`. -/
+theorem multiCount_addEdge_promote (hv : t.effGet p = some v) (hM : v ≠ MULTI) :
+    (addEdge t p id).multiCount = t.multiCount + 1 := by
+  rw [multi_count_eq, multi_count_eq, multiPairs_addEdge_promote hv hM,
+    Finset.card_insert_of_notMem (notMem_multiPairs_of_single hv hM)]
+
+/-- `E → E`: another id for an already-multi pair leaves the count alone. -/
+theorem multiCount_addEdge_multi (hv : t.effGet p = some MULTI) :
+    (addEdge t p id).multiCount = t.multiCount := by
+  rw [multi_count_eq, multi_count_eq, multiPairs_congr (multi_effDom hv) (multi_effGet hv)]
+
+/-- `A → B`: the first edge of an absent pair is inline, so no pair becomes
+multi-edge. -/
+theorem multiCount_addEdge_first (hid : ValidId id) (hv : t.effGet p = none) :
+    (addEdge t p id).multiCount = t.multiCount := by
+  have hpdom : p ∉ t.effDom := by rw [mem_effDom_iff_isSome, hv]; simp
+  rw [multi_count_eq, multi_count_eq,
+    multiPairs_eq_of_not_multi hpdom (first_effDom hv)
+      (by rw [first_effGet_self hv]; exact fun hc => hid.ne_multi (Option.some_inj.mp hc))
+      (fun q hq => first_effGet_ne hv hq)]
 
 end Tensor
 end FalkorDB

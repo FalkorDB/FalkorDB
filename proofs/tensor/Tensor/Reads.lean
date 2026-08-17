@@ -52,7 +52,6 @@ theorem inv_new (nrows ncols : Nat) : Inv (new nrows ncols) where
   me_keyed := by simp [new]
   bounded := by intro p hp; simp [new, effDom] at hp
   in_range := by intro p hp; simp [new] at hp
-  multi_count_eq := by simp [new, multiPairs, effDom]
   mt_eq := by intro p; simp [new, effDom]
   valid_ids := by intro p i hi; simp [new, edgesAt, effGet, Layer.get] at hi
 
@@ -179,7 +178,6 @@ theorem inv_resize (h : Inv t) {nr nc : Nat} (hr : t.nrows ≤ nr) (hc : t.ncols
     simp only [resize] at hq ⊢
     obtain ⟨h1, h2⟩ := h.in_range q hq
     omega
-  multi_count_eq := h.multi_count_eq
   mt_eq := h.mt_eq
   valid_ids := h.valid_ids
 

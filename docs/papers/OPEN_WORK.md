@@ -122,25 +122,32 @@ it yields the effective set in ascending `(row, col)` order. The ordering half i
 the part worth having: it is what downstream operators assume and what nothing
 currently checks.
 
-### 3b-bis. The model still has the counter the code deleted
+### 3b-bis. The model's counter — done
 
-`Tensor/Model.lean` carries `multiCount` as a field, with `multi_count_eq :
-t.multiCount = t.multiPairs.card` as an invariant clause, and `Tensor/Count.lean`
-quotes a `self.multi_count` that no longer exists in `tensor.rs`. #2439 deleted
-the field and derives the quantity from `me`.
+**Status:** closed. The model carried `multiCount` as a field with
+`multi_count_eq : t.multiCount = t.multiPairs.card` in `Inv`, which is what the
+Rust held before #2439 deleted it.
 
-This divergence can only make the code safer than the model — a derived quantity
-cannot disagree with itself, so the clause holds by construction — which is why
-it is listed here rather than under 3a. But it means the cardinality theorems are
-stated about a field the artifact does not have, and the docstrings cite code
-that is gone.
+`multiCount` is now a *definition* — `t.multiPairs.card` — so `multi_count_eq` is
+`rfl` and there is no clause to preserve. Three consequences, all in the
+favourable direction:
 
-**How.** Either replace the field with `multiPairs.card` throughout, dropping
-`multi_count_eq` from `Inv` and letting the `edgeCount` theorems quote the
-derivation; or keep the field and say in `Model.lean` that it models a derived
-quantity. The first is more honest and is a mechanical edit — `multi_count_eq`
-is used as a rewrite in the `edgeCount` proofs and nowhere else. Refresh the
-Rust quoted in `Count.lean`'s header either way.
+- Every `multi_count_eq := ?_` obligation disappeared from the operation proofs,
+  along with the six `*_multiCount` field-tracking lemmas that fed them.
+- The count's transitions are now stated once each rather than tracked
+  everywhere: `multiCount_addEdge_promote` (+1), `multiCount_addEdge_multi` (+0),
+  `multiCount_addEdge_first` (+0) in `Add.lean`. These say something about which
+  pairs read as `MULTI`, where the old lemmas said only that a field was bumped.
+- `retro_promote_agrees`'s count conjunct is now *derived* from its `effGet`
+  conjunct instead of proved separately, which is the honest dependency: agreeing
+  on the effective view forces agreeing on a quantity computed from it.
+
+The `trans_*` state theorems lost their count conjunct, deliberately: the count is
+no longer a layer, so it does not belong in a statement about layers. Note the
+one thing this exposed — those conjuncts were previously provable with no
+`≠ MULTI` hypothesis because bumping a field cannot fail; as claims about the
+derived count, several would have needed one. That is a mild argument that the
+old formulation was weaker than it looked.
 
 ### 3c. The `Encode`/`Decode` blob format
 

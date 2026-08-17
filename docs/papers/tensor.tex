@@ -123,7 +123,7 @@ give the resulting ten-state per-pair automaton, a closed-form cardinality
 identity, and a proof that the three-way sorted-merge iterator streams
 exactly the effective edge multiset in $(\text{src},\text{dst},\text{id})$
 order. The invariant set, the automaton and both theorems are machine-checked in
-Lean 4 against a model transcribed from the Rust --- $5{,}070$ lines and $362$
+Lean 4 against a model transcribed from the Rust --- $5{,}061$ lines and $362$
 theorems, with no \texttt{sorry} and no bespoke axiom --- which found two
 unreachable branches in the shipped code, one of which would have fabricated a
 valid edge identifier had the invariant it rested on ever broken. We are
@@ -235,7 +235,7 @@ Rust storage engine. Specifically:
         lexicographic order without materialising an intermediate matrix
         (Theorem~\ref{thm:iter}).
   \item \textbf{A machine-checked development, and an account of its limits}
-        (\S\ref{sec:mechanised}). $5{,}070$ lines and $362$ theorems of Lean 4
+        (\S\ref{sec:mechanised}). $5{,}061$ lines and $362$ theorems of Lean 4
         over a model transcribed operation by operation from the Rust, in two
         layers so that the tensor's use of its Boolean sub-structure is proved
         rather than assumed. It pays for itself by finding two unreachable
@@ -709,9 +709,11 @@ invariant over a maintained field: $\textit{multi}$ was a counter that every
 mutation path had to remember to move, which made it the only piece of state
 resting on a discipline rather than on a structural argument. It is now derived
 from $me$ instead (\S\ref{sec:limits}), so the clause holds by construction and
-the discipline is gone. We keep it in the invariant set because the mechanised
-model still carries the field, and because the cardinality identity below is
-stated against it.
+the discipline is gone --- in the mechanisation too, where $\textit{multi}$ is a
+definition rather than a field and this clause is \texttt{rfl}. We keep it in the
+invariant set because the cardinality identity below is stated against it, and
+because it is what the identity would need if the quantity were ever cached
+again.
 
 \subsection{The per-pair automaton}
 \label{sec:automaton}
@@ -1508,7 +1510,7 @@ development is in \texttt{proofs/tensor/} in the artifact and comes in two
 layers, the second discharging the first's one abstraction boundary:
 
 \begin{itemize}
-\item \textbf{\texttt{Tensor}} ($4{,}102$ lines, $290$ theorems).
+\item \textbf{\texttt{Tensor}} ($4{,}093$ lines, $290$ theorems).
   Every operation of \texttt{tensor.rs} gets two theorems: it preserves the
   invariants, and it acts on $\mathrm{Ids}$ the way its specification says. It
   models $mt$ and $me$ --- \texttt{VersionedMatrix} values in Rust --- as the
@@ -1619,14 +1621,13 @@ the whole development rests on, and no proof inside it can discharge that.
 Where the code is currently ahead of the model, we say so: iteration is
 mechanised by its result rather than as the three-way lookahead merge; the
 serialised byte format is outside both layers (the round-trip theorems are
-about the abstract encode/decode pair); batched deletion replays a per-pair
-plan where the model folds per-edge transitions (\S\ref{sec:future}); and the
-model still carries $\textit{multi}$ as a field with
-Invariant~\ref{inv:counter} as its agreement condition, where the code now
-derives it from $me$ (\S\ref{sec:limits}). The last of these is a divergence
-that can only make the code safer than the model --- a derived quantity cannot
-disagree with itself --- but it is a divergence, and the theorems below are
-about the field.
+about the abstract encode/decode pair); and batched deletion replays a per-pair
+plan where the model folds per-edge transitions (\S\ref{sec:future}). One such
+divergence has since been closed rather than documented: the model carried
+$\textit{multi}$ as a field with Invariant~\ref{inv:counter} as its agreement
+condition, where the code derives it from $me$; the model now derives it too, so
+the invariant holds by definition and no operation states anything about
+maintaining it.
 
 Three consequences are worth reporting, because they are the kind of thing a
 mechanisation buys that a proof on paper does not.
@@ -2773,13 +2774,14 @@ removes the way a \emph{mutation path} can break the identity, not the ways a
 corrupt decoded blob or a memory error can, and the mechanised
 \texttt{edgeCount\_no\_underflow} says precisely that an underflow means an
 invariant is already broken --- so computing it in checked arithmetic would
-convert a wrapped count into an error raised where it is detected. Second, the
-mechanised model still carries \texttt{multiCount} as a field with
-Invariant~\ref{inv:counter} as its agreement condition. Every operation in the
-model provably preserves it, so the \emph{algorithm} was never in question; what
-was unproved is that the Rust performed the same updates the model does. Deleting
-the field discharges that particular correspondence obligation in the code while
-leaving the model one revision behind it (\S\ref{sec:mechanised}).
+convert a wrapped count into an error raised where it is detected. Second, the repair
+propagates into the mechanisation in a way worth naming: with the count derived
+there too, Invariant~\ref{inv:counter} is a definitional identity and the
+per-operation theorems that used to say ``this operation moves the counter
+correctly'' have nothing left to say. What replaces them is three statements about
+which pairs read as $\M$ --- promotion adds one, an extra identifier on an
+already-multi pair adds none, a first edge adds none --- which is the same content
+without an obligation attached to every mutation path.
 
 \paragraph{The transaction-local state space is genuinely larger.}
 Ten per-pair states with shadowing is more than the four a Boolean delta

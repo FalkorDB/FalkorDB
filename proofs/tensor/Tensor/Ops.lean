@@ -53,7 +53,6 @@ def new (nrows ncols : Nat) : Tensor where
   dm := ∅
   mt := ∅
   me := ∅
-  multiCount := 0
   nrows := nrows
   ncols := ncols
 
@@ -181,8 +180,7 @@ def addEdge (t : Tensor) (p : Pair) (id : Nat) : Tensor :=
       -- in `me`, and the sentinel is queued for the inline slot.
       else
         writeInline
-          { t with me := insert (key p, v) (insert (key p, id) t.me),
-                   multiCount := t.multiCount + 1 }
+          { t with me := insert (key p, v) (insert (key p, id) t.me) }
           p MULTI (if (t.dp.get p).isSome then t.m.get p else none)
   -- First edge for this pair: inline.
   | none => writeInline t p id (if p ∈ t.dm then t.m.get p else none)
@@ -234,8 +232,7 @@ def removeOne (t : Tensor) (id : Nat) (p : Pair) : Tensor × Option Pair :=
               -- Demote: the surviving id returns inline (cancelling if it is the
               -- committed value).  `mt` already has `(dst, src)`.
               let t1 : Tensor :=
-                { t with me := (t.me.erase (key p, id)).erase (key p, last),
-                         multiCount := t.multiCount - 1 }
+                { t with me := (t.me.erase (key p, id)).erase (key p, last) }
               if t.m.get p = some last then ({ t1 with dp := t1.dp.remove p }, none)
               else ({ t1 with dp := t1.dp.set p last }, none)
           | none =>
@@ -244,8 +241,7 @@ def removeOne (t : Tensor) (id : Nat) (p : Pair) : Tensor × Option Pair :=
               -- by construction: it carries an `unreachable!()` here rather than
               -- the delete-the-pair branch it used to.  The model keeps a total
               -- definition, so this arm stays — it is simply never taken.
-              (deletePair { t with me := t.me.erase (key p, id),
-                                   multiCount := t.multiCount - 1 } p, some p)
+              (deletePair { t with me := t.me.erase (key p, id) } p, some p)
       else if v = id then (deletePair t p, some p)
       else (t, none)
   | none => (t, none)

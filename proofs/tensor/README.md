@@ -6,7 +6,7 @@ theorem for every operation of `tensor.rs`.
 * No `sorry`, no `admit`, no custom `axiom`. Every top-level theorem depends only
   on Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`) —
   verify with `#print axioms`.
-* ~4 100 lines, ~300 theorems; a clean rebuild takes ~20 s once the
+* ~4 100 lines, 290 theorems; a clean rebuild takes ~20 s once the
   mathlib cache is in place.
 
 ## Build
@@ -24,7 +24,7 @@ Toolchain: `leanprover/lean4:v4.32.0` + mathlib `v4.32.0` (pinned in
 
 `Tensor` denotes a multigraph: `edgesAt t p` is the finite set of edge ids stored
 at pair `p`. `Inv t` is the "Delta-Layer Invariants" section of the Rust module
-docs, stated formally (11 clauses). Every operation gets two kinds of theorem:
+docs, stated formally (10 clauses). Every operation gets two kinds of theorem:
 it **preserves `Inv`**, and it **acts on `edgesAt` the way its doc comment says**.
 
 | `tensor.rs` | theorems | file |
@@ -46,6 +46,7 @@ it **preserves `Inv`**, and it **acts on `edgesAt` the way its doc comment says*
 | `dup` / `Clone` | `inv_dup`, `edgesAt_dup` | `Reads.lean` |
 | `structural_iter` | `mem_structuralIter_iff` | `Reads.lean` |
 | `edge_count` | `edgeCount_eq_sum` (= `∑ pairs, #edges`), `edgeCount_no_underflow` (the `u64` subtraction chain never wraps) | `Count.lean` |
+| `multi_pairs` | `multiCount` is a *definition* (`multiPairs.card`), not stored state, matching #2439's deletion of the `multi_count` field — so `multi_count_eq` is `rfl` and no operation carries an obligation to maintain it. Its transitions: `multiCount_addEdge_promote` (+1), `multiCount_addEdge_multi`, `multiCount_addEdge_first` (both +0) | `Model.lean`, `Add.lean` |
 | `iter_edges` | `mem_iterEdges` + `nodup_iterEdges` (every edge exactly once; the `me` half inverts `compound_key`) | `Iter.lean` |
 | `iter(.., false)` | `mem_iterFwd`, `nodup_iterFwd` | `Iter.lean` |
 | `iter(.., true)` | `mem_iterBwd` (range selects by *destination*), `nodup_iterBwd`, `iterBwd_eff_get_isSome` | `Iter.lean` |
@@ -101,14 +102,6 @@ than assumed silently.
   `eff_set`, `eff_remove`, `eff_removeMask`, `nvals_eq_card`. The two developments
   together cover the path from Cypher-visible behaviour down to the GraphBLAS
   calls with no hand-waved layer in between.
-* **`multiCount` is a field here and a derivation there.** The model carries the
-  number of `MULTI` pairs as a field, with `multi_count_eq` in `Inv` requiring it
-  to agree with `multiPairs.card`. `tensor.rs` deleted the corresponding field in
-  #2439 and derives the quantity from `me` at each `edge_count()`. The clause
-  therefore holds by construction in the artifact, so the divergence can only make
-  the code safer than the model — but the `edgeCount` theorems are stated about a
-  field the artifact does not have. Tracked as item 3b-bis in
-  `docs/papers/OPEN_WORK.md`.
 * GraphBLAS pending work (`wait`, `wait_all`, `wait_base`, `is_synced`,
   `pending`) has no denotational content: every operation here behaves as if the
   layers were materialized, which is what `tensor.rs` guarantees by waiting on

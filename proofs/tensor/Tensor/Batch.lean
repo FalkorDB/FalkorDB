@@ -44,19 +44,18 @@ variable {t : Tensor} {p : Pair} {i1 i2 : Nat}
 
 /-- The state the read phase leaves for a pair that was absent before the batch
 and gained a second edge: sentinel queued for the inline slot, both ids in `me`,
-`multi_count` bumped, and the `m_masked` value **recorded at first sight**. -/
+both ids in `me` (which is what makes the pair count as multi-edge, there being
+no counter to bump), and the `m_masked` value **recorded at first sight**. -/
 def retroPromote (t : Tensor) (p : Pair) (i1 i2 : Nat) : Tensor :=
   writeInline
-    { t with me := insert (key p, i1) (insert (key p, i2) t.me),
-             multiCount := t.multiCount + 1 }
+    { t with me := insert (key p, i1) (insert (key p, i2) t.me) }
     p MULTI (if p ∈ t.dm then t.m.get p else none)
 
 private theorem seq_def (hv : t.effGet p = none) (hid1 : ValidId i1) :
     addEdge (addEdge t p i1) p i2 =
       writeInline
         { addEdge t p i1 with
-          me := insert (key p, i1) (insert (key p, i2) (addEdge t p i1).me),
-          multiCount := (addEdge t p i1).multiCount + 1 }
+          me := insert (key p, i1) (insert (key p, i2) (addEdge t p i1).me) }
         p MULTI (if ((addEdge t p i1).dp.get p).isSome then (addEdge t p i1).m.get p else none) := by
   have h1 : (addEdge t p i1).effGet p = some i1 := by
     rw [addEdge_first_def hv]
@@ -64,7 +63,8 @@ private theorem seq_def (hv : t.effGet p = none) (hid1 : ValidId i1) :
   exact addEdge_promote_def h1 hid1.ne_multi
 
 /-- **The retroactive promotion agrees with sequential promotion**, everywhere:
-same effective value at every pair, same `me`, same `multi_count`, same `mt`. -/
+same effective value at every pair, same `me`, same multi-edge pair count
+(which follows from the first, the count being derived), same `mt`. -/
 theorem retro_promote_agrees (hv : t.effGet p = none) (hid1 : ValidId i1) :
     (∀ q, (addEdge (addEdge t p i1) p i2).effGet q = (retroPromote t p i1 i2).effGet q) ∧
       (addEdge (addEdge t p i1) p i2).me = (retroPromote t p i1 i2).me ∧
@@ -72,13 +72,12 @@ theorem retro_promote_agrees (hv : t.effGet p = none) (hid1 : ValidId i1) :
       (addEdge (addEdge t p i1) p i2).mt = (retroPromote t p i1 i2).mt := by
   have hme1 : (addEdge t p i1).me = t.me := by
     rw [addEdge_first_def hv]; exact writeInline_me
-  have hmc1 : (addEdge t p i1).multiCount = t.multiCount := by
-    rw [addEdge_first_def hv]; exact writeInline_multiCount
   have hmt1 : (addEdge t p i1).mt = insert (p.2, p.1) t.mt := by
     rw [addEdge_first_def hv]; exact writeInline_mt
   have hm1 : (addEdge t p i1).m = t.m := by rw [addEdge_first_def hv]; exact writeInline_m
-  refine ⟨?_, ?_, ?_, ?_⟩
-  · -- both sides put the sentinel at `p` and leave every other pair alone
+  -- both sides put the sentinel at `p` and leave every other pair alone
+  have hget : ∀ q, (addEdge (addEdge t p i1) p i2).effGet q
+      = (retroPromote t p i1 i2).effGet q := by
     intro q
     by_cases hq : q = p
     · subst hq
@@ -88,12 +87,16 @@ theorem retro_promote_agrees (hv : t.effGet p = none) (hid1 : ValidId i1) :
       show (addEdge t p i1).effGet q = t.effGet q
       rw [addEdge_first_def hv]
       exact writeInline_effGet_ne hq
+  refine ⟨hget, ?_, ?_, ?_⟩
   · rw [seq_def hv hid1, writeInline_me, retroPromote, writeInline_me]
     show insert (key p, i1) (insert (key p, i2) (addEdge t p i1).me) = _
     rw [hme1]
-  · rw [seq_def hv hid1, writeInline_multiCount, retroPromote, writeInline_multiCount]
-    show (addEdge t p i1).multiCount + 1 = t.multiCount + 1
-    rw [hmc1]
+  · -- the count is derived from the effective view, so the first conjunct gives
+    -- this one: there is no separately-maintained counter left to compare.
+    have hdom : (addEdge (addEdge t p i1) p i2).effDom
+        = (retroPromote t p i1 i2).effDom := by
+      ext q; rw [mem_effDom_iff_isSome, mem_effDom_iff_isSome, hget q]
+    rw [multi_count_eq, multi_count_eq, multiPairs_congr hdom hget]
   · rw [seq_def hv hid1, writeInline_mt, retroPromote, writeInline_mt]
     show insert (p.2, p.1) (addEdge t p i1).mt = insert (p.2, p.1) t.mt
     rw [hmt1, Finset.insert_idem]

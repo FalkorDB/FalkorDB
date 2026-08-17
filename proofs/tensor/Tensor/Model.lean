@@ -155,8 +155,11 @@ end Layer
 
 `m`/`dp`/`dm` are the three forward delta layers holding **inline edge ids**;
 `mt` is the backward `(dst, src)` structure; `me` maps `compound_key src dst` to
-the edge ids of multi-edge pairs; `multiCount` counts pairs whose effective
-inline value is `MULTI_EDGE`. -/
+the edge ids of multi-edge pairs.
+
+The number of `MULTI` pairs is **not** a field: it is `multiPairs.card`, derived
+from `me` on demand, which is what `tensor.rs` does since #2439 deleted the
+`multi_count` cache it used to keep. -/
 structure Tensor where
   /-- Committed base, `(src, dst) ↦ inline edge id` (or `MULTI`). -/
   m : Layer Nat
@@ -168,8 +171,6 @@ structure Tensor where
   mt : Finset Pair
   /-- Multi-edge ids: `(compound_key src dst, edge_id)`. -/
   me : Finset (Nat × Nat)
-  /-- Number of pairs whose effective inline value is `MULTI`. -/
-  multiCount : Nat
   /-- Forward-matrix row capacity (`GrB_Matrix_nrows`), grown by `resize`. -/
   nrows : Nat
   /-- Forward-matrix column capacity (`GrB_Matrix_ncols`), grown by `resize`. -/
@@ -217,6 +218,22 @@ def InBounds (t : Tensor) (p : Pair) : Prop :=
 /-- The pairs whose effective inline value is the `MULTI` sentinel. -/
 def multiPairs (t : Tensor) : Finset Pair :=
   t.effDom.filter (fun p => t.effGet p = some MULTI)
+
+/-- The number of multi-edge pairs — `multi_pairs()` in `tensor.rs`.
+
+This is a **derived quantity, not stored state**, which is the whole point: it is
+recovered from `me` (whose non-empty rows are exactly the `MULTI` pairs, by
+`InvCore.multi_iff` and `InvCore.row_empty`) rather than maintained by every
+mutation path. #2439 deleted the `multi_count` field the Rust used to carry, and
+the model followed; before that, this was a field plus an `Inv` clause tying the
+two together, and every operation had to be shown to move it correctly.
+
+Defining it rather than storing it is what makes `multi_count_eq` below `rfl`. -/
+def multiCount (t : Tensor) : Nat := t.multiPairs.card
+
+/-- The old `Inv.multi_count_eq` clause, now a definitional identity: there is
+nothing left to keep in sync. -/
+@[simp] theorem multi_count_eq (t : Tensor) : t.multiCount = t.multiPairs.card := rfl
 
 /-! ### Basic facts about the effective view -/
 
@@ -424,8 +441,6 @@ structure InvCore (t : Tensor) : Prop where
   /-- Every stored coordinate — committed or pending — is inside the matrix
   capacity.  `resize` only grows, so it preserves this. -/
   in_range : ∀ p ∈ t.m.dom ∪ t.dp.dom, p.1 < t.nrows ∧ p.2 < t.ncols
-  /-- `multi_count` counts the `MULTI` pairs. -/
-  multi_count_eq : t.multiCount = t.multiPairs.card
   /-- Stored edge ids are real GraphBLAS indices, so they never collide with the
   `MULTI` sentinel. -/
   valid_ids : ∀ p, ∀ i ∈ t.edgesAt p, ValidId i
@@ -442,7 +457,7 @@ effective view.  These two lemmas discharge the invariants for any such step. -/
 
 theorem invCore_of_effGet_eq {t t' : Tensor} (h : InvCore t)
     (hget : ∀ q, t'.effGet q = t.effGet q) (hme : t'.me = t.me)
-    (hmc : t'.multiCount = t.multiCount) (hsub : t'.dm ⊆ t'.m.dom)
+    (hsub : t'.dm ⊆ t'.m.dom)
     (hdisj : Disjoint t'.dp.dom t'.dm)
     (hcc : ∀ q ∈ t'.dp.dom, t'.m.get q ≠ some (t'.dp.val q))
     (hrange : ∀ q ∈ t'.m.dom ∪ t'.dp.dom, q.1 < t'.nrows ∧ q.2 < t'.ncols) : InvCore t' := by
@@ -453,7 +468,7 @@ theorem invCore_of_effGet_eq {t t' : Tensor} (h : InvCore t)
     fun q => edgesAt_congr_at (hget q) (hrow _)
   refine { dm_sub_m := hsub, dp_disj_dm := hdisj, cancel_clean := hcc, multi_iff := ?_,
            row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := hrange,
-           multi_count_eq := ?_, valid_ids := ?_ }
+           valid_ids := ?_ }
   · intro q hq
     rw [hrow]
     exact h.multi_iff q (by rw [← hget q]; exact hq)
@@ -464,21 +479,19 @@ theorem invCore_of_effGet_eq {t t' : Tensor} (h : InvCore t)
     obtain ⟨q, hbq, hqdom, hqk⟩ := h.me_keyed x (by rw [hme] at hx; exact hx)
     exact ⟨q, hbq, by rw [hdom]; exact hqdom, hqk⟩
   · rw [hdom]; exact h.bounded
-  · rw [hmc, h.multi_count_eq]
-    exact congrArg Finset.card (multiPairs_congr hdom hget).symm
   · intro q i hi
     rw [hedges q] at hi
     exact h.valid_ids q i hi
 
 theorem inv_of_effGet_eq {t t' : Tensor} (h : Inv t)
     (hget : ∀ q, t'.effGet q = t.effGet q) (hme : t'.me = t.me) (hmt : t'.mt = t.mt)
-    (hmc : t'.multiCount = t.multiCount) (hsub : t'.dm ⊆ t'.m.dom)
+    (hsub : t'.dm ⊆ t'.m.dom)
     (hdisj : Disjoint t'.dp.dom t'.dm)
     (hcc : ∀ q ∈ t'.dp.dom, t'.m.get q ≠ some (t'.dp.val q))
     (hrange : ∀ q ∈ t'.m.dom ∪ t'.dp.dom, q.1 < t'.nrows ∧ q.2 < t'.ncols) : Inv t' := by
   have hdom : t'.effDom = t.effDom := by
     ext q; rw [mem_effDom_iff_isSome, mem_effDom_iff_isSome, hget q]
-  exact { invCore_of_effGet_eq h.toInvCore hget hme hmc hsub hdisj hcc hrange with
+  exact { invCore_of_effGet_eq h.toInvCore hget hme hsub hdisj hcc hrange with
           mt_eq := by intro q; rw [hdom, hmt]; exact h.mt_eq q }
 
 

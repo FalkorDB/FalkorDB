@@ -30,7 +30,6 @@ variable {mask : Finset Pair}
 
 @[simp] theorem removeFast_m : (removeFast t mask).m = t.m := rfl
 @[simp] theorem removeFast_me : (removeFast t mask).me = t.me := rfl
-@[simp] theorem removeFast_multiCount : (removeFast t mask).multiCount = t.multiCount := rfl
 @[simp] theorem removeFast_nrows : (removeFast t mask).nrows = t.nrows := rfl
 @[simp] theorem removeFast_ncols : (removeFast t mask).ncols = t.ncols := rfl
 
@@ -92,7 +91,7 @@ theorem inv_removeFast (h : Inv t) (hme : t.me = ∅) : Inv (removeFast t mask) 
     exact hnm q (Finset.mem_filter.mp hq).2
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
            row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
-           multi_count_eq := ?_, valid_ids := ?_,
+           valid_ids := ?_,
            mt_eq := by
              intro q
              rw [removeFast_effDom, Finset.mem_sdiff, h.mt_eq q]
@@ -130,14 +129,6 @@ theorem inv_removeFast (h : Inv t) (hme : t.me = ∅) : Inv (removeFast t mask) 
     · exact h.in_range q (Finset.mem_union_left _ (by simpa using hq'))
     · have : q ∈ t.dp.dom ∧ q ∉ mask := by simpa [removeFast] using hq'
       exact h.in_range q (Finset.mem_union_right _ this.1)
-  · have hmp' : (removeFast t mask).multiPairs = ∅ := by
-      apply Finset.eq_empty_of_forall_notMem
-      intro q hq
-      have := (Finset.mem_filter.mp hq).2
-      by_cases hqm : q ∈ mask
-      · rw [removeFast_effGet_mem hqm] at this; exact absurd this (by simp)
-      · rw [removeFast_effGet_not_mem hqm] at this; exact hnm q this
-    rw [hmp', removeFast_multiCount, h.multi_count_eq, hmp]
   · intro q i hi
     by_cases hqm : q ∈ mask
     · rw [edgesAt_removeFast_mem hqm] at hi; exact absurd hi (by simp)
@@ -168,7 +159,6 @@ theorem removeOne_survivor (h : Inv t) (hv : t.effGet p = some MULTI) :
 
 @[simp] theorem deletePair_m : (deletePair t p).m = t.m := rfl
 @[simp] theorem deletePair_me : (deletePair t p).me = t.me := rfl
-@[simp] theorem deletePair_multiCount : (deletePair t p).multiCount = t.multiCount := rfl
 @[simp] theorem deletePair_nrows : (deletePair t p).nrows = t.nrows := rfl
 @[simp] theorem deletePair_ncols : (deletePair t p).ncols = t.ncols := rfl
 @[simp] theorem deletePair_mt : (deletePair t p).mt = t.mt.erase (p.2, p.1) := rfl
@@ -231,7 +221,7 @@ theorem inv_deletePair (h : Inv t) (hrow : t.meRow (key p) = ∅)
     exact absurd this (by simp)
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
            row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
-           multi_count_eq := ?_, mt_eq := mt_eq_erase h.mt_eq, valid_ids := ?_ }
+           mt_eq := mt_eq_erase h.mt_eq, valid_ids := ?_ }
   · intro q hq
     rcases deletePair_mem_dm.mp hq with hq' | ⟨rfl, hq'⟩
     · exact h.dm_sub_m hq'
@@ -275,16 +265,6 @@ theorem inv_deletePair (h : Inv t) (hrow : t.meRow (key p) = ∅)
     · exact h.in_range q (Finset.mem_union_left _ (by simpa using hq'))
     · have : q ∈ t.dp.dom.erase p := by simpa [deletePair] using hq'
       exact h.in_range q (Finset.mem_union_right _ (Finset.mem_of_mem_erase this))
-  · have hmp : (deletePair t p).multiPairs = t.multiPairs := by
-      ext q
-      simp only [multiPairs, Finset.mem_filter, deletePair_effDom, Finset.mem_erase]
-      by_cases hqp : q = p
-      · subst hqp
-        simp only [ne_eq, not_true_eq_false, false_and, false_iff]
-        exact fun hc => hnm hc.2
-      · rw [deletePair_effGet_ne hqp]
-        tauto
-    rw [hmp, deletePair_multiCount, h.multi_count_eq]
   · intro q i hi
     by_cases hqp : q = p
     · subst hqp; rw [edgesAt_deletePair_self] at hi; exact absurd hi (by simp)
@@ -315,7 +295,6 @@ theorem removeOne_demote_cancel (hv : t.effGet p = some MULTI)
     (hlast : (rowAfterErase t p id).min = some last) (hm : t.m.get p = some last) :
     removeOne t id p =
       ({ t with me := (t.me.erase (key p, id)).erase (key p, last),
-                multiCount := t.multiCount - 1,
                 dp := t.dp.remove p }, none) := by
   simp [removeOne, hv, hcard, hlast, hm]
 
@@ -326,7 +305,6 @@ theorem removeOne_demote_shadow (hv : t.effGet p = some MULTI)
     (hlast : (rowAfterErase t p id).min = some last) (hm : t.m.get p ≠ some last) :
     removeOne t id p =
       ({ t with me := (t.me.erase (key p, id)).erase (key p, last),
-                multiCount := t.multiCount - 1,
                 dp := t.dp.set p last }, none) := by
   simp [removeOne, hv, hcard, hlast, hm]
 
@@ -376,7 +354,6 @@ private theorem demote_core (h : Inv t) (hbp : Bounded p) (hv : t.effGet p = som
     {last : Nat} (hrow : rowAfterErase t p id = {last}) {t' : Tensor}
     (hm : t'.m = t.m) (hdm : t'.dm = t.dm) (hmt : t'.mt = t.mt)
     (hme : t'.me = (t.me.erase (key p, id)).erase (key p, last))
-    (hmc : t'.multiCount = t.multiCount - 1)
     (hnr : t'.nrows = t.nrows) (hnc : t'.ncols = t.ncols)
     (hself : t'.effGet p = some last) (hne : ∀ q, q ≠ p → t'.effGet q = t.effGet q)
     (hdpdom : t'.dp.dom ⊆ insert p t.dp.dom) (hdisj : Disjoint t'.dp.dom t'.dm)
@@ -414,7 +391,7 @@ private theorem demote_core (h : Inv t) (hbp : Bounded p) (hv : t.effGet p = som
   refine ⟨?_, hedges_p, hedges_ne⟩
   refine { dm_sub_m := ?_, dp_disj_dm := hdisj, cancel_clean := hcc, multi_iff := ?_,
            row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
-           multi_count_eq := ?_, valid_ids := ?_,
+           valid_ids := ?_,
            mt_eq := by intro q; rw [hdom, hmt]; exact h.mt_eq q }
   · rw [hdm, hm]; exact h.dm_sub_m
   · intro q hq
@@ -447,17 +424,6 @@ private theorem demote_core (h : Inv t) (hbp : Bounded p) (hv : t.effGet p = som
         · exact h.in_range q (Finset.mem_union_left _ (Finset.mem_sdiff.mp hq3).1)
         · exact h.in_range q (Finset.mem_union_right _ hq3)
       · exact h.in_range q (Finset.mem_union_right _ hq'')
-  · have hmpp : p ∈ t.multiPairs := Finset.mem_filter.mpr ⟨hpdom, hv⟩
-    have hmp : t'.multiPairs = t.multiPairs.erase p := by
-      ext q
-      simp only [multiPairs, Finset.mem_filter, Finset.mem_erase, hdom]
-      by_cases hqp : q = p
-      · subst hqp
-        simp only [hself, ne_eq, not_true_eq_false, false_and, iff_false, not_and]
-        exact fun _ hc => hlastM (Option.some_inj.mp hc)
-      · rw [hne q hqp]
-        tauto
-    rw [hmp, hmc, h.multi_count_eq, Finset.card_erase_of_mem hmpp]
   · intro q i hi
     by_cases hqp : q = p
     · subst hqp
@@ -500,7 +466,7 @@ private theorem still_multi_spec (h : Inv t) (hbp : Bounded p) (hv : t.effGet p 
   refine ⟨?_, hedges_p, hedges_ne⟩
   refine { dm_sub_m := h.dm_sub_m, dp_disj_dm := h.dp_disj_dm, cancel_clean := h.cancel_clean,
            multi_iff := ?_, row_empty := ?_, me_keyed := ?_, bounded := h.bounded,
-           in_range := h.in_range, multi_count_eq := ?_, mt_eq := h.mt_eq, valid_ids := ?_ }
+           in_range := h.in_range, mt_eq := h.mt_eq, valid_ids := ?_ }
   · intro q hq
     rw [hget q] at hq
     by_cases hqp : q = p
@@ -517,8 +483,6 @@ private theorem still_multi_spec (h : Inv t) (hbp : Bounded p) (hv : t.effGet p 
     exact h.row_empty q hbq hq
   · intro x hx
     exact h.me_keyed x (Finset.mem_of_mem_erase hx)
-  · rw [h.multi_count_eq]
-    exact congrArg Finset.card (multiPairs_congr rfl hget).symm
   · intro q i hi
     by_cases hqp : q = p
     · subst hqp
@@ -549,7 +513,7 @@ theorem removeOne_spec (h : Inv t) (hbp : Bounded p) :
         have hpdm : p ∉ t.dm := not_mem_dm_of_multi h hg
         by_cases hmv : t.m.get p = some last
         · rw [removeOne_demote_cancel hg hcard hlast' hmv]
-          refine demote_core h hbp hg hrow rfl rfl rfl rfl rfl rfl rfl
+          refine demote_core h hbp hg hrow rfl rfl rfl rfl rfl rfl
             ((effGet_of_m (by simp) (by simpa using hpdm)).trans hmv)
             (fun q hq => effGet_congr_at rfl (by simp [hq]) (by simp)) ?_ ?_ ?_
           · exact fun q hq => Finset.mem_insert_of_mem (Finset.mem_of_mem_erase (by simpa using hq))
@@ -560,7 +524,7 @@ theorem removeOne_spec (h : Inv t) (hbp : Bounded p) :
           · intro q hq
             exact h.cancel_clean q (Finset.mem_of_mem_erase (by simpa using hq))
         · rw [removeOne_demote_shadow hg hcard hlast' hmv]
-          refine demote_core h hbp hg hrow rfl rfl rfl rfl rfl rfl rfl
+          refine demote_core h hbp hg hrow rfl rfl rfl rfl rfl rfl
             (effGet_of_dp (by simp))
             (fun q hq => effGet_congr_at rfl (by simp [hq]) (by simp)) ?_ ?_ ?_
           · exact fun q hq => by simpa using hq

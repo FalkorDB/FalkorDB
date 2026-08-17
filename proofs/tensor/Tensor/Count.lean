@@ -12,11 +12,10 @@ pub fn edge_count(&self) -> u64 {
 
 `multi_pairs()` derives the count from `me` — `nvals` when nothing is multi-edge,
 the hyper vector count when `me` is assembled, an `O(multi)` walk only while its
-deltas are live. The model below instead carries `multiCount` as a *field*, with
-`Inv.multi_count_eq` requiring it to equal `multiPairs.card`; that is what the
-Rust held before #2439 deleted it. The clause now holds by construction in the
-artifact, so the model is one revision behind in the safe direction. See the
-modelling-boundary note in `README.md`.
+deltas are live. The model matches: the count is `multiPairs.card`, computed from
+`me`, and not a field. Before #2439 the Rust kept a `multi_count` cache and the
+model carried a matching field with an `Inv` clause tying the two together; both
+are gone, so nothing here has to be maintained across mutations.
 
 Proved here:
 
@@ -126,7 +125,7 @@ theorem totalEdges_add_multiCount (h : Inv t) :
     rw [edgesAt_of_single hv (by rintro rfl; exact hqne hv), Finset.card_singleton]
   have hcards := Finset.card_filter_add_card_filter_not
     (s := t.effDom) (p := fun q => t.effGet q = some MULTI)
-  rw [totalEdges, ← hsplit, hmulti, hsingle, h.multi_count_eq, multiPairs]
+  rw [totalEdges, ← hsplit, hmulti, hsingle, multiCount, multiPairs]
   omega
 
 /-- The `if dp.nvals == 0` guard is a pure optimisation: `intersection_nvals`
@@ -142,9 +141,8 @@ theorem edgeCount_eq (t : Tensor) :
 theorem edgeCount_eq_sum (h : Inv t) : edgeCount t = totalEdges t := by
   have hdom := effDom_card_add h
   have hsum := totalEdges_add_multiCount h
-  have hmc : t.multiCount ≤ t.effDom.card := by
-    rw [h.multi_count_eq]
-    exact Finset.card_le_card (Finset.filter_subset _ _)
+  have hmc : t.multiCount ≤ t.effDom.card :=
+    Finset.card_le_card (Finset.filter_subset _ _)
   rw [edgeCount_eq]
   omega
 
@@ -155,9 +153,8 @@ theorem edgeCount_no_underflow (h : Inv t) :
       (t.dp.dom ∩ t.m.dom).card ≤ t.m.dom.card + t.dp.dom.card - t.dm.card ∧
       t.multiCount ≤ t.m.dom.card + t.dp.dom.card - t.dm.card - (t.dp.dom ∩ t.m.dom).card := by
   have hdom := effDom_card_add h
-  have hmc : t.multiCount ≤ t.effDom.card := by
-    rw [h.multi_count_eq]
-    exact Finset.card_le_card (Finset.filter_subset _ _)
+  have hmc : t.multiCount ≤ t.effDom.card :=
+    Finset.card_le_card (Finset.filter_subset _ _)
   refine ⟨by omega, by omega, by omega⟩
 
 end Tensor

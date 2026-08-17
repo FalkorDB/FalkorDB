@@ -61,7 +61,7 @@ theorem foldDp_effGet (h : Inv t) (q : Pair) : (foldDp t).effGet q = t.effGet q 
     · rw [effGet_of_m hdpc (by simpa [foldDp] using hqdm), effGet_of_m h1 hqdm, h3]
 
 theorem inv_foldDp (h : Inv t) : Inv (foldDp t) := by
-  refine inv_of_effGet_eq h (foldDp_effGet h) rfl rfl rfl ?_ ?_ ?_ ?_
+  refine inv_of_effGet_eq h (foldDp_effGet h) rfl rfl ?_ ?_ ?_ ?_
   · exact fun q hq => Finset.mem_union_left _ (h.dm_sub_m hq)
   · simp [foldDp, Layer.clear]
   · intro q hq
@@ -87,7 +87,7 @@ theorem foldDm_effGet (q : Pair) : (foldDm t).effGet q = t.effGet q := by
       exact Layer.get_removeAll_not_mem hqdm
 
 theorem inv_foldDm (h : Inv t) : Inv (foldDm t) := by
-  refine inv_of_effGet_eq h foldDm_effGet rfl rfl rfl ?_ ?_ ?_ ?_
+  refine inv_of_effGet_eq h foldDm_effGet rfl rfl ?_ ?_ ?_ ?_
   · simp [foldDm]
   · simp [foldDm]
   · intro q hq
