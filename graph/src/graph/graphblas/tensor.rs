@@ -881,6 +881,90 @@ impl Tensor {
         )
     }
 
+    /// How many edges leave `row`, without materialising any of them.
+    ///
+    /// [`Self::iter`] answers this today by counting the triples it yields,
+    /// which buffers every identifier of every multi-edge pair into a `Vec`
+    /// only to drop it. Degree does not need the identifiers, only how many
+    /// there are, and the C engine's `Tensor_RowDegree` is built on exactly
+    /// that observation.
+    ///
+    /// The row's `me` lookups share one cursor. A row with several multi-edge
+    /// pairs would otherwise attach a `GxB_Iterator` per pair, and attaching is
+    /// most of what a short scan costs.
+    #[must_use]
+    pub fn row_degree(
+        &self,
+        row: u64,
+    ) -> u64 {
+        let mut degree = 0;
+        let mut ids: Option<versioned_matrix::Iter> = None;
+        for (_, dst, inline) in self.fwd_iter(row, row) {
+            if inline != MULTI_EDGE {
+                degree += 1;
+                continue;
+            }
+            let key = compound_key(row, dst);
+            let it = match &mut ids {
+                Some(it) => {
+                    it.seek(key, key);
+                    it
+                }
+                none => none.insert(self.me.iter(key, key)),
+            };
+            degree += it.count() as u64;
+        }
+        degree
+    }
+
+    /// How many edges enter `col`, without materialising any of them.
+    ///
+    /// The mirror of [`Self::row_degree`], and dearer for the reason
+    /// `\S`transposed iteration is: `mt` carries structure only, so each
+    /// incoming pair costs one forward point lookup to learn whether it is
+    /// inline or promoted. That is the trade the transpose makes by not storing
+    /// every identifier twice.
+    #[must_use]
+    pub fn col_degree(
+        &self,
+        col: u64,
+    ) -> u64 {
+        let mut degree = 0;
+        let mut ids: Option<versioned_matrix::Iter> = None;
+        for (_, src) in self.mt.iter(col, col) {
+            // `mt` mirrors the effective forward structure, so a pair reached
+            // through it always has a forward inline value — the same fact
+            // `Iter::next` relies on, machine-checked as
+            // `iterBwd_eff_get_isSome` in `proofs/tensor`.
+            let Some(inline) = self.eff_get(src, col) else {
+                unreachable!("mt holds ({src}, {col}) but the forward matrix does not")
+            };
+            if inline != MULTI_EDGE {
+                degree += 1;
+                continue;
+            }
+            let key = compound_key(src, col);
+            let it = match &mut ids {
+                Some(it) => {
+                    it.seek(key, key);
+                    it
+                }
+                none => none.insert(self.me.iter(key, key)),
+            };
+            degree += it.count() as u64;
+        }
+        degree
+    }
+
+    #[cfg(test)]
+    pub(super) fn fwd_iter_for_test(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> versioned_matrix::Iter<Uint64Extract> {
+        self.fwd_iter(min_row, max_row)
+    }
+
     /// Transposed/backward pair-level adjacency (dst → src), structure only.
     #[must_use]
     pub const fn matrix_t(&self) -> &VersionedMatrix<bool> {
@@ -1665,5 +1749,71 @@ mod tests {
             vec![1],
             "committed edge lost"
         );
+    }
+
+    /// `row_degree`/`col_degree` exist to be cheaper than counting what
+    /// `iter` yields, so the property that matters is that they agree with it —
+    /// on every row, under every mix of inline and promoted pairs, and with
+    /// live deltas rather than a freshly committed tensor.
+    ///
+    /// Deltas matter here because the two paths reach `me` differently: `iter`
+    /// buffers a row's identifiers, these count them through a shared cursor
+    /// that is re-seeked, and a re-seek is exactly where a skipped delta layer
+    /// would show up as a lost edge.
+    #[test]
+    fn degree_agrees_with_counting_the_iterator() {
+        ensure_init();
+        const N: u64 = 64;
+        let mut t = Tensor::new(N, N);
+        // A deliberately uneven shape: row `r` holds `r % 5` pairs, and every
+        // third pair is multi-edge with a different fan-out.
+        let (mut srcs, mut dsts, mut ids) = (Vec::new(), Vec::new(), Vec::new());
+        let mut next_id = 0u64;
+        for r in 0..N {
+            for c in 0..(r % 5) {
+                let dst = (r * 7 + c * 11) % N;
+                let k = if c % 3 == 0 { 1 + (c % 4) } else { 1 };
+                for _ in 0..k {
+                    srcs.push(r);
+                    dsts.push(dst);
+                    ids.push(next_id);
+                    next_id += 1;
+                }
+            }
+        }
+        t.set_all_from_slices(&srcs, &dsts, &ids);
+        let mut t = t.dup();
+        t.flush();
+        t.wait();
+
+        let check = |t: &Tensor, what: &str| {
+            for r in 0..N {
+                assert_eq!(
+                    t.row_degree(r),
+                    t.iter(r, r, false).count() as u64,
+                    "row {r} out-degree disagrees ({what})"
+                );
+                assert_eq!(
+                    t.col_degree(r),
+                    t.iter(r, r, true).count() as u64,
+                    "col {r} in-degree disagrees ({what})"
+                );
+            }
+        };
+        check(&t, "committed");
+
+        // Now with live deltas: a promotion, a fresh pair, and a deletion, none
+        // of them folded.
+        t.set_all_from_slices(
+            &[3, 3, 40],
+            &[21, 21, 41],
+            &[next_id, next_id + 1, next_id + 2],
+        );
+        t.wait();
+        check(&t, "pending adds");
+
+        t.remove_all(&[(0, 0, (0 * 7) % N)]);
+        t.wait();
+        check(&t, "pending add and delete");
     }
 }
