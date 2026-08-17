@@ -123,7 +123,7 @@ give the resulting ten-state per-pair automaton, a closed-form cardinality
 identity, and a proof that the three-way sorted-merge iterator streams
 exactly the effective edge multiset in $(\text{src},\text{dst},\text{id})$
 order. The invariant set, the automaton and both theorems are machine-checked in
-Lean 4 against a model transcribed from the Rust --- $5{,}996$ lines and $412$
+Lean 4 against a model transcribed from the Rust --- $7{,}071$ lines and $460$
 theorems, with no \texttt{sorry} and no bespoke axiom --- which found two
 unreachable branches in the shipped code, one of which would have fabricated a
 valid edge identifier had the invariant it rested on ever broken. We are
@@ -235,7 +235,7 @@ Rust storage engine. Specifically:
         lexicographic order without materialising an intermediate matrix
         (Theorem~\ref{thm:iter}).
   \item \textbf{A machine-checked development, and an account of its limits}
-        (\S\ref{sec:mechanised}). $5{,}996$ lines and $412$ theorems of Lean 4
+        (\S\ref{sec:mechanised}). $7{,}071$ lines and $460$ theorems of Lean 4
         over a model transcribed operation by operation from the Rust, in two
         layers so that the tensor's use of its Boolean sub-structure is proved
         rather than assumed. It pays for itself by finding two unreachable
@@ -1510,7 +1510,7 @@ development is in \texttt{proofs/tensor/} in the artifact and comes in two
 layers, the second discharging the first's one abstraction boundary:
 
 \begin{itemize}
-\item \textbf{\texttt{Tensor}} ($5{,}028$ lines, $340$ theorems).
+\item \textbf{\texttt{Tensor}} ($6{,}103$ lines, $388$ theorems).
   Every operation of \texttt{tensor.rs} gets two theorems: it preserves the
   invariants, and it acts on $\mathrm{Ids}$ the way its specification says. It
   models $mt$ and $me$ --- \texttt{VersionedMatrix} values in Rust --- as the
@@ -1618,18 +1618,23 @@ without re-examining correctness at all.
 Rust is maintained by hand --- transcribed operation by operation, with the
 GraphBLAS calls read as set operations. That correspondence is the assumption
 the whole development rests on, and no proof inside it can discharge that.
-Where the code is currently ahead of the model, we say so: the
-serialised byte format is outside both layers (the round-trip theorems are
-about the abstract encode/decode pair); and the write phase's freedom to
-apply per-pair plans in any order rests on a commutation argument whose components
-are proved but whose assembly is not (\S\ref{sec:future}). Two such divergences
-have since been closed rather than documented. Batched deletion replayed a
-per-pair plan where the model folded per-edge transitions; the model now carries
-the plan, and \texttt{tequiv\_applyPlan\_removeFold} shows the two agree ---
-observationally rather than literally, because the sequential fold writes a
-demoted pair's survivor into $dp$ and removes it again where the batched path
-never writes it, leaving the two layers differing in a value outside the pattern
-that no reader can observe. And the model carried
+Where the code is currently ahead of the model, we say so, and the list is now
+short: only the serialised \emph{byte} stream --- framing, lengths, endianness ---
+is outside both layers. The structured blob is not: a decoder's validation
+predicate is modelled, and shown to accept a blob exactly when the tensor it
+decodes to satisfies the invariants, which is what stops a corrupt blob
+manufacturing an invalid tensor. Three divergences have been closed rather than
+documented. Batched deletion replayed a per-pair plan where the model folded
+per-edge transitions; the model now carries the plan, and
+\texttt{tequiv\_applyPlan\_removeFold} shows the two agree --- observationally
+rather than literally, because the sequential fold writes a demoted pair's
+survivor into $dp$ and removes it again where the batched path never writes it,
+leaving the two layers differing in a value outside the pattern that no reader
+can observe. Iteration was mechanised by its result rather than as the three-way
+merge that computes it; the merge is now modelled, and proved both to emit the
+effective set and to emit it in strictly ascending order --- which also showed
+that the merge \emph{depends} on Invariant~\ref{inv:pure}, since at a tie it
+advances the base cursor without advancing the mask. And the model carried
 $\textit{multi}$ as a field with Invariant~\ref{inv:counter} as its agreement
 condition, where the code derives it from $me$; the model now derives it too, so
 the invariant holds by definition and no operation states anything about

@@ -185,18 +185,35 @@ one thing this exposed — those conjuncts were previously provable with no
 derived count, several would have needed one. That is a mild argument that the
 old formulation was weaker than it looked.
 
-### 3c. The `Encode`/`Decode` blob format
+### 3c. Rejecting a malformed blob — done
 
-Outside the model on both layers. Round-trip is proved "by computation" for the
-in-memory structure only.
+**Status:** closed, in `proofs/tensor/Tensor/CodecCheck.lean`.
 
-**How.** Model the byte format abstractly — a list of layer descriptors plus
-payloads — and prove decode-after-encode is the identity, and that decode either
-rejects a malformed blob or returns a tensor satisfying the invariants. The
-second half is the one that matters, since a corrupt blob is one of the two ways
-a proved invariant can still break in production.
+`Codec.lean` proved the round trip, which says nothing about a blob `encode` did
+not write — and `decode` is the one entry point that manufactures a tensor out of
+bytes. Hand it a blob whose forward matrix tags a pair as multi-edge while the
+tensor section carries no ids for it and the modelled `decode`, being total,
+produces a tensor violating promotion-completeness, from which the iterator would
+index an empty row.
 
----
+`WellFormed` is the predicate a decoder must check, and `wellFormed_iff_invCore`
+says it is **exactly** right: the check accepts a blob if and only if the tensor
+it decodes to satisfies the invariants. Soundness is the half that matters
+(`invCore_decodeChecked`); completeness matters too (`decodeChecked_encode`),
+because a check that rejected valid blobs would be a compatibility bug rather
+than a safety one.
+
+Each clause ranges over the blob's own tables, so each is a finite scan a decoder
+can run: coordinates fit `u32` and the declared dimensions; every tagged cell has
+≥ 2 ids in the tensor section; every tensor-section row belongs to a present,
+tagged, bounded pair; stored and inline ids are GraphBLAS indices. `keyed` earns
+its keep twice — with `key_inj` it also yields Invariant `row_empty`, since a row
+keyed to a bounded tagged pair cannot also be some other bounded pair's row.
+
+**What this does not cover.** The model is of the *structured* blob (`Encoded`),
+not of the byte stream: framing, lengths and endianness are still outside. That
+is the weaker half of what this item originally asked for, and deliberately so —
+the half that carries the safety argument is the validation, and it is done.
 
 ## 4. Demotion policy: is hysteresis worth it?
 

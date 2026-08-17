@@ -6,7 +6,7 @@ theorem for every operation of `tensor.rs`.
 * No `sorry`, no `admit`, no custom `axiom`. Every top-level theorem depends only
   on Lean's three standard axioms (`propext`, `Classical.choice`, `Quot.sound`) —
   verify with `#print axioms`.
-* ~4 100 lines, 290 theorems; a clean rebuild takes ~20 s once the
+* ~7 100 lines, 460 theorems; a clean rebuild takes ~20 s once the
   mathlib cache is in place.
 
 ## Build
@@ -52,6 +52,9 @@ it **preserves `Inv`**, and it **acts on `edgesAt` the way its doc comment says*
 | `iter(.., true)` | `mem_iterBwd` (range selects by *destination*), `nodup_iterBwd`, `iterBwd_eff_get_isSome` | `Iter.lean` |
 | `has_multi_edge` | `hasMultiEdge_iff` (`me` non-empty ⟺ some pair has ≥ 2 edges) | `Reads.lean` |
 | `encode` / `decode` | `edgesAt_decode_encode`, `invCore_decode_encode`, `inv_decode_encode`, `edgeCount_roundTrip`, plus `msb_or` / `msb_and_eq_zero` / `msb_and_ne_zero` for the MSB tag | `Codec.lean` |
+| `decode`, on a blob nobody trusts | `wellFormed_iff_invCore` — a decoder's validation predicate accepts a blob **iff** the tensor it decodes to satisfies the invariants; `invCore_decodeChecked` (soundness), `decodeChecked_encode` (no valid blob is rejected) | `CodecCheck.lean` |
+| `remove_all`, batched | `tequiv_applyPlan_removeFold` (the per-pair plan agrees with the sequential fold), `reported_iff`, `applyPlan_comm` (distinct pairs commute, so write-phase order is free), `inv_applyPlan` | `RemovePlan.lean` |
+| `iter`, as the merge | `mem_merge3` (emits `(m ∖ dm) ∪ dp`, `dp` winning ties), `sortedBy_merge3` (strictly ascending), `merge3_effGet` (the merge computes `eff_get`) | `Merge.lean` |
 | per-pair state diagram | 9 arrows of the documented `A`–`J` diagram, on the raw layers: `trans_A_add`, `trans_B_add`, `trans_D_add`, `trans_G_add_cancel`, `trans_G_add_other`, `trans_I_add_cancel`, `trans_D_del`, `trans_E_del`, `trans_F_del_cancel` | `States.lean` |
 | the fold *policy* (`should_fold`) | `foldPoint_optimal` — the square-root rule minimises the cost model it is derived from; `foldCost_foldPoint` (the minimum value); `sq_ge_iff_ge_sqrt` (the `u64` predicate `d² ≥ k·t` is the real test `d ≥ √(k·t)`) | `Cost.lean` |
 | `iter_edges`, as output | `iterEdges_output_optimal` — every edge exactly once and nothing else, i.e. the least output any correct enumerator can produce | `Cost.lean` |
