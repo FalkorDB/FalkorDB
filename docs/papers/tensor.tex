@@ -123,7 +123,7 @@ give the resulting ten-state per-pair automaton, a closed-form cardinality
 identity, and a proof that the three-way sorted-merge iterator streams
 exactly the effective edge multiset in $(\text{src},\text{dst},\text{id})$
 order. The invariant set, the automaton and both theorems are machine-checked in
-Lean 4 against a model transcribed from the Rust --- $5{,}061$ lines and $362$
+Lean 4 against a model transcribed from the Rust --- $5{,}996$ lines and $412$
 theorems, with no \texttt{sorry} and no bespoke axiom --- which found two
 unreachable branches in the shipped code, one of which would have fabricated a
 valid edge identifier had the invariant it rested on ever broken. We are
@@ -235,7 +235,7 @@ Rust storage engine. Specifically:
         lexicographic order without materialising an intermediate matrix
         (Theorem~\ref{thm:iter}).
   \item \textbf{A machine-checked development, and an account of its limits}
-        (\S\ref{sec:mechanised}). $5{,}061$ lines and $362$ theorems of Lean 4
+        (\S\ref{sec:mechanised}). $5{,}996$ lines and $412$ theorems of Lean 4
         over a model transcribed operation by operation from the Rust, in two
         layers so that the tensor's use of its Boolean sub-structure is proved
         rather than assumed. It pays for itself by finding two unreachable
@@ -1510,7 +1510,7 @@ development is in \texttt{proofs/tensor/} in the artifact and comes in two
 layers, the second discharging the first's one abstraction boundary:
 
 \begin{itemize}
-\item \textbf{\texttt{Tensor}} ($4{,}093$ lines, $290$ theorems).
+\item \textbf{\texttt{Tensor}} ($5{,}028$ lines, $340$ theorems).
   Every operation of \texttt{tensor.rs} gets two theorems: it preserves the
   invariants, and it acts on $\mathrm{Ids}$ the way its specification says. It
   models $mt$ and $me$ --- \texttt{VersionedMatrix} values in Rust --- as the
@@ -1621,9 +1621,16 @@ the whole development rests on, and no proof inside it can discharge that.
 Where the code is currently ahead of the model, we say so: iteration is
 mechanised by its result rather than as the three-way lookahead merge; the
 serialised byte format is outside both layers (the round-trip theorems are
-about the abstract encode/decode pair); and batched deletion replays a per-pair
-plan where the model folds per-edge transitions (\S\ref{sec:future}). One such
-divergence has since been closed rather than documented: the model carried
+about the abstract encode/decode pair); and the write phase's freedom to
+apply per-pair plans in any order rests on a commutation argument whose components
+are proved but whose assembly is not (\S\ref{sec:future}). Two such divergences
+have since been closed rather than documented. Batched deletion replayed a
+per-pair plan where the model folded per-edge transitions; the model now carries
+the plan, and \texttt{tequiv\_applyPlan\_removeFold} shows the two agree ---
+observationally rather than literally, because the sequential fold writes a
+demoted pair's survivor into $dp$ and removes it again where the batched path
+never writes it, leaving the two layers differing in a value outside the pattern
+that no reader can observe. And the model carried
 $\textit{multi}$ as a field with Invariant~\ref{inv:counter} as its agreement
 condition, where the code derives it from $me$; the model now derives it too, so
 the invariant holds by definition and no operation states anything about

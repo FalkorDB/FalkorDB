@@ -5,6 +5,7 @@ import Tensor.Reads
 import Tensor.Add
 import Tensor.Batch
 import Tensor.Remove
+import Tensor.RemovePlan
 import Tensor.Count
 import Tensor.Flush
 import Tensor.Iter
