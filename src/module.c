@@ -38,6 +38,8 @@
 #include "arithmetic/arithmetic_expression.h"
 #include "serializers/encoder/v19/encode_v19.h"
 #include "serializers/decoders/current/v19/decode_v19.h"
+#include "serializers/encoder/encode_graph.h"
+#include "serializers/decoders/decode_graph.h"
 
 // minimal supported Redis version
 #define MIN_REDIS_VERSION_MAJOR 8
@@ -82,6 +84,8 @@ static int _ExportAPIs
 	EXPORT_API ("RdbLoadGraphContext_latest",     RdbLoadGraphContext_latest)
 	EXPORT_API ("GraphContext_DecreaseRefCount",  GraphContext_DecreaseRefCount)
 	EXPORT_API ("GraphContextRedisModuleType_Get", GraphContextRedisModuleType_Get)
+	EXPORT_API ("Graph_EncodingVersion",          Graph_EncodingVersion)
+	EXPORT_API ("Graph_GetDecoder",               Graph_GetDecoder)
 
 #undef EXPORT_API
 
