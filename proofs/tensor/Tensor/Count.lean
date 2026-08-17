@@ -3,11 +3,20 @@
 
 ```rust
 pub fn edge_count(&self) -> u64 {
+    self.wait_fwd();
     let shadow = if self.dp.nvals() == 0 { 0 } else { self.dp.intersection_nvals(&self.m) };
-    self.m.nvals() + self.dp.nvals() - self.dm.nvals() - shadow - self.multi_count
+    self.m.nvals() + self.dp.nvals() - self.dm.nvals() - shadow - self.multi_pairs()
         + self.me.nvals()
 }
 ```
+
+`multi_pairs()` derives the count from `me` — `nvals` when nothing is multi-edge,
+the hyper vector count when `me` is assembled, an `O(multi)` walk only while its
+deltas are live. The model below instead carries `multiCount` as a *field*, with
+`Inv.multi_count_eq` requiring it to equal `multiPairs.card`; that is what the
+Rust held before #2439 deleted it. The clause now holds by construction in the
+artifact, so the model is one revision behind in the safe direction. See the
+modelling-boundary note in `README.md`.
 
 Proved here:
 

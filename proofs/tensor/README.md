@@ -101,6 +101,14 @@ than assumed silently.
   `eff_set`, `eff_remove`, `eff_removeMask`, `nvals_eq_card`. The two developments
   together cover the path from Cypher-visible behaviour down to the GraphBLAS
   calls with no hand-waved layer in between.
+* **`multiCount` is a field here and a derivation there.** The model carries the
+  number of `MULTI` pairs as a field, with `multi_count_eq` in `Inv` requiring it
+  to agree with `multiPairs.card`. `tensor.rs` deleted the corresponding field in
+  #2439 and derives the quantity from `me` at each `edge_count()`. The clause
+  therefore holds by construction in the artifact, so the divergence can only make
+  the code safer than the model — but the `edgeCount` theorems are stated about a
+  field the artifact does not have. Tracked as item 3b-bis in
+  `docs/papers/OPEN_WORK.md`.
 * GraphBLAS pending work (`wait`, `wait_all`, `wait_base`, `is_synced`,
   `pending`) has no denotational content: every operation here behaves as if the
   layers were materialized, which is what `tensor.rs` guarantees by waiting on

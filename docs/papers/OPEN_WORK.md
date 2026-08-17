@@ -122,6 +122,26 @@ it yields the effective set in ascending `(row, col)` order. The ordering half i
 the part worth having: it is what downstream operators assume and what nothing
 currently checks.
 
+### 3b-bis. The model still has the counter the code deleted
+
+`Tensor/Model.lean` carries `multiCount` as a field, with `multi_count_eq :
+t.multiCount = t.multiPairs.card` as an invariant clause, and `Tensor/Count.lean`
+quotes a `self.multi_count` that no longer exists in `tensor.rs`. #2439 deleted
+the field and derives the quantity from `me`.
+
+This divergence can only make the code safer than the model — a derived quantity
+cannot disagree with itself, so the clause holds by construction — which is why
+it is listed here rather than under 3a. But it means the cardinality theorems are
+stated about a field the artifact does not have, and the docstrings cite code
+that is gone.
+
+**How.** Either replace the field with `multiPairs.card` throughout, dropping
+`multi_count_eq` from `Inv` and letting the `edgeCount` theorems quote the
+derivation; or keep the field and say in `Model.lean` that it models a derived
+quantity. The first is more honest and is a mechanical edit — `multi_count_eq`
+is used as a rewrite in the `edgeCount` proofs and nowhere else. Refresh the
+Rust quoted in `Count.lean`'s header either way.
+
 ### 3c. The `Encode`/`Decode` blob format
 
 Outside the model on both layers. Round-trip is proved "by computation" for the
@@ -149,8 +169,10 @@ one-to-two boundary pays a promotion and a demotion per oscillation.
 **Design.** Defer demotion to end of transaction: mark the pair, keep its ids in
 `me`, and settle at commit. A pair that re-promotes within the same transaction
 then pays nothing. Cost is space — an `me` row outliving its need — and one more
-piece of per-transaction state, which is exactly the kind of state item 1 exists
-to keep honest, so build it inside `EdgeOverflow`.
+piece of per-transaction state. Note that item 1 removed the last such cache
+rather than encapsulating it, so the bar for adding one back is that the
+quantity genuinely cannot be derived from `me`; a deferred-demotion set cannot
+be, which is what would justify it.
 
 **Acceptance.** A Cypher script driving pairs across the boundary repeatedly, at
 several oscillation rates, measuring instructions per cycle and resident bytes
@@ -207,9 +229,20 @@ what was and was not measured.
   `Tensor_RemoveElements_Flat`, `Tensor_SetEdges`, row and column degree.
 - **Wall clock and cycles.** Some runs shared the machine, so no claim in the
   paper is a latency claim. Re-running a quiet host would let that change.
-- **Linux and CI.** Everything is macOS/arm64, with the C side pinned to
+- **Linux and CI.** Everything is macOS/arm64, with both sides built against
   GraphBLAS 10.3.1. The engines' relative standing on the CI architecture is
   unmeasured.
+- **GraphBLAS 10.5.0.** Trunk moved from 10.3.1 to 10.5.0 after these
+  measurements (#2523), which regenerates every PreJIT kernel and changes the
+  iso-build rule the paper's space model leans on. Nothing has been re-measured
+  against it. Re-running the multiplicity sweep on 10.5.0 is the cheapest way to
+  find out whether any of the read/write columns moved.
+- **The live-bytes column's parse.** The space figures were collected through a
+  `MEMORY MALLOC-STATS` parser whose whitespace split fused adjacent fixed-width
+  fields at high allocation rates (#2492, since fixed). The failure mode is
+  catastrophic rather than subtle — an affected row lands in the petabytes — so
+  the reported figures are almost certainly unaffected, but they have not been
+  re-collected under the corrected parse.
 - **Whether multiplicity distributions dominated by 1 describe real
   deployments.** A question about deployments, not data structures, and the one
   assumption the whole design rests on.

@@ -122,7 +122,13 @@ committed value rather than only add to or subtract from a pattern --- and we
 give the resulting ten-state per-pair automaton, a closed-form cardinality
 identity, and a proof that the three-way sorted-merge iterator streams
 exactly the effective edge multiset in $(\text{src},\text{dst},\text{id})$
-order. We further state two rules that embedding such a
+order. The invariant set, the automaton and both theorems are machine-checked in
+Lean 4 against a model transcribed from the Rust --- $5{,}070$ lines and $362$
+theorems, with no \texttt{sorry} and no bespoke axiom --- which found two
+unreachable branches in the shipped code, one of which would have fabricated a
+valid edge identifier had the invariant it rested on ever broken. We are
+explicit about what such a proof does not establish, since it binds a model and
+not the binary. We further state two rules that embedding such a
 structure in a non-blocking sparse-linear-algebra runtime imposes: keep
 operators pattern-only on identifier-carrying matrices, because a
 value-carrying operator typecasts the identifier $0$ into an entry that valued
@@ -228,6 +234,14 @@ Rust storage engine. Specifically:
         three-way sorted merge emits each effective edge exactly once in
         lexicographic order without materialising an intermediate matrix
         (Theorem~\ref{thm:iter}).
+  \item \textbf{A machine-checked development, and an account of its limits}
+        (\S\ref{sec:mechanised}). $5{,}070$ lines and $362$ theorems of Lean 4
+        over a model transcribed operation by operation from the Rust, in two
+        layers so that the tensor's use of its Boolean sub-structure is proved
+        rather than assumed. It pays for itself by finding two unreachable
+        branches in the shipped code --- and it binds a model, not a binary, so
+        we say where the correspondence rests and where the code has since moved
+        ahead of it.
   \item \textbf{Two rules the host runtime imposes}
         (\S\ref{sec:hazards}). \emph{Keep operators pattern-only on
         identifier-carrying matrices}: a value-propagating operator typecasts
@@ -260,8 +274,8 @@ Rust storage engine. Specifically:
 
 \paragraph{Scope.} This is a design and analysis paper about a single data
 structure, written against a specific artifact: \texttt{Tensor} in
-\texttt{graph/src/graph/graphblas/tensor.rs} in the FalkorDB repository, at the
-commits given under Availability. Our cost model (\S\ref{sec:cost}) is
+\texttt{graph/src/graph/graphblas/tensor.rs} in the FalkorDB repository, as
+given under Availability. Our cost model (\S\ref{sec:cost}) is
 analytic --- space and operation costs derived from the storage formats and the
 GraphBLAS operations invoked --- and \S\ref{sec:eval} measures it, because the
 design's central claim, that inline-first is cheaper for the common case, is a
@@ -426,11 +440,13 @@ transition, which (A) and (B) do not have.}
 Table~\ref{tab:designspace} summarises. Design (C) buys the common case at
 the price of a state transition and the invariant discipline that transition
 requires; the rest of this paper is largely about that price, and
-\S\ref{sec:eval} measures it --- where it turns out to be, even after a defect
-fix, about three times what (A) pays for the same logical change, and where the
-row of this table it most decisively confirms is instead the \emph{absence} of
-(A)'s heap container: $0.24\times$ its promotion cost and $0.25\times$ its space
-per multi-edge pair.
+\S\ref{sec:eval} measures it --- and finds its two halves pointing opposite
+ways. \emph{Promotion} is where (C) wins most decisively, because it is exactly
+where (A) allocates the heap container this table gives it: $0.24\times$ (A)'s
+cost, alongside $0.25\times$ its space per multi-edge pair. \emph{Demotion} is
+where (C) loses: even after a defect fix it costs about three times what (A)
+pays for the same logical change. The transition is the design's distinguishing
+cost in both directions, and the design is right about one of them.
 
 % =====================================================================
 \section{Representation}
@@ -446,7 +462,6 @@ pub struct Tensor {
     dm: Delta<bool>,             // pending deletions (mask over m)
     mt: VersionedMatrix<bool>,   // backward adjacency: dst -> src, structure only
     me: VersionedMatrix<bool>,   // overflow: compound_key(src,dst) -> edge id
-    multi_count: u64,            // number of pairs whose effective value is MULTI
     needs_flush: AtomicBool,     // a latched fold is executable now
 }
 
@@ -461,6 +476,14 @@ struct Delta<T> {
 pub const MULTI_EDGE: u64 = u64::MAX;
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 \end{lstlisting}
+
+Figure~\ref{fig:components} shows how the five matrices relate.
+
+The number of multi-edge pairs, written $\textit{multi}$ throughout and needed
+by the cardinality identity of \S\ref{sec:correctness}, is \emph{not} a field.
+It is derived from $me$ on demand; \S\ref{sec:limits} gives the derivation and
+why an earlier revision of this structure carried it as a maintained counter
+instead.
 
 Three asymmetries are deliberate. First, the forward adjacency is \emph{not}
 wrapped in the generic \texttt{VersionedMatrix}; the tensor owns its layers
@@ -639,8 +662,9 @@ recognise a shadowed pair and drop the stale $m$ entry (\S\ref{sec:iter}).
 \subsection{Invariants}
 \label{sec:invariants}
 
-Write $|X|$ for $\mathrm{nvals}$, $\textit{multi}$ for \texttt{multi\_count},
-and $P^{\ast} = \{p : \varepsilon(p) \neq \bot\}$ for the effective pattern.
+Write $|X|$ for $\mathrm{nvals}$, $\textit{multi}$ for the number of multi-edge
+pairs (\texttt{multi\_pairs()} in the artifact), and
+$P^{\ast} = \{p : \varepsilon(p) \neq \bot\}$ for the effective pattern.
 
 \begin{invariant}[Mask domain]\label{inv:masksub}
 $dm \subseteq \dom(m)$: the deletion mask only ever marks committed cells.
@@ -679,13 +703,15 @@ Invariant~\ref{inv:promotion} is what makes a cell value self-describing: a
 non-sentinel value is \emph{the} identifier, never one of several, so no
 reader must consult $me$ speculatively.
 
-Invariant~\ref{inv:counter} deserves a note: $\textit{multi}$ is maintained
-incrementally and is not derivable from the matrices in $O(1)$ (deriving it
-would require counting sentinel-valued cells, i.e.\ a scan). It is therefore
-the one piece of state whose consistency rests on every mutation path
-updating it, rather than on a structural argument --- a genuine, if small,
-soundness liability, and one reason the cardinality identity is worth stating
-as a theorem to be tested against.
+Invariant~\ref{inv:counter} deserves a note, because it is the one clause whose
+status changed after this design was first written. It was then a genuine
+invariant over a maintained field: $\textit{multi}$ was a counter that every
+mutation path had to remember to move, which made it the only piece of state
+resting on a discipline rather than on a structural argument. It is now derived
+from $me$ instead (\S\ref{sec:limits}), so the clause holds by construction and
+the discipline is gone. We keep it in the invariant set because the mechanised
+model still carries the field, and because the cardinality identity below is
+stated against it.
 
 \subsection{The per-pair automaton}
 \label{sec:automaton}
@@ -693,7 +719,8 @@ as a theorem to be tested against.
 Invariants~\ref{inv:masksub}--\ref{inv:cancel} bound the reachable layer
 configurations of a single pair to exactly ten. Table~\ref{tab:states} lists
 them with the artifact's own labels; Figure~\ref{fig:automaton} gives the
-transition structure.
+transition structure, and Appendix~\ref{app:transitions} the same transitions
+as a table, with the example identifiers spelled out.
 
 \begin{table}[t]
 \centering
@@ -838,6 +865,8 @@ drawn on its own in Figure~\ref{fig:fold}, discussed in \S\ref{sec:folding}.
 \end{algorithmic}
 \end{algorithm}
 
+Algorithm~\ref{alg:get} gives both, and Appendix~\ref{app:table} tabulates
+$\varepsilon$'s four cases against the layers directly.
 The single-edge path costs at most three FFI lookups and \emph{no}
 allocation: the returned iterator is an \texttt{Option} iterator by value.
 This matters because \textsc{Get} is the inner loop of the query operators
@@ -981,7 +1010,8 @@ keeps Invariant~\ref{inv:pure} true: a pair in state $\mathbf{H}$ or
 $\mathbf{F}$ has both a $dp$ shadow and a live $m$ cell, and the two
 operations together move it to $\mathbf{G}$.
 
-The slow path is per-edge and is the only place demotion happens. For a
+The slow path (Algorithm~\ref{alg:remove}) is per-edge and is the only place
+demotion happens. For a
 multi-edge pair, the identifier is removed from $me$ and the row is then
 probed for \emph{at most two} survivors --- enough to distinguish ``still
 multi'', ``exactly one left, demote'', and ``empty, delete the pair'' without
@@ -1228,7 +1258,8 @@ shrinking with it. The two balance at
   D^{\ast} \;=\; \sqrt{2\,(F/w)\,t} ,
 \]
 which is why this is a square-root rule rather than the LSM-style ratio
-$D \ge \text{base}/K$. A ratio is right when each entry is rewritten $O(1)$
+$D \ge \text{base}/K$. Figure~\ref{fig:foldcost}(b) draws the two terms and
+their crossing. A ratio is right when each entry is rewritten $O(1)$
 times between merges; here every transaction re-touches the \emph{whole}
 delta, so the accumulated tax is quadratic in $D$ and depends on $t$.
 
@@ -1461,16 +1492,16 @@ re-established by it.
 The theorems above, the invariant set of \S\ref{sec:invariants} and the
 per-pair automaton of \S\ref{sec:automaton} are machine-checked in Lean 4
 against a model transcribed statement-by-statement from the Rust. The
-development is in \texttt{proofs/} in the artifact and comes in two layers, the
-second discharging the first's one abstraction boundary:
+development is in \texttt{proofs/tensor/} in the artifact and comes in two
+layers, the second discharging the first's one abstraction boundary:
 
 \begin{itemize}
-\item \textbf{\texttt{Tensor}} ($\approx$3{,}950 lines, $\approx$290 theorems).
+\item \textbf{\texttt{Tensor}} ($4{,}102$ lines, $290$ theorems).
   Every operation of \texttt{tensor.rs} gets two theorems: it preserves the
   invariants, and it acts on $\mathrm{Ids}$ the way its specification says. It
   models $mt$ and $me$ --- \texttt{VersionedMatrix} values in Rust --- as the
   sets of their effective entries, which is the whole interface the tensor uses.
-\item \textbf{\texttt{VersionedMatrix}} ($\approx$940 lines, $\approx$73
+\item \textbf{\texttt{VersionedMatrix}} ($968$ lines, $72$
   theorems). The Boolean delta matrix underneath, proved against exactly that
   interface, so no hand-waved layer remains between the query-visible behaviour
   and the GraphBLAS calls.
@@ -1523,7 +1554,16 @@ Compound key      & \ref{sec:compound}& \texttt{keyBits\_eq\_key} (bitwise $=$ a
                                        \texttt{key\_lt}, \texttt{key\_inj} \\
 Serialisation     & \ref{sec:codec}  & \texttt{edgesAt\_decode\_encode},
                                        \texttt{inv\_decode\_encode}, \texttt{edgeCount\_roundTrip} \\
-Per-pair automaton& \ref{sec:automaton}& nine \texttt{trans\_*} lemmas, one per documented arrow \\
+Per-pair automaton& \ref{sec:automaton}& nine \texttt{trans\_*} lemmas, stated on the \emph{raw layers}: the four
+                                       additions $\mathbf{A}\to\mathbf{B}\to\mathbf{C}$,
+                                       $\mathbf{D}\to\mathbf{F}$, $\mathbf{G}\to\mathbf{H}$,
+                                       $\mathbf{I}\to\mathbf{E}$ and the three removals
+                                       $\mathbf{D}\to\mathbf{G}$, $\mathbf{E}\to\mathbf{I}$,
+                                       $\mathbf{F}\to\mathbf{D}$, including all three
+                                       cancel-to-clean edges. The remaining arrows of
+                                       Figure~\ref{fig:automaton} are covered denotationally by
+                                       \texttt{inv\_addEdge}/\texttt{removeOne\_spec} rather than as
+                                       statements about the representation \\
 \bottomrule
 \end{tabular}
 \caption{Each algorithm and the results that discharge it. Every row asserts
@@ -1565,9 +1605,16 @@ Rust is maintained by hand --- transcribed operation by operation, with the
 GraphBLAS calls read as set operations. That correspondence is the assumption
 the whole development rests on, and no proof inside it can discharge that.
 Where the code is currently ahead of the model, we say so: iteration is
-mechanised by its result rather than as the three-way lookahead merge, and the
+mechanised by its result rather than as the three-way lookahead merge; the
 serialised byte format is outside both layers (the round-trip theorems are
-about the abstract encode/decode pair).
+about the abstract encode/decode pair); batched deletion replays a per-pair
+plan where the model folds per-edge transitions (\S\ref{sec:future}); and the
+model still carries $\textit{multi}$ as a field with
+Invariant~\ref{inv:counter} as its agreement condition, where the code now
+derives it from $me$ (\S\ref{sec:limits}). The last of these is a divergence
+that can only make the code safer than the model --- a derived quantity cannot
+disagree with itself --- but it is a divergence, and the theorems below are
+about the field.
 
 Three consequences are worth reporting, because they are the kind of thing a
 mechanisation buys that a proof on paper does not.
@@ -1663,7 +1710,10 @@ not why any of it goes through.
 Building a structure with its own invariants on a runtime with typed operators
 and deferred execution costs two disciplines. Both are stated here as rules
 because both are cheap to follow and expensive to retrofit, and neither is
-specific to this data structure.
+specific to this data structure. Each is pinned by a regression test that reads
+as a specification of the rule rather than as a test of a fix;
+Appendix~\ref{app:tests} gives both, with three further tests that witness
+properties \S\ref{sec:mechanised} proves.
 
 \subsection{Never let an operator read a value on an identifier-carrying matrix}
 \label{sec:hazard-zero}
@@ -1733,6 +1783,18 @@ paths --- and it replaces a whole-program argument with a local one. The same
 obligation applies to the generic \texttt{VersionedMatrix}, and is discharged
 the same way.
 
+The rule earns its keep as the implementation moves underneath it. The artifact
+has since changed how it grows a layer twice --- a tuple rebuild, then
+\texttt{GxB\_Matrix\_concat} into a fresh matrix, now a \texttt{dup} followed by
+\texttt{GrB\_Matrix\_resize}, each change made on measured grounds unrelated to
+this section --- and the last of them routes \emph{every} capacity grow of the
+committed base back through exactly the call this rule is about. The discipline
+absorbed that without a correctness question being reopened, because the
+obligation sits at the call site rather than in an argument about which
+primitive is in use: the grown layer is materialised before it is published.
+Newer GraphBLAS versions offer a no-wait fast path through \texttt{resize};
+taking it would not help here, for the same reason.
+
 % =====================================================================
 \section{Serialisation}
 \label{sec:codec}
@@ -1781,10 +1843,18 @@ only up to the persistence boundary.
 SuiteSparse's sparse format stores, per entry, one index and one value, plus
 $O(\mathrm{nvec})$ vector pointers; since v10 the index arrays may be 32-bit
 when the matrix's dimensions permit. Two refinements matter for an honest
-count. First, a Boolean layer whose entries are all \texttt{true} is
-\emph{iso-valued}, and SuiteSparse then stores one shared scalar instead of a
-value array --- so such a layer costs its index array alone; a non-iso Boolean
-layer costs one further byte per entry. Second, $me$'s declared dimensions of
+count. First, a Boolean layer whose entries are all \texttt{true} can be
+stored \emph{iso-valued}, one shared scalar instead of a value array --- so
+such a layer costs its index array alone, where a non-iso Boolean layer costs
+one further byte per entry. This is a property of how the layer is
+\emph{built}, not of the format, and the distinction became load-bearing in
+SuiteSparse v10.5.0, which dropped the post-build iso check from the
+\texttt{GrB\_*\_build} family: an all-\texttt{true} value array no longer
+collapses on its own. The artifact's Boolean layers stay iso because
+\texttt{Matrix::<bool>::build} goes through \texttt{GxB\_Matrix\_build\_Scalar},
+which is documented as always iso, and a regression test
+(\texttt{build\_bool\_is\_iso\_and\_grb\_build\_is\_not}) fails if either half
+of that stops holding. Second, $me$'s declared dimensions of
 $2^{60}-1$ \emph{force 64-bit indices}, so although hypersparsity makes the
 wide declaration free with respect to the \emph{unused} dimensions, it is not
 free for the entries actually stored.
@@ -1861,7 +1931,7 @@ Operation & Cost & Notes \\
 \midrule
 \textsc{Get}, single edge & $O(1)$ FFI, $0$ alloc & $\le 3$ probes; $dm$ probe skipped when $dm$ empty \\
 \textsc{Get}, $k$-edge    & $O(1) + O(k)$ & one row scan, ascending id order for free \\
-\textsc{EdgeCount}        & $O(1)$ metadata $+$ one \texttt{eWiseMult} & intersection skipped when $|dp| = 0$ (Thm.~\ref{thm:count}) \\
+\textsc{EdgeCount}        & $O(1)$ metadata $+$ one \texttt{eWiseMult} & intersection skipped when $|dp| = 0$; $\textit{multi}$ derived from $me$, metadata unless its deltas are live (Thm.~\ref{thm:count}) \\
 \textsc{HasMultiEdge}     & $O(1)$ & $|me| \neq 0$ \\
 \textsc{SetAll}, $n$ edges & $O(n)$ FFI, $O(1)$ waits & phase split; without it, $\Theta(n)$ waits (Prop.~\ref{prop:insertcost}) \\
 \textsc{RemoveAll}, flat  & $3$ bulk ops $+ O(n)$ build & independent of $|E|$ \\
@@ -1949,6 +2019,19 @@ allocator itself reports them, and \texttt{GRAPH.MEMORY}'s total. The live
 figure is the one that bears on the claim against (A), because that claim is
 about allocator pressure from per-pair containers rather than about time.
 
+One provenance note on that figure, since it is the only number here produced by
+a tool that has since been corrected. Live bytes are summed from the
+\texttt{bins:} and \texttt{large:} tables of \texttt{MEMORY MALLOC-STATS}, and
+the harness parsed those fixed-width tables by splitting on whitespace, which
+fuses two fields whenever a size class exceeds ten million allocations per
+second. The harness now slices by the header's own column ranges. The failure is
+not a small bias but a catastrophic one --- a fused field moves the parsed total
+by $\approx\!7\times10^{16}$ bytes, so an affected reading is off by orders of
+magnitude rather than by percent --- and no figure in
+Table~\ref{tab:evalwrite} is of that character. We report the numbers as
+measured and note that the shape of the failure is what licenses trusting them,
+rather than a re-run under the corrected parse.
+
 \paragraph{Point reads are amortised over the query that carries them.} A
 single point read costs a few thousand instructions inside a query pipeline
 that costs hundreds of thousands, so a per-query count would measure the
@@ -1996,10 +2079,12 @@ $16.0$ & $242{,}241{,}357$ & $139{,}093{,}038$ & $0.57$ & & $16{,}197$ & $11{,}6
 \caption{The multiplicity sweep, read side. Scan is
 \texttt{MATCH ()-[r:R]->() RETURN sum(r.k)} over the whole graph; lookup is
 $1{,}000$ bound-pair reads per query, $20$ repetitions, reported per pair.
-$|E| = 176{,}000$ throughout, so scan cost falls with $\mu$ on both sides
-because $|P|$ falls. Ratios below $1$ favour (C). The two lookup rows where
-(C) loses are \emph{not} explained by the tensor --- see
-\S\ref{sec:evaldecomp}.}
+$|E| = 176{,}000$ throughout, so $|P|$ falls as $\mu$ rises and (A)'s scan cost
+falls monotonically with it. (C)'s does not: it rises to a peak at $\mu = 2$,
+where every pair is promoted and none is read inline, before falling away ---
+the shape the design predicts, discussed below. Ratios below $1$ favour (C).
+The two lookup rows where (C) loses are \emph{not} explained by the tensor ---
+see \S\ref{sec:evaldecomp}.}
 \label{tab:evalread}
 \end{table}
 
@@ -2423,6 +2508,16 @@ at all but a quadratic, diagnosed to a specific call pattern, and fixed. We give
 all four stages, because the first is what the design predicted, the second is
 what our code actually did, and the fourth still does not reach (A).
 
+One scoping remark first, because this subsection and \S\ref{sec:evalboundary}
+report the same design feature with opposite signs. The transition has two
+directions and they are not symmetric here: \S\ref{sec:evalboundary} measured
+\emph{promotion} and found (C) four times cheaper, because promotion is where
+(A) allocates its container. This subsection measures \emph{demotion}, at engine
+level, and finds (C) three times dearer. Both are the promotion/demotion
+transition Table~\ref{tab:designspace} prices at two auxiliary writes, and the
+design's prediction of a small constant survives in one direction and not the
+other.
+
 The experiment isolates the transition by holding everything else equal: the
 same \texttt{DELETE} query over the same number of rows, run once where each
 deletion demotes a two-edge pair down to one edge, and once where it merely
@@ -2589,14 +2684,18 @@ GraphBLAS already imposes, so neither restricts anything reachable --- but
 they are assumptions that a future change to identifier allocation would have
 to preserve.
 
-\paragraph{\texttt{multi\_count} is incrementally maintained --- but need not be.}
-Theorem~\ref{thm:count} depends on every mutation path updating the counter, and
-a divergence would surface as a wrong --- possibly wrapped --- edge count rather
-than as corrupt data, so it would surface late and far from its cause. In the
-artifact the exposure is concrete: seven call sites add or remove a row entry of
-$me$, and three of them adjust the counter.
+\paragraph{$\textit{multi}$ was a maintained counter, and no longer is.}
+This paragraph records a limitation the artifact has since removed, because the
+route out of it is the transferable part.
 
-The premise that makes this look unavoidable is that the quantity cannot be
+Theorem~\ref{thm:count} needs the number of multi-edge pairs. An earlier
+revision held it in a \texttt{multi\_count} field, which made the theorem depend
+on every mutation path remembering to move it: seven call sites added or removed
+a row entry of $me$ and three of them adjusted the counter, and a divergence
+would have surfaced as a wrong --- possibly wrapped --- edge count, late and far
+from its cause.
+
+The premise that made this look unavoidable is that the quantity cannot be
 recovered cheaply, and that premise is false. Invariant~\ref{inv:promotion} says
 $\varepsilon(p) = \M$ exactly when row $\kappa(p)$ of $me$ is non-empty, so
 \[
@@ -2605,38 +2704,25 @@ $\varepsilon(p) = \M$ exactly when row $\kappa(p)$ of $me$ is non-empty, so
 and a hypersparse matrix stores precisely its non-empty vectors --- so that count
 is metadata, not a scan. It is one read once $me$ is assembled, and at worst
 proportional to the number of multi-edge pairs while its deltas are live. Never
-proportional to $|E|$. The counter is therefore a \emph{cache} of a structural
-property of $me$, not independent state, which admits three repairs of
-increasing ambition.
+proportional to $|E|$. The counter was therefore a \emph{cache} of a structural
+property of $me$ rather than independent state, and the repair was to delete it
+and derive the quantity at each \textsc{EdgeCount}. \S\ref{sec:future} gives the
+measurements that made that viable and the two subtleties anyone reintroducing a
+cache would meet again.
 
-\emph{Make divergence loud rather than silent.} The subtractions in
-Theorem~\ref{thm:count} can only underflow if an invariant is already broken ---
-that is exactly what the mechanised \texttt{edgeCount\_no\_underflow} says --- so
-computing the identity in checked arithmetic converts a wrapped count into an
-error raised where it is detected. This costs nothing and removes the worst
-failure mode without addressing the cause.
-
-\emph{Check it, cheaply enough to leave on.} Comparing the counter against $me$'s
-vector count is $O(\textit{multi})$, so unlike the full Theorem~\ref{thm:count}
-audit against a scan --- which is $O(|E|)$ --- it can run at every commit rather
-than only in debug builds. That converts a late, remote symptom into an
-immediate, local one.
-
-\emph{Or remove the obligation.} Either compute the count on demand from $me$ at
-each \textsc{EdgeCount}, paying one metadata read on a path that is not hot; or
-keep the field and make forgetting it impossible by construction, bundling $me$
-with its counter in a type whose only mutators move both together. The second is
-the move the delta layers already make (\S\ref{sec:components}), and it is the
-one that generalises: it turns ``every mutation path must remember'' into ``two
-functions do it,'' which is a property a reviewer can check by reading a type
-rather than by auditing call sites.
-
-Note what the mechanisation does and does not settle here. Every operation in the
-model provably preserves Invariant~\ref{inv:counter}, so the \emph{algorithm} is
-not in question; what is unproved is that the Rust performs the same updates the
-model does. That is the correspondence assumption of \S\ref{sec:mechanised}, and
-the third repair is valuable precisely because it shrinks the surface over which
-that assumption has to hold.
+Two things survive the repair, and they are the limitation proper. First, the
+identity's subtractions are still unsigned and unchecked: deriving the count
+removes the way a \emph{mutation path} can break the identity, not the ways a
+corrupt decoded blob or a memory error can, and the mechanised
+\texttt{edgeCount\_no\_underflow} says precisely that an underflow means an
+invariant is already broken --- so computing it in checked arithmetic would
+convert a wrapped count into an error raised where it is detected. Second, the
+mechanised model still carries \texttt{multiCount} as a field with
+Invariant~\ref{inv:counter} as its agreement condition. Every operation in the
+model provably preserves it, so the \emph{algorithm} was never in question; what
+was unproved is that the Rust performed the same updates the model does. Deleting
+the field discharges that particular correspondence obligation in the code while
+leaving the model one revision behind it (\S\ref{sec:mechanised}).
 
 \paragraph{The transaction-local state space is genuinely larger.}
 Ten per-pair states with shadowing is more than the four a Boolean delta
@@ -2674,8 +2760,12 @@ Transposed iteration and several C entry points are also unmeasured.
 \emph{Only instruction counts are trustworthy here.} Some runs overlapped other
 work on the machine, so wall clock and cycles are not reported, and no claim in
 \S\ref{sec:eval} should be read as a latency result. Everything is macOS on
-arm64, with the C side pinned to SuiteSparse:GraphBLAS v10.3.1; Linux and CI are
-unmeasured.
+arm64, with both sides built against SuiteSparse:GraphBLAS v10.3.1; Linux and CI
+are unmeasured. The Rust engine's trunk has since moved to v10.5.0, which
+changes kernel selection and the iso-build rule of \S\ref{sec:cost} but no
+algorithm in this paper; nothing here has been re-measured against it, so the
+numbers should be read as of the commit under Availability rather than as of
+\texttt{main}.
 
 \emph{And the multiplicity distribution is an assumption throughout.} The
 premise that $\mu$ is dominated by $1$ --- which is what makes the common case
@@ -2745,9 +2835,9 @@ block $0$, and what the crossover looks like on a graph whose multi-edge pairs
 are spread thinly across many blocks --- the case where per-transaction work
 becomes proportional to the number of live blocks rather than to one.
 
-\paragraph{Take the counter off the critical path.} The invariant set is now
-proved (\S\ref{sec:mechanised}), but proofs bind the model, not the running
-process: a memory error, a decoder fed a corrupt blob, or a future edit to a path
+\paragraph{The counter is gone; the checked arithmetic is not.} The invariant
+set is now proved (\S\ref{sec:mechanised}), but proofs bind the model, not the
+running process: a memory error, a decoder fed a corrupt blob, or a future edit to a path
 the model does not cover can still break an invariant in production.
 Mechanisation and run-time checking answer different questions, and the first
 does not retire the second.
@@ -2889,9 +2979,13 @@ container is worth a factor of four to six and shows up as an allocator curve
 without the container design's hump. It corrects it on iteration, which is
 slightly cheaper in the container design, so the engine-level scan advantage we
 might have claimed belongs to the engine and not to this structure. And it
-corrects it on the transition, the cost the design nominated as its own: that
-cost was a quadratic in our implementation until we instrumented and fixed it,
-and even now it is about three times what a container costs to allocate. The
+corrects it on the transition, the cost the design nominated as its own --- and
+splits it in two. Promotion, measured at the boundary, is where (C) is furthest
+ahead: a quarter of what (A) pays, because (A) allocates a container and (C)
+writes two matrix entries. Demotion, measured at engine level, runs the other
+way: it was a quadratic in our implementation until we instrumented and fixed
+it, and even now it is about three times what the container design pays for the
+same logical change. The
 general lesson is less about tensors than about grain. Two of the attributions
 we made from whole-query measurements were wrong by factors of $1.8$ and $5.1$
 once the structures were measured as structures, always in the direction that
@@ -2901,39 +2995,53 @@ at the boundary even when the engine-level number is the one a user feels.
 % =====================================================================
 \section*{Availability}
 
-The implementation described here is \texttt{Tensor} in
+Everything described here is in \url{https://github.com/FalkorDB/FalkorDB}, on
+\texttt{main}, the Rust engine's trunk; this revision describes that tree at
+commit \texttt{e5d4936}, the branch of PR \#2433, which is \texttt{main} plus
+this paper and the proofs. \texttt{master} carries the C implementation compared
+against as design (A), under \texttt{src/graph/tensor/}. An earlier revision of
+this paper cited a \texttt{fold-policy} branch at \texttt{6458a2a} and a
+\texttt{tensor-proof} branch at \texttt{0a10c93}; both have since been deleted,
+their work having landed on \texttt{main}, so a reader holding that PDF should
+look here rather than for those branches.
+
+The implementation is \texttt{Tensor} in
 \texttt{graph/src/graph/graphblas/tensor.rs}, with supporting code in
-\texttt{versioned\_matrix.rs}, \texttt{matrix.rs} and \texttt{cow.rs}, in
-\url{https://github.com/FalkorDB/FalkorDB}. This revision describes the
-\texttt{fold-policy} branch at commit \texttt{6458a2a}, which adds the fold
-policy of \S\ref{sec:folding}; the Lean development of
-\S\ref{sec:mechanised} is under \texttt{proofs/} on the \texttt{tensor-proof}
-branch at commit \texttt{0a10c93} (that branch is \texttt{fold-policy} plus the
-proofs). The measurements behind $F$ and $w$ are reproducible from
-\texttt{fold\_cost\_bench.rs} in the same tree.
+\texttt{versioned\_matrix.rs} and \texttt{matrix.rs} beside it and
+\texttt{graph/src/graph/cow.rs}. The Lean development of \S\ref{sec:mechanised}
+is \texttt{proofs/tensor/} in the same tree; \texttt{lake build} reproduces it
+and \texttt{\#print axioms} on any cited name reports only Lean's three standard
+axioms. The measurements behind $F$ and $w$ are reproducible from
+\texttt{fold\_cost\_bench.rs}, and the grow-strategy comparison of
+\S\ref{sec:hazard-resize} from \texttt{grow\_cost\_rebuild\_vs\_resize} in the
+same file.
 
-Both branch from \texttt{main}, the Rust engine's trunk, at commit
-\texttt{02049e0}. Note that the earlier revision of this paper cited a
-\texttt{main-rs} branch; the Rust engine's trunk is now \texttt{main}, and
-\texttt{master} carries the C implementation used for comparison as design (A),
-under \texttt{src/graph/tensor/}.
+Three landed changes correspond to points in the text: the fold policy of
+\S\ref{sec:folding} is PR \#2349, the demotion fix of \S\ref{sec:evalosc} is
+\#2431 closing issue \#2429, and the removal of the \texttt{multi\_count} field
+(\S\ref{sec:limits}) is \#2439. The other anomaly this evaluation found, the
+two-state point-read cost, is issue \#2430, open with no identified cause.
 
-The measurements of \S\ref{sec:eval} were taken with the repository's benchmark
-harness under \texttt{bench/}, whose instruction counting is
-\texttt{proc\_pid\_rusage} against the server process
-(\texttt{counters.py} in that tree); both engines were release builds on one
-macOS arm64 host, with the C side built against SuiteSparse:GraphBLAS v10.3.1.
-The boundary harnesses of \S\ref{sec:evalboundary} and \S\ref{sec:evalspace}
-are committed at \texttt{bench/studies/edge\_storage/} and
-\texttt{graph/src/graph/graphblas/tensor\_cost\_bench.rs} on the
-\texttt{measure/design-b-and-boundary} branch; the C harness there links the
-shipped static archive directly, with no stubbed symbols.
-Of the anomalies this evaluation found, the batch demotion cost is FalkorDB issue
-\#2429, fixed by PR \#2431, and the two-state point-read cost is \#2430, open
-with no identified cause.
+\paragraph{What is reproducible, and what is not.} The measurements of
+\S\ref{sec:eval} were taken with the repository's benchmark harness under
+\texttt{bench/}, whose instruction counting is \texttt{proc\_pid\_rusage}
+against the server process (\texttt{counters.py} in that tree); both engines
+were release builds on one macOS arm64 host, both built against
+SuiteSparse:GraphBLAS v10.3.1 with LAGraph v1.2.1. Trunk has since moved to
+v10.5.0 and LAGraph v1.3, so reproducing the numbers exactly means pinning the
+older library rather than building trunk as it stands.
 
-Built against SuiteSparse:GraphBLAS v10.3.1 and LAGraph v1.2.1; the proofs
-against Lean 4 v4.32.0 with mathlib v4.32.0, pinned in the project's
+The boundary harnesses of \S\ref{sec:evalboundary} and \S\ref{sec:evalspace} ---
+\texttt{bench/studies/\allowbreak edge\_storage/} and
+\texttt{graph/\allowbreak src/\allowbreak graph/\allowbreak graphblas/\allowbreak tensor\_cost\_bench.rs},
+the C side of which
+links the shipped static archive directly with no stubbed symbols --- are
+\emph{not} on any published branch at the time of writing. Until they are, the
+boundary results of \S\ref{sec:evalboundary} should be read as reported rather
+than as reproducible, which is a weaker standing than the rest of the evaluation
+has and one we would rather state than paper over.
+
+The proofs are checked against Lean 4 v4.32.0 with mathlib v4.32.0, pinned in
 \texttt{lean-toolchain} and \texttt{lakefile.toml}.
 
 % =====================================================================

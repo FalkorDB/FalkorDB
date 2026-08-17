@@ -23,9 +23,15 @@ the transitions between them:
 ```
 
 Each theorem below is one arrow of that diagram, stated on the *raw layers*
-(what `m`, `dp`, `dm`, `me` and `multi_count` hold afterwards) rather than on the
+(what `m`, `dp`, `dm`, `me` and `multiCount` hold afterwards) rather than on the
 denotation — that is what the diagram claims, and it is where the delicate
 "cancel to clean" and "`dp` shadows `m`" behaviour shows up.
+
+These are the *representative* arrows, not all of them: seven distinct arrows
+plus the three cancel-to-clean edges, chosen so that every shape the
+representation can take is stated somewhere. The rest of the diagram's arrows
+are covered denotationally by the general theorems below, which is a weaker
+statement about the layers and a sufficient one about behaviour.
 
 The invariants and the denotational effect of each arrow are already covered by
 the general theorems (`inv_addEdge`, `edgesAt_addEdge_self`, `removeOne_spec`);
