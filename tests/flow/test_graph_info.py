@@ -488,26 +488,41 @@ class testGraphInfo():
     def test08_no_sections_reports_everything(self):
         """a bare GRAPH.INFO reports every section, as the C engine does"""
 
+        def shape(res):
+            """The labels and the shape of each section, but not the counters.
+
+               Comparing two replies field for field would compare the object-pool
+               counters too, and those move on their own: a graph displaced by
+               `register_graph` or freed by `graph_free` is dropped on a background
+               thread, and the interned strings it releases change `Unique Objects in
+               Pool` between one call and the next."""
+            return [res[0], res[2], res[4],
+                    len(res), type(res[1]), type(res[3]),
+                    [entry[0] for entry in res[5]]]
+
         res = self.conn.execute_command("GRAPH.INFO")
 
         # same sections, in the same order, as asking for all of them
-        self.env.assertEqual(res,
-                             self.conn.execute_command("GRAPH.INFO",
-                                                       "RunningQueries",
-                                                       "WaitingQueries",
-                                                       "ObjectPool"))
+        self.env.assertEqual(shape(res),
+                             shape(self.conn.execute_command("GRAPH.INFO",
+                                                             "RunningQueries",
+                                                             "WaitingQueries",
+                                                             "ObjectPool")))
 
         self.env.assertEqual(len(res), 6)
         self.env.assertEqual(res[0], "# Running queries")
         self.env.assertEqual(res[2], "# Waiting queries")
         self.env.assertEqual(res[4], "Object Pool")
 
-        # an unknown section is still rejected
-        try:
-            self.conn.execute_command("GRAPH.INFO", "NoSuchSection")
-            self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertContains("Unknown section", str(e))
+        # an unknown section is ignored, and the recognised one still answers —
+        # C's `_handle_sections` matches what it knows and skips the rest
+        res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "NoSuchSection")
+        self.env.assertEqual(len(res), 2)
+        self.env.assertEqual(res[0], "# Running queries")
+
+        # nothing recognised at all: C replies with a string, not an error
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.INFO", "NoSuchSection"), "no section found")
 
     def test09_cmd_info_runtime_toggle(self):
         """CMD_INFO is settable at run-time, and gates query logging"""
@@ -553,6 +568,35 @@ class testGraphInfo():
             self.env.assertContains("Failed to set config value CMD_INFO to maybe", str(e))
         self.env.assertEqual(self.db.config_get("CMD_INFO"), 1)
 
+    def test10_max_info_queries_zero_keeps_nothing(self):
+        """MAX_INFO_QUERIES 0 bounds the stream, as C's unconditional trim does.
+
+           0 is accepted by both `GRAPH.CONFIG SET` and the module argument, and C
+           passes it straight to `RedisModule_StreamTrimByLength`. Skipping the trim
+           for 0 turned the one value that means "keep nothing" into "keep
+           everything": 2000 queries left all 2000 entries in the stream, with no
+           setting left that could bound it."""
+
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", "0"), "OK")
+        self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 0)
+
+        try:
+            for _ in range(500):
+                self.graph.query("RETURN 1")
+            time.sleep(0.5)   # well past the flusher's window
+
+            # approximate trimming works in whole listpack nodes, so some of the last
+            # entries can survive; what must not survive is all 500 of them
+            xlen = self.conn.xlen(stream) if self.conn.exists(stream) else 0
+            self.env.assertLess(xlen, 200)
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", "1000")
+            self.conn.delete(stream)
+
 class testGraphInfoStaleEntry():
     """A queued telemetry entry belongs to the graph that produced it, not to that
        graph's name.
@@ -564,7 +608,11 @@ class testGraphInfoStaleEntry():
        key-API write does not replicate, which is what made
        `test_replication_states` fail: it compares master and replica keyspaces.
        The C engine cannot get this wrong because its queries log is owned by the
-       GraphContext and is freed with it."""
+       GraphContext and is freed with it.
+
+       The corollary is that a graph which merely *moved* keeps its entries: they are
+       re-addressed to the key it answers to at write time, which is C's behaviour
+       too."""
 
     def __init__(self):
         self.env, self.db = Env()
@@ -582,21 +630,27 @@ class testGraphInfoStaleEntry():
         keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
         self.env.assertEqual(keys, ["stale"])
 
-    def test02_stale_entry_not_written_under_a_renamed_key(self):
+    def test02_entry_follows_a_renamed_graph(self):
         """The other half: same graph, different name.
 
            A `RENAME` re-keys the graph and deletes the stream of the old key, so a
-           still-queued entry naming that key must not recreate it. The graph itself
-           is very much alive, which is why liveness alone is not the question —
-           the entry has to belong to the graph registered under *its* name."""
+           still-queued entry naming that key must not recreate it — it belongs to the
+           graph, which now lives at the new key, so it is written there. That is what
+           C does: its cron task takes the stream name from the `GraphContext`, and
+           `GraphContext_Rename` deletes the old stream and rebuilds that name.
+           Dropping the entry instead loses every query in flight across a blue/green
+           key swap."""
         self.conn.flushall()
         g = self.db.select_graph("before")
         g.query("CREATE (:N {v: 1})")          # queues an entry naming "before"
         self.conn.rename("before", "after")    # deletes telemetry{before}
-        time.sleep(1)
+        pollUntil(lambda: self.conn.type("telemetry{after}") == "stream",
+                  "the in-flight entry to be written under the new key")
+        self.env.assertEqual(self.conn.xlen("telemetry{after}"), 1)
+        # the stream the rename deleted stays deleted
         self.env.assertEqual(self.conn.type("telemetry{before}"), "none")
         keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
-        self.env.assertEqual(keys, ["after"])
+        self.env.assertEqual(keys, ["after", "telemetry{after}"])
 
 class testGraphInfoCmdInfoDisabled():
     """`CMD_INFO no` at *load time* must stop logging finished queries.

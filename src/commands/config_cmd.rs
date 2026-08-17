@@ -15,11 +15,18 @@
 //!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
 //!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
 //!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE, EFFECTS_THRESHOLD,
-//!   CMD_INFO, MAX_INFO_QUERIES, DELAY_INDEXING
+//!   CMD_INFO, MAX_INFO_QUERIES, ASYNC_DELETE, DELAY_INDEXING
 //!
 //! Read-only (SET returns an error):
-//!   THREAD_COUNT, OMP_THREAD_COUNT, CACHE_SIZE, ASYNC_DELETE,
+//!   THREAD_COUNT, OMP_THREAD_COUNT, CACHE_SIZE,
 //!   NODE_CREATION_BUFFER, BOLT_PORT, IMPORT_FOLDER, TEMP_FOLDER
+//!
+//! ASYNC_DELETE and DELAY_INDEXING are settable, as they are in C, but nothing in
+//! this engine reads either one yet: graph teardown is always off-thread (see
+//! `graph_core::graph_free`, which cannot free inline — `Index::drop` takes the GIL,
+//! which the main thread already holds while the free callback runs), and the
+//! decoders always build indexes eagerly. So `SET` on them records a value and
+//! changes no behaviour; C reads both.
 //!
 //! ## Multi-SET semantics
 //! When multiple name-value pairs are provided in a single SET, all pairs are
