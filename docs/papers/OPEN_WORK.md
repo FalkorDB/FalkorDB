@@ -124,57 +124,39 @@ takes reads `m`, which neither shape writes, so both orders take the same
 decisions and the nine shape pairs are one-liners over three `Layer` commutation
 facts plus `me_sdiff_comm` (where `key_inj` enters).
 
-### 3b. Iteration as the merge that computes it
+### 3b. Iteration as the merge that computes it — done
 
-**Status:** open. Attempted; the model is designed and most of the membership
-proof works, but it is not landed and the file is not in the tree. Two concrete
-results from the attempt, both of which save the next person the same detour.
+**Status:** closed, in `proofs/tensor/Tensor/Merge.lean`.
 
-**The model.** Three cursors as sorted lists — `ms : List (Pair × Nat)`,
-`ds : List Pair`, `ps : List (Pair × Nat)` — merged by a `merge3` recursion whose
-branches are exactly the paper's two rules: a `dm` entry drops the `m` entry it
-matches, and a `dp` entry at an occupied position wins and suppresses it.
-Positions compare lexicographically by `(src, dst)`, which is the order GraphBLAS
-row iterators yield. Two theorems are wanted: `mem_merge3` (the output is
-`(m ∖ dm) ∪ dp`) and `merge3_sorted` (strictly ascending).
+`Iter.lean` characterised the iterators by their *result*. This models the merge
+that produces it — three ascending cursors, a `dm` lookahead that drops the `m`
+entry it matches, and a `dp` entry that wins at a shared position — and proves:
 
-**Finding: the merge *needs* Invariant purity (`dp ∩ dm = ∅`), and the model
-shows why.** At a tie the algorithm emits the `dp` entry and advances the `m`
-cursor **without advancing `dm`**. That is sound only because a shadowed position
-carries no tombstone. If purity were violated, `dm`'s head would stay pinned at
-the shadowed position while `m` moved past it, and the *next* masked entry would
-be compared against a stale head, fail the match, and be emitted — a deleted edge
-appearing in a scan. The paper currently motivates purity as keeping `dm`'s
-meaning crisp for the fold and removal paths; this says the iterator depends on it
-too, and more sharply.
+- `mem_merge3` — the merge emits exactly `(m ∖ dm) ∪ dp`, with `dp` winning ties.
+- `sortedBy_merge3` — it emits in strictly ascending `(src, dst)` order. Strict,
+  so this also says no position is emitted twice. This is what downstream
+  operators assume and what nothing checked before.
+- `merge3_effGet` — the bridge back to the tensor: instantiate the cursors with
+  the three forward layers and the output *is* the effective view.
 
-**Blocker, and the fix.** `merge3` as written recurses on `ps` while holding `ms`
-fixed (the "`dp` is behind, emit and advance it" branch), so it needs
-`termination_by ms.length + ps.length` and Lean compiles it by well-founded
-recursion. Its equation lemmas then do not fire under `rw`/`simp` in the two
-both-cursors-non-empty cases, which is where seven of the nine cases of
-`mem_merge3` otherwise go through.
+**Finding: the merge needs Invariant purity, and the model shows why.** At a tie
+the algorithm emits the `dp` entry and advances `m` **without advancing `dm`**.
+That is sound only because a shadowed position carries no tombstone. Violate
+purity and `dm`'s head stays pinned at the shadowed position while `m` moves past
+it, so the next masked entry is compared against a stale head, fails the match,
+and is emitted — a deleted edge appearing in a scan. `hpure` is that invariant and
+the tie branch is where it is used. The paper motivates purity as keeping `dm`'s
+meaning crisp for the fold and removal paths; the iterator depends on it too, and
+more sharply.
 
-The fix is to make the recursion **structural on `ms`** by flushing the `dp`
-cursor up front instead of one entry at a time:
-
-```lean
-def takeLt (b : Pair) : List (Pair × Nat) → List (Pair × Nat) × List (Pair × Nat)
-  | [] => ([], [])
-  | pp :: ps => if plt pp.1 b then ((takeLt b ps).1.cons pp, (takeLt b ps).2)
-                else ([], pp :: ps)
-
-def merge3 : List (Pair × Nat) → List Pair → List (Pair × Nat) → List (Pair × Nat)
-  | [], _, ps => ps
-  | m :: ms', ds, ps => -- `takeLt m.1 ps` first, then the tie / mask / emit cases
-```
-
-That is if anything a *better* model of the loop — "flush every pending entry
-below the current base position, then decide about the base position" is what the
-Rust does — and it makes every equation definitional, so the nine-case proof
-becomes three. Budget a session; the ordering theorem wants a lower-bound lemma
-(`every element of the output is above any bound both inputs are above`) proved
-alongside.
+**Note on the shape of the recursion, for anyone extending this.** Writing the
+merge the natural way — "if `dp` is behind, emit it and advance `dp`" — recurses
+on the pending list while holding the base fixed, so it needs a combined
+termination measure, compiles by well-founded recursion, and its equation lemmas
+then will not rewrite. Flushing the pending cursor up front (`takeLt`) makes the
+recursion structural on the base list and every equation usable. It is also the
+better model: *flush every pending entry below the current base position, then
+decide about the base position* is what the loop does.
 
 ### 3b-bis. The model's counter — done
 

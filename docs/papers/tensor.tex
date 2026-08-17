@@ -1618,8 +1618,7 @@ without re-examining correctness at all.
 Rust is maintained by hand --- transcribed operation by operation, with the
 GraphBLAS calls read as set operations. That correspondence is the assumption
 the whole development rests on, and no proof inside it can discharge that.
-Where the code is currently ahead of the model, we say so: iteration is
-mechanised by its result rather than as the three-way lookahead merge; the
+Where the code is currently ahead of the model, we say so: the
 serialised byte format is outside both layers (the round-trip theorems are
 about the abstract encode/decode pair); and the write phase's freedom to
 apply per-pair plans in any order rests on a commutation argument whose components
