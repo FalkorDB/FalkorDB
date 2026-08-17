@@ -1218,6 +1218,73 @@ fn remove_batch_matches_single_removes_and_stays_valid() {
     check_invariants(&tr, true);
 }
 
+/// Emptying a **middle** child outright — the one shape `strip_empty` handles that no other path
+/// reaches. Single-key removal never produces it (an emptied leaf is just maximally under-full, and
+/// `rebalance` merges it into a sibling), and the random differential harness is not guaranteed to
+/// drain one whole child while leaving its neighbours intact.
+///
+/// The question this pins down is which separator survives. Dropping `children[i]` leaves
+/// `seps[i - 1]` — which named the *removed* child's minimum — as the boundary between
+/// `children[i - 1]` and the old `children[i + 1]`. That is deliberately still valid: separators are
+/// **routing boundaries**, `max(left) < sep <= min(right)`, not live minima. `seps[i - 1]` sits above
+/// everything in `children[i - 1]` (unchanged) and strictly below `min(children[i + 1])`, because the
+/// dropped `seps[i]` bracketed them. Rewriting separators to the surviving children's minima would be
+/// extra `min()` walks to restore a property the tree does not maintain anywhere else — a borrow or
+/// merge leaves separators below the right child's current min too (see `check_invariants`).
+#[test]
+fn strip_empty_middle_child_keeps_a_valid_separator() {
+    // 16 keys at LEAF_MAX = 4 pack as [0..3][4..7][8..11][12..15] under one branch root.
+    //
+    // Four children, not three: with only three, *every* single separator left behind happens to be
+    // a valid boundary, so the test could not tell a correct choice from a wrong one. At four, the
+    // surviving separators have to stay aligned with the surviving pairs — keeping the far separator
+    // would leave one that sits below its own left child's max.
+    let all: Vec<(u64, u64)> = (0..16u64).map(|k| (k, k)).collect();
+    let mut t = CowBTree::<4, 4, 8>::from_sorted(&all);
+    assert!(
+        t.root_is_branch(),
+        "test needs a branch root, not a lone leaf"
+    );
+    assert_eq!(
+        t.leaves().len(),
+        4,
+        "test needs four children for the separator choice to be constrained"
+    );
+
+    // Drain the middle child exactly, leaving its neighbours full.
+    let middle: Vec<(u64, u64)> = (4..8u64).map(|k| (k, k)).collect();
+    t.remove_batch(&middle);
+
+    // The separator left behind must still route correctly, and min fill must be restored.
+    check_invariants(&t, true);
+
+    let expected: Vec<(u64, u64)> = (0..4u64).chain(8..16).map(|k| (k, k)).collect();
+    assert_eq!(
+        tree_pairs(&t),
+        expected,
+        "content after draining the middle"
+    );
+
+    // Read across the seam the removed child used to occupy: the keys that bracket the hole, the
+    // hole itself, and a range spanning it.
+    assert_eq!(t.point(3).collect::<Vec<_>>(), vec![3], "left of the hole");
+    assert_eq!(t.point(8).collect::<Vec<_>>(), vec![8], "right of the hole");
+    for k in 4..8u64 {
+        assert_eq!(t.point(k).count(), 0, "removed key {k} still reachable");
+        assert!(!t.contains_key(k), "contains_key({k}) after removal");
+    }
+    assert_eq!(
+        t.range(2, 9).collect::<Vec<_>>(),
+        vec![2, 3, 8, 9],
+        "range spanning the drained child"
+    );
+    // Every surviving key stays reachable through the rewritten branch, including the last child —
+    // the one a mis-aligned separator would strand.
+    for k in (0..4u64).chain(8..16) {
+        assert_eq!(t.point(k).collect::<Vec<_>>(), vec![k], "survivor {k}");
+    }
+}
+
 fn check_invariants<const L: usize, const B: usize, const DOC_BYTES: usize>(
     t: &CowBTree<L, B, DOC_BYTES>,
     min_fill: bool,
