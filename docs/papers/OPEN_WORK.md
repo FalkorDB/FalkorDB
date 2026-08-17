@@ -250,10 +250,11 @@ oscillate hard to matter, against a permanent space cost and a new piece of
 per-transaction state, is a poor trade. Revisit if a real workload shows up that
 oscillates; the bench is committed, so re-deriving the number is one command.
 
-## 5. The two-state point-read cost (#2430) — cause found
+## 5. The two-state point-read cost (#2430) — fixed
 
-**Status:** diagnosed, not yet fixed. `bench/studies/issue_2430/` and
-`graph/.../issue_2430_bench.rs`.
+**Status:** diagnosed and fixed (PR #2571). `bench/studies/issue_2430/`,
+`graph/.../issue_2430_bench.rs`, and the regression bench
+`graph/.../me_delta_bench.rs`.
 
 **Cause: `me`'s delta-plus is non-empty.** When the multi-edge id matrix carries
 pending entries, every multi-edge row read consults the delta layer instead of
@@ -289,14 +290,29 @@ The fold policy is size-based, so a delta of one entry never meets the threshold
 and a write is not obliged to fold `me`. The hypothesis was right; the experiment
 could not see it.
 
-**The fix, not yet written.** `eff_get` already short-circuits the `dm` probe
-when `dm` is empty; the same trick is missing one level down. `me.dp` is
-hypersparse and keyed by `(compound_key, id)`, so "does the delta touch this row"
-is one cheap probe against building a merged iterator — and a delta is small by
-construction, so nearly every row would take the base path. The more ambitious
-version is a fold policy that prices what a resident delta costs *readers*: the
-square-root rule of §folding is derived entirely from write amortisation and has
-no term for the read side, which this bug is a direct consequence of.
+**The fix (PR #2571).** The layer-empty short-circuit in `Iter::from_layers`
+asks whether a delta is empty *in total*; the fix asks whether it holds anything
+in the row being read. `RowFilter` is a 4 KB bitmap of the rows a delta may hold,
+allocated only once the delta holds something and dropped when it folds. Its only
+safety property is that it never says "no" when the answer is yes, so
+`Delta::layer_mut` — the choke point every entry-adding path goes through —
+invalidates it by default; a path added later without touching this stays
+correct.
+
+A skipped layer is **detached, not dropped**, because `Iter::seek` re-points an
+iterator at a different range and a dropped layer would swallow entries in every
+later one. `matrix::Iter::detached` keeps the handle and attaches on first seek.
+
+| pairs | 1k | 11k | 41k | 88k | 121k | step |
+|---|---|---|---|---|---|---|
+| before | 8,723 | 8,787 | 8,786 | 9,929 | 9,963 | **+1,143** |
+| after | 8,738 | 8,774 | 8,796 | 8,912 | 8,915 | **+116** |
+
+90% of the step, and the two states are one. Writes pay +0.64%; memory is
+unchanged. **Still open:** the more ambitious version, a fold policy that prices
+what a resident delta costs *readers*. The square-root rule of §folding is
+derived entirely from write amortisation and has no term for the read side, which
+this bug was a direct consequence of.
 
 ## 6. What the evaluation still does not settle
 
@@ -386,13 +402,40 @@ what was and was not measured.
   id only to discard it, so its cost is proportional to *edges* and the ratio
   grows with `k`.
 
-  **The fix is clear and not implemented.** The count (A) reads in constant time
-  is available in (C) as the cardinality of the pair's row in `me`; a degree that
-  reads the forward cell and, on the sentinel, takes that cardinality without
-  materialising would have (A)'s shape. Blast radius is bounded — these four
-  functions back Cypher's `indegree`/`outdegree` built-ins and nothing else;
-  traversal does not route through them — which is why this is recorded rather
-  than rushed into the arxiv branch.
+  **That explanation was wrong, and taking it apart is what found the real one**
+  (PR #2572). Decomposing the k=1 figure: of 1,990 instructions the forward row
+  scan underneath is 1,908, so *materialising the ids costs 81* — and the same
+  scan through a **re-seeked** iterator costs 300. The dominant term, 1,608 of
+  1,990, is constructing a `GxB_Iterator` per call. A degree that only stopped
+  collecting ids would have moved 81 instructions.
+
+  Worth recording as a process failure, not just a result: the first explanation
+  was plausible, matched the shape of the numbers (a ratio growing with `k`), and
+  survived a whole revision of the paper — because nothing had asked it to account
+  for the *total*. The decomposition took ten minutes and inverted the conclusion.
+
+  Two fixes followed, and the smaller-sounding one is the valuable one:
+
+  - **Pool `GxB_Iterator` handles** (thread-local free list of 32). Sound because
+    GraphBLAS documents re-attaching a handle to another matrix. This is general —
+    it is on every row scan in the engine. Multi-edge point read 2,995 → 2,200;
+    forward single-row scan 1,908 → 1,125; #2430's engine fixture 8,912 → 8,309.
+  - **`Tensor::row_degree` / `col_degree`**, dropping the per-pair `Vec` and
+    sharing one `me` cursor across a row.
+
+  | | (C) | before | after | was | now |
+  |---|---|---|---|---|---|
+  | row degree, `k`=1 | 1,011 | 1,990 | 1,203 | 1.97x | 1.19x |
+  | row degree, `k`=2 | 1,160 | 4,810 | 2,793 | 4.15x | 2.41x |
+  | col degree, `k`=1 | 1,432 | 2,582 | 1,814 | 1.80x | 1.27x |
+  | col degree, `k`=2 | 1,581 | 5,402 | 3,409 | 3.42x | 2.16x |
+
+  **Still open:** the remaining ~830 instructions of attach are
+  `GxB_rowIterator_attach` itself, which pooling cannot remove — only *not
+  attaching* can. `Tensor::get` still builds a fresh three-layer merge per call
+  and `ExpandInto` calls it per row, so a reusable cursor for the hot traversal
+  callers is the next step and a larger API change. That is now the single
+  biggest known gap to (A) on the read path.
 - **Wall clock and cycles.** Some runs shared the machine, so no claim in the
   paper is a latency claim — with one deliberate exception, the residency sweep
   above, where a latency result is the whole point and no instruction count could

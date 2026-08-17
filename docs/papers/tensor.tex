@@ -2670,8 +2670,8 @@ $17\%$; degree is not, and the reason is an entry point (C) does not have.}
 \label{tab:evalentry}
 \end{table}
 
-\paragraph{Degree is the one place (C) pays for a missing entry point rather
-than for its representation.} (A) implements degree as a scan of the row's
+\paragraph{Degree looked like the one place (C) pays for a missing entry point
+rather than for its representation.} (A) implements degree as a scan of the row's
 \emph{cells}: a scalar cell contributes one, and a tagged cell contributes
 \texttt{GrB\_Vector\_nvals} of the container it points at --- a constant-time
 read of a length that is already stored. Its cost is therefore proportional to
@@ -2681,22 +2681,52 @@ $k=2$, a $15\%$ rise for twice the edges).
 
 (C) has no degree entry point at all. Degree is computed one level up, in
 \texttt{Graph::get\_node\_outdegree}, by counting a full single-row iteration ---
-which materialises every identifier in the row only to discard it. Its cost is
-therefore proportional to the number of \emph{edges}, and the ratio grows with
-$k$: $1.96\times$ at $k=1$, $4.21\times$ at $k=2$, and by construction worse
-above that.
+which materialises every identifier in the row only to discard it. That reads
+like the whole explanation, and the ratio's growth with $k$ ($1.96\times$ at
+$k=1$, $4.21\times$ at $k=2$) reads like confirmation of it.
 
-This is a fixable gap rather than a property of inline-first storage. The
-information (A) reads in constant time --- the number of identifiers held for a
-pair --- is equally available in (C) as the cardinality of the pair's row in
-$me$, and a degree that reads the forward cell and, on the sentinel, takes that
-cardinality without materialising the row would have (A)'s shape. We have not
-implemented it, so the table reports what the engine does today.
+\paragraph{It is not the explanation, and taking it apart is what found the real
+one.} Decomposing the $k=1$ figure: of $1{,}990$ instructions, the forward
+single-row scan underneath accounts for $1{,}908$, so \emph{materialising the
+identifiers costs $81$}. And the same scan through an iterator that is
+\emph{re-seeked} rather than rebuilt costs $300$. The dominant term --- $1{,}608$
+of $1{,}990$, four fifths of the whole --- is neither the representation nor the
+missing entry point. It is the cost of constructing a \texttt{GxB\_Iterator} per
+call, which (A) pays once per degree and (C) pays once per row scan and again per
+multi-edge pair.
 
-Its blast radius is bounded and worth stating so the number is not read as worse
-than it is: these four functions back Cypher's \texttt{indegree} and
-\texttt{outdegree} built-ins and nothing else. Traversal does not route through
-them. A workload that never calls those built-ins never pays this.
+That is worth stating plainly because the first explanation was ours, it was
+published in the previous revision of this table, and it would have led to a fix
+that moved $81$ instructions. It also generalises past degree: the same per-call
+construction sits under every point read in Table~\ref{tab:evalboundary}, which
+is where (C)'s $3.89\times$ at $k=2$ mostly comes from.
+
+\paragraph{Both have since been addressed, which changes two numbers in this
+paper.} Recycling \texttt{GxB\_Iterator} handles through a small thread-local
+free list --- sound because GraphBLAS documents re-attaching an iterator to
+another matrix --- removes about half the per-call construction cost, and a
+\texttt{row\_degree}/\texttt{col\_degree} that drops the per-pair buffer and
+shares one $me$ cursor across a row removes the rest of the degree-specific
+overhead. Measured on the same fixtures: degree falls to $1{,}203$ and $2{,}793$
+at $k = 1, 2$ against (A)'s $1{,}011$ and $1{,}160$, so
+$1.97\times \to 1.19\times$ and $4.15\times \to 2.41\times$; the transposed
+figures fall to $1{,}814$ and $3{,}409$, $1.80\times \to 1.27\times$ and
+$3.42\times \to 2.16\times$. The multi-edge point read of
+Table~\ref{tab:evalboundary} falls from $2{,}940$ to $2{,}200$, taking its ratio
+against (A) from $3.89\times$ to $2.91\times$.
+
+Table~\ref{tab:evalentry} reports the engine as measured for this paper, before
+those changes, and the numbers above are what the same benches say after. We keep
+both rather than silently restating the better ones: the point of the
+decomposition is that a plausible explanation survived a whole revision because
+nothing had asked it to account for the total.
+
+Degree's blast radius is bounded and worth stating so the original number is not
+read as worse than it was: these four functions back Cypher's \texttt{indegree}
+and \texttt{outdegree} built-ins and nothing else. Traversal does not route
+through them. The iterator-construction cost underneath them, on the other hand,
+is on every read path in the engine, which is why the smaller of the two findings
+turned out to be the more valuable one.
 
 \subsection{Residency: the same reads out of cache}
 \label{sec:evalcold}
