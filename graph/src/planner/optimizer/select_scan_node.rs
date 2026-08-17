@@ -363,6 +363,31 @@ fn resolve_path(
     Some(node.idx())
 }
 
+/// Does the subtree *beneath* `scan_idx` provably bind `alias`?
+///
+/// `Argument(None)` is opaque about which variables it carries, so its presence
+/// anywhere below makes the answer unknown and this reports `false` — the
+/// caller then leaves the plan alone.
+fn child_subtree_binds(
+    plan: &DynTree<IR>,
+    scan_idx: NodeIdx<Dyn<IR>>,
+    alias: u32,
+) -> bool {
+    let mut binds = false;
+    for child in plan.node(scan_idx).children() {
+        let sub: DynTree<IR> = child.clone_as_tree();
+        for i in sub.root().indices::<Bfs>() {
+            if matches!(sub.node(i).data(), IR::Argument(None)) {
+                return false;
+            }
+        }
+        if collect_subtree_variables(&sub.root()).contains(&alias) {
+            binds = true;
+        }
+    }
+    binds
+}
+
 /// Picks which endpoint of a leaf `CondVarLenTraverse` to scan.
 ///
 /// The planner always scans the pattern's `from` endpoint. When `to` is the
@@ -422,6 +447,37 @@ fn select_var_len_scan_node(
         }
         let from = relationship.from.clone();
         let to = relationship.to.clone();
+
+        // Non-leaf case: something below the planner's `from` scan may already
+        // bind `to`. Then no scan is needed on either endpoint — dropping the
+        // planner's scan leaves `to` bound and `from` free, and
+        // `CondVarLenTraverseOp` walks the relationship backwards from that one
+        // bound endpoint (`reversed`), enforcing `from`'s labels as the
+        // destination filter. Keeping the scan instead seeds the DFS with every
+        // node carrying `from`'s label, once per input row.
+        //
+        // This is the same decision `select_scan_node` makes for `CondTraverse`
+        // chains via `bound_vars`, except the binding here sits *below* the
+        // planner's scan rather than being the immediate child, so it has to be
+        // looked for one level deeper.
+        if child_subtree_binds(optimized_plan, child_idx, to.alias.id) {
+            let kept: Vec<DynTree<IR>> = optimized_plan
+                .node(child_idx)
+                .children()
+                .map(|c| c.clone_as_tree())
+                .collect();
+            // Only rewrite when the scan actually has something under it; a
+            // childless planner scan is the leaf case handled below.
+            if !kept.is_empty() {
+                optimized_plan.node_mut(child_idx).prune();
+                let idx = resolve_path(optimized_plan, &path)
+                    .expect("pruning a child never changes the parent's path");
+                for t in kept {
+                    optimized_plan.node_mut(idx).push_child_tree(t);
+                }
+                continue;
+            }
+        }
 
         // A correlated sub-plan may already bind `to` from its outer context;
         // scanning it here would rebind it. `Argument(None)` is opaque about

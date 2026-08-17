@@ -500,3 +500,47 @@ class testTraversalConstruction():
         result = self.graph.query(q).result_set
         self.env.assertTrue(result == expected)
 
+
+    # A variable-length traverse whose bound endpoint is supplied by an operator
+    # other than a directly selectable scan — a WITH barrier or an UNWIND —
+    # must still anchor on that bound endpoint. Before this was handled, the
+    # planner inserted a scan on the *free* endpoint and the runtime seeded its
+    # DFS with every node carrying that endpoint's label, once per input row.
+    def test_var_len_anchor_with_non_leaf_child(self):
+        g = self.db.select_graph("VarLenAnchorNonLeaf")
+        g.query("""CREATE (a:P {id:0})-[:E]->(b:P {id:1})-[:E]->(c:P {id:2})
+                          -[:E]->(d:P {id:3})-[:E]->(e:P {id:4})""")
+
+        # Baseline: the leaf form already anchors on the bound `u`.
+        leaf = """MATCH path=(p:P)-[:E*0..]->(u:P) WHERE u.id=3 RETURN count(path)"""
+        leaf_plan = str(g.explain(leaf))
+        self.env.assertNotContains("Node By Label Scan | (p:P)", leaf_plan)
+        expected = g.query(leaf).result_set
+
+        # A WITH/LIMIT barrier between the scan and the traverse.
+        barrier = """MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
+                     MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)"""
+        barrier_plan = str(g.explain(barrier))
+        self.env.assertNotContains("Node By Label Scan | (p:P)", barrier_plan)
+        self.env.assertContains("Conditional Variable Length Traverse", barrier_plan)
+        self.env.assertTrue(g.query(barrier).result_set == expected)
+
+        # `u` arriving through an UNWIND chain.
+        unwound = """UNWIND [3] AS wanted
+                     MATCH (u:P) WHERE u.id = wanted
+                     MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)"""
+        unwound_plan = str(g.explain(unwound))
+        self.env.assertNotContains("Node By Label Scan | (p:P)", unwound_plan)
+        self.env.assertTrue(g.query(unwound).result_set == expected)
+
+        # The free endpoint's label is still enforced — by the traverse itself,
+        # as its destination filter — so an unlabeled `p` must match strictly
+        # more rows once a non-P node can reach the same `u`. Attach to the
+        # existing id=3 node so `WITH u LIMIT 1` stays deterministic.
+        g.query("MATCH (d:P {id:3}) CREATE (:Q {id:99})-[:E]->(d)")
+        labeled = g.query("""MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
+                             MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)""").result_set
+        unlabeled = g.query("""MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
+                               MATCH path=(p)-[:E*0..]->(u) RETURN count(path)""").result_set
+        self.env.assertTrue(unlabeled[0][0] > labeled[0][0])
+        g.delete()
