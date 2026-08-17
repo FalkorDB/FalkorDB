@@ -55,6 +55,7 @@
 #![allow(clippy::doc_markdown)]
 
 use std::{
+    cell::RefCell,
     marker::PhantomData,
     mem::{ManuallyDrop, MaybeUninit},
     os::raw::c_void,
@@ -1482,6 +1483,26 @@ pub struct Iter<E: IterExtract = BoolExtract> {
 unsafe impl<E: IterExtract> Send for Iter<E> {}
 unsafe impl<E: IterExtract> Sync for Iter<E> {}
 
+/// Recycled `GxB_Iterator` handles.
+///
+/// A scan of a single row spends most of its instructions *getting* an iterator
+/// rather than reading anything: 1,951 instructions against 296 for the same
+/// scan through one that is re-seeked. Allocation is a large part of that, and
+/// unlike the attach itself it is avoidable — GraphBLAS documents re-attachment
+/// explicitly ("if the iterator is already attached to a matrix, it is detached
+/// and then attached to the given matrix A"), so a handle is reusable across
+/// matrices and a free list is sound.
+///
+/// Thread-local because a `GxB_Iterator` carries a scan position and must not be
+/// shared. Handles are leaked at thread exit rather than freed: a `Drop` on the
+/// pool would run at thread teardown, possibly after `GrB_finalize`, and leaking
+/// at most [`ITER_POOL_MAX`] small structs per thread is the cheaper mistake.
+const ITER_POOL_MAX: usize = 32;
+
+thread_local! {
+    static ITER_POOL: RefCell<Vec<GxB_Iterator>> = const { RefCell::new(Vec::new()) };
+}
+
 impl<E: IterExtract> Drop for Iter<E> {
     /// Frees the GraphBLAS iterator when the `Iter` is dropped.
     fn drop(&mut self) {
@@ -1491,7 +1512,22 @@ impl<E: IterExtract> Drop for Iter<E> {
                 // debug_assert: don't panic in Drop (see Matrix::drop above).
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            if !self.inner.is_null() {
+            if self.inner.is_null() {
+                return;
+            }
+            // `try_borrow_mut` rather than `borrow_mut`: this runs in a `Drop`,
+            // and a panic there would abort. A contended pool simply frees.
+            let recycled = ITER_POOL.with(|pool| {
+                pool.try_borrow_mut().is_ok_and(|mut pool| {
+                    if pool.len() < ITER_POOL_MAX {
+                        pool.push(self.inner);
+                        true
+                    } else {
+                        false
+                    }
+                })
+            });
+            if !recycled {
                 GxB_Iterator_free(&raw mut self.inner);
             }
         }
@@ -1543,14 +1579,20 @@ impl<E: IterExtract> Iter<E> {
             return;
         }
         unsafe {
-            let mut iter = MaybeUninit::uninit();
-            let info = GxB_Iterator_new(iter.as_mut_ptr());
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Iterator_new failed: {info:?}"
-            );
-            let iter = iter.assume_init();
+            let pooled =
+                ITER_POOL.with(|pool| pool.try_borrow_mut().ok().and_then(|mut p| p.pop()));
+            let iter = if let Some(iter) = pooled {
+                iter
+            } else {
+                let mut iter = MaybeUninit::uninit();
+                let info = GxB_Iterator_new(iter.as_mut_ptr());
+                assert_eq!(
+                    info,
+                    GrB_Info::GrB_SUCCESS,
+                    "GxB_Iterator_new failed: {info:?}"
+                );
+                iter.assume_init()
+            };
             let info = GxB_rowIterator_attach(iter, *self.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             self.inner = iter;

@@ -1842,8 +1842,8 @@ impl Graph {
     ) -> usize {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, true))
-            .count()
+            .map(|m| m.col_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of incoming edges to a node, filtered by relationship types.
@@ -1856,8 +1856,8 @@ impl Graph {
         types
             .iter()
             .filter_map(|t| self.get_relationship_matrix(t))
-            .flat_map(|m| m.iter(id.0, id.0, true))
-            .count()
+            .map(|m| m.col_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of outgoing edges from a node.
@@ -1868,8 +1868,8 @@ impl Graph {
     ) -> usize {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, false))
-            .count()
+            .map(|m| m.row_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of outgoing edges from a node, filtered by relationship types.
@@ -1882,8 +1882,8 @@ impl Graph {
         types
             .iter()
             .filter_map(|t| self.get_relationship_matrix(t))
-            .flat_map(|m| m.iter(id.0, id.0, false))
-            .count()
+            .map(|m| m.row_degree(id.0) as usize)
+            .sum()
     }
 
     #[must_use]
