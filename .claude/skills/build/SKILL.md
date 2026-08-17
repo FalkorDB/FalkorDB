@@ -15,7 +15,7 @@ libraries (GraphBLAS and RediSearch) that must be compiled and installed
 Only needed once per machine/container (skip if `cargo build` already works).
 
 ```bash
-./graphblas.sh    # clones, builds (static, PIC) and installs GraphBLAS v10.5.0-beta.1 + LAGraph
+./graphblas.sh    # clones, builds (static, PIC) and installs GraphBLAS v10.5.0 + LAGraph
 ./redisearch.sh   # clones and builds RediSearch (static) into redisearch/RediSearch/bin
 ```
 
