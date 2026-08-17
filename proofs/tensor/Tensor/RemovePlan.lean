@@ -61,9 +61,12 @@ exactly this, which is worth knowing before starting.
 * [`tequiv_applyPlan_removeFold`] — for one pair, replaying its plan and applying
   it once is observationally equal to folding `removeOne` over the same ids.
 * [`reported_iff`] — and the two report the same pair as emptied.
-* [`applyPlan_comm`] — plans for distinct pairs commute, from `key_inj` (distinct
-  pairs own disjoint `me` rows) and from each plan touching only its own forward
-  cell.
+* [`applyPlan_comm`] — plans for distinct pairs commute, so the write phase's
+  hash-map order is irrelevant. Each component's update is named (`dpOp`, `dmOp`,
+  `mtOp`) as a function of the *original* tensor, which is what makes this nine
+  one-line cases: the decision each shape takes reads `m`, which neither shape
+  writes, so both orders take the same decisions. The `me` half is `me_sdiff_comm`,
+  and that is where `key_inj` enters — distinct pairs own distinct rows.
 * [`inv_applyPlan`] — hence the batched path preserves `Inv`, inherited through
   [`TEquiv`] from what `Remove.lean` already proves about the fold.
 
@@ -901,34 +904,162 @@ theorem applyShape_mt (t : Tensor) (p : Pair) (D : Finset Nat) (k : Shape) :
 
 /-! ### Layer operations at distinct points commute -/
 
+theorem Layer.ext' {α : Type} {L M : Layer α} (hd : L.dom = M.dom) (hv : L.val = M.val) :
+    L = M := by cases L; cases M; simp_all
+
 theorem Layer.remove_remove_comm {α : Type} (L : Layer α) (a b : Pair) :
     (L.remove a).remove b = (L.remove b).remove a := by
   simp [Layer.remove, Finset.erase_right_comm]
 
-/-! ### What remains
+theorem Layer.set_set_comm {α : Type} (L : Layer α) {a b : Pair} (h : a ≠ b) (u v : α) :
+    (L.set a u).set b v = (L.set b v).set a u := by
+  refine Layer.ext' (Finset.insert_comm _ _ _) ?_
+  funext q
+  by_cases hqa : q = a
+  · have hqb : q ≠ b := fun hc => h (hqa ▸ hc)
+    simp [Layer.set, hqa, hqb, h]
+  · by_cases hqb : q = b
+    · simp [Layer.set, hqa, hqb, h, Ne.symm h]
+    · simp [Layer.set, hqa, hqb]
 
-The three components above are each described in closed form, and the `me` and
-point-removal halves of the commutation argument are proved (`me_sdiff_comm`,
-`Layer.remove_remove_comm`, plus `Finset.erase_right_comm` and
-`Finset.insert_comm` from mathlib). What is left is the two `Layer` facts a
-demote needs — `(L.remove a).set b v = (L.set b v).remove a` and
-`(L.set a u).set b v = (L.set b v).set a u` for `a ≠ b` — and assembling
-everything into
+theorem Layer.remove_set_comm {α : Type} (L : Layer α) {a b : Pair} (h : a ≠ b) (v : α) :
+    (L.remove a).set b v = (L.set b v).remove a := by
+  refine Layer.ext' ?_ rfl
+  show insert b (L.dom.erase a) = (insert b L.dom).erase a
+  ext q
+  simp only [Finset.mem_insert, Finset.mem_erase]
+  constructor
+  · rintro (rfl | ⟨hqa, hq⟩)
+    · exact ⟨Ne.symm h, Or.inl rfl⟩
+    · exact ⟨hqa, Or.inr hq⟩
+  · rintro ⟨hqa, rfl | hq⟩
+    · exact Or.inl rfl
+    · exact Or.inr ⟨hqa, hq⟩
 
-```text
-TEquiv (applyShape (applyShape t p D k) p' D' k')
-       (applyShape (applyShape t p' D' k') p D k)
-```
+/-! ### The three component operations, and their commutation
 
-for `p ≠ p'` is the remaining step of this file, and it is bookkeeping over the
-nine shape pairs rather than a new idea: `m`, `nrows` and `ncols` are untouched by
-either side, `me` commutes by `me_sdiff_comm` (which is where `key_inj` enters),
-and `dp`/`dm`/`mt` commute because each side writes only at its own pair. Tracked
-as item 3a in `docs/papers/OPEN_WORK.md`.
+Naming each component's update as a function of the *original* tensor is what
+makes the nine-case argument nine one-liners: the decision each shape takes reads
+`m`, which neither shape writes, so both orders take the same decisions. -/
 
-What is *proved* here is the half that carries the risk: the per-pair replay
-agrees with the sequential fold, including the demote-then-empty interleaving.
--/
+def dpOp (m L : Layer Nat) (p : Pair) : Shape → Layer Nat
+  | .meOnly => L
+  | .demote i => if m.get p = some i then L.remove p else L.set p i
+  | .emptied => L.remove p
+
+def dmOp (mdom S : Finset Pair) (p : Pair) : Shape → Finset Pair
+  | .emptied => if p ∈ mdom then insert p S else S
+  | _ => S
+
+def mtOp (S : Finset Pair) (p : Pair) : Shape → Finset Pair
+  | .emptied => S.erase (p.2, p.1)
+  | _ => S
+
+theorem applyShape_dp' (t : Tensor) (p : Pair) (D : Finset Nat) (k : Shape) :
+    (applyShape t p D k).dp = dpOp t.m t.dp p k := by
+  cases k with
+  | meOnly => rfl
+  | demote i => by_cases hm : t.m.get p = some i <;> simp [applyShape, dpOp, hm]
+  | emptied => rfl
+
+theorem applyShape_dm' (t : Tensor) (p : Pair) (D : Finset Nat) (k : Shape) :
+    (applyShape t p D k).dm = dmOp t.m.dom t.dm p k := by
+  cases k with
+  | meOnly => rfl
+  | demote i => by_cases hm : t.m.get p = some i <;> simp [applyShape, dmOp, hm]
+  | emptied => rfl
+
+theorem applyShape_mt' (t : Tensor) (p : Pair) (D : Finset Nat) (k : Shape) :
+    (applyShape t p D k).mt = mtOp t.mt p k := by
+  cases k with
+  | meOnly => rfl
+  | demote i => by_cases hm : t.m.get p = some i <;> simp [applyShape, mtOp, hm]
+  | emptied => rfl
+
+theorem dpOp_comm (m L : Layer Nat) {p p' : Pair} (h : p ≠ p') (k k' : Shape) :
+    dpOp m (dpOp m L p k) p' k' = dpOp m (dpOp m L p' k') p k := by
+  cases k with
+  | meOnly => cases k' <;> rfl
+  | demote i =>
+    cases k' with
+    | meOnly => rfl
+    | demote i' =>
+      simp only [dpOp]
+      split_ifs <;>
+        first
+          | exact Layer.remove_remove_comm _ _ _
+          | exact Layer.remove_set_comm _ h _
+          | exact (Layer.remove_set_comm _ (Ne.symm h) _).symm
+          | exact Layer.set_set_comm _ h _ _
+    | emptied =>
+      simp only [dpOp]
+      split_ifs <;>
+        first
+          | exact Layer.remove_remove_comm _ _ _
+          | exact Layer.remove_set_comm _ h _
+          | exact (Layer.remove_set_comm _ (Ne.symm h) _).symm
+  | emptied =>
+    cases k' with
+    | meOnly => rfl
+    | demote i' =>
+      simp only [dpOp]
+      split_ifs <;>
+        first
+          | exact Layer.remove_remove_comm _ _ _
+          | exact Layer.remove_set_comm _ h _
+          | exact (Layer.remove_set_comm _ (Ne.symm h) _).symm
+    | emptied => exact Layer.remove_remove_comm _ _ _
+
+theorem dmOp_comm (mdom S : Finset Pair) (p p' : Pair) (k k' : Shape) :
+    dmOp mdom (dmOp mdom S p k) p' k' = dmOp mdom (dmOp mdom S p' k') p k := by
+  cases k with
+  | meOnly => cases k' <;> rfl
+  | demote i => cases k' <;> rfl
+  | emptied =>
+    cases k' with
+    | meOnly => rfl
+    | demote i' => rfl
+    | emptied =>
+      simp only [dmOp]
+      split_ifs <;> first | rfl | exact Finset.insert_comm _ _ _
+
+theorem mtOp_comm (S : Finset Pair) (p p' : Pair) (k k' : Shape) :
+    mtOp (mtOp S p k) p' k' = mtOp (mtOp S p' k') p k := by
+  cases k with
+  | meOnly => cases k' <;> rfl
+  | demote i => cases k' <;> rfl
+  | emptied =>
+    cases k' with
+    | meOnly => rfl
+    | demote i' => rfl
+    | emptied => exact Finset.erase_right_comm
+
+/-- **Plans for distinct pairs commute.** The write phase may apply them in any
+order, which is what licenses the Rust iterating a hash map. -/
+theorem applyShape_comm {p p' : Pair} (hbp : Bounded p) (hbp' : Bounded p') (hne : p ≠ p')
+    (D D' : Finset Nat) (k k' : Shape) :
+    TEquiv (applyShape (applyShape t p D k) p' D' k')
+      (applyShape (applyShape t p' D' k') p D k) := by
+  have hkey : key p ≠ key p' := fun hc => hne (key_inj hbp hbp' hc)
+  refine ⟨fun q => by simp only [applyShape_m], ?_, ?_, ?_, ?_,
+    by simp only [applyShape_nrows], by simp only [applyShape_ncols]⟩
+  · intro q
+    simp only [applyShape_dp', applyShape_m]
+    rw [dpOp_comm _ _ hne]
+  · simp only [applyShape_dm', applyShape_m]
+    rw [dmOp_comm]
+  · simp only [applyShape_mt']
+    rw [mtOp_comm]
+  · simp only [applyShape_me]
+    exact me_sdiff_comm hkey _ _
+
+/-- The same statement about plans rather than shapes. -/
+theorem applyPlan_comm {p p' : Pair} (hbp : Bounded p) (hbp' : Bounded p') (hne : p ≠ p')
+    (s s' : PairState) :
+    TEquiv (applyPlan (applyPlan t p s) p' s') (applyPlan (applyPlan t p' s') p s) := by
+  rw [applyPlan_eq_applyShape, applyPlan_eq_applyShape, applyPlan_eq_applyShape,
+    applyPlan_eq_applyShape]
+  exact applyShape_comm hbp hbp' hne _ _ _ _
 
 end Tensor
 end FalkorDB

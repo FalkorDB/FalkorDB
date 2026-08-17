@@ -90,45 +90,39 @@ version bump and a round-trip test against blobs written by the current code.
 
 **Status:** open. Three gaps, in the order they are worth closing.
 
-### 3a. Batch-plan equivalence for deletion — *mostly done*
+### 3a. Batch-plan equivalence for deletion — done
 
-**Status:** the hard half is proved, in `proofs/tensor/Tensor/RemovePlan.lean`
-(934 lines). One bookkeeping step remains.
+**Status:** closed, in `proofs/tensor/Tensor/RemovePlan.lean`.
 
-**Proved.** The read phase's `PairPlan` is modelled (`initPlan`, `stepPlan`,
-`planFold`) along with the write phase (`applyPlan`), and:
+The read phase's `PairPlan` is modelled (`initPlan`, `stepPlan`, `planFold`) along
+with the write phase (`applyPlan`), and:
 
 - `tequiv_applyPlan_removeFold` — replaying one pair's plan and applying it once
   agrees with `foldl removeOne` over the same ids, *including* the
   demote-then-empty interleaving that was the reason to doubt it.
 - `reported_iff` — the batch reports a pair exactly when it emptied one that was
   there.
+- `applyPlan_comm` — plans for distinct pairs commute, so the write phase's
+  hash-map order is irrelevant.
 - `inv_applyPlan`, `edgesAt_applyPlan` — the batched path preserves every
   invariant and denotes the same multigraph, inherited through `TEquiv` rather
   than re-proved.
 
-**The finding worth carrying.** The two paths are **not** equal as terms, and
-attempting term equality is a dead end. Where a pair demotes and is then emptied
-in the same batch, the sequential fold writes the survivor into `dp` and removes
-it again; the batched path never writes it. `Layer` carries a total `val`
-alongside its pattern, so the two layers differ in `val` at a coordinate *outside*
-the pattern — unreadable, since every read goes through `Layer.get`. Hence
-`TEquiv`, an observational equality, is the right statement.
+**The finding worth carrying, if this is ever redone.** The two paths are **not**
+equal as terms, and attempting term equality is a dead end. Where a pair demotes
+and is then emptied in the same batch, the sequential fold writes the survivor
+into `dp` and removes it again; the batched path never writes it. `Layer` carries
+a total `val` alongside its pattern, so the two layers differ in `val` at a
+coordinate *outside* the pattern — unreadable, since every read goes through
+`Layer.get`. Hence `TEquiv`, an observational equality, with `TEquiv.inv`
+transferring the invariant bundle and `TEquiv.removeOne_congr` pushing the
+induction through.
 
-**What is left.** Plans for distinct pairs commute, so the write phase's hash-map
-order is irrelevant. The components are all in place — `applyShape_dp/dm/mt/me`
-describe each component in closed form, `me_sdiff_comm` handles the rows (this is
-where `key_inj` enters), `Layer.remove_remove_comm` and mathlib's
-`Finset.erase_right_comm`/`insert_comm` handle the rest. Two `Layer` facts remain
-unproved, both for `a ≠ b`:
-
-```lean
-(L.remove a).set b v = (L.set b v).remove a
-(L.set a u).set b v = (L.set b v).set a u
-```
-
-then `applyShape_comm` follows by cases over the nine shape pairs. This is
-bookkeeping, not a new idea, but it is not done.
+The commutation half came out cheaply once each component's update was named as a
+function of the original tensor (`dpOp`, `dmOp`, `mtOp`): the decision a shape
+takes reads `m`, which neither shape writes, so both orders take the same
+decisions and the nine shape pairs are one-liners over three `Layer` commutation
+facts plus `me_sdiff_comm` (where `key_inj` enters).
 
 ### 3b. Iteration as the merge that computes it
 
