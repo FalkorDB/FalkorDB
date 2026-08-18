@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__subassign_06s__7ffc507f00020110.c
+// GB_jit__subassign_06s__7ffc507f00020111.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -83,13 +83,13 @@
 #define GB_Mj_BITS 32
 #define GB_Mi_BITS 32
 
-// A matrix: hypersparse
-#define GB_A_IS_HYPER  1
-#define GB_A_IS_SPARSE 0
+// A matrix: sparse
+#define GB_A_IS_HYPER  0
+#define GB_A_IS_SPARSE 1
 #define GB_A_IS_BITMAP 0
 #define GB_A_IS_FULL   0
 #define GBp_A(Ap,k,vlen) Ap [k]
-#define GBh_A(Ah,k)      Ah [k]
+#define GBh_A(Ah,k)      (k)
 #define GBi_A(Ai,p,vlen) Ai [p]
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
@@ -133,15 +133,15 @@
 
 #include "include/GB_assign_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__subassign_06s__7ffc507f00020110
-#define GB_jit_query  GB_jit__subassign_06s__7ffc507f00020110_query
+#define GB_jit_kernel GB_jit__subassign_06s__7ffc507f00020111
+#define GB_jit_query  GB_jit__subassign_06s__7ffc507f00020111_query
 #endif
 #include "template/GB_jit_kernel_subassign_06s.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x5946ced01f2690cb ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    (*hash) = 0xe37cfc60835d35af ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

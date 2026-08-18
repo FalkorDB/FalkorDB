@@ -140,7 +140,7 @@ RUN python3 -m venv venv
 # falkordb-py releases a fix.
 RUN venv/bin/pip install behave falkordb 'redis<8.1' falkordb-bulk-loader hypothesis pytest RLTest
 
-# Build SuiteSparse:GraphBLAS v10.3.1 + LAGraph v1.2.1 with the FalkorDB-
+# Build SuiteSparse:GraphBLAS v10.5.0 + LAGraph v1.3.x with the FalkorDB-
 # specific tweaks: GB_control.h patch, vendored PreJIT kernels from the
 # FalkorDB C repo, matching cmake flags, and shared OpenMP wiring. Single
 # source of truth is graphblas.sh at the repo root — devs invoke it
