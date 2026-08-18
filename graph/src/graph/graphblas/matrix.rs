@@ -1491,7 +1491,9 @@ impl<E: IterExtract> Drop for Iter<E> {
                 // debug_assert: don't panic in Drop (see Matrix::drop above).
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            GxB_Iterator_free(&raw mut self.inner);
+            if !self.inner.is_null() {
+                GxB_Iterator_free(&raw mut self.inner);
+            }
         }
     }
 }
@@ -1509,6 +1511,37 @@ impl<E: IterExtract> Iter<E> {
         min_row: u64,
         max_row: u64,
     ) -> Self {
+        let mut it = Self::detached(m);
+        it.seek(min_row, max_row);
+        it
+    }
+
+    /// An iterator over `m` with no `GxB_Iterator` behind it yet: it yields
+    /// nothing until [`Self::seek`] attaches one.
+    ///
+    /// `GxB_Iterator_new` + `GxB_rowIterator_attach` + the matching free cost
+    /// about 1,700 instructions, which is most of what a single-row scan of a
+    /// small matrix pays. A caller that has established the range holds no
+    /// entry can skip all of it and still hand back a real iterator — one that
+    /// attaches if it is ever re-seeked somewhere the answer differs, so
+    /// skipping stays an optimisation rather than a promise the caller has to
+    /// keep.
+    #[must_use]
+    pub fn detached<T>(m: &Matrix<T>) -> Self {
+        Self {
+            m: m.m.clone(),
+            inner: null_mut(),
+            depleted: true,
+            max_row: 0,
+            _extract: PhantomData,
+        }
+    }
+
+    /// Attach the GraphBLAS iterator if this is still detached.
+    fn attach(&mut self) {
+        if !self.inner.is_null() {
+            return;
+        }
         unsafe {
             let mut iter = MaybeUninit::uninit();
             let info = GxB_Iterator_new(iter.as_mut_ptr());
@@ -1518,25 +1551,9 @@ impl<E: IterExtract> Iter<E> {
                 "GxB_Iterator_new failed: {info:?}"
             );
             let iter = iter.assume_init();
-            let info = GxB_rowIterator_attach(iter, *m.m, null_mut());
+            let info = GxB_rowIterator_attach(iter, *self.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            let mut info = GxB_rowIterator_seekRow(iter, min_row);
-            debug_assert!(
-                info == GrB_Info::GrB_SUCCESS
-                    || info == GrB_Info::GrB_NO_VALUE
-                    || info == GrB_Info::GxB_EXHAUSTED
-            );
-            while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row {
-                info = GxB_rowIterator_nextRow(iter);
-            }
-            Self {
-                m: m.m.clone(),
-                inner: iter,
-                depleted: info != GrB_Info::GrB_SUCCESS
-                    || GxB_rowIterator_getRowIndex(iter) > max_row,
-                max_row,
-                _extract: PhantomData,
-            }
+            self.inner = iter;
         }
     }
 }
@@ -1551,6 +1568,7 @@ impl<E: IterExtract> Iter<E> {
         min_row: u64,
         max_row: u64,
     ) {
+        self.attach();
         unsafe {
             let mut info = GxB_rowIterator_seekRow(self.inner, min_row);
             debug_assert!(
