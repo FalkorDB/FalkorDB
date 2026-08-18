@@ -3368,6 +3368,16 @@ matrix keyed by a packed coordinate. Stating the pattern in those terms, with
 the invariant discipline of \S\ref{sec:invariants} as its obligations, may be
 the most transferable part of this design.
 
+That statement now exists as a companion note, \emph{Inline-First with Sentinel
+Promotion: A Pattern for Sparse Stores Whose Cells Usually Hold One Value}
+(\texttt{pattern.tex} in this artifact). It says as little about edges as it
+can, and it carries three things this paper cannot: the invariant set restated
+as obligations an adopter inherits rather than properties this design has, an
+explicit account of when \emph{not} to use the pattern --- including a candidate
+instantiation we sketch and then argue against --- and the measurement traps of
+\S\ref{sec:evalfanout} and \S\ref{sec:evalentry} generalised, since both of the
+attributions they correct were ours and in print.
+
 % =====================================================================
 \section{Conclusion}
 

@@ -480,18 +480,54 @@ what was and was not measured.
 
 ---
 
-## 7. Generalising the pattern
+## 7. Generalising the pattern — done
 
-**Status:** open, conceptual, and the most transferable part of the design.
+**Status:** closed, as `docs/papers/pattern.tex` (7 pages, standalone).
 
-Inline-first with sentinel promotion needs nothing specific to edge identifiers.
-Any sparse-matrix-backed store whose cell values are drawn from a domain strictly
-smaller than the machine word, and whose multiplicity distribution is dominated
-by 1, can use it: reserve a point outside the domain, keep the common case
-inline, overflow to one shared hypersparse matrix keyed by a packed coordinate.
+*Inline-first with sentinel promotion* stated with the edges taken out: any
+sparse store whose cells are wider than their value domain and whose
+multiplicity is dominated by 1. `tensor.tex` is its worked instantiation and
+now points at it from the future-work section.
 
-Writing it up as a pattern means stating the obligations, not just the mechanism:
-the invariant set is what a user of the pattern inherits, and the paper's
-experience is that the promotion-completeness invariant is the one that makes a
-cell value self-describing and the cancel-to-clean invariant is the one that is
-easy to get wrong. A short paper or a design note, not code.
+The mechanism was never the hard part — it is a paragraph, and arguably
+folklore. What the note carries that the mechanism does not:
+
+- **Two preconditions**, stated so they can be *checked* rather than assumed.
+  Sentinel headroom is a property of the domain, not of current data: "no id is
+  ever 2^64-1 in practice" is not headroom, "ids come from a counter bounded by
+  the index limit" is. The distinction matters because a sentinel collision is
+  the one failure with no graceful degradation — it returns a wrong answer
+  rather than performing badly.
+- **Six obligations**, and which ones actually bite. Promotion completeness is
+  the whole value proposition (it is what makes a cell self-describing, hence
+  why no reader probes the overflow speculatively — exactly the cost design (B)
+  pays forever). Cancel-to-clean is invisible until something *counts*, which is
+  why it was this design's hardest bug: reads are unaffected, so tests that read
+  pass.
+- **One obligation you should decline.** Count agreement began as a maintained
+  counter and is now derived, which deleted the invariant and every per-mutation
+  discipline attached to it. Generalised: *in a design whose invariants make a
+  quantity structurally determined, caching it converts a theorem into an
+  obligation.* Stated anyway, because an adopter who does not know it exists
+  will cache the count.
+- **The cost, not just the benefit.** Ten states per cell against a Boolean
+  store's four, three of them existing only because cells carry values, plus the
+  canonicalisation every mutation path must respect. A design that keeps the
+  primary store Boolean needs none of it — and pays a second lookup on every
+  read forever. That trade is the decision, stated in one sentence.
+- **A second instantiation, sketched and then argued against.** Node labels fit
+  both preconditions and would still probably lose on space, because the
+  baseline (a bool matrix, no value array) has no container to displace. Kept
+  precisely because a pattern note exhibiting only successes is not a guide.
+- **The measurement traps, generalised.** All three caught us in print: a ratio
+  of two whole-system differences coming out backwards; a plausible mechanism
+  surviving a whole revision because nothing asked it to account for the total
+  (81 instructions of 1,990); and instruction counts erring in *both* directions
+  once residency changes. With the constructive corollary — the pattern's space
+  advantage is also a latency advantage, and the space constants predict where.
+- **When not to use it**, as five explicit disqualifiers.
+
+**Still open, and deliberately so:** the note's `pattern.tex` claims transfer
+from one instantiation. A second *built* instantiation would be the thing that
+turns it from a generalisation into a pattern; the labels sketch says what would
+have to be measured first.
