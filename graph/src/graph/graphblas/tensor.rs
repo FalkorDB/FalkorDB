@@ -662,23 +662,14 @@ impl Tensor {
         self.m.wait();
         self.dp.wait();
         self.dm.wait();
-        // `grown` blocks each layer into the top-left of a fresh matrix with
-        // `GxB_Matrix_concat` — one bulk copy, no tuple round-trip. Measured
-        // against the row-iterate + `GrB_Matrix_build` rebuild it replaced
-        // (`grow_cost_concat_vs_rebuild`, uint64 layer, 1.14x dims): 1.2 ms vs
-        // 7.6-8.4 ms at 1m entries, 1.1-1.4 ms vs 3.5-3.8 ms at 262k, and
-        // roughly par at 16k. Below that the rebuild is the cheaper of the two,
-        // which is why an empty delta skips the concat entirely rather than
-        // growing a matrix with nothing in it. End to end on a grow-heavy bulk
-        // create (8 x 50k node-pairs + edges) this is 0.905x the wall clock with
-        // byte-identical `GRAPH.MEMORY`.
-        //
-        // It does churn more transient memory: `concat`'s internal workspace
-        // scales with the target row count, which `bench measure` sees as +6.2%
-        // allocated bytes on `write 100k` (76.1 -> 80.8 MB, stable to 0.05%
-        // across runs). All of it is freed inside the query — net retained is
-        // 295 KB vs 279 KB — and the suite total moves 1.0039x, so this costs
-        // allocator traffic on a capacity grow, not resident memory.
+        // `grown` re-emits each layer at the target dims as a `dup` plus a
+        // `GrB_Matrix_resize`. Measured against the row-iterate +
+        // `GrB_Matrix_build` rebuild it replaced (`grow_cost_rebuild_vs_resize`,
+        // uint64 layer, 1.14x dims): 0.47 ms against 3.7 ms at 262k entries and
+        // 0.81 ms against 9.0 ms at 1m, and cheaper than the `GxB_Matrix_concat`
+        // formulation that sat here before at every size measured. An empty
+        // delta still skips it entirely rather than growing a matrix with
+        // nothing in it.
         let new_m = self.m.grown(nrows, ncols);
         new_m.wait();
         self.m.replace(new_m);

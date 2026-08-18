@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__bitmap_assign_2_whole__0000103f0003eea2__LG_MF_flowEdge.c
+// GB_jit__bitmap_assign_2_whole__0000003f0002bba2.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -10,7 +10,7 @@
 
 #include "include/GB_jit_kernel.h"
 
-// assign: C<!M,bitmap,struct> = A 
+// assign: C<M,bitmap,struct> = A 
 #define GB_ASSIGN_KIND GB_ASSIGN
 #define GB_SCALAR_ASSIGN 0
 #define GB_I_KIND GB_ALL
@@ -22,10 +22,6 @@
 #define GB_C_REPLACE 0
 
 // accum: not present
-
-typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
-#define GB_LG_MF_flowEdge_USER_DEFN \
-"typedef struct{ double capacity; double flow; } LG_MF_flowEdge;"
 
 #define GB_ACCUMULATE_scalar(Cx,pC,ywork,C_iso) /* unused */
 #define GB_ACCUMULATE_aij(Cx,pC,Ax,pA,A_iso,ywork,C_iso) /* unused */
@@ -43,7 +39,7 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 #define GB_C_NHELD(e) int64_t e = (C->vlen * C->vdim)
 #define GB_C_ISO 0
 #define GB_C_IN_ISO 0
-#define GB_C_TYPE LG_MF_flowEdge
+#define GB_C_TYPE double
 #define GB_PUTC(cwork,Cx,p) Cx [p] = cwork
 #define GB_Cp_TYPE uint64_t
 #define GB_Cj_TYPE uint64_t
@@ -53,10 +49,11 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 #define GB_Cp_BITS 64
 #define GB_Cj_BITS 64
 #define GB_Ci_BITS 64
-#define GB_DECLAREC(cwork) LG_MF_flowEdge cwork
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [0]
-#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso) Cx [pC] = cwork
-#define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [0]
+#define GB_DECLAREC(cwork) double cwork
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [pA]
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso) \
+    GB_COPY_A_to_C (Cx, pC, Ax, pA, A_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [p]
 #define GB_COPY_cwork_to_C(Cx,pC,cwork,C_iso) /* unused */
 #define GB_COPY_scalar_to_cwork(cwork,scalar) /* unused */
 
@@ -69,11 +66,11 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 #define GBh_M(Mh,k)      (k)
 #define GBi_M(Mi,p,vlen) ((p) % (vlen))
 #define GBb_M(Mb,p)      Mb [p]
-// structural mask (complemented):
+// structural mask:
 #define GB_M_TYPE void
 #define GB_MCAST(Mx,p,msize) 1
 #define GB_MASK_STRUCT 1
-#define GB_MASK_COMP   1
+#define GB_MASK_COMP   0
 #define GB_NO_MASK     0
 #define GB_M_NVALS(e) int64_t e = M->nvals
 #define GB_M_NHELD(e) int64_t e = (M->vlen * M->vdim)
@@ -97,8 +94,8 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 #define GBb_A(Ab,p)      Ab [p]
 #define GB_A_NVALS(e) int64_t e = A->nvals
 #define GB_A_NHELD(e) int64_t e = (A->vlen * A->vdim)
-#define GB_A_ISO 1
-#define GB_A_TYPE LG_MF_flowEdge
+#define GB_A_ISO 0
+#define GB_A_TYPE double
 #define GB_A2TYPE void
 #define GB_DECLAREA(a)
 #define GB_GETA(a,Ax,p,iso)
@@ -118,19 +115,19 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 
 #include "include/GB_assign_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__bitmap_assign_2_whole__0000103f0003eea2__LG_MF_flowEdge
-#define GB_jit_query  GB_jit__bitmap_assign_2_whole__0000103f0003eea2__LG_MF_flowEdge_query
+#define GB_jit_kernel GB_jit__bitmap_assign_2_whole__0000003f0002bba2
+#define GB_jit_query  GB_jit__bitmap_assign_2_whole__0000003f0002bba2_query
 #endif
 #include "template/GB_jit_kernel_bitmap_assign_2_whole.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xeffcfee5790a489c ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    (*hash) = 0xc4e4f8e3d25cb3f7 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
-    defn [2] = GB_LG_MF_flowEdge_USER_DEFN ;
-    defn [3] = defn [2] ;
+    defn [2] = NULL ;
+    defn [3] = NULL ;
     defn [4] = NULL ;
     return (true) ;
 }
