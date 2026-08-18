@@ -70,13 +70,68 @@
 
 #[cfg(test)]
 mod fold_cost_bench;
+#[cfg(test)]
+mod issue_2430_bench;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;
+#[cfg(test)]
+mod oscillation_bench;
 pub mod serialization;
 pub mod tensor;
+#[cfg(test)]
+mod tensor_cost_bench;
 pub mod vector;
 pub mod versioned_matrix;
+
+/// The instruction counter every bench in this directory measures with.
+///
+/// One declaration, shared, for the same reason as [`test_init`]: three copies
+/// of an `extern "C"` block that disagreed on a parameter type is a warning the
+/// compiler is right to raise, and a bench that reads a different field offset
+/// than the others would be worse than a warning.
+#[cfg(test)]
+pub(crate) mod instr {
+    /// Running instruction total for this process, or `None` where the platform
+    /// has no cheap equivalent.
+    ///
+    /// macOS exposes `proc_pid_rusage(RUSAGE_INFO_V4)` to any caller for its own
+    /// pid with no privileges; `ri_instructions` is `u64` field 29 of the struct
+    /// body, which starts after the 16-byte `ri_uuid`. Same offsets as
+    /// `bench/src/falkorbench/counters.py::read_rusage`, which is where the
+    /// engine-level numbers these benches are compared against come from —
+    /// keeping them identical is the point.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn read_instr() -> Option<u64> {
+        const RUSAGE_INFO_V4: i32 = 4;
+        const RI_INSTRUCTIONS_OFF: usize = 16 + 29 * 8;
+
+        unsafe extern "C" {
+            fn proc_pid_rusage(
+                pid: i32,
+                flavor: i32,
+                buffer: *mut u8,
+            ) -> i32;
+            fn getpid() -> i32;
+        }
+        let mut buf = [0u8; 1024];
+        // SAFETY: `buf` is 1024 bytes, far larger than `struct rusage_info_v4`
+        // (~0x150 bytes), and the kernel writes at most that flavor's size.
+        if unsafe { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, buf.as_mut_ptr()) } != 0 {
+            return None;
+        }
+        Some(u64::from_le_bytes(
+            buf[RI_INSTRUCTIONS_OFF..RI_INSTRUCTIONS_OFF + 8]
+                .try_into()
+                .expect("8 bytes"),
+        ))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) fn read_instr() -> Option<u64> {
+        None
+    }
+}
 
 /// Process-wide GraphBLAS initialization for unit tests. `GrB_init` may only
 /// be called once per process, so every `#[cfg(test)]` module must go through
