@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__union__e3f312bbb0bbb45.c
+// GB_jit__trans_unop__17c802bb0bb5.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -10,17 +10,23 @@
 
 #include "include/GB_jit_kernel.h"
 
-// op: (minus, double)
+// op: (identity, double)
 
-// binary operator types:
+// unary operator types:
 #define GB_Z_TYPE double
 #define GB_X_TYPE double
-#define GB_Y_TYPE double
+#define GB_Y_TYPE void
+#define GB_DECLAREZ(zwork) double zwork
+#define GB_DECLAREX(xwork) double xwork
+#define GB_DECLAREY(ywork) void ywork
 
-// binary operator:
-#define GB_BINOP(z,x,y,i,j) z = (x) - (y)
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
-#define GB_COPY_B_to_C(Cx,pC,Bx,pB,B_iso)
+// unary operator:
+#define GB_UNARYOP(z,x,i,j,y) z = x
+#define GB_DEPENDS_ON_X 1
+#define GB_DEPENDS_ON_Y 0
+#define GB_DEPENDS_ON_I 0
+#define GB_DEPENDS_ON_J 0
+#define GB_UNOP(Cx,pC,Ax,pA,A_iso,i,j,y) Cx [pC] = Ax [pA]
 
 // C matrix: sparse
 #define GB_C_IS_HYPER  0
@@ -38,29 +44,13 @@
 #define GB_C_TYPE double
 #define GB_PUTC(c,Cx,p) Cx [p] = c
 #define GB_Cp_TYPE uint32_t
-#define GB_Cj_TYPE uint32_t
-#define GB_Cj_SIGNED_TYPE int32_t
+#define GB_Cj_TYPE uint64_t
+#define GB_Cj_SIGNED_TYPE int64_t
 #define GB_Ci_TYPE uint32_t
 #define GB_Ci_SIGNED_TYPE int32_t
 #define GB_Cp_BITS 32
-#define GB_Cj_BITS 32
+#define GB_Cj_BITS 64
 #define GB_Ci_BITS 32
-#define GB_EWISEOP(Cx,p,aij,bij,i,j) GB_BINOP (Cx [p], aij, bij, i, j)
-
-// M matrix: none
-#define GB_M_TYPE void
-#define GB_MCAST(Mx,p,msize) 1
-#define GB_MASK_STRUCT 1
-#define GB_MASK_COMP   0
-#define GB_NO_MASK     1
-#define GB_Mp_TYPE uint64_t
-#define GB_Mj_TYPE uint64_t
-#define GB_Mj_SIGNED_TYPE int64_t
-#define GB_Mi_TYPE uint64_t
-#define GB_Mi_SIGNED_TYPE int64_t
-#define GB_Mp_BITS 64
-#define GB_Mj_BITS 64
-#define GB_Mi_BITS 64
 
 // A matrix: sparse
 #define GB_A_IS_HYPER  0
@@ -73,11 +63,12 @@
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
 #define GB_A_NHELD(e) GB_A_NVALS(e)
-#define GB_A_ISO 1
+#define GB_A_HAS_ZOMBIES 0
+#define GB_A_ISO 0
 #define GB_A_TYPE double
 #define GB_A2TYPE double
 #define GB_DECLAREA(a) double a
-#define GB_GETA(a,Ax,p,iso) a = Ax [0]
+#define GB_GETA(a,Ax,p,iso) a = Ax [p]
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
 #define GB_Aj_SIGNED_TYPE int32_t
@@ -87,42 +78,17 @@
 #define GB_Aj_BITS 32
 #define GB_Ai_BITS 32
 
-// B matrix: sparse
-#define GB_B_IS_HYPER  0
-#define GB_B_IS_SPARSE 1
-#define GB_B_IS_BITMAP 0
-#define GB_B_IS_FULL   0
-#define GBp_B(Bp,k,vlen) Bp [k]
-#define GBh_B(Bh,k)      (k)
-#define GBi_B(Bi,p,vlen) Bi [p]
-#define GBb_B(Bb,p)      1
-#define GB_B_NVALS(e) int64_t e = B->nvals
-#define GB_B_NHELD(e) GB_B_NVALS(e)
-#define GB_B_ISO 1
-#define GB_B_TYPE double
-#define GB_B2TYPE double
-#define GB_DECLAREB(b) double b
-#define GB_GETB(b,Bx,p,iso) b = Bx [0]
-#define GB_Bp_TYPE uint32_t
-#define GB_Bj_TYPE uint32_t
-#define GB_Bj_SIGNED_TYPE int32_t
-#define GB_Bi_TYPE uint32_t
-#define GB_Bi_SIGNED_TYPE int32_t
-#define GB_Bp_BITS 32
-#define GB_Bj_BITS 32
-#define GB_Bi_BITS 32
-
-#include "include/GB_ewise_shared_definitions.h"
+#include "include/GB_kernel_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__union__e3f312bbb0bbb45
-#define GB_jit_query  GB_jit__union__e3f312bbb0bbb45_query
+#define GB_jit_kernel GB_jit__trans_unop__17c802bb0bb5
+#define GB_jit_query  GB_jit__trans_unop__17c802bb0bb5_query
 #endif
-#include "template/GB_jit_kernel_union.c"
+#include "template/GB_jit_kernel_trans_unop.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xdffd86deb3e2a922 ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    (*hash) = 0x2f6366eafd628fd6 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

@@ -1,5 +1,6 @@
 from common import *
 from index_utils import *
+import re
 
 GRAPH_ID = "TraversalConstruction"
 
@@ -95,15 +96,130 @@ class testTraversalConstruction():
             self.env.assertTrue("Filter" in ops[3])
 
     def test_filter_as_early_as_possible(self):
+        # The branch point B is two hops from either filtered endpoint, so the
+        # other filtered node is reached by two traverses, not one. This used to
+        # assert it at ops[2] — a single hop away — which only held because the
+        # chain-reversal emitted the far hop at the bottom of the plan, where
+        # neither of its endpoints was bound and the runtime answered it by
+        # enumerating every edge of the type. The property this test is named
+        # for is unchanged: each filtered node is filtered immediately after the
+        # operator that binds it.
         q = """MATCH (A:L {v: 1})-->(B)-->(C), (B)-->(D:L {v: 1}) RETURN 1"""
         plan = str(self.graph.explain(q))
         ops = plan.split(os.linesep)
         ops.reverse()
         self.env.assertTrue("Node By Label Scan" in ops[0]) # scan either A or D
-        self.env.assertTrue("Filter" in ops[1]) # filter either A or D
-        self.env.assertTrue("Conditional Traverse" in ops[2]) # traverse to the other filtered node
-        self.env.assertTrue("Filter" in ops[3]) # filter the other node as early as possible
-        self.env.assertTrue("Conditional Traverse" in ops[4]) # continue traversing
+        self.env.assertTrue("Filter" in ops[1]) # filter it immediately
+        self.env.assertTrue("Conditional Traverse" in ops[2]) # traverse to the branch point
+        self.env.assertTrue("Conditional Traverse" in ops[3]) # traverse to the other filtered node
+        self.env.assertTrue("Filter" in ops[4]) # filter it as soon as it is bound
+        self.env.assertTrue("Conditional Traverse" in ops[5]) # continue traversing
+
+    # Endpoint scoring reads label cardinality and index presence, so the
+    # reversal cases need a graph that holds both — an indexed anchor is the
+    # shape the benchmark measures. A separate graph keeps that data from moving
+    # the plans the tests above assert on an empty one.
+    def _reversal_graph(self):
+        g = self.db.select_graph(GRAPH_ID + "Reversal")
+        # MERGE first: it creates the key, and listing indices on a key that
+        # does not exist yet is an error rather than an empty answer.
+        g.query("MERGE (a:M {v: 0})-[:E]->(b:M {v: 2})-[:E]->(c:M {v: 1})")
+        if not list_indicies(g).result_set:
+            create_node_range_index(g, "M", "v", sync=True)
+        return g
+
+    def _assert_traverses_start_bound(self, graph, q):
+        # Every traverse prints its source alias first, whichever way its arrow
+        # points, so that alias must already be bound by an operator below it. A
+        # traverse whose source nothing binds is not wrong — the runtime answers
+        # it by enumerating every edge of the type, once per input row — but on
+        # the 10k-node benchmark graph that read as 34.4M instructions for
+        # `MATCH (a)-[:KNOWS]->(b)-[:KNOWS]->(c {id: 1})` against 419k for the
+        # same query on the C engine.
+        plan = str(graph.explain(q))
+        ops = plan.split(os.linesep)
+        ops.reverse()
+        bound = set()
+        for op in ops:
+            body = op.split("|", 1)[1] if "|" in op else ""
+            # one alias per parenthesised endpoint, label suffix dropped; a named
+            # edge prints in brackets and is therefore skipped
+            aliases = [a.split(":")[0].strip() for a in re.findall(r"\(([^)]*)\)", body)]
+            if "Conditional Traverse" in op or "Expand Into" in op:
+                if aliases and aliases[0] not in bound:
+                    print(f"traverse from unbound {aliases[0]!r}:\n{plan}", flush=True)
+                    self.env.assertTrue(False)
+                bound.update(aliases)
+            else:
+                # scans, Argument, Project, Unwind … bind what they name
+                bound.update(aliases)
+
+    def test_reversed_chain_hop_order(self):
+        # Reversing a chain to start from the better endpoint has to reorder the
+        # hops as well, or the bottom of the plan ends up holding the far hop —
+        # the one whose endpoints nothing below it binds.
+        g = self._reversal_graph()
+        for q in ["MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) RETURN count(a)",
+                  "MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) WHERE b.v > 0 RETURN count(a)",
+                  "MATCH (a)-[:E]->(b)-[:E]->(d)-[:E]->(c:M {v: 1}) RETURN count(a)",
+                  "MATCH (c:M {v: 1})-[:E]->(b)-[:E]->(a) RETURN count(a)",
+                  # branching: only the path to the branch point is reversed, so
+                  # the hop leaving it stays in storage direction
+                  "MATCH (A:M {v: 1})-->(B)-->(C), (B)-->(D:M {v: 1}) RETURN 1",
+                  "MATCH (A:M)-->(B)-->(C), (B)-->(D:M {v: 1}) RETURN 1"]:
+            self._assert_traverses_start_bound(g, q)
+
+    def test_selective_hop_runs_first(self):
+        # Among the hops that *can* run next, the one that constrains the most
+        # goes first, so a selective side prunes before an unselective side fans
+        # out. Pattern order decides ties only. This is what the C engine gets
+        # from the label-cardinality tiebreak in its scored search; taking the
+        # pattern's order instead measured 1,712,085 instructions against
+        # 780,735 on a 200-node branch whose two sides reach 50 nodes and 1.
+        g = self.db.select_graph(GRAPH_ID + "Selective")
+        g.query("UNWIND range(0, 19) AS i CREATE (:S {v: i})")
+        g.query("UNWIND range(0, 999) AS i CREATE (:Wide {v: i})")
+        g.query("MATCH (s:S), (w:Wide) WHERE w.v / 50 = s.v CREATE (s)-[:E]->(w)")
+        g.query("CREATE (:Narrow {v: 0})")
+        g.query("MATCH (s:S {v: 0}), (n:Narrow) CREATE (s)-[:E]->(n)")
+
+        # the pattern mentions the wide side first; the plan must not
+        q = "MATCH (s:S {v: 0})-[:E]->(w:Wide), (s)-[:E]->(n:Narrow) RETURN count(*)"
+        ops = str(g.explain(q)).split(os.linesep)
+        ops.reverse()
+        narrow_at = next(i for i, o in enumerate(ops) if "(:Narrow)" in o or "(n:Narrow)" in o)
+        wide_at = next(i for i, o in enumerate(ops) if "(w:Wide)" in o)
+        self.env.assertTrue(narrow_at < wide_at)
+
+        # and every traverse still starts from something bound
+        self._assert_traverses_start_bound(g, q)
+
+    def test_reversed_chain_mid_filter_placement(self):
+        # A filter between the hops of a reversed chain belongs above the hop
+        # that binds the alias it reads, which after reordering is a different
+        # hop than before.
+        q = """MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) WHERE b.v > 0 RETURN count(a)"""
+        ops = str(self._reversal_graph().explain(q)).split(os.linesep)
+        ops.reverse()
+        self.env.assertTrue("Node By Index Scan | (c:M)" in ops[0])
+        self.env.assertTrue("Conditional Traverse | (c)<-(b)" in ops[1]) # binds b
+        self.env.assertTrue("Filter" in ops[2])                          # then filters b
+        self.env.assertTrue("Conditional Traverse | (b)<-(a)" in ops[3])
+
+    def test_reversed_chain_results_match(self):
+        # The broken order produced correct rows by brute force, so the guard
+        # against regressing it has to check rows as well as plan shape.
+        g = self._reversal_graph()
+        res = g.query("""MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) RETURN a.v, b.v""")
+        self.env.assertEqual(res.result_set, [[0, 2]])
+        res = g.query(
+            """MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) WHERE b.v > 0 RETURN a.v, b.v"""
+        )
+        self.env.assertEqual(res.result_set, [[0, 2]])
+        res = g.query(
+            """MATCH (a)-[:E]->(b)-[:E]->(c:M {v: 1}) WHERE b.v > 5 RETURN a.v, b.v"""
+        )
+        self.env.assertEqual(res.result_set, [])
 
     def test_long_pattern(self):
         q = """match (a)--(b)--(c)--(d)--(e)--(f)--(g)--(h)--(i)--(j)--(k)--(l) return *"""
