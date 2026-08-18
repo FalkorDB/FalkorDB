@@ -1659,6 +1659,48 @@ impl<'a> Runtime<'a> {
         labels.iter().map(|l| g.get_label_by_id(*l)).collect()
     }
 
+    /// Test whether `id` carries every label in `required`, without building
+    /// the node's label set. `None` means "cannot answer from the label matrix
+    /// alone" — the caller must fall back to [`Self::get_node_labels`].
+    ///
+    /// `n:Person` reaches the runtime as a `hasLabels` call, and answering it
+    /// through `get_node_labels` costs two `OrderSet`s and an `Arc<String>`
+    /// clone per stored label, then compares label *names*, for every row. On
+    /// the benchmark graph `MATCH (n) WHERE n:Person RETURN count(n)` spent
+    /// 48.9M instructions over 15k nodes — 3.3k a row — against 22.4M on the C
+    /// engine, while the same scan filtering on a property (`n.id < 5`) costs
+    /// 2.0M. A label test is one bit in the label matrix; this reads that bit.
+    ///
+    /// Falls back when a label was added or removed on this node in this query,
+    /// or when the node is pending-deleted, because then the committed matrix is
+    /// not the whole truth.
+    pub fn node_has_all_labels(
+        &self,
+        id: NodeId,
+        required: &[Value],
+    ) -> Option<bool> {
+        if self.deleted_nodes.borrow().contains_key(&id)
+            || self.pending.borrow().has_label_overrides(id)
+        {
+            return None;
+        }
+        let g = self.g.borrow();
+        for label in required {
+            let Value::String(name) = label else {
+                return None;
+            };
+            // An unknown label cannot be on any node, and resolving it is a walk
+            // over the label names — a handful of entries, no allocation.
+            let Some(label_id) = g.get_label_id(name) else {
+                return Some(false);
+            };
+            if !g.node_has_label_id(id, label_id) {
+                return Some(false);
+            }
+        }
+        Some(true)
+    }
+
     pub fn get_node_attrs(
         &self,
         id: NodeId,

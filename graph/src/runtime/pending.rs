@@ -450,6 +450,21 @@ impl Pending {
         }
     }
 
+    /// True when this query has added or removed labels on `id`, so the
+    /// committed label matrix alone cannot answer "does it have label L".
+    ///
+    /// Lets a label *test* skip materializing the node's whole label set in the
+    /// common case — a read query with no label mutations — while keeping
+    /// [`Self::update_node_labels`] as the answer whenever the pending state
+    /// actually bears on it.
+    pub fn has_label_overrides(
+        &self,
+        id: NodeId,
+    ) -> bool {
+        let raw_id: u64 = id.into();
+        self.set_labels.contains_key(&raw_id) || self.remove_labels.contains_key(&raw_id)
+    }
+
     pub fn update_node_labels(
         &self,
         id: NodeId,

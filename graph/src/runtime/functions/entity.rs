@@ -104,6 +104,12 @@ pub fn register(funcs: &mut Functions) {
                         }
                     }
 
+                    // Read the label matrix directly where it can answer: this
+                    // is the `n:Label` predicate's hot path, once per row.
+                    if let Some(has_all) = runtime.node_has_all_labels(id, required_labels) {
+                        return Ok(Value::Bool(has_all));
+                    }
+
                     // Get the actual labels of the node
                     let node_labels = runtime.get_node_labels(id);
                     // Check if all required labels are present
