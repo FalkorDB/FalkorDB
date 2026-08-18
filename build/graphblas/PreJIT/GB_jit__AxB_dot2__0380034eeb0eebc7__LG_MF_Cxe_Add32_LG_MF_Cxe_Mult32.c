@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__AxB_dot2__0380434eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32.c
+// GB_jit__AxB_dot2__0380034eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -67,17 +67,17 @@ void LG_MF_Cxe_Mult32(LG_MF_resultTuple32 * z, const LG_MF_compareTuple32 * x, G
 
 // special cases:
 
-// C matrix: bitmap
+// C matrix: full
 #define GB_C_IS_HYPER  0
 #define GB_C_IS_SPARSE 0
-#define GB_C_IS_BITMAP 1
-#define GB_C_IS_FULL   0
+#define GB_C_IS_BITMAP 0
+#define GB_C_IS_FULL   1
 #define GBp_C(Cp,k,vlen) ((k) * (vlen))
 #define GBh_C(Ch,k)      (k)
 #define GBi_C(Ci,p,vlen) ((p) % (vlen))
-#define GBb_C(Cb,p)      Cb [p]
-#define GB_C_NVALS(e) int64_t e = C->nvals
-#define GB_C_NHELD(e) int64_t e = (C->vlen * C->vdim)
+#define GBb_C(Cb,p)      1
+#define GB_C_NVALS(e) int64_t e = (C->vlen * C->vdim)
+#define GB_C_NHELD(e) GB_C_NVALS(e)
 #define GB_C_ISO 0
 #define GB_C_IN_ISO 0
 #define GB_C_TYPE LG_MF_resultTuple32
@@ -117,11 +117,11 @@ void LG_MF_Cxe_Mult32(LG_MF_resultTuple32 * z, const LG_MF_compareTuple32 * x, G
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
 #define GB_A_NHELD(e) GB_A_NVALS(e)
-#define GB_A_ISO 1
+#define GB_A_ISO 0
 #define GB_A_TYPE LG_MF_compareTuple32
 #define GB_A2TYPE LG_MF_compareTuple32
 #define GB_DECLAREA(a) LG_MF_compareTuple32 a
-#define GB_GETA(a,Ax,p,iso) a = Ax [0]
+#define GB_GETA(a,Ax,p,iso) a = Ax [p]
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
 #define GB_Aj_SIGNED_TYPE int32_t
@@ -158,21 +158,21 @@ void LG_MF_Cxe_Mult32(LG_MF_resultTuple32 * z, const LG_MF_compareTuple32 * x, G
 
 #include "include/GB_mxm_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__AxB_dot2__0380434eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32
-#define GB_jit_query  GB_jit__AxB_dot2__0380434eeb0eeb87__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query
+#define GB_jit_kernel GB_jit__AxB_dot2__0380034eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32
+#define GB_jit_query  GB_jit__AxB_dot2__0380034eeb0eebc7__LG_MF_Cxe_Add32_LG_MF_Cxe_Mult32_query
 #endif
 #include "template/GB_jit_kernel_AxB_dot2.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0xcc1f97b653cbf980 ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    (*hash) = 0x50e3445e80465296 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = GB_LG_MF_Cxe_Add32_USER_DEFN ;
     defn [1] = GB_LG_MF_Cxe_Mult32_USER_DEFN ;
     defn [2] = GB_LG_MF_resultTuple32_USER_DEFN ;
     defn [3] = GB_LG_MF_compareTuple32_USER_DEFN ;
     defn [4] = NULL ;
-    if (id_size != 16 || term_size != 0) return (false) ;
+    if (id_memsize != 16 || term_memsize != 0) return (false) ;
     GB_DECLARE_IDENTITY_CONST (zidentity) ;
     if (id == NULL || memcmp (id, &zidentity, 16) != 0) return (false) ;
     return (true) ;
