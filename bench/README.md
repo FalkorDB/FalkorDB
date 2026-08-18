@@ -146,6 +146,7 @@ locally against a real base build.
 | `src/falkorbench/flow.py` | per-flow-test-file measurement |
 | `src/falkorbench/cli.py` | the `bench` command |
 | `src/falkorbench/coverage.py` | instrumented build, run the set once, report graph-crate line coverage |
+| `src/falkorbench/ldbc/` | LDBC SNB Interactive v1 — dataset fetch/prepare, loader, parameters, runner, and the vendored query texts |
 | `Dockerfile` | the CI measurement image, `FROM …:edge-c` |
 | `pmc_tool.c` | Apple Silicon PMU counters (kperf/kperfdata private frameworks) |
 | `tests/` | the guards above, over CSV fixtures |
@@ -222,8 +223,6 @@ Three deliberate deviations:
 CLAUDE.md) is p99 latency. `redis-benchmark` computes a latency distribution and
 this harness currently discards it, so the p99 bar is not measured here yet.
 
-## Known gaps
-
 One structural gap is worth recording because closing it needs a design decision
 rather than a patch: the MVCC copy-on-write `GrB_Matrix_dup` of delta matrices in
 `create_nodes` / `set_nodes_labels_bulk` waits on pending work first, so it scales
@@ -244,3 +243,122 @@ query cannot reach from this graph: `cow_btree` (~750 lines, appears unwired),
 this set targets (runtime, expressions, planner, matrices), coverage is high.
 `bench coverage` reports the number but does not enforce a floor — it is a
 validator of the query set, not a coverage gate.
+
+## LDBC SNB (Interactive v1)
+
+A second, complementary workload: the 14 **complex reads** of the LDBC Social
+Network Benchmark, run against the real SNB dataset. The micro-benchmark set
+above measures narrow operations on a synthetic ring; these measure whole
+realistic queries — multi-hop traversals, aggregation, `OPTIONAL MATCH`,
+variable-length paths — on a graph with realistic degree skew. A planner
+regression that a single-op query cannot see tends to show up here.
+
+```bash
+bench ldbc fetch --sf 0.1                 # download + prepare (~18 MB)
+bench ldbc run --sf 0.1                   # load, then measure all 14
+bench ldbc run --sf 1 IC1 IC13            # a subset, at SF1 (~230 MB)
+bench ldbc run --params ./substitution_parameters   # official parameters
+```
+
+Results go to `results/ldbc_sf<SF>.csv` (p50/p95/p99 per query) and are
+deliberately **not** merged into `results/current.csv`: LDBC's metric is
+response time, and mixing it into the file the `compare` thresholds gate would
+distort the micro-benchmark gate.
+
+### This is not an auditable LDBC result
+
+Do not publish these as an "LDBC score". A real result requires the official
+Java driver with its validation and workload-generation phases, LDBC
+membership, and an audit commissioned from a certified auditor. What this gives
+you is an internal, repeatable number on a standard dataset and standard
+queries.
+
+### Seven queries differ from the reference text
+
+Each departure is annotated in the `.cypher` file next to the line it replaced,
+and listed in `ldbc/queries.py::REWRITES` so a run always prints them. All seven
+were confirmed against a running engine, and each was checked against the C
+engine too so that a genuine bug is not filed away as a dialect gap:
+
+| query | why it could not run as written |
+|---|---|
+| IC1, IC13 | `MATCH path = shortestPath(...)` → *"FalkorDB currently only supports shortestPaths in WITH or RETURN clauses"*. Moved into `WITH`. |
+| IC14 | `allShortestPaths()` with inline endpoint patterns → *"Source and destination must already be resolved"*. Endpoints pre-bound in a preceding `MATCH`. Also, a pattern comprehension's `WHERE` cannot see the enclosing list comprehension's variable, so the per-relationship weights are computed over `UNWIND`ed relationships with their endpoints hoisted into plain variables. |
+| IC10 | `datetime({epochMillis: ...}).month` → *"Unknown function 'datetime'"*. The loader derives `birthdayMonth`/`birthdayDay` instead. |
+| IC7 | `not((liker)-[:KNOWS]-(person))` → *"Type mismatch: expected Boolean or Null but was List"*. A traversal pattern is not a boolean-valued expression in a projection, and `exists()` explicitly refuses traversal patterns, so this becomes `size(<pattern>) = 0`. |
+| IC6 | **A bug, not a dialect gap.** An inline property filter on a pattern followed by further patterns fails under `UNWIND` with *"Type mismatch: expected Map, Node, Edge, ... but was List"*; the C engine runs it correctly. The filter moves into `WHERE`. Tracked as [#2556](https://github.com/FalkorDB/FalkorDB/issues/2556) — revert when fixed. |
+| IC9 | **A bug, not a dialect gap.** A `WHERE` on a node reached from an `UNWIND`-bound anchor silently returns zero rows — no error, just nothing, while the same query without the `WHERE` returns 81,897. The C engine is correct. `WITH DISTINCT` in place of `collect(DISTINCT ...)` + `UNWIND` avoids it. Tracked as [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) — revert when fixed. |
+
+IC1, IC7, IC13 and IC14 fail identically on the C engine, so those four are
+dialect gaps rather than regressions. IC6 and IC9 look like the same kind of
+thing and are not: both run correctly on C. That distinction only exists because
+every failure was re-checked against `falkordb/falkordb-server:edge-c` before
+being classified — without that step two real regressions would have been
+written off as dialect gaps, and two dialect gaps filed as false bugs.
+
+`CREATE CONSTRAINT ... ASSERT n.id IS UNIQUE` is also unsupported, so upstream's
+`indices.cypher` becomes `GRAPH.CONSTRAINT CREATE` calls — each of which
+additionally requires its exact-match index to already exist, and validates
+asynchronously (the loader waits for `OPERATIONAL` rather than assuming it;
+note `db.constraints()` reports `UNDER CONSTRUCTION`, never `PENDING`).
+
+The CSVs are pipe-separated. FalkorDB has no `DELIMITER` keyword — the
+standard-Cypher spelling is `FIELDTERMINATOR`, and it goes *after* `AS <var>`.
+
+### Substitution parameters
+
+LDBC generates parameters chosen so the queries hit a representative spread of
+the data; the cost of these queries varies by orders of magnitude with how
+well-connected the chosen person is, so the parameter set matters as much as the
+query text. Pass an official set with `--params DIR`.
+
+Without it, the harness samples the loaded graph with a fixed seed. Those runs
+are deterministic and comparable **to each other**, but not to published LDBC
+numbers — the CSV and the console output both say which source was used, and
+that caveat should travel with any number taken from it.
+
+Sampling deliberately draws from where the data is dense: people from the
+most-connected end of the `KNOWS` degree distribution, and dates from the last
+quarter of the corpus. IC3 gets a much wider window than the rest — it counts
+friends who are *not* resident in either country yet posted from both inside the
+window, and at SF0.1 a 30-day window returns 0 rows where 365 returns 1 and 730
+returns 2. Both engines agree on those counts, so it is a property of the
+dataset, not of either engine; `durationDays` is an explicit LDBC parameter, so
+widening it stays inside the query's own contract. A uniformly drawn person is usually isolated and a
+uniformly drawn date window usually lands in the sparse early history; either
+returns nothing in microseconds, which would report the benchmark as fast while
+measuring almost none of the work it exists to measure. `runner.problems()`
+treats "returned zero rows on every run" as a failure for the same reason.
+
+### What the first run found
+
+Running the 14 complex reads against SF0.1 was worth doing for the bugs alone.
+All fourteen now produce a measurement — IC3 needs `--timeout` above the default
+— and four of them (IC1, IC10, IC13, IC14) do not run on the C engine at all.
+Every query except IC3 and IC10 is in the same order of magnitude as C or
+faster. Four defects came out of the exercise, each confirmed against the C
+engine before being filed:
+
+| issue | what |
+|---|---|
+| [#2555](https://github.com/FalkorDB/FalkorDB/issues/2555) | aggregation over a bare map property returns empty — `collect`→`[]`, `count`→`0`, silently |
+| [#2556](https://github.com/FalkorDB/FalkorDB/issues/2556) | inline property filter under `UNWIND` raises a spurious type mismatch |
+| [#2557](https://github.com/FalkorDB/FalkorDB/issues/2557) | `WHERE` on a node matched from an `UNWIND`-bound anchor silently returns zero rows |
+| [#2558](https://github.com/FalkorDB/FalkorDB/issues/2558) | a variable-length traversal loses its indexed anchor when the `MATCH` has a second pattern — 19,000x |
+
+**#2558 is the one that matters.** On the same parameter row, returning the
+identical 2 rows, IC3 takes **136.72 ms** on C and **271,817.66 ms** on Rust —
+1,988x — and IC10 takes 86 s. Both plans abandon a unique-index seed in favour
+of scanning the unbound side. No other measured query is affected, so a single
+planner decision accounts for the entire Rust-vs-C gap on this workload.
+
+Three of the four are **silent** — wrong or empty results with no error. They
+were caught only because the runner treats "zero rows on every run" as a failure
+rather than as a fast query. A harness that reported latency alone would have
+called that run a success.
+
+Following the file-level convention above, a ranked latency table is not kept
+here; regenerate it from a live run. `results/ldbc_sf<SF>.csv` is written per run
+and deliberately not merged into `current.csv` — these runtimes are orders of
+magnitude larger than the micro-benchmark's and would distort its regression
+thresholds.
