@@ -584,6 +584,53 @@ class testConstraintNodes():
         drop_node_range_index(self.g, "Author", "nickname")
         drop_node_range_index(self.g, "Author", "birthdate")
 
+    def test09_long_string_values(self):
+        # unique constraints must be enforced regardless of the property
+        # length, the C engine stopped enforcing them past 4096 bytes
+        # (see issue #2440)
+        for length in (4096, 4097, 65536):
+            lbl = f"Doc{length}"
+            hash = 'a' * length
+
+            self.g.query(f"CREATE (:{lbl} {{hash: '{hash}'}})")
+            create_unique_node_constraint(self.g, lbl, "hash", sync=True)
+
+            # constraint must be operational, not failed
+            c = get_constraint(self.g, "UNIQUE", "NODE", lbl, "hash")
+            self.env.assertEqual(c.status, "OPERATIONAL")
+
+            # creating a node with the same value must be rejected
+            try:
+                self.g.query(f"CREATE (:{lbl} {{hash: '{hash}'}})")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains(
+                    f"unique constraint violation on node of type {lbl}", str(e))
+
+            # updating an existing node to a duplicate value must be rejected
+            self.g.query(f"CREATE (:{lbl} {{hash: 'placeholder'}})")
+            try:
+                self.g.query(f"MATCH (n:{lbl} {{hash: 'placeholder'}}) SET n.hash = '{hash}'")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains(
+                    f"unique constraint violation on node of type {lbl}", str(e))
+
+            # only the original node and the placeholder survived
+            res = self.g.query(f"MATCH (n:{lbl}) RETURN count(n)")
+            self.env.assertEqual(res.result_set[0][0], 2)
+
+    def test10_long_string_values_constraint_creation(self):
+        # a constraint created over pre-existing duplicates longer than
+        # 4096 bytes must fail, not silently become operational
+        hash = 'a' * 4097
+
+        self.g.query(f"CREATE (:Dup {{hash: '{hash}'}}), (:Dup {{hash: '{hash}'}})")
+        create_unique_node_constraint(self.g, "Dup", "hash", sync=True)
+
+        c = get_constraint(self.g, "UNIQUE", "NODE", "Dup", "hash")
+        self.env.assertEqual(c.status, "FAILED")
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
