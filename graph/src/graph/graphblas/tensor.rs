@@ -142,6 +142,17 @@ use super::{
 #[allow(non_upper_case_globals)]
 pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 
+/// Row (and wide-column) dimension of every `me` block.
+///
+/// `GrB_INDEX_MAX` is the largest valid *index*, so a matrix declared that many
+/// rows accepts `0..GrB_INDEX_MAX - 1` — one short. [`compound_key`] can produce
+/// exactly `GrB_INDEX_MAX` (both endpoint halves all-ones, e.g.
+/// `src = dst = 2^BLOCK_SHIFT - 1`), and a write there was silently dropped, which
+/// is the very failure this module exists to remove, reintroduced at the new
+/// boundary. Declaring one row more makes every key [`compound_key`] can produce
+/// in range by construction.
+const ME_DIM: u64 = GrB_INDEX_MAX + 1;
+
 /// Column count `me` is created with, and the width at which GraphBLAS stores
 /// its column indices in 32 bits rather than 64.
 ///
@@ -327,7 +338,7 @@ impl Tensor {
             dp: Delta::new(Matrix::<u64>::new(nrows, ncols)),
             dm: Delta::new(Matrix::<bool>::new(nrows, ncols)),
             mt: VersionedMatrix::<bool>::new(ncols, nrows),
-            me: VersionedMatrix::<bool>::new(GrB_INDEX_MAX, ME_NARROW_NCOLS),
+            me: VersionedMatrix::<bool>::new(ME_DIM, ME_NARROW_NCOLS),
             me_blocks: None,
             needs_flush: AtomicBool::new(false),
         }
@@ -350,9 +361,9 @@ impl Tensor {
     /// The `me` matrix holding `block`, creating it if this is the first pair to
     /// reach it. Writes take this.
     ///
-    /// Every block is `GrB_INDEX_MAX` square like the original single matrix,
-    /// and hypersparse, so an empty one costs the fixed matrix header rather
-    /// than anything proportional to its dimensions.
+    /// Every block is [`ME_DIM`] rows like the original single matrix, and
+    /// hypersparse, so an empty one costs the fixed matrix header rather than
+    /// anything proportional to its dimensions.
     fn me_block_mut(
         &mut self,
         block: MeBlock,
@@ -367,7 +378,7 @@ impl Tensor {
         self.me_blocks
             .get_or_insert_with(|| Box::new(FxHashMap::default()))
             .entry(block)
-            .or_insert_with(|| VersionedMatrix::<bool>::new(GrB_INDEX_MAX, ncols))
+            .or_insert_with(|| VersionedMatrix::<bool>::new(ME_DIM, ncols))
     }
 
     /// Widen every `me` block's column space if `max_id` will not fit.
@@ -383,7 +394,7 @@ impl Tensor {
             return;
         }
         for me in self.me_all_mut() {
-            me.resize(GrB_INDEX_MAX, GrB_INDEX_MAX);
+            me.resize(ME_DIM, ME_DIM);
         }
     }
 
@@ -1362,7 +1373,7 @@ impl Decode<19> for Tensor {
         // `(count | MSB)` for multi-edge pairs, whose real id lists follow in
         // the tensor section.
         let mut m = Matrix::<u64>::new(nrows, ncols);
-        let mut me = VersionedMatrix::<bool>::new(GrB_INDEX_MAX, ME_NARROW_NCOLS);
+        let mut me = VersionedMatrix::<bool>::new(ME_DIM, ME_NARROW_NCOLS);
         let mut me_blocks: Option<Box<FxHashMap<MeBlock, VersionedMatrix<bool>>>> = None;
         // Widened lazily, as in `set_all_from_slices`: a blob whose ids all fit
         // decodes into the narrow form and keeps the 32-bit column indices.
@@ -1408,11 +1419,11 @@ impl Decode<19> for Tensor {
                     let edge_ids: Vec<u64> = v.iter().collect();
                     if let Some(&max_id) = edge_ids.iter().max() {
                         if max_id >= me_ncols {
-                            me_ncols = GrB_INDEX_MAX;
-                            me.resize(GrB_INDEX_MAX, GrB_INDEX_MAX);
+                            me_ncols = ME_DIM;
+                            me.resize(ME_DIM, ME_DIM);
                             if let Some(blocks) = me_blocks.as_mut() {
                                 for b in blocks.values_mut() {
-                                    b.resize(GrB_INDEX_MAX, GrB_INDEX_MAX);
+                                    b.resize(ME_DIM, ME_DIM);
                                 }
                             }
                         }
@@ -1423,9 +1434,7 @@ impl Decode<19> for Tensor {
                         me_blocks
                             .get_or_insert_with(|| Box::new(FxHashMap::default()))
                             .entry(block)
-                            .or_insert_with(|| {
-                                VersionedMatrix::<bool>::new(GrB_INDEX_MAX, me_ncols)
-                            })
+                            .or_insert_with(|| VersionedMatrix::<bool>::new(ME_DIM, me_ncols))
                     };
                     for edge_id in edge_ids {
                         target.set(key, edge_id, true);
@@ -2144,7 +2153,7 @@ mod tests {
         t.wait();
         assert_eq!(
             t.edge_versioned_block_0().ncols(),
-            GrB_INDEX_MAX,
+            super::ME_DIM,
             "an id at the narrow width should have widened `me`"
         );
         assert_eq!(t.get(1, 2).collect::<Vec<_>>(), vec![7, 8, narrow]);
@@ -2162,5 +2171,42 @@ mod tests {
             vec![narrow + 2, narrow + 3],
             "a block created after widening dropped its ids"
         );
+    }
+
+    /// The top row key is the one [`compound_key`] can produce with both
+    /// endpoint halves all-ones, and it is exactly `GrB_INDEX_MAX`. A matrix
+    /// declared that many rows accepts one fewer, so this pair's writes were
+    /// silently dropped — the original bug, at the new boundary. Caught in
+    /// review; the earlier tests all used `src = 2^k`, which never lands here.
+    #[test]
+    fn the_top_row_key_of_a_block_is_writable() {
+        ensure_init();
+        let m = (1u64 << BLOCK_SHIFT) - 1;
+        assert_eq!(
+            compound_key(m, m).1,
+            GrB_INDEX_MAX,
+            "fixture is not exercising the top row key"
+        );
+
+        // In block (0,0), and in a higher block, since blocks are created by a
+        // different path than the tensor's own field.
+        let b = 1u64 << BLOCK_SHIFT;
+        for (src, dst) in [(m, m), (b + m, b + m), (b + m, m), (m, b + m)] {
+            let mut t = Tensor::new(2 * b + 2, 2 * b + 2);
+            t.set_all_from_slices(&[src, src], &[dst, dst], &[10, 11]);
+            let mut t = t.dup();
+            t.flush();
+            t.wait();
+            assert_eq!(
+                t.get(src, dst).collect::<Vec<_>>(),
+                vec![10, 11],
+                "ids dropped at the top row key of ({src}, {dst})"
+            );
+            assert_eq!(t.edge_count(), 2, "edge_count wrong at ({src}, {dst})");
+            assert_eq!(t.multi_pairs(), 1);
+            let mut seen: Vec<_> = t.iter_edges().collect();
+            seen.sort_unstable();
+            assert_eq!(seen, vec![(src, dst, 10), (src, dst, 11)]);
+        }
     }
 }

@@ -207,3 +207,45 @@ fn block_scaling_index_width() {
         );
     }
 }
+
+/// Probe: is the top row key writable, and is a wider dimension legal?
+#[test]
+#[ignore]
+fn block_scaling_top_row_probe() {
+    use super::matrix::Matrix;
+    use super::tensor::{BLOCK_SHIFT, GrB_INDEX_MAX, Tensor, compound_key};
+
+    ensure_init();
+    let m = (1u64 << BLOCK_SHIFT) - 1;
+    let (block, row) = compound_key(m, m);
+    println!("compound_key({m}, {m}) = block {block:?} row {row}");
+    println!("row == GrB_INDEX_MAX: {}", row == GrB_INDEX_MAX);
+
+    // (a) does a write at the top row of a GrB_INDEX_MAX-row matrix land?
+    let mut a = Matrix::<bool>::new(GrB_INDEX_MAX, 1 << 31).into_hyper();
+    a.set(row, 7, true);
+    a.wait();
+    println!("nrows=GrB_INDEX_MAX, set(row={row}) -> nvals {}", a.nvals());
+
+    // (b) is a dimension one larger accepted at all?
+    let mut b = Matrix::<bool>::new(GrB_INDEX_MAX + 1, 1 << 31).into_hyper();
+    b.set(row, 7, true);
+    b.wait();
+    println!(
+        "nrows=GrB_INDEX_MAX+1 -> nrows reported {}, set(row={row}) -> nvals {}",
+        b.nrows(),
+        b.nvals()
+    );
+
+    // (c) end to end through the tensor
+    let mut t = Tensor::new(m + 2, m + 2);
+    t.set_all_from_slices(&[m, m], &[m, m], &[10, 11]);
+    let mut t = t.dup();
+    t.flush();
+    t.wait();
+    println!(
+        "tensor pair ({m}, {m}): ids {:?}  edge_count {}",
+        t.get(m, m).collect::<Vec<_>>(),
+        t.edge_count()
+    );
+}

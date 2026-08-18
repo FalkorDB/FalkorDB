@@ -821,16 +821,21 @@ impl<T> Matrix<T> {
     pub(super) fn integer_bits_for_test(&self) -> (i32, i32) {
         unsafe {
             let (mut r, mut c) = (0i32, 0i32);
-            GrB_Matrix_get_INT32(
+            // Checked: a failed getter leaves the initialised zero behind, and
+            // reporting "0-bit indices" would read as a result rather than an
+            // error.
+            let ri = GrB_Matrix_get_INT32(
                 *self.m,
                 &raw mut r,
                 GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS as i32,
             );
-            GrB_Matrix_get_INT32(
+            assert_eq!(ri, GrB_Info::GrB_SUCCESS, "row index bits: {ri:?}");
+            let ci = GrB_Matrix_get_INT32(
                 *self.m,
                 &raw mut c,
                 GxB_Option_Field::GxB_COLINDEX_INTEGER_BITS as i32,
             );
+            assert_eq!(ci, GrB_Info::GrB_SUCCESS, "column index bits: {ci:?}");
             (r, c)
         }
     }

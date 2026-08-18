@@ -204,7 +204,10 @@ macro_rules! each_tier {
 
 impl EndpointIndex {
     /// Which tier a value of this size needs: 0 = `w16` … 3 = `w64`.
-    const fn rank_for(v: u64) -> u8 {
+    ///
+    /// Public because the restore path recovers the tier boundaries with it.
+    #[must_use]
+    pub const fn rank_for(v: u64) -> u8 {
         if v < u16::CEILING {
             0
         } else if v < U24::CEILING {
@@ -400,6 +403,40 @@ impl EndpointIndex {
         self.with_tier(rank, |v| v.grow_to(len));
     }
 
+    /// Lay out all four tiers directly, for a caller that already knows where
+    /// the boundaries fall.
+    ///
+    /// `starts[r]` is the first edge id belonging to tier `r + 1`, and `len` is
+    /// one past the largest edge id. Every slot is created empty.
+    ///
+    /// This exists so a restore can *rebuild* the tiering rather than flatten
+    /// it. Sizing with [`Self::prepare`] and the whole graph's widest endpoint
+    /// would put every edge at the widest width, undoing on each load exactly
+    /// what the tiers are for. The boundaries are recoverable without keeping
+    /// anything per edge: under incremental growth an edge lands in the widest
+    /// tier any earlier edge needed, so tier `r` begins at the smallest edge id
+    /// whose own endpoints need at least `r` — three scalars, found in the same
+    /// scan that finds the maximum id.
+    pub fn prepare_tiers(
+        &mut self,
+        starts: [u64; 3],
+        len: u64,
+    ) {
+        let to = |v: u64| usize::try_from(v).expect("edge id exceeds usize");
+        let (len, s1, s2, s3) = (to(len), to(starts[0]), to(starts[1]), to(starts[2]));
+        let (s1, s2, s3) = (s1.min(len), s2.min(len), s3.min(len));
+        debug_assert!(s1 <= s2 && s2 <= s3, "tier starts must be ordered");
+        for (rank, n) in [(0u8, s1), (1, s2 - s1), (2, s3 - s2), (3, len - s3)] {
+            if n == 0 {
+                continue;
+            }
+            self.with_tier(rank, |v| {
+                v.reserve_exact(n);
+                v.grow_to(n);
+            });
+        }
+    }
+
     /// Record `edge_id`'s endpoints, promoting and growing as needed.
     pub fn set(
         &mut self,
@@ -458,26 +495,6 @@ impl EndpointIndex {
             base += n;
         }
     }
-
-    /// Build from `(edge_id, src, dst)` triples, sizing one tier exactly. Used
-    /// by the load path, which knows the whole set and writes it at one width.
-    #[must_use]
-    pub fn build(triples: &[(u64, u64, u64)]) -> Self {
-        let max_endpoint = triples.iter().map(|&(_, s, d)| s.max(d)).max().unwrap_or(0);
-        let slots = triples.iter().map(|&(e, _, _)| e).max().map_or(0, |m| {
-            usize::try_from(m).expect("edge id exceeds usize") + 1
-        });
-        let mut ix = Self::default();
-        let rank = Self::rank_for(max_endpoint);
-        ix.with_tier(rank, |v| {
-            v.reserve_exact_to(slots);
-            v.grow_to(slots);
-            for &(e, s, d) in triples {
-                v.put(e as usize, s, d);
-            }
-        });
-        ix
-    }
 }
 
 /// The operations a tier needs, so the four concrete vectors can be reached
@@ -486,10 +503,6 @@ impl EndpointIndex {
 /// directly.
 trait TierOps {
     fn grow_to(
-        &mut self,
-        len: usize,
-    );
-    fn reserve_exact_to(
         &mut self,
         len: usize,
     );
@@ -517,14 +530,6 @@ impl<T: Endpoint> TierOps for Slots<T> {
     ) {
         if len > self.len() {
             self.resize(len, (T::EMPTY, T::EMPTY));
-        }
-    }
-    fn reserve_exact_to(
-        &mut self,
-        len: usize,
-    ) {
-        if len > self.len() {
-            Vec::reserve_exact(self, len - self.len());
         }
     }
     fn put(
@@ -654,6 +659,41 @@ mod tests {
         }
     }
 
+    /// A restore must rebuild the same tiering the graph had in memory, or
+    /// every reload would flatten the index to its widest width.
+    #[test]
+    fn prepare_tiers_rebuilds_the_layout_growth_produced() {
+        // Grown incrementally: 1000 narrow edges, then 1000 wide ones.
+        let mut grown = EndpointIndex::default();
+        for e in 0..1000u64 {
+            grown.set(e, e, e + 1);
+        }
+        for e in 1000..2000u64 {
+            grown.set(e, 100_000 + e, 100_001 + e);
+        }
+
+        // Restored: the boundary is the first edge id needing the wider tier.
+        let mut restored = EndpointIndex::default();
+        restored.prepare_tiers([1000, 2000, 2000], 2000);
+        for e in 0..1000u64 {
+            restored.set(e, e, e + 1);
+        }
+        for e in 1000..2000u64 {
+            restored.set(e, 100_000 + e, 100_001 + e);
+        }
+
+        assert_eq!(restored.len(), grown.len());
+        assert!(
+            (restored.bytes_per_edge() - grown.bytes_per_edge()).abs() < f64::EPSILON,
+            "restore flattened the tiering: {} vs {}",
+            restored.bytes_per_edge(),
+            grown.bytes_per_edge()
+        );
+        for e in 0..2000u64 {
+            assert_eq!(restored.get(e), grown.get(e), "slot {e}");
+        }
+    }
+
     /// Gaps left by non-contiguous edge ids read as absent, not as `(0, 0)`.
     #[test]
     fn gaps_read_as_absent() {
@@ -665,21 +705,39 @@ mod tests {
         assert_eq!(ix.get(6), None, "past the end");
     }
 
-    /// `build` and `prepare` + `set` must agree, since the load path uses one
-    /// and every other path the other.
+    /// `prepare` exists only to stop bulk insertion being quadratic, so it must
+    /// not change what the index ends up holding. The load path prepares and
+    /// every other path does not, and both have to agree.
     #[test]
-    fn build_agrees_with_prepared_sets() {
-        let triples = [(0u64, 1u64, 2u64), (3, 70_000, 4), (7, 5, 6)];
-        let mut a = EndpointIndex::default();
-        a.prepare(7, 70_000);
+    fn preparing_first_changes_nothing_but_the_cost() {
+        let triples = [
+            (0u64, 1u64, 2u64),
+            (3, 70_000, 4),
+            (7, 5, 6),
+            (9, 1 << 25, 2),
+        ];
+        let mut prepared = EndpointIndex::default();
+        prepared.prepare(9, 1 << 25);
         for &(e, s, d) in &triples {
-            a.set(e, s, d);
+            prepared.set(e, s, d);
         }
-        let b = EndpointIndex::build(&triples);
-        assert_eq!(a.len(), b.len());
-        for e in 0..a.len() as u64 {
-            assert_eq!(a.get(e), b.get(e), "slot {e}");
+        let mut plain = EndpointIndex::default();
+        for &(e, s, d) in &triples {
+            plain.set(e, s, d);
         }
+        assert_eq!(prepared.len(), plain.len());
+        for e in 0..plain.len() as u64 {
+            assert_eq!(prepared.get(e), plain.get(e), "slot {e}");
+        }
+        // The *contents* agree; the layouts deliberately do not. `prepare`
+        // sizes one tier to the batch's widest endpoint, so it is wider on
+        // average than letting each edge pick its own tier. That is the trade
+        // for not reallocating per edge, and it is why the restore path uses
+        // `prepare_tiers` — which rebuilds the boundaries — rather than this.
+        assert!(
+            prepared.bytes_per_edge() >= plain.bytes_per_edge(),
+            "preparing should never be narrower than growing edge by edge"
+        );
     }
 }
 

@@ -748,18 +748,49 @@ impl Graph {
     ) -> Self {
         // Rebuild the graph-wide reverse index after RDB load to ensure
         // complete sync with the decoded edges.
-        // Collected first so the index picks its field width once, from the
-        // widest endpoint in the graph, instead of repacking as it discovers
-        // wider ones.
-        let triples: Vec<(u64, u64, u64)> = relationship_matrices
-            .iter()
-            .flat_map(|tensor| {
-                tensor
-                    .iter_edges()
-                    .map(|(src, dst, edge_id)| (edge_id, src, dst))
-            })
-            .collect();
-        let edge_endpoints = EndpointIndex::build(&triples);
+        // Two scans rather than one scan into a `Vec` of triples: materialising
+        // them would add ~24 bytes per edge of peak memory on top of the graph
+        // being restored, which is enough to fail a load that would otherwise
+        // fit. The first scan takes only maxima, which sizes the index once, so
+        // the second neither widens nor reallocates.
+        //
+        // The first pass also recovers where the index's width tiers begin.
+        // Sizing everything to the graph's widest endpoint would be simpler and
+        // would flatten the tiering on every load; under incremental growth an
+        // edge lands in the widest tier any earlier edge needed, so tier `r`
+        // begins at the smallest edge id whose own endpoints need at least `r`.
+        // Three scalars, no per-edge state.
+        let mut max_edge_id = 0u64;
+        let mut starts = [u64::MAX; 3];
+        for tensor in &relationship_matrices {
+            for (src, dst, edge_id) in tensor.iter_edges() {
+                max_edge_id = max_edge_id.max(edge_id);
+                let rank = EndpointIndex::rank_for(src.max(dst));
+                for r in 1..=rank {
+                    let slot = &mut starts[usize::from(r) - 1];
+                    *slot = (*slot).min(edge_id);
+                }
+            }
+        }
+        let len = if relationship_matrices.iter().any(|t| t.edge_count() > 0) {
+            max_edge_id + 1
+        } else {
+            0
+        };
+        // A tier nothing reached starts at the end, i.e. stays empty. Clamped
+        // monotone so a later tier never begins before an earlier one.
+        let mut acc = len;
+        for slot in starts.iter_mut().rev() {
+            acc = acc.min(*slot);
+            *slot = acc;
+        }
+        let mut edge_endpoints = EndpointIndex::default();
+        edge_endpoints.prepare_tiers(starts, len);
+        for tensor in &relationship_matrices {
+            for (src, dst, edge_id) in tensor.iter_edges() {
+                edge_endpoints.set(edge_id, src, dst);
+            }
+        }
 
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
