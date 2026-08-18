@@ -91,6 +91,100 @@ class testReplicaDivergence():
             "MATCH (n:P) RETURN id(n) ORDER BY id(n)").result_set
         env.assertEquals(expected, actual)
 
+    # same divergence contract, but exercised through EFFECT_UPDATE_EDGE
+    # rather than EFFECT_DELETE_EDGE
+    #
+    # EFFECT_CREATE_EDGE doesn't encode an edge id - the replica allocates
+    # one itself off its own free list - while UPDATE/DELETE address an edge
+    # by explicit id. so master and replica must keep allocating identical
+    # ids, and once they don't, an UPDATE_EDGE can name an id that sits on
+    # the replica's deleted list. Graph_GetEdge then yields a NULL
+    # attribute-set, which AttributeSet_Update dereferences unconditionally
+    #
+    # DELETE_EDGE has always reported that cleanly; UPDATE_EDGE used to
+    # guard it with ASSERT() alone, which compiles to nothing in a release
+    # build, so the same divergence segfaulted the whole replica process
+    def test_forced_full_resync_on_edge_update_divergence(self):
+        env = self.env
+        master = env.getConnection()
+        replica = env.getSlaveConnection()
+
+        graph_id = GRAPH_ID + "_edge_update"
+        master_graph = Graph(master, graph_id)
+        replica_graph = Graph(replica, graph_id)
+
+        # force effects-based replication, so the SET below replicates as
+        # GRAPH.EFFECT UPDATE_EDGE rather than the raw GRAPH.QUERY
+        self.db.config_set("EFFECTS_THRESHOLD", 0)
+
+        # create a couple of edges carrying a property, let the replica sync
+        master_graph.query(
+            "CREATE (a:P {v: 1})-[:R {seen: 1}]->(b:P {v: 2}),"
+            "       (b)-[:R {seen: 2}]->(:P {v: 3})")
+        master.execute_command("WAIT", "1", "0")
+
+        # pick the edge we'll remove on the replica only
+        res = master_graph.query(
+            "MATCH ()-[r:R]->() RETURN id(r) ORDER BY id(r) LIMIT 1")
+        target_id = res.result_set[0][0]
+
+        # allow direct writes on the replica and delete the edge there only,
+        # putting that id on the replica's free list while the master keeps
+        # the edge live - exactly the state the crash needs
+        replica.config_set("slave-read-only", "no")
+        replica_graph.query(
+            f"MATCH ()-[r]->() WHERE id(r) = {target_id} DELETE r")
+        replica.config_set("slave-read-only", "yes")
+
+        # sanity check: replica and master have diverged
+        replica_count = replica_graph.ro_query(
+            "MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0]
+        env.assertEquals(replica_count, 1)
+
+        sync_full_before = master.info()["sync_full"]
+
+        # update that same edge on the master
+        # the new value must differ from the current one, a no-op SET emits
+        # no effect at all
+        master_graph.query(
+            f"MATCH ()-[r]->() WHERE id(r) = {target_id} SET r.seen = 42")
+
+        # the replica must detect the divergence and force a full resync
+        # rather than dereference a NULL attribute-set and die
+        deadline = time.time() + 30
+        resynced = False
+        while time.time() < deadline:
+            info = master.info()
+            if (info["sync_full"] > sync_full_before and
+                    info["connected_slaves"] >= 1):
+                resynced = True
+                break
+            time.sleep(0.5)
+
+        env.assertTrue(resynced)
+
+        # replica is still alive and serving, and its dataset matches the
+        # master's again - including the updated property
+        master.execute_command("WAIT", "1", "5000")
+
+        expected = master_graph.query(
+            "MATCH ()-[r:R]->() RETURN id(r), r.seen ORDER BY id(r)").result_set
+        actual = replica_graph.ro_query(
+            "MATCH ()-[r:R]->() RETURN id(r), r.seen ORDER BY id(r)").result_set
+        env.assertEquals(expected, actual)
+
+        # confirm it was our UPDATE_EDGE guard that reported the divergence,
+        # when a log file is available (RLTest may run with output capturing
+        # disabled, in which case the resync assertion above made the point)
+        log_name = env.envRunner._getFileName("slave", ".log")
+        try:
+            with open(os.path.join(env.logDir, log_name)) as f:
+                log = f.read()
+        except FileNotFoundError:
+            return
+
+        env.assertContains("UPDATE_EDGE references edge", log)
+
 
 # a divergence hit while replaying the local AOF (rather than while
 # consuming the live replication stream) can't be fixed by a resync: the

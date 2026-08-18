@@ -110,7 +110,11 @@ void GraphHub_UpdateEntityProperties
 // update the node attributes
 // update the relevant indexes of the node
 // used from effects
-void GraphHub_UpdateNodeProperty
+//
+// returns false if 'id' doesn't resolve to a live node in this graph, which
+// means this instance has diverged from the master that emitted the effect;
+// the node is left untouched in that case
+bool GraphHub_UpdateNodeProperty
 (
 	GraphContext *gc,             // graph context
 	NodeID id,                    // node ID
@@ -122,7 +126,12 @@ void GraphHub_UpdateNodeProperty
 // update the edge attributes
 // update the relevant indexes of the edge
 // used from effects
-void GraphHub_UpdateEdgeProperty
+//
+// returns false if 'id' doesn't resolve to a live edge in this graph, or if
+// 'r_id' doesn't name a known relationship-type, which means this instance
+// has diverged from the master that emitted the effect; the edge is left
+// untouched in that case
+bool GraphHub_UpdateEdgeProperty
 (
 	GraphContext *gc,             // graph context
 	EdgeID id,                    // edge ID

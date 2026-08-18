@@ -526,7 +526,9 @@ void ReadConstraintAttributes
 }
 
 // process Update_Edge effect
-static void ApplyUpdateEdge
+// returns false if the effect references an edge, or a relationship-type,
+// that doesn't exist locally (replica has diverged from the master)
+static bool ApplyUpdateEdge
 (
 	FILE *stream,     // effects stream
 	GraphContext *gc  // graph to operate on
@@ -589,11 +591,21 @@ static void ApplyUpdateEdge
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 
-	GraphHub_UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
+	if (!GraphHub_UpdateEdgeProperty (gc, id, r_id, s_id, t_id, attr_id, v)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT UPDATE_EDGE references edge %" PRIu64
+				" of relationship-type %d which doesn't exist locally",
+				id, r_id) ;
+		return false ;
+	}
+
+	return true ;
 }
 
 // process UpdateNode effect
-static void ApplyUpdateNode
+// returns false if the effect references a node that doesn't exist locally
+// (replica has diverged from the master)
+static bool ApplyUpdateNode
 (
 	FILE *stream,     // effects stream
 	GraphContext *gc  // graph to operate on
@@ -630,7 +642,14 @@ static void ApplyUpdateNode
 	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
 	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
 
-	GraphHub_UpdateNodeProperty(gc, id, attr_id, v);
+	if (!GraphHub_UpdateNodeProperty (gc, id, attr_id, v)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT UPDATE_NODE references node %" PRIu64
+				" which doesn't exist locally", id) ;
+		return false ;
+	}
+
+	return true ;
 }
 
 // process DeleteNode effect
@@ -846,11 +865,11 @@ bool Effects_Apply
 				break ;
 
 			case EFFECT_UPDATE_NODE:
-				ApplyUpdateNode (stream, gc) ;
+				ok = ApplyUpdateNode (stream, gc) ;
 				break ;
 
 			case EFFECT_UPDATE_EDGE:
-				ApplyUpdateEdge (stream, gc) ;
+				ok = ApplyUpdateEdge (stream, gc) ;
 				break ;
 
 			case EFFECT_CREATE_NODE:

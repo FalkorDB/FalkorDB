@@ -319,7 +319,7 @@ void GraphHub_UpdateEntityProperties
 	}
 }
 
-void GraphHub_UpdateNodeProperty
+bool GraphHub_UpdateNodeProperty
 (
 	GraphContext *gc,     // graph context
 	NodeID id,            // node ID
@@ -333,8 +333,13 @@ void GraphHub_UpdateNodeProperty
 	Graph *g = GraphContext_GetGraph (gc) ;
 
 	Node n;  // node to update
-	int res = Graph_GetNode (g, id, &n) ;
-	ASSERT(res == true);  // make sure entity was found
+	// 'id' arrives from the master's effect payload, it is not derived from
+	// local state, so it can name a slot which is free on this instance
+	// Graph_GetNode leaves n.attributes NULL in that case, and both
+	// AttributeSet_Free and AttributeSet_Update dereference it unconditionally
+	if (Graph_GetNode (g, id, &n) == false) {
+		return false ;
+	}
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
 		AttributeSet_Free(n.attributes);
@@ -361,9 +366,11 @@ void GraphHub_UpdateNodeProperty
 			if(idx) Schema_AddNodeToIndex(s, &n);
 		}
 	}
+
+	return true;
 }
 
-void GraphHub_UpdateEdgeProperty
+bool GraphHub_UpdateEdgeProperty
 (
 	GraphContext *gc,     // graph context
 	EdgeID id,            // edge ID
@@ -383,8 +390,13 @@ void GraphHub_UpdateEdgeProperty
 	Edge e; // edge to update
 
 	// get src node, dest node and edge from the graph
-	int res = Graph_GetEdge (GraphContext_GetGraph (gc), id, &e);
-	ASSERT(res != 0);
+	// 'id' arrives from the master's effect payload, it is not derived from
+	// local state, so it can name a slot which is free on this instance
+	// Graph_GetEdge leaves e.attributes NULL in that case, and both
+	// AttributeSet_Free and AttributeSet_Update dereference it unconditionally
+	if (Graph_GetEdge (GraphContext_GetGraph (gc), id, &e) == false) {
+		return false ;
+	}
 
 	// set edge relation, src and destination node
 	Edge_SetRelationID(&e, r_id);
@@ -392,8 +404,13 @@ void GraphHub_UpdateEdgeProperty
 	Edge_SetDestNodeID(&e, dest_id);
 
 	// get edge schema
+	// 'r_id' also arrives from the effect payload, a relationship-type this
+	// instance doesn't know about yields a NULL schema, which is dereferenced
+	// unconditionally below
 	Schema *s = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
-	ASSERT(s != NULL);
+	if (s == NULL) {
+		return false ;
+	}
 
 	// clear all attributes
 	if(attr_id == ATTRIBUTE_ID_ALL) {
@@ -401,7 +418,7 @@ void GraphHub_UpdateEdgeProperty
 
 		// remove edge from index
 		Schema_RemoveEdgeFromIndex(s, &e);
-		return;
+		return true;
 	}
 
 	GraphEntity *ge = (GraphEntity *)&e;
@@ -418,6 +435,8 @@ void GraphHub_UpdateEdgeProperty
 		Index idx = Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_ANY, true);
 		if(idx) Schema_AddEdgeToIndex(s, &e);
 	}
+
+	return true;
 }
 
 Schema *GraphHub_AddSchema
