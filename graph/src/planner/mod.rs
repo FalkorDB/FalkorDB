@@ -183,8 +183,11 @@ pub enum IR {
     CondTraverse {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
         emit_relationship: bool,
-        /// Alias IDs of other relationship variables in the same MATCH clause
-        /// component. Only these are checked for relationship uniqueness.
+        /// Alias IDs of the relationship variables in the same MATCH clause
+        /// component whose type set can overlap this one — named and
+        /// anonymous alike. Only these are checked for relationship
+        /// uniqueness. Empty when no sibling can bind the same physical edge,
+        /// which also keeps the batched/fused traversal fast paths eligible.
         sibling_edges: Vec<u32>,
         /// When true, the optimizer has swapped from/to relative to the edge
         /// direction in the graph. The runtime transposes the relationship
@@ -236,8 +239,11 @@ pub enum IR {
     ExpandInto {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
         emit_relationship: bool,
-        /// Alias IDs of other relationship variables in the same MATCH clause
-        /// component. Only these are checked for relationship uniqueness.
+        /// Alias IDs of the relationship variables in the same MATCH clause
+        /// component whose type set can overlap this one — named and
+        /// anonymous alike. Only these are checked for relationship
+        /// uniqueness. Empty when no sibling can bind the same physical edge,
+        /// which also keeps the batched/fused traversal fast paths eligible.
         sibling_edges: Vec<u32>,
     },
     /// Build path objects from matched patterns
@@ -1775,19 +1781,46 @@ impl Planner {
                         .any(|p| p.vars.iter().any(|v| v.id == rel.alias.id))
             };
             // Collect edge alias IDs for relationship uniqueness checking.
-            // Only named (non-anonymous) edges participate in uniqueness constraints;
-            // anonymous edges (`_anon*`) are excluded so the same physical edge
-            // can be traversed by different anonymous bindings (matches FalkorDB C).
-            let sibling_edges: Vec<u32> = relationships
-                .iter()
-                .filter(|r| {
-                    !r.alias
-                        .name
-                        .as_ref()
-                        .is_some_and(|n| n.starts_with("_anon"))
-                })
-                .map(|r| r.alias.id)
-                .collect();
+            //
+            // Cypher relationship-uniqueness applies to every relationship
+            // pattern in a MATCH clause, anonymous ones included: on a graph
+            // with a single `R` edge, `MATCH (a)-[:R]-(b)-[:R]-(c)` can only
+            // match by reusing that edge for both hops, so it must return no
+            // rows (issue #2441).
+            //
+            // Only fixed-length siblings whose type set can overlap this
+            // relationship's are listed. Two hops restricted to disjoint types
+            // can never bind the same physical edge, and keeping the list empty
+            // there preserves the batched/fused traversal fast paths. A
+            // var-length sibling binds a path rather than a single edge, so it
+            // is never a candidate.
+            let types_overlap =
+                |a: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
+                 b: &QueryRelationship<Arc<String>, Arc<String>, Variable>| {
+                    a.types.is_empty()
+                        || b.types.is_empty()
+                        || a.types.iter().any(|t| b.types.contains(t))
+                };
+            let sibling_edges_for =
+                |rel: &QueryRelationship<Arc<String>, Arc<String>, Variable>| -> Vec<u32> {
+                    let mut edges: Vec<u32> = relationships
+                        .iter()
+                        .filter(|r| {
+                            r.min_hops.is_none()
+                                && r.all_shortest_paths == AllShortestPaths::No
+                                && r.alias.id != rel.alias.id
+                                && types_overlap(r, rel)
+                        })
+                        .map(|r| r.alias.id)
+                        .collect();
+                    // No sibling can collide — leave the list empty so the
+                    // runtime keeps its uniqueness-free fast paths.
+                    if edges.is_empty() {
+                        return edges;
+                    }
+                    edges.push(rel.alias.id);
+                    edges
+                };
             let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
                 tree!(IR::AllShortestPaths(relationship.clone()))
             } else if relationship.min_hops.is_some() {
@@ -1857,7 +1890,7 @@ impl Planner {
                     let mut ei = tree!(IR::ExpandInto {
                         relationship: relationship.clone(),
                         emit_relationship: emit_rel(relationship),
-                        sibling_edges: sibling_edges.clone()
+                        sibling_edges: sibling_edges_for(relationship)
                     });
                     if let Some(filter_expr) = attr_filter {
                         ei = tree!(IR::Filter(Arc::new(filter_expr)), ei);
@@ -1880,7 +1913,7 @@ impl Planner {
                         IR::ExpandInto {
                             relationship: relationship.clone(),
                             emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone()
+                            sibling_edges: sibling_edges_for(relationship)
                         },
                         scan
                     )
@@ -1895,7 +1928,7 @@ impl Planner {
                 let mut ei = tree!(IR::ExpandInto {
                     relationship: relationship.clone(),
                     emit_relationship: emit_rel(relationship),
-                    sibling_edges: sibling_edges.clone()
+                    sibling_edges: sibling_edges_for(relationship)
                 });
                 // Both endpoints already bound — check for inline attrs
                 // that need filtering (e.g. reversed patterns where attrs
@@ -1917,7 +1950,7 @@ impl Planner {
                 let mut ct = tree!(IR::CondTraverse {
                     relationship: relationship.clone(),
                     emit_relationship: emit_rel(relationship),
-                    sibling_edges: sibling_edges.clone(),
+                    sibling_edges: sibling_edges_for(relationship),
                     transposed: false,
                     chain: Vec::new(),
                     optional: false,
@@ -2011,7 +2044,7 @@ impl Planner {
                             IR::ExpandInto {
                                 relationship: relationship.clone(),
                                 emit_relationship: emit_rel(relationship),
-                                sibling_edges: sibling_edges.clone()
+                                sibling_edges: sibling_edges_for(relationship)
                             },
                             res
                         );
@@ -2038,7 +2071,7 @@ impl Planner {
                             IR::ExpandInto {
                                 relationship: relationship.clone(),
                                 emit_relationship: emit_rel(relationship),
-                                sibling_edges: sibling_edges.clone()
+                                sibling_edges: sibling_edges_for(relationship)
                             },
                             scan,
                             res
@@ -2055,7 +2088,7 @@ impl Planner {
                         IR::ExpandInto {
                             relationship: relationship.clone(),
                             emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone()
+                            sibling_edges: sibling_edges_for(relationship)
                         },
                         res
                     );
@@ -2077,7 +2110,7 @@ impl Planner {
                         IR::CondTraverse {
                             relationship: relationship.clone(),
                             emit_relationship: emit_rel(relationship),
-                            sibling_edges: sibling_edges.clone(),
+                            sibling_edges: sibling_edges_for(relationship),
                             transposed: false,
                             chain: Vec::new(),
                             optional: false,
