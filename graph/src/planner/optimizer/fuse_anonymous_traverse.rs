@@ -28,6 +28,16 @@
 //! length, and have no inline attribute predicates. Both ops must have empty
 //! `sibling_edges` and `transposed = false`. When any condition fails the
 //! pair is left alone and the fast/slow paths run as before.
+//!
+//! ## Why fusion is restricted to existence tests
+//!
+//! The fused chain runs as a single boolean matrix product, so its result
+//! says only *whether* a destination is reachable — not how many distinct
+//! paths reach it. On a diamond (`a->b1->c`, `a->b2->c`) the two paths
+//! collapse into one row, which is wrong for a plain `MATCH`: Cypher
+//! requires one row per distinct pair of relationships. Fusing is therefore
+//! only applied under a `SemiApply`/`AntiSemiApply` right branch, where the
+//! rows are discarded and only their existence is consulted.
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
@@ -76,6 +86,43 @@ fn intermediate_unreferenced(
         cur = parent.idx();
     }
     true
+}
+
+/// True when the rows this traverse produces only ever feed an existence
+/// test, so collapsing distinct paths cannot change the query's answer.
+///
+/// `SemiApply`/`AntiSemiApply` run their right branch purely to learn
+/// whether it yields *at least one* row and discard the rows themselves.
+/// Everywhere else the row count is observable — it is the cardinality of
+/// the result set, and it feeds `count(*)` and every other aggregate — so
+/// fusing would silently drop the duplicate rows that distinct paths
+/// through the intermediate node are supposed to produce.
+fn feeds_existence_only(
+    plan: &DynTree<IR>,
+    idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
+) -> bool {
+    let mut cur = idx;
+    while let Some(parent) = plan.node(cur).parent() {
+        match parent.data() {
+            // Row-preserving operators: they neither observe nor alter the
+            // number of paths, so keep walking towards the consumer.
+            IR::CondTraverse { .. } | IR::Filter(_) => {}
+            IR::SemiApply | IR::AntiSemiApply => {
+                // Child 0 is the driving stream, whose rows are emitted and
+                // therefore counted; child 1 is the existence test.
+                return parent.num_children() > 1 && parent.child(1).idx() == cur;
+            }
+            IR::OrApplyMultiplexer(_) => {
+                // Same shape, one branch per disjunct: child 0 drives, and
+                // children 1..N are existence branches whose rows only feed a
+                // "did anything arrive" test before being discarded.
+                return (1..parent.num_children()).any(|i| parent.child(i).idx() == cur);
+            }
+            _ => return false,
+        }
+        cur = parent.idx();
+    }
+    false
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)
@@ -170,6 +217,14 @@ fn can_fuse(
     // Already-fused chain entries on the child stay storage-direction by
     // construction (the pass only ever inserts non-transposed hops).
     let _ = c_chain;
+
+    // The fused chain is evaluated as a single boolean matrix product, which
+    // records only *whether* the destination is reachable, not how many
+    // distinct paths reach it. That is only acceptable where the row count
+    // is not observable.
+    if !feeds_existence_only(plan, parent_idx) {
+        return false;
+    }
 
     // Intermediate must not be referenced by any ancestor of the parent CT,
     // since after fusion it disappears from the binding set. (Filters that
@@ -280,5 +335,89 @@ pub(super) fn fuse_anonymous_traverse(plan: &mut DynTree<IR>) {
         }
         // Prune the original child CT, leaving [g1, g2, ...].
         plan.node_mut(child_idx).prune();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use orx_tree::{Bfs, DynTree, NodeRef};
+
+    use super::super::eliminate_true_filters::eliminate_true_filters;
+    use super::super::push_filters_down::push_filters_down;
+    use super::super::reduce_expand_into::reduce_expand_into;
+    use super::super::reduce_var_len_path::reduce_var_len_path;
+    use super::fuse_anonymous_traverse;
+    use crate::parser::cypher::Parser;
+    use crate::planner::{IR, Planner, binder::Binder};
+    use crate::runtime::functions::init_functions;
+    use std::collections::HashMap;
+
+    /// Compiles `query` through parse → bind → plan, then runs the Graph-free
+    /// prefix of the optimizer in pipeline order up to and including
+    /// `fuse_anonymous_traverse`. The skipped passes (`reduce_count`,
+    /// `select_scan_node`, `utilize_index`) need a live GraphBLAS context and
+    /// do not affect whether a CondTraverse pair is fusable.
+    fn optimized_plan(query: &str) -> DynTree<IR> {
+        let _ = init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let mut plan = Planner::new(scope_vars).plan(ir);
+
+        reduce_expand_into(&mut plan);
+        reduce_var_len_path(&mut plan);
+        eliminate_true_filters(&mut plan, &HashMap::new());
+        push_filters_down(&mut plan);
+        fuse_anonymous_traverse(&mut plan);
+        plan
+    }
+
+    /// Number of CondTraverse ops carrying at least one fused hop.
+    fn fused_ops(plan: &DynTree<IR>) -> usize {
+        plan.root()
+            .indices::<Bfs>()
+            .filter(|idx| {
+                matches!(plan.node(*idx).data(),
+                    IR::CondTraverse { chain, .. } if !chain.is_empty())
+            })
+            .count()
+    }
+
+    #[test]
+    fn plain_match_does_not_fuse() {
+        // The row count is observable here, and a boolean matrix product
+        // would lose one row per extra path through the intermediate.
+        let plan = optimized_plan("MATCH (a:A)-[:R]->()-[:R]->(c:C) RETURN count(*)");
+        assert_eq!(fused_ops(&plan), 0);
+    }
+
+    #[test]
+    fn named_intermediate_does_not_fuse() {
+        let plan = optimized_plan("MATCH (a:A)-[:R]->(m)-[:R]->(c:C) RETURN m");
+        assert_eq!(fused_ops(&plan), 0);
+    }
+
+    #[test]
+    fn pattern_predicate_fuses() {
+        // SemiApply consults only whether a row arrives, so collapsing the
+        // paths cannot change the answer.
+        let plan = optimized_plan("MATCH (a:A) WHERE (a)-[:R]->()-[:R]->() RETURN a");
+        assert_eq!(fused_ops(&plan), 1);
+    }
+
+    #[test]
+    fn negated_pattern_predicate_fuses() {
+        let plan = optimized_plan("MATCH (a:A) WHERE NOT (a)-[:R]->()-[:R]->() RETURN a");
+        assert_eq!(fused_ops(&plan), 1);
+    }
+
+    #[test]
+    fn or_of_pattern_predicates_fuses_every_branch() {
+        // Or Apply Multiplexer branches are existence tests too.
+        let plan = optimized_plan(
+            "MATCH (a:A) WHERE (a)-[:R]->()-[:R]->() OR (a)-[:Q]->()-[:Q]->() RETURN a",
+        );
+        assert_eq!(fused_ops(&plan), 2);
     }
 }
