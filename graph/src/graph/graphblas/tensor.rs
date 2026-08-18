@@ -899,6 +899,30 @@ impl Tensor {
     /// except `MULTI_EDGE` sentinels (see [`Self::multi_pairs`]), whose real
     /// ids all live in `me`. Effective nvals is `|m| + |dp| − |dm| − |dp ∩ m|`
     /// (`dp` may shadow `m`; `dm ⊆ m` is disjoint from `dp`).
+    ///
+    /// # Panics
+    ///
+    /// If any step leaves the range of a `u64`, which cannot happen while the
+    /// delta invariants hold. The three subtractions are the interesting case:
+    /// `dm ⊆ m` bounds the second term, `dp ∩ dm = ∅` the third, and
+    /// promotion-completeness the fourth, and the Lean development proves each
+    /// stays non-negative (`edgeCount_no_underflow` in
+    /// `proofs/tensor/Tensor/Count.lean`). The two additions can overflow only
+    /// if an `nvals` is not a real matrix size — reachable the same way, through
+    /// memory corruption rather than through any operation here. Each step says
+    /// which of those it hit, since sending a reader after the wrong term costs
+    /// more than the branch does.
+    ///
+    /// The arithmetic is checked because the identity is *unsigned* and this is
+    /// a reachable failure mode even though the algorithm is proved: a proof
+    /// binds the model, not the running process, and a decoded blob or a memory
+    /// error can still break an invariant underneath it. Unchecked, a single
+    /// wrapped subtraction turns into a count near `2^64`, and the count reaches
+    /// `Vec::with_capacity` in `algo_procedures`' max-flow path — so the symptom
+    /// was a capacity-overflow abort, far from the cause and indistinguishable
+    /// from an out-of-memory condition. Panicking here is the same trade
+    /// [`compound_key`] already makes: a loud, immediate, memory-safe stop beats
+    /// a wrong answer that reaches an allocator.
     #[must_use]
     pub fn edge_count(&self) -> u64 {
         self.wait_fwd();
@@ -907,8 +931,51 @@ impl Tensor {
         } else {
             self.dp.intersection_nvals(&self.m)
         };
-        self.m.nvals() + self.dp.nvals() - self.dm.nvals() - shadow - self.multi_pairs()
-            + self.me.nvals()
+        let (m, dp, dm, multi, me) = (
+            self.m.nvals(),
+            self.dp.nvals(),
+            self.dm.nvals(),
+            self.multi_pairs(),
+            self.me.nvals(),
+        );
+        // Evaluated left to right, exactly as the identity is stated, and each
+        // step reports what failed and which invariant bounds it. The two
+        // additions can only overflow and the three subtractions can only
+        // underflow, so a single shared message would have to guess at one or
+        // the other — and guessing wrong sends the reader after the wrong term.
+        let broken = |what: &str, why: &str| -> u64 {
+            panic!(
+                "Tensor::edge_count: {what} ({why}). \
+                 |m|={m} |dp|={dp} |dm|={dm} |dp∩m|={shadow} multi={multi} |me|={me}"
+            )
+        };
+        let acc = m.checked_add(dp).unwrap_or_else(|| {
+            broken(
+                "|m| + |dp| overflowed",
+                "an nvals is not a real matrix size",
+            )
+        });
+        let acc = acc
+            .checked_sub(dm)
+            .unwrap_or_else(|| broken("|dm| exceeds |m| + |dp|", "dm ⊆ m is broken"));
+        let acc = acc.checked_sub(shadow).unwrap_or_else(|| {
+            broken(
+                "|dp ∩ m| exceeds the running total",
+                "dp ∩ dm = ∅ is broken, so the pattern size is wrong",
+            )
+        });
+        let acc = acc.checked_sub(multi).unwrap_or_else(|| {
+            broken(
+                "multi exceeds the effective pattern",
+                "promotion-completeness is broken",
+            )
+        });
+        acc.checked_add(me).unwrap_or_else(|| {
+            broken(
+                "adding |me| overflowed",
+                "an nvals is not a real matrix size",
+            )
+        })
     }
 
     /// Iterate every `(src, dst, edge_id)` triple in the tensor.
@@ -966,6 +1033,19 @@ impl Tensor {
     #[cfg(test)]
     fn fwd_me_nvals_for_test(&self) -> u64 {
         self.me.nvals()
+    }
+
+    /// Break `dm ⊆ m` the way a corrupt decoded blob can: mask a pair the
+    /// committed base does not hold. No mutation path can reach this state,
+    /// which is exactly why the underflow it causes needs a test hook.
+    #[cfg(test)]
+    fn forge_orphan_tombstone_for_test(
+        &mut self,
+        src: u64,
+        dst: u64,
+    ) {
+        self.dm.insert(src, dst);
+        self.dm.wait();
     }
 
     #[must_use]
@@ -1335,6 +1415,34 @@ mod tests {
     /// u64 edge id instead of reading only the sparsity pattern turns id 0
     /// into a `false` entry, which valued masks then treat as absent — the
     /// deletion is silently lost.
+    /// `edge_count`'s identity is unsigned, so a broken invariant used to wrap
+    /// rather than fail. The count then reaches `Vec::with_capacity` in
+    /// `algo_procedures`' max-flow path, which turns a storage-layer corruption
+    /// into an allocation abort with nothing pointing back at the cause.
+    ///
+    /// This forges the one input the Lean proof rules out — a tombstone with no
+    /// committed entry beneath it, which is `dm ⊆ m` violated, the shape a
+    /// corrupt decoded blob produces — and pins that the count now stops loudly
+    /// at the subtraction instead of returning a number near `2^64`. It asserts
+    /// on the *diagnosis* rather than on the word "underflow", so the message
+    /// has to keep naming the invariant that broke.
+    #[test]
+    #[should_panic(expected = "dm ⊆ m is broken")]
+    fn edge_count_underflow_panics_instead_of_wrapping() {
+        ensure_init();
+        let mut t = Tensor::new(16, 16);
+        t.set_all_from_slices(&[0], &[1], &[7]);
+        let mut t = t.dup();
+        t.flush();
+        t.wait();
+        assert_eq!(t.edge_count(), 1, "baseline count before forging");
+
+        // One committed entry, two tombstones: |m| + |dp| - |dm| goes negative.
+        t.forge_orphan_tombstone_for_test(2, 3);
+        t.forge_orphan_tombstone_for_test(4, 5);
+        let _ = t.edge_count();
+    }
+
     /// The bulk loader puts a pair's duplicate edges in ONE batch, which takes
     /// `set_all_from_slices`' retro-promotion path rather than the plain promote.
     #[test]
