@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__build__f90bbbb6.c
+// GB_jit__build__1ff90bbbb6.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -26,34 +26,51 @@
 #define GB_UPDATE(z,y) z = y
 
 // build copy/dup methods:
+#define GB_BLD_SXTYPE_IS_TXTYPE 0
+#define GB_BLD_NO_CASTING 0
 #define GB_BLD_COPY(Tx,p,Sx,k) Tx [p] = (double) Sx [k]
 #define GB_BLD_DUP(Tx,p,Sx,k) \
+{ \
     double y = (double) Sx [k] ; \
     double x = Tx [p] ; \
     double z ; \
     GB_DUP (z, x, y) ; \
-    Tx [p] = z ;
+    Tx [p] = z ; \
+}
+
+// type of build:
+#define GB_MTX_BUILD 1
+#define GB_ISO_BUILD 0
+#define GB_KNOWN_NO_DUPLICATES 1
+#define GB_KNOWN_SORTED 0
 
 // 32/64 integer types:
+#define GB_Tp_TYPE int32_t
+#define GB_Tp_BITS 32
+#define GB_Tj_TYPE int32_t
+#define GB_Tj_BITS 32
 #define GB_Ti_TYPE int32_t
 #define GB_Ti_BITS 32
 #define GB_I_TYPE  uint32_t
+#define GB_J_TYPE  uint32_t
 #define GB_K_TYPE  uint32_t
 #define GB_K_WORK(k) k
 #define GB_K_IS_NULL 1
-#define GB_NO_DUPLICATES 1
+#define GB_KEY_PRELOADED 0
+#define GB_KEY_TYPE uint32_t
+#define GB_KEY_BITS 32
 
 #include "include/GB_kernel_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__build__f90bbbb6
-#define GB_jit_query  GB_jit__build__f90bbbb6_query
+#define GB_jit_kernel GB_jit__build__1ff90bbbb6
+#define GB_jit_query  GB_jit__build__1ff90bbbb6_query
 #endif
 #include "template/GB_jit_kernel_build.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x8d634a378dc292b4 ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    (*hash) = 0x03b76d7fb7d346ec ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;

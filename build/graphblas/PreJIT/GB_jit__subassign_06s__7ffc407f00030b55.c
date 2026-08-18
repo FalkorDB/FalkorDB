@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__subassign_06s__7ffc507f0003ee55__LG_MF_flowEdge.c
+// GB_jit__subassign_06s__7ffc407f00030b55.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -23,10 +23,6 @@
 
 // accum: not present
 
-typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
-#define GB_LG_MF_flowEdge_USER_DEFN \
-"typedef struct{ double capacity; double flow; } LG_MF_flowEdge;"
-
 #define GB_ACCUMULATE_scalar(Cx,pC,ywork,C_iso) /* unused */
 #define GB_ACCUMULATE_aij(Cx,pC,Ax,pA,A_iso,ywork,C_iso) /* unused */
 
@@ -41,10 +37,10 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 #define GBb_C(Cb,p)      1
 #define GB_C_NVALS(e) int64_t e = C->nvals
 #define GB_C_NHELD(e) GB_C_NVALS(e)
-#define GB_C_ISO 0
-#define GB_C_IN_ISO 0
-#define GB_C_TYPE LG_MF_flowEdge
-#define GB_PUTC(cwork,Cx,p) Cx [p] = cwork
+#define GB_C_ISO 1
+#define GB_C_IN_ISO 1
+#define GB_C_TYPE void
+#define GB_PUTC(cwork,Cx,p)
 #define GB_Cp_TYPE uint32_t
 #define GB_Cj_TYPE uint32_t
 #define GB_Cj_SIGNED_TYPE int32_t
@@ -53,10 +49,10 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 #define GB_Cp_BITS 32
 #define GB_Cj_BITS 32
 #define GB_Ci_BITS 32
-#define GB_DECLAREC(cwork) LG_MF_flowEdge cwork
-#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso) Cx [pC] = Ax [0]
-#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso) Cx [pC] = cwork
-#define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [0]
+#define GB_DECLAREC(cwork) double cwork
+#define GB_COPY_A_to_C(Cx,pC,Ax,pA,A_iso)
+#define GB_COPY_aij_to_C(Cx,pC,Ax,pA,A_iso,cwork,C_iso)
+#define GB_COPY_aij_to_cwork(cwork,Ax,p,A_iso) cwork = Ax [p]
 #define GB_COPY_cwork_to_C(Cx,pC,cwork,C_iso) /* unused */
 #define GB_COPY_scalar_to_cwork(cwork,scalar) /* unused */
 
@@ -97,8 +93,8 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
 #define GB_A_NHELD(e) GB_A_NVALS(e)
-#define GB_A_ISO 1
-#define GB_A_TYPE LG_MF_flowEdge
+#define GB_A_ISO 0
+#define GB_A_TYPE double
 #define GB_A2TYPE void
 #define GB_DECLAREA(a)
 #define GB_GETA(a,Ax,p,iso)
@@ -136,19 +132,19 @@ typedef struct{ double capacity; double flow; } LG_MF_flowEdge;
 
 #include "include/GB_assign_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__subassign_06s__7ffc507f0003ee55__LG_MF_flowEdge
-#define GB_jit_query  GB_jit__subassign_06s__7ffc507f0003ee55__LG_MF_flowEdge_query
+#define GB_jit_kernel GB_jit__subassign_06s__7ffc407f00030b55
+#define GB_jit_query  GB_jit__subassign_06s__7ffc407f00030b55_query
 #endif
 #include "template/GB_jit_kernel_subassign_06s.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x85458709870e338f ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    (*hash) = 0x4247132e7fb5f686 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
-    defn [2] = GB_LG_MF_flowEdge_USER_DEFN ;
-    defn [3] = defn [2] ;
+    defn [2] = NULL ;
+    defn [3] = NULL ;
     defn [4] = NULL ;
     return (true) ;
 }
