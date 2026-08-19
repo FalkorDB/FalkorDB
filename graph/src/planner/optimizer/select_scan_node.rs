@@ -88,7 +88,7 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// When scores are equal, the endpoint with fewer label nodes is preferred.
 fn score_endpoint(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
-    filtered_vars: &HashSet<u32>,
+    filtered_vars: &HashSet<(u32, u32)>,
     bound_vars: &HashSet<u32>,
     graph: &Graph,
 ) -> (u32, u64) {
@@ -96,7 +96,7 @@ fn score_endpoint(
     if bound_vars.contains(&node.alias.id) {
         score += 3;
     }
-    if filtered_vars.contains(&node.alias.id) {
+    if filtered_vars.contains(&(node.alias.id, node.alias.scope_id)) {
         score += 2;
     }
     // Node attribute filters (e.g. {name: "Nicolas Cage"}) also count as filters.
@@ -120,12 +120,21 @@ fn score_endpoint(
     (score, cardinality)
 }
 
-/// Collects variable IDs referenced by Filter nodes that are ancestors of
-/// the given node index, up to the first non-Filter/non-CondTraverse ancestor.
+/// Collects the variables referenced by Filter nodes that are ancestors of the
+/// given node index, up to the first non-Filter/non-CondTraverse ancestor.
+///
+/// Keyed on the full `(id, scope_id)` pair. Today the walk cannot leave the
+/// traverse's own scope — every scope boundary (`Project` for `WITH`, `Apply`
+/// for `CALL {}`, `Unwind`, `Aggregate`) falls into the `_ => break` arm below,
+/// so bare ids would be unambiguous in practice. The pair is kept because two
+/// callers use this set to prove an endpoint's inline attributes are still
+/// enforced above before removing a scan that carried them, and `Variable::id`
+/// is only an index into its own scope's env: that proof should not silently
+/// rest on the walk never being widened.
 fn collect_filtered_vars(
     plan: &DynTree<IR>,
     start_idx: NodeIdx<Dyn<IR>>,
-) -> HashSet<u32> {
+) -> HashSet<(u32, u32)> {
     let mut vars = HashSet::new();
     let mut current = start_idx;
     while let Some(parent) = plan.node(current).parent() {
@@ -133,7 +142,7 @@ fn collect_filtered_vars(
             IR::Filter(filter) => {
                 for idx in filter.root().indices::<Bfs>() {
                     if let ExprIR::Variable(v) = filter.node(idx).data() {
-                        vars.insert(v.id);
+                        vars.insert((v.id, v.scope_id));
                     }
                 }
             }
@@ -338,10 +347,10 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
         }
         // Argument with known bound vars: the incoming rows bind exactly
         // these variables. `Argument(None)` stays opaque (conservative).
-        // Only the id is kept: this set feeds `score_endpoint`, which is a
-        // preference heuristic over bare ids (as `filtered_vars` already is)
-        // and never decides plan validity. The scope-sensitive decision —
-        // whether the Argument is transparent — compares full pairs.
+        // Only the id is kept: this set feeds `score_endpoint`'s `bound_vars`,
+        // a preference heuristic that never decides plan validity. The
+        // scope-sensitive decision — whether the Argument is transparent —
+        // compares full pairs.
         IR::Argument(Some(vars)) => {
             aliases.extend(vars.iter().map(|(id, _)| *id));
         }
@@ -507,7 +516,8 @@ fn select_var_len_scan_node(
                 }
                 node = node.child(0);
             }
-            ok && (from.attrs.root().num_children() == 0 || filtered_vars.contains(&from.alias.id))
+            ok && (from.attrs.root().num_children() == 0
+                || filtered_vars.contains(&(from.alias.id, from.alias.scope_id)))
         };
         if wrapper_ok && child_subtree_binds(optimized_plan, scan_idx, &to.alias) {
             let kept: Vec<DynTree<IR>> = optimized_plan
@@ -544,10 +554,10 @@ fn select_var_len_scan_node(
         // placed above this traverse, so replacing the scan subtree cannot lose
         // them — but only reverse once those Filters are confirmed present.
         // `push_filters_down` then lands the `to` one back onto the new scan.
-        if [&from, &to]
-            .iter()
-            .any(|n| n.attrs.root().num_children() > 0 && !filtered_vars.contains(&n.alias.id))
-        {
+        if [&from, &to].iter().any(|n| {
+            n.attrs.root().num_children() > 0
+                && !filtered_vars.contains(&(n.alias.id, n.alias.scope_id))
+        }) {
             continue;
         }
 
