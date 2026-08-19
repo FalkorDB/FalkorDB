@@ -262,6 +262,25 @@ fn planner_scan_alias(
     }
 }
 
+/// Returns the index of the scan at the bottom of a planner-added scan subtree
+/// (the shape [`is_planner_scan_subtree`] accepts), or `None` when `idx` does
+/// not root such a subtree.
+fn planner_scan_idx(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<NodeIdx<Dyn<IR>>> {
+    let mut node = plan.node(idx);
+    loop {
+        match node.data() {
+            IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } => return Some(node.idx()),
+            IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
+                node = node.child(0);
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// Creates a new `QueryRelationship` with from and to swapped.
 fn swap_relationship(
     rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
@@ -371,17 +390,23 @@ fn resolve_path(
 fn child_subtree_binds(
     plan: &DynTree<IR>,
     scan_idx: NodeIdx<Dyn<IR>>,
-    alias: u32,
+    alias: &Variable,
 ) -> bool {
+    use crate::runtime::runtime::GetVariables;
     let mut binds = false;
     for child in plan.node(scan_idx).children() {
-        let sub: DynTree<IR> = child.clone_as_tree();
-        for i in sub.root().indices::<Bfs>() {
-            if matches!(sub.node(i).data(), IR::Argument(None)) {
+        for ir in child.walk::<Bfs>() {
+            if matches!(ir, IR::Argument(None)) {
                 return false;
             }
         }
-        if collect_subtree_variables(&sub.root()).contains(&alias) {
+        // `id` alone is ambiguous: it is an index into its own scope's env, so
+        // the same number names different variables in different scopes.
+        if child
+            .get_variables()
+            .iter()
+            .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+        {
             binds = true;
         }
     }
@@ -460,9 +485,33 @@ fn select_var_len_scan_node(
         // chains via `bound_vars`, except the binding here sits *below* the
         // planner's scan rather than being the immediate child, so it has to be
         // looked for one level deeper.
-        if child_subtree_binds(optimized_plan, child_idx, to.alias.id) {
+        let filtered_vars = collect_filtered_vars(optimized_plan, idx);
+
+        // `planner_scan_alias` looks through `Filter` (inline attrs) and
+        // `IncludePending` (MERGE) wrappers, so the scan to drop is not
+        // necessarily `child_idx`. The whole wrapper chain goes with it:
+        //  - a `Filter` there carries `from`'s inline attrs, which the planner
+        //    also emitted above this traverse — assert that duplicate is
+        //    present rather than assume it;
+        //  - `IncludePending` carries MERGE pending-node visibility that has
+        //    nowhere else to live, so bail out instead.
+        let scan_idx = planner_scan_idx(optimized_plan, child_idx)
+            .expect("planner_scan_alias matched, so a scan is there");
+        let wrapper_ok = {
+            let mut node = optimized_plan.node(child_idx);
+            let mut ok = true;
+            while node.idx() != scan_idx {
+                if matches!(node.data(), IR::IncludePending { .. }) {
+                    ok = false;
+                    break;
+                }
+                node = node.child(0);
+            }
+            ok && (from.attrs.root().num_children() == 0 || filtered_vars.contains(&from.alias.id))
+        };
+        if wrapper_ok && child_subtree_binds(optimized_plan, scan_idx, &to.alias) {
             let kept: Vec<DynTree<IR>> = optimized_plan
-                .node(child_idx)
+                .node(scan_idx)
                 .children()
                 .map(|c| c.clone_as_tree())
                 .collect();
@@ -491,7 +540,6 @@ fn select_var_len_scan_node(
             _ => {}
         }
 
-        let filtered_vars = collect_filtered_vars(optimized_plan, idx);
         // Both endpoints' inline attributes are enforced by Filters the planner
         // placed above this traverse, so replacing the scan subtree cannot lose
         // them — but only reverse once those Filters are confirmed present.

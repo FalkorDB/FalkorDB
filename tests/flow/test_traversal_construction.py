@@ -523,7 +523,7 @@ class testTraversalConstruction():
         barrier_plan = str(g.explain(barrier))
         self.env.assertNotContains("Node By Label Scan | (p:P)", barrier_plan)
         self.env.assertContains("Conditional Variable Length Traverse", barrier_plan)
-        self.env.assertTrue(g.query(barrier).result_set == expected)
+        self.env.assertEqual(g.query(barrier).result_set, expected)
 
         # `u` arriving through an UNWIND chain.
         unwound = """UNWIND [3] AS wanted
@@ -531,7 +531,7 @@ class testTraversalConstruction():
                      MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)"""
         unwound_plan = str(g.explain(unwound))
         self.env.assertNotContains("Node By Label Scan | (p:P)", unwound_plan)
-        self.env.assertTrue(g.query(unwound).result_set == expected)
+        self.env.assertEqual(g.query(unwound).result_set, expected)
 
         # The free endpoint's label is still enforced — by the traverse itself,
         # as its destination filter — so an unlabeled `p` must match strictly
@@ -542,5 +542,32 @@ class testTraversalConstruction():
                              MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)""").result_set
         unlabeled = g.query("""MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
                                MATCH path=(p)-[:E*0..]->(u) RETURN count(path)""").result_set
-        self.env.assertTrue(unlabeled[0][0] > labeled[0][0])
+        self.env.assertGreater(unlabeled[0][0], labeled[0][0])
+
+        # An inline attribute on the free endpoint puts a Filter between the
+        # traverse and the planner's scan. The scan must still go — and the
+        # Filter must not go with it, or `p` loses its predicate.
+        attrs = """MATCH (u:P) WHERE u.id=3 WITH u LIMIT 1
+                    MATCH path=(p:P {id:1})-[:E*0..]->(u) RETURN count(path)"""
+        attrs_plan = str(g.explain(attrs))
+        self.env.assertNotContains("Node By Label Scan | (p:P)", attrs_plan)
+        self.env.assertContains("Filter", attrs_plan)
+        self.env.assertEqual(g.query(attrs).result_set, [[1]])
+        g.delete()
+
+    # `Argument(None)` is opaque about which variables it carries, so a scan
+    # with one anywhere below it cannot be proven redundant and the plan must
+    # be left alone — even though the outer `u` is in fact bound.
+    def test_var_len_anchor_opaque_argument(self):
+        g = self.db.select_graph("VarLenAnchorOpaqueArgument")
+        g.query("CREATE (a:P {id:0})-[:E]->(b:P {id:1})-[:E]->(c:P {id:2})")
+
+        for q in ["MATCH (u:P) WHERE u.id=2 OPTIONAL MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path)",
+                  """MATCH (u:P) WHERE u.id=2
+                     CALL { WITH u MATCH path=(p:P)-[:E*0..]->(u) RETURN count(path) AS c }
+                     RETURN c"""]:
+            plan = str(g.explain(q))
+            self.env.assertContains("Argument", plan)
+            self.env.assertContains("Node By Label Scan | (p:P)", plan)
+            self.env.assertEqual(g.query(q).result_set, [[3]])
         g.delete()
