@@ -1029,6 +1029,26 @@ uint GraphContext_AttributeCount
 	return arr_len (_GetAttributes (gc)) ;
 }
 
+// checks if graph context is aware of attribute id
+bool GraphContext_HasAttribute
+(
+	const GraphContext *gc,  // graph context
+	AttributeID id           // attribute id
+)
+{
+	ASSERT (gc != NULL) ;
+	ASSERT (id != ATTRIBUTE_ID_NONE && id != ATTRIBUTE_ID_ALL) ;
+
+	// use _GetAttributes rather than gc->attributes directly: while a write is
+	// in flight (e.g. an ADD_ATTRIBUTE effect earlier in the same GRAPH.EFFECT
+	// buffer), the new attribute lives only in the writer's pending copy
+	// gc->_attributes. gc->attributes isn't updated until the changes are
+	// committed on write-lock release, so reading it here would miss the
+	// just-added attribute and misreport a following UPDATE effect as a
+	// master/replica divergence
+	return (id < arr_len (_GetAttributes ((GraphContext *)gc))) ;
+}
+
 // returns an attribute ID given a string, creating one if not found
 AttributeID GraphContext_FindOrAddAttribute
 (
