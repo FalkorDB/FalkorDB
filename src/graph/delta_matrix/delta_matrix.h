@@ -311,6 +311,13 @@ GrB_Info Delta_Matrix_synchronize
 	GrB_Index ncols   // the required number of columns
 );
 
+// cache transpose matrices (M, DP, and DM) into C->transposed
+// allocates the transpose matrix if missing
+GrB_Info Delta_transpose_calculate
+(
+	Delta_Matrix C
+);
+
 bool Delta_Matrix_Synced
 (
 	const Delta_Matrix C
