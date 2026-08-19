@@ -1351,9 +1351,15 @@ impl Index {
     /// Uses the same bitmask as C FalkorDB's RediSearch INT64 workaround,
     /// applied to the value's magnitude so negative integers are handled
     /// correctly.
+    ///
+    /// The mask covers bit 63 as well: `i64::MIN`'s magnitude is `1 << 63`,
+    /// whose only set bit sits above C's `0x7FF0...` mask. It round-trips
+    /// through `f64` exactly, but its neighbours up to `i64::MIN + 512` all
+    /// collapse onto the same `f64`, so an index lookup for `i64::MIN` still
+    /// needs its residual filter.
     #[must_use]
     pub const fn int_loses_f64_precision(i: i64) -> bool {
-        i.unsigned_abs() & 0x7FF0_0000_0000_0000 != 0
+        i.unsigned_abs() & 0xFFF0_0000_0000_0000 != 0
     }
 
     /// Build a RediSearch numeric range node for numeric values.
