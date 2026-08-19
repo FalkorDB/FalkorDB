@@ -557,6 +557,66 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH (x:BOO) WHERE x.id = 0 RETURN x")
         self.env.assertEqual(res.result_set, [])
 
+    def test26_delete_same_edge_variable_twice(self):
+        # Deleting the same edge variable a second time is a no-op, but it
+        # used to decrement the relationship statistics again. That left a
+        # phantom edge: a later MERGE saw a stale count and skipped creating
+        # a relationship, so two semantically equivalent queries disagreed.
+        # https://github.com/FalkorDB/FalkorDB/issues/1018
+        self.graph.delete()
+
+        # baseline - a single DELETE of x
+        self.graph.query("""CREATE ()-[x:A]->()
+                            DELETE x
+                            MERGE ()<-[:B]-()
+                            MERGE ()-[:C]->()""")
+        expected = self.graph.query(
+                "MATCH ()-[m]->() RETURN count(m)").result_set[0][0]
+        expected_undirected = self.graph.query(
+                "MATCH ()-[m]-() RETURN count(m)").result_set[0][0]
+        self.env.assertEqual(expected, 2)
+        self.env.assertEqual(expected_undirected, expected)
+
+        # the same query with x deleted a second time must be equivalent
+        self.graph.delete()
+        self.graph.query("""CREATE ()-[x:A]->()
+                            DELETE x
+                            MERGE ()<-[:B]-()
+                            DELETE x
+                            MERGE ()-[:C]->()""")
+        self.env.assertEqual(
+                self.graph.query("MATCH ()-[m]->() RETURN count(m)").result_set[0][0],
+                expected)
+
+        # the edge must be reachable through either traversal direction -
+        # a phantom edge showed up in one but not the other
+        self.env.assertEqual(
+                self.graph.query("MATCH ()-[m]-() RETURN count(m)").result_set[0][0],
+                expected_undirected)
+
+        # the same shape used to trip an assertion on the relationship
+        # statistics (relation_idx / edge_count) rather than corrupt counts
+        # https://github.com/FalkorDB/FalkorDB/issues/416
+        self.graph.delete()
+        self.graph.query("MERGE ()<-[x:A]-() DELETE x MERGE (:B)<-[:C]-() DELETE x")
+        self.env.assertEqual(
+                self.graph.query("MATCH ()-[m]->() RETURN count(m)").result_set[0][0],
+                1)
+
+        # and this one tripped an 'i < n' assertion while re-deleting
+        # https://github.com/FalkorDB/FalkorDB/issues/428
+        self.graph.delete()
+        self.graph.query("CREATE ()-[y:A]->() DELETE y CREATE ()-[:B]->() DELETE y")
+        self.env.assertEqual(
+                self.graph.query("MATCH ()-[m]->() RETURN count(m)").result_set[0][0],
+                1)
+
+        # statistics must agree with what a scan actually finds
+        res = self.graph.query("MATCH ()-[m:B]->() RETURN count(m)")
+        self.env.assertEqual(res.result_set[0][0], 1)
+        res = self.graph.query("MATCH ()-[m:A]->() RETURN count(m)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
