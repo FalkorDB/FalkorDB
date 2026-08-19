@@ -744,6 +744,93 @@ class testGraphInfoCmdInfoDisabled():
         self.env.assertEqual(self.conn.type(stream), "none")
         self.env.assertEqual(self.conn.xlen(stream), 0)
 
+class testGraphInfoShutdownUnderLoad():
+    """`SHUTDOWN` must not hang because the telemetry flusher is behind.
+
+    `shutdown_flusher_thread` drops the sender and then joins the flusher from the
+    main thread, which holds the module GIL for the whole shutdown event callback.
+    So the flusher must never park on the GIL after that point: it has to notice the
+    disconnect and leave without writing.
+
+    Noticing it means *asking*. `drain_queued` stops calling `try_recv` the moment the
+    batch reaches `FLUSH_BATCH_MAX`, and crossfire reports `Disconnected` only when the
+    channel is empty as well as closed — so with a backlog the flusher used to walk
+    past its `if disconnected` guard straight into a blocking `hold_gil()` and park
+    there forever, main thread waiting on it in `pthread_join`. The two halves of
+    #2554 interact to produce exactly that: skipping the linger when a full batch is
+    already queued is what removed the last observation of the disconnect.
+
+    The pipelined burst is what creates the backlog — it drives the queue past
+    `FLUSH_BATCH_MAX` so every drain exits full rather than empty.
+
+    Asserted here is only that the process *terminates*, not that it exits zero: the
+    module's shutdown handler also tears down RediSearch, which is beyond what this
+    test is pinning. A hang is what the regression looked like.
+    """
+
+    def __init__(self):
+        # The shutdown handler is only subscribed when RS_GLOBAL_DTORS is set (see
+        # module_init.rs), i.e. the sanitizer/valgrind runs — without it nothing calls
+        # `shutdown_flusher_thread` and there is no deadlock to have. RLTest snapshots
+        # os.environ when it builds the runner, so this has to be set before Env(),
+        # and is put back straight after so no later env inherits it.
+        saved = os.environ.get('RS_GLOBAL_DTORS')
+        os.environ['RS_GLOBAL_DTORS'] = '1'
+        try:
+            # A moduleArgs value distinct from every other class in this file, so
+            # RLTest starts a fresh server for it rather than reusing one that was
+            # spawned without RS_GLOBAL_DTORS.
+            self.env, self.db = Env(moduleArgs="MAX_INFO_QUERIES 100000")
+        finally:
+            if saved is None:
+                os.environ.pop('RS_GLOBAL_DTORS', None)
+            else:
+                os.environ['RS_GLOBAL_DTORS'] = saved
+        self.conn = self.env.getConnection()
+
+    def test01_shutdown_with_a_backlogged_flusher(self):
+        # Only meaningful when RLTest owns the server process. In the CI image mode
+        # (FALKORDB_TEST_IMAGE) the module runs in a container this test cannot signal
+        # or reap, so there is nothing here to observe.
+        proc = getattr(self.env.envRunner, 'masterProcess', None)
+        if proc is None:
+            self.env.skip()
+            return
+
+        # Pipelined so the entries arrive far faster than the flusher's ceiling of one
+        # FLUSH_BATCH_MAX (256) per FLUSH_LINGER (5ms); a round trip per query would
+        # keep the queue empty and never reach the state under test.
+        for _ in range(8):
+            pipe = self.conn.pipeline(transaction=False)
+            for i in range(2000):
+                pipe.execute_command("GRAPH.QUERY", "shutdownload", f"RETURN {i}")
+            pipe.execute()
+
+        # Straight into the shutdown, with the queue still backlogged. On the way out
+        # the server never replies to this — it either goes away mid-command or, when
+        # the bug is present, stops answering entirely — so every outcome here is an
+        # exception, and the verdict is taken from the process below, not from this.
+        try:
+            self.conn.execute_command("SHUTDOWN", "NOSAVE")
+        except Exception:
+            pass
+
+        deadline = time.time() + 30
+        while time.time() < deadline and proc.poll() is None:
+            time.sleep(0.1)
+        alive = proc.poll() is None
+        if alive:
+            proc.kill()
+        self.env.assertFalse(
+            alive,
+            message="server still running 30s after SHUTDOWN NOSAVE: the telemetry "
+                    "flusher parked on the GIL while the main thread joined it",
+        )
+        # The server is gone; keep RLTest from trying to talk to it on the way out.
+        self.env.envRunner.masterProcess = None
+        self.env.envRunner.envIsUp = False
+        self.env.envRunner.envIsHealthy = False
+
 #class testGraphInfoReplication():
 #    def __init__(self):
 #        self.env, self.db = Env(env='oss', useSlaves=True)

@@ -13,6 +13,7 @@ use redis_module::{Context, ContextFlags, RedisString, RedisValue, raw};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -600,6 +601,12 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(5);
 /// schedule rather than per query.
 const FLUSH_LINGER: Duration = Duration::from_millis(5);
 
+/// How long `shutdown_flusher_thread` waits for the flusher to stop before giving up on
+/// it and letting shutdown continue without it. See there for why it is not an
+/// unconditional join. Far longer than an iteration of the loop takes, so the normal
+/// path returns the moment the flusher signals rather than after any part of this.
+const FLUSHER_STOP_GRACE: Duration = Duration::from_millis(500);
+
 /// Cap on entries held back while replica traffic is paused (see `flusher_loop`).
 /// Beyond this the oldest are dropped: the telemetry stream is already lossy —
 /// `MAX_INFO_QUERIES` trims it on every write — so bounding memory matters more
@@ -623,9 +630,19 @@ struct PendingEntry {
     entry: TelemetryEntry,
 }
 
-/// One distinct graph of a flush batch: a strong reference to it, and the key it is
-/// registered under once [`resolve_current_names`] has looked that up.
-type BatchGraph = (Arc<RwLock<ThreadedGraph>>, Option<Arc<str>>);
+/// One distinct graph of a flush batch.
+struct BatchGraph {
+    /// A strong reference, not just an address: an address only identifies a graph for
+    /// as long as the allocation behind it lives, and holding one is what stops a graph
+    /// being freed and its address reused by another between resolution and the write.
+    /// `Arc::as_ptr` of this is also what the batch's entries are matched against.
+    graph: Arc<RwLock<ThreadedGraph>>,
+    /// The key this batch's entries addressed. Tried against the registry first: it is
+    /// still the right answer for every graph whose key has not moved.
+    captured: Arc<str>,
+    /// The key the graph is registered under *now*, once resolved.
+    current: Option<Arc<str>>,
+}
 
 /// Re-key every entry to the Redis key its graph is registered under *now*, dropping
 /// entries whose graph is no longer registered at all.
@@ -648,44 +665,59 @@ type BatchGraph = (Arc<RwLock<ThreadedGraph>>, Option<Arc<str>>);
 /// Resolving outside it left a window where a rename between resolution and the write
 /// made the confirmation fail, and the entry was dropped — the very case this exists
 /// to carry across a rename.
-fn resolve_current_names(deferred: &mut Vec<PendingEntry>) {
-    // The distinct graphs of the batch — almost always one or two, so a linear scan
-    // beats hashing. Each is *held*, not just noted: an address is only a valid
-    // identity for as long as the allocation behind it lives, and keeping a strong
-    // reference for the whole function is what stops one being freed and reused by
-    // another graph between the registry scan and the match below.
-    let mut graphs: Vec<BatchGraph> = Vec::new();
-    for pe in deferred.iter() {
-        let Some(arc) = pe.graph.upgrade() else {
-            continue;
-        };
-        if !graphs.iter().any(|(g, _)| g.data_ptr() == arc.data_ptr()) {
-            graphs.push((arc, None));
-        }
-    }
+fn resolve_current_names(
+    deferred: &mut Vec<PendingEntry>,
+    graphs: &mut [BatchGraph],
+) {
     if !graphs.is_empty() {
         let registry = GRAPH_REGISTRY.lock();
-        for (name, arc) in registry.iter() {
-            if let Some((_, slot)) = graphs
-                .iter_mut()
-                .find(|(g, _)| g.data_ptr() == arc.data_ptr())
-            {
-                *slot = Some(Arc::from(name.as_str()));
+        // One hash lookup per graph settles the overwhelming majority: the key an entry
+        // addressed is still the key its graph answers to unless a `RENAME` moved it, or
+        // the name was rebound to a different graph, in the milliseconds since.
+        let mut unresolved = 0;
+        for b in &mut *graphs {
+            match registry.get(&*b.captured) {
+                Some(arc) if arc.data_ptr() == b.graph.data_ptr() => {
+                    b.current = Some(Arc::clone(&b.captured));
+                }
+                _ => unresolved += 1,
+            }
+        }
+        // Only the graphs that missed need the scan, and it stops as soon as the last of
+        // them is placed. Scanning unconditionally is O(R·G) in the number of graphs in
+        // the keyspace, with the GIL held, every 5-10ms: on a multi-tenant keyspace of
+        // tens of thousands of graphs that is all command processing stalled behind
+        // telemetry bookkeeping.
+        if unresolved > 0 {
+            for (name, arc) in registry.iter() {
+                let Some(b) = graphs
+                    .iter_mut()
+                    .find(|b| b.current.is_none() && b.graph.data_ptr() == arc.data_ptr())
+                else {
+                    continue;
+                };
+                b.current = Some(Arc::from(name.as_str()));
+                unresolved -= 1;
+                if unresolved == 0 {
+                    break;
+                }
             }
         }
     }
     deferred.retain_mut(|pe| {
-        // Upgraded rather than compared as a raw address: a `Weak` whose graph has been
-        // freed still carries the address it had, and matching that against a live
-        // graph that reused the allocation would file this entry under someone else's
-        // name. Holding a strong reference is the proof the address still means us.
-        let Some(arc) = pe.graph.upgrade() else {
-            return false;
-        };
-        let Some((_, Some(name))) = graphs.iter().find(|(g, _)| g.data_ptr() == arc.data_ptr())
+        // Matched by address rather than by upgrading: `graphs` holds a strong reference
+        // to every graph in it, so an address found there is alive by construction, and
+        // a `Weak` keeps its own allocation alive for as long as it exists — so no dead
+        // entry can borrow a live graph's address and be filed under its name. Upgrading
+        // here instead put one contended atomic per entry, a thousand of them a flush,
+        // on the single counter every query thread is already touching.
+        let Some(name) = graphs
+            .iter()
+            .find(|b| Arc::as_ptr(&b.graph) == pe.graph.as_ptr())
+            .and_then(|b| b.current.as_ref())
         else {
-            // Alive but registered under no key: deleted, or flushed and replaced.
-            // Either way it has no stream to be written to.
+            // Either the graph is gone, or it is alive and registered under no key —
+            // deleted, or flushed and replaced. Neither has a stream to be written to.
             return false;
         };
         if pe.graph_name != *name {
@@ -693,6 +725,60 @@ fn resolve_current_names(deferred: &mut Vec<PendingEntry>) {
         }
         true
     });
+}
+
+/// The distinct graphs of `deferred`, each held by a strong reference.
+///
+/// Built *before* the GIL is taken and kept until after it is released, so every graph
+/// the flush touches is already held here: nothing done under the GIL can be the last
+/// release of one, and no `ThreadedGraph` destructor — matrices, RediSearch indexes —
+/// can run on this thread while it holds the GIL.
+///
+/// Entries are grouped by `Weak::as_ptr`, a pointer read, and only one upgrade is done
+/// per distinct graph. A `Weak` keeps its own allocation alive, so two live `Weak`s
+/// address the same allocation only if they are the same graph, which makes the pointer
+/// a sound identity here. The obvious version — upgrade every entry and compare — is
+/// one contended atomic increment per entry on a single cache line, a thousand of them
+/// per flush, against the same counter the query threads are hammering; it cost about
+/// half the flusher's throughput under a 16-client load.
+fn hold_batch_graphs(deferred: &[PendingEntry]) -> Vec<BatchGraph> {
+    let mut graphs: Vec<BatchGraph> = Vec::new();
+    // Addresses already considered, including any whose upgrade failed, so a batch of
+    // one dead graph's entries does not retry the upgrade a thousand times.
+    let mut seen: Vec<*const RwLock<ThreadedGraph>> = Vec::new();
+    for pe in deferred {
+        let addr = pe.graph.as_ptr();
+        if seen.contains(&addr) {
+            continue;
+        }
+        seen.push(addr);
+        // A batch is one or two distinct graphs in practice, so the linear scans here
+        // and at the match sites beat hashing.
+        if let Some(graph) = pe.graph.upgrade() {
+            graphs.push(BatchGraph {
+                graph,
+                captured: Arc::clone(&pe.graph_name),
+                current: None,
+            });
+        }
+    }
+    graphs
+}
+
+/// Release what [`hold_batch_graphs`] took, off this thread if it turns out to be the
+/// last holder.
+///
+/// `register_graph`, `rename_graph` and `graph_free` all hand teardown to a background
+/// thread rather than run it inline, because `Index::drop` reaches RediSearch and takes
+/// the GIL. The flusher is a latency-critical thread for the same reason they are: the
+/// next batch waits behind whatever runs here.
+fn release_batch_graphs(graphs: Vec<BatchGraph>) {
+    for b in graphs {
+        let arc = b.graph;
+        if Arc::strong_count(&arc) == 1 {
+            thread::spawn(move || drop(arc));
+        }
+    }
 }
 
 /// True if the Redis key `name` currently holds `graph`. The GIL must be held.
@@ -723,7 +809,12 @@ fn key_holds_graph(
 }
 
 /// Move everything already queued into `batch`, up to [`FLUSH_BATCH_MAX`].
-/// Returns `true` if the channel has disconnected.
+///
+/// `true` if the channel has disconnected. `false` does *not* mean it has not: the loop
+/// also falls out with a full batch, having asked nothing, and `try_recv` reports
+/// `Disconnected` only once the channel is *empty* as well as closed. Callers that are
+/// about to block on something the shutdown path holds must re-check with
+/// [`MRx::is_disconnected`], which answers the question the sender's fate alone decides.
 fn drain_queued(
     rx: &MRx<List<PendingEntry>>,
     batch: &mut Vec<PendingEntry>,
@@ -752,6 +843,10 @@ static SENDER: Mutex<Option<MTx<List<PendingEntry>>>> = Mutex::new(None);
 static RECEIVER: Mutex<Option<MRx<List<PendingEntry>>>> = Mutex::new(None);
 /// Handle for the flusher thread, joined during `shutdown_flusher_thread`.
 static FLUSHER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+/// Signalled when the flusher thread has left its loop, so shutdown can wait for it
+/// with a deadline instead of joining it unconditionally. The sender lives in the
+/// spawned closure, so it also drops — waking the receiver — if the thread panics.
+static FLUSHER_EXIT: Mutex<Option<mpsc::Receiver<()>>> = Mutex::new(None);
 
 /// Entries sent but not yet taken off the channel.
 ///
@@ -861,21 +956,60 @@ pub fn start_flusher_thread() {
         }
     }
 
+    let (exit_tx, exit_rx) = mpsc::channel();
+    *FLUSHER_EXIT.lock() = Some(exit_rx);
     let handle = thread::Builder::new()
         .name("falkordb-telemetry".to_string())
-        .spawn(flusher_loop)
+        .spawn(move || {
+            flusher_loop();
+            // Sent, and in any case dropped, as the thread ends: either way the wait in
+            // `shutdown_flusher_thread` returns.
+            let _ = exit_tx.send(());
+        })
         .expect("failed to spawn telemetry flusher thread");
     *FLUSHER.lock() = Some(handle);
 }
 
-/// Stop the background flusher: drop the sender so the channel disconnects,
-/// then join the thread. Must be called on module unload before tearing down
-/// Redis state the flusher's `RM_Call("XADD")` touches.
+/// Stop the background flusher: drop the sender so the channel disconnects, then wait
+/// for the thread. Must be called on module unload before tearing down Redis state the
+/// flusher's writes touch.
+///
+/// The wait is bounded, and that is the point. This runs on the main thread inside
+/// Redis's shutdown event callback, which holds the module GIL for its whole duration —
+/// so a flusher parked on `hold_gil()` can never wake, and an unconditional join hangs
+/// the server. The flusher checks for the disconnect immediately before it acquires the
+/// GIL, which closes that door in every ordering but one: the sender dropping in the
+/// instant between its check and its acquire. Rather than pay for that window on the
+/// hot path — a polling try-lock keeps missing the brief windows in which Redis
+/// releases the GIL, which cost the flusher about half its throughput in measurement —
+/// the window is made harmless here. A flusher still parked when the grace expires is
+/// left parked: it is blocked acquiring a GIL that this thread holds and will hold
+/// until the process exits, so it cannot touch Redis state, which is all the join was
+/// ever protecting.
 pub fn shutdown_flusher_thread() {
-    // Drop the sender to close the channel; the flusher loop exits on
-    // `Disconnected` after draining any pending entries.
+    // Drop the sender to close the channel; the flusher observes the disconnect and
+    // leaves *without* writing, dropping whatever is still queued.
     drop(SENDER.lock().take());
     let handle = FLUSHER.lock().take();
+    let exit = FLUSHER_EXIT.lock().take();
+    // `Err(Timeout)` is the only outcome that means "still running": a send and a
+    // dropped sender (the thread panicked) both say it is done.
+    let stopped = exit.is_none_or(|rx| {
+        !matches!(
+            rx.recv_timeout(FLUSHER_STOP_GRACE),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        )
+    });
+    if !stopped {
+        log_warning(
+            "telemetry: the flush thread did not stop within the shutdown grace period \
+             and is being left parked; it holds no Redis state",
+        );
+        // Dropped rather than joined, which detaches it.
+        drop(handle);
+        // Leaked deliberately: the parked thread's stream template still borrows them.
+        return;
+    }
     if let Some(h) = handle {
         let _ = h.join();
     }
@@ -962,6 +1096,14 @@ fn flusher_loop() {
             reported_drops = drops;
         }
 
+        // Asked of the channel itself rather than inferred from the drains: `try_recv`
+        // reports `Disconnected` only when the channel is *empty* as well as closed, and
+        // `drain_queued` stops asking altogether once the batch is full. A backlog —
+        // precisely the state the linger-skip above exists to handle — would otherwise
+        // hide the shutdown for as long as it lasted. `is_disconnected` is the sender's
+        // fate alone, so a queue with entries still in it cannot mask it.
+        disconnected |= rx.is_disconnected();
+
         if disconnected {
             // Leave *without* writing. `shutdown_flusher_thread` runs on the main
             // thread inside Redis's shutdown event callback, which holds the module
@@ -991,8 +1133,24 @@ fn flusher_loop() {
             continue;
         }
 
+        // Upgraded here, outside the GIL, and held until it has been released again, so
+        // that nothing done under the GIL can be the last release of a graph. This is
+        // also the batch's only pass of upgrades: everything below matches entries to
+        // these by address. See `hold_batch_graphs`.
+        let mut graphs = hold_batch_graphs(&deferred);
+
         // Single GIL acquisition for the whole batch, through the same guard queries
         // use, so every acquisition in the process funnels through one place.
+        //
+        // Blocking, and deliberately: the main thread can be waiting on this thread
+        // while holding the GIL — `shutdown_flusher_thread` waits for it from inside the
+        // shutdown event callback — but the disconnect check above is what keeps this
+        // thread from arriving here after that has begun. The one ordering it cannot
+        // cover, a sender dropped between that check and this line, is handled by
+        // bounding the wait over there instead of bounding this. A try-lock here would
+        // cover it, and was measured: polling misses the brief windows in which Redis
+        // releases the GIL, where a blocked waiter is handed it, and the flusher fell
+        // far enough behind to drop several times as many entries at the queue cap.
         {
             let _gil = crate::query_session::hold_gil();
             let ctx = Context::new(tsc);
@@ -1035,7 +1193,7 @@ fn flusher_loop() {
                 // hold a batch for a whole pause window, and every path that deletes or
                 // re-keys a graph runs on the main thread, which cannot execute a command
                 // callback while this thread holds the GIL.
-                resolve_current_names(&mut deferred);
+                resolve_current_names(&mut deferred, &mut graphs);
 
                 // Group by graph so each stream key is opened and trimmed once per batch
                 // rather than once per entry. Sorting is enough: entries of one graph end
@@ -1047,10 +1205,13 @@ fn flusher_loop() {
                     // The registry named this key; Redis has to agree that it still
                     // holds this graph. See `key_holds_graph`. One graph per run, so
                     // any entry of it answers for the rest.
-                    let Some(graph) = run[0].graph.upgrade() else {
+                    let Some(b) = graphs
+                        .iter()
+                        .find(|b| Arc::as_ptr(&b.graph) == run[0].graph.as_ptr())
+                    else {
                         continue;
                     };
-                    if !key_holds_graph(&ctx, name, &graph) {
+                    if !key_holds_graph(&ctx, name, &b.graph) {
                         continue;
                     }
                     stream_entries(tsc, &mut template, name, run, max_len);
@@ -1058,6 +1219,7 @@ fn flusher_loop() {
                 deferred.clear();
             }
         }
+        release_batch_graphs(graphs);
     }
 
     unsafe {
