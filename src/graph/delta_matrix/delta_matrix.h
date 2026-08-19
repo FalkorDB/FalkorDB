@@ -311,8 +311,9 @@ GrB_Info Delta_Matrix_synchronize
 	GrB_Index ncols   // the required number of columns
 );
 
-// cache transpose matrices (M, DP, and DM) into C->transposed
-// allocates the transpose matrix if missing
+// (Re)calculate cached transpose matrices (TM/TDP/TDM) into C->transposed.
+// Note: the cached transpose stores structure only (GrB_BOOL with entries set to true),
+// which is safe even when C->M/DP contain UINT64 values (including 0).
 GrB_Info Delta_transpose_calculate
 (
 	Delta_Matrix C
