@@ -212,3 +212,94 @@ class testAOFDivergence():
         env.assertContains("while loading from disk", log)
         env.assertNotContains("Scheduling a forced full resync", log)
 
+
+# verifies that after a replica completes a FULL SYNC its graph is identical
+# to the master's - including the order in which entities are returned.
+#
+# a graph's matrices keep pending changes in delta-plus / delta-minus that are
+# not necessarily merged into the main matrix. during a full sync the master
+# forks, encodes its live matrices (M / DP / DM, separately) to an RDB, and the
+# replica decodes them. the decoder must restore the M / DP / DM split as-is,
+# and rebuild each matrix's transpose from all three - rather than merging the
+# deltas into M (the old Graph_ApplyAllPending behaviour).
+#
+# a merge is logically equivalent but reorders a DeltaMatrixIterator, so an
+# order-sensitive query (a label scan such as MATCH (n:L) RETURN n, or any
+# LIMIT query) could return entities in a different order on the replica than
+# on the master. a missing / stale transpose would additionally break reverse
+# traversals on the replica.
+#
+# lives in its own class/Env: it cycles REPLICAOF on the replica to force a
+# fresh full sync, which would interfere with the tests above.
+class testFullSyncMatrixConsistency():
+    def __init__(self):
+        # replication timing doesn't play well with Valgrind/sanitizers
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env(env='oss', useSlaves=True,
+                                 enableDebugCommand=True)
+
+    def test_full_sync_preserves_matrix_order(self):
+        env = self.env
+        master = env.getConnection()
+        replica = env.getSlaveConnection()
+
+        graph_id = GRAPH_ID + "_fullsync"
+        master_graph = Graph(master, graph_id)
+        replica_graph = Graph(replica, graph_id)
+
+        # remember where the replica replicates from, then detach it so the
+        # graph reaches it via a fresh FULL SYNC - not the incremental
+        # replication stream - once we re-attach
+        repl_info = replica.info()
+        master_host = repl_info["master_host"]
+        master_port = repl_info["master_port"]
+        replica.execute_command("REPLICAOF", "NO", "ONE")
+
+        # build a graph on the master with pending deltas: create a batch of
+        # labeled, connected nodes then delete a portion, leaving entries in
+        # the matrices' delta-minus and gaps in the datablocks
+        master_graph.query(
+            "UNWIND range(0, 999) AS i CREATE (:L {v: i})-[:R]->(:M {v: i})")
+        master_graph.query("MATCH (:L)-[e:R]->(:M) WHERE e.v % 3 = 0 DELETE e")
+        master_graph.query("MATCH (n:M) WHERE n.v % 5 = 0 DELETE n")
+
+        # snapshot the master's full-sync counter so we can confirm a
+        # FULLRESYNC actually happened (not a partial PSYNC CONTINUE)
+        sync_full_before = master.info()["sync_full"]
+
+        # re-attach the replica -> triggers a full resync: the master forks,
+        # encodes its live matrices to an RDB, and the replica loads it through
+        # the exact decode path this branch changed
+        replica.execute_command("REPLICAOF", master_host, master_port)
+
+        # wait for the full sync to complete
+        deadline = time.time() + 60
+        synced = False
+        while time.time() < deadline:
+            if (master.info()["sync_full"] > sync_full_before and
+                    replica.info()["master_link_status"] == "up"):
+                synced = True
+                break
+            time.sleep(0.5)
+        env.assertTrue(synced)
+
+        # make sure the replica has fully caught up
+        master.execute_command("WAIT", "1", "10000")
+
+        # every query - label scans plus forward and reverse traversals - must
+        # return identical, identically-ordered results on master and replica.
+        # intentionally no ORDER BY: the result order reflects the underlying
+        # matrix iteration order, which is what a merge-on-decode would change
+        queries = [
+            "MATCH (n:L) RETURN n.v",                        # label scan
+            "MATCH (n:M) RETURN n.v",                        # label scan
+            "MATCH (n:L)-[e:R]->(m:M) RETURN n.v, e.v, m.v", # forward traverse
+            "MATCH (m:M)<-[e:R]-(n:L) RETURN m.v, e.v, n.v", # reverse (transpose)
+        ]
+        for q in queries:
+            expected = master_graph.query(q).result_set
+            actual = replica_graph.ro_query(q).result_set
+            env.assertEquals(actual, expected)
+

@@ -7,7 +7,9 @@
 #include "src/configuration/config.h"
 #include "src/graph/tensor/tensor.h"
 #include "src/graph/delta_matrix/delta_utils.h"
+#include "src/graph/delta_matrix/delta_matrix_iter.h"
 #include <time.h>
+#include <string.h>
 
 void setup();
 void tearDown();
@@ -1711,8 +1713,169 @@ void test_RGMatrix_resize() {
 	Delta_Matrix_free(&A);
 }
 
+// collect (row, col, val) tuples in DeltaMatrixIterator order into the
+// caller's arrays; returns the number of tuples collected
+static int _collect_tuples
+(
+	Delta_Matrix  A,      // matrix to scan
+	GrB_Index    *rows,   // [output] row indices
+	GrB_Index    *cols,   // [output] column indices
+	uint64_t     *vals,   // [output] values
+	int           cap     // capacity of the output arrays
+) {
+	Delta_MatrixTupleIter it;
+	memset(&it, 0, sizeof(it));
+
+	TEST_ASSERT(Delta_MatrixTupleIter_attach(&it, A) == GrB_SUCCESS);
+
+	int n = 0;
+	GrB_Index r, c;
+	uint64_t  v;
+	while(n < cap &&
+		Delta_MatrixTupleIter_next_UINT64(&it, &r, &c, &v) == GrB_SUCCESS) {
+		rows[n] = r;
+		cols[n] = c;
+		vals[n] = v;
+		n++;
+	}
+
+	Delta_MatrixTupleIter_detach(&it);
+	return n;
+}
+
+// verify Delta_Matrix_setMatrices - the primitive the graph decoder uses to
+// restore a matrix from an RDB - preserves the exact M / DP / DM split of the
+// encoded matrix instead of merging the deltas into M, and rebuilds the
+// cached transpose from all three matrices.
+//
+// this guards against replica divergence right after a full sync: the master
+// can hold entries in DP / DM that a DeltaMatrixIterator emits in a different
+// order than the logically-equivalent, fully-merged matrix. if decoding were
+// to merge the deltas (the old Graph_ApplyAllPending behaviour) then an
+// order-sensitive LIMIT query - e.g. MATCH ()-[e]->() RETURN e LIMIT k - could
+// return different entities on the replica than on the master, even though the
+// two graphs are logically identical.
+void test_RGMatrix_setMatrices_preserves_deltas() {
+	GrB_Type      t     = GrB_UINT64;
+	Delta_Matrix  A     = NULL;   // source matrix (as held by the master)
+	Delta_Matrix  B     = NULL;   // decoded matrix (as restored by a replica)
+	GrB_Info      info  = GrB_SUCCESS;
+	GrB_Index     nrows = 100;
+	GrB_Index     ncols = 100;
+	GrB_Index     nvals = 0;
+
+	//--------------------------------------------------------------------------
+	// build a source matrix with a non-trivial M / DP / DM split
+	//--------------------------------------------------------------------------
+
+	// a UINT64 delta matrix always maintains a transpose
+	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// populate M with two "high" entries, then flush DP -> M
+	info = Delta_Matrix_setElement_UINT64(A, 1, 5, 6);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_setElement_UINT64(A, 2, 7, 8);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	Delta_Matrix_wait(A, true);   // force sync: M = {(5,6),(7,8)}
+
+	// add a "low" entry that stays in DP; row 2 sorts before M's rows so a
+	// merge would move it ahead of (5,6) - changing the iteration order
+	info = Delta_Matrix_setElement_UINT64(A, 3, 2, 3);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// delete one M entry so it lives in DM (masked, not yet merged out of M)
+	info = Delta_Matrix_removeElement(A, 7, 8);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// sanity: A really is split across M, DP and DM
+	{
+		GrB_Matrix M  = DELTA_MATRIX_M(A);
+		GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS(A);
+		GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS(A);
+		M_NOT_EMPTY();
+		DP_NOT_EMPTY();
+		DM_NOT_EMPTY();
+	}
+
+	// capture A's iteration order: this is the order a query observes.
+	// expected: M first - (5,6) [(7,8) skipped, it is in DM] - then DP (2,3).
+	// note this is NOT globally sorted: (5,6) precedes (2,3)
+	GrB_Index a_rows[8], a_cols[8];
+	uint64_t  a_vals[8];
+	int a_n = _collect_tuples(A, a_rows, a_cols, a_vals, 8);
+	TEST_ASSERT(a_n == 2);
+	TEST_ASSERT(a_rows[0] == 5 && a_cols[0] == 6 && a_vals[0] == 1);
+	TEST_ASSERT(a_rows[1] == 2 && a_cols[1] == 3 && a_vals[1] == 3);
+
+	//--------------------------------------------------------------------------
+	// simulate an encode / decode round-trip: the encoder writes M, DP and DM
+	// separately, the decoder restores them via Delta_Matrix_setMatrices into
+	// a fresh, empty matrix
+	//--------------------------------------------------------------------------
+
+	GrB_Matrix M, DP, DM;
+	TEST_ASSERT(GrB_Matrix_dup(&M,  DELTA_MATRIX_M(A))           == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_dup(&DP, DELTA_MATRIX_DELTA_PLUS(A))  == GrB_SUCCESS);
+	TEST_ASSERT(GrB_Matrix_dup(&DM, DELTA_MATRIX_DELTA_MINUS(A)) == GrB_SUCCESS);
+
+	info = Delta_Matrix_new(&B, t, nrows, ncols, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = Delta_Matrix_setMatrices(B, &M, &DP, &DM);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// setMatrices takes ownership of the provided matrices
+	TEST_ASSERT(M == NULL && DP == NULL && DM == NULL);
+
+	//--------------------------------------------------------------------------
+	// the decoded matrix must NOT have merged the deltas
+	//--------------------------------------------------------------------------
+
+	{
+		GrB_Matrix DP = DELTA_MATRIX_DELTA_PLUS(B);
+		GrB_Matrix DM = DELTA_MATRIX_DELTA_MINUS(B);
+		DP_NOT_EMPTY();   // DP preserved - would be empty had it been merged
+		DM_NOT_EMPTY();   // DM preserved - would be empty had it been merged
+	}
+
+	// and it must emit entries in the SAME order as the master
+	GrB_Index b_rows[8], b_cols[8];
+	uint64_t  b_vals[8];
+	int b_n = _collect_tuples(B, b_rows, b_cols, b_vals, 8);
+	TEST_ASSERT(b_n == a_n);
+	for(int k = 0; k < a_n; k++) {
+		TEST_ASSERT(b_rows[k] == a_rows[k]);
+		TEST_ASSERT(b_cols[k] == a_cols[k]);
+		TEST_ASSERT(b_vals[k] == a_vals[k]);
+	}
+
+	//--------------------------------------------------------------------------
+	// the cached transpose must be rebuilt from M, DP and DM - not left empty.
+	// reverse lookups rely on it; before the fix setMatrices did not compute
+	// the transpose (the decoder computed it separately from the merged matrix)
+	//--------------------------------------------------------------------------
+
+	Delta_Matrix BT = Delta_Matrix_getTranspose(B);
+	TEST_ASSERT(BT != NULL);
+
+	// (5,6) in M  -> (6,5) present in the transpose
+	TEST_ASSERT(Delta_Matrix_isStoredElement(BT, 6, 5) == GrB_SUCCESS);
+	// (2,3) in DP -> (3,2) present in the transpose
+	TEST_ASSERT(Delta_Matrix_isStoredElement(BT, 3, 2) == GrB_SUCCESS);
+	// (7,8) removed via DM -> (8,7) absent from the transpose
+	TEST_ASSERT(Delta_Matrix_isStoredElement(BT, 8, 7) == GrB_NO_VALUE);
+
+	// clean up
+	Delta_Matrix_free(&A);
+	TEST_ASSERT(A == NULL);
+	Delta_Matrix_free(&B);
+	TEST_ASSERT(B == NULL);
+}
+
 TEST_LIST = {
 	{"RGMatrix_new", test_RGMatrix_new},
+	{"RGMatrix_setMatrices_preserves_deltas", test_RGMatrix_setMatrices_preserves_deltas},
 	{"RGMatrix_simple_set", test_RGMatrix_simple_set},
 	{"RGMatrix_del", test_RGMatrix_del},
 	{"RGMatrix_del_entry", test_RGMatrix_del_entry},
