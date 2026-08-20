@@ -66,6 +66,7 @@ pub mod set;
 pub mod skip;
 pub mod sort;
 pub mod union;
+pub mod unit_subquery;
 pub mod unwind;
 pub mod value_hash_join;
 
@@ -106,6 +107,7 @@ pub use set::SetOp;
 pub use skip::SkipOp;
 pub use sort::SortOp;
 pub use union::UnionOp;
+pub use unit_subquery::UnitSubqueryOp;
 pub use unwind::UnwindOp;
 pub use value_hash_join::ValueHashJoinOp;
 

@@ -2885,3 +2885,108 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 2) # avgX
 
+    def test_54_unit_subquery_cardinality(self):
+        """a subquery with no RETURN contributes no rows of its own, however
+        many its body produces internally"""
+
+        g = self.db.select_graph("unit_subquery")
+        g.query("CREATE (:S), (:S), (:S)")
+
+        # the body fans out to 3 rows per input row and writes once per row it
+        # produced, but the outer row count stays at the 3 the MATCH yielded.
+        # both numbers match the C engine
+        for q, rows, created in [
+                # body fans out, one write per fanned-out row
+                ("MATCH (x:S) CALL { MATCH (y:S) CREATE (:T) } RETURN count(*)",       3, 3 * 3),
+                # nesting compounds the writes, never the rows
+                ("MATCH (x:S) CALL { CALL { MATCH (y:S) RETURN y } CREATE (:T) } "
+                 "RETURN count(*)",                                                    3, 3 * 3),
+                ("MATCH (x:S) CALL { CALL { CALL { MATCH (z:S) RETURN z } "
+                 "MATCH (y:S) RETURN y } CREATE (:T) } RETURN count(*)",               3, 3 * 3 * 3),
+                # UNWIND fans out the same way
+                ("MATCH (x:S) CALL { UNWIND [1,2] AS k CREATE (:T {k:k}) } "
+                 "RETURN count(*)",                                                    3, 3 * 2),
+                # no fan-out at all
+                ("MATCH (x:S) CALL { CREATE (:T) } RETURN count(*)",                   3, 3),
+                # a body that matches nothing still lets its input row through
+                ("MATCH (x:S) CALL { MATCH (y:Nope) CREATE (:T) } RETURN count(*)",    3, 0),
+                # opening the query on the subquery: one implicit input row
+                ("CALL { MATCH (y:S) CREATE (:T) } RETURN count(*)",                   1, 3),
+                # two unit subqueries in a row each keep the count
+                ("MATCH (x:S) CALL { MATCH (y:S) CREATE (:T) } CALL { CREATE (:Q) } "
+                 "RETURN count(*)",                                                    3, 3 * 3 + 3),
+        ]:
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[rows]])
+            self.env.assertEqual(res.nodes_created, created)
+            g.query("MATCH (t) WHERE t:T OR t:Q DELETE t")
+
+        # the operator replaces the Apply/Optional pair that let the fan-out out
+        plan = g.explain("MATCH (x:S) CALL { MATCH (y:S) CREATE (:T) } RETURN count(*)")
+        self.env.assertEqual(count_operation(plan.structured_plan, "Unit Subquery"), 1)
+        self.env.assertEqual(count_operation(plan.structured_plan, "Optional"), 0)
+
+        g.delete()
+
+    def test_55_unit_subquery_body_runs_per_row(self):
+        # A unit subquery runs its body once per input row. A body that
+        # collapses rows, LIMIT, SKIP, DISTINCT or an aggregation, must apply
+        # within one invocation, not once across the whole input batch.
+        g = self.db.select_graph("unit_subquery_per_row")
+        g.query("UNWIND range(1, 3) AS i CREATE (:S {v: i})")
+
+        for q, rows, created in [
+                # LIMIT 1 inside the body keeps one row per invocation, so each
+                # of the 3 input rows still writes once.
+                ("MATCH (x:S) CALL { WITH x UNWIND [1,2,3] AS z WITH z LIMIT 1 "
+                 "CREATE (:T {z:z}) } RETURN count(*)",                                3, 3),
+                # SKIP drops one row per invocation, not one overall.
+                ("MATCH (x:S) CALL { WITH x UNWIND [1,2] AS z WITH z SKIP 1 "
+                 "CREATE (:T {z:z}) } RETURN count(*)",                                3, 3),
+                # DISTINCT dedups within an invocation; the next one starts fresh.
+                ("MATCH (x:S) CALL { WITH x UNWIND [1,1] AS z WITH DISTINCT z "
+                 "CREATE (:T {z:z}) } RETURN count(*)",                                3, 3),
+                # an aggregation collapses to one row per invocation.
+                ("MATCH (x:S) CALL { WITH x MATCH (y:S) WITH count(y) AS c "
+                 "CREATE (:T {c:c}) } RETURN count(*)",                                3, 3),
+                # MERGE is evaluated per row, so each distinct key is created.
+                ("MATCH (x:S) CALL { WITH x MERGE (:T {v: x.v}) } RETURN count(*)",     3, 3),
+        ]:
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[rows]])
+            self.env.assertEqual(res.nodes_created, created)
+            g.query("MATCH (t:T) DELETE t")
+
+        # a body with nothing to collapse still runs batched, and its fan-out
+        # must not reach the outer row count
+        res = g.query("MATCH (x:S) CALL { WITH x UNWIND [1,2,3] AS z "
+                      "CREATE (:T {z:z}) } RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[3]])
+        self.env.assertEqual(res.nodes_created, 9)
+
+        g.delete()
+
+    def test_56_unit_subquery_preserves_outer_distinct(self):
+        # Value-dedup state is shared across the plan. Resetting the body's
+        # DISTINCT between invocations must not drop the state of an enclosing
+        # count(DISTINCT ...), which accumulates across input batches.
+        g = self.db.select_graph("unit_subquery_distinct")
+        g.query("CREATE (:S {v: 1}), (:S {v: 1}), (:S {v: 2})")
+
+        # 3000 rows spans several batches, while p only ever takes two values
+        res = g.query("UNWIND range(1, 3000) AS i WITH i, i % 2 AS p "
+                      "CALL { WITH i WITH i LIMIT 1 CREATE (:T) } "
+                      "RETURN count(DISTINCT p)")
+        self.env.assertEqual(res.result_set, [[2]])
+        g.query("MATCH (t:T) DELETE t")
+
+        # the body's own DISTINCT still starts fresh on each invocation, so
+        # every one of the 3 rows sees both distinct values
+        g.query("MATCH (x:S) CALL { WITH x MATCH (y:S) "
+                "WITH count(DISTINCT y.v) AS c CREATE (:R {c: c}) } "
+                "RETURN count(*)")
+        res = g.query("MATCH (r:R) RETURN collect(r.c)")
+        self.env.assertEqual(res.result_set, [[[2, 2, 2]]])
+
+        g.delete()
+
