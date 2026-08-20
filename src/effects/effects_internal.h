@@ -121,3 +121,21 @@ bool ApplyDropConstraint
 	GraphContext *gc  // graph to operate on
 );
 
+// process UpdateNode effect
+// returns false if the effect references a node that doesn't exist locally
+// (replica has diverged from the master)
+bool ApplyUpdateNode
+(
+	FILE *stream,     // effects stream
+	GraphContext *gc  // graph to operate on
+);
+
+// process Update_Edge effect
+// returns false if the effect references an edge, or a relationship-type,
+// that doesn't exist locally (replica has diverged from the master)
+bool ApplyUpdateEdge
+(
+	FILE *stream,     // effects stream
+	GraphContext *gc  // graph to operate on
+);
+

@@ -319,6 +319,10 @@ void GraphHub_UpdateEntityProperties
 	}
 }
 
+// update a node
+// update the node attributes
+// update the relevant indexes of the node
+// used from effects
 void GraphHub_UpdateNodeProperty
 (
 	GraphContext *gc,     // graph context
@@ -326,39 +330,42 @@ void GraphHub_UpdateNodeProperty
 	AttributeID attr_id,  // attribute ID
 	SIValue v             // new attribute value
 ) {
-	ASSERT(gc      != NULL);
-	ASSERT(id      != INVALID_ENTITY_ID);
-	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
+	ASSERT (gc      != NULL) ;
+	ASSERT (id      != INVALID_ENTITY_ID) ;
+	ASSERT (attr_id != ATTRIBUTE_ID_NONE) ;
 
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	Node n;  // node to update
-	int res = Graph_GetNode (g, id, &n) ;
-	ASSERT(res == true);  // make sure entity was found
+	Node n ;
+	bool retrieved = Graph_GetNode (g, id, &n) ;
+	ASSERT (retrieved == true) ;
 
 	if(attr_id == ATTRIBUTE_ID_ALL) {
-		AttributeSet_Free(n.attributes);
+		AttributeSet_Free (n.attributes) ;
 	} else {
 		AttributeSet_Update (NULL, n.attributes, &attr_id, &v, 1, false) ;
 	}
 
 	// retrieve node labels
-	uint label_count;
+	uint label_count ;
 	NODE_GET_LABELS (g, &n, label_count) ;
 
-	Schema *s;
-	for(uint i = 0; i < label_count; i++) {
-		int label_id = labels[i];
-		s = GraphContext_GetSchemaByID(gc, label_id, SCHEMA_NODE);
-		ASSERT(s != NULL);
+	Schema *s ;
+	for (uint i = 0; i < label_count; i++) {
+		int label_id = labels [i] ;
+		s = GraphContext_GetSchemaByID (gc, label_id, SCHEMA_NODE) ;
+		ASSERT (s != NULL) ;
 
-		if(attr_id == ATTRIBUTE_ID_ALL) {
+		if (attr_id == ATTRIBUTE_ID_ALL) {
 			// remove node from all indices
-			Schema_RemoveNodeFromIndex(s, &n);
+			Schema_RemoveNodeFromIndex (s, &n) ;
 		} else {
 			// index node if updated attribute is indexed
-			Index idx = Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_ANY, true);
-			if(idx) Schema_AddNodeToIndex(s, &n);
+			Index idx = Schema_GetIndex (s, &attr_id, 1, INDEX_FLD_ANY, true) ;
+			if (idx)
+			{
+				Schema_AddNodeToIndex (s, &n) ;
+			}
 		}
 	}
 }
@@ -373,38 +380,39 @@ void GraphHub_UpdateEdgeProperty
 	AttributeID attr_id,  // attribute ID
 	SIValue v             // new attribute value
 ) {
-	ASSERT(gc      != NULL);
-	ASSERT(id      != INVALID_ENTITY_ID);
-	ASSERT(r_id    != GRAPH_NO_RELATION);
-	ASSERT(src_id  != INVALID_ENTITY_ID);
-	ASSERT(dest_id != INVALID_ENTITY_ID);
-	ASSERT(attr_id != ATTRIBUTE_ID_NONE);
+	ASSERT (gc      != NULL) ;
+	ASSERT (id      != INVALID_ENTITY_ID) ;
+	ASSERT (r_id    != GRAPH_NO_RELATION) ;
+	ASSERT (src_id  != INVALID_ENTITY_ID) ;
+	ASSERT (dest_id != INVALID_ENTITY_ID) ;
+	ASSERT (attr_id != ATTRIBUTE_ID_NONE) ;
 
-	Edge e; // edge to update
+	Edge e ; // edge to update
 
-	// get src node, dest node and edge from the graph
-	int res = Graph_GetEdge (GraphContext_GetGraph (gc), id, &e);
-	ASSERT(res != 0);
+	// get edge from the graph
+	bool retrieved =  Graph_GetEdge (GraphContext_GetGraph (gc), id, &e) ;
+	ASSERT (retrieved == true) ;
 
 	// set edge relation, src and destination node
-	Edge_SetRelationID(&e, r_id);
-	Edge_SetSrcNodeID(&e,  src_id);
-	Edge_SetDestNodeID(&e, dest_id);
+	Edge_SetSrcNodeID  (&e, src_id) ;
+	Edge_SetDestNodeID (&e, dest_id) ;
+	Edge_SetRelationID (&e, r_id) ;
 
 	// get edge schema
-	Schema *s = GraphContext_GetSchemaByID(gc, r_id, SCHEMA_EDGE);
-	ASSERT(s != NULL);
+	// 'r_id' also arrives from the effect payload, a relationship-type this
+	// instance doesn't know about yields a NULL schema, which is dereferenced
+	// unconditionally below
+	Schema *s = GraphContext_GetSchemaByID (gc, r_id, SCHEMA_EDGE) ;
+	ASSERT (s != NULL) ;
 
 	// clear all attributes
-	if(attr_id == ATTRIBUTE_ID_ALL) {
-		AttributeSet_Free(e.attributes);
+	if (attr_id == ATTRIBUTE_ID_ALL) {
+		AttributeSet_Free (e.attributes) ;
 
 		// remove edge from index
-		Schema_RemoveEdgeFromIndex(s, &e);
-		return;
+		Schema_RemoveEdgeFromIndex (s, &e) ;
+		return ;
 	}
-
-	GraphEntity *ge = (GraphEntity *)&e;
 
 	AttributeSetChangeType change ;
 	AttributeSet_Update (&change, e.attributes, &attr_id, &v, 1, false) ;
@@ -413,10 +421,13 @@ void GraphHub_UpdateEdgeProperty
 	// update index if
 	// 1. attribute was set/updated
 	// 2. attribute is indexed
-	if(update_idx == true) {
+	if (update_idx == true) {
 		// see if attribute is indexed
-		Index idx = Schema_GetIndex(s, &attr_id, 1, INDEX_FLD_ANY, true);
-		if(idx) Schema_AddEdgeToIndex(s, &e);
+		Index idx = Schema_GetIndex (s, &attr_id, 1, INDEX_FLD_ANY, true) ;
+		if (idx)
+		{
+			Schema_AddEdgeToIndex (s, &e) ;
+		}
 	}
 }
 

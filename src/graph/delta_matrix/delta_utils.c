@@ -193,15 +193,15 @@ void Delta_Matrix_validate
 #ifdef RG_DEBUG
 	ASSERT (C != NULL);
 
-	bool        m_dp_disjoint     =  false;
-	bool        dp_dm_disjoint    =  false;
-	bool        m_zombies_valid   =  true;
-	bool        dm_iso            =  true;
-	GrB_Info    info              =  GrB_SUCCESS;
-	GrB_Matrix  m                 =  DELTA_MATRIX_M(C);
-	GrB_Matrix  dp                =  DELTA_MATRIX_DELTA_PLUS(C);
-	GrB_Matrix  dm                =  DELTA_MATRIX_DELTA_MINUS(C);
-	GrB_Matrix  temp              =  NULL;
+	bool        m_dp_disjoint     = false;
+	bool        dp_dm_disjoint    = false;
+	bool        m_zombies_valid   = true;
+	bool        dm_iso            = true;
+	GrB_Info    info              = GrB_SUCCESS;
+	GrB_Matrix  m                 = DELTA_MATRIX_M(C);
+	GrB_Matrix  dp                = DELTA_MATRIX_DELTA_PLUS(C);
+	GrB_Matrix  dm                = DELTA_MATRIX_DELTA_MINUS(C);
+	GrB_Matrix  temp              = NULL;
 	GrB_Index   nrows             = 0;
 	GrB_Index   ncols             = 0;
 	GrB_Index   nvals             = 0;
@@ -211,15 +211,15 @@ void Delta_Matrix_validate
 	GrB_Type    ty_m              = NULL;
 	GrB_Type    ty_dp             = NULL;
 
-	GrB_OK (Delta_Matrix_nrows(&nrows, C));
-	GrB_OK (Delta_Matrix_ncols(&ncols, C));
+	GrB_OK (Delta_Matrix_nrows (&nrows, C)) ;
+	GrB_OK (Delta_Matrix_ncols (&ncols, C)) ;
 	
 	//--------------------------------------------------------------------------
 	// Check type is allowed
 	//--------------------------------------------------------------------------
 
 	// GrB_OK (Delta_Matrix_type(&ty, C));
-	GrB_OK (GxB_Matrix_type (&ty_m, m)) ;
+	GrB_OK (GxB_Matrix_type (&ty_m,  m))  ;
 	GrB_OK (GxB_Matrix_type (&ty_dp, dp)) ;
 	ty = ty_m ;
 
@@ -231,30 +231,30 @@ void Delta_Matrix_validate
 	// check sparcity control
 	//--------------------------------------------------------------------------
 
-	int32_t sparticy = 0;
-	GrB_OK(GrB_Matrix_get_INT32(m, &sparticy, GxB_SPARSITY_CONTROL));
-	ASSERT(sparticy == (GxB_SPARSE | GxB_HYPERSPARSE));
+	int32_t sparticy = 0 ;
+	GrB_OK(GrB_Matrix_get_INT32 (m, &sparticy, GxB_SPARSITY_CONTROL)) ;
+	ASSERT (sparticy == (GxB_SPARSE | GxB_HYPERSPARSE)) ;
 
-	GrB_OK(GrB_Matrix_get_INT32(dp, &sparticy, GxB_SPARSITY_CONTROL));
-	ASSERT(sparticy == GxB_HYPERSPARSE);
+	GrB_OK (GrB_Matrix_get_INT32 (dp, &sparticy, GxB_SPARSITY_CONTROL)) ;
+	ASSERT (sparticy == GxB_HYPERSPARSE) ;
 
-	GrB_OK(GrB_Matrix_get_INT32(dm, &sparticy, GxB_SPARSITY_CONTROL));
-	ASSERT(sparticy == GxB_HYPERSPARSE);
+	GrB_OK (GrB_Matrix_get_INT32 (dm, &sparticy, GxB_SPARSITY_CONTROL)) ;
+	ASSERT (sparticy == GxB_HYPERSPARSE) ;
 
-	int32_t hyper_hash = 0;
+	int32_t hyper_hash = 0 ;
 
-	GrB_OK (GrB_get (dp, &hyper_hash, GxB_HYPER_HASH));
-	ASSERT (hyper_hash == false);
+	GrB_OK (GrB_get (dp, &hyper_hash, GxB_HYPER_HASH)) ;
+	ASSERT (hyper_hash == false) ;
 
-	GrB_OK (GrB_get (dm, &hyper_hash, GxB_HYPER_HASH));
-	ASSERT (hyper_hash == false);
+	GrB_OK (GrB_get (dm, &hyper_hash, GxB_HYPER_HASH)) ;
+	ASSERT (hyper_hash == false) ;
 
-	double hyper_switch = 0;
-	// Using historical method because modern one requires me to create a scalar
-	GrB_OK (GxB_get (dp, GxB_HYPER_SWITCH, &hyper_switch));
-	ASSERT (hyper_switch == GxB_ALWAYS_HYPER);
-	GrB_OK (GxB_get (dm, GxB_HYPER_SWITCH, &hyper_switch));
-	ASSERT (hyper_switch == GxB_ALWAYS_HYPER);
+	double hyper_switch = 0 ;
+	// using historical method because modern one requires me to create a scalar
+	GrB_OK (GxB_get (dp, GxB_HYPER_SWITCH, &hyper_switch)) ;
+	ASSERT (hyper_switch == GxB_ALWAYS_HYPER) ;
+	GrB_OK (GxB_get (dm, GxB_HYPER_SWITCH, &hyper_switch)) ;
+	ASSERT (hyper_switch == GxB_ALWAYS_HYPER) ;
 
 	//--------------------------------------------------------------------------
 	// Check dm is iso
@@ -263,9 +263,9 @@ void Delta_Matrix_validate
 	#if 1 // less strict iso test:
 	// if this passes, Graphblas may not recognize the matrix as iso
 	// but it only has true values. 
-	info = GrB_Matrix_reduce_BOOL(
-		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	info = GrB_Matrix_reduce_BOOL (
+		&dm_iso, GrB_LAND, GrB_LAND_MONOID_BOOL, dm, NULL) ;
+	ASSERT (info == GrB_SUCCESS) ;
 	#else
 	GrB_OK (GxB_Matrix_iso (&dm_iso, dm));
 	#endif
@@ -277,17 +277,18 @@ void Delta_Matrix_validate
 		GxB_fprint (dm, GxB_COMPLETE_VERBOSE, stdout) ;
 	}
 
-	ASSERT(dm_iso || dm_nvals == 0);
+	ASSERT (dm_iso || dm_nvals == 0) ;
 
 	//--------------------------------------------------------------------------
 	// Check the transpose
 	//--------------------------------------------------------------------------
-	if(check_transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) { 
+
+	if (check_transpose && DELTA_MATRIX_MAINTAIN_TRANSPOSE (C)) {
 		// this may to too strict
 		// the transpose should be structually the transpose
 		// however doesn't need to have all pending changes be equal.
-		GrB_Matrix tm  = DELTA_MATRIX_TM (C) ;
-		GrB_Matrix tdp = DELTA_MATRIX_TDELTA_PLUS (C) ;
+		GrB_Matrix tm  = DELTA_MATRIX_TM           (C) ;
+		GrB_Matrix tdp = DELTA_MATRIX_TDELTA_PLUS  (C) ;
 		GrB_Matrix tdm = DELTA_MATRIX_TDELTA_MINUS (C) ;
 
 		// m = tm^t

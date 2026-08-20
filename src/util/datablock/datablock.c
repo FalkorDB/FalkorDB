@@ -168,18 +168,28 @@ void DataBlock_Ensure(DataBlock *dataBlock, uint64_t idx) {
 	ASSERT(dataBlock->itemCap > idx);
 }
 
-void *DataBlock_GetItem(const DataBlock *dataBlock, uint64_t idx) {
-	ASSERT(dataBlock != NULL);
+void *DataBlock_GetItem
+(
+	const DataBlock *dataBlock,
+	uint64_t idx
+) {
+	ASSERT (dataBlock != NULL) ;
 
 	// return NULL if idx is out of bounds
-	if(_DataBlock_IndexOutOfBounds(dataBlock, idx)) return NULL;
+	if (_DataBlock_IndexOutOfBounds (dataBlock, idx))
+	{
+		return NULL ;
+	}
 
-	DataBlockItemHeader *item_header = DataBlock_GetItemHeader(dataBlock, idx);
+	DataBlockItemHeader *item_header = DataBlock_GetItemHeader (dataBlock, idx) ;
 
-	// Incase item is marked as deleted, return NULL.
-	if(IS_ITEM_DELETED(item_header)) return NULL;
+	// incase item is marked as deleted, return NULL.
+	if (IS_ITEM_DELETED (item_header))
+	{
+		return NULL ;
+	}
 
-	return ITEM_DATA(item_header);
+	return ITEM_DATA (item_header) ;
 }
 
 uint64_t DataBlock_GetReservedIdx

@@ -356,6 +356,13 @@ uint GraphContext_AttributeCount
 	GraphContext *gc
 );
 
+// checks if graph context is aware of attribute id
+bool GraphContext_HasAttribute
+(
+	const GraphContext *gc,  // graph context
+	AttributeID id           // attribute id
+);
+
 // returns an attribute ID given a string, creating one if not found
 AttributeID GraphContext_FindOrAddAttribute
 (

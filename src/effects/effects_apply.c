@@ -525,114 +525,6 @@ void ReadConstraintAttributes
 	}
 }
 
-// process Update_Edge effect
-static void ApplyUpdateEdge
-(
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
-) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    edge ID
-	//    attribute ID
-	//    attribute value
-	//--------------------------------------------------------------------------
-	
-	SIValue v;            // updated value
-	AttributeID attr_id;  // entity ID
-
-	NodeID     s_id = INVALID_ENTITY_ID;       // edge src node ID
-	NodeID     t_id = INVALID_ENTITY_ID;       // edge dest node ID
-	RelationID r_id = GRAPH_UNKNOWN_RELATION;  // edge rel-type
-
-	EntityID id = INVALID_ENTITY_ID;
-
-	//--------------------------------------------------------------------------
-	// read edge ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&id, sizeof(EntityID), stream);
-	ASSERT(id != INVALID_ENTITY_ID);
-
-	//--------------------------------------------------------------------------
-	// read relation ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&r_id, sizeof(RelationID), stream);
-	ASSERT(r_id >= 0);
-
-	//--------------------------------------------------------------------------
-	// read src ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&s_id, sizeof(NodeID), stream);
-	ASSERT(s_id != INVALID_ENTITY_ID);
-
-	//--------------------------------------------------------------------------
-	// read dest ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&t_id, sizeof(NodeID), stream);
-	ASSERT(t_id != INVALID_ENTITY_ID);
-
-	//--------------------------------------------------------------------------
-	// read attribute ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&attr_id, sizeof(AttributeID), stream);
-
-	//--------------------------------------------------------------------------
-	// read attribute value
-	//--------------------------------------------------------------------------
-
-	v = SIValue_FromBinary(stream);
-	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
-	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
-
-	GraphHub_UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
-}
-
-// process UpdateNode effect
-static void ApplyUpdateNode
-(
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
-) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    entity ID
-	//    attribute ID
-	//    attribute value
-	//--------------------------------------------------------------------------
-
-	SIValue v;            // updated value
-	AttributeID attr_id;  // entity ID
-
-	EntityID id = INVALID_ENTITY_ID;
-
-	//--------------------------------------------------------------------------
-	// read node ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&id, sizeof(EntityID), stream);
-
-	//--------------------------------------------------------------------------
-	// read attribute ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&attr_id, sizeof(AttributeID), stream);
-
-	//--------------------------------------------------------------------------
-	// read attribute ID
-	//--------------------------------------------------------------------------
-
-	v = SIValue_FromBinary(stream);
-	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
-	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
-
-	GraphHub_UpdateNodeProperty(gc, id, attr_id, v);
-}
-
 // process DeleteNode effect
 // returns false if the effect references a node that doesn't exist locally
 // (replica has diverged from the master); processing stops immediately,
@@ -846,11 +738,11 @@ bool Effects_Apply
 				break ;
 
 			case EFFECT_UPDATE_NODE:
-				ApplyUpdateNode (stream, gc) ;
+				ok = ApplyUpdateNode (stream, gc) ;
 				break ;
 
 			case EFFECT_UPDATE_EDGE:
-				ApplyUpdateEdge (stream, gc) ;
+				ok = ApplyUpdateEdge (stream, gc) ;
 				break ;
 
 			case EFFECT_CREATE_NODE:
