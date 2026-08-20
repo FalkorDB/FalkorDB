@@ -56,6 +56,10 @@ GrB_Info Delta_Matrix_setMatrices
 	*DP  = NULL;
 	*DM  = NULL;
 
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
+		GrB_OK (Delta_transpose_calculate(C)) ;
+	}
+
 	Delta_Matrix_validate(C, false);
 
 	return GrB_SUCCESS;
@@ -84,14 +88,17 @@ GrB_Info Delta_Matrix_setM
 
 	GrB_OK (GrB_free(&DELTA_MATRIX_M(C)));
 
-	DELTA_MATRIX_M(C) = *M;
-
-	GrB_OK (GrB_Matrix_wait(*M, GrB_MATERIALIZE));
-
 	// set correct sparcity controls
 	GrB_OK (GrB_set(*M, GxB_SPARSE | GxB_HYPERSPARSE, GxB_SPARSITY_CONTROL));
+	GrB_OK (GrB_Matrix_wait(*M, GrB_MATERIALIZE));
+
+	DELTA_MATRIX_M(C) = *M;
 
 	*M = NULL;
+
+	if (DELTA_MATRIX_MAINTAIN_TRANSPOSE(C)) {
+		GrB_OK (Delta_transpose_calculate(C)) ;
+	}
 
 	return GrB_SUCCESS;
 }
