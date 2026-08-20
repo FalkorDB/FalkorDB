@@ -274,6 +274,7 @@ GraphContext *RdbLoadGraphContext_v18
 	}
 
 	if (GraphDecodeContext_Finished (decoding_context)) {
+		Graph_ApplyAllPending (g, false) ;
 		GraphContext_ReleaseLock (gc) ;
 
 		uint rel_count   = Graph_RelationTypeCount(g);
