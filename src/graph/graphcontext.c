@@ -1046,7 +1046,7 @@ bool GraphContext_HasAttribute
 	// committed on write-lock release, so reading it here would miss the
 	// just-added attribute and misreport a following UPDATE effect as a
 	// master/replica divergence
-	return (id < arr_len (_GetAttributes ((GraphContext *)gc))) ;
+	return (id >= 0 && id < arr_len (_GetAttributes ((GraphContext *)gc))) ;
 }
 
 // returns an attribute ID given a string, creating one if not found

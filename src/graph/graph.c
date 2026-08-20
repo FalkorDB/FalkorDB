@@ -1191,7 +1191,7 @@ bool Graph_HasNode
 }
 
 // retrieves node with given id from graph,
-// returns NULL if node wasn't found
+// returns false if node was not found
 bool Graph_GetNode
 (
 	const Graph *g,
@@ -1230,7 +1230,7 @@ bool Graph_HasEdge
 	}
 
 	// unknown relation id
-	if (r >= Graph_RelationTypeCount (g))
+	if (r < 0 || r >= Graph_RelationTypeCount (g))
 	{
 		return false ;
 	}
