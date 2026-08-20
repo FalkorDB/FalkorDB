@@ -2928,3 +2928,41 @@ updating clause.")
 
         g.delete()
 
+    def test_55_unit_subquery_body_runs_per_row(self):
+        # A unit subquery runs its body once per input row. A body that
+        # collapses rows, LIMIT, SKIP, DISTINCT or an aggregation, must apply
+        # within one invocation, not once across the whole input batch.
+        g = self.db.select_graph("unit_subquery_per_row")
+        g.query("UNWIND range(1, 3) AS i CREATE (:S {v: i})")
+
+        for q, rows, created in [
+                # LIMIT 1 inside the body keeps one row per invocation, so each
+                # of the 3 input rows still writes once.
+                ("MATCH (x:S) CALL { WITH x UNWIND [1,2,3] AS z WITH z LIMIT 1 "
+                 "CREATE (:T {z:z}) } RETURN count(*)",                                3, 3),
+                # SKIP drops one row per invocation, not one overall.
+                ("MATCH (x:S) CALL { WITH x UNWIND [1,2] AS z WITH z SKIP 1 "
+                 "CREATE (:T {z:z}) } RETURN count(*)",                                3, 3),
+                # DISTINCT dedups within an invocation; the next one starts fresh.
+                ("MATCH (x:S) CALL { WITH x UNWIND [1,1] AS z WITH DISTINCT z "
+                 "CREATE (:T {z:z}) } RETURN count(*)",                                3, 3),
+                # an aggregation collapses to one row per invocation.
+                ("MATCH (x:S) CALL { WITH x MATCH (y:S) WITH count(y) AS c "
+                 "CREATE (:T {c:c}) } RETURN count(*)",                                3, 3),
+                # MERGE is evaluated per row, so each distinct key is created.
+                ("MATCH (x:S) CALL { WITH x MERGE (:T {v: x.v}) } RETURN count(*)",     3, 3),
+        ]:
+            res = g.query(q)
+            self.env.assertEqual(res.result_set, [[rows]])
+            self.env.assertEqual(res.nodes_created, created)
+            g.query("MATCH (t:T) DELETE t")
+
+        # a body with nothing to collapse still runs batched, and its fan-out
+        # must not reach the outer row count
+        res = g.query("MATCH (x:S) CALL { WITH x UNWIND [1,2,3] AS z "
+                      "CREATE (:T {z:z}) } RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[3]])
+        self.env.assertEqual(res.nodes_created, 9)
+
+        g.delete()
+

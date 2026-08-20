@@ -28,9 +28,10 @@
 //!
 //! The C engine calls its counterpart `SubqueryForeach`.
 
-use crate::planner::IR;
+use crate::planner::{IR, subtree_contains};
 use crate::runtime::{
-    batch::{Batch, BatchOp},
+    batch::{Batch, BatchBuilder, BatchOp, BatchRow},
+    row::RowView,
     runtime::Runtime,
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
@@ -39,6 +40,8 @@ pub struct UnitSubqueryOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     body_idx: NodeIdx<Dyn<IR>>,
+    /// False when the body collapses rows, so it must see one row at a time.
+    can_batch: bool,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -50,12 +53,47 @@ impl<'a> UnitSubqueryOp<'a> {
     ) -> Self {
         let body_idx = runtime.plan.node(idx).child(1).idx();
 
+        // A body that collapses rows, such as `WITH ... LIMIT 1` or an
+        // aggregation, would apply once across the whole batch rather than once
+        // per input row, and its writes would happen the wrong number of times.
+        // Apply draws the same line for the same reason.
+        let can_batch = !subtree_contains(&runtime.plan, body_idx, |ir| {
+            matches!(
+                ir,
+                IR::Aggregate { .. }
+                    | IR::CartesianProduct
+                    | IR::Optional(_)
+                    | IR::Apply
+                    | IR::UnitSubquery
+                    | IR::Merge { .. }
+                    | IR::Union
+                    | IR::Sort(_)
+                    | IR::Limit(_)
+                    | IR::Skip(_)
+                    | IR::Distinct
+            )
+        });
+
         Self {
             runtime,
             child,
             body_idx,
+            can_batch,
             idx,
         }
+    }
+
+    /// Runs the body once over `arg`, discarding every row it produces.
+    fn drain_body(
+        &self,
+        arg: Batch<'a>,
+    ) -> Result<(), String> {
+        let mut body = self.runtime.run_batch(self.body_idx)?;
+        body.set_argument_batch(arg);
+        for result in body.by_ref() {
+            result?;
+        }
+        Ok(())
     }
 }
 
@@ -68,18 +106,23 @@ impl<'a> Iterator for UnitSubqueryOp<'a> {
             Err(e) => return Some(Err(e)),
         };
 
-        let mut body = match self.runtime.run_batch(self.body_idx) {
-            Ok(b) => b,
-            Err(e) => return Some(Err(e)),
-        };
-        body.set_argument_batch(batch.clone_active_rows_seq_origin());
-
-        for result in body.by_ref() {
-            if let Err(e) = result {
+        if self.can_batch {
+            if let Err(e) = self.drain_body(batch.clone_active_rows_seq_origin()) {
                 return Some(Err(e));
             }
+            return Some(Ok(batch));
         }
-        drop(body);
+
+        for row in batch.active_indices() {
+            let mut arg = BatchBuilder::new();
+            arg.push_row(&BatchRow::new(&batch, row).to_owned_row());
+            if let Err(e) = self.drain_body(arg.finish()) {
+                return Some(Err(e));
+            }
+            // Each invocation is a separate CALL {}, so DISTINCT inside the
+            // body must not remember rows from the previous one.
+            self.runtime.value_dedupers.borrow_mut().clear();
+        }
 
         Some(Ok(batch))
     }
