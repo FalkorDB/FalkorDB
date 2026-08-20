@@ -91,6 +91,100 @@ class testReplicaDivergence():
             "MATCH (n:P) RETURN id(n) ORDER BY id(n)").result_set
         env.assertEquals(expected, actual)
 
+    # same divergence contract, but exercised through EFFECT_UPDATE_EDGE
+    # rather than EFFECT_DELETE_EDGE
+    #
+    # EFFECT_CREATE_EDGE doesn't encode an edge id - the replica allocates
+    # one itself off its own free list - while UPDATE/DELETE address an edge
+    # by explicit id. so master and replica must keep allocating identical
+    # ids, and once they don't, an UPDATE_EDGE can name an id that sits on
+    # the replica's deleted list. Graph_GetEdge then yields a NULL
+    # attribute-set, which AttributeSet_Update dereferences unconditionally
+    #
+    # DELETE_EDGE has always reported that cleanly; UPDATE_EDGE used to
+    # guard it with ASSERT() alone, which compiles to nothing in a release
+    # build, so the same divergence segfaulted the whole replica process
+    def test_forced_full_resync_on_edge_update_divergence(self):
+        env = self.env
+        master = env.getConnection()
+        replica = env.getSlaveConnection()
+
+        graph_id = GRAPH_ID + "_edge_update"
+        master_graph = Graph(master, graph_id)
+        replica_graph = Graph(replica, graph_id)
+
+        # force effects-based replication, so the SET below replicates as
+        # GRAPH.EFFECT UPDATE_EDGE rather than the raw GRAPH.QUERY
+        self.db.config_set("EFFECTS_THRESHOLD", 0)
+
+        # create a couple of edges carrying a property, let the replica sync
+        master_graph.query(
+            "CREATE (a:P {v: 1})-[:R {seen: 1}]->(b:P {v: 2}),"
+            "       (b)-[:R {seen: 2}]->(:P {v: 3})")
+        master.execute_command("WAIT", "1", "0")
+
+        # pick the edge we'll remove on the replica only
+        res = master_graph.query(
+            "MATCH ()-[r:R]->() RETURN id(r) ORDER BY id(r) LIMIT 1")
+        target_id = res.result_set[0][0]
+
+        # allow direct writes on the replica and delete the edge there only,
+        # putting that id on the replica's free list while the master keeps
+        # the edge live - exactly the state the crash needs
+        replica.config_set("slave-read-only", "no")
+        replica_graph.query(
+            f"MATCH ()-[r]->() WHERE id(r) = {target_id} DELETE r")
+        replica.config_set("slave-read-only", "yes")
+
+        # sanity check: replica and master have diverged
+        replica_count = replica_graph.ro_query(
+            "MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0]
+        env.assertEquals(replica_count, 1)
+
+        sync_full_before = master.info()["sync_full"]
+
+        # update that same edge on the master
+        # the new value must differ from the current one, a no-op SET emits
+        # no effect at all
+        master_graph.query(
+            f"MATCH ()-[r]->() WHERE id(r) = {target_id} SET r.seen = 42")
+
+        # the replica must detect the divergence and force a full resync
+        # rather than dereference a NULL attribute-set and die
+        deadline = time.time() + 30
+        resynced = False
+        while time.time() < deadline:
+            info = master.info()
+            if (info["sync_full"] > sync_full_before and
+                    info["connected_slaves"] >= 1):
+                resynced = True
+                break
+            time.sleep(0.5)
+
+        env.assertTrue(resynced)
+
+        # replica is still alive and serving, and its dataset matches the
+        # master's again - including the updated property
+        master.execute_command("WAIT", "1", "5000")
+
+        expected = master_graph.query(
+            "MATCH ()-[r:R]->() RETURN id(r), r.seen ORDER BY id(r)").result_set
+        actual = replica_graph.ro_query(
+            "MATCH ()-[r:R]->() RETURN id(r), r.seen ORDER BY id(r)").result_set
+        env.assertEquals(expected, actual)
+
+        # confirm it was our UPDATE_EDGE guard that reported the divergence,
+        # when a log file is available (RLTest may run with output capturing
+        # disabled, in which case the resync assertion above made the point)
+        log_name = env.envRunner._getFileName("slave", ".log")
+        try:
+            with open(os.path.join(env.logDir, log_name)) as f:
+                log = f.read()
+        except FileNotFoundError:
+            return
+
+        env.assertContains("UPDATE_EDGE references edge", log)
+
 
 # a divergence hit while replaying the local AOF (rather than while
 # consuming the live replication stream) can't be fixed by a resync: the
@@ -211,4 +305,95 @@ class testAOFDivergence():
 
         env.assertContains("while loading from disk", log)
         env.assertNotContains("Scheduling a forced full resync", log)
+
+
+# verifies that after a replica completes a FULL SYNC its graph is identical
+# to the master's - including the order in which entities are returned.
+#
+# a graph's matrices keep pending changes in delta-plus / delta-minus that are
+# not necessarily merged into the main matrix. during a full sync the master
+# forks, encodes its live matrices (M / DP / DM, separately) to an RDB, and the
+# replica decodes them. the decoder must restore the M / DP / DM split as-is,
+# and rebuild each matrix's transpose from all three - rather than merging the
+# deltas into M (the old Graph_ApplyAllPending behaviour).
+#
+# a merge is logically equivalent but reorders a DeltaMatrixIterator, so an
+# order-sensitive query (a label scan such as MATCH (n:L) RETURN n, or any
+# LIMIT query) could return entities in a different order on the replica than
+# on the master. a missing / stale transpose would additionally break reverse
+# traversals on the replica.
+#
+# lives in its own class/Env: it cycles REPLICAOF on the replica to force a
+# fresh full sync, which would interfere with the tests above.
+class testFullSyncMatrixConsistency():
+    def __init__(self):
+        # replication timing doesn't play well with Valgrind/sanitizers
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env(env='oss', useSlaves=True,
+                                 enableDebugCommand=True)
+
+    def test_full_sync_preserves_matrix_order(self):
+        env = self.env
+        master = env.getConnection()
+        replica = env.getSlaveConnection()
+
+        graph_id = GRAPH_ID + "_fullsync"
+        master_graph = Graph(master, graph_id)
+        replica_graph = Graph(replica, graph_id)
+
+        # remember where the replica replicates from, then detach it so the
+        # graph reaches it via a fresh FULL SYNC - not the incremental
+        # replication stream - once we re-attach
+        repl_info = replica.info()
+        master_host = repl_info["master_host"]
+        master_port = repl_info["master_port"]
+        replica.execute_command("REPLICAOF", "NO", "ONE")
+
+        # build a graph on the master with pending deltas: create a batch of
+        # labeled, connected nodes then delete a portion, leaving entries in
+        # the matrices' delta-minus and gaps in the datablocks
+        master_graph.query(
+            "UNWIND range(0, 999) AS i CREATE (:L {v: i})-[:R]->(:M {v: i})")
+        master_graph.query("MATCH (:L)-[e:R]->(:M) WHERE e.v % 3 = 0 DELETE e")
+        master_graph.query("MATCH (n:M) WHERE n.v % 5 = 0 DELETE n")
+
+        # snapshot the master's full-sync counter so we can confirm a
+        # FULLRESYNC actually happened (not a partial PSYNC CONTINUE)
+        sync_full_before = master.info()["sync_full"]
+
+        # re-attach the replica -> triggers a full resync: the master forks,
+        # encodes its live matrices to an RDB, and the replica loads it through
+        # the exact decode path this branch changed
+        replica.execute_command("REPLICAOF", master_host, master_port)
+
+        # wait for the full sync to complete
+        deadline = time.time() + 60
+        synced = False
+        while time.time() < deadline:
+            if (master.info()["sync_full"] > sync_full_before and
+                    replica.info()["master_link_status"] == "up"):
+                synced = True
+                break
+            time.sleep(0.5)
+        env.assertTrue(synced)
+
+        # make sure the replica has fully caught up
+        master.execute_command("WAIT", "1", "10000")
+
+        # every query - label scans plus forward and reverse traversals - must
+        # return identical, identically-ordered results on master and replica.
+        # intentionally no ORDER BY: the result order reflects the underlying
+        # matrix iteration order, which is what a merge-on-decode would change
+        queries = [
+            "MATCH (n:L) RETURN n.v",                        # label scan
+            "MATCH (n:M) RETURN n.v",                        # label scan
+            "MATCH (n:L)-[e:R]->(m:M) RETURN n.v, e.v, m.v", # forward traverse
+            "MATCH (m:M)<-[e:R]-(n:L) RETURN m.v, e.v, n.v", # reverse (transpose)
+        ]
+        for q in queries:
+            expected = master_graph.query(q).result_set
+            actual = replica_graph.ro_query(q).result_set
+            env.assertEquals(actual, expected)
 

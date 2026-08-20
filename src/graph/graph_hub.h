@@ -121,16 +121,15 @@ void GraphHub_UpdateNodeProperty
 // update an edge
 // update the edge attributes
 // update the relevant indexes of the edge
-// used from effects
 void GraphHub_UpdateEdgeProperty
 (
-	GraphContext *gc,             // graph context
-	EdgeID id,                    // edge ID
-	RelationID r_id,              // relation ID
-	NodeID src_id,                // source node ID
-	NodeID dest_id,               // destination node ID
-	AttributeID attr_id,          // attribute ID
-	SIValue v                     // new attribute value
+	GraphContext *gc,     // graph context
+	EdgeID id,            // edge ID
+	RelationID r_id,      // relation ID
+	NodeID src_id,        // source node ID
+	NodeID dest_id,       // destination node ID
+	AttributeID attr_id,  // attribute ID
+	SIValue v             // new attribute value
 );
 
 // applies pending label additions and removals to the graph
