@@ -2966,3 +2966,27 @@ updating clause.")
 
         g.delete()
 
+    def test_56_unit_subquery_preserves_outer_distinct(self):
+        # Value-dedup state is shared across the plan. Resetting the body's
+        # DISTINCT between invocations must not drop the state of an enclosing
+        # count(DISTINCT ...), which accumulates across input batches.
+        g = self.db.select_graph("unit_subquery_distinct")
+        g.query("CREATE (:S {v: 1}), (:S {v: 1}), (:S {v: 2})")
+
+        # 3000 rows spans several batches, while p only ever takes two values
+        res = g.query("UNWIND range(1, 3000) AS i WITH i, i % 2 AS p "
+                      "CALL { WITH i WITH i LIMIT 1 CREATE (:T) } "
+                      "RETURN count(DISTINCT p)")
+        self.env.assertEqual(res.result_set, [[2]])
+        g.query("MATCH (t:T) DELETE t")
+
+        # the body's own DISTINCT still starts fresh on each invocation, so
+        # every one of the 3 rows sees both distinct values
+        g.query("MATCH (x:S) CALL { WITH x MATCH (y:S) "
+                "WITH count(DISTINCT y.v) AS c CREATE (:R {c: c}) } "
+                "RETURN count(*)")
+        res = g.query("MATCH (r:R) RETURN collect(r.c)")
+        self.env.assertEqual(res.result_set, [[[2, 2, 2]]])
+
+        g.delete()
+

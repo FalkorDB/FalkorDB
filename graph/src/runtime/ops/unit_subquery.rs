@@ -113,6 +113,18 @@ impl<'a> Iterator for UnitSubqueryOp<'a> {
             return Some(Ok(batch));
         }
 
+        // `value_dedupers` is shared with the rest of the plan, and an
+        // enclosing `count(DISTINCT ...)` accumulates across input batches, so
+        // only the entries the body itself creates may be dropped between
+        // invocations.
+        let outer_keys: rustc_hash::FxHashSet<_> = self
+            .runtime
+            .value_dedupers
+            .borrow()
+            .keys()
+            .copied()
+            .collect();
+
         for row in batch.active_indices() {
             let mut arg = BatchBuilder::new();
             arg.push_row(&BatchRow::new(&batch, row).to_owned_row());
@@ -121,7 +133,10 @@ impl<'a> Iterator for UnitSubqueryOp<'a> {
             }
             // Each invocation is a separate CALL {}, so DISTINCT inside the
             // body must not remember rows from the previous one.
-            self.runtime.value_dedupers.borrow_mut().clear();
+            let mut dedupers = self.runtime.value_dedupers.borrow_mut();
+            if dedupers.len() != outer_keys.len() {
+                dedupers.retain(|key, _| outer_keys.contains(key));
+            }
         }
 
         Some(Ok(batch))
