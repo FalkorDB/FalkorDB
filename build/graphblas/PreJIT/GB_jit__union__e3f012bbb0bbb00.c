@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
-// GB_jit__union__e3f312bbb0bbb00.c
+// GB_jit__union__e3f012bbb0bbb00.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -73,11 +73,11 @@
 #define GBb_A(Ab,p)      1
 #define GB_A_NVALS(e) int64_t e = A->nvals
 #define GB_A_NHELD(e) GB_A_NVALS(e)
-#define GB_A_ISO 1
+#define GB_A_ISO 0
 #define GB_A_TYPE double
 #define GB_A2TYPE double
 #define GB_DECLAREA(a) double a
-#define GB_GETA(a,Ax,p,iso) a = Ax [0]
+#define GB_GETA(a,Ax,p,iso) a = Ax [p]
 #define GB_Ap_TYPE uint32_t
 #define GB_Aj_TYPE uint32_t
 #define GB_Aj_SIGNED_TYPE int32_t
@@ -98,11 +98,11 @@
 #define GBb_B(Bb,p)      1
 #define GB_B_NVALS(e) int64_t e = B->nvals
 #define GB_B_NHELD(e) GB_B_NVALS(e)
-#define GB_B_ISO 1
+#define GB_B_ISO 0
 #define GB_B_TYPE double
 #define GB_B2TYPE double
 #define GB_DECLAREB(b) double b
-#define GB_GETB(b,Bx,p,iso) b = Bx [0]
+#define GB_GETB(b,Bx,p,iso) b = Bx [p]
 #define GB_Bp_TYPE uint32_t
 #define GB_Bj_TYPE uint32_t
 #define GB_Bj_SIGNED_TYPE int32_t
@@ -114,15 +114,15 @@
 
 #include "include/GB_ewise_shared_definitions.h"
 #ifndef GB_JIT_RUNTIME
-#define GB_jit_kernel GB_jit__union__e3f312bbb0bbb00
-#define GB_jit_query  GB_jit__union__e3f312bbb0bbb00_query
+#define GB_jit_kernel GB_jit__union__e3f012bbb0bbb00
+#define GB_jit_query  GB_jit__union__e3f012bbb0bbb00_query
 #endif
 #include "template/GB_jit_kernel_union.c"
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
-    (*hash) = 0x953a83f61136476a ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    (*hash) = 0x0afcfd16ae264fea ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = NULL ;
