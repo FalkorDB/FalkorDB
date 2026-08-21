@@ -26,7 +26,7 @@ on:
 jobs:
   build:
     runs-on: macos-14
-    timeout-minutes: 90
+    timeout-minutes: 120
     permissions:
       contents: read
     env:
@@ -34,7 +34,7 @@ jobs:
       # matching the Linux single-.so contract). graph/build.rs links static
       # when ${LIBOMP_PREFIX}/lib/libomp.a exists.
       LIBOMP_PREFIX: /opt/homebrew/opt/libomp
-      # Workspace-local GraphBLAS install (no sudo; cacheable). graphblas.sh
+      # Workspace-local GraphBLAS install (no sudo). graphblas.sh
       # reads GRAPHBLAS_INSTALL_PREFIX; build.rs reads GRAPHBLAS_LIB_DIR.
       GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
       GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
@@ -54,47 +54,28 @@ jobs:
           echo "${LLVM_PREFIX}/bin"             >> "$GITHUB_PATH"
           echo "CC=${LLVM_PREFIX}/bin/clang"    >> "$GITHUB_ENV"
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
-          # Bust the native-deps cache when Homebrew LLVM moves (the C artefacts
-          # are ABI-tied to it).
-          echo "BREW_LLVM_VERSION=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_ENV"
 
       - name: Install Rust stable
         run: rustup default stable
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: "macos-artifact-release"
+      # NOTE: no Actions cache (neither rust-cache nor actions/cache) in this
+      # job, deliberately. The job checks out and compiles arbitrary code
+      # (`inputs.commit_sha`, e.g. a PR head), so anything it wrote to the
+      # cache would be attacker-controlled content living in a cache scope that
+      # privileged, default-branch runs can restore from — the cache-poisoning
+      # class of supply-chain attack (CodeQL `actions/cache-poisoning/*`).
+      # Cache scope is decided by GitHub, not by the key, so a custom key
+      # cannot isolate it; the only safe option for an untrusted-code build is
+      # not to write the cache at all. This is a rarely-run, manually triggered
+      # verification build, so a cold rebuild of the native deps is acceptable.
 
-      # Hosted macOS has no Docker toolchain image, so rebuild GraphBLAS +
-      # LAGraph + RediSearch from source and cache them (keyed on the build
-      # scripts + vendored PreJIT + the exact Homebrew LLVM version).
-      - name: Restore GraphBLAS + RediSearch native builds
-        id: native-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
-        with:
-          path: |
-            .deps/graphblas
-            lagraph_lib
-            redisearch/RediSearch/bin
-          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
-
+      # Hosted macOS has no Docker toolchain image, so GraphBLAS + LAGraph +
+      # RediSearch are rebuilt from source on every run.
       - name: Build GraphBLAS + LAGraph
-        if: steps.native-cache.outputs.cache-hit != 'true'
         run: ./graphblas.sh
 
       - name: Build RediSearch
-        if: steps.native-cache.outputs.cache-hit != 'true'
         run: ./redisearch.sh
-
-      - name: Save GraphBLAS + RediSearch native builds
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
-        with:
-          path: |
-            .deps/graphblas
-            lagraph_lib
-            redisearch/RediSearch/bin
-          key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Build libfalkordb.dylib
         run: cargo build --release
