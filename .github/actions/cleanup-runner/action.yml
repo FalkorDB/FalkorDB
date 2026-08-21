@@ -21,9 +21,12 @@ runs:
   steps:
     - name: Authenticate to GCP
       shell: bash
+      env:
+        SERVICE_ACCOUNT_KEY: ${{ inputs.service_account_key }}
+        PROJECT_ID: ${{ inputs.project_id }}
       run: |
-        echo '${{ inputs.service_account_key }}' \
-          | gcloud --project '${{ inputs.project_id }}' --quiet \
+        printf '%s' "${SERVICE_ACCOUNT_KEY}" \
+          | gcloud --project "${PROJECT_ID}" --quiet \
               auth activate-service-account --key-file - >/dev/null 2>&1
 
     - name: Delete the runner VM (if any)
