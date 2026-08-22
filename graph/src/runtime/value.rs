@@ -1234,6 +1234,33 @@ impl CompareValue for Value {
                 Self::compare_list(a, b)
             }
             (Self::Map(a), Self::Map(b)) => Self::compare_map(a, b),
+            // Vector equality is element-wise: vecf32([1.0,2.0]) equals
+            // vecf32([1.0,2.0]). Without this arm the fallthrough compared
+            // only the type order, so `=` and `<>` were both always false
+            // for vectors and MERGE on a vector property duplicated on
+            // every execution (#2604).
+            (Self::VecF32(a), Self::VecF32(b)) => {
+                let len_a = a.len();
+                let len_b = b.len();
+                let ord = len_a.cmp(&len_b).then_with(|| {
+                    a.iter()
+                        .zip(b.iter())
+                        .map(|(x, y)| {
+                            // NaN components order less than everything; a
+                            // NaN compares equal only to another NaN.
+                            x.partial_cmp(y).unwrap_or(if x.is_nan() && y.is_nan() {
+                                Ordering::Equal
+                            } else if x.is_nan() {
+                                Ordering::Less
+                            } else {
+                                Ordering::Greater
+                            })
+                        })
+                        .find(|ord| *ord != Ordering::Equal)
+                        .unwrap_or(Ordering::Equal)
+                });
+                (ord, DisjointOrNull::None)
+            }
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Relationship(rel_a), Self::Relationship(rel_b)) => {
                 (rel_a.cmp(rel_b), DisjointOrNull::None)
@@ -1907,5 +1934,71 @@ impl Decode<19> for Value {
             si_type::T_DURATION => Ok(Self::Duration(r.read_signed()?)),
             _ => Err(format!("unknown SIType tag: {tag}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod vecf32_compare_tests {
+    use super::CompareValue;
+    use super::DisjointOrNull;
+    use super::Ordering;
+    use super::Value;
+    use std::sync::Arc;
+    use thin_vec::{ThinVec, thin_vec as thin_vec_from_slice};
+
+    fn vecf32(values: &[f32]) -> Value {
+        Value::VecF32(Arc::new(ThinVec::from_slice(values)))
+    }
+
+    fn eq(
+        a: &Value,
+        b: &Value,
+    ) -> bool {
+        a.compare_value(b).0 == Ordering::Equal
+    }
+
+    fn disjoint(
+        a: &Value,
+        b: &Value,
+    ) -> bool {
+        a.compare_value(b).1 == DisjointOrNull::Disjoint
+    }
+
+    // Regression (#2604): vector equality was always false (and `<>` also
+    // always false), because compare_value had no VecF32 arm and the
+    // fallthrough compared only the type order.
+    #[test]
+    fn vecf32_equals_identical_vector() {
+        let a = vecf32(&[1.0, 2.0]);
+        assert!(eq(&a, &vecf32(&[1.0, 2.0])));
+        assert!(!disjoint(&a, &vecf32(&[1.0, 2.0])));
+    }
+
+    #[test]
+    fn vecf32_unequals_different_vector() {
+        let a = vecf32(&[0.1, 0.1, 0.1, 0.1, 0.1]);
+        let b = vecf32(&[0.2, 0.2, 0.2, 0.2, 0.9]);
+        assert!(!eq(&a, &b));
+        assert!(!disjoint(&a, &b));
+    }
+
+    #[test]
+    fn vecf32_unequals_different_dimension() {
+        let a = vecf32(&[1.0]);
+        let b = vecf32(&[1.0, 2.0]);
+        assert!(!eq(&a, &b));
+        assert!(!disjoint(&a, &b));
+    }
+
+    #[test]
+    fn vecf32_empty_vectors_equal() {
+        assert!(eq(&vecf32(&[]), &vecf32(&[])));
+    }
+
+    #[test]
+    fn vecf32_with_nan_components() {
+        // NaN orders below everything and compares equal only to NaN.
+        assert!(eq(&vecf32(&[1.0, f32::NAN]), &vecf32(&[1.0, f32::NAN])));
+        assert!(!eq(&vecf32(&[1.0, f32::NAN]), &vecf32(&[1.0, 2.0])));
     }
 }
