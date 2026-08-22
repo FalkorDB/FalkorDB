@@ -1974,12 +1974,22 @@ mod vecf32_compare_tests {
         assert!(!disjoint(&a, &vecf32(&[1.0, 2.0])));
     }
 
+    fn ordering(
+        a: &Value,
+        b: &Value,
+    ) -> Ordering {
+        a.compare_value(b).0
+    }
+
     #[test]
     fn vecf32_unequals_different_vector() {
         let a = vecf32(&[0.1, 0.1, 0.1, 0.1, 0.1]);
         let b = vecf32(&[0.2, 0.2, 0.2, 0.2, 0.9]);
         assert!(!eq(&a, &b));
         assert!(!disjoint(&a, &b));
+        // Both directions: the smaller operand orders Less both ways round.
+        assert_eq!(ordering(&a, &b), Ordering::Less);
+        assert_eq!(ordering(&b, &a), Ordering::Greater);
     }
 
     #[test]
@@ -1988,11 +1998,17 @@ mod vecf32_compare_tests {
         let b = vecf32(&[1.0, 2.0]);
         assert!(!eq(&a, &b));
         assert!(!disjoint(&a, &b));
+        // Dimension decides first: the shorter vector is Less.
+        assert_eq!(ordering(&a, &b), Ordering::Less);
+        assert_eq!(ordering(&b, &a), Ordering::Greater);
     }
 
     #[test]
     fn vecf32_empty_vectors_equal() {
         assert!(eq(&vecf32(&[]), &vecf32(&[])));
+        // Empty is the shortest vector: Less than any non-empty one.
+        assert_eq!(ordering(&vecf32(&[]), &vecf32(&[1.0])), Ordering::Less);
+        assert_eq!(ordering(&vecf32(&[1.0]), &vecf32(&[])), Ordering::Greater);
     }
 
     #[test]
@@ -2000,5 +2016,14 @@ mod vecf32_compare_tests {
         // NaN orders below everything and compares equal only to NaN.
         assert!(eq(&vecf32(&[1.0, f32::NAN]), &vecf32(&[1.0, f32::NAN])));
         assert!(!eq(&vecf32(&[1.0, f32::NAN]), &vecf32(&[1.0, 2.0])));
+        // NaN orders below a number in both directions.
+        assert_eq!(
+            ordering(&vecf32(&[f32::NAN]), &vecf32(&[1.0])),
+            Ordering::Less
+        );
+        assert_eq!(
+            ordering(&vecf32(&[1.0]), &vecf32(&[f32::NAN])),
+            Ordering::Greater
+        );
     }
 }
