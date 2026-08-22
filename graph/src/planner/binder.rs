@@ -2506,7 +2506,16 @@ fn rewrite_compiled_regex(
     else {
         return (new_data, children);
     };
-    let Ok(regex) = regex::Regex::new(pattern.as_str()) else {
+    // openCypher `=~` is a whole-string match (Neo4j/Memgraph semantics):
+    // anchor the pattern at compile time. The non-capturing group keeps a
+    // top-level alternation (`a|b`) from binding to only one side, and \A/\z
+    // avoid `$`'s before-trailing-newline match in the Rust regex crate
+    // (#2603). matchRegEx/replaceRegEx keep unanchored search semantics.
+    let compiled_pattern = match kind {
+        RegexFnKind::Matches => format!(r"\A(?:{pattern})\z"),
+        _ => pattern.clone(),
+    };
+    let Ok(regex) = regex::Regex::new(compiled_pattern.as_str()) else {
         return (new_data, children);
     };
     let mut children = children;
