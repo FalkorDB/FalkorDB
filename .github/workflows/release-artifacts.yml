@@ -121,7 +121,10 @@ jobs:
       packages: read
     with:
       cells: ${{ needs.prepare.outputs.cells }}
-      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      revision: ${{ needs.prepare.outputs.commit_sha }}
+      # Release builds run on a tag / maintainer-supplied commit that is already
+      # in this repository — reviewed code, so this build may write the cache.
+      trusted_revision: true
     # No `secrets: inherit` — the reusable build only needs the auto GITHUB_TOKEN.
 
   publish:
