@@ -5,10 +5,10 @@ falkordb
 # constructor, which rejects it. Every flow test that builds its own pool
 # fails with a TypeError. Keep in sync with build/Dockerfile; drop both once
 # falkordb-py releases a fix.
-redis<8.1
+redis<8.2
 falkordb-bulk-loader
 hypothesis
 pytest
 textual
 textual-dev
-RLTest>=0.7.25
+RLTest>=0.7.28
