@@ -1,14 +1,19 @@
-# For most projects, this workflow file will not need changing; you simply need
-# to commit it to your repository.
+# CodeQL for the C engine (this branch).
 #
-# You may wish to alter this file to override the set of languages analyzed,
-# or to provide custom queries or build logic.
-#
-# ******** NOTE ********
-# We have attempted to detect the languages in your repository. Please check
-# the `language` matrix defined below to confirm you have the correct set of
-# supported CodeQL languages.
-#
+# Runs with build-mode: none (extraction without compiling) instead of the
+# `make build` + self-hosted GCE runner this workflow used prior to CodeQL
+# scanning C/C++ without a build going GA (see
+# https://github.blog/changelog/2025-10-14-codeql-scanning-rust-and-c-c-without-builds-is-now-generally-available/).
+# The runner existed only to give `make build` enough CPU/RAM, and its
+# `n4-highcpu-8` machine type is prone to zonal stockouts
+# (ZONE_RESOURCE_POOL_EXHAUSTED_WITH_DETAILS) that failed this job outright
+# with no code issue involved. All of FalkorDB's own sources plus its bundled
+# deps (vendored directly, e.g. deps/GraphBLAS, or via git submodule) are
+# already present after checkout, so no compiled build is needed to extract
+# them. See .github/codeql/codeql-config.yml for the one thing that *did*
+# depend on a build: the GraphBLAS PreJIT kernels are compiled from a
+# prebuilt cache rather than generated fresh, so they were already visible to
+# CodeQL and already needed excluding.
 name: "CodeQL"
 
 on:
@@ -38,34 +43,11 @@ concurrency:
 
 permissions:
   contents: read
-  packages: read
 
 jobs:
-  # Prefer the PR's RC toolchain image, fall back to stable (shared workflow).
-  detect-toolchain:
-    uses: ./.github/workflows/detect-toolchain.yml
-
-  create-runner:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create Runner For Benchmark
-        id: create-runner
-        uses: FalkorDB/gce-github-runner@0caf8406cd6353630fcd0b2eade420d3da124e01 # install_docker
-        with:
-          token: ${{ secrets.GH_SA_TOKEN }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          machine_zones: ${{ vars.GCP_ZONES }}
-          machine_type: n4-highcpu-8
-          network: gh-runner
-          disk_size: 50GB
-          runner_label: codeql-${{ github.run_id }}-${{ github.run_number }}
-
   analyze:
-    needs: [create-runner, detect-toolchain]
     name: Analyze
-    runs-on: codeql-${{ github.run_id }}-${{ github.run_number }}
-    container: ${{ needs.detect-toolchain.outputs.image }}
+    runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
@@ -88,89 +70,13 @@ jobs:
           git config --global --add safe.directory '*'
           git submodule update --init --recursive
 
-      # Check for cached dependencies
-
-      - name: Cache GraphBLAS
-        id: cache_graphblas
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: $GITHUB_WORKSPACE/bin/linux-x64-release/GraphBLAS
-          key: graphblas-${{ hashFiles('./deps/GraphBLAS/Include/GraphBLAS.h', './deps/GraphBLAS/Config/GB_prejit.c') }}
-
-      - name: Cache parser
-        id: cache_parser
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcypher-parser
-          key: parser-${{ hashFiles('./deps/libcypher-parser/lib/src/parser.c') }}
-
-      # The RediSearch submodule gitlink SHA is part of the cache key so that
-      # advancing the fork pin invalidates the cache even when src/version.h is
-      # unchanged (our LLAPI-extension commits do not bump the version macros).
-      - name: Compute RediSearch SHA
-        id: rs_sha
-        run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache search
-        id: cache_search
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: $GITHUB_WORKSPACE/bin/linux-x64-release/search-static
-          key: search-${{ hashFiles('./deps/RediSearch/src/version.h') }}-${{ steps.rs_sha.outputs.sha }}
-
-      - name: Cache libcurl
-        id: cache_libcurl
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcurl
-          key: libcurl-${{ hashFiles('./deps/libcurl/RELEASE-NOTES', './build.sh') }}
-  
-      - name: Cache libcsv
-        id: cache_libcsv
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
-        with:
-          path: $GITHUB_WORKSPACE/bin/linux-x64-release/libcsv
-          key: libcsv-${{ hashFiles('./deps/libcsv/ChangeLog') }}
-    
       # Initializes the CodeQL tools for scanning.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
         with:
           languages: ${{ matrix.language }}
-          # If you wish to specify custom queries, you can do so here or in a config file.
-          # By default, queries listed here will override any specified in a config file.
-          # Prefix the list here with "+" to use these queries and those in the config file.
-          # queries: ./path/to/local/query, your-org/your-repo/queries@main
-
-      # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
-      # If this step fails, then you should remove it and run the build manually (see below)
-      - name: Build
-        run: |
-          rustup default stable
-          make build
-
-      # ℹ️ Command-line programs to run using the OS shell.
-      # 📚 https://git.io/JvXDl
-
-      # ✏️ If the Autobuild fails above, remove it and uncomment the following three lines
-      #    and modify them (or add more) to build your code if your project
-      #    uses a compiled language
-
-      #- run: |
-      #   make bootstrap
-      #   make release
+          build-mode: none
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4
-
-  cleanup-runner:
-    needs: analyze
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: ./.github/actions/cleanup-runner
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          zone: ${{ vars.GCP_ZONE }}
-          instance_label: codeql-${{ github.run_id }}-${{ github.run_number }}
