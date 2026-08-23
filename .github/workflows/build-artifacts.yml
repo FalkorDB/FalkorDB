@@ -97,7 +97,11 @@ jobs:
       packages: read
     with:
       cells: ${{ needs.prepare.outputs.cells }}
-      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      revision: ${{ needs.prepare.outputs.commit_sha }}
+      # On a `pull_request` run the revision is the PR head — untrusted code, so
+      # the build may not write any cache. Only a maintainer dispatch (which can
+      # only target a ref already in this repo) is treated as trusted.
+      trusted_revision: ${{ github.event_name == 'workflow_dispatch' }}
     # No `secrets: inherit` — the reusable workflow only needs the auto-provided
     # GITHUB_TOKEN (GHCR read). Keeping custom secrets out of a PR-triggered
     # build that compiles untrusted code is deliberate.
@@ -109,4 +113,5 @@ jobs:
     permissions:
       contents: read
     with:
-      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      revision: ${{ needs.prepare.outputs.commit_sha }}
+      trusted_revision: ${{ github.event_name == 'workflow_dispatch' }}
