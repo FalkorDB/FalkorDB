@@ -6,9 +6,13 @@
 
 #include "RG.h"
 #include "effects.h"
+#include "../util/arr.h"
+#include "effects_internal.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
+#include <string.h>
+#include <inttypes.h>
 
 // read effect type from stream
 static inline EffectType ReadEffectType
@@ -160,9 +164,9 @@ static void ApplyCreateEdge
 	// attributes (id,value) pair
 	//--------------------------------------------------------------------------
 
-	int i = 0 ;                       // size of current batch
-	const size_t batch_size = 4096 ;  // max batch size
-	Edge edges[batch_size] ;          // edges
+	int i = 0 ;                     // size of current batch
+	enum { batch_size = 4096 } ;    // compile-time constant, avoids a VLA
+	Edge edges[batch_size] ;        // edges
 
 	Edge **batch = arr_new (Edge *, 1) ;  // batch, points to edges
 	AttributeSet *sets = arr_new (AttributeSet, 1) ;  // attribute-sets
@@ -245,7 +249,9 @@ static void ApplyCreateEdge
 	arr_free (batch) ;
 }
 
-static void ApplyLabels
+// returns false if the effect references graph state that doesn't exist
+// locally (replica has diverged from the master)
+static bool ApplyLabels
 (
 	FILE *stream,      // effects stream
 	GraphContext *gc,  // graph to operate on
@@ -258,7 +264,7 @@ static void ApplyLabels
 	//    labels count
 	//    label IDs
 	//--------------------------------------------------------------------------
-	
+
 	//--------------------------------------------------------------------------
 	// read node ID
 	//--------------------------------------------------------------------------
@@ -273,7 +279,12 @@ static void ApplyLabels
 	Node  n ;
 
 	Graph *g = GraphContext_GetGraph (gc) ;
-	ASSERT (Graph_GetNode (g, id, &n) == true) ;
+	if (!Graph_GetNode (g, id, &n)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT SET/REMOVE_LABELS references node %" PRIu64
+				" which doesn't exist locally", id) ;
+		return false ;
+	}
 
 	//--------------------------------------------------------------------------
 	// read labels count
@@ -293,7 +304,16 @@ static void ApplyLabels
 		LabelID l ;
 		fread_assert (&l, sizeof (LabelID), stream) ;
 		Schema *s = GraphContext_GetSchemaByID (gc, l, SCHEMA_NODE) ;
-		ASSERT (s != NULL) ;
+		if (s == NULL) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT SET/REMOVE_LABELS references unknown "
+					"label schema %d", l) ;
+			// clean up label vectors created so far
+			for (uint16_t j = 0; j < i; j++) {
+				GrB_OK (GrB_free (lbls + j)) ;
+			}
+			return false ;
+		}
 
 		GrB_Vector V = NULL ;
 		GrB_OK (GrB_Vector_new (&V, GrB_BOOL, Graph_NodeCap (g))) ;
@@ -316,12 +336,16 @@ static void ApplyLabels
 	for (uint16_t i = 0; i < lbl_count; i++) {
 		GrB_OK (GrB_free (lbls + i)) ;
 	}
+
+	return true ;
 }
 
 // effect format:
 //   [EffectType]         effect type tag
 //   [GxB serialized]     GxB_Vector_serialize blob of the node vector
-static void ApplyLabels_V2
+//
+// returns false if the effect's payload is malformed
+static bool ApplyLabels_V2
 (
 	FILE *stream,      // effects stream
 	GraphContext *gc,  // graph to operate on
@@ -330,7 +354,11 @@ static void ApplyLabels_V2
 
 	GrB_Index blob_size = 0 ;
 	fread_assert (&blob_size, sizeof(blob_size), stream) ;
-	ASSERT (blob_size > 0) ;
+	if (blob_size == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT SET/REMOVE_LABELS carries an empty payload") ;
+		return false ;
+	}
 
 	void *blob = rm_malloc (blob_size) ;
 	fread_assert (blob, blob_size, stream) ;
@@ -348,9 +376,13 @@ static void ApplyLabels_V2
 
 	// clean up
 	GrB_OK (GrB_free (&w)) ;
+
+	return true ;
 }
 
-static void ApplyAddSchema
+// returns false if the schema this effect introduces already exists locally
+// (replica has diverged from the master)
+static bool ApplyAddSchema
 (
 	FILE *stream,     // effects stream
 	GraphContext *gc  // graph to operate on
@@ -376,14 +408,21 @@ static void ApplyAddSchema
 	fread_assert(schema_name, l, stream);
 
 	// create schema
-	// GraphHub_AddSchema (gc, schema_name, t, false) ;
 	bool created = false ;
 	Schema *s = GraphContext_FindOrAddSchema (gc, schema_name, t, &created) ;
-	ASSERT (s       != NULL) ;
-	ASSERT (created == true) ;
+	if (s == NULL || created == false) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_SCHEMA targets schema '%s' which already "
+				"exists locally", schema_name) ;
+		return false ;
+	}
+
+	return true ;
 }
 
-static void ApplyAddAttribute
+// returns false if the attribute this effect introduces already exists
+// locally (replica has diverged from the master)
+static bool ApplyAddAttribute
 (
 	FILE *stream,     // effects stream
 	GraphContext *gc  // graph to operate on
@@ -393,132 +432,104 @@ static void ApplyAddAttribute
 	// effect type
 	// attribute name
 	//--------------------------------------------------------------------------
-	
+
 	// read attribute name length
 	size_t l ;
 	fread_assert (&l, sizeof (l), stream) ;
 
 	// read attribute name
-	const char attr[l] ;
+	char attr[l] ;
 	fread_assert (attr, l, stream) ;
 
 	// attr should not exist
-	ASSERT (GraphContext_GetAttributeID (gc, attr) == ATTRIBUTE_ID_NONE) ;
+	if (GraphContext_GetAttributeID (gc, attr) != ATTRIBUTE_ID_NONE) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_ATTRIBUTE targets attribute '%s' which "
+				"already exists locally", attr) ;
+		return false ;
+	}
 
 	// add attribute
 	GraphHub_FindOrAddAttribute (gc, attr, false) ;
+
+	return true ;
 }
 
-// process Update_Edge effect
-static void ApplyUpdateEdge
+// resolve & verify a schema referenced by an effect via its id+name pair
+// (see design principle #2 in the index/constraint effects: the id is
+// authoritative - it's only valid because every schema mutation is itself
+// an effect, applied in the same order on every replica - the name is a
+// cheap cross-check that surfaces divergence instead of silently trusting
+// a stale/incorrect id)
+//
+// returns NULL if the replica has diverged from the master (the id doesn't
+// resolve locally, or resolves to a schema with a different name)
+Schema *VerifySchema
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	GraphContext *gc,   // graph to operate on
+	SchemaType st,      // schema type (node/edge)
+	int label_id,       // expected label/relationship-type id
+	const char *label   // expected label/relationship-type name
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    edge ID
-	//    attribute ID
-	//    attribute value
-	//--------------------------------------------------------------------------
-	
-	SIValue v;            // updated value
-	AttributeID attr_id;  // entity ID
+	Schema *s = GraphContext_GetSchemaByID (gc, label_id, st) ;
+	if (s == NULL || strcmp (Schema_GetName (s), label) != 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT references label/relationship-type '%s' "
+				"(id %d) which doesn't match local schema state",
+				label, label_id) ;
+		return NULL ;
+	}
 
-	NodeID     s_id = INVALID_ENTITY_ID;       // edge src node ID
-	NodeID     t_id = INVALID_ENTITY_ID;       // edge dest node ID
-	RelationID r_id = GRAPH_UNKNOWN_RELATION;  // edge rel-type
-
-	EntityID id = INVALID_ENTITY_ID;
-
-	//--------------------------------------------------------------------------
-	// read edge ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&id, sizeof(EntityID), stream);
-	ASSERT(id != INVALID_ENTITY_ID);
-
-	//--------------------------------------------------------------------------
-	// read relation ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&r_id, sizeof(RelationID), stream);
-	ASSERT(r_id >= 0);
-
-	//--------------------------------------------------------------------------
-	// read src ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&s_id, sizeof(NodeID), stream);
-	ASSERT(s_id != INVALID_ENTITY_ID);
-
-	//--------------------------------------------------------------------------
-	// read dest ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&t_id, sizeof(NodeID), stream);
-	ASSERT(t_id != INVALID_ENTITY_ID);
-
-	//--------------------------------------------------------------------------
-	// read attribute ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&attr_id, sizeof(AttributeID), stream);
-
-	//--------------------------------------------------------------------------
-	// read attribute value
-	//--------------------------------------------------------------------------
-
-	v = SIValue_FromBinary(stream);
-	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
-	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
-
-	GraphHub_UpdateEdgeProperty(gc, id, r_id, s_id, t_id, attr_id, v);
+	return s ;
 }
 
-// process UpdateNode effect
-static void ApplyUpdateNode
+// resolve & verify an attribute referenced by an effect via its id+name pair
+// returns false if the replica has diverged from the master
+bool VerifyAttribute
 (
-	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	GraphContext *gc,     // graph to operate on
+	AttributeID attr_id,  // expected attribute id
+	const char *attr      // expected attribute name
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	//    entity ID
-	//    attribute ID
-	//    attribute value
-	//--------------------------------------------------------------------------
+	const char *local_name = GraphContext_GetAttributeName (gc, attr_id) ;
+	if (local_name == NULL || strcmp (local_name, attr) != 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT references attribute '%s' (id %u) which "
+				"doesn't match local attribute state", attr, attr_id) ;
+		return false ;
+	}
 
-	SIValue v;            // updated value
-	AttributeID attr_id;  // entity ID
+	return true ;
+}
 
-	EntityID id = INVALID_ENTITY_ID;
+// read (attribute id, attribute name) pairs off of stream, as encoded by
+// EffectsBuffer_AddCreateConstraintEffect / EffectsBuffer_AddDropConstraintEffect
+//
+// returns props attribute-name allocations via 'props' (caller must free each
+// entry with rm_free)
+void ReadConstraintAttributes
+(
+	FILE *stream,           // effects stream
+	uint8_t n,              // number of attributes
+	AttributeID *attr_ids,  // [output] attribute ids
+	char **props            // [output] mutable attribute-name view
+) {
+	for (uint8_t i = 0; i < n; i++) {
+		fread_assert (attr_ids + i, sizeof (AttributeID), stream) ;
 
-	//--------------------------------------------------------------------------
-	// read node ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&id, sizeof(EntityID), stream);
-
-	//--------------------------------------------------------------------------
-	// read attribute ID
-	//--------------------------------------------------------------------------
-
-	fread_assert(&attr_id, sizeof(AttributeID), stream);
-
-	//--------------------------------------------------------------------------
-	// read attribute ID
-	//--------------------------------------------------------------------------
-
-	v = SIValue_FromBinary(stream);
-	ASSERT(SI_TYPE(v) & (SI_VALID_PROPERTY_VALUE | T_NULL));
-	ASSERT((attr_id != ATTRIBUTE_ID_ALL || SIValue_IsNull(v)) && attr_id != ATTRIBUTE_ID_NONE);
-
-	GraphHub_UpdateNodeProperty(gc, id, attr_id, v);
+		size_t l ;
+		fread_assert (&l, sizeof (l), stream) ;
+		char *name = rm_malloc (l) ;
+		fread_assert (name, l, stream) ;
+		props [i] = name ;
+	}
 }
 
 // process DeleteNode effect
-static void ApplyDeleteNode
+// returns false if the effect references a node that doesn't exist locally
+// (replica has diverged from the master); processing stops immediately,
+// without flushing the in-progress batch, once that's detected
+static bool ApplyDeleteNode
 (
 	FILE *stream,      // effects stream
 	GraphContext *gc,  // graph to operate on
@@ -528,21 +539,25 @@ static void ApplyDeleteNode
 	// effect format:
 	//    node ID
 	//--------------------------------------------------------------------------
-	
+
 	EntityID id;                             // node ID
 	Graph *g = GraphContext_GetGraph (gc) ;  // graph to delete node from
 
-	int i = 0 ;                      // size of batch
-	const size_t batch_size = 4096 ; // max batch size
-	Node nodes[batch_size] ;         // nodes
+	int i = 0 ;                    // size of batch
+	enum { batch_size = 4096 } ;   // compile-time constant, avoids a VLA
+	Node nodes[batch_size] ;       // nodes
 
 	while (true) {
 		Node *n = nodes + i ;
 		// read node ID off of stream
 		fread_assert (&n->id, sizeof(EntityID), stream) ;
 
-		// debug assert node exists
-		ASSERT (Graph_GetNode (g, n->id, nodes + i)) ;
+		if (!Graph_GetNode (g, n->id, nodes + i)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT DELETE_NODE references node %" PRIu64
+					" which doesn't exist locally", n->id) ;
+			return false ;
+		}
 
 		i++ ;
 
@@ -571,10 +586,15 @@ static void ApplyDeleteNode
 		// flush batch
 		GraphHub_DeleteNodes (gc, nodes, i, false) ;
 	}
+
+	return true ;
 }
 
-// process DeleteNode effect
-static void ApplyDeleteEdge
+// process DeleteEdge effect
+// returns false if the effect references an edge that doesn't exist locally
+// (replica has diverged from the master); processing stops immediately,
+// without flushing the in-progress batch, once that's detected
+static bool ApplyDeleteEdge
 (
 	FILE *stream,      // effects stream
 	GraphContext *gc,  // graph to operate on
@@ -588,8 +608,8 @@ static void ApplyDeleteEdge
 	//    dest ID
 	//--------------------------------------------------------------------------
 
-	int i = 0 ;                       // size of current batch
-	const size_t batch_size = 4096 ;  // max batch size
+	int i = 0 ;                     // size of current batch
+	enum { batch_size = 4096 } ;    // compile-time constant, avoids a VLA
 	Edge edges[batch_size] ;          // edges
 
 	// encoded edge struct
@@ -610,8 +630,12 @@ static void ApplyDeleteEdge
 
 		Edge *e = edges + i ;
 
-		// debug assert edge exists
-		ASSERT (Graph_GetEdge (g, _edge_desc.id, edges + i) == true) ;
+		if (!Graph_GetEdge (g, _edge_desc.id, edges + i)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT DELETE_EDGE references edge %" PRIu64
+					" which doesn't exist locally", _edge_desc.id) ;
+			return false ;
+		}
 
 		// set edge relation, src and destination node
 		e->id         = _edge_desc.id      ;
@@ -646,6 +670,8 @@ static void ApplyDeleteEdge
 	if (i > 0) {
 		GraphHub_DeleteEdges (gc, edges, i, false, false) ;
 	}
+
+	return true ;
 }
 
 // returns false in case of effect encode/decode version mismatch
@@ -671,8 +697,11 @@ static bool ValidateVersion
 	return true ;
 }
 
-// applys effects encoded in buffer
-void Effects_Apply
+// applies effects encoded in buffer
+// returns false if the replica has diverged from the master (an effect
+// referenced graph state that doesn't exist locally, or the encoding
+// version didn't match); processing stops at the first such failure
+bool Effects_Apply
 (
 	GraphContext *gc,          // graph to operate on
 	const char *effects_buff,  // encoded effects
@@ -689,31 +718,34 @@ void Effects_Apply
 	uint8_t version ;
 	if (ValidateVersion (stream, &version) == false) {
 		// replica/primary out of sync
-		exit (1) ;
+		fclose (stream) ;
+		return false ;
 	}
 
+	bool ok = true ;
+
 	// as long as there's data in stream
-	while (ftell (stream) < l) {
+	while (ok && ftell (stream) < l) {
 		// read effect type
 		EffectType t = ReadEffectType (stream) ;
 		switch (t) {
 			case EFFECT_DELETE_NODE:
-				ApplyDeleteNode (stream, gc, l) ;
+				ok = ApplyDeleteNode (stream, gc, l) ;
 				break ;
 
 			case EFFECT_DELETE_EDGE:
-				ApplyDeleteEdge (stream, gc, l) ;
+				ok = ApplyDeleteEdge (stream, gc, l) ;
 				break ;
 
 			case EFFECT_UPDATE_NODE:
-				ApplyUpdateNode (stream, gc) ;
+				ok = ApplyUpdateNode (stream, gc) ;
 				break ;
 
 			case EFFECT_UPDATE_EDGE:
-				ApplyUpdateEdge (stream, gc) ;
+				ok = ApplyUpdateEdge (stream, gc) ;
 				break ;
 
-			case EFFECT_CREATE_NODE:    
+			case EFFECT_CREATE_NODE:
 				ApplyCreateNode (stream, gc) ;
 				break ;
 
@@ -723,35 +755,55 @@ void Effects_Apply
 
 			case EFFECT_SET_LABELS:
 				if (unlikely (version == 1)) {
-					ApplyLabels (stream, gc, true) ;
+					ok = ApplyLabels (stream, gc, true) ;
 				} else {
-					ApplyLabels_V2 (stream, gc, true) ;
+					ok = ApplyLabels_V2 (stream, gc, true) ;
 				}
 				break ;
 
-			case EFFECT_REMOVE_LABELS: 
+			case EFFECT_REMOVE_LABELS:
 				if (unlikely (version == 1)) {
-					ApplyLabels (stream, gc, false) ;
+					ok = ApplyLabels (stream, gc, false) ;
 				} else {
-					ApplyLabels_V2 (stream, gc, false) ;
+					ok = ApplyLabels_V2 (stream, gc, false) ;
 				}
 				break ;
 
 			case EFFECT_ADD_SCHEMA:
-				ApplyAddSchema (stream, gc) ;
+				ok = ApplyAddSchema (stream, gc) ;
 				break ;
 
 			case EFFECT_ADD_ATTRIBUTE:
-				ApplyAddAttribute (stream, gc) ;
+				ok = ApplyAddAttribute (stream, gc) ;
+				break ;
+
+			case EFFECT_CREATE_INDEX:
+				ok = ApplyCreateIndex (stream, gc) ;
+				break ;
+
+			case EFFECT_DROP_INDEX:
+				ok = ApplyDropIndex (stream, gc) ;
+				break ;
+
+			case EFFECT_CREATE_CONSTRAINT:
+				ok = ApplyCreateConstraint (stream, gc) ;
+				break ;
+
+			case EFFECT_DROP_CONSTRAINT:
+				ok = ApplyDropConstraint (stream, gc) ;
 				break ;
 
 			default:
-				ASSERT (false && "unknown effect type") ;
+				RedisModule_Log (NULL, "warning",
+						"GRAPH.EFFECT encountered unknown effect type %d", t) ;
+				ok = false ;
 				break ;
 		}
 	}
 
 	// close stream
 	fclose (stream) ;
+
+	return ok ;
 }
 

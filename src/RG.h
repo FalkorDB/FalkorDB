@@ -81,6 +81,17 @@ _Pragma("GCC diagnostic pop")
 #undef UNUSED
 #define UNUSED(V) ((void)V)
 
+// disables optimization for a single function - used to work around a
+// Clang -O2/-O3 miscompilation (see call sites for details); 'optnone' is
+// a Clang-only attribute, GCC doesn't have the underlying bug and doesn't
+// recognize it, so it's a no-op there rather than an unrecognized-attribute
+// warning
+#if defined(__clang__)
+	#define OPTNONE __attribute__((optnone))
+#else
+	#define OPTNONE
+#endif
+
 // GraphBLAS return code validation
 // both GrB_SUCCESS and GrB_NO_VALUE are valid "OK"
 // return codes

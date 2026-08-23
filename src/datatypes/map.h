@@ -185,6 +185,14 @@ void Map_ToString
 	size_t *bytesWritten  // length of string
 );
 
+// creates a map from its binary representation
+// keys and values are read via SIValue_FromBinary, mirroring
+// SIArray_FromBinary
+SIValue Map_FromBinary
+(
+	FILE *stream  // stream containing binary representation of a map
+);
+
 // defrag map
 // returns true if map memory been relocated
 bool Map_Defrag

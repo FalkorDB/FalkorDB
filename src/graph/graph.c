@@ -1177,8 +1177,21 @@ bool Graph_RelationshipContainsMultiEdge
 	return nvals != Graph_RelationEdgeCount(g, r);
 }
 
+// checks if graph has a node with id
+bool Graph_HasNode
+(
+	const Graph *g,  // graph
+	NodeID id        // node id
+)
+{
+	ASSERT (g  != NULL) ;
+	ASSERT (id != INVALID_ENTITY_ID) ;
+
+	return (DataBlock_GetItem (g->nodes, id) != NULL) ;
+}
+
 // retrieves node with given id from graph,
-// returns NULL if node wasn't found
+// returns false if node was not found
 bool Graph_GetNode
 (
 	const Graph *g,
@@ -1194,6 +1207,58 @@ bool Graph_GetNode
 	return (n->attributes != NULL);
 }
 
+// checks if graph has an edge with id under the relationship r
+bool Graph_HasEdge
+(
+	const Graph *g,  // graph
+	EdgeID id,       // edge id
+	NodeID src,      // edge source node id
+	NodeID dest,     // edge destination node id
+	RelationID r     // edge relationship
+)
+{
+	ASSERT (g    != NULL) ;
+	ASSERT (r    != GRAPH_UNKNOWN_RELATION && r != GRAPH_NO_RELATION) ;
+	ASSERT (id   != INVALID_ENTITY_ID) ;
+	ASSERT (src  != INVALID_ENTITY_ID) ;
+	ASSERT (dest != INVALID_ENTITY_ID) ;
+
+	// see if edge is in the datablock
+	if (DataBlock_GetItem (g->edges, id) == NULL)
+	{
+		return false ;
+	}
+
+	// unknown relation id
+	if (r < 0 || r >= Graph_RelationTypeCount (g))
+	{
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// make sure edge is associated with relation id
+	//--------------------------------------------------------------------------
+
+	Tensor T = Graph_GetRelationMatrix (g, r, false) ;
+
+	EdgeID x ;
+	GrB_Info info = Delta_Matrix_extractElement_UINT64 (&x, T, src, dest) ;
+
+	if (info != GrB_SUCCESS)
+	{
+		return false ;
+	}
+
+	if (SCALAR_ENTRY (x)) {
+		return ((EntityID) x == id) ;
+	} else {
+		// multi-edge
+		GrB_Vector vec = AS_VECTOR (x) ;
+		info = GxB_Vector_isStoredElement (vec, id) ;
+		return (info == GrB_SUCCESS) ;
+	}
+}
+
 // retrieves edge with given id from graph,
 // returns NULL if edge wasn't found
 bool Graph_GetEdge
@@ -1202,9 +1267,9 @@ bool Graph_GetEdge
 	EdgeID id,
 	Edge *e
 ) {
-	ASSERT(g != NULL);
-	ASSERT(e != NULL);
-	ASSERT(id < g->edges->itemCap);
+	ASSERT (g != NULL) ;
+	ASSERT (e != NULL) ;
+	ASSERT (id < g->edges->itemCap) ;
 
 	e->id         = id;
 	e->attributes = _Graph_GetEntity(g->edges, id);

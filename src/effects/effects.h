@@ -7,6 +7,8 @@
 #pragma once
 
 #include "../graph/graphcontext.h"
+#include "../index/index_field.h"
+#include "../constraint/constraint.h"
 
 #define EFFECTS_VERSION 2  // current effects encoding/decoding version
 
@@ -24,16 +26,23 @@ typedef enum {
 	EFFECT_DELETE_EDGE,    // edge deletion
 	EFFECT_SET_LABELS,     // set labels
 	EFFECT_REMOVE_LABELS,  // remove labels
-	EFFECT_ADD_SCHEMA,     // schema addition
-	EFFECT_ADD_ATTRIBUTE,  // add attribute
+	EFFECT_ADD_SCHEMA,         // schema addition
+	EFFECT_ADD_ATTRIBUTE,      // add attribute
+	EFFECT_CREATE_INDEX,       // index field creation
+	EFFECT_DROP_INDEX,         // index field deletion
+	EFFECT_CREATE_CONSTRAINT,  // constraint creation
+	EFFECT_DROP_CONSTRAINT,    // constraint deletion
 } EffectType;
 
 //------------------------------------------------------------------------------
 // effects API
 //------------------------------------------------------------------------------
 
-// applys effects encoded in buffer
-void Effects_Apply
+// applies effects encoded in buffer
+// returns false if the replica has diverged from the master and the effects
+// could not be applied in full; on false the caller must not propagate the
+// effects any further down a replication sub-chain
+bool Effects_Apply
 (
 	GraphContext *gc,          // graph to operate on
 	const char *effects_buff,  // encoded effects
@@ -150,6 +159,60 @@ void EffectsBuffer_AddNewAttributeEffect
 (
 	EffectsBuffer *buff,  // effect buffer
 	const char *attr      // attribute name
+);
+
+// add an index field creation effect to buffer
+// label/relationship-type and attribute are identified by both their
+// internal id (authoritative, used to drive the operation) and their name
+// (cross-checked at the receiving end to detect divergence)
+void EffectsBuffer_AddCreateIndexEffect
+(
+	EffectsBuffer *buff,   // effect buffer
+	SchemaType st,         // schema type (node/edge)
+	int label_id,          // label/relationship-type id
+	const char *label,     // label/relationship-type name
+	AttributeID attr_id,   // attribute id
+	const char *attr,      // attribute name
+	IndexFieldType t,      // index field type (range/fulltext/vector)
+	SIValue options        // index options
+);
+
+// add an index field deletion effect to buffer
+void EffectsBuffer_AddDropIndexEffect
+(
+	EffectsBuffer *buff,   // effect buffer
+	SchemaType st,         // schema type (node/edge)
+	int label_id,          // label/relationship-type id
+	const char *label,     // label/relationship-type name
+	AttributeID attr_id,   // attribute id
+	const char *attr,      // attribute name
+	IndexFieldType t       // index field type (range/fulltext/vector)
+);
+
+// add a constraint creation effect to buffer
+void EffectsBuffer_AddCreateConstraintEffect
+(
+	EffectsBuffer *buff,          // effect buffer
+	ConstraintType ct,            // constraint type (unique/mandatory)
+	GraphEntityType et,           // entity type (node/edge)
+	int label_id,                 // label/relationship-type id
+	const char *label,            // label/relationship-type name
+	const AttributeID *attr_ids,  // constrained attribute ids
+	const char **attrs,           // constrained attribute names
+	uint8_t n                     // number of constrained attributes
+);
+
+// add a constraint deletion effect to buffer
+void EffectsBuffer_AddDropConstraintEffect
+(
+	EffectsBuffer *buff,          // effect buffer
+	ConstraintType ct,            // constraint type (unique/mandatory)
+	GraphEntityType et,           // entity type (node/edge)
+	int label_id,                 // label/relationship-type id
+	const char *label,            // label/relationship-type name
+	const AttributeID *attr_ids,  // constrained attribute ids
+	const char **attrs,           // constrained attribute names
+	uint8_t n                     // number of constrained attributes
 );
 
 // free effects-buffer

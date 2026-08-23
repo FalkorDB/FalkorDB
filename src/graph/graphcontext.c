@@ -15,6 +15,8 @@
 #include "../util/rmalloc.h"
 #include "graph_memoryUsage.h"
 #include "../util/thpool/pool.h"
+#include "../errors/errors.h"
+#include "../errors/error_msgs.h"
 #include "../constraint/constraint.h"
 #include "../util/identifier_limits.h"
 #include "../commands/execution_ctx.h"
@@ -1027,6 +1029,26 @@ uint GraphContext_AttributeCount
 	return arr_len (_GetAttributes (gc)) ;
 }
 
+// checks if graph context is aware of attribute id
+bool GraphContext_HasAttribute
+(
+	const GraphContext *gc,  // graph context
+	AttributeID id           // attribute id
+)
+{
+	ASSERT (gc != NULL) ;
+	ASSERT (id != ATTRIBUTE_ID_NONE && id != ATTRIBUTE_ID_ALL) ;
+
+	// use _GetAttributes rather than gc->attributes directly: while a write is
+	// in flight (e.g. an ADD_ATTRIBUTE effect earlier in the same GRAPH.EFFECT
+	// buffer), the new attribute lives only in the writer's pending copy
+	// gc->_attributes. gc->attributes isn't updated until the changes are
+	// committed on write-lock release, so reading it here would miss the
+	// just-added attribute and misreport a following UPDATE effect as a
+	// master/replica divergence
+	return (id >= 0 && id < arr_len (_GetAttributes ((GraphContext *)gc))) ;
+}
+
 // returns an attribute ID given a string, creating one if not found
 AttributeID GraphContext_FindOrAddAttribute
 (
@@ -1062,6 +1084,15 @@ AttributeID GraphContext_FindOrAddAttribute
 	if (gc->_attributes == NULL) {
 		gc->writer_tid = pthread_self () ;
 		arr_clone (gc->_attributes, gc->attributes) ;
+	}
+
+	// AttributeID is a 16-bit type and its top two values are reserved
+	// sentinels (ATTRIBUTE_ID_ALL, ATTRIBUTE_ID_NONE), so ATTRIBUTE_ID_ALL is
+	// the actual upper bound on the number of distinct attributes a graph
+	// can hold; refuse to mint an id that would collide with a sentinel
+	if (unlikely (arr_len (gc->_attributes) >= ATTRIBUTE_ID_ALL)) {
+		ErrorCtx_SetError (EMSG_MAX_ATTRIBUTES_EXCEEDED, ATTRIBUTE_ID_ALL) ;
+		return ATTRIBUTE_ID_NONE ;
 	}
 
 	id = arr_len (gc->_attributes) ;
@@ -1253,11 +1284,6 @@ int GraphContext_DeleteIndex
 
 	if (s != NULL) {
 		res = Schema_RemoveIndex (s, field, t) ;
-		if (res == INDEX_OK) {
-			// update resultset statistics
-			ResultSet *result_set = QueryCtx_GetResultSet () ;
-			ResultSet_IndexDeleted (result_set, res) ;
-		}
 	}
 
 	return res ;

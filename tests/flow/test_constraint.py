@@ -584,6 +584,32 @@ class testConstraintNodes():
         drop_node_range_index(self.g, "Author", "nickname")
         drop_node_range_index(self.g, "Author", "birthdate")
 
+    def test09_drop_multi_prop_constraint_argument_order(self):
+        # regression test: dropping a multi-property constraint must succeed
+        # regardless of the order properties are supplied in, even when that
+        # order differs from how the underlying attribute IDs happen to sort.
+        # GraphHub_DropConstraint used to look up the constraint using the
+        # caller's property order verbatim, while GraphHub_AddConstraint
+        # always sorts by attribute ID before storing - since
+        # Schema_GetConstraint compares attribute arrays positionally, a
+        # mismatched order caused a false "no such constraint" on drop.
+
+        def widget_constraints():
+            return [c for c in list_constraints(self.g) if c.label == "Widget"]
+
+        # 'zulu' is introduced first (lower attribute ID), 'alpha' second
+        # (higher attribute ID) - the reverse of the order used below
+        create_node_range_index(self.g, "Widget", "zulu", "alpha")
+
+        # create the constraint listing properties in 'alpha' then 'zulu'
+        # order - the reverse of their attribute-ID order
+        create_constraint(self.g, "unique", "node", "Widget", "alpha", "zulu")
+        self.env.assertEqual(len(widget_constraints()), 1)
+
+        # drop using the exact same property order used at creation time
+        drop_unique_node_constraint(self.g, "Widget", "alpha", "zulu")
+        self.env.assertEqual(len(widget_constraints()), 0)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
@@ -1027,7 +1053,10 @@ class testConstraintReplication():
             with self.replica.monitor() as m:
                 MONITOR_ATTACHED = True
                 for cmd in m.listen():
-                    if 'GRAPH.CONSTRAINT' in cmd['command']:
+                    # constraints replicate via GRAPH.EFFECT (an encoded
+                    # EFFECT_CREATE_CONSTRAINT), not a verbatim GRAPH.CONSTRAINT
+                    # command - see GraphHub_AddConstraint / Constraint_Replicate
+                    if 'GRAPH.EFFECT' in cmd['command']:
                         self.monitor.append(cmd)
         except:
             pass
@@ -1057,15 +1086,356 @@ class testConstraintReplication():
         for c in constraints:
             self.env.assertEqual(c.status, 'OPERATIONAL')
 
-        # each constraint should be replicated twice from source to replica:
+        # each constraint should be replicated twice from source to replica,
+        # each time as a GRAPH.EFFECT command encoding EFFECT_CREATE_CONSTRAINT:
         # 1. upon creation
         # 2. upon constraint becoming activate
+        # that's 6 constraints * 2 = 12 GRAPH.EFFECT commands.
+        #
+        # on top of that, EFFECTS_THRESHOLD defaults to 0 (always replicate
+        # via effects), so the RANGE index each UNIQUE constraint creates to
+        # support itself (see create_unique_node/edge_constraint) also
+        # replicates as its own GRAPH.EFFECT command (EFFECT_CREATE_INDEX)
+        # instead of a verbatim GRAPH.QUERY: one each for Person.height,
+        # Person.name, Person.age, Person.loc and Knows.since - 5 more,
+        # for a total of 17.
         self.source.execute_command("WAIT", 1, 0)
 
-        # wait for all 12 GRAPH.CONSTRAINT commands to be replicated
+        # wait for all 17 GRAPH.EFFECT commands to be replicated
         elapsed = 10
-        while len(self.monitor) < 12 and elapsed > 0:
+        while len(self.monitor) < 17 and elapsed > 0:
             time.sleep(0.2)
             elapsed -= 0.2
 
-        self.env.assertEqual(len(self.monitor), 12)
+        self.env.assertEqual(len(self.monitor), 17)
+
+    def test_02_constraint_introduces_new_schema_and_attr(self):
+        # every constraint created so far targeted a label/relationship-type
+        # and attribute(s) that a prior query had already introduced to the
+        # graph. this test makes sure a constraint created against a label,
+        # relationship-type and attribute(s) that no query has ever
+        # referenced before is still correctly replicated: the constraint
+        # command itself must introduce the missing schema and attribute
+        # ID(s) on the replica, rather than relying on the replica having
+        # already learned about them from some earlier data-modifying query
+
+        # brand new node label + attribute
+        create_unique_node_constraint(self.g, 'Artist', 'nickname', sync=True)
+
+        # brand new relationship-type + attribute
+        create_mandatory_edge_constraint(self.g, 'Wrote', 'year', sync=True)
+
+        # the WAIT command forces master slave sync to complete
+        self.source.execute_command("WAIT", 1, 0)
+
+        replica = Graph(self.replica, GRAPH_ID)
+
+        #-----------------------------------------------------------------------
+        # the constraints should be visible on the replica
+        #-----------------------------------------------------------------------
+
+        # WAIT only guarantees the GRAPH.CONSTRAINT CREATE command itself was
+        # applied on the replica; constraint enforcement runs asynchronously
+        # on the replica's own indexer thread pool, so wait for it separately
+        # before checking status
+        wait_on_constraint(replica, 'UNIQUE',    'NODE',         'Artist', 'nickname')
+        wait_on_constraint(replica, 'MANDATORY', 'RELATIONSHIP', 'Wrote',  'year')
+
+        c = get_constraint(replica, 'UNIQUE', 'NODE', 'Artist', 'nickname')
+        self.env.assertIsNotNone (c)
+        self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        c = get_constraint(replica, 'MANDATORY', 'RELATIONSHIP', 'Wrote', 'year')
+        self.env.assertIsNotNone (c)
+        self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        #-----------------------------------------------------------------------
+        # the schema and attributes the constraints introduced should be
+        # visible on the replica too, even though no data referencing the new
+        # label / relationship-type / attributes was ever created
+        #-----------------------------------------------------------------------
+
+        labels = replica.ro_query("CALL db.labels() YIELD label RETURN label").result_set
+        self.env.assertContains(['Artist'], labels)
+
+        rel_types = replica.ro_query("CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType").result_set
+        self.env.assertContains(['Wrote'], rel_types)
+
+        prop_keys = replica.ro_query("CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey").result_set
+        self.env.assertContains(['nickname'], prop_keys)
+        self.env.assertContains(['year'], prop_keys)
+
+        #-----------------------------------------------------------------------
+        # constraints should be enforced on the source
+        #-----------------------------------------------------------------------
+
+        self.g.query("CREATE (:Artist {nickname: 'Banksy'})")
+        self.g.query("CREATE ()-[:Wrote {year: 2000}]->()")
+
+        try:
+            self.g.query("CREATE (:Artist {nickname: 'Banksy'})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Artist", str(e))
+
+        try:
+            self.g.query("CREATE ()-[:Wrote]->()")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("mandatory constraint violation: edge with relationship-type Wrote missing property year", str(e))
+
+        #-----------------------------------------------------------------------
+        # the data referencing the new label / relationship-type / attributes
+        # should replicate correctly, using the same schema / attribute IDs
+        # the constraint introduced
+        #-----------------------------------------------------------------------
+
+        self.source.execute_command("WAIT", 1, 0)
+
+        q = "MATCH (n:Artist) RETURN n ORDER BY n"
+        result = self.g.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
+        self.env.assertEqual(replica_result, result)
+
+        q = "MATCH ()-[e:Wrote]->() RETURN e ORDER BY e"
+        result = self.g.ro_query(q).result_set
+        replica_result = replica.ro_query(q).result_set
+        self.env.assertEqual(replica_result, result)
+
+class testConstraintAOF():
+    def __init__(self):
+        self.env, self.db = Env(useAof=True)
+        self.con = self.env.getConnection()
+
+        # this test restarts the server mid-test (self.env.stop()/start())
+        # to force an AOF reload. FalkorDB's shutdown handler only frees
+        # global singletons (thread pool, indexer, GraphBLAS, RediSearch) and
+        # never walks the keyspace to free per-graph state (schemas,
+        # constraints, indexes, ...), so a graceful process exit while a
+        # graph still holds data is always reported by LeakSanitizer as a
+        # pile of leaks. this is a long-standing, harmless shutdown gap that
+        # other tests don't hit because they never explicitly restart their
+        # (shared) server mid-test, not something introduced by this test
+        if SANITIZER:
+            self.env.skip()
+
+        self.con.delete(GRAPH_ID)
+        self.g = self.db.select_graph(GRAPH_ID)
+        self.populate_graph()
+
+    def populate_graph(self):
+        g = self.g
+        g.query("CREATE (:Person {name: 'Mike', age: 10, height: 180})")
+        g.query("CREATE (:Person {name: 'Tim', age: 20, height: 190})")
+        g.query("MATCH (a{name: 'Mike'}), (b{name:'Tim'}) CREATE (a)-[:Knows {since: 2000, weight: 1}]->(b)")
+
+    def test01_aof_load_constraints(self):
+        # this test exercises constraint creation/deletion effects
+        # (EFFECT_CREATE_CONSTRAINT/EFFECT_DROP_CONSTRAINT, encoded as
+        # GRAPH.EFFECT commands) being replayed as part of AOF loading (as
+        # opposed to being issued by a regular client)
+        #
+        # a constraint of every UNIQUE/MANDATORY x NODE/RELATIONSHIP
+        # combination is created, an additional constraint of every
+        # combination is created and then dropped, so the AOF contains both
+        # create and drop constraint effects for every combination
+
+        g = self.g
+
+        #-----------------------------------------------------------------------
+        # constraints that should survive the reload
+        #-----------------------------------------------------------------------
+
+        create_unique_node_constraint    (g, 'Person', 'name',  sync=True)
+        create_mandatory_node_constraint (g, 'Person', 'age',   sync=True)
+        create_unique_edge_constraint    (g, 'Knows',  'since', sync=True)
+        create_mandatory_edge_constraint (g, 'Knows',  'since', sync=True)
+
+        #-----------------------------------------------------------------------
+        # constraints that get dropped before the reload, to make sure
+        # drop-constraint effects are present in the AOF as well
+        #-----------------------------------------------------------------------
+
+        create_unique_node_constraint    (g, 'Person', 'height', sync=True)
+        create_mandatory_node_constraint (g, 'Person', 'height', sync=True)
+        create_unique_edge_constraint    (g, 'Knows',  'weight', sync=True)
+        create_mandatory_edge_constraint (g, 'Knows',  'weight', sync=True)
+
+        drop_unique_node_constraint    (g, 'Person', 'height')
+        drop_mandatory_node_constraint (g, 'Person', 'height')
+        drop_unique_edge_constraint    (g, 'Knows',  'weight')
+        drop_mandatory_edge_constraint (g, 'Knows',  'weight')
+
+        constraints = list_constraints(g)
+        self.env.assertEqual(len(constraints), 4)
+        for c in constraints:
+            self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        #-----------------------------------------------------------------------
+        # restart the server; on start-up the whole AOF command log,
+        # including the create/drop constraint effects issued above, is
+        # replayed while the module is executing under
+        # REDISMODULE_CTX_FLAGS_LOADING
+        #-----------------------------------------------------------------------
+
+        self.env.stop()
+        self.env.start()
+
+        self.con = self.env.getConnection()
+        g = self.db.select_graph(GRAPH_ID)
+        self.g = g
+
+        # (re)activation of a constraint is asynchronous, wait for it to
+        # complete for each of the surviving constraints
+        wait_on_constraint(g, 'UNIQUE',    'NODE',         'Person', 'name')
+        wait_on_constraint(g, 'MANDATORY', 'NODE',         'Person', 'age')
+        wait_on_constraint(g, 'UNIQUE',    'RELATIONSHIP', 'Knows',  'since')
+        wait_on_constraint(g, 'MANDATORY', 'RELATIONSHIP', 'Knows',  'since')
+
+        #-----------------------------------------------------------------------
+        # validate constraints survived the AOF reload
+        #-----------------------------------------------------------------------
+
+        constraints = list_constraints(g)
+        self.env.assertEqual(len(constraints), 4)
+        for c in constraints:
+            self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        # the dropped constraints must not have been resurrected by the reload
+        self.env.assertIsNone (get_constraint(g, 'UNIQUE',    'NODE',         'Person', 'height'))
+        self.env.assertIsNone (get_constraint(g, 'MANDATORY', 'NODE',         'Person', 'height'))
+        self.env.assertIsNone (get_constraint(g, 'UNIQUE',    'RELATIONSHIP', 'Knows',  'weight'))
+        self.env.assertIsNone (get_constraint(g, 'MANDATORY', 'RELATIONSHIP', 'Knows',  'weight'))
+
+        #-----------------------------------------------------------------------
+        # surviving constraints should still be enforced after the reload
+        #-----------------------------------------------------------------------
+
+        try:
+            g.query("CREATE (:Person {name:'Mike', age:99})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Person", str(e))
+
+        try:
+            g.query("CREATE (:Person {name:'NewGuy'})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("mandatory constraint violation: node with label Person missing property age", str(e))
+
+        try:
+            g.query("MATCH (a:Person{name:'Mike'}), (b:Person{name:'Tim'}) CREATE (a)-[:Knows{since:2000}]->(b)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation, on edge of relationship-type Knows", str(e))
+
+        try:
+            g.query("MATCH (a:Person{name:'Mike'}), (b:Person{name:'Tim'}) CREATE (a)-[:Knows]->(b)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("mandatory constraint violation: edge with relationship-type Knows missing property since", str(e))
+
+        # the dropped constraints should no longer be enforced
+        # (name/age satisfy the still-active constraints; the duplicate/missing
+        # height is what would have violated the now-dropped constraints)
+        g.query("CREATE (:Person {name:'Architect1', age:40, height:180})")
+        g.query("CREATE (:Person {name:'Architect2', age:41})")
+
+        # (since satisfies the still-active constraints; the duplicate/missing
+        # weight is what would have violated the now-dropped constraints)
+        g.query("MATCH (a:Person{name:'Mike'}), (b:Person{name:'Tim'}) CREATE (a)-[:Knows{since:3000, weight:1}]->(b)")
+        g.query("MATCH (a:Person{name:'Mike'}), (b:Person{name:'Tim'}) CREATE (a)-[:Knows{since:4000}]->(b)")
+
+    def test02_aof_load_constraint_introduces_new_schema_and_attr(self):
+        # every constraint created in test01 targeted a label/relationship-type
+        # and attribute(s) that populate_graph() had already introduced before
+        # the constraint was created. this test makes sure a constraint
+        # created against a brand new label, relationship-type and
+        # attribute(s) - ones no query has ever referenced before - survives
+        # an AOF reload: the create-constraint effect replayed from the AOF
+        # must itself recreate the missing schema and attribute ID(s),
+        # rather than relying on some earlier CREATE query in the AOF to have
+        # introduced them first
+
+        g = self.g
+
+        # brand new node label + attribute
+        create_unique_node_constraint(g, 'Poet', 'penname', sync=True)
+
+        # brand new relationship-type + attribute
+        create_mandatory_edge_constraint(g, 'Painted', 'year', sync=True)
+
+        #-----------------------------------------------------------------------
+        # restart the server, forcing the whole AOF command log - including
+        # the two create-constraint effects above - to be replayed while the
+        # module is executing under REDISMODULE_CTX_FLAGS_LOADING
+        #-----------------------------------------------------------------------
+
+        self.env.stop()
+        self.env.start()
+
+        self.con = self.env.getConnection()
+        g = self.db.select_graph(GRAPH_ID)
+        self.g = g
+
+        wait_on_constraint(g, 'UNIQUE',    'NODE',         'Poet',    'penname')
+        wait_on_constraint(g, 'MANDATORY', 'RELATIONSHIP', 'Painted', 'year')
+
+        #-----------------------------------------------------------------------
+        # the constraints, and the schema / attributes they introduced,
+        # should have survived the reload
+        #-----------------------------------------------------------------------
+
+        c = get_constraint(g, 'UNIQUE', 'NODE', 'Poet', 'penname')
+        self.env.assertIsNotNone (c)
+        self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        c = get_constraint(g, 'MANDATORY', 'RELATIONSHIP', 'Painted', 'year')
+        self.env.assertIsNotNone (c)
+        self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        labels = g.ro_query("CALL db.labels() YIELD label RETURN label").result_set
+        self.env.assertContains(['Poet'], labels)
+
+        rel_types = g.ro_query("CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType").result_set
+        self.env.assertContains(['Painted'], rel_types)
+
+        prop_keys = g.ro_query("CALL db.propertyKeys() YIELD propertyKey RETURN propertyKey").result_set
+        self.env.assertContains(['penname'], prop_keys)
+        self.env.assertContains(['year'], prop_keys)
+
+        #-----------------------------------------------------------------------
+        # the recreated schema/attribute IDs should be usable: write data
+        # through them and make sure it's queryable, and make sure a plain
+        # query introducing yet another new label right after the reload
+        # doesn't collide with the IDs the constraint reload assigned
+        #-----------------------------------------------------------------------
+
+        g.query("CREATE (:Poet {penname: 'Twain'})")
+        g.query("CREATE ()-[:Painted {year: 1889}]->()")
+        g.query("CREATE (:Curator {since: 1990})")
+
+        result = g.query("MATCH (n:Poet) RETURN n.penname").result_set
+        self.env.assertEqual(result, [['Twain']])
+
+        result = g.query("MATCH ()-[e:Painted]->() RETURN e.year").result_set
+        self.env.assertEqual(result, [[1889]])
+
+        result = g.query("MATCH (n:Curator) RETURN n.since").result_set
+        self.env.assertEqual(result, [[1990]])
+
+        #-----------------------------------------------------------------------
+        # constraints should still be enforced after the reload
+        #-----------------------------------------------------------------------
+
+        try:
+            g.query("CREATE (:Poet {penname: 'Twain'})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Poet", str(e))
+
+        try:
+            g.query("CREATE ()-[:Painted]->()")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("mandatory constraint violation: edge with relationship-type Painted missing property year", str(e))
