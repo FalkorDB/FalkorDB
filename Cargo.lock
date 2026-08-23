@@ -448,6 +448,7 @@ dependencies = [
  "phf",
  "rand",
  "regex",
+ "regex-automata",
  "roaring",
  "rquickjs",
  "rustc-hash",

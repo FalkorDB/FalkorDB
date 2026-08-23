@@ -26,7 +26,10 @@
 #![allow(clippy::unnecessary_wraps)]
 
 use super::{FnType, Functions, Type};
-use crate::runtime::{runtime::Runtime, value::Value};
+use crate::{
+    parser::ast::RegexFn,
+    runtime::{runtime::Runtime, value::Value},
+};
 
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "starts_with",
@@ -108,17 +111,11 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(Value::String(s)), Some(Value::String(pattern))) => {
-                    // openCypher `=~` is a whole-string match; \A/\z anchor
-                    // without matching before a trailing newline (#2603).
-                    let anchored = format!(r"\A(?:{pattern})\z");
-                    match regex::Regex::new(anchored.as_str()) {
-                        Ok(re) => Ok(Value::Bool(re.is_match(s.as_str()))),
-                        Err(_) => match regex::Regex::new(pattern.as_str()) {
-                            // Report the original pattern's error, not the
-                            // wrapped form's.
-                            Ok(_) => unreachable!("anchored compile failed but raw compiled"),
-                            Err(e) => Err(format!("Invalid regex pattern: {e}")),
-                        },
+                    match RegexFn::compile_matches(pattern.as_str()) {
+                        Ok(regex) => {
+                            Ok(Value::Bool(RegexFn::is_full_match(&regex, s.as_str())))
+                        }
+                        Err(error) => Err(format!("Invalid regex pattern: {error}")),
                     }
                 }
                 (Some(Value::Null), _) | (_, Some(Value::Null)) => Ok(Value::Null),
