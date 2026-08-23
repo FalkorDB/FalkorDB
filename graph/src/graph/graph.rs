@@ -283,11 +283,12 @@ pub struct Graph {
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
     /// Graph-wide reverse index: `edge_id` → `(src, dst)` for O(1) endpoint
-    /// lookup, as a dense array indexed by edge id. Edge IDs are densely
-    /// allocated, so an array is far more compact than a hash map (~31 B/edge
+    /// lookup, as contiguous slots indexed by edge id. Edge IDs are densely
+    /// allocated, so slots are far more compact than a hash map (~31 B/edge
     /// with control bytes and load-factor slack). Wrapped in `Arc` so MVCC
     /// `new_version` is O(1); the first edge mutation per version pays one
-    /// `Arc::make_mut` deep clone, node-only writes pay nothing.
+    /// `Arc::make_mut` deep clone of the tier it writes to — not of the whole
+    /// index — and node-only writes pay nothing.
     ///
     /// [`EndpointIndex`] sizes its fields to the endpoints it holds, so this is
     /// 6 bytes per edge on a graph of millions of nodes rather than a flat 8 —
@@ -784,8 +785,9 @@ impl Graph {
             acc = acc.min(*slot);
             *slot = acc;
         }
+        let to_slot = |v: u64| usize::try_from(v).expect("edge id exceeds usize");
         let mut edge_endpoints = EndpointIndex::default();
-        edge_endpoints.prepare_tiers(starts, len);
+        edge_endpoints.prepare_tiers(starts.map(to_slot), to_slot(len));
         for tensor in &relationship_matrices {
             for (src, dst, edge_id) in tensor.iter_edges() {
                 edge_endpoints.set(edge_id, src, dst);
@@ -3993,8 +3995,8 @@ impl Graph {
 
         // --- edge block storage ---
         // Mirrors the node side: the matrix recording each edge's existence and
-        // type, plus the graph-wide edge_id → endpoint reverse index (a dense
-        // vector holding one u64 per edge slot).
+        // type, plus the graph-wide edge_id → endpoint reverse index (one slot
+        // per edge id, 4, 6, 8 or 16 bytes wide depending on the tier).
         let edge_block_storage_sz: usize = self.relationship_type_matrix.memory_usage()
             + self.relationship_attrs.structural_memory_usage()
             + self.deleted_relationships.serialized_size()

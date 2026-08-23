@@ -126,6 +126,14 @@ impl Endpoint for u64 {
 /// One slot per edge id, in a fixed field type.
 type Slots<T> = Vec<(T, T)>;
 
+/// Bytes one slot of a tier costs, taken from the layout the compiler chose
+/// rather than a literal that has to be kept in step with it. `(U24, U24)` is 6
+/// bytes only because `U24` is `[u8; 3]` and so alignment 1; a field type that
+/// gained alignment would otherwise make `GRAPH.MEMORY` drift silently.
+const fn slot_bytes<T>(_: &Slots<T>) -> usize {
+    size_of::<(T, T)>()
+}
+
 /// A tier, shared between MVCC versions until one of them writes to it.
 ///
 /// The sharing is per tier rather than per index, and that is the point. A write
@@ -208,28 +216,22 @@ impl EndpointIndex {
     /// Public because the restore path recovers the tier boundaries with it.
     #[must_use]
     pub const fn rank_for(v: u64) -> u8 {
-        if v < u16::CEILING {
-            0
-        } else if v < U24::CEILING {
-            1
-        } else if v < u32::CEILING {
-            2
-        } else {
-            3
+        match v {
+            0..u16::CEILING => 0,
+            u16::CEILING..U24::CEILING => 1,
+            U24::CEILING..u32::CEILING => 2,
+            _ => 3,
         }
     }
 
     /// The tier new edge ids append to: the widest one that already holds
     /// anything, since a narrower range can never follow a wider one.
     const fn append_rank(&self) -> u8 {
-        if self.w64.is_some() {
-            3
-        } else if self.w32.is_some() {
-            2
-        } else if self.w24.is_some() {
-            1
-        } else {
-            0
+        match (&self.w64, &self.w32, &self.w24) {
+            (Some(_), ..) => 3,
+            (_, Some(_), _) => 2,
+            (_, _, Some(_)) => 1,
+            (None, None, None) => 0,
         }
     }
 
@@ -250,10 +252,11 @@ impl EndpointIndex {
     /// Bytes held, for `GRAPH.MEMORY`.
     #[must_use]
     pub fn memory_usage(&self) -> usize {
-        self.w16.as_ref().map_or(0, |v| v.capacity() * 4)
-            + self.w24.as_ref().map_or(0, |v| v.capacity() * 6)
-            + self.w32.as_ref().map_or(0, |v| v.capacity() * 8)
-            + self.w64.as_ref().map_or(0, |v| v.capacity() * 16)
+        let mut n = 0;
+        each_tier!(self, |v| {
+            n += v.as_ref().map_or(0, |v| v.capacity() * slot_bytes(v));
+        });
+        n
     }
 
     /// Mean bytes per stored slot, which is the quantity the tiering is for.
@@ -263,15 +266,22 @@ impl EndpointIndex {
         if n == 0 {
             return 0.0;
         }
-        (self.w16.as_ref().map_or(0, |v| v.len() * 4)
-            + self.w24.as_ref().map_or(0, |v| v.len() * 6)
-            + self.w32.as_ref().map_or(0, |v| v.len() * 8)
-            + self.w64.as_ref().map_or(0, |v| v.len() * 16)) as f64
-            / n as f64
+        let mut bytes = 0;
+        each_tier!(self, |v| {
+            bytes += v.as_ref().map_or(0, |v| v.len() * slot_bytes(v));
+        });
+        bytes as f64 / n as f64
     }
 
     /// The endpoints of `edge_id`, or `None` if the slot is empty, deleted, or
     /// past the end.
+    ///
+    /// Indexes the concrete vectors rather than going through [`Self::locate`]
+    /// and `TierOps`: this is the per-row read path, and a `dyn` call plus a
+    /// second walk of the tier lengths would show up on it. The last tier's
+    /// `slot -=` is dead by construction — there is nothing after it — which is
+    /// what the allow covers.
+    #[allow(unused_assignments)]
     #[must_use]
     pub fn get(
         &self,
@@ -407,7 +417,9 @@ impl EndpointIndex {
     /// the boundaries fall.
     ///
     /// `starts[r]` is the first edge id belonging to tier `r + 1`, and `len` is
-    /// one past the largest edge id. Every slot is created empty.
+    /// one past the largest edge id. Both are slot indices, so the caller — who
+    /// knows its ids fit — does the narrowing and this stays total. Every slot
+    /// is created empty.
     ///
     /// This exists so a restore can *rebuild* the tiering rather than flatten
     /// it. Sizing with [`Self::prepare`] and the whole graph's widest endpoint
@@ -419,12 +431,10 @@ impl EndpointIndex {
     /// scan that finds the maximum id.
     pub fn prepare_tiers(
         &mut self,
-        starts: [u64; 3],
-        len: u64,
+        starts: [usize; 3],
+        len: usize,
     ) {
-        let to = |v: u64| usize::try_from(v).expect("edge id exceeds usize");
-        let (len, s1, s2, s3) = (to(len), to(starts[0]), to(starts[1]), to(starts[2]));
-        let (s1, s2, s3) = (s1.min(len), s2.min(len), s3.min(len));
+        let [s1, s2, s3] = starts.map(|s| s.min(len));
         debug_assert!(s1 <= s2 && s2 <= s3, "tier starts must be ordered");
         for (rank, n) in [(0u8, s1), (1, s2 - s1), (2, s3 - s2), (3, len - s3)] {
             if n == 0 {
@@ -437,6 +447,24 @@ impl EndpointIndex {
         }
     }
 
+    /// The tier holding `slot` and its offset within that tier, or `None` if
+    /// the id is past every tier. The tiers partition the id space into
+    /// contiguous ranges, so this walks at most four of them.
+    fn locate(
+        &self,
+        slot: usize,
+    ) -> Option<(u8, usize)> {
+        let mut base = 0usize;
+        for rank in 0..4u8 {
+            let n = self.tier_len(rank);
+            if slot < base + n {
+                return Some((rank, slot - base));
+            }
+            base += n;
+        }
+        None
+    }
+
     /// Record `edge_id`'s endpoints, promoting and growing as needed.
     pub fn set(
         &mut self,
@@ -445,36 +473,28 @@ impl EndpointIndex {
         dst: u64,
     ) {
         let slot = usize::try_from(edge_id).expect("edge id exceeds usize");
-        // An id inside an existing tier is an update in place. If it no longer
-        // fits that tier — which happens when a deleted edge id is reused for an
-        // edge with wider endpoints — every tier up to the needed width is
-        // promoted, which keeps the ranges contiguous.
         let needed = Self::rank_for(src.max(dst));
-        let mut base = 0usize;
-        for rank in 0..4u8 {
-            let n = self.tier_len(rank);
-            if slot < base + n {
-                if needed > rank {
-                    self.raise_to(needed);
-                    // Promotion moved this slot into `needed`, whose range now
-                    // starts at 0, so the offset is the raw id again.
-                    self.with_tier(needed, |v| v.put(slot, src, dst));
-                } else {
-                    self.with_tier(rank, |v| v.put(slot - base, src, dst));
-                }
-                return;
+        match self.locate(slot) {
+            // A reused id whose new endpoints no longer fit its tier. Promoting
+            // up to `needed` re-bases that tier's range to 0, so the offset just
+            // computed is stale and the raw id is the right index.
+            Some((rank, _)) if needed > rank => {
+                self.raise_to(needed);
+                self.with_tier(needed, |v| v.put(slot, src, dst));
             }
-            base += n;
+            // An id inside an existing tier is an update in place.
+            Some((rank, at)) => self.with_tier(rank, |v| v.put(at, src, dst)),
+            // Past the end: append to the widest active tier, or a wider one if
+            // this edge needs it.
+            None => {
+                let rank = needed.max(self.append_rank());
+                let at = slot - (self.len() - self.tier_len(rank));
+                self.with_tier(rank, |v| {
+                    v.grow_to(at + 1);
+                    v.put(at, src, dst);
+                });
+            }
         }
-        // Past the end: append to the widest active tier, or a wider one if this
-        // edge needs it.
-        let rank = needed.max(self.append_rank());
-        let below = self.len() - self.tier_len(rank);
-        let at = slot - below;
-        self.with_tier(rank, |v| {
-            v.grow_to(at + 1);
-            v.put(at, src, dst);
-        });
     }
 
     /// Tombstone `edge_id`'s slot. Vectors never shrink, as before.
@@ -485,14 +505,8 @@ impl EndpointIndex {
         let Ok(slot) = usize::try_from(edge_id) else {
             return;
         };
-        let mut base = 0usize;
-        for rank in 0..4u8 {
-            let n = self.tier_len(rank);
-            if slot < base + n {
-                self.with_tier(rank, |v| v.vacate(slot - base));
-                return;
-            }
-            base += n;
+        if let Some((rank, at)) = self.locate(slot) {
+            self.with_tier(rank, |v| v.vacate(at));
         }
     }
 }
