@@ -813,6 +813,72 @@ impl<T> Matrix<T> {
         }
     }
 
+    /// The index widths GraphBLAS chose for this matrix, as
+    /// `(row bits, column bits)`. Read-only in GraphBLAS and derived from the
+    /// declared dimensions, so this is how a shape choice is checked rather
+    /// than assumed.
+    #[cfg(test)]
+    pub(super) fn integer_bits_for_test(&self) -> (i32, i32) {
+        unsafe {
+            let (mut r, mut c) = (0i32, 0i32);
+            // Checked: a failed getter leaves the initialised zero behind, and
+            // reporting "0-bit indices" would read as a result rather than an
+            // error.
+            let ri = GrB_Matrix_get_INT32(
+                *self.m,
+                &raw mut r,
+                GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS as i32,
+            );
+            assert_eq!(ri, GrB_Info::GrB_SUCCESS, "row index bits: {ri:?}");
+            let ci = GrB_Matrix_get_INT32(
+                *self.m,
+                &raw mut c,
+                GxB_Option_Field::GxB_COLINDEX_INTEGER_BITS as i32,
+            );
+            assert_eq!(ci, GrB_Info::GrB_SUCCESS, "column index bits: {ci:?}");
+            (r, c)
+        }
+    }
+
+    /// Ask GraphBLAS for 32-bit row and column index arrays. Only a *hint*: it
+    /// is honoured when the matrix's declared dimensions fit, and ignored when
+    /// they do not, so a caller cannot make indices too narrow for the data.
+    #[cfg(test)]
+    pub(super) fn hint_32bit_indices_for_test(&mut self) -> (i32, i32) {
+        unsafe {
+            let r = GrB_Matrix_set_INT32(
+                *self.m,
+                32,
+                GxB_Option_Field::GxB_ROWINDEX_INTEGER_HINT as i32,
+            );
+            let c = GrB_Matrix_set_INT32(
+                *self.m,
+                32,
+                GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT as i32,
+            );
+            (r as i32, c as i32)
+        }
+    }
+
+    /// Ask GraphBLAS globally for 32-bit indices on matrices created after this
+    /// point. Returns the two status codes.
+    #[cfg(test)]
+    pub(super) fn global_hint_32bit_for_test() -> (i32, i32) {
+        unsafe {
+            let r = GrB_Global_set_INT32(
+                GrB_GLOBAL,
+                32,
+                GxB_Option_Field::GxB_ROWINDEX_INTEGER_HINT as i32,
+            );
+            let c = GrB_Global_set_INT32(
+                GrB_GLOBAL,
+                32,
+                GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT as i32,
+            );
+            (r as i32, c as i32)
+        }
+    }
+
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Matrix_clear(*self.m);
