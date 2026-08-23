@@ -18,7 +18,6 @@
 #include "../errors/errors.h"
 #include "index_operations.h"
 #include "../effects/effects.h"
-#include "../util/cache/cache.h"
 #include "../configuration/config.h"
 #include "../graph/graphcontext_retrieve.h"
 #include "../replication/divergence_guard.h"

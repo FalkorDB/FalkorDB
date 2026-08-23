@@ -1,0 +1,341 @@
+from common import *
+import heapq
+import math
+
+# haversine great-circle distance in meters between two (lat, lon) pairs
+# given in degrees. Mirrors the formula in src/arithmetic/point_funcs/
+# point_funcs.c (AR_DISTANCE) / src/algorithms/AStar.c (_haversine_meters).
+def _haversine(lat1, lon1, lat2, lon2):
+    R = 6378140.0
+    rlat1, rlat2 = math.radians(lat1), math.radians(lat2)
+    dlat = rlat2 - rlat1
+    dlon = math.radians(lon2) - math.radians(lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(rlat1) * math.cos(rlat2) * math.sin(dlon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+class testAStar(FlowTestsBase):
+    def __init__(self):
+        self.env, self.db = Env()
+
+    def test01_astar_validations(self):
+        g = self.db.select_graph("astar_validations")
+        g.query("CREATE (:AK {id: 0, lat: 0.0, lon: 0.0}), (:AK {id: 1, lat: 0.0, lon: 0.0})")
+
+        # missing sourceNode/targetNode
+        queries = [
+            """CALL algo.AStar({})""",
+            """MATCH (n:AK {id: 0}) CALL algo.AStar({sourceNode: n})""",
+            """MATCH (n:AK {id: 0}) CALL algo.AStar({targetNode: n})"""
+        ]
+        for query in queries:
+            try:
+                g.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("sourceNode and targetNode are required", str(e))
+
+        # wrong type for sourceNode/targetNode
+        queries = [
+            """MATCH (n:AK {id: 0}) CALL algo.AStar({sourceNode: 1, targetNode: 1})""",
+            """MATCH (n:AK {id: 0}) CALL algo.AStar({sourceNode: 1, targetNode: n})""",
+            """MATCH (n:AK {id: 0}) CALL algo.AStar({sourceNode: n, targetNode: 1})"""
+        ]
+        for query in queries:
+            try:
+                g.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("sourceNode and targetNode must be of type Node", str(e))
+
+        # missing latitudeProperty/longitudeProperty (either or both)
+        queries = [
+            """MATCH (n:AK {id: 0}), (m:AK {id: 1}) CALL algo.AStar({sourceNode: n, targetNode: m})""",
+            """MATCH (n:AK {id: 0}), (m:AK {id: 1}) CALL algo.AStar({sourceNode: n, targetNode: m, latitudeProperty: 'lat'})""",
+            """MATCH (n:AK {id: 0}), (m:AK {id: 1}) CALL algo.AStar({sourceNode: n, targetNode: m, longitudeProperty: 'lon'})"""
+        ]
+        for query in queries:
+            try:
+                g.query(query)
+                self.env.assertTrue(False)
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("latitudeProperty and longitudeProperty are required", str(e))
+
+        # wrong type for latitudeProperty/longitudeProperty
+        query = """MATCH (n:AK {id: 0}), (m:AK {id: 1}) CALL algo.AStar({sourceNode: n, targetNode: m, latitudeProperty: 1, longitudeProperty: 'lon'})"""
+        try:
+            g.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("latitudeProperty/longitudeProperty must be string", str(e))
+
+        # bad relDirection
+        query = """MATCH (n:AK {id: 0}), (m:AK {id: 1}) CALL algo.AStar({sourceNode: n, targetNode: m, latitudeProperty: 'lat', longitudeProperty: 'lon', relDirection: 'a'})"""
+        try:
+            g.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("relDirection values must be 'incoming', 'outgoing' or 'both'", str(e))
+
+        # bad relTypes
+        query = """MATCH (n:AK {id: 0}), (m:AK {id: 1}) CALL algo.AStar({sourceNode: n, targetNode: m, latitudeProperty: 'lat', longitudeProperty: 'lon', relTypes: 1})"""
+        try:
+            g.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("relTypes must be array of strings", str(e))
+
+        # bad weightProp
+        query = """MATCH (n:AK {id: 0}), (m:AK {id: 1}) CALL algo.AStar({sourceNode: n, targetNode: m, latitudeProperty: 'lat', longitudeProperty: 'lon', weightProp: 1})"""
+        try:
+            g.query(query)
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("weightProp must be string", str(e))
+
+    def _dijkstra_all_pairs(self, n_nodes, edges):
+        # independent reference implementation: all-pairs shortest
+        # distances over a directed, non-negatively weighted graph given
+        # as a list of (u, v, weight) edges.
+        adj = [[] for _ in range(n_nodes)]
+        for u, v, w in edges:
+            adj[u].append((v, w))
+
+        all_dist = {}
+        for src in range(n_nodes):
+            dist = {src: 0}
+            pq = [(0, src)]
+            while pq:
+                d, u = heapq.heappop(pq)
+                if d > dist.get(u, float('inf')):
+                    continue
+                for v, w in adj[u]:
+                    nd = d + w
+                    if nd < dist.get(v, float('inf')):
+                        dist[v] = nd
+                        heapq.heappush(pq, (nd, v))
+            all_dist[src] = dist
+
+        return all_dist
+
+    def _verify_astar_all_pairs(self, graph_name, n_nodes, coords, edge_pairs):
+        # build a directed graph with real lat/lon node coordinates, where
+        # every edge's weight is set to the haversine distance between
+        # that edge's own two endpoints. This guarantees the haversine
+        # heuristic stays admissible for *any* topology built this way,
+        # regardless of how the nodes/edges are arranged: the triangle
+        # inequality guarantees the sum of any path's segment distances
+        # can never be less than the straight-line distance between its
+        # ends. So any mismatch against the independent Dijkstra reference
+        # below would indicate a genuine AStar bug, not a violated
+        # precondition of the test graph itself.
+        g = self.db.select_graph(graph_name)
+        g.query(f"UNWIND range(0, {n_nodes - 1}) AS x CREATE (:AK {{id: x}})")
+
+        for i, (lat, lon) in enumerate(coords):
+            g.query(f"MATCH (n:AK {{id: {i}}}) SET n.lat = {lat}, n.lon = {lon}")
+
+        edges = []
+        for u, v in edge_pairs:
+            w = _haversine(coords[u][0], coords[u][1], coords[v][0], coords[v][1])
+            edges.append((u, v, w))
+
+        if edges:
+            rows = ", ".join(f"[{u}, {v}, {w}]" for u, v, w in edges)
+            g.query(f"""
+                UNWIND [{rows}] AS e
+                MATCH (a:AK {{id: e[0]}}), (b:AK {{id: e[1]}})
+                CREATE (a)-[:AE {{weight: e[2]}}]->(b)
+            """)
+
+        result = g.query("""
+            MATCH (n:AK), (m:AK)
+            WHERE n.id <> m.id
+            CALL algo.AStar({
+                sourceNode: n,
+                targetNode: m,
+                weightProp: 'weight',
+                latitudeProperty: 'lat',
+                longitudeProperty: 'lon'
+            }) YIELD pathWeight
+            RETURN n.id, m.id, pathWeight
+        """)
+
+        actual = {(row[0], row[1]): row[2] for row in result.result_set}
+        expected = self._dijkstra_all_pairs(n_nodes, edges)
+
+        for src in range(n_nodes):
+            for dst in range(n_nodes):
+                if src == dst:
+                    continue
+
+                key = (src, dst)
+                exp_weight = expected[src].get(dst)
+
+                if exp_weight is None:
+                    self.env.assertNotContains(key, actual)
+                else:
+                    self.env.assertContains(key, actual)
+                    self.env.assertAlmostEqual(actual[key], exp_weight, delta=1e-6)
+
+    def test02_astar_line_graph(self):
+        # simple directed line 0->1->2->...->(n-1), each hop a small real
+        # geographic step. exactly one path exists between any (src, dst)
+        # pair, and only "forward" pairs are reachable at all.
+        n = 8
+        coords = [(37.0 + 0.01 * i, -122.0 + 0.01 * i) for i in range(n)]
+        edge_pairs = [(i, i + 1) for i in range(n - 1)]
+        self._verify_astar_all_pairs("astar_line", n, coords, edge_pairs)
+
+    def test03_astar_diamond_graph(self):
+        # two chained diamonds, each offering a direct waypoint and a
+        # geographically detouring one between the same pair of nodes.
+        # Since every edge's weight is the true geographic distance
+        # between its own endpoints, the detour branch is both physically
+        # longer and heavier -- AStar must still find the correct minimum
+        # via real relaxation, not just by following the heuristic blindly.
+        coords = [
+            (37.00, -122.00),  # 0
+            (37.01, -122.00),  # 1 direct branch waypoint
+            (37.02, -121.90),  # 2 detour branch waypoint
+            (37.03, -122.00),  # 3
+            (37.04, -122.00),  # 4 direct branch waypoint
+            (37.05, -121.90),  # 5 detour branch waypoint
+            (37.06, -122.00),  # 6
+            (37.07, -122.00),  # 7
+        ]
+        edge_pairs = [
+            (0, 1), (0, 2),
+            (1, 3), (2, 3),
+            (3, 4), (3, 5),
+            (4, 6), (5, 6),
+            (6, 7),
+        ]
+        self._verify_astar_all_pairs("astar_diamond", 8, coords, edge_pairs)
+
+    def test04_astar_grid_graph(self):
+        # a 4x4 grid with only rightward/downward edges: many equal-length
+        # alternative routes exist between nodes on the same diagonal.
+        rows, cols = 4, 4
+
+        def node_id(r, c):
+            return r * cols + c
+
+        coords = [(37.0 + 0.01 * r, -122.0 + 0.01 * c)
+                  for r in range(rows) for c in range(cols)]
+        edge_pairs = []
+        for r in range(rows):
+            for c in range(cols):
+                if c + 1 < cols:
+                    edge_pairs.append((node_id(r, c), node_id(r, c + 1)))
+                if r + 1 < rows:
+                    edge_pairs.append((node_id(r, c), node_id(r + 1, c)))
+
+        self._verify_astar_all_pairs("astar_grid", rows * cols, coords, edge_pairs)
+
+    def test05_astar_agrees_with_dijkstra(self):
+        # direct cross-check on the same graph/weights: algo.SPpaths'
+        # Dijkstra fast path (pathCount: 1, no maxCost) and algo.AStar
+        # must agree on pathWeight -- the single most important
+        # correctness check, since it validates AStar's admissible-
+        # heuristic optimality against a trusted, independently
+        # implemented baseline rather than only the hand-rolled Python
+        # reference used above.
+        coords = [
+            (37.00, -122.00),
+            (37.01, -122.00),
+            (37.02, -121.90),
+            (37.03, -122.00),
+        ]
+        edge_pairs = [(0, 1), (0, 2), (1, 3), (2, 3)]
+
+        g = self.db.select_graph("astar_vs_dijkstra")
+        g.query("UNWIND range(0, 3) AS x CREATE (:AK {id: x})")
+        for i, (lat, lon) in enumerate(coords):
+            g.query(f"MATCH (n:AK {{id: {i}}}) SET n.lat = {lat}, n.lon = {lon}")
+
+        rows = ", ".join(
+            f"[{u}, {v}, {_haversine(*coords[u], *coords[v])}]" for u, v in edge_pairs)
+        g.query(f"""
+            UNWIND [{rows}] AS e
+            MATCH (a:AK {{id: e[0]}}), (b:AK {{id: e[1]}})
+            CREATE (a)-[:AE {{weight: e[2]}}]->(b)
+        """)
+
+        dijkstra_result = g.query("""
+            MATCH (n:AK {id: 0}), (m:AK {id: 3})
+            CALL algo.SPpaths({sourceNode: n, targetNode: m, weightProp: 'weight', pathCount: 1})
+            YIELD pathWeight
+            RETURN pathWeight
+        """)
+        astar_result = g.query("""
+            MATCH (n:AK {id: 0}), (m:AK {id: 3})
+            CALL algo.AStar({sourceNode: n, targetNode: m, weightProp: 'weight',
+                              latitudeProperty: 'lat', longitudeProperty: 'lon'})
+            YIELD pathWeight
+            RETURN pathWeight
+        """)
+
+        self.env.assertEquals(len(dijkstra_result.result_set), 1)
+        self.env.assertEquals(len(astar_result.result_set), 1)
+        self.env.assertAlmostEqual(
+            astar_result.result_set[0][0], dijkstra_result.result_set[0][0], delta=1e-9)
+
+    def test06_astar_unreachable(self):
+        g = self.db.select_graph("astar_unreachable")
+        g.query("""CREATE (:AK {id: 0, lat: 37.0, lon: -122.0}),
+                           (:AK {id: 1, lat: 38.0, lon: -121.0})""")
+
+        result = g.query("""
+            MATCH (n:AK {id: 0}), (m:AK {id: 1})
+            CALL algo.AStar({sourceNode: n, targetNode: m, weightProp: 'weight',
+                              latitudeProperty: 'lat', longitudeProperty: 'lon'})
+            YIELD path
+            RETURN path
+        """)
+        self.env.assertEquals(len(result.result_set), 0)
+
+    def test07_astar_src_eq_dst(self):
+        # sourceNode == targetNode is degenerate: a path needs at least
+        # one edge, so this must always return no results, even though a
+        # trivial zero-edge/zero-weight "path" would otherwise be found
+        # instantly by the search's own seeding step.
+        g = self.db.select_graph("astar_src_eq_dst")
+        g.query("CREATE (:AK {id: 0, lat: 37.0, lon: -122.0})")
+
+        result = g.query("""
+            MATCH (n:AK {id: 0})
+            CALL algo.AStar({sourceNode: n, targetNode: n, weightProp: 'weight',
+                              latitudeProperty: 'lat', longitudeProperty: 'lon'})
+            YIELD path
+            RETURN path
+        """)
+        self.env.assertEquals(len(result.result_set), 0)
+
+    def test08_astar_missing_latlon_on_node(self):
+        # a node reachable mid-path with no lat/lon properties at all: its
+        # heuristic must degrade to 0 (still admissible) rather than
+        # error, and the true shortest (lowest-weight) path must still be
+        # found -- here the 2-hop route through 'b' (weight 10) beats the
+        # direct edge to 'c' (weight 20).
+        g = self.db.select_graph("astar_missing_latlon")
+        g.query("""
+            CREATE (a:AK {id: 0, lat: 37.00, lon: -122.00}),
+                   (b:AK {id: 1}),
+                   (c:AK {id: 2, lat: 37.02, lon: -122.00}),
+                   (a)-[:AE {weight: 5}]->(b),
+                   (b)-[:AE {weight: 5}]->(c),
+                   (a)-[:AE {weight: 20}]->(c)
+        """)
+
+        result = g.query("""
+            MATCH (n:AK {id: 0}), (m:AK {id: 2})
+            CALL algo.AStar({sourceNode: n, targetNode: m, weightProp: 'weight',
+                              latitudeProperty: 'lat', longitudeProperty: 'lon'})
+            YIELD pathWeight, path
+            RETURN pathWeight, length(path)
+        """)
+
+        self.env.assertEquals(len(result.result_set), 1)
+        self.env.assertAlmostEqual(result.result_set[0][0], 10, delta=1e-9)
+        self.env.assertEquals(result.result_set[0][1], 2)

@@ -8,30 +8,8 @@
 #include "../value.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
-
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v;
-
-	if(!GraphEntity_GetProperty(ge, id, &v)) {
-		return default_value;
-	}
-
-	if(SI_TYPE(v) & SI_NUMERIC) {
-		return v;
-	}
-
-	return default_value;
-}
-
-//------------------------------------------------------------------------------
-// DijkstraHeap: min-heap of (node, weight) candidates
-//------------------------------------------------------------------------------
+#include "utils/node_map.h"
+#include "utils/priority_heap.h"
 
 // per-node label used by the Dijkstra search below
 typedef struct {
@@ -40,258 +18,6 @@ typedef struct {
 	double weight;    // current best known weight to reach this node
 	bool   finalized; // true once popped from the heap with its optimal weight
 } DijkstraLabel;
-
-// heap entry: a candidate (node, weight) pair waiting to be finalized.
-// duplicate/stale entries for the same node are allowed (lazy deletion);
-// they're skipped at pop time via DijkstraLabel.finalized.
-typedef struct {
-	NodeID node;
-	double weight;  // weight at the time this entry was queued (heap key)
-} DijkstraItem;
-
-// min-heap of DijkstraItem, ordered by ascending weight.
-//
-// unlike a generic heap (items stored via a runtime-sized memcpy/void* cmp
-// callback), this is fixed to DijkstraItem: element moves are plain struct
-// assignments the compiler can inline as two register moves, and the
-// weight comparison is inlined rather than called through a function
-// pointer. entries are stored by value (no per-push allocation) since
-// DijkstraItem is a small POD.
-typedef struct {
-	DijkstraItem *items;  // contiguous buffer of 'cap' slots
-	uint32_t count;        // number of items currently held
-	uint32_t cap;           // number of slots currently allocated
-} DijkstraHeap;
-
-#define DIJKSTRA_HEAP_DEFAULT_CAP 64
-
-static void DijkstraHeap_init
-(
-	DijkstraHeap *hp
-) {
-	hp->cap   = DIJKSTRA_HEAP_DEFAULT_CAP ;
-	hp->count = 0 ;
-	hp->items = rm_calloc (hp->cap, sizeof (DijkstraItem)) ;
-}
-
-// move 'item' up from 'idx', treating 'idx' as an empty hole until the
-// final resting place is found, then write 'item' there once (one struct
-// assignment per level, instead of a swap's three)
-static void _dijkstra_heap_sift_up
-(
-	DijkstraHeap *hp,
-	uint32_t idx,
-	DijkstraItem item
-) {
-	while(idx > 0) {
-		uint32_t parent = (idx - 1) / 2;
-
-		if(item.weight >= hp->items[parent].weight) {
-			break;
-		}
-
-		hp->items[idx] = hp->items[parent];
-		idx = parent;
-	}
-
-	hp->items[idx] = item;
-}
-
-// move 'item' down from 'idx' using the same hole technique as
-// _dijkstra_heap_sift_up
-static void _dijkstra_heap_sift_down
-(
-	DijkstraHeap *hp,
-	uint32_t idx,
-	DijkstraItem item
-) {
-	while(true) {
-		uint32_t l = idx * 2 + 1;
-		uint32_t r = idx * 2 + 2;
-		uint32_t smallest   = idx;
-		double   smallest_w = item.weight;
-
-		if(l < hp->count && hp->items[l].weight < smallest_w) {
-			smallest   = l;
-			smallest_w = hp->items[l].weight;
-		}
-		if(r < hp->count && hp->items[r].weight < smallest_w) {
-			smallest = r;
-		}
-
-		if(smallest == idx) {
-			break;
-		}
-
-		hp->items[idx] = hp->items[smallest];
-		idx = smallest;
-	}
-
-	hp->items[idx] = item;
-}
-
-static void DijkstraHeap_offer
-(
-	DijkstraHeap *hp,
-	DijkstraItem item
-) {
-	if(hp->count == hp->cap) {
-		hp->cap *= 2;
-		hp->items = rm_realloc(hp->items, (size_t)hp->cap * sizeof(DijkstraItem));
-	}
-
-	_dijkstra_heap_sift_up(hp, hp->count, item);
-	hp->count++;
-}
-
-static bool DijkstraHeap_poll
-(
-	DijkstraHeap *hp,
-	DijkstraItem *out
-) {
-	if(hp->count == 0) {
-		return false;
-	}
-
-	*out = hp->items[0];
-
-	hp->count--;
-	if(hp->count > 0) {
-		_dijkstra_heap_sift_down(hp, 0, hp->items[hp->count]);
-	}
-
-	return true;
-}
-
-static void DijkstraHeap_free
-(
-	DijkstraHeap *hp
-) {
-	rm_free(hp->items);
-}
-
-//------------------------------------------------------------------------------
-// NodeMap: NodeID -> label index
-//------------------------------------------------------------------------------
-
-// maps a discovered NodeID to its 1-based slot in 'labels' (0 means "not
-// present"). specialized open-addressing hash map (linear probing,
-// power-of-two capacity, no tombstones) rather than a generic chained
-// dict: keys are only ever inserted or looked up during a single search
-// and the whole map is torn down in one shot at the end, so there's no
-// need for per-entry allocation, deletion support, or incremental
-// rehashing -- all of which dominate a generic dict's cost here (a
-// malloc/free pair per discovered node, plus chain-walking and
-// incremental-rehash bookkeeping on every lookup)
-typedef struct {
-	NodeID   key;
-	uint32_t val;  // 1-based index into 'labels'; 0 means the slot is empty
-} NodeMapEntry;
-
-typedef struct {
-	NodeMapEntry *slots;
-	uint32_t count;  // occupied slots
-	uint32_t cap;    // number of slots, always a power of two
-} NodeMap;
-
-#define NODE_MAP_DEFAULT_CAP 64
-
-static void NodeMap_init
-(
-	NodeMap *m
-) {
-	m->cap   = NODE_MAP_DEFAULT_CAP;
-	m->count = 0;
-	m->slots = rm_calloc(m->cap, sizeof(NodeMapEntry));
-}
-
-// fibonacci hashing: spreads a NodeID (often sequential/dense) across the
-// table with a single multiply before masking down to 'cap'
-static inline uint32_t _node_map_hash
-(
-	NodeID key,
-	uint32_t cap
-) {
-	return (uint32_t)((key * 0x9E3779B97F4A7C15ULL) >> 32) & (cap - 1);
-}
-
-static void _node_map_grow
-(
-	NodeMap *m
-) {
-	uint32_t old_cap        = m->cap;
-	NodeMapEntry *old_slots = m->slots;
-
-	m->cap  *= 2;
-	m->slots = rm_calloc(m->cap, sizeof(NodeMapEntry));
-
-	for(uint32_t i = 0; i < old_cap; i++) {
-		if(old_slots[i].val == 0) {
-			continue;  // empty slot
-		}
-
-		uint32_t idx = _node_map_hash(old_slots[i].key, m->cap);
-		while(m->slots[idx].val != 0) {
-			idx = (idx + 1) & (m->cap - 1);
-		}
-		m->slots[idx] = old_slots[i];
-	}
-
-	rm_free(old_slots);
-}
-
-// find 'key's slot, inserting a fresh (empty, val == 0) one if absent. the
-// returned pointer is only valid until the next call that may grow the
-// table. 'is_new', if not NULL, reports which case occurred
-static uint32_t *NodeMap_findOrInsert
-(
-	NodeMap *m,
-	NodeID key,
-	bool *is_new
-) {
-	if((m->count + 1) * 2 >= m->cap) {  // load factor >= 0.5
-		_node_map_grow(m);
-	}
-
-	uint32_t idx = _node_map_hash(key, m->cap);
-	while(m->slots[idx].val != 0) {
-		if(m->slots[idx].key == key) {
-			if(is_new) *is_new = false;
-			return &m->slots[idx].val;
-		}
-		idx = (idx + 1) & (m->cap - 1);
-	}
-
-	m->slots[idx].key = key;
-	m->count++;
-	if(is_new) *is_new = true;
-
-	return &m->slots[idx].val;
-}
-
-// find 'key's value, 0 if not present
-static uint32_t NodeMap_find
-(
-	const NodeMap *m,
-	NodeID key
-) {
-	uint32_t idx = _node_map_hash(key, m->cap);
-	while(m->slots[idx].val != 0) {
-		if(m->slots[idx].key == key) {
-			return m->slots[idx].val;
-		}
-		idx = (idx + 1) & (m->cap - 1);
-	}
-
-	return 0;
-}
-
-static void NodeMap_free
-(
-	NodeMap *m
-) {
-	rm_free(m->slots);
-}
 
 //------------------------------------------------------------------------------
 // Dijkstra
@@ -315,15 +41,15 @@ bool Dijkstra_ShortestPath
 	// 'label_idx' maps a node id to its 1-based slot in 'labels' (0 means
 	// "not yet discovered").
 	// 'heap' is the Dijkstra priority queue: pending (node, weight)
-	// candidates ordered so the next DijkstraHeap_poll always returns the
+	// candidates ordered so the next NodeWeightHeap_poll always returns the
 	// smallest-weight candidate discovered so far.
 	NodeMap label_idx;
 	NodeMap_init(&label_idx);
 
 	DijkstraLabel *labels = arr_new(DijkstraLabel, 64);
 
-	DijkstraHeap heap;
-	DijkstraHeap_init(&heap);
+	NodeWeightHeap heap;
+	NodeWeightHeap_init(&heap);
 
 	// scratch buffer for edge expansion, reused (via arr_clear) across
 	// every neighbor scan performed by this search
@@ -370,9 +96,9 @@ bool Dijkstra_ShortestPath
 
 	// push the source onto the priority queue so the main loop below has
 	// somewhere to start.
-	DijkstraItem seed = { .node = src_id, .weight = 0 };
+	NodeWeightItem seed = { .node = src_id, .weight = 0 };
 
-	DijkstraHeap_offer(&heap, seed);
+	NodeWeightHeap_offer(&heap, seed);
 
 	bool found = false;
 
@@ -385,11 +111,11 @@ bool Dijkstra_ShortestPath
 	while(!found) {
 		// extract the minimum-weight candidate. this may be a stale
 		// duplicate left over from a relaxation performed after this
-		// entry was queued (see the lazy-deletion note on DijkstraItem);
+		// entry was queued (see the lazy-deletion note on NodeWeightItem);
 		// staleness is detected below via the label's 'finalized' flag
 		// rather than by removing superseded heap entries in place.
-		DijkstraItem item;
-		if(!DijkstraHeap_poll(&heap, &item)) {
+		NodeWeightItem item;
+		if(!NodeWeightHeap_poll(&heap, &item)) {
 			break;  // heap exhausted: dst is unreachable
 		}
 
@@ -486,8 +212,8 @@ bool Dijkstra_ShortestPath
 				// weight. any older, now-superseded heap entry for 'nid'
 				// is left in place and simply skipped later as a stale
 				// duplicate once popped.
-				DijkstraItem qi = { .node = nid, .weight = new_weight };
-				DijkstraHeap_offer(&heap, qi);
+				NodeWeightItem qi = { .node = nid, .weight = new_weight };
+				NodeWeightHeap_offer(&heap, qi);
 			}
 
 			arr_clear(neighbors);
@@ -496,7 +222,7 @@ bool Dijkstra_ShortestPath
 
 	// search is over (dst found or heap exhausted): entries are stored by
 	// value, so there's nothing to drain, just free the heap itself.
-	DijkstraHeap_free(&heap);
+	NodeWeightHeap_free(&heap);
 	arr_free(neighbors);
 	rm_free(iters);
 
