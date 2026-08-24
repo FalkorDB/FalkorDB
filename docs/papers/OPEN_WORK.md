@@ -370,6 +370,40 @@ what a resident delta costs *readers*. The square-root rule of §folding is
 derived entirely from write amortisation and has no term for the read side, which
 this bug was a direct consequence of.
 
+## 5a. Stop constructing a GraphBLAS iterator per call
+
+**Status:** open, and the largest constant in the paper. Partially addressed by
+#2572, which took what was reachable without a new API.
+
+**The number.** At `k = 1` a `row_degree` call costs 1,979 instructions. The bare
+forward row scan under it is 1,951, so counting the ids costs ~28. The *same scan
+through a re-seeked iterator* costs 298. Per-call `GxB_rowIterator_attach` is
+therefore ~1,653 of 1,979 — five sixths — and the same construction sits under
+every point read.
+
+**What #2572 did and did not do.** It gave the engine `Tensor::row_degree` /
+`col_degree`, which count instead of collecting and share one `me` cursor across a
+row: 2,065 → 1,979 at `k=1`, 4,926 → 4,337 at `k=2` (transposed 2,664 → 2,575 and
+5,523 → 4,933). 4% and 12%. Bounded from the start, because the decomposition had
+already shown the identifiers were never the cost.
+
+**What not to do.** A thread-local free list of `GxB_Iterator` handles. An earlier
+revision of the paper reported exactly this with degree falling to 1,203 — that
+change was never committed and the figures did not reproduce; they are withdrawn
+in §evalentry. Do not re-derive it from the paper's history.
+
+**The design that fits the cost.** A reusable cursor threaded through the hot
+callers, so a traversal attaches once and re-seeks per row. Attach cost is then
+amortised over rows read rather than paid per row. This is an API change through
+`Tensor` and its callers, which is why it was deferred.
+
+**Acceptance.** The saving is per attach avoided, so the number that sizes it is
+how many rows a typical traversal reads through one logical cursor — which this
+paper does not measure. Get that first; it decides whether this is worth the API
+churn.
+
+---
+
 ## 6. What the evaluation still does not settle
 
 Not future work so much as honest scope. Listed here so nobody has to re-derive

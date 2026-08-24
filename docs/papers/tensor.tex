@@ -2735,18 +2735,24 @@ the worst ratio in this paper.
 \toprule
  & (A) & (C) & (C)/(A) \\
 \midrule
-row degree, $k=1$              & $1{,}011$ & $1{,}983$ & $1.96$ \\
-row degree, $k=2$              & $1{,}160$ & $4{,}886$ & $4.21$ \\
-column degree, $k=1$           & $1{,}432$ & $2{,}573$ & $1.80$ \\
-column degree, $k=2$           & $1{,}581$ & $5{,}475$ & $3.46$ \\
+row degree, $k=1$              & $1{,}011$ & $1{,}979$ & $1.96$ \\
+row degree, $k=2$              & $1{,}160$ & $4{,}337$ & $3.74$ \\
+column degree, $k=1$           & $1{,}432$ & $2{,}575$ & $1.80$ \\
+column degree, $k=2$           & $1{,}581$ & $4{,}933$ & $3.12$ \\
 \addlinespace
 bulk delete, all-inline (per pair) & $1{,}121$ & $1{,}279$ & $1.14$ \\
 bulk insert, all-inline (per edge) & $1{,}487$ & $1{,}737$ & $1.17$ \\
 \bottomrule
 \end{tabular}
 \caption{Instructions per operation at the data-structure boundary, same
-fixture and method as Table~\ref{tab:evalfanout}. The bulk paths are within
-$17\%$; degree is not, and the reason is an entry point (C) does not have.}
+method as Table~\ref{tab:evalfanout}. The degree rows are (C) as it now stands,
+with the counting entry point of \#2572; the paths they replaced measured
+$2{,}065$ and $4{,}926$ (row), $2{,}664$ and $5{,}523$ (column), so the entry
+point bought $4\%$ at $k=1$ and $12\%$ at $k=2$. Per-operation counts are
+insensitive to fixture size here --- the superseded path measures within $0.2\%$
+at $100$k and $200$k pairs. The bulk paths are within $17\%$; degree is not, and
+\S\ref{sec:evalentry} takes apart why, because the obvious reason is the wrong
+one.}
 \label{tab:evalentry}
 \end{table}
 
@@ -2759,11 +2765,12 @@ the number of pairs in the row and independent of $k$, which
 Table~\ref{tab:evalentry} shows directly ($1{,}011 \to 1{,}160$ from $k=1$ to
 $k=2$, a $15\%$ rise for twice the edges).
 
-(C) has no degree entry point at all. Degree is computed one level up, in
-\texttt{Graph::get\_node\_outdegree}, by counting a full single-row iteration ---
-which materialises every identifier in the row only to discard it. That reads
-like the whole explanation, and the ratio's growth with $k$ ($1.96\times$ at
-$k=1$, $4.21\times$ at $k=2$) reads like confirmation of it.
+(C), when this was first measured, had no degree entry point at all. Degree was
+computed one level up, in \texttt{Graph::get\_node\_outdegree}, by counting a
+full single-row iteration --- which materialises every identifier in the row only
+to discard it. That reads like the whole explanation, and the ratio's growth with
+$k$ ($1.96\times$ at $k=1$, $4.21\times$ at $k=2$) reads like confirmation of
+it.
 
 \paragraph{It is not the explanation, and taking it apart is what found the real
 one.} Decomposing the $k=1$ figure: of $1{,}990$ instructions, the forward
@@ -2775,31 +2782,46 @@ missing entry point. It is the cost of constructing a \texttt{GxB\_Iterator} per
 call, which (A) pays once per degree and (C) pays once per row scan and again per
 multi-edge pair.
 
+The decomposition reproduces on the current tree and the proportion has grown,
+because the entry point removed the only term it could reach: \texttt{row\_degree}
+costs $1{,}979$, the bare row scan under it $1{,}951$ --- so counting the
+identifiers now costs about $28$ --- and that scan through a re-seeked iterator
+costs $298$. Per-call construction is therefore $1{,}653$ of $1{,}979$, five
+sixths of the whole.
+
 That is worth stating plainly because the first explanation was ours, it was
 published in the previous revision of this table, and it would have led to a fix
 that moved $81$ instructions. It also generalises past degree: the same per-call
 construction sits under every point read in Table~\ref{tab:evalboundary}, which
 is where (C)'s $3.89\times$ at $k=2$ mostly comes from.
 
-\paragraph{Both have since been addressed, which changes two numbers in this
-paper.} Recycling \texttt{GxB\_Iterator} handles through a small thread-local
-free list --- sound because GraphBLAS documents re-attaching an iterator to
-another matrix --- removes about half the per-call construction cost, and a
-\texttt{row\_degree}/\texttt{col\_degree} that drops the per-pair buffer and
-shares one $me$ cursor across a row removes the rest of the degree-specific
-overhead. Measured on the same fixtures: degree falls to $1{,}203$ and $2{,}793$
-at $k = 1, 2$ against (A)'s $1{,}011$ and $1{,}160$, so
-$1.97\times \to 1.19\times$ and $4.15\times \to 2.41\times$; the transposed
-figures fall to $1{,}814$ and $3{,}409$, $1.80\times \to 1.27\times$ and
-$3.42\times \to 2.16\times$. The multi-edge point read of
-Table~\ref{tab:evalboundary} falls from $2{,}940$ to $2{,}200$, taking its ratio
-against (A) from $3.89\times$ to $2.91\times$.
+\paragraph{One of the two has been addressed, and the decomposition is why the
+other is worth doing.} \#2572 gave (C) the entry point it was missing:
+\texttt{row\_degree}/\texttt{col\_degree} count rather than collect --- an inline
+pair is one edge, a promoted pair is the length of its $me$ row --- and the row's
+$me$ lookups share one cursor instead of attaching an iterator per pair. Measured
+on the same fixture, $2{,}065 \to 1{,}979$ at $k=1$ and $4{,}926 \to 4{,}337$ at
+$k=2$; transposed, $2{,}664 \to 2{,}575$ and $5{,}523 \to 4{,}933$. Four per cent
+and twelve.
 
-Table~\ref{tab:evalentry} reports the engine as measured for this paper, before
-those changes, and the numbers above are what the same benches say after. We keep
-both rather than silently restating the better ones: the point of the
-decomposition is that a plausible explanation survived a whole revision because
-nothing had asked it to account for the total.
+That is a small return for a real change, and the decomposition above is exactly
+why it was bounded before it was written: the identifiers were never the cost.
+A previous revision of this paper additionally reported recycling
+\texttt{GxB\_Iterator} handles through a thread-local free list, with degree
+falling to $1{,}203$ and $2{,}793$. \textbf{That change is not in the tree and
+those figures do not reproduce}; the numbers in
+Table~\ref{tab:evalentry} are what the current engine measures, and the earlier
+ones described a prototype that was never committed. Recycling remains the
+outstanding item, and it is the larger one: per-call construction is five sixths
+of a degree call, and the same construction sits under every point read in
+Table~\ref{tab:evalboundary}. Removing it needs a reusable cursor threaded
+through the hot callers rather than a handle cache, which is an API change
+(\S\ref{sec:future}).
+
+We keep the superseded figures beside the current ones rather than silently
+restating the better ones: the point of the decomposition is that a plausible
+explanation survived a whole revision because nothing had asked it to account for
+the total, and the same discipline applies to a number whose change never landed.
 
 Degree's blast radius is bounded and worth stating so the original number is not
 read as worse than it was: these four functions back Cypher's \texttt{indegree}
@@ -3537,6 +3559,24 @@ well-formed blob means and nothing about which byte sequences are well-formed.
 That is the remaining gap, and it is a parsing obligation rather than a
 data-structure one.
 
+\paragraph{Stop constructing an iterator per call.} The largest single constant
+this paper measures is not a representation choice. Per-call
+\texttt{GxB\_Iterator} construction is five sixths of a degree call
+(\S\ref{sec:evalentry}) and sits under every point read in
+Table~\ref{tab:evalboundary}; the same scan through a re-seeked iterator costs
+$298$ instructions against $1{,}951$ through a fresh one. Design (A) pays it once
+per degree, this design pays it once per row scan and again per multi-edge pair.
+
+A handle cache is the obvious repair and is the wrong one --- a previous revision
+of this paper reported one, it was never committed, and its figures are withdrawn
+in \S\ref{sec:evalentry}. What the cost actually argues for is a \emph{reusable
+cursor} threaded through the hot callers, so a traversal attaches once and
+re-seeks per row. That is an API change rather than a local optimisation, which is
+why \#2572 stopped where it did: it took what was reachable without a new cursor
+API and no more. Sizing it needs one number this paper does not have --- how many
+rows a typical traversal reads through one logical cursor --- because the saving
+is per attach avoided.
+
 \paragraph{Give the fold policy a read-side term.} \S\ref{sec:evaldecomp}'s
 two-state read was a resident delta on $me$ making every multi-edge read consult
 a layer it could skip --- a flat ${\approx}1{,}200$ instructions per read,
@@ -3547,6 +3587,23 @@ building a merged iterator, and a delta is small by construction so nearly every
 row takes the base path. \textsc{EffGet} already did exactly this for $dm$
 (\S\ref{sec:reads}); the multi-edge path had simply never learned the trick. It
 has now, and the two-state read is gone.
+
+The cause was narrower than the symptom suggested. \texttt{Iter::from\_layers}
+asked whether a delta was empty \emph{in total}, not whether it held anything in
+the row being read, so one pending identifier anywhere made every single-row scan
+allocate, attach and seek an iterator that yielded nothing. The repair answers the
+narrower question without touching GraphBLAS: a bitmap of which rows a delta may
+hold, allocated only once the delta holds something and dropped when it folds,
+whose only required property is that it never says \emph{no} when the answer is
+yes --- so the one choke point every entry-adding path goes through invalidates it
+by default, and a bulk path added later without knowing about it costs a scan
+rather than a wrong answer. A skipped layer is \emph{detached} rather than
+dropped, because \texttt{seek} re-points an existing iterator and a layer dropped
+on the first range would silently swallow entries in every later one.
+
+Measured on the reported repro, instructions per pair as the graph grows:
+the step that made this look like two discrete states was $+1{,}143$ and is now
+$+116$.
 
 The more interesting repair is the fold policy itself. The square-root rule of
 \S\ref{sec:folding} is derived entirely from what a delta costs \emph{writers}
@@ -3662,11 +3719,14 @@ axioms. The measurements behind $F$ and $w$ are reproducible from
 \S\ref{sec:hazard-resize} from \texttt{grow\_cost\_rebuild\_vs\_resize} in the
 same file.
 
-Three landed changes correspond to points in the text: the fold policy of
-\S\ref{sec:folding} is PR \#2349, the demotion fix of \S\ref{sec:evalosc} is
-\#2431 closing issue \#2429, and the removal of the \texttt{multi\_count} field
-(\S\ref{sec:limits}) is \#2439. The other anomaly this evaluation found, the
-two-state point-read cost, is issue \#2430, open with no identified cause.
+Landed changes corresponding to points in the text: the fold policy of
+\S\ref{sec:folding} is PR \#2349; the demotion fix of \S\ref{sec:evalosc} is
+\#2431 closing issue \#2429; the removal of the \texttt{multi\_count} field
+(\S\ref{sec:limits}) is \#2439; the cardinality identity's checked arithmetic is
+\#2565; the block-indexed key and the narrow $me$ of \S\ref{sec:compound} are
+\#2579 closing \#2578; the degree entry point of \S\ref{sec:evalentry} is \#2572.
+The other anomaly this evaluation found, the two-state point-read cost, was
+issue \#2430 --- diagnosed and closed by \#2571, described below.
 
 \paragraph{What is reproducible, and what is not.} The measurements of
 \S\ref{sec:eval} were taken with the repository's benchmark harness under
