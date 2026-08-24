@@ -90,7 +90,7 @@ theorem inv_removeFast (h : Inv t) (hme : t.me = ∅) : Inv (removeFast t mask) 
     intro q hq
     exact hnm q (Finset.mem_filter.mp hq).2
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            valid_ids := ?_,
            mt_eq := by
              intro q
@@ -116,14 +116,11 @@ theorem inv_removeFast (h : Inv t) (hme : t.me = ∅) : Inv (removeFast t mask) 
     · rw [removeFast_effGet_mem hqm] at hq; exact absurd hq (by simp)
     · rw [removeFast_effGet_not_mem hqm] at hq
       exact absurd hq (hnm q)
-  · intro q _ _
+  · intro q _
     rw [meRow, removeFast_me, hme, meRowOf_empty]
   · intro x hx
     rw [removeFast_me, hme] at hx
     exact absurd hx (by simp)
-  · intro q hq
-    rw [removeFast_effDom] at hq
-    exact h.bounded q (Finset.mem_sdiff.mp hq).1
   · intro q hq
     rcases Finset.mem_union.mp hq with hq' | hq'
     · exact h.in_range q (Finset.mem_union_left _ (by simpa using hq'))
@@ -220,7 +217,7 @@ theorem inv_deletePair (h : Inv t) (hrow : t.meRow (key p) = ∅)
     rw [hrow] at this
     exact absurd this (by simp)
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            mt_eq := mt_eq_erase h.mt_eq, valid_ids := ?_ }
   · intro q hq
     rcases deletePair_mem_dm.mp hq with hq' | ⟨rfl, hq'⟩
@@ -245,21 +242,18 @@ theorem inv_deletePair (h : Inv t) (hrow : t.meRow (key p) = ∅)
     rw [deletePair_effGet_ne hqp] at hq
     rw [meRow, deletePair_me]
     exact h.multi_iff q hq
-  · intro q hbq hq
+  · intro q hq
     rw [meRow, deletePair_me]
     by_cases hqp : q = p
     · subst hqp; exact hrow
     · rw [deletePair_effGet_ne hqp] at hq
-      exact h.row_empty q hbq hq
+      exact h.row_empty q hq
   · intro x hx
     rw [deletePair_me] at hx
-    obtain ⟨q, hbq, hqdom, hqk⟩ := h.me_keyed x hx
-    refine ⟨q, hbq, ?_, hqk⟩
+    obtain ⟨q, hqdom, hqk⟩ := h.me_keyed x hx
+    refine ⟨q, ?_, hqk⟩
     rw [deletePair_effDom, Finset.mem_erase]
     exact ⟨fun hc => hkey x hx (by rw [hqk, hc]), hqdom⟩
-  · intro q hq
-    rw [deletePair_effDom] at hq
-    exact h.bounded q (Finset.mem_of_mem_erase hq)
   · intro q hq
     rcases Finset.mem_union.mp hq with hq' | hq'
     · exact h.in_range q (Finset.mem_union_left _ (by simpa using hq'))
@@ -350,7 +344,7 @@ private theorem rowAfterErase_singleton
   exact hcard h2
 
 /-- The part of demotion that both shapes share. -/
-private theorem demote_core (h : Inv t) (hbp : Bounded p) (hv : t.effGet p = some MULTI)
+private theorem demote_core (h : Inv t) (hv : t.effGet p = some MULTI)
     {last : Nat} (hrow : rowAfterErase t p id = {last}) {t' : Tensor}
     (hm : t'.m = t.m) (hdm : t'.dm = t.dm) (hmt : t'.mt = t.mt)
     (hme : t'.me = (t.me.erase (key p, id)).erase (key p, last))
@@ -384,13 +378,12 @@ private theorem demote_core (h : Inv t) (hbp : Bounded p) (hv : t.effGet p = som
     | some w =>
       by_cases hMw : w = MULTI
       · subst hMw
-        have hbq : Bounded q := h.bounded q (mem_effDom_iff_isSome.mpr (by rw [hgq]; rfl))
         rw [edgesAt_of_multi (by rw [hne q hq, hgq]), edgesAt_of_multi hgq,
-          hrowne q (key_ne hbq hbp hq)]
+          hrowne q (key_ne hq)]
       · rw [edgesAt_of_single (by rw [hne q hq, hgq]) hMw, edgesAt_of_single hgq hMw]
   refine ⟨?_, hedges_p, hedges_ne⟩
   refine { dm_sub_m := ?_, dp_disj_dm := hdisj, cancel_clean := hcc, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            valid_ids := ?_,
            mt_eq := by intro q; rw [hdom, hmt]; exact h.mt_eq q }
   · rw [hdm, hm]; exact h.dm_sub_m
@@ -400,21 +393,19 @@ private theorem demote_core (h : Inv t) (hbp : Bounded p) (hv : t.effGet p = som
       rw [hself] at hq
       exact hlastM (Option.some_inj.mp hq)
     rw [hne q hqp] at hq
-    have hbq : Bounded q := h.bounded q (mem_effDom_iff_isSome.mpr (by rw [hq]; rfl))
-    rw [hrowne q (key_ne hbq hbp hqp)]
+    rw [hrowne q (key_ne hqp)]
     exact h.multi_iff q hq
-  · intro q hbq hq
+  · intro q hq
     by_cases hqp : q = p
     · subst hqp; exact hrow'
     · rw [hne q hqp] at hq
-      rw [hrowne q (key_ne hbq hbp hqp)]
-      exact h.row_empty q hbq hq
+      rw [hrowne q (key_ne hqp)]
+      exact h.row_empty q hq
   · intro x hx
     rw [hme] at hx
     have hx' : x ∈ t.me := Finset.mem_of_mem_erase (Finset.mem_of_mem_erase hx)
-    obtain ⟨q, hbq, hqdom, hqk⟩ := h.me_keyed x hx'
-    exact ⟨q, hbq, by rw [hdom]; exact hqdom, hqk⟩
-  · rw [hdom]; exact h.bounded
+    obtain ⟨q, hqdom, hqk⟩ := h.me_keyed x hx'
+    exact ⟨q, by rw [hdom]; exact hqdom, hqk⟩
   · intro q hq
     rw [hnr, hnc]
     rcases Finset.mem_union.mp hq with hq' | hq'
@@ -435,7 +426,7 @@ private theorem demote_core (h : Inv t) (hbp : Bounded p) (hv : t.effGet p = som
 /-! ### `removeOne`, all shapes together -/
 
 /-- Shape 1 in full: only the `me` entry goes; the pair stays `MULTI`. -/
-private theorem still_multi_spec (h : Inv t) (hbp : Bounded p) (hv : t.effGet p = some MULTI)
+private theorem still_multi_spec (h : Inv t) (hv : t.effGet p = some MULTI)
     (hcard : 2 ≤ (rowAfterErase t p id).card) :
     Inv (removeOne t id p).1 ∧ (removeOne t id p).1.edgesAt p = (t.edgesAt p).erase id ∧
       ∀ q, q ≠ p → (removeOne t id p).1.edgesAt q = t.edgesAt q := by
@@ -456,16 +447,15 @@ private theorem still_multi_spec (h : Inv t) (hbp : Bounded p) (hv : t.effGet p 
     | some w =>
       by_cases hMw : w = MULTI
       · subst hMw
-        have hbq : Bounded q := h.bounded q (mem_effDom_iff_isSome.mpr (by rw [hgq]; rfl))
         rw [edgesAt_of_multi (by rw [hget q, hgq]), edgesAt_of_multi hgq,
-          hrowne q (key_ne hbq hbp hq)]
+          hrowne q (key_ne hq)]
       · rw [edgesAt_of_single (by rw [hget q, hgq]) hMw, edgesAt_of_single hgq hMw]
   have hedges_p : ({ t with me := t.me.erase (key p, id) } : Tensor).edgesAt p
       = (t.edgesAt p).erase id := by
     rw [edgesAt_of_multi (by rw [hget p]; exact hv), hrow, edgesAt_of_multi hv]
   refine ⟨?_, hedges_p, hedges_ne⟩
   refine { dm_sub_m := h.dm_sub_m, dp_disj_dm := h.dp_disj_dm, cancel_clean := h.cancel_clean,
-           multi_iff := ?_, row_empty := ?_, me_keyed := ?_, bounded := h.bounded,
+           multi_iff := ?_, row_empty := ?_, me_keyed := ?_,
            in_range := h.in_range, mt_eq := h.mt_eq, valid_ids := ?_ }
   · intro q hq
     rw [hget q] at hq
@@ -473,14 +463,13 @@ private theorem still_multi_spec (h : Inv t) (hbp : Bounded p) (hv : t.effGet p 
     · subst hqp
       rw [hrow, ← rowAfterErase_eq]
       exact hcard
-    · have hbq : Bounded q := h.bounded q (mem_effDom_iff_isSome.mpr (by rw [hq]; rfl))
-      rw [hrowne q (key_ne hbq hbp hqp)]
+    · rw [hrowne q (key_ne hqp)]
       exact h.multi_iff q hq
-  · intro q hbq hq
+  · intro q hq
     rw [hget q] at hq
     have hqp : q ≠ p := by rintro rfl; exact hq hv
-    rw [hrowne q (key_ne hbq hbp hqp)]
-    exact h.row_empty q hbq hq
+    rw [hrowne q (key_ne hqp)]
+    exact h.row_empty q hq
   · intro x hx
     exact h.me_keyed x (Finset.mem_of_mem_erase hx)
   · intro q i hi
@@ -493,7 +482,7 @@ private theorem still_multi_spec (h : Inv t) (hbp : Bounded p) (hv : t.effGet p 
 
 /-- **`remove_all` removes exactly the named edge from the named pair, and
 preserves every invariant.** -/
-theorem removeOne_spec (h : Inv t) (hbp : Bounded p) :
+theorem removeOne_spec (h : Inv t) :
     Inv (removeOne t id p).1 ∧ (removeOne t id p).1.edgesAt p = (t.edgesAt p).erase id ∧
       ∀ q, q ≠ p → (removeOne t id p).1.edgesAt q = t.edgesAt q := by
   cases hg : t.effGet p with
@@ -505,7 +494,7 @@ theorem removeOne_spec (h : Inv t) (hbp : Bounded p) :
     by_cases hM : v = MULTI
     · subst hM
       by_cases hcard : 2 ≤ (rowAfterErase t p id).card
-      · exact still_multi_spec h hbp hg hcard
+      · exact still_multi_spec h hg hcard
       · obtain ⟨x, hx⟩ := removeOne_survivor (id := id) h hg
         obtain ⟨last, hlast⟩ := Finset.min_of_mem hx
         have hlast' : (rowAfterErase t p id).min = some last := hlast
@@ -513,7 +502,7 @@ theorem removeOne_spec (h : Inv t) (hbp : Bounded p) :
         have hpdm : p ∉ t.dm := not_mem_dm_of_multi h hg
         by_cases hmv : t.m.get p = some last
         · rw [removeOne_demote_cancel hg hcard hlast' hmv]
-          refine demote_core h hbp hg hrow rfl rfl rfl rfl rfl rfl
+          refine demote_core h hg hrow rfl rfl rfl rfl rfl rfl
             ((effGet_of_m (by simp) (by simpa using hpdm)).trans hmv)
             (fun q hq => effGet_congr_at rfl (by simp [hq]) (by simp)) ?_ ?_ ?_
           · exact fun q hq => Finset.mem_insert_of_mem (Finset.mem_of_mem_erase (by simpa using hq))
@@ -524,7 +513,7 @@ theorem removeOne_spec (h : Inv t) (hbp : Bounded p) :
           · intro q hq
             exact h.cancel_clean q (Finset.mem_of_mem_erase (by simpa using hq))
         · rw [removeOne_demote_shadow hg hcard hlast' hmv]
-          refine demote_core h hbp hg hrow rfl rfl rfl rfl rfl rfl
+          refine demote_core h hg hrow rfl rfl rfl rfl rfl rfl
             (effGet_of_dp (by simp))
             (fun q hq => effGet_congr_at rfl (by simp [hq]) (by simp)) ?_ ?_ ?_
           · exact fun q hq => by simpa using hq
@@ -547,7 +536,7 @@ theorem removeOne_spec (h : Inv t) (hbp : Bounded p) :
     · by_cases hvid : v = id
       · subst hvid
         rw [removeOne_single hg hM]
-        have hrow : t.meRow (key p) = ∅ := h.row_empty p hbp (by rw [hg]; simpa using hM)
+        have hrow : t.meRow (key p) = ∅ := h.row_empty p (by rw [hg]; simpa using hM)
         refine ⟨inv_deletePair h hrow (by rw [hg]; simpa using hM), ?_, fun q hq =>
           edgesAt_deletePair_ne hq⟩
         rw [edgesAt_deletePair_self, edgesAt_of_single hg hM]
@@ -640,15 +629,15 @@ theorem removeSlow_cons {r : Nat × Pair} {rels : List (Nat × Pair)} :
 /-- **The slow path of `remove_all`**: invariants preserved, exactly the requested
 edges removed, and every reported pair really is empty afterwards. -/
 theorem removeSlow_spec {rels : List (Nat × Pair)} (h : Inv t)
-    (hb : ∀ r ∈ rels, Bounded r.2) :
+    :
     Inv (removeSlow t rels).1 ∧
       (∀ q, (removeSlow t rels).1.edgesAt q = t.edgesAt q \ removedIds rels q) ∧
       ∀ q ∈ (removeSlow t rels).2, (removeSlow t rels).1.edgesAt q = ∅ := by
   induction rels generalizing t with
   | nil => exact ⟨h, fun q => by simp, fun q hq => absurd hq (by simp)⟩
   | cons r rest ih =>
-    obtain ⟨h1, hedge, hempt⟩ := removeOne_spec (id := r.1) (p := r.2) h (hb r (List.mem_cons_self ..))
-    obtain ⟨h2, hedge2, hempt2⟩ := ih h1 (fun r' hr' => hb r' (List.mem_cons_of_mem _ hr'))
+    obtain ⟨h1, hedge, hempt⟩ := removeOne_spec (id := r.1) (p := r.2) h
+    obtain ⟨h2, hedge2, hempt2⟩ := ih h1
     have hstep : ∀ q, (removeSlow t (r :: rest)).1.edgesAt q
         = t.edgesAt q \ removedIds (r :: rest) q := by
       intro q
@@ -684,7 +673,7 @@ The precondition is the one the callers satisfy: the request names edges that
 exist (they come from the graph).  It is what makes the fast path — which deletes
 whole pairs without checking ids — correct. -/
 theorem removeAll_spec {rels : List (Nat × Pair)} (h : Inv t)
-    (hb : ∀ r ∈ rels, Bounded r.2) (hex : ∀ r ∈ rels, r.1 ∈ t.edgesAt r.2) :
+    (hex : ∀ r ∈ rels, r.1 ∈ t.edgesAt r.2) :
     Inv (removeAll t rels).1 ∧
       (∀ q, (removeAll t rels).1.edgesAt q = t.edgesAt q \ removedIds rels q) ∧
       ∀ q ∈ (removeAll t rels).2, (removeAll t rels).1.edgesAt q = ∅ := by
@@ -736,7 +725,7 @@ theorem removeAll_spec {rels : List (Nat × Pair)} (h : Inv t)
       · intro q hq
         exact edgesAt_removeFast_mem (List.mem_toFinset.mpr hq)
     -- slow path
-    · exact removeSlow_spec h hb
+    · exact removeSlow_spec h
 
 end Slow
 

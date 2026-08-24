@@ -131,7 +131,7 @@ theorem effGet {a b : Tensor} (h : TEquiv a b) (q : Pair) : a.effGet q = b.effGe
 theorem effDom {a b : Tensor} (h : TEquiv a b) : a.effDom = b.effDom := by
   ext q; rw [mem_effDom_iff_isSome, mem_effDom_iff_isSome, h.effGet q]
 
-theorem meRow {a b : Tensor} (h : TEquiv a b) (k : Nat) : a.meRow k = b.meRow k := by
+theorem meRow {a b : Tensor} (h : TEquiv a b) (k : Addr) : a.meRow k = b.meRow k := by
   simp only [Tensor.meRow, h.me]
 
 theorem edgesAt {a b : Tensor} (h : TEquiv a b) (q : Pair) : a.edgesAt q = b.edgesAt q :=
@@ -145,7 +145,7 @@ capacity, so it transfers. This is what lets the batched path inherit every
 invariant `Remove.lean` proves of the fold instead of re-proving them. -/
 theorem inv {a b : Tensor} (h : TEquiv a b) (hb : Inv b) : Inv a := by
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            valid_ids := ?_, mt_eq := ?_ }
   · rw [h.dm, h.m_dom]; exact hb.dm_sub_m
   · rw [h.dp_dom, h.dm]; exact hb.dp_disj_dm
@@ -158,11 +158,10 @@ theorem inv {a b : Tensor} (h : TEquiv a b) (hb : Inv b) : Inv a := by
       rw [hbv] at this; exact (Option.some_inj.mp this).symm
     rw [h.m_get q, hval]; exact hb.cancel_clean q hq'
   · intro q hq; rw [h.meRow]; exact hb.multi_iff q (by rwa [← h.effGet q])
-  · intro q hbq hq; rw [h.meRow]; exact hb.row_empty q hbq (by rwa [← h.effGet q])
+  · intro q hq; rw [h.meRow]; exact hb.row_empty q (by rwa [← h.effGet q])
   · intro x hx
-    obtain ⟨q, hbq, hqd, hqk⟩ := hb.me_keyed x (by rwa [h.me] at hx)
-    exact ⟨q, hbq, by rwa [h.effDom], hqk⟩
-  · rw [h.effDom]; exact hb.bounded
+    obtain ⟨q, hqd, hqk⟩ := hb.me_keyed x (by rwa [h.me] at hx)
+    exact ⟨q, by rwa [h.effDom], hqk⟩
   · rw [h.m_dom, h.dp_dom, h.nrows, h.ncols]; exact hb.in_range
   · intro q i hi; rw [h.edgesAt q] at hi; exact hb.valid_ids q i hi
   · intro q; rw [h.mt, h.effDom]; exact hb.mt_eq q
@@ -248,10 +247,10 @@ def removeFold (t : Tensor) (p : Pair) (ids : List Nat) : Tensor :=
 The deletions are applied as one set difference where the fold erases one entry at
 a time; these lemmas move an erase across the difference. -/
 
-@[simp] theorem me_sdiff_empty (s : Finset (Nat × Nat)) (k : Nat) :
+@[simp] theorem me_sdiff_empty (s : Finset (Addr × Nat)) (k : Addr) :
     s \ (∅ : Finset Nat).image (fun i => (k, i)) = s := by simp
 
-theorem me_sdiff_insert (s : Finset (Nat × Nat)) (d : Finset Nat) (k i : Nat) :
+theorem me_sdiff_insert (s : Finset (Addr × Nat)) (d : Finset Nat) (k : Addr) (i : Nat) :
     s \ (insert i d).image (fun j => (k, j)) = (s \ d.image (fun j => (k, j))).erase (k, i) := by
   ext x
   simp only [Finset.mem_sdiff, Finset.mem_erase, Finset.mem_image, Finset.mem_insert]
@@ -571,7 +570,7 @@ related. Everything `removeOne` reads — `effGet` at the pair, the `me` row, th
 committed value — is `TEquiv`-invariant, and everything it writes preserves the
 relation. -/
 
-theorem TEquiv.me_erase {a b : Tensor} (h : TEquiv a b) (x : Nat × Nat) :
+theorem TEquiv.me_erase {a b : Tensor} (h : TEquiv a b) (x : Addr × Nat) :
     TEquiv { a with me := a.me.erase x } { b with me := b.me.erase x } :=
   ⟨h.m_get, h.dp_get, h.dm, h.mt, by rw [h.me], h.nrows, h.ncols⟩
 
@@ -748,16 +747,16 @@ theorem reported_iff (h : Inv t) (p : Pair) (es : List Nat) :
 
 /-! ## Invariants -/
 
-theorem inv_removeFold (h : Inv t) (hbp : Bounded p) (es : List Nat) : Inv (removeFold t p es) := by
+theorem inv_removeFold (h : Inv t) (es : List Nat) : Inv (removeFold t p es) := by
   induction es generalizing t with
   | nil => exact h
-  | cons e rest ih => exact ih (removeOne_spec h hbp).1
+  | cons e rest ih => exact ih (removeOne_spec h).1
 
 /-- **The batched path preserves every invariant**, inherited through [`TEquiv`]
 rather than proved a second time. -/
-theorem inv_applyPlan (h : Inv t) (hbp : Bounded p) (es : List Nat) :
+theorem inv_applyPlan (h : Inv t) (es : List Nat) :
     Inv (applyPlan t p (planFold t p es)) :=
-  (tequiv_applyPlan_removeFold h p es).inv (inv_removeFold h hbp es)
+  (tequiv_applyPlan_removeFold h p es).inv (inv_removeFold h es)
 
 /-- And it denotes the same multigraph, which is the statement a query sees. -/
 theorem edgesAt_applyPlan (h : Inv t) (p : Pair) (es : List Nat) (q : Pair) :
@@ -861,7 +860,7 @@ theorem applyShape_mt_ne {q : Pair} (hq : q ≠ (p.2, p.1)) (D : Finset Nat) (k 
 
 /-- `me` deletions for distinct pairs land in distinct rows, so they commute.
 This is where `key_inj` earns its place in the argument. -/
-theorem me_sdiff_comm {me : Finset (Nat × Nat)} {k k' : Nat} (hk : k ≠ k') (D D' : Finset Nat) :
+theorem me_sdiff_comm {me : Finset (Addr × Nat)} {k k' : Addr} (hk : k ≠ k') (D D' : Finset Nat) :
     (me \ D.image (fun i => (k, i))) \ D'.image (fun i => (k', i))
       = (me \ D'.image (fun i => (k', i))) \ D.image (fun i => (k, i)) := by
   ext x; simp only [Finset.mem_sdiff]; tauto
@@ -1036,11 +1035,11 @@ theorem mtOp_comm (S : Finset Pair) (p p' : Pair) (k k' : Shape) :
 
 /-- **Plans for distinct pairs commute.** The write phase may apply them in any
 order, which is what licenses the Rust iterating a hash map. -/
-theorem applyShape_comm {p p' : Pair} (hbp : Bounded p) (hbp' : Bounded p') (hne : p ≠ p')
+theorem applyShape_comm {p p' : Pair} (hne : p ≠ p')
     (D D' : Finset Nat) (k k' : Shape) :
     TEquiv (applyShape (applyShape t p D k) p' D' k')
       (applyShape (applyShape t p' D' k') p D k) := by
-  have hkey : key p ≠ key p' := fun hc => hne (key_inj hbp hbp' hc)
+  have hkey : key p ≠ key p' := fun hc => hne (key_inj hc)
   refine ⟨fun q => by simp only [applyShape_m], ?_, ?_, ?_, ?_,
     by simp only [applyShape_nrows], by simp only [applyShape_ncols]⟩
   · intro q
@@ -1054,12 +1053,12 @@ theorem applyShape_comm {p p' : Pair} (hbp : Bounded p) (hbp' : Bounded p') (hne
     exact me_sdiff_comm hkey _ _
 
 /-- The same statement about plans rather than shapes. -/
-theorem applyPlan_comm {p p' : Pair} (hbp : Bounded p) (hbp' : Bounded p') (hne : p ≠ p')
+theorem applyPlan_comm {p p' : Pair} (hne : p ≠ p')
     (s s' : PairState) :
     TEquiv (applyPlan (applyPlan t p s) p' s') (applyPlan (applyPlan t p' s') p s) := by
   rw [applyPlan_eq_applyShape, applyPlan_eq_applyShape, applyPlan_eq_applyShape,
     applyPlan_eq_applyShape]
-  exact applyShape_comm hbp hbp' hne _ _ _ _
+  exact applyShape_comm hne _ _ _ _
 
 end Tensor
 end FalkorDB

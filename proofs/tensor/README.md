@@ -29,7 +29,7 @@ it **preserves `Inv`**, and it **acts on `edgesAt` the way its doc comment says*
 
 | `tensor.rs` | theorems | file |
 | --- | --- | --- |
-| `compound_key` | `keyBits_eq_key` (bitwise `(src<<32)\|dst` = arithmetic model), `key_lt` (no `u64` truncation), `key_inj`, `keyHi`/`keyLo` (round-trip) | `Key.lean` |
+| `compound_key` | `rowBits_eq_row` (bitwise = arithmetic model), `row_lt` / `row_le_grbIndexMax` (always in range for `me`), `key_inj`, `inv_key` (round-trip via `compound_key_inverse`), `row_inj_of_block` | `Key.lean` |
 | `new` | `inv_new`, `edgesAt_new`, `edgeCount_new` | `Reads.lean` |
 | `eff_get` | `mem_effDom_iff_isSome`, `effGet_of_dp`, `effGet_of_m` | `Model.lean` |
 | `get` / `EdgeIds` | `getIds_eq_sort`, `mem_getIds`, `getIds_nodup`, `getIds_pairwise_lt` (ascending), `getIds_single` (allocation-free path) | `Reads.lean` |
@@ -82,8 +82,9 @@ removing them from the code.
 These are requirements the *callers* satisfy; they are stated explicitly rather
 than assumed silently.
 
-* `InBounds t p` — each node id fits a `u32` (what `compound_key` asserts) and
-  the coordinate is inside the matrix (the caller `resize`s first).
+* `InBounds t p` — the coordinate is inside the matrix (the caller `resize`s
+  first). It says nothing about node-id *width*: since #2579 `compound_key`
+  accepts every pair, so there is no width precondition left to state.
 * `ValidId id` — an edge id is a GraphBLAS index (`≤ GrB_INDEX_MAX`), hence never
   the `MULTI_EDGE` sentinel.
 * `FreshBatch` — edge ids are freshly allocated, so a batch never inserts an id
@@ -136,7 +137,8 @@ than assumed silently.
   `fold_cost_bench.rs`, the benchmark tables — is measurement, and nothing in this
   development speaks to running time.
 * Indices are `Nat`, not `u64`/`u32`. Where width matters the bound is proved
-  rather than assumed: `key_lt` (the compound key fits a `u64`),
+  rather than assumed: `row_lt` / `row_le_grbIndexMax` (a row key is always a
+  writable `me` index — the property whose absence was #2578),
   `edgeCount_no_underflow` (the unsigned subtraction chain), `msb_*` (the
   serialisation tag).
 * The read phase of `set_all_from_slices` is modelled per pair, not as the
@@ -172,3 +174,30 @@ each GraphBLAS call to its model (`GrB_Matrix_setElement` → `Layer.set`,
 The proofs are about `Ops.lean`, so they are only as good as its correspondence
 to `tensor.rs`. If you change the Rust, change `Ops.lean` and re-run `lake build`
 — a semantics change will break a proof, which is the point.
+
+## What #2579 changed here
+
+`compound_key` used to be `(src << 32) | dst`: injective only for `dst < 2^32`,
+and a valid `me` row index only for `src < 2^28`. This development carried both
+conditions as one hypothesis, `Bounded p`, threaded through three invariant
+fields and every theorem that touched `me`.
+
+The key is now a `(block, row)` address built from masked halves, so it accepts
+every pair. `Bounded` has no successor — it is *deleted*, not weakened — and the
+results that used to assume it now hold outright:
+
+| before | after |
+| --- | --- |
+| `key_inj : Bounded p → Bounded q → key p = key q → p = q` | `key_inj : key p = key q → p = q` |
+| `key_lt : Bounded p → key p < 2^64` | `row_lt : ∀ p, row p < 2^60` |
+| `keyHi`/`keyLo` under `Bounded` | `inv_key : ∀ p, keyInverse (blockOf p) (row p) = p` |
+| `InvCore.bounded : ∀ p ∈ effDom, Bounded p` | *(field removed)* |
+| `row_empty : ∀ p, Bounded p → …` | `row_empty : ∀ p, …` |
+| `WellFormed.bounded` (a decoder obligation) | *(field removed — one fewer way for a blob to be malformed)* |
+
+Two modelling details moved with it. `me`'s element type is `Addr × Nat` rather
+than `Nat × Nat`, `Addr = (Nat × Nat) × Nat` being the `(block, row)` pair. And
+`iter_edges`' forward half is modelled by `fwdIterAll` — every row, no filter —
+because the Rust's `u64::MAX` bound means "no bound", and modelling it as the
+numeral `2^64 - 1` only worked while `Bounded` was silently supplying that node
+ids were u64-representable.

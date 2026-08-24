@@ -99,7 +99,7 @@ noncomputable def encode (t : Tensor) : Encoded where
   ncols := t.ncols
 
 /-- Absorb one tensor group into `me` (`me.set(key, edge_id, true)` per id). -/
-def loadGroup (me : Finset (Nat × Nat)) (g : List (Pair × Finset Nat)) : Finset (Nat × Nat) :=
+def loadGroup (me : Finset (Addr × Nat)) (g : List (Pair × Finset Nat)) : Finset (Addr × Nat) :=
   g.foldl (fun s e => s ∪ e.2.image (fun i => (key e.1, i))) me
 
 /-- `Tensor::decode`.  Entries whose `fwd_dm` bit is set are skipped, `fwd_dp`
@@ -138,8 +138,8 @@ theorem meRow_card_lt_msb (h : Inv t) {q : Pair} (hq : t.effGet q = some MULTI) 
 
 /-! ### Loading the tensor groups -/
 
-theorem mem_loadGroup {me : Finset (Nat × Nat)} {g : List (Pair × Finset Nat)}
-    {x : Nat × Nat} :
+theorem mem_loadGroup {me : Finset (Addr × Nat)} {g : List (Pair × Finset Nat)}
+    {x : Addr × Nat} :
     x ∈ loadGroup me g ↔ x ∈ me ∨ ∃ e ∈ g, ∃ i ∈ e.2, x = (key e.1, i) := by
   induction g generalizing me with
   | nil => simp [loadGroup]
@@ -163,7 +163,7 @@ variable {q : Pair}
 
 /-- The `me` set the decoder rebuilds holds exactly the ids of the multi-edge
 pairs that were written. -/
-theorem mem_me_decode_encode {x : Nat × Nat} :
+theorem mem_me_decode_encode {x : Addr × Nat} :
     x ∈ (decode (encode t)).me ↔ ∃ p ∈ t.multiPairs, x = (key p, x.2) ∧ x.2 ∈ t.meRow (key p) := by
   show x ∈ loadGroup (loadGroup ∅ (encode t).groupBase) (encode t).groupDelta ↔ _
   rw [show (encode t).groupDelta = [] from rfl, show loadGroup (loadGroup ∅ (encode t).groupBase) []
@@ -183,26 +183,26 @@ theorem meRow_decode_encode_multi (h : Inv t) (hq : q ∈ t.multiPairs) :
   constructor
   · rintro ⟨p, hp, hx, hi⟩
     have hkey : key p = key q := by
-      have := congrArg Prod.fst hx
+      have := congrArg (fun (y : Addr × Nat) => y.1) hx
       simpa using this.symm
     have hpq : p = q :=
-      key_inj (h.bounded p (mem_multiPairs.mp hp).1) (h.bounded q (mem_multiPairs.mp hq).1) hkey
+      key_inj hkey
     subst hpq
     exact hi
   · intro hi
     exact ⟨q, hq, rfl, hi⟩
 
 /-- …and a single-edge (or absent) pair gets no row at all. -/
-theorem meRow_decode_encode_not_multi (h : Inv t) (hb : Bounded q) (hq : q ∉ t.multiPairs) :
+theorem meRow_decode_encode_not_multi (h : Inv t) (hq : q ∉ t.multiPairs) :
     (decode (encode t)).meRow (key q) = ∅ := by
   apply Finset.eq_empty_of_forall_notMem
   intro i hi
   obtain ⟨p, hp, hx, _⟩ := mem_me_decode_encode |>.mp (mem_meRow.mp hi)
   have hkey : key p = key q := by
-    have := congrArg Prod.fst hx
+    have := congrArg (fun (y : Addr × Nat) => y.1) hx
     simpa using this.symm
   have hpq : p = q :=
-    key_inj (h.bounded p (mem_multiPairs.mp hp).1) hb hkey
+    key_inj hkey
   exact hq (hpq ▸ hp)
 
 /-- The decoded forward value: single ids survive, sentinels are restored from
@@ -259,7 +259,7 @@ theorem invCore_decode_encode (h : Inv t) : InvCore (decode (encode t)) := by
     ext r
     rw [mem_effDom_iff_isSome, mem_effDom_iff_isSome, effGet_decode_encode h]
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            valid_ids := ?_ }
   · simp [decode]
   · simp [decode]
@@ -270,16 +270,15 @@ theorem invCore_decode_encode (h : Inv t) : InvCore (decode (encode t)) := by
       mem_multiPairs.mpr ⟨mem_effDom_iff_isSome.mpr (by rw [hr]; rfl), hr⟩
     rw [meRow_decode_encode_multi h hrm]
     exact h.multi_iff r hr
-  · intro r hbr hr
+  · intro r hr
     rw [effGet_decode_encode h] at hr
-    exact meRow_decode_encode_not_multi h hbr (fun hc => hr (mem_multiPairs.mp hc).2)
+    exact meRow_decode_encode_not_multi h (fun hc => hr (mem_multiPairs.mp hc).2)
   · intro x hx
     obtain ⟨p, hp, hxk, hi⟩ := mem_me_decode_encode |>.mp hx
-    refine ⟨p, h.bounded p (mem_multiPairs.mp hp).1, ?_, ?_⟩
+    refine ⟨p, ?_, ?_⟩
     · rw [hdom]; exact (mem_multiPairs.mp hp).1
-    · have := congrArg Prod.fst hxk
+    · have := congrArg (fun (y : Addr × Nat) => y.1) hxk
       simpa using this
-  · rw [hdom]; exact h.bounded
   · intro r hr
     have hr' : r ∈ t.effDom := by
       simp only [decode, encode, Finset.mem_union, Finset.mem_sdiff, Finset.notMem_empty,

@@ -15,7 +15,7 @@ on the denotation the way its doc comment claims.
 * `mt` (backward adjacency) and `me` (multi-edge id storage) are `VersionedMatrix`
   values in Rust.  Their *own* three-layer algebra belongs to
   `versioned_matrix.rs`; from the tensor's point of view they are sets
-  (`mt : Finset Pair` of `(dst, src)`, `me : Finset (key × edge_id)`), which is
+  (`mt : Finset Pair` of `(dst, src)`, `me : Finset (Addr × edge_id)`), which is
   exactly the interface `tensor.rs` uses (`set`/`remove`/`remove_mask`/`iter`/
   `nvals`).  That is the one abstraction boundary of this development.
 * GraphBLAS "pending work" (`wait`, `wait_all`, `is_synced`, `pending`) is a
@@ -34,12 +34,29 @@ namespace FalkorDB
 /-- A `(src, dst)` node-id pair, i.e. a matrix coordinate. -/
 abbrev Pair := Nat × Nat
 
-/-- Node ids are packed two-to-a-`u64` by `compound_key`, so each side must fit
-in a `u32`.  `tensor.rs` asserts this unconditionally. -/
-def Bounded (p : Pair) : Prop := p.1 < 2 ^ 32 ∧ p.2 < 2 ^ 32
+/-- `BLOCK_SHIFT`: how many bits of each node id the row key carries. Everything
+above them selects an `me` *block* instead. `2 * blockShift = 60` is the whole
+GraphBLAS index budget, so 30 is the maximum and therefore the fewest blocks. -/
+def blockShift : Nat := 30
 
-instance (p : Pair) : Decidable (Bounded p) := by
-  unfold Bounded; infer_instance
+/-- The block coordinate of a pair — the high bits of each endpoint. `MeBlock` in
+`tensor.rs`. -/
+def blockOf (p : Pair) : Nat × Nat := (p.1 / 2 ^ blockShift, p.2 / 2 ^ blockShift)
+
+/-- The row key within a block: the low bits of each endpoint, packed. -/
+def row (p : Pair) : Nat :=
+  (p.1 % 2 ^ blockShift) * 2 ^ blockShift + p.2 % 2 ^ blockShift
+
+/-- Where a pair's edge ids live: which `me` block, and which row of it. This is
+what `compound_key` returns.
+
+There is deliberately no `Bounded` predicate here any more. Its predecessor
+`(src << 32) | dst` was injective only below `dst = 2^32` and in range only below
+`src = 2^28`, and this development carried those conditions as a hypothesis on
+every theorem that touched `me`. The key is now built from masked halves, so both
+properties hold for every input and the hypothesis has no successor — see
+`Key.lean`. -/
+abbrev Addr := (Nat × Nat) × Nat
 
 /-- `GrB_INDEX_MAX`, the largest GraphBLAS index (`2^60 - 1`). -/
 def GrBIndexMax : Nat := 2 ^ 60 - 1
@@ -169,8 +186,10 @@ structure Tensor where
   dm : Finset Pair
   /-- Backward adjacency, oriented `(dst, src)`, structure only. -/
   mt : Finset Pair
-  /-- Multi-edge ids: `(compound_key src dst, edge_id)`. -/
-  me : Finset (Nat × Nat)
+  /-- Multi-edge ids: `(compound_key src dst, edge_id)`. The key is a
+  `(block, row)` address since #2579, so this is one flat set standing for the
+  engine's collection of per-block matrices. -/
+  me : Finset (Addr × Nat)
   /-- Forward-matrix row capacity (`GrB_Matrix_nrows`), grown by `resize`. -/
   nrows : Nat
   /-- Forward-matrix column capacity (`GrB_Matrix_ncols`), grown by `resize`. -/
@@ -178,9 +197,10 @@ structure Tensor where
 
 namespace Tensor
 
-/-- `compound_key src dst = (src << 32) | dst`, as a number.  `Key.lean` proves
-this agrees with the bitwise form and is injective on `Bounded` pairs. -/
-def key (p : Pair) : Nat := p.1 * 2 ^ 32 + p.2
+/-- `compound_key src dst = ((src >> 30, dst >> 30), ((src & M) << 30) | (dst & M))`.
+`Key.lean` proves this agrees with the bitwise form, is always in range for `me`,
+and is injective — all three unconditionally. -/
+def key (p : Pair) : Addr := (blockOf p, row p)
 
 /-- `Tensor::eff_get`: `dp` wins, else `m` unless masked by `dm`. -/
 def effGet (t : Tensor) (p : Pair) : Option Nat :=
@@ -192,11 +212,11 @@ def effGet (t : Tensor) (p : Pair) : Option Nat :=
 def effDom (t : Tensor) : Finset Pair := (t.m.dom \ t.dm) ∪ t.dp.dom
 
 /-- The edge ids stored under compound key `k` in an `me` set. -/
-def meRowOf (s : Finset (Nat × Nat)) (k : Nat) : Finset Nat :=
+def meRowOf (s : Finset (Addr × Nat)) (k : Addr) : Finset Nat :=
   (s.filter (fun x => x.1 = k)).image (fun x => x.2)
 
 /-- The `me` row of a compound key: the edge ids stored there. -/
-def meRow (t : Tensor) (k : Nat) : Finset Nat := meRowOf t.me k
+def meRow (t : Tensor) (k : Addr) : Finset Nat := meRowOf t.me k
 
 /-- **The denotation**: the set of edge ids the tensor stores at pair `p`.
 A single-edge pair answers from its inline value; a `MULTI` pair from its `me`
@@ -209,11 +229,12 @@ def edgesAt (t : Tensor) (p : Pair) : Finset Nat :=
 /-- The pairs that currently have at least one edge. -/
 def support (t : Tensor) : Finset Pair := t.effDom
 
-/-- A coordinate an operation may write: it must fit the compound key (`u32` per
-side, asserted by `compound_key`) and lie inside the matrix capacity (the caller
-grows it with `resize` first). -/
+/-- A coordinate an operation may write: it must lie inside the matrix capacity
+(the caller grows it with `resize` first). The compound key imposes nothing —
+since #2579 it accepts every pair — so unlike its predecessor this is purely a
+capacity condition. -/
 def InBounds (t : Tensor) (p : Pair) : Prop :=
-  Bounded p ∧ p.1 < t.nrows ∧ p.2 < t.ncols
+  p.1 < t.nrows ∧ p.2 < t.ncols
 
 /-- The pairs whose effective inline value is the `MULTI` sentinel. -/
 def multiPairs (t : Tensor) : Finset Pair :=
@@ -261,7 +282,7 @@ theorem effGet_of_dp {t : Tensor} {p : Pair} {v : Nat} (h : t.dp.get p = some v)
 theorem effGet_of_m {t : Tensor} {p : Pair} (h1 : t.dp.get p = none) (h2 : p ∉ t.dm) :
     t.effGet p = t.m.get p := by simp [effGet, h1, h2]
 
-theorem mem_meRowOf {s : Finset (Nat × Nat)} {k i : Nat} : i ∈ meRowOf s k ↔ (k, i) ∈ s := by
+theorem mem_meRowOf {s : Finset (Addr × Nat)} {k : Addr} {i : Nat} : i ∈ meRowOf s k ↔ (k, i) ∈ s := by
   simp only [meRowOf, Finset.mem_image, Finset.mem_filter]
   constructor
   · rintro ⟨⟨k', i'⟩, ⟨hmem, hk⟩, hi⟩
@@ -269,23 +290,23 @@ theorem mem_meRowOf {s : Finset (Nat × Nat)} {k i : Nat} : i ∈ meRowOf s k �
     subst hk; subst hi; exact hmem
   · intro h; exact ⟨(k, i), ⟨h, rfl⟩, rfl⟩
 
-theorem mem_meRow {t : Tensor} {k i : Nat} : i ∈ t.meRow k ↔ (k, i) ∈ t.me := mem_meRowOf
+theorem mem_meRow {t : Tensor} {k : Addr} {i : Nat} : i ∈ t.meRow k ↔ (k, i) ∈ t.me := mem_meRowOf
 
-@[simp] theorem meRowOf_empty {k : Nat} : meRowOf ∅ k = ∅ := by simp [meRowOf]
+@[simp] theorem meRowOf_empty {k : Addr} : meRowOf ∅ k = ∅ := by simp [meRowOf]
 
-@[simp] theorem meRowOf_insert_self {s : Finset (Nat × Nat)} {k i : Nat} :
+@[simp] theorem meRowOf_insert_self {s : Finset (Addr × Nat)} {k : Addr} {i : Nat} :
     meRowOf (insert (k, i) s) k = insert i (meRowOf s k) := by
   ext j; simp [mem_meRowOf]
 
-theorem meRowOf_insert_ne {s : Finset (Nat × Nat)} {k k' i : Nat} (h : k' ≠ k) :
+theorem meRowOf_insert_ne {s : Finset (Addr × Nat)} {k k' : Addr} {i : Nat} (h : k' ≠ k) :
     meRowOf (insert (k, i) s) k' = meRowOf s k' := by
   ext j; simp [mem_meRowOf, h]
 
-@[simp] theorem meRowOf_erase_self {s : Finset (Nat × Nat)} {k i : Nat} :
+@[simp] theorem meRowOf_erase_self {s : Finset (Addr × Nat)} {k : Addr} {i : Nat} :
     meRowOf (s.erase (k, i)) k = (meRowOf s k).erase i := by
   ext j; simp [mem_meRowOf]
 
-theorem meRowOf_erase_ne {s : Finset (Nat × Nat)} {k k' i : Nat} (h : k' ≠ k) :
+theorem meRowOf_erase_ne {s : Finset (Addr × Nat)} {k k' : Addr} {i : Nat} (h : k' ≠ k) :
     meRowOf (s.erase (k, i)) k' = meRowOf s k' := by
   ext j; simp [mem_meRowOf, h]
 
@@ -431,13 +452,12 @@ structure InvCore (t : Tensor) : Prop where
   /-- A pair has ≥ 2 edges iff its effective inline value is `MULTI`, and then
   *all* of its ids live in `me`. -/
   multi_iff : ∀ p, t.effGet p = some MULTI → 2 ≤ (t.meRow (key p)).card
-  /-- Otherwise `me` has no row for the pair. -/
-  row_empty : ∀ p, Bounded p → t.effGet p ≠ some MULTI → t.meRow (key p) = ∅
-  /-- Every `me` entry belongs to a live pair, and pairs are `u32`-bounded so
-  their compound keys cannot collide. -/
-  me_keyed : ∀ x ∈ t.me, ∃ p, Bounded p ∧ p ∈ t.effDom ∧ x.1 = key p
-  /-- Node ids fit in a `u32` (`compound_key`'s assertion). -/
-  bounded : ∀ p ∈ t.effDom, Bounded p
+  /-- Otherwise `me` has no row for the pair. Stated for *every* pair: the old
+  key needed `Bounded p` here, the new one does not. -/
+  row_empty : ∀ p, t.effGet p ≠ some MULTI → t.meRow (key p) = ∅
+  /-- Every `me` entry belongs to a live pair. Compound keys cannot collide, and
+  now that is unconditional rather than a consequence of a width assumption. -/
+  me_keyed : ∀ x ∈ t.me, ∃ p, p ∈ t.effDom ∧ x.1 = key p
   /-- Every stored coordinate — committed or pending — is inside the matrix
   capacity.  `resize` only grows, so it preserves this. -/
   in_range : ∀ p ∈ t.m.dom ∪ t.dp.dom, p.1 < t.nrows ∧ p.2 < t.ncols
@@ -467,18 +487,17 @@ theorem invCore_of_effGet_eq {t t' : Tensor} (h : InvCore t)
   have hedges : ∀ q, t'.edgesAt q = t.edgesAt q :=
     fun q => edgesAt_congr_at (hget q) (hrow _)
   refine { dm_sub_m := hsub, dp_disj_dm := hdisj, cancel_clean := hcc, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := hrange,
+           row_empty := ?_, me_keyed := ?_, in_range := hrange,
            valid_ids := ?_ }
   · intro q hq
     rw [hrow]
     exact h.multi_iff q (by rw [← hget q]; exact hq)
-  · intro q hbq hq
+  · intro q hq
     rw [hrow]
-    exact h.row_empty q hbq (by rw [← hget q]; exact hq)
+    exact h.row_empty q (by rw [← hget q]; exact hq)
   · intro x hx
-    obtain ⟨q, hbq, hqdom, hqk⟩ := h.me_keyed x (by rw [hme] at hx; exact hx)
-    exact ⟨q, hbq, by rw [hdom]; exact hqdom, hqk⟩
-  · rw [hdom]; exact h.bounded
+    obtain ⟨q, hqdom, hqk⟩ := h.me_keyed x (by rw [hme] at hx; exact hx)
+    exact ⟨q, by rw [hdom]; exact hqdom, hqk⟩
   · intro q i hi
     rw [hedges q] at hi
     exact h.valid_ids q i hi

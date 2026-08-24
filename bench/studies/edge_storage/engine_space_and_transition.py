@@ -58,15 +58,46 @@ work is not in the numbers. Ports 6600-6699.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, "/Users/aviavni/repos/FalkorDB/bench/src")
+# Repo root, and therefore where `falkorbench` and the C module are found.
+# Overridable so this runs from a worktree rather than only from the checkout it
+# was first written in.
+ROOT = Path(os.environ.get("FALKORDB_ROOT", "/Users/aviavni/repos/FalkorDB"))
+
+sys.path.insert(0, str(ROOT / "bench/src"))
 
 from falkorbench import client as client_mod
-from falkorbench.counters import select_backend, rss
+from falkorbench.counters import select_backend
+
+
+def rss(pid: int) -> int | None:
+    """Resident set size of `pid`, in bytes.
+
+    Local to this harness rather than imported: `falkorbench.counters` exposes
+    `read_rusage` and the perf backends but has never had an RSS helper, so the
+    import this file used to carry could not resolve. `ps -o rss=` reports KiB on
+    both macOS and Linux, which is the only place this runs.
+
+    RSS is the *cross-check* here, not the metric — `relation_matrices_sz_mb` and
+    jemalloc live bytes are — so a platform where this returns `None` still
+    produces the numbers the paper reports.
+    """
+    try:
+        out = subprocess.run(
+            ["ps", "-o", "rss=", "-p", str(pid)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        return int(out) * 1024 if out else None
+    except (subprocess.CalledProcessError, ValueError, OSError):
+        return None
 
 SRCS = 500  # :S nodes; the multi configs use the first MULTI_SRCS
 DSTS = 2_000  # :D nodes
@@ -75,9 +106,14 @@ PAIRS = MULTI_SRCS * DSTS  # 500,000
 PORT = 6613
 REPS = 3
 
+# Scratch dir for the server's data and import folders. Env-overridable: the
+# default is tied to whichever session first ran this.
 WORK = Path(
-    "/private/tmp/claude-501/-Users-aviavni-repos-FalkorDB/"
-    "315a73ee-413e-4bd9-9431-31a67ffd04de/scratchpad/gap1work"
+    os.environ.get(
+        "GAP1_WORK",
+        "/private/tmp/claude-501/-Users-aviavni-repos-FalkorDB/"
+        "315a73ee-413e-4bd9-9431-31a67ffd04de/scratchpad/gap1work",
+    )
 )
 
 
@@ -353,10 +389,21 @@ def transition_controlled2(engine: str, module: Path, out: dict) -> None:
 
 
 if __name__ == "__main__":
-    root = Path("/Users/aviavni/repos/FalkorDB")
+    # `RUST_MODULE` / `C_MODULE` override the two modules under test, so a
+    # re-measurement names the build it measured instead of inheriting a path
+    # from the worktree this was written in. A module that is missing is
+    # skipped, which is how one engine is measured alone.
     engines = {
-        "C": root / "bin/macos-arm64v8-release/falkordb.so",
-        "Rust": root / ".claude/worktrees/agent-aaba21650d1efbb58/target/release/libfalkordb.dylib",
+        "C": Path(
+            os.environ.get("C_MODULE", ROOT / "bin/macos-arm64v8-release/falkordb.so")
+        ),
+        "Rust": Path(
+            os.environ.get(
+                "RUST_MODULE",
+                ROOT / ".claude/worktrees/agent-aaba21650d1efbb58"
+                "/target/release/libfalkordb.dylib",
+            )
+        ),
     }
     results: dict = {}
     for name, mod in engines.items():

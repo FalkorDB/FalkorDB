@@ -31,6 +31,22 @@ SRC=/tmp/cmaster BIN=$PWD/bin/macos-arm64v8-release ./build.sh
 OMP_NUM_THREADS=1 ./tensor_bench
 ```
 
+The engine-level companion names its two modules the same way:
+
+```sh
+FALKORDB_ROOT=/path/to/checkout \
+RUST_MODULE=/path/to/target/release/libfalkordb.dylib \
+GAP1_WORK=/tmp/gap1work \
+python3 engine_space_and_transition.py space
+```
+
+The Rust-side measurement tests must run **serially** —
+`cargo test --release -p graph tensor_cost -- --ignored --nocapture
+--test-threads=1`. Without `--test-threads=1` the eight of them run
+concurrently, which both interleaves their output and inflates every
+instruction count; a point read measured 8,156 instructions in parallel
+against 566 serially.
+
 `build.sh` compiles **only** `tensor_bench.c`. `tensor.c`, `tensor_iterator.c`
 and `delta_matrix/*.c` come out of `libfalkordb_static.a`, so what is measured is
 the shipped implementation rather than a recompilation of it — 323 of the
@@ -47,7 +63,7 @@ least.
 | --- | --- |
 | `tensor_bench.c` | the harness: point reads, iteration (forward and transposed), fan-out to `k = 16`, row/column degree, bulk insert/delete/clear, the working-set sweep, promote/demote, build paths, space |
 | `calib.c` | measures the instruction-counter overhead the harness subtracts |
-| `engine_space_and_transition.py` | the *engine-level* companion: `relation_matrices_sz_mb` across `k`, and the build-order gap that isolates a transition |
+| `engine_space_and_transition.py` | the *engine-level* companion: `relation_matrices_sz_mb` across `k`, and the build-order gap that isolates a transition. Takes `FALKORDB_ROOT`, `C_MODULE`, `RUST_MODULE` and `GAP1_WORK` from the environment; a module that is missing is skipped, which is how one engine is measured alone |
 | `build.sh` | compiles and links the above against `$BIN` |
 
 ## Caveats that belong with the numbers

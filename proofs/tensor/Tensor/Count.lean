@@ -61,7 +61,7 @@ theorem effDom_card_add (h : Inv t) :
 
 /-- The fibre of `me` over a key is its row (the `snd` projection is injective on
 a fibre). -/
-theorem card_filter_eq_card_meRow {k : Nat} :
+theorem card_filter_eq_card_meRow {k : Addr} :
     (t.me.filter (fun x => x.1 = k)).card = (meRowOf t.me k).card := by
   refine (Finset.card_image_of_injOn ?_).symm
   intro x hx y hy hxy
@@ -75,12 +75,12 @@ theorem me_keys_eq (h : Inv t) : t.me.image Prod.fst = t.multiPairs.image key :=
   simp only [Finset.mem_image]
   constructor
   · rintro ⟨x, hx, rfl⟩
-    obtain ⟨q, hbq, hqdom, hqk⟩ := h.me_keyed x hx
+    obtain ⟨q, hqdom, hqk⟩ := h.me_keyed x hx
     refine ⟨q, ?_, hqk.symm⟩
     refine Finset.mem_filter.mpr ⟨hqdom, ?_⟩
     by_contra hne
     have : x.2 ∈ t.meRow (key q) := mem_meRow.mpr (by rw [← hqk]; exact hx)
-    rw [h.row_empty q hbq hne] at this
+    rw [h.row_empty q hne] at this
     exact absurd this (by simp)
   · rintro ⟨q, hq, rfl⟩
     have hmulti := (Finset.mem_filter.mp hq).2
@@ -97,7 +97,7 @@ theorem me_card_eq_sum (h : Inv t) :
     exact Finset.mem_image_of_mem _ hx
   have hinj : ∀ x ∈ t.multiPairs, ∀ y ∈ t.multiPairs, key x = key y → x = y := by
     intro x hx y hy hxy
-    exact key_inj (h.bounded x (mem_multiPairs.mp hx).1) (h.bounded y (mem_multiPairs.mp hy).1) hxy
+    exact key_inj hxy
   rw [Finset.card_eq_sum_card_fiberwise hfib, Finset.sum_image hinj]
   exact Finset.sum_congr rfl (fun q _ => card_filter_eq_card_meRow)
 

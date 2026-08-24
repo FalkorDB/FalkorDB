@@ -189,8 +189,8 @@ them. -/
 theorem writableBatch_flush {l : List (Pair × Nat)} (fdp fdm : Bool)
     (hb : WritableBatch t l) : WritableBatch (flush t fdp fdm) l := by
   intro e he
-  obtain ⟨⟨hbd, hr, hc⟩, hid⟩ := hb e he
-  exact ⟨⟨hbd, by simpa using hr, by simpa using hc⟩, hid⟩
+  obtain ⟨⟨hr, hc⟩, hid⟩ := hb e he
+  exact ⟨⟨by simpa using hr, by simpa using hc⟩, hid⟩
 
 theorem freshBatch_flush {l : List (Pair × Nat)} (h : Inv t) (fdp fdm : Bool)
     (hf : FreshBatch t l) : FreshBatch (flush t fdp fdm) l := by
@@ -215,7 +215,7 @@ theorem inv_setAll_after_flush {l : List (Pair × Nat)} (h : Inv t)
 /-- **`remove_all`'s entry `flush()` cannot change its result** either: the same
 edges are removed, the same pairs reported emptied, and the invariants hold. -/
 theorem removeAll_after_flush_spec {rels : List (Nat × Pair)} (h : Inv t)
-    (hb : ∀ r ∈ rels, Bounded r.2) (hex : ∀ r ∈ rels, r.1 ∈ t.edgesAt r.2)
+    (hex : ∀ r ∈ rels, r.1 ∈ t.edgesAt r.2)
     (fdp fdm : Bool) :
     Inv (removeAll (flush t fdp fdm) rels).1 ∧
       (∀ q, (removeAll (flush t fdp fdm) rels).1.edgesAt q
@@ -223,7 +223,7 @@ theorem removeAll_after_flush_spec {rels : List (Nat × Pair)} (h : Inv t)
       ∀ q ∈ (removeAll (flush t fdp fdm) rels).2,
         (removeAll (flush t fdp fdm) rels).1.edgesAt q = ∅ := by
   obtain ⟨hinv, hedges, hemptied⟩ :=
-    removeAll_spec (inv_flush h fdp fdm) hb
+    removeAll_spec (inv_flush h fdp fdm)
       (fun r hr => by rw [edgesAt_flush h fdp fdm r.2]; exact hex r hr)
   refine ⟨hinv, fun q => ?_, hemptied⟩
   rw [hedges q, edgesAt_flush h fdp fdm q]

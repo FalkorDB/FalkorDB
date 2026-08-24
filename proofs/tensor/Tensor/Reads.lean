@@ -48,9 +48,8 @@ theorem inv_new (nrows ncols : Nat) : Inv (new nrows ncols) where
   dp_disj_dm := by simp [new]
   cancel_clean := by simp [new]
   multi_iff := by intro p hp; simp [new, effGet, Layer.get] at hp
-  row_empty := by intro p _ _; simp [new, meRow]
+  row_empty := by intro p _; simp [new, meRow]
   me_keyed := by simp [new]
-  bounded := by intro p hp; simp [new, effDom] at hp
   in_range := by intro p hp; simp [new] at hp
   mt_eq := by intro p; simp [new, effDom]
   valid_ids := by intro p i hi; simp [new, edgesAt, effGet, Layer.get] at hi
@@ -112,12 +111,12 @@ theorem hasMultiEdge_iff (h : Inv t) :
   simp only [hasMultiEdge, decide_eq_true_eq]
   constructor
   · rintro ⟨x, hx⟩
-    obtain ⟨p, hb, hdom, hk⟩ := h.me_keyed x hx
+    obtain ⟨p, hdom, hk⟩ := h.me_keyed x hx
     refine ⟨p, ?_⟩
     have hrow : (t.meRow (key p)).Nonempty := ⟨x.2, mem_meRow.mpr (by rw [← hk]; exact hx)⟩
     have hmulti : t.effGet p = some MULTI := by
       by_contra hne
-      exact absurd (h.row_empty p hb hne) (Finset.nonempty_iff_ne_empty.mp hrow)
+      exact absurd (h.row_empty p hne) (Finset.nonempty_iff_ne_empty.mp hrow)
     have := h.multi_iff p hmulti
     simpa [edgesAt, hmulti] using this
   · rintro ⟨p, hp⟩
@@ -172,7 +171,6 @@ theorem inv_resize (h : Inv t) {nr nc : Nat} (hr : t.nrows ≤ nr) (hc : t.ncols
   multi_iff := h.multi_iff
   row_empty := h.row_empty
   me_keyed := h.me_keyed
-  bounded := h.bounded
   in_range := by
     intro q hq
     simp only [resize] at hq ⊢

@@ -282,15 +282,14 @@ theorem edgesAt_addEdge_multi_ne (h : Inv t) (hbp : InBounds t p)
   | none => simp
   | some w =>
     by_cases hM : w = MULTI
-    · have hbq : Bounded q := h.bounded q (mem_effDom_iff_isSome.mpr (by simp [hgq]))
-      simp [hM, multi_meRow_ne hv (key_ne hbq hbp.1 hq)]
+    · simp [hM, multi_meRow_ne hv (key_ne hq)]
     · simp [hM]
 
 theorem inv_addEdge_multi (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
     (hv : t.effGet p = some MULTI) : Inv (addEdge t p id) := by
   have hpdom : p ∈ t.effDom := mem_effDom_iff_isSome.mpr (by simp [hv])
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            valid_ids := ?_,
            mt_eq := by rw [multi_effDom hv, addEdge_multi_def hv]; exact h.mt_eq }
   · rw [addEdge_multi_def hv]; exact h.dm_sub_m
@@ -304,21 +303,19 @@ theorem inv_addEdge_multi (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
       have h1 := h.multi_iff q hq
       have h2 := Finset.card_le_card (Finset.subset_insert id (t.meRow (key q)))
       omega
-    · have hbq : Bounded q := h.bounded q (mem_effDom_iff_isSome.mpr (by simp [hq]))
-      rw [multi_meRow_ne hv (key_ne hbq hbp.1 hqp)]
+    · rw [multi_meRow_ne hv (key_ne hqp)]
       exact h.multi_iff q hq
-  · intro q hbq hq
+  · intro q hq
     rw [multi_effGet hv] at hq
     have hqp : q ≠ p := by rintro rfl; exact hq hv
-    rw [multi_meRow_ne hv (key_ne hbq hbp.1 hqp)]
-    exact h.row_empty q hbq hq
+    rw [multi_meRow_ne hv (key_ne hqp)]
+    exact h.row_empty q hq
   · intro x hx
     rw [addEdge_multi_def hv] at hx
     rcases Finset.mem_insert.mp hx with rfl | hx
-    · exact ⟨p, hbp.1, by rw [multi_effDom hv]; exact hpdom, rfl⟩
-    · obtain ⟨q, hbq, hqdom, hqk⟩ := h.me_keyed x hx
-      exact ⟨q, hbq, by rw [multi_effDom hv]; exact hqdom, hqk⟩
-  · rw [multi_effDom hv]; exact h.bounded
+    · exact ⟨p, by rw [multi_effDom hv]; exact hpdom, rfl⟩
+    · obtain ⟨q, hqdom, hqk⟩ := h.me_keyed x hx
+      exact ⟨q, by rw [multi_effDom hv]; exact hqdom, hqk⟩
   · rw [addEdge_multi_def hv]; exact h.in_range
   · intro q i hi
     by_cases hqp : q = p
@@ -394,7 +391,7 @@ theorem inv_addEdge_first (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
       h.dm_sub_m h.dp_disj_dm h.cancel_clean (first_mm) (first_hnone hv h)
   rw [← addEdge_first_def hv] at hsub hdisj hcc
   refine { dm_sub_m := hsub, dp_disj_dm := hdisj, cancel_clean := hcc, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            valid_ids := ?_,
            mt_eq := mt_eq_insert h.mt_eq (first_effDom hv)
              (by rw [addEdge_first_def hv]; exact writeInline_mt) }
@@ -406,29 +403,24 @@ theorem inv_addEdge_first (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
     rw [first_effGet_ne hv hqp] at hq
     rw [meRow, first_me hv]
     exact h.multi_iff q hq
-  · intro q hbq hq
+  · intro q hq
     rw [meRow, first_me hv]
     by_cases hqp : q = p
     · subst hqp
-      exact h.row_empty q hbq (by rw [hv]; simp)
+      exact h.row_empty q (by rw [hv]; simp)
     · rw [first_effGet_ne hv hqp] at hq
-      exact h.row_empty q hbq hq
+      exact h.row_empty q hq
   · intro x hx
     rw [first_me hv] at hx
-    obtain ⟨q, hbq, hqdom, hqk⟩ := h.me_keyed x hx
-    exact ⟨q, hbq, by rw [first_effDom hv]; exact Finset.mem_insert_of_mem hqdom, hqk⟩
-  · intro q hq
-    rw [first_effDom hv] at hq
-    rcases Finset.mem_insert.mp hq with rfl | hq
-    · exact hbp.1
-    · exact h.bounded q hq
+    obtain ⟨q, hqdom, hqk⟩ := h.me_keyed x hx
+    exact ⟨q, by rw [first_effDom hv]; exact Finset.mem_insert_of_mem hqdom, hqk⟩
   · intro q hq
     rw [addEdge_nrows, addEdge_ncols]
     rw [addEdge_first_def hv] at hq
     rcases Finset.mem_union.mp hq with hq' | hq'
     · exact h.in_range q (Finset.mem_union_left _ (by simpa using hq'))
     · rcases Finset.mem_insert.mp (writeInline_dp_dom_subset hq') with rfl | hq''
-      · exact ⟨hbp.2.1, hbp.2.2⟩
+      · exact ⟨hbp.1, hbp.2⟩
       · exact h.in_range q (Finset.mem_union_right _ hq'')
   · intro q i hi
     by_cases hqp : q = p
@@ -531,7 +523,7 @@ private theorem promote_me (hv : t.effGet p = some v) (hM : v ≠ MULTI) :
 holds exactly the two ids. -/
 private theorem promote_meRow_self (h : Inv t) (hbp : InBounds t p) (hv : t.effGet p = some v)
     (hM : v ≠ MULTI) : (addEdge t p id).meRow (key p) = {v, id} := by
-  have hrow : t.meRow (key p) = ∅ := h.row_empty p hbp.1 (by rw [hv]; simpa using hM)
+  have hrow : t.meRow (key p) = ∅ := h.row_empty p (by rw [hv]; simpa using hM)
   rw [meRow, promote_me hv hM, meRowOf_insert_self, meRowOf_insert_self]
   rw [show meRowOf t.me (key p) = ∅ from hrow]
   rfl
@@ -556,8 +548,7 @@ theorem edgesAt_addEdge_promote_ne (h : Inv t) (hbp : InBounds t p) (hv : t.effG
   | none => rfl
   | some w =>
     by_cases hMw : w = MULTI
-    · have hbq : Bounded q := h.bounded q (mem_effDom_iff_isSome.mpr (by rw [hgq]; rfl))
-      simp only [if_pos hMw, promote_meRow_ne hv hM (key_ne hbq hbp.1 hq)]
+    · simp only [if_pos hMw, promote_meRow_ne hv hM (key_ne hq)]
     · simp only [if_neg hMw]
 
 theorem inv_addEdge_promote (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
@@ -573,7 +564,7 @@ theorem inv_addEdge_promote (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
       h.dm_sub_m h.dp_disj_dm h.cancel_clean promote_mm (promote_hnone h hv hM)
   rw [← addEdge_promote_def' hv hM] at hsub hdisj hcc
   refine { dm_sub_m := hsub, dp_disj_dm := hdisj, cancel_clean := hcc, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            valid_ids := ?_,
            mt_eq := mt_eq_insert (p := p) h.mt_eq
              (by rw [promote_effDom hv hM, Finset.insert_eq_self.mpr hpdom])
@@ -585,32 +576,30 @@ theorem inv_addEdge_promote (h : Inv t) (hbp : InBounds t p) (hid : ValidId id)
       rw [Finset.card_insert_of_notMem (by simpa using fun hc => hvid hc.symm)]
       simp
     · rw [promote_effGet_ne hv hM hqp] at hq
-      have hbq : Bounded q := h.bounded q (mem_effDom_iff_isSome.mpr (by rw [hq]; rfl))
-      rw [promote_meRow_ne hv hM (key_ne hbq hbp.1 hqp)]
+      rw [promote_meRow_ne hv hM (key_ne hqp)]
       exact h.multi_iff q hq
-  · intro q hbq hq
+  · intro q hq
     have hqp : q ≠ p := by
       rintro rfl
       exact hq (promote_effGet_self hv hM)
     rw [promote_effGet_ne hv hM hqp] at hq
-    rw [promote_meRow_ne hv hM (key_ne hbq hbp.1 hqp)]
-    exact h.row_empty q hbq hq
+    rw [promote_meRow_ne hv hM (key_ne hqp)]
+    exact h.row_empty q hq
   · intro x hx
     rw [promote_me hv hM] at hx
     rw [promote_effDom hv hM]
     rcases Finset.mem_insert.mp hx with rfl | hx
-    · exact ⟨p, hbp.1, hpdom, rfl⟩
+    · exact ⟨p, hpdom, rfl⟩
     · rcases Finset.mem_insert.mp hx with rfl | hx
-      · exact ⟨p, hbp.1, hpdom, rfl⟩
+      · exact ⟨p, hpdom, rfl⟩
       · exact h.me_keyed x hx
-  · rw [promote_effDom hv hM]; exact h.bounded
   · intro q hq
     rw [addEdge_nrows, addEdge_ncols]
     rw [addEdge_promote_def' hv hM] at hq
     rcases Finset.mem_union.mp hq with hq' | hq'
     · exact h.in_range q (Finset.mem_union_left _ (by simpa using hq'))
     · rcases Finset.mem_insert.mp (writeInline_dp_dom_subset hq') with rfl | hq''
-      · exact ⟨hbp.2.1, hbp.2.2⟩
+      · exact ⟨hbp.1, hbp.2⟩
       · exact h.in_range q (Finset.mem_union_right _ (by simpa using hq''))
   · intro q i hi
     by_cases hqp : q = p

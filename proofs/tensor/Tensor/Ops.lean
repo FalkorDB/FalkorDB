@@ -118,11 +118,28 @@ def fwdIter (t : Tensor) (minRow maxRow : Nat) : Multiset (Nat × Nat × Nat) :=
   (t.effDom.filter (inRows minRow maxRow)).val.map
     (fun p => (p.1, p.2, (t.effGet p).getD 0))
 
+/-- `Tensor::fwd_iter(0, u64::MAX)`: every effective triple, with no row filter.
+
+The Rust passes `u64::MAX` as the upper bound, which is that type's way of
+spelling "no bound at all". Modelling it as the numeral `2 ^ 64 - 1` would make
+every statement about `iter_edges` depend on node ids being u64-representable —
+a fact the old `Bounded` hypothesis silently supplied and the block-indexed key
+neither needs nor provides — so the model says "every row" directly. -/
+def fwdIterAll (t : Tensor) : Multiset (Nat × Nat × Nat) :=
+  t.effDom.val.map (fun p => (p.1, p.2, (t.effGet p).getD 0))
+
 /-- `Tensor::iter_edges`: the inline ids of all non-`MULTI` pairs, then every `me`
-entry with its key split back into `(src, dst)` by `>> 32` / `& 0xFFFF_FFFF`. -/
+entry with its address turned back into `(src, dst)` by `compound_key_inverse`.
+
+Since #2579 that address is a block and a row rather than one shifted key, and
+the Rust walks `edge_versioned_all()` — every live block — reassembling each pair
+from the block it was found in. `keyInverse` is total, so every entry yields a
+pair. -/
 def iterEdges (t : Tensor) : Multiset (Nat × Nat × Nat) :=
-  ((t.fwdIter 0 (2 ^ 64 - 1)).filter (fun x => x.2.2 ≠ MULTI)) +
-    t.me.val.map (fun x => (x.1 >>> 32, x.1 % 2 ^ 32, x.2))
+  (t.fwdIterAll.filter (fun x => x.2.2 ≠ MULTI)) +
+    t.me.val.map (fun x =>
+      let p := keyInverse x.1.1 x.1.2
+      (p.1, p.2, x.2))
 
 /-- `Tensor::iter` with `transpose = false`. -/
 def iterFwd (t : Tensor) (minRow maxRow : Nat) : Multiset (Nat × Nat × Nat) :=

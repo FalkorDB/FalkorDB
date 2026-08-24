@@ -60,7 +60,7 @@ def decVal (e : Encoded) (p : Pair) : Nat :=
   if v &&& MSB = 0 then v else MULTI
 
 /-- The overflow set `decode` will build from the two tensor groups. -/
-def decMe (e : Encoded) : Finset (Nat × Nat) :=
+def decMe (e : Encoded) : Finset (Addr × Nat) :=
   loadGroup (loadGroup ∅ e.groupBase) e.groupDelta
 
 @[simp] theorem decode_m_dom : (decode e).m.dom = decDom e := rfl
@@ -77,22 +77,26 @@ theorem decode_effGet (p : Pair) :
   rw [effGet_of_m hdp hdm]
   simp [decode, Layer.get, decDom, decVal]
 
-theorem decode_meRow (k : Nat) : (decode e).meRow k = meRowOf (decMe e) k := rfl
+theorem decode_meRow (k : Addr) : (decode e).meRow k = meRowOf (decMe e) k := rfl
 
 /-! ## The check -/
 
 /-- What a decoder must verify before trusting a blob. Every clause ranges over
 the blob's own tables. -/
 structure WellFormed (e : Encoded) : Prop where
-  /-- Coordinates fit the compound key's `u32` halves. -/
-  bounded : ∀ p ∈ decDom e, Bounded p
-  /-- …and lie inside the declared dimensions. -/
+  /-- Coordinates lie inside the declared dimensions.
+
+  There is no companion clause about node-id *width*. Before #2579 a decoder had
+  to check that each coordinate fitted the compound key's `u32` halves, because a
+  blob naming a larger id produced key aliasing or a dropped write. The key now
+  accepts every pair, so that obligation is gone — one fewer way for a blob to be
+  malformed, ruled out by construction rather than by the decoder. -/
   in_range : ∀ p ∈ decDom e, p.1 < e.nrows ∧ p.2 < e.ncols
   /-- A tagged cell has at least two ids in the tensor section. Without this a
   blob can fabricate a sentinel over an empty row. -/
   multi_rows : ∀ p ∈ decDom e, decVal e p = MULTI → 2 ≤ (meRowOf (decMe e) (key p)).card
-  /-- Every tensor-section entry belongs to a present, tagged, bounded pair. -/
-  keyed : ∀ x ∈ decMe e, ∃ p ∈ decDom e, Bounded p ∧ x.1 = key p ∧ decVal e p = MULTI
+  /-- Every tensor-section entry belongs to a present, tagged pair. -/
+  keyed : ∀ x ∈ decMe e, ∃ p ∈ decDom e, x.1 = key p ∧ decVal e p = MULTI
   /-- Stored ids are GraphBLAS indices. -/
   ids_valid : ∀ x ∈ decMe e, ValidId x.2
   /-- …as are inline ids. -/
@@ -114,7 +118,7 @@ this one does not. -/
 
 theorem invCore_of_wellFormed (hw : WellFormed e) : InvCore (decode e) := by
   refine { dm_sub_m := ?_, dp_disj_dm := ?_, cancel_clean := ?_, multi_iff := ?_,
-           row_empty := ?_, me_keyed := ?_, bounded := ?_, in_range := ?_,
+           row_empty := ?_, me_keyed := ?_, in_range := ?_,
            valid_ids := ?_ }
   · simp [decode]
   · simp [decode]
@@ -126,18 +130,17 @@ theorem invCore_of_wellFormed (hw : WellFormed e) : InvCore (decode e) := by
       exact hw.multi_rows q hmem (Option.some_inj.mp hq)
     · rw [decode_effGet, if_neg hmem] at hq
       exact absurd hq (by simp)
-  · intro q hbq hq
+  · intro q hq
     rw [decode_meRow]
     by_contra hne
     obtain ⟨i, hi⟩ := Finset.nonempty_iff_ne_empty.mpr hne
-    obtain ⟨p, hp, hbp, hkey, hval⟩ := hw.keyed (key q, i) (mem_meRowOf.mp hi)
-    have : p = q := key_inj hbp hbq hkey.symm
+    obtain ⟨p, hp, hkey, hval⟩ := hw.keyed (key q, i) (mem_meRowOf.mp hi)
+    have : p = q := key_inj hkey.symm
     subst this
     exact hq (by rw [decode_effGet, if_pos hp, hval])
   · intro x hx
-    obtain ⟨p, hp, hbp, hkey, _⟩ := hw.keyed x (by simpa using hx)
-    exact ⟨p, hbp, by rw [decode_effDom]; exact hp, hkey⟩
-  · rw [decode_effDom]; exact hw.bounded
+    obtain ⟨p, hp, hkey, _⟩ := hw.keyed x (by simpa using hx)
+    exact ⟨p, by rw [decode_effDom]; exact hp, hkey⟩
   · intro q hq
     have hq' : q ∈ decDom e := by
       rcases Finset.mem_union.mp hq with h | h
@@ -157,20 +160,19 @@ theorem invCore_of_wellFormed (hw : WellFormed e) : InvCore (decode e) := by
       exact absurd hi (by simp)
 
 theorem wellFormed_of_invCore (hi : InvCore (decode e)) : WellFormed e := by
-  refine { bounded := ?_, in_range := ?_, multi_rows := ?_, keyed := ?_, ids_valid := ?_,
+  refine { in_range := ?_, multi_rows := ?_, keyed := ?_, ids_valid := ?_,
            inline_valid := ?_ }
-  · intro p hp; exact hi.bounded p (by rw [decode_effDom]; exact hp)
   · intro p hp
     exact hi.in_range p (Finset.mem_union_left _ (by simpa using hp))
   · intro p hp hval
     have := hi.multi_iff p (by rw [decode_effGet, if_pos hp, hval])
     rwa [decode_meRow] at this
   · intro x hx
-    obtain ⟨p, hbp, hpd, hkey⟩ := hi.me_keyed x (by simpa using hx)
-    refine ⟨p, by rw [← decode_effDom]; exact hpd, hbp, hkey, ?_⟩
+    obtain ⟨p, hpd, hkey⟩ := hi.me_keyed x (by simpa using hx)
+    refine ⟨p, by rw [← decode_effDom]; exact hpd, hkey, ?_⟩
     by_contra hval
     have hrow : (decode e).meRow (key p) = ∅ := by
-      refine hi.row_empty p hbp ?_
+      refine hi.row_empty p ?_
       rw [decode_effGet, if_pos (by rw [← decode_effDom]; exact hpd)]
       exact fun hc => hval (Option.some_inj.mp hc)
     rw [decode_meRow] at hrow
@@ -178,11 +180,11 @@ theorem wellFormed_of_invCore (hi : InvCore (decode e)) : WellFormed e := by
     rw [hrow] at this
     exact absurd this (by simp)
   · intro x hx
-    obtain ⟨p, hbp, hpd, hkey⟩ := hi.me_keyed x (by simpa using hx)
+    obtain ⟨p, hpd, hkey⟩ := hi.me_keyed x (by simpa using hx)
     refine hi.valid_ids p x.2 ?_
     have hmulti : (decode e).effGet p = some MULTI := by
       by_contra hne
-      have hrow := hi.row_empty p hbp hne
+      have hrow := hi.row_empty p hne
       rw [decode_meRow] at hrow
       have hmem2 : x.2 ∈ meRowOf (decMe e) (key p) := mem_meRowOf.mpr (by rw [← hkey]; exact hx)
       rw [hrow] at hmem2
