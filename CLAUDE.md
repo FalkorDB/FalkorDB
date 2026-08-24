@@ -83,7 +83,8 @@ RELEASE=1 VERBOSE=0 TEST=test_name ./flow.sh
 
 Before building, GraphBLAS and RediSearch must be compiled and installed:
 - GraphBLAS: `./graphblas.sh` or build manually with `make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on'`
-- RediSearch: `./redisearch.sh`
+- RediSearch: `./redisearch.sh` (builds the `deps/RediSearch` submodule; the pinned
+  commit is `REDISEARCH_REF` in that script and must match the committed gitlink)
 
 ### PreJIT kernels (`build/graphblas/PreJIT/`)
 

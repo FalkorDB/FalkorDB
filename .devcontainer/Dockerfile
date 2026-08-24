@@ -65,11 +65,10 @@ RUN chmod +x graphblas.sh && \
     CC=clang-22 CXX=clang++-22 ./graphblas.sh
 
 # Build and install RediSearch using project script
-# Build in /data so output lands at /data/redisearch/RediSearch/
-# Symlink bin/ so build.rs can find it at /data/redisearch/bin/
+# Build in /data so output lands at /data/deps/RediSearch/bin/, which is one of
+# graph/build.rs's absolute fallbacks -- no symlink needed.
 RUN chmod +x redisearch.sh && \
-    ./redisearch.sh && \
-    ln -sf /data/redisearch/RediSearch/bin /data/redisearch/bin
+    ./redisearch.sh
 
 WORKDIR /workspace
 

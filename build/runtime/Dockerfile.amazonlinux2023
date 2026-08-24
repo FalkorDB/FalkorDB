@@ -67,13 +67,13 @@ COPY build/graphblas /data/build/graphblas
 RUN LAGRAPH_INSTALL_DIR=/data/lagraph_lib /data/graphblas.sh && \
     rm -rf /data/graphblas.sh /data/build
 
-# RediSearch (static) → /data/redisearch/RediSearch/bin
+# RediSearch (static) → /data/deps/RediSearch/bin
 COPY redisearch.sh /data/redisearch.sh
 RUN bash /data/redisearch.sh && \
     rm -f /data/redisearch.sh
 
 # Build the cdylib from the repo source. Deps resolve via graph/build.rs's
-# absolute fallbacks (/data/lagraph_lib, /data/redisearch/RediSearch/bin),
+# absolute fallbacks (/data/lagraph_lib, /data/deps/RediSearch/bin),
 # GRAPHBLAS_LIB_DIR (/usr/local/lib default) and LIBOMP_PREFIX (/opt/libomp).
 ARG CXX
 WORKDIR /src

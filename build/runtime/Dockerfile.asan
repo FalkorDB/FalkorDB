@@ -44,7 +44,7 @@ WORKDIR /src
 # Rebuild the RediSearch 8.6 fork WITH AddressSanitizer so the embedded
 # VectorSimilarity is instrumented. The toolchain image ships a
 # non-instrumented RediSearch; redisearch.sh with REDISEARCH_SAN=address
-# produces the `debug-asan` flavor in-tree (./redisearch/RediSearch/bin),
+# produces the `debug-asan` flavor in-tree (./deps/RediSearch/bin),
 # which graph/build.rs discovers ahead of the toolchain's /data copy.
 # Copied on its own first so editing module source doesn't bust this
 # expensive layer (redisearch/ is .dockerignore'd, so the later COPY won't
@@ -66,7 +66,7 @@ RUN set -eux; \
     # archives. The pin lives in the in-image RediSearch checkout (redisearch/ is
     # .dockerignore'd, so `COPY . .` didn't clobber it). redisearch.sh already
     # installed this toolchain (with rust-src) during the SAN build.
-    rustup default "$(cat redisearch/RediSearch/.rust-nightly)"; \
+    rustup default "$(cat deps/RediSearch/.rust-nightly)"; \
     case "$TARGETARCH" in \
       amd64) RT=x86_64-unknown-linux-gnu ;; \
       arm64) RT=aarch64-unknown-linux-gnu ;; \

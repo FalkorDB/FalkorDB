@@ -1,7 +1,8 @@
 target/
 # Host-built native dep outputs that would shadow the build image's prebuilt versions
-# (graph/build.rs's link-search adds ../lagraph_lib and redisearch/... before /data paths).
+# (graph/build.rs's link-search adds ../lagraph_lib and deps/RediSearch/... before /data paths).
 lagraph_lib/
+deps/RediSearch/
 redisearch/
 .git/
 .github/

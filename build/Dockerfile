@@ -158,14 +158,14 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
 # Build the RediSearch 8.6 fork (falkordb/llapi-extensions-8.6) as an embeddable
 # static library. redisearch.sh is the single source of truth (also used for
-# local dev); output lands at /data/redisearch/RediSearch/bin/<variant>/, which
+# local dev); output lands at /data/deps/RediSearch/bin/<variant>/, which
 # graph/build.rs discovers. Prune the source tree afterwards (keep only bin/) to
 # keep the toolchain image lean.
 COPY redisearch.sh /data/redisearch.sh
 RUN . /data/venv/bin/activate && \
     cd /data && \
     CC=clang-${CLANG_MAJOR} CXX=clang++-${CLANG_MAJOR} bash redisearch.sh && \
-    find /data/redisearch/RediSearch -mindepth 1 -maxdepth 1 ! -name bin -exec rm -rf {} + && \
+    find /data/deps/RediSearch -mindepth 1 -maxdepth 1 ! -name bin -exec rm -rf {} + && \
     rm -f /data/redisearch.sh
 
 CMD "/bin/bash"

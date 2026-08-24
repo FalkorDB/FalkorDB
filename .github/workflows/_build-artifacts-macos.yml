@@ -93,7 +93,7 @@ jobs:
           path: |
             .deps/graphblas
             lagraph_lib
-            redisearch/RediSearch/bin
+            deps/RediSearch/bin
           key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
 
       - name: Build GraphBLAS + LAGraph
@@ -115,7 +115,7 @@ jobs:
           path: |
             .deps/graphblas
             lagraph_lib
-            redisearch/RediSearch/bin
+            deps/RediSearch/bin
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Build libfalkordb.dylib

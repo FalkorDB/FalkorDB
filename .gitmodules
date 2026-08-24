@@ -1,0 +1,4 @@
+[submodule "deps/RediSearch"]
+	path = deps/RediSearch
+	url = https://github.com/FalkorDB/RediSearch.git
+	branch = falkordb/llapi-extensions-8.6
