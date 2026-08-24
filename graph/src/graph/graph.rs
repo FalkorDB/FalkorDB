@@ -88,10 +88,11 @@ use crate::{
     graph::{
         attribute_store::{AttrNameMap, AttributeStore},
         constraint::{Constraint, ConstraintStatus, ConstraintType},
+        endpoint_index::EndpointIndex,
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
-            tensor::{Tensor, compound_key},
+            tensor::Tensor,
             versioned_matrix::{self, VersionedMatrix},
         },
     },
@@ -248,13 +249,6 @@ pub struct MemoryUsageReport {
 ///
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
-/// Sentinel for an empty/deleted slot in [`Graph::edge_endpoints`].
-///
-/// Equals `compound_key(u32::MAX, u32::MAX)`, which would only collide with a
-/// real edge whose endpoints are both node id `u32::MAX` (4.29 billion) — not
-/// reachable in practice, since the tensor compound key caps node ids at u32.
-const EDGE_NO_ENDPOINT: u64 = u64::MAX;
-
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -288,14 +282,19 @@ pub struct Graph {
     labels_matices: Vec<VersionedMatrix<bool>>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
-    /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
-    /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
-    /// are densely allocated, so a `Vec` is far more compact than a hash map
-    /// (8 B/edge vs ~31 B with control bytes + load-factor slack). Wrapped in
-    /// `Arc` so MVCC `new_version` is O(1); the first edge mutation per
-    /// version pays one `Arc::make_mut` deep clone, node-only writes pay
-    /// nothing. Empty/deleted slots hold [`EDGE_NO_ENDPOINT`].
-    edge_endpoints: Arc<Vec<u64>>,
+    /// Graph-wide reverse index: `edge_id` → `(src, dst)` for O(1) endpoint
+    /// lookup, as contiguous slots indexed by edge id. Edge IDs are densely
+    /// allocated, so slots are far more compact than a hash map (~31 B/edge
+    /// with control bytes and load-factor slack). Wrapped in `Arc` so MVCC
+    /// `new_version` is O(1); the first edge mutation per version pays one
+    /// `Arc::make_mut` deep clone of the tier it writes to — not of the whole
+    /// index — and node-only writes pay nothing.
+    ///
+    /// [`EndpointIndex`] sizes its fields to the endpoints it holds, so this is
+    /// 6 bytes per edge on a graph of millions of nodes rather than a flat 8 —
+    /// and it has no ceiling, where the previous `(src << 32) | dst` packing
+    /// refused any node id past 2^32.
+    edge_endpoints: Arc<EndpointIndex>,
     /// The graph's one attribute-name dictionary: name → id and id → name, shared by
     /// both stores below so an id means the same attribute everywhere it appears — in a
     /// span, the RDB, a `GRAPH.EFFECT`, or a compact reply.
@@ -316,6 +315,14 @@ pub struct Graph {
     edge_indexer: Indexer,
     /// Label names (ID → name mapping)
     node_labels: Vec<Arc<String>>,
+    /// Label name → ID, the reverse of `node_labels`.
+    ///
+    /// A label test is a per-row operation (`n:Person` for every row of a scan),
+    /// so resolving the name must not walk the whole schema: with 500 labels
+    /// registered, `MATCH (n) WHERE n:Person RETURN count(n)` over 10k nodes
+    /// measured 2.1x the same query on a one-label schema, all of it in the
+    /// walk. Maintained only by `intern_label`, so it cannot drift.
+    node_labels_index: FxHashMap<String, LabelId>,
     /// Relationship type names (ID → name mapping)
     relationship_types: Vec<Arc<String>>,
     /// LRU cache for query plans
@@ -706,13 +713,14 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            edge_endpoints: Arc::new(Vec::new()),
+            edge_endpoints: Arc::new(EndpointIndex::default()),
             attrs_name: AttrNameMap::default(),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
             node_labels: Vec::new(),
+            node_labels_index: FxHashMap::default(),
             relationship_types: Vec::new(),
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
@@ -750,18 +758,50 @@ impl Graph {
     ) -> Self {
         // Rebuild the graph-wide reverse index after RDB load to ensure
         // complete sync with the decoded edges.
-        let mut edge_endpoints: Vec<u64> = Vec::new();
+        // Two scans rather than one scan into a `Vec` of triples: materialising
+        // them would add ~24 bytes per edge of peak memory on top of the graph
+        // being restored, which is enough to fail a load that would otherwise
+        // fit. The first scan takes only maxima, which sizes the index once, so
+        // the second neither widens nor reallocates.
+        //
+        // The first pass also recovers where the index's width tiers begin.
+        // Sizing everything to the graph's widest endpoint would be simpler and
+        // would flatten the tiering on every load; under incremental growth an
+        // edge lands in the widest tier any earlier edge needed, so tier `r`
+        // begins at the smallest edge id whose own endpoints need at least `r`.
+        // Three scalars, no per-edge state.
+        let mut max_edge_id = 0u64;
+        let mut starts = [u64::MAX; 3];
         for tensor in &relationship_matrices {
             for (src, dst, edge_id) in tensor.iter_edges() {
-                let idx = edge_id as usize;
-                if idx >= edge_endpoints.len() {
-                    edge_endpoints.resize(idx + 1, EDGE_NO_ENDPOINT);
+                max_edge_id = max_edge_id.max(edge_id);
+                let rank = EndpointIndex::rank_for(src.max(dst));
+                for r in 1..=rank {
+                    let slot = &mut starts[usize::from(r) - 1];
+                    *slot = (*slot).min(edge_id);
                 }
-                edge_endpoints[idx] = compound_key(src, dst);
             }
         }
-        // Drop the doubling slack left by the incremental resizes above.
-        edge_endpoints.shrink_to_fit();
+        let len = if relationship_matrices.iter().any(|t| t.edge_count() > 0) {
+            max_edge_id + 1
+        } else {
+            0
+        };
+        // A tier nothing reached starts at the end, i.e. stays empty. Clamped
+        // monotone so a later tier never begins before an earlier one.
+        let mut acc = len;
+        for slot in starts.iter_mut().rev() {
+            acc = acc.min(*slot);
+            *slot = acc;
+        }
+        let to_slot = |v: u64| usize::try_from(v).expect("edge id exceeds usize");
+        let mut edge_endpoints = EndpointIndex::default();
+        edge_endpoints.prepare_tiers(starts.map(to_slot), to_slot(len));
+        for tensor in &relationship_matrices {
+            for (src, dst, edge_id) in tensor.iter_edges() {
+                edge_endpoints.set(edge_id, src, dst);
+            }
+        }
 
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
@@ -790,6 +830,11 @@ impl Graph {
             relationship_attrs,
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
+            node_labels_index: node_labels
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (l.as_str().to_string(), LabelId(i)))
+                .collect(),
             node_labels,
             relationship_types,
             cache: Arc::new(Mutex::new(LruCache::new(
@@ -890,6 +935,7 @@ impl Graph {
             node_indexer: self.node_indexer.clone(),
             edge_indexer: self.edge_indexer.clone(),
             node_labels: self.node_labels.clone(),
+            node_labels_index: self.node_labels_index.clone(),
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
             constraints: self.constraints.clone(),
@@ -999,33 +1045,41 @@ impl Graph {
         self.attrs_name.iter()
     }
 
+    /// Register `label`, or return the id it already has. The only writer of
+    /// `node_labels` and `node_labels_index`, so the two stay in step.
+    fn intern_label(
+        &mut self,
+        label: &Arc<String>,
+    ) -> LabelId {
+        if let Some(&id) = self.node_labels_index.get(label.as_str()) {
+            return id;
+        }
+        let id = LabelId(self.node_labels.len());
+        self.node_labels.push(label.clone());
+        self.node_labels_index
+            .insert(label.as_str().to_string(), id);
+        id
+    }
+
     pub fn get_label_id_mut(
         &mut self,
         label: &str,
     ) -> LabelId {
-        if let Some(pos) = self
-            .node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(LabelId)
-        {
-            return pos;
+        if let Some(id) = self.get_label_id(label) {
+            return id;
         }
 
-        self.node_labels.push(Arc::new(label.to_string()));
+        let id = self.intern_label(&Arc::new(label.to_string()));
         self.labels_matices
             .push(VersionedMatrix::<bool>::new(self.node_cap, self.node_cap));
-        LabelId(self.node_labels.len() - 1)
+        id
     }
 
     pub fn get_label_id(
         &self,
         label: &str,
     ) -> Option<LabelId> {
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(LabelId)
+        self.node_labels_index.get(label).copied()
     }
 
     pub fn get_type_id(
@@ -1175,28 +1229,20 @@ impl Graph {
         &self,
         label: &str,
     ) -> Option<&VersionedMatrix<bool>> {
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(|i| &self.labels_matices[i])
+        self.get_label_id(label)
+            .map(|id| &self.labels_matices[id.0])
     }
 
     fn get_label_matrix_mut(
         &mut self,
         label: &Arc<String>,
     ) -> &mut VersionedMatrix<bool> {
-        if !self.node_labels.contains(label) {
-            self.node_labels.push(label.clone());
-
+        let id = self.intern_label(label);
+        if id.0 == self.labels_matices.len() {
             let m = VersionedMatrix::<bool>::new(self.node_cap, self.node_cap);
-            self.labels_matices.insert(self.node_labels.len() - 1, m);
+            self.labels_matices.insert(id.0, m);
         }
-
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label.as_str())
-            .map(|i| &mut self.labels_matices[i])
-            .expect("label was just inserted")
+        &mut self.labels_matices[id.0]
     }
 
     fn get_relationship_matrix_mut(
@@ -2100,15 +2146,16 @@ impl Graph {
         // Reserve exactly: MVCC clones reset capacity to `len`, so amortized
         // doubling here would only leave ~2x slack behind, never save reallocs.
         let endpoints = Arc::make_mut(&mut self.edge_endpoints);
-        if let Some(&max_id) = rel_ids.iter().max() {
-            let needed = max_id as usize + 1;
-            if needed > endpoints.len() {
-                endpoints.reserve_exact(needed - endpoints.len());
-                endpoints.resize(needed, EDGE_NO_ENDPOINT);
-            }
+        // Size for the whole batch first: growing per edge is a reallocation
+        // per edge, since the index reserves exactly rather than doubling.
+        if let (Some(&max_id), Some(max_endpoint)) = (
+            rel_ids.iter().max(),
+            srcs.iter().chain(dsts.iter()).max().copied(),
+        ) {
+            endpoints.prepare(max_id, max_endpoint);
         }
         for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
-            endpoints[id as usize] = compound_key(src, dst);
+            endpoints.set(id, src, dst);
         }
 
         self.adjacancy_matrix
@@ -2665,10 +2712,7 @@ impl Graph {
         &self,
         edge_id: u64,
     ) -> Option<(u64, u64)> {
-        self.edge_endpoints
-            .get(edge_id as usize)
-            .filter(|&&key| key != EDGE_NO_ENDPOINT)
-            .map(|&key| (key >> 32, key & 0xFFFF_FFFF))
+        self.edge_endpoints.get(edge_id)
     }
 
     /// Clear an edge's endpoint slot in the reverse index (on deletion).
@@ -2677,9 +2721,7 @@ impl Graph {
         &mut self,
         edge_id: u64,
     ) {
-        if let Some(slot) = Arc::make_mut(&mut self.edge_endpoints).get_mut(edge_id as usize) {
-            *slot = EDGE_NO_ENDPOINT;
-        }
+        Arc::make_mut(&mut self.edge_endpoints).clear(edge_id);
     }
 
     /// Returns (src, dst) for an edge via the maintained reverse index.
@@ -3968,12 +4010,12 @@ impl Graph {
 
         // --- edge block storage ---
         // Mirrors the node side: the matrix recording each edge's existence and
-        // type, plus the graph-wide edge_id → compound_key reverse index (a dense
-        // vector holding one u64 per edge slot).
+        // type, plus the graph-wide edge_id → endpoint reverse index (one slot
+        // per edge id, 4, 6, 8 or 16 bytes wide depending on the tier).
         let edge_block_storage_sz: usize = self.relationship_type_matrix.memory_usage()
             + self.relationship_attrs.structural_memory_usage()
             + self.deleted_relationships.serialized_size()
-            + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
+            + self.edge_endpoints.memory_usage();
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();

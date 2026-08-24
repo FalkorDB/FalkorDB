@@ -83,8 +83,8 @@
 //!   2. **Reads are where it loses.** A sentinel read is 4.4x an inline read
 //!      (2,502 vs 566), while the C container is only 1.4x (751 vs 553) — a
 //!      tagged pointer is one dereference, whereas reading `me` is a second
-//!      GraphBLAS point lookup into a `GrB_INDEX_MAX`-square hypersparse
-//!      matrix. This is the cost the always-materialised design would pay on
+//!      GraphBLAS point lookup into a hypersparse matrix of `ME_DIM` rows.
+//!      This is the cost the always-materialised design would pay on
 //!      *every* pair, and it is the strongest argument against it.
 //!   3. **Promotion is 4.2x cheaper here** (2,735 vs 11,548), because a
 //!      promotion is two `me` writes rather than a `GrB_Vector_new` +
@@ -122,7 +122,7 @@ use std::time::Instant;
 
 use super::instr::read_instr;
 use super::matrix::Matrix;
-use super::tensor::{GrB_INDEX_MAX, Tensor, compound_key};
+use super::tensor::{GrB_INDEX_MAX, ME_DIM, ME_NARROW_NCOLS, Tensor, compound_key};
 use super::test_init::ensure_init;
 use super::versioned_matrix::VersionedMatrix;
 
@@ -217,7 +217,7 @@ fn built(
         "fixture not committed: the {PAIRS} pairs did not fold into the base"
     );
     assert_eq!(
-        t.edge_versioned().nvals(),
+        t.edge_versioned_block_0().nvals(),
         multi * k,
         "fixture's `me` does not hold exactly the multi pairs' ids"
     );
@@ -278,7 +278,7 @@ fn built_diag(k: u64) -> Tensor {
     t.flush();
     t.wait();
     assert_eq!(t.fwd_m().nvals(), XN, "diagonal fixture not committed");
-    assert_eq!(t.edge_versioned().nvals(), if k == 1 { 0 } else { XN * k });
+    assert_eq!(t.edge_versioned_block_0().nvals(), if k == 1 { 0 } else { XN * k });
     t
 }
 
@@ -319,12 +319,12 @@ fn tensor_cost_c_comparable() {
             t.memory_usage(),
             t.memory_usage() as f64 / edges as f64,
             t.memory_usage() as f64 / XN as f64,
-            t.edge_versioned().memory_usage(),
-            t.edge_versioned().nvals(),
-            if t.edge_versioned().nvals() == 0 {
+            t.edge_versioned_block_0().memory_usage(),
+            t.edge_versioned_block_0().nvals(),
+            if t.edge_versioned_block_0().nvals() == 0 {
                 0.0
             } else {
-                t.edge_versioned().memory_usage() as f64 / t.edge_versioned().nvals() as f64
+                t.edge_versioned_block_0().memory_usage() as f64 / t.edge_versioned_block_0().nvals() as f64
             }
         );
         println!("{:>34}  {:>12}  {:>10}", "operation", "instr/op", "ns/op");
@@ -456,7 +456,7 @@ fn tensor_cost_c_comparable() {
             let ids: Vec<u64> = (2 * XN..3 * XN).collect();
             let c = measure(XN, || t.set_all_from_slices(&diag, &diag, &ids));
             t.wait();
-            assert_eq!(t.edge_versioned().nvals(), 3 * XN);
+            assert_eq!(t.edge_versioned_block_0().nvals(), 3 * XN);
             println!(
                 "{:>34}  {:>12}  {:>10.1}",
                 "add-3rd (control)",
@@ -469,7 +469,7 @@ fn tensor_cost_c_comparable() {
             let ids: Vec<u64> = (XN..2 * XN).collect();
             let c = measure(XN, || t.set_all_from_slices(&diag, &diag, &ids));
             t.wait();
-            assert_eq!(t.edge_versioned().nvals(), 2 * XN);
+            assert_eq!(t.edge_versioned_block_0().nvals(), 2 * XN);
             println!(
                 "{:>34}  {:>12}  {:>10.1}",
                 "add-2nd (promote)",
@@ -487,7 +487,7 @@ fn tensor_cost_c_comparable() {
             std::hint::black_box(t.remove_all(&rels));
         });
         t.wait();
-        assert_eq!(t.edge_versioned().nvals(), 0);
+        assert_eq!(t.edge_versioned_block_0().nvals(), 0);
         println!(
             "{:>34}  {:>12}  {:>10.1}",
             "del-2nd (demote, batch of XN)",
@@ -640,7 +640,7 @@ fn tensor_cost_promote() {
             let c = measure(PAIRS, || t.set_all_from_slices(&srcs, &dsts, &ids));
             t.wait();
             assert_eq!(
-                t.edge_versioned().nvals(),
+                t.edge_versioned_block_0().nvals(),
                 3 * PAIRS,
                 "the 3rd edge of every pair did not land in `me`"
             );
@@ -665,7 +665,7 @@ fn tensor_cost_promote() {
             let ids: Vec<u64> = (PAIRS..2 * PAIRS).collect();
             let c = measure(PAIRS, || t.set_all_from_slices(&fresh, &dsts, &ids));
             t.wait();
-            assert_eq!(t.edge_versioned().nvals(), 0, "control promoted something");
+            assert_eq!(t.edge_versioned_block_0().nvals(), 0, "control promoted something");
             assert_eq!(
                 t.fwd_dp().nvals(),
                 PAIRS,
@@ -686,7 +686,7 @@ fn tensor_cost_promote() {
             let c = measure(PAIRS, || t.set_all_from_slices(&srcs, &dsts, &ids));
             t.wait();
             assert_eq!(
-                t.edge_versioned().nvals(),
+                t.edge_versioned_block_0().nvals(),
                 2 * PAIRS,
                 "promotion did not move both ids of every pair into `me`"
             );
@@ -717,7 +717,7 @@ fn tensor_cost_promote() {
             }
             let c = measure(PAIRS, || t.set_all_from_slices(&b_srcs, &b_dsts, &b_ids));
             t.wait();
-            assert_eq!(t.edge_versioned().nvals(), 2 * PAIRS);
+            assert_eq!(t.edge_versioned_block_0().nvals(), 2 * PAIRS);
             println!(
                 "{:>20}  {:>12}  {:>10.4}",
                 "batch-2 (per pair)",
@@ -829,7 +829,7 @@ fn tensor_cost_demote() {
                 });
                 t.wait();
                 assert_eq!(
-                    t.edge_versioned().nvals(),
+                    t.edge_versioned_block_0().nvals(),
                     2 * (multi - n),
                     "demotion left ids in `me` for the pairs it touched"
                 );
@@ -922,8 +922,9 @@ fn tensor_cost_iteration() {
 ///    per pair varied over 2, 4, 8, 16. Reports `me`'s own `memory_usage` and
 ///    bytes/id. This is a *measurement* of this design's auxiliary matrix.
 /// 2. **A standalone `me`-shaped matrix holding one id per pair.** This is the
-///    geometry the always-materialised design would have — `GrB_INDEX_MAX`
-///    square, one `(compound_key(src,dst), edge_id)` entry per pair, so one
+///    geometry the always-materialised design would have — `ME_DIM` rows by
+///    `ME_NARROW_NCOLS` columns, the shape #2579 gave `me`, one
+///    `(compound_key(src,dst).1, edge_id)` entry per pair, so one
 ///    entry per row, the least amortised regime there is. Constructed directly
 ///    rather than through a tensor, because no tensor state has one id per `me`
 ///    row: promotion moves at least two. It is a measurement of the
@@ -951,8 +952,8 @@ fn tensor_cost_space() {
     );
     for k in [1u64, 2, 4, 8, 16] {
         let t = built(if k == 1 { 0 } else { PAIRS }, k);
-        let me = t.edge_versioned().nvals();
-        let me_bytes = t.edge_versioned().memory_usage();
+        let me = t.edge_versioned_block_0().nvals();
+        let me_bytes = t.edge_versioned_block_0().memory_usage();
         let per = if me == 0 {
             f64::NAN
         } else {
@@ -969,11 +970,13 @@ fn tensor_cost_space() {
     }
 
     // One id per `me` row: the always-materialised geometry.
-    let mut aux = Matrix::<bool>::new(GrB_INDEX_MAX, GrB_INDEX_MAX);
+    let mut aux = Matrix::<bool>::new(ME_DIM, ME_NARROW_NCOLS);
     let keys: Vec<u64> = (0..PAIRS)
         .map(|i| {
             let (s, d) = pair(i);
-            compound_key(s, d)
+            // Every fixture pair is within `BLOCK_SHIFT` bits per axis, so the
+            // block is `ME_BLOCK_0` and the row half is the whole key.
+            compound_key(s, d).1
         })
         .collect();
     let ids: Vec<u64> = (0..PAIRS).collect();
@@ -1016,11 +1019,11 @@ fn tensor_cost_space() {
     println!(
         "\nsimple graph (1 edge/pair): tensor {} bytes, of which `me` {} bytes ({} ids)",
         simple.memory_usage(),
-        simple.edge_versioned().memory_usage(),
-        simple.edge_versioned().nvals()
+        simple.edge_versioned_block_0().memory_usage(),
+        simple.edge_versioned_block_0().nvals()
     );
     let model = adj_bool.memory_usage() + aux_bytes;
-    let measured_inline = adj_u64.memory_usage() + simple.edge_versioned().memory_usage();
+    let measured_inline = adj_u64.memory_usage() + simple.edge_versioned_block_0().memory_usage();
     println!(
         "MODEL (not a measurement): always-materialised simple graph = BOOL adjacency {} + aux {} = {} bytes; \
          inline-first equivalent = UINT64 adjacency {} + empty me {} = {} bytes; ratio {:.2}x",
@@ -1028,13 +1031,13 @@ fn tensor_cost_space() {
         aux_bytes,
         model,
         adj_u64.memory_usage(),
-        simple.edge_versioned().memory_usage(),
+        simple.edge_versioned_block_0().memory_usage(),
         measured_inline,
         model as f64 / measured_inline as f64,
     );
     // Guard the fixture the model rests on: a simple graph really does leave
     // `me` empty, so its whole auxiliary cost is what the model adds back.
-    assert_eq!(simple.edge_versioned().nvals(), 0);
+    assert_eq!(simple.edge_versioned_block_0().nvals(), 0);
 }
 
 /// The entry points the paper listed as unmeasured on the Rust side, plus the

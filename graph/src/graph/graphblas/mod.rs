@@ -69,6 +69,8 @@
 #![allow(clippy::derive_partial_eq_without_eq)]
 
 #[cfg(test)]
+mod block_scaling_bench;
+#[cfg(test)]
 mod fold_cost_bench;
 #[cfg(test)]
 mod issue_2430_bench;
@@ -84,12 +86,10 @@ mod tensor_cost_bench;
 pub mod vector;
 pub mod versioned_matrix;
 
-/// The instruction counter every bench in this directory measures with.
+/// The instruction counter the benches in this directory measure with.
 ///
-/// One declaration, shared, for the same reason as [`test_init`]: three copies
-/// of an `extern "C"` block that disagreed on a parameter type is a warning the
-/// compiler is right to raise, and a bench that reads a different field offset
-/// than the others would be worse than a warning.
+/// One declaration, shared, for the same reason as [`test_init`]: benches that
+/// disagreed on a field offset would report numbers that cannot be compared.
 #[cfg(test)]
 pub(crate) mod instr {
     /// Running instruction total for this process, or `None` where the platform
@@ -98,9 +98,8 @@ pub(crate) mod instr {
     /// macOS exposes `proc_pid_rusage(RUSAGE_INFO_V4)` to any caller for its own
     /// pid with no privileges; `ri_instructions` is `u64` field 29 of the struct
     /// body, which starts after the 16-byte `ri_uuid`. Same offsets as
-    /// `bench/src/falkorbench/counters.py::read_rusage`, which is where the
-    /// engine-level numbers these benches are compared against come from —
-    /// keeping them identical is the point.
+    /// `bench/src/falkorbench/counters.py::read_rusage`, so engine-level and
+    /// data-structure-level numbers are on one scale.
     #[cfg(target_os = "macos")]
     pub(crate) fn read_instr() -> Option<u64> {
         const RUSAGE_INFO_V4: i32 = 4;

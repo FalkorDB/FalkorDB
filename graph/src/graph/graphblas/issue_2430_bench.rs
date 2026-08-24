@@ -127,7 +127,7 @@ fn issue_2430_sparsity() {
             t.fwd_m().sparsity_status(),
             t.fwd_dp().sparsity_status(),
             t.fwd_dm().sparsity_status(),
-            t.edge_versioned().m().sparsity_status(),
+            t.edge_versioned_block_0().m().sparsity_status(),
         );
     }
 }
@@ -226,9 +226,9 @@ fn issue_2430_build_path() {
                 t.fwd_m().nvals(),
                 t.fwd_dp().nvals(),
                 t.fwd_dm().nvals(),
-                t.edge_versioned().m().nvals(),
-                t.edge_versioned().dp().nvals(),
-                t.edge_versioned().dm().nvals(),
+                t.edge_versioned_block_0().m().nvals(),
+                t.edge_versioned_block_0().dp().nvals(),
+                t.edge_versioned_block_0().dm().nvals(),
             )
         };
         // The candidate: `Matrix::wait` short-circuits on `has_pending`, which
@@ -272,7 +272,7 @@ fn issue_2430_one_pending_id() {
     for pairs in [11_000u64, 41_000, 121_000] {
         let t = built(pairs, PROBES.min(pairs));
         assert_eq!(
-            t.edge_versioned().dp().nvals(),
+            t.edge_versioned_block_0().dp().nvals(),
             0,
             "fixture should start folded"
         );
@@ -287,7 +287,7 @@ fn issue_2430_one_pending_id() {
         let (fs, fd) = (i % ROWS, (i * 7 + 3) % ROWS);
         dirty.set_all_from_slices(&[fs], &[fd], &[u32::MAX as u64]);
         dirty.wait();
-        let pending = dirty.edge_versioned().dp().nvals();
+        let pending = dirty.edge_versioned_block_0().dp().nvals();
         let (after, _) = probe_cost(&dirty);
 
         println!(
@@ -296,7 +296,7 @@ fn issue_2430_one_pending_id() {
             before,
             after,
             after - before,
-            dirty.edge_versioned().m().nvals(),
+            dirty.edge_versioned_block_0().m().nvals(),
         );
     }
 }
