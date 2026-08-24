@@ -75,6 +75,8 @@ mod fold_cost_bench;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;
+#[cfg(test)]
+mod me_delta_bench;
 pub mod serialization;
 pub mod tensor;
 pub mod vector;
