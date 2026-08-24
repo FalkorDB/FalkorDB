@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__select_bitmap__00131e1ea__LG_MF_Prune32.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -103,7 +103,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x34d48f3da13beb2c ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = GB_LG_MF_Prune32_USER_DEFN ;
     defn [1] = NULL ;
     defn [2] = GB_LG_MF_resultTuple32_USER_DEFN ;
