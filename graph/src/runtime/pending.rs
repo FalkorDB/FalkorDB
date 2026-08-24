@@ -450,19 +450,35 @@ impl Pending {
         }
     }
 
-    /// True when this query has added or removed labels on `id`, so the
-    /// committed label matrix alone cannot answer "does it have label L".
+    /// What this query has staged about `label` on `id`: `Some(true)` if it was
+    /// added, `Some(false)` if it was removed, `None` if this query says nothing
+    /// about it and the committed label matrix is the answer.
     ///
-    /// Lets a label *test* skip materializing the node's whole label set in the
-    /// common case — a read query with no label mutations — while keeping
-    /// [`Self::update_node_labels`] as the answer whenever the pending state
-    /// actually bears on it.
-    pub fn has_label_overrides(
+    /// The precedence is [`Self::update_node_labels`]'s, which applies the adds
+    /// and then the removals, so a removal wins — the two must agree, since they
+    /// answer the same question for the same node.
+    pub fn node_has_label(
         &self,
         id: NodeId,
-    ) -> bool {
+        label: LabelId,
+    ) -> Option<bool> {
         let raw_id: u64 = id.into();
-        self.set_labels.contains_key(&raw_id) || self.remove_labels.contains_key(&raw_id)
+        let label_id = usize::from(label) as u64;
+        if self
+            .remove_labels
+            .get(&raw_id)
+            .is_some_and(|removed| removed.contains(&label_id))
+        {
+            return Some(false);
+        }
+        if self
+            .set_labels
+            .get(&raw_id)
+            .is_some_and(|set| set.contains(&label_id))
+        {
+            return Some(true);
+        }
+        None
     }
 
     pub fn update_node_labels(

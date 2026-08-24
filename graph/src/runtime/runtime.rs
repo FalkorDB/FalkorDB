@@ -1659,9 +1659,14 @@ impl<'a> Runtime<'a> {
         labels.iter().map(|l| g.get_label_by_id(*l)).collect()
     }
 
-    /// Test whether `id` carries every label in `required`, without building
-    /// the node's label set. `None` means "cannot answer from the label matrix
-    /// alone" — the caller must fall back to [`Self::get_node_labels`].
+    /// Whether `id` carries the label named `name` — the whole answer, for
+    /// every node this query can see, without building the node's label set.
+    ///
+    /// This is the single place a label test is decided, and it decides it in
+    /// the same order [`Self::get_node_labels`] does: a node deleted by this
+    /// query answers from the labels captured at the delete, a label this query
+    /// staged answers from the staged state, and everything else is one bit of
+    /// the committed label matrix.
     ///
     /// `n:Person` reaches the runtime as a `hasLabels` call, and answering it
     /// through `get_node_labels` costs two `OrderSet`s and an `Arc<String>`
@@ -1670,35 +1675,26 @@ impl<'a> Runtime<'a> {
     /// 48.9M instructions over 15k nodes — 3.3k a row — against 22.4M on the C
     /// engine, while the same scan filtering on a property (`n.id < 5`) costs
     /// 2.0M. A label test is one bit in the label matrix; this reads that bit.
-    ///
-    /// Falls back when a label was added or removed on this node in this query,
-    /// or when the node is pending-deleted, because then the committed matrix is
-    /// not the whole truth.
-    pub fn node_has_all_labels(
+    pub fn node_has_label(
         &self,
         id: NodeId,
-        required: &[Value],
-    ) -> Option<bool> {
-        if self.deleted_nodes.borrow().contains_key(&id)
-            || self.pending.borrow().has_label_overrides(id)
-        {
-            return None;
-        }
+        name: &str,
+    ) -> bool {
         let g = self.g.borrow();
-        for label in required {
-            let Value::String(name) = label else {
-                return None;
-            };
-            // An unknown label cannot be on any node, and resolving it is a walk
-            // over the label names — a handful of entries, no allocation.
-            let Some(label_id) = g.get_label_id(name) else {
-                return Some(false);
-            };
-            if !g.node_has_label_id(id, label_id) {
-                return Some(false);
-            }
+        // A name the graph has never registered is on no node at all, not even
+        // one this query just created: `CREATE (:L)` registers `L` before it
+        // stages the label. Resolving a known name is a walk over the label
+        // names — a handful of entries, no allocation.
+        let Some(label_id) = g.get_label_id(name) else {
+            return false;
+        };
+        if let Some(deleted) = self.deleted_nodes.borrow().get(&id) {
+            return deleted.labels.contains(&label_id);
         }
-        Some(true)
+        self.pending
+            .borrow()
+            .node_has_label(id, label_id)
+            .unwrap_or_else(|| g.node_has_label_id(id, label_id))
     }
 
     pub fn get_node_attrs(
