@@ -80,13 +80,17 @@ pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
 /// GIL-guarded because the query hot path reads it off the main thread, and
 /// because C lets `GRAPH.CONFIG SET CMD_INFO yes|no` flip it at runtime.
 pub static CONFIGURATION_CMD_INFO: AtomicBool = AtomicBool::new(true);
-/// Cap on the telemetry stream's length, used as the XADD `MAXLEN`.
+/// Cap on the telemetry stream's length, applied by the flusher's stream trim.
+/// 0 means "keep nothing", the way C's unconditional `StreamTrimByLength` does.
 pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(MAX_INFO_QUERIES_CAP);
+/// Whether graph teardown may happen off the calling thread. Settable at run-time as
+/// in C, but not yet read: this engine always frees off-thread (see
+/// `graph_core::graph_free`).
+pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
 
 // ── Read-only runtime configs ──
 
 pub static OMP_THREAD_COUNT: AtomicI64 = AtomicI64::new(0);
-pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
 pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
 
 /// Highest accepted `MAX_INFO_QUERIES`, and its default. Larger values are

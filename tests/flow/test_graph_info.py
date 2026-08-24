@@ -488,26 +488,41 @@ class testGraphInfo():
     def test08_no_sections_reports_everything(self):
         """a bare GRAPH.INFO reports every section, as the C engine does"""
 
+        def shape(res):
+            """The labels and the shape of each section, but not the counters.
+
+               Comparing two replies field for field would compare the object-pool
+               counters too, and those move on their own: a graph displaced by
+               `register_graph` or freed by `graph_free` is dropped on a background
+               thread, and the interned strings it releases change `Unique Objects in
+               Pool` between one call and the next."""
+            return [res[0], res[2], res[4],
+                    len(res), type(res[1]), type(res[3]),
+                    [entry[0] for entry in res[5]]]
+
         res = self.conn.execute_command("GRAPH.INFO")
 
         # same sections, in the same order, as asking for all of them
-        self.env.assertEqual(res,
-                             self.conn.execute_command("GRAPH.INFO",
-                                                       "RunningQueries",
-                                                       "WaitingQueries",
-                                                       "ObjectPool"))
+        self.env.assertEqual(shape(res),
+                             shape(self.conn.execute_command("GRAPH.INFO",
+                                                             "RunningQueries",
+                                                             "WaitingQueries",
+                                                             "ObjectPool")))
 
         self.env.assertEqual(len(res), 6)
         self.env.assertEqual(res[0], "# Running queries")
         self.env.assertEqual(res[2], "# Waiting queries")
         self.env.assertEqual(res[4], "Object Pool")
 
-        # an unknown section is still rejected
-        try:
-            self.conn.execute_command("GRAPH.INFO", "NoSuchSection")
-            self.env.assertTrue(False)
-        except redis.exceptions.ResponseError as e:
-            self.env.assertContains("Unknown section", str(e))
+        # an unknown section is ignored, and the recognised one still answers —
+        # C's `_handle_sections` matches what it knows and skips the rest
+        res = self.conn.execute_command("GRAPH.INFO", "RunningQueries", "NoSuchSection")
+        self.env.assertEqual(len(res), 2)
+        self.env.assertEqual(res[0], "# Running queries")
+
+        # nothing recognised at all: C replies with a string, not an error
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.INFO", "NoSuchSection"), "no section found")
 
     def test09_cmd_info_runtime_toggle(self):
         """CMD_INFO is settable at run-time, and gates query logging"""
@@ -526,6 +541,19 @@ class testGraphInfo():
         self.env.assertEqual(
             self.conn.execute_command("GRAPH.CONFIG", "SET", "CMD_INFO", "no"), "OK")
         self.env.assertEqual(self.db.config_get("CMD_INFO"), 0)
+
+        # Take the baseline only once the stream has stopped growing. With logging off
+        # nothing new can be enqueued, so the stream reaches a fixed point — but an
+        # entry enqueued while it was still on (this class runs queries from threads
+        # two tests earlier) can still be in flight, and reading `n` before it lands
+        # blames the arrival on the config that was already off. Observed as a rare
+        # `2 == 1` here under a parallel run.
+        def settled():
+            before = self.conn.xlen(stream)
+            time.sleep(0.1)
+            return before == self.conn.xlen(stream)
+
+        pollUntil(settled, "the telemetry stream to stop growing")
 
         n = self.conn.xlen(stream)
         self.graph.query("RETURN 2")
@@ -553,6 +581,39 @@ class testGraphInfo():
             self.env.assertContains("Failed to set config value CMD_INFO to maybe", str(e))
         self.env.assertEqual(self.db.config_get("CMD_INFO"), 1)
 
+    def test10_max_info_queries_zero_keeps_nothing(self):
+        """MAX_INFO_QUERIES 0 bounds the stream, as C's unconditional trim does.
+
+           0 is accepted by both `GRAPH.CONFIG SET` and the module argument, and C
+           passes it straight to `RedisModule_StreamTrimByLength`. Skipping the trim
+           for 0 turned the one value that means "keep nothing" into "keep
+           everything": 2000 queries left all 2000 entries in the stream, with no
+           setting left that could bound it."""
+
+        stream = StreamName(self.graph)
+        self.conn.delete(stream)
+
+        # restored rather than reset to the default, so this test cannot quietly
+        # change the cap for whatever runs after it
+        previous = self.db.config_get("MAX_INFO_QUERIES")
+
+        self.env.assertEqual(
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", "0"), "OK")
+        self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 0)
+
+        try:
+            for _ in range(500):
+                self.graph.query("RETURN 1")
+            time.sleep(0.5)   # well past the flusher's window
+
+            # approximate trimming works in whole listpack nodes, so some of the last
+            # entries can survive; what must not survive is all 500 of them
+            xlen = self.conn.xlen(stream) if self.conn.exists(stream) else 0
+            self.env.assertLess(xlen, 200)
+        finally:
+            self.conn.execute_command("GRAPH.CONFIG", "SET", "MAX_INFO_QUERIES", str(previous))
+            self.conn.delete(stream)
+
 class testGraphInfoStaleEntry():
     """A queued telemetry entry belongs to the graph that produced it, not to that
        graph's name.
@@ -564,7 +625,11 @@ class testGraphInfoStaleEntry():
        key-API write does not replicate, which is what made
        `test_replication_states` fail: it compares master and replica keyspaces.
        The C engine cannot get this wrong because its queries log is owned by the
-       GraphContext and is freed with it."""
+       GraphContext and is freed with it.
+
+       The corollary is that a graph which merely *moved* keeps its entries: they are
+       re-addressed to the key it answers to at write time, which is C's behaviour
+       too."""
 
     def __init__(self):
         self.env, self.db = Env()
@@ -582,21 +647,54 @@ class testGraphInfoStaleEntry():
         keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
         self.env.assertEqual(keys, ["stale"])
 
-    def test02_stale_entry_not_written_under_a_renamed_key(self):
+    def test02_entry_follows_a_renamed_graph(self):
         """The other half: same graph, different name.
 
            A `RENAME` re-keys the graph and deletes the stream of the old key, so a
-           still-queued entry naming that key must not recreate it. The graph itself
-           is very much alive, which is why liveness alone is not the question —
-           the entry has to belong to the graph registered under *its* name."""
-        self.conn.flushall()
-        g = self.db.select_graph("before")
-        g.query("CREATE (:N {v: 1})")          # queues an entry naming "before"
-        self.conn.rename("before", "after")    # deletes telemetry{before}
-        time.sleep(1)
-        self.env.assertEqual(self.conn.type("telemetry{before}"), "none")
-        keys = sorted(k.decode() if isinstance(k, bytes) else k for k in self.conn.keys("*"))
-        self.env.assertEqual(keys, ["after"])
+           still-queued entry naming that key must not recreate it — it belongs to the
+           graph, which now lives at the new key, so it is written there. That is what
+           C does: its cron task takes the stream name from the `GraphContext`, and
+           `GraphContext_Rename` deletes the old stream and rebuilds that name.
+           Dropping the entry instead loses every query in flight across a blue/green
+           key swap.
+
+           The query and the `RENAME` are pipelined, because "in flight" is a race the
+           test has to win: the entry is written a linger window (5ms) after the query
+           finishes, so a client round trip in between can lose it — the entry then
+           lands in telemetry{before} and the rename deletes it, leaving nothing to
+           follow. Pipelining removes the round trip, leaving only the microseconds
+           Redis takes to unblock the client, and the attempt is retried on the rare
+           occasion that is not enough. The invariant that holds either way — that the
+           stream the rename deleted stays deleted — is asserted on every attempt."""
+
+        attempts = 20
+        for attempt in range(attempts):
+            self.conn.flushall()
+            before, after = f"before{attempt}", f"after{attempt}"
+
+            pipe = self.conn.pipeline(transaction=False)
+            pipe.execute_command("GRAPH.QUERY", before, "CREATE (:N {v: 1})")
+            pipe.rename(before, after)
+            pipe.execute()
+
+            # well past the flusher's window: whatever was going to be written, was
+            time.sleep(0.5)
+
+            # the stream the rename deleted stays deleted, whoever won the race
+            self.env.assertEqual(self.conn.type(f"telemetry{{{before}}}"), "none")
+
+            keys = sorted(k.decode() if isinstance(k, bytes) else k
+                          for k in self.conn.keys("*"))
+            if keys == [after, f"telemetry{{{after}}}"]:
+                # the entry was still queued at the rename and followed the graph
+                self.env.assertEqual(self.conn.xlen(f"telemetry{{{after}}}"), 1)
+                return
+            # the flusher got there first, so there was nothing in flight to carry
+            self.env.assertEqual(keys, [after])
+
+        raise AssertionError(
+            f"in {attempts} attempts the flusher was never still holding an entry when "
+            "the rename landed, so the behaviour under test was never exercised")
 
 class testGraphInfoCmdInfoDisabled():
     """`CMD_INFO no` at *load time* must stop logging finished queries.
@@ -645,6 +743,93 @@ class testGraphInfoCmdInfoDisabled():
         time.sleep(1)
         self.env.assertEqual(self.conn.type(stream), "none")
         self.env.assertEqual(self.conn.xlen(stream), 0)
+
+class testGraphInfoShutdownUnderLoad():
+    """`SHUTDOWN` must not hang because the telemetry flusher is behind.
+
+    `shutdown_flusher_thread` drops the sender and then joins the flusher from the
+    main thread, which holds the module GIL for the whole shutdown event callback.
+    So the flusher must never park on the GIL after that point: it has to notice the
+    disconnect and leave without writing.
+
+    Noticing it means *asking*. `drain_queued` stops calling `try_recv` the moment the
+    batch reaches `FLUSH_BATCH_MAX`, and crossfire reports `Disconnected` only when the
+    channel is empty as well as closed — so with a backlog the flusher used to walk
+    past its `if disconnected` guard straight into a blocking `hold_gil()` and park
+    there forever, main thread waiting on it in `pthread_join`. The two halves of
+    #2554 interact to produce exactly that: skipping the linger when a full batch is
+    already queued is what removed the last observation of the disconnect.
+
+    The pipelined burst is what creates the backlog — it drives the queue past
+    `FLUSH_BATCH_MAX` so every drain exits full rather than empty.
+
+    Asserted here is only that the process *terminates*, not that it exits zero: the
+    module's shutdown handler also tears down RediSearch, which is beyond what this
+    test is pinning. A hang is what the regression looked like.
+    """
+
+    def __init__(self):
+        # The shutdown handler is only subscribed when RS_GLOBAL_DTORS is set (see
+        # module_init.rs), i.e. the sanitizer/valgrind runs — without it nothing calls
+        # `shutdown_flusher_thread` and there is no deadlock to have. RLTest snapshots
+        # os.environ when it builds the runner, so this has to be set before Env(),
+        # and is put back straight after so no later env inherits it.
+        saved = os.environ.get('RS_GLOBAL_DTORS')
+        os.environ['RS_GLOBAL_DTORS'] = '1'
+        try:
+            # A moduleArgs value distinct from every other class in this file, so
+            # RLTest starts a fresh server for it rather than reusing one that was
+            # spawned without RS_GLOBAL_DTORS.
+            self.env, self.db = Env(moduleArgs="MAX_INFO_QUERIES 100000")
+        finally:
+            if saved is None:
+                os.environ.pop('RS_GLOBAL_DTORS', None)
+            else:
+                os.environ['RS_GLOBAL_DTORS'] = saved
+        self.conn = self.env.getConnection()
+
+    def test01_shutdown_with_a_backlogged_flusher(self):
+        # Only meaningful when RLTest owns the server process. In the CI image mode
+        # (FALKORDB_TEST_IMAGE) the module runs in a container this test cannot signal
+        # or reap, so there is nothing here to observe.
+        proc = getattr(self.env.envRunner, 'masterProcess', None)
+        if proc is None:
+            self.env.skip()
+            return
+
+        # Pipelined so the entries arrive far faster than the flusher's ceiling of one
+        # FLUSH_BATCH_MAX (256) per FLUSH_LINGER (5ms); a round trip per query would
+        # keep the queue empty and never reach the state under test.
+        for _ in range(8):
+            pipe = self.conn.pipeline(transaction=False)
+            for i in range(2000):
+                pipe.execute_command("GRAPH.QUERY", "shutdownload", f"RETURN {i}")
+            pipe.execute()
+
+        # Straight into the shutdown, with the queue still backlogged. On the way out
+        # the server never replies to this — it either goes away mid-command or, when
+        # the bug is present, stops answering entirely — so every outcome here is an
+        # exception, and the verdict is taken from the process below, not from this.
+        try:
+            self.conn.execute_command("SHUTDOWN", "NOSAVE")
+        except Exception:
+            pass
+
+        deadline = time.time() + 30
+        while time.time() < deadline and proc.poll() is None:
+            time.sleep(0.1)
+        alive = proc.poll() is None
+        if alive:
+            proc.kill()
+        self.env.assertFalse(
+            alive,
+            message="server still running 30s after SHUTDOWN NOSAVE: the telemetry "
+                    "flusher parked on the GIL while the main thread joined it",
+        )
+        # The server is gone; keep RLTest from trying to talk to it on the way out.
+        self.env.envRunner.masterProcess = None
+        self.env.envRunner.envIsUp = False
+        self.env.envRunner.envIsHealthy = False
 
 #class testGraphInfoReplication():
 #    def __init__(self):
