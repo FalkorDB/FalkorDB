@@ -105,16 +105,21 @@ enum KeyExprKind {
 enum AggInputKind {
     /// Simple variable: `sum(x)`
     Variable(Variable),
-    /// Property access: `sum(n.age)`
-    Property { var: Variable, attr: Arc<String> },
-    /// Any other expression: `sum(i * 3)`, `sum(n.age + 1)`, …
+    /// Any other expression, `sum(n.age)` and `sum(i * 3)` alike.
     ///
     /// The column is built by [`VectorEval`], so the whole input tree is
-    /// evaluated column at a time — one bulk attribute fetch and one pass per
-    /// operator — and the rest of the vectorized path (bulk key extraction,
-    /// the columnar accumulate loop) is kept. Falling back to
+    /// evaluated column at a time — a bare `n.age` is still one bulk attribute
+    /// fetch — and the rest of the vectorized path (bulk key extraction, the
+    /// columnar accumulate loop) is kept. Falling back to
     /// `consume_input_per_row` instead abandons those too and rebuilds a full
     /// owned `Row` per row.
+    ///
+    /// Property access used to be its own variant, reading the column through
+    /// a hand-rolled node/relationship lookup that answered `null` for every
+    /// other value. That is issue #2555: `collect(row.t)` over map rows
+    /// aggregated nothing at all, silently, while `collect(row['t'])` and
+    /// `collect(toUpper(row.t))` worked. Deferring to the one evaluator
+    /// removes the second implementation that could disagree.
     Computed {
         tree: QueryExpr<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -290,16 +295,13 @@ impl<'a> AggregateOp<'a> {
             let inner = distinct.child(0);
             let input = match inner.data() {
                 ExprIR::Variable(var) => AggInputKind::Variable(var.clone()),
-                ExprIR::Property(attr) => {
-                    if inner.num_children() != 1 {
+                ExprIR::Property(_) if inner.num_children() == 1 => {
+                    if !matches!(inner.child(0).data(), ExprIR::Variable(_)) {
                         return None;
                     }
-                    let ExprIR::Variable(var) = inner.child(0).data() else {
-                        return None;
-                    };
-                    AggInputKind::Property {
-                        var: var.clone(),
-                        attr: attr.clone(),
+                    AggInputKind::Computed {
+                        tree: tree.clone(),
+                        idx: inner.idx(),
                     }
                 }
                 _ => return None,
@@ -321,19 +323,6 @@ impl<'a> AggregateOp<'a> {
             let arg = root.child(0);
             match arg.data() {
                 ExprIR::Variable(var) => Some(AggInputKind::Variable(var.clone())),
-                ExprIR::Property(attr) => {
-                    if arg.num_children() != 1 {
-                        return None;
-                    }
-                    if let ExprIR::Variable(var) = arg.child(0).data() {
-                        Some(AggInputKind::Property {
-                            var: var.clone(),
-                            attr: attr.clone(),
-                        })
-                    } else {
-                        return None;
-                    }
-                }
                 ExprIR::Constant(
                     Value::Bool(true) | Value::Int(_) | Value::Float(_) | Value::String(_),
                 ) if func.name.eq_ignore_ascii_case("count") => {
@@ -661,47 +650,6 @@ impl<'a> AggregateOp<'a> {
                         .map(|&row| batch.value_at(var.id, row).unwrap_or(Value::Null))
                         .collect();
                     agg_columns.push(col);
-                }
-                Some(AggInputKind::Property { var, attr }) => {
-                    // `sum(r.prop)` over a *relationship* classifies as
-                    // `Property` exactly as a node one does, so both need a bulk
-                    // materializer. Without the relationship arm the batch used
-                    // to fail here and fall to `consume_batch_per_row`, which
-                    // calls `to_owned_row()` per row — a `Vec` of every column,
-                    // for every row. Measured at 1,260 instructions per edge on
-                    // `MATCH ()-[r:R]->() RETURN sum(r.k)`, which is why wrapping
-                    // the same property in any expression (`sum(r.k * 2)`) was
-                    // 40% *cheaper*: that classifies as `Computed` and stays on
-                    // this path.
-                    if let Some(node_ids) = batch.extract_node_ids(var.id) {
-                        let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
-                        agg_columns
-                            .push(runtime.materialize_node_property_values(&active_ids, attr));
-                    } else if let Some(rel_ids) = batch.extract_rel_ids(var.id) {
-                        let active_ids: Vec<_> = active.iter().map(|&i| rel_ids[i]).collect();
-                        agg_columns.push(
-                            runtime.materialize_relationship_property_values(&active_ids, attr),
-                        );
-                    } else {
-                        // Neither a node nor a relationship id column — e.g. a
-                        // `Values` column carrying entities past a `WITH`. Read
-                        // per row rather than failing the batch: one property
-                        // lookup per row is what the expression path pays, and
-                        // far less than an owned row per row.
-                        let mut col = Vec::with_capacity(active.len());
-                        for &row in active {
-                            col.push(match batch.value_at(var.id, row) {
-                                Some(Value::Relationship(rel)) => runtime
-                                    .get_relationship_attribute(rel, attr)
-                                    .unwrap_or(Value::Null),
-                                Some(Value::Node(id)) => {
-                                    runtime.get_node_attribute(id, attr).unwrap_or(Value::Null)
-                                }
-                                _ => Value::Null,
-                            });
-                        }
-                        agg_columns.push(col);
-                    }
                 }
                 Some(AggInputKind::Computed { tree, idx }) => {
                     // Evaluated columnarly: `sum(n.age * 3)` costs one bulk
