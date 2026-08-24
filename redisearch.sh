@@ -4,18 +4,26 @@ set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # RediSearch lives at deps/RediSearch as a git submodule, the same layout the C
-# engine uses on `master`. The committed gitlink is the source of truth for a
-# git checkout; REDISEARCH_REF below is the same commit spelled out for builds
-# that only have this script and no repository (the Docker toolchain images COPY
-# redisearch.sh alone, so bumping REDISEARCH_REF busts their cached
-# `RUN redisearch.sh` layer and keeps those builds reproducible).
+# engine uses on `master`. Like every submodule it is pinned to a COMMIT (the
+# gitlink, `160000 <sha>` in the tree) -- never to a branch. REDISEARCH_REF below
+# is that same commit spelled out for builds that have this script and no
+# repository: the Docker toolchain images COPY redisearch.sh alone, so this
+# file's content is also what busts their cached `RUN redisearch.sh` layer and
+# what `.github/workflows/rust-pr.yml`'s check-files matches to rebuild the
+# toolchain image.
+#
+# REDISEARCH_BRANCH is documentation only -- where new RediSearch work lands, so
+# you know what to fetch. Nothing resolves it at build time, and .gitmodules
+# deliberately carries no `branch` key: it would only be read by
+# `git submodule update --remote`, which moves the pin to a branch tip, i.e. the
+# one operation this pin exists to prevent.
 #
 # To move to a new RediSearch commit, do BOTH:
 #   git -C deps/RediSearch fetch origin && git -C deps/RediSearch checkout <sha>
 #   git add deps/RediSearch          # bump the gitlink
 #   ...and set REDISEARCH_REF=<sha> here
-# The two are checked against each other below, so a half-done bump fails loudly
-# instead of building a different RediSearch locally than in Docker.
+# `--check-pin` (below, and run in CI) fails when they disagree, so a half-done
+# bump cannot quietly build a different RediSearch in Docker than locally.
 REDISEARCH_BRANCH="falkordb/llapi-extensions-8.6"
 REDISEARCH_REF="ea1a6f40cbc959d13c63617b3a2e0ed6b8616037"
 REDISEARCH_DIR="$ROOT/deps/RediSearch"
@@ -29,9 +37,24 @@ fi
 
 if [ -n "$gitlink_ref" ] && [ "$gitlink_ref" != "$REDISEARCH_REF" ]; then
   echo "ERROR: deps/RediSearch gitlink ($gitlink_ref) != REDISEARCH_REF ($REDISEARCH_REF)." >&2
-  echo "       These must agree: the gitlink drives submodule builds, REDISEARCH_REF" >&2
-  echo "       drives the Docker toolchain images. Update REDISEARCH_REF in $0." >&2
+  echo "       These must agree: the gitlink is what a submodule checkout builds," >&2
+  echo "       REDISEARCH_REF is what the Docker toolchain images clone." >&2
+  echo "       Update REDISEARCH_REF in $0 (or re-point the gitlink)." >&2
   exit 1
+fi
+
+# `--check-pin` stops here: assert the two agree and exit, building nothing.
+# Linux CI builds run inside the prebuilt toolchain container and never execute
+# this script, so without a job that calls this the check would only ever fire
+# on a developer machine -- and a gitlink-only bump would go green while Docker
+# silently built the old REDISEARCH_REF.
+if [ "${1:-}" = "--check-pin" ]; then
+  if [ -z "$gitlink_ref" ]; then
+    echo "ERROR: --check-pin needs a git checkout with deps/RediSearch in the index." >&2
+    exit 1
+  fi
+  echo "deps/RediSearch pin OK: gitlink and REDISEARCH_REF both $REDISEARCH_REF"
+  exit 0
 fi
 
 if [ ! -d "$REDISEARCH_DIR/.git" ]; then
@@ -50,8 +73,8 @@ if [ ! -d "$REDISEARCH_DIR/.git" ]; then
   mkdir -p "$REDISEARCH_DIR"
   git init -q "$REDISEARCH_DIR"
   git -C "$REDISEARCH_DIR" remote add origin https://github.com/FalkorDB/RediSearch.git
-  # GitHub allows fetching a reachable SHA, so no branch fetch is needed. The
-  # branch name is recorded in .gitmodules (and REDISEARCH_BRANCH) for humans.
+  # GitHub allows fetching a reachable SHA, so no branch fetch is needed --
+  # which is also why .gitmodules needs no `branch` key (see the header).
   git -C "$REDISEARCH_DIR" fetch -q --depth 1 origin "$REDISEARCH_REF"
   git -C "$REDISEARCH_DIR" checkout -q FETCH_HEAD
   git -C "$REDISEARCH_DIR" submodule update --init --recursive --depth 1
