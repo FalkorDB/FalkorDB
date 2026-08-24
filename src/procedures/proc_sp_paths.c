@@ -16,6 +16,8 @@
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 #include "../algorithms/Dijkstra.h"
+#include "../algorithms/yen.h"
+#include "../algorithms/all_weighted_shortest_paths.h"
 
 #include <float.h>
 
@@ -462,6 +464,30 @@ static inline SIValue _get_value_or_default
 	return default_value ;
 }
 
+// sum costProp over a path's edges. cost isn't part of what the Dijkstra/Yen/
+// DAG fast paths optimize for -- it's a secondary attribute reported alongside
+// each path. returns 0 when no costProp was given, rather than defaulting
+// every edge to 1 and silently reporting the path length.
+static double _sum_path_cost
+(
+	const Path *p,
+	AttributeID cost_prop
+) {
+	if(cost_prop == ATTRIBUTE_ID_NONE) {
+		return 0;
+	}
+
+	double cost = 0;
+	uint edge_count = Path_EdgeCount((Path *)p);
+	for(uint i = 0; i < edge_count; i++) {
+		SIValue c = _get_value_or_default((GraphEntity *)Path_GetEdge((Path *)p, i),
+				cost_prop, SI_LongVal(1));
+		cost += SI_GET_NUMERIC(c);
+	}
+
+	return cost;
+}
+
 // predecessor of a node discovered by the BFS pre-pass in `_find_bound_path`
 typedef struct {
 	NodeID parent;  // node from which this node was first reached
@@ -869,35 +895,34 @@ static ProcedureResult Proc_SPpathsInvoke
 	ctx->privateData = single_pair_ctx ;
 	_process_yield (single_pair_ctx, yield) ;
 
-	// fast path: a single shortest path with no maxCost constraint is
-	// exactly what Dijkstra solves, in O((V+E) log V) instead of the
-	// exhaustive DFS enumeration below, which can blow up combinatorially
-	// on graphs with many similar-weight alternative routes. this makes
-	// the bound pre-pass unnecessary too, since Dijkstra finds the exact
-	// optimum (and unreachability) directly.
-	// NOTE: Dijkstra_ShortestPath assumes weightProp is non-negative for
-	// every edge (see its own comment for why this isn't detected/guarded).
-	// src == dst is degenerate: Dijkstra trivially "finds" the source at
-	// distance 0 with zero edges traversed, which would violate the
-	// minLen==1 contract (a path needs at least one edge, e.g. a genuine
-	// self-loop). Rather than special-casing that inside the search, just
-	// don't take the fast path here and let the exhaustive DFS (which
-	// already handles this correctly) run instead.
+	// src == dst is degenerate for Dijkstra: it trivially "finds" the source
+	// at distance 0 with zero edges, violating the minLen==1 contract (a path
+	// needs at least one edge, e.g. a genuine self-loop). such queries skip
+	// the fast paths and use the exhaustive DFS, which handles it correctly.
 	bool src_eq_dst =
 		(ENTITY_GET_ID (&single_pair_ctx->src) ==
 		 ENTITY_GET_ID (single_pair_ctx->dst)) ;
 
-	if (src_eq_dst == false                    &&
-		single_pair_ctx->path_count == 1       &&
-		single_pair_ctx->max_cost   == DBL_MAX &&
-		single_pair_ctx->maxLen     == UNBOUNDED_PATH_LENGTH + 1) {
+	// the fast paths below all use Dijkstra, which is only valid when weight
+	// alone determines optimality (no maxCost), path length is unbounded
+	// (Dijkstra doesn't honor a hop cap), and src != dst (a path needs at
+	// least one edge). anything outside this box falls through to the
+	// exhaustive DFS. non-negative weightProp is assumed (see Dijkstra.h).
+	bool fast = (src_eq_dst == false                    &&
+				 single_pair_ctx->max_cost   == DBL_MAX &&
+				 single_pair_ctx->maxLen     == UNBOUNDED_PATH_LENGTH + 1) ;
+
+	NodeID src_id = ENTITY_GET_ID (&single_pair_ctx->src) ;
+	NodeID dst_id = ENTITY_GET_ID (single_pair_ctx->dst)  ;
+
+	// a single shortest path is exactly what Dijkstra solves, in O((V+E) log V)
+	// instead of the exhaustive DFS enumeration below.
+	if (fast && single_pair_ctx->path_count == 1) {
 		Path   *path ;
 		double  weight ;
 
 		bool found = Dijkstra_ShortestPath (&path, &weight,
-				single_pair_ctx->g,
-				ENTITY_GET_ID (&single_pair_ctx->src),
-				ENTITY_GET_ID (single_pair_ctx->dst),
+				single_pair_ctx->g, src_id, dst_id,
 				single_pair_ctx->dir,
 				single_pair_ctx->relationIDs,
 				single_pair_ctx->relationMatrices,
@@ -905,26 +930,63 @@ static ProcedureResult Proc_SPpathsInvoke
 				single_pair_ctx->weight_prop) ;
 
 		if (found) {
-			// sum cost_prop over the winning path's edges: not part of
-			// what Dijkstra optimizes for, just a secondary attribute the
-			// query asked to have reported alongside it. skip the pass
-			// entirely when no costProp was given, rather than defaulting
-			// every edge to 1 and silently reporting the path length.
-			double cost = 0 ;
-			if (single_pair_ctx->cost_prop != ATTRIBUTE_ID_NONE) {
-				uint edge_count = Path_EdgeCount (path) ;
-				for (uint i = 0; i < edge_count; i++) {
-					SIValue c = _get_value_or_default (
-							(GraphEntity *)Path_GetEdge (path, i),
-							single_pair_ctx->cost_prop, SI_LongVal (1)) ;
-					cost += SI_GET_NUMERIC (c) ;
-				}
-			}
-
 			single_pair_ctx->single.path   = path ;
-			single_pair_ctx->single.cost   = cost ;
+			single_pair_ctx->single.cost   =
+				_sum_path_cost (path, single_pair_ctx->cost_prop) ;
 			single_pair_ctx->single.weight = weight ;
 		}
+
+		return PROCEDURE_OK ;
+	}
+
+	// all minimum-weight paths via the shortest-path DAG (bidirectional
+	// Dijkstra), instead of weight-bounded DFS enumeration.
+	if (fast && single_pair_ctx->path_count == 0) {
+		Path  **paths ;
+		double  min_weight ;
+		uint n = AllWeightedShortestPaths (single_pair_ctx->g, src_id, dst_id,
+				single_pair_ctx->dir, single_pair_ctx->relationIDs,
+				single_pair_ctx->relationMatrices,
+				single_pair_ctx->relationCount, single_pair_ctx->weight_prop,
+				&paths, &min_weight) ;
+
+		single_pair_ctx->array = arr_new (WeightedPath, n) ;
+		for (uint i = 0; i < n; i++) {
+			WeightedPath wp = {
+				.path   = paths[i],
+				.weight = min_weight,
+				.cost   = _sum_path_cost (paths[i], single_pair_ctx->cost_prop)
+			} ;
+			arr_append (single_pair_ctx->array, wp) ;
+		}
+		arr_free (paths) ;
+
+		return PROCEDURE_OK ;
+	}
+
+	// k shortest loopless paths via Yen's algorithm, instead of exhaustive DFS
+	// enumeration bounded by the k-th best weight found so far.
+	if (fast && single_pair_ctx->path_count > 1) {
+		Path   **paths ;
+		double  *weights ;
+		uint n = Yen_KShortestPaths (single_pair_ctx->g, src_id, dst_id,
+				single_pair_ctx->path_count, single_pair_ctx->dir,
+				single_pair_ctx->relationIDs, single_pair_ctx->relationMatrices,
+				single_pair_ctx->relationCount, single_pair_ctx->weight_prop,
+				&paths, &weights) ;
+
+		// load results into the same max-heap Proc_SPpathsStep drains, exactly
+		// as SPpaths_k_minimal does, so downstream behavior is unchanged.
+		single_pair_ctx->heap = Heap_new (path_cmp, NULL) ;
+		for (uint i = 0; i < n; i++) {
+			WeightedPath *pp = rm_malloc (sizeof (WeightedPath)) ;
+			pp->path   = paths[i] ;
+			pp->weight = weights[i] ;
+			pp->cost   = _sum_path_cost (paths[i], single_pair_ctx->cost_prop) ;
+			Heap_offer (&single_pair_ctx->heap, pp) ;
+		}
+		arr_free (paths) ;
+		arr_free (weights) ;
 
 		return PROCEDURE_OK ;
 	}
