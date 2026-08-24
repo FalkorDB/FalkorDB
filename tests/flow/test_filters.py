@@ -156,3 +156,78 @@ class testFilters():
 
         res = g.query("MATCH (n:P) WITH n.v AS k, count(*) AS c RETURN k ORDER BY k")
         self.env.assertEqual(res.result_set, [[1.5], [9007199254740993]])
+
+    def test07_columnar_expressions_match_per_row(self):
+        # Filters, projections and aggregate inputs are all evaluated column
+        # at a time. The columnar walk must answer exactly what the per-row
+        # evaluator answers for every operator, including three-valued logic
+        # and the null/type edge cases.
+        #
+        # `UNWIND` builds the same row set as a literal list, and evaluating
+        # the expression inside `WITH ... AS` (per-row) against `WHERE` and
+        # `RETURN` (columnar) is the cross-check.
+        g = self.db.select_graph("columnar_expr_parity")
+        g.query("""CREATE (:E {i:1, f:1.5, s:'abc', b:true, z:0}),
+                          (:E {i:2, f:2.5, s:'abd', b:false, z:1}),
+                          (:E {i:3, f:-1.0, s:'ABC', b:true, z:2}),
+                          (:E {i:-4, s:'', b:false, z:3}),
+                          (:E {i:0, f:0.0, z:4})""")
+
+        exprs = [
+            "n.i > 1", "n.i >= 1", "n.i < 1", "n.i <= 1", "n.i = 1", "n.i <> 1",
+            "n.i % 2 = 0", "n.i * 2 + 1 > 3", "n.i - 1 <= 0", "n.i / 2 = 0",
+            "n.f > 1.0", "n.i + n.f > 2.0", "n.i > n.z", "n.i = n.z",
+            "n.f IS NULL", "n.f IS NOT NULL", "n.missing = 1", "n.missing <> 1",
+            "n.b", "NOT n.b", "n.b AND n.i > 1", "n.b OR n.i > 1",
+            "n.b XOR n.i > 1", "NOT (n.b AND n.i > 1)", "NOT n.missing",
+            "n.i > 1 AND n.f > 1.0 AND n.s <> 'abc'",
+            "n.i > 1 OR n.f > 1.0 OR n.s = 'abc'",
+            "n.s STARTS WITH 'ab'", "n.s CONTAINS 'b'", "n.s ENDS WITH 'c'",
+            "toUpper(n.s) = 'ABC'", "size(n.s) > 2", "n.s =~ 'ab.'",
+            "n.i IN [1, 2]", "n.s IN ['abc', 'ABC']",
+            "(CASE WHEN n.i > 1 THEN 'big' ELSE 'small' END) = 'big'",
+            "(CASE n.i WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'many' END) = 'one'",
+            # CASE must not evaluate a branch for rows that did not select it:
+            # `n.z = 0` would divide by zero on the first row otherwise.
+            "(CASE WHEN n.z = 0 THEN 0 ELSE 10 / n.z END) > 3",
+            "coalesce(n.f, 0.0) > 1.0", "n.i > 1 = true",
+        ]
+
+        for expr in exprs:
+            # per-row: the expression is computed by a projection the engine
+            # cannot turn into a column reference, then compared as a variable
+            scalar = g.query(f"MATCH (n:E) RETURN n.z AS z, {expr} AS v ORDER BY z")
+            expected = sorted([[z] for z, v in scalar.result_set if v is True])
+            columnar = g.query(f"MATCH (n:E) WHERE {expr} RETURN n.z AS z ORDER BY z")
+            self.env.assertEqual(sorted(columnar.result_set), expected)
+
+        # Aggregate inputs and grouping keys take the same columnar path.
+        for expr in ["n.i * 3 + 1", "n.i % 2", "n.f * 2.0", "toUpper(n.s)",
+                     "CASE WHEN n.i > 1 THEN n.i ELSE 0 END"]:
+            rows = g.query(f"MATCH (n:E) RETURN n.z AS z, {expr} AS v ORDER BY z").result_set
+            values = [v for _, v in rows if v is not None]
+            agg = g.query(f"MATCH (n:E) RETURN count({expr}), collect({expr})")
+            self.env.assertEqual(agg.result_set[0][0], len(values))
+            self.env.assertEqual(sorted(map(str, agg.result_set[0][1])),
+                                 sorted(map(str, values)))
+
+    def test08_columnar_and_or_short_circuit(self):
+        # `A AND B` must not evaluate B for rows where A is already false: the
+        # columnar walk narrows rows per conjunct, so a division by zero in B
+        # stays unreached exactly as it does per row.
+        g = self.db.select_graph("columnar_short_circuit")
+        g.query("CREATE (:D {d: 0}), (:D {d: 1}), (:D {d: 2})")
+
+        # d=1 -> 10, d=2 -> 5, both > 1; d=0 never reaches the division.
+        res = g.query("MATCH (n:D) WHERE n.d <> 0 AND 10 / n.d > 1 RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[2]])
+
+        res = g.query("MATCH (n:D) WHERE n.d = 0 OR 10 / n.d > 100 RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        # …and a division that is genuinely reachable still raises.
+        try:
+            g.query("MATCH (n:D) WHERE 10 / n.d > 1 RETURN count(n)")
+            self.env.assertTrue(False)
+        except redis.exceptions.ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))

@@ -19,14 +19,15 @@
 //!            output one row per group
 //! ```
 //!
-//! When all key and aggregation-input expressions are simple (variable
-//! passthrough or `entity.property`), the operator uses a vectorized path
-//! that extracts values in bulk via [`Runtime::materialize_node_property`]
-//! instead of per-row `run_expr` evaluation.  This includes single-argument
-//! `DISTINCT` aggregations (e.g. `count(DISTINCT n.id)`): the property column
-//! is still extracted in bulk and per-group deduplication is applied during
-//! accumulation.  For other complex expressions it falls back to per-row
-//! evaluation.
+//! Key and aggregation-input expressions are evaluated in bulk: a variable
+//! passthrough or `entity.property` is a single bulk attribute read, and any
+//! other input tree (`sum(n.age * 3)`) goes through
+//! [`VectorEval`](crate::runtime::vector_expr::VectorEval), which evaluates it
+//! column at a time. This includes single-argument `DISTINCT` aggregations
+//! (e.g. `count(DISTINCT n.id)`): the property column is still extracted in
+//! bulk and per-group deduplication is applied during accumulation. Inputs
+//! containing a nested aggregate, and multi-argument aggregations, still fall
+//! back to per-row evaluation.
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
@@ -37,6 +38,7 @@ use crate::runtime::{
     row::{Row, RowView},
     runtime::Runtime,
     value::{Value, ValuesDeduper},
+    vector_expr::VectorEval,
 };
 use ahash::RandomState;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
@@ -107,13 +109,12 @@ enum AggInputKind {
     Property { var: Variable, attr: Arc<String> },
     /// Any other expression: `sum(i * 3)`, `sum(n.age + 1)`, …
     ///
-    /// The column is built by evaluating the expression once per active row —
-    /// a loop, but confined to materialising this one column. What matters is
-    /// that the rest of the vectorized path is kept: bulk key extraction and
-    /// the columnar accumulate loop. Falling back to `consume_input_per_row`
-    /// instead abandons those too and rebuilds a full owned `Row` per row,
-    /// measured at ~1,320 instructions/row for a single multiply (`sum(i)`
-    /// 620,879 instr vs `sum(i * 3)` 1,948,488, over 1000 rows).
+    /// The column is built by [`VectorEval`], so the whole input tree is
+    /// evaluated column at a time — one bulk attribute fetch and one pass per
+    /// operator — and the rest of the vectorized path (bulk key extraction,
+    /// the columnar accumulate loop) is kept. Falling back to
+    /// `consume_input_per_row` instead abandons those too and rebuilds a full
+    /// owned `Row` per row.
     Computed {
         tree: QueryExpr<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -703,16 +704,15 @@ impl<'a> AggregateOp<'a> {
                     }
                 }
                 Some(AggInputKind::Computed { tree, idx }) => {
-                    // Evaluated against `BatchRow` directly: the per-row path
-                    // calls `to_owned_row()` first, which allocates a `Vec` of
-                    // every column for every row.
-                    let mut col = Vec::with_capacity(active.len());
-                    let eval = ExprEval::from_runtime(runtime);
-                    for &row in active {
-                        let view = BatchRow::new(batch, row);
-                        col.push(eval.eval(tree, *idx, Some(&view), None).map_err(|_| ())?);
-                    }
-                    agg_columns.push(col);
+                    // Evaluated columnarly: `sum(n.age * 3)` costs one bulk
+                    // attribute fetch and one pass per operator, where the
+                    // per-row path re-walked the tree — and re-read the
+                    // property — for every row.
+                    agg_columns.push(
+                        VectorEval::new(runtime)
+                            .eval_values(&tree.node(*idx), batch, active)
+                            .map_err(|_| ())?,
+                    );
                 }
             }
         }
