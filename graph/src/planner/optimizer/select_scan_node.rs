@@ -88,7 +88,7 @@ use super::{collect_expr_variables, collect_subtree_variables};
 /// When scores are equal, the endpoint with fewer label nodes is preferred.
 fn score_endpoint(
     node: &Arc<QueryNode<Arc<String>, Variable>>,
-    filtered_vars: &HashSet<u32>,
+    filtered_vars: &HashSet<(u32, u32)>,
     bound_vars: &HashSet<u32>,
     graph: &Graph,
 ) -> (u32, u64) {
@@ -96,7 +96,7 @@ fn score_endpoint(
     if bound_vars.contains(&node.alias.id) {
         score += 3;
     }
-    if filtered_vars.contains(&node.alias.id) {
+    if filtered_vars.contains(&(node.alias.id, node.alias.scope_id)) {
         score += 2;
     }
     // Node attribute filters (e.g. {name: "Nicolas Cage"}) also count as filters.
@@ -120,12 +120,21 @@ fn score_endpoint(
     (score, cardinality)
 }
 
-/// Collects variable IDs referenced by Filter nodes that are ancestors of
-/// the given node index, up to the first non-Filter/non-CondTraverse ancestor.
+/// Collects the variables referenced by Filter nodes that are ancestors of the
+/// given node index, up to the first non-Filter/non-CondTraverse ancestor.
+///
+/// Keyed on the full `(id, scope_id)` pair. Today the walk cannot leave the
+/// traverse's own scope — every scope boundary (`Project` for `WITH`, `Apply`
+/// for `CALL {}`, `Unwind`, `Aggregate`) falls into the `_ => break` arm below,
+/// so bare ids would be unambiguous in practice. The pair is kept because two
+/// callers use this set to prove an endpoint's inline attributes are still
+/// enforced above before removing a scan that carried them, and `Variable::id`
+/// is only an index into its own scope's env: that proof should not silently
+/// rest on the walk never being widened.
 fn collect_filtered_vars(
     plan: &DynTree<IR>,
     start_idx: NodeIdx<Dyn<IR>>,
-) -> HashSet<u32> {
+) -> HashSet<(u32, u32)> {
     let mut vars = HashSet::new();
     let mut current = start_idx;
     while let Some(parent) = plan.node(current).parent() {
@@ -133,7 +142,7 @@ fn collect_filtered_vars(
             IR::Filter(filter) => {
                 for idx in filter.root().indices::<Bfs>() {
                     if let ExprIR::Variable(v) = filter.node(idx).data() {
-                        vars.insert(v.id);
+                        vars.insert((v.id, v.scope_id));
                     }
                 }
             }
@@ -262,6 +271,25 @@ fn planner_scan_alias(
     }
 }
 
+/// Returns the index of the scan at the bottom of a planner-added scan subtree
+/// (the shape [`is_planner_scan_subtree`] accepts), or `None` when `idx` does
+/// not root such a subtree.
+fn planner_scan_idx(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<NodeIdx<Dyn<IR>>> {
+    let mut node = plan.node(idx);
+    loop {
+        match node.data() {
+            IR::AllNodeScan(_) | IR::NodeByLabelScan { .. } => return Some(node.idx()),
+            IR::Filter(_) | IR::IncludePending { .. } if node.num_children() == 1 => {
+                node = node.child(0);
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// Creates a new `QueryRelationship` with from and to swapped.
 fn swap_relationship(
     rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
@@ -319,10 +347,10 @@ fn collect_output_aliases(ir: &IR) -> HashSet<u32> {
         }
         // Argument with known bound vars: the incoming rows bind exactly
         // these variables. `Argument(None)` stays opaque (conservative).
-        // Only the id is kept: this set feeds `score_endpoint`, which is a
-        // preference heuristic over bare ids (as `filtered_vars` already is)
-        // and never decides plan validity. The scope-sensitive decision —
-        // whether the Argument is transparent — compares full pairs.
+        // Only the id is kept: this set feeds `score_endpoint`'s `bound_vars`,
+        // a preference heuristic that never decides plan validity. The
+        // scope-sensitive decision — whether the Argument is transparent —
+        // compares full pairs.
         IR::Argument(Some(vars)) => {
             aliases.extend(vars.iter().map(|(id, _)| *id));
         }
@@ -361,6 +389,37 @@ fn resolve_path(
         node = node.get_child(pos)?;
     }
     Some(node.idx())
+}
+
+/// Does the subtree *beneath* `scan_idx` provably bind `alias`?
+///
+/// `Argument(None)` is opaque about which variables it carries, so its presence
+/// anywhere below makes the answer unknown and this reports `false` — the
+/// caller then leaves the plan alone.
+fn child_subtree_binds(
+    plan: &DynTree<IR>,
+    scan_idx: NodeIdx<Dyn<IR>>,
+    alias: &Variable,
+) -> bool {
+    use crate::runtime::runtime::GetVariables;
+    let mut binds = false;
+    for child in plan.node(scan_idx).children() {
+        for ir in child.walk::<Bfs>() {
+            if matches!(ir, IR::Argument(None)) {
+                return false;
+            }
+        }
+        // `id` alone is ambiguous: it is an index into its own scope's env, so
+        // the same number names different variables in different scopes.
+        if child
+            .get_variables()
+            .iter()
+            .any(|v| v.id == alias.id && v.scope_id == alias.scope_id)
+        {
+            binds = true;
+        }
+    }
+    binds
 }
 
 /// Picks which endpoint of a leaf `CondVarLenTraverse` to scan.
@@ -423,6 +482,62 @@ fn select_var_len_scan_node(
         let from = relationship.from.clone();
         let to = relationship.to.clone();
 
+        // Non-leaf case: something below the planner's `from` scan may already
+        // bind `to`. Then no scan is needed on either endpoint — dropping the
+        // planner's scan leaves `to` bound and `from` free, and
+        // `CondVarLenTraverseOp` walks the relationship backwards from that one
+        // bound endpoint (`reversed`), enforcing `from`'s labels as the
+        // destination filter. Keeping the scan instead seeds the DFS with every
+        // node carrying `from`'s label, once per input row.
+        //
+        // This is the same decision `select_scan_node` makes for `CondTraverse`
+        // chains via `bound_vars`, except the binding here sits *below* the
+        // planner's scan rather than being the immediate child, so it has to be
+        // looked for one level deeper.
+        let filtered_vars = collect_filtered_vars(optimized_plan, idx);
+
+        // `planner_scan_alias` looks through `Filter` (inline attrs) and
+        // `IncludePending` (MERGE) wrappers, so the scan to drop is not
+        // necessarily `child_idx`. The whole wrapper chain goes with it:
+        //  - a `Filter` there carries `from`'s inline attrs, which the planner
+        //    also emitted above this traverse — assert that duplicate is
+        //    present rather than assume it;
+        //  - `IncludePending` carries MERGE pending-node visibility that has
+        //    nowhere else to live, so bail out instead.
+        let scan_idx = planner_scan_idx(optimized_plan, child_idx)
+            .expect("planner_scan_alias matched, so a scan is there");
+        let wrapper_ok = {
+            let mut node = optimized_plan.node(child_idx);
+            let mut ok = true;
+            while node.idx() != scan_idx {
+                if matches!(node.data(), IR::IncludePending { .. }) {
+                    ok = false;
+                    break;
+                }
+                node = node.child(0);
+            }
+            ok && (from.attrs.root().num_children() == 0
+                || filtered_vars.contains(&(from.alias.id, from.alias.scope_id)))
+        };
+        if wrapper_ok && child_subtree_binds(optimized_plan, scan_idx, &to.alias) {
+            let kept: Vec<DynTree<IR>> = optimized_plan
+                .node(scan_idx)
+                .children()
+                .map(|c| c.clone_as_tree())
+                .collect();
+            // Only rewrite when the scan actually has something under it; a
+            // childless planner scan is the leaf case handled below.
+            if !kept.is_empty() {
+                optimized_plan.node_mut(child_idx).prune();
+                let idx = resolve_path(optimized_plan, &path)
+                    .expect("pruning a child never changes the parent's path");
+                for t in kept {
+                    optimized_plan.node_mut(idx).push_child_tree(t);
+                }
+                continue;
+            }
+        }
+
         // A correlated sub-plan may already bind `to` from its outer context;
         // scanning it here would rebind it. `Argument(None)` is opaque about
         // what it carries, so treat it as binding everything.
@@ -435,15 +550,14 @@ fn select_var_len_scan_node(
             _ => {}
         }
 
-        let filtered_vars = collect_filtered_vars(optimized_plan, idx);
         // Both endpoints' inline attributes are enforced by Filters the planner
         // placed above this traverse, so replacing the scan subtree cannot lose
         // them — but only reverse once those Filters are confirmed present.
         // `push_filters_down` then lands the `to` one back onto the new scan.
-        if [&from, &to]
-            .iter()
-            .any(|n| n.attrs.root().num_children() > 0 && !filtered_vars.contains(&n.alias.id))
-        {
+        if [&from, &to].iter().any(|n| {
+            n.attrs.root().num_children() > 0
+                && !filtered_vars.contains(&(n.alias.id, n.alias.scope_id))
+        }) {
             continue;
         }
 

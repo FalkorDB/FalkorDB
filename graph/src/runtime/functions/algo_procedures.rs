@@ -68,6 +68,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 
 use super::{FnType, Functions, Type, empty_procedure_batch};
+use crate::graph::graphblas::tensor::compound_key_inverse;
 use crate::{
     graph::{
         attribute_store::AttributeStore,
@@ -483,6 +484,55 @@ fn active_node_set(g: &Graph) -> FxHashSet<u64> {
     g.get_nodes(&empty, 0).map(u64::from).collect()
 }
 
+/// Bulk-fill an empty BOOL matrix with an all-`true` coordinate pattern, as an
+/// **iso** matrix — one value shared by the whole pattern.
+///
+/// `GxB_Matrix_build_Scalar` rather than `GrB_Matrix_build_BOOL` over a
+/// `vec![true; n]`, because since GraphBLAS 10.5.0 the two are no longer
+/// equivalent: `GrB_Matrix_build_*` "always build a non-iso matrix"
+/// (`Source/builder/GB_build.c`), the post-iso check that used to notice an
+/// all-identical value array having been dropped, while `GxB_Matrix_build_Scalar`
+/// is documented in that same file as always iso. Non-iso costs a byte per
+/// entry — measured at 37,108 against 33,020 bytes for a 4,096-entry pattern —
+/// and takes LAGraph off the iso fast paths its algorithms select on. The
+/// scalar form also needs no values array at all, which was the only reason to
+/// materialize one.
+///
+/// Duplicate coordinates still collapse to a single entry, exactly as they did
+/// under the `GxB_ANY_BOOL` dup operator this replaces: an iso build discards
+/// duplicates. The symmetric caller relies on that for self-loops, which it
+/// pushes from both directions.
+///
+/// # Safety
+/// `m` must be a valid, empty, BOOL-typed matrix whose dimensions cover every
+/// coordinate in `rows` and `cols`, which must be the same length.
+unsafe fn build_bool_pattern(
+    m: crate::graph::graphblas::GrB_Matrix,
+    rows: &[crate::graph::graphblas::GrB_Index],
+    cols: &[crate::graph::graphblas::GrB_Index],
+) {
+    use crate::graph::graphblas::{
+        GrB_BOOL, GrB_Index, GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new,
+        GrB_Scalar_setElement_BOOL, GxB_Matrix_build_Scalar,
+    };
+
+    debug_assert_eq!(rows.len(), cols.len());
+    if rows.is_empty() {
+        return;
+    }
+    let mut scalar: GrB_Scalar = null_mut();
+    GrB_Scalar_new(&raw mut scalar, GrB_BOOL);
+    GrB_Scalar_setElement_BOOL(scalar, true);
+    GxB_Matrix_build_Scalar(
+        m,
+        rows.as_ptr(),
+        cols.as_ptr(),
+        scalar,
+        rows.len() as GrB_Index,
+    );
+    GrB_Scalar_free(&raw mut scalar);
+}
+
 /// Build compact adjacency directly from relationship tensors.
 /// Avoids materializing the full node_cap × node_cap matrix.
 /// Returns (compact_matrix_handle, id_to_compact, compact_to_id, n).
@@ -497,9 +547,7 @@ unsafe fn build_compact_adj_from_tensors(
     Vec<u64>,
     u64,
 ) {
-    use crate::graph::graphblas::{
-        GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_build_BOOL, GrB_Matrix_new, GxB_ANY_BOOL,
-    };
+    use crate::graph::graphblas::{GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_new};
 
     // Build mapping: original_id -> compact_id
     let mut sorted_ids: Vec<u64> = active.iter().copied().collect();
@@ -547,15 +595,7 @@ unsafe fn build_compact_adj_from_tensors(
     // Build compact matrix in one bulk call
     let mut compact: GrB_Matrix = null_mut();
     GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
-    let xvals = vec![true; ri.len()];
-    GrB_Matrix_build_BOOL(
-        compact,
-        ri.as_ptr(),
-        ci.as_ptr(),
-        xvals.as_ptr(),
-        ri.len() as GrB_Index,
-        GxB_ANY_BOOL,
-    );
+    build_bool_pattern(compact, &ri, &ci);
 
     (compact, id_to_compact, sorted_ids, n)
 }
@@ -573,9 +613,7 @@ unsafe fn build_compact_adj_symmetric_from_tensors(
     Vec<u64>,
     u64,
 ) {
-    use crate::graph::graphblas::{
-        GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_build_BOOL, GrB_Matrix_new, GxB_ANY_BOOL,
-    };
+    use crate::graph::graphblas::{GrB_BOOL, GrB_Index, GrB_Matrix, GrB_Matrix_new};
 
     // Build mapping: original_id -> compact_id
     let mut sorted_ids: Vec<u64> = active.iter().copied().collect();
@@ -627,15 +665,7 @@ unsafe fn build_compact_adj_symmetric_from_tensors(
     // Build compact matrix in one bulk call
     let mut compact: GrB_Matrix = null_mut();
     GrB_Matrix_new(&raw mut compact, GrB_BOOL, n, n);
-    let xvals = vec![true; ri.len()];
-    GrB_Matrix_build_BOOL(
-        compact,
-        ri.as_ptr(),
-        ci.as_ptr(),
-        xvals.as_ptr(),
-        ri.len() as GrB_Index,
-        GxB_ANY_BOOL,
-    );
+    build_bool_pattern(compact, &ri, &ci);
 
     (compact, id_to_compact, sorted_ids, n)
 }
@@ -1527,91 +1557,100 @@ fn register_msf(funcs: &mut Functions) {
                     GrB_Matrix_free(&raw mut eff);
 
                     // Multi pass: every edge id of a multi-edge pair lives in
-                    // `me[compound_key(src,dst)][edge_id]`; skip it entirely
+                    // its block's `me[row][edge_id]`; skip it entirely
                     // on single-edge tensors.
                     if !tensor.has_multi_edge() {
                         continue;
                     }
-                    let me = tensor.edge_versioned();
-                    me.wait();
-                    // Two read-only edge sources per tensor: live base edges `m`
-                    // (masked by ¬dm to drop deletions) and pending additions `dp`
-                    // (disjoint from dm).
-                    let sources: [(GrB_Matrix, GrB_Matrix, GrB_Descriptor); 2] = [
-                        (me.m().inner(), me.dm().inner(), GrB_DESC_SC),
-                        (me.dp().inner(), null_mut(), null_mut()),
-                    ];
-                    // v[compound_key(src,dst)] = the pair's minimum-score
-                    // edge, via a parallel monoid row-reduction instead of a host
-                    // iterator walk; the accum merges the two sources.
-                    let mut me_rows: GrB_Index = 0;
-                    GrB_Matrix_nrows(&raw mut me_rows, me.m().inner());
-                    let mut v: GrB_Vector = null_mut();
-                    GrB_Vector_new(&raw mut v, scored_edge_type, me_rows);
-                    for (src_mat, mask, desc) in sources {
-                        let mut src_nvals: GrB_Index = 0;
-                        GrB_Matrix_nvals(&raw mut src_nvals, src_mat);
-                        if src_nvals == 0 {
+                    // One `me` matrix per block, and a pair's identifiers live
+                    // in exactly one of them, so the winners simply accumulate
+                    // across blocks — there is nothing to merge between them.
+                    // Every graph within 2^30 nodes per axis has one block.
+                    for (block, me) in tensor.edge_versioned_all() {
+                        if me.nvals() == 0 {
                             continue;
                         }
-                        let mut n_rows: GrB_Index = 0;
-                        let mut n_cols: GrB_Index = 0;
-                        GrB_Matrix_nrows(&raw mut n_rows, src_mat);
-                        GrB_Matrix_ncols(&raw mut n_cols, src_mat);
+                        me.wait();
+                        // Two read-only edge sources per tensor: live base edges `m`
+                        // (masked by ¬dm to drop deletions) and pending additions `dp`
+                        // (disjoint from dm).
+                        let sources: [(GrB_Matrix, GrB_Matrix, GrB_Descriptor); 2] = [
+                            (me.m().inner(), me.dm().inner(), GrB_DESC_SC),
+                            (me.dp().inner(), null_mut(), null_mut()),
+                        ];
+                        // v[compound_key(src,dst)] = the pair's minimum-score
+                        // edge, via a parallel monoid row-reduction instead of a host
+                        // iterator walk; the accum merges the two sources.
+                        let mut me_rows: GrB_Index = 0;
+                        GrB_Matrix_nrows(&raw mut me_rows, me.m().inner());
+                        let mut v: GrB_Vector = null_mut();
+                        GrB_Vector_new(&raw mut v, scored_edge_type, me_rows);
+                        for (src_mat, mask, desc) in sources {
+                            let mut src_nvals: GrB_Index = 0;
+                            GrB_Matrix_nvals(&raw mut src_nvals, src_mat);
+                            if src_nvals == 0 {
+                                continue;
+                            }
+                            let mut n_rows: GrB_Index = 0;
+                            let mut n_cols: GrB_Index = 0;
+                            GrB_Matrix_nrows(&raw mut n_rows, src_mat);
+                            GrB_Matrix_ncols(&raw mut n_cols, src_mat);
 
-                        let mut scored: GrB_Matrix = null_mut();
-                        GrB_Matrix_new(&raw mut scored, scored_edge_type, n_rows, n_cols);
-                        GrB_Matrix_apply_IndexOp_UDT(
-                            scored,
-                            mask,
-                            null_mut(),
-                            ov_op,
-                            src_mat,
-                            (&raw const ctx).cast::<std::os::raw::c_void>(),
-                            desc,
-                        );
-                        GrB_Matrix_reduce_Monoid(
-                            v,
-                            null_mut(),
-                            min_by_score,
-                            min_monoid,
-                            scored,
-                            null_mut(),
-                        );
-                        GrB_Matrix_free(&raw mut scored);
-                    }
+                            let mut scored: GrB_Matrix = null_mut();
+                            GrB_Matrix_new(&raw mut scored, scored_edge_type, n_rows, n_cols);
+                            GrB_Matrix_apply_IndexOp_UDT(
+                                scored,
+                                mask,
+                                null_mut(),
+                                ov_op,
+                                src_mat,
+                                (&raw const ctx).cast::<std::os::raw::c_void>(),
+                                desc,
+                            );
+                            GrB_Matrix_reduce_Monoid(
+                                v,
+                                null_mut(),
+                                min_by_score,
+                                min_monoid,
+                                scored,
+                                null_mut(),
+                            );
+                            GrB_Matrix_free(&raw mut scored);
+                        }
 
-                    // Host step: only the compound-key → (src,dst) index split —
-                    // arithmetic GraphBLAS cannot express — one entry per
-                    // multi-edge pair, not per edge.
-                    let mut v_nvals: GrB_Index = 0;
-                    GrB_Vector_nvals(&raw mut v_nvals, v);
-                    if v_nvals != 0 {
-                        let mut keys: Vec<GrB_Index> = vec![0; v_nvals as usize];
-                        let mut vals: Vec<ScoredEdge> =
-                            vec![ScoredEdge { score: 0.0, edge: 0 }; v_nvals as usize];
-                        let mut nv = v_nvals;
-                        GrB_Vector_extractTuples_UDT(
-                            keys.as_mut_ptr(),
-                            vals.as_mut_ptr().cast::<std::os::raw::c_void>(),
-                            &raw mut nv,
-                            v,
-                        );
-                        for (key, se) in keys.iter().zip(&vals) {
-                            let src_original = (key >> 32) as usize;
-                            let dst_original = (key & 0xFFFF_FFFF) as usize;
-                            if src_original < id_to_compact_vec.len()
-                                && id_to_compact_vec[src_original] != u64::MAX
-                                && dst_original < id_to_compact_vec.len()
-                                && id_to_compact_vec[dst_original] != u64::MAX
-                            {
-                                ov_rows.push(id_to_compact_vec[src_original]);
-                                ov_cols.push(id_to_compact_vec[dst_original]);
-                                ov_vals.push(*se);
+                        // Host step: only the compound-key → (src,dst) index split —
+                        // arithmetic GraphBLAS cannot express — one entry per
+                        // multi-edge pair, not per edge.
+                        let mut v_nvals: GrB_Index = 0;
+                        GrB_Vector_nvals(&raw mut v_nvals, v);
+                        if v_nvals != 0 {
+                            let mut keys: Vec<GrB_Index> = vec![0; v_nvals as usize];
+                            let mut vals: Vec<ScoredEdge> =
+                                vec![ScoredEdge { score: 0.0, edge: 0 }; v_nvals as usize];
+                            let mut nv = v_nvals;
+                            GrB_Vector_extractTuples_UDT(
+                                keys.as_mut_ptr(),
+                                vals.as_mut_ptr().cast::<std::os::raw::c_void>(),
+                                &raw mut nv,
+                                v,
+                            );
+                            for (key, se) in keys.iter().zip(&vals) {
+                                let (src, dst) = compound_key_inverse(block, *key);
+                                let src_original = src as usize;
+                                let dst_original = dst as usize;
+                                if src_original < id_to_compact_vec.len()
+                                    && id_to_compact_vec[src_original] != u64::MAX
+                                    && dst_original < id_to_compact_vec.len()
+                                    && id_to_compact_vec[dst_original] != u64::MAX
+                                {
+                                    ov_rows.push(id_to_compact_vec[src_original]);
+                                    ov_cols.push(id_to_compact_vec[dst_original]);
+                                    ov_vals.push(*se);
+                                }
                             }
                         }
+                        GrB_Vector_free(&raw mut v);
                     }
-                    GrB_Vector_free(&raw mut v);
                 }
                 GrB_IndexUnaryOp_free(&raw mut ov_op);
                 GrB_Monoid_free(&raw mut min_monoid);

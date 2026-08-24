@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__convert_s2b__03c002ee0eec__LG_MF_compareTuple32.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -79,7 +79,7 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0xd7d18db4ed1ce84f ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = NULL ;
     defn [1] = NULL ;
     defn [2] = GB_LG_MF_compareTuple32_USER_DEFN ;

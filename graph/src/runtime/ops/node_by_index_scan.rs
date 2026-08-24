@@ -303,8 +303,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                         let extra = extra.clone();
                         let runtime = self.runtime;
                         Box::new(base.filter(move |nid| {
-                            let node_labels = runtime.get_node_labels(*nid);
-                            extra.iter().all(|l| node_labels.iter().any(|nl| nl == l))
+                            extra.iter().all(|l| runtime.node_has_label(*nid, l))
                         }))
                     }
                     None => base,
