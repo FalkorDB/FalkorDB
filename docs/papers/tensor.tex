@@ -105,9 +105,10 @@ adjacency matrix is \texttt{UINT64}-valued and stores a single edge's
 identifier \emph{directly} as the matrix value, so a simple graph requires no
 auxiliary edge structure whatsoever. A reserved sentinel value $\M = 2^{64}-1$
 in the cell announces that the pair has become multi-edge, at which point
-\emph{all} of the pair's identifiers migrate to a single global hypersparse
-overflow matrix keyed by a $(\text{src},\text{dst})$ compound key that names a
-block and a row within it.
+\emph{all} of the pair's identifiers migrate to a shared hypersparse overflow
+matrix keyed by a $(\text{src},\text{dst})$ compound key that names a block and a
+row within it --- one matrix per block, which for any graph below $2^{30}$ nodes
+per axis means one matrix.
 The scheme is provably safe --- edge identifiers are bounded by the GraphBLAS
 index limit $2^{60}-1$ and therefore cannot collide with the sentinel --- and
 it reduces the steady-state cost of a single-edge pair to one $\langle$32-bit
@@ -209,9 +210,10 @@ Rust storage engine. Specifically:
         move, so the cell value is never ambiguous. We prove the sentinel
         cannot collide with a real identifier
         (Lemma~\ref{lem:sentinel}).
-  \item \textbf{A single global overflow matrix instead of per-cell
-        containers} (\S\ref{sec:compound}). Multi-edge identifiers live in one
-        hypersparse \cite{bulucgilbert2008} Boolean matrix indexed by a
+  \item \textbf{A shared overflow matrix instead of per-cell
+        containers} (\S\ref{sec:compound}). Multi-edge identifiers live in a
+        hypersparse \cite{bulucgilbert2008} Boolean matrix per block --- one
+        matrix for any graph below $2^{30}$ nodes per axis --- indexed by a
         \emph{compound key} $\kappa$ --- which cuts each endpoint in two,
         the low $30$ bits packing into the row and the high bits selecting a
         block --- in the row dimension, and by edge identifier in the column
@@ -439,7 +441,7 @@ Transition cost on 2nd edge  & allocate container    & none                     
 \end{tabular}
 \caption{The three designs. (C) is (B) with the $\mu = 1$ case specialised
 into the adjacency matrix, and (A) with the heap containers replaced by rows
-of one global matrix. Its distinguishing cost is the promotion/demotion
+of a shared matrix. Its distinguishing cost is the promotion/demotion
 transition, which (A) and (B) do not have.}
 \label{tab:designspace}
 \end{table}
