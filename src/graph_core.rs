@@ -139,27 +139,6 @@ pub fn graph_is_registered(arc: &Arc<RwLock<ThreadedGraph>>) -> bool {
         .any(|registered| registered.data_ptr() as usize == target)
 }
 
-/// True if `arc` is still the graph registered under the Redis key `name`.
-///
-/// The stricter sibling of [`graph_is_registered`], for callers that captured the
-/// key a graph was reached through and must write back to *that* key. A `RENAME`
-/// re-keys the registry, so a graph can stay registered while `name` comes to hold
-/// a different graph (or nothing) — which [`graph_is_registered`]'s any-key scan
-/// cannot see, but a write addressed to `name` would land in the wrong place.
-///
-/// Telemetry is that caller: an entry names the stream it belongs to. Query
-/// execution wants the looser check instead, because a query renamed mid-flight
-/// should still commit.
-pub fn graph_is_registered_as(
-    name: &str,
-    arc: &Arc<RwLock<ThreadedGraph>>,
-) -> bool {
-    GRAPH_REGISTRY
-        .lock()
-        .get(name)
-        .is_some_and(|registered| registered.data_ptr() == arc.data_ptr())
-}
-
 /// Re-key a registry entry when a Redis RENAME moves a graph to a new key.
 ///
 /// `graph_free` only runs for the *overwritten destination* value, so without
