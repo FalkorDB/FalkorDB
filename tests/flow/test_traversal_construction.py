@@ -500,3 +500,52 @@ class testTraversalConstruction():
         result = self.graph.query(q).result_set
         self.env.assertTrue(result == expected)
 
+
+    def test_anonymous_intermediate_keeps_path_multiplicity(self):
+        # two distinct 2-hop paths lead from (a) to (c):
+        #   (a)-[:R]->(b1)-[:R]->(c)
+        #   (a)-[:R]->(b2)-[:R]->(c)
+        # an anonymous intermediate node lets the planner fuse both hops
+        # into a single matrix product, which records only whether (c) is
+        # reachable and so used to collapse the two paths into one row
+        g = self.db.select_graph("anon_intermediate_multiplicity")
+        g.query("""CREATE (a:A), (b1:B), (b2:B), (c:C),
+                          (a)-[:R]->(b1), (a)-[:R]->(b2),
+                          (b1)-[:R]->(c), (b2)-[:R]->(c)""")
+
+        # all three spellings describe the same two paths
+        anonymous = "MATCH (a:A)-[:R]->()-[:R]->(c:C) RETURN count(*)"
+        named     = "MATCH (a:A)-[:R]->(m)-[:R]->(c:C) RETURN count(*)"
+        with_path = "MATCH p = (a:A)-[:R]->()-[:R]->(c:C) RETURN count(*)"
+
+        self.env.assertEqual(g.query(anonymous).result_set, [[2]])
+        self.env.assertEqual(g.query(named).result_set, [[2]])
+        self.env.assertEqual(g.query(with_path).result_set, [[2]])
+
+        # the hops must not be fused when the row count is observable
+        self.env.assertNotContains("fused hop", str(g.explain(anonymous)))
+
+        # a third hop behaves the same way
+        g.query("MATCH (c:C) CREATE (c)-[:R]->(:D)")
+        q = "MATCH (a:A)-[:R]->()-[:R]->()-[:R]->(d:D) RETURN count(*)"
+        self.env.assertEqual(g.query(q).result_set, [[2]])
+
+        # inside a pattern predicate only reachability is consulted, so the
+        # fusion is still applied there and still yields the right answer
+        exists = "MATCH (a:A) WHERE (a)-[:R]->()-[:R]->() RETURN count(*)"
+        self.env.assertContains("fused hop", str(g.explain(exists)))
+        self.env.assertEqual(g.query(exists).result_set, [[1]])
+
+        not_exists = "MATCH (a:A) WHERE NOT (a)-[:R]->()-[:R]->() RETURN count(*)"
+        self.env.assertContains("fused hop", str(g.explain(not_exists)))
+        self.env.assertEqual(g.query(not_exists).result_set, [[0]])
+
+        # an OR of pattern predicates is served by the Or Apply Multiplexer,
+        # whose branches are existence tests too, so fusion holds there as well
+        or_exists = """MATCH (a:A)
+                       WHERE (a)-[:R]->()-[:R]->() OR (a)-[:Q]->()-[:Q]->()
+                       RETURN count(*)"""
+        self.env.assertContains("fused hop", str(g.explain(or_exists)))
+        self.env.assertEqual(g.query(or_exists).result_set, [[1]])
+
+        g.delete()
