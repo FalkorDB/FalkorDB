@@ -450,6 +450,37 @@ impl Pending {
         }
     }
 
+    /// What this query has staged about `label` on `id`: `Some(true)` if it was
+    /// added, `Some(false)` if it was removed, `None` if this query says nothing
+    /// about it and the committed label matrix is the answer.
+    ///
+    /// The precedence is [`Self::update_node_labels`]'s, which applies the adds
+    /// and then the removals, so a removal wins — the two must agree, since they
+    /// answer the same question for the same node.
+    pub fn node_has_label(
+        &self,
+        id: NodeId,
+        label: LabelId,
+    ) -> Option<bool> {
+        let raw_id: u64 = id.into();
+        let label_id = usize::from(label) as u64;
+        if self
+            .remove_labels
+            .get(&raw_id)
+            .is_some_and(|removed| removed.contains(&label_id))
+        {
+            return Some(false);
+        }
+        if self
+            .set_labels
+            .get(&raw_id)
+            .is_some_and(|set| set.contains(&label_id))
+        {
+            return Some(true);
+        }
+        None
+    }
+
     pub fn update_node_labels(
         &self,
         id: NodeId,
