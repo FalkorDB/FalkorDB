@@ -3418,20 +3418,25 @@ Each item below is expanded in \texttt{docs/papers/OPEN\_WORK.md} in the
 repository, which carries the design, the acceptance criteria and the known
 risks for each --- this section says what is open, that says how to close it.
 
-\paragraph{Land the block-indexed key.} The design in \S\ref{sec:limits} that
-removes the node-identifier ceiling is settled but not yet implemented. Two
-things want measuring once it is: whether a sparse map over populated blocks
-costs anything against today's single matrix on a graph that only ever occupies
-block $0$, and what the crossover looks like on a graph whose multi-edge pairs
-are spread thinly across many blocks --- the case where per-transaction work
-becomes proportional to the number of live blocks rather than to one.
+\paragraph{The block-indexed key is landed; the many-block regime is not
+measured.} The ceiling is removed and both acceptance measurements this section
+previously asked for were taken (\S\ref{sec:limits}): a graph confined to block
+$0$ pays nothing on reads and $1.8$--$4.3\%$ on the write path, and maintenance
+cost is linear in live block count. What remains unmeasured is the regime that
+motivated the question --- a graph whose multi-edge pairs are spread thinly
+across \emph{many} blocks, where per-transaction fold and wait work becomes
+proportional to the number of live blocks rather than to one. Reaching it needs
+node identifiers above $2^{30}$ on both axes, which no fixture here builds, so
+the crossover is known to exist and its location is not known.
 
-\paragraph{The counter is gone; the checked arithmetic is not.} The invariant
-set is now proved (\S\ref{sec:mechanised}), but proofs bind the model, not the
-running process: a memory error, a decoder fed a corrupt blob, or a future edit to a path
-the model does not cover can still break an invariant in production.
-Mechanisation and run-time checking answer different questions, and the first
-does not retire the second.
+\paragraph{The counter and the checked arithmetic are both done; the general
+point is not retired.} The invariant set is proved (\S\ref{sec:mechanised}), but
+proofs bind the model, not the running process: a memory error, a decoder fed a
+corrupt blob, or a future edit to a path the model does not cover can still break
+an invariant in production. Mechanisation and run-time checking answer different
+questions, and the first does not retire the second. That is why the two
+paragraphs below are kept after the work in them shipped --- the reasoning
+transfers to the next invariant someone is tempted to leave unchecked.
 
 Two of the three repairs in \S\ref{sec:limits} were prototyped, which answered
 the question this paragraph previously left open --- in the negative, the useful
@@ -3505,39 +3510,43 @@ deriving the quantity removes the way a \emph{mutation path} can break the
 identity, but not the ways a corrupt decoded blob or a memory error can, and the
 identity's subtractions still reach a pre-allocation in one graph algorithm.
 
-\paragraph{Close the modelling gaps.} Three places where the code is ahead of
-the proof. Iteration is mechanised by its \emph{result} --- the effective set
-restricted to a row range --- rather than as the three-way lookahead merge that
-computes it, and the merge is where the delicate index reasoning lives. The
-\texttt{Encode}/\texttt{Decode} blob format is outside the model on both layers;
-the half of that worth having is not round-tripping but the guarantee that a
-malformed blob is rejected rather than decoded into a tensor violating the
-invariants, since a corrupt blob is one of the two ways a proved invariant can
-still break in a running process.
+\paragraph{The modelling gaps are closed; the byte stream is not.} Three places
+where the code was ahead of the proof, all three since mechanised, and the one
+that remains is smaller than any of them.
 
-The third is newer and the most urgent, because it is the one where the code
-moved after the proof was written. The model composes deletion as per-edge
-transitions --- \texttt{removeOne} and its three reachable shapes --- folded over
-the batch. To make demotion linear in the batch (\S\ref{sec:evalosc}) the
-implementation now reads each pair's $me$ row once, replays that pair's
-transitions into a plan, and applies the plan in a separate write phase. The
-decisions are intended to be identical, so the invariants are believed intact,
-but ``batching by pair and replaying is equivalent to the sequential per-edge
-fold'' is an obligation the model does not state, and it is currently supported
-by regression tests rather than by a proof. Closing it means proving the
-per-pair plan agrees with \texttt{foldl removeOne} restricted to that pair, and
-that plans for distinct pairs commute --- which they should, since they touch
-disjoint $me$ rows and disjoint forward cells, and that disjointness is exactly
-what makes the two-phase split sound.
+Iteration was mechanised by its \emph{result} --- the effective set restricted to
+a row range --- rather than as the three-way lookahead merge that computes it. It
+is now the merge (\texttt{Tensor/Merge.lean}), which is where the delicate index
+reasoning lives. Batch deletion was the most urgent, being the one place the code
+moved \emph{after} the proof was written: to make demotion linear in the batch
+(\S\ref{sec:evalosc}) the implementation reads each pair's $me$ row once, replays
+that pair's transitions into a plan, and applies the plan in a separate write
+phase, and ``batching by pair and replaying is equivalent to the sequential
+per-edge fold'' was an obligation the model did not state. It states it now
+(\texttt{Tensor/RemovePlan.lean}): the per-pair plan agrees with
+\texttt{foldl removeOne} restricted to that pair, and plans for distinct pairs
+commute, the disjointness that makes the two-phase split sound. And the
+\texttt{Encode}/\texttt{Decode} direction that was worth having --- not
+round-tripping but the guarantee that a malformed blob is \emph{rejected} rather
+than decoded into a tensor violating the invariants --- is proved in
+\texttt{Tensor/CodecCheck.lean}.
+
+What is still outside the model is the serialised \emph{byte stream}: framing,
+lengths, endianness. The model reasons over the decoded tables, so it says what a
+well-formed blob means and nothing about which byte sequences are well-formed.
+That is the remaining gap, and it is a parsing obligation rather than a
+data-structure one.
 
 \paragraph{Give the fold policy a read-side term.} \S\ref{sec:evaldecomp}'s
-two-state read is a resident delta on $me$ making every multi-edge read consult a
-layer it could skip. The targeted repair is one probe: $me$'s delta is
-hypersparse and keyed by $(\kappa, e)$, so ``does the delta touch this row'' is
-far cheaper than building a merged iterator, and a delta is small by construction
-so nearly every row would take the base path. \textsc{EffGet} already does
-exactly this for $dm$ (\S\ref{sec:reads}); the multi-edge path simply never
-learned the trick.
+two-state read was a resident delta on $me$ making every multi-edge read consult
+a layer it could skip --- a flat ${\approx}1{,}200$ instructions per read,
+independent of how much the delta held, so one pending identifier cost what eight
+thousand did. The targeted repair was one probe: $me$'s delta is hypersparse and
+keyed by $(\kappa, e)$, so ``does the delta touch this row'' is far cheaper than
+building a merged iterator, and a delta is small by construction so nearly every
+row takes the base path. \textsc{EffGet} already did exactly this for $dm$
+(\S\ref{sec:reads}); the multi-edge path had simply never learned the trick. It
+has now, and the two-state read is gone.
 
 The more interesting repair is the fold policy itself. The square-root rule of
 \S\ref{sec:folding} is derived entirely from what a delta costs \emph{writers}
@@ -3547,17 +3556,21 @@ consequence: a one-entry delta is nearly free to fold and, measured, expensive t
 keep, and no threshold derived from write amortisation will ever fold it. What
 the model is missing is a term in the read rate.
 
-\paragraph{Demotion policy.} Demotion is currently eager: the moment a pair
-drops to one edge, its identifier returns inline and its $me$ row is emptied.
-A workload that oscillates across the boundary pays a promotion and a
-demotion per oscillation. Hysteresis --- keeping a pair in $me$ until the
-transaction ends --- would trade a little space for stability, and it is not
-obvious which wins. That question was downstream of \#2429
-(\S\ref{sec:evalosc}) --- while a batch's demotions cost more than linearly in
-their number, the policy choice was not what dominated, and any measurement of
-hysteresis would mostly have measured the defect. With that fixed, and the
-residual transition now a constant $3.2\times$ (A)'s, the comparison is worth
-running.
+\paragraph{Demotion policy --- measured, and the upside is small.} Demotion is
+eager: the moment a pair drops to one edge, its identifier returns inline and its
+$me$ row is emptied, so a workload oscillating across the boundary pays a
+promotion \emph{and} a demotion per cycle. Hysteresis --- keeping a pair in $me$
+until the transaction ends --- would trade space for stability, and which wins was
+not obvious. The question was downstream of \#2429 (\S\ref{sec:evalosc}), since
+while a batch's demotions cost more than linearly in their number any measurement
+of hysteresis would mostly have measured the defect. With that fixed the
+comparison was run, and it answers itself: a full oscillation costs $9{,}486$
+instructions per pair, of which $7{,}106$ are the same $+1/-1$ work on a
+three-edge pair that never crosses the boundary. Hysteresis can therefore remove
+at most $2{,}380$ instructions --- a quarter of the cycle --- and costs
+$46.2$\,bytes per oscillating pair held to commit. Three quarters of what looks
+like transition cost is not the transition. The policy is left eager, and this
+paragraph is the reason rather than an intention.
 
 \paragraph{Generalising the pattern.} Inline-first with sentinel promotion is
 not specific to edge identifiers. Any sparse-matrix-backed store whose cell
