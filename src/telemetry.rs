@@ -7,17 +7,20 @@
 use crossfire::mpmc::{self, List};
 use crossfire::{MRx, MTx};
 use parking_lot::{Mutex, RwLock};
+use redis_module::key::KeyFlags;
 use redis_module::logging::log_warning;
-use redis_module::{Context, ContextFlags, RedisValue, raw};
+use redis_module::{Context, ContextFlags, RedisString, RedisValue, raw};
 use std::os::raw::{c_char, c_int};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
-use crate::graph_core::{ThreadedGraph, graph_is_registered_as};
+use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph};
+use crate::redis_type::GRAPH_TYPE;
 
 /// Maximum stored string length for query/params in telemetry entries.
 const STR_MAX_LEN: usize = 2048;
@@ -264,13 +267,17 @@ fn stream_entries(
     entries: &[PendingEntry],
     max_len: i64,
 ) {
-    let key_name = create_detached_string(&stream_name(graph_name));
+    // Owned rather than borrowed from a command's auto-memory, and freed by its own
+    // `Drop` — `RedisString` is the same NULL-context, binary-safe string
+    // `create_detached_string` builds, minus the frees this function would otherwise
+    // have to place on each of its three exits.
+    let key_name =
+        RedisString::create_from_slice(ptr::null_mut(), stream_name(graph_name).as_bytes());
     let key = unsafe {
         let f = raw::RedisModule_OpenKey.expect("RedisModule_OpenKey");
-        f(ctx, key_name, raw::REDISMODULE_WRITE as c_int)
+        f(ctx, key_name.inner, raw::REDISMODULE_WRITE as c_int)
     };
     if key.is_null() {
-        free_detached_string(key_name);
         return;
     }
     // A key of some other type is not ours to write to. The C engine makes the
@@ -286,28 +293,32 @@ fn stream_entries(
             template.add(key, entry);
         }
         template.report_failures(graph_name);
-        if max_len > 0 {
-            // Returns the number of entries deleted, or -1 with `errno` set.
-            let deleted = unsafe {
-                let f =
-                    raw::RedisModule_StreamTrimByLength.expect("RedisModule_StreamTrimByLength");
-                f(key, raw::REDISMODULE_STREAM_TRIM_APPROX as c_int, max_len)
-            };
-            // A failed trim is not a lost entry, but it does mean the stream is
-            // growing past MAX_INFO_QUERIES unbounded, which is worth saying out
-            // loud rather than discovering as memory growth.
-            if deleted < 0 {
-                log_warning(format!(
-                    "telemetry: failed to trim the stream of graph '{graph_name}' to {max_len} entries"
-                ));
-            }
+        // Unconditionally, `max_len` of 0 included, which is what C does:
+        // `CronTask_streamFinishedQueries` passes `Config_CMD_INFO_MAX_QUERY_COUNT`
+        // straight to `RedisModule_StreamTrimByLength`. Skipping the call for 0 turns
+        // the one value that means "keep nothing" into "keep everything", and 0 is
+        // accepted by both `GRAPH.CONFIG SET MAX_INFO_QUERIES` and the module
+        // argument — so the stream would then grow for the lifetime of the server
+        // with no way to bound it.
+        //
+        // Returns the number of entries deleted, or -1 with `errno` set.
+        let deleted = unsafe {
+            let f = raw::RedisModule_StreamTrimByLength.expect("RedisModule_StreamTrimByLength");
+            f(key, raw::REDISMODULE_STREAM_TRIM_APPROX as c_int, max_len)
+        };
+        // A failed trim is not a lost entry, but it does mean the stream is
+        // growing past MAX_INFO_QUERIES unbounded, which is worth saying out
+        // loud rather than discovering as memory growth.
+        if deleted < 0 {
+            log_warning(format!(
+                "telemetry: failed to trim the stream of graph '{graph_name}' to {max_len} entries"
+            ));
         }
     }
     unsafe {
         let f = raw::RedisModule_CloseKey.expect("RedisModule_CloseKey");
         f(key);
     }
-    free_detached_string(key_name);
 }
 
 /// Delete the telemetry stream for a graph.
@@ -590,6 +601,12 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(5);
 /// schedule rather than per query.
 const FLUSH_LINGER: Duration = Duration::from_millis(5);
 
+/// How long `shutdown_flusher_thread` waits for the flusher to stop before giving up on
+/// it and letting shutdown continue without it. See there for why it is not an
+/// unconditional join. Far longer than an iteration of the loop takes, so the normal
+/// path returns the moment the flusher signals rather than after any part of this.
+const FLUSHER_STOP_GRACE: Duration = Duration::from_millis(500);
+
 /// Cap on entries held back while replica traffic is paused (see `flusher_loop`).
 /// Beyond this the oldest are dropped: the telemetry stream is already lossy —
 /// `MAX_INFO_QUERIES` trims it on every write — so bounding memory matters more
@@ -597,22 +614,222 @@ const FLUSH_LINGER: Duration = Duration::from_millis(5);
 const DEFERRED_XADD_MAX: usize = 4 * FLUSH_BATCH_MAX;
 
 struct PendingEntry {
-    /// The Redis key this query addressed, and so the stream the entry belongs in.
+    /// The Redis key this query addressed — replaced by the key the graph is
+    /// registered under *now* just before the write, see `resolve_current_names`.
     graph_name: Arc<str>,
     /// The graph this query ran on, weakly.
     ///
-    /// Not the name alone: a name can be flushed and rebound to a *different*
-    /// graph while an entry is still queued, and writing it then attributes one
-    /// graph's query to another's stream — and resurrects a stream key that
-    /// `FLUSHALL` removed. The C engine cannot get this wrong because its
-    /// queries log is owned by the `GraphContext`, so flushing the graph frees
-    /// the pending entries with it; this handle reproduces that ownership.
-    ///
-    /// Checked *together with* `graph_name`, not on its own: after a `RENAME` the
-    /// graph is still registered, but under another key, and this entry's stream
-    /// was deleted with the rename. See `flusher_loop`.
+    /// The graph and not the name is what an entry belongs to: a name can be
+    /// flushed and rebound to a *different* graph while an entry is still queued,
+    /// and writing it then attributes one graph's query to another's stream — and
+    /// resurrects a stream key that `FLUSHALL` removed. The C engine cannot get this
+    /// wrong because its queries log is owned by the `GraphContext`, so flushing the
+    /// graph frees the pending entries with it; this handle reproduces that
+    /// ownership, and is also what a `RENAME`d entry is re-keyed by.
     graph: Weak<RwLock<ThreadedGraph>>,
     entry: TelemetryEntry,
+}
+
+/// One distinct graph of a flush batch.
+struct BatchGraph {
+    /// A strong reference, not just an address: an address only identifies a graph for
+    /// as long as the allocation behind it lives, and holding one is what stops a graph
+    /// being freed and its address reused by another between resolution and the write.
+    /// `Arc::as_ptr` of this is also what the batch's entries are matched against.
+    graph: Arc<RwLock<ThreadedGraph>>,
+    /// The key this batch's entries addressed. Tried against the registry first: it is
+    /// still the right answer for every graph whose key has not moved.
+    captured: Arc<str>,
+    /// The key the graph is registered under *now*, once resolved.
+    current: Option<Arc<str>>,
+}
+
+/// Re-key every entry to the Redis key its graph is registered under *now*, dropping
+/// entries whose graph is no longer registered at all.
+///
+/// Entries carry the key the query addressed, and a linger window plus a replica pause
+/// can pass before they are written — long enough for a `RENAME` to move the graph and
+/// delete the old key's stream with it. C follows the graph: its cron task takes the
+/// stream name from the `GraphContext`, and `GraphContext_Rename` deletes the old
+/// stream and rebuilds that name, so a renamed graph's in-flight entries land in its
+/// new stream. Matching a stale name against the registry instead just discards them,
+/// which loses every entry in flight across a blue/green key swap with no diagnostic.
+///
+/// One registry lock for the whole batch rather than one per entry: at flush rates the
+/// per-entry version was tens of thousands of acquisitions a second on a mutex that
+/// `register_graph`, `rename_graph`, `graph_free` and the pre-fork sync all need.
+///
+/// Called with the GIL held, so that the name this settles on and the keyspace
+/// [`key_holds_graph`] then checks it against cannot disagree: a `RENAME` runs on the
+/// main thread, which cannot run a command callback while the flusher holds the GIL.
+/// Resolving outside it left a window where a rename between resolution and the write
+/// made the confirmation fail, and the entry was dropped — the very case this exists
+/// to carry across a rename.
+fn resolve_current_names(
+    deferred: &mut Vec<PendingEntry>,
+    graphs: &mut [BatchGraph],
+) {
+    if !graphs.is_empty() {
+        let registry = GRAPH_REGISTRY.lock();
+        // One hash lookup per graph settles the overwhelming majority: the key an entry
+        // addressed is still the key its graph answers to unless a `RENAME` moved it, or
+        // the name was rebound to a different graph, in the milliseconds since.
+        let mut unresolved = 0;
+        for b in &mut *graphs {
+            match registry.get(&*b.captured) {
+                Some(arc) if arc.data_ptr() == b.graph.data_ptr() => {
+                    b.current = Some(Arc::clone(&b.captured));
+                }
+                _ => unresolved += 1,
+            }
+        }
+        // Only the graphs that missed need the scan, and it stops as soon as the last of
+        // them is placed. Scanning unconditionally is O(R·G) in the number of graphs in
+        // the keyspace, with the GIL held, every 5-10ms: on a multi-tenant keyspace of
+        // tens of thousands of graphs that is all command processing stalled behind
+        // telemetry bookkeeping.
+        if unresolved > 0 {
+            for (name, arc) in registry.iter() {
+                let Some(b) = graphs
+                    .iter_mut()
+                    .find(|b| b.current.is_none() && b.graph.data_ptr() == arc.data_ptr())
+                else {
+                    continue;
+                };
+                b.current = Some(Arc::from(name.as_str()));
+                unresolved -= 1;
+                if unresolved == 0 {
+                    break;
+                }
+            }
+        }
+    }
+    deferred.retain_mut(|pe| {
+        // Matched by address rather than by upgrading: `graphs` holds a strong reference
+        // to every graph in it, so an address found there is alive by construction, and
+        // a `Weak` keeps its own allocation alive for as long as it exists — so no dead
+        // entry can borrow a live graph's address and be filed under its name. Upgrading
+        // here instead put one contended atomic per entry, a thousand of them a flush,
+        // on the single counter every query thread is already touching.
+        let Some(name) = graphs
+            .iter()
+            .find(|b| Arc::as_ptr(&b.graph) == pe.graph.as_ptr())
+            .and_then(|b| b.current.as_ref())
+        else {
+            // Either the graph is gone, or it is alive and registered under no key —
+            // deleted, or flushed and replaced. Neither has a stream to be written to.
+            return false;
+        };
+        if pe.graph_name != *name {
+            pe.graph_name = Arc::clone(name);
+        }
+        true
+    });
+}
+
+/// The distinct graphs of `deferred`, each held by a strong reference.
+///
+/// Built *before* the GIL is taken and kept until after it is released, so every graph
+/// the flush touches is already held here: nothing done under the GIL can be the last
+/// release of one, and no `ThreadedGraph` destructor — matrices, RediSearch indexes —
+/// can run on this thread while it holds the GIL.
+///
+/// Entries are grouped by `Weak::as_ptr`, a pointer read, and only one upgrade is done
+/// per distinct graph. A `Weak` keeps its own allocation alive, so two live `Weak`s
+/// address the same allocation only if they are the same graph, which makes the pointer
+/// a sound identity here. The obvious version — upgrade every entry and compare — is
+/// one contended atomic increment per entry on a single cache line, a thousand of them
+/// per flush, against the same counter the query threads are hammering; it cost about
+/// half the flusher's throughput under a 16-client load.
+fn hold_batch_graphs(deferred: &[PendingEntry]) -> Vec<BatchGraph> {
+    let mut graphs: Vec<BatchGraph> = Vec::new();
+    // Addresses already considered, including any whose upgrade failed, so a batch of
+    // one dead graph's entries does not retry the upgrade a thousand times.
+    let mut seen: Vec<*const RwLock<ThreadedGraph>> = Vec::new();
+    for pe in deferred {
+        let addr = pe.graph.as_ptr();
+        if seen.contains(&addr) {
+            continue;
+        }
+        seen.push(addr);
+        // A batch is one or two distinct graphs in practice, so the linear scans here
+        // and at the match sites beat hashing.
+        if let Some(graph) = pe.graph.upgrade() {
+            graphs.push(BatchGraph {
+                graph,
+                captured: Arc::clone(&pe.graph_name),
+                current: None,
+            });
+        }
+    }
+    graphs
+}
+
+/// Release what [`hold_batch_graphs`] took, off this thread if it turns out to be the
+/// last holder.
+///
+/// `register_graph`, `rename_graph` and `graph_free` all hand teardown to a background
+/// thread rather than run it inline, because `Index::drop` reaches RediSearch and takes
+/// the GIL. The flusher is a latency-critical thread for the same reason they are: the
+/// next batch waits behind whatever runs here.
+fn release_batch_graphs(graphs: Vec<BatchGraph>) {
+    for b in graphs {
+        let arc = b.graph;
+        if Arc::strong_count(&arc) == 1 {
+            thread::spawn(move || drop(arc));
+        }
+    }
+}
+
+/// True if the Redis key `name` currently holds `graph`. The GIL must be held.
+///
+/// The registry is the module's view of the keyspace; this is Redis's own, and the two
+/// can disagree. `graph_free` is the module type's free callback, so under lazy free
+/// (`lazyfree-lazy-user-flush yes`, `UNLINK`, an async `FLUSHALL`) it runs on the
+/// lazyfree thread — arbitrarily later than the key left the keyspace. Writing on the
+/// registry's word alone would then recreate the stream key of a graph Redis has
+/// already dropped, and because a key-API write is not propagated, that key exists on
+/// the master and nowhere else: the master/replica keyspace mismatch this whole check
+/// chain is here to prevent. One key open per graph per batch.
+fn key_holds_graph(
+    ctx: &Context,
+    name: &str,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+) -> bool {
+    // NULL context, like every other string this module builds off the command path,
+    // so Redis does not tie it to an auto-memory pool that outlives the call.
+    let key_name = RedisString::create_from_slice(ptr::null_mut(), name.as_bytes());
+    // NOTOUCH: reporting on a query must not make the graph look more recently used
+    // than the query already made it.
+    let key = ctx.open_key_with_flags(&key_name, KeyFlags::NOTOUCH);
+    matches!(
+        key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE),
+        Ok(Some(registered)) if registered.data_ptr() == graph.data_ptr()
+    )
+}
+
+/// Move everything already queued into `batch`, up to [`FLUSH_BATCH_MAX`].
+///
+/// `true` if the channel has disconnected. `false` does *not* mean it has not: the loop
+/// also falls out with a full batch, having asked nothing, and `try_recv` reports
+/// `Disconnected` only once the channel is *empty* as well as closed. Callers that are
+/// about to block on something the shutdown path holds must re-check with
+/// [`MRx::is_disconnected`], which answers the question the sender's fate alone decides.
+fn drain_queued(
+    rx: &MRx<List<PendingEntry>>,
+    batch: &mut Vec<PendingEntry>,
+) -> bool {
+    while batch.len() < FLUSH_BATCH_MAX {
+        match rx.try_recv() {
+            Ok(pe) => {
+                QUEUED.fetch_sub(1, Ordering::Relaxed);
+                batch.push(pe);
+            }
+            Err(crossfire::TryRecvError::Empty) => return false,
+            Err(crossfire::TryRecvError::Disconnected) => return true,
+        }
+    }
+    false
 }
 
 /// Producer side of the telemetry channel. `None` before
@@ -626,8 +843,38 @@ static SENDER: Mutex<Option<MTx<List<PendingEntry>>>> = Mutex::new(None);
 static RECEIVER: Mutex<Option<MRx<List<PendingEntry>>>> = Mutex::new(None);
 /// Handle for the flusher thread, joined during `shutdown_flusher_thread`.
 static FLUSHER: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
+/// Signalled when the flusher thread has left its loop, so shutdown can wait for it
+/// with a deadline instead of joining it unconditionally. The sender lives in the
+/// spawned closure, so it also drops — waking the receiver — if the thread panics.
+static FLUSHER_EXIT: Mutex<Option<mpsc::Receiver<()>>> = Mutex::new(None);
 
-/// Push a telemetry entry to the background channel. Lock-free hot path.
+/// Entries sent but not yet taken off the channel.
+///
+/// The channel is unbounded and has to be: `enqueue_entry` runs on the query hot
+/// path, where blocking a worker until the flusher catches up would charge
+/// telemetry the very latency it exists to measure. Unbounded *and* uncapped is the
+/// other failure — the flusher writes at most [`FLUSH_BATCH_MAX`] entries per GIL
+/// acquisition, so a burst that outruns it grows the queue for as long as it lasts:
+/// 400k queries at 140k ops/s left the flusher 8.2s and ~50MB behind. C cannot grow
+/// here at all, because its per-graph queries log is a fixed-size circular buffer
+/// that overwrites its oldest entry; dropping arrivals past [`QUEUE_MAX`] is the
+/// same trade, bounded and lossy in the same way.
+static QUEUED: AtomicUsize = AtomicUsize::new(0);
+
+/// Entries dropped because the channel was at [`QUEUE_MAX`], reported by the flusher.
+static DROPPED: AtomicU64 = AtomicU64::new(0);
+
+/// Cap on entries waiting on the channel — four batches, the same bound
+/// [`DEFERRED_XADD_MAX`] puts on entries held back through a replica pause.
+const QUEUE_MAX: usize = 4 * FLUSH_BATCH_MAX;
+
+/// Push a telemetry entry onto the background channel.
+///
+/// Off the GIL, but not lock-free: the sender lives behind a `Mutex` so that
+/// [`shutdown_flusher_thread`] can drop it and disconnect the channel. The critical
+/// section is a pointer read and a queue push, so workers serialise for the length of
+/// the push and nothing else — the entry's real cost (formatting, string creation,
+/// the stream write) is all on the flusher.
 pub fn enqueue_entry(
     graph_name: &Arc<str>,
     graph: &Arc<RwLock<ThreadedGraph>>,
@@ -651,12 +898,27 @@ pub fn enqueue_entry(
     if IS_REPLICA.load(Ordering::Relaxed) {
         return;
     }
+    // Bounded queue: see `QUEUED`. Checked before the send and with a plain load, so a
+    // burst can overshoot the cap by however many workers race here at once — which is
+    // fine, the cap is a memory bound and not a quota.
+    if QUEUED.load(Ordering::Relaxed) >= QUEUE_MAX {
+        DROPPED.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
     if let Some(tx) = SENDER.lock().as_ref() {
-        let _ = tx.send(PendingEntry {
-            graph_name: Arc::clone(graph_name),
-            graph: Arc::downgrade(graph),
-            entry,
-        });
+        // Counted before the send so the flusher's decrement can never run first and
+        // wrap the counter through zero.
+        QUEUED.fetch_add(1, Ordering::Relaxed);
+        if tx
+            .send(PendingEntry {
+                graph_name: Arc::clone(graph_name),
+                graph: Arc::downgrade(graph),
+                entry,
+            })
+            .is_err()
+        {
+            QUEUED.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 }
 
@@ -694,21 +956,60 @@ pub fn start_flusher_thread() {
         }
     }
 
+    let (exit_tx, exit_rx) = mpsc::channel();
+    *FLUSHER_EXIT.lock() = Some(exit_rx);
     let handle = thread::Builder::new()
         .name("falkordb-telemetry".to_string())
-        .spawn(flusher_loop)
+        .spawn(move || {
+            flusher_loop();
+            // Sent, and in any case dropped, as the thread ends: either way the wait in
+            // `shutdown_flusher_thread` returns.
+            let _ = exit_tx.send(());
+        })
         .expect("failed to spawn telemetry flusher thread");
     *FLUSHER.lock() = Some(handle);
 }
 
-/// Stop the background flusher: drop the sender so the channel disconnects,
-/// then join the thread. Must be called on module unload before tearing down
-/// Redis state the flusher's `RM_Call("XADD")` touches.
+/// Stop the background flusher: drop the sender so the channel disconnects, then wait
+/// for the thread. Must be called on module unload before tearing down Redis state the
+/// flusher's writes touch.
+///
+/// The wait is bounded, and that is the point. This runs on the main thread inside
+/// Redis's shutdown event callback, which holds the module GIL for its whole duration —
+/// so a flusher parked on `hold_gil()` can never wake, and an unconditional join hangs
+/// the server. The flusher checks for the disconnect immediately before it acquires the
+/// GIL, which closes that door in every ordering but one: the sender dropping in the
+/// instant between its check and its acquire. Rather than pay for that window on the
+/// hot path — a polling try-lock keeps missing the brief windows in which Redis
+/// releases the GIL, which cost the flusher about half its throughput in measurement —
+/// the window is made harmless here. A flusher still parked when the grace expires is
+/// left parked: it is blocked acquiring a GIL that this thread holds and will hold
+/// until the process exits, so it cannot touch Redis state, which is all the join was
+/// ever protecting.
 pub fn shutdown_flusher_thread() {
-    // Drop the sender to close the channel; the flusher loop exits on
-    // `Disconnected` after draining any pending entries.
+    // Drop the sender to close the channel; the flusher observes the disconnect and
+    // leaves *without* writing, dropping whatever is still queued.
     drop(SENDER.lock().take());
     let handle = FLUSHER.lock().take();
+    let exit = FLUSHER_EXIT.lock().take();
+    // `Err(Timeout)` is the only outcome that means "still running": a send and a
+    // dropped sender (the thread panicked) both say it is done.
+    let stopped = exit.is_none_or(|rx| {
+        !matches!(
+            rx.recv_timeout(FLUSHER_STOP_GRACE),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        )
+    });
+    if !stopped {
+        log_warning(
+            "telemetry: the flush thread did not stop within the shutdown grace period \
+             and is being left parked; it holds no Redis state",
+        );
+        // Dropped rather than joined, which detaches it.
+        drop(handle);
+        // Leaked deliberately: the parked thread's stream template still borrows them.
+        return;
+    }
     if let Some(h) = handle {
         let _ = h.join();
     }
@@ -740,11 +1041,16 @@ fn flusher_loop() {
     // Entries not yet written because replica traffic was paused when their turn
     // came. Retried on a later iteration — see the pause check below.
     let mut deferred: Vec<PendingEntry> = Vec::new();
+    // Drops already reported, so each warning covers only what is new.
+    let mut reported_drops = 0;
 
     loop {
         // Block until at least one entry is available (or the channel closes).
         match rx.recv_timeout(FLUSH_INTERVAL) {
-            Ok(first) => batch.push(first),
+            Ok(first) => {
+                QUEUED.fetch_sub(1, Ordering::Relaxed);
+                batch.push(first);
+            }
             // Nothing new — but entries held back by a pause still need a retry, so
             // only park again once there is genuinely nothing to do.
             Err(crossfire::RecvTimeoutError::Timeout) => {
@@ -754,32 +1060,59 @@ fn flusher_loop() {
             }
             Err(crossfire::RecvTimeoutError::Disconnected) => break,
         }
-        // Let the window elapse, then take everything that arrived during it.
-        //
-        // A *blocking* wait here would return the moment an entry is queued, so
-        // the thread would still wake once per query and only the flush would be
-        // batched — and waking is most of what an entry costs. Asleep, a sender's
-        // push is an atomic with nobody to wake, which is the position the C
-        // engine is in: its cron task runs on a timer and the query thread only
-        // appends to a per-graph buffer.
-        //
         // Skipped when nothing arrived: this iteration is then only a retry of a
         // held batch, and there is no arrival to collect neighbours for.
         if !batch.is_empty() {
-            thread::sleep(FLUSH_LINGER);
-            while batch.len() < FLUSH_BATCH_MAX {
-                match rx.try_recv() {
-                    Ok(pe) => batch.push(pe),
-                    Err(crossfire::TryRecvError::Empty) => break,
-                    Err(crossfire::TryRecvError::Disconnected) => {
-                        // Flush what we have and then leave: entries already accepted
-                        // from a client should still reach the stream, and
-                        // `shutdown_flusher_thread` is waiting on this thread.
-                        disconnected = true;
-                        break;
-                    }
-                }
+            // Take what is already queued *before* deciding to wait. A full batch is
+            // the signal that the flusher is behind: lingering then buys no batching
+            // it does not already have, and caps throughput at FLUSH_BATCH_MAX per
+            // FLUSH_LINGER — ~51k entries/s in theory, 36k measured — while the
+            // channel keeps accepting at whatever rate the clients manage. That is
+            // how 400k queries at 140k ops/s left the flusher 8.2s behind.
+            disconnected |= drain_queued(&rx, &mut batch);
+            // Let the window elapse, then take what arrived during it.
+            //
+            // A *blocking* wait here would return the moment an entry is queued, so
+            // the thread would still wake once per query and only the flush would be
+            // batched — and waking is most of what an entry costs. Asleep, a sender's
+            // push is an atomic with nobody to wake, which is the position the C
+            // engine is in: its cron task runs on a timer and the query thread only
+            // appends to a per-graph buffer.
+            if batch.len() < FLUSH_BATCH_MAX && !disconnected {
+                thread::sleep(FLUSH_LINGER);
+                disconnected |= drain_queued(&rx, &mut batch);
             }
+        }
+
+        // Once per flush rather than once per drop: at the rate a full queue drops
+        // entries, a line each would be the more expensive half of the problem.
+        let drops = DROPPED.load(Ordering::Relaxed);
+        if drops > reported_drops {
+            log_warning(format!(
+                "telemetry: dropped {} finished-query entries — the queue was at its \
+                 {QUEUE_MAX}-entry cap",
+                drops - reported_drops,
+            ));
+            reported_drops = drops;
+        }
+
+        // Asked of the channel itself rather than inferred from the drains: `try_recv`
+        // reports `Disconnected` only when the channel is *empty* as well as closed, and
+        // `drain_queued` stops asking altogether once the batch is full. A backlog —
+        // precisely the state the linger-skip above exists to handle — would otherwise
+        // hide the shutdown for as long as it lasted. `is_disconnected` is the sender's
+        // fate alone, so a queue with entries still in it cannot mask it.
+        disconnected |= rx.is_disconnected();
+
+        if disconnected {
+            // Leave *without* writing. `shutdown_flusher_thread` runs on the main
+            // thread inside Redis's shutdown event callback, which holds the module
+            // GIL for its whole duration (Redis releases it in `beforeSleep`), and
+            // blocks there joining this thread. Taking the GIL here would deadlock
+            // the two and hang the server on shutdown after any query burst. Entries
+            // still queued are dropped, which is the same thing the `Disconnected`
+            // arm above does when the channel closes while the flusher is parked.
+            break;
         }
 
         let max_len = MAX_INFO_QUERIES.load(Ordering::Relaxed);
@@ -791,27 +1124,33 @@ fn flusher_loop() {
             deferred.drain(..deferred.len() - DEFERRED_XADD_MAX);
         }
 
-        // Keep only entries whose graph is *still the graph registered under the name
-        // the entry names*. Both halves earn their place:
-        //
-        // - the handle rules out "same name, a different graph after a FLUSHALL and
-        //   RESTORE", which a name-only check would write to the wrong stream;
-        // - the name rules out "same graph, a different name after a RENAME", which a
-        //   handle-only check would write to the stream the rename just deleted.
-        //
-        // Here, immediately before the write, rather than as entries are queued: the
-        // pause check below can hold a batch for the whole pause window, and a graph
-        // dropped or renamed during it would otherwise have its stream key recreated
-        // when the window closes. Outside the GIL block because it needs only the
-        // graph registry's own lock.
-        deferred.retain(|pe| {
-            pe.graph
-                .upgrade()
-                .is_some_and(|arc| graph_is_registered_as(&pe.graph_name, &arc))
-        });
+        // Entries whose graph has been dropped outright have nowhere to go. Checking it
+        // here costs one atomic load each and takes no lock at all, so a batch that is
+        // entirely dead — a graph deleted while its last queries were still queued —
+        // never reaches the point of acquiring the GIL to write nothing.
+        deferred.retain(|pe| pe.graph.strong_count() > 0);
+        if deferred.is_empty() {
+            continue;
+        }
+
+        // Upgraded here, outside the GIL, and held until it has been released again, so
+        // that nothing done under the GIL can be the last release of a graph. This is
+        // also the batch's only pass of upgrades: everything below matches entries to
+        // these by address. See `hold_batch_graphs`.
+        let mut graphs = hold_batch_graphs(&deferred);
 
         // Single GIL acquisition for the whole batch, through the same guard queries
         // use, so every acquisition in the process funnels through one place.
+        //
+        // Blocking, and deliberately: the main thread can be waiting on this thread
+        // while holding the GIL — `shutdown_flusher_thread` waits for it from inside the
+        // shutdown event callback — but the disconnect check above is what keeps this
+        // thread from arriving here after that has begun. The one ordering it cannot
+        // cover, a sender dropped between that check and this line, is handled by
+        // bounding the wait over there instead of bounding this. A try-lock here would
+        // cover it, and was measured: polling misses the brief windows in which Redis
+        // releases the GIL, where a blocked waiter is handed it, and the flusher fell
+        // far enough behind to drop several times as many entries at the queue cap.
         {
             let _gil = crate::query_session::hold_gil();
             let ctx = Context::new(tsc);
@@ -843,34 +1182,44 @@ fn flusher_loop() {
                 // interleaving rather than a race, which is how `test_role_change_race`
                 // pins this behaviour.
                 //
+                // Address each entry to the key its graph answers to *now*, and drop the
+                // entries whose graph is registered under no key at all: the graph a
+                // query ran on is what an entry belongs to, and its key can have moved
+                // (`RENAME`) or been rebound to another graph (`FLUSHALL` then `RESTORE`)
+                // in the milliseconds since.
+                //
+                // Under the GIL, and immediately before the write, so that nothing can
+                // move between resolving a name and confirming it: the pause branch can
+                // hold a batch for a whole pause window, and every path that deletes or
+                // re-keys a graph runs on the main thread, which cannot execute a command
+                // callback while this thread holds the GIL.
+                resolve_current_names(&mut deferred, &mut graphs);
+
                 // Group by graph so each stream key is opened and trimmed once per batch
                 // rather than once per entry. Sorting is enough: entries of one graph end
                 // up in one run, and being stable it keeps arrival order within a graph,
                 // which is the order consumers read.
                 deferred.sort_by(|a, b| a.graph_name.cmp(&b.graph_name));
-                let mut run_start = 0;
-                while run_start < deferred.len() {
-                    let name = Arc::clone(&deferred[run_start].graph_name);
-                    let mut run_end = run_start + 1;
-                    while run_end < deferred.len() && deferred[run_end].graph_name == name {
-                        run_end += 1;
+                for run in deferred.chunk_by(|a, b| a.graph_name == b.graph_name) {
+                    let name = &run[0].graph_name;
+                    // The registry named this key; Redis has to agree that it still
+                    // holds this graph. See `key_holds_graph`. One graph per run, so
+                    // any entry of it answers for the rest.
+                    let Some(b) = graphs
+                        .iter()
+                        .find(|b| Arc::as_ptr(&b.graph) == run[0].graph.as_ptr())
+                    else {
+                        continue;
+                    };
+                    if !key_holds_graph(&ctx, name, &b.graph) {
+                        continue;
                     }
-                    stream_entries(
-                        tsc,
-                        &mut template,
-                        &name,
-                        &deferred[run_start..run_end],
-                        max_len,
-                    );
-                    run_start = run_end;
+                    stream_entries(tsc, &mut template, name, run, max_len);
                 }
                 deferred.clear();
             }
         }
-
-        if disconnected {
-            break;
-        }
+        release_batch_graphs(graphs);
     }
 
     unsafe {
