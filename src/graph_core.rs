@@ -819,19 +819,18 @@ pub fn execute_query_write(
 
 /// Reply with profile output: DFS walk of the plan tree, each line annotated
 /// with `Records produced: N, Execution time: T.TTTTTT ms`.
-/// Skips `Commit` nodes (internal implementation detail).
+/// Skips only the operators that do not exist at runtime.
 fn reply_profile(
     ctx: &Context,
     runtime: &Runtime,
     plan: &orx_tree::DynTree<IR>,
 ) {
     let all_ops: Vec<_> = plan.root().indices::<Dfs>().collect();
-    // Filter out Commit nodes, and Filters folded whole into the traverse
-    // below them (those build no operator), adjusting depth accordingly.
-    let hidden = |idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>| {
-        matches!(plan.node(idx).data(), IR::Commit)
-            || graph::planner::filter_is_fused_away(plan, idx)
-    };
+    // Hide only what builds no operator: a `Filter` folded whole into the
+    // traverse below it. `Commit` builds a `CommitOp` and runs, so it stays —
+    // matching `GRAPH.EXPLAIN`, which has always shown it.
+    let hidden =
+        |idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>| graph::planner::filter_is_fused_away(plan, idx);
     let ops: Vec<_> = all_ops.iter().filter(|idx| !hidden(**idx)).collect();
     let profile_data = runtime.profile_data.borrow();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
