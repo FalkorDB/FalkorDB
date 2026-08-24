@@ -13,10 +13,21 @@ name: Build artifacts macOS (reusable)
 on:
   workflow_call:
     inputs:
-      commit_sha:
-        description: "Commit SHA to check out and build"
+      revision:
+        description: "Git revision (commit SHA) to check out and build"
         required: true
         type: string
+      trusted_revision:
+        description: >-
+          Whether `revision` is already-reviewed code (release tags, the default
+          branch, a maintainer dispatch). Defaults to FALSE — a caller must opt
+          in — so a caller that forwards a pull-request head is untrusted by
+          construction. Untrusted builds never WRITE a cache, which is what keeps
+          a PR build from poisoning the native deps / Rust artefacts a later
+          release build restores.
+        required: false
+        type: boolean
+        default: false
       suffix:
         description: "Asset suffix → falkordb-<suffix>.so"
         required: false
@@ -39,9 +50,14 @@ jobs:
       GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
       GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
     steps:
+      # This job compiles caller-supplied code that may come from a pull request.
+      # `persist-credentials: false` keeps no GITHUB_TOKEN on disk, `permissions`
+      # is read-only, callers pass no secrets, and every cache WRITE below is
+      # gated on `trusted_revision` so an untrusted build cannot seed artefacts
+      # that a later release build restores.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ inputs.revision }}
           persist-credentials: false
 
       - name: Install Homebrew build deps
@@ -64,6 +80,8 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: "macos-artifact-release"
+          # Untrusted revisions restore the cache but never save it.
+          save-if: ${{ inputs.trusted_revision }}
 
       # Hosted macOS has no Docker toolchain image, so rebuild GraphBLAS +
       # LAGraph + RediSearch from source and cache them (keyed on the build
@@ -87,7 +105,11 @@ jobs:
         run: ./redisearch.sh
 
       - name: Save GraphBLAS + RediSearch native builds
-        if: steps.native-cache.outputs.cache-hit != 'true'
+        # Only a trusted revision may WRITE this cache. `graphblas.sh` /
+        # `redisearch.sh` come from the checked-out tree, so on a PR build their
+        # output is attacker-controlled and must never be published for a later
+        # release build to restore.
+        if: ${{ inputs.trusted_revision && steps.native-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: |

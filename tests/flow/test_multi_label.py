@@ -262,3 +262,70 @@ class testMultiLabel():
         self.env.assertEqual(query_result.labels_added, 1)
         self.env.assertEqual(query_result.nodes_created, 1)
         self.env.assertEqual(query_result.result_set[0][0], ["L4"])
+
+    def test11_label_predicate_against_pending_labels(self):
+        """`n:Label` is answered by a single label test that has to agree with
+           the node's materialized label set in every case: labels this query
+           added or removed, a node it created, a node it deleted, and labels
+           the graph has never registered. This pins each of them."""
+
+        g = self.db.select_graph('pending_label_predicate')
+
+        # a label added in the same query, tested after the SET
+        res = g.query("CREATE (n:A {v: 1}) SET n:B WITH n WHERE n:B RETURN n.v")
+        self.env.assertEqual(res.result_set, [[1]])
+
+        # ... and the same node tested for a label it does not have
+        res = g.query("MATCH (n:A) WHERE n:C RETURN n.v")
+        self.env.assertEqual(res.result_set, [])
+
+        # a label removed in the same query is gone for the predicate too
+        res = g.query("MATCH (n:A) REMOVE n:B WITH n WHERE n:B RETURN n.v")
+        self.env.assertEqual(res.result_set, [])
+
+        # it is committed as removed
+        res = g.query("MATCH (n) WHERE n:B RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        # a node created in this query, before any commit
+        res = g.query("CREATE (n:D {v: 2}) WITH n WHERE n:D RETURN n.v")
+        self.env.assertEqual(res.result_set, [[2]])
+
+        # multi-label AND: both must hold
+        g.query("CREATE (:E:F {v: 3}), (:E {v: 4})")
+        res = g.query("MATCH (n) WHERE n:E AND n:F RETURN n.v")
+        self.env.assertEqual(res.result_set, [[3]])
+        res = g.query("MATCH (n) WHERE n:E RETURN n.v ORDER BY n.v")
+        self.env.assertEqual(res.result_set, [[3], [4]])
+
+        # a label no node in the graph has ever carried
+        res = g.query("MATCH (n) WHERE n:NeverUsed RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        # hasLabels() shares the same path
+        res = g.query("MATCH (n:E) WHERE hasLabels(n, ['E', 'F']) RETURN n.v")
+        self.env.assertEqual(res.result_set, [[3]])
+        res = g.query("MATCH (n:E) WHERE hasLabels(n, ['NeverUsed']) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        # a node deleted in this query still answers from its captured labels
+        res = g.query("MATCH (n:D) DELETE n WITH n WHERE n:D RETURN n.v")
+        self.env.assertEqual(res.result_set, [[2]])
+
+        # a non-string label is a type error, and stays one even where the
+        # answer is already settled by an earlier label in the list
+        for labels in ("['E', 1]", "['NeverUsed', 1]", "[1, 'E']"):
+            try:
+                g.query(f"MATCH (n:E) RETURN hasLabels(n, {labels})")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
+
+        # the extra-label filter above an index scan runs the same test
+        create_node_range_index(g, 'E', 'v', sync=True)
+        res = g.query("MATCH (n:E:F) WHERE n.v > 0 RETURN n.v")
+        self.env.assertEqual(res.result_set, [[3]])
+        res = g.query("MATCH (n:E:NeverUsed) WHERE n.v > 0 RETURN n.v")
+        self.env.assertEqual(res.result_set, [])
+        res = g.query("MATCH (n:E:F) WHERE n.v > 0 REMOVE n:F WITH n MATCH (m:E:F) WHERE m.v > 0 RETURN m.v")
+        self.env.assertEqual(res.result_set, [])
