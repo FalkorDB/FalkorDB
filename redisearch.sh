@@ -17,7 +17,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 # The two are checked against each other below, so a half-done bump fails loudly
 # instead of building a different RediSearch locally than in Docker.
 REDISEARCH_BRANCH="falkordb/llapi-extensions-8.6"
-REDISEARCH_REF="ac45247834fec495f4d3ec76f337e3709260fdd5"
+REDISEARCH_REF="f44243456192c8f39be59756fb777dc829a98d00"
 REDISEARCH_DIR="$ROOT/deps/RediSearch"
 
 # The committed gitlink, when we are in a repository at all (empty otherwise).
