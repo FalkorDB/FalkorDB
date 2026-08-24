@@ -106,7 +106,8 @@ identifier \emph{directly} as the matrix value, so a simple graph requires no
 auxiliary edge structure whatsoever. A reserved sentinel value $\M = 2^{64}-1$
 in the cell announces that the pair has become multi-edge, at which point
 \emph{all} of the pair's identifiers migrate to a single global hypersparse
-overflow matrix keyed by a packed $(\text{src},\text{dst})$ compound key.
+overflow matrix keyed by a $(\text{src},\text{dst})$ compound key that names a
+block and a row within it.
 The scheme is provably safe --- edge identifiers are bounded by the GraphBLAS
 index limit $2^{60}-1$ and therefore cannot collide with the sentinel --- and
 it reduces the steady-state cost of a single-edge pair to one $\langle$32-bit
@@ -211,8 +212,10 @@ Rust storage engine. Specifically:
   \item \textbf{A single global overflow matrix instead of per-cell
         containers} (\S\ref{sec:compound}). Multi-edge identifiers live in one
         hypersparse \cite{bulucgilbert2008} Boolean matrix indexed by a
-        \emph{compound key} $\kappa(s,d) = (s \ll 32) \mathbin{|} d$ in the
-        row dimension and by edge identifier in the column dimension. This
+        \emph{compound key} $\kappa$ --- which cuts each endpoint in two,
+        the low $30$ bits packing into the row and the high bits selecting a
+        block --- in the row dimension, and by edge identifier in the column
+        dimension. This
         removes $N$ container objects and their allocation, lifetime and
         serialisation obligations in exchange for one wide, mostly empty
         matrix that GraphBLAS already stores in $O(\mathrm{nvals})$ space.
@@ -266,10 +269,14 @@ Rust storage engine. Specifically:
         quadratic in our implementation: we give the measurement, the
         instrumented cause, the fix, and the $3\times$ residual.
   \item \textbf{An explicit account of the design's \emph{domain
-        restrictions}} (\S\ref{sec:limits}), including the
-        observation that although the compound-key guard admits node
-        identifiers up to $2^{32}-1$, the overflow matrix's dimension bounds
-        the source identifier of a multi-edge pair by $2^{28}$.
+        restrictions}} (\S\ref{sec:limits}). The sharpest of them was a
+        defect: the compound key's guard admitted node identifiers up to
+        $2^{32}-1$ while the overflow matrix's dimension bounded the source
+        identifier of a multi-edge pair by $2^{28}$, and in release builds the
+        out-of-range write was dropped silently. We report the reproduction,
+        the repair that removed the ceiling rather than documenting it, and
+        the two places where what shipped differs from what this paper first
+        proposed.
 \end{enumerate}
 
 \paragraph{Scope.} This is a design and analysis paper about a single data
@@ -461,7 +468,8 @@ pub struct Tensor {
     dp: Delta<u64>,              // pending additions / in-place value updates
     dm: Delta<bool>,             // pending deletions (mask over m)
     mt: VersionedMatrix<bool>,   // backward adjacency: dst -> src, structure only
-    me: VersionedMatrix<bool>,   // overflow: compound_key(src,dst) -> edge id
+    me: SmallVec<[(MeBlock, VersionedMatrix<bool>); 1]>, // overflow, one matrix
+                                 // per live block: row key -> edge id
     needs_flush: AtomicBool,     // a latched fold is executable now
 }
 
@@ -525,7 +533,7 @@ type: \texttt{Delta<u64>} carries identifiers, \texttt{Delta<bool>} a mask.
       $\mathcal{E}=(m\setminus dm)\cup dp$, values are edge ids}] (fwd) {};
 
 \node[aux] (mt) at (8.4,0)     {$mt$ \;\texttt{BOOL}\\\scriptsize backward structure, $dst \to src$};
-\node[aux] (me) at (8.4,-2.7)  {$me$ \;\texttt{BOOL}, $(2^{60}\!-\!1)^2$\\\scriptsize $\kappa(src,dst) \to$ edge id};
+\node[aux] (me) at (8.4,-2.7)  {$me$ \;\texttt{BOOL}, $2^{60}\!\times\!2^{31}$ per block\\\scriptsize $\kappa(src,dst) \to$ edge id};
 
 \draw[->,black!60] (fwd.east |- m) -- node[midway,above,font=\scriptsize,
       align=center,fill=white,inner sep=1.5pt]
@@ -577,37 +585,94 @@ representation invariant.
 
 The overflow matrix must associate a \emph{pair} with a set of identifiers.
 Rather than a matrix per pair, or a three-dimensional object GraphBLAS does
-not provide, the pair is folded into one index:
+not provide, the pair is folded into an index. It is folded into \emph{two}:
+a block, and a row within that block,
 \[
-  \kappa(s,d) \;=\; (s \ll 32) \mathbin{|} d ,
-  \qquad me\bigl[\kappa(s,d),\, e\bigr] = \texttt{true} .
+  \kappa(s,d) \;=\;
+    \Bigl(\underbrace{(s \gg k,\; d \gg k)}_{\text{block}},\;
+          \underbrace{((s \wedge m) \ll k) \mathbin{|} (d \wedge m)}_{\text{row}}\Bigr),
+  \qquad k = 30,\ m = 2^{k}-1 ,
 \]
-A pair's identifiers are exactly one \emph{row} of $me$; the row scan
-GraphBLAS provides yields them in ascending column order, i.e.\ in ascending
-identifier order, for free. Because $me$ is hypersparse, its $2^{60}$-row
-declaration costs nothing: space is proportional to stored entries, and the
-row dimension exists only to give $\kappa$ room.
+and $me$ is a collection of matrices indexed by block, with
+$me_{\text{block}}\bigl[\text{row},\, e\bigr] = \texttt{true}$. Equivalently,
+the $s \times d$ identifier space is tiled into $2^{30} \times 2^{30}$ tiles:
+the block names the tile, the row names the cell inside it.
 
-The packing is only injective if both operands fit in $32$ bits, and the
-artifact checks this unconditionally rather than under a debug assertion:
+A pair's identifiers are still exactly one \emph{row} of one matrix; the row
+scan GraphBLAS provides yields them in ascending column order, i.e.\ in
+ascending identifier order, for free. Because each block is hypersparse, its
+$2^{60}$-row declaration costs nothing.
+
+Three properties follow from building the row out of \emph{masked} halves, and
+they are the reason for the shape.
+
+\paragraph{It is total.} Two $k$-bit halves occupy $2k = 60$ bits, which is
+exactly GraphBLAS's index budget, so the row is a valid index of $me$ for every
+input. There is nothing to check and nothing to panic on:
 
 \begin{lstlisting}
-pub fn compound_key(src: u64, dst: u64) -> u64 {
-    assert!(u32::try_from(src).is_ok() && u32::try_from(dst).is_ok(),
-        "Tensor compound key overflow: src={src}, dst={dst} (each must fit in u32)");
-    (src << 32) | dst
+pub const BLOCK_SHIFT: u32 = 30;
+const BLOCK_MASK: u64 = (1u64 << BLOCK_SHIFT) - 1;
+
+pub fn compound_key(src: u64, dst: u64) -> (MeBlock, u64) {
+    (
+        (src >> BLOCK_SHIFT, dst >> BLOCK_SHIFT),
+        ((src & BLOCK_MASK) << BLOCK_SHIFT) | (dst & BLOCK_MASK),
+    )
 }
 \end{lstlisting}
 
-The choice of an unconditional check is worth stating explicitly, because it
-is the opposite of the usual advice for a hot path. Silent truncation here
-does not produce a wrong answer that a test would catch; it produces
-\emph{key aliasing}, conflating the identifier sets of two different node
-pairs, and the corruption is durable --- it survives into the on-disk
-snapshot. A panic is strictly preferable to a graph that has silently merged
-two relationships, and the cost is two comparisons on a path already
-dominated by FFI calls. \S\ref{sec:limits} notes that this guard is in fact
-looser than the storage admits.
+Identifiers too large for one tile move to another rather than truncate. This
+is the property the predecessor lacked, and \S\ref{sec:limits} tells that
+story: $\kappa$ was $(s \ll 32) \mathbin{|} d$, which needed $60$ bits at
+$s = 2^{28}$ and was then out of range, where the write was \emph{silently
+dropped} in release builds.
+
+\paragraph{It is invertible, and its injectivity is unconditional.} Each
+endpoint is reassembled from its block coordinate and its half of the row, so
+whole-tensor enumeration recovers $(s,d)$ without an external endpoint table.
+Distinct pairs therefore never share an address --- with no hypothesis about
+identifier width, which is what lets the mechanisation state
+\texttt{key\_inj} outright (\S\ref{sec:mechanised}).
+
+\paragraph{It costs a compare, not a lookup.} Every graph below $2^{30}$ nodes
+per axis lands wholly in block $(0,0)$, and the tensor holds its blocks in a
+list sized for exactly one, with block $(0,0)$ at index $0$. Such a graph pays
+one comparison against the first entry --- no hashing, nothing on the heap ---
+and has the layout the single-matrix design had. Maintenance paths (fold, wait,
+resize) fold over \emph{live} blocks, so their cost is proportional to blocks
+that exist rather than to the block index range.
+
+The serialised form is unaffected: the blob stores $(s, d, \textit{ids})$ rather
+than row keys, so it is block-agnostic already and re-keys on load. The packing
+is an in-memory detail, never a format --- so the repair needed no version bump
+and no migration.
+
+\subsection{The overflow matrix is declared narrow}
+\label{sec:narrow}
+
+One further choice belongs here because it is where $me$'s space actually goes.
+The row dimension is the full $2^{60}$, but the \emph{column} dimension is
+declared at $2^{31}$, not $2^{60}$.
+
+Columns of $me$ are edge identifiers, so the column-index array holds one entry
+per stored identifier --- it is the largest array in the structure. GraphBLAS
+chooses its index width per matrix from the declared dimensions, and stores
+column indices in $32$ bits when the column count fits a \texttt{u32}. The
+threshold is $2^{31}$ rather than $2^{32}$ because the dimension itself must
+fit. Declaring the matrix $2^{60}$ wide forced $64$-bit indices for every
+identifier; declaring it $2^{31}$ wide halves that array. Measured at $200{,}000$
+identifiers, $6.44$ bytes per identifier against $11.69$ --- the declaration
+alone accounted for $45\%$.
+
+A tensor whose edge identifiers actually reach $2^{31}$ widens back and pays the
+old price, so the narrow default costs only the check. Rows stay wide
+deliberately: narrowing them saves a further $0.40$\,B/id --- row arrays hold
+one entry per multi-edge \emph{pair}, not per identifier --- and would require
+$k = 15$, i.e.\ a block per $32{,}768$ nodes per axis.
+
+\S\ref{sec:evalspace} reports what this did to the measured space, including the
+part of it that is a result rather than an erratum.
 
 % =====================================================================
 \section{Delta algebra for value-carrying layers}
@@ -1159,7 +1224,8 @@ identifiers twice (\S\ref{sec:representation}).
 A separate whole-tensor enumeration, \textsc{IterEdges}, exists for
 consumers that need every edge but not in pair order (snapshot writing, index
 rebuilds). It concatenates the forward stream with sentinels filtered out and
-a single flat scan of $me$, unpacking $\kappa$ back into $(s,d)$ by shifting.
+a flat scan of each live block of $me$, inverting $\kappa$ back into $(s,d)$
+from the block a row was found in.
 On a simple graph $me$ is empty and this degenerates to one streaming pass
 with no sub-iterator at all --- the point of the whole design, visible in one
 line of code.
@@ -1447,7 +1513,8 @@ and empty for all others, so summing over $P^{\ast}$,
       = |P^{\ast}| - \textit{multi} + |me| ,
 \]
 using Invariant~\ref{inv:counter} for the middle term and the fact that
-$\kappa$ is injective (\S\ref{sec:compound}) so the rows partition $me$.
+$\kappa$ is injective (\S\ref{sec:compound}) --- unconditionally, since it is
+built from masked halves --- so the rows partition $me$.
 \end{proof}
 
 \begin{remark}
@@ -1564,8 +1631,10 @@ Rebuild transpose & \ref{sec:rebuild}& \texttt{inv\_rebuildBackward} --- \emph{e
 \midrule
 Cardinality (Thm.~\ref{thm:count}) & \ref{sec:correctness}
                                    & \texttt{edgeCount\_eq\_sum}, \texttt{edgeCount\_no\_underflow} \\
-Compound key      & \ref{sec:compound}& \texttt{keyBits\_eq\_key} (bitwise $=$ arithmetic),
-                                       \texttt{key\_lt}, \texttt{key\_inj} \\
+Compound key      & \ref{sec:compound}& \texttt{rowBits\_eq\_row} (bitwise $=$ arithmetic),
+                                       \texttt{row\_le\_grbIndexMax} (always a writable
+                                       index), \texttt{key\_inj}, \texttt{inv\_key}
+                                       --- all with no hypothesis \\
 Serialisation     & \ref{sec:codec}  & \texttt{edgesAt\_decode\_encode},
                                        \texttt{inv\_decode\_encode}, \texttt{edgeCount\_roundTrip} \\
 Per-pair automaton& \ref{sec:automaton}& nine \texttt{trans\_*} lemmas, stated on the \emph{raw layers}: the four
@@ -1889,16 +1958,21 @@ approximately
 \[
   \underbrace{|P|\,(b_i + 8)}_{m:\ \text{ids or sentinels}}
   \;+\; \underbrace{|P|\,b_i}_{mt:\ \text{iso Boolean structure}}
-  \;+\; \underbrace{8\Bigl(\textstyle\sum_{p \in P_{\ge 2}} |\mathrm{Ids}(p)|\Bigr)}_{me:\ \text{64-bit indices}}
+  \;+\; \underbrace{4\Bigl(\textstyle\sum_{p \in P_{\ge 2}} |\mathrm{Ids}(p)|\Bigr)}_{me:\ \text{32-bit column indices}}
   \;+\; O(\mathrm{nvec}) \ \text{vector pointers} .
 \]
 With $b_i = 4$: a single-edge pair costs $12$ bytes in $m$ plus $4$ in $mt$
 and contributes nothing to $me$ --- the $\approx 12$ bytes per edge the
 implementation's own documentation claims for the forward layer.
 Table~\ref{tab:space} instantiates this at $\mu = 1$ and contrasts the
-designs. Note that the $me$ term is a further argument for narrowing the
-compound key (\S\ref{sec:limits}): a key that fits in $30+30$ bits would
-still need 64-bit row indices, but a key space below $2^{32}$ would not.
+designs. The coefficient on the $me$ term used to be $8$, and this paper argued
+from it that the compound key was worth narrowing. The argument was right about
+the quantity and wrong about which dimension to narrow. Cutting the key to
+$30+30$ bits leaves the \emph{row} indices $64$-bit regardless, because $2^{60}$
+still exceeds a \texttt{u32}; what the coefficient counts is the \emph{column}
+index array, one entry per stored identifier. Declaring the column dimension at
+$2^{31}$ (\S\ref{sec:narrow}) takes it to $4$, and \S\ref{sec:evalspace}
+measures the effect.
 
 \begin{table}[!ht]
 \centering
@@ -1909,21 +1983,25 @@ $\mu = 1$ (simple graph), per edge & \textbf{(A) container/cell} & \textbf{(B) a
 \midrule
 forward cell            & $12$\,B & $4$\,B  & $12$\,B \\
 backward cell           & $4$\,B  & $4$\,B  & $4$\,B \\
-auxiliary entry         & ---     & $8$\,B  & --- \\
+auxiliary entry         & ---     & $4$\,B  & --- \\
 per-pair heap object    & ---     & ---     & --- \\
 \midrule
-\textbf{total}          & $\approx16$\,B & $\approx16$\,B & $\approx16$\,B \\
+\textbf{total}          & $\approx16$\,B & $\approx12$\,B & $\approx16$\,B \\
 \midrule
 \multicolumn{4}{@{}l@{}}{\emph{and at $\mu > 1$, per multi-edge pair:}}\\
 extra objects            & 1 container, heap & --- & --- \\
-extra entries            & container payload & $8$\,B/edge in aux. & $8$\,B/edge in $me$ \\
+extra entries            & container payload & $4$\,B/edge in aux. & $4$\,B/edge in $me$ \\
 wasted forward cell      & ---     & ---     & $12$\,B (holds $\M$) \\
 \bottomrule
 \end{tabular}
-\caption{Per-edge space, $32$-bit forward/backward indices, $64$-bit indices in
-the wide auxiliary matrix. At $\mu = 1$ all three designs land at roughly the
-same total --- (B) trades a narrower forward cell for an auxiliary entry it
-cannot avoid --- so (C)'s advantage is not raw bytes at unit multiplicity but
+\caption{Per-edge space, $32$-bit forward/backward indices, and --- since
+\S\ref{sec:narrow} --- $32$-bit column indices in the auxiliary matrix too. At
+$\mu = 1$ the auxiliary entry is the only term that separates the designs, and
+narrowing it moved (B) \emph{below} (A) and (C) on this idealised count. The
+measured composition in \S\ref{sec:evalspace} does not follow the table there,
+because it charges (B) the per-row overhead this table omits; the table counts
+payload, the measurement counts the structure. Either way (C)'s advantage is not
+raw bytes at unit multiplicity but
 that the auxiliary matrix is \emph{empty}: no second structure to allocate,
 iterate, fold, serialise or keep consistent. At $\mu > 1$ the designs separate:
 (A) allocates a container object per pair outside GraphBLAS's ownership,
@@ -2833,34 +2911,84 @@ edges, reading \texttt{relation\allowbreak\_matrices\allowbreak\_sz\allowbreak\_
 three repetitions on both engines: an all-inline graph costs $23.1$ bytes per
 pair on \emph{both} designs, so at $\mu = 1$ there is nothing to choose between
 them. Turning a pair multi-edge costs (A) $272.6$ bytes and (C) $46.1$, a factor
-of $5.9$. Each identifier \emph{after} the second costs $8.04$ bytes in (A) and
-$9.09$ in (C) --- (A) is marginally cheaper per identifier. So the entire space
-difference between the designs is a fixed per-pair charge, not a per-identifier
-one, which is exactly the shape \S\ref{sec:cost} predicted from the container
-object and is not what a reader would guess from
-Table~\ref{tab:evalwrite}'s whole-graph megabytes. The boundary confirms it to
-the byte: (A)'s container costs $+272.00$ bytes for the second identifier and
+of $5.9$. So the bulk of the space difference between the designs is a fixed
+per-pair charge, which is exactly the shape \S\ref{sec:cost} predicted from the
+container object and is not what a reader would guess from
+Table~\ref{tab:evalwrite}'s whole-graph megabytes. The boundary confirms the
+container to the byte: (A) costs $+272.00$ bytes for the second identifier and
 $+8.00$ for each one after it.
+
+\paragraph{The per-identifier slope, and an ordering that inverted.} This paper
+previously reported that each identifier after the second costs $8.04$ bytes in
+(A) against $9.09$ in (C), and concluded that (A) is marginally cheaper per
+identifier and that the whole difference between the designs is therefore the
+per-pair charge. Narrowing $me$'s column dimension (\S\ref{sec:narrow}) changed
+that. Re-running the same harness on both sides:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\texttt{relation\_matrices\_sz\_mb} & (A) C & (C) before & (C) after \\
+\midrule
+$k = 1$ (all inline)    & $11$ & $11$ & $11$ \\
+$k = 2$                 & $141$ & $33$ & $29$ \\
+$k = 4$                 & $148$ & $41$ & $34$ \\
+$k = 8$                 & $164$ & $59$ & $44$ \\
+reference ($10^6 \times 1$) & $22$ & $23$ & $23$ \\
+\midrule
+slope over $k \ge 2$, B/id & $8.04$ & $9.09$ & $\mathbf{5.24}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The "before" column reproduces the published figures exactly, which is what
+licenses attributing the move to the narrowing rather than to the machine or the
+toolchain. And the move inverts the ordering: (C)'s marginal cost per identifier
+was $13\%$ above (A)'s and is now $35\%$ below it. The sentence this paper used
+to carry --- that (A) is marginally cheaper per identifier, so the designs differ
+only in a fixed charge --- is no longer true in either half. There is now a
+per-identifier difference, and it runs the same way as the per-pair one.
+
+Whole-graph totals moved with it on the same fixture: $19$, $49$, $73$, $124$\,MB
+at $k = 1, 2, 4, 8$ before, against $17$, $41$, $59$, $93$ after, and jemalloc
+live bytes at $k = 8$ from $141{,}000{,}648$ to $106{,}797{,}680$, a $24\%$
+reduction.
+
+Table~\ref{tab:evalwrite}'s space columns are \emph{not} re-measured here: they
+come from a different fixture and harness ($|E| = 176{,}000$, the benchmark
+suite) which was not re-run. Its (C) live-bytes and \texttt{GRAPH.MEMORY} columns
+therefore predate the narrowing, and the direction of the correction is the one
+above --- (C)'s figures would fall, by an amount that grows with multiplicity and
+is zero at $\mu = 1$. The ratios in that table should be read as upper bounds on
+(C)'s space rather than as current values.
 
 \paragraph{Design (B)'s space, as a model over measured components.} (B) is
 still not implemented, so this is a model --- but a model whose terms are
 measured rather than derived. On the Rust side, at $100{,}000$ entries each: an
 auxiliary matrix holding one identifier per row in $me$'s exact geometry
-(\texttt{GrB\_INDEX\_MAX} square, compound keys) costs $38.63$ bytes per
+($2^{60}$ rows by $2^{31}$ columns, row keys) costs $34.63$ bytes per
 identifier; a \texttt{UINT64} adjacency matrix costs $12.01$ bytes per entry;
 a \texttt{BOOL} adjacency matrix costs $4.01$. $me$'s cost per identifier falls
-steeply as its rows fill --- $24.32$ bytes at $k = 2$, $16.66$ at $4$, $12.83$
-at $8$, $10.91$ at $16$ --- which is the hypersparse row overhead being
+steeply as its rows fill --- $20.32$ bytes at $k = 2$, $12.66$ at $4$, $8.83$
+at $8$, $6.91$ at $16$ --- which is the hypersparse row overhead being
 amortised, and the reason (B)'s penalty is worst exactly where (B) is supposed
 to be uniform.
+
+Every one of these auxiliary figures is exactly $4.00$\,B/id below the value
+this paper reported before \S\ref{sec:narrow}'s narrowing, and the two adjacency
+figures are unchanged --- which is the signature of the change being the column
+index array and nothing else. Re-running the same harness at the commit before
+the narrowing reproduces the old column to the hundredth ($38.63$, $24.32$,
+$16.66$, $12.83$, $10.91$), so the difference is attributable to that one
+declaration rather than to a toolchain move.
 
 Composing them for a simple graph, where every pair holds one edge:
 \[
   \begin{aligned}
     \text{(B)} \;&:\;
       \underbrace{4.01}_{\text{\textsc{bool} adjacency}}
-      \;+\; \underbrace{38.63}_{\text{one id per row in } me\text{'s geometry}}
-      \;=\; 42.64 \ \text{B/edge},
+      \;+\; \underbrace{34.63}_{\text{one id per row in } me\text{'s geometry}}
+      \;=\; 38.64 \ \text{B/edge},
     \\[2pt]
     \text{(C)} \;&:\;
       \underbrace{12.01}_{\text{\textsc{uint64} adjacency}}
@@ -2868,7 +2996,13 @@ Composing them for a simple graph, where every pair holds one edge:
       \;=\; 12.01 \ \text{B/edge},
   \end{aligned}
 \]
-a ratio of $3.55$. What the model assumes is that such an implementation would
+a ratio of $3.22$. That ratio \emph{fell} from $3.55$ when $me$'s columns were
+narrowed, and the direction is worth stating plainly: the narrowing helps (B)
+more than it helps (C), because the auxiliary matrix is the whole of what (B) is
+made of and is empty in (C) on a simple graph. An optimisation to this design
+narrowed its own advantage over the alternative. (C) still wins the axis by
+better than $3\times$, but a reader should not read $3.22$ as an improvement on
+$3.55$. What the model assumes is that such an implementation would
 reuse these same GraphBLAS matrices at these dimensions with this key encoding;
 a (B) built on a narrower key or a different structure would land elsewhere. It
 excludes the backward matrix, which both designs need equally. With those
@@ -3008,57 +3142,71 @@ revision of this paper should be able to see which numbers moved and why.
 \section{Limitations and domain restrictions}
 \label{sec:limits}
 
-\paragraph{The compound key restricts node identifiers --- more than its guard says.}
-$\kappa$ requires $s,d < 2^{32}$, and this is checked. But $\kappa(s,d)$ is
-used as a \emph{row index} of $me$, whose declared row dimension is
-$\texttt{GrB\_INDEX\_MAX} = 2^{60}-1$. A valid row index therefore needs
-$\kappa(s,d) < 2^{60}-1$, i.e.\
-\[
-  s \;<\; 2^{28} \;=\; 268{,}435{,}456 ,
-\]
-a bound $16$ times tighter than the guard enforces. For a graph with a
-multi-edge pair whose source identifier exceeds $2^{28}$, the write to $me$
-is out of range. The gap is reachable only for multi-edge pairs --- a simple
-graph never indexes $me$ --- but it is a discrepancy between a checked
-precondition and an actual one, so the guard should in any case be derived from
-the storage ($\kappa(s,d) < \mathrm{nrows}(me)$) rather than from $32$-bit
-packing, which turns silent out-of-range into a loud failure.
+\paragraph{The compound key restricted node identifiers --- and the restriction
+is gone.} This paragraph is kept as a record of a limitation the artifact has
+since removed, because both the defect and the shape of the repair are the
+transferable part.
 
-Widening $me$ does not help: GraphBLAS's own index limit \emph{is} $2^{60}$, so
-$60$ bits is the entire budget and no packing of two $60$-bit node identifiers
-fits. Rebalancing to $30+30$ buys the source two bits --- $2^{30} \approx 10^9$
-against today's $2^{28}$, a factor of four --- and pays for them out of the
-destination, which falls from $2^{32}$ to the same $2^{30}$. It postpones the
-ceiling rather than removing it.
+$\kappa$ was $(s \ll 32) \mathbin{|} d$, guarded by an assertion that both
+endpoints fit $32$ bits. The guard was checking the wrong bound. The key is used
+as a \emph{row index} of $me$, whose declared row dimension is
+$\texttt{GrB\_INDEX\_MAX} = 2^{60}-1$, so a valid index needed
+$\kappa(s,d) < 2^{60}$, i.e.\ $s < 2^{28}$ --- a bound $16$ times tighter than
+the guard enforced. The guard therefore never fired on the case that mattered.
 
-\paragraph{Removing the ceiling: a block-indexed overflow matrix.} The
-restriction is being lifted rather than merely documented, by making $\kappa$
-return a \emph{pair} --- a block index and a row within that block --- and
-holding $me$ as a collection of matrices keyed by block:
-\[
-  \kappa(s,d) \;=\; \bigl(\, s \gg k, \;\; ((s \bmod 2^{k}) \ll 32) \mathbin{|} d \,\bigr).
-\]
-With $k = 28$ the block index is $0$ for exactly the region that works today, so
-existing graphs keep a single block and an identical layout, while $s$ becomes
-bounded only by the adjacency matrix's own dimension.
+What made this more than a documentation gap is where the failure surfaced.
+\texttt{Matrix::set} checked its GraphBLAS status under \texttt{debug\_assert!}
+only, so in a release build the out-of-range write was \emph{dropped silently}:
+the pair kept its $\M$ sentinel over an empty $me$ row. That is Invariant
+\emph{promotion completeness} violated --- and its consequences are exactly the
+ones \S\ref{sec:invariants} predicts for that invariant. Reads returned nothing
+for a pair that had edges, and $\textit{edge\/count}$ disagreed with both the
+inserts and the reads. Reproduced at two edges per pair:
 
-Three properties make this the preferable repair over the alternatives (a hashed
-row, or moving $me$ out of GraphBLAS into a keyed container). It stays
-\emph{invertible}: $s = (\text{block} \ll k) \mathbin{|} (\text{row} \gg 32)$
-and $d = \text{row} \bmod 2^{32}$, so whole-tensor enumeration still recovers
-$(s,d)$ from the key without consulting an external endpoint table. It
-preserves \emph{global order}: blocks ascend with $s$ and rows ascend with
-$(s,d)$ within a block, so concatenating the blocks' scans is still sorted, and
-the iteration theorems carry over unchanged. And it is \emph{migration-free},
-because the serialised form stores $s$ and $d$ separately and recomputes the key
-on load --- the packing is an in-memory detail, never a format.
+\begin{center}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& $\kappa < 2^{60}$ & ids read back & $\textit{edge\/count}$ \\
+\midrule
+$s = 2^{27}$ & true  & $[10, 11]$ & $2$ \\
+$s = 2^{28}$ & false & $[\,]$     & $1$ \\
+$s = 2^{29}$ & false & $[\,]$     & $1$ \\
+\bottomrule
+\end{tabular}
+\end{center}
 
-The costs are that per-transaction work must stay proportional to
-\emph{populated} blocks rather than to the block index range, which argues for
-a sparse map rather than a dense vector; and that the mechanised statement of
-$\kappa$'s injectivity has to be restated for pairs. That restatement is an
-improvement: the current bound $s < 2^{28}$ is a hypothesis of the key lemmas,
-and under a block-indexed key the corresponding fact holds unconditionally.
+The repair is the block-indexed key of \S\ref{sec:compound}, and it is worth
+recording where the shipped form differs from the one this paper first proposed,
+because two of the differences matter.
+
+\emph{The block is a pair, not a scalar.} The proposal split only the source,
+$\kappa(s,d) = (s \gg k,\ ((s \bmod 2^{k}) \ll 32) \mathbin{|} d)$, which leaves
+$d$ at $32$ bits and merely moves the ceiling onto the destination. Splitting
+\emph{both} endpoints at $k = 30$ removes it from both: two $30$-bit halves fill
+the $60$-bit budget exactly, and the block absorbs everything above.
+
+\emph{The guard is gone rather than corrected.} The proposal kept a check,
+derived from the storage instead of from $32$-bit packing, on the argument that a
+loud failure beats silent corruption. That argument was right about the
+predecessor and is moot for the successor: a key built from masked halves cannot
+leave range, so there is no failure to be loud about. Totality is a better
+answer than a correct assertion.
+
+Two predictions held. The repair is \emph{migration-free}, because the
+serialised form stores $s$ and $d$ separately and re-keys on load. And the
+mechanised statement of injectivity did have to be restated for pairs --- and
+that restatement was the improvement the paper claimed it would be: $\kappa$'s
+injectivity, its range, and its inverse are now unconditional, and the
+hypothesis that carried the old width assumption through the development is
+deleted outright (\S\ref{sec:mechanised}).
+
+One prediction was wrong in a way worth noting: the proposal argued for a sparse
+map keyed by block, to keep per-transaction work proportional to populated
+blocks. Populated blocks is the right quantity, but a map is the wrong
+structure for it. Every real graph has exactly one block, so the artifact holds
+blocks in a list sized for one with block $(0,0)$ at index $0$: a compare rather
+than a hash, and nothing allocated. The general case still needs the fold over
+live blocks, and that cost is linear in their number.
 
 \paragraph{Two values are reserved.}
 $\M = 2^{64}-1$ is removed from the identifier domain, and the $2^{63}$ bit is
@@ -3173,6 +3321,41 @@ is that the structural claims --- bytes and scan cost --- survive the upgrade
 and the read constants do not. Every ratio here should still be read as of the
 commit under Availability rather than as of \texttt{main}.
 
+A later re-run, on the same machine and across the commit that introduced the
+block-indexed key and the narrow $me$ (\S\ref{sec:compound},
+\S\ref{sec:narrow}), separates that library drift from this design change and
+finds the design change is not where the read constants moved:
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+instructions & before & after & change \\
+\midrule
+inline read                 & $726.9$   & $721.9$   & $-0.7\%$ \\
+sentinel read               & $2{,}922.8$ & $2{,}928.8$ & $+0.2\%$ \\
+promote (add a 2nd edge)    & $3{,}174.2$ & $3{,}229.8$ & $+1.8\%$ \\
+add a 3rd edge (control)    & $1{,}417.3$ & $1{,}478.7$ & $+4.3\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Reads are flat to within measurement noise, which is what the design predicts: a
+read of an inline cell never consults $me$ at all, and a sentinel read now costs
+one extra comparison to select a block from a list of length one. The write path
+pays that comparison twice over --- promotion writes two identifiers --- and
+$4.3\%$ on the third-edge control is the clearest signal in the table of what
+blocking costs. Both are small enough that the ordering of any ratio in
+\S\ref{sec:eval} is unaffected.
+
+Two things follow for the reader. The absolute read constants in
+Table~\ref{tab:evalboundary} are the $10.3.1$ figures and reproduce neither on
+$10.5.0$ nor on \texttt{main}; the \emph{space} figures reproduce exactly, which
+is the asymmetry \S\ref{sec:evalspace} exploits to attribute the narrowing. And
+whole-graph resident numbers have a second mover this paper does not otherwise
+cover: the same change replaced the edge-endpoint side table with a tiered
+structure, which is outside the tensor but inside
+Table~\ref{tab:evalwrite}'s megabytes.
+
 \emph{And the multiplicity distribution is an assumption throughout.} The
 premise that $\mu$ is dominated by $1$ --- which is what makes the common case
 common, and which the sweep parameterises rather than tests --- is a claim about
@@ -3248,15 +3431,30 @@ the model does not cover can still break an invariant in production.
 Mechanisation and run-time checking answer different questions, and the first
 does not retire the second.
 
-Two of the three repairs in \S\ref{sec:limits} have been prototyped, and doing so
-answered the question this paragraph previously left open --- in the negative,
-which is the useful outcome.
+Two of the three repairs in \S\ref{sec:limits} were prototyped, which answered
+the question this paragraph previously left open --- in the negative, the useful
+outcome. Two have since shipped: checked arithmetic, immediately below, and the
+block-indexed key of \S\ref{sec:compound}.
 
-\emph{Checked arithmetic is free and should simply be done.} Computing
+\emph{Checked arithmetic is free, and has since been done.} Computing
 Theorem~\ref{thm:count} with checked operations turns a wrapped count near
 $2^{64}$ into a detectable failure. It matters more than it sounds: the count
 reaches a \texttt{Vec} pre-allocation in one graph algorithm, so a wrapped value
-is an allocation abort rather than a wrong answer.
+was an allocation abort --- arbitrarily far from the cause, and
+indistinguishable from genuine memory pressure --- rather than a wrong answer.
+
+The artifact now does this, and the shape of the change is the part worth
+keeping. Each of the five steps is checked, and a failure panics naming all six
+operands, so the term whose invariant broke is in the message. The cost is
+nothing: six metadata reads and five arithmetic operations either way. And the
+regression test has to \emph{forge} its input --- a tombstone with no committed
+entry beneath it, which violates $dm \subseteq m$ --- through a test-only hook,
+because no mutation path can reach that state. That is the honest statement of
+what the check is for: not a reachable bug, but the difference between a loud
+stop and a wrong number reaching an allocator when something outside the model's
+reach breaks an invariant. It is the same trade the compound key used to make
+for key aliasing, and \S\ref{sec:limits} explains why that particular guard is
+now gone instead.
 
 \emph{The cheap check is cheap only when $me$ is assembled.} Recovering
 $\textit{multi}$ from $me$'s vector count costs a flat $125$--$250$\,ns once $me$

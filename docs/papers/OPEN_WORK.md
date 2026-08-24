@@ -58,37 +58,93 @@ whenever `me` has live deltas, and `GxB_rowIterator_kount` is only an *upper*
 bound on non-empty rows, so it can screen but never adjudicate — an over-counting
 screen would "repair" a correct counter into a wrong one.
 
-## 2. Land the block-indexed compound key
+## 2. The block-indexed compound key — done, and two predictions were wrong
 
-**Status:** open. Design settled in the paper's limits section; nothing
-implemented.
+**Status:** closed by #2579 (fixing #2578). Recorded here because the design that
+shipped differs from the one this document specified in two ways that matter, and
+because the ceiling turned out to be a live defect rather than a documented
+limit.
 
-**Problem.** `compound_key(src, dst)` packs two node ids into one `u64` row
-index of `me`, which caps node ids at `2^32`. That is a real ceiling, not a
-theoretical one, for a graph that churns ids.
+**What it actually was.** Not merely a cap. `compound_key` packed `(src << 32) |
+dst`, which needs 60 bits at `src = 2^28` and is then out of range for `me`.
+`Matrix::set` checked its GraphBLAS status under `debug_assert!` only, so release
+builds **dropped the write silently** and left the pair tagged `MULTI_EDGE` over
+an empty `me` row — promotion completeness broken, `get` returning nothing,
+`edge_count` disagreeing with both the inserts and the reads. The guard that
+existed checked `u32`, four bits above the bound that mattered, so it never
+fired. Reproduced at two edges per pair: `src=2^27` reads `[10, 11]`; `src=2^28`
+and `src=2^29` read `[]` with `edge_count=1`.
 
-**Design.** Make the key `(block, row)`: `me` becomes a sparse map from block id
-to a matrix, and `compound_key` returns both halves. When `src` and `dst` both
-fit in `2^32` the block id is `0` and the map holds exactly one matrix, so a
-graph that never exceeds today's limit pays a map lookup and nothing else.
+**Where the shipped design differs from the one specified above.**
 
-**Acceptance and the two measurements the paper asks for.**
+1. **The block is a pair, not a scalar.** This document said "a sparse map from
+   block id to a matrix", with the block derived from `src` alone. That leaves
+   `dst` at 32 bits and moves the ceiling onto the destination. What shipped
+   splits *both* endpoints at `BLOCK_SHIFT = 30`: the block is
+   `(src >> 30, dst >> 30)` and the row is `((src & M) << 30) | (dst & M)`. Two
+   30-bit halves fill the 60-bit index budget exactly, so the function is
+   **total** — it cannot panic and cannot go out of range.
+2. **A list, not a map.** "A map lookup and nothing else" was the wrong cost.
+   Every real graph occupies exactly one block, so the blocks live in a
+   `SmallVec` sized for one with block `(0,0)` at index 0: a compare, no hashing,
+   nothing on the heap.
 
-1. On a graph confined to block `0`, the per-operation cost against today's
-   single matrix — point read, promote, demote, full scan. Target: within noise.
-2. On a graph whose multi-edge pairs are spread thinly across many blocks, the
-   crossover where per-transaction work becomes proportional to the number of
-   live blocks rather than to one. Report where it starts to matter, since that
-   is the case the design trades away.
+**Where it was right.** Migration-free, exactly as predicted — the blob stores
+`(src, dst, ids)`, not row keys, so it is block-agnostic and re-keys on decode.
+No version bump, contradicting the risk this document listed. And the mechanised
+injectivity statement did have to be restated for pairs, and that restatement was
+the improvement claimed: see item 2a.
 
-**Risks.** Every place that folds, waits or resizes `me` becomes a loop over live
-blocks — including the commit path, which is where the per-block cost turns into
-per-transaction cost. Serialisation format changes, so `Encode`/`Decode` needs a
-version bump and a round-trip test against blobs written by the current code.
+**Both acceptance measurements were taken.** Per-operation cost on a graph
+confined to block 0 is within noise for reads (inline 726.9 → 721.9 instructions,
+sentinel 2,922.8 → 2,928.8) and costs the write path a little (promote 3,174.2 →
+3,229.8, +1.8%; third-edge control 1,417.3 → 1,478.7, +4.3%) — the block
+selection, paid once per identifier written. `block_scaling_bench` covers the
+second: maintenance cost is linear in live block count, and block (0,0) alone is
+unchanged.
 
-**Effort.** Several days. Touches serialisation, so it wants its own PR.
+**An unplanned second result.** The same change declared `me` **narrow** — 2^31
+columns, so GraphBLAS stores column indices in 32 bits rather than 64. Columns
+are edge ids and the column-index array holds one entry per stored id, so this is
+the largest array in the structure: 6.44 B/id against 11.69 at full width, the
+declaration alone accounting for 45%. `Tensor::widen_me_for_id` widens back if
+edge ids ever reach 2^31, so the narrow default costs only the check.
+
+That moved every auxiliary-space figure in the paper by exactly −4.00 B/id and
+**inverted** one of its comparisons: the marginal engine-level cost per
+identifier was 9.09 B/id against the C engine's 8.04, and is now 5.24. The
+paper's §evalspace is updated with the before/after and the attribution.
 
 ---
+
+## 2a. Restate the mechanised key lemmas for the block key — done
+
+**Status:** closed alongside #2579, in the same PR as this document.
+
+`Bounded p` (`p.1 < 2^32 ∧ p.2 < 2^32`) existed only to make the old key
+injective and in range. It appeared in three `InvCore` fields and every theorem
+that touched `me` — 40 sites across 9 files. The new key needs none of it, so
+`Bounded` is **deleted** rather than weakened, and what remains is strictly
+stronger:
+
+| before | after |
+| --- | --- |
+| `key_inj : Bounded p → Bounded q → key p = key q → p = q` | `key_inj : key p = key q → p = q` |
+| `key_lt : Bounded p → key p < 2^64` | `row_lt : ∀ p, row p < 2^60` |
+| `keyHi`/`keyLo` under `Bounded` | `inv_key : ∀ p, keyInverse (blockOf p) (row p) = p` |
+| — | `row_le_grbIndexMax : ∀ p, row p ≤ GrBIndexMax` (the property whose absence *was* #2578) |
+| `InvCore.bounded` | *(field removed)* |
+| `WellFormed.bounded` | *(field removed — a decoder obligation that no longer exists)* |
+
+Two modelling changes came with it, both worth knowing before touching these
+files. `me : Finset (Addr × Nat)` where `Addr = (Nat × Nat) × Nat`, because a row
+key alone no longer identifies a pair. And `iter_edges`' forward half is
+`fwdIterAll` — every row, no filter — because `u64::MAX` in the Rust means "no
+bound", and modelling it as the numeral `2^64 - 1` only typechecked while
+`Bounded` was quietly supplying that node ids are u64-representable. That one is
+a modelling *bug* the refactor exposed rather than introduced.
+
+`lake build` clean, 2024 jobs, no `sorry`, axioms unchanged.
 
 ## 3. Close the modelling gaps — done
 
