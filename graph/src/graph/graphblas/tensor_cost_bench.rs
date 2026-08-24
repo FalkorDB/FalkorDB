@@ -278,7 +278,10 @@ fn built_diag(k: u64) -> Tensor {
     t.flush();
     t.wait();
     assert_eq!(t.fwd_m().nvals(), XN, "diagonal fixture not committed");
-    assert_eq!(t.edge_versioned_block_0().nvals(), if k == 1 { 0 } else { XN * k });
+    assert_eq!(
+        t.edge_versioned_block_0().nvals(),
+        if k == 1 { 0 } else { XN * k }
+    );
     t
 }
 
@@ -324,7 +327,8 @@ fn tensor_cost_c_comparable() {
             if t.edge_versioned_block_0().nvals() == 0 {
                 0.0
             } else {
-                t.edge_versioned_block_0().memory_usage() as f64 / t.edge_versioned_block_0().nvals() as f64
+                t.edge_versioned_block_0().memory_usage() as f64
+                    / t.edge_versioned_block_0().nvals() as f64
             }
         );
         println!("{:>34}  {:>12}  {:>10}", "operation", "instr/op", "ns/op");
@@ -665,7 +669,11 @@ fn tensor_cost_promote() {
             let ids: Vec<u64> = (PAIRS..2 * PAIRS).collect();
             let c = measure(PAIRS, || t.set_all_from_slices(&fresh, &dsts, &ids));
             t.wait();
-            assert_eq!(t.edge_versioned_block_0().nvals(), 0, "control promoted something");
+            assert_eq!(
+                t.edge_versioned_block_0().nvals(),
+                0,
+                "control promoted something"
+            );
             assert_eq!(
                 t.fwd_dp().nvals(),
                 PAIRS,

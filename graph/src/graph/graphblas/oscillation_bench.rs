@@ -100,7 +100,11 @@ fn oscillation_cost() {
             t.remove_all(&rels);
         });
         t.wait();
-        assert_eq!(t.edge_versioned_block_0().nvals(), 0, "demotion did not empty me");
+        assert_eq!(
+            t.edge_versioned_block_0().nvals(),
+            0,
+            "demotion did not empty me"
+        );
 
         println!("{:>44}  {:>12.1}  {:>10.1}", "promote (+1 edge)", pi, pn);
         println!("{:>44}  {:>12.1}  {:>10.1}", "demote  (-1 edge)", di, dn);
@@ -155,7 +159,11 @@ fn oscillation_control() {
             t.remove_all(&rels);
         });
         t.wait();
-        assert_eq!(t.edge_versioned_block_0().nvals(), 2 * N, "control changed state");
+        assert_eq!(
+            t.edge_versioned_block_0().nvals(),
+            2 * N,
+            "control changed state"
+        );
 
         println!(
             "{:>44}  {:>12.1}  {:>10.1}",
