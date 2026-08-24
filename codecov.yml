@@ -8,3 +8,13 @@ coverage:
       default:
         # Require at least 70% of new lines to be covered
         target: 70%
+
+# `#[cfg(test)]` instruction-count harnesses, whose every test is `#[ignore]`d
+# so no CI job runs them — they are run by hand when investigating a regression.
+# Their bodies are therefore uncovered by construction, and counting them as
+# product lines meant a PR that adds one bench failed the patch gate on lines
+# that are not supposed to execute (#2571: 174/176 hit in the code the PR
+# changes, 174/272 with the bench). Excluded here rather than at each `lcov -r`
+# because the report is uploaded from eleven places across four workflows.
+ignore:
+  - "**/*_bench.rs"
