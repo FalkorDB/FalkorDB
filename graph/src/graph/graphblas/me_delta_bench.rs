@@ -69,7 +69,11 @@ fn committed_multi() -> Tensor {
     let mut t = t.dup();
     t.flush();
     t.wait();
-    assert_eq!(t.edge_versioned().dp().nvals(), 0, "fixture starts clean");
+    assert_eq!(
+        t.edge_versioned_block_0().dp().nvals(),
+        0,
+        "fixture starts clean"
+    );
     t
 }
 
@@ -100,7 +104,7 @@ fn me_delta_step() {
         println!(
             "{:>34}  {:>10}  {:>12.1}",
             "committed, delta empty",
-            t.edge_versioned().dp().nvals(),
+            t.edge_versioned_block_0().dp().nvals(),
             probe(&t)
         );
     }
@@ -111,7 +115,7 @@ fn me_delta_step() {
     t.set_all_from_slices(&[PAIRS - 1], &[PAIRS - 1], &[u64::from(u32::MAX)]);
     t.wait();
     assert_eq!(
-        t.edge_versioned().dp().nvals(),
+        t.edge_versioned_block_0().dp().nvals(),
         1,
         "expected exactly one pending id"
     );
@@ -120,7 +124,7 @@ fn me_delta_step() {
         println!(
             "{:>34}  {:>10}  {:>12.1}",
             "one pending id in me.dp",
-            t.edge_versioned().dp().nvals(),
+            t.edge_versioned_block_0().dp().nvals(),
             probe(&t)
         );
     }
@@ -140,13 +144,13 @@ fn me_delta_attach_vs_seek() {
 
     let mut t = committed_multi();
     for round in 0..2 {
-        let me = t.edge_versioned();
+        let me = t.edge_versioned_block_0();
         let n = me.dp().nvals();
 
         for _ in 0..3 {
             let c = per_op(READS, || {
                 for r in 0..READS {
-                    let k = super::tensor::compound_key(r % PAIRS, r % PAIRS);
+                    let (_, k) = super::tensor::compound_key(r % PAIRS, r % PAIRS);
                     std::hint::black_box(me.iter(k, k).count());
                 }
             });
@@ -157,7 +161,7 @@ fn me_delta_attach_vs_seek() {
             let mut it = me.iter(0, 0);
             let c = per_op(READS, || {
                 for r in 0..READS {
-                    let k = super::tensor::compound_key(r % PAIRS, r % PAIRS);
+                    let (_, k) = super::tensor::compound_key(r % PAIRS, r % PAIRS);
                     it.seek(k, k);
                     std::hint::black_box(it.by_ref().count());
                 }
