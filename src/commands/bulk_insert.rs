@@ -1,7 +1,8 @@
-use crate::query_session::{QuerySession, hold_gil};
+use crate::dispatch::must_run_inline;
+use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    graph_core::{BlockedClient, ThreadedGraph, ffi, register_graph},
     redis_type::GRAPH_TYPE,
     telemetry,
 };
@@ -15,6 +16,7 @@ use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
+use std::ffi::CString;
 use std::sync::Arc;
 
 // Binary property type markers (matching Python bulk loader's TYPE enum)
@@ -189,8 +191,12 @@ fn parse_header(
     // Read property count (4 bytes)
     let prop_count = read_u32_ne(data, idx)? as usize;
 
-    // Read property names
-    let mut prop_names = Vec::with_capacity(prop_count);
+    // Read property names. Cap the pre-allocation to the bytes that remain, exactly as
+    // `read_property` does for `BI_ARRAY` above: `prop_count` is 4 raw bytes of client
+    // input, so a declared count of `u32::MAX` would otherwise request ~34GB of `Arc`
+    // slots before the first name is even read.
+    let cap = prop_count.min(data.len().saturating_sub(*idx));
+    let mut prop_names = Vec::with_capacity(cap);
     for _ in 0..prop_count {
         let name = read_cstring(data, idx)?;
         validate_identifier_len(name, "Property name")?;
@@ -215,6 +221,95 @@ fn discard_created_graph(
     telemetry::delete_stream(ctx, &key_str.to_string());
     let key = ctx.open_key_writable(key_str);
     let _ = key.delete();
+}
+
+/// A command, held so a worker thread can replicate it after the calling context is
+/// gone. `argv[0]` is the command name, as with any Redis argument vector.
+///
+/// Replication cannot be verbatim from a worker: `RM_ReplicateVerbatim` propagates
+/// `ctx->client->argv`, and a thread-safe context's client is a fake pooled one with no
+/// argv at all (Redis substitutes it because a real client is main-thread state). So the
+/// command goes out through `RM_Replicate` — but from *the client's own strings*, held
+/// here, rather than from bytes.
+///
+/// That distinction is the point of this type. Handing `RM_Replicate` byte slices makes
+/// it allocate a fresh string per argument, duplicating the whole payload — for
+/// `GRAPH.BULK` that is a batch, 64 MB by default and 1 GB if `--max-buffer-size` is
+/// raised. Holding the originals means propagation only bumps refcounts.
+struct HeldArgs {
+    argv: Vec<*mut raw::RedisModuleString>,
+}
+
+// SAFETY: every entry is an immutable, refcounted `robj` this struct owns a reference
+// to, so nothing can free one while it is held. Redis requires the GIL for access to
+// strings that came from client command arguments; every access here satisfies that —
+// `replicate` runs inside the writer session, and `Drop` takes the GIL itself.
+unsafe impl Send for HeldArgs {}
+
+impl HeldArgs {
+    /// Hold an entire argument vector, command name included. Call on the main thread,
+    /// while the calling context still owns those strings.
+    ///
+    /// Because these are the client's own strings, whatever is propagated from them
+    /// carries the client's exact bytes: nothing is re-serialized, so a count written as
+    /// `010` replays as `010` rather than normalized to `10`.
+    fn hold(args: &[RedisString]) -> Self {
+        // SAFETY: called on the main thread inside the command, so the GIL is held and
+        // every argument string is still alive.
+        let argv = args
+            .iter()
+            .map(|a| unsafe {
+                let held = ffi::hold_string(a.inner);
+                ffi::trim_string_allocation(held);
+                held
+            })
+            .collect();
+        Self { argv }
+    }
+
+    /// Propagate this command to replicas and the AOF.
+    ///
+    /// The name is split back out here rather than stored apart: `RM_Replicate` wants it
+    /// as a NUL-terminated `const char *`, calls `lookupCommandByCString` on it, and then
+    /// builds argv[0] from it itself — so passing the full vector as well would emit the
+    /// name twice and shift every argument by one. Taking it from `argv[0]` instead of a
+    /// literal means it cannot drift from the name the command is registered under, and
+    /// the client's casing reaches the stream.
+    ///
+    /// # Safety
+    /// `ctx` must be a valid module context, and the GIL must be held — both because
+    /// these strings came from client command arguments and because propagation is
+    /// flushed when the GIL is released.
+    unsafe fn replicate(
+        &self,
+        ctx: *mut raw::RedisModuleCtx,
+    ) {
+        let mut len = 0;
+        let name = raw::string_ptr_len(self.argv[0], &raw mut len);
+        // SAFETY: `name`/`len` describe the command name's bytes, valid while it is held.
+        let name = unsafe { std::slice::from_raw_parts(name.cast::<u8>(), len) };
+        // A dispatched command name has no interior NUL: Redis matched these very bytes
+        // against the registered name to reach this handler.
+        let cmd = CString::new(name).expect("a dispatched command name has no interior NUL");
+        unsafe { ffi::replicate_argv(ctx, &cmd, &self.argv[1..]) };
+    }
+}
+
+impl Drop for HeldArgs {
+    fn drop(&mut self) {
+        // Freeing decrements a refcount on a string that came from client command
+        // arguments, which Redis requires the GIL for. By the time this runs the writer
+        // session has already released the GIL on the success path, and the error paths
+        // never took it at all — so acquire it here. `hold_gil` is reentrancy-aware and
+        // no-ops if this thread already holds it, which keeps every path correct.
+        let _gil = hold_gil();
+        // SAFETY: each pointer came from `hold_string` and is freed exactly once, here.
+        unsafe {
+            for a in &self.argv {
+                ffi::free_string(*a);
+            }
+        }
+    }
 }
 
 /// Yield to Redis if running on the main thread (non-null context).
@@ -421,8 +516,8 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count);
-    let rel_ids = g.reserve_relationships(edge_count);
+    let node_ids = g.reserve_nodes(node_count)?;
+    let rel_ids = g.reserve_relationships(edge_count)?;
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
@@ -451,8 +546,8 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count);
-    let rel_ids = g.reserve_relationships(edge_count);
+    let node_ids = g.reserve_nodes(node_count)?;
+    let rel_ids = g.reserve_relationships(edge_count)?;
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
@@ -472,6 +567,62 @@ fn bulk_insert_sync_yield(
     Ok(())
 }
 
+/// Parse one of `GRAPH.BULK`'s four count arguments the way C's
+/// `RedisModule_StringToLongLong` (`string2ll`) does — canonical decimal only.
+///
+/// Negatives are the one deliberate divergence: C accepts them, truncates to `uint`, and
+/// reports the original value back. Refusing them keeps a nonsense count from ever
+/// reaching a reservation.
+fn parse_count(s: &str) -> Option<usize> {
+    // The empty string, which `string2ll` rejects on its length check.
+    if s.is_empty() {
+        return None;
+    }
+    // Any non-digit byte anywhere: sign (`+10`, `-5`), radix point and exponent (`1.5`,
+    // `1e1`), hex (`0x0a`), leading or trailing space. `string2ll` gets this from its
+    // digit-only scan plus its "not all bytes were used" check.
+    if !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    // Leading zeros (`010`, `00`): `string2ll` special-cases a lone `0`, then requires the
+    // first digit to be 1-9.
+    if s.len() > 1 && s.starts_with('0') {
+        return None;
+    }
+    // Through `i64` so the accepted range is `string2ll`'s and not `usize`'s — 2^63 is 19
+    // canonical digits that C rejects.
+    usize::try_from(s.parse::<i64>().ok()?).ok()
+}
+
+/// Bytes an edge record spends on its endpoints before any properties: the two
+/// `read_u64_ne` reads at the top of `process_edge_token`'s loop. Node records have no
+/// such fixed part.
+const EDGE_ENDPOINTS_LEN: usize = 16;
+
+/// Largest number of records `token` can describe, from the same arithmetic its reader uses.
+///
+/// Every property occupies at least its 1-byte type marker — `BI_NULL` is exactly that, and
+/// the bulk loader emits it for every empty CSV field — so a record costs at least
+/// `endpoints_len + P` bytes, where `P` is the property count in the token header. A node
+/// token whose header declares no properties describes no records at all: its record body is
+/// empty, so `process_node_token`'s `while idx < data.len()` loop never runs.
+///
+/// Parsing the header here also validates its identifier lengths before any graph state is
+/// touched, which is the order C uses (`_BulkInsert_ValidateTokens` in `bulk_insert.c`).
+fn max_records(
+    token: &[u8],
+    entity: &str,
+    endpoints_len: usize,
+) -> Result<usize, String> {
+    let mut idx = 0;
+    let (_, prop_names) = parse_header(token, &mut idx, entity)?;
+    let per_record = endpoints_len + prop_names.len();
+    if per_record == 0 {
+        return Ok(0);
+    }
+    Ok(token.len().saturating_sub(idx) / per_record)
+}
+
 pub fn graph_bulk_insert(
     ctx: &Context,
     args: Vec<RedisString>,
@@ -479,6 +630,20 @@ pub fn graph_bulk_insert(
     if args.len() < 3 {
         return Err(redis_module::RedisError::WrongArity);
     }
+
+    // Contexts that cannot block run inline, with RM_Yield so Redis still handles PING
+    // between tokens — see `must_run_inline` for the flag set and why each one is in it.
+    //
+    // Decided up front, before the argument vector is consumed, so the background path
+    // can hold the arguments while they are still to hand.
+    let inline = must_run_inline(ctx);
+
+    // Hold everything after the command name for replication (see `HeldArgs`). No
+    // inspection or reassembly: the argument vector is already exactly what has to be
+    // propagated, in order. Only the background path needs it — the inline path
+    // replicates verbatim off the real command context — and holding is not free,
+    // since each string is trimmed as it is held.
+    let held = (!inline).then(|| HeldArgs::hold(&args));
 
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
@@ -491,52 +656,45 @@ pub fn graph_bulk_insert(
         (false, next)
     };
 
-    // Get or create graph. The key handle is scoped to this block so a later
-    // failure can re-open the key to delete it (see `discard_created_graph`)
-    // without a second live handle to the same key.
-    let graph = {
+    // Resolve the graph without writing to the keyspace yet: reading the key first keeps
+    // the argument errors below from reporting ahead of "already exists" / "empty key",
+    // which is the order C uses (it retrieves the GraphContext before parsing the counts).
+    // Creating nothing until the whole batch has been validated is what lets a rejected
+    // batch leave no key behind, so the client can re-run the corrected one instead of
+    // tripping the "already exists" guard. The key handle is scoped to this block so the
+    // creation below — and `discard_created_graph` on the failure paths — can re-open the
+    // key without a second live handle to it.
+    let existing = {
         let key = ctx.open_key_writable(&key_str);
+        let found = key
+            .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
+            .cloned();
         if begin {
-            if key
-                .get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?
-                .is_some()
-            {
+            if found.is_some() {
                 return Err(redis_module::RedisError::String(format!(
                     "Graph with name '{key_str}' cannot be created, as key '{key_str}' already exists."
                 )));
             }
-            let g = Arc::new(RwLock::new(ThreadedGraph::new(
-                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-                &key_str.to_string(),
-            )));
-            key.set_value(&GRAPH_TYPE, g.clone())?;
-            crate::graph_core::register_graph(key_str.to_string(), g.clone());
-            g
-        } else if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-            g.clone()
-        } else {
+        } else if found.is_none() {
             return Err(redis_module::RedisError::Str(
                 "ERR Invalid graph operation on empty key",
             ));
         }
+        found
     };
 
     // Parse counts
-    let node_count: usize = node_count_str
-        .parse()
-        .map_err(|_| redis_module::RedisError::Str("Error parsing node count."))?;
-    let edge_count: usize = args
-        .next_str()?
-        .parse()
-        .map_err(|_| redis_module::RedisError::Str("Error parsing relation count."))?;
-    let node_token_count: usize = args
-        .next_str()?
-        .parse()
-        .map_err(|_| redis_module::RedisError::Str("Error parsing node token count."))?;
-    let rel_token_count: usize = args
-        .next_str()?
-        .parse()
-        .map_err(|_| redis_module::RedisError::Str("Error parsing relation token count."))?;
+    let node_count = parse_count(node_count_str)
+        .ok_or(redis_module::RedisError::Str("Error parsing node count."))?;
+    let edge_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+        "Error parsing relation count.",
+    ))?;
+    let node_token_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+        "Error parsing node token count.",
+    ))?;
+    let rel_token_count = parse_count(args.next_str()?).ok_or(redis_module::RedisError::Str(
+        "Error parsing relation token count.",
+    ))?;
 
     // Collect remaining binary token args
     let token_strings: Vec<RedisString> = args.collect();
@@ -546,9 +704,67 @@ pub fn graph_bulk_insert(
         ));
     }
 
-    // Inside MULTI/EXEC: blocking commands are not allowed, run synchronously
-    // with RM_Yield to let Redis process PING between operations.
-    if ctx.get_flags().contains(ContextFlags::MULTI) {
+    //--------------------------------------------------------------------------
+    // Bound the declared counts by what the payload can describe.
+    //
+    // `node_count` and `edge_count` are pure client input, and they size a `Vec` of ids
+    // directly in `Graph::reserve_nodes` / `reserve_relationships`. Unbounded, that is a
+    // crash: `GRAPH.BULK g BEGIN 9223372036854775807 0 0 0` carries no payload at all, and
+    // the capacity overflow aborted the whole process (#2426). Below the overflow threshold
+    // it is a memory-amplification vector, since the reservation really happens.
+    //
+    // The sections are positional — the first `node_token_count` tokens hold nodes and the
+    // rest hold edges, the same split `bulk_insert_sync` iterates with — so each count is
+    // bounded by the records its own section describes.
+    //--------------------------------------------------------------------------
+    // A malformed header reports exactly what it reports when the insert itself trips over
+    // it below — only sooner, before any graph state exists to roll back.
+    let header_err =
+        |e: String| redis_module::RedisError::String(format!("ERR bulk insert failed: {e}"));
+    let (node_tokens, rel_tokens) = token_strings.split_at(node_token_count);
+
+    let mut node_ceiling = 0usize;
+    for token in node_tokens {
+        node_ceiling += max_records(token.as_slice(), "Label name", 0).map_err(header_err)?;
+    }
+    if node_count > node_ceiling {
+        return Err(redis_module::RedisError::String(format!(
+            "Bulk insert format error, declared node count {node_count} exceeds the \
+             {node_ceiling} node records the payload describes."
+        )));
+    }
+
+    let mut edge_ceiling = 0usize;
+    for token in rel_tokens {
+        edge_ceiling += max_records(token.as_slice(), "Relationship type", EDGE_ENDPOINTS_LEN)
+            .map_err(header_err)?;
+    }
+    if edge_count > edge_ceiling {
+        return Err(redis_module::RedisError::String(format!(
+            "Bulk insert format error, declared relation count {edge_count} exceeds the \
+             {edge_ceiling} edge records the payload describes."
+        )));
+    }
+
+    // Every argument checks out, so it is safe to put a graph in the keyspace.
+    let graph = match existing {
+        Some(g) => g,
+        None => {
+            let key = ctx.open_key_writable(&key_str);
+            let g = Arc::new(RwLock::new(ThreadedGraph::new(
+                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+                &key_str.to_string(),
+            )));
+            key.set_value(&GRAPH_TYPE, g.clone())?;
+            register_graph(key_str.to_string(), g.clone());
+            g
+        }
+    };
+
+    // Run inline on this thread; `inline` is decided above, before the arguments were
+    // consumed. Replication here is verbatim: this is the real command context, so
+    // `ctx->client->argv` is the client's own vector.
+    if inline {
         let tokens: Vec<&[u8]> = token_strings
             .iter()
             .map(redis_module::RedisString::as_slice)
@@ -600,21 +816,46 @@ pub fn graph_bulk_insert(
 
     // Block the client and process on a background thread so the main
     // Redis thread stays free to handle PING and other commands.
+    //
+    // The background thread commits and replicates long after Redis authorized the
+    // command here, so escalation must re-authorize it against the pause state and role
+    // that are live then (#2371) — unless this insert arrived over the replication link,
+    // in which case it mirrors a write the master already committed and rejecting it
+    // would diverge us. Decided here, on the main thread, because the worker's detached
+    // context cannot see REPLICATED.
+    //
+    // `must_run_inline` (#2420, widened to C's full dispatcher set in #2421) routes
+    // REPLICATED and LOADING inline, so neither reaches this worker. ASYNC_LOADING is
+    // the exception: it is in C's *authorization* bypass but in neither C's dispatcher
+    // predicate nor ours, so such a batch still spawns a worker — and that worker can
+    // escalate after the loading window has closed, where a live read would reject a
+    // write that was already authorized and persisted.
+    //
+    // Narrower than C, deliberately: C bypasses authorization wholesale on
+    // ASYNC_LOADING, dropping the pause check with it. This worker does replicate
+    // (phase 2 below), so it keeps `replicates: true` and only waives the role check.
+    let facts = WriteFacts {
+        replicates: true,
+        originated_here: !ctx.get_flags().contains(ContextFlags::ASYNC_LOADING),
+    };
     let bc = unsafe { BlockedClient::new(ctx.ctx) };
     let token_data: Vec<Vec<u8>> = token_strings
         .iter()
         .map(|rs| rs.as_slice().to_vec())
         .collect();
-    // `RedisString` is tied to the calling context, so carry the name as a
-    // plain `String` for the cleanup path to rebuild on the worker thread.
-    let graph_name = key_str.to_string();
+    let held = held.expect("held on the background path, which is the only path here");
+    // The cleanup path re-opens the key by name, so it also needs the exact bytes:
+    // `to_string` goes through `to_string_lossy`, and a non-UTF-8 graph name would come
+    // back with replacement characters and delete a *different* key than the one this
+    // batch created.
+    let key_bytes: Vec<u8> = key_str.as_slice().to_vec();
     spawn(
         move || {
             let ts_ctx = unsafe { ffi::get_thread_safe_context(bc.inner) };
             // Build, commit and replicate under one session, which releases its locks
             // when this block ends — before the client is unblocked below.
             let result: Result<(), String> = 'phase: {
-                let session = QuerySession::begin(&graph);
+                let session = QuerySession::begin_with(&graph, facts);
                 // Phase 1: build the new version as a reader, GIL-free. What we take
                 // here is the MVCC *write slot* — the single-writer marker on
                 // `MvccGraph`, not a lock — so if another writer holds it, fail with a
@@ -651,7 +892,7 @@ pub fn graph_bulk_insert(
                     // clear it, so skipping this leaves the graph permanently
                     // unwritable.
                     session.with_graph(|tg| tg.graph.rollback());
-                    break 'phase Err(e);
+                    break 'phase Err(e.to_string());
                 }
                 // Publish the index documents inside the writer scope, matching
                 // `CommitOp`: the index is not MVCC, so readers must be excluded while
@@ -668,7 +909,37 @@ pub fn graph_bulk_insert(
                 session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
                     .expect("writer mode after upgrade_to_write");
-                raw::replicate_verbatim(ts_ctx);
+                // Replicate the client's own argument strings.
+                //
+                // `RM_ReplicateVerbatim` cannot be used from here. It propagates
+                // `ctx->client->argv`, and a thread-safe context's client is a *fake*
+                // pooled one — Redis substitutes it because a real client is main-thread
+                // state ("we can't access it safely from another thread, so we use a
+                // fake client here"). It carries no argv, so the verbatim call that used
+                // to be here propagated a zero-argument command: replicas skipped the
+                // frame and the AOF became unparseable (#2347). Redis only ever binds
+                // the real client to a context on the main thread, so from a worker
+                // there is no argv to replicate from, by construction.
+                //
+                // `RM_Replicate` takes an explicit vector instead, which is also what C
+                // does when it replicates off the main thread (`QueryCtx_Replicate`).
+                // Passing `held` — the arguments as the client sent them — keeps this
+                // equivalent to verbatim in both respects that matter: the propagated
+                // bytes are the client's own, and propagation only increments refcounts
+                // rather than copying the payload.
+                //
+                // Deliberately still inside the writer session: commit and replicate
+                // have to stay atomic against other writers, or a later query could
+                // replicate ahead of this batch and reach the replica referencing nodes
+                // it has not created yet. Releasing the session flushes the propagation.
+                //
+                // Replay is deterministic — bulk assigns ids sequentially from the
+                // current reserved counts, and the replica parses identical token bytes
+                // in identical order.
+                // SAFETY: `ts_ctx` is this worker's context, every entry of `held.argv`
+                // is a string this closure owns a reference to, and the session holds
+                // the GIL.
+                unsafe { held.replicate(ts_ctx) };
                 Ok(())
             };
             match result {
@@ -684,7 +955,7 @@ pub fn graph_bulk_insert(
                         // retake the GIL for this keyspace write.
                         let _gil = hold_gil();
                         let cleanup_ctx = Context::new(ts_ctx);
-                        let key_name = cleanup_ctx.create_string(graph_name.as_str());
+                        let key_name = cleanup_ctx.create_string(key_bytes.as_slice());
                         discard_created_graph(&cleanup_ctx, &key_name);
                     }
                     let cerr = ffi::sanitise_error(msg);

@@ -211,6 +211,92 @@ pub(super) fn delta_dominates_base(
 /// `count` leaves the fold policy reading a delta size that never happened, so
 /// writes go through the counted [`Self::insert`] / [`Self::erase`], or through
 /// [`Self::layer_mut`] for callers that resync the count themselves.
+/// Bits in [`RowFilter`]'s bitmap. 4096 bits is 512 bytes, allocated only once
+/// a delta actually holds something, and enough that the deltas the fold policy
+/// permits stay well below saturation.
+const ROW_FILTER_BITS: usize = 32768;
+const ROW_FILTER_WORDS: usize = ROW_FILTER_BITS / 64;
+
+/// Which rows a delta layer may hold entries in.
+///
+/// Readers merge three layers per scan, and the existing short-circuit asks
+/// whether a layer is empty *in total*. That is the wrong question for a narrow
+/// scan: one pending entry anywhere makes every single-row read attach and seek
+/// a GraphBLAS iterator that yields nothing (#2430). This answers the narrower
+/// question — may this layer hold row `r`? — without touching GraphBLAS.
+///
+/// **The only safety property that matters is that it never says "no" when the
+/// answer is yes.** [`Self::Unknown`] is therefore the default for anything not
+/// explicitly tracked: a bulk write, a transpose, any future path that reaches
+/// [`Delta::layer_mut`]. Being wrong in the conservative direction costs the
+/// scan it would have done anyway.
+#[derive(Clone)]
+enum RowFilter {
+    /// Nothing has been added since the last clear, so no row is present. The
+    /// state a fresh or just-folded delta is in, and the one that costs nothing.
+    Empty,
+    /// A row is present only if its hash bit is set. False positives are
+    /// expected (hash collisions, and entries erased since); false negatives
+    /// are not possible.
+    Bits(Box<[u64; ROW_FILTER_WORDS]>),
+    /// A bulk write moved entries this cannot track. Every row may be present.
+    Unknown,
+}
+
+impl RowFilter {
+    /// Fibonacci hashing: rows here are `compound_key(src, dst)` values whose
+    /// low bits are a raw destination id, so the multiply is what spreads them.
+    const fn slot(row: u64) -> (usize, u64) {
+        let h = (row.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - 15)) as usize;
+        (h / 64, 1u64 << (h % 64))
+    }
+
+    fn add(
+        &mut self,
+        row: u64,
+    ) {
+        match self {
+            Self::Unknown => {}
+            Self::Empty => {
+                let mut bits = Box::new([0u64; ROW_FILTER_WORDS]);
+                let (w, b) = Self::slot(row);
+                bits[w] |= b;
+                *self = Self::Bits(bits);
+            }
+            Self::Bits(bits) => {
+                let (w, b) = Self::slot(row);
+                bits[w] |= b;
+            }
+        }
+    }
+
+    /// Whether any row in `min..=max` may be present. Wide ranges answer `true`
+    /// without testing: a scan that broad wants the delta anyway, and the point
+    /// of this is the single-row case.
+    fn may_hold(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> bool {
+        match self {
+            Self::Unknown => true,
+            Self::Empty => false,
+            Self::Bits(bits) => {
+                let Some(span) = max_row.checked_sub(min_row) else {
+                    return false;
+                };
+                if span >= 64 {
+                    return true;
+                }
+                (min_row..=max_row).any(|r| {
+                    let (w, b) = Self::slot(r);
+                    bits[w] & b != 0
+                })
+            }
+        }
+    }
+}
+
 pub(super) struct Delta<T> {
     layer: Cow<Matrix<T>>,
     /// Approximate `layer.nvals()`, maintained by the mutation methods without
@@ -232,6 +318,9 @@ pub(super) struct Delta<T> {
     /// the base. The flag carries the decision across that gap (and across
     /// versions, via `new_version`).
     fold: AtomicBool,
+    /// Which rows this layer may hold, so a single-row scan can skip it
+    /// entirely. Conservative by construction; see [`RowFilter`].
+    rows: RowFilter,
 }
 
 // Manual `Clone` so it holds for every `T` without a `T: Clone` bound (see the
@@ -255,18 +344,29 @@ impl<T> Delta<T> {
     /// Wrap a layer whose size is exactly known — a fresh empty matrix, or one
     /// just decoded. Pins it hypersparse, as every delta is.
     pub(super) fn new(layer: Matrix<T>) -> Self {
+        let rows = if layer.nvals() == 0 {
+            RowFilter::Empty
+        } else {
+            // A decoded layer arrives with entries this never saw inserted.
+            RowFilter::Unknown
+        };
         Self {
             count: AtomicU64::new(layer.nvals()),
             layer: Cow::new(layer.into_hyper()),
             tx_nvals: 0,
             fold: AtomicBool::new(false),
+            rows,
         }
     }
 
     /// This delta, transposed: same bookkeeping over the transposed layer, since
     /// a transpose moves no entries.
     pub(super) fn transposed(&self) -> Self {
-        self.relayer(Cow::new(self.transpose().into_hyper()))
+        let mut t = self.relayer(Cow::new(self.transpose().into_hyper()));
+        // A transpose turns rows into columns, so the filter describes the
+        // wrong axis and no cheap correction exists.
+        t.rows = RowFilter::Unknown;
+        t
     }
 
     /// This delta's bookkeeping over a different layer of the same size (a
@@ -280,6 +380,8 @@ impl<T> Delta<T> {
             count: AtomicU64::new(self.count()),
             tx_nvals: self.tx_nvals,
             fold: AtomicBool::new(self.fold.load(Ordering::Relaxed)),
+            // Same entries at the same coordinates; `transposed` overrides.
+            rows: self.rows.clone(),
         }
     }
 
@@ -296,6 +398,7 @@ impl<T> Delta<T> {
             count: AtomicU64::new(count),
             tx_nvals: count,
             fold: AtomicBool::new(fold),
+            rows: self.rows.clone(),
         }
     }
 
@@ -363,6 +466,9 @@ impl<T> Delta<T> {
         *self.count.get_mut() = 0;
         self.tx_nvals = 0;
         *self.fold.get_mut() = false;
+        // The layer is empty again, which is the one state that can be asserted
+        // rather than approximated.
+        self.rows = RowFilter::Empty;
     }
 
     /// Swap in a layer holding the same entries at different dimensions (a
@@ -383,14 +489,43 @@ impl<T> Delta<T> {
         nrows: u64,
         ncols: u64,
     ) {
+        // A resize moves no entry to a different row, so the filter stands —
+        // and it must be restored explicitly, since `layer_mut` invalidates.
+        let rows = std::mem::replace(&mut self.rows, RowFilter::Unknown);
         self.layer_mut().resize(nrows, ncols);
+        self.rows = rows;
     }
 
     /// The layer, mutably, *without* counting the mutation. For bulk callers
     /// that resync `count` themselves (`remove_mask`) or that cannot change the
     /// entry count at all (`resize`).
     pub(super) fn layer_mut(&mut self) -> &mut Matrix<T> {
+        // Every path that adds entries reaches the layer through here, so
+        // invalidating by default is what makes the filter safe: a caller that
+        // knows better says so (`insert`, `resize`), and one that says nothing
+        // costs a scan rather than a wrong answer.
+        self.rows = RowFilter::Unknown;
         &mut self.layer
+    }
+
+    /// The layer, mutably, recording that row `i` now holds an entry. For the
+    /// counted single-entry inserts, which are the paths worth tracking.
+    fn layer_mut_row(
+        &mut self,
+        i: u64,
+    ) -> &mut Matrix<T> {
+        self.rows.add(i);
+        &mut self.layer
+    }
+
+    /// Whether this layer may hold an entry in rows `min_row..=max_row`. Only
+    /// ever over-reports; see [`RowFilter`].
+    pub(super) fn may_hold_rows(
+        &self,
+        min_row: u64,
+        max_row: u64,
+    ) -> bool {
+        self.rows.may_hold(min_row, max_row)
     }
 
     /// Drop `(i, j)` and un-count it. Saturates: the caller may not know
@@ -401,7 +536,9 @@ impl<T> Delta<T> {
         i: u64,
         j: u64,
     ) {
-        self.layer_mut().remove(i, j);
+        // A removal only shrinks the true row set, so the filter is still a
+        // superset — `layer_mut_row` keeps it that way without invalidating.
+        self.layer_mut_row(i).remove(i, j);
         let count = self.count.get_mut();
         *count = count.saturating_sub(1);
     }
@@ -418,7 +555,7 @@ impl Delta<bool> {
         i: u64,
         j: u64,
     ) {
-        self.layer_mut().set(i, j, true);
+        self.layer_mut_row(i).set(i, j, true);
         *self.count.get_mut() += 1;
     }
 
@@ -463,6 +600,10 @@ impl Delta<u64> {
         j: u64,
         value: u64,
     ) {
+        // No row filter here: `VersionedMatrix::iter` — the only thing that
+        // reads one — exists for `bool` matrices alone, so tracking rows on a
+        // valued delta would be a per-insert cost nothing can spend. `layer_mut`
+        // pins the filter at `Unknown`, which is the answer that is always safe.
         self.layer_mut().set(i, j, value);
         *self.count.get_mut() += 1;
     }
@@ -687,10 +828,11 @@ impl VersionedMatrix<bool> {
         // (observed as GrB_INVALID_OBJECT / heap corruption under stress).
         self.wait_all();
         // With nothing to fold there is no merge to do, only a copy of `m` at
-        // the new dims — which `GxB_Matrix_concat` does as one bulk block copy
-        // instead of a tuple round-trip (`grow_cost_concat_vs_rebuild`: 1.2 ms
-        // vs 7.6-8.4 ms at 1m entries). This is the common shape, since a grow
-        // typically follows a commit that already folded.
+        // the new dims, which `grown` does as a `dup` plus a `GrB_Matrix_resize`
+        // — 0.47 ms against the tuple round-trip's 3.7 ms at 262k entries and
+        // 0.81 ms against 9.0 ms at 1m (`grow_cost_rebuild_vs_resize`). This is
+        // the common shape, since a grow typically follows a commit that already
+        // folded.
         if self.dp.nvals() == 0 && self.dm.nvals() == 0 {
             let new_m = self.m.grown(nrows, ncols);
             new_m.wait();
@@ -1143,7 +1285,20 @@ impl<E: IterExtract> Iter<E> {
         min_row: u64,
         max_row: u64,
     ) -> Self {
-        Self::from_layers(&vm.m, &vm.dp, &vm.dm, min_row, max_row)
+        // A layer whose row filter rules this range out is left *detached*: no
+        // `GxB_Iterator` is allocated, attached or seeked for it, and it yields
+        // nothing. It is still carried, so a later `seek` to a range the filter
+        // does not rule out attaches it and reads normally — the skip is an
+        // optimisation, not a promise the caller has to keep.
+        Self::from_layers_detaching(
+            &vm.m,
+            &vm.dp,
+            !vm.dp.may_hold_rows(min_row, max_row),
+            &vm.dm,
+            !vm.dm.may_hold_rows(min_row, max_row),
+            min_row,
+            max_row,
+        )
     }
 
     /// Build the effective-content iterator directly from the three delta
@@ -1159,8 +1314,26 @@ impl<E: IterExtract> Iter<E> {
         min_row: u64,
         max_row: u64,
     ) -> Self {
+        Self::from_layers_detaching(m, dp, false, dm, false, min_row, max_row)
+    }
+
+    /// As [`Self::from_layers`], but a layer flagged `detach` is one the caller
+    /// has established holds nothing in `min_row..=max_row`. It yields nothing
+    /// now and attaches on the first [`Self::seek`], so the stream is identical
+    /// either way and only the cost differs.
+    fn from_layers_detaching<V>(
+        m: &Matrix<V>,
+        dp: &Matrix<V>,
+        detach_dp: bool,
+        dm: &Matrix<bool>,
+        detach_dm: bool,
+        min_row: u64,
+        max_row: u64,
+    ) -> Self {
         let mut dmit = if dm.nvals() == 0 {
             None
+        } else if detach_dm {
+            Some(matrix::Iter::<BoolExtract>::detached(dm))
         } else {
             Some(matrix::Iter::<BoolExtract>::new(dm, min_row, max_row))
         };
@@ -1170,6 +1343,8 @@ impl<E: IterExtract> Iter<E> {
             m_next: None,
             dpit: if dp.nvals() == 0 {
                 None
+            } else if detach_dp {
+                Some(matrix::Iter::detached(dp))
             } else {
                 Some(matrix::Iter::new(dp, min_row, max_row))
             },
@@ -1519,5 +1694,115 @@ mod tests {
         );
         assert_eq!(v.get(probe.0, probe.1), Some(true));
         assert_eq!(v.nvals(), filler + 2, "nvals double-counted the re-add");
+    }
+
+    /// The row filter lets a single-row scan skip a delta layer entirely, which
+    /// is only sound if it never rules out a row the layer holds. These pin the
+    /// two halves of that: the skip happens, and it is never wrong.
+    ///
+    /// This one is the wrong half — a scan of a row the delta *does* hold must
+    /// still see it, whether the entry is the only one in the delta or one of
+    /// many.
+    #[test]
+    fn row_filter_never_hides_a_pending_entry() {
+        ensure_init();
+        let mut v = VersionedMatrix::<bool>::new(1 << 12, 1 << 12);
+        for r in (0..2048).step_by(2) {
+            v.set(r, r + 1, true);
+        }
+        let mut v = v.dup();
+        v.flush();
+        v.wait_all();
+        // Pending entries on rows that are *not* in the committed base, so the
+        // only way to read them is through `dp`.
+        let pending: Vec<u64> = vec![1, 3, 777, 2047];
+        for &r in &pending {
+            v.set(r, r, true);
+        }
+        v.wait_all();
+        for &r in &pending {
+            let got: Vec<_> = v.iter(r, r).collect();
+            assert_eq!(got, vec![(r, r)], "row {r}'s pending entry was skipped");
+        }
+        // And every committed row still reads, with the delta non-empty.
+        for r in (0..2048).step_by(2) {
+            let got: Vec<_> = v.iter(r, r).collect();
+            let want = if pending.contains(&r) {
+                vec![(r, r), (r, r + 1)]
+            } else {
+                vec![(r, r + 1)]
+            };
+            assert_eq!(got, want, "row {r} misread with a non-empty delta");
+        }
+    }
+
+    /// **The hazard the design has to answer.** A skipped layer is skipped for
+    /// *a range*, but `Iter::seek` re-points an existing iterator at a different
+    /// range — so a layer dropped because the first range missed it would
+    /// silently swallow entries in every later one. Detaching rather than
+    /// dropping is what makes that safe, and this is the test that says so:
+    /// build the iterator on a row the delta does not hold, then seek to one it
+    /// does.
+    #[test]
+    fn seek_after_a_skipped_layer_still_reads_the_delta() {
+        ensure_init();
+        let mut v = VersionedMatrix::<bool>::new(1 << 12, 1 << 12);
+        v.set(10, 10, true);
+        let mut v = v.dup();
+        v.flush();
+        v.wait_all();
+        v.set(900, 901, true);
+        v.wait_all();
+
+        // Row 10 is committed and holds no delta entry, so this iterator is
+        // built with `dp` detached.
+        let mut it = v.iter(10, 10);
+        assert_eq!(it.by_ref().collect::<Vec<_>>(), vec![(10, 10)]);
+
+        // Re-seeking must attach it rather than keep answering "empty".
+        it.seek(900, 900);
+        assert_eq!(
+            it.collect::<Vec<_>>(),
+            vec![(900, 901)],
+            "a re-seeked iterator lost the pending entry"
+        );
+    }
+
+    /// The filter is only worth having if the resizes a bulk create performs
+    /// constantly leave it usable — degrading to `Unknown` would be safe and
+    /// would silently switch the optimisation off. Both directions are checked,
+    /// because they take different paths and end in different states.
+    #[test]
+    fn row_filter_stays_exact_across_both_resize_paths() {
+        ensure_init();
+        let mut v = VersionedMatrix::<bool>::new(4096, 4096);
+        v.set(5, 6, true);
+        v.wait_all();
+        assert!(v.dp.may_hold_rows(5, 5), "the row it just took");
+        assert!(!v.dp.may_hold_rows(7, 7), "a row it never took");
+
+        // Shrink keeps the delta and resizes it in place, so the filter has to
+        // survive `Delta::resize` — which reaches the layer through the same
+        // `layer_mut` that invalidates by default.
+        v.resize(2048, 2048);
+        v.wait_all();
+        assert!(v.dp.may_hold_rows(5, 5), "shrink lost the entry's row");
+        assert!(
+            !v.dp.may_hold_rows(7, 7),
+            "shrink degraded the filter to Unknown"
+        );
+        assert_eq!(v.iter(5, 5).collect::<Vec<_>>(), vec![(5, 6)]);
+
+        // Growing with a non-empty delta rebuilds the base with the delta
+        // folded in, so afterwards nothing is pending and no row is claimed —
+        // and the entry must still read, now out of the base.
+        v.resize(8192, 8192);
+        v.wait_all();
+        assert_eq!(v.dp().nvals(), 0, "grow did not fold the delta");
+        assert!(
+            !v.dp.may_hold_rows(5, 5),
+            "a folded delta still claims a row"
+        );
+        assert_eq!(v.iter(5, 5).collect::<Vec<_>>(), vec![(5, 6)]);
     }
 }

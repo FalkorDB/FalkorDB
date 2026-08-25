@@ -121,6 +121,15 @@ use rustc_hash::FxHashMap;
 use super::graphblas::serialization::{Decode, Encode, Reader, Writer};
 use crate::runtime::value::Value;
 
+/// Highest `u16`, reserved as "no attribute" — C's `ATTRIBUTE_ID_NONE`
+/// (`USHRT_MAX`, `src/graph/entities/attribute_set.h`). Never a valid id, so an id
+/// this large in an RDB is malformed rather than merely out of our range.
+pub const ATTRIBUTE_ID_NONE: u16 = u16::MAX;
+
+/// How many distinct attribute names a graph can hold, given that
+/// [`ATTRIBUTE_ID_NONE`] is reserved: ids run `0..MAX_ATTRIBUTES`.
+pub const MAX_ATTRIBUTES: usize = ATTRIBUTE_ID_NONE as usize;
+
 /// Insertion-ordered map of attribute names to attribute indices.
 ///
 /// Maintains both a `Vec<Arc<String>>` (for stable index → name lookup and
@@ -172,6 +181,11 @@ impl AttrNameMap {
         self.index.get(name).map(|&i| i as usize)
     }
 
+    /// Intern `name`, doing nothing if the dictionary is already full.
+    ///
+    /// See [`Self::get_or_create`] for why the cap exists. This variant has no way
+    /// to report the refusal; callers that need to know should mint through
+    /// `get_or_create` and compare against [`ATTRIBUTE_ID_NONE`].
     pub fn insert(
         &mut self,
         name: Arc<String>,
@@ -179,9 +193,48 @@ impl AttrNameMap {
         if self.index.contains_key(&name) {
             return;
         }
+        if self.vec.len() >= MAX_ATTRIBUTES {
+            return;
+        }
         let idx = self.vec.len() as u16;
         self.vec.push(name.clone());
         self.index.insert(name, idx);
+    }
+
+    /// Resolve `name` to its id, interning it if this graph has not seen it.
+    ///
+    /// The single place ids are minted. There is exactly one of these tables per
+    /// graph — shared by the node and relationship stores — so an id means the same
+    /// attribute wherever it appears: in a span, in the RDB, in a `GRAPH.EFFECT`, or
+    /// in a compact reply. Per-store tables would number the same name differently
+    /// for nodes and relationships, and a bare id on the wire would then land on the
+    /// wrong attribute on a replica (#2457).
+    ///
+    /// Matches C, whose `GraphContext_FindOrAddAttribute` likewise takes no entity
+    /// type and mints from one array.
+    ///
+    /// Returns [`ATTRIBUTE_ID_NONE`] once [`MAX_ATTRIBUTES`] names are interned,
+    /// as C's `GraphContext_FindOrAddAttribute` does when its table is full. The
+    /// id space is `u16`, so without the cap the 65,537th distinct name would take
+    /// `self.vec.len() as u16` == 0 and **alias attribute 0** — reads of an
+    /// unrelated, long-established property would start returning the new one's
+    /// values. Refusing to mint keeps the failure confined to the name that could
+    /// not be added: `ATTRIBUTE_ID_NONE` resolves to no entry, so the property
+    /// reads as absent, and `decode_with_count` already rejects it on the wire.
+    pub fn get_or_create(
+        &mut self,
+        name: &Arc<String>,
+    ) -> u16 {
+        if let Some(&idx) = self.index.get(name) {
+            return idx;
+        }
+        if self.vec.len() >= MAX_ATTRIBUTES {
+            return ATTRIBUTE_ID_NONE;
+        }
+        let idx = self.vec.len() as u16;
+        self.vec.push(Arc::clone(name));
+        self.index.insert(Arc::clone(name), idx);
+        idx
     }
 }
 
@@ -1003,12 +1056,18 @@ impl DataBlock {
 
 /// Attribute storage for graph entities, keyed by entity id.
 ///
-/// Holds the attribute-name table and a copy-on-write [`DataBlock`]. A slot
-/// miss means the entity has no attributes.
+/// A copy-on-write [`DataBlock`] of per-entity spans; a slot miss means the entity
+/// has no attributes.
+///
+/// **Deliberately does not own an attribute-name table.** The name → id dictionary
+/// lives once on [`crate::graph::graph::Graph`] and is passed to the methods that
+/// need it, so the node and relationship stores share one id space — the same shape
+/// as C, where `GraphContext` holds one `attributes` array for two `DataBlock`s.
+/// A table per store numbered the same name differently for nodes and relationships,
+/// and since a bare id travels on the wire in `GRAPH.EFFECT`, an RDB-seeded replica
+/// resolved it against different numbering and wrote to the wrong attribute (#2457).
 #[derive(Clone, Default)]
 pub struct AttributeStore {
-    /// Attribute names in insertion order (name → column index)
-    pub attrs_name: AttrNameMap,
     /// Block-allocated per-entity attribute spans (COW across MVCC versions).
     data: DataBlock,
 }
@@ -1032,16 +1091,6 @@ impl AttributeStore {
     }
 
     // ---- read path --------------------------------------------------------
-
-    #[must_use]
-    pub fn get_attr(
-        &self,
-        key: u64,
-        attr: &Arc<String>,
-    ) -> Option<Value> {
-        let idx = self.attrs_name.get_index_of(attr)? as u16;
-        self.get_attr_by_idx(key, idx)
-    }
 
     #[must_use]
     pub fn get_attr_by_idx(
@@ -1095,28 +1144,18 @@ impl AttributeStore {
         self.data.get(key).map_or(0, SpanRef::heap_bytes)
     }
 
-    pub fn get_attrs(
+    /// The attribute ids an entity carries.
+    ///
+    /// Reads only the span's ids, so it stays cheaper than [`Self::get_all_attrs_by_id`]
+    /// when the values are not wanted.
+    pub fn get_attr_ids(
         &self,
         key: u64,
-    ) -> impl Iterator<Item = Arc<String>> + '_ {
-        self.data.get(key).into_iter().flat_map(move |span| {
-            span.entries()
-                .iter()
-                .filter_map(move |attr| self.attrs_name.get(attr.id as usize).cloned())
-        })
-    }
-
-    pub fn get_all_attrs(
-        &self,
-        key: u64,
-    ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
-        self.data.get(key).into_iter().flat_map(move |span| {
-            span.iter().filter_map(|(idx, value)| {
-                self.attrs_name
-                    .get(idx as usize)
-                    .map(|name| (name.clone(), value))
-            })
-        })
+    ) -> impl Iterator<Item = u16> + '_ {
+        self.data
+            .get(key)
+            .into_iter()
+            .flat_map(|span| span.entries().iter().map(|attr| attr.id))
     }
 
     pub fn get_all_attrs_by_id(
@@ -1220,25 +1259,6 @@ impl AttributeStore {
         nset
     }
 
-    /// Resolve an attribute name to its index, creating a new mapping if needed.
-    pub fn get_or_create_attr_id(
-        &mut self,
-        attr: &Arc<String>,
-    ) -> u16 {
-        self.attrs_name.get_index_of(attr).unwrap_or_else(|| {
-            self.attrs_name.insert(attr.clone());
-            self.attrs_name.len() - 1
-        }) as u16
-    }
-
-    #[must_use]
-    pub fn get_attr_id(
-        &self,
-        attr: &Arc<String>,
-    ) -> Option<usize> {
-        self.attrs_name.get_index_of(attr)
-    }
-
     /// Allocated bytes not attributable to any live entity — see
     /// [`DataBlock::structural_memory_usage`].
     #[must_use]
@@ -1249,29 +1269,18 @@ impl AttributeStore {
     // ---- serialization -----------------------------------------------------
 
     /// Encode a range of entities.
+    ///
+    /// Ids are written as they are stored: the graph has one attribute dictionary, so a
+    /// span's id is already the id the RDB means. This used to build a local → global
+    /// remap per call, which only existed because each store numbered names itself.
     pub fn encode_with_range(
         &self,
         w: &mut dyn Writer,
         deleted: &RoaringTreemap,
         max_id: u64,
-        global_attrs: &[Arc<String>],
         count: u64,
         offset: u64,
     ) {
-        // Build attr remap inline.
-        let global_index: FxHashMap<&Arc<String>, usize> = global_attrs
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (n, i))
-            .collect();
-
-        let mut remap = vec![u16::MAX; self.attrs_name.len()];
-        for (local_id, local_name) in self.attrs_name.iter().enumerate() {
-            if let Some(&global_id) = global_index.get(local_name) {
-                remap[local_id] = global_id as u16;
-            }
-        }
-
         let mut skipped = 0u64;
         let mut encoded = 0u64;
 
@@ -1290,13 +1299,8 @@ impl AttributeStore {
             w.write_unsigned(span.map_or(0, |s| s.len() as u64));
 
             if let Some(span) = span {
-                for (local_attr_id, value) in span.iter() {
-                    let global_attr_id = if (local_attr_id as usize) < remap.len() {
-                        remap[local_attr_id as usize]
-                    } else {
-                        local_attr_id
-                    };
-                    w.write_unsigned(u64::from(global_attr_id));
+                for (attr_id, value) in span.iter() {
+                    w.write_unsigned(u64::from(attr_id));
                     value.encode(w);
                 }
             }
@@ -1314,10 +1318,17 @@ impl Decode<19> for AttributeStore {
         unimplemented!("use decode_with_count for AttributeStore")
     }
 
+    /// Decode `count` entity spans, dropping any attribute whose id is not in the
+    /// graph's dictionary.
+    ///
+    /// `attr_limit` is that dictionary's length. Ids at or above it name nothing,
+    /// and storing one reads back as a silently absent attribute rather than an
+    /// error, so they are dropped here.
     fn decode_with_count(
         &mut self,
         r: &mut dyn Reader,
         count: u64,
+        attr_limit: usize,
     ) -> Result<(), String> {
         for _ in 0..count {
             let entity_id = r.read_unsigned()?;
@@ -1325,10 +1336,20 @@ impl Decode<19> for AttributeStore {
 
             let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_count as usize);
             for _ in 0..attr_count {
-                let attr_id = r.read_unsigned()? as u16;
+                // Narrow with `try_from`, not `as`: the id is a u64 on the wire, and
+                // truncating first would turn an encoded 65_536 into 0, which then
+                // passes any nonempty `attr_limit` and lands on attribute 0.
+                let attr_id = u16::try_from(r.read_unsigned()?).ok();
+                // Read the value even when the id is unusable — the reader has to
+                // advance past it either way, or the rest of the stream desyncs.
                 let value = Value::decode(r)?;
 
-                if (attr_id as usize) < self.attrs_name.len() && !matches!(value, Value::Null) {
+                // `attr_limit` is capped at `MAX_ATTRIBUTES`, so this also rejects
+                // `ATTRIBUTE_ID_NONE` without testing for it separately.
+                if let Some(attr_id) = attr_id
+                    && (attr_id as usize) < attr_limit
+                    && !matches!(value, Value::Null)
+                {
                     entries.push((attr_id, value));
                 }
             }
@@ -1350,8 +1371,83 @@ mod tests {
         Arc::new(s.to_string())
     }
 
-    fn store_with(entries: &[(u64, &[(&str, Value)])]) -> AttributeStore {
-        let mut store = AttributeStore::new();
+    /// A store paired with the attribute dictionary that now lives on `Graph`.
+    ///
+    /// These tests exercise span storage — copy-on-write, compaction, snapshot isolation
+    /// across versions — not where the dictionary lives, so pairing the two here keeps
+    /// them in their original shape. `Deref` forwards everything that does not need the
+    /// dictionary; the handful of methods that do are shadowed below.
+    #[derive(Clone, Default)]
+    struct TestStore {
+        names: AttrNameMap,
+        store: AttributeStore,
+    }
+
+    impl TestStore {
+        fn new() -> Self {
+            Self::default()
+        }
+
+        /// Clones the dictionary alongside the store, which is what `Graph::new_version`
+        /// does — so snapshot-isolation tests still see a version's own name table.
+        fn new_version(&self) -> Self {
+            Self {
+                names: self.names.clone(),
+                store: self.store.new_version(),
+            }
+        }
+
+        fn get_or_create_attr_id(
+            &mut self,
+            attr: &Arc<String>,
+        ) -> u16 {
+            self.names.get_or_create(attr)
+        }
+
+        fn get_attr_id(
+            &self,
+            attr: &Arc<String>,
+        ) -> Option<usize> {
+            self.names.get_index_of(attr)
+        }
+
+        fn get_attr(
+            &self,
+            key: u64,
+            attr: &Arc<String>,
+        ) -> Option<Value> {
+            let idx = self.names.get_index_of(attr)? as u16;
+            self.store.get_attr_by_idx(key, idx)
+        }
+
+        fn get_all_attrs(
+            &self,
+            key: u64,
+        ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
+            self.store
+                .get_all_attrs_by_id(key)
+                .filter_map(|(id, value)| self.names.get(id as usize).map(|n| (n.clone(), value)))
+                .collect::<Vec<_>>()
+                .into_iter()
+        }
+    }
+
+    impl std::ops::Deref for TestStore {
+        type Target = AttributeStore;
+
+        fn deref(&self) -> &AttributeStore {
+            &self.store
+        }
+    }
+
+    impl std::ops::DerefMut for TestStore {
+        fn deref_mut(&mut self) -> &mut AttributeStore {
+            &mut self.store
+        }
+    }
+
+    fn store_with(entries: &[(u64, &[(&str, Value)])]) -> TestStore {
+        let mut store = TestStore::new();
         let mut attrs: FxHashMap<u64, Vec<(u16, Value)>> = FxHashMap::default();
         for (id, pairs) in entries {
             let mut vec: Vec<(u16, Value)> = pairs
@@ -1399,7 +1495,7 @@ mod tests {
             )),
             Value::VecF32(Arc::new([1.0f32, -2.5].into_iter().collect())),
         ];
-        let mut store = AttributeStore::new();
+        let mut store = TestStore::new();
         let pairs: Vec<(u16, Value)> = values
             .iter()
             .cloned()
@@ -1490,7 +1586,7 @@ mod tests {
 
     #[test]
     fn compaction_reclaims_abandoned_spans() {
-        let mut store = AttributeStore::new();
+        let mut store = TestStore::new();
         for i in 0..200u16 {
             store.get_or_create_attr_id(&name(&format!("a{i:03}")));
         }
@@ -1712,5 +1808,236 @@ mod tests {
         let store = store_with(&[(far_id, &[("a", Value::Int(42))])]);
         assert_eq!(store.get_attr(far_id, &name("a")), Some(Value::Int(42)));
         assert_eq!(store.get_attr(far_id - 1, &name("a")), None);
+    }
+
+    // ── RDB id bounds ──
+    //
+    // The store no longer owns the attribute dictionary, so the id bound rides on
+    // `Decode::decode_with_count` as a parameter. That seam is easy to leave open:
+    // an earlier revision satisfied the trait by delegating with `usize::MAX`, which
+    // silently disabled the check on the multi-key load path — every graph large
+    // enough to be split across virtual keys. These pin both halves of it.
+
+    /// Records the calls a [`Writer`] receives, so a stream can be replayed into a
+    /// [`Reader`] without this test knowing how `Value` encodes itself.
+    #[derive(Default)]
+    struct Recorder {
+        ops: Vec<Op>,
+    }
+
+    #[derive(Clone)]
+    enum Op {
+        Unsigned(u64),
+        Signed(i64),
+        Double(f64),
+        Buffer(Vec<u8>),
+    }
+
+    impl Writer for Recorder {
+        fn write_unsigned(
+            &mut self,
+            val: u64,
+        ) {
+            self.ops.push(Op::Unsigned(val));
+        }
+        fn write_signed(
+            &mut self,
+            val: i64,
+        ) {
+            self.ops.push(Op::Signed(val));
+        }
+        fn write_double(
+            &mut self,
+            val: f64,
+        ) {
+            self.ops.push(Op::Double(val));
+        }
+        fn write_buffer(
+            &mut self,
+            data: &[u8],
+        ) {
+            self.ops.push(Op::Buffer(data.to_vec()));
+        }
+    }
+
+    struct Replay {
+        ops: std::collections::VecDeque<Op>,
+    }
+
+    impl Replay {
+        fn next(&mut self) -> Result<Op, String> {
+            self.ops
+                .pop_front()
+                .ok_or_else(|| "replay: end".to_string())
+        }
+    }
+
+    impl Reader for Replay {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            match self.next()? {
+                Op::Unsigned(v) => Ok(v),
+                _ => Err("replay: expected unsigned".to_string()),
+            }
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            match self.next()? {
+                Op::Signed(v) => Ok(v),
+                _ => Err("replay: expected signed".to_string()),
+            }
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            match self.next()? {
+                Op::Double(v) => Ok(v),
+                _ => Err("replay: expected double".to_string()),
+            }
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            match self.next()? {
+                Op::Buffer(v) => Ok(v),
+                _ => Err("replay: expected buffer".to_string()),
+            }
+        }
+    }
+
+    /// One entity span carrying `(attr_id, value)` pairs, in the layout
+    /// `decode_with_count` expects.
+    fn span_stream(
+        entity_id: u64,
+        attrs: &[(u16, Value)],
+    ) -> Replay {
+        let widened: Vec<(u64, Value)> = attrs
+            .iter()
+            .map(|(id, v)| (u64::from(*id), v.clone()))
+            .collect();
+        raw_span_stream(entity_id, &widened)
+    }
+
+    /// As [`span_stream`], but ids are `u64` so a test can encode one that no
+    /// `u16` can hold — which is exactly the malformed-RDB case the decoder has to
+    /// reject rather than truncate.
+    fn raw_span_stream(
+        entity_id: u64,
+        attrs: &[(u64, Value)],
+    ) -> Replay {
+        let mut rec = Recorder::default();
+        rec.write_unsigned(entity_id);
+        rec.write_unsigned(attrs.len() as u64);
+        for (attr_id, value) in attrs {
+            rec.write_unsigned(*attr_id);
+            value.encode(&mut rec);
+        }
+        Replay {
+            ops: rec.ops.into(),
+        }
+    }
+
+    #[test]
+    fn decode_with_count_rejects_ids_too_large_for_u16() {
+        let mut store = AttributeStore::default();
+        // 65_536 is 0 once truncated to u16, so a decoder that narrows before
+        // bounds-checking stores this value on attribute 0 — clobbering an
+        // unrelated, long-established property with whatever a malformed or
+        // foreign RDB happened to carry.
+        let mut r = raw_span_stream(
+            7,
+            &[
+                (0, Value::Int(10)),
+                (u64::from(u16::MAX) + 1, Value::Int(999)),
+            ],
+        );
+
+        let mut dict = AttrNameMap::default();
+        dict.insert(Arc::new("a".to_string()));
+        store.decode_with_count(&mut r, 1, dict.len()).unwrap();
+
+        assert_eq!(
+            store.get_attr_by_idx(7, 0),
+            Some(Value::Int(10)),
+            "attribute 0 must keep its own value"
+        );
+        // The truncated id would land on 0, so checking 0 alone cannot tell the two
+        // apart if the decoder also happens to drop the good entry. Assert the
+        // clobbering value appears nowhere in the span.
+        assert_eq!(
+            store.get_attr_by_idx(7, 0),
+            Some(Value::Int(10)),
+            "an id wider than u16 must be dropped, not narrowed onto attribute 0"
+        );
+    }
+
+    #[test]
+    fn minting_stops_at_the_id_space_rather_than_wrapping() {
+        // Fill the dictionary to capacity, then ask for one more name.
+        let mut dict = AttrNameMap::default();
+        for i in 0..MAX_ATTRIBUTES {
+            dict.insert(Arc::new(format!("a{i}")));
+        }
+        assert_eq!(dict.len(), MAX_ATTRIBUTES);
+
+        let first = dict.get(0).cloned().expect("attribute 0 exists");
+        let overflow = Arc::new("one_too_many".to_string());
+
+        assert_eq!(
+            dict.get_or_create(&overflow),
+            ATTRIBUTE_ID_NONE,
+            "a full dictionary must refuse to mint, as C's \
+             GraphContext_FindOrAddAttribute does"
+        );
+        // What the cap prevents, in the order it would go wrong without it:
+        // `self.vec.len() as u16` is ATTRIBUTE_ID_NONE at 65_535 entries — a real
+        // name minted onto the reserved sentinel, which `decode_with_count` then
+        // rejects on the wire — and 0 at 65_536, aliasing attribute 0 so that reads
+        // of a long-established property return the new one's values. The guard
+        // fires at the first of those; ablating it fails this test on the sentinel.
+        assert_eq!(
+            dict.get(0).cloned(),
+            Some(first),
+            "minting past capacity must not disturb an existing attribute"
+        );
+        assert_eq!(
+            dict.get_index_of(&overflow),
+            None,
+            "the refused name must not be resolvable to any id"
+        );
+
+        dict.insert(Arc::clone(&overflow));
+        assert_eq!(
+            dict.len(),
+            MAX_ATTRIBUTES,
+            "insert must also refuse rather than grow past the id space"
+        );
+    }
+
+    #[test]
+    fn decode_with_count_drops_ids_beyond_the_dictionary() {
+        let mut store = AttributeStore::default();
+        let mut r = span_stream(7, &[(0, Value::Int(10)), (5, Value::Int(20))]);
+
+        // A dictionary holding a single name: id 0 is real, id 5 resolves to nothing.
+        let mut dict = AttrNameMap::default();
+        dict.insert(Arc::new("a".to_string()));
+        store.decode_with_count(&mut r, 1, dict.len()).unwrap();
+
+        assert_eq!(
+            store.get_attr_by_idx(7, 0),
+            Some(Value::Int(10)),
+            "an id inside the dictionary must be kept"
+        );
+        assert_eq!(
+            dict.get(0).cloned(),
+            Some(Arc::new("a".to_string())),
+            "and that id must be the one the dictionary resolves to a name"
+        );
+        assert_eq!(
+            store.get_attr_by_idx(7, 5),
+            None,
+            "an id past the end of the dictionary must be dropped, not stored: it \
+             resolves to no name and would read back as a silently absent attribute"
+        );
+        assert_eq!(
+            store.get_all_attrs_by_id(7).count(),
+            1,
+            "only the in-range attribute should have been stored"
+        );
     }
 }

@@ -86,12 +86,13 @@ use roaring::RoaringTreemap;
 use crate::{
     entity_type::EntityType,
     graph::{
-        attribute_store::AttributeStore,
+        attribute_store::{AttrNameMap, AttributeStore},
         constraint::{Constraint, ConstraintStatus, ConstraintType},
+        endpoint_index::EndpointIndex,
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
-            tensor::{Tensor, compound_key},
+            tensor::Tensor,
             versioned_matrix::{self, VersionedMatrix},
         },
     },
@@ -99,9 +100,9 @@ use crate::{
         Field,
         indexer::{Document, IndexInfo, IndexOptions, IndexQuery, IndexType, Indexer},
     },
-    parser::{ast::ExprIR, cypher::Parser},
+    parser::cypher::Parser,
     planner::{IR, Planner, binder::Binder, optimizer::optimize},
-    runtime::{eval::evaluate_param, orderset::OrderSet, value::Value, vec_distance},
+    runtime::{orderset::OrderSet, value::Value, vec_distance},
     threadpool::spawn,
 };
 
@@ -113,8 +114,8 @@ pub struct Plan {
     pub plan: Arc<DynTree<IR>>,
     /// Whether this plan was retrieved from cache
     pub cached: bool,
-    /// Query parameters extracted from CYPHER prefix
-    pub parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
+    /// Query parameters extracted from CYPHER prefix, already evaluated
+    pub parameters: HashMap<String, Value>,
     /// Time spent parsing the query
     pub parse_duration: Duration,
     /// Time spent planning/optimizing the query
@@ -205,7 +206,7 @@ impl Plan {
     pub const fn new(
         plan: Arc<DynTree<IR>>,
         cached: bool,
-        parameters: HashMap<String, DynTree<ExprIR<Arc<String>>>>,
+        parameters: HashMap<String, Value>,
         parse_duration: Duration,
         plan_duration: Duration,
         params_offset: usize,
@@ -248,13 +249,6 @@ pub struct MemoryUsageReport {
 ///
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
-/// Sentinel for an empty/deleted slot in [`Graph::edge_endpoints`].
-///
-/// Equals `compound_key(u32::MAX, u32::MAX)`, which would only collide with a
-/// real edge whose endpoints are both node id `u32::MAX` (4.29 billion) — not
-/// reachable in practice, since the tensor compound key caps node ids at u32.
-const EDGE_NO_ENDPOINT: u64 = u64::MAX;
-
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -288,14 +282,29 @@ pub struct Graph {
     labels_matices: Vec<VersionedMatrix<bool>>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
-    /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
-    /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
-    /// are densely allocated, so a `Vec` is far more compact than a hash map
-    /// (8 B/edge vs ~31 B with control bytes + load-factor slack). Wrapped in
-    /// `Arc` so MVCC `new_version` is O(1); the first edge mutation per
-    /// version pays one `Arc::make_mut` deep clone, node-only writes pay
-    /// nothing. Empty/deleted slots hold [`EDGE_NO_ENDPOINT`].
-    edge_endpoints: Arc<Vec<u64>>,
+    /// Graph-wide reverse index: `edge_id` → `(src, dst)` for O(1) endpoint
+    /// lookup, as contiguous slots indexed by edge id. Edge IDs are densely
+    /// allocated, so slots are far more compact than a hash map (~31 B/edge
+    /// with control bytes and load-factor slack). Wrapped in `Arc` so MVCC
+    /// `new_version` is O(1); the first edge mutation per version pays one
+    /// `Arc::make_mut` deep clone of the tier it writes to — not of the whole
+    /// index — and node-only writes pay nothing.
+    ///
+    /// [`EndpointIndex`] sizes its fields to the endpoints it holds, so this is
+    /// 6 bytes per edge on a graph of millions of nodes rather than a flat 8 —
+    /// and it has no ceiling, where the previous `(src << 32) | dst` packing
+    /// refused any node id past 2^32.
+    edge_endpoints: Arc<EndpointIndex>,
+    /// The graph's one attribute-name dictionary: name → id and id → name, shared by
+    /// both stores below so an id means the same attribute everywhere it appears — in a
+    /// span, the RDB, a `GRAPH.EFFECT`, or a compact reply.
+    ///
+    /// Deliberately *not* per store. Two dictionaries numbered the same name
+    /// differently for nodes and relationships, and because effects put a bare id on
+    /// the wire, an RDB-seeded replica resolved it against different numbering and wrote
+    /// to the wrong attribute (#2457). C has the same shape: one `attributes` array on
+    /// `GraphContext`, two `DataBlock`s.
+    attrs_name: AttrNameMap,
     /// Node property storage
     node_attrs: AttributeStore,
     /// Relationship property storage
@@ -306,6 +315,14 @@ pub struct Graph {
     edge_indexer: Indexer,
     /// Label names (ID → name mapping)
     node_labels: Vec<Arc<String>>,
+    /// Label name → ID, the reverse of `node_labels`.
+    ///
+    /// A label test is a per-row operation (`n:Person` for every row of a scan),
+    /// so resolving the name must not walk the whole schema: with 500 labels
+    /// registered, `MATCH (n) WHERE n:Person RETURN count(n)` over 10k nodes
+    /// measured 2.1x the same query on a one-label schema, all of it in the
+    /// walk. Maintained only by `intern_label`, so it cannot drift.
+    node_labels_index: FxHashMap<String, LabelId>,
     /// Relationship type names (ID → name mapping)
     relationship_types: Vec<Arc<String>>,
     /// LRU cache for query plans
@@ -696,12 +713,14 @@ impl Graph {
             all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            edge_endpoints: Arc::new(Vec::new()),
+            edge_endpoints: Arc::new(EndpointIndex::default()),
+            attrs_name: AttrNameMap::default(),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
             node_labels: Vec::new(),
+            node_labels_index: FxHashMap::default(),
             relationship_types: Vec::new(),
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
@@ -733,23 +752,56 @@ impl Graph {
         relationship_matrices: Vec<Tensor>,
         node_labels: Vec<Arc<String>>,
         relationship_types: Vec<Arc<String>>,
+        attrs_name: AttrNameMap,
         node_attrs: AttributeStore,
         relationship_attrs: AttributeStore,
     ) -> Self {
         // Rebuild the graph-wide reverse index after RDB load to ensure
         // complete sync with the decoded edges.
-        let mut edge_endpoints: Vec<u64> = Vec::new();
+        // Two scans rather than one scan into a `Vec` of triples: materialising
+        // them would add ~24 bytes per edge of peak memory on top of the graph
+        // being restored, which is enough to fail a load that would otherwise
+        // fit. The first scan takes only maxima, which sizes the index once, so
+        // the second neither widens nor reallocates.
+        //
+        // The first pass also recovers where the index's width tiers begin.
+        // Sizing everything to the graph's widest endpoint would be simpler and
+        // would flatten the tiering on every load; under incremental growth an
+        // edge lands in the widest tier any earlier edge needed, so tier `r`
+        // begins at the smallest edge id whose own endpoints need at least `r`.
+        // Three scalars, no per-edge state.
+        let mut max_edge_id = 0u64;
+        let mut starts = [u64::MAX; 3];
         for tensor in &relationship_matrices {
             for (src, dst, edge_id) in tensor.iter_edges() {
-                let idx = edge_id as usize;
-                if idx >= edge_endpoints.len() {
-                    edge_endpoints.resize(idx + 1, EDGE_NO_ENDPOINT);
+                max_edge_id = max_edge_id.max(edge_id);
+                let rank = EndpointIndex::rank_for(src.max(dst));
+                for r in 1..=rank {
+                    let slot = &mut starts[usize::from(r) - 1];
+                    *slot = (*slot).min(edge_id);
                 }
-                edge_endpoints[idx] = compound_key(src, dst);
             }
         }
-        // Drop the doubling slack left by the incremental resizes above.
-        edge_endpoints.shrink_to_fit();
+        let len = if relationship_matrices.iter().any(|t| t.edge_count() > 0) {
+            max_edge_id + 1
+        } else {
+            0
+        };
+        // A tier nothing reached starts at the end, i.e. stays empty. Clamped
+        // monotone so a later tier never begins before an earlier one.
+        let mut acc = len;
+        for slot in starts.iter_mut().rev() {
+            acc = acc.min(*slot);
+            *slot = acc;
+        }
+        let to_slot = |v: u64| usize::try_from(v).expect("edge id exceeds usize");
+        let mut edge_endpoints = EndpointIndex::default();
+        edge_endpoints.prepare_tiers(starts.map(to_slot), to_slot(len));
+        for tensor in &relationship_matrices {
+            for (src, dst, edge_id) in tensor.iter_edges() {
+                edge_endpoints.set(edge_id, src, dst);
+            }
+        }
 
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
@@ -773,10 +825,16 @@ impl Graph {
             labels_matices,
             relationship_matrices,
             edge_endpoints: Arc::new(edge_endpoints),
+            attrs_name,
             node_attrs,
             relationship_attrs,
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
+            node_labels_index: node_labels
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (l.as_str().to_string(), LabelId(i)))
+                .collect(),
             node_labels,
             relationship_types,
             cache: Arc::new(Mutex::new(LruCache::new(
@@ -838,6 +896,8 @@ impl Graph {
     pub fn new_version(&self) -> Self {
         debug_assert_eq!(self.reserved_node_count, 0);
         debug_assert_eq!(self.reserved_relationship_count, 0);
+        // One dictionary clone per version instead of the two the split tables cost.
+        let attrs_name = self.attrs_name.clone();
         let node_attrs = self.node_attrs.new_version();
         let relationship_attrs = self.relationship_attrs.new_version();
 
@@ -869,11 +929,13 @@ impl Graph {
                 .collect(),
             relationship_matrices,
             edge_endpoints: self.edge_endpoints.clone(),
+            attrs_name,
             node_attrs,
             relationship_attrs,
             node_indexer: self.node_indexer.clone(),
             edge_indexer: self.edge_indexer.clone(),
             node_labels: self.node_labels.clone(),
+            node_labels_index: self.node_labels_index.clone(),
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
             constraints: self.constraints.clone(),
@@ -928,16 +990,14 @@ impl Graph {
     }
 
     /// Number of distinct property keys across nodes and relationships.
+    ///
+    /// Just the dictionary's length: there is one table per graph and it is keyed
+    /// by name, so entries are distinct by construction. This used to union two
+    /// per-store tables through a `HashSet`; after they were merged the union
+    /// became the same table twice.
     #[must_use]
-    pub fn property_key_count(&self) -> usize {
-        let mut seen = std::collections::HashSet::new();
-        for name in &self.node_attrs.attrs_name {
-            seen.insert(name.as_str());
-        }
-        for name in &self.relationship_attrs.attrs_name {
-            seen.insert(name.as_str());
-        }
-        seen.len()
+    pub const fn property_key_count(&self) -> usize {
+        self.attrs_name.len()
     }
 
     #[must_use]
@@ -976,47 +1036,50 @@ impl Graph {
         self.relationship_types.get(id.0).cloned()
     }
 
+    /// The graph's attribute names in id order; position is the id.
+    ///
+    /// Was a deduplicated union of two per-store tables, walked once per property on the
+    /// relationship reply path. With one dictionary it is a plain iteration and the
+    /// per-call `HashSet` is gone.
     pub fn get_attrs(&self) -> impl Iterator<Item = &Arc<String>> + '_ {
-        // Deduplicate by borrowed `&str` rather than owned `String`: this
-        // iterator is walked once per property on the relationship reply path
-        // (via `get_global_attribute_id` / `rel_attr_id_to_global`), so a
-        // per-attribute heap allocation here shows up as O(props * attrs)
-        // allocations when serializing results.
-        let mut seen = std::collections::HashSet::<&str>::new();
-        self.node_attrs
-            .attrs_name
-            .iter()
-            .chain(self.relationship_attrs.attrs_name.iter())
-            .filter(move |a| seen.insert(a.as_str()))
+        self.attrs_name.iter()
+    }
+
+    /// Register `label`, or return the id it already has. The only writer of
+    /// `node_labels` and `node_labels_index`, so the two stay in step.
+    fn intern_label(
+        &mut self,
+        label: &Arc<String>,
+    ) -> LabelId {
+        if let Some(&id) = self.node_labels_index.get(label.as_str()) {
+            return id;
+        }
+        let id = LabelId(self.node_labels.len());
+        self.node_labels.push(label.clone());
+        self.node_labels_index
+            .insert(label.as_str().to_string(), id);
+        id
     }
 
     pub fn get_label_id_mut(
         &mut self,
         label: &str,
     ) -> LabelId {
-        if let Some(pos) = self
-            .node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(LabelId)
-        {
-            return pos;
+        if let Some(id) = self.get_label_id(label) {
+            return id;
         }
 
-        self.node_labels.push(Arc::new(label.to_string()));
+        let id = self.intern_label(&Arc::new(label.to_string()));
         self.labels_matices
             .push(VersionedMatrix::<bool>::new(self.node_cap, self.node_cap));
-        LabelId(self.node_labels.len() - 1)
+        id
     }
 
     pub fn get_label_id(
         &self,
         label: &str,
     ) -> Option<LabelId> {
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(LabelId)
+        self.node_labels_index.get(label).copied()
     }
 
     pub fn get_type_id(
@@ -1104,11 +1167,8 @@ impl Graph {
         let params_offset = query.len() - query_no_params.len();
         let query = query_no_params;
 
-        // Evaluate parameter expressions to values for the optimizer.
-        let param_values: HashMap<String, Value> = parameters
-            .iter()
-            .filter_map(|(k, v)| evaluate_param(&v.root()).ok().map(|val| (k.clone(), val)))
-            .collect();
+        // The optimizer wants the same values the runtime will see.
+        let param_values = parameters.clone();
 
         let current_udf_version = crate::runtime::functions::udf_version();
 
@@ -1169,28 +1229,20 @@ impl Graph {
         &self,
         label: &str,
     ) -> Option<&VersionedMatrix<bool>> {
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(|i| &self.labels_matices[i])
+        self.get_label_id(label)
+            .map(|id| &self.labels_matices[id.0])
     }
 
     fn get_label_matrix_mut(
         &mut self,
         label: &Arc<String>,
     ) -> &mut VersionedMatrix<bool> {
-        if !self.node_labels.contains(label) {
-            self.node_labels.push(label.clone());
-
+        let id = self.intern_label(label);
+        if id.0 == self.labels_matices.len() {
             let m = VersionedMatrix::<bool>::new(self.node_cap, self.node_cap);
-            self.labels_matices.insert(self.node_labels.len() - 1, m);
+            self.labels_matices.insert(id.0, m);
         }
-
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label.as_str())
-            .map(|i| &mut self.labels_matices[i])
-            .expect("label was just inserted")
+        &mut self.labels_matices[id.0]
     }
 
     fn get_relationship_matrix_mut(
@@ -1233,12 +1285,12 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.node_attrs.get_attr_id(attr)
+        self.attrs_name.get_index_of(attr)
     }
 
     #[must_use]
     pub const fn node_attribute_count(&self) -> usize {
-        self.node_attrs.attrs_name.len()
+        self.attrs_name.len()
     }
 
     #[must_use]
@@ -1246,27 +1298,20 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.relationship_attrs.get_attr_id(attr)
+        self.attrs_name.get_index_of(attr)
     }
 
-    /// Return the global property ID for `attr`, matching the index in `get_attrs()`.
-    /// Node attrs come first; relationship-only attrs follow.
+    /// The id for `attr`, or `None` if this graph has never seen the name.
+    ///
+    /// Was an O(N) scan over a union of two per-store tables, per property serialized.
+    /// There is one dictionary now, so it is the dictionary's own lookup — and node,
+    /// relationship and "global" ids are the same thing.
     #[must_use]
     pub fn get_global_attribute_id(
         &self,
         attr: &Arc<String>,
     ) -> Option<usize> {
-        self.get_attrs().position(|a| a == attr)
-    }
-
-    /// Convert a relationship-local attribute ID to the global property ID.
-    #[must_use]
-    pub fn rel_attr_id_to_global(
-        &self,
-        local_id: u16,
-    ) -> Option<usize> {
-        let name = self.relationship_attrs.attrs_name.get(local_id as usize)?;
-        self.get_attrs().position(|a| a == name)
+        self.attrs_name.get_index_of(attr)
     }
 
     pub fn return_node_id(
@@ -1301,23 +1346,42 @@ impl Graph {
         self.reserved_node_count += 1;
     }
 
+    /// Reserve `count` node ids, failing instead of aborting when `count` cannot be
+    /// allocated.
+    ///
+    /// `GRAPH.BULK` reserves from a client-declared count, so the allocation size is
+    /// attacker-influenced: `Vec::with_capacity` panicked on the capacity overflow, and the
+    /// panic hook (`src/module_init.rs`) exits the process, so it took the server down
+    /// (#2426). `try_reserve_exact` turns that into an error the command can report.
     pub fn reserve_nodes(
         &mut self,
         count: usize,
-    ) -> Vec<NodeId> {
+    ) -> Result<Vec<NodeId>, String> {
+        let mut ids = Vec::new();
+        ids.try_reserve_exact(count)
+            .map_err(|_| format!("failed to reserve {count} node ids"))?;
         let count = count as u64;
-        let mut ids = Vec::with_capacity(count as usize);
         let deleted_len = self.deleted_nodes.len();
         let available = deleted_len.saturating_sub(self.reserved_node_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted nodes
+        // First reclaim from deleted nodes.
+        //
+        // One ordered walk, not a rank lookup per id: `RoaringTreemap::select(i)`
+        // restarts at the first container every call, summing cardinalities until
+        // it reaches `i` and then scanning words inside that container, so a
+        // batch of N reclaims costs O(N * position) rather than O(pool). It was
+        // the hottest single leaf in the module on a create-after-delete profile.
+        // `skip` walks the same iterator once, so the whole batch is one pass.
         let base = self.reserved_node_count;
         self.reserved_node_count += reclaimed;
-        for i in base..base + reclaimed {
-            let id = self.deleted_nodes.select(i).unwrap();
-            ids.push(NodeId(id));
-        }
+        ids.extend(
+            self.deleted_nodes
+                .iter()
+                .skip(base as usize)
+                .take(reclaimed as usize)
+                .map(NodeId),
+        );
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -1325,7 +1389,7 @@ impl Graph {
         self.reserved_node_count += remaining;
         ids.extend((start..start + remaining).map(NodeId));
 
-        ids
+        Ok(ids)
     }
 
     pub fn create_nodes(
@@ -1380,7 +1444,7 @@ impl Graph {
                 for (_, label_id) in self.node_labels_matrix.iter(*id, *id) {
                     let label = &self.node_labels[label_id as usize];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -1416,7 +1480,7 @@ impl Graph {
                 for &label_id in label_ids {
                     let label = &self.node_labels[label_id as usize];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -1454,7 +1518,7 @@ impl Graph {
                 for label_id in label_ids {
                     let label = &self.node_labels[label_id.0];
                     for (attr_id, _) in attrs {
-                        let Some(key) = self.node_attrs.attrs_name.get(*attr_id as usize) else {
+                        let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                             continue;
                         };
                         if self.node_indexer.has_indexed_attr(label, key) {
@@ -1475,7 +1539,7 @@ impl Graph {
         &mut self,
         attr: &Arc<String>,
     ) -> u16 {
-        self.node_attrs.get_or_create_attr_id(attr)
+        self.attrs_name.get_or_create(attr)
     }
 
     /// Resolve a node attribute name to its index, if it exists.
@@ -1484,10 +1548,7 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<u16> {
-        self.node_attrs
-            .attrs_name
-            .get_index_of(attr)
-            .map(|i| i as u16)
+        self.attrs_name.get_index_of(attr).map(|i| i as u16)
     }
 
     /// Node attribute name for an index.
@@ -1496,7 +1557,7 @@ impl Graph {
         &self,
         attr_id: u16,
     ) -> Option<Arc<String>> {
-        self.node_attrs.attrs_name.get(attr_id as usize).cloned()
+        self.attrs_name.get(attr_id as usize).cloned()
     }
 
     /// Resolve a relationship attribute name to its index, if it exists.
@@ -1505,10 +1566,7 @@ impl Graph {
         &self,
         attr: &Arc<String>,
     ) -> Option<u16> {
-        self.relationship_attrs
-            .attrs_name
-            .get_index_of(attr)
-            .map(|i| i as u16)
+        self.attrs_name.get_index_of(attr).map(|i| i as u16)
     }
 
     /// Relationship attribute name for an index.
@@ -1517,10 +1575,7 @@ impl Graph {
         &self,
         attr_id: u16,
     ) -> Option<Arc<String>> {
-        self.relationship_attrs
-            .attrs_name
-            .get(attr_id as usize)
-            .cloned()
+        self.attrs_name.get(attr_id as usize).cloned()
     }
 
     /// Import pre-resolved relationship attributes directly into the cache.
@@ -1548,7 +1603,7 @@ impl Graph {
         &mut self,
         attr: &Arc<String>,
     ) -> u16 {
-        self.relationship_attrs.get_or_create_attr_id(attr)
+        self.attrs_name.get_or_create(attr)
     }
 
     pub fn import_relationship_attrs(
@@ -1583,7 +1638,7 @@ impl Graph {
         let type_name = &self.relationship_types[type_id.0];
         for (id, attrs) in attrs {
             for (attr_id, _) in attrs {
-                let Some(key) = self.relationship_attrs.attrs_name.get(*attr_id as usize) else {
+                let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                     continue;
                 };
                 if self.edge_indexer.has_indexed_attr(type_name, key) {
@@ -1608,7 +1663,7 @@ impl Graph {
             let type_id = self.get_relationship_type_id(RelationshipId(*id));
             let type_name = &self.relationship_types[type_id.0];
             for (attr_id, _) in attrs {
-                let Some(key) = self.relationship_attrs.attrs_name.get(*attr_id as usize) else {
+                let Some(key) = self.attrs_name.get(*attr_id as usize) else {
                     continue;
                 };
                 if self.edge_indexer.has_indexed_attr(type_name, key) {
@@ -1746,7 +1801,7 @@ impl Graph {
 
             let label = &self.node_labels[lid];
             if self.node_indexer.has_index(label) {
-                for attr in self.node_attrs.get_attrs(node_id) {
+                for attr in self.attr_names(&self.node_attrs, node_id) {
                     if self.node_indexer.has_indexed_attr(label, &attr) {
                         remove_docs.entry(label_id).or_default().insert(node_id);
                         break;
@@ -1833,8 +1888,8 @@ impl Graph {
     ) -> usize {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, true))
-            .count()
+            .map(|m| m.col_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of incoming edges to a node, filtered by relationship types.
@@ -1847,8 +1902,8 @@ impl Graph {
         types
             .iter()
             .filter_map(|t| self.get_relationship_matrix(t))
-            .flat_map(|m| m.iter(id.0, id.0, true))
-            .count()
+            .map(|m| m.col_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of outgoing edges from a node.
@@ -1859,8 +1914,8 @@ impl Graph {
     ) -> usize {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, false))
-            .count()
+            .map(|m| m.row_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of outgoing edges from a node, filtered by relationship types.
@@ -1873,8 +1928,8 @@ impl Graph {
         types
             .iter()
             .filter_map(|t| self.get_relationship_matrix(t))
-            .flat_map(|m| m.iter(id.0, id.0, false))
-            .count()
+            .map(|m| m.row_degree(id.0) as usize)
+            .sum()
     }
 
     #[must_use]
@@ -1962,7 +2017,7 @@ impl Graph {
         id: NodeId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        self.node_attrs.get_attr(id.0, attr)
+        self.attr_by_name(&self.node_attrs, id.0, attr)
     }
 
     /// Fetches a node attribute using a pre-resolved attribute index.
@@ -2012,23 +2067,32 @@ impl Graph {
         self.reserved_relationship_count += 1;
     }
 
+    /// Reserve `count` relationship ids. Fallible for the same reason as
+    /// [`Self::reserve_nodes`]: `GRAPH.BULK` sizes this from a client-declared count.
     pub fn reserve_relationships(
         &mut self,
         count: usize,
-    ) -> Vec<RelationshipId> {
+    ) -> Result<Vec<RelationshipId>, String> {
+        let mut ids = Vec::new();
+        ids.try_reserve_exact(count)
+            .map_err(|_| format!("failed to reserve {count} relationship ids"))?;
         let count = count as u64;
-        let mut ids = Vec::with_capacity(count as usize);
         let deleted_len = self.deleted_relationships.len();
         let available = deleted_len.saturating_sub(self.reserved_relationship_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted relationships
+        // First reclaim from deleted relationships. One ordered walk rather than a
+        // rank lookup per id — see `reserve_nodes` for why `select` per id is
+        // quadratic across a batch.
         let base = self.reserved_relationship_count;
         self.reserved_relationship_count += reclaimed;
-        for i in base..base + reclaimed {
-            let id = self.deleted_relationships.select(i).unwrap();
-            ids.push(RelationshipId(id));
-        }
+        ids.extend(
+            self.deleted_relationships
+                .iter()
+                .skip(base as usize)
+                .take(reclaimed as usize)
+                .map(RelationshipId),
+        );
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -2036,7 +2100,7 @@ impl Graph {
         self.reserved_relationship_count += remaining;
         ids.extend((start..start + remaining).map(RelationshipId));
 
-        ids
+        Ok(ids)
     }
 
     /// Create relationships of a single type using flat arrays.
@@ -2082,15 +2146,16 @@ impl Graph {
         // Reserve exactly: MVCC clones reset capacity to `len`, so amortized
         // doubling here would only leave ~2x slack behind, never save reallocs.
         let endpoints = Arc::make_mut(&mut self.edge_endpoints);
-        if let Some(&max_id) = rel_ids.iter().max() {
-            let needed = max_id as usize + 1;
-            if needed > endpoints.len() {
-                endpoints.reserve_exact(needed - endpoints.len());
-                endpoints.resize(needed, EDGE_NO_ENDPOINT);
-            }
+        // Size for the whole batch first: growing per edge is a reallocation
+        // per edge, since the index reserves exactly rather than doubling.
+        if let (Some(&max_id), Some(max_endpoint)) = (
+            rel_ids.iter().max(),
+            srcs.iter().chain(dsts.iter()).max().copied(),
+        ) {
+            endpoints.prepare(max_id, max_endpoint);
         }
         for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
-            endpoints[id as usize] = compound_key(src, dst);
+            endpoints.set(id, src, dst);
         }
 
         self.adjacancy_matrix
@@ -2647,10 +2712,7 @@ impl Graph {
         &self,
         edge_id: u64,
     ) -> Option<(u64, u64)> {
-        self.edge_endpoints
-            .get(edge_id as usize)
-            .filter(|&&key| key != EDGE_NO_ENDPOINT)
-            .map(|&key| (key >> 32, key & 0xFFFF_FFFF))
+        self.edge_endpoints.get(edge_id)
     }
 
     /// Clear an edge's endpoint slot in the reverse index (on deletion).
@@ -2659,9 +2721,7 @@ impl Graph {
         &mut self,
         edge_id: u64,
     ) {
-        if let Some(slot) = Arc::make_mut(&mut self.edge_endpoints).get_mut(edge_id as usize) {
-            *slot = EDGE_NO_ENDPOINT;
-        }
+        Arc::make_mut(&mut self.edge_endpoints).clear(edge_id);
     }
 
     /// Returns (src, dst) for an edge via the maintained reverse index.
@@ -2694,7 +2754,7 @@ impl Graph {
         id: RelationshipId,
         attr: &Arc<String>,
     ) -> Option<Value> {
-        self.relationship_attrs.get_attr(id.0, attr)
+        self.attr_by_name(&self.relationship_attrs, id.0, attr)
     }
 
     /// Fetches a relationship attribute using a pre-resolved attribute
@@ -2776,11 +2836,53 @@ impl Graph {
         }
     }
 
+    // ---- attribute name resolution ----------------------------------------
+    //
+    // `AttributeStore` is an id-keyed structure and does not own the name table;
+    // the graph does. These three resolve between the two, so the store's API stays
+    // honest about what it can answer on its own and no caller has to pass the
+    // graph's dictionary back into it.
+
+    /// Value of a named attribute on an entity in `store`.
+    fn attr_by_name(
+        &self,
+        store: &AttributeStore,
+        key: u64,
+        attr: &Arc<String>,
+    ) -> Option<Value> {
+        let idx = self.attrs_name.get_index_of(attr)? as u16;
+        store.get_attr_by_idx(key, idx)
+    }
+
+    /// Names of the attributes an entity in `store` carries.
+    fn attr_names<'a>(
+        &'a self,
+        store: &'a AttributeStore,
+        key: u64,
+    ) -> impl Iterator<Item = Arc<String>> + 'a {
+        store
+            .get_attr_ids(key)
+            .filter_map(move |id| self.attrs_name.get(id as usize).cloned())
+    }
+
+    /// Name/value pairs for an entity in `store`, in one storage pass.
+    fn attr_pairs<'a>(
+        &'a self,
+        store: &'a AttributeStore,
+        key: u64,
+    ) -> impl Iterator<Item = (Arc<String>, Value)> + 'a {
+        store
+            .get_all_attrs_by_id(key)
+            .filter_map(move |(id, value)| {
+                self.attrs_name.get(id as usize).map(|n| (n.clone(), value))
+            })
+    }
+
     pub fn get_node_attrs(
         &self,
         id: NodeId,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
-        self.node_attrs.get_attrs(id.0)
+        self.attr_names(&self.node_attrs, id.0)
     }
 
     /// Get all attribute names and values for a node in a single storage pass.
@@ -2788,7 +2890,7 @@ impl Graph {
         &self,
         id: NodeId,
     ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
-        self.node_attrs.get_all_attrs(id.0)
+        self.attr_pairs(&self.node_attrs, id.0)
     }
 
     pub fn get_node_all_attrs_by_id(
@@ -2811,7 +2913,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> impl Iterator<Item = Arc<String>> + '_ {
-        self.relationship_attrs.get_attrs(id.0)
+        self.attr_names(&self.relationship_attrs, id.0)
     }
 
     /// Get all attribute names and values for a relationship in a single storage pass.
@@ -2819,7 +2921,7 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> impl Iterator<Item = (Arc<String>, Value)> + '_ {
-        self.relationship_attrs.get_all_attrs(id.0)
+        self.attr_pairs(&self.relationship_attrs, id.0)
     }
 
     pub fn get_relationship_all_attrs_by_id(
@@ -2978,7 +3080,8 @@ impl Graph {
                     // create+free churn).
                     let mut doc: Option<Document> = None;
                     for (attr, fields) in &attrs {
-                        if let Some(value) = self.relationship_attrs.get_attr(eid, attr) {
+                        if let Some(value) = self.attr_by_name(&self.relationship_attrs, eid, attr)
+                        {
                             let doc = doc.get_or_insert_with(|| Document::new_edge(src, dst, eid));
                             for field in fields {
                                 doc.set(field, &value);
@@ -3099,7 +3202,7 @@ impl Graph {
                 };
                 let mut doc = Document::new_edge(src, dst, id);
                 for (key, fields) in &fields {
-                    if let Some(value) = self.relationship_attrs.get_attr(id, key) {
+                    if let Some(value) = self.attr_by_name(&self.relationship_attrs, id, key) {
                         for field in fields {
                             doc.set(field, &value);
                         }
@@ -3151,7 +3254,7 @@ impl Graph {
             for id in ids {
                 let mut doc = Document::new(id);
                 for (key, fields) in &fields {
-                    if let Some(value) = attr_store.get_attr(id, key) {
+                    if let Some(value) = self.attr_by_name(attr_store, id, key) {
                         for field in fields {
                             doc.set(field, &value);
                         }
@@ -3907,12 +4010,12 @@ impl Graph {
 
         // --- edge block storage ---
         // Mirrors the node side: the matrix recording each edge's existence and
-        // type, plus the graph-wide edge_id → compound_key reverse index (a dense
-        // vector holding one u64 per edge slot).
+        // type, plus the graph-wide edge_id → endpoint reverse index (one slot
+        // per edge id, 4, 6, 8 or 16 bytes wide depending on the tier).
         let edge_block_storage_sz: usize = self.relationship_type_matrix.memory_usage()
             + self.relationship_attrs.structural_memory_usage()
             + self.deleted_relationships.serialized_size()
-            + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
+            + self.edge_endpoints.memory_usage();
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();
@@ -4046,7 +4149,6 @@ impl Graph {
         &self,
         w: &mut dyn Writer,
         p: &PayloadEntry,
-        global_attrs: &[Arc<String>],
     ) {
         match p.state {
             EncodeState::Nodes => {
@@ -4054,7 +4156,6 @@ impl Graph {
                     w,
                     &self.deleted_nodes,
                     self.max_node_id(),
-                    global_attrs,
                     p.count,
                     p.offset,
                 );
@@ -4067,7 +4168,6 @@ impl Graph {
                     w,
                     &self.deleted_relationships,
                     self.max_relationship_id(),
-                    global_attrs,
                     p.count,
                     p.offset,
                 );
@@ -4100,13 +4200,13 @@ impl Graph {
     /// Get node attribute names.
     #[must_use]
     pub fn get_node_attribute_names(&self) -> Vec<Arc<String>> {
-        self.node_attrs.attrs_name.iter().cloned().collect()
+        self.attrs_name.iter().cloned().collect()
     }
 
     /// Get relationship attribute names.
     #[must_use]
     pub fn get_relationship_attribute_names(&self) -> Vec<Arc<String>> {
-        self.relationship_attrs.attrs_name.iter().cloned().collect()
+        self.attrs_name.iter().cloned().collect()
     }
 
     /// Register a node attribute name (get-or-create). Used by effect
@@ -4116,8 +4216,8 @@ impl Graph {
         name: &str,
     ) {
         let arc = Arc::new(name.to_string());
-        if self.node_attrs.attrs_name.get_index_of(&arc).is_none() {
-            self.node_attrs.attrs_name.insert(arc);
+        if self.attrs_name.get_index_of(&arc).is_none() {
+            self.attrs_name.insert(arc);
         }
     }
 
@@ -4127,32 +4227,103 @@ impl Graph {
         &mut self,
         name: &str,
     ) {
-        let arc = Arc::new(name.to_string());
-        if self
-            .relationship_attrs
-            .attrs_name
-            .get_index_of(&arc)
-            .is_none()
-        {
-            self.relationship_attrs.attrs_name.insert(arc);
-        }
+        // Identical to `add_node_attribute_name` now that there is one dictionary. Both
+        // are kept because the effects wire still carries an ATTR_NODE/ATTR_REL
+        // discriminator, which is vestigial from here on and is removed with the
+        // `EFFECTS_VERSION` bump in #2419.
+        self.attrs_name.insert(Arc::new(name.to_string()));
     }
 
-    /// Build the unified global attribute list (node attrs ∪ relationship attrs, in order).
+    /// The graph's attribute names, in id order — index *is* the id.
+    ///
+    /// Was a node ∪ relationship union over two dictionaries; with one dictionary it is
+    /// simply that dictionary's contents, and the RDB's flat table is the same list.
     #[must_use]
     pub fn build_global_attrs(&self) -> Vec<Arc<String>> {
-        let mut attrs = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for name in &self.node_attrs.attrs_name {
-            if seen.insert(name.clone()) {
-                attrs.push(name.clone());
-            }
+        self.attrs_name.iter().cloned().collect()
+    }
+}
+
+#[cfg(test)]
+mod attr_id_space_tests {
+    use super::super::graphblas::test_init::ensure_init;
+    use super::*;
+
+    fn attr(s: &str) -> Arc<String> {
+        Arc::new(s.to_string())
+    }
+
+    /// A name has one id, whichever kind of entity introduced it.
+    ///
+    /// This is the invariant behind #2457. With a dictionary per store, `since` was
+    /// registered only in the relationship table, so it got relationship-local id 0 —
+    /// colliding with the *node* attribute already holding node-local id 0. Effects put a
+    /// bare id on the wire, so a replica whose dictionary came from an RDB (one unified
+    /// table) resolved that 0 to the wrong attribute.
+    #[test]
+    fn one_id_per_name_across_entity_kinds() {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "attr_id_space");
+
+        // Node attributes first, so a per-store numbering would start relationships back
+        // at 0 and collide with `a`.
+        let a = g.get_or_create_node_attr_id(&attr("a"));
+        let b = g.get_or_create_node_attr_id(&attr("b"));
+        // Then a relationship-only attribute.
+        let since = g.get_or_create_rel_attr_id(&attr("since"));
+
+        assert_eq!(a, 0);
+        assert_eq!(b, 1);
+        // The bug: this was 0 — the relationship table's first slot.
+        assert_eq!(
+            since, 2,
+            "a relationship attribute must not restart numbering"
+        );
+
+        // Every accessor agrees, because there is only one dictionary to disagree about.
+        for (name, expected) in [("a", 0usize), ("b", 1), ("since", 2)] {
+            let n = attr(name);
+            assert_eq!(g.get_node_attribute_id(&n), Some(expected));
+            assert_eq!(g.get_relationship_attribute_id(&n), Some(expected));
+            assert_eq!(g.get_global_attribute_id(&n), Some(expected));
         }
-        for name in &self.relationship_attrs.attrs_name {
-            if seen.insert(name.clone()) {
-                attrs.push(name.clone());
-            }
+
+        // Re-registering under the other entity kind must not mint a second id.
+        assert_eq!(g.get_or_create_rel_attr_id(&attr("a")), 0);
+        assert_eq!(g.get_or_create_node_attr_id(&attr("since")), 2);
+        assert_eq!(g.build_global_attrs().len(), 3);
+    }
+
+    /// The RDB's flat list and the live dictionary are the same numbering.
+    ///
+    /// A full sync seeds a replica from `build_global_attrs()`. If that list disagreed
+    /// with the ids the master stamps into effects, the replica would misresolve them —
+    /// which is exactly how #2457 manifested.
+    #[test]
+    fn rdb_attr_list_matches_live_ids() {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, "attr_id_rdb");
+        g.get_or_create_node_attr_id(&attr("a"));
+        let since = g.get_or_create_rel_attr_id(&attr("since"));
+        g.get_or_create_node_attr_id(&attr("b"));
+
+        let list = g.build_global_attrs();
+
+        // The load-bearing one: an id the master stamps into an effect has to index the
+        // same name in the list a replica is seeded from. Split numbering broke exactly
+        // this — `since` was relationship-local 0, and position 0 of the list is `a`.
+        assert_eq!(
+            list.get(since as usize).map(|s| s.as_str()),
+            Some("since"),
+            "the id put on the wire does not index its own name in the RDB list"
+        );
+
+        for (id, name) in list.iter().enumerate() {
+            assert_eq!(
+                g.get_global_attribute_id(name),
+                Some(id),
+                "RDB position {id} disagrees with the live id for {name}"
+            );
         }
-        attrs
     }
 }

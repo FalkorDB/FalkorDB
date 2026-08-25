@@ -200,6 +200,15 @@ pub enum IR {
         /// producing no expansion are emitted with the traverse-introduced
         /// variables (edge + destination) bound to NULL.
         optional: bool,
+        /// When false, nothing above this operator reads the edge alias, so it
+        /// skips the per-row tensor lookup that resolves a representative edge
+        /// id and leaves the edge column unbound. Distinct from
+        /// `emit_relationship`, which only decides row *multiplicity*: an
+        /// anonymous edge inside a named path emits one row per pair yet still
+        /// has to be bound, because `PathBuilder` reads it. Conservatively
+        /// `true` at planning time; lowered to `false` by the
+        /// `reduce_bound_edge` optimizer pass.
+        bind_relationship: bool,
     },
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse {
@@ -1912,6 +1921,7 @@ impl Planner {
                     transposed: false,
                     chain: Vec::new(),
                     optional: false,
+                    bind_relationship: true,
                 });
                 if let Some(filter_expr) = edge_attr_filter {
                     ct = tree!(IR::Filter(Arc::new(filter_expr)), ct);
@@ -2071,6 +2081,7 @@ impl Planner {
                             transposed: false,
                             chain: Vec::new(),
                             optional: false,
+                            bind_relationship: true,
                         },
                         res
                     );

@@ -866,6 +866,7 @@ impl<'a> Runtime<'a> {
                 transposed,
                 chain,
                 optional,
+                bind_relationship,
             } => {
                 // Account for both limit and skip so the traverse produces
                 // enough rows for a downstream SkipOp + LimitOp pipeline.
@@ -880,6 +881,7 @@ impl<'a> Runtime<'a> {
                     *transposed,
                     chain,
                     *optional,
+                    *bind_relationship,
                     idx,
                     record_cap,
                 )))
@@ -1583,6 +1585,66 @@ impl<'a> Runtime<'a> {
         values
     }
 
+    /// Bulk-read `attr` for `rel_ids`, the relationship counterpart of
+    /// [`materialize_node_property`](Self::materialize_node_property). Same
+    /// shape, same reason: on the read-only path a single batched attribute-store
+    /// call covers every id, instead of one lookup per row.
+    pub fn materialize_relationship_property(
+        &self,
+        rel_ids: &[RelationshipId],
+        attr: &Arc<String>,
+    ) -> (Column, NullBitmap) {
+        classify_column(self.materialize_relationship_property_values(rel_ids, attr))
+    }
+
+    /// Like
+    /// [`materialize_relationship_property`](Self::materialize_relationship_property)
+    /// but returns the raw per-relationship values without classifying them
+    /// into a typed column, for callers that must preserve exact value types.
+    pub fn materialize_relationship_property_values(
+        &self,
+        rel_ids: &[RelationshipId],
+        attr: &Arc<String>,
+    ) -> Vec<Value> {
+        let g = self.g.borrow();
+        let attr_idx = self.rel_attr_id(&g, attr);
+
+        let deleted = self.deleted_relationships.borrow();
+        let pending = self.pending.borrow();
+
+        let mut values = Vec::with_capacity(rel_ids.len());
+        if deleted.is_empty() && !pending.has_relationship_attrs() {
+            // Hot read-only path: a single batch call covers all relationship ids.
+            if let Some(idx) = attr_idx {
+                g.get_relationship_attributes_by_idx(rel_ids, idx, &Value::Null, &mut values);
+            } else {
+                values.resize(rel_ids.len(), Value::Null);
+            }
+        } else {
+            for &id in rel_ids {
+                let val = deleted.get(&id).map_or_else(
+                    || {
+                        attr_idx
+                            .and_then(|idx| {
+                                pending
+                                    .get_relationship_attribute(id, idx)
+                                    .cloned()
+                                    .or_else(|| g.get_relationship_attribute_by_idx(id, idx))
+                            })
+                            .unwrap_or(Value::Null)
+                    },
+                    |dr| dr.attrs.get(attr).cloned().unwrap_or(Value::Null),
+                );
+                values.push(val);
+            }
+        }
+        drop(g);
+        drop(deleted);
+        drop(pending);
+
+        values
+    }
+
     pub fn get_node_labels(
         &self,
         id: NodeId,
@@ -1595,6 +1657,44 @@ impl<'a> Runtime<'a> {
         self.pending.borrow().update_node_labels(id, &mut labels);
 
         labels.iter().map(|l| g.get_label_by_id(*l)).collect()
+    }
+
+    /// Whether `id` carries the label named `name` — the whole answer, for
+    /// every node this query can see, without building the node's label set.
+    ///
+    /// This is the single place a label test is decided, and it decides it in
+    /// the same order [`Self::get_node_labels`] does: a node deleted by this
+    /// query answers from the labels captured at the delete, a label this query
+    /// staged answers from the staged state, and everything else is one bit of
+    /// the committed label matrix.
+    ///
+    /// `n:Person` reaches the runtime as a `hasLabels` call, and answering it
+    /// through `get_node_labels` costs two `OrderSet`s and an `Arc<String>`
+    /// clone per stored label, then compares label *names*, for every row. On
+    /// the benchmark graph `MATCH (n) WHERE n:Person RETURN count(n)` spent
+    /// 48.9M instructions over 15k nodes — 3.3k a row — against 22.4M on the C
+    /// engine, while the same scan filtering on a property (`n.id < 5`) costs
+    /// 2.0M. A label test is one bit in the label matrix; this reads that bit.
+    pub fn node_has_label(
+        &self,
+        id: NodeId,
+        name: &str,
+    ) -> bool {
+        let g = self.g.borrow();
+        // A name the graph has never registered is on no node at all, not even
+        // one this query just created: `CREATE (:L)` registers `L` before it
+        // stages the label. Resolving a known name is a walk over the label
+        // names — a handful of entries, no allocation.
+        let Some(label_id) = g.get_label_id(name) else {
+            return false;
+        };
+        if let Some(deleted) = self.deleted_nodes.borrow().get(&id) {
+            return deleted.labels.contains(&label_id);
+        }
+        self.pending
+            .borrow()
+            .node_has_label(id, label_id)
+            .unwrap_or_else(|| g.node_has_label_id(id, label_id))
     }
 
     pub fn get_node_attrs(

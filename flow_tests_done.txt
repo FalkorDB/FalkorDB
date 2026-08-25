@@ -1,6 +1,8 @@
 tests/flow/test_access_del_entity
 tests/flow/test_aggregation
 tests/flow/test_all_shortest_paths.py
+tests/flow/test_attr_id_space.py
+tests/flow/test_aof.py
 tests/flow/test_betweenness.py
 tests/flow/test_bfs.py
 tests/flow/test_bidirectional_traversals.py
@@ -73,6 +75,7 @@ tests/flow/test_path.py
 tests/flow/test_path_algorithms.py
 tests/flow/test_path_filter
 tests/flow/test_path_projections.py
+tests/flow/test_pause_replication_race.py
 tests/flow/test_pending_queries_limit.py
 tests/flow/test_persistency.py
 tests/flow/test_point
@@ -80,12 +83,14 @@ tests/flow/test_procedures.py
 tests/flow/test_profile.py
 tests/flow/test_query_mem_limit.py
 tests/flow/test_query_validation
+tests/flow/test_rdb_c_layout.py
 tests/flow/test_rdb_load.py
 tests/flow/test_reduce.py
 tests/flow/test_redundant_ops
 tests/flow/test_relation_patterns.py
 tests/flow/test_replication.py
 tests/flow/test_replication_states.py
+tests/flow/test_role_change_race.py
 tests/flow/test_results.py
 tests/flow/test_reversed_patterns
 tests/flow/test_ro_query.py

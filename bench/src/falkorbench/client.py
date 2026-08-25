@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -45,6 +46,77 @@ _DEATH_MARKERS = (
     "signal:",
     "=== REDIS BUG REPORT",
 )
+
+
+def _jemalloc_table_columns(header: str) -> dict[str, tuple[int, int]]:
+    """Map each column label in a jemalloc `bins:`/`large:` header to the
+    `(start, end)` character range of its field.
+
+    **jemalloc's stats tables cannot be split on whitespace.** Every value is
+    right-aligned in a fixed-width field, and the `(#/sec)` rate fields are only
+    8 characters wide, so a rate of 10,000,000/sec or more fills its field
+    exactly and no space is left between it and the `nmalloc` before it:
+
+    ```text
+    nmalloc (#/sec)      ndalloc (#/sec)     <- header
+        1379247  689623      1355704  677852 <- fine, rates are 6 digits
+    21949879 10974939 21947904 10973952      <- fused: 8-digit rates
+    ```
+
+    `line.split()` turns that second row into `['21949879109749392194790410973952']`
+    -- a 16-digit garbage `nmalloc` -- and shifts every later column left by
+    one, so `ndalloc` reads the fused ndalloc+rate too. The parsed cumulative
+    total jumps by ~7e16 bytes the moment a hot size class crosses 10M
+    allocations/sec, and drops back when it cools. Because `measure` reports
+    *deltas* between two snapshots, that surfaced as per-query allocation
+    figures in the petabytes and, when the fusion cleared between snapshots,
+    as negative ones. It read as a 30,000x memory regression in whichever
+    queries happened to straddle the transition.
+
+    Slicing by the header's own column ranges is immune: overflow in a
+    right-aligned field spills *left*, so a field read up to its own end column
+    is still correct, and only its left neighbour (a rate we do not use) is
+    damaged.
+
+    A field therefore runs from the *previous* column's end to its own, not from
+    its own label's start -- values are commonly wider than their label
+    (`size` labels a 5-digit 49152), and anchoring on the label's start would
+    shear the leading digits off.
+    """
+    cols: dict[str, tuple[int, int]] = {}
+    prev_end = 0
+    for m in re.finditer(r"\S+", header):
+        label = m.group()
+        # `(#/sec)` repeats after every counter, and the leading `bins:`/`large:`
+        # is a row label rather than a column; both still advance the boundary.
+        # First occurrence wins, which is all we need for named counters.
+        if label not in ("bins:", "large:") and label not in cols:
+            cols[label] = (prev_end, m.end())
+        prev_end = m.end()
+    return cols
+
+
+def _jemalloc_row(
+    line: str,
+    cols: dict[str, tuple[int, int]],
+    wanted: Sequence[str],
+) -> dict[str, int] | None:
+    """Read `wanted` integer fields out of one jemalloc table row, or None if
+    this is not a data row (a `total:`/`---` separator, or a short line).
+
+    Fields are located by the header's column ranges rather than by whitespace
+    position; see [`_jemalloc_table_columns`].
+    """
+    out: dict[str, int] = {}
+    for name in wanted:
+        span = cols.get(name)
+        if span is None:
+            return None
+        text = line[span[0] : span[1]].strip()
+        if not text.isdigit():
+            return None
+        out[name] = int(text)
+    return out
 
 
 class SetupFailed(RuntimeError):
@@ -130,13 +202,9 @@ class BenchClient:
         stats, or (None, None) if the server is not jemalloc-built.
 
         Sums size*nmalloc / size*ndalloc over the `bins:` and `large:`
-        size-class tables. Column positions are read from each table's own
-        header rather than hardcoded: they *were* hardcoded, and the dealloc
-        index was wrong — jemalloc 5.x emits
-        `size ind allocated nmalloc ndalloc nrequests ...`, so index 5 is
-        *nrequests*, not ndalloc. That inflated deallocated bytes and made the
-        per-query deltas meaningless (absurd ratios, negative values). Reading
-        the header also survives column changes between jemalloc versions.
+        size-class tables, reading each field by the character columns of its
+        own table header — see [`_jemalloc_table_columns`] for why splitting
+        those rows on whitespace does not work.
         """
         try:
             out = str(self.command("MEMORY", "MALLOC-STATS"))
@@ -146,34 +214,30 @@ class BenchClient:
             return None, None
 
         alloc = dealloc = 0
-        in_merged = in_table = False
-        i_nmalloc = i_ndalloc = None
+        in_merged = False
+        cols: dict[str, tuple[int, int]] | None = None
         for line in out.splitlines():
             if line.startswith("Merged arenas stats:"):
                 in_merged = True
             elif line.startswith("arenas["):
                 break
             elif in_merged:
-                s = line.split()
-                if not s:
+                head = line.split(maxsplit=1)
+                if not head:
                     continue
-                if s[0] in ("bins:", "large:") and "size" in s:
-                    in_table = True
-                    # Header tokens include the leading "bins:"/"large:" label,
-                    # which data rows do not, hence the -1.
-                    try:
-                        i_nmalloc = s.index("nmalloc") - 1
-                        i_ndalloc = s.index("ndalloc") - 1
-                    except ValueError:
-                        i_nmalloc = i_ndalloc = None
-                elif s[0] == "extents:":
-                    in_table = False
-                elif in_table and s[0].isdigit() and i_nmalloc is not None:
-                    if len(s) <= max(i_nmalloc, i_ndalloc):
+                label = head[0]
+                if label in ("bins:", "large:") and " size " in line:
+                    cols = _jemalloc_table_columns(line)
+                elif label == "extents:":
+                    # A different table with different columns, and no
+                    # nmalloc/ndalloc to contribute.
+                    cols = None
+                elif cols is not None:
+                    row = _jemalloc_row(line, cols, ("size", "nmalloc", "ndalloc"))
+                    if row is None:
                         continue
-                    size = int(s[0])
-                    alloc += size * int(s[i_nmalloc])
-                    dealloc += size * int(s[i_ndalloc])
+                    alloc += row["size"] * row["nmalloc"]
+                    dealloc += row["size"] * row["ndalloc"]
         return alloc, dealloc
 
     def shutdown(self) -> None:
