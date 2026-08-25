@@ -98,6 +98,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # This job runs a script from the PR branch. The default
+          # persist-credentials writes GITHUB_TOKEN into .git/config, which that
+          # script could read; --check-pin only inspects the local index, so it
+          # needs no credentials at all.
+          persist-credentials: false
       - name: deps/RediSearch gitlink matches REDISEARCH_REF
         run: ./redisearch.sh --check-pin
 

@@ -57,7 +57,12 @@ if [ "${1:-}" = "--check-pin" ]; then
   exit 0
 fi
 
-if [ ! -d "$REDISEARCH_DIR/.git" ]; then
+# `-e`, not `-d`: `git submodule update --init` leaves `.git` as a FILE holding
+# `gitdir: ../../.git/modules/deps/RediSearch`, and only the bootstrap below
+# creates it as a directory. Testing for a directory sent every properly cloned
+# checkout down the bootstrap path, where `git remote add origin` fails with
+# "remote origin already exists" and set -e kills the build.
+if [ ! -e "$REDISEARCH_DIR/.git" ]; then
   # Bootstrap the submodule path ourselves rather than via `git submodule
   # update`, and identically whether or not there is a repository here (the
   # Docker toolchain images COPY only this script). Two reasons:
@@ -99,9 +104,16 @@ cd "$REDISEARCH_DIR"
 
 # VecSim promotes some warnings to errors; relax for our toolchain. Restore the
 # file afterwards so the submodule does not show up as dirty in the parent repo.
+#
+# Restore the BYTES we saw, not `git checkout --` of the tracked version: this
+# script deliberately supports editing deps/RediSearch in place, and checking
+# out would silently throw away uncommitted VecSim work.
 VECSIM_CMAKE="deps/VectorSimilarity/src/VecSim/CMakeLists.txt"
+VECSIM_BACKUP="$(mktemp)"
+cp "$VECSIM_CMAKE" "$VECSIM_BACKUP"
 restore_vecsim() {
-  git -C deps/VectorSimilarity checkout -- src/VecSim/CMakeLists.txt 2>/dev/null || true
+  cp "$VECSIM_BACKUP" "$VECSIM_CMAKE" 2>/dev/null || true
+  rm -f "$VECSIM_BACKUP"
 }
 trap restore_vecsim EXIT
 if [[ "$(uname -s)" == "Darwin" ]]; then
