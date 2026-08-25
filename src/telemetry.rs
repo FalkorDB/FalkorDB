@@ -322,12 +322,22 @@ fn stream_entries(
 }
 
 /// Delete the telemetry stream for a graph.
+///
+/// The key name embeds the graph's Redis key, which is arbitrary bytes and may
+/// hold an interior NUL — a graph is created by `GRAPH.QUERY "a\0b" ...` like any
+/// other. `Context::create_string` routes through `CString::new(..).unwrap()`, so
+/// building the name that way let any client abort the process by deleting or
+/// renaming such a key (#2490); `create_from_slice` passes the bytes with their
+/// length, which is what every other name in this module already does.
 pub fn delete_stream(
     ctx: &Context,
     graph_name: &str,
 ) {
     let key = stream_name(graph_name);
-    let args = [ctx.create_string(key.as_str())];
+    let args = [RedisString::create_from_slice(
+        ctx.get_raw(),
+        key.as_bytes(),
+    )];
     let _ = ctx.call("DEL", args.iter().collect::<Vec<_>>().as_slice());
 }
 

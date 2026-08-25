@@ -30,6 +30,24 @@
 
 use redis_module::{Context, RedisError, RedisResult, RedisString, RedisValue};
 
+/// Re-type a key name from `SCAN` as a bulk string so it is replied byte for byte.
+///
+/// `SCAN` hands back key names as `RedisValue::SimpleString` whenever they are valid
+/// UTF-8, and replying with that variant goes through `CString::new(..).unwrap()` onto
+/// `RM_ReplyWithSimpleString` — a NUL-terminated, single-line RESP status. A graph key
+/// is arbitrary bytes, so that variant both aborted the process on a key holding an
+/// interior NUL (#2490) and mangled a key holding CR or LF. The C engine replies to
+/// `GRAPH.LIST` with `RM_ReplyWithStringBuffer` per name; a bulk string is the same
+/// thing, and carries the bytes it was given.
+fn binary_safe(name: RedisValue) -> RedisValue {
+    match name {
+        RedisValue::SimpleString(s) | RedisValue::BulkString(s) => {
+            RedisValue::StringBuffer(s.into_bytes())
+        }
+        other => other,
+    }
+}
+
 #[allow(clippy::needless_pass_by_value)]
 pub fn graph_list(
     ctx: &Context,
@@ -50,7 +68,7 @@ pub fn graph_list(
         match call_res {
             RedisValue::Array(mut arr) => {
                 if let RedisValue::Array(arr) = arr.remove(1) {
-                    res.extend(arr);
+                    res.extend(arr.into_iter().map(binary_safe));
                 }
                 if let RedisValue::SimpleString(i) = arr.remove(0) {
                     if i == "0" {

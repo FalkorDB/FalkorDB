@@ -127,7 +127,12 @@ fn memory_report(
     ));
     let mut label_attrs = Vec::new();
     for (name, mb) in &node_attr_by_label_mb {
-        label_attrs.push(RedisValue::SimpleString(name.clone()));
+        // A bulk string, not a `SimpleString`: a label name is whatever the query
+        // that created it said, and replying with a RESP status runs it through
+        // `CString::new(..).unwrap()`, which aborted the process for a label holding
+        // an interior NUL (#2490). C replies to these with
+        // `RM_ReplyWithCString(Schema_GetName(s))`, which is a bulk string too.
+        label_attrs.push(RedisValue::BulkString(name.clone()));
         label_attrs.push(RedisValue::Integer(*mb));
     }
     out.push(RedisValue::Array(label_attrs));
@@ -150,7 +155,8 @@ fn memory_report(
     ));
     let mut type_attrs = Vec::new();
     for (name, mb) in &edge_attr_by_type_mb {
-        type_attrs.push(RedisValue::SimpleString(name.clone()));
+        // A bulk string for the same reason as the label names above.
+        type_attrs.push(RedisValue::BulkString(name.clone()));
         type_attrs.push(RedisValue::Integer(*mb));
     }
     out.push(RedisValue::Array(type_attrs));
