@@ -1,10 +1,15 @@
 behave
 falkordb
-# redis-py 8.1.0 adds `himport_registry` to ConnectionPool.connection_kwargs,
-# which falkordb-py 1.6.2's async Is_Cluster forwards to the sync Redis()
-# constructor, which rejects it. Every flow test that builds its own pool
-# fails with a TypeError. Keep in sync with build/Dockerfile; drop both once
-# falkordb-py releases a fix.
+# redis-py 8.1.0 added `himport_registry` to ConnectionPool.connection_kwargs,
+# which falkordb-py 1.6.2's async Is_Cluster forwarded to the sync Redis()
+# constructor, which rejects it — every flow test that builds its own pool
+# died with a TypeError. falkordb-py 1.7.0 fixed it (Is_Cluster now filters
+# connection_kwargs down to the sync constructor's signature), so 8.1.x is
+# safe again and the bound is widened to <8.2.
+#
+# build/Dockerfile still installs `redis<8.1` because editing it rebuilds the
+# whole multi-arch toolchain image; drop that pin the next time the toolchain
+# is rebuilt for another reason.
 redis<8.2
 falkordb-bulk-loader
 hypothesis
