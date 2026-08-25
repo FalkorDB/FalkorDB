@@ -150,7 +150,7 @@ impl Runtime<'_> {
             let active_len = batch.active_len();
 
             // Reserve all node IDs at once
-            let node_ids = self.g.borrow_mut().reserve_nodes(active_len);
+            let node_ids = self.g.borrow_mut().reserve_nodes(active_len)?;
 
             // Record creations and set labels in batch
             {
@@ -264,7 +264,7 @@ impl Runtime<'_> {
             }
 
             // Reserve all relationship IDs at once
-            let ids = self.g.borrow_mut().reserve_relationships(endpoints.len());
+            let ids = self.g.borrow_mut().reserve_relationships(endpoints.len())?;
 
             // Record all created relationships directly into pending (no intermediate Vec)
             let type_name = rel.types.first().unwrap().clone();

@@ -18,7 +18,7 @@ ARG BUILD_IMAGE
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023 AS builder
+FROM amazonlinux:2023.12.20260727.0 AS builder
 
 ENV CC=clang-19
 ENV CXX=clang++-19

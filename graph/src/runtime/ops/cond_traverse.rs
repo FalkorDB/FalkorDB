@@ -134,6 +134,13 @@ pub struct CondTraverseOp<'a> {
     /// one row per (src, dst) pair (false). Set by the planner based on
     /// whether the edge is named or referenced in a named path.
     emit_relationship: bool,
+    /// False when nothing above this operator reads the edge alias, so the
+    /// per-row lookup that resolves a representative edge id is dead work and
+    /// the edge column is left unbound. Distinct from `emit_relationship`,
+    /// which governs row multiplicity only: an anonymous edge inside a named
+    /// path collapses to one row per pair yet still has to be bound, because
+    /// `PathBuilder` reads it. Lowered by the `reduce_bound_edge` pass.
+    bind_relationship: bool,
     /// Alias IDs of sibling relationship variables in the same MATCH clause.
     sibling_edges: &'a [u32],
     /// When true, from/to have been swapped by the optimizer relative to the
@@ -246,6 +253,7 @@ impl<'a> CondTraverseOp<'a> {
         transposed: bool,
         chain: &'a [Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>],
         optional: bool,
+        bind_relationship: bool,
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
@@ -332,6 +340,7 @@ impl<'a> CondTraverseOp<'a> {
             emitter,
             pending_batches: VecDeque::new(),
             emit_relationship,
+            bind_relationship,
             sibling_edges,
             transposed,
             chain,
@@ -617,6 +626,10 @@ impl<'a> CondTraverseOp<'a> {
             (&rp.to.alias, state.fwd_dst_label_ids.as_slice())
         };
         let chain_is_empty = self.chain.is_empty();
+        // A chain-less traverse binds the edge column, and getting a value for
+        // it costs a tensor lookup per surviving row. Skip both when nothing
+        // above reads the alias.
+        let bind_edge = chain_is_empty && self.bind_relationship;
         let mut out_indices = Vec::new();
         let mut out_dest_ids = Vec::new();
         let mut out_edge_ids = Vec::new();
@@ -647,15 +660,17 @@ impl<'a> CondTraverseOp<'a> {
                 continue;
             }
 
-            if chain_is_empty {
+            if bind_edge {
                 // Look up one representative edge id (mirrors expand_row's
-                // anonymous-edge fast path). Required because downstream
-                // PathBuilder reads the edge alias even when emit_relationship
-                // is false. Storage matrix orientation: src=F's seed
-                // (matrix-src), dst=F*A result (matrix-dst), regardless of
-                // self.transposed (which only affects alias→storage mapping,
-                // not the underlying matrix orientation since
-                // build_relationship_matrix_unrestricted is non-transposed).
+                // anonymous-edge fast path). Needed whenever the alias is read
+                // downstream — including by PathBuilder, which reads it even
+                // when emit_relationship is false, so `emit_relationship`
+                // alone cannot decide this. Storage matrix orientation:
+                // src=F's seed (matrix-src), dst=F*A result (matrix-dst),
+                // regardless of self.transposed (which only affects
+                // alias→storage mapping, not the underlying matrix orientation
+                // since build_relationship_matrix_unrestricted is
+                // non-transposed).
                 let Some(Value::Node(src_id)) = batch.value_at(from_alias.id, row_idx) else {
                     continue;
                 };
@@ -679,9 +694,13 @@ impl<'a> CondTraverseOp<'a> {
                     }
                 }
             } else {
-                // Fused chain: edges across hops are anonymous & unreferenced
-                // (enforced by the fusion pass), so no edge id is bound and
-                // no intermediate node alias is exposed.
+                // No edge column to fill: either a fused chain, whose per-hop
+                // edges are anonymous & unreferenced by construction (the
+                // fusion pass enforces it) and whose intermediate node aliases
+                // are not exposed, or a single hop whose alias nothing reads.
+                // Dropping the lookup also drops its `found_id` guard, which
+                // never fired: `f` is built from these same tensors, so every
+                // pair it yields has at least one edge in one of them.
                 out_indices.push(row_idx);
                 out_dest_ids.push(dest_id);
                 if self.optional {
@@ -691,7 +710,7 @@ impl<'a> CondTraverseOp<'a> {
 
             if out_indices.len() >= BATCH_SIZE {
                 let mut out_batch = batch.gather(&out_indices);
-                if chain_is_empty {
+                if bind_edge {
                     out_batch.set_column(
                         rp.alias.id,
                         Column::RelIds(std::mem::take(&mut out_edge_ids)),
@@ -708,7 +727,7 @@ impl<'a> CondTraverseOp<'a> {
 
         if !out_indices.is_empty() {
             let mut out_batch = batch.gather(&out_indices);
-            if chain_is_empty {
+            if bind_edge {
                 out_batch.set_column(rp.alias.id, Column::RelIds(out_edge_ids));
             }
             out_batch.set_column(to_alias.id, Column::NodeIds(out_dest_ids));

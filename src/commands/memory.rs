@@ -37,6 +37,7 @@
 //! handler holds the GIL while waiting for the read lock, and the write holds the
 //! write lock while waiting for the GIL.
 
+use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
     graph_core::{BlockedClient, ThreadedGraph, ffi},
@@ -44,9 +45,7 @@ use crate::{
 };
 use graph::threadpool::spawn;
 use parking_lot::RwLock;
-use redis_module::{
-    Context, ContextFlags, NextArg, RedisError, RedisResult, RedisString, RedisValue,
-};
+use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
 
 const MB: usize = 1 << 20;
@@ -220,12 +219,9 @@ pub fn graph_memory(
         .ok_or(RedisError::Str("Graph does not exist"))?
         .clone();
 
-    // Blocking clients are not allowed inside MULTI/EXEC, and replicated
-    // commands must complete before the handler returns (same rules as
-    // GRAPH.QUERY) — run synchronously in those cases.
-    if ctx.get_flags().contains(ContextFlags::MULTI)
-        || ctx.get_flags().contains(ContextFlags::REPLICATED)
-    {
+    // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
+    // `must_run_inline`.
+    if must_run_inline(ctx) {
         return memory_report(&graph, samples);
     }
 
