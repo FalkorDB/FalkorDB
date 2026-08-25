@@ -2,45 +2,67 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-# Pin RediSearch to a specific commit on falkordb/llapi-extensions-8.6 rather
-# than tracking the branch tip. The commit lives in this file, which is COPY'd
-# into build/Dockerfile, so bumping REDISEARCH_REF busts the toolchain image's
-# cached `RUN redisearch.sh` layer and keeps the build reproducible. To pick up
-# new RediSearch work, update REDISEARCH_REF to the new commit (check-files in
-# .github/workflows/rust-pr.yml rebuilds the toolchain when this file changes).
-REDISEARCH_BRANCH="falkordb/llapi-extensions-8.6"
-REDISEARCH_REF="ac45247834fec495f4d3ec76f337e3709260fdd5"
-REDISEARCH_DIR="$ROOT/redisearch/RediSearch"
 
-mkdir -p "$ROOT/redisearch"
-if [ ! -d "$REDISEARCH_DIR/.git" ]; then
-  # Shallow-fetch just the pinned commit (GitHub allows fetching a reachable SHA).
-  git init -q "$REDISEARCH_DIR"
-  git -C "$REDISEARCH_DIR" remote add origin https://github.com/FalkorDB/RediSearch.git
-  git -C "$REDISEARCH_DIR" fetch -q --depth 1 origin "$REDISEARCH_REF"
-  git -C "$REDISEARCH_DIR" checkout -q FETCH_HEAD
-  git -C "$REDISEARCH_DIR" submodule update --init --recursive --depth 1
-else
-  # Reusing an existing checkout (fast local iteration; CI always clones fresh
-  # because redisearch/ is .dockerignore'd). Warn loudly if it isn't on the
-  # pinned ref so a stale or branch-switched clone doesn't silently build
-  # against the wrong RediSearch ABI. We deliberately do NOT auto-reset — that
-  # would clobber local RediSearch work; remove the directory to force a clean
-  # re-fetch.
-  current_ref="$(git -C "$REDISEARCH_DIR" rev-parse HEAD 2>/dev/null || echo '?')"
-  if [ "$current_ref" != "$REDISEARCH_REF" ]; then
-    echo "WARNING: $REDISEARCH_DIR is at '$current_ref', expected '$REDISEARCH_REF'." >&2
-    echo "         Remove that directory to re-fetch, or check out the expected ref." >&2
-  fi
+# RediSearch lives at deps/RediSearch as a git submodule, the same layout the C
+# engine uses on `master`. GIT owns that checkout: this script only BUILDS what
+# is there, and never fetches, clones, resets or otherwise moves the pin. That
+# is what keeps the pinned commit single-sourced in the gitlink
+# (`160000 <sha>` in the tree) instead of also being spelled out here.
+#
+# So every consumer must populate the submodule before calling this:
+#   locally   git submodule update --init --recursive
+#   CI        actions/checkout with `submodules: recursive`
+#   Docker    the image COPYs deps/RediSearch in (see build/Dockerfile); the
+#             build context carries the checked-out submodule, which is also
+#             what makes the COPY layer's cache key the submodule CONTENT --
+#             it turns over exactly when the pin moves.
+#
+# New RediSearch work lands on falkordb/llapi-extensions-8.6. To move the pin:
+#   git -C deps/RediSearch fetch origin && git -C deps/RediSearch checkout <sha>
+#   git add deps/RediSearch
+# and nothing else -- there is no second copy of the SHA to keep in step.
+REDISEARCH_DIR="$ROOT/deps/RediSearch"
+
+# Populated means "has files". An uninitialized submodule is an empty directory,
+# which would otherwise fail much later inside RediSearch's own build with
+# something unhelpful.
+if [ -z "$(ls -A "$REDISEARCH_DIR" 2>/dev/null || true)" ]; then
+  echo "ERROR: $REDISEARCH_DIR is empty -- the RediSearch submodule is not checked out." >&2
+  echo "       Run:  git submodule update --init --recursive" >&2
+  echo "       (in CI, set \`submodules: recursive\` on actions/checkout)" >&2
+  exit 1
+fi
+
+# RediSearch's own nested submodules are build inputs, not optional extras --
+# VectorSimilarity is the one that fails loudest, so name it. A non-recursive
+# `git submodule update` leaves these empty.
+if [ -z "$(ls -A "$REDISEARCH_DIR/deps/VectorSimilarity" 2>/dev/null || true)" ]; then
+  echo "ERROR: $REDISEARCH_DIR/deps/VectorSimilarity is empty -- RediSearch's own" >&2
+  echo "       submodules are not checked out. Run:" >&2
+  echo "       git submodule update --init --recursive" >&2
+  exit 1
 fi
 
 cd "$REDISEARCH_DIR"
 
-# VecSim promotes some warnings to errors; relax for our toolchain.
+# VecSim promotes some warnings to errors; relax for our toolchain. Restore the
+# file afterwards so the submodule does not show up as dirty in the parent repo.
+#
+# Restore the BYTES we saw, not `git checkout --` of the tracked version: this
+# script deliberately supports editing deps/RediSearch in place, and checking
+# out would silently throw away uncommitted VecSim work.
+VECSIM_CMAKE="deps/VectorSimilarity/src/VecSim/CMakeLists.txt"
+VECSIM_BACKUP="$(mktemp)"
+cp "$VECSIM_CMAKE" "$VECSIM_BACKUP"
+restore_vecsim() {
+  cp "$VECSIM_BACKUP" "$VECSIM_CMAKE" 2>/dev/null || true
+  rm -f "$VECSIM_BACKUP"
+}
+trap restore_vecsim EXIT
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  sed -i '' 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt
+  sed -i '' 's/-Werror//g' "$VECSIM_CMAKE"
 else
-  sed -i 's/-Werror//g' deps/VectorSimilarity/src/VecSim/CMakeLists.txt
+  sed -i 's/-Werror//g' "$VECSIM_CMAKE"
 fi
 
 # Build RediSearch 8.6 as an embeddable STATIC library:
