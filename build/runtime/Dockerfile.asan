@@ -44,13 +44,20 @@ WORKDIR /src
 # Rebuild the RediSearch 8.6 fork WITH AddressSanitizer so the embedded
 # VectorSimilarity is instrumented. The toolchain image ships a
 # non-instrumented RediSearch; redisearch.sh with REDISEARCH_SAN=address
-# produces the `debug-asan` flavor in-tree (./redisearch/RediSearch/bin),
+# produces the `debug-asan` flavor in-tree (./deps/RediSearch/bin),
 # which graph/build.rs discovers ahead of the toolchain's /data copy.
-# Copied on its own first so editing module source doesn't bust this
-# expensive layer (redisearch/ is .dockerignore'd, so the later COPY won't
-# clobber the build output).
+# Copied on their own first so editing module source doesn't bust this expensive
+# layer: both inputs change only when the RediSearch pin or build recipe does.
+# deps/RediSearch/bin is .dockerignore'd, so the later `COPY . .` re-copies the
+# (identical) source but cannot clobber the debug-asan output built here.
 COPY redisearch.sh redisearch.sh
-RUN CC=clang-22 CXX=clang++-22 REDISEARCH_SAN=address bash redisearch.sh
+COPY deps/RediSearch deps/RediSearch
+# RediSearch's redisearch_rs build scripts find their source root by walking up
+# for a `.git` entry (build_utils::git_root; existence check only, never invokes
+# git). All git metadata is .dockerignore'd, so create an empty marker -- see
+# .dockerignore for why this is a marker rather than the real gitlink.
+RUN mkdir -p deps/RediSearch/.git && \
+    CC=clang-22 CXX=clang++-22 REDISEARCH_SAN=address bash redisearch.sh
 
 COPY . .
 
@@ -63,10 +70,10 @@ RUN set -eux; \
     # Build the module with the SAME pinned nightly that redisearch.sh used for
     # redisearch_rs (RediSearch's .rust-nightly), not the floating `nightly`
     # alias defaulted above — so the -Zsanitizer toolchain matches across both
-    # archives. The pin lives in the in-image RediSearch checkout (redisearch/ is
-    # .dockerignore'd, so `COPY . .` didn't clobber it). redisearch.sh already
+    # archives. The pin is read from the RediSearch checkout, which `COPY . .`
+    # re-copies identically from the submodule. redisearch.sh already
     # installed this toolchain (with rust-src) during the SAN build.
-    rustup default "$(cat redisearch/RediSearch/.rust-nightly)"; \
+    rustup default "$(cat deps/RediSearch/.rust-nightly)"; \
     case "$TARGETARCH" in \
       amd64) RT=x86_64-unknown-linux-gnu ;; \
       arm64) RT=aarch64-unknown-linux-gnu ;; \
