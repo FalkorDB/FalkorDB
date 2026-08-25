@@ -251,6 +251,22 @@ pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
     (column, nulls)
 }
 
+/// Classifies a `Vec<Value>` for the comparison kernels, keeping every lane
+/// exact: an all-`Int` (or null) column becomes [`Column::Ints`], an all-`Float`
+/// one becomes [`Column::Floats`], and anything else — including a *mixed*
+/// int/float column — stays [`Column::Values`].
+///
+/// The difference from [`classify_column`] is [`FloatLane::Pure`]: promoting a
+/// mixed column to `f64` would round integers past 2^53, so `p.v = 9007199254740993`
+/// would match a stored `9007199254740992` in a filter while the scalar
+/// evaluator (which compares `Int` to `Int` exactly) says it does not.
+#[must_use]
+pub fn classify_exact_column(values: Vec<Value>) -> (Column, NullBitmap) {
+    let nulls = NullBitmap::from_values(&values);
+    let column = classify_numeric(values, true, FloatLane::Pure);
+    (column, nulls)
+}
+
 /// Appends the active rows of one batch's typed column slice `src` onto `out`.
 ///
 /// `selection` is the owning batch's active-row mask: `None` means the batch is

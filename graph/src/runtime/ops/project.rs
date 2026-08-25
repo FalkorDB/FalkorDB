@@ -106,38 +106,15 @@ impl<'a> ProjectOp<'a> {
         for kind in plan {
             let col = match kind {
                 ProjectionKind::Property { var, attr } => {
-                    batch.extract_node_ids(var.id).and_then(|node_ids| {
+                    // The stored values are what the projection emits, so take
+                    // them unclassified: classifying and rebuilding `Value`s
+                    // costs two extra passes, and its float lane would promote
+                    // a mixed int/float column, printing a stored
+                    // 9007199254740993 as 9.00719925474099e+15.
+                    batch.extract_node_ids(var.id).map(|node_ids| {
                         let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
-                        let (col, nulls) =
-                            self.runtime.materialize_node_property(&active_ids, attr);
-                        match col {
-                            Column::Ints(data) => Some(
-                                data.iter()
-                                    .enumerate()
-                                    .map(|(i, &v)| {
-                                        if nulls.is_null(i) {
-                                            Value::Null
-                                        } else {
-                                            Value::Int(v)
-                                        }
-                                    })
-                                    .collect(),
-                            ),
-                            Column::Floats(data) => Some(
-                                data.iter()
-                                    .enumerate()
-                                    .map(|(i, &v)| {
-                                        if nulls.is_null(i) {
-                                            Value::Null
-                                        } else {
-                                            Value::Float(v)
-                                        }
-                                    })
-                                    .collect(),
-                            ),
-                            Column::Values(data) => Some(data),
-                            _ => None,
-                        }
+                        self.runtime
+                            .materialize_node_property_values(&active_ids, attr)
                     })
                 }
                 ProjectionKind::Variable(var) => Some(
