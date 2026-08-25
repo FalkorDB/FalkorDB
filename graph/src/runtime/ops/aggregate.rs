@@ -32,7 +32,7 @@ use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap},
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     functions::{FnType, GraphFn},
     row::{Row, RowView},
     runtime::Runtime,
@@ -629,8 +629,11 @@ impl<'a> AggregateOp<'a> {
                 KeyExprKind::Property { var, attr } => {
                     let node_ids = batch.extract_node_ids(var.id).ok_or(())?;
                     let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
-                    let (col, nulls) = runtime.materialize_node_property(&active_ids, attr);
-                    key_columns.push(column_to_values(&col, &nulls, active.len()));
+                    // Unclassified: a grouping key must be the stored value, and
+                    // the classifier's float lane would promote a mixed
+                    // int/float column, merging 9007199254740993 and
+                    // 9007199254740992 into one group.
+                    key_columns.push(runtime.materialize_node_property_values(&active_ids, attr));
                 }
             }
         }
@@ -671,13 +674,13 @@ impl<'a> AggregateOp<'a> {
                     // this path.
                     if let Some(node_ids) = batch.extract_node_ids(var.id) {
                         let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
-                        let (col, nulls) = runtime.materialize_node_property(&active_ids, attr);
-                        agg_columns.push(column_to_values(&col, &nulls, active.len()));
+                        agg_columns
+                            .push(runtime.materialize_node_property_values(&active_ids, attr));
                     } else if let Some(rel_ids) = batch.extract_rel_ids(var.id) {
                         let active_ids: Vec<_> = active.iter().map(|&i| rel_ids[i]).collect();
-                        let (col, nulls) =
-                            runtime.materialize_relationship_property(&active_ids, attr);
-                        agg_columns.push(column_to_values(&col, &nulls, active.len()));
+                        agg_columns.push(
+                            runtime.materialize_relationship_property_values(&active_ids, attr),
+                        );
                     } else {
                         // Neither a node nor a relationship id column — e.g. a
                         // `Values` column carrying entities past a `WITH`. Read
@@ -1074,37 +1077,6 @@ impl<'a> Iterator for AggregateOp<'a> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Converts a `Column` + `NullBitmap` from `materialize_node_property` into
-/// a `Vec<Value>` for use in grouping and accumulation.
-fn column_to_values(
-    col: &Column,
-    nulls: &NullBitmap,
-    len: usize,
-) -> Vec<Value> {
-    match col {
-        Column::Ints(data) => (0..len)
-            .map(|i| {
-                if nulls.is_null(i) {
-                    Value::Null
-                } else {
-                    Value::Int(data[i])
-                }
-            })
-            .collect(),
-        Column::Floats(data) => (0..len)
-            .map(|i| {
-                if nulls.is_null(i) {
-                    Value::Null
-                } else {
-                    Value::Float(data[i])
-                }
-            })
-            .collect(),
-        Column::Values(data) => data.clone(),
-        _ => vec![Value::Null; len],
-    }
-}
 
 /// Recursively walks an expression tree and unbinds each aggregate function's
 /// accumulator variable from the environment. This mirrors the recursion in
