@@ -18,7 +18,7 @@ ARG BUILD_IMAGE
 # ---------------------------------------------------------------------------
 # Toolchain + dependency build.
 # ---------------------------------------------------------------------------
-FROM amazonlinux:2023 AS builder
+FROM amazonlinux:2023.12.20260727.0 AS builder
 
 ENV CC=clang-19
 ENV CXX=clang++-19
@@ -67,13 +67,21 @@ COPY build/graphblas /data/build/graphblas
 RUN LAGRAPH_INSTALL_DIR=/data/lagraph_lib /data/graphblas.sh && \
     rm -rf /data/graphblas.sh /data/build
 
-# RediSearch (static) → /data/redisearch/RediSearch/bin
+# RediSearch (static) → /data/deps/RediSearch/bin
+# Source comes from the deps/RediSearch submodule in the build context (git owns
+# the pin; redisearch.sh only builds). Needs `submodules: recursive` on checkout.
 COPY redisearch.sh /data/redisearch.sh
-RUN bash /data/redisearch.sh && \
+COPY deps/RediSearch /data/deps/RediSearch
+# RediSearch's redisearch_rs build scripts find their source root by walking up
+# for a `.git` entry (build_utils::git_root; existence check only, never invokes
+# git). All git metadata is .dockerignore'd, so create an empty marker -- see
+# .dockerignore for why this is a marker rather than the real gitlink.
+RUN mkdir -p /data/deps/RediSearch/.git && \
+    bash /data/redisearch.sh && \
     rm -f /data/redisearch.sh
 
 # Build the cdylib from the repo source. Deps resolve via graph/build.rs's
-# absolute fallbacks (/data/lagraph_lib, /data/redisearch/RediSearch/bin),
+# absolute fallbacks (/data/lagraph_lib, /data/deps/RediSearch/bin),
 # GRAPHBLAS_LIB_DIR (/usr/local/lib default) and LIBOMP_PREFIX (/opt/libomp).
 ARG CXX
 WORKDIR /src
