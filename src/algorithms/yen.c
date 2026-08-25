@@ -11,26 +11,7 @@
 #include "../util/heap.h"
 #include "../util/dict.h"
 #include "../util/rmalloc.h"
-
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v;
-
-	if(!GraphEntity_GetProperty(ge, id, &v)) {
-		return default_value;
-	}
-
-	if(SI_TYPE(v) & SI_NUMERIC) {
-		return v;
-	}
-
-	return default_value;
-}
+#include "utils/entity_value.h"
 
 // a Yen candidate path waiting in the candidate heap
 typedef struct {
@@ -64,6 +45,12 @@ static int _yen_cand_cmp
 }
 
 // 64-bit FNV-1a hash of a path's edge-id sequence -- its identity for dedup.
+//
+// deliberately not SIPath_HashCode: that hashes node+edge SIValues and would
+// require wrapping each candidate Path in an SIValue (an allocation/ownership
+// dance) per lookup. the edge-id sequence is exactly the identity Yen needs --
+// it distinguishes parallel edges between the same node pair -- and hashing it
+// is a few multiplies with no allocation.
 static uint64_t _path_key
 (
 	const Path *p
@@ -205,6 +192,10 @@ uint Yen_KShortestPaths
 	Path ***paths,             // [output] array_t of Path*, ascending weight
 	double **weights           // [output] array_t of matching total weights
 ) {
+	ASSERT(g       != NULL);
+	ASSERT(paths   != NULL);
+	ASSERT(weights != NULL);
+
 	// A: accepted paths (ascending weight); AW: their weights (parallel)
 	Path   **A  = arr_new (Path *, 0);
 	double  *AW = arr_new (double, 0);

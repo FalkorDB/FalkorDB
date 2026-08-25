@@ -109,6 +109,26 @@ bool DijkstraCtx_Run
 	const dict *blocked_edges   // edges to skip, or NULL
 );
 
+// bounded single-source run: finalizes every node whose shortest-path distance
+// from 'src_id' is <= 'dist_bound' and stops as soon as the next-closest node
+// exceeds it (nodes are finalized in nondecreasing distance order). pass
+// DBL_MAX for no bound. if 'dst_id' != INVALID_ENTITY_ID, reaching it tightens
+// the bound to dst's own distance -- so the run finalizes exactly the ball of
+// nodes no farther than the src->dst shortest distance, and the return value
+// reports whether dst was reached. this lets the all-shortest-paths DAG explore
+// only the shortest-path region instead of the whole graph. results are read
+// via DijkstraCtx_Distance. never early-exits at dst.
+bool DijkstraCtx_RunBounded
+(
+	DijkstraCtx *dc,            // engine
+	NodeID src_id,             // source node
+	NodeID dst_id,             // target whose distance bounds the ball, or
+	                           //   INVALID_ENTITY_ID to use dist_bound as-is
+	double dist_bound,         // finalize nodes within this distance (DBL_MAX = none)
+	const dict *blocked_nodes,  // nodes to skip, or NULL
+	const dict *blocked_edges   // edges to skip, or NULL
+);
+
 // after a run: report the finalized shortest-path weight to 'v'. returns
 // false if 'v' was never discovered by the last run (leaving *weight
 // untouched). after a single-source run every reachable node is finalized,

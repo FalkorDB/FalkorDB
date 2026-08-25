@@ -12,28 +12,8 @@
 
 #include <string.h>
 
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v;
-
-	if(!GraphEntity_GetProperty(ge, id, &v)) {
-		return default_value;
-	}
-
-	if(SI_TYPE(v) & SI_NUMERIC) {
-		return v;
-	}
-
-	return default_value;
-}
-
 //------------------------------------------------------------------------------
-// NodeMap: NodeID -> label index
+// NodeMap: NodeID -> search-record index
 //------------------------------------------------------------------------------
 
 // maps a discovered NodeID to its 1-based slot in 'labels' (0 means "not
@@ -149,7 +129,9 @@ static inline uint32_t NodeMap_find
 }
 
 // reset the map to empty without releasing its buffer, so it can be reused by
-// a subsequent search. capacity is retained; only occupied slots are zeroed.
+// a subsequent search. capacity is retained; the whole slot buffer is cleared
+// (O(cap)), which for a context reused across many searches trades a per-run
+// clear for never reallocating.
 static inline void NodeMap_clear
 (
 	NodeMap *m

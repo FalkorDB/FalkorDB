@@ -12,6 +12,7 @@
 #include "../util/rmalloc.h"
 #include "utils/node_map.h"
 #include "utils/priority_heap.h"
+#include "utils/entity_value.h"
 
 #include <math.h>
 
@@ -101,7 +102,9 @@ static inline double _heuristic
 	return _haversine_meters(lat, lon, dst_lat, dst_lon);
 }
 
-// per-node label used by the search below
+// per-node search record used by the A* search below (best-known cost g, cached
+// heuristic h, predecessor and connecting edge). "label" in the label-setting
+// sense -- unrelated to graph node labels.
 typedef struct {
 	NodeID parent;    // predecessor in the shortest-path tree
 	Edge   edge;      // edge connecting parent -> this node
@@ -144,10 +147,9 @@ typedef struct AStarCtx {
 	TensorIterator *iters;
 
 	// per-run scratch, reset (not reallocated) between runs
-	NodeMap         label_idx;   // node id -> 1-based slot in 'labels'
-	AStarLabel     *labels;      // one AStarLabel per discovered node
+	NodeMap         record_idx;  // node id -> 1-based slot in 'records'
+	AStarLabel     *records;     // one search record per discovered node
 	NodeWeightHeap  heap;        // priority queue keyed by f = g + h
-	Edge           *neighbors;   // reused buffer for each neighbor scan
 } AStarCtx;
 
 static AStarCtx *AStarCtx_New
@@ -189,10 +191,9 @@ static AStarCtx *AStarCtx_New
 		}
 	}
 
-	NodeMap_init(&ac->label_idx);
-	ac->labels    = arr_new(AStarLabel, 64);
+	NodeMap_init(&ac->record_idx);
+	ac->records = arr_new(AStarLabel, 64);
 	NodeWeightHeap_init(&ac->heap);
-	ac->neighbors = arr_new(Edge, 32);
 
 	return ac;
 }
@@ -204,10 +205,9 @@ static inline void _AStarCtx_Reset
 (
 	AStarCtx *ac
 ) {
-	NodeMap_clear(&ac->label_idx);
-	arr_clear(ac->labels);
+	NodeMap_clear(&ac->record_idx);
+	arr_clear(ac->records);
 	NodeWeightHeap_clear(&ac->heap);
-	arr_clear(ac->neighbors);
 }
 
 // run an A* search from src to dst. internal scratch is reset at entry so the
@@ -240,10 +240,10 @@ static bool AStarCtx_Run
 	AStarLabel src_label =
 		{ .parent = src_id, .g_score = 0, .h = src_h, .finalized = false };
 
-	arr_append(ac->labels, src_label);
+	arr_append(ac->records, src_label);
 
-	uint32_t *src_slot = NodeMap_findOrInsert(&ac->label_idx, src_id, NULL);
-	*src_slot = arr_len(ac->labels);
+	uint32_t *src_slot = NodeMap_findOrInsert(&ac->record_idx, src_id, NULL);
+	*src_slot = arr_len(ac->records);
 
 	NodeWeightItem seed = { .node = src_id, .weight = src_h };
 	NodeWeightHeap_offer(&ac->heap, seed);
@@ -262,96 +262,109 @@ static bool AStarCtx_Run
 
 		NodeID cur = item.node;
 
-		uint32_t cur_idx = NodeMap_find(&ac->label_idx, cur);
+		uint32_t cur_idx = NodeMap_find(&ac->record_idx, cur);
 
 		ASSERT(cur_idx != 0);
-		if(ac->labels[cur_idx - 1].finalized) {
+		if(ac->records[cur_idx - 1].finalized) {
 			continue;  // stale duplicate entry
 		}
 
-		ac->labels[cur_idx - 1].finalized = true;
+		ac->records[cur_idx - 1].finalized = true;
 
 		if(cur == dst_id) {
 			found = true;
 			break;
 		}
 
-		double cur_g = ac->labels[cur_idx - 1].g_score;
+		double cur_g = ac->records[cur_idx - 1].g_score;
 
-		Node curNode = GE_NEW_NODE();
-		Graph_GetNode(ac->g, cur, &curNode);
+		// relaxation: stream edges straight from the tensor iterator (no scratch
+		// array); fetch an edge's attribute set from the datablock only when a
+		// weight is actually read or an improving edge is stored for the path.
+		bool need_weight = (ac->weight_prop != ATTRIBUTE_ID_NONE);
 
 		for(int d = 0; d < ac->ndirs; d++) {
+			bool outgoing = (ac->dirs[d] == GRAPH_EDGE_DIR_OUTGOING);
+
 			for(int r = 0; r < ac->relationCount; r++) {
-				Graph_GetNodeEdgesFromIterator(ac->g, &curNode, ac->dirs[d],
-						&ac->iters[d * ac->relationCount + r],
-						ac->relationIDs[r], &ac->neighbors);
-			}
+				TensorIterator *it = &ac->iters[d * ac->relationCount + r];
+				TensorIterator_IterateRow(it, cur);
 
-			uint32_t n = arr_len(ac->neighbors);
-			for(uint32_t j = 0; j < n; j++) {
-				Edge *e = ac->neighbors + j;
-				NodeID nid = (ac->dirs[d] == GRAPH_EDGE_DIR_OUTGOING)
-					? Edge_GetDestNodeID(e)
-					: Edge_GetSrcNodeID(e);
+				while(true) {
+					Edge e = { .relationID = ac->relationIDs[r] };
+					if(outgoing) {
+						e.src_id = cur;
+						if(!TensorIterator_next(it, NULL, &e.dest_id, &e.id, NULL)) break;
+					} else {
+						e.dest_id = cur;
+						if(!TensorIterator_next(it, &e.src_id, NULL, &e.id, NULL)) break;
+					}
 
-				if(nid == cur) {
-					continue;  // ignore self-loops
-				}
+					NodeID nid = outgoing ? e.dest_id : e.src_id;
 
-				// blocked-set filters: skip edges/nodes virtually removed from
-				// the graph for this run (Yen's spur searches). both checks are
-				// skipped entirely when the corresponding set is NULL.
-				if(blocked_edges != NULL &&
-					HashTableFind((dict *)blocked_edges,
-						(void *)(uintptr_t)ENTITY_GET_ID(e)) != NULL) {
-					continue;
-				}
-				if(blocked_nodes != NULL &&
-					HashTableFind((dict *)blocked_nodes,
-						(void *)(uintptr_t)nid) != NULL) {
-					continue;
-				}
+					if(nid == cur) {
+						continue;  // ignore self-loops
+					}
 
-				// candidate g_score to 'nid' through 'cur'. weightProp is
-				// assumed non-negative (see AStar.h).
-				SIValue w = _get_value_or_default((GraphEntity *)e,
-						ac->weight_prop, SI_LongVal(1));
-				double new_g = cur_g + SI_GET_NUMERIC(w);
-
-				bool is_new;
-				AStarLabel *nlabel = NULL;
-				uint32_t *nslot =
-					NodeMap_findOrInsert(&ac->label_idx, nid, &is_new);
-
-				if(!is_new) {
-					nlabel = ac->labels + (*nslot - 1);
-					if(nlabel->finalized || new_g >= nlabel->g_score) {
+					// blocked-set filters (Yen spur searches); skipped when NULL.
+					if(blocked_edges != NULL &&
+						HashTableFind((dict *)blocked_edges,
+							(void *)(uintptr_t)e.id) != NULL) {
+						continue;
+					}
+					if(blocked_nodes != NULL &&
+						HashTableFind((dict *)blocked_nodes,
+							(void *)(uintptr_t)nid) != NULL) {
 						continue;
 					}
 
-					nlabel->edge    = *e;
+					// candidate g_score to 'nid' through 'cur' (default weight 1
+					// when no weight property). weightProp is assumed
+					// non-negative (see AStar.h).
+					double edge_w = 1;
+					if(need_weight) {
+						Graph_GetEdge(ac->g, e.id, &e);  // populate e.attributes
+						SIValue w = _get_value_or_default((GraphEntity *)&e,
+								ac->weight_prop, SI_LongVal(1));
+						edge_w = SI_GET_NUMERIC(w);
+					}
+					double new_g = cur_g + edge_w;
+
+					bool is_new;
+					uint32_t *nslot =
+						NodeMap_findOrInsert(&ac->record_idx, nid, &is_new);
+
+					double h;
+					if(!is_new) {
+						AStarLabel *nlabel = ac->records + (*nslot - 1);
+						if(nlabel->finalized || new_g >= nlabel->g_score) {
+							continue;
+						}
+						h = nlabel->h;  // heuristic is fixed per node
+					} else {
+						// first discovery: compute and cache h(nid).
+						h = _heuristic(ac->g, nid, ac->lat_prop, ac->lon_prop,
+								dst_has_coords, dst_lat, dst_lon);
+						AStarLabel fresh = { .h = h, .finalized = false };
+						arr_append(ac->records, fresh);
+						*nslot = arr_len(ac->records);
+					}
+
+					// store the improving edge; ensure attributes are populated
+					// (already done above when weighted) for the returned path.
+					if(e.attributes == NULL) {
+						Graph_GetEdge(ac->g, e.id, &e);
+					}
+					AStarLabel *nlabel = ac->records + (*nslot - 1);
+					nlabel->edge    = e;
 					nlabel->parent  = cur;
 					nlabel->g_score = new_g;
-				} else {
-					double h = _heuristic(ac->g, nid, ac->lat_prop,
-							ac->lon_prop, dst_has_coords, dst_lat, dst_lon);
 
-					AStarLabel lbl = { .parent = cur, .edge = *e,
-						.g_score = new_g, .h = h, .finalized = false };
-
-					arr_append(ac->labels, lbl);
-
-					*nslot = arr_len(ac->labels);
-					nlabel = ac->labels + (*nslot - 1);
+					// queue (or re-queue) 'nid' at priority f = g + h(nid).
+					NodeWeightItem qi = { .node = nid, .weight = new_g + h };
+					NodeWeightHeap_offer(&ac->heap, qi);
 				}
-
-				// queue (or re-queue) 'nid' at priority f = g + h(nid).
-				NodeWeightItem qi = { .node = nid, .weight = new_g + nlabel->h };
-				NodeWeightHeap_offer(&ac->heap, qi);
 			}
-
-			arr_clear(ac->neighbors);
 		}
 	}
 
@@ -366,13 +379,13 @@ static bool AStarCtx_Distance
 	NodeID v,
 	double *weight
 ) {
-	uint32_t idx = NodeMap_find(&ac->label_idx, v);
+	uint32_t idx = NodeMap_find(&ac->record_idx, v);
 	if(idx == 0) {
 		return false;
 	}
 
 	if(weight != NULL) {
-		*weight = ac->labels[idx - 1].g_score;
+		*weight = ac->records[idx - 1].g_score;
 	}
 
 	return true;
@@ -390,9 +403,9 @@ static Path *AStarCtx_Path
 	Path *p = Path_New(8);
 
 	while(cur != src_id) {
-		uint32_t idx = NodeMap_find(&ac->label_idx, cur);
+		uint32_t idx = NodeMap_find(&ac->record_idx, cur);
 		ASSERT(idx != 0);
-		AStarLabel *label = ac->labels + (idx - 1);
+		AStarLabel *label = ac->records + (idx - 1);
 
 		Node n = GE_NEW_NODE();
 		Graph_GetNode(ac->g, cur, &n);
@@ -420,9 +433,8 @@ static void AStarCtx_Free
 	}
 
 	NodeWeightHeap_free(&ac->heap);
-	NodeMap_free(&ac->label_idx);
-	arr_free(ac->labels);
-	arr_free(ac->neighbors);
+	NodeMap_free(&ac->record_idx);
+	arr_free(ac->records);
 	rm_free(ac->iters);
 	rm_free(ac);
 }
@@ -446,6 +458,10 @@ bool AStar_ShortestPath
 	AttributeID lat_prop,
 	AttributeID lon_prop
 ) {
+	ASSERT(g      != NULL);
+	ASSERT(path   != NULL);
+	ASSERT(weight != NULL);
+
 	AStarCtx *ac = AStarCtx_New(g, dir, relationIDs, relationMatrices,
 			relationCount, weight_prop, lat_prop, lon_prop);
 
@@ -464,6 +480,10 @@ bool AStar_ShortestPath
 //------------------------------------------------------------------------------
 // AStar_KShortestPaths: Yen's algorithm driven by A* spur searches
 //------------------------------------------------------------------------------
+//
+// this mirrors the Yen orchestration in yen.c; the two are kept deliberately
+// separate (each engine self-contained) rather than sharing a generic driver,
+// so the A* variant stays fully enclosed in this module.
 
 // a Yen candidate path waiting in the candidate heap
 typedef struct {
@@ -497,6 +517,9 @@ static int _astar_cand_cmp
 }
 
 // 64-bit FNV-1a hash of a path's edge-id sequence -- its identity for dedup.
+// (not SIPath_HashCode: that hashes node/edge SIValues and would need each
+// candidate wrapped in an SIValue; the edge-id sequence is exactly the identity
+// Yen needs -- it distinguishes parallel edges -- and costs no allocation.)
 static uint64_t _path_key
 (
 	const Path *p
@@ -616,6 +639,10 @@ uint AStar_KShortestPaths
 	Path ***paths,
 	double **weights
 ) {
+	ASSERT(g       != NULL);
+	ASSERT(paths   != NULL);
+	ASSERT(weights != NULL);
+
 	// A: accepted paths (ascending weight); AW: their weights (parallel)
 	Path   **A  = arr_new(Path *, 0);
 	double  *AW = arr_new(double, 0);

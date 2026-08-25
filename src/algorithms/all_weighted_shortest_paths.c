@@ -8,26 +8,9 @@
 #include "all_weighted_shortest_paths.h"
 #include "../value.h"
 #include "../util/arr.h"
+#include "utils/entity_value.h"
 
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v;
-
-	if(!GraphEntity_GetProperty(ge, id, &v)) {
-		return default_value;
-	}
-
-	if(SI_TYPE(v) & SI_NUMERIC) {
-		return v;
-	}
-
-	return default_value;
-}
+#include <float.h>
 
 // reverse a traversal direction (OUTGOING <-> INCOMING, BOTH unchanged), so a
 // backward search from dst measures distance *to* dst in the original graph.
@@ -67,24 +50,28 @@ uint AllWeightedShortestPaths
 		return 0;
 	}
 
-	// forward search: shortest-path weight from src to every reachable node.
+	// forward search: shortest-path weight from src, bounded by the src->dst
+	// distance D. reaching dst discovers D and stops the sweep at that radius,
+	// so it finalizes only the ball of nodes no farther than D from src -- every
+	// node on a shortest path lives there -- instead of the whole graph.
 	DijkstraCtx *fwd = DijkstraCtx_New(g, dir, relationIDs, relationMatrices,
 			relationCount, weight_prop);
-	DijkstraCtx_Run(fwd, src, INVALID_ENTITY_ID, NULL, NULL);
-
-	double D;
-	if(!DijkstraCtx_Distance(fwd, dst, &D)) {
+	if(!DijkstraCtx_RunBounded(fwd, src, dst, DBL_MAX, NULL, NULL)) {
 		// dst unreachable from src: no paths.
 		DijkstraCtx_Free(fwd);
 		return 0;
 	}
 
-	// backward search: shortest-path weight from every node to dst, obtained by
-	// searching from dst along reversed edges. used to prune enumeration to
-	// nodes that can still reach dst.
+	double D;
+	DijkstraCtx_Distance(fwd, dst, &D);
+
+	// backward search: shortest-path weight from every node to dst, searching
+	// from dst along reversed edges. a node v on a shortest path satisfies
+	// d_dst(v) = D - d_src(v) <= D, so the backward sweep only needs the ball of
+	// radius D around dst. also prunes enumeration to nodes that can reach dst.
 	DijkstraCtx *bwd = DijkstraCtx_New(g, _reverse_dir(dir), relationIDs,
 			relationMatrices, relationCount, weight_prop);
-	DijkstraCtx_Run(bwd, dst, INVALID_ENTITY_ID, NULL, NULL);
+	DijkstraCtx_RunBounded(bwd, dst, INVALID_ENTITY_ID, D, NULL, NULL);
 
 	// expansion directions for the (forward) enumeration below
 	GRAPH_EDGE_DIR dirs[2];
@@ -168,12 +155,17 @@ uint AllWeightedShortestPaths
 						continue;
 					}
 
+					// v must also lie in the forward ball (d_src(v) <= D); if it
+					// wasn't finalized there, d_src(v) > D so v can't be on a
+					// shortest path -- skip it.
+					double d_src_v;
+					if(!DijkstraCtx_Distance(fwd, vid, &d_src_v)) {
+						continue;
+					}
+
 					// (u->v) must be tight: d_src(u)+w == d_src(v). exact for
 					// integer weights (see header note). a strictly-greater sum
 					// means this edge isn't on any shortest path to v.
-					double d_src_v;
-					DijkstraCtx_Distance(fwd, vid, &d_src_v);
-
 					SIValue w = _get_value_or_default((GraphEntity *)e,
 							weight_prop, SI_LongVal(1));
 					if(d_src_u + SI_GET_NUMERIC(w) != d_src_v) {

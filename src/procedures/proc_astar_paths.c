@@ -95,8 +95,11 @@ static void _process_yield
 	}
 }
 
-// validate config map and initialize AStarCtx
-static ProcedureResult validate_config
+// validate config map and initialize AStarCtx.
+// returns true on success, false on a validation error (with the error set via
+// ErrorCtx). deliberately bool, not ProcedureResult: the caller uses it as a
+// boolean and PROCEDURE_OK == 0 would read as "false" under that usage.
+static bool validate_config
 (
 	SIValue config,
 	AStarCtx *ctx

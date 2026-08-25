@@ -91,9 +91,24 @@ static void SinglePairCtx_Free
 	if(ctx->relationIDs)      arr_free(ctx->relationIDs);
 	if(ctx->relationMatrices) arr_free(ctx->relationMatrices);
 
+	// free any results the Step function never consumed (e.g. a downstream
+	// LIMIT, early termination or error stopped the plan before draining them).
+	// Step detaches each path it emits, so only the un-emitted ones remain.
 	if(ctx->path_count == 0 && ctx->array != NULL) {
+		// array holds WeightedPath by value; free the still-owned paths.
+		uint32_t remaining = arr_len(ctx->array);
+		for(uint32_t i = 0; i < remaining; i++) {
+			if(ctx->array[i].path) Path_Free(ctx->array[i].path);
+		}
 		arr_free(ctx->array);
 	} else if(ctx->path_count > 1 && ctx->heap != NULL) {
+		// heap holds WeightedPath* (Heap_free does not touch elements); drain
+		// and free each remaining WeightedPath and its path.
+		WeightedPath *wp;
+		while((wp = Heap_poll(ctx->heap)) != NULL) {
+			if(wp->path) Path_Free(wp->path);
+			rm_free(wp);
+		}
 		Heap_free(ctx->heap);
 	}
 
