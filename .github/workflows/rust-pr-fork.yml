@@ -1,0 +1,146 @@
+# Fork PRs: run the RC-image half of CI under the base repo's credentials.
+#
+# ## Why this file exists
+#
+# rust-pr.yml runs on `pull_request`. For a PR raised from a fork GitHub hands
+# that run a read-only GITHUB_TOKEN — `permissions: packages: write` cannot grant
+# what the event withholds — so `docker push ghcr.io/falkordb/...:rc-pr-<N>`
+# fails with:
+#
+#   denied: installation not allowed to Write organization package
+#
+# and every job that pulls the tag is skipped behind it. Nothing about the PR's
+# code is wrong and no re-run helps, so rust-pr.yml now skips that half for forks
+# and this workflow supplies it.
+#
+# ## Why `pull_request_target`, and what makes it safe
+#
+# `pull_request_target` evaluates the workflow file from the BASE branch and runs
+# with the base repo's token, which is what makes the GHCR push possible. The
+# well-known hazard is that it then builds fork-authored code — including a
+# fork-authored `build/runtime/Dockerfile` — while a writable token is in scope.
+#
+# Three things contain that:
+#
+#   1. The trigger is `labeled` only, never `synchronize`. A push cannot start
+#      this workflow; a human has to act after the diff exists.
+#   2. `gate` re-checks that the labeller has write/admin on this repo, so the
+#      label event alone is not the authority — someone with commit rights is.
+#      (Only such a person can apply a label in the first place; this is
+#      defence in depth against a label surviving a permission change.)
+#   3. `gate` pins the head SHA it saw and everything downstream builds THAT
+#      SHA. A push racing the label cannot substitute new code into this run.
+#
+# The label is deliberately not sticky: because only `labeled` fires, a later
+# push does NOT re-run this. Remove and re-add `action:ok-to-test` to test a new
+# head — and re-read the diff before you do, since that is the whole review step
+# this design rests on. Pay particular attention to build/**, .github/** and
+# tests/**: those execute, unlike graph/src changes which only run inside the
+# container under test.
+#
+# ## Consequences of a green run here
+#
+# A run publishes `rc-pr-<N>` tags to ghcr.io/falkordb from fork-authored source.
+# Those tags are PR scratch space — cleanup-rc-images.yml reaps them and nothing
+# promotes them to a release channel — but treat them as untrusted just the same.
+
+name: Rust PR (fork)
+
+on:
+  pull_request_target:
+    types: [labeled]
+    branches:
+      - "main"
+      - "main-rs"
+      - "[0-9]*.[0-9]*"
+
+# One run per PR, same as rust-pr.yml. Distinct group so a fork run and the
+# `pull_request` run of the same PR never cancel each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Cheap, unprivileged, and the only place trust is decided. Runs no PR code:
+  # there is deliberately no checkout here.
+  gate:
+    if: >-
+      github.event.label.name == 'action:ok-to-test' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      head_sha: ${{ steps.pin.outputs.sha }}
+      file_changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - name: Verify the labeller can authorise this
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+          LEVEL=$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission)
+          echo "$ACTOR has '$LEVEL' on $REPO"
+          case "$LEVEL" in
+            admin|write|maintain) ;;
+            *) echo "::error::$ACTOR lacks write access; refusing to run fork CI"; exit 1 ;;
+          esac
+
+      # Pin the head this run is authorising. Everything downstream takes the
+      # SHA from here rather than re-reading the event, so a push landing while
+      # the build runs cannot swap in code the labeller never saw.
+      - name: Pin the reviewed head
+        id: pin
+        env:
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "::notice::Building fork head $SHA"
+
+      # Same toolchain-change probe as rust-pr.yml's check-files, but resolved
+      # over the API instead of a working tree — this job must not check out
+      # fork code. The paths mirror that job's grep; keep them in step.
+      - name: Check whether the toolchain changed
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          FILES=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          if echo "$FILES" | grep -qE '^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|\.github/workflows/build-toolchain\.yml)$'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Rebuild the toolchain image at :pr-<N> when the fork touched build/**.
+  docker:
+    needs: gate
+    if: needs.gate.outputs.file_changed == 'true'
+    uses: ./.github/workflows/build-toolchain.yml
+    permissions:
+      contents: read
+      packages: write
+
+    with:
+      tag: pr-${{ github.event.pull_request.number }}
+
+  # The identical pipeline rust-pr.yml runs for same-repo PRs — one definition,
+  # so fork CI cannot drift from trunk CI.
+  rc-pipeline:
+    needs: [gate, docker]
+    if: ${{ !cancelled() && needs.gate.result == 'success' && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    uses: ./.github/workflows/_rc-pipeline.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      commit_sha: ${{ needs.gate.outputs.head_sha }}
+      build_image: ${{ needs.gate.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+    secrets: inherit

@@ -47,6 +47,15 @@ on:
         description: "PR number — used for log-artifact naming + coverage image lookup"
         required: true
         type: string
+      ref:
+        description: >-
+          Commit SHA to check out for the test sources. Must be set explicitly
+          by callers reached from a `pull_request_target` run, where a bare
+          checkout resolves to the base branch and would silently run the base's
+          tests against the PR's image. Empty keeps checkout's default.
+        required: false
+        type: string
+        default: ""
       sanitizer_env:
         description: "Value for the SANITIZER env var (set to 'address' for a-sanitizer; empty otherwise)"
         required: false
@@ -116,6 +125,8 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
@@ -207,6 +218,8 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
       - name: Pre-create cov dir (coverage flavour only)
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
