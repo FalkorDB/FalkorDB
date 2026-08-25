@@ -57,6 +57,9 @@ jobs:
       # that a later release build restores.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # redisearch.sh builds the deps/RediSearch submodule and no longer
+          # clones it, so it must be checked out here.
+          submodules: recursive
           ref: ${{ inputs.revision }}
           persist-credentials: false
 
@@ -86,6 +89,14 @@ jobs:
       # Hosted macOS has no Docker toolchain image, so rebuild GraphBLAS +
       # LAGraph + RediSearch from source and cache them (keyed on the build
       # scripts + vendored PreJIT + the exact Homebrew LLVM version).
+      # The RediSearch pin used to ride along in hashFiles('redisearch.sh')
+      # (REDISEARCH_REF lived there). It is now only the submodule gitlink, which
+      # hashFiles cannot see and which hashing the 60MB checkout would be a silly
+      # way to reach -- so read the SHA and put it in the key directly.
+      - name: Resolve the deps/RediSearch pin
+        id: rs-pin
+        run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+
       - name: Restore GraphBLAS + RediSearch native builds
         id: native-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
@@ -94,7 +105,7 @@ jobs:
             .deps/graphblas
             lagraph_lib
             deps/RediSearch/bin
-          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-rs${{ steps.rs-pin.outputs.sha }}-llvm${{ env.BREW_LLVM_VERSION }}
 
       - name: Build GraphBLAS + LAGraph
         if: steps.native-cache.outputs.cache-hit != 'true'

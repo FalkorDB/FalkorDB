@@ -16,7 +16,8 @@ Only needed once per machine/container (skip if `cargo build` already works).
 
 ```bash
 ./graphblas.sh    # clones, builds (static, PIC) and installs GraphBLAS v10.5.0 + LAGraph
-./redisearch.sh   # clones and builds RediSearch (static) into deps/RediSearch/bin
+git submodule update --init --recursive   # populates deps/RediSearch (git owns it)
+./redisearch.sh   # builds that checkout (static) into deps/RediSearch/bin
 ```
 
 If a script fails, read it before retrying by hand — `graphblas.sh` documents

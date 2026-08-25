@@ -57,8 +57,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 # Set working directory for build scripts
 WORKDIR /data
 
-# Copy build scripts
+# Copy build scripts, and the RediSearch submodule they build (git owns the pin;
+# redisearch.sh only builds what is checked out, so the source must be present)
 COPY graphblas.sh redisearch.sh /data/
+COPY deps/RediSearch /data/deps/RediSearch
 
 # Build and install GraphBLAS using project script
 RUN chmod +x graphblas.sh && \
@@ -67,7 +69,12 @@ RUN chmod +x graphblas.sh && \
 # Build and install RediSearch using project script
 # Build in /data so output lands at /data/deps/RediSearch/bin/, which is one of
 # graph/build.rs's absolute fallbacks -- no symlink needed.
-RUN chmod +x redisearch.sh && \
+# RediSearch's redisearch_rs build scripts find their source root by walking up
+# for a `.git` entry (build_utils::git_root; existence check only, never invokes
+# git). All git metadata is .dockerignore'd, so create an empty marker -- see
+# .dockerignore for why this is a marker rather than the real gitlink.
+RUN mkdir -p /data/deps/RediSearch/.git && \
+    chmod +x redisearch.sh && \
     ./redisearch.sh
 
 WORKDIR /workspace

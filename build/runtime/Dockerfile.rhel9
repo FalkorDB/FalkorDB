@@ -60,8 +60,16 @@ RUN CC=clang CXX=clang++ LAGRAPH_INSTALL_DIR=/data/lagraph_lib /data/graphblas.s
     rm -rf /data/graphblas.sh /data/build
 
 # RediSearch (static) → /data/deps/RediSearch/bin
+# Source comes from the deps/RediSearch submodule in the build context (git owns
+# the pin; redisearch.sh only builds). Needs `submodules: recursive` on checkout.
 COPY redisearch.sh /data/redisearch.sh
-RUN CC=clang CXX=clang++ bash /data/redisearch.sh && \
+COPY deps/RediSearch /data/deps/RediSearch
+# RediSearch's redisearch_rs build scripts find their source root by walking up
+# for a `.git` entry (build_utils::git_root; existence check only, never invokes
+# git). All git metadata is .dockerignore'd, so create an empty marker -- see
+# .dockerignore for why this is a marker rather than the real gitlink.
+RUN mkdir -p /data/deps/RediSearch/.git && \
+    CC=clang CXX=clang++ bash /data/redisearch.sh && \
     rm -f /data/redisearch.sh
 
 # Build the cdylib from the repo source. Deps resolve via graph/build.rs's

@@ -156,13 +156,27 @@ RUN cd /data && \
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 
-# Build the RediSearch 8.6 fork (falkordb/llapi-extensions-8.6) as an embeddable
-# static library. redisearch.sh is the single source of truth (also used for
-# local dev); output lands at /data/deps/RediSearch/bin/<variant>/, which
-# graph/build.rs discovers. Prune the source tree afterwards (keep only bin/) to
-# keep the toolchain image lean.
+# Build the RediSearch 8.6 fork as an embeddable static library. redisearch.sh
+# is the single source of truth for HOW (also used for local dev); the
+# deps/RediSearch submodule is the single source of truth for WHICH commit, so
+# the source is COPY'd in rather than cloned by the script. That makes this
+# layer's cache key the submodule's content: it turns over exactly when the pin
+# moves, with no SHA duplicated into a script to keep in step.
+#
+# Requires the build context to carry a populated submodule --
+# `submodules: recursive` on actions/checkout. deps/RediSearch/bin is
+# .dockerignore'd so a host-built (wrong-arch) output can never come along.
+#
+# Output lands at /data/deps/RediSearch/bin/<variant>/, which graph/build.rs
+# discovers. Prune the source afterwards (keep only bin/) to keep the image lean.
 COPY redisearch.sh /data/redisearch.sh
-RUN . /data/venv/bin/activate && \
+COPY deps/RediSearch /data/deps/RediSearch
+# RediSearch's redisearch_rs build scripts find their source root by walking up
+# for a `.git` entry (build_utils::git_root; existence check only, never invokes
+# git). All git metadata is .dockerignore'd, so create an empty marker -- see
+# .dockerignore for why this is a marker rather than the real gitlink.
+RUN mkdir -p /data/deps/RediSearch/.git && \
+    . /data/venv/bin/activate && \
     cd /data && \
     CC=clang-${CLANG_MAJOR} CXX=clang++-${CLANG_MAJOR} bash redisearch.sh && \
     find /data/deps/RediSearch -mindepth 1 -maxdepth 1 ! -name bin -exec rm -rf {} + && \

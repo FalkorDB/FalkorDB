@@ -83,8 +83,10 @@ RELEASE=1 VERBOSE=0 TEST=test_name ./flow.sh
 
 Before building, GraphBLAS and RediSearch must be compiled and installed:
 - GraphBLAS: `./graphblas.sh` or build manually with `make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on'`
-- RediSearch: `./redisearch.sh` (builds the `deps/RediSearch` submodule; the pinned
-  commit is `REDISEARCH_REF` in that script and must match the committed gitlink)
+- RediSearch: `git submodule update --init --recursive` then `./redisearch.sh`.
+  git owns `deps/RediSearch`; the script only builds what is checked out, and the
+  gitlink is the only record of the pinned commit. The Docker images COPY that
+  submodule in, so any workflow feeding one needs `submodules: recursive`.
 
 ### PreJIT kernels (`build/graphblas/PreJIT/`)
 
