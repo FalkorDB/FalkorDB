@@ -31,7 +31,8 @@ outg
 data
 tests/flow/logs
 tests/flow/csvs
-redisearch
+# legacy pre-submodule RediSearch checkout (now deps/RediSearch)
+/redisearch/
 lagraph_lib
 /GraphBLAS/
 /LAGraph/
