@@ -664,21 +664,43 @@ pub fn split_edge_filter(
     let IR::Filter(filter) = parent.data() else {
         return None;
     };
-    let constrains_only_edge = |e: &DynTree<ExprIR<Variable>>| {
-        let vars = collect_expr_variables(e);
-        vars.len() == 1 && vars.contains(&alias.id)
+    // Whether a subtree, walked in place, references only the edge alias.
+    // Deciding this before cloning matters: `DynTree::clone` allocates a whole
+    // new tree, and this runs on every execution of every fusable traverse.
+    let only_edge = |node: &orx_tree::DynNode<ExprIR<Variable>>| {
+        let mut saw_edge = false;
+        for n in node.walk::<Bfs>() {
+            if let ExprIR::Variable(v) = n {
+                if v.id != alias.id {
+                    return false;
+                }
+                saw_edge = true;
+            }
+        }
+        saw_edge
     };
-    let conjuncts: Vec<DynTree<ExprIR<Variable>>> = if matches!(filter.root().data(), ExprIR::And) {
-        filter
-            .root()
-            .children()
-            .map(|c| c.clone_as_tree())
-            .collect()
-    } else {
-        vec![DynTree::clone(filter)]
-    };
-    let (mine, theirs): (Vec<_>, Vec<_>) =
-        conjuncts.into_iter().partition(|c| constrains_only_edge(c));
+
+    if !matches!(filter.root().data(), ExprIR::And) {
+        // Single predicate: it either belongs to the edge whole or not at all,
+        // and when it does the fused expression *is* the filter — share the
+        // existing `Arc` rather than copying the tree.
+        return Some(if only_edge(&filter.root()) {
+            (Some(Arc::clone(filter)), vec![])
+        } else {
+            (None, vec![DynTree::clone(filter)])
+        });
+    }
+
+    // Conjunction: classify each child in place, then clone only what is kept.
+    let mut mine = vec![];
+    let mut theirs = vec![];
+    for c in filter.root().children() {
+        if only_edge(&c) {
+            mine.push(c.clone_as_tree());
+        } else {
+            theirs.push(c.clone_as_tree());
+        }
+    }
     let fused = match mine.len() {
         0 => None,
         1 => Some(Arc::new(mine.into_iter().next().unwrap())),
