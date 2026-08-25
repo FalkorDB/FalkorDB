@@ -344,6 +344,43 @@ class testConfig(FlowTestsBase):
         expected_response = 1024
         self.env.assertEqual(creation_buffer_size, expected_response)
 
+    def test12_set_get_runtime_booleans(self):
+        """CMD_INFO and DELAY_INDEXING are settable at run-time, as in C"""
+
+        for config_name in ["CMD_INFO", "DELAY_INDEXING"]:
+            for value, expected in [("no", 0), ("yes", 1), ("0", 0), ("1", 1)]:
+                self.env.assertEqual(self.db.config_set(config_name, value), "OK")
+                self.env.assertEqual(self.db.config_get(config_name), expected)
+
+            # a non-boolean value is rejected, leaving the config as it was
+            try:
+                self.db.config_set(config_name, "maybe")
+                assert(False)
+            except redis.ResponseError as e:
+                assert(("Failed to set config value %s to maybe" % config_name) in str(e))
+            self.env.assertEqual(self.db.config_get(config_name), 1)
+
+        # restore defaults for the tests that follow
+        self.db.config_set("DELAY_INDEXING", "no")
+
+    def test13_set_get_max_info_queries(self):
+        """MAX_INFO_QUERIES is settable at run-time, and clamped to its cap"""
+
+        self.env.assertEqual(self.db.config_set("MAX_INFO_QUERIES", 42), "OK")
+        self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 42)
+
+        # above the cap the value is clamped, not rejected - as C's setter does
+        self.env.assertEqual(self.db.config_set("MAX_INFO_QUERIES", 99999), "OK")
+        self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 1000)
+
+        for invalid in [-1, "invalid"]:
+            try:
+                self.db.config_set("MAX_INFO_QUERIES", invalid)
+                assert(False)
+            except redis.ResponseError as e:
+                assert(("Failed to set config value MAX_INFO_QUERIES to %s" % invalid) in str(e))
+        self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 1000)
+
 import stat
 import shutil
 import tempfile
@@ -496,3 +533,13 @@ class testLoadTimeConfig(FlowTestsBase):
                 val = False
 
             env.assertEqual(db.config_get(name), val)
+
+    def test02_loadtime_max_info_queries(self):
+        """MAX_INFO_QUERIES honours its load-time argument, up to the cap"""
+
+        env, db = Env(moduleArgs="MAX_INFO_QUERIES 500")
+        env.assertEqual(db.config_get("MAX_INFO_QUERIES"), 500)
+
+        # over the cap the value is clamped rather than refused
+        env, db = Env(moduleArgs="MAX_INFO_QUERIES 99999")
+        env.assertEqual(db.config_get("MAX_INFO_QUERIES"), 1000)

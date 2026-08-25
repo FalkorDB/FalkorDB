@@ -28,10 +28,20 @@ on:
           per-OS Dockerfiles; `cxx` is the C++ compiler passed to the builder.
         required: true
         type: string
-      commit_sha:
-        description: "Commit SHA to check out and build"
+      revision:
+        description: "Git revision (commit SHA) to check out and build"
         required: true
         type: string
+      trusted_revision:
+        description: >-
+          Whether `revision` is already-reviewed code (release tags, the default
+          branch, a maintainer dispatch). Defaults to FALSE — a caller must opt
+          in — so a caller that forwards a pull-request head is untrusted by
+          construction. Untrusted builds never WRITE a build cache, which is what
+          keeps a PR build from poisoning the layers a later release build reuses.
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -48,12 +58,15 @@ jobs:
       # safe even though it builds caller-supplied (potentially PR) code: no
       # GITHUB_TOKEN is left on disk and the job cannot write anything. Callers
       # do not pass `secrets: inherit`, so no custom secrets reach the build.
+      # The remaining cross-run risk — an untrusted build writing a cache that a
+      # later trusted build consumes — is closed by the `trusted_revision` gate
+      # on `cache-to` below.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.commit_sha }}
+          ref: ${{ inputs.revision }}
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -85,8 +98,11 @@ jobs:
             CXX=${{ matrix.cxx }}
           # Per-suffix GitHub Actions cache so each platform's build layers are
           # independent and sticky across runs (no packages:write needed).
+          # Untrusted revisions READ the cache but never write it: a PR build
+          # compiles attacker-controlled sources, so letting it publish layers
+          # would let it seed the cache a later release build restores.
           cache-from: type=gha,scope=artifact-${{ matrix.suffix }}
-          cache-to: type=gha,mode=max,scope=artifact-${{ matrix.suffix }}
+          cache-to: ${{ inputs.trusted_revision && format('type=gha,mode=max,scope=artifact-{0}', matrix.suffix) || '' }}
 
       - name: Stage + checksum
         env:

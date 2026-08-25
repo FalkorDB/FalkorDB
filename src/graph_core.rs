@@ -50,7 +50,6 @@ use graph::{
     },
     planner::{IR, plan_is_non_deterministic},
     runtime::{
-        eval::evaluate_param,
         pending::{
             EFFECT_CREATE_INDEX, EFFECT_DROP_INDEX, EFFECTS_VERSION, write_string, write_u16,
         },
@@ -492,10 +491,6 @@ pub fn execute_query(
         params_offset,
         ..
     } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
-    let parameters = parameters
-        .into_iter()
-        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-        .collect::<Result<HashMap<_, _>, String>>()?;
     // Single pass over the plan: index DDL (CREATE/DROP INDEX) and a Commit
     // node both mean this is a write. Writes escalate to writer mode lazily
     // during execution (see `crate::query_session`), so no further plan
@@ -583,10 +578,6 @@ pub fn execute_profile(
     if is_write {
         return Ok(ProfileDetect::Write);
     }
-    let parameters = parameters
-        .into_iter()
-        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-        .collect::<Result<HashMap<_, _>, String>>()?;
     let g = session.with_graph(|tg| tg.graph.read());
     let timeout_ms = compute_effective_timeout(per_query_timeout, false)?;
     let runtime = Runtime::new(
@@ -640,10 +631,6 @@ pub fn execute_query_write(
         ..
     } = session.with_graph(|tg| tg.graph.read().borrow().get_plan(query))?;
     let cached = first_cached;
-    let parameters = parameters
-        .into_iter()
-        .map(|(k, v)| Ok((k, evaluate_param(&v.root())?)))
-        .collect::<Result<HashMap<_, _>, String>>()?;
     debug_assert!(plan.iter().any(|n| matches!(
         n,
         IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
@@ -1093,7 +1080,7 @@ pub fn query_mut(
                             is_write: false,
                             timed_out: read_result.timed_out,
                         };
-                        telemetry::enqueue_entry(&key_name, entry);
+                        telemetry::enqueue_entry(&key_name, &graph, entry);
                         drop(bc);
                         unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     }
@@ -1190,7 +1177,7 @@ fn query_sync(
                             is_write: true,
                             timed_out: false,
                         };
-                        telemetry::enqueue_entry(key_name, entry);
+                        telemetry::enqueue_entry(key_name, graph, entry);
                     }
                     Err(err) => {
                         // execute_query_write already released the MVCC write
@@ -1218,7 +1205,7 @@ fn query_sync(
                     is_write: false,
                     timed_out: read_result.timed_out,
                 };
-                telemetry::enqueue_entry(key_name, entry);
+                telemetry::enqueue_entry(key_name, graph, entry);
             }
         }
         Err(err) => {
@@ -1473,6 +1460,11 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // The session lives only for this block, so its locks are released — the read
         // lock, or the GIL + write lock if the query escalated — on every path out,
         // including the error returns, and before the reply below.
+        //
+        // Plain `begin`: a client sent this write to this instance, so escalation
+        // re-authorizes it against the pause state and role that are live *then* — both
+        // can have changed since it was admitted and queued. Replicated commands never
+        // reach here; they run inline (see `query_mut`).
         let res = execute_query_write(
             QuerySession::begin(graph),
             &ctx,
@@ -1509,7 +1501,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     is_write: true,
                     timed_out: false,
                 };
-                telemetry::enqueue_entry(&key_name, entry);
+                telemetry::enqueue_entry(&key_name, graph, entry);
                 drop(bc);
             }
             Err(err) => {

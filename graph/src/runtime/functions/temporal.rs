@@ -693,7 +693,11 @@ pub fn register(funcs: &mut Functions) {
 
     // ── date() ──
     cypher_fn!(funcs, "date",
-        var_arg: Type::union([Type::Map, Type::String, Type::Null]),
+        args: [Type::Optional(Box::new(Type::union([
+            Type::Map,
+            Type::String,
+            Type::Null,
+        ])))],
         ret: Type::union([Type::Date, Type::Null]),
         non_deterministic,
         fn date_fn(_, args) {
@@ -710,7 +714,11 @@ pub fn register(funcs: &mut Functions) {
 
     // ── localtime() ──
     cypher_fn!(funcs, "localtime",
-        var_arg: Type::union([Type::Map, Type::String, Type::Null]),
+        args: [Type::Optional(Box::new(Type::union([
+            Type::Map,
+            Type::String,
+            Type::Null,
+        ])))],
         ret: Type::union([Type::Time, Type::Null]),
         non_deterministic,
         fn localtime_fn(_, args) {
@@ -729,7 +737,11 @@ pub fn register(funcs: &mut Functions) {
 
     // ── localdatetime() ──
     cypher_fn!(funcs, "localdatetime",
-        var_arg: Type::union([Type::Map, Type::String, Type::Null]),
+        args: [Type::Optional(Box::new(Type::union([
+            Type::Map,
+            Type::String,
+            Type::Null,
+        ])))],
         ret: Type::union([Type::Datetime, Type::Null]),
         non_deterministic,
         fn localdatetime_fn(_, args) {
