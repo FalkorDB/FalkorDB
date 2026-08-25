@@ -356,7 +356,7 @@ DijkstraCtx *DijkstraCtx_New
 	int relationCount,
 	AttributeID weight_prop
 ) {
-	DijkstraCtx *dc = rm_calloc(1, sizeof(DijkstraCtx));
+	DijkstraCtx *dc = rm_calloc (1, sizeof(DijkstraCtx));
 
 	dc->g                = g;
 	dc->dir              = dir;
@@ -402,10 +402,10 @@ static inline void _DijkstraCtx_Reset
 (
 	DijkstraCtx *dc
 ) {
-	NodeMap_clear(&dc->label_idx);
-	arr_clear(dc->labels);
-	DijkstraHeap_clear(&dc->heap);
-	arr_clear(dc->neighbors);
+	NodeMap_clear (&dc->label_idx);
+	arr_clear (dc->labels);
+	DijkstraHeap_clear (&dc->heap);
+	arr_clear (dc->neighbors);
 }
 
 bool DijkstraCtx_Run
@@ -421,7 +421,7 @@ bool DijkstraCtx_Run
 	// single-pair mode stops as soon as 'dst' is finalized; single-source
 	// mode (dst == INVALID_ENTITY_ID) runs to completion over the whole
 	// reachable component.
-	bool early = (dst_id != (NodeID)INVALID_ENTITY_ID);
+	bool early = (dst_id != (NodeID) INVALID_ENTITY_ID);
 
 	// initialization: seed the source node with distance 0 and no parent
 	// (it parents itself, which also makes DijkstraCtx_Path's "cur != src_id"
@@ -569,7 +569,6 @@ bool DijkstraCtx_Run
 			arr_clear(dc->neighbors);
 		}
 	}
-
 	// single-pair: report whether dst was reached. single-source: the run
 	// always completes; the caller reads results via DijkstraCtx_Distance.
 	return early ? found : true;
@@ -638,12 +637,12 @@ void DijkstraCtx_Free
 		return;
 	}
 
-	DijkstraHeap_free(&dc->heap);
-	NodeMap_free(&dc->label_idx);
-	arr_free(dc->labels);
-	arr_free(dc->neighbors);
-	rm_free(dc->iters);
-	rm_free(dc);
+	DijkstraHeap_free (&dc->heap);
+	NodeMap_free (&dc->label_idx);
+	arr_free (dc->labels);
+	arr_free (dc->neighbors);
+	rm_free (dc->iters);
+	rm_free (dc);
 }
 
 //------------------------------------------------------------------------------

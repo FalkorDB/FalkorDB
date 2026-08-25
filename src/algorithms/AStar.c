@@ -578,23 +578,23 @@ static Path *_concat
 	uint i,
 	const Path *spur
 ) {
-	uint spur_nodes = Path_NodeCount((Path *)spur);
-	uint spur_edges = Path_EdgeCount((Path *)spur);
+	uint spur_nodes = Path_NodeCount(spur);
+	uint spur_edges = Path_EdgeCount(spur);
 
 	Path *total = Path_New(i + 1 + spur_nodes);
 
 	for(uint j = 0; j <= i; j++) {
-		Path_AppendNode(total, *Path_GetNode((Path *)prev, j));
+		Path_AppendNode(total, *Path_GetNode(prev, j));
 	}
 	for(uint j = 0; j < i; j++) {
-		Path_AppendEdge(total, *Path_GetEdge((Path *)prev, j));
+		Path_AppendEdge(total, *Path_GetEdge(prev, j));
 	}
 
 	for(uint j = 1; j < spur_nodes; j++) {
-		Path_AppendNode(total, *Path_GetNode((Path *)spur, j));
+		Path_AppendNode(total, *Path_GetNode(spur, j));
 	}
 	for(uint j = 0; j < spur_edges; j++) {
-		Path_AppendEdge(total, *Path_GetEdge((Path *)spur, j));
+		Path_AppendEdge(total, *Path_GetEdge(spur, j));
 	}
 
 	return total;
@@ -652,7 +652,7 @@ uint AStar_KShortestPaths
 	dict *blocked_edges = HashTableCreate(&def_dt);
 
 	while(arr_len(A) < k) {
-		Path *prev       = A[arr_len(A) - 1];
+		Path *prev       = arr_tail (A);
 		uint  prev_nodes = Path_NodeCount(prev);
 
 		// spur node ranges over prev's nodes [0 .. prev_nodes-2] (its last node

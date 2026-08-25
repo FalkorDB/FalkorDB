@@ -31,7 +31,7 @@ typedef struct {
 	                              // 'targetNode', same convention as
 	                              // proc_sp_paths.c's SinglePairCtx.dst
 	Graph *g;                    // graph to traverse
-	int *relationIDs;            // edge type(s) to traverse
+	RelationID *relationIDs;     // edge type(s) to traverse
 	Tensor *relationMatrices;    // relation matrix per relationIDs entry
 	int relationCount;           // length of relationIDs
 	GRAPH_EDGE_DIR dir;          // traverse direction
@@ -52,20 +52,20 @@ static void AStarCtx_Free
 (
 	AStarCtx *ctx
 ) {
-	if(ctx == NULL) return;
+	if (ctx == NULL) return;
 
 	// free any result paths not yet emitted (the emitted ones were consumed by
 	// SIPath_Wrap or Path_Free in the step function).
-	if(ctx->paths != NULL) {
+	if (ctx->paths != NULL) {
 		for(uint i = ctx->cursor; i < arr_len(ctx->paths); i++) {
 			Path_Free(ctx->paths[i]);
 		}
 		arr_free(ctx->paths);
 	}
-	if(ctx->weights != NULL) arr_free(ctx->weights);
+	if (ctx->weights != NULL) arr_free(ctx->weights);
 
-	if(ctx->relationIDs)      arr_free(ctx->relationIDs);
-	if(ctx->relationMatrices) arr_free(ctx->relationMatrices);
+	if (ctx->relationIDs)      arr_free(ctx->relationIDs);
+	if (ctx->relationMatrices) arr_free(ctx->relationMatrices);
 
 	rm_free(ctx);
 }
@@ -160,7 +160,7 @@ static ProcedureResult validate_config
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	Graph *g = QueryCtx_GetGraph();
-	int *types = NULL;
+	RelationID *types = NULL;
 	uint types_count = 0;
 	if(relationships_exists) {
 		if(SI_TYPE(relationships) != T_ARRAY ||
@@ -170,7 +170,7 @@ static ProcedureResult validate_config
 		}
 		types_count = SIArray_Length(relationships);
 		if(types_count > 0) {
-			types = arr_new(int, types_count);
+			types = arr_new(RelationID, types_count);
 			for(uint i = 0; i < types_count; i++) {
 				SIValue rel = SIArray_Get(relationships, i);
 				const char *type = rel.stringval;
@@ -186,9 +186,9 @@ static ProcedureResult validate_config
 		// GRAPH_NO_RELATION wildcard through) so each one can be resolved
 		// to a matrix and cached once below.
 		types_count = Graph_RelationTypeCount(g);
-		types = arr_new(int, types_count);
+		types = arr_new(RelationID, types_count);
 		for(uint i = 0; i < types_count; i++) {
-			arr_append(types, (int)i);
+			arr_append(types, (RelationID)i);
 		}
 	}
 

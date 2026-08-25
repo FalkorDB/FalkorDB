@@ -50,7 +50,7 @@ typedef struct {
 	Path *path;                  // current path
 	Graph *g;                    // graph to traverse
 	Edge *neighbors;             // reusable buffer of edges along the current path
-	int *relationIDs;            // edge type(s) to traverse
+	RelationID *relationIDs;     // edge type(s) to traverse
 	Tensor *relationMatrices;    // relation matrix per relationIDs entry, synced once up front
 	int relationCount;           // length of relationIDs
 	GRAPH_EDGE_DIR dir;          // traverse direction
@@ -171,7 +171,7 @@ static void SinglePairCtx_New
 	Node *src,
 	Node *dst,
 	Graph *g,
-	int *relationIDs,
+	RelationID *relationIDs,
 	int relationCount,
 	GRAPH_EDGE_DIR dir,
 	int64_t minLen,
@@ -269,7 +269,7 @@ static ProcedureResult validate_config
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	Graph *g = QueryCtx_GetGraph();
-	int *types = NULL;
+	RelationID *types = NULL;
 	uint types_count = 0;
 	if(relationships_exists) {
 		if(SI_TYPE(relationships) != T_ARRAY || 
@@ -279,7 +279,7 @@ static ProcedureResult validate_config
 		}
 		types_count = SIArray_Length(relationships);
 		if(types_count > 0) {
-			types = arr_new(int, types_count);
+			types = arr_new(RelationID, types_count);
 			for (uint i = 0; i < types_count; i++) {
 				SIValue rel = SIArray_Get(relationships, i);
 				const char *type = rel.stringval;
@@ -295,9 +295,9 @@ static ProcedureResult validate_config
 		// GRAPH_NO_RELATION wildcard through) so each one can be resolved
 		// to a matrix and cached once in SinglePairCtx_New below.
 		types_count = Graph_RelationTypeCount(g);
-		types = arr_new(int, types_count);
+		types = arr_new(RelationID, types_count);
 		for(uint i = 0; i < types_count; i++) {
-			arr_append(types, (int)i);
+			arr_append(types, (RelationID)i);
 		}
 	}
 
