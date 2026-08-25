@@ -101,3 +101,58 @@ class testFilters():
         plan = self.g.explain(q)
         self.env.assertFalse('Filter' in plan)
 
+
+    def test05_bulk_filter_matches_scalar_eval(self):
+        # A filter on `var.prop <op> constant` runs through the columnar
+        # comparison kernels, while the same expression in a RETURN is
+        # evaluated per row. The two must agree for every property type.
+        #
+        # Issue #2582: the kernel answered `false` for every non-string cell of
+        # `prop <> 'string'`, so `WHERE n.v <> 'abc'` dropped rows that
+        # `RETURN n.v <> 'abc'` called true, and `WHERE a AND b` disagreed with
+        # `WHERE a WITH n WHERE b`.
+        g = self.db.select_graph("bulk_filter_parity")
+        g.query("""CREATE (:V {k:'int', v:1}), (:V {k:'float', v:1.5}),
+                          (:V {k:'bool', v:true}), (:V {k:'str', v:'abc'}),
+                          (:V {k:'other', v:'Dhaka'}), (:V {k:'list', v:[1,2]}),
+                          (:V {k:'missing'})""")
+        g.query("MATCH (n:V {k:'point'}) DELETE n")
+        g.query("CREATE (:V {k:'point'})")
+        g.query("MATCH (n:V {k:'point'}) SET n.v = point({latitude:31.18, longitude:34.22})")
+
+        for op in ['=', '<>', '<', '<=', '>', '>=']:
+            for const in ["'abc'", '1', '1.5', 'true']:
+                # what the per-row evaluator says, keyed by node
+                scalar = g.query(f"MATCH (n:V) RETURN n.k, n.v {op} {const} ORDER BY n.k")
+                expected = sorted([[k] for k, r in scalar.result_set if r is True])
+                # what the columnar kernel says for the same predicate
+                bulk = g.query(f"MATCH (n:V) WHERE n.v {op} {const} RETURN n.k ORDER BY n.k")
+                self.env.assertEqual(sorted(bulk.result_set), expected)
+
+        # `WHERE a AND b` must equal `WHERE a WITH n WHERE b`: the first is one
+        # conjunction kernel, the second two separate filters.
+        conj = g.query("MATCH (n:V) WHERE n.k <> 'zz' AND n.v <> 'abc' RETURN n.k ORDER BY n.k")
+        split = g.query("MATCH (n:V) WHERE n.k <> 'zz' WITH n WHERE n.v <> 'abc' RETURN n.k ORDER BY n.k")
+        self.env.assertEqual(conj.result_set, split.result_set)
+        # and parentheses, which keep the predicate off the kernel, must not
+        # change the answer either
+        paren = g.query("MATCH (n:V) WHERE (n.v <> 'abc') RETURN n.k ORDER BY n.k")
+        plain = g.query("MATCH (n:V) WHERE n.v <> 'abc' RETURN n.k ORDER BY n.k")
+        self.env.assertEqual(paren.result_set, plain.result_set)
+
+    def test06_bulk_paths_keep_integer_precision(self):
+        # A mixed int/float property column must not be promoted to f64 by the
+        # bulk paths: 9007199254740993 and 9007199254740992 are the same double,
+        # so promotion would make the filter match the wrong row, print the
+        # wrong number, and merge two grouping keys into one.
+        g = self.db.select_graph("bulk_precision")
+        g.query("CREATE (:P {v: 9007199254740993}), (:P {v: 1.5})")
+
+        res = g.query("MATCH (n:P) WHERE n.v = 9007199254740992 RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        res = g.query("MATCH (n:P) WHERE n.v = 9007199254740993 RETURN n.v")
+        self.env.assertEqual(res.result_set, [[9007199254740993]])
+
+        res = g.query("MATCH (n:P) WITH n.v AS k, count(*) AS c RETURN k ORDER BY k")
+        self.env.assertEqual(res.result_set, [[1.5], [9007199254740993]])
