@@ -40,7 +40,7 @@
 use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
-    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    graph_core::{BlockedClient, ThreadedGraph, ffi, up_to_nul},
     redis_type::GRAPH_TYPE,
 };
 use graph::threadpool::spawn;
@@ -127,12 +127,10 @@ fn memory_report(
     ));
     let mut label_attrs = Vec::new();
     for (name, mb) in &node_attr_by_label_mb {
-        // A bulk string, not a `SimpleString`: a label name is whatever the query
-        // that created it said, and replying with a RESP status runs it through
-        // `CString::new(..).unwrap()`, which aborted the process for a label holding
-        // an interior NUL (#2490). C replies to these with
-        // `RM_ReplyWithCString(Schema_GetName(s))`, which is a bulk string too.
-        label_attrs.push(RedisValue::BulkString(name.clone()));
+        // C replies these with `RM_ReplyWithCString(Schema_GetName(s))`, which ends at
+        // the first NUL. A query can no longer put one in a label name, but a name
+        // decoded from an RDB written before that still has to reply, not abort.
+        label_attrs.push(RedisValue::SimpleString(up_to_nul(name).to_owned()));
         label_attrs.push(RedisValue::Integer(*mb));
     }
     out.push(RedisValue::Array(label_attrs));
@@ -155,8 +153,8 @@ fn memory_report(
     ));
     let mut type_attrs = Vec::new();
     for (name, mb) in &edge_attr_by_type_mb {
-        // A bulk string for the same reason as the label names above.
-        type_attrs.push(RedisValue::BulkString(name.clone()));
+        // Truncated as the label names above are.
+        type_attrs.push(RedisValue::SimpleString(up_to_nul(name).to_owned()));
         type_attrs.push(RedisValue::Integer(*mb));
     }
     out.push(RedisValue::Array(type_attrs));

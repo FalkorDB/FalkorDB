@@ -20,7 +20,10 @@
 
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, query_mut, reply_invalid_graph_version},
+    graph_core::{
+        ThreadedGraph, c_graph_key, c_graph_name, query_mut, register_graph,
+        reply_invalid_graph_version, up_to_nul,
+    },
     redis_type::GRAPH_TYPE,
 };
 use parking_lot::RwLock;
@@ -41,7 +44,8 @@ pub fn graph_query(
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
-    let query = args.next_str()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
 
     #[cfg(feature = "fuzz")]
     {
@@ -71,8 +75,10 @@ pub fn graph_query(
     }
 
     // Try read-only key access first to avoid triggering WATCH on existing graphs.
+    // The lookup is by the key the command named, the *name* is the one C derives from
+    // it — those differ once the key holds a NUL. See `c_graph_name`.
     let read_key = ctx.open_key(&key_str);
-    let key_name: Arc<str> = Arc::from(key_str.to_string());
+    let key_name: Arc<str> = Arc::from(c_graph_name(&key_str));
 
     if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         let graph = graph.clone();
@@ -109,9 +115,10 @@ pub fn graph_query(
         );
     }
 
+    let name = key_name.to_string();
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-        &key_str.to_string(),
+        &name,
     )));
 
     // For a newly-created graph, the initial schema_version is 0. Checked
@@ -134,7 +141,13 @@ pub fn graph_query(
         timeout,
         None,
     );
-    key.set_value(&GRAPH_TYPE, graph.clone())?;
-    crate::graph_core::register_graph(key_str.to_string(), graph);
+    // Stored under the name, not under the key that was looked up — this is
+    // `GraphContext_SetKey`, and it is why a graph addressed as `a\0b` lands at key
+    // `a`, replacing whatever graph was there. `key` is dropped unset, leaving the
+    // addressed key absent, exactly as in C.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+    drop(key);
+    create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+    register_graph(name, graph);
     result
 }

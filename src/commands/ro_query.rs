@@ -17,7 +17,7 @@
 
 use crate::{
     commands::EMPTY_KEY_ERR,
-    graph_core::{ThreadedGraph, query_mut},
+    graph_core::{ThreadedGraph, c_graph_name, query_mut, up_to_nul},
     redis_type::GRAPH_TYPE,
 };
 use parking_lot::RwLock;
@@ -30,7 +30,8 @@ pub fn graph_ro_query(
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
-    let query = args.next_str()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
     let mut compact = false;
     let mut track_memory = false;
     let mut version_check: Option<u64> = None;
@@ -52,7 +53,7 @@ pub fn graph_ro_query(
         }
     }
 
-    let key_name: Arc<str> = Arc::from(key.to_string());
+    let key_name: Arc<str> = Arc::from(c_graph_name(&key));
     let key = ctx.open_key(&key);
 
     (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(EMPTY_KEY_ERR, |graph| {

@@ -29,6 +29,7 @@ use crate::config::{
     OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
     get_thread_count, normalize_node_creation_buffer,
 };
+use crate::graph_core::up_to_nul;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::{
@@ -573,12 +574,14 @@ unsafe extern "C" fn on_keyspace_event(
 
     match event_str {
         "rename_from" => {
-            *RENAME_OLD_NAME.lock() = Some(key_name.to_string());
+            // Names, not keys: C's handler hands `GraphContext_Rename` a C string, so
+            // both sides of a rename are truncated at their first NUL.
+            *RENAME_OLD_NAME.lock() = Some(up_to_nul(key_name).to_string());
         }
         "rename_to" => {
             let old = RENAME_OLD_NAME.lock().take();
             if let Some(old_name) = old {
-                crate::graph_core::rename_graph(&old_name, key_name);
+                crate::graph_core::rename_graph(&old_name, up_to_nul(key_name));
                 let context = Context::new(ctx);
                 telemetry::delete_stream(&context, &old_name);
             }

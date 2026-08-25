@@ -1,6 +1,9 @@
 use crate::{
-    commands::EMPTY_KEY_ERR, config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph,
-    redis_type::GRAPH_TYPE, serializers,
+    commands::EMPTY_KEY_ERR,
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{ThreadedGraph, c_graph_key, c_graph_name},
+    redis_type::GRAPH_TYPE,
+    serializers,
 };
 use graph::graph::graphblas::matrix::set_nthreads;
 use graph::graph::mvcc_graph::MvccGraph;
@@ -139,8 +142,11 @@ pub fn graph_copy(
     let tg = ThreadedGraph::from_mvcc(mvcc);
     let boxed = Arc::new(RwLock::new(tg));
 
-    dest_key.set_value(&GRAPH_TYPE, boxed.clone())?;
-    crate::graph_core::register_graph(dest_name.to_string(), boxed);
+    // Attached under C's name, at the key rebuilt from it — see `c_graph_key`.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &dest_key_name));
+    drop(dest_key);
+    create_key.set_value(&GRAPH_TYPE, boxed.clone())?;
+    crate::graph_core::register_graph(c_graph_name(&dest_key_name), boxed);
 
     // Replicate via GRAPH.RESTORE so replicas receive the serialized graph data.
     ctx.replicate("GRAPH.RESTORE", &[dest_name.as_bytes(), &serialized]);
