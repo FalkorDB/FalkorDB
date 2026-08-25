@@ -878,16 +878,25 @@ impl<'a> ExprEval<'a> {
                     // child values into a stack array and dispatch the
                     // slice-based struct_fn directly. Bypasses the per-row
                     // ThinVec<Value> heap alloc, the validate_args_type walk,
-                    // and the Arc<RuntimeFn> dispatch hop. The
-                    // `num_children > 1` guard distinguishes the rewritten
-                    // positional form from the regular `duration({...})` call
-                    // with a single Map argument. Max 10 slots
-                    // (matches `localdatetime`).
+                    // and the Arc<RuntimeFn> dispatch hop.
+                    //
+                    // The guard must be an *equality* against the slot count.
+                    // `rewrite_struct_constructor` only rewrites a call with a
+                    // single Map argument, and always emits exactly one child
+                    // per slot (absent keys become `Constant(Null)`), so any
+                    // other arity did not come from the rewrite. A `> 1` test
+                    // let a genuine multi-argument call — these constructors are
+                    // declared `var_arg`, so arity validation accepts one — reach
+                    // a `struct_fn` expecting `slots.len()` values. With two
+                    // arguments `localdatetime` then read `args[3]` of a 2-slice:
+                    // a debug assertion in test builds, an out-of-bounds index
+                    // that killed the server in release.
                     if let Some(struct_fn) = func.struct_fn
-                        && node.num_children() > 1
+                        && !func.struct_slots.is_empty()
+                        && node.num_children() == func.struct_slots.len()
                     {
                         let n = node.num_children();
-                        debug_assert!(n <= 10);
+                        debug_assert!(n <= 10, "struct slots exceed the stack array");
                         let mut slots: [Value; 10] = std::array::from_fn(|_| Value::Null);
                         for (i, child) in node.children().enumerate() {
                             if !matches!(child.data(), ExprIR::Constant(Value::Null)) {

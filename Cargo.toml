@@ -22,6 +22,7 @@ name = "falkordb"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+thiserror = "2"
 atomic_refcell = "0.1.14"
 crossfire = "3.1.19"
 graph = { path = "graph", version = "0.1.0" }
@@ -49,7 +50,7 @@ lto = true
 
 # Release performance (LTO on, so it mirrors the shipped build) plus full
 # DWARF debuginfo so `perf --call-graph dwarf` can unwind + symbolize (incl.
-# inlined frames) for flame graphs. Not stripped. Used by profile.sh.
+# inlined frames) for flame graphs. Not stripped. Used by `bench profile`.
 [profile.profiling]
 inherits = "release"
 debug = true

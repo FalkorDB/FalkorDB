@@ -450,6 +450,37 @@ impl Pending {
         }
     }
 
+    /// What this query has staged about `label` on `id`: `Some(true)` if it was
+    /// added, `Some(false)` if it was removed, `None` if this query says nothing
+    /// about it and the committed label matrix is the answer.
+    ///
+    /// The precedence is [`Self::update_node_labels`]'s, which applies the adds
+    /// and then the removals, so a removal wins — the two must agree, since they
+    /// answer the same question for the same node.
+    pub fn node_has_label(
+        &self,
+        id: NodeId,
+        label: LabelId,
+    ) -> Option<bool> {
+        let raw_id: u64 = id.into();
+        let label_id = usize::from(label) as u64;
+        if self
+            .remove_labels
+            .get(&raw_id)
+            .is_some_and(|removed| removed.contains(&label_id))
+        {
+            return Some(false);
+        }
+        if self
+            .set_labels
+            .get(&raw_id)
+            .is_some_and(|set| set.contains(&label_id))
+        {
+            return Some(true);
+        }
+        None
+    }
+
     pub fn update_node_labels(
         &self,
         id: NodeId,
@@ -898,8 +929,15 @@ impl Pending {
         }
         if !self.set_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.set_labels);
+            // Pairs for nodes created in this transaction cannot already be
+            // committed (fresh ids; a reclaimed id's stale entries carry dm
+            // tombstones), so a pure-create batch takes the unchecked insert.
+            let all_new = self
+                .set_labels
+                .keys()
+                .all(|id| self.created_nodes.contains(*id));
             g.borrow_mut()
-                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_add_docs);
+                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_add_docs, all_new);
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);

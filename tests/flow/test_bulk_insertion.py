@@ -3,6 +3,7 @@ import os
 import csv
 import time
 import random
+import struct
 import threading
 from common import *
 from click.testing import CliRunner
@@ -835,3 +836,163 @@ class testGraphBulkInsertFlow(FlowTestsBase):
         for edge_csv in edge_csvs:
             os.remove(edge_csv)
 
+    # Rows appended by GRAPH.BULK into a graph that ALREADY has an index must be indexed.
+    #
+    # GRAPH.BULK only creates a graph when the batch carries a BEGIN token; a batch
+    # without it appends to the existing graph. The official loader always begins on a
+    # fresh graph and adds its indexes afterwards, so it never exercises the append path
+    # against a live index — this test does, by reusing the loader's own serialization
+    # with the BEGIN token suppressed.
+    #
+    # Regression: the bulk path collected index documents *before* importing the
+    # attributes, so `has_attributes(id)` was always false and it collected none — then
+    # dropped the map without committing it. Nothing repaired it afterwards, because
+    # GRAPH.BULK does not run the post-load `populate_indexes_sync` rebuild.
+    def test13_bulk_append_into_indexed_graph(self):
+        from falkordb_bulk_loader.bulk_insert import parse_schemas, process_entities
+        from falkordb_bulk_loader.query_buffer import QueryBuffer
+        from falkordb_bulk_loader.config import Config
+        from falkordb_bulk_loader.label import Label
+        from falkordb_bulk_loader.relation_type import RelationType
+
+        graphname = "bulk_append_indexed"
+        graph = self.db.select_graph(graphname)
+
+        # Creates the graph AND the indexes, before any bulk data exists.
+        graph.query("CREATE INDEX FOR (n:N) ON (n.v)")
+        graph.query("CREATE INDEX FOR ()-[r:R]->() ON (r.w)")
+
+        node_csv, rel_csv = '/tmp/bulk_append_nodes.tmp', '/tmp/bulk_append_rels.tmp'
+        with open(node_csv, mode='w') as csv_file:
+            out = csv.writer(csv_file)
+            out.writerow(["v"])
+            for i in range(100):
+                out.writerow([i])
+        with open(rel_csv, mode='w') as csv_file:
+            out = csv.writer(csv_file)
+            out.writerow(["src", "dest", "w"])
+            for i in range(99):
+                out.writerow([i, i + 1, i])
+
+        # Append (no BEGIN) — the path the loader CLI cannot produce.
+        config = Config(store_node_identifiers=True)
+        buf = QueryBuffer(graphname, self.db.connection, config)
+        buf.initial_query = False
+        entities = parse_schemas(Label, buf, [], [('N', node_csv)], config)
+        entities += parse_schemas(RelationType, buf, [], [('R', rel_csv)], config)
+        process_entities(entities)
+        buf.send_buffer()
+        buf.wait_pool()
+
+        # An index-served count must equal the full-scan count; `+ 0` defeats index selection.
+        # Compare an index-served count against a full-scan count of the same rows: the
+        # `+ 0` defeats index selection, so the two agree only if the bulk-loaded rows
+        # actually reached the index.
+        #
+        # Pin that premise first. Without these two assertions the comparison silently
+        # degrades to scan-vs-scan the day the planner stops picking the index here, and
+        # the test would then pass with the fix reverted.
+        idx_n_query = "MATCH (n:N) WHERE n.v >= 0 RETURN count(n)"
+        scan_n_query = "MATCH (n:N) WHERE n.v + 0 >= 0 RETURN count(n)"
+        self.env.assertContains('Node By Index Scan', str(graph.explain(idx_n_query)))
+        self.env.assertNotContains('Node By Index Scan', str(graph.explain(scan_n_query)))
+
+        idx_n = graph.query(idx_n_query).result_set[0][0]
+        scan_n = graph.query(scan_n_query).result_set[0][0]
+        self.env.assertEqual(scan_n, 100)
+        self.env.assertEqual(idx_n, scan_n)
+
+        idx_e_query = "MATCH ()-[r:R]->() WHERE r.w >= 0 RETURN count(r)"
+        scan_e_query = "MATCH ()-[r:R]->() WHERE r.w + 0 >= 0 RETURN count(r)"
+        self.env.assertContains('Edge By Index Scan', str(graph.explain(idx_e_query)))
+        self.env.assertNotContains('Edge By Index Scan', str(graph.explain(scan_e_query)))
+
+        idx_e = graph.query(idx_e_query).result_set[0][0]
+        scan_e = graph.query(scan_e_query).result_set[0][0]
+        self.env.assertEqual(scan_e, 99)
+        self.env.assertEqual(idx_e, scan_e)
+
+        os.remove(node_csv)
+        os.remove(rel_csv)
+
+    # The declared node / edge counts size an id reservation directly, so they have to be
+    # bounded by what the payload can describe, and they have to be parsed as strictly as
+    # C parses them.
+    #
+    # Regression (#2426): the counts went straight to `Vec::with_capacity`, so
+    # `GRAPH.BULK g BEGIN 9223372036854775807 0 0 0` — no payload at all — overflowed the
+    # capacity computation, and the panic hook takes the process down. Every case below
+    # therefore re-checks that the server is still answering, not merely that the command
+    # returned an error.
+    def test14_declared_counts_are_bounded(self):
+        conn = self.db.connection
+        graphname = "bulk_counts"
+
+        def assert_rejected(*args):
+            try:
+                self.db.execute_command("GRAPH.BULK", graphname, "BEGIN", *args)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                # Still alive, and the rejected BEGIN batch left no key behind — otherwise
+                # the corrected re-run would trip the "already exists" guard.
+                self.env.assertTrue(conn.ping())
+                self.env.assertEqual(conn.exists(graphname), 0)
+                return str(e)
+
+        # one node token: label "N", one property "v", one BI_LONG record — 17 bytes total,
+        # of which a 9-byte record body describing a single node
+        node_token = b"N\0" + struct.pack("=I", 1) + b"v\0" + struct.pack("=Bq", 4, 7)
+        # one edge token: type "R", no properties, one 16-byte src/dest record
+        edge_token = b"R\0" + struct.pack("=I", 0) + struct.pack("=QQ", 0, 0)
+
+        #-----------------------------------------------------------------------
+        # counts with no payload to back them
+        #-----------------------------------------------------------------------
+
+        # i64::MAX: the crash
+        assert_rejected(9223372036854775807, 0, 0, 0)
+        assert_rejected(0, 9223372036854775807, 0, 0)
+        # below the overflow threshold, but still a 2.1B-id reservation
+        assert_rejected(2147483647, 0, 0, 0)
+        assert_rejected(0, 2147483647, 0, 0)
+
+        #-----------------------------------------------------------------------
+        # counts that outrun the payload they came with
+        #-----------------------------------------------------------------------
+
+        assert_rejected(1000000, 0, 1, 0, node_token)
+        assert_rejected(0, 1000000, 0, 1, edge_token)
+
+        # The ceiling counts records, not bytes: the node token is 17 bytes long but only 9
+        # of them are record body, and a record costs at least one byte per declared
+        # property. Ten nodes is under the byte count and still impossible.
+        assert_rejected(10, 0, 1, 0, node_token)
+        # Two edges need 32 bytes of endpoints; the token carries 16.
+        assert_rejected(0, 2, 0, 1, edge_token)
+
+        #-----------------------------------------------------------------------
+        # count parsing, against C's `string2ll`
+        #-----------------------------------------------------------------------
+
+        for bad in ["010", "+10", "-5", " 10", "10 ", "1e1", "1.5", "0x0a", "",
+                    "9223372036854775808"]:
+            self.env.assertContains("Error parsing node count.",
+                                    assert_rejected(bad, 0, 0, 0))
+        # each count reports itself, so a mis-ordered read would show up here
+        self.env.assertContains("Error parsing relation count.",
+                                assert_rejected(0, "+10", 0, 0))
+
+        #-----------------------------------------------------------------------
+        # positive control, on the very name every case above was rejected under:
+        # an honest batch still loads, and nothing the rejections left behind
+        # stands in its way
+        #-----------------------------------------------------------------------
+
+        res = self.db.execute_command("GRAPH.BULK", graphname, "BEGIN", 1, 1, 1, 1,
+                                      node_token, edge_token)
+        self.env.assertContains("1 nodes created", res)
+        self.env.assertContains("1 relations created", res)
+
+        graph = self.db.select_graph(graphname)
+        query_result = graph.query("MATCH (n:N)-[:R]->(n) RETURN n.v")
+        self.env.assertEqual(query_result.result_set, [[7]])

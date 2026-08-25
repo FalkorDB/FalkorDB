@@ -9,7 +9,10 @@ redis-debug.log
 .idea
 *.iml
 myenv
-coverage.sh
+# Root-anchored: an unanchored `coverage.sh` also matched bench/coverage.sh and
+# silently kept it out of the tree, so CI ran `bash bench/coverage.sh` against a
+# file that was never committed.
+/coverage.sh
 codecov.txt*
 temp-*
 /coverage

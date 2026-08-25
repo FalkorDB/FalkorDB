@@ -41,6 +41,7 @@
 mod allocator;
 mod commands;
 mod config;
+mod dispatch;
 mod graph_core;
 mod module_init;
 mod query_session;
@@ -107,8 +108,8 @@ redis_module! {
             ["TEMP_FOLDER", &*CONFIGURATION_TEMP_FOLDER, "/tmp", ConfigurationFlags::IMMUTABLE, None],
         ],
         bool: [
-            ["CMD_INFO", &*CONFIGURATION_CMD_INFO, true, ConfigurationFlags::IMMUTABLE, None],
-            ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::IMMUTABLE, None],
+            ["CMD_INFO", &CONFIGURATION_CMD_INFO, true, ConfigurationFlags::DEFAULT, None],
+            ["DELAY_INDEXING", &*CONFIGURATION_DELAY_INDEXING, false, ConfigurationFlags::DEFAULT, None],
         ],
         enum: [],
         module_args_as_configuration: true,

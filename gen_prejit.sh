@@ -97,6 +97,20 @@ export KMP_DUPLICATE_LIB_OK=TRUE
 # "cannot find -lomp" — every runtime JIT compile errors out (GxB_JIT_ERROR),
 # aborting each algorithm at its first uncached kernel so later kernels
 # never get generated. Symlink the archive into the default path.
+# Doctests are linked by rustdoc, and cargo ignores `rustdocflags` under the
+# `[target.'cfg(target_os = "linux")']` table in .cargo/config.toml (unused-key
+# warning), so the `--allow-multiple-definition` that the rest of the Linux
+# link needs never reaches rustdoc. Without this the two doctests in
+# parser/string_escape.rs fail to link and Step 4a is reported as a failure
+# even though all 108 unit tests passed. Linux-only: the flag is GNU ld's and
+# breaks macOS ld64.
+# Appends rather than only setting when empty: a caller who exports
+# RUSTDOCFLAGS for an unrelated reason would otherwise silently lose the
+# linker flag and get the doctest failure back.
+if [[ "$(uname -s)" == "Linux" ]]; then
+    export RUSTDOCFLAGS="${RUSTDOCFLAGS:+${RUSTDOCFLAGS} }-C link-arg=-Wl,--allow-multiple-definition"
+fi
+
 if [[ "$(uname -s)" == "Linux" && -f /opt/libomp/lib/libomp.a && ! -e /usr/lib/libomp.a ]]; then
     if [[ -w /usr/lib ]]; then
         ln -s /opt/libomp/lib/libomp.a /usr/lib/libomp.a
@@ -234,6 +248,43 @@ echo "[Step 4e] Running flow tests..."
 (cd "${REPO_DIR}" && run_with_retry "flow.sh" ./flow.sh)
 
 # ---------------------------------------------------------------------------
+# Step 4f – Run the benchmark query set (when present).
+# ---------------------------------------------------------------------------
+# bench/queries.py carries query shapes the functional suites never issue, so
+# without this step their kernels are absent from the harvest and the
+# benchmark silently runs on generic kernels — precisely the regression PreJIT
+# exists to prevent. `--once` executes each query through redis-cli against
+# the bench graph (plus the expected-error set, and with AOF on so the
+# replication-effect paths run); unlike the measuring mode it needs neither
+# redis-benchmark nor valgrind, neither of which the toolchain image ships.
+# Guarded because bench/ is not on every branch.
+run_bench_queries() {
+    # bench/ used to be a single run_bench.py and is now a uv project exposing a
+    # `bench` CLI, where `measure --once` is the same unmeasured coverage pass.
+    # Try the current form first and fall back to the old script, so this works
+    # whichever shape the branch has.
+    if [[ -f "${REPO_DIR}/bench/pyproject.toml" ]] && command -v uv >/dev/null 2>&1; then
+        (cd "${REPO_DIR}" && run_with_retry "bench measure --once" \
+            uv run --project bench bench measure --once)
+    elif [[ -f "${REPO_DIR}/bench/run_bench.py" ]]; then
+        (cd "${REPO_DIR}" && run_with_retry "bench --once" \
+            python3 bench/run_bench.py --once)
+    else
+        # Not a benign skip: the benchmark query set carries shapes no functional
+        # suite issues, so without it those kernels are missing from the harvest
+        # and the benchmark silently runs generic — the exact regression PreJIT
+        # exists to prevent. Fail loudly into the summary rather than log a line
+        # that scrolls past.
+        echo "   WARNING: no runnable bench query set — need bench/pyproject.toml plus" >&2
+        echo "   uv on PATH, or bench/run_bench.py. Benchmark-only kernels will be" >&2
+        echo "   ABSENT from this harvest." >&2
+        FAILURES+=("bench query set (no runner found — harvest is incomplete)")
+    fi
+}
+echo "[Step 4f] Running benchmark query set (--once)..."
+run_bench_queries
+
+# ---------------------------------------------------------------------------
 # Step 5 – Harvest .c kernel sources from the JIT cache.
 # ---------------------------------------------------------------------------
 echo "[Step 5] Harvesting JIT kernels..."
@@ -276,6 +327,8 @@ echo "[Step 6c] Re-running full test suite to verify..."
 (cd "${REPO_DIR}" && run_with_retry "pytest tck" \
     env TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s)
 (cd "${REPO_DIR}" && run_with_retry "flow.sh" ./flow.sh)
+echo "[Step 6d] Re-running benchmark query set to verify..."
+run_bench_queries
 
 echo ""
 echo "============================================================"
