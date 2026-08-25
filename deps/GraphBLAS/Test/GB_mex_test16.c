@@ -130,7 +130,15 @@ void mexFunction
     CHECK (code == UINT64_MAX) ;
 
     code = GB_encodify_build (&e, &suffix, 0, mult, GrB_FP32, GrB_FP32,
-        true, true, true, true, false) ;
+        /* is_matrix: */ true,
+        /* iso: */ false,
+        /* Tp, Tj, Tj is_32: */ true, true, true,
+        /* I,J,K is_32: */ true, true, true,
+        /* K is NULL: */ true,
+        /* Key_preloaded: */ false,
+        /* Key_is_32: */ true,
+        /* no dupl: */ false,
+        /* sorted: */ false) ;
     CHECK (code == UINT64_MAX) ;
 
     //--------------------------------------------------------------------------

@@ -1,44 +1,54 @@
-function gbtest50
-%GBTEST50 test GrB.ktruss and GrB.tricount
+function gbtest50 (ghb)
+%GBTEST50 test [GrB,GhB].ktruss and [GrB,GhB].tricount
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-rng ('default') ;
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 % The MathWorks has mangled the Harwell-Boeing west0479 matrix,
 % by reducing the precision of its entries, and dropping one entry.
 % The correct version is in the HB/west0479 matrix at sparse.tamu.edu.
 
-load west0479_correct.txt
-west0479 = spconvert (west0479_correct) ;
+[filepath, name, ext] = fileparts (mfilename ('fullpath')) ;
+load (fullfile (filepath, './matrix/west0479_correct.mat')) ;
 
-A = GrB.offdiag (west0479) ;
+A = gtb_offdiag (ghb, Problem.A) ;
 A = A+A' ;
-C3a  = GrB.ktruss (A) ;
-C3  = GrB.ktruss (A, 3) ;
+C3a = gtb_ktruss (ghb, A) ;
+C3 = gtb_ktruss (ghb, A, 3) ;
 assert (isequal (C3a, C3)) ;
-C3  = GrB.ktruss (A, 3, 'check') ;
+
+C3  = gtb_ktruss (ghb, A, 3, 'symmetric') ;
 assert (isequal (C3a, C3)) ;
+
+% A is unsymmetric; ktruss will symmetrize it:
+C5 = gtb_ktruss (ghb, Problem.A, 3) ;
+assert (isequal (C5, C3)) ;
+C5 = gtb_ktruss (ghb, GhB (Problem.A, 'by row'), 3) ;
+assert (isequal (C5, C3)) ;
 
 ntriangles = sum (C3, 'all') / 6 ;
 assert (ntriangles == 237) ;
 
-C4a = GrB.ktruss (A, 4) ;
-C4b = GrB.ktruss (C3, 4) ;          % this is faster
+C4a = gtb_ktruss (ghb, A, 4) ;
+C4b = gtb_ktruss (ghb, C3, 4) ;          % this is faster
 assert (isequal (C4a, C4b)) ;
 
-nt2 = GrB.tricount (A) ;
+nt2 = gtb_tricount (ghb, A) ;
 assert (ntriangles == nt2) ;
 
-d = GrB.entries (A, 'col', 'degree') ;
-nt2 = GrB.tricount (A, d) ;
+d = gtb_entries (ghb, A, 'col', 'degree') ;
+nt2 = gtb_tricount (ghb, A, d) ;
 assert (ntriangles == nt2) ;
 
-nt2 = GrB.tricount (A, 'check', d) ;
+nt2 = gtb_tricount (ghb, A, 'check', d) ;
 assert (ntriangles == nt2) ;
 
-nt2 = GrB.tricount (A, d, 'check') ;
+nt2 = gtb_tricount (ghb, A, d, 'check') ;
 assert (ntriangles == nt2) ;
 
 rng ('default') ;
@@ -47,12 +57,12 @@ for k = 1:200
         fprintf ('.') ;
     end
     n = 10000 ;
-    G = GrB.eye (10000) ;
+    G = gtb_eye (ghb, 10000) ;
     j = randperm (n, 10) ;
     G (:,j) = 1 ;
     G (j,:) = 1 ;
-    nt = GrB.tricount (G) ; %#ok<NASGU>
+    nt = gtb_tricount (ghb, G) ; %#ok<NASGU>
 end
 
-fprintf ('\ngbtest50: all tests passed\n') ;
+fprintf ('\ngbtest50 (%d): all tests passed\n', ghb) ;
 

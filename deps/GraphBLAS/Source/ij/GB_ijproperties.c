@@ -38,6 +38,8 @@ GrB_Info GB_ijproperties        // check I and determine its properties
     bool *I_is_contig,          // true if I is a contiguous list, imin:imax
     int64_t *imin_result,       // min (I)
     int64_t *imax_result,       // max (I)
+    // input:
+    const int data_arena,       // arena for workspace
     GB_Werk Werk
 )
 {
@@ -67,6 +69,8 @@ GrB_Info GB_ijproperties        // check I and determine its properties
     ASSERT (limit >= 0) ;
     ASSERT (limit <= GB_NMAX) ;
     int64_t imin, imax ;
+
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     //--------------------------------------------------------------------------
     // scan I
@@ -204,8 +208,8 @@ GrB_Info GB_ijproperties        // check I and determine its properties
         imax = -1 ;
 
         // allocate workspace for imin and imax
-        GB_WERK_DECLARE (Work_imin, int64_t) ;
-        GB_WERK_DECLARE (Work_imax, int64_t) ;
+        GB_WERK_DECLARE (Work_imin, int64_t, mem) ;
+        GB_WERK_DECLARE (Work_imax, int64_t, mem) ;
         GB_WERK_PUSH (Work_imin, ntasks, int64_t) ;
         GB_WERK_PUSH (Work_imax, ntasks, int64_t) ;
         if (Work_imin == NULL || Work_imax == NULL)

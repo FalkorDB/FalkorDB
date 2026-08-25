@@ -227,6 +227,18 @@ GrB_Info GB_matvec_set
                                GB_set_j_control (A, ivalue)) ;
             break ;
 
+        case GxB_ARENA_DATA : 
+
+            // change the data arena of the matrix (not lazy)
+            if (GB_Global_malloc_function_get (ivalue) == NULL)
+            { 
+                // arena out of range or not initialized
+                return (GrB_INVALID_VALUE) ;
+            }
+            A->data_arena = ivalue ;
+            GB_OK (GB_wait_arenas (A)) ;
+            break ;
+
         default : 
 
             return (GrB_INVALID_VALUE) ;

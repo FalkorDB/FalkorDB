@@ -1,15 +1,14 @@
 function [m, n] = size (G, dim)
 %SIZE the dimensions of a matrix.
-% [m n] = size (G) is the size of an m-by-n sparse matrix.
-% If any dimension exceeds flintmax (2^53), m and n are returned as int64.
+% [m n] = size (G) is the size of an m-by-n GrB or GhB matrix.  If any
+% dimension exceeds flintmax (2^53), m and n are returned as int64.
 %
 % See also GrB/length, GrB/numel.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-G = G.opaque ;
-[m, n] = gbsize (G) ;
+[m, n] = gb_size (G) ;
 
 if (nargin == 2)
     s = [m n] ;

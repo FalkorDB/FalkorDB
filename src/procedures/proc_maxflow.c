@@ -35,6 +35,7 @@
 #include "../datatypes/array.h"
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
+#include <pthread.h>
 
 // number of recognised keys in the configuration map
 #define MAX_FLOW_CONFIG_KEY_COUNT 6
@@ -105,6 +106,35 @@ static void _get_edge_capacity
 	if (!valid && !atomic_load_explicit(ctx->invalid, memory_order_relaxed)) {
 		atomic_store_explicit(ctx->invalid, true, memory_order_relaxed) ;
 	}
+}
+
+//------------------------------------------------------------------------------
+// Create process-lifetime constants for GrB_ Ops, each initialized exactly once
+//------------------------------------------------------------------------------
+
+static GrB_Type maxflow_cap_ctx_type = NULL;
+static GrB_IndexUnaryOp maxflow_get_capacity_op = NULL;
+static pthread_once_t maxflow_capacity_once = PTHREAD_ONCE_INIT;
+
+static void _init_maxflow_capacity_op
+(
+	void
+) {
+	GrB_OK (GrB_Type_new(&maxflow_cap_ctx_type,
+			sizeof(EdgeCapacityContext)));
+
+	GrB_OK (GrB_IndexUnaryOp_new(&maxflow_get_capacity_op,
+			(GxB_index_unary_function) _get_edge_capacity, GrB_FP64,
+			GrB_UINT64, maxflow_cap_ctx_type));
+}
+
+static inline void _ensure_maxflow_capacity_op
+(
+	void
+) {
+	pthread_once(&maxflow_capacity_once, _init_maxflow_capacity_op);
+	ASSERT(maxflow_cap_ctx_type != NULL);
+	ASSERT(maxflow_get_capacity_op != NULL);
 }
 
 //------------------------------------------------------------------------------
@@ -547,6 +577,7 @@ ProcedureResult Proc_MaxFlowInvoke
 	// apply capacity weights to U via a custom IndexUnaryOp
 	//--------------------------------------------------------------------------
 	atomic_bool invalid_attributes = false;
+	_ensure_maxflow_capacity_op();
 
 	EdgeCapacityContext cap_ctx = {
 		.g             = g,
@@ -556,18 +587,10 @@ ProcedureResult Proc_MaxFlowInvoke
 		.invalid       = &invalid_attributes
 	} ;
 
-	GrB_Type         cap_ctx_type = NULL ;
 	GrB_Scalar       cap_ctx_s    = NULL ;
-	GrB_IndexUnaryOp get_capacity = NULL ;
 
-	GrB_OK (GrB_Type_new (&cap_ctx_type, sizeof (EdgeCapacityContext))) ;
-	GrB_OK (GrB_Scalar_new (&cap_ctx_s, cap_ctx_type)) ;
+	GrB_OK (GrB_Scalar_new (&cap_ctx_s, maxflow_cap_ctx_type)) ;
 	GrB_OK (GrB_Scalar_setElement_UDT (cap_ctx_s, (void *) &cap_ctx)) ;
-
-	GrB_OK (GrB_IndexUnaryOp_new (
-				&get_capacity,
-				(GxB_index_unary_function) _get_edge_capacity,
-				GrB_FP64, GrB_UINT64, cap_ctx_type)) ;
 
 	GrB_Matrix C ;
 	GrB_Index nrows, ncols ;
@@ -576,11 +599,9 @@ ProcedureResult Proc_MaxFlowInvoke
 	GrB_OK (GrB_Matrix_new (&C, GrB_FP64, nrows, ncols)) ;
 
 	GrB_OK (GrB_Matrix_apply_IndexOp_Scalar (
-		C, NULL, NULL, get_capacity, U, cap_ctx_s, NULL)) ;
+		C, NULL, NULL, maxflow_get_capacity_op, U, cap_ctx_s, NULL)) ;
 
 	GrB_OK (GrB_free (&cap_ctx_s)) ;
-	GrB_OK (GrB_free (&cap_ctx_type)) ;
-	GrB_OK (GrB_free (&get_capacity)) ;
 
 
 	if (invalid_attributes) {

@@ -60,7 +60,11 @@ GrB_Info GxB_Matrix_reshape     // reshape a GrB_Matrix in place
     // reshape the matrix
     //--------------------------------------------------------------------------
 
-    info = GB_reshape (NULL, C, by_col, nrows_new, ncols_new, Werk) ;
+    int header_arena = GB_arena (C->header_mem) ;
+    int data_arena = C->data_arena ;
+
+    info = GB_reshape (NULL, C, by_col, nrows_new, ncols_new,
+        header_arena, data_arena, Werk) ;
     GB_BURBLE_END ;
     return (info) ;
 }

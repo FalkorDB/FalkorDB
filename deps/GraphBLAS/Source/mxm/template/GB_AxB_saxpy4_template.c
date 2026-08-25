@@ -187,8 +187,10 @@
 
         // allocate workspace to implement the atomic update
         #if !GB_Z_HAS_ATOMIC_UPDATE
-        int8_t *restrict Wf = NULL ; size_t Wf_size = 0 ;
-        Wf = GB_CALLOC_MEMORY (C->vlen * C->vdim, sizeof (int8_t), &Wf_size) ;
+        int data_arena = C->data_arena ;
+        uint64_t mem = GB_mem (data_arena, 0) ;
+        int8_t *restrict Wf = NULL ; uint64_t Wf_mem = mem ;
+        Wf = GB_CALLOC_MEMORY (C->vlen * C->vdim, sizeof (int8_t), &Wf_mem) ;
         if (Wf == NULL)
         { 
             return (GrB_OUT_OF_MEMORY) ;
@@ -294,7 +296,7 @@
 
         // free workspace for atomic update
         #if !GB_Z_HAS_ATOMIC_UPDATE
-        GB_FREE_MEMORY (&Wf, Wf_size) ;
+        GB_FREE_MEMORY (&Wf, Wf_mem) ;
         #endif
 
     }

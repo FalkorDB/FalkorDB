@@ -87,6 +87,16 @@ static GrB_Info GB_global_enum_set (int32_t value, int field)
             GB_Context_nthreads_max_set (NULL, value) ;
             break ;
 
+        case GxB_ARENA_DATA : 
+
+            return (GB_Context_data_arena_set (NULL, value)) ;
+            break ;
+
+        case GxB_ARENA_HEADER : 
+
+            return (GB_Context_header_arena_set (NULL, value)) ;
+            break ;
+
         case GxB_BURBLE : 
 
             GB_Global_burble_set ((bool) value) ;
@@ -150,7 +160,7 @@ GrB_Info GrB_Global_set_Scalar
     // set the field
     //--------------------------------------------------------------------------
 
-    GB_OPENMP_LOCK_SET (0)
+    GB_OPENMP_LOCK_SET (0)      // global set (scalar)
     {
         double dvalue = 0 ;
         int32_t ivalue = 0 ;
@@ -195,7 +205,7 @@ GrB_Info GrB_Global_set_Scalar
                 break ;
         }
     }
-    GB_OPENMP_LOCK_UNSET (0)
+    GB_OPENMP_LOCK_UNSET (0)      // global set (scalar)
 
     return ((info == GrB_NO_VALUE) ? GrB_EMPTY_OBJECT : info) ;
 }
@@ -225,7 +235,7 @@ GrB_Info GrB_Global_set_String
     // get the field
     //--------------------------------------------------------------------------
 
-    GB_OPENMP_LOCK_SET (0)
+    GB_OPENMP_LOCK_SET (0)      // global set (string)
     {
         switch ((int) field)
         {
@@ -281,7 +291,7 @@ GrB_Info GrB_Global_set_String
                 break ;
         }
     }
-    GB_OPENMP_LOCK_UNSET (0)
+    GB_OPENMP_LOCK_UNSET (0)        // global set (string)
 
     return (info) ;
 }
@@ -310,11 +320,11 @@ GrB_Info GrB_Global_set_INT32
     // set the field
     //--------------------------------------------------------------------------
 
-    GB_OPENMP_LOCK_SET (0)
+    GB_OPENMP_LOCK_SET (0)      // global set (enum)
     {
         info = GB_global_enum_set (value, field) ;
     }
-    GB_OPENMP_LOCK_UNSET (0)
+    GB_OPENMP_LOCK_UNSET (0)        // global set (enum)
 
     return (info) ;
 }
@@ -346,7 +356,7 @@ GrB_Info GrB_Global_set_VOID
     // set the field
     //--------------------------------------------------------------------------
 
-    GB_OPENMP_LOCK_SET (0)
+    GB_OPENMP_LOCK_SET (0)      // global set (void)
     {
         switch (field)
         {
@@ -421,7 +431,7 @@ GrB_Info GrB_Global_set_VOID
                 break ;
         }
     }
-    GB_OPENMP_LOCK_UNSET (0)
+    GB_OPENMP_LOCK_UNSET (0)        // global set (void)
 
     #pragma omp flush
     return (info) ;

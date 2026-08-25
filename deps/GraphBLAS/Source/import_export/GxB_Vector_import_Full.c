@@ -1,11 +1,19 @@
 //------------------------------------------------------------------------------
-// GxB_Vector_import_Full: import a vector in full format
+// GxB_Vector_import_Full: import a vector in full format (HISTORICAL)
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// The input array vx is assumed to be in the data arena
+// defined by the current Context, or the global context if no Context is
+// engaged.  Results are undefined if these arrays are in a different arena.
+
+// The output vector v is created in the same data arena.
+// The new header for v is created in the header arena defined by
+// the current Context, or the global context if no Context is enganged.
 
 #include "import_export/GB_export.h"
 
@@ -16,7 +24,7 @@ GrB_Info GxB_Vector_import_Full // import a full vector
     uint64_t n,         // vector length
 
     void **vx,          // values
-    uint64_t vx_size,   // size of vx in bytes
+    uint64_t vx_memsize,   // size of vx in bytes
     bool iso,           // if true, v is iso
 
     const GrB_Descriptor desc
@@ -28,7 +36,7 @@ GrB_Info GxB_Vector_import_Full // import a full vector
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Vector_import_Full (&v, type, n, "
-        "&vx, vx_size, iso, desc)") ;
+        "&vx, vx_memsize, iso, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
@@ -42,7 +50,7 @@ GrB_Info GxB_Vector_import_Full // import a full vector
         NULL, 0,        // Ah
         NULL, 0,        // Ab
         NULL, 0,        // Ai
-        vx,   vx_size,  // Ax
+        vx,   vx_memsize,  // Ax
         0, false, 0,
         GxB_FULL, true,                     // full by col
         iso, fast_import, true, Werk) ;

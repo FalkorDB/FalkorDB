@@ -1,11 +1,19 @@
 //------------------------------------------------------------------------------
-// GxB_Matrix_import_HyperCSC: import a matrix in hypersparse CSC format
+// GxB_Matrix_import_HyperCSC: import a matrix in hypersparse CSC (HISTORICAL)
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// The input arrays Ap, Ah, Ai, and Ax are assumed to be in the data arena
+// defined by the current Context, or the global context if no Context is
+// engaged.  Results are undefined if these arrays are in a different arena.
+
+// The output matrix A is created in the same data arena.
+// The new header for A is created in the header arena defined by
+// the current Context, or the global context if no Context is enganged.
 
 #include "import_export/GB_export.h"
 
@@ -20,10 +28,10 @@ GrB_Info GxB_Matrix_import_HyperCSC      // import a hypersparse CSC matrix
     uint64_t **Ah,      // column indices
     uint64_t **Ai,      // row indices
     void **Ax,          // values
-    uint64_t Ap_size,   // size of Ap in bytes
-    uint64_t Ah_size,   // size of Ah in bytes
-    uint64_t Ai_size,   // size of Ai in bytes
-    uint64_t Ax_size,   // size of Ax in bytes
+    uint64_t Ap_memsize,   // size of Ap in bytes
+    uint64_t Ah_memsize,   // size of Ah in bytes
+    uint64_t Ai_memsize,   // size of Ai in bytes
+    uint64_t Ax_memsize,   // size of Ax in bytes
     bool iso,           // if true, A is iso
 
     uint64_t nvec,      // number of columns that appear in Ah
@@ -37,8 +45,8 @@ GrB_Info GxB_Matrix_import_HyperCSC      // import a hypersparse CSC matrix
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Matrix_import_HyperCSC (&A, type, nrows, ncols, "
-        "&Ap, &Ah, &Ai, &Ax, Ap_size, Ah_size, Ai_size, Ax_size, iso, "
-        "nvec, jumbled, desc)") ;
+        "&Ap, &Ah, &Ai, &Ax, Ap_memsize, Ah_memsize, Ai_memsize, Ax_memsize, "
+        "iso, nvec, jumbled, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
@@ -48,11 +56,11 @@ GrB_Info GxB_Matrix_import_HyperCSC      // import a hypersparse CSC matrix
     //--------------------------------------------------------------------------
 
     info = GB_import (false, A, type, nrows, ncols, false,
-        Ap,   Ap_size,  // Ap
-        Ah,   Ah_size,  // Ah
+        Ap,   Ap_memsize,  // Ap
+        Ah,   Ah_memsize,  // Ah
         NULL, 0,        // Ab
-        Ai,   Ai_size,  // Ai
-        Ax,   Ax_size,  // Ax
+        Ai,   Ai_memsize,  // Ai
+        Ax,   Ax_memsize,  // Ax
         0, jumbled, nvec,                   // jumbled or not
         GxB_HYPERSPARSE, true,              // hypersparse by col
         iso, fast_import, true, Werk) ;

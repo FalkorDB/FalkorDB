@@ -1,4 +1,4 @@
-% benchmark @GrB vs built-in methods
+% benchmark GrB vs built-in methods
 
 % SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
@@ -12,8 +12,9 @@ dobench_methods ('SNAP/roadNet-CA', 3) ;
 dobench_methods ('Freescale/Freescale2', 3) ;
 dobench_methods ('LAW/indochina-2004', 3) ;
 dobench_methods ('SNAP/com-Orkut', 3) ;
-dobench_methods ('GAP/GAP-road', 3) ;
 
+% GAP benchmarks:
+dobench_methods ('GAP/GAP-road', 3) ;
 dobench_methods ('GAP/GAP-twitter', 3) ;
 dobench_methods ('GAP/GAP-web', 2) ;
 dobench_methods ('GAP/GAP-urand', 1) ;

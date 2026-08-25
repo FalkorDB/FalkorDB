@@ -427,3 +427,47 @@ class test_encode_decode(FlowTestsBase):
             "MATCH (n:Str) RETURN n.id, size(n.val) ORDER BY n.id"
         )
         self.env.assertEquals(expected.result_set, actual.result_set)
+
+    def test_18_encode_decode_preserves_pending_deltas(self):
+        # Regression test for replica divergence right after a full sync.
+        #
+        # A graph's matrices keep pending changes in delta-plus / delta-minus
+        # that aren't necessarily merged into the main matrix. The RDB encodes
+        # M / DP / DM separately and the decoder must restore them as-is (and
+        # rebuild each matrix's transpose from all three) rather than merging
+        # them together - the old decoder called Graph_ApplyAllPending, which
+        # merged DP / DM into M.
+        #
+        # A merge is logically equivalent but reorders a DeltaMatrixIterator,
+        # so on the master (which keeps the split) an order-sensitive query
+        # such as `MATCH (n:L) RETURN n` - a label scan iterates the label
+        # matrix directly - could return entities in a different order than on
+        # a replica that merged during its full sync. DEBUG RELOAD runs the
+        # exact same encode/decode path a replica uses, so a correct round-trip
+        # must leave every query - forward and reverse - returning identical,
+        # identically-ordered results.
+        g = self.graph
+
+        # build a graph with several labels and relationships, then delete a
+        # portion so the matrices carry pending deletions (delta-minus) and the
+        # datablocks carry deleted-entity gaps
+        g.query("UNWIND range(0, 999) AS i CREATE (:L {v: i})-[:R]->(:M {v: i})")
+        g.query("MATCH (:L)-[e:R]->(:M) WHERE e.v % 3 = 0 DELETE e")
+        g.query("MATCH (n:M) WHERE n.v % 5 = 0 DELETE n")
+
+        # order-sensitive snapshots - intentionally no ORDER BY, so the result
+        # order reflects the underlying matrix iteration order
+        queries = [
+            "MATCH (n:L) RETURN n.v",                       # label scan (fwd)
+            "MATCH (n:M) RETURN n.v",                       # label scan (fwd)
+            "MATCH (n:L)-[e:R]->(m:M) RETURN n.v, e.v, m.v",# forward traverse
+            "MATCH (m:M)<-[e:R]-(n:L) RETURN m.v, e.v, n.v",# reverse (transpose)
+        ]
+        expected = [g.query(q).result_set for q in queries]
+
+        # Save RDB & Load from RDB - the same encode/decode a replica performs
+        # during a full sync
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+
+        for q, exp in zip(queries, expected):
+            self.env.assertEquals(g.query(q).result_set, exp)

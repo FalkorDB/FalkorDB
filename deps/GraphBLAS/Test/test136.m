@@ -100,6 +100,8 @@ for k = 1:length (Work)
 end
 
 C2 = GB_mex_subassign (C, Work2) ;  % WORK_ASSIGN
+C1
+C2
 GB_spec_compare (C1, C2) ;
 
 C2 = GB_mex_subassign (C, Work2, [2 2]) ;   % WORK_ASSIGN

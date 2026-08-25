@@ -1,16 +1,16 @@
 function blob = serialize (G, method, level)
 %GRB.SERIALIZE convert a matrix to a serialized blob.
-% blob = GrB.serialize (G) returns a uint8 array containing the contents
-% of the matrix G, which may be a MATLAB or @GrB matrix.  The array may
-% be saved to a binary file and used to construct a GrB_Matrix outside
-% of this MATLAB/Octave interface to GraphBLAS.  It may also be used to
-% reconstruct a @GrB matrix with G = GrB.deserialize (blob).
+% blob = GrB.serialize (G) returns a uint8 array containing the contents of the
+% matrix G, which may be a MATLAB, GhB, or GrB matrix.  The array may be saved
+% to a binary file and used to construct a GrB_Matrix outside of this
+% MATLAB/Octave interface to GraphBLAS.  It may also be used to reconstruct a
+% GrB matrix with G = GrB.deserialize (blob).
 %
-% blob = GrB.serialize (G,method,level) specifies the compression method,
-% as a string.  The 3rd parameter is optional; it is an integer that
-% specifices the compression level, with a higher level resulting in a
-% more compact blob at the cost of higher run time.  Levels outside
-% the allowable range are changed to the default level.
+% blob = GrB.serialize (G,method,level) specifies the compression method, as a
+% string.  The 3rd parameter is optional; it is an integer that specifices the
+% compression level, with a higher level resulting in a more compact blob at
+% the cost of higher run time.  Levels outside the allowable range are changed
+% to the default level.
 %
 %   'zstd'  ZSTD.  The level can be 1 to 19 with 1 the default.
 %           This is the default method if no method is specified.
@@ -39,23 +39,21 @@ function blob = serialize (G, method, level)
 %
 % See also GrB.deserialize, GrB.load, GrB.save, GrB/struct.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
 
-if (isobject (G))
-    % extract the contents of a GraphBLAS matrix
-    G = G.opaque ;
+% serialize the matrix into a uint8 blob
+switch (nargin)
+    case 1
+        % use the default compression method and default level
+        b = gzb_serialize (0, G) ;
+    case 2
+        % use the given compression method and default level
+        b = gzb_serialize (0, G, method) ;
+    case 3
+        % use the given compression method and given level
+        b = gzb_serialize (0, G, method, level) ;
 end
 
-% serialize the matrix into a uint8 blob
-if (nargin == 1)
-    % use the default compression method and default level
-    blob = gbserialize (G) ;
-elseif (nargin == 2)
-    % use the given compression method and default level
-    blob = gbserialize (G, method) ;
-else
-    % use the given compression method and given level
-    blob = gbserialize (G, method, level) ;
-end
+blob = gb_builtin (b) ;
 

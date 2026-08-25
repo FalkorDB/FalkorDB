@@ -12,7 +12,7 @@
 const char *GB_semiring_name_get (GrB_Semiring semiring)
 {
 
-    if (semiring->user_name_size > 0)
+    if (GB_memsize (semiring->user_name_mem) > 0)
     { 
         // user-defined semiring, with name defined by GrB_set
         return (semiring->user_name) ;

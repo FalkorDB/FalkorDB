@@ -1,11 +1,11 @@
 # GraphBLAS/GraphBLAS: MATLAB/Octave interface for SuiteSparse:GraphBLAS
 
-SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 SPDX-License-Identifier: Apache-2.0
 
-The @GrB class provides an easy-to-use interface to SuiteSparse:GraphBLAS.
-This README.md file explains how to install it for use in MATLAB/Octave on
-Linux, Mac, or Windows.
+The GrB and GhB classes provide an easy-to-use interface to SuiteSparse:
+GraphBLAS.  This README.md file explains how to install it for use in
+MATLAB/Octave on Linux, Mac, or Windows.
 
 --------------------------------------------------------------------------------
 # For Mac
@@ -33,7 +33,7 @@ Linux, Mac, or Windows.
     Next, restart your terminal shell before continuing the steps in the
     section "For Linux/Mac" below.
 
-    HOWEVER, this may fail on MATLAB.
+    HOWEVER, this may fail in MATLAB on the Mac.
 
     MATLAB on the Mac comes with its own copy of libomp.dylib, typically
 
@@ -78,14 +78,10 @@ Linux, Mac, or Windows.
         cd test
         gbtest
 
-    That should be enough.  However, the above script may fail if the
-    graphblas_install script is unable to use "system ('cmake ...')" to
-    use cmake to build GraphBLAS.
-
-    If this happens, the script will print a set of commands you can type in
-    your system shell to first compile the GraphBLAS library outside of
-    MATLAB/Octave, instead of using the graphblas_install.m script.  Use those
-    instructions, or continue with the following (both should work OK):
+    In case this fails, the graphblas_install script will print a set of
+    commands you can type in your system shell to first compile the GraphBLAS
+    library outside of MATLAB/Octave, instead of using the graphblas_install.m
+    script.  Use those instructions, or continue with the following:
 
     Suppose your copy of GraphBLAS is in /home/me/GraphBLAS.  For MATLAB on
     Linux/Mac, compile libgraphblas_matlab.so (.dylib on the Mac) with:
@@ -108,8 +104,22 @@ Linux, Mac, or Windows.
 
     Then inside MATLAB/Octave, do this:
 
-        cd /home/me/GraphBLAS/GraphBLAS/@GrB/private
+        cd /home/me/GraphBLAS/GraphBLAS/private
         gbmake
+
+    When using Octave, you must ensure that GraphBLAS, its mexFunctions, and
+    Octave are compiled with the same compiler.  Do not try to mix gcc, clang,
+    and the Intel icx compilers, since they all require different OpenMP
+    libraries.  To ensure the gbmake script in Octave uses the right compiler,
+    start octave with the following (assume Octave was compiled with gcc):
+
+        CC=gcc CXX=g++ octave
+
+    or, in your Octave startup.m script, add these commands to run after
+    octave starts:
+
+        setenv ('CC', 'gcc') ;
+        setenv ('CXX', 'g++') ;
 
 --------------------------------------------------------------------------------
 # For Windows
@@ -130,7 +140,7 @@ Linux, Mac, or Windows.
 
     Then do this inside of MATLAB/Octave:
 
-        cd /home/me/GraphBLAS/GraphBLAS/@GrB/private
+        cd /home/me/GraphBLAS/GraphBLAS/private
         gbmake
 
 --------------------------------------------------------------------------------
@@ -154,6 +164,7 @@ Linux, Mac, or Windows.
 
         methods GrB
         help GrB
+        help GhB
 
     To run the demos, go to the GraphBLAS/GraphBLAS/demo folder and type:
 
@@ -175,13 +186,13 @@ Linux, Mac, or Windows.
 
     You cannot use a single copy of the GraphBLAS source distribution to use in
     both MATLAB and Octave on the same system at the same time.  The .o files
-    in GraphBLAS/GraphBLAS/@GrB/private compiled by the graphblas_install.m
-    will conflict with each other.  To switch between MATLAB and Octave, use a
+    in GraphBLAS/GraphBLAS/private compiled by the graphblas_install.m will
+    conflict with each other.  To switch between MATLAB and Octave, use a
     second copy of the GraphBLAS source distribution, or do a clean
-    installation (via "make purge" in the GraphBLAS/GraphBLAS/@GrB/private
-    folder, outside of MATLAB/Octave) and redo the above instructions.  There
-    is no need to recompile the libgraphblas.so (or dylib on the Mac) since
-    Octave uses GraphBLAS/build/libgraphblas.so while MATLAB uses
+    installation (via "make purge" in the GraphBLAS/GraphBLAS/private folder,
+    outside of MATLAB/Octave) and redo the above instructions.  There is no
+    need to recompile the libgraphblas.so (or dylib on the Mac) since Octave
+    uses GraphBLAS/build/libgraphblas.so while MATLAB uses
     GraphBLAS/GraphBLAS/build/libgraphblas_matlab.so.  Both MATLAB and Octave
     can share the same compiled JIT kernels.
 

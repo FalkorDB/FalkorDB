@@ -279,8 +279,6 @@ void mexFunction
     OK (GrB_Type_get_SIZE_(GxB_FC64, &size, GrB_SIZE)) ;
     CHECK (size == sizeof (double complex)) ;
 
-
-
     // built-in type definition
     OK (GrB_Type_get_SIZE_(GrB_BOOL, &size, GxB_JIT_C_DEFINITION)) ;
     CHECK (size == 1) ;
@@ -329,6 +327,15 @@ void mexFunction
 
     OK (GrB_Type_get_INT32_(type, &code, GrB_EL_TYPE_CODE)) ;
     CHECK (code == GrB_UDT_CODE) ;
+
+    int arena = 42 ;
+    OK (GrB_Type_get_INT32_(type, &arena, GxB_ARENA_HEADER)) ;
+    CHECK (arena == GB_ARENA_TEST) ;
+
+    arena = 42 ;
+    OK (GrB_Type_get_Scalar_(type, s_int32, GxB_ARENA_HEADER)) ;
+    OK (GrB_Scalar_extractElement_INT32_(&arena, s_int32)) ;
+    CHECK (arena == GB_ARENA_TEST) ;
 
     OK (GrB_Type_get_String_(type, name, GrB_EL_TYPE_STRING)) ;
     CHECK (MATCH (name, "user name of a type")) ;

@@ -10,7 +10,7 @@
 #include "get_set/GB_get_set.h"
 
 const char *GB_type_name_get (GrB_Type type)
-{
+{ 
 
     if (type == NULL)
     { 

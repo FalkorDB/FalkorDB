@@ -5,7 +5,7 @@
 
 #include "graph_memoryUsage.h"
 
-// get graph's memory usage
+// get graph's structural memory usage (matrices + datablocks; no attribute sampling)
 void Graph_memoryUsage
 (
 	const Graph *g,            // graph
@@ -62,7 +62,7 @@ void Graph_memoryUsage
 		if (Graph_RelationshipContainsMultiEdge(g, rel)) {
 			GrB_OK (Tensor_memoryUsage (&n, T)) ;
 		} else {
-			GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
+			GrB_OK (Delta_Matrix_memoryUsage (&n, T)) ;
 		}
 
 		result->rel_matrices_sz += n ;
@@ -71,6 +71,7 @@ void Graph_memoryUsage
 	//--------------------------------------------------------------------------
 	// graph's zero matrix
 	//--------------------------------------------------------------------------
+
 	D = Graph_GetZeroMatrix (g) ;
 
 	GrB_OK (Delta_Matrix_memoryUsage (&n, D)) ;
@@ -84,4 +85,3 @@ void Graph_memoryUsage
 	result->node_block_storage_sz = DataBlock_memoryUsage (g->nodes) ;
 	result->edge_block_storage_sz = DataBlock_memoryUsage (g->edges) ;
 }
-

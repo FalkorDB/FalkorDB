@@ -90,7 +90,7 @@ jobs:
       - name: Safe dir
         run: git config --global --add safe.directory '*'
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           set-safe-directory: '*'
           submodules: recursive
@@ -180,7 +180,7 @@ jobs:
         benchmark_group: [ a, b ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/cleanup-runner
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -218,7 +218,7 @@ jobs:
       actions: read          # download artifacts via the Actions API
       pull-requests: write   # update the PR body with the comparison
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Sanitize ref name
         run: echo "SAFE_REF=$(echo '${{ github.head_ref }}' | tr '/' '-')" >> "$GITHUB_ENV"
 

@@ -19,6 +19,12 @@
 // If count is uint32, returns true if OK, false if overflow.  The overflow
 // condition is not checked if count is uint64_t (always returns true).
 
+// The parallel cumsum requires a small amount of memory, typically allocated
+// on the werk stack, or in the data_arena if the stack is full.  The single-
+// threaded cumsum requires no space at all.  This method always succeeds; if
+// no space is available for a parallel cumsum, the single-threaded cumsum is
+// used instead.
+
 #include "GB.h"
 
 bool GB_cumsum                  // cumulative sum of an array
@@ -28,6 +34,7 @@ bool GB_cumsum                  // cumulative sum of an array
     const int64_t n,
     int64_t *restrict kresult,  // return k, if needed by the caller
     int nthreads,
+    const int data_arena,       // arena for workspace
     GB_Werk Werk
 )
 {
@@ -38,6 +45,8 @@ bool GB_cumsum                  // cumulative sum of an array
 
     ASSERT (count_arg != NULL) ;
     ASSERT (n >= 0) ;
+
+    uint64_t mem = GB_mem (data_arena, 0) ;
 
     //--------------------------------------------------------------------------
     // determine # of threads to use

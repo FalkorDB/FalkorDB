@@ -1,5 +1,5 @@
 function result = GB_isequal_ignore_32 (C1, C2)
-%GB_ISEQUAL_IGNORE_32 compare two structs but ignore [phi]_is_32 fields
+%GB_ISEQUAL_IGNORE_32 compare two structs but ignore [pji]_is_32 fields
 
 % SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0

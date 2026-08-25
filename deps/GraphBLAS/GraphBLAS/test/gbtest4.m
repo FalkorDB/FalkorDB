@@ -1,12 +1,17 @@
-function gbtest4
+function gbtest4 (ghb)
 %GBTEST4 list all semirings
 % This count excludes operator synonyms ('1st' and 'first', for example),
 % but it does include identical semirings with operators of different
 % names.  For example, the spec has many boolean operators with different
 % names but they compute the same thing.
 
-% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
+% SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2026, All Rights Reserved.
 % SPDX-License-Identifier: Apache-2.0
+
+if (nargin == 0)
+    ghb = 0 ;
+end
+gtb_name = gtb_prep (ghb) ;
 
 types = gbtest_types ;
 ops = gbtest_binops ;
@@ -17,17 +22,18 @@ for k1 = 1:length (ops)
     add = ops {k1} ;
     for k2 = 1:length (ops)
         mult = ops {k2} ;
+
+        s = [add '.' mult] ;
+        fprintf ('\n================================ %s\n', s) ;
+
         for k3 = 1:length (types)
             type = types {k3} ;
 
-            s = [add '.' mult] ;
             semiring = [s '.' type] ;
 
-            fprintf ('\n================================ %s\n', semiring) ;
-
             try
-                GrB.semiringinfo (semiring) ;
-                GrB.semiringinfo (s, type) ;
+                gtb_semiringinfo (ghb, semiring) ;
+                gtb_semiringinfo (ghb, s, type) ;
                 nsemirings = nsemirings + 1 ;
                 ok = true ;
             catch
@@ -36,18 +42,18 @@ for k1 = 1:length (ops)
                 % a valid semiring.
                 ok = false ;
             end
-            if (ok)
-                fprintf ('\nOK %s.%s\n', s, type) ;
-            end
+%           if (ok)
+%               fprintf ('\nOK %s.%s\n', s, type) ;
+%           end
         end
     end
 end
 
 fprintf ('\n') ;
-GrB.semiringinfo
+gtb_semiringinfo (ghb)
 
 fprintf ('number of semirings: %d\n', nsemirings) ;
 assert (nsemirings == 2589) ;
 
-fprintf ('\ngbtest4: all tests passed\n') ;
+fprintf ('\ngbtest4 (%d): all tests passed\n', ghb) ;
 

@@ -1,11 +1,19 @@
 //------------------------------------------------------------------------------
-// GxB_Matrix_import_FullC: import a matrix in full format, held by column
+// GxB_Matrix_import_FullC: import in full format, held by col (HISTORICAL)
 //------------------------------------------------------------------------------
 
 // SuiteSparse:GraphBLAS, Timothy A. Davis, (c) 2017-2025, All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 //------------------------------------------------------------------------------
+
+// The input array Ax is assumed to be in the data arena
+// defined by the current Context, or the global context if no Context is
+// engaged.  Results are undefined if this array is in a different arena.
+
+// The output matrix A is created in the same data arena.
+// The new header for A is created in the header arena defined by
+// the current Context, or the global context if no Context is enganged.
 
 #include "import_export/GB_export.h"
 
@@ -17,7 +25,7 @@ GrB_Info GxB_Matrix_import_FullC  // import a full matrix, held by column
     uint64_t ncols,     // number of columns of the matrix
 
     void **Ax,          // values
-    uint64_t Ax_size,   // size of Ax in bytes
+    uint64_t Ax_memsize,   // size of Ax in bytes
     bool iso,           // if true, A is iso
 
     const GrB_Descriptor desc
@@ -29,7 +37,7 @@ GrB_Info GxB_Matrix_import_FullC  // import a full matrix, held by column
     //--------------------------------------------------------------------------
 
     GB_WHERE0 ("GxB_Matrix_import_FullC (&A, type, nrows, ncols, "
-        "&Ax, Ax_size, iso, desc)") ;
+        "&Ax, Ax_memsize, iso, desc)") ;
 
     GB_GET_DESCRIPTOR (info, desc, xx1, xx2, xx3, xx4, xx5, xx6, xx7) ;
     GB_GET_DESCRIPTOR_IMPORT (desc, fast_import) ;
@@ -43,7 +51,7 @@ GrB_Info GxB_Matrix_import_FullC  // import a full matrix, held by column
         NULL, 0,        // Ah
         NULL, 0,        // Ab
         NULL, 0,        // Ai
-        Ax,   Ax_size,  // Ax
+        Ax,   Ax_memsize,  // Ax
         0, false, 0,
         GxB_FULL, true,                     // full by col
         iso, fast_import, true, Werk) ;

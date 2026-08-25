@@ -5,6 +5,35 @@
 
 \begin{itemize}
 
+\item July 31, 2026: version 10.4.0
+
+    \begin{itemize}
+    \item Memory arenas: allows the use of multiple memory allocators.
+        See Section~\ref{sec:arenas}.
+    \item substantial revision to MATLAB/Octave interface: GhB is a new handle
+        object, so that m-files and mexFunctions can modify their inputs.  This
+        allows pending work to be left in a GhB matrix, speeding up algorithms
+        that use GraphBLAS.
+    \item \verb'GrB_Matrix_extractElement': no longer waits if the entry can be
+        found without finalizing pending tuples
+    \item \verb'GxB_atfork_(prepare,parent,child)': added to support an
+        application needing to fork, while still using GraphBLAS.
+    \item static \verb'GrB_Matrix' headers: used internally; removed, except for
+        \verb'GB_Scalar_wrap', and unary/binary ops, to simplify memory arena
+        feature and future CUDA kernels.
+    \item MATLAB/Octave (68) bug fix:  v10.0 to v10.3 do not properly load GrB
+        hypersparse matrices from \verb'*.mat' files saved by v9 and earlier,
+        when using the built-in load/save methods in MATLAB.  The load/save of
+        a serialized blob is not affected by this bug.
+    \end{itemize}
+
+\item July 21, 2026: version 10.3.2
+
+    \begin{itemize}
+    \item compiler port: changes required for recent clang compilers
+    \item cmake: 3.23 now required; SuiteSparsePolicy.cmake revised.
+    \end{itemize}
+
 \item Jan 21, 2026: version 10.3.1
 
     \begin{itemize}
@@ -502,7 +531,7 @@
         Based on \cite{Green19}.
         \item \verb'GxB_unpack_HyperHash' and \verb'GxB_pack_HyperHash':
             to pack/unpack the hyper-hash
-    \item \verb'@GrB' MATLAB/Octave interface: changed license to Apache-2.0.
+    \item \verb'GrB' MATLAB/Octave interface: changed license to Apache-2.0.
     \item MATLAB library: renamed to \verb'libgraphblas_matlab.so'
     \item performance: faster \verb'C=A*B' when using a single thread and
         \verb'B' is a sparse vector with many entries.
@@ -626,7 +655,7 @@
     \begin{packed_itemize}
     \item added the \verb'GxB_Iterator' object and its methods.  See
         Section~\ref{iter}.
-    \item \verb'@GrB' interface: revised sparse-times-full rule for the
+    \item \verb'GrB' interface: revised sparse-times-full rule for the
         conventional semiring (the syntax \verb'C=A*B'), so that
         sparse-times-full results in \verb'C' as full,
         but hypersparse-times-sparse is not full
@@ -645,10 +674,10 @@
     \item Octave 7: port to Apple Silicon (thanks to
             G{\'{a}}bor Sz{\'{a}}rnyas).
     \item min/max monoids:  real case (FP32 and FP64) no longer terminal
-    \item \verb'@GrB' interface: overloaded \verb'C=A*B' syntax where one
+    \item \verb'GrB' interface: overloaded \verb'C=A*B' syntax where one
         matrix is full always results in a full matrix \verb'C'.
     \item Faster \verb'C=A*B' for sparse-times-full and full-times-sparse
-        for \verb'@GrB' interface.
+        for \verb'GrB' interface.
     \end{packed_itemize}
 
 \item Version 6.1.3 (Jan 1, 2022)
@@ -875,10 +904,10 @@
     \item added \verb'GxB_*_pack/unpack' methods in place of
         import/export.
     \item added \verb'GxB_PRINT_1BASED' to the global settings.
-    \item added \verb'GxB_*_memoryUsage'
+    \item added \verb'GxB_Matrix_memoryUsage' and related methods.
     \item port to Octave:  \verb'gbmake' and \verb'gbtest'
         work in Octave7 to build and test
-        the \verb'@GrB' interface to GraphBLAS.  Octave 7.0.0 is required.
+        the \verb'GrB' interface to GraphBLAS.  Octave 7.0.0 is required.
     \end{packed_itemize}
 
 \item Version 5.0.6 (May 24, 2021)
@@ -904,7 +933,7 @@
 \item Version 5.0.4 (May 13, 2021)
 
     \begin{packed_itemize}
-    \item \verb'@GrB' MATLAB/Octave interface: changed license
+    \item \verb'GrB' MATLAB/Octave interface: changed license
         to GNU General Public License v3.0 or later.
         It was licensed under Apache-2.0 in Version 5.0.3 and earlier.
         Changed back to Apache-2.0 for Version 7.3.0; see above.
@@ -931,7 +960,7 @@
         wrong descriptors for \verb'GrB_INP0' and \verb'GrB_INP1'.
         Caught by Erik Welch, Anaconda.
     \item memory pool added for faster allocation/free of small blocks
-    \item \verb'@GrB' interface ported to MATLAB R2021a.
+    \item \verb'GrB' interface ported to MATLAB R2021a.
     \item \verb'GxB_PRINTF' and \verb'GxB_FLUSH' global options added.
     \item \verb'GxB_Matrix_diag': construct a diagonal matrix from a vector
     \item \verb'GxB_Vector_diag': extract a diagonal from a matrix
@@ -1016,7 +1045,7 @@
     Added complex types (\verb'GxB_FC32' and \verb'GxB_FC64'), many unary
     operators, binary operators, monoids, and semirings.  Added bitwise
     operators, and their monoids and semirings.  Added the predefined monoids
-    and semirings from the v1.3 specification.  \verb'@GrB' interface: added complex
+    and semirings from the v1.3 specification.  \verb'GrB' interface: added complex
     matrices and operators, and changed behavior of integer operations to more
     closely match the behavior on built-in integer matrices.  The rules for
     typecasting large floating point values to integers has changed.  The
@@ -1033,7 +1062,7 @@
     compatible with the faster matrix operations.  Added the \verb'ANY' and
     \verb'PAIR' operators.  Added the predefined descriptors,
     \verb'GrB_DESC_*'.  Added the structural mask option.  Changed default
-    chunk size to 65,536.  \verb'@GrB' interface modified:  \verb'GrB.init' is
+    chunk size to 65,536.  \verb'GrB' interface modified:  \verb'GrB.init' is
     now optional.
 
 \item Version 3.1.2 (Dec, 2019).  Changes to allow SuiteSparse:GraphBLAS
@@ -1045,9 +1074,9 @@
     to 128 bytes in size.  These changes have no effect if you have an C11
     compliant compiler.
 
-    \verb'@GrB' interface modified:  \verb'GrB.init' is now required.
+    \verb'GrB' interface modified:  \verb'GrB.init' is now required.
 
-\item Version 3.1.0 (Oct 1, 2019).  \verb'@GrB' interface added.  See the
+\item Version 3.1.0 (Oct 1, 2019).  \verb'GrB' interface added.  See the
     \newline \verb'GraphBLAS/GraphBLAS' folder for details and documentation,
     and Section~\ref{octave}.
 

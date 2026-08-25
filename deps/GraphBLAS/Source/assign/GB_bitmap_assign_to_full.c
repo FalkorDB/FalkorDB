@@ -28,7 +28,7 @@ GB_CALLBACK_BITMAP_ASSIGN_TO_FULL_PROTO (GB_bitmap_assign_to_full)
     if (GB_sparsity_control (C->sparsity_control, C->vdim) & GxB_FULL)
     { 
         // C is bitmap but can become full; convert it to full
-        GB_FREE_MEMORY (&(C->b), C->b_size) ;
+        GB_FREE_MEMORY (&(C->b), C->b_mem) ;
         C->nvals = -1 ;
     }
     else

@@ -13,11 +13,11 @@
 #define GB_FREE_ALL ;
 
 #if GB_C_ISO
-// FIXME
+// fixme
 #error "kernel undefined for C iso"
 #endif
 
-// FIXME: Figure out how to use graphblas-specific INFINITY macro
+// fixme: Figure out how to use graphblas-specific INFINITY macro
 #ifndef INFINITY
 #define INFINITY std::numeric_limits<double>::max()
 #endif
@@ -26,15 +26,12 @@
 // dot3 kernel launch geometry
 //------------------------------------------------------------------------------
 
-// FIXME: some duplicates here
-// FIXME: tune these values.  Bigger chunk_size leads to fewer binary searches
+// fixme: some duplicates here; move to GB_cuda_geomtry.hpp
+// fixme: tune these values.  Bigger CHUNKSIZE leads to fewer binary searches
 // with GB_cuda_ek_slice_setup, for example.
-#define chunk_size 128
-#define log2_chunk_size 7
-#define tile_sz 32 
-#define log2_tile_sz 5 
+#define CHUNKSIZE      GB_CUDA_DOT3_CHUNKSIZE
+#define LOG2_CHUNKSIZE GB_CUDA_DOT3_CHUNKSIZE_LOG2
 #define shared_vector_size 256 
-#define threads_per_block 32
 
 //------------------------------------------------------------------------------
 // operators
@@ -97,7 +94,6 @@
 // depending on the bucket).
 
 // dot3:  C<M>=A'B, M is sparse or hyper, C is sparse or hyper
-// 32 kernels A,B: (hyper,sparse,bitmap,full)^2 x (M and C are sparse/hyper)
 
 typedef enum
 {
@@ -114,7 +110,7 @@ typedef enum
     GB_BUCKET_SPDN = 2,         // spdn: sparse vector has lots of entries;
                                 // use a whole warp for each dot product
 }
-GB_bucket_code ;    // FIXME: rename GB_dot3_bucket_code
+GB_bucket_code ;    // fixme: rename GB_dot3_bucket_code
 
 // These may use another bucket enum:
 
@@ -153,12 +149,12 @@ GB_bucket_code ;    // FIXME: rename GB_dot3_bucket_code
     // sparse-sparse, sparse-dense, or dense-sparse
 
     #undef  GB_FREE_ALL
-    #define GB_FREE_ALL                     \
-    {                                       \
-        GB_FREE_MEMORY (&Nanobuckets, Nb_size) ;   \
-        GB_FREE_MEMORY (&Blockbucket, Bb_size) ;   \
-        GB_FREE_MEMORY (&Bucketp, Bup_size) ;      \
-        GB_FREE_MEMORY (&Bucket, Bu_size) ;        \
+    #define GB_FREE_ALL                         \
+    {                                           \
+        GB_FREE_MEMORY (&Nanobuckets, Nb_mem) ; \
+        GB_FREE_MEMORY (&Blockbucket, Bb_mem) ; \
+        GB_FREE_MEMORY (&Bucketp, Bup_mem) ;    \
+        GB_FREE_MEMORY (&Bucket, Bu_mem) ;      \
     }
 
     #include "template/GB_cuda_jit_AxB_dot3_phase1.cuh"
@@ -210,10 +206,11 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
     // dense-dense case requires no workspace
     #else
     // sparse-sparse, sparse-dense, and dense-sparse requires workspace
-    int64_t *Nanobuckets = NULL ; size_t Nb_size  = 0 ;
-    int64_t *Blockbucket = NULL ; size_t Bb_size  = 0 ;
-    int64_t *Bucket = NULL      ; size_t Bu_size  = 0 ;
-    int64_t *Bucketp = NULL     ; size_t Bup_size = 0 ;
+    uint64_t mem = GB_mem (GB_ARENA_RMM, 0) ;
+    int64_t *Nanobuckets = NULL ; uint64_t Nb_mem  = mem ;
+    int64_t *Blockbucket = NULL ; uint64_t Bb_mem  = mem ;
+    int64_t *Bucket = NULL      ; uint64_t Bu_mem  = mem ;
+    int64_t *Bucketp = NULL     ; uint64_t Bup_mem = mem ;
     #endif
 
     //--------------------------------------------------------------------------
@@ -221,15 +218,15 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
     //--------------------------------------------------------------------------
 
     const GB_M_NVALS (mnz) ;
-    int nblks_1 = (mnz + chunk_size - 1) / chunk_size ;
-    int number_of_blocks_1 = GB_IMIN (nblks_1,  chunk_size * number_of_sms) ;
+    int nblks_1 = (mnz + CHUNKSIZE - 1) / CHUNKSIZE ;
+    int number_of_blocks_1 = GB_IMIN (nblks_1,  CHUNKSIZE * number_of_sms) ;
 
     // most methods can use these launch geometries:
     printf ("\nmnz: %ld\n", mnz) ;
     printf ("number_of_blocks_1: %d\n", number_of_blocks_1) ;
-    printf ("threads_per_block: %d\n", threads_per_block) ;
+    printf ("GB_CUDA_TILE_SIZE: %d\n", GB_CUDA_TILE_SIZE) ;
     dim3 grid_1 (number_of_blocks_1) ;
-    dim3 block (threads_per_block) ;
+    dim3 block_1 (GB_CUDA_TILE_SIZE) ;
 
     CUDA_OK (cudaGetLastError ( )) ;
     CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -251,17 +248,17 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
         // Idea is to have each task work on a continguous block of columns of
         // C Note: for small tests, mnz is small so ntasks is be governed by
-        // chunk_size, not chunk_size*number_of_sms.  For large problems in
-        // production, chunk_size is less important since ntasks will likely be
-        // bounded by chunk_size*number_of_sms (say 128*80 = 10,240 on a V100,
-        // for the default chunk_size of 128).
+        // CHUNKSIZE, not CHUNKSIZE*number_of_sms.  For large problems in
+        // production, CHUNKSIZE is less important since ntasks will likely be
+        // bounded by CHUNKSIZE*number_of_sms (say 128*80 = 10,240 on a V100,
+        // for the default CHUNKSIZE of 128).
 
         //----------------------------------------------------------------------
         // dense case, phase 1
         //----------------------------------------------------------------------
 
         // kernel_timer.Start();
-        GB_cuda_AxB_dot3_dense_phase1_kernel <<<grid_1, block, 0, stream>>>
+        GB_cuda_AxB_dot3_dense_phase1_kernel <<<grid_1, block_1, 0, stream>>>
             (C, M) ;
         CUDA_OK (cudaGetLastError ( )) ;
         CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -270,15 +267,16 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // printf ("(GPU phase1 %12.6g ms )\n", kernel_timer.Elapsed()) ;
 
         //----------------------------------------------------------------------
-        // dense case, phase "3" (FIXME: rename to dense_phase2)
+        // dense case, phase "3" (fixme: rename to dense_phase2)
         //----------------------------------------------------------------------
 
+        // this kernel requires a blockDim.x of GB_CUDA_TILE_SIZE
         int work_per_thread = 8 ;
-        int blocksz = 64 ;
+        // int blocksz = 64 ;
         work_per_thread = 8 ;
         if (mnz > 1024)
         {
-            blocksz = 512 ;
+            // blocksz = 512 ;
             work_per_thread = 64 ;
         }
         int gridsz = GB_ICEIL (mnz, work_per_thread*blocksz) ;
@@ -286,7 +284,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
         // kernel_timer.Start();
 
-        GB_cuda_AxB_dot3_phase3_dndn_kernel <<grid_2dn, block, 0, stream>>
+        GB_cuda_AxB_dot3_phase3_dndn_kernel <<grid_2dn, block_1, 0, stream>>
             (C, M, A, B, theta) ;
 
     }
@@ -307,12 +305,12 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // # by the size of the warp.  ph2_task = ph1_task/32 for example
 
         int64_t Blockbucket_size = NBUCKETS * (number_of_blocks_1 + 1) ;
-        int64_t nanobuckets_size = Blockbucket_size * threads_per_block ;
+        int64_t nanobuckets_size = Blockbucket_size * GB_CUDA_TILE_SIZE ;
 
-        Nanobuckets = (int64_t *) GB_MALLOC_MEMORY (nanobuckets_size, sizeof (int64_t), &Nb_size) ;
-        Blockbucket = (int64_t *) GB_MALLOC_MEMORY (Blockbucket_size, sizeof (int64_t), &Bb_size) ;
-        Bucketp = (int64_t *) GB_MALLOC_MEMORY (NBUCKETS+1, sizeof (int64_t), &Bup_size) ;
-        Bucket = (int64_t *) GB_MALLOC_MEMORY (mnz, sizeof (int64_t), &Bu_size) ;
+        Nanobuckets = (int64_t *) GB_MALLOC_MEMORY (nanobuckets_size, sizeof (int64_t), &Nb_mem) ;
+        Blockbucket = (int64_t *) GB_MALLOC_MEMORY (Blockbucket_size, sizeof (int64_t), &Bb_mem) ;
+        Bucketp = (int64_t *) GB_MALLOC_MEMORY (NBUCKETS+1, sizeof (int64_t), &Bup_mem) ;
+        Bucket = (int64_t *) GB_MALLOC_MEMORY (mnz, sizeof (int64_t), &Bu_mem) ;
 
 //      memset (Bucketp, 0, (NBUCKETS+1) * sizeof (int64_t)) ;
 
@@ -324,8 +322,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
             return (GrB_OUT_OF_MEMORY) ;
         }
 
-        // FIXME: do async with streams
-        // FIXME: do we need any of these?
+        // fixme: do async with streams
+        // fixme: do we need any of these?
         // YES! We need at least Blockbucket [(0:4)*(nblocks+1)] = 0
         CUDA_OK (cudaMemsetAsync(Nanobuckets, 0, nanobuckets_size * sizeof(int64_t), stream));
         CUDA_OK (cudaMemsetAsync(Blockbucket, 0, Blockbucket_size * sizeof(int64_t), stream));
@@ -336,8 +334,11 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // phase1 and phase2: place each C(i,j) in a bucket
         //----------------------------------------------------------------------
 
+// fixme: API for CUDA 13.2
+#if 0
         CUDA_OK (cudaMemAdvise( Bucketp, (NBUCKETS+1) * sizeof ( int64_t), cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId));
-        CUDA_OK (cudaMemAdvise( Bucketp, (NBUCKETS+1) * sizeof ( int64_t), cudaMemAdviseSetAccessedBy, device));
+        CUDA_OK (cudaMemAdvise( Bucketp, (NBUCKETS+1) * sizeof ( int64_t), cudaMemAdviseSetAccessedBy, (cudaMemLocation) device));
+#endif
 
         CUDA_OK (cudaGetLastError ( )) ;
         CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -349,7 +350,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         // kernel_timer.Start();
 
         // printf ("\nLaunching sparse phase1:\n") ;
-        GB_jit_AxB_dot3_phase1_kernel <<<grid_1, block, 0, stream>>>
+        GB_jit_AxB_dot3_phase1_kernel <<<grid_1, block_1, 0, stream>>>
             (Nanobuckets, Blockbucket, C, M, A, B) ;
         CUDA_OK (cudaGetLastError ( )) ;
         CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -362,8 +363,8 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         //----------------------------------------------------------------------
 
         // # of blocks for phase2:
-//      // number_of_blocks_2 = ceil ((number_of_blocks_1+1) / threads_per_block)
-//      int number_of_blocks_2 = ((number_of_blocks_1) + threads_per_block - 1) / threads_per_block ;
+//      // number_of_blocks_2 = ceil ((number_of_blocks_1+1) / GB_CUDA_TILE_SIZE)
+//      int number_of_blocks_2 = ((number_of_blocks_1) + GB_CUDA_TILE_SIZE - 1) / GB_CUDA_TILE_SIZE ;
 
 //      number_of_blocks_2 = 1 ;
 //      printf ("number_of_blocks_2: %d\n", number_of_blocks_2) ;
@@ -386,7 +387,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 #endif
 
         // printf ("Launching sparse phase2:\n") ;
-        GB_cuda_AxB_dot3_phase2_kernel <<<grid_2, block, 0, stream>>>
+        GB_cuda_AxB_dot3_phase2_kernel <<<grid_2, block_1, 0, stream>>>
             (Blockbucket, number_of_blocks_1) ;
         CUDA_OK (cudaGetLastError ( )) ;
         CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -442,7 +443,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
         {
             // kernel_timer.Start();
             // printf ("Launching sparse phase2end:\n") ;
-            GB_cuda_AxB_dot3_phase2end_kernel <<<grid_1, block, 0, stream>>>
+            GB_cuda_AxB_dot3_phase2end_kernel <<<grid_1, block_1, 0, stream>>>
                 (Nanobuckets, Blockbucket, Bucketp, Bucket, C, mnz) ;
             CUDA_OK (cudaGetLastError ( )) ;
             CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -479,7 +480,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
                         case GB_BUCKET_VSVS :
                         {
-                            // FIXME: should be a function of cuda architecture
+                            // fixme: should be a function of cuda architecture
                             blocksz = 256 ;
                             work_per_thread = 4 ;
                             if (cnz_in_bucket > (2<<12))
@@ -490,8 +491,9 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                                 work_per_thread*blocksz) ;
                             gridsz = GB_IMIN (gridsz, 256*number_of_sms) ;
                             dim3 grid_3 (gridsz) ;
+                            dim3 block_for_vsvs (blocksz) ;
                             GB_cuda_AxB_dot3_phase3_vsvs_kernel
-                                <<<grid_3, block, 0, stream>>>
+                                <<<grid_3, block_for_vsvs, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
                             CUDA_OK (cudaGetLastError ( )) ;
                             CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -504,8 +506,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
                         case GB_BUCKET_MERGEPATH :
                         {
-                            // FIXME: should be a function of cuda architecture
-                            blocksz = 32 ;
+                            // fixme: should be a function of cuda architecture
                             work_per_thread = 256 ;
                             if (cnz_in_bucket > (2<<20))
                             {
@@ -521,11 +522,9 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             dim3 grid_3 (gridsz) ;
                             // each thread block creates Ai_s and Bj_s; each
                             // are int64_t arrays of size shared_vector_size
-                            size_t shared_bytes = 0 ;
-                                // shared_vector_size *
-                                // sizeof (int64_t) * 2 ;
+                            size_t shared_bytes = shared_vector_size * sizeof (int64_t) * 2 ;
                             GB_cuda_AxB_dot3_phase3_mp_kernel
-                                <<<grid_3, block, shared_bytes, stream>>>
+                                <<<grid_3, block_1, shared_bytes, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
                             CUDA_OK (cudaGetLastError ( )) ;
                             CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -538,8 +537,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
                         case GB_BUCKET_VSSP :
                         {
-                            // FIXME: should be a function of cuda architecture
-                            blocksz = 32 ;
+                            // fixme: should be a function of cuda architecture
                             work_per_thread = 256 ;
                             if (cnz_in_bucket > (2<<20))
                             {
@@ -554,7 +552,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             gridsz = GB_IMIN (gridsz, 256*number_of_sms) ;
                             dim3 grid_3 (gridsz) ;
                             GB_cuda_AxB_dot3_phase3_vssp_kernel
-                                <<<grid_3, block, 0, stream>>>
+                                <<<grid_3, block_1, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
                             CUDA_OK (cudaGetLastError ( )) ;
                             CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -574,7 +572,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
                         case GB_BUCKET_VSDN :
                         {
-                            // FIXME: should be a function of cuda architecture
+                            // fixme: should be a function of cuda architecture
                             blocksz = 256 ;
                             work_per_thread = 4 ;
                             if (cnz_in_bucket > (2<<12))
@@ -585,8 +583,9 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                                 work_per_thread*blocksz) ;
                             gridsz = GB_IMIN (gridsz, 256*number_of_sms) ;
                             dim3 grid_3 (gridsz) ;
+                            dim3 block_for_vsdn (blocksz) ;
                             GB_cuda_AxB_dot3_phase3_vsdn_kernel
-                                <<<grid_3, block, 0, stream>>>
+                                <<<grid_3, block_for_vsdn, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
                             CUDA_OK (cudaGetLastError ( )) ;
                             CUDA_OK (cudaStreamSynchronize (stream)) ;
@@ -599,8 +598,11 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
 
                         case GB_BUCKET_SPDN :
                         {
-                            // FIXME: should be a function of cuda architecture
-                            blocksz = 32 ;
+                            // the blockDim.x for this method must match the
+                            // CUDA tile size:
+                            blocksz = GB_CUDA_TILE_SIZE ;
+
+                            // fixme: should be a function of cuda architecture
                             work_per_thread = 256 ;
                             if (cnz_in_bucket > (2<<20))
                             {
@@ -615,7 +617,7 @@ GB_JIT_CUDA_KERNEL_DOT3_PROTO (GB_jit_kernel)
                             gridsz = GB_IMIN (gridsz, 256*number_of_sms) ;
                             dim3 grid_3 (gridsz) ;
                             GB_cuda_AxB_dot3_phase3_spdn_kernel
-                                <<<grid_3, block, 0, stream>>>
+                                <<<grid_3, block_1, 0, stream>>>
                                 (start, end, Bucket, C, M, A, B, theta) ;
                             CUDA_OK (cudaGetLastError ( )) ;
                             CUDA_OK (cudaStreamSynchronize (stream)) ;

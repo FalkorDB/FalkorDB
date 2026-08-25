@@ -343,6 +343,13 @@ bool Graph_RelationshipContainsMultiEdge
 	RelationID r     // Relationship ID
 );
 
+// checks if graph has a node with id
+bool Graph_HasNode
+(
+	const Graph *g,  // graph
+	NodeID id        // node id
+);
+
 // retrieves node with given id from graph,
 // returns NULL if node wasn't found
 bool Graph_GetNode
@@ -350,6 +357,16 @@ bool Graph_GetNode
 	const Graph *g,
 	NodeID id,
 	Node *n
+);
+
+// checks if graph has an edge with id under the relationship r
+bool Graph_HasEdge
+(
+	const Graph *g,  // graph
+	EdgeID id,       // edge id
+	NodeID src,      // edge source node id
+	NodeID dest,     // edge destination node id
+	RelationID r     // edge relationship
 );
 
 // retrieves edge with given id from graph,
@@ -416,6 +433,40 @@ void Graph_GetNodeEdges
 	const Node *n,        // node to extract edges from
 	GRAPH_EDGE_DIR dir,   // edge direction
 	RelationID edgeType,  // relation type
+	Edge **edges          // array_t incoming/outgoing edges
+);
+
+// get node edges of a specific relation, given an already-synchronized
+// relation matrix, skipping the per-call matrix lookup/sync (and its lock).
+// callers that repeatedly query the same relation (e.g. a traversal's inner
+// loop) should resolve the matrix once via Graph_GetRelationMatrix and reuse
+// it across calls -- safe only while the caller holds whatever lock
+// guarantees the graph is stable for that long (e.g. a read query's graph
+// read lock)
+void Graph_GetNodeEdgesFromMatrix
+(
+	const Graph *g,       // graph to get edges from
+	const Node *n,        // node to extract edges from
+	GRAPH_EDGE_DIR dir,   // edge direction
+	Tensor R,             // already synchronized relation matrix for 'edgeType'
+	RelationID edgeType,  // relation type (must be a concrete relation)
+	Edge **edges          // array_t incoming/outgoing edges
+);
+
+// get node edges of a specific relation, using an already-attached
+// TensorIterator (see TensorIterator_Attach), reseeking it to 'n' instead of
+// re-attaching it to the relation matrix from scratch. 'dir' must be
+// OUTGOING or INCOMING -- callers wanting both directions should hold one
+// iterator per direction and call this once per iterator. intended for hot
+// loops that repeatedly query the same relation matrix across many nodes
+// (e.g. Dijkstra's relaxation loop)
+void Graph_GetNodeEdgesFromIterator
+(
+	const Graph *g,       // graph to get edges from
+	const Node *n,        // node to extract edges from
+	GRAPH_EDGE_DIR dir,   // edge direction, OUTGOING or INCOMING
+	TensorIterator *it,   // iterator already attached to the relation matrix
+	RelationID edgeType,  // relation type (must be a concrete relation)
 	Edge **edges          // array_t incoming/outgoing edges
 );
 

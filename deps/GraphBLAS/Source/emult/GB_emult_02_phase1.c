@@ -52,6 +52,9 @@ GrB_Info GB_emult_02_phase1 // symbolic analysis for GB_emult_02 and GB_emult_03
     ASSERT ((M == NULL) || GB_IS_BITMAP (M) || GB_IS_FULL (M)) ;
 
     GrB_Info info ;
+    ASSERT (C != NULL) ;
+    int data_arena = C->data_arena ;
+
     const int8_t  *restrict Mb = (M == NULL) ? NULL : M->b ;
     const GB_M_TYPE *restrict Mx = (M == NULL || Mask_struct) ? NULL :
         (const GB_M_TYPE *) M->x ;
@@ -199,7 +202,8 @@ GrB_Info GB_emult_02_phase1 // symbolic analysis for GB_emult_02 and GB_emult_03
             Wfirst, Wlast, A_ek_slicing, A_ntasks) ;
 
         int64_t nvec_nonempty ;
-        GB_cumsum (Cp, Cp_is_32, nvec, &nvec_nonempty, A_nthreads, Werk) ;
+        GB_cumsum (Cp, Cp_is_32, nvec, &nvec_nonempty, A_nthreads,
+            data_arena, Werk) ;
         GB_nvec_nonempty_set (C, nvec_nonempty) ;
 
         GB_ek_slice_merge2 (Cp_kfirst, Cp, Cp_is_32,
@@ -243,5 +247,4 @@ GrB_Info GB_emult_02_phase1 // symbolic analysis for GB_emult_02 and GB_emult_03
 
     return (GrB_SUCCESS) ;
 }
-
 

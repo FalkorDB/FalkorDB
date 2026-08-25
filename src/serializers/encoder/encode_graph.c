@@ -6,6 +6,7 @@
 #include "encode_graph.h"
 #include "v19/encode_v19.h"
 #include "../serializer_io.h"
+#include "../encoding_version.h"
 
 void RdbSaveGraph
 (
@@ -15,5 +16,9 @@ void RdbSaveGraph
 	SerializerIO io = SerializerIOv2_FromBufferedRedisModuleIO(rdb, true);
 	RdbSaveGraph_latest(io, value);
 	SerializerIO_Free(&io);
+}
+
+uint32_t Graph_EncodingVersion(void) {
+	return GRAPH_ENCODING_LATEST_V;
 }
 

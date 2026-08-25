@@ -44,35 +44,34 @@
 // debugging definitions
 //------------------------------------------------------------------------------
 
+// assert X is true in all build modes
+#define RELEASE_ASSERT(X)                                       \
+_Pragma("GCC diagnostic push")                                  \
+_Pragma("GCC diagnostic ignored \"-Wnull-dereference\"")        \
+{                                                               \
+	if (!(X))                                                   \
+	{                                                           \
+		if(RedisModule__Assert != NULL) {                       \
+			RedisModule_Assert(X);                              \
+		} else {                                                \
+			printf ("assert(%s) failed: %s line %d\n",          \
+			#X, __FILE__, __LINE__);                            \
+			/* force crash */                                   \
+			char x = *((char*)NULL); /* produce stack trace */  \
+			assert(x); /* solves C++ unused var warning */      \
+		}                                                       \
+	}                                                           \
+}                                                               \
+_Pragma("GCC diagnostic pop")
+
 #undef ASSERT
 
 #ifdef RG_DEBUG
-
 	// assert X is true
-	#define ASSERT(X)                                               \
-	_Pragma("GCC diagnostic push")                                  \
-	_Pragma("GCC diagnostic ignored \"-Wnull-dereference\"")        \
-	{                                                               \
-		if (!(X))                                                   \
-		{                                                           \
-			if(RedisModule__Assert != NULL) {                       \
-				RedisModule_Assert(X);                              \
-			} else {                                                \
-				printf ("assert(%s) failed: %s line %d\n",          \
-				#X, __FILE__, __LINE__);                            \
-				/* force crash */                                   \
-				char x = *((char*)NULL); /* produce stack trace */  \
-				assert(x); /* solves C++ unused var warning */      \
-			}                                                       \
-		}                                                           \
-	}                                                               \
-	_Pragma("GCC diagnostic pop")
-
+	#define ASSERT(X) RELEASE_ASSERT(X)
 #else
-
 	// debugging disabled
 	#define ASSERT(X)
-
 #endif
 
 
@@ -81,6 +80,17 @@
 
 #undef UNUSED
 #define UNUSED(V) ((void)V)
+
+// disables optimization for a single function - used to work around a
+// Clang -O2/-O3 miscompilation (see call sites for details); 'optnone' is
+// a Clang-only attribute, GCC doesn't have the underlying bug and doesn't
+// recognize it, so it's a no-op there rather than an unrecognized-attribute
+// warning
+#if defined(__clang__)
+	#define OPTNONE __attribute__((optnone))
+#else
+	#define OPTNONE
+#endif
 
 // GraphBLAS return code validation
 // both GrB_SUCCESS and GrB_NO_VALUE are valid "OK"

@@ -17,13 +17,13 @@ typedef struct
     int64_t start ;     // starting vector for coarse task, p for fine task
     int64_t end ;       // ending vector for coarse task, p for fine task
     int64_t vector ;    // -1 for coarse task, vector j for fine task
-    uint64_t hsize ;    // size of hash table
+    uint64_t hash_nitems ;  // # of items in hash table
     uint64_t *Hi ;      // Hi array for hash table (coarse hash tasks only)
     GB_void *Hf ;       // Hf array for hash table (int8_t or uint64_t)
     GB_void *Hx ;       // Hx array for hash table
     int64_t my_cjnz ;   // # entries in C(:,j) found by this fine task
     int leader ;        // leader fine task for the vector C(:,j)
-    int team_size ;     // # of fine tasks in the team for vector C(:,j)
+    int team_nfine ;    // # of fine tasks in the team for vector C(:,j)
 }
 GB_saxpy3task_struct ;
 

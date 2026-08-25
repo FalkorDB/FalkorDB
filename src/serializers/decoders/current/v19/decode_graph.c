@@ -6,67 +6,6 @@
 #include "decode_v19.h"
 #include "../../../../index/indexer.h"
 
-// TODO: have the delta matrix upon setting M, incase the matrix
-// contains a transpose, we should overwrite it with MT
-// compute transpose matrices
-static void _ComputeTransposeMatrix
-(
-	const Delta_Matrix A
-) {
-	ASSERT(A != NULL);
-
-	GrB_Info info;
-	GrB_Index nvals;
-
-	// make sure A is fully synced
-	GrB_Matrix DP = Delta_Matrix_DP (A) ;
-	GrB_Matrix DM = Delta_Matrix_DM (A) ;
-
-	// expecting A's DP & DM to have no entries
-	info = GrB_Matrix_nvals (&nvals, DP) ;
-	ASSERT (info == GrB_SUCCESS) ;
-	ASSERT (nvals == 0) ;
-
-	info = GrB_Matrix_nvals (&nvals, DM) ;
-	ASSERT (info == GrB_SUCCESS) ;
-	ASSERT (nvals == 0) ;
-
-	// compute transpose
-	Delta_Matrix AT  = Delta_Matrix_getTranspose(A);
-	GrB_Matrix   AM  = Delta_Matrix_M(A);
-	GrB_Matrix   ATM = Delta_Matrix_M(AT);
-
-	// make sure transpose doesn't contains any entries
-	info = GrB_Matrix_nvals(&nvals, ATM);
-	ASSERT(info  == GrB_SUCCESS);
-	ASSERT(nvals == 0);
-
-	info = GrB_transpose(ATM, NULL, NULL, AM, NULL);
-	ASSERT(info  == GrB_SUCCESS);
-
-	info = GrB_wait (ATM, GrB_MATERIALIZE) ;
-	ASSERT(info  == GrB_SUCCESS);
-}
-
-static void _ComputeTransposeMatrices
-(
-	Graph *g  // graph
-) {
-	ASSERT(g != NULL);
-
-	int n = Graph_RelationTypeCount(g);
-
-	// compute transpose for each relation matrix
-	for(RelationID r = 0; r < n; r++) {
-		Delta_Matrix R = Graph_GetRelationMatrix(g, r, false);
-		_ComputeTransposeMatrix(R);
-	}
-
-	// compute transpose for the adjacency matrix
-	Delta_Matrix ADJ = Graph_GetAdjacencyMatrix(g, false);
-	_ComputeTransposeMatrix(ADJ);
-}
-
 static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
@@ -78,9 +17,6 @@ static GraphContext *_GetOrCreateGraphContext
 		gc = GraphContext_New (graph_name) ;
 		GraphContext_AcquireWriteLock (gc) ;
 	}
-
-	// free the name string, as it either not in used or copied
-	RedisModule_Free (graph_name) ;
 
 	return gc ;
 }
@@ -102,7 +38,8 @@ static void _InitGraphDataStructure
 
 static GraphContext *_DecodeHeader
 (
-	SerializerIO rdb
+	SerializerIO rdb,
+	bool detached
 ) {
 	// Header format:
 	// Graph name
@@ -136,7 +73,15 @@ static GraphContext *_DecodeHeader
 	// total keys representing the graph
 	uint64_t key_number = SerializerIO_ReadUnsigned(rdb);
 
-	GraphContext *gc = _GetOrCreateGraphContext(graph_name);
+	GraphContext *gc = NULL ;
+	if (detached) {
+		gc = GraphContext_New (graph_name) ;
+		GraphContext_AcquireWriteLock (gc) ;
+	} else {
+		gc = _GetOrCreateGraphContext (graph_name) ;
+	}
+	RedisModule_Free (graph_name) ;
+
 	Graph *g = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -203,7 +148,8 @@ static PayloadInfo *_RdbLoadKeySchema
 GraphContext *RdbLoadGraphContext_latest
 (
 	SerializerIO rdb,
-	const RedisModuleString *rm_key_name
+	const RedisModuleString *rm_key_name,
+	bool detached
 ) {
 	// Key format:
 	//  Header
@@ -213,7 +159,7 @@ GraphContext *RdbLoadGraphContext_latest
 	//      Entities in payload
 	//  Payload(s) X N
 
-	GraphContext *gc = _DecodeHeader(rdb);
+	GraphContext *gc = _DecodeHeader (rdb, detached) ;
 	Graph        *g  = GraphContext_GetGraph (gc) ;
 	GraphDecodeContext *decoding_context = GraphContext_GetDecodingCtx (gc) ;
 
@@ -335,12 +281,7 @@ GraphContext *RdbLoadGraphContext_latest
 	}
 
 	if (GraphDecodeContext_Finished (decoding_context)) {
-		// flush graph matrices
-		Graph_ApplyAllPending (g, true) ;
-
-		// compute transposes
-		_ComputeTransposeMatrices (g) ;
-
+		Graph_ApplyAllPending (g, false) ;
 		GraphContext_ReleaseLock (gc) ;
 
 		uint rel_count   = Graph_RelationTypeCount(g);

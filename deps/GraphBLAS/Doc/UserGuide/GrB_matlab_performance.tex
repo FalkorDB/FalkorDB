@@ -17,7 +17,7 @@ the same code is being used by both (\verb'GrB_mxm').
 Other methods in GraphBLAS are also faster, some {\em extremely} so, but are
 not yet exploited as built-in operations MATLAB.  In particular, the statement
 \verb'C(M)=A' (where \verb'M' is a logical matrix) takes under a second for a
-large sparse problem when using GraphBLAS via its \verb'@GrB' interface.  By
+large sparse problem when using GraphBLAS via its \verb'GrB' interface.  By
 stark contrast, MATLAB would take about 4 or 5 days, a speedup of about
 500,000x.  For a smaller problem, GraphBLAS takes 0.4 seconds while MATLAB
 takes 28 hours (a speedup of about 250,000x).  Both cases use the same
@@ -48,7 +48,7 @@ i7-8565U CPU @ 1.80GHz with 4 hardware cores).  GraphBLAS is using 4 threads.
 \end{tabular}}
 \vspace{0.10in}
 
-The assignment \verb'C(I,J)=A' in MATLAB, when using \verb'@GrB' objects, is up
+The assignment \verb'C(I,J)=A' in MATLAB, when using \verb'GrB' objects, is up
 to 1000x faster than the same statement with the same syntax, when using MATLAB
 sparse matrices instead.  Matrix concatenation \verb'C = [A B]' is about 17
 times faster in GraphBLAS, on a 20-core Intel Xeon.  For more details, see the

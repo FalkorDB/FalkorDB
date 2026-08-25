@@ -69,7 +69,11 @@ GrB_Info GB_AxB_saxpy5              // C += A*B
     //--------------------------------------------------------------------------
 
     GrB_Info info ;
-    GB_WERK_DECLARE (B_slice, int64_t) ;
+
+    ASSERT (C != NULL) ;
+    int data_arena = C->data_arena ;
+    uint64_t mem = GB_mem (data_arena, 0) ;
+    GB_WERK_DECLARE (B_slice, int64_t, mem) ;
 
     // C type must match the ztype of the monoid
     ASSERT_MATRIX_OK (C, "C for saxpy5 C+=A*B", GB0) ;
