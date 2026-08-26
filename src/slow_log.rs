@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use parking_lot::Mutex;
 use redis_module::raw;
 
-use crate::reply::format_g;
+use graph::runtime::double_format::{G_BUF_LEN, format_g_into};
 
 /// Maximum number of slowlog entries.
 const MAX_ENTRIES: usize = 10;
@@ -198,7 +198,8 @@ impl SlowLog {
             raw::reply_with_string_buffer(ctx, entry.query.as_ptr().cast(), entry.query.len());
 
             // 4. latency (formatted with ~5 significant digits, matching C's %.5g)
-            let latency_str = format_g(entry.latency, 5);
+            let mut latency_buf = [0u8; G_BUF_LEN];
+            let latency_str = format_g_into(entry.latency, 5, &mut latency_buf);
             raw::reply_with_string_buffer(ctx, latency_str.as_ptr().cast(), latency_str.len());
 
             // 5. params (string or null)
