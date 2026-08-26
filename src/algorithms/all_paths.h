@@ -21,6 +21,7 @@
 #include "../graph/graph.h"
 #include "../graph/entities/node.h"
 #include "../filter_tree/filter_tree.h"
+#include "dfs_stack.h"
 
 typedef struct {
 	Node node;
@@ -29,6 +30,7 @@ typedef struct {
 
 typedef struct {
 	LevelConnection **levels;   // nodes reached at depth i, and edges leading to them
+	Graph_dfs_stack dfs_levels; // stack for dfs path resolution (WIP)
 	Path *path;                 // current path
 	Graph *g;                   // graph to traverse
 	Edge *neighbors;            // reusable buffer of edges along the current path
@@ -45,6 +47,7 @@ typedef struct {
 	int edge_idx;               // record index of the edge alias; -1 if edge is not referenced
 	bool fetch_edges;           // true when edge attributes must be populated (filter or referenced edge)
 	bool shortest_paths;        // only collect shortest paths
+	bool emit_0_path;           // emit source-only path on first NextPath call
 	GrB_Vector visited;         // visited nodes in shortest path
 } AllPathsCtx;
 
@@ -94,4 +97,3 @@ void AllPathsCtx_Free
 (
 	AllPathsCtx *ctx
 );
-

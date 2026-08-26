@@ -6,6 +6,7 @@
 
 #include "RG.h"
 #include "all_paths.h"
+#include "dfs_stack.h"
 #include "all_shortest_paths.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
@@ -279,6 +280,7 @@ AllPathsCtx *AllPathsCtx_New
 	// should contain min+1..max+1 nodes.
 	ctx->minLen = minLen + 1 ;
 	ctx->maxLen = maxLen + 1 ;
+	ctx->emit_0_path = (ctx->minLen == 1) ;
 
 	// take ownership of relation IDs; expand GRAPH_NO_RELATION to all actual types
 	if (relationCount == 1 && relationIDs [0] == GRAPH_NO_RELATION) {
@@ -299,7 +301,14 @@ AllPathsCtx *AllPathsCtx_New
 		ctx->multi_edge [i] = Graph_RelationshipContainsMultiEdge (g, ctx->relationIDs [i]) ;
 	}
 
-	ctx->levels         = arr_new (LevelConnection *, 1) ;
+	dfs_stack_new (&ctx->dfs_levels, g, ctx->relationIDs, ctx->relationCount,
+			dir, minLen) ;
+	if (ctx->maxLen > 1) {
+		dfs_stack_push_neighbors (&ctx->dfs_levels, ENTITY_GET_ID (src)) ;
+	}
+
+	ctx->levels = arr_new (LevelConnection *, 1) ;
+
 	ctx->path           = Path_New (1) ;
 	ctx->neighbors      = arr_new (Edge, 32) ;
 	ctx->dst            = dst ;
@@ -341,73 +350,64 @@ static Path *_AllPathsCtx_NextPath
 (
 	AllPathsCtx *ctx
 ) {
-	// as long as path is not empty OR there are neighbors to traverse
-	while (Path_NodeCount (ctx->path) > 0 ||
-		   _AllPathsCtx_LevelNotEmpty (ctx, 0)) {
-
-		uint32_t depth = Path_NodeCount (ctx->path) ;
-
-		// can we advance?
-		if (_AllPathsCtx_LevelNotEmpty (ctx, depth)) {
-			// get a new frontier
-			LevelConnection frontierConnection = arr_pop (ctx->levels [depth]);
-			Edge frontierEdge = frontierConnection.edge ;
-
-			// path is not valid if the next edge is a duplicate of the edges
-			// that came before it
-			if (depth > 1 &&
-				Path_ContainsEdge (ctx->path, ENTITY_GET_ID (&frontierEdge))) {
-				continue ;
-			}
-
-			// add frontier to path
-			Path_AppendNode (ctx->path, frontierConnection.node) ;
-
-			// if depth is 0 this is the source node
-			// there is no leading edge to it
-			// for depth > 0 for each frontier node, there is a leading edge
-			if (depth > 0) {
-				Path_AppendEdge (ctx->path, frontierEdge) ;
-			}
-
-			// update path depth
-			depth++ ;
-
-			// introduce neighbors only if path depth < maximum path length
-			if (depth < ctx->maxLen) {
-				addNeighbors (ctx, &frontierConnection, depth, ctx->dir) ;
-			}
-
-			// see if we can return path
-			// TODO: note that further calls to this function will continue to
-			// operate on this path, so it is essential that the caller does not
-			// modify it (or creates a copy beforehand)
-			// if future features like an algorithm API use this routine  they
-			// should either be responsible for memory safety or a memory-safe
-			// boolean/routine should be offered
-			if (depth >= ctx->minLen && depth <= ctx->maxLen) {
-
-				// looking for a specific destination node?
-				if (ctx->dst != NULL) {
-					Node dst = Path_Head (ctx->path) ;
-					if (ENTITY_GET_ID (ctx->dst) != ENTITY_GET_ID (&dst)) {
-						continue ;
-					}
-				}
-
-				return ctx->path ;
-			}
-		} else {
-			// no way to advance, backtrack
-			Path_PopNode (ctx->path) ;
-			if (Path_EdgeCount (ctx->path)) {
-				Path_PopEdge (ctx->path) ;
-			}
+	if (ctx->emit_0_path) {
+		ctx->emit_0_path = false ;
+		Node src = ctx->levels[0][0].node;
+		if (ctx->dst == NULL ||
+			ENTITY_GET_ID (ctx->dst) == ENTITY_GET_ID (&src))
+		{
+			Path *p = Path_New (0) ;
+			Path_AppendNode (p, src) ;
+			return p ;
 		}
 	}
 
-	// couldn't find a path
-	return NULL ;
+	Graph_dfs_stack *levels = &ctx->dfs_levels;
+	NodeID frontier;
+	Edge e;
+	Path *path = NULL;
+	bool found_path = false;
+	// as long as path is not empty OR there are neighbors to traverse
+	while (!found_path && dfs_stack_pop (levels, &frontier, &e)) {
+		e.attributes = NULL ;
+		uint32_t depth = arr_len (levels->levels) ;
+
+		// skip edge if already on stack
+		// TODO: improve from linear scan
+		if (dfs_stack_contains_edge (levels, ENTITY_GET_ID (&e))) {
+			continue ;
+		}
+
+		// apply filters only when a filter tree exists
+		if (ctx->ft) {
+			Graph_GetEdge (ctx->g, ENTITY_GET_ID (&e), &e) ;
+			Record_AddEdge (ctx->r, ctx->edge_idx, e) ;
+			if (FilterTree_applyFilters (ctx->ft, ctx->r) != FILTER_PASS) {
+				continue ;
+			}
+		}
+
+		// see if we can return path
+		// TODO: note that further calls to this function will continue to
+		// operate on this path, so it is essential that the caller does not
+		// modify it (or creates a copy beforehand)
+		// if future features like an algorithm API use this routine  they
+		// should either be responsible for memory safety or a memory-safe
+		// boolean/routine should be offered
+		++ depth;
+		found_path = depth >= ctx->minLen && depth <= ctx->maxLen
+			&& (ctx->dst == NULL || ENTITY_GET_ID (ctx->dst) == frontier);
+
+		if (found_path) {
+			path = dfs_stack_to_path (levels, ctx->g) ;
+		}
+
+		if (depth < ctx->maxLen) {
+			dfs_stack_push_neighbors (levels, frontier) ;
+		}
+	}
+
+	return path ;
 }
 
 Path *AllPathsCtx_NextPath
@@ -439,9 +439,14 @@ void AllPathsCtx_Reset
 
 	ctx->r   = r ;
 	ctx->dst = dst ;
+	ctx->emit_0_path = ctx->minLen == 1;
 
 	Path_Clear (ctx->path) ;
 	arr_clear  (ctx->neighbors) ;
+	dfs_stack_clear (&ctx->dfs_levels) ;
+	if (ctx->maxLen > 1) {
+		dfs_stack_push_neighbors (&ctx->dfs_levels, ENTITY_GET_ID (src)) ;
+	}
 
 	uint levelsCount = arr_len (ctx->levels) ;
 	for (uint i = 0; i < levelsCount; i++) {
@@ -468,6 +473,7 @@ void AllPathsCtx_Free (AllPathsCtx *ctx) {
 	arr_free  (ctx->neighbors)   ;
 	rm_free   (ctx->multi_edge)  ;
 	rm_free   (ctx->relationIDs) ;
+	dfs_stack_free (ctx->dfs_levels) ;
 
 	if (ctx->visited) {
 		GrB_Vector_free (&ctx->visited) ;
