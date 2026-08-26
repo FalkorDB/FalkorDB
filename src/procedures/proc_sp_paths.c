@@ -493,9 +493,9 @@ static double _sum_path_cost
 	}
 
 	double cost = 0;
-	uint edge_count = Path_EdgeCount((Path *)p);
+	uint edge_count = Path_EdgeCount (p);
 	for(uint i = 0; i < edge_count; i++) {
-		SIValue c = _get_value_or_default((GraphEntity *)Path_GetEdge((Path *)p, i),
+		SIValue c = _get_value_or_default ((GraphEntity *) Path_GetEdge(p, i),
 				cost_prop, SI_LongVal(1));
 		cost += SI_GET_NUMERIC(c);
 	}

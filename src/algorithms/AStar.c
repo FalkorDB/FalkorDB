@@ -62,9 +62,9 @@ static inline bool _get_node_latlon
 
 	SIValue vlat;
 	SIValue vlon;
-	if(!GraphEntity_GetProperty((GraphEntity *)&n, lat_prop, &vlat) ||
-	   !GraphEntity_GetProperty((GraphEntity *)&n, lon_prop, &vlon) ||
-	   !(SI_TYPE(vlat) & SI_NUMERIC)                                ||
+	if(!GraphEntity_GetProperty((GraphEntity *) &n, lat_prop, &vlat) ||
+	   !GraphEntity_GetProperty((GraphEntity *) &n, lon_prop, &vlon) ||
+	   !(SI_TYPE(vlat) & SI_NUMERIC)                                 ||
 	   !(SI_TYPE(vlon) & SI_NUMERIC)) {
 		return false;
 	}
@@ -243,10 +243,12 @@ static bool AStarCtx_Run
 	arr_append(ac->records, src_label);
 
 	uint32_t *src_slot = NodeMap_findOrInsert(&ac->record_idx, src_id, NULL);
+
+	// set the one-based position in records array
 	*src_slot = arr_len(ac->records);
 
 	NodeWeightItem seed = { .node = src_id, .weight = src_h };
-	NodeWeightHeap_offer(&ac->heap, seed);
+	NodeWeightHeap_offer (&ac->heap, seed);
 
 	bool found = false;
 
@@ -256,7 +258,7 @@ static bool AStarCtx_Run
 	// finalized (found) or the heap empties (dst unreachable).
 	while(!found) {
 		NodeWeightItem item;
-		if(!NodeWeightHeap_poll(&ac->heap, &item)) {
+		if (!NodeWeightHeap_poll (&ac->heap, &item)) {
 			break;  // heap exhausted: dst is unreachable
 		}
 
@@ -283,87 +285,82 @@ static bool AStarCtx_Run
 		// weight is actually read or an improving edge is stored for the path.
 		bool need_weight = (ac->weight_prop != ATTRIBUTE_ID_NONE);
 
-		for(int d = 0; d < ac->ndirs; d++) {
-			bool outgoing = (ac->dirs[d] == GRAPH_EDGE_DIR_OUTGOING);
+        int num_iters = ac->ndirs * ac->relationCount;
+		for(int r = 0; r < num_iters; r++) {
+			TensorIterator *it = &ac->iters[r];
+			TensorIterator_IterateRow (it, cur);
 
-			for(int r = 0; r < ac->relationCount; r++) {
-				TensorIterator *it = &ac->iters[d * ac->relationCount + r];
-				TensorIterator_IterateRow(it, cur);
+			Edge e = { .relationID = ac->relationIDs[r] };
+			while (TensorIterator_next (it, &e.src_id, &e.dest_id, &e.id, NULL))
+			{
+				e.attributes = NULL;
+				ASSERT (e.src_id == cur || e.dest_id == cur) ;
 
-				while(true) {
-					Edge e = { .relationID = ac->relationIDs[r] };
-					if(outgoing) {
-						e.src_id = cur;
-						if(!TensorIterator_next(it, NULL, &e.dest_id, &e.id, NULL)) break;
-					} else {
-						e.dest_id = cur;
-						if(!TensorIterator_next(it, &e.src_id, NULL, &e.id, NULL)) break;
-					}
+				// nid is whichever node is NOT cur
+				NodeID nid = (e.src_id == cur) ? e.dest_id : e.src_id;
 
-					NodeID nid = outgoing ? e.dest_id : e.src_id;
-
-					if(nid == cur) {
-						continue;  // ignore self-loops
-					}
-
-					// blocked-set filters (Yen spur searches); skipped when NULL.
-					if(blocked_edges != NULL &&
-						HashTableFind((dict *)blocked_edges,
-							(void *)(uintptr_t)e.id) != NULL) {
-						continue;
-					}
-					if(blocked_nodes != NULL &&
-						HashTableFind((dict *)blocked_nodes,
-							(void *)(uintptr_t)nid) != NULL) {
-						continue;
-					}
-
-					// candidate g_score to 'nid' through 'cur' (default weight 1
-					// when no weight property). weightProp is assumed
-					// non-negative (see AStar.h).
-					double edge_w = 1;
-					if(need_weight) {
-						Graph_GetEdge(ac->g, e.id, &e);  // populate e.attributes
-						SIValue w = _get_value_or_default((GraphEntity *)&e,
-								ac->weight_prop, SI_LongVal(1));
-						edge_w = SI_GET_NUMERIC(w);
-					}
-					double new_g = cur_g + edge_w;
-
-					bool is_new;
-					uint32_t *nslot =
-						NodeMap_findOrInsert(&ac->record_idx, nid, &is_new);
-
-					double h;
-					if(!is_new) {
-						AStarLabel *nlabel = ac->records + (*nslot - 1);
-						if(nlabel->finalized || new_g >= nlabel->g_score) {
-							continue;
-						}
-						h = nlabel->h;  // heuristic is fixed per node
-					} else {
-						// first discovery: compute and cache h(nid).
-						h = _heuristic(ac->g, nid, ac->lat_prop, ac->lon_prop,
-								dst_has_coords, dst_lat, dst_lon);
-						AStarLabel fresh = { .h = h, .finalized = false };
-						arr_append(ac->records, fresh);
-						*nslot = arr_len(ac->records);
-					}
-
-					// store the improving edge; ensure attributes are populated
-					// (already done above when weighted) for the returned path.
-					if(e.attributes == NULL) {
-						Graph_GetEdge(ac->g, e.id, &e);
-					}
-					AStarLabel *nlabel = ac->records + (*nslot - 1);
-					nlabel->edge    = e;
-					nlabel->parent  = cur;
-					nlabel->g_score = new_g;
-
-					// queue (or re-queue) 'nid' at priority f = g + h(nid).
-					NodeWeightItem qi = { .node = nid, .weight = new_g + h };
-					NodeWeightHeap_offer(&ac->heap, qi);
+				if (nid == cur) {
+					continue;  // ignore self-loops
 				}
+
+				// blocked-set filters (Yen spur searches); skipped when NULL.
+				if (blocked_edges != NULL &&
+					HashTableFind((dict *)blocked_edges,
+						(void *)(uintptr_t)e.id) != NULL) {
+					continue;
+				}
+				if (blocked_nodes != NULL &&
+					HashTableFind((dict *)blocked_nodes,
+						(void *)(uintptr_t)nid) != NULL) {
+					continue;
+				}
+
+				// candidate g_score to 'nid' through 'cur' (default weight 1
+				// when no weight property). weightProp is assumed
+				// non-negative (see AStar.h).
+				double edge_w = 1;
+				if(need_weight) {
+					Graph_GetEdge(ac->g, e.id, &e);  // populate e.attributes
+					SIValue w = _get_value_or_default((GraphEntity *)&e,
+							ac->weight_prop, SI_LongVal(1));
+					edge_w = SI_GET_NUMERIC(w);
+				}
+				double new_g = cur_g + edge_w;
+
+				bool is_new;
+				uint32_t *nslot =
+					NodeMap_findOrInsert(&ac->record_idx, nid, &is_new);
+
+				double h;
+				if(!is_new) {
+					AStarLabel *nlabel = ac->records + (*nslot - 1);
+					if(nlabel->finalized || new_g >= nlabel->g_score) {
+						continue;
+					}
+					h = nlabel->h;  // heuristic is fixed per node
+				} else {
+					// first discovery: compute and cache h(nid).
+					h = _heuristic(ac->g, nid, ac->lat_prop, ac->lon_prop,
+							dst_has_coords, dst_lat, dst_lon);
+					AStarLabel fresh = { .h = h, .finalized = false };
+					arr_append(ac->records, fresh);
+					*nslot = arr_len(ac->records);
+				}
+
+				// store the improving edge; ensure attributes are populated
+				// (already done above when weighted) for the returned path.
+				if(e.attributes == NULL) {
+					Graph_GetEdge (ac->g, e.id, &e);
+				}
+
+				AStarLabel *nlabel = ac->records + (*nslot - 1);
+				nlabel->edge       = e;
+				nlabel->parent     = cur;
+				nlabel->g_score    = new_g;
+
+				// queue (or re-queue) 'nid' at priority f = g + h(nid).
+				NodeWeightItem qi = { .node = nid, .weight = new_g + h };
+				NodeWeightHeap_offer(&ac->heap, qi);
 			}
 		}
 	}
@@ -526,9 +523,9 @@ static uint64_t _path_key
 ) {
 	uint64_t h = 1469598103934665603ULL;  // FNV offset basis
 
-	uint ec = Path_EdgeCount((Path *)p);
+	uint ec = Path_EdgeCount(p);
 	for(uint i = 0; i < ec; i++) {
-		uint64_t e = ENTITY_GET_ID(Path_GetEdge((Path *)p, i));
+		uint64_t e = ENTITY_GET_ID(Path_GetEdge(p, i));
 		h ^= e;
 		h *= 1099511628211ULL;  // FNV prime
 	}
@@ -560,13 +557,13 @@ static bool _shares_root
 	const Path *prev,
 	uint i
 ) {
-	if(Path_EdgeCount((Path *)p) <= i) {
+	if(Path_EdgeCount(p) <= i) {
 		return false;
 	}
 
 	for(uint j = 0; j < i; j++) {
-		if(ENTITY_GET_ID(Path_GetEdge((Path *)p, j)) !=
-			ENTITY_GET_ID(Path_GetEdge((Path *)prev, j))) {
+		if(ENTITY_GET_ID(Path_GetEdge(p, j)) !=
+			ENTITY_GET_ID(Path_GetEdge(prev, j))) {
 			return false;
 		}
 	}
@@ -585,7 +582,7 @@ static double _root_weight
 
 	for(uint j = 0; j < i; j++) {
 		SIValue v = _get_value_or_default(
-				(GraphEntity *)Path_GetEdge((Path *)prev, j),
+				(GraphEntity *)Path_GetEdge(prev, j),
 				weight_prop, SI_LongVal(1));
 		w += SI_GET_NUMERIC(v);
 	}

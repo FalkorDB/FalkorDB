@@ -57,9 +57,9 @@ static uint64_t _path_key
 ) {
 	uint64_t h = 1469598103934665603ULL;  // FNV offset basis
 
-	uint ec = Path_EdgeCount ((Path *)p);
+	uint ec = Path_EdgeCount (p);
 	for(uint i = 0; i < ec; i++) {
-		uint64_t e = ENTITY_GET_ID (Path_GetEdge ((Path *)p, i));
+		uint64_t e = ENTITY_GET_ID (Path_GetEdge (p, i));
 		h ^= e;
 		h *= 1099511628211ULL;  // FNV prime
 	}
@@ -133,25 +133,25 @@ static Path *_concat
 	uint i,
 	const Path *spur
 ) {
-	uint spur_nodes = Path_NodeCount((Path *)spur);
-	uint spur_edges = Path_EdgeCount((Path *)spur);
+	uint spur_nodes = Path_NodeCount(spur);
+	uint spur_edges = Path_EdgeCount(spur);
 	Path *total = Path_New(i + 1 + spur_nodes);
 
 	// root nodes [0..i] and root edges [0..i-1]
 	for(uint j = 0; j <= i; j++) {
-		Path_AppendNode(total, *Path_GetNode((Path *)prev, j));
+		Path_AppendNode(total, *Path_GetNode(prev, j));
 	}
 	for(uint j = 0; j < i; j++) {
-		Path_AppendEdge(total, *Path_GetEdge((Path *)prev, j));
+		Path_AppendEdge(total, *Path_GetEdge(prev, j));
 	}
 
 	// spur nodes [1..end] (node 0 is the spur node, already appended) and all
 	// spur edges
 	for(uint j = 1; j < spur_nodes; j++) {
-		Path_AppendNode(total, *Path_GetNode((Path *)spur, j));
+		Path_AppendNode(total, *Path_GetNode(spur, j));
 	}
 	for(uint j = 0; j < spur_edges; j++) {
-		Path_AppendEdge(total, *Path_GetEdge((Path *)spur, j));
+		Path_AppendEdge(total, *Path_GetEdge(spur, j));
 	}
 
 	return total;

@@ -307,16 +307,15 @@ static void NodeMap_free
 
 struct DijkstraCtx {
 	// graph + search parameters (borrowed, owned by the caller)
-	Graph          *g;                 // graph to traverse
-	GRAPH_EDGE_DIR  dir;               // traverse direction
-	RelationID     *relationIDs;       // edge type(s) to traverse
-	Tensor         *relationMatrices;  // relation matrix per relationIDs entry
-	int             relationCount;     // length of relationIDs
-	AttributeID     weight_prop;       // weight attribute id
+	const Graph          *g;                 // graph to traverse
+	GRAPH_EDGE_DIR  dir;                     // traverse direction
+	const RelationID     *relationIDs;       // edge type(s) to traverse
+	int             relationCount;           // length of relationIDs
+	AttributeID     weight_prop;             // weight attribute id
 
 	// expansion directions derived from 'dir', computed once at construction
-	int             ndirs;             // number of active directions (1 or 2)
-	GRAPH_EDGE_DIR  dirs[2];           // the active directions themselves
+	int             ndirs;    // number of active directions (1 or 2)
+	GRAPH_EDGE_DIR  dirs[2];  // the active directions themselves
 
 	// one TensorIterator per (direction, relation) pair, attached once at
 	// construction and re-seeked (not re-attached) on every node expansion,
@@ -336,19 +335,18 @@ struct DijkstraCtx {
 // relation arrays are borrowed and must outlive the returned context.
 DijkstraCtx *DijkstraCtx_New
 (
-	Graph *g,
-	GRAPH_EDGE_DIR dir,
-	RelationID *relationIDs,
-	Tensor *relationMatrices,
-	int relationCount,
-	AttributeID weight_prop
+	const Graph *g,                  // graph to traverse
+	GRAPH_EDGE_DIR dir,              // traverse direction
+	const RelationID *relationIDs,   // edge type(s) to traverse
+	const Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,               // length of relationIDs
+	AttributeID weight_prop          // weight attribute id
 ) {
 	DijkstraCtx *dc = rm_calloc (1, sizeof(DijkstraCtx));
 
 	dc->g                = g;
 	dc->dir              = dir;
 	dc->relationIDs      = relationIDs;
-	dc->relationMatrices = relationMatrices;
 	dc->relationCount    = relationCount;
 	dc->weight_prop      = weight_prop;
 
@@ -490,95 +488,88 @@ static bool _dijkstra_run
 		// the id triplet the iterator already produces.
 		bool need_weight = (dc->weight_prop != ATTRIBUTE_ID_NONE);
 
-		for(int d = 0; d < dc->ndirs; d++) {
-			bool outgoing = (dc->dirs[d] == GRAPH_EDGE_DIR_OUTGOING);
+        int num_iters = dc->ndirs * dc->relationCount;
+		for(int r = 0; r < num_iters; r++) {
+			TensorIterator *it = &dc->iters[r];
+			TensorIterator_IterateRow (it, cur);
 
-			for(int r = 0; r < dc->relationCount; r++) {
-				TensorIterator *it = &dc->iters[d * dc->relationCount + r];
-				TensorIterator_IterateRow(it, cur);
+			Edge e = { .relationID = dc->relationIDs[r] };
+			while (TensorIterator_next (it, &e.src_id, &e.dest_id, &e.id, NULL))
+			{
+				e.attributes = NULL;
+				ASSERT (e.src_id == cur || e.dest_id == cur) ;
 
-				while(true) {
-					Edge e = { .relationID = dc->relationIDs[r] };
-					if(outgoing) {
-						e.src_id = cur;
-						if(!TensorIterator_next(it, NULL, &e.dest_id, &e.id, NULL)) break;
-					} else {
-						e.dest_id = cur;
-						if(!TensorIterator_next(it, &e.src_id, NULL, &e.id, NULL)) break;
-					}
-
-					NodeID nid = outgoing ? e.dest_id : e.src_id;
-
-					if(nid == cur) {
-						continue;  // ignore self-loops
-					}
-
-					// blocked-set filters: skip edges/nodes the caller has
-					// virtually removed from the graph for this run (Yen's spur
-					// searches). both checks are skipped entirely when the
-					// corresponding set is NULL, so the common case pays nothing.
-					if(blocked_edges != NULL &&
-						HashTableFind((dict *)blocked_edges,
-							(void *)(uintptr_t)e.id) != NULL) {
-						continue;
-					}
-					if(blocked_nodes != NULL &&
-						HashTableFind((dict *)blocked_nodes,
-							(void *)(uintptr_t)nid) != NULL) {
-						continue;
-					}
-
-					// candidate distance to 'nid' through 'cur': cur's
-					// finalized distance plus this edge's weight (default 1 when
-					// no weight property is set). reading the weight also
-					// populates e.attributes, reused below when storing.
-					// NOTE: weightProp is assumed non-negative (see the header);
-					// a negative value would silently make the result incorrect.
-					double edge_w = 1;
-					if(need_weight) {
-						Graph_GetEdge(dc->g, e.id, &e);  // populate e.attributes
-						SIValue w = _get_value_or_default((GraphEntity *)&e,
-								dc->weight_prop, SI_LongVal(1));
-						edge_w = SI_GET_NUMERIC(w);
-					}
-					double new_weight = cur_weight + edge_w;
-
-					// look up (or reserve) 'nid's slot in 'records'
-					bool is_new;
-					uint32_t *nslot =
-						NodeMap_findOrInsert(&dc->record_idx, nid, &is_new);
-
-					if(!is_new) {
-						// already discovered: skip if finalized (distance is
-						// final) or if going through 'cur' isn't strictly better.
-						DijkstraLabel *nlabel = dc->records + (*nslot - 1);
-						if(nlabel->finalized || new_weight >= nlabel->weight) {
-							continue;
-						}
-					} else {
-						// first time 'nid' is seen: append a placeholder record
-						// (filled in just below) and point its slot at it.
-						DijkstraLabel fresh = { .finalized = false };
-						arr_append(dc->records, fresh);
-						*nslot = arr_len(dc->records);
-					}
-
-					// store the improving edge; ensure its attribute set is
-					// populated (already done above when weighted) so the
-					// reconstructed path carries usable edges.
-					if(e.attributes == NULL) {
-						Graph_GetEdge(dc->g, e.id, &e);
-					}
-					DijkstraLabel *nlabel = dc->records + (*nslot - 1);
-					nlabel->edge   = e;
-					nlabel->parent = cur;
-					nlabel->weight = new_weight;
-
-					// queue (or re-queue) 'nid' at its updated tentative weight;
-					// any superseded heap entry is skipped later as a stale dup.
-					DijkstraItem qi = { .node = nid, .weight = new_weight };
-					DijkstraHeap_offer(&dc->heap, qi);
+				// nid is whichever node is NOT cur
+				NodeID nid = (e.src_id == cur) ? e.dest_id : e.src_id;
+				if(nid == cur) {
+					continue;  // ignore self-loops
 				}
+
+				// blocked-set filters: skip edges/nodes the caller has
+				// virtually removed from the graph for this run (Yen's spur
+				// searches). both checks are skipped entirely when the
+				// corresponding set is NULL, so the common case pays nothing.
+				if(blocked_edges != NULL &&
+					HashTableFind((dict *)blocked_edges,
+						(void *)(uintptr_t)e.id) != NULL) {
+					continue;
+				}
+				if(blocked_nodes != NULL &&
+					HashTableFind((dict *)blocked_nodes,
+						(void *)(uintptr_t)nid) != NULL) {
+					continue;
+				}
+
+				// candidate distance to 'nid' through 'cur': cur's
+				// finalized distance plus this edge's weight (default 1 when
+				// no weight property is set). reading the weight also
+				// populates e.attributes, reused below when storing.
+				// NOTE: weightProp is assumed non-negative (see the header);
+				// a negative value would silently make the result incorrect.
+				double edge_w = 1;
+				if(need_weight) {
+					Graph_GetEdge(dc->g, e.id, &e);  // populate e.attributes
+					SIValue w = _get_value_or_default((GraphEntity *)&e,
+							dc->weight_prop, SI_LongVal(1));
+					edge_w = SI_GET_NUMERIC(w);
+				}
+				double new_weight = cur_weight + edge_w;
+
+				// look up (or reserve) 'nid's slot in 'records'
+				bool is_new;
+				uint32_t *nslot =
+					NodeMap_findOrInsert(&dc->record_idx, nid, &is_new);
+
+				if(!is_new) {
+					// already discovered: skip if finalized (distance is
+					// final) or if going through 'cur' isn't strictly better.
+					DijkstraLabel *nlabel = dc->records + (*nslot - 1);
+					if(nlabel->finalized || new_weight >= nlabel->weight) {
+						continue;
+					}
+				} else {
+					// first time 'nid' is seen: append a placeholder record
+					// (filled in just below) and point its slot at it.
+					DijkstraLabel fresh = { .finalized = false };
+					arr_append(dc->records, fresh);
+					*nslot = arr_len(dc->records);
+				}
+
+				// store the improving edge; ensure its attribute set is
+				// populated (already done above when weighted) so the
+				// reconstructed path carries usable edges.
+				if(e.attributes == NULL) {
+					Graph_GetEdge(dc->g, e.id, &e);
+				}
+				DijkstraLabel *nlabel = dc->records + (*nslot - 1);
+				nlabel->edge   = e;
+				nlabel->parent = cur;
+				nlabel->weight = new_weight;
+
+				// queue (or re-queue) 'nid' at its updated tentative weight;
+				// any superseded heap entry is skipped later as a stale dup.
+				DijkstraItem qi = { .node = nid, .weight = new_weight };
+				DijkstraHeap_offer(&dc->heap, qi);
 			}
 		}
 	}
@@ -593,11 +584,11 @@ static bool _dijkstra_run
 // Dijkstra.h for the full contract.
 bool DijkstraCtx_Run
 (
-	DijkstraCtx *dc,
-	NodeID src_id,
-	NodeID dst_id,
-	const dict *blocked_nodes,
-	const dict *blocked_edges
+	DijkstraCtx *dc,            // engine
+	NodeID src_id,              // source node
+	NodeID dst_id,              // destination, or INVALID_ENTITY_ID for all
+	const dict *blocked_nodes,  // nodes to skip, or NULL
+	const dict *blocked_edges   // edges to skip, or NULL
 ) {
 	bool early = (dst_id != (NodeID)INVALID_ENTITY_ID);
 	return _dijkstra_run(dc, src_id, dst_id, early, DBL_MAX,
@@ -610,12 +601,13 @@ bool DijkstraCtx_Run
 // src->dst, and returns whether dst was reached. see Dijkstra.h.
 bool DijkstraCtx_RunBounded
 (
-	DijkstraCtx *dc,
-	NodeID src_id,
-	NodeID dst_id,
-	double dist_bound,
-	const dict *blocked_nodes,
-	const dict *blocked_edges
+	DijkstraCtx *dc,            // engine
+	NodeID src_id,             // source node
+	NodeID dst_id,             // target whose distance bounds the ball, or
+	                           //   INVALID_ENTITY_ID to use dist_bound as-is
+	double dist_bound,         // finalize nodes within this distance (DBL_MAX = none)
+	const dict *blocked_nodes,  // nodes to skip, or NULL
+	const dict *blocked_edges   // edges to skip, or NULL
 ) {
 	return _dijkstra_run(dc, src_id, dst_id, false, dist_bound,
 			blocked_nodes, blocked_edges);
@@ -625,9 +617,9 @@ bool DijkstraCtx_RunBounded
 // false if 'v' was never discovered (see Dijkstra.h).
 bool DijkstraCtx_Distance
 (
-	const DijkstraCtx *dc,
-	NodeID v,
-	double *weight
+	const DijkstraCtx *dc,  // engine
+	NodeID v,               // node to query
+	double *weight          // [output] shortest-path weight to 'v'
 ) {
 	uint32_t idx = NodeMap_find(&dc->record_idx, v);
 	if(idx == 0) {
@@ -645,9 +637,9 @@ bool DijkstraCtx_Distance
 // dst; caller owns the returned Path (see Dijkstra.h).
 Path *DijkstraCtx_Path
 (
-	const DijkstraCtx *dc,
-	NodeID src_id,
-	NodeID dst_id
+	const DijkstraCtx *dc,  // engine
+	NodeID src_id,          // source node (walk stops here)
+	NodeID dst_id           // destination node (walk starts here)
 ) {
 	// reconstruct the path by walking parent pointers from dst back to src,
 	// one finalized record at a time.
@@ -683,7 +675,7 @@ Path *DijkstraCtx_Path
 // free a Dijkstra engine and all its scratch/iterators.
 void DijkstraCtx_Free
 (
-	DijkstraCtx *dc
+	DijkstraCtx *dc  // engine
 ) {
 	if(dc == NULL) {
 		return;
@@ -702,16 +694,16 @@ void DijkstraCtx_Free
 
 bool Dijkstra_ShortestPath
 (
-	Path **path,
-	double *weight,
-	Graph *g,
-	NodeID src_id,
-	NodeID dst_id,
-	GRAPH_EDGE_DIR dir,
-	RelationID *relationIDs,
-	Tensor *relationMatrices,
-	int relationCount,
-	AttributeID weight_prop
+	Path **path,                     // [output] src -> dst path
+	double *weight,                  // [output] total path weight
+	const Graph *g,                  // graph to traverse
+	NodeID src_id,                   // source node
+	NodeID dst_id,                   // destination node
+	GRAPH_EDGE_DIR dir,              // traverse direction
+	const RelationID *relationIDs,   // edge type(s) to traverse
+	const Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,               // length of relationIDs
+	AttributeID weight_prop          // weight attribute id
 ) {
 	ASSERT(g      != NULL);
 	ASSERT(path   != NULL);

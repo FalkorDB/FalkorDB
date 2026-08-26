@@ -39,16 +39,16 @@
 // returned path's edges instead.
 bool Dijkstra_ShortestPath
 (
-	Path **path,               // [output] src -> dst path
-	double *weight,            // [output] total path weight
-	Graph *g,                  // graph to traverse
-	NodeID src_id,             // source node
-	NodeID dst_id,             // destination node
-	GRAPH_EDGE_DIR dir,        // traverse direction
-	RelationID *relationIDs,   // edge type(s) to traverse
-	Tensor *relationMatrices,  // relation matrix per relationIDs entry
-	int relationCount,         // length of relationIDs
-	AttributeID weight_prop    // weight attribute id
+	Path **path,                     // [output] src -> dst path
+	double *weight,                  // [output] total path weight
+	const Graph *g,                  // graph to traverse
+	NodeID src_id,                   // source node
+	NodeID dst_id,                   // destination node
+	GRAPH_EDGE_DIR dir,              // traverse direction
+	const RelationID *relationIDs,   // edge type(s) to traverse
+	const Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,               // length of relationIDs
+	AttributeID weight_prop          // weight attribute id
 );
 
 //------------------------------------------------------------------------------
@@ -79,12 +79,12 @@ typedef struct DijkstraCtx DijkstraCtx;
 // outlive the returned context. iterators are attached here, once.
 DijkstraCtx *DijkstraCtx_New
 (
-	Graph *g,                  // graph to traverse
-	GRAPH_EDGE_DIR dir,        // traverse direction
-	RelationID *relationIDs,   // edge type(s) to traverse
-	Tensor *relationMatrices,  // relation matrix per relationIDs entry
-	int relationCount,         // length of relationIDs
-	AttributeID weight_prop    // weight attribute id
+	const Graph *g,                  // graph to traverse
+	GRAPH_EDGE_DIR dir,              // traverse direction
+	const RelationID *relationIDs,   // edge type(s) to traverse
+	const Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,               // length of relationIDs
+	AttributeID weight_prop          // weight attribute id
 );
 
 // run a search from 'src'. internal scratch (labels/heap/map) is reset at
