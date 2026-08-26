@@ -24,7 +24,7 @@ use crate::runtime::{
     batch::{Batch, BatchOp},
     runtime::Runtime,
     value::Value,
-    vector_expr::{Vector, VectorEval},
+    vector_expr::{ExprColumn, VectorEval},
 };
 use orx_tree::{Dyn, NodeIdx};
 
@@ -68,8 +68,16 @@ impl<'a> FilterOp<'a> {
 
         let passing = match verdict {
             // The common shape: a comparison or boolean tree is already a mask.
-            // `null` rows are marked in the bitmap and drop with the `false`s.
-            Vector::Bools(mask, nulls) => rows
+            // `null` rows are marked in the bitmap and drop with the `false`s —
+            // but a predicate over non-null data marks none, so the bitmap is
+            // consulted once for the whole batch rather than once per row.
+            ExprColumn::Bools(mask, nulls) if !nulls.any_null() => rows
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| mask[i])
+                .map(|(_, &row)| row as u16)
+                .collect(),
+            ExprColumn::Bools(mask, nulls) => rows
                 .iter()
                 .enumerate()
                 .filter(|&(i, _)| mask[i] && !nulls.is_null(i))

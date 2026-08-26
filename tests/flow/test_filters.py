@@ -163,9 +163,12 @@ class testFilters():
         # evaluator answers for every operator, including three-valued logic
         # and the null/type edge cases.
         #
-        # `UNWIND` builds the same row set as a literal list, and evaluating
-        # the expression inside `WITH ... AS` (per-row) against `WHERE` and
-        # `RETURN` (columnar) is the cross-check.
+        # Getting a genuinely per-row reading takes some care, because
+        # projections are columnar too now. `head([<expr>])` is the lever: a
+        # list literal has no columnar arm, so the whole list subtree — and
+        # therefore <expr> inside it — goes through the per-row evaluator,
+        # while `WHERE <expr>` and `RETURN <expr>` stay columnar. All three
+        # must agree.
         g = self.db.select_graph("columnar_expr_parity")
         g.query("""CREATE (:E {i:1, f:1.5, s:'abc', b:true, z:0}),
                           (:E {i:2, f:2.5, s:'abd', b:false, z:1}),
@@ -204,7 +207,7 @@ class testFilters():
         # Aggregate inputs and grouping keys take the same columnar path.
         for expr in ["n.i * 3 + 1", "n.i % 2", "n.f * 2.0", "toUpper(n.s)",
                      "CASE WHEN n.i > 1 THEN n.i ELSE 0 END"]:
-            rows = g.query(f"MATCH (n:E) RETURN n.z AS z, {expr} AS v ORDER BY z").result_set
+            rows = g.query(f"MATCH (n:E) RETURN n.z AS z, head([{expr}]) AS v ORDER BY z").result_set
             values = [v for _, v in rows if v is not None]
             agg = g.query(f"MATCH (n:E) RETURN count({expr}), collect({expr})")
             self.env.assertEqual(agg.result_set[0][0], len(values))
@@ -231,3 +234,31 @@ class testFilters():
             self.env.assertTrue(False)
         except redis.exceptions.ResponseError as e:
             self.env.assertContains("Division by zero", str(e))
+
+    def test09_case_value_form_null_subject(self):
+        # `CASE x WHEN y` matching is `Value` equality, which in this engine
+        # calls two nulls equal, so a null subject selects a `WHEN null` arm
+        # rather than falling through to ELSE (openCypher would fall through;
+        # test_function_calls.py's `test68_Case` pins this engine's answer).
+        #
+        # What must never differ is *which path* computed it: the columnar
+        # `CASE` and the per-row one have to agree on the null subject, which
+        # is the invariant this test exists to hold.
+        g = self.db.select_graph("case_value_form")
+        g.query("UNWIND range(1, 5) AS i CREATE (:K {i: i})")
+
+        for query, expected in [
+            ("RETURN CASE null WHEN null THEN 'matched' ELSE 'else' END", 'matched'),
+            ("RETURN CASE 1 WHEN null THEN 'matched' ELSE 'else' END", 'else'),
+            ("RETURN CASE null WHEN 1 THEN 'matched' ELSE 'else' END", 'else'),
+            ("RETURN CASE 1 WHEN 1 THEN 'matched' ELSE 'else' END", 'matched'),
+        ]:
+            self.env.assertEqual(g.query(query).result_set, [[expected]], depth=1)
+
+        # Over a batch: columnar and per-row must return the same column.
+        columnar = g.query(
+            "MATCH (n:K) RETURN CASE n.missing WHEN null THEN 'matched' ELSE 'else' END AS v")
+        per_row = g.query(
+            "MATCH (n:K) RETURN head([CASE n.missing WHEN null THEN 'matched' ELSE 'else' END]) AS v")
+        self.env.assertEqual(columnar.result_set, per_row.result_set)
+        self.env.assertEqual(columnar.result_set, [['matched']] * 5)

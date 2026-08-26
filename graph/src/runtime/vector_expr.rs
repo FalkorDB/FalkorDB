@@ -19,8 +19,8 @@
 //!
 //! ## Total, not partial
 //!
-//! Every node evaluates to a [`Vector`]; a node this module has no columnar
-//! arm for is evaluated per row into [`Vector::Values`] and the walk continues
+//! Every node evaluates to a [`ExprColumn`]; a node this module has no columnar
+//! arm for is evaluated per row into [`ExprColumn::Values`] and the walk continues
 //! columnar above it. So an unsupported operator costs what it costs today
 //! while its operands — property reads especially — still go through the bulk
 //! path. There is no "this tree is not vectorizable" answer to fall back on.
@@ -32,7 +32,7 @@
 //! `wrapping_add` on both paths, and so on), and every other shape is computed
 //! by calling the very same `Value` operator per element. Nulls and the
 //! three-valued logic of `AND`/`OR`/`XOR`/`NOT` are tracked explicitly, which
-//! `Vector::Bools` carries as a null bitmap beside its mask.
+//! `ExprColumn::Bools` carries as a null bitmap beside its mask.
 //!
 //! Short-circuiting is preserved by *narrowing rows*: `A AND B` evaluates `B`
 //! only over the rows where `A` was not `false`, exactly as the per-row
@@ -55,15 +55,15 @@ use crate::runtime::vectorized::{
 use orx_tree::NodeRef;
 
 // ---------------------------------------------------------------------------
-// Vector — one expression's value across a batch of rows
+// ExprColumn — one expression's value across a batch of rows
 // ---------------------------------------------------------------------------
 
 /// The value of one expression over `rows`, entry `i` answering `rows[i]`.
 ///
 /// The typed variants carry a null bitmap because a primitive lane has no
-/// in-band null; [`Vector::Values`] carries `Value::Null` in-band instead.
+/// in-band null; [`ExprColumn::Values`] carries `Value::Null` in-band instead.
 #[derive(Debug)]
-pub enum Vector {
+pub enum ExprColumn {
     /// One value shared by every row — constants and parameters, which never
     /// need materializing.
     Scalar(Value),
@@ -74,7 +74,7 @@ pub enum Vector {
     Values(Vec<Value>),
 }
 
-impl Vector {
+impl ExprColumn {
     /// The value at position `i`.
     #[must_use]
     pub fn get(
@@ -122,11 +122,15 @@ impl Vector {
         }
     }
 
-    /// The null bitmap of a typed lane, if it has one.
-    const fn nulls(&self) -> Option<&NullBitmap> {
+    /// This column's null bitmap, or an empty one for the variants that carry
+    /// their nulls in band.
+    fn nulls_or_none(
+        &self,
+        len: usize,
+    ) -> NullBitmap {
         match self {
-            Self::Ints(_, nulls) | Self::Floats(_, nulls) | Self::Bools(_, nulls) => Some(nulls),
-            _ => None,
+            Self::Ints(_, nulls) | Self::Floats(_, nulls) | Self::Bools(_, nulls) => nulls.clone(),
+            _ => NullBitmap::none(len),
         }
     }
 
@@ -157,41 +161,30 @@ impl Vector {
     }
 }
 
-/// Builds a null bitmap from a predicate over positions.
-fn nulls_from<F: Fn(usize) -> bool>(
-    len: usize,
-    is_null: F,
-) -> NullBitmap {
-    let mut bitmap = NullBitmap::none(len);
-    for i in 0..len {
-        if is_null(i) {
-            bitmap.set(i);
-        }
-    }
-    bitmap
-}
-
 /// Union of two operands' nulls — the shape every binary typed lane needs.
 ///
 /// A constant operand is null for every row or for none, which is the common
 /// case (`p.age > 45`) and settles the union without a row loop.
 fn union_nulls(
-    lhs: &Vector,
-    rhs: &Vector,
+    lhs: &ExprColumn,
+    rhs: &ExprColumn,
     len: usize,
 ) -> NullBitmap {
     match (lhs.constant_nullness(), rhs.constant_nullness()) {
-        (Some(true), _) | (_, Some(true)) => nulls_from(len, |_| true),
+        // A null constant makes every row null, whatever the other side holds.
+        (Some(true), _) | (_, Some(true)) => NullBitmap::all(len),
         (Some(false), Some(false)) => NullBitmap::none(len),
-        (Some(false), None) => rhs
-            .nulls()
-            .cloned()
-            .unwrap_or_else(|| NullBitmap::none(len)),
-        (None, Some(false)) => lhs
-            .nulls()
-            .cloned()
-            .unwrap_or_else(|| NullBitmap::none(len)),
-        _ => nulls_from(len, |i| lhs.is_null(i) || rhs.is_null(i)),
+        (Some(false), None) => rhs.nulls_or_none(len),
+        (None, Some(false)) => lhs.nulls_or_none(len),
+        _ => {
+            let mut bitmap = NullBitmap::none(len);
+            for i in 0..len {
+                if lhs.is_null(i) || rhs.is_null(i) {
+                    bitmap.set(i);
+                }
+            }
+            bitmap
+        }
     }
 }
 
@@ -213,23 +206,23 @@ impl<'a> VectorEval<'a> {
     /// Evaluates `node` over `rows` of `batch`.
     ///
     /// The result is aligned to `rows`: entry `i` is the value for row
-    /// `rows[i]`. Never fails to produce a vector — a shape with no columnar
-    /// arm is evaluated per row into [`Vector::Values`].
+    /// `rows[i]`. Never fails to produce a column — a shape with no columnar
+    /// arm is evaluated per row into [`ExprColumn::Values`].
     pub fn eval(
         &self,
         node: &ExprNode<'_>,
         batch: &Batch<'_>,
         rows: &[usize],
-    ) -> Result<Vector, String> {
+    ) -> Result<ExprColumn, String> {
         let len = rows.len();
         match node.data() {
-            ExprIR::Constant(v) => Ok(Vector::Scalar(v.clone())),
+            ExprIR::Constant(v) => Ok(ExprColumn::Scalar(v.clone())),
             ExprIR::Parameter(name) => self
                 .runtime
                 .parameters
                 .get(name)
-                .map(|v| Vector::Scalar(v.clone()))
-                .ok_or_else(|| format!("Missing parameters {name}")),
+                .map(|v| ExprColumn::Scalar(v.clone()))
+                .ok_or_else(|| format!("Parameter {name} not found")),
             ExprIR::Variable(var) => Ok(self.eval_variable(var, batch, rows)),
             ExprIR::Property(attr) if node.num_children() == 1 => {
                 match self.eval_property(attr, &node.child(0), batch, rows) {
@@ -238,12 +231,6 @@ impl<'a> VectorEval<'a> {
                 }
             }
             ExprIR::Paren if node.num_children() == 1 => self.eval(&node.child(0), batch, rows),
-            op if node.num_children() == 2 && CmpOp::from_expr_ir(op).is_some() => {
-                let cmp = CmpOp::from_expr_ir(op).expect("guarded by the match arm");
-                let lhs = self.eval(&node.child(0), batch, rows)?;
-                let rhs = self.eval(&node.child(1), batch, rows)?;
-                Ok(compare_vectors(&lhs, &rhs, cmp, len))
-            }
             ExprIR::And => self.eval_and_or(node, batch, rows, false),
             ExprIR::Or => self.eval_and_or(node, batch, rows, true),
             ExprIR::Not if node.num_children() == 1 => {
@@ -258,6 +245,12 @@ impl<'a> VectorEval<'a> {
                 arithmetic(op, lhs, rhs, len)
             }
             ExprIR::Case { has_subject } => self.eval_case(*has_subject, node, batch, rows),
+            op if node.num_children() == 2 && CmpOp::from_expr_ir(op).is_some() => {
+                let cmp = CmpOp::from_expr_ir(op).expect("guarded by the match arm");
+                let lhs = self.eval(&node.child(0), batch, rows)?;
+                let rhs = self.eval(&node.child(1), batch, rows)?;
+                Ok(compare_columns(&lhs, &rhs, cmp, len))
+            }
             ExprIR::FuncInvocation(func)
                 if !matches!(func.fn_type, FnType::Aggregation { .. })
                     && func.struct_fn.is_none()
@@ -275,12 +268,15 @@ impl<'a> VectorEval<'a> {
     /// Evaluates `node` and hands back plain `Value`s — what a projection
     /// emits and what an aggregate accumulates.
     ///
-    /// Distinct from `eval(..).into_values(..)` for the two shapes that would
-    /// otherwise pay a pointless round trip: a property read and a variable
-    /// passthrough are *already* `Value`s, so classifying them into a typed
-    /// column and rebuilding `Value`s out of it costs two extra passes and an
-    /// allocation for no gain. Classification earns its keep only when an
-    /// operator above will consume the typed lane.
+    /// This is not `eval(..).into_values(..)`: the two leading arms exist to
+    /// *skip* [`eval`](Self::eval) for the shapes whose result is already a
+    /// `Value`. A property read and a variable passthrough would otherwise be
+    /// classified into a typed column and rebuilt back into `Value`s — two
+    /// extra passes and an allocation for nothing, because no operator above
+    /// is going to consume the typed lane. Routing `ProjectOp` through
+    /// `eval(..).into_values(..)` instead measured 5,674,324 instructions on
+    /// the `RETURN DISTINCT` benchmark row against 4,988,111 with these arms:
+    /// a 1.14x regression on projections that read a property.
     pub fn eval_values(
         &self,
         node: &ExprNode<'_>,
@@ -310,19 +306,19 @@ impl<'a> VectorEval<'a> {
         var: &Variable,
         batch: &Batch<'_>,
         rows: &[usize],
-    ) -> Vector {
+    ) -> ExprColumn {
         match batch.column(var.id) {
             Column::Ints(data) => {
                 let gathered: Vec<i64> = rows.iter().map(|&r| data[r]).collect();
                 let nulls = NullBitmap::none(gathered.len());
-                Vector::Ints(gathered, nulls)
+                ExprColumn::Ints(gathered, nulls)
             }
             Column::Floats(data) => {
                 let gathered: Vec<f64> = rows.iter().map(|&r| data[r]).collect();
                 let nulls = NullBitmap::none(gathered.len());
-                Vector::Floats(gathered, nulls)
+                ExprColumn::Floats(gathered, nulls)
             }
-            col => Vector::Values(rows.iter().map(|&r| col.get(r)).collect()),
+            col => ExprColumn::Values(rows.iter().map(|&r| col.get(r)).collect()),
         }
     }
 
@@ -335,13 +331,17 @@ impl<'a> VectorEval<'a> {
         child: &ExprNode<'_>,
         batch: &Batch<'_>,
         rows: &[usize],
-    ) -> Option<Vector> {
+    ) -> Option<ExprColumn> {
         let values = self.property_values(attr, child, batch, rows)?;
         let (col, nulls) = classify_exact_column(values);
         Some(match col {
-            Column::Ints(data) => Vector::Ints(data, nulls),
-            Column::Floats(data) => Vector::Floats(data, nulls),
-            other => Vector::Values((0..rows.len()).map(|i| other.get(i)).collect()),
+            Column::Ints(data) => ExprColumn::Ints(data, nulls),
+            Column::Floats(data) => ExprColumn::Floats(data, nulls),
+            // `classify_exact_column` hands the original vector back untouched
+            // when no typed lane fits, so take it rather than cloning every
+            // string, list and map out of it again.
+            Column::Values(data) => ExprColumn::Values(data),
+            other => ExprColumn::Values((0..rows.len()).map(|i| other.get(i)).collect()),
         })
     }
 
@@ -389,7 +389,7 @@ impl<'a> VectorEval<'a> {
         batch: &Batch<'_>,
         rows: &[usize],
         short_circuit_on: bool,
-    ) -> Result<Vector, String> {
+    ) -> Result<ExprColumn, String> {
         let len = rows.len();
         // Neutral element: `AND` starts true, `OR` starts false.
         let mut result = vec![!short_circuit_on; len];
@@ -419,7 +419,7 @@ impl<'a> VectorEval<'a> {
             // A comparison child is already a mask: read it directly rather
             // than rebuilding a `Value` per row, which is the whole point of
             // the columnar path for `a > 1 AND b < 2`.
-            if let Vector::Bools(mask, child_nulls) = &vector {
+            if let ExprColumn::Bools(mask, child_nulls) = &vector {
                 for (offset, &pos) in live.iter().enumerate() {
                     if child_nulls.is_null(offset) {
                         nulls.set(pos);
@@ -455,7 +455,7 @@ impl<'a> VectorEval<'a> {
             std::mem::swap(&mut live, &mut still_live);
         }
 
-        Ok(Vector::Bools(result, nulls))
+        Ok(ExprColumn::Bools(result, nulls))
     }
 
     /// `CASE`, one arm at a time over the rows that arm actually claims.
@@ -472,7 +472,7 @@ impl<'a> VectorEval<'a> {
         node: &ExprNode<'_>,
         batch: &Batch<'_>,
         rows: &[usize],
-    ) -> Result<Vector, String> {
+    ) -> Result<ExprColumn, String> {
         let len = rows.len();
         let subject = if has_subject {
             Some(self.eval(&node.child(0), batch, rows)?)
@@ -496,6 +496,11 @@ impl<'a> VectorEval<'a> {
             for (offset, &pos) in unclaimed.iter().enumerate() {
                 let matched = match &subject {
                     // Value form: the arm matches when it equals the subject.
+                    // `Value`'s equality, deliberately — this engine matches a
+                    // null subject against a `WHEN null` arm (pinned by
+                    // test_function_calls.py's `test68_Case`), where openCypher
+                    // would fall through to `ELSE`. The per-row `eval_case`
+                    // does the same, and the two must not diverge.
                     Some(subject) => when.get(offset) == subject.get(pos),
                     // Searched form: anything but `false` / `null` matches, so
                     // a non-boolean condition is truthy rather than an error.
@@ -530,7 +535,7 @@ impl<'a> VectorEval<'a> {
             }
         }
 
-        Ok(Vector::Values(out))
+        Ok(ExprColumn::Values(out))
     }
 
     /// A scalar function call: operands are evaluated columnarly, then the
@@ -542,7 +547,7 @@ impl<'a> VectorEval<'a> {
         node: &ExprNode<'_>,
         batch: &Batch<'_>,
         rows: &[usize],
-    ) -> Result<Vector, String> {
+    ) -> Result<ExprColumn, String> {
         let ExprIR::FuncInvocation(func) = node.data() else {
             unreachable!("guarded by the caller")
         };
@@ -560,7 +565,7 @@ impl<'a> VectorEval<'a> {
             func.validate_args_type(&args)?;
             out.push(func.func.call(self.runtime, &args)?);
         }
-        Ok(Vector::Values(out))
+        Ok(ExprColumn::Values(out))
     }
 
     /// The universal fallback: evaluate this subtree once per row, through the
@@ -570,14 +575,14 @@ impl<'a> VectorEval<'a> {
         node: &ExprNode<'_>,
         batch: &Batch<'_>,
         rows: &[usize],
-    ) -> Result<Vector, String> {
+    ) -> Result<ExprColumn, String> {
         let eval = ExprEval::from_runtime(self.runtime);
         let mut out = Vec::with_capacity(rows.len());
         for &row in rows {
             let view = BatchRow::new(batch, row);
             out.push(eval.eval_node(node, Some(&view), None)?);
         }
-        Ok(Vector::Values(out))
+        Ok(ExprColumn::Values(out))
     }
 }
 
@@ -590,52 +595,56 @@ impl<'a> VectorEval<'a> {
 /// Typed lanes are entered only where the primitive comparison is the `Value`
 /// comparison; everything else goes through the same `compare_value` /
 /// `partial_cmp` the per-row evaluator uses.
-fn compare_vectors(
-    lhs: &Vector,
-    rhs: &Vector,
+fn compare_columns(
+    lhs: &ExprColumn,
+    rhs: &ExprColumn,
     op: CmpOp,
     len: usize,
-) -> Vector {
+) -> ExprColumn {
     let nulls = union_nulls(lhs, rhs, len);
     let mask = match (lhs, rhs) {
-        (Vector::Ints(data, _), Vector::Scalar(Value::Int(t))) => {
+        (ExprColumn::Ints(data, _), ExprColumn::Scalar(Value::Int(t))) => {
             Some(compare_i64_column(data, op, *t, &nulls))
         }
-        (Vector::Scalar(Value::Int(t)), Vector::Ints(data, _)) => {
+        (ExprColumn::Scalar(Value::Int(t)), ExprColumn::Ints(data, _)) => {
             Some(compare_i64_column(data, op.flip(), *t, &nulls))
         }
-        (Vector::Floats(data, _), Vector::Scalar(Value::Float(t))) => {
+        (ExprColumn::Floats(data, _), ExprColumn::Scalar(Value::Float(t))) => {
             Some(compare_f64_column(data, op, *t, &nulls))
         }
-        (Vector::Scalar(Value::Float(t)), Vector::Floats(data, _)) => {
+        (ExprColumn::Scalar(Value::Float(t)), ExprColumn::Floats(data, _)) => {
             Some(compare_f64_column(data, op.flip(), *t, &nulls))
         }
         // `Value::compare_value` compares `Int` against `Float` as `i as f64`,
         // so the promoted lane is the same comparison.
-        (Vector::Ints(data, _), Vector::Scalar(Value::Float(t))) => {
+        (ExprColumn::Ints(data, _), ExprColumn::Scalar(Value::Float(t))) => {
             let floats: Vec<f64> = data.iter().map(|&i| i as f64).collect();
             Some(compare_f64_column(&floats, op, *t, &nulls))
         }
-        (Vector::Floats(data, _), Vector::Scalar(Value::Int(t))) => {
+        (ExprColumn::Floats(data, _), ExprColumn::Scalar(Value::Int(t))) => {
             Some(compare_f64_column(data, op, *t as f64, &nulls))
         }
-        (Vector::Ints(a, _), Vector::Ints(b, _)) => Some(compare_i64_pairs(a, b, op, &nulls)),
-        (Vector::Floats(a, _), Vector::Floats(b, _)) => Some(compare_f64_pairs(a, b, op, &nulls)),
+        (ExprColumn::Ints(a, _), ExprColumn::Ints(b, _)) => {
+            Some(compare_i64_pairs(a, b, op, &nulls))
+        }
+        (ExprColumn::Floats(a, _), ExprColumn::Floats(b, _)) => {
+            Some(compare_f64_pairs(a, b, op, &nulls))
+        }
         _ => None,
     };
 
     if let Some(mask) = mask {
         // A typed lane's operands are numeric on both sides, so the only way a
         // comparison is null is a null operand — already in `nulls`.
-        return Vector::Bools(mask, nulls);
+        return ExprColumn::Bools(mask, nulls);
     }
 
     // Generic lane. A constant right-hand side keeps the kernel's shape.
-    if let Vector::Scalar(constant) = rhs
-        && let Vector::Values(data) = lhs
+    if let ExprColumn::Scalar(constant) = rhs
+        && let ExprColumn::Values(data) = lhs
     {
         let (mask, nulls) = compare_value_column_3vl(data, op, constant);
-        return Vector::Bools(mask, nulls);
+        return ExprColumn::Bools(mask, nulls);
     }
 
     let mut mask = vec![false; len];
@@ -646,7 +655,7 @@ fn compare_vectors(
             None => nulls.set(i),
         }
     }
-    Vector::Bools(mask, nulls)
+    ExprColumn::Bools(mask, nulls)
 }
 
 #[allow(clippy::needless_range_loop)]
@@ -710,9 +719,9 @@ fn mask_out_nulls(
 
 /// `NOT`, three-valued.
 fn negate_bools(
-    child: &Vector,
+    child: &ExprColumn,
     len: usize,
-) -> Result<Vector, String> {
+) -> Result<ExprColumn, String> {
     let mut mask = vec![false; len];
     let mut nulls = NullBitmap::none(len);
     for (i, slot) in mask.iter_mut().enumerate() {
@@ -727,7 +736,7 @@ fn negate_bools(
             }
         }
     }
-    Ok(Vector::Bools(mask, nulls))
+    Ok(ExprColumn::Bools(mask, nulls))
 }
 
 /// Arithmetic, with typed lanes for the numeric shapes and the `Value`
@@ -735,10 +744,10 @@ fn negate_bools(
 /// arithmetic, type errors).
 fn arithmetic(
     op: &ExprIR<Variable>,
-    lhs: Vector,
-    rhs: Vector,
+    lhs: ExprColumn,
+    rhs: ExprColumn,
     len: usize,
-) -> Result<Vector, String> {
+) -> Result<ExprColumn, String> {
     let nulls = union_nulls(&lhs, &rhs, len);
     // Int lanes: identical to `Value`'s wrapping arithmetic. Div/Modulo keep
     // the divide-by-zero error, so they only take the lane when no divisor is
@@ -767,7 +776,7 @@ fn arithmetic(
             _ => None,
         };
         if let Some(data) = out {
-            return Ok(Vector::Ints(data, nulls));
+            return Ok(ExprColumn::Ints(data, nulls));
         }
     }
 
@@ -786,7 +795,7 @@ fn arithmetic(
             _ => None,
         };
         if let Some(data) = out {
-            return Ok(Vector::Floats(data, nulls));
+            return Ok(ExprColumn::Floats(data, nulls));
         }
     }
 
@@ -804,37 +813,40 @@ fn arithmetic(
             _ => (a % b)?,
         });
     }
-    Ok(Vector::Values(out))
+    Ok(ExprColumn::Values(out))
 }
 
 /// The operand as `i64`s when every non-null row is an `Int`.
 fn int_lane(
-    vector: &Vector,
+    column: &ExprColumn,
     len: usize,
 ) -> Option<Vec<i64>> {
-    match vector {
-        Vector::Ints(data, _) => Some(data.clone()),
-        Vector::Scalar(Value::Int(v)) => Some(vec![*v; len]),
+    match column {
+        ExprColumn::Ints(data, _) => Some(data.clone()),
+        ExprColumn::Scalar(Value::Int(v)) => Some(vec![*v; len]),
         _ => None,
     }
 }
 
 /// The operand as `f64`s when every non-null row is numeric.
 fn float_lane(
-    vector: &Vector,
+    column: &ExprColumn,
     len: usize,
 ) -> Option<Vec<f64>> {
-    match vector {
-        Vector::Floats(data, _) => Some(data.clone()),
-        Vector::Ints(data, _) => Some(data.iter().map(|&i| i as f64).collect()),
-        Vector::Scalar(Value::Float(v)) => Some(vec![*v; len]),
-        Vector::Scalar(Value::Int(v)) => Some(vec![*v as f64; len]),
+    match column {
+        ExprColumn::Floats(data, _) => Some(data.clone()),
+        ExprColumn::Ints(data, _) => Some(data.iter().map(|&i| i as f64).collect()),
+        ExprColumn::Scalar(Value::Float(v)) => Some(vec![*v; len]),
+        ExprColumn::Scalar(Value::Int(v)) => Some(vec![*v as f64; len]),
         _ => None,
     }
 }
 
 /// Whether this operand contributes a float, which decides whether the float
 /// lane applies at all (`Int / Int` must stay integer division).
-const fn float_operand(vector: &Vector) -> bool {
-    matches!(vector, Vector::Floats(..) | Vector::Scalar(Value::Float(_)))
+const fn float_operand(column: &ExprColumn) -> bool {
+    matches!(
+        column,
+        ExprColumn::Floats(..) | ExprColumn::Scalar(Value::Float(_))
+    )
 }

@@ -114,12 +114,11 @@ enum AggInputKind {
     /// `consume_input_per_row` instead abandons those too and rebuilds a full
     /// owned `Row` per row.
     ///
-    /// Property access used to be its own variant, reading the column through
-    /// a hand-rolled node/relationship lookup that answered `null` for every
-    /// other value. That is issue #2555: `collect(row.t)` over map rows
-    /// aggregated nothing at all, silently, while `collect(row['t'])` and
-    /// `collect(toUpper(row.t))` worked. Deferring to the one evaluator
-    /// removes the second implementation that could disagree.
+    /// Property access had its own variant until #2555: it read the column
+    /// through a hand-rolled node/relationship lookup that answered `null` for
+    /// every other value, so `collect(row.t)` over map rows silently
+    /// aggregated nothing. The variant is gone rather than fixed — one
+    /// evaluator, nothing left to disagree with.
     Computed {
         tree: QueryExpr<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -417,20 +416,19 @@ impl<'a> AggregateOp<'a> {
             };
 
             // --- Phase 2: Extract aggregation input columns in bulk ---
-            let Ok(agg_input_columns) =
-                Self::extract_agg_input_columns(self.runtime, &batch, &active, &analysis.agg_kinds)
-            else {
-                Self::consume_batch_per_row(
-                    self.runtime,
-                    self.keys,
-                    self.agg,
-                    self.copy_from_parent,
-                    &batch,
-                    &default_acc,
-                    &mut groups,
-                    &mut errors,
-                );
-                continue;
+            let agg_input_columns = match Self::extract_agg_input_columns(
+                self.runtime,
+                &batch,
+                &active,
+                &analysis.agg_kinds,
+            ) {
+                Ok(columns) => columns,
+                // An input expression failed to evaluate: the query fails with
+                // that error, exactly as it would on the per-row path.
+                Err(e) => {
+                    errors.push(e);
+                    break;
+                }
             };
 
             // --- Phase 3: Group rows and accumulate ---
@@ -631,12 +629,18 @@ impl<'a> AggregateOp<'a> {
     }
 
     /// Extracts aggregation input values for all active rows in a batch.
+    ///
+    /// Unlike [`extract_key_columns`](Self::extract_key_columns), which reports
+    /// "this batch cannot take the bulk path" with `Err(())`, every input shape
+    /// is evaluable here — [`VectorEval`] is total. So an `Err` is a genuine
+    /// evaluation error (`Division by zero`) and is returned as such, rather
+    /// than sending the batch down the per-row path only to raise it again.
     fn extract_agg_input_columns(
         runtime: &'a Runtime<'a>,
         batch: &Batch<'a>,
         active: &[usize],
         agg_kinds: &[VectorizableAgg],
-    ) -> Result<Vec<Vec<Value>>, ()> {
+    ) -> Result<Vec<Vec<Value>>, String> {
         let mut agg_columns = Vec::with_capacity(agg_kinds.len());
         for agg in agg_kinds {
             match &agg.input {
@@ -656,11 +660,11 @@ impl<'a> AggregateOp<'a> {
                     // attribute fetch and one pass per operator, where the
                     // per-row path re-walked the tree — and re-read the
                     // property — for every row.
-                    agg_columns.push(
-                        VectorEval::new(runtime)
-                            .eval_values(&tree.node(*idx), batch, active)
-                            .map_err(|_| ())?,
-                    );
+                    agg_columns.push(VectorEval::new(runtime).eval_values(
+                        &tree.node(*idx),
+                        batch,
+                        active,
+                    )?);
                 }
             }
         }

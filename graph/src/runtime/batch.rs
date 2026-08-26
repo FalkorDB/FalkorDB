@@ -103,6 +103,16 @@ impl NullBitmap {
         }
     }
 
+    /// Creates a bitmap with every bit set (every row null).
+    #[must_use]
+    pub fn all(len: usize) -> Self {
+        let mut bitmap = Self::none(len);
+        for i in 0..len {
+            bitmap.set(i);
+        }
+        bitmap
+    }
+
     /// Creates a bitmap from a slice of Values, setting bit `i` if `values[i]` is Null.
     #[must_use]
     pub fn from_values(values: &[Value]) -> Self {
