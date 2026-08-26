@@ -23,10 +23,11 @@
 //! - Comparison kernels: [`compare_i64_column`] and [`compare_f64_column`] --
 //!   tight indexed loops for auto-vectorization over primitive columns, plus
 //!   [`compare_value_column`] -- the general lane for every other column shape
-//! - [`SimplePredicate`] / [`VectorizablePredicate`] -- detected filter patterns
-//!   that can use the bulk path instead of per-row expression evaluation
-//! - [`try_extract_vectorizable_predicate`] -- analyzes a filter expression tree
-//!   to detect `entity.property <cmp> constant` patterns
+//!
+//! Callers do not choose between these and the per-row evaluator: they are the
+//! leaves of [`vector_expr`](super::vector_expr), which evaluates whole
+//! expression trees columnarly and reaches for a kernel whenever a comparison's
+//! operands happen to be a typed column and a constant.
 //!
 //! ## Agreement with the scalar evaluator
 //!
@@ -44,14 +45,10 @@
 //! LLVM auto-vectorization on all target platforms (x86_64 SSE/AVX, ARM NEON).
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::sync::Arc;
 
-use crate::parser::ast::{ExprIR, Variable};
+use crate::parser::ast::ExprIR;
 use crate::runtime::batch::NullBitmap;
 use crate::runtime::value::{CompareValue, DisjointOrNull, Value};
-
-use orx_tree::{Dyn, DynTree, NodeIdx, NodeRef};
 
 // ---------------------------------------------------------------------------
 // CmpOp — comparison operator enum
@@ -234,156 +231,75 @@ pub fn compare_value_column(
     op: CmpOp,
     constant: &Value,
 ) -> Vec<bool> {
-    data.iter()
-        .map(|v| {
-            let (ord, flag) = v.compare_value(constant);
-            match op {
-                // Equality is total across types: only an exact match passes,
-                // and a null operand makes the whole comparison null.
-                CmpOp::Eq => flag == DisjointOrNull::None && ord == Ordering::Equal,
-                // `partial_cmp` is `None` only for a null operand; every other
-                // pair — including disjoint types — is ordered, hence unequal.
-                CmpOp::Neq => flag != DisjointOrNull::ComparedNull && ord != Ordering::Equal,
-                // Ordering across disjoint types (or with a null, or a NaN) is
-                // not a truth value, so the row drops.
-                _ => {
-                    flag == DisjointOrNull::None
-                        && match op {
-                            CmpOp::Lt => ord == Ordering::Less,
-                            CmpOp::Le => ord != Ordering::Greater,
-                            CmpOp::Gt => ord == Ordering::Greater,
-                            _ => ord != Ordering::Less,
-                        }
-                }
-            }
-        })
-        .collect()
+    compare_value_column_3vl(data, op, constant).0
 }
 
-// ---------------------------------------------------------------------------
-// Simple predicate detection
-// ---------------------------------------------------------------------------
-
-/// A simple predicate that can be evaluated in vectorized mode.
-/// Represents: `entity_variable.property <op> constant`
-#[derive(Debug)]
-pub struct SimplePredicate {
-    /// The variable whose property is being compared (e.g., `n` in `n.age > 30`).
-    pub var: Variable,
-    /// The property name (e.g., "age").
-    pub attr: Arc<String>,
-    /// The comparison operator.
-    pub op: CmpOp,
-    /// The constant value on the other side.
-    pub constant: Value,
-}
-
-/// A vectorizable predicate — either a single comparison or a conjunction.
-#[derive(Debug)]
-pub enum VectorizablePredicate {
-    Single(SimplePredicate),
-    Conjunction(Vec<SimplePredicate>),
-}
-
-/// Tries to extract a vectorizable predicate from a filter expression tree.
-///
-/// Detects patterns like:
-/// - `n.age > 30` → `Single(SimplePredicate { var: n, attr: "age", op: Gt, constant: Int(30) })`
-/// - `n.age > 30 AND n.name = 'Alice'` → `Conjunction([...])`
-///
-/// Returns `None` for complex predicates that cannot be vectorized.
-#[allow(clippy::implicit_hasher)]
-pub fn try_extract_vectorizable_predicate(
-    tree: &DynTree<ExprIR<Variable>>,
-    params: &HashMap<String, Value>,
-) -> Option<VectorizablePredicate> {
-    let root = tree.root();
-    let root_data = root.data();
-
-    // Check for AND (conjunction of simple predicates)
-    if matches!(root_data, ExprIR::And) {
-        let mut preds = Vec::new();
-        for child in root.children() {
-            let child_tree = child.clone_as_tree();
-            preds.push(try_extract_single_predicate(&child_tree, params)?);
-        }
-        if preds.is_empty() {
-            return None;
-        }
-        return Some(VectorizablePredicate::Conjunction(preds));
-    }
-
-    // Single predicate
-    try_extract_single_predicate(tree, params).map(VectorizablePredicate::Single)
-}
-
-/// Tries to extract a single `SimplePredicate` from a comparison expression.
-fn try_extract_single_predicate(
-    tree: &DynTree<ExprIR<Variable>>,
-    params: &HashMap<String, Value>,
-) -> Option<SimplePredicate> {
-    let root = tree.root();
-    let op = CmpOp::from_expr_ir(root.data())?;
-
-    if root.num_children() != 2 {
-        return None;
-    }
-
-    let lhs_idx = root.child(0).idx();
-    let rhs_idx = root.child(1).idx();
-
-    // Try: Property(attr) -> Variable(var)  <op>  Constant
-    if let Some(pred) = try_property_vs_constant(tree, lhs_idx, rhs_idx, op, params) {
-        return Some(pred);
-    }
-    // Try: Constant  <op>  Property(attr) -> Variable(var) (flip operator)
-    try_property_vs_constant(tree, rhs_idx, lhs_idx, op.flip(), params)
-}
-
-/// Checks if `prop_side` is `Property(attr) -> Variable(var)` and
-/// `const_side` is a literal constant or a resolvable query parameter.
-fn try_property_vs_constant(
-    tree: &DynTree<ExprIR<Variable>>,
-    prop_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-    const_idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+#[must_use]
+/// One comparison with the per-row evaluator's semantics: `None` is `null`.
+pub fn compare_values(
+    lhs: &Value,
+    rhs: &Value,
     op: CmpOp,
-    params: &HashMap<String, Value>,
-) -> Option<SimplePredicate> {
-    let prop_node = tree.node(prop_idx);
-    let ExprIR::Property(attr) = prop_node.data() else {
-        return None;
-    };
-    if prop_node.num_children() != 1 {
-        return None;
+) -> Option<bool> {
+    let (ord, flag) = lhs.compare_value(rhs);
+    match op {
+        // `=` is `all_equals`: null makes it null, disjoint types and NaN are
+        // simply not equal.
+        CmpOp::Eq => match flag {
+            DisjointOrNull::ComparedNull => None,
+            DisjointOrNull::NaN | DisjointOrNull::Disjoint => Some(false),
+            DisjointOrNull::None => Some(ord == Ordering::Equal),
+        },
+        // `<>` is `all_not_equals`, i.e. `partial_cmp`, which is `None` only
+        // for a null operand — disjoint types are ordered, hence unequal.
+        CmpOp::Neq => match flag {
+            DisjointOrNull::ComparedNull => None,
+            _ => Some(ord != Ordering::Equal),
+        },
+        // Ordering across disjoint types or with a null is null; NaN is false.
+        _ => match flag {
+            DisjointOrNull::ComparedNull | DisjointOrNull::Disjoint => None,
+            DisjointOrNull::NaN => Some(false),
+            DisjointOrNull::None => Some(match op {
+                CmpOp::Lt => ord == Ordering::Less,
+                CmpOp::Le => ord != Ordering::Greater,
+                CmpOp::Gt => ord == Ordering::Greater,
+                _ => ord != Ordering::Less,
+            }),
+        },
     }
-    let ExprIR::Variable(var) = prop_node.child(0).data() else {
-        return None;
-    };
+}
 
-    // const_side must be a leaf literal or a query parameter that resolves to
-    // a literal value (parameters are not substituted into the cached plan, so
-    // `MATCH (n {id: $id})` keeps `$id` as an `ExprIR::Parameter` node).
-    let const_node = tree.node(const_idx);
-    if const_node.num_children() != 0 {
-        return None;
+/// [`compare_value_column`] keeping `null` distinct from `false`.
+///
+/// A filter drops both, so it uses the mask alone; a predicate nested under
+/// `NOT` / `AND` / `OR` needs the difference, since `NOT null` is `null` while
+/// `NOT false` is `true`.
+#[must_use]
+pub fn compare_value_column_3vl(
+    data: &[Value],
+    op: CmpOp,
+    constant: &Value,
+) -> (Vec<bool>, NullBitmap) {
+    let mut mask = vec![false; data.len()];
+    let mut nulls = NullBitmap::none(data.len());
+    for (i, v) in data.iter().enumerate() {
+        match compare_values(v, constant, op) {
+            Some(pass) => mask[i] = pass,
+            None => nulls.set(i),
+        }
     }
-    let constant = match const_node.data() {
-        ExprIR::Constant(v) => v.clone(),
-        ExprIR::Parameter(name) => params.get(name)?.clone(),
-        _ => return None,
-    };
-
-    Some(SimplePredicate {
-        var: var.clone(),
-        attr: attr.clone(),
-        op,
-        constant,
-    })
+    (mask, nulls)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::Arc;
+
+    use crate::parser::ast::Variable;
+    use orx_tree::{DynTree, NodeRef};
 
     use crate::runtime::eval::{ExprEval, NO_ROW};
     use crate::runtime::value::Point;

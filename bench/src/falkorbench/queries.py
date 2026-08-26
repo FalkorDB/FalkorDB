@@ -559,6 +559,22 @@ QUERIES = [
     # Distance index scan over the Geo point index (IndexQuery::Point).
     Q("distance index scan geo", False, "MATCH (g:Geo) WHERE distance(g.loc, point({latitude: 0.0, longitude: 0.0})) < 10000 RETURN count(g)"),
 
+    # ---- columnar expression evaluation ------------------------------------
+    # Unindexed 10k-Person scans whose predicate/aggregate input is a computed
+    # tree, i.e. the shapes that fall off the columnar path onto per-row
+    # expression evaluation. `expr prop cmp` is the control: the same scan with
+    # a bare `property <op> constant` predicate, which the kernels already take.
+    Q("expr prop cmp",       False, "MATCH (p:Person) WHERE p.age > 45 RETURN count(p)", cg=True),
+    Q("expr mod filter",     False, "MATCH (p:Person) WHERE p.age % 7 = 3 RETURN count(p)", cg=True),
+    Q("expr arith filter",   False, "MATCH (p:Person) WHERE p.age * 2 + 1 > 100 RETURN count(p)", cg=True),
+    Q("expr or filter",      False, "MATCH (p:Person) WHERE p.age > 70 OR p.score < 100.0 RETURN count(p)", cg=True),
+    Q("expr not filter",     False, "MATCH (p:Person) WHERE NOT p.age > 70 RETURN count(p)", cg=True),
+    Q("expr starts with",    False, "MATCH (p:Person) WHERE p.name STARTS WITH 'p1' RETURN count(p)", cg=True),
+    Q("expr func filter",    False, "MATCH (p:Person) WHERE toUpper(p.name) = 'P100' RETURN count(p)", cg=True),
+    Q("expr sum computed",   False, "MATCH (p:Person) RETURN sum(p.age * 3 + 1)", cg=True),
+    Q("expr case filter",    False, "MATCH (p:Person) WHERE (CASE WHEN p.age > 40 THEN 1 ELSE 2 END) = 1 RETURN count(p)", cg=True),
+    Q("expr project computed", False, "MATCH (p:Person) WITH p.age * 2 AS d RETURN count(d)", cg=True),
+
     # ---- sized writes ------------------------------------------------------
     # Kept LAST: they inflate node capacity / matrix dimension to max(N),
     # which would slow every full-graph query measured after them.
