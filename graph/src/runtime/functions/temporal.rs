@@ -167,6 +167,15 @@ fn parse_date_string(s: &str) -> Result<NaiveDate, String> {
             }
             2 => {
                 let year: i32 = parts[0].parse().map_err(|_| format!("Invalid year: {s}"))?;
+
+                if parts[1].len() == 3 && parts[1].chars().all(|c| c.is_ascii_digit()) {
+                    let ordinal: u32 = parts[1]
+                        .parse()
+                        .map_err(|_| format!("Invalid ordinal: {s}"))?;
+                    return NaiveDate::from_yo_opt(year, ordinal)
+                        .ok_or_else(|| format!("Invalid ordinal date: {s}"));
+                }
+
                 let month: u32 = parts[1]
                     .parse()
                     .map_err(|_| format!("Invalid month: {s}"))?;
@@ -820,4 +829,85 @@ pub fn register(funcs: &mut Functions) {
         LOCALDATETIME_SLOTS,
     );
     funcs.set_struct_fn("duration", duration_struct_pure, DURATION_SLOTS);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn string_value(value: &str) -> Value {
+        Value::String(Arc::new(value.to_owned()))
+    }
+
+    fn date_timestamp(value: &str) -> i64 {
+        NaiveDate::parse_from_str(value, "%Y-%m-%d")
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp()
+    }
+
+    fn datetime_timestamp(value: &str) -> i64 {
+        NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S")
+            .unwrap()
+            .and_utc()
+            .timestamp()
+    }
+
+    #[test]
+    fn date_parses_hyphenated_ordinal_dates() {
+        for (input, expected) in [
+            ("2015-001", "2015-01-01"),
+            ("2015-202", "2015-07-21"),
+            ("2015-365", "2015-12-31"),
+            ("2016-366", "2016-12-31"),
+        ] {
+            assert_eq!(
+                date_pure(&[string_value(input)]),
+                Ok(Value::Date(date_timestamp(expected)))
+            );
+        }
+    }
+
+    #[test]
+    fn date_rejects_invalid_hyphenated_ordinal_dates() {
+        for input in ["2015-000", "2015-366"] {
+            assert!(date_pure(&[string_value(input)]).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn date_keeps_hyphenated_year_month_parsing() {
+        assert_eq!(
+            date_pure(&[string_value("2015-07")]),
+            Ok(Value::Date(date_timestamp("2015-07-01")))
+        );
+    }
+
+    #[test]
+    fn localdatetime_parses_hyphenated_ordinal_dates() {
+        assert_eq!(
+            localdatetime_pure(&[string_value("2015-202T21:40:32")]),
+            Ok(Value::Datetime(datetime_timestamp("2015-07-21T21:40:32")))
+        );
+    }
+
+    #[test]
+    fn localdatetime_keeps_hyphenated_year_month_parsing() {
+        assert_eq!(
+            localdatetime_pure(&[string_value("2015-07T12:00:00")]),
+            Ok(Value::Datetime(datetime_timestamp("2015-07-01T12:00:00")))
+        );
+    }
+
+    #[test]
+    fn localdatetime_rejects_invalid_hyphenated_ordinal_dates() {
+        for input in ["2015-000T00:00:00", "2015-366T00:00:00"] {
+            assert!(
+                localdatetime_pure(&[string_value(input)]).is_err(),
+                "{input}"
+            );
+        }
+    }
 }
