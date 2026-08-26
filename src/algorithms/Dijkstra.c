@@ -493,7 +493,10 @@ static bool _dijkstra_run
 			TensorIterator *it = &dc->iters[r];
 			TensorIterator_IterateRow (it, cur);
 
-			Edge e = { .relationID = dc->relationIDs[r] };
+			// iters is laid out [dir][relation]; map the flat index back to its
+			// relation so relationIDs[] (length relationCount) isn't read out of
+			// bounds when ndirs == 2 (relDirection:'both').
+			Edge e = { .relationID = dc->relationIDs[r % dc->relationCount] };
 			while (TensorIterator_next (it, &e.src_id, &e.dest_id, &e.id, NULL))
 			{
 				e.attributes = NULL;

@@ -290,7 +290,10 @@ static bool AStarCtx_Run
 			TensorIterator *it = &ac->iters[r];
 			TensorIterator_IterateRow (it, cur);
 
-			Edge e = { .relationID = ac->relationIDs[r] };
+			// iters is laid out [dir][relation]; map the flat index back to its
+			// relation so relationIDs[] (length relationCount) isn't read out of
+			// bounds when ndirs == 2 (relDirection:'both').
+			Edge e = { .relationID = ac->relationIDs[r % ac->relationCount] };
 			while (TensorIterator_next (it, &e.src_id, &e.dest_id, &e.id, NULL))
 			{
 				e.attributes = NULL;
