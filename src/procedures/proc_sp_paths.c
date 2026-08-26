@@ -16,6 +16,8 @@
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 #include "../algorithms/Dijkstra.h"
+#include "../algorithms/yen.h"
+#include "../algorithms/all_weighted_shortest_paths.h"
 
 #include <float.h>
 
@@ -48,7 +50,7 @@ typedef struct {
 	Path *path;                  // current path
 	Graph *g;                    // graph to traverse
 	Edge *neighbors;             // reusable buffer of edges along the current path
-	int *relationIDs;            // edge type(s) to traverse
+	RelationID *relationIDs;     // edge type(s) to traverse
 	Tensor *relationMatrices;    // relation matrix per relationIDs entry, synced once up front
 	int relationCount;           // length of relationIDs
 	GRAPH_EDGE_DIR dir;          // traverse direction
@@ -89,9 +91,24 @@ static void SinglePairCtx_Free
 	if(ctx->relationIDs)      arr_free(ctx->relationIDs);
 	if(ctx->relationMatrices) arr_free(ctx->relationMatrices);
 
+	// free any results the Step function never consumed (e.g. a downstream
+	// LIMIT, early termination or error stopped the plan before draining them).
+	// Step detaches each path it emits, so only the un-emitted ones remain.
 	if(ctx->path_count == 0 && ctx->array != NULL) {
+		// array holds WeightedPath by value; free the still-owned paths.
+		uint32_t remaining = arr_len(ctx->array);
+		for(uint32_t i = 0; i < remaining; i++) {
+			if(ctx->array[i].path) Path_Free(ctx->array[i].path);
+		}
 		arr_free(ctx->array);
 	} else if(ctx->path_count > 1 && ctx->heap != NULL) {
+		// heap holds WeightedPath* (Heap_free does not touch elements); drain
+		// and free each remaining WeightedPath and its path.
+		WeightedPath *wp;
+		while((wp = Heap_poll(ctx->heap)) != NULL) {
+			if(wp->path) Path_Free(wp->path);
+			rm_free(wp);
+		}
 		Heap_free(ctx->heap);
 	}
 
@@ -169,7 +186,7 @@ static void SinglePairCtx_New
 	Node *src,
 	Node *dst,
 	Graph *g,
-	int *relationIDs,
+	RelationID *relationIDs,
 	int relationCount,
 	GRAPH_EDGE_DIR dir,
 	int64_t minLen,
@@ -267,7 +284,7 @@ static ProcedureResult validate_config
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	Graph *g = QueryCtx_GetGraph();
-	int *types = NULL;
+	RelationID *types = NULL;
 	uint types_count = 0;
 	if(relationships_exists) {
 		if(SI_TYPE(relationships) != T_ARRAY || 
@@ -277,13 +294,23 @@ static ProcedureResult validate_config
 		}
 		types_count = SIArray_Length(relationships);
 		if(types_count > 0) {
-			types = arr_new(int, types_count);
+			types = arr_new(RelationID, types_count);
 			for (uint i = 0; i < types_count; i++) {
 				SIValue rel = SIArray_Get(relationships, i);
 				const char *type = rel.stringval;
 				Schema *s = GraphContext_GetSchema(gc, type, SCHEMA_EDGE);
 				if(s == NULL) continue;
-				arr_append(types, Schema_GetID(s));
+
+				// skip a relation type listed more than once: a duplicate
+				// would make every engine scan that relation's edges twice,
+				// double-counting paths. the small relTypes list makes this
+				// linear check cheap.
+				RelationID rid = Schema_GetID(s);
+				bool dup = false;
+				for(uint j = 0; j < arr_len(types); j++) {
+					if(types[j] == rid) { dup = true; break; }
+				}
+				if(!dup) arr_append(types, rid);
 			}
 			types_count = arr_len(types);
 		}
@@ -293,9 +320,9 @@ static ProcedureResult validate_config
 		// GRAPH_NO_RELATION wildcard through) so each one can be resolved
 		// to a matrix and cached once in SinglePairCtx_New below.
 		types_count = Graph_RelationTypeCount(g);
-		types = arr_new(int, types_count);
+		types = arr_new(RelationID, types_count);
 		for(uint i = 0; i < types_count; i++) {
-			arr_append(types, (int)i);
+			arr_append(types, (RelationID)i);
 		}
 	}
 
@@ -460,6 +487,30 @@ static inline SIValue _get_value_or_default
 	}
 
 	return default_value ;
+}
+
+// sum costProp over a path's edges. cost isn't part of what the Dijkstra/Yen/
+// DAG fast paths optimize for -- it's a secondary attribute reported alongside
+// each path. returns 0 when no costProp was given, rather than defaulting
+// every edge to 1 and silently reporting the path length.
+static double _sum_path_cost
+(
+	const Path *p,
+	AttributeID cost_prop
+) {
+	if(cost_prop == ATTRIBUTE_ID_NONE) {
+		return 0;
+	}
+
+	double cost = 0;
+	uint edge_count = Path_EdgeCount (p);
+	for(uint i = 0; i < edge_count; i++) {
+		SIValue c = _get_value_or_default ((GraphEntity *) Path_GetEdge(p, i),
+				cost_prop, SI_LongVal(1));
+		cost += SI_GET_NUMERIC(c);
+	}
+
+	return cost;
 }
 
 // predecessor of a node discovered by the BFS pre-pass in `_find_bound_path`
@@ -869,35 +920,34 @@ static ProcedureResult Proc_SPpathsInvoke
 	ctx->privateData = single_pair_ctx ;
 	_process_yield (single_pair_ctx, yield) ;
 
-	// fast path: a single shortest path with no maxCost constraint is
-	// exactly what Dijkstra solves, in O((V+E) log V) instead of the
-	// exhaustive DFS enumeration below, which can blow up combinatorially
-	// on graphs with many similar-weight alternative routes. this makes
-	// the bound pre-pass unnecessary too, since Dijkstra finds the exact
-	// optimum (and unreachability) directly.
-	// NOTE: Dijkstra_ShortestPath assumes weightProp is non-negative for
-	// every edge (see its own comment for why this isn't detected/guarded).
-	// src == dst is degenerate: Dijkstra trivially "finds" the source at
-	// distance 0 with zero edges traversed, which would violate the
-	// minLen==1 contract (a path needs at least one edge, e.g. a genuine
-	// self-loop). Rather than special-casing that inside the search, just
-	// don't take the fast path here and let the exhaustive DFS (which
-	// already handles this correctly) run instead.
+	// src == dst is degenerate for Dijkstra: it trivially "finds" the source
+	// at distance 0 with zero edges, violating the minLen==1 contract (a path
+	// needs at least one edge, e.g. a genuine self-loop). such queries skip
+	// the fast paths and use the exhaustive DFS, which handles it correctly.
 	bool src_eq_dst =
 		(ENTITY_GET_ID (&single_pair_ctx->src) ==
 		 ENTITY_GET_ID (single_pair_ctx->dst)) ;
 
-	if (src_eq_dst == false                    &&
-		single_pair_ctx->path_count == 1       &&
-		single_pair_ctx->max_cost   == DBL_MAX &&
-		single_pair_ctx->maxLen     == UNBOUNDED_PATH_LENGTH + 1) {
+	// the fast paths below all use Dijkstra, which is only valid when weight
+	// alone determines optimality (no maxCost), path length is unbounded
+	// (Dijkstra doesn't honor a hop cap), and src != dst (a path needs at
+	// least one edge). anything outside this box falls through to the
+	// exhaustive DFS. non-negative weightProp is assumed (see Dijkstra.h).
+	bool fast = (src_eq_dst == false                    &&
+				 single_pair_ctx->max_cost   == DBL_MAX &&
+				 single_pair_ctx->maxLen     == UNBOUNDED_PATH_LENGTH + 1) ;
+
+	NodeID src_id = ENTITY_GET_ID (&single_pair_ctx->src) ;
+	NodeID dst_id = ENTITY_GET_ID (single_pair_ctx->dst)  ;
+
+	// a single shortest path is exactly what Dijkstra solves, in O((V+E) log V)
+	// instead of the exhaustive DFS enumeration below.
+	if (fast && single_pair_ctx->path_count == 1) {
 		Path   *path ;
 		double  weight ;
 
 		bool found = Dijkstra_ShortestPath (&path, &weight,
-				single_pair_ctx->g,
-				ENTITY_GET_ID (&single_pair_ctx->src),
-				ENTITY_GET_ID (single_pair_ctx->dst),
+				single_pair_ctx->g, src_id, dst_id,
 				single_pair_ctx->dir,
 				single_pair_ctx->relationIDs,
 				single_pair_ctx->relationMatrices,
@@ -905,26 +955,63 @@ static ProcedureResult Proc_SPpathsInvoke
 				single_pair_ctx->weight_prop) ;
 
 		if (found) {
-			// sum cost_prop over the winning path's edges: not part of
-			// what Dijkstra optimizes for, just a secondary attribute the
-			// query asked to have reported alongside it. skip the pass
-			// entirely when no costProp was given, rather than defaulting
-			// every edge to 1 and silently reporting the path length.
-			double cost = 0 ;
-			if (single_pair_ctx->cost_prop != ATTRIBUTE_ID_NONE) {
-				uint edge_count = Path_EdgeCount (path) ;
-				for (uint i = 0; i < edge_count; i++) {
-					SIValue c = _get_value_or_default (
-							(GraphEntity *)Path_GetEdge (path, i),
-							single_pair_ctx->cost_prop, SI_LongVal (1)) ;
-					cost += SI_GET_NUMERIC (c) ;
-				}
-			}
-
 			single_pair_ctx->single.path   = path ;
-			single_pair_ctx->single.cost   = cost ;
+			single_pair_ctx->single.cost   =
+				_sum_path_cost (path, single_pair_ctx->cost_prop) ;
 			single_pair_ctx->single.weight = weight ;
 		}
+
+		return PROCEDURE_OK ;
+	}
+
+	// all minimum-weight paths via the shortest-path DAG (bidirectional
+	// Dijkstra), instead of weight-bounded DFS enumeration.
+	if (fast && single_pair_ctx->path_count == 0) {
+		Path  **paths ;
+		double  min_weight ;
+		uint n = AllWeightedShortestPaths (single_pair_ctx->g, src_id, dst_id,
+				single_pair_ctx->dir, single_pair_ctx->relationIDs,
+				single_pair_ctx->relationMatrices,
+				single_pair_ctx->relationCount, single_pair_ctx->weight_prop,
+				&paths, &min_weight) ;
+
+		single_pair_ctx->array = arr_new (WeightedPath, n) ;
+		for (uint i = 0; i < n; i++) {
+			WeightedPath wp = {
+				.path   = paths[i],
+				.weight = min_weight,
+				.cost   = _sum_path_cost (paths[i], single_pair_ctx->cost_prop)
+			} ;
+			arr_append (single_pair_ctx->array, wp) ;
+		}
+		arr_free (paths) ;
+
+		return PROCEDURE_OK ;
+	}
+
+	// k shortest loopless paths via Yen's algorithm, instead of exhaustive DFS
+	// enumeration bounded by the k-th best weight found so far.
+	if (fast && single_pair_ctx->path_count > 1) {
+		Path   **paths ;
+		double  *weights ;
+		uint n = Yen_KShortestPaths (single_pair_ctx->g, src_id, dst_id,
+				single_pair_ctx->path_count, single_pair_ctx->dir,
+				single_pair_ctx->relationIDs, single_pair_ctx->relationMatrices,
+				single_pair_ctx->relationCount, single_pair_ctx->weight_prop,
+				&paths, &weights) ;
+
+		// load results into the same max-heap Proc_SPpathsStep drains, exactly
+		// as SPpaths_k_minimal does, so downstream behavior is unchanged.
+		single_pair_ctx->heap = Heap_new (path_cmp, NULL) ;
+		for (uint i = 0; i < n; i++) {
+			WeightedPath *pp = rm_malloc (sizeof (WeightedPath)) ;
+			pp->path   = paths[i] ;
+			pp->weight = weights[i] ;
+			pp->cost   = _sum_path_cost (paths[i], single_pair_ctx->cost_prop) ;
+			Heap_offer (&single_pair_ctx->heap, pp) ;
+		}
+		arr_free (paths) ;
+		arr_free (weights) ;
 
 		return PROCEDURE_OK ;
 	}

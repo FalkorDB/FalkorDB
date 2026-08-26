@@ -7,33 +7,20 @@
 #include "Dijkstra.h"
 #include "../value.h"
 #include "../util/arr.h"
+#include "../util/dict.h"
 #include "../util/rmalloc.h"
+#include "utils/entity_value.h"
 
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v;
-
-	if(!GraphEntity_GetProperty(ge, id, &v)) {
-		return default_value;
-	}
-
-	if(SI_TYPE(v) & SI_NUMERIC) {
-		return v;
-	}
-
-	return default_value;
-}
+#include <float.h>
+#include <string.h>
 
 //------------------------------------------------------------------------------
 // DijkstraHeap: min-heap of (node, weight) candidates
 //------------------------------------------------------------------------------
 
-// per-node label used by the Dijkstra search below
+// per-node search record used by the Dijkstra search below (best-known weight,
+// its predecessor and the connecting edge). "label" in the label-setting sense
+// of Dijkstra's algorithm -- unrelated to graph node labels.
 typedef struct {
 	NodeID parent;    // predecessor in the shortest-path tree
 	Edge   edge;      // edge connecting parent -> this node
@@ -163,6 +150,15 @@ static bool DijkstraHeap_poll
 	return true;
 }
 
+// reset the heap to empty without releasing its buffer, so it can be reused
+// by a subsequent search (see DijkstraCtx).
+static inline void DijkstraHeap_clear
+(
+	DijkstraHeap *hp
+) {
+	hp->count = 0;
+}
+
 static void DijkstraHeap_free
 (
 	DijkstraHeap *hp
@@ -171,10 +167,10 @@ static void DijkstraHeap_free
 }
 
 //------------------------------------------------------------------------------
-// NodeMap: NodeID -> label index
+// NodeMap: NodeID -> record index
 //------------------------------------------------------------------------------
 
-// maps a discovered NodeID to its 1-based slot in 'labels' (0 means "not
+// maps a discovered NodeID to its 1-based slot in 'records' (0 means "not
 // present"). specialized open-addressing hash map (linear probing,
 // power-of-two capacity, no tombstones) rather than a generic chained
 // dict: keys are only ever inserted or looked up during a single search
@@ -185,7 +181,7 @@ static void DijkstraHeap_free
 // incremental-rehash bookkeeping on every lookup)
 typedef struct {
 	NodeID   key;
-	uint32_t val;  // 1-based index into 'labels'; 0 means the slot is empty
+	uint32_t val;  // 1-based index into 'records'; 0 means the slot is empty
 } NodeMapEntry;
 
 typedef struct {
@@ -286,6 +282,18 @@ static uint32_t NodeMap_find
 	return 0;
 }
 
+// reset the map to empty without releasing its buffer, so it can be reused
+// by a subsequent search (see DijkstraCtx). capacity is retained; the whole
+// slot buffer is cleared (O(cap)) -- for a context reused across many searches
+// this trades a per-run clear for never reallocating.
+static inline void NodeMap_clear
+(
+	NodeMap *m
+) {
+	memset(m->slots, 0, (size_t)m->cap * sizeof(NodeMapEntry));
+	m->count = 0;
+}
+
 static void NodeMap_free
 (
 	NodeMap *m
@@ -294,258 +302,432 @@ static void NodeMap_free
 }
 
 //------------------------------------------------------------------------------
-// Dijkstra
+// DijkstraCtx: reusable Dijkstra engine
 //------------------------------------------------------------------------------
 
-bool Dijkstra_ShortestPath
+struct DijkstraCtx {
+	// graph + search parameters (borrowed, owned by the caller)
+	const Graph          *g;                 // graph to traverse
+	GRAPH_EDGE_DIR  dir;                     // traverse direction
+	const RelationID     *relationIDs;       // edge type(s) to traverse
+	int             relationCount;           // length of relationIDs
+	AttributeID     weight_prop;             // weight attribute id
+
+	// expansion directions derived from 'dir', computed once at construction
+	int             ndirs;    // number of active directions (1 or 2)
+	GRAPH_EDGE_DIR  dirs[2];  // the active directions themselves
+
+	// one TensorIterator per (direction, relation) pair, attached once at
+	// construction and re-seeked (not re-attached) on every node expansion,
+	// across every DijkstraCtx_Run call -- attaching is expensive (re-derives
+	// matrix sparsity/format), re-seeking is cheap, and the matrices don't
+	// change over the engine's lifetime (held under the graph read lock)
+	TensorIterator *iters;
+
+	// per-run scratch, reset (not reallocated) between runs
+	NodeMap         record_idx;  // node id -> 1-based slot in 'records'
+	DijkstraLabel  *records;     // one search record per discovered node
+	DijkstraHeap    heap;        // priority queue of pending candidates
+};
+
+// create a reusable Dijkstra engine over the given graph/direction/relations,
+// attaching the tensor iterators once (see DijkstraCtx / Dijkstra.h). the
+// relation arrays are borrowed and must outlive the returned context.
+DijkstraCtx *DijkstraCtx_New
 (
-	Path **path,
-	double *weight,
-	Graph *g,
-	NodeID src_id,
-	NodeID dst_id,
-	GRAPH_EDGE_DIR dir,
-	RelationID *relationIDs,
-	Tensor *relationMatrices,
-	int relationCount,
-	AttributeID weight_prop
+	const Graph *g,                  // graph to traverse
+	GRAPH_EDGE_DIR dir,              // traverse direction
+	const RelationID *relationIDs,   // edge type(s) to traverse
+	const Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,               // length of relationIDs
+	AttributeID weight_prop          // weight attribute id
 ) {
-	// 'labels' holds one DijkstraLabel per node ever discovered (tentative
-	// or finalized best-known distance, its parent and connecting edge).
-	// 'label_idx' maps a node id to its 1-based slot in 'labels' (0 means
-	// "not yet discovered").
-	// 'heap' is the Dijkstra priority queue: pending (node, weight)
-	// candidates ordered so the next DijkstraHeap_poll always returns the
-	// smallest-weight candidate discovered so far.
-	NodeMap label_idx;
-	NodeMap_init(&label_idx);
+	DijkstraCtx *dc = rm_calloc (1, sizeof(DijkstraCtx));
 
-	DijkstraLabel *labels = arr_new(DijkstraLabel, 64);
-
-	DijkstraHeap heap;
-	DijkstraHeap_init(&heap);
-
-	// scratch buffer for edge expansion, reused (via arr_clear) across
-	// every neighbor scan performed by this search
-	Edge *neighbors = arr_new(Edge, 32);
+	dc->g                = g;
+	dc->dir              = dir;
+	dc->relationIDs      = relationIDs;
+	dc->relationCount    = relationCount;
+	dc->weight_prop      = weight_prop;
 
 	// build the list of edge directions to expand through when scanning a
 	// node's neighbors: OUTGOING, INCOMING, or both, per the caller's
 	// requested traversal direction.
-	int ndirs = 0;
-	GRAPH_EDGE_DIR dirs[2];
+	dc->ndirs = 0;
 	if(dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_BOTH) {
-		dirs[ndirs++] = GRAPH_EDGE_DIR_OUTGOING;
+		dc->dirs[dc->ndirs++] = GRAPH_EDGE_DIR_OUTGOING;
 	}
 	if(dir == GRAPH_EDGE_DIR_INCOMING || dir == GRAPH_EDGE_DIR_BOTH) {
-		dirs[ndirs++] = GRAPH_EDGE_DIR_INCOMING;
+		dc->dirs[dc->ndirs++] = GRAPH_EDGE_DIR_INCOMING;
 	}
 
-	// one TensorIterator per (direction, relation) pair, attached once up
-	// front and reseeked (rather than re-attached) for every node popped
-	// from the heap below -- attaching a TensorIterator is expensive (it
-	// re-derives the underlying matrices' sparsity/format), while reseeking
-	// it to a different row is cheap, and the relation matrices themselves
-	// don't change over the course of a single search
-	TensorIterator *iters = rm_malloc(ndirs * relationCount * sizeof(TensorIterator));
-	for(int d = 0; d < ndirs; d++) {
-		bool transpose = (dirs[d] == GRAPH_EDGE_DIR_INCOMING);
+	// attach one TensorIterator per (direction, relation) pair, once.
+	dc->iters =
+		rm_malloc(dc->ndirs * relationCount * sizeof(TensorIterator));
+	for(int d = 0; d < dc->ndirs; d++) {
+		bool transpose = (dc->dirs[d] == GRAPH_EDGE_DIR_INCOMING);
 		for(int r = 0; r < relationCount; r++) {
-			TensorIterator_Attach(&iters[d * relationCount + r],
+			TensorIterator_Attach(&dc->iters[d * relationCount + r],
 					relationMatrices[r], transpose);
 		}
 	}
 
+	NodeMap_init(&dc->record_idx);
+	dc->records = arr_new(DijkstraLabel, 64);
+	DijkstraHeap_init(&dc->heap);
+
+	return dc;
+}
+
+// reset per-run scratch (record map, records, heap) so the engine can run
+// another search. iterators are intentionally left attached -- that's the
+// whole point of reusing the context.
+static inline void _DijkstraCtx_Reset
+(
+	DijkstraCtx *dc
+) {
+	NodeMap_clear(&dc->record_idx);
+	arr_clear(dc->records);
+	DijkstraHeap_clear(&dc->heap);
+}
+
+// core search shared by the public entry points below. 'early_exit' stops the
+// moment dst is finalized (single-pair). otherwise the search is single-source:
+// it finalizes every node whose distance is <= 'dist_bound' and stops when the
+// next-closest node exceeds it (DBL_MAX = unbounded, i.e. the whole reachable
+// component); if dst is also given, reaching it tightens 'dist_bound' to dst's
+// distance, so the search finalizes exactly the ball of nodes within the
+// src->dst distance -- what the all-shortest DAG needs from each sweep.
+static bool _dijkstra_run
+(
+	DijkstraCtx *dc,
+	NodeID src_id,
+	NodeID dst_id,
+	bool early_exit,
+	double dist_bound,
+	const dict *blocked_nodes,
+	const dict *blocked_edges
+) {
+	_DijkstraCtx_Reset(dc);
+
 	// initialization: seed the source node with distance 0 and no parent
-	// (it parents itself, which also makes the path-reconstruction loop's
-	// "cur != src_id" stop condition correct). every other node is
-	// implicitly at distance +inf until first discovered below.
+	// (it parents itself, which also makes DijkstraCtx_Path's "cur != src_id"
+	// stop condition correct). every other node is implicitly at distance
+	// +inf until first discovered below.
 	DijkstraLabel src_label =
 		{ .parent = src_id, .weight = 0, .finalized = false };
 
-	arr_append(labels, src_label);
+	arr_append(dc->records, src_label);
 
-	uint32_t *src_slot = NodeMap_findOrInsert(&label_idx, src_id, NULL);
-	*src_slot = arr_len(labels);
+	uint32_t *src_slot = NodeMap_findOrInsert(&dc->record_idx, src_id, NULL);
+	*src_slot = arr_len(dc->records);
 
-	// push the source onto the priority queue so the main loop below has
-	// somewhere to start.
 	DijkstraItem seed = { .node = src_id, .weight = 0 };
-
-	DijkstraHeap_offer(&heap, seed);
+	DijkstraHeap_offer(&dc->heap, seed);
 
 	bool found = false;
 
-	// main Dijkstra loop: repeatedly extract the not-yet-finalized node
-	// with the smallest tentative distance and finalize it -- that
-	// distance is now guaranteed optimal, since all edge weights are
-	// non-negative and every unexplored candidate is at least as large.
-	// stops either when dst is finalized (found) or the heap empties
-	// (dst unreachable from src).
-	while(!found) {
-		// extract the minimum-weight candidate. this may be a stale
-		// duplicate left over from a relaxation performed after this
-		// entry was queued (see the lazy-deletion note on DijkstraItem);
-		// staleness is detected below via the label's 'finalized' flag
-		// rather than by removing superseded heap entries in place.
+	// main Dijkstra loop: repeatedly extract the not-yet-finalized node with
+	// the smallest tentative distance and finalize it -- that distance is now
+	// guaranteed optimal, since all edge weights are non-negative and every
+	// unexplored candidate is at least as large. stops either when dst is
+	// finalized (single-pair) or the heap empties (single-source, or dst
+	// unreachable).
+	while(true) {
+		// extract the minimum-weight candidate. this may be a stale duplicate
+		// left over from a relaxation performed after this entry was queued
+		// (lazy deletion); staleness is detected below via the label's
+		// 'finalized' flag rather than by removing superseded heap entries.
 		DijkstraItem item;
-		if(!DijkstraHeap_poll(&heap, &item)) {
-			break;  // heap exhausted: dst is unreachable
+		if(!DijkstraHeap_poll(&dc->heap, &item)) {
+			break;  // heap exhausted
 		}
 
 		NodeID cur = item.node;
 
-		uint32_t cur_idx = NodeMap_find(&label_idx, cur);
+		uint32_t cur_idx = NodeMap_find(&dc->record_idx, cur);
 
 		ASSERT(cur_idx != 0);
-		if(labels[cur_idx - 1].finalized) {
+		if(dc->records[cur_idx - 1].finalized) {
 			continue;  // stale duplicate entry
 		}
 
-		// finalize 'cur': its current label weight is its true shortest
-		// distance from src and will never be improved again (label
-		// setting -- each node is finalized exactly once).
-		labels[cur_idx - 1].finalized = true;
-
-		// dst just got finalized, its shortest path is settled: stop
-		// early instead of exploring the rest of the reachable graph.
-		if(cur == dst_id) {
-			found = true;
+		// bounded single-source: nodes pop in nondecreasing distance, so once
+		// one exceeds the bound every remaining one does too -- stop. inert for
+		// the unbounded / single-pair paths, where dist_bound is DBL_MAX.
+		if(item.weight > dist_bound) {
 			break;
 		}
 
-		double cur_weight = labels[cur_idx - 1].weight;
+		// finalize 'cur': its current label weight is its true shortest
+		// distance from src and will never be improved again (label setting --
+		// each node is finalized exactly once).
+		dc->records[cur_idx - 1].finalized = true;
+		double cur_weight = dc->records[cur_idx - 1].weight;
 
-		Node curNode = GE_NEW_NODE();
-		Graph_GetNode(g, cur, &curNode);
+		// dst finalized: single-pair stops immediately; the bounded single-
+		// source path instead tightens the bound to dst's distance, so it goes
+		// on to finalize the rest of the src->dst ball and then stops.
+		if(dst_id != (NodeID)INVALID_ENTITY_ID && cur == dst_id) {
+			found = true;
+			if(early_exit) {
+				break;
+			}
+			dist_bound = cur_weight;
+		}
 
 		// relaxation step: examine every edge leaving (or entering, per
-		// 'dirs') 'cur', across every relationship type the caller
-		// allows, and try to improve each neighbor's tentative distance
-		// through 'cur'.
-		for(int d = 0; d < ndirs; d++) {
-			for(int r = 0; r < relationCount; r++) {
-				Graph_GetNodeEdgesFromIterator(g, &curNode, dirs[d],
-						&iters[d * relationCount + r], relationIDs[r], &neighbors);
-			}
+		// 'dirs') 'cur', across every relationship type the caller allows,
+		// and try to improve each neighbor's tentative distance through 'cur'.
+		//
+		// edges are streamed straight from the tensor iterator rather than
+		// collected into a scratch array; the edge's attribute set is fetched
+		// (from the edges datablock) only when it's actually needed -- to read
+		// a weight property, or to store an improving edge for the eventual
+		// returned path -- so the many non-improving edges cost nothing beyond
+		// the id triplet the iterator already produces.
+		bool need_weight = (dc->weight_prop != ATTRIBUTE_ID_NONE);
 
-			uint32_t n = arr_len(neighbors);
-			for(uint32_t j = 0; j < n; j++) {
-				Edge *e = neighbors + j;
-				NodeID nid = (dirs[d] == GRAPH_EDGE_DIR_OUTGOING)
-					? Edge_GetDestNodeID(e)
-					: Edge_GetSrcNodeID(e);
+        int num_iters = dc->ndirs * dc->relationCount;
+		for(int r = 0; r < num_iters; r++) {
+			TensorIterator *it = &dc->iters[r];
+			TensorIterator_IterateRow (it, cur);
 
+			// iters is laid out [dir][relation]; map the flat index back to its
+			// relation so relationIDs[] (length relationCount) isn't read out of
+			// bounds when ndirs == 2 (relDirection:'both').
+			Edge e = { .relationID = dc->relationIDs[r % dc->relationCount] };
+			while (TensorIterator_next (it, &e.src_id, &e.dest_id, &e.id, NULL))
+			{
+				e.attributes = NULL;
+				ASSERT (e.src_id == cur || e.dest_id == cur) ;
+
+				// nid is whichever node is NOT cur
+				NodeID nid = (e.src_id == cur) ? e.dest_id : e.src_id;
 				if(nid == cur) {
 					continue;  // ignore self-loops
 				}
 
-				// candidate distance to 'nid' going through 'cur' via
-				// this edge: cur's finalized distance plus the edge's
-				// weight.
-				// NOTE: weightProp is assumed non-negative here (see the
-				// function-level comment above); a negative value would
-				// silently make this search's result incorrect.
-				SIValue w = _get_value_or_default((GraphEntity *)e,
-						weight_prop, SI_LongVal(1));
-				double new_weight = cur_weight + SI_GET_NUMERIC(w);
+				// blocked-set filters: skip edges/nodes the caller has
+				// virtually removed from the graph for this run (Yen's spur
+				// searches). both checks are skipped entirely when the
+				// corresponding set is NULL, so the common case pays nothing.
+				if(blocked_edges != NULL &&
+					HashTableFind((dict *)blocked_edges,
+						(void *)(uintptr_t)e.id) != NULL) {
+					continue;
+				}
+				if(blocked_nodes != NULL &&
+					HashTableFind((dict *)blocked_nodes,
+						(void *)(uintptr_t)nid) != NULL) {
+					continue;
+				}
 
-				// look up (or reserve) 'nid's slot in 'labels'
+				// candidate distance to 'nid' through 'cur': cur's
+				// finalized distance plus this edge's weight (default 1 when
+				// no weight property is set). reading the weight also
+				// populates e.attributes, reused below when storing.
+				// NOTE: weightProp is assumed non-negative (see the header);
+				// a negative value would silently make the result incorrect.
+				double edge_w = 1;
+				if(need_weight) {
+					Graph_GetEdge(dc->g, e.id, &e);  // populate e.attributes
+					SIValue w = _get_value_or_default((GraphEntity *)&e,
+							dc->weight_prop, SI_LongVal(1));
+					edge_w = SI_GET_NUMERIC(w);
+				}
+				double new_weight = cur_weight + edge_w;
+
+				// look up (or reserve) 'nid's slot in 'records'
 				bool is_new;
-				uint32_t *nslot = NodeMap_findOrInsert(&label_idx, nid, &is_new);
+				uint32_t *nslot =
+					NodeMap_findOrInsert(&dc->record_idx, nid, &is_new);
 
 				if(!is_new) {
-					// 'nid' already labeled: this is the relaxation
-					// comparison proper. skip if it's already finalized
-					// (its distance is final and can't improve) or if
-					// going through 'cur' isn't strictly better than what
-					// it already has.
-					DijkstraLabel *nlabel = labels + (*nslot - 1);
+					// already discovered: skip if finalized (distance is
+					// final) or if going through 'cur' isn't strictly better.
+					DijkstraLabel *nlabel = dc->records + (*nslot - 1);
 					if(nlabel->finalized || new_weight >= nlabel->weight) {
 						continue;
 					}
-
-					// found a strictly shorter route to 'nid' through
-					// 'cur': update its label in place with the new best
-					// distance, parent and connecting edge.
-					nlabel->edge   = *e;
-					nlabel->parent = cur;
-					nlabel->weight = new_weight;
 				} else {
-					// first time 'nid' is discovered: create its label
-					// with 'cur' as parent and 'new_weight' as its (so
-					// far unbeaten) tentative distance.
-					DijkstraLabel nlabel = { .parent = cur, .edge = *e,
-						.weight = new_weight, .finalized = false };
-
-					arr_append(labels, nlabel);
-					*nslot = arr_len(labels);
+					// first time 'nid' is seen: append a placeholder record
+					// (filled in just below) and point its slot at it.
+					DijkstraLabel fresh = { .finalized = false };
+					arr_append(dc->records, fresh);
+					*nslot = arr_len(dc->records);
 				}
 
-				// queue (or re-queue) 'nid' at its updated tentative
-				// weight. any older, now-superseded heap entry for 'nid'
-				// is left in place and simply skipped later as a stale
-				// duplicate once popped.
-				DijkstraItem qi = { .node = nid, .weight = new_weight };
-				DijkstraHeap_offer(&heap, qi);
-			}
+				// store the improving edge; ensure its attribute set is
+				// populated (already done above when weighted) so the
+				// reconstructed path carries usable edges.
+				if(e.attributes == NULL) {
+					Graph_GetEdge(dc->g, e.id, &e);
+				}
+				DijkstraLabel *nlabel = dc->records + (*nslot - 1);
+				nlabel->edge   = e;
+				nlabel->parent = cur;
+				nlabel->weight = new_weight;
 
-			arr_clear(neighbors);
+				// queue (or re-queue) 'nid' at its updated tentative weight;
+				// any superseded heap entry is skipped later as a stale dup.
+				DijkstraItem qi = { .node = nid, .weight = new_weight };
+				DijkstraHeap_offer(&dc->heap, qi);
+			}
 		}
 	}
+	// when a dst was given, report whether it was reached; a pure single-source
+	// run (dst == INVALID) always "succeeds" -- results read via _Distance.
+	return (dst_id != (NodeID)INVALID_ENTITY_ID) ? found : true;
+}
 
-	// search is over (dst found or heap exhausted): entries are stored by
-	// value, so there's nothing to drain, just free the heap itself.
-	DijkstraHeap_free(&heap);
-	arr_free(neighbors);
-	rm_free(iters);
+// run a search from 'src_id', resetting per-run scratch first so the context is
+// reusable. dst_id == INVALID_ENTITY_ID runs to completion (single-source);
+// otherwise the search stops when dst is finalized (single-pair). see
+// Dijkstra.h for the full contract.
+bool DijkstraCtx_Run
+(
+	DijkstraCtx *dc,            // engine
+	NodeID src_id,              // source node
+	NodeID dst_id,              // destination, or INVALID_ENTITY_ID for all
+	const dict *blocked_nodes,  // nodes to skip, or NULL
+	const dict *blocked_edges   // edges to skip, or NULL
+) {
+	bool early = (dst_id != (NodeID)INVALID_ENTITY_ID);
+	return _dijkstra_run(dc, src_id, dst_id, early, DBL_MAX,
+			blocked_nodes, blocked_edges);
+}
 
-	if(!found) {
-		// dst is unreachable from src: nothing to report.
-		arr_free(labels);
-		NodeMap_free(&label_idx);
-		return false;
+// bounded single-source run: finalizes every node within 'dist_bound' of src
+// and stops. if dst_id is given, reaching it tightens the bound to dst's
+// distance -- so the search finalizes exactly the ball of nodes no farther than
+// src->dst, and returns whether dst was reached. see Dijkstra.h.
+bool DijkstraCtx_RunBounded
+(
+	DijkstraCtx *dc,            // engine
+	NodeID src_id,             // source node
+	NodeID dst_id,             // target whose distance bounds the ball, or
+	                           //   INVALID_ENTITY_ID to use dist_bound as-is
+	double dist_bound,         // finalize nodes within this distance (DBL_MAX = none)
+	const dict *blocked_nodes,  // nodes to skip, or NULL
+	const dict *blocked_edges   // edges to skip, or NULL
+) {
+	return _dijkstra_run(dc, src_id, dst_id, false, dist_bound,
+			blocked_nodes, blocked_edges);
+}
+
+// report the finalized shortest-path weight to 'v' from the last run, or
+// false if 'v' was never discovered (see Dijkstra.h).
+bool DijkstraCtx_Distance
+(
+	const DijkstraCtx *dc,  // engine
+	NodeID v,               // node to query
+	double *weight          // [output] shortest-path weight to 'v'
+) {
+	uint32_t idx = NodeMap_find(&dc->record_idx, v);
+	if(idx == 0) {
+		return false;  // 'v' was never discovered by the last run
 	}
 
-	// reconstruct the path by walking parent pointers from dst back to
-	// src, one finalized label at a time.
+	if(weight != NULL) {
+		*weight = dc->records[idx - 1].weight;
+	}
+
+	return true;
+}
+
+// reconstruct the src -> dst path from the last (single-pair) run that reached
+// dst; caller owns the returned Path (see Dijkstra.h).
+Path *DijkstraCtx_Path
+(
+	const DijkstraCtx *dc,  // engine
+	NodeID src_id,          // source node (walk stops here)
+	NodeID dst_id           // destination node (walk starts here)
+) {
+	// reconstruct the path by walking parent pointers from dst back to src,
+	// one finalized record at a time.
 	NodeID cur = dst_id;
 	Path *p = Path_New(8);
 
 	while(cur != src_id) {
-		uint32_t idx = NodeMap_find(&label_idx, cur);
+		uint32_t idx = NodeMap_find(&dc->record_idx, cur);
 		ASSERT(idx != 0);
-		DijkstraLabel *label = labels + (idx - 1);
+		DijkstraLabel *label = dc->records + (idx - 1);
 
-		// append 'cur' and the edge that reached it from its parent; the
-		// path is being built tail-first (dst towards src) and will be
-		// reversed once the walk reaches src.
+		// append 'cur' and the edge that reached it from its parent; the path
+		// is built tail-first (dst towards src) and reversed once we hit src.
 		Node n = GE_NEW_NODE();
-		Graph_GetNode(g, cur, &n);
+		Graph_GetNode(dc->g, cur, &n);
 		Path_AppendNode(p, n);
 		Path_AppendEdge(p, label->edge);
 
 		cur = label->parent;
 	}
 
-	// walk terminated at src: append it (it has no incoming edge on this
-	// path) and flip the path from dst->src order into src->dst order.
+	// walk terminated at src: append it (it has no incoming edge on this path)
+	// and flip the path from dst->src order into src->dst order.
 	Node srcNode = GE_NEW_NODE();
-	Graph_GetNode(g, src_id, &srcNode);
+	Graph_GetNode(dc->g, src_id, &srcNode);
 	Path_AppendNode(p, srcNode);
 
 	Path_Reverse(p);
 
-	// dst's finalized label already holds the total shortest weight from
-	// src, accumulated incrementally throughout the relaxation loop.
-	uint32_t dst_idx = NodeMap_find(&label_idx, dst_id);
-
-	*path   = p;
-	*weight = labels[dst_idx - 1].weight;
-
-	arr_free(labels);
-	NodeMap_free(&label_idx);
-
-	return true;
+	return p;
 }
 
+// free a Dijkstra engine and all its scratch/iterators.
+void DijkstraCtx_Free
+(
+	DijkstraCtx *dc  // engine
+) {
+	if(dc == NULL) {
+		return;
+	}
+
+	DijkstraHeap_free(&dc->heap);
+	NodeMap_free(&dc->record_idx);
+	arr_free(dc->records);
+	rm_free(dc->iters);
+	rm_free(dc);
+}
+
+//------------------------------------------------------------------------------
+// Dijkstra
+//------------------------------------------------------------------------------
+
+bool Dijkstra_ShortestPath
+(
+	Path **path,                     // [output] src -> dst path
+	double *weight,                  // [output] total path weight
+	const Graph *g,                  // graph to traverse
+	NodeID src_id,                   // source node
+	NodeID dst_id,                   // destination node
+	GRAPH_EDGE_DIR dir,              // traverse direction
+	const RelationID *relationIDs,   // edge type(s) to traverse
+	const Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,               // length of relationIDs
+	AttributeID weight_prop          // weight attribute id
+) {
+	ASSERT(g      != NULL);
+	ASSERT(path   != NULL);
+	ASSERT(weight != NULL);
+
+	// convenience wrapper for the single-pair, single-shot case: build a
+	// context, run one search, reconstruct the path, tear it down. callers that
+	// issue many searches over the same graph (Yen's spur searches, the
+	// bidirectional all-shortest DAG) instead hold a DijkstraCtx and call
+	// DijkstraCtx_Run repeatedly, which is what the reuse machinery is for.
+	DijkstraCtx *dc = DijkstraCtx_New(g, dir, relationIDs, relationMatrices,
+			relationCount, weight_prop);
+
+	bool found = DijkstraCtx_Run(dc, src_id, dst_id, NULL, NULL);
+
+	if(found) {
+		*path = DijkstraCtx_Path(dc, src_id, dst_id);
+		DijkstraCtx_Distance(dc, dst_id, weight);
+	}
+
+	DijkstraCtx_Free(dc);
+
+	return found;
+}
