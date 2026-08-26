@@ -28,6 +28,15 @@ void Path_EnsureLen
 	p->edges = arr_ensure_len (p->edges, len - 1) ;
 }
 
+void Path_Truncate
+(
+	Path *p,
+	size_t len
+) {
+	arr_truncate (p->nodes, len) ;
+	arr_truncate (p->edges, len) ;
+}
+
 void Path_AppendNode
 (
 	Path *p,

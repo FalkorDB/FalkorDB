@@ -20,6 +20,9 @@ Path *Path_New(size_t len);
 // ensure the nodes and edge array in a specific len
 void Path_EnsureLen(Path *p, size_t len);
 
+// Truncate to n nodes
+void Path_Truncate (Path *p, size_t len);
+
 // appends a node to the path
 void Path_AppendNode(Path *p, Node n);
 

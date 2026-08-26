@@ -19,6 +19,7 @@
 #include "dfs_stack.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
+#include "datatypes/path/path.h"
 #include "graph/entities/graph_entity.h"
 
 void dfs_stack_new (
@@ -55,6 +56,9 @@ void dfs_stack_new (
 			TensorIterator_Attach (&stk->it_arr [idx], T, false) ;
 		}
 	}
+
+	stk->cached_path = Path_New (cap) ;
+	stk->n_cached = 0 ;
 }
 
 void dfs_stack_push_neighbors (
@@ -131,25 +135,29 @@ bool dfs_stack_pop (
 		if (_levelit_next (
 			stk, &e->src_id, &e->dest_id, &e->id, &e->relationID, frontier))
 		{
+			stk->n_cached = MIN (stk->n_cached, arr_len(stk->levels) - 1);
 			return true;
 		}
 		arr_pop (stk->levels) ;
 	}
+	stk->n_cached = 0;
 	return false;
 }
 
 Path *dfs_stack_to_path (
-	const Graph_dfs_stack *stk,
+	Graph_dfs_stack *stk,
 	const Graph *g
 ) {
 	uint depth = arr_len (stk->levels) ;
-	Path *p = Path_New (depth) ;
+	Path *p = stk->cached_path ;
 	if (depth == 0) {
+		Path_Clear (p) ;
 		return p;
 	}
-
-	for (uint i = 0; i < depth; i++) {
+	Path_Truncate (p, stk->n_cached);
+	for (uint i = stk->n_cached; i < depth; i++) {
 		Node n = GE_NEW_NODE () ;
+
 		Graph_GetNode (g, stk->levels [i].src, &n) ;
 		Path_AppendNode (p, n) ;
 
@@ -166,6 +174,7 @@ Path *dfs_stack_to_path (
 		Graph_GetEdge (g, lvl->it.x, &e) ;
 		Path_AppendEdge (p, e) ;
 	}
+	stk->n_cached = depth;
 
 	Node n = GE_NEW_NODE () ;
 	LevelIt *lvl = &arr_tail (stk->levels);

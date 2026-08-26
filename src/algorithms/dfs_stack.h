@@ -23,6 +23,8 @@ typedef struct {
 	const RelationID *rels;
 	int rel_count;
 	int it_n;
+	Path *cached_path;
+	int n_cached;
 } Graph_dfs_stack;
 
 void dfs_stack_new (
@@ -46,7 +48,7 @@ bool dfs_stack_pop (
 );
 
 Path *dfs_stack_to_path (
-	const Graph_dfs_stack *stk,
+	Graph_dfs_stack *stk,
 	const Graph *g
 );
 

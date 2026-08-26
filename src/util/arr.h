@@ -243,6 +243,8 @@ static void arr_free(arr_t arr) {
 
 #define arr_clear(arr) arr_hdr(arr)->len = 0
 
+#define arr_truncate(arr, n) arr_hdr(arr)->len = MIN (n, arr_hdr(arr)->len)
+
 /* Free the array, free individual element using callback */
 #define arr_free_cb(arr, cb)                          \
   ({                                                  \
