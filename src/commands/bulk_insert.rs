@@ -960,7 +960,11 @@ pub fn graph_bulk_insert(
                         // retake the GIL for this keyspace write.
                         let _gil = hold_gil();
                         let cleanup_ctx = Context::new(ts_ctx);
-                        let key_name = cleanup_ctx.create_string(key_bytes.as_slice());
+                        // `create_string` is `CString::new(..).unwrap()`, so a key
+                        // holding an interior NUL aborted the process here (#2490) —
+                        // the one constructor that cannot carry the bytes this path
+                        // deliberately captured. ptr+len carries them.
+                        let key_name = RedisString::create_from_slice(ts_ctx, key_bytes.as_slice());
                         discard_created_graph(&cleanup_ctx, &key_name);
                     }
                     let cerr = ffi::sanitise_error(msg);

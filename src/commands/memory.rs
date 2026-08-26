@@ -53,6 +53,19 @@ const MB: usize = 1 << 20;
 /// Take the graph read lock, sample the attribute stores, build the flat key-value
 /// reply array. Runs on a worker thread, or synchronously for MULTI/REPLICATED.
 #[allow(clippy::too_many_lines)]
+/// A schema name as `GRAPH.MEMORY` replies it: ended at its first NUL, and
+/// length-framed.
+///
+/// C replies these with `RM_ReplyWithCString(Schema_GetName(s))`, which is a *bulk*
+/// reply — length-framed — over a C string, so the name ends at its first NUL. Replying
+/// it as a RESP status instead escapes nothing: a label name can hold CR/LF
+/// (``CREATE (:`L\r\n+PWNED`)``), and those bytes then either inject into the next
+/// reply on the connection or come back mangled where Redis sanitises a status. Same
+/// rule, and same reason, as `GRAPH.LIST` (`commands::list::c_reply_name`).
+fn c_schema_name(name: &str) -> RedisValue {
+    RedisValue::StringBuffer(up_to_nul(name).as_bytes().to_vec())
+}
+
 fn memory_report(
     graph: &Arc<RwLock<ThreadedGraph>>,
     samples: usize,
@@ -127,10 +140,9 @@ fn memory_report(
     ));
     let mut label_attrs = Vec::new();
     for (name, mb) in &node_attr_by_label_mb {
-        // C replies these with `RM_ReplyWithCString(Schema_GetName(s))`, which ends at
-        // the first NUL. A query can no longer put one in a label name, but a name
-        // decoded from an RDB written before that still has to reply, not abort.
-        label_attrs.push(RedisValue::SimpleString(up_to_nul(name).to_owned()));
+        // A query can no longer put a NUL in a label name, but a name decoded from an
+        // RDB written before that still has to reply rather than abort.
+        label_attrs.push(c_schema_name(name));
         label_attrs.push(RedisValue::Integer(*mb));
     }
     out.push(RedisValue::Array(label_attrs));
@@ -153,8 +165,8 @@ fn memory_report(
     ));
     let mut type_attrs = Vec::new();
     for (name, mb) in &edge_attr_by_type_mb {
-        // Truncated as the label names above are.
-        type_attrs.push(RedisValue::SimpleString(up_to_nul(name).to_owned()));
+        // Replied as the label names above are.
+        type_attrs.push(c_schema_name(name));
         type_attrs.push(RedisValue::Integer(*mb));
     }
     out.push(RedisValue::Array(type_attrs));

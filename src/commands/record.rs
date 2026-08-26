@@ -226,23 +226,27 @@ pub fn graph_record(
     // C ends the query at its first NUL byte; see `up_to_nul`.
     let query = up_to_nul(args.next_str()?);
 
-    let key_name: Arc<str> = Arc::from(c_graph_name(&key_str).as_str());
     let key = ctx.open_key_writable(&key_str);
 
-    let graph = if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        graph.clone()
-    } else {
-        let name = key_name.to_string();
-        let graph = Arc::new(RwLock::new(ThreadedGraph::new(
-            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &name,
-        )));
-        // Stored under C's key, as GRAPH.QUERY does — see `c_graph_key`.
-        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
-        create_key.set_value(&GRAPH_TYPE, graph.clone())?;
-        register_graph(name, graph.clone());
-        graph
-    };
+    // `key_name` is the key the graph lives at, not C's name for it — see `graph_query`.
+    // An existing graph is at the key the command named; one created here lands at the
+    // key C rebuilds from the name.
+    let (graph, key_name): (Arc<RwLock<ThreadedGraph>>, Arc<str>) =
+        if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+            (graph.clone(), Arc::from(key_str.to_string()))
+        } else {
+            let name = c_graph_name(&key_str);
+            let graph = Arc::new(RwLock::new(ThreadedGraph::new(
+                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+                &name,
+            )));
+            // Stored under C's key, as GRAPH.QUERY does — see `c_graph_key`.
+            let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+            create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+            let key_name: Arc<str> = Arc::from(name.as_str());
+            register_graph(name, graph.clone());
+            (graph, key_name)
+        };
 
     // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
     // `must_run_inline`.

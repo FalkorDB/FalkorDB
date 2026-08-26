@@ -1,6 +1,6 @@
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, c_graph_key, c_graph_name},
+    graph_core::{ThreadedGraph, register_graph, up_to_nul},
     redis_type::GRAPH_TYPE,
     serializers,
 };
@@ -24,6 +24,12 @@ pub fn graph_restore(
     let dest_name = std::str::from_utf8(dest_key_name.as_slice())
         .map_err(|_| RedisError::Str("ERR destination key is not valid UTF-8"))?;
 
+    // The destination *key* is the full bytes the command named, both for the existence
+    // check and for the write — C opens `argv[1]` twice and never rebuilds the key from
+    // the name. Only the graph's own *name* is truncated: C takes it from the payload
+    // header, which `GRAPH.COPY` wrote as a C string.
+    let graph_name = up_to_nul(dest_name);
+
     // Verify dest key does not already exist.
     let dest_key = ctx.open_key_writable(&dest_key_name);
     if dest_key
@@ -39,7 +45,7 @@ pub fn graph_restore(
     let cache_size = *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize;
 
     let data = data_arg.as_slice();
-    let new_graph = serializers::decoder::vec_load_graph(data, cache_size, dest_name)
+    let new_graph = serializers::decoder::vec_load_graph(data, cache_size, graph_name)
         .map_err(RedisError::String)?;
 
     // Wrap the decoded graph and set on dest key.
@@ -49,11 +55,9 @@ pub fn graph_restore(
     let tg = ThreadedGraph::from_mvcc(mvcc);
     let boxed = Arc::new(RwLock::new(tg));
 
-    // Attached under C's name, at the key rebuilt from it — see `c_graph_key`.
-    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &dest_key_name));
-    drop(dest_key);
-    create_key.set_value(&GRAPH_TYPE, boxed.clone())?;
-    crate::graph_core::register_graph(c_graph_name(&dest_key_name), boxed);
+    dest_key.set_value(&GRAPH_TYPE, boxed.clone())?;
+    // Registered under the key it was written to — see `graph_core::register_graph`.
+    register_graph(dest_name.to_string(), boxed);
 
     // Replicate verbatim so sub-replicas also receive GRAPH.RESTORE.
     ctx.replicate_verbatim();

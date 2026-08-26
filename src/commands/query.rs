@@ -75,10 +75,15 @@ pub fn graph_query(
     }
 
     // Try read-only key access first to avoid triggering WATCH on existing graphs.
-    // The lookup is by the key the command named, the *name* is the one C derives from
-    // it — those differ once the key holds a NUL. See `c_graph_name`.
+    //
+    // `key_name` is the *key* the graph lives at, not C's name for it: replication,
+    // `WATCH` signalling, the registry and telemetry all address Redis by it, and a
+    // write replicated against a name no key answers to leaves a replica that never
+    // reconverges. For a graph that already exists that key is the one the command
+    // named, NUL and all — a `RENAME` can leave a graph sitting at such a key. A graph
+    // this query *creates* lands elsewhere, and rebinds `key_name` below.
     let read_key = ctx.open_key(&key_str);
-    let key_name: Arc<str> = Arc::from(c_graph_name(&key_str));
+    let key_name: Arc<str> = Arc::from(key_str.to_string());
 
     if let Some(graph) = read_key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         let graph = graph.clone();
@@ -115,7 +120,11 @@ pub fn graph_query(
         );
     }
 
-    let name = key_name.to_string();
+    // Creating, from here on: `GraphContext_SetKey` puts a new graph at the key rebuilt
+    // from C's name rather than at the addressed one, so that truncated key — which is
+    // the name — is the key this graph lives at.
+    let name = c_graph_name(&key_str);
+    let key_name: Arc<str> = Arc::from(name.as_str());
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
         &name,

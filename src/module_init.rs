@@ -29,7 +29,7 @@ use crate::config::{
     OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
     get_thread_count, normalize_node_creation_buffer,
 };
-use crate::graph_core::up_to_nul;
+use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::{
@@ -568,21 +568,32 @@ unsafe extern "C" fn on_keyspace_event(
     let key_ptr =
         unsafe { redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
     let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
-    let Ok(key_name) = std::str::from_utf8(key_bytes) else {
-        return 0;
-    };
+    // Lossy rather than rejected: a Redis key name is arbitrary bytes, and every other
+    // producer of a registry name converts the same lossy way — `register_graph` off
+    // `RedisString::to_string`, the virtual-key builder and `graph_rdb_save` off
+    // `String::from_utf8_lossy`. Bailing out here left a renamed non-UTF-8 graph
+    // (`test_binary_key_name_scan_skip` keeps one under `\xc3\x28...`) with a stale
+    // registry entry under the key it no longer occupies.
+    let key_name = String::from_utf8_lossy(key_bytes);
 
     match event_str {
         "rename_from" => {
-            // Names, not keys: C's handler hands `GraphContext_Rename` a C string, so
-            // both sides of a rename are truncated at their first NUL.
-            *RENAME_OLD_NAME.lock() = Some(up_to_nul(key_name).to_string());
+            // Keys, not names: `GRAPH_REGISTRY` is the module's index of the *keyspace*
+            // — `graph_rdb_save`, the virtual-key builder and the telemetry flusher all
+            // open a Redis key by the name they find there — so a rename has to re-key
+            // it to the key bytes Redis itself now holds. Truncating here left the
+            // registry naming `c` for a graph living at `c\0d`, which reads back as no
+            // graph at all: telemetry dropped its entries and an RDB save persisted the
+            // empty virtual-key placeholders as junk keys.
+            *RENAME_OLD_NAME.lock() = Some(key_name.to_string());
         }
         "rename_to" => {
             let old = RENAME_OLD_NAME.lock().take();
             if let Some(old_name) = old {
-                crate::graph_core::rename_graph(&old_name, up_to_nul(key_name));
+                rename_graph(&old_name, &key_name);
                 let context = Context::new(ctx);
+                // The stream, in contrast, is named after the *graph*, and
+                // `telemetry::stream_name` truncates to it.
                 telemetry::delete_stream(&context, &old_name);
             }
         }

@@ -17,7 +17,7 @@
 
 use crate::{
     commands::EMPTY_KEY_ERR,
-    graph_core::{ThreadedGraph, c_graph_name, query_mut, up_to_nul},
+    graph_core::{ThreadedGraph, query_mut, up_to_nul},
     redis_type::GRAPH_TYPE,
 };
 use parking_lot::RwLock;
@@ -53,7 +53,9 @@ pub fn graph_ro_query(
         }
     }
 
-    let key_name: Arc<str> = Arc::from(c_graph_name(&key));
+    // The key the graph lives at, not C's name for it — see `graph_query`. A read-only
+    // query never creates one, so it is always the key the command named.
+    let key_name: Arc<str> = Arc::from(key.to_string());
     let key = ctx.open_key(&key);
 
     (key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)?).map_or(EMPTY_KEY_ERR, |graph| {

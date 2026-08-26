@@ -33,7 +33,8 @@ pub fn graph_profile(
         }
     }
 
-    let key_name: Arc<str> = Arc::from(c_graph_name(&key_str));
+    // The key the graph lives at, not C's name for it — see `graph_query`.
+    let key_name: Arc<str> = Arc::from(key_str.to_string());
 
     // Try read-only key access first.
     let read_key = ctx.open_key(&key_str);
@@ -51,7 +52,9 @@ pub fn graph_profile(
         return profile_mut(ctx, &graph, query, &key_name, timeout);
     }
 
-    let name = key_name.to_string();
+    // Creating: a new graph lands at C's key, not the addressed one — see `graph_query`.
+    let name = c_graph_name(&key_str);
+    let key_name: Arc<str> = Arc::from(name.as_str());
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
         &name,
