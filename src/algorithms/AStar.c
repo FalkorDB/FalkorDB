@@ -231,8 +231,8 @@ static bool AStarCtx_Run
 	// Dijkstra) rather than erroring.
 	double dst_lat = 0;
 	double dst_lon = 0;
-	bool dst_has_coords = _get_node_latlon(ac->g, dst_id, ac->lat_prop,
-			ac->lon_prop, &dst_lat, &dst_lon);
+	bool dst_has_coords = (ac->weight_prop != ATTRIBUTE_ID_NONE) &&
+			_get_node_latlon(ac->g, dst_id, ac->lat_prop, ac->lon_prop, &dst_lat, &dst_lon);
 
 	// seed the source: g_score 0, priority f = 0 + h(src).
 	double src_h = _heuristic(ac->g, src_id, ac->lat_prop, ac->lon_prop,
