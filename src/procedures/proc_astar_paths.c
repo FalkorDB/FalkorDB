@@ -179,7 +179,17 @@ static bool validate_config
 				const char *type = rel.stringval;
 				Schema *s = GraphContext_GetSchema(gc, type, SCHEMA_EDGE);
 				if(s == NULL) continue;
-				arr_append(types, Schema_GetID(s));
+
+				// skip a relation type listed more than once: a duplicate
+				// would make the search scan that relation's edges twice,
+				// double-counting paths. the small relTypes list makes this
+				// linear check cheap.
+				RelationID rid = Schema_GetID(s);
+				bool dup = false;
+				for(uint j = 0; j < arr_len(types); j++) {
+					if(types[j] == rid) { dup = true; break; }
+				}
+				if(!dup) arr_append(types, rid);
 			}
 			types_count = arr_len(types);
 		}

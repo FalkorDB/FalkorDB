@@ -8,6 +8,7 @@
 #include "all_weighted_shortest_paths.h"
 #include "../value.h"
 #include "../util/arr.h"
+#include "../util/dict.h"
 #include "utils/entity_value.h"
 
 #include <float.h>
@@ -96,6 +97,11 @@ uint AllWeightedShortestPaths
 	Path *cur       = Path_New(8);
 	Edge *neighbors = arr_new(Edge, 32);
 
+	// membership of the nodes currently on 'cur', kept in sync as the DFS
+	// pushes/pops -- an O(1) replacement for a linear Path_ContainsNode scan
+	// per candidate (the cycle guard below).
+	dict *on_path = HashTableCreate(&def_dt);
+
 	while(Path_NodeCount(cur) > 0 || arr_len(levels[0]) > 0) {
 		uint depth = Path_NodeCount(cur);
 
@@ -106,11 +112,12 @@ uint AllWeightedShortestPaths
 
 			// cycle guard: with strictly positive weights the DAG is acyclic
 			// and this never fires; it covers zero-weight-edge cycles.
-			if(Path_ContainsNode(cur, uid)) {
+			if(HashTableFind(on_path, (void *)(uintptr_t)uid) != NULL) {
 				continue;
 			}
 
 			Path_AppendNode(cur, f.node);
+			HashTableAdd(on_path, (void *)(uintptr_t)uid, (void *)(uintptr_t)1);
 			if(depth > 0) {
 				Path_AppendEdge(cur, f.edge);
 			}
@@ -181,8 +188,10 @@ uint AllWeightedShortestPaths
 				arr_clear(neighbors);
 			}
 		} else {
-			// no way forward from the current path: backtrack one step.
-			Path_PopNode(cur);
+			// no way forward from the current path: backtrack one step,
+			// keeping 'on_path' in sync with the popped node.
+			Node popped = Path_PopNode(cur);
+			HashTableDelete(on_path, (void *)(uintptr_t)ENTITY_GET_ID(&popped));
 			if(Path_EdgeCount(cur) > 0) {
 				Path_PopEdge(cur);
 			}
@@ -199,6 +208,7 @@ uint AllWeightedShortestPaths
 	arr_free(levels);
 	arr_free(neighbors);
 	Path_Free(cur);
+	HashTableRelease(on_path);
 	DijkstraCtx_Free(fwd);
 	DijkstraCtx_Free(bwd);
 

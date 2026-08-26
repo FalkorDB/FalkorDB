@@ -943,17 +943,19 @@ class testAllShortestPaths():
         self._verify_all_minimal_all_pairs("dag_dense", 6, dense)
 
     def _grid_edges(self, rows, cols):
-        # rightward/downward grid edges with deterministic-per-run weights
-        # (generated once, shared by graph build and reference).
+        # rightward/downward grid edges with deterministic weights: a locally
+        # seeded RNG keeps the graph identical across runs (and independent of
+        # the global RNG / test ordering), so failures are reproducible.
+        rng = random.Random(20240826)
         def nid(r, c):
             return r * cols + c
         edges = []
         for r in range(rows):
             for c in range(cols):
                 if c + 1 < cols:
-                    edges.append((nid(r, c), nid(r, c + 1), random.randint(1, 9)))
+                    edges.append((nid(r, c), nid(r, c + 1), rng.randint(1, 9)))
                 if r + 1 < rows:
-                    edges.append((nid(r, c), nid(r + 1, c), random.randint(1, 9)))
+                    edges.append((nid(r, c), nid(r + 1, c), rng.randint(1, 9)))
         return edges
 
     def test19_yen_classic_example(self):
@@ -1197,3 +1199,35 @@ class testAllShortestPaths():
         # hop-count minimum a->d is the direct edge (weight 1, 1 hop)
         allmin = self._fp_rows(g, f"{m} CALL algo.SPpaths({{sourceNode:u, targetNode:v, pathCount:0}}) {ret}")
         self.env.assertEquals(allmin, [((0, 3), 1)])
+
+    def test28_fastpath_both_dir_multi_reltypes(self):
+        # relDirection:'both' combined with multiple relTypes exercises the
+        # (direction x relation) iterator indexing in the streamed relaxation
+        # loop (2 directions x 2 relations = 4 iterators). Every fast path must
+        # still agree with the DFS -- guards against any relationIDs[] indexing
+        # / mislabeling regression in that loop.
+        g = self.db.select_graph("fp_both_multi")
+        g.query("""
+            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}), (d:V {id:3}),
+                   (a)-[:R {w:1}]->(b), (b)-[:S {w:1}]->(d),
+                   (a)-[:S {w:2}]->(c), (c)-[:R {w:1}]->(d),
+                   (d)-[:R {w:1}]->(a)
+        """)
+        for pc in (0, 100):
+            for rd in ("outgoing", "incoming", "both"):
+                self._fp_match(g, 0, 3, pc, rel_dir=rd, rel_types=["R", "S"])
+
+        # a relation type listed more than once is deduplicated at the
+        # procedure level, so duplicate relTypes must return exactly the same
+        # paths as the distinct list -- no double-counting.
+        ret = ("YIELD path, pathWeight "
+               "RETURN [n IN nodes(path) | n.id] AS ids, pathWeight")
+        m = "MATCH (u:V {id:0}), (v:V {id:3})"
+        for rd in ("outgoing", "incoming", "both"):
+            distinct = self._fp_rows(g, f"{m} CALL algo.SPpaths({{sourceNode:u, "
+                f"targetNode:v, weightProp:'w', relDirection:'{rd}', "
+                f"pathCount:100, relTypes:['R','S']}}) {ret}")
+            dup = self._fp_rows(g, f"{m} CALL algo.SPpaths({{sourceNode:u, "
+                f"targetNode:v, weightProp:'w', relDirection:'{rd}', "
+                f"pathCount:100, relTypes:['R','S','R']}}) {ret}")
+            self.env.assertEquals(dup, distinct)

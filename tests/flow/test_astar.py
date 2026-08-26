@@ -565,3 +565,23 @@ class testAStar(FlowTestsBase):
         for rt in (["AR"], ["AS"], ["AR", "AS"]):
             self._astar_vs_sppaths(g, 0, 2, 1, rel_types=rt)
             self._astar_vs_sppaths(g, 0, 2, 100, rel_types=rt)
+
+    def test16_astar_both_dir_multi_reltypes(self):
+        # relDirection:'both' with multiple relTypes exercises the
+        # (direction x relation) iterator indexing in A*'s streamed relaxation
+        # loop (2 dirs x 2 rels = 4 iterators). Must still match algo.SPpaths.
+        # colocated coords keep the haversine heuristic 0 (admissible) so this
+        # isolates the traversal-indexing path, not the heuristic.
+        g = self.db.select_graph("astar_both_multi")
+        g.query("""
+            CREATE (a:AK {id:0, lat:37.0, lon:-122.0}),
+                   (b:AK {id:1, lat:37.0, lon:-122.0}),
+                   (c:AK {id:2, lat:37.0, lon:-122.0}),
+                   (d:AK {id:3, lat:37.0, lon:-122.0}),
+                   (a)-[:AR {weight:1}]->(b), (b)-[:AS {weight:1}]->(d),
+                   (a)-[:AS {weight:2}]->(c), (c)-[:AR {weight:1}]->(d),
+                   (d)-[:AR {weight:1}]->(a)
+        """)
+        for rd in ("outgoing", "incoming", "both"):
+            self._astar_vs_sppaths(g, 0, 3, 1,   rel_dir=rd, rel_types=["AR", "AS"])
+            self._astar_vs_sppaths(g, 0, 3, 100, rel_dir=rd, rel_types=["AR", "AS"])
