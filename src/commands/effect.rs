@@ -10,7 +10,11 @@
 //! GRAPH.EFFECT <key> <effects_buffer>
 //! ```
 
-use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+use crate::{
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{ThreadedGraph, c_graph_key, c_graph_name, register_graph},
+    redis_type::GRAPH_TYPE,
+};
 use graph::{
     entity_type::EntityType,
     graph::graph::{Graph, TypeId},
@@ -50,12 +54,17 @@ pub fn graph_effect(
     let graph = if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         g.clone()
     } else {
+        let name = c_graph_name(&key_str);
         let g = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
+            &name,
         )));
-        key.set_value(&GRAPH_TYPE, g.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), g.clone());
+        // Created under the name C derives from the key, and stored at the key
+        // rebuilt from that name (`GraphContext_SetKey`) — not at the key the
+        // command addressed, which differs once it holds a NUL.
+        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        create_key.set_value(&GRAPH_TYPE, g.clone())?;
+        register_graph(name, g.clone());
         g
     };
 

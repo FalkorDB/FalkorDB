@@ -19,7 +19,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::config::{CONFIGURATION_CMD_INFO, MAX_INFO_QUERIES};
-use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph};
+use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, up_to_nul};
 use crate::redis_type::GRAPH_TYPE;
 
 /// Maximum stored string length for query/params in telemetry entries.
@@ -64,7 +64,12 @@ fn truncate_arc(s: &Arc<str>) -> Arc<str> {
 
 /// Build the Redis stream key name for a graph's telemetry.
 pub fn stream_name(graph_name: &str) -> String {
-    format!("telemetry{{{graph_name}}}")
+    // Named after the graph, not after the key it lives at: C builds this with
+    // `RM_CreateStringPrintf(NULL, "telemetry{%s}", gc->graph_name)`, so a graph whose
+    // key holds an interior NUL — which a `RENAME` can leave behind — streams under the
+    // part before it. Truncating here rather than at the call sites keeps the callers
+    // free to pass the key, which is what the rest of the flush path addresses Redis by.
+    format!("telemetry{{{}}}", up_to_nul(graph_name))
 }
 
 /// Data for one telemetry stream entry (10 fields).
@@ -322,12 +327,21 @@ fn stream_entries(
 }
 
 /// Delete the telemetry stream for a graph.
+///
+/// `graph_name` may be either the graph's name or the key it lives at; [`stream_name`]
+/// truncates, so both name the same stream. The key is built from ptr+len rather than
+/// through `create_string`, whose `CString::new(..).unwrap()` is what made a stray NUL
+/// abort the process (#2490) — this path should not be one caller's mistake away from
+/// that again.
 pub fn delete_stream(
     ctx: &Context,
     graph_name: &str,
 ) {
     let key = stream_name(graph_name);
-    let args = [ctx.create_string(key.as_str())];
+    let args = [RedisString::create_from_slice(
+        ctx.get_raw(),
+        key.as_bytes(),
+    )];
     let _ = ctx.call("DEL", args.iter().collect::<Vec<_>>().as_slice());
 }
 

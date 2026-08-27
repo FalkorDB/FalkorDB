@@ -2,7 +2,7 @@ use crate::dispatch::must_run_inline;
 use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{BlockedClient, ThreadedGraph, ffi, register_graph},
+    graph_core::{BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
     redis_type::GRAPH_TYPE,
     telemetry,
 };
@@ -218,8 +218,10 @@ fn discard_created_graph(
     ctx: &Context,
     key_str: &RedisString,
 ) {
-    telemetry::delete_stream(ctx, &key_str.to_string());
-    let key = ctx.open_key_writable(key_str);
+    // The graph was created under C's name, so that — not the addressed key — is
+    // what has to be taken back out of the keyspace.
+    telemetry::delete_stream(ctx, &c_graph_name(key_str));
+    let key = ctx.open_key_writable(&c_graph_key(ctx, key_str));
     let _ = key.delete();
 }
 
@@ -750,13 +752,16 @@ pub fn graph_bulk_insert(
     let graph = match existing {
         Some(g) => g,
         None => {
-            let key = ctx.open_key_writable(&key_str);
+            // Created under C's name and stored at the key rebuilt from it, not at
+            // the key the command addressed — see `c_graph_key`.
+            let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+            let name = c_graph_name(&key_str);
             let g = Arc::new(RwLock::new(ThreadedGraph::new(
                 *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-                &key_str.to_string(),
+                &name,
             )));
             key.set_value(&GRAPH_TYPE, g.clone())?;
-            register_graph(key_str.to_string(), g.clone());
+            register_graph(name, g.clone());
             g
         }
     };
@@ -955,7 +960,11 @@ pub fn graph_bulk_insert(
                         // retake the GIL for this keyspace write.
                         let _gil = hold_gil();
                         let cleanup_ctx = Context::new(ts_ctx);
-                        let key_name = cleanup_ctx.create_string(key_bytes.as_slice());
+                        // `create_string` is `CString::new(..).unwrap()`, so a key
+                        // holding an interior NUL aborted the process here (#2490) —
+                        // the one constructor that cannot carry the bytes this path
+                        // deliberately captured. ptr+len carries them.
+                        let key_name = RedisString::create_from_slice(ts_ctx, key_bytes.as_slice());
                         discard_created_graph(&cleanup_ctx, &key_name);
                     }
                     let cerr = ffi::sanitise_error(msg);

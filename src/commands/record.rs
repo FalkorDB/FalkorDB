@@ -22,7 +22,9 @@ use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
-    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    graph_core::{
+        BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph, up_to_nul,
+    },
     redis_type::GRAPH_TYPE,
     reply::reply_verbose_value,
 };
@@ -221,22 +223,30 @@ pub fn graph_record(
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
-    let query = args.next_str()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
 
-    let key_name: Arc<str> = Arc::from(key_str.to_string().as_str());
     let key = ctx.open_key_writable(&key_str);
 
-    let graph = if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        graph.clone()
-    } else {
-        let graph = Arc::new(RwLock::new(ThreadedGraph::new(
-            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
-        )));
-        key.set_value(&GRAPH_TYPE, graph.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), graph.clone());
-        graph
-    };
+    // `key_name` is the key the graph lives at, not C's name for it — see `graph_query`.
+    // An existing graph is at the key the command named; one created here lands at the
+    // key C rebuilds from the name.
+    let (graph, key_name): (Arc<RwLock<ThreadedGraph>>, Arc<str>) =
+        if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+            (graph.clone(), Arc::from(key_str.to_string()))
+        } else {
+            let name = c_graph_name(&key_str);
+            let graph = Arc::new(RwLock::new(ThreadedGraph::new(
+                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+                &name,
+            )));
+            // Stored under C's key, as GRAPH.QUERY does — see `c_graph_key`.
+            let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+            create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+            let key_name: Arc<str> = Arc::from(name.as_str());
+            register_graph(name, graph.clone());
+            (graph, key_name)
+        };
 
     // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
     // `must_run_inline`.
