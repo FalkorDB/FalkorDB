@@ -577,8 +577,16 @@ class testGraphDeletionFlow(FlowTestsBase):
             res = self.graph.query("""
                 MATCH (a:P {id: 1}), (b:P {id: 2})
                 CREATE (a)-[r:R {uid: 999}]->(b)
-                DELETE r"""
+                DELETE r
+                RETURN id(r)"""
             )
+            # The id pins the precondition. On the first pass nothing has been
+            # freed yet so id 0 is fresh; from the second on it comes back off
+            # the free list, which is the case that used to leak. Asserting it
+            # stays 0 is what keeps this test exercising a recycled id — were
+            # reclamation to stop, the ids would climb and this would fail
+            # rather than quietly testing the already-working fresh-id path.
+            self.env.assertEqual(res.result_set, [[0]])
             self.env.assertEqual(res.relationships_created, 1)
             self.env.assertEqual(res.relationships_deleted, 1)
 
@@ -602,8 +610,10 @@ class testGraphDeletionFlow(FlowTestsBase):
             res = self.graph.query("""
                 MATCH (a:P {id: 1}), (b:P {id: 2})
                 CREATE (a)-[r:R {uid: 999}]->(b)
-                DELETE r"""
+                DELETE r
+                RETURN id(r)"""
             )
+            self.env.assertEqual(res.result_set, [[0]])
             self.env.assertEqual(res.relationships_created, 1)
             self.env.assertEqual(res.relationships_deleted, 1)
 
@@ -626,13 +636,53 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("""
             MATCH (a:P {id: 1}), (b:P {id: 2})
             CREATE (a)-[r1:R {n: 1}]->(b), (a)-[r2:R {n: 2}]->(b)
-            DELETE r1"""
+            DELETE r1
+            RETURN id(r1), id(r2)"""
         )
+        # r1 takes the one id on the free list, r2 is allocated fresh — so the
+        # edge being deleted is precisely the recycled one, and the edge that
+        # must survive is not.
+        self.env.assertEqual(res.result_set, [[0, 1]])
         self.env.assertEqual(res.relationships_created, 2)
         self.env.assertEqual(res.relationships_deleted, 1)
 
-        res = self.graph.query("MATCH ()-[r:R]->() RETURN r.n")
-        self.env.assertEqual(res.result_set, [[2]])
+        res = self.graph.query("MATCH ()-[r:R]->() RETURN id(r), r.n")
+        self.env.assertEqual(res.result_set, [[1, 2]])
+
+    def test29_delete_recycled_pending_node_and_edge(self):
+        # Coverage of the node-cascade path with every id reclaimed rather than
+        # fresh: both endpoints and the edge come back off the free lists.
+        #
+        # Unlike test26-test28 this one passes with or without the relationship
+        # fix, and deliberately stays here saying so. Deleting the nodes cascades
+        # through `remove_pending_relationships_for_node`, which cancels the
+        # edge's pending create outright, so the edge never reaches the
+        # relationship arm of `delete_entity` and the recycled-id bug cannot
+        # bite. What it does pin is that this cascade keeps handling recycled
+        # node *and* edge ids correctly, which is the neighbouring path.
+        self.graph.delete()
+
+        # warm both free lists
+        self.graph.query("CREATE (a:P {t: 0})-[r:R {t: 0}]->(b:P {t: 0})")
+        self.graph.query("MATCH (a:P)-[r:R]->(b:P) DELETE a, r, b")
+
+        for i in range(3):
+            res = self.graph.query("""
+                CREATE (a:P {t: 1})-[r:R {t: 2}]->(b:P {t: 3})
+                WITH a, r, b
+                DELETE a, r, b
+                RETURN id(a), id(r), id(b)"""
+            )
+            self.env.assertEqual(res.result_set, [[0, 0, 1]])
+            self.env.assertEqual(res.nodes_created, 2)
+            self.env.assertEqual(res.nodes_deleted, 2)
+            self.env.assertEqual(res.relationships_created, 1)
+            self.env.assertEqual(res.relationships_deleted, 1)
+
+            res = self.graph.query("MATCH (n) RETURN count(n)")
+            self.env.assertEqual(res.result_set[0][0], 0)
+            res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+            self.env.assertEqual(res.result_set[0][0], 0)
 
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
