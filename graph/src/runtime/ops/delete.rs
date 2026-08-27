@@ -474,7 +474,18 @@ impl Runtime<'_> {
             Value::Relationship(rel) => {
                 if self.pending.borrow().is_relationship_deleted(*rel) {
                     // Already pending deletion, nothing to do
-                } else if !self.g.borrow().is_relationship_deleted(*rel) {
+                } else if self.pending.borrow().is_relationship_created(*rel)
+                    || !self.g.borrow().is_relationship_deleted(*rel)
+                {
+                    // A pending-created edge is deletable even though the
+                    // committed graph still lists its id as deleted: ids are
+                    // recycled, and `reserve_relationship` hands one out while
+                    // leaving it in that set until commit, so the id reads as
+                    // deleted for the whole life of the pending create. Testing
+                    // only the committed flag skipped such an edge and left its
+                    // create standing, so the edge survived the query that
+                    // deleted it.
+                    //
                     // Snapshot attrs BEFORE marking as deleted so pending data
                     // is still accessible via get_relationship_attrs.
                     let type_name = self.get_relationship_type(*rel).unwrap();
