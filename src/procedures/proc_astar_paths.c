@@ -306,10 +306,12 @@ static ProcedureResult Proc_AStarPathsInvoke
 		}
 	} else {
 		// k shortest loopless paths: Yen driven by A* spur searches.
+		// algo.AStar has no costProp; pass ATTRIBUTE_ID_NONE so cost defaults
+		// to hop count and selection stays (weight, length).
 		AStar_KShortestPaths(actx->g, src_id, dst_id, actx->path_count,
 				actx->dir, actx->relationIDs, actx->relationMatrices,
-				actx->relationCount, actx->weight_prop, actx->lat_prop,
-				actx->lon_prop, &actx->paths, &actx->weights);
+				actx->relationCount, actx->weight_prop, ATTRIBUTE_ID_NONE,
+				actx->lat_prop, actx->lon_prop, &actx->paths, &actx->weights);
 	}
 
 	return PROCEDURE_OK;

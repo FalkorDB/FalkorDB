@@ -26,6 +26,12 @@
 // produces, a false collision (which would drop a distinct path) is
 // astronomically unlikely.
 //
+// the k paths are selected by the lexicographic order (weight, cost, length),
+// cost being the sum of 'cost_prop' over a path's edges (missing values default
+// to 1). pass ATTRIBUTE_ID_NONE for cost_prop to leave it unspecified: cost
+// then equals the hop count, so the cost key only refines the length tie-break
+// and weight-only queries are unaffected.
+//
 // returns the number of paths found (<= k; 0 if dst is unreachable). '*paths'
 // and '*weights' are set to newly allocated parallel array_t buffers (Path*
 // and its total weight, ascending); the caller owns both arrays and each Path.
@@ -40,6 +46,7 @@ uint Yen_KShortestPaths
 	Tensor *relationMatrices,  // relation matrix per relationIDs entry
 	int relationCount,         // length of relationIDs
 	AttributeID weight_prop,   // weight attribute id
+	AttributeID cost_prop,     // secondary tie-break attribute, or NONE
 	Path ***paths,             // [output] array_t of Path*, ascending weight
 	double **weights           // [output] array_t of matching total weights
 );

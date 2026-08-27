@@ -31,8 +31,13 @@
 //
 // if dst, or any other node discovered during the search, is missing a
 // numeric latitudeProperty/longitudeProperty, its heuristic degrades to
-// 0 for that node -- still admissible, just locally equivalent to
-// Dijkstra rather than an error.
+// 0 for that node -- still admissible, just locally equivalent to Dijkstra
+// rather than an error. mixing coordinate-bearing and coordinate-less nodes
+// makes the heuristic admissible but not necessarily consistent, so the search
+// reopens (re-expands) an already-finalized node whenever a strictly shorter
+// route to it is found. this keeps the returned path optimal at the cost of a
+// few extra expansions on such graphs; when every node has coordinates the
+// heuristic is consistent and no reopening occurs.
 //
 // returns true and populates 'path' and 'weight' if 'dst' is reachable
 // from 'src'; returns false (leaving them untouched) otherwise.
@@ -64,7 +69,10 @@ bool AStar_ShortestPath
 // geographically-embedded graphs (road networks).
 //
 // same weightProp / lat/lon preconditions as AStar_ShortestPath. candidate
-// paths are deduplicated by a 64-bit hash of their edge-id sequence.
+// paths are deduplicated by a 64-bit hash of their edge-id sequence, and the k
+// paths are selected by the lexicographic order (weight, cost, length) -- see
+// Yen_KShortestPaths (yen.h) for the cost_prop semantics; pass
+// ATTRIBUTE_ID_NONE to leave it unspecified.
 //
 // returns the number of paths found (<= k; 0 if dst is unreachable). '*paths'
 // and '*weights' are set to newly allocated parallel array_t buffers (Path*
@@ -80,6 +88,7 @@ uint AStar_KShortestPaths
 	Tensor *relationMatrices,  // relation matrix per relationIDs entry
 	int relationCount,         // length of relationIDs
 	AttributeID weight_prop,   // weight attribute id
+	AttributeID cost_prop,     // secondary tie-break attribute, or NONE
 	AttributeID lat_prop,      // latitude attribute id, used for the heuristic
 	AttributeID lon_prop,      // longitude attribute id, used for the heuristic
 	Path ***paths,             // [output] array_t of Path*, ascending weight
