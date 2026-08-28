@@ -119,7 +119,7 @@ class testTemporalDate(FlowTestsBase):
           ('2015202',    '2015-07-21'),
           #('2015W30',    '2015-07-20'),
           ('2015-07',    '2015-07-01'),
-          #('2015-202',   '2015-07-21'),
+          ('2015-202',   '2015-07-21'),
           #('2015W302',   '2015-07-21'),
           ('2015-W30',   '2015-07-20'),
           ('20150721',   '2015-07-21'),
@@ -327,10 +327,12 @@ class testTemporalLocalDateTime(FlowTestsBase):
                 ('2025-02-18T12',       datetime(year=2025, month=2, day=18, hour=12, tzinfo=timezone.utc)),
                 ('2025-02-18T12:34',    datetime(year=2025, month=2, day=18, hour=12, minute=34, tzinfo=timezone.utc)),
                 ('2025-02-18T12:34:56', datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56, tzinfo=timezone.utc)),
-                ('20250218T123456',     datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56, tzinfo=timezone.utc))
+                ('20250218T123456',     datetime(year=2025, month=2, day=18, hour=12, minute=34, second=56, tzinfo=timezone.utc)),
                 #('2025-049', datetime()), # Year + day-of-year
                 #('2025049T12', datetime()), # Year + day-of-year + hour
                 #('2025049T1234', datetime()), # Year + day-of-year + hour + minute
+                ('2025-049',            datetime(year=2025, month=2, day=18, tzinfo=timezone.utc)),
+                ('2025-202',            datetime(year=2025, month=7, day=21, tzinfo=timezone.utc)),
         ]
 
         query = "RETURN localdatetime($str)"
