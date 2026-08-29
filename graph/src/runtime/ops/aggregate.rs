@@ -20,14 +20,14 @@
 //! ```
 //!
 //! Key and aggregation-input expressions are evaluated in bulk: a variable
-//! passthrough or `entity.property` is a single bulk attribute read, and any
-//! other input tree (`sum(n.age * 3)`) goes through
-//! [`VectorEval`](crate::runtime::vector_expr::VectorEval), which evaluates it
-//! column at a time. This includes single-argument `DISTINCT` aggregations
-//! (e.g. `count(DISTINCT n.id)`): the property column is still extracted in
-//! bulk and per-group deduplication is applied during accumulation. Inputs
-//! containing a nested aggregate, and multi-argument aggregations, still fall
-//! back to per-row evaluation.
+//! passthrough is read straight from its batch column, and every other tree
+//! — key or input, `n.age` and `sum(n.age * 3)` and `n.id % 100` alike — goes
+//! through [`VectorEval`](crate::runtime::vector_expr::VectorEval), which
+//! evaluates it column at a time. This includes single-argument `DISTINCT`
+//! aggregations (e.g. `count(DISTINCT n.id)`): the property column is still
+//! extracted in bulk and per-group deduplication is applied during
+//! accumulation. Inputs containing a nested aggregate, keys containing one,
+//! and multi-argument aggregations still fall back to per-row evaluation.
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
@@ -97,8 +97,29 @@ impl Hash for GroupKey {
 enum KeyExprKind {
     /// Simple variable passthrough: `GROUP BY n`
     Variable(Variable),
-    /// Property access: `GROUP BY n.age`
-    Property { var: Variable, attr: Arc<String> },
+    /// Any other key tree, `n.age` and `n.id % 100` alike.
+    ///
+    /// The column is built by [`VectorEval`], so the whole key tree is
+    /// evaluated column at a time — a bare `n.age` is still one bulk attribute
+    /// fetch — and the rest of the vectorized path (bulk aggregate-input
+    /// extraction, the columnar accumulate loop) is kept.
+    ///
+    /// Property access had its own variant, and any other shape sent the
+    /// *whole operator* down `consume_input_per_row`, which rebuilds an owned
+    /// `Row` and re-walks every key and input tree for every row. So a key as
+    /// ordinary as `n.age / 10` cost the bulk aggregate path too. The variant
+    /// is gone rather than extended — one evaluator, nothing left to disagree
+    /// with, exactly as [`AggInputKind::Computed`] did for the input side.
+    ///
+    /// The old variant's "unclassified" requirement is preserved by
+    /// [`VectorEval::eval_values`], which answers a property read with the
+    /// stored values rather than a classified lane: a grouping key must be the
+    /// stored value, or the classifier's float lane would promote a mixed
+    /// int/float column and merge 9007199254740993 with 9007199254740992.
+    Computed {
+        tree: QueryExpr<Variable>,
+        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
+    },
 }
 
 /// How an aggregation input expression can be evaluated in bulk.
@@ -225,20 +246,19 @@ impl<'a> AggregateOp<'a> {
                 ExprIR::Variable(var) => {
                     key_kinds.push(KeyExprKind::Variable(var.clone()));
                 }
-                ExprIR::Property(attr) => {
-                    if root.num_children() != 1 {
+                // Anything else: materialise the column with `VectorEval`,
+                // keeping the whole operator on the vectorized path. A nested
+                // aggregate still falls back — it needs the per-row path's
+                // group-aware evaluation.
+                _ => {
+                    if subtree_has_aggregate(&root) {
                         return None;
                     }
-                    if let ExprIR::Variable(var) = root.child(0).data() {
-                        key_kinds.push(KeyExprKind::Property {
-                            var: var.clone(),
-                            attr: attr.clone(),
-                        });
-                    } else {
-                        return None;
-                    }
+                    key_kinds.push(KeyExprKind::Computed {
+                        tree: tree.clone(),
+                        idx: root.idx(),
+                    });
                 }
-                _ => return None,
             }
         }
 
@@ -397,23 +417,17 @@ impl<'a> AggregateOp<'a> {
             }
 
             // --- Phase 1: Extract key columns in bulk ---
-            let Ok(key_columns) =
-                Self::extract_key_columns(self.runtime, &batch, &active, &analysis.key_kinds)
-            else {
-                // Vectorized extraction failed for this batch.
-                // Fall back to per-row for this batch only.
-                Self::consume_batch_per_row(
-                    self.runtime,
-                    self.keys,
-                    self.agg,
-                    self.copy_from_parent,
-                    &batch,
-                    &default_acc,
-                    &mut groups,
-                    &mut errors,
-                );
-                continue;
-            };
+            let key_columns =
+                match Self::extract_key_columns(self.runtime, &batch, &active, &analysis.key_kinds)
+                {
+                    Ok(columns) => columns,
+                    // A key expression failed to evaluate: the query fails with
+                    // that error, exactly as it would on the per-row path.
+                    Err(e) => {
+                        errors.push(e);
+                        break;
+                    }
+                };
 
             // --- Phase 2: Extract aggregation input columns in bulk ---
             let agg_input_columns = match Self::extract_agg_input_columns(
@@ -598,12 +612,17 @@ impl<'a> AggregateOp<'a> {
     }
 
     /// Extracts key values for all active rows in a batch.
+    ///
+    /// Every key shape is evaluable — [`VectorEval`] is total — so an `Err` is
+    /// a genuine evaluation error (`Division by zero`) rather than "this batch
+    /// cannot take the bulk path", exactly as
+    /// [`extract_agg_input_columns`](Self::extract_agg_input_columns) reports.
     fn extract_key_columns(
         runtime: &'a Runtime<'a>,
         batch: &Batch<'a>,
         active: &[usize],
         key_kinds: &[KeyExprKind],
-    ) -> Result<Vec<Vec<Value>>, ()> {
+    ) -> Result<Vec<Vec<Value>>, String> {
         let mut key_columns = Vec::with_capacity(key_kinds.len());
         for kind in key_kinds {
             match kind {
@@ -614,14 +633,12 @@ impl<'a> AggregateOp<'a> {
                         .collect();
                     key_columns.push(col);
                 }
-                KeyExprKind::Property { var, attr } => {
-                    let node_ids = batch.extract_node_ids(var.id).ok_or(())?;
-                    let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
-                    // Unclassified: a grouping key must be the stored value, and
-                    // the classifier's float lane would promote a mixed
-                    // int/float column, merging 9007199254740993 and
-                    // 9007199254740992 into one group.
-                    key_columns.push(runtime.materialize_node_property_values(&active_ids, attr));
+                KeyExprKind::Computed { tree, idx } => {
+                    key_columns.push(VectorEval::new(runtime).eval_values(
+                        &tree.node(*idx),
+                        batch,
+                        active,
+                    )?);
                 }
             }
         }
@@ -630,11 +647,10 @@ impl<'a> AggregateOp<'a> {
 
     /// Extracts aggregation input values for all active rows in a batch.
     ///
-    /// Unlike [`extract_key_columns`](Self::extract_key_columns), which reports
-    /// "this batch cannot take the bulk path" with `Err(())`, every input shape
-    /// is evaluable here — [`VectorEval`] is total. So an `Err` is a genuine
-    /// evaluation error (`Division by zero`) and is returned as such, rather
-    /// than sending the batch down the per-row path only to raise it again.
+    /// Every input shape is evaluable here — [`VectorEval`] is total — so an
+    /// `Err` is a genuine evaluation error (`Division by zero`) and is returned
+    /// as such, rather than sending the batch down the per-row path only to
+    /// raise it again.
     fn extract_agg_input_columns(
         runtime: &'a Runtime<'a>,
         batch: &Batch<'a>,
@@ -714,8 +730,15 @@ impl<'a> AggregateOp<'a> {
     }
 
     /// Processes a single batch using per-row evaluation.
-    /// Shared by both the per-row fallback path and the vectorized path
-    /// (when a specific batch can't use bulk extraction).
+    ///
+    /// `#[inline(never)]` because this is the *cold* path and it is large: with
+    /// `consume_input_vectorized` no longer calling it, LLVM starts inlining it
+    /// into `consume_input_per_row`, and the resulting layout costs the hot
+    /// vectorized loop measurably — 1,604,640 instructions on the `aggregates`
+    /// benchmark row against 1,596,817 with the attribute, and 536,087 against
+    /// 534,304 on `agg count`. Keeping it out of line pins both back to what
+    /// they cost before.
+    #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn consume_batch_per_row(
         runtime: &'a Runtime<'a>,
