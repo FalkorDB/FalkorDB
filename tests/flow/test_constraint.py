@@ -1021,6 +1021,28 @@ class testConstraintReplication():
         # the WAIT command forces master slave sync to complete
         self.source.execute_command("WAIT", 1, 0)
 
+        # Drop whatever the replica was still working through.
+        #
+        # Under the service-container flow flavour the replica is long-lived and
+        # shared with the classes above, so their ~26 GRAPH.CONSTRAINT commands
+        # replicate into it as well. A slow replica -- coverage instrumentation
+        # is enough -- can still be applying that backlog when MONITOR attaches,
+        # and the backlog then lands in `self.monitor` and inflates the count
+        # `test_01` asserts. It is a race, not a constant: it only shows up when
+        # the source runs far enough ahead of the replica.
+        #
+        # `WAIT` above returns once the replica has acked this connection's
+        # offset, and the replication stream is ordered, so everything the
+        # earlier classes wrote has been executed by now. MONITOR delivery is
+        # asynchronous, so settle first, then drop: from here on the list holds
+        # only what this test causes.
+        deadline = time.time() + 10
+        seen = -1
+        while len(self.monitor) != seen and time.time() < deadline:
+            seen = len(self.monitor)
+            time.sleep(0.5)
+        self.monitor.clear()
+
     def monitor_thread(self):
         global MONITOR_ATTACHED
         try:
