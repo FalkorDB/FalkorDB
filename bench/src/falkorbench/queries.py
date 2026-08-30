@@ -580,20 +580,26 @@ QUERIES = [
     # which would slow every full-graph query measured after them.
     # "write N" is the mixed create+delete round-trip; the "create N" /
     # "delete N" pairs measure the two halves separately.
+    # Ordered by the amount of churn each row causes, ascending, so no row is
+    # preceded by one an order of magnitude larger. Grouping the mixed
+    # "write N" rows ahead of the create/delete pairs instead put `create 100`
+    # and `create 10k` directly after `write 1m`, and a write costs more while
+    # the engine still carries a large deletion: creating a single node costs
+    # 0.05 ms after a 10k delete and 0.69 ms after a 1M one. Those two rows were
+    # measuring recovery from `write 1m` rather than the cost of a create, and
+    # read as a 4.4x / 3.0x regression against C that a fresh graph does not
+    # show (there Rust is at 1.28x and 0.74x).
     Q("write 1",             True,  "UNWIND range(1, 1) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 1000),
     Q("write 10",            True,  "UNWIND range(1, 10) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 1000),
     Q("write 100",           True,  "UNWIND range(1, 100) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 500),
-    Q("write 1k",            True,  "UNWIND range(1, 1000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 200),
-    Q("write 10k",           True,  "UNWIND range(1, 10000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 50),
-    Q("write 100k",          True,  "UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 10),
-    Q("write 1m",            True,  "UNWIND range(1, 1000000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 2),
-    # The pure create/delete pairs accumulate up to reps*N entities before the
-    # delete row drains them, inflating capacity even further — keep them
-    # after the mixed "write N" rows so those keep a stable context.
     Q("create 100",          True,  "UNWIND range(1, 100) AS i CREATE (:Tmp {x: i})", 500),
     Q("delete 100",          True,  "MATCH (t:Tmp) WITH t LIMIT 100 DELETE t", 500),
+    Q("write 1k",            True,  "UNWIND range(1, 1000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 200),
+    Q("write 10k",           True,  "UNWIND range(1, 10000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 50),
     Q("create 10k",          True,  "UNWIND range(1, 10000) AS i CREATE (:Tmp {x: i})", 50),
     Q("delete 10k",          True,  "MATCH (t:Tmp) WITH t LIMIT 10000 DELETE t", 50),
+    Q("write 100k",          True,  "UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 10),
+    Q("write 1m",            True,  "UNWIND range(1, 1000000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 2),
 ]
 
 # Expected-error queries: run only in --once (coverage) mode, never timed.
