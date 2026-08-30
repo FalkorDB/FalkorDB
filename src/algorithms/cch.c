@@ -555,6 +555,60 @@ void CCH_Customize
 	cch->dn_w = dn_w ;
 }
 
+void CCH_ExtractShortcuts
+(
+	const CCH   *cch,
+	GrB_Matrix   W,
+	GrB_Matrix  *S
+) {
+	ASSERT (cch       != NULL) ;
+	ASSERT (cch->up_w != NULL) ;   // Phase 2 must have run
+	ASSERT (W         != NULL) ;
+	ASSERT (S         != NULL) ;
+
+	int64_t n = cch->n ;
+
+	GrB_Matrix _S = NULL ;
+	GrB_OK (GrB_Matrix_new (&_S, GrB_FP64, n, n)) ;
+
+	for (int64_t a = 0 ; a < n ; a++) {
+		int64_t  u   = cch->perm [a] ;                   // lower-rank node id
+		int64_t *ua  = cch->up [a] ;
+		int64_t  deg = (int64_t) arr_len (ua) ;
+
+		for (int64_t i = 0 ; i < deg ; i++) {
+			int64_t v    = cch->perm [ua [i]] ;          // higher-rank node id
+			double  up_w = cch->up_w [a] [i] ;           // u -> v
+			double  dn_w = cch->dn_w [a] [i] ;           // v -> u
+			double  road ;
+
+			// up arc u -> v: emit only if it improves on (or replaces a
+			// missing) road edge. up_w is seeded from W and only ever
+			// decreases, so up_w == road (bit-identical) means the road edge
+			// is already optimal and no shortcut is needed.
+			if (up_w != INFINITY) {
+				GrB_Info info =
+					GrB_Matrix_extractElement_FP64 (&road, W, u, v) ;
+				if (info != GrB_SUCCESS || up_w < road) {
+					GrB_OK (GrB_Matrix_setElement_FP64 (_S, up_w, u, v)) ;
+				}
+			}
+
+			// down arc v -> u
+			if (dn_w != INFINITY) {
+				GrB_Info info =
+					GrB_Matrix_extractElement_FP64 (&road, W, v, u) ;
+				if (info != GrB_SUCCESS || dn_w < road) {
+					GrB_OK (GrB_Matrix_setElement_FP64 (_S, dn_w, v, u)) ;
+				}
+			}
+		}
+	}
+
+	GrB_OK (GrB_Matrix_wait (_S, GrB_MATERIALIZE)) ;
+	*S = _S ;
+}
+
 //------------------------------------------------------------------------------
 // Phase 3: query
 //------------------------------------------------------------------------------

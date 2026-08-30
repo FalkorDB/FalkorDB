@@ -180,6 +180,22 @@ void CCH_Customize
 	GrB_Matrix  W    // node-id space, W[u][v] = weight of edge u -> v
 ) ;
 
+// build the improving-shortcut matrix for materialization into the graph.
+// for every chordal arc, emit its customized weight into 'S' (a fresh GrB_FP64
+// matrix in node-id space, S[u][v] = customized weight of the directed arc
+// u -> v) IFF that weight beats the corresponding road-edge weight in 'W' (or
+// W has no entry there) -- i.e. only the arcs that carry information beyond the
+// original edges, exactly classic CH's shortcut set. everywhere else the
+// original road edge already carries the correct weight, so no shortcut is
+// emitted. requires Phase 2 (CCH_Customize) to have run against this same 'W'.
+// caller owns and frees '*S'.
+void CCH_ExtractShortcuts
+(
+	const CCH   *cch,
+	GrB_Matrix   W,   // road weight matrix (same one Customize ran with)
+	GrB_Matrix  *S    // [output] improving shortcuts, node-id space FP64
+) ;
+
 // Phase 3 (query): exact point-to-point shortest distance from 'src' to 'dst'
 // (both node ids). Runs the heap-free elimination-tree search -- walk src's
 // and dst's ancestor paths in T_G, relaxing up-arcs (forward, via up_w) and

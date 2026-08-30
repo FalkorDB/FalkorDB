@@ -42,6 +42,7 @@ void Proc_Register() {
 	// register graph algorithms
 	//--------------------------------------------------------------------------
 	_procRegister("algo.BFS",                Proc_BFS_Ctx);
+	_procRegister("algo.CCH",                Proc_CCHCtx);
 	_procRegister("algo.MSF",                Proc_MSFCtx);
 	_procRegister("algo.WCC",                Proc_WCCCtx);
 	_procRegister("algo.maxFlow",            Proc_MaxFlowCtx);
