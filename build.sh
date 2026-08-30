@@ -466,6 +466,18 @@ setup_build_environment() {
     export QUICKJS_BINDIR="${DEPS_BINDIR}/quickjs"
     export UTF8PROC_BINDIR="${DEPS_BINDIR}/utf8proc"
     export ONIGURUMA_BINDIR="${DEPS_BINDIR}/oniguruma"
+    # GKlib builds out-of-tree like the other CMake deps, then gets installed
+    # into a private prefix (GKLIB_BINDIR) so METIS's own CMakeLists.txt can
+    # find matching include/ and lib/ dirs under one path -- without touching
+    # any shared/system location.
+    export GKLIB_BUILD_DIR="${DEPS_BINDIR}/GKlib-build"
+    export GKLIB_BINDIR="${DEPS_BINDIR}/GKlib"
+    # METIS's own CMakeLists.txt hardcodes an in-source "build/xinclude" path
+    # (relative to its source dir, not whatever build dir cmake is invoked
+    # from), so unlike the other deps it cannot be configured out-of-tree.
+    # It is built in-tree via its own Makefile, matching upstream's documented
+    # workflow; both submodules gitignore their build/ dirs.
+    export METIS_BINDIR="${ROOT}/deps/KarypisLab/METIS/build"
 
     # Export environment variables for dependencies
     export RAX="${RAX_BINDIR}/librax.a"
@@ -479,6 +491,9 @@ setup_build_environment() {
     export QUICKJS="${QUICKJS_BINDIR}/libquickjs.a"
     export UTF8PROC="${UTF8PROC_BINDIR}/libutf8proc.a"
     export ONIGURUMA="${ONIGURUMA_BINDIR}/libonig.a"
+    export GKLIB="${GKLIB_BINDIR}/lib/libGKlib.a"
+    export METIS="${METIS_BINDIR}/libmetis/libmetis.a"
+    export METIS_INCLUDE="${METIS_BINDIR}/xinclude"
 
     # Setup compiler flags
     if [[ "$OS" == "macos" ]]; then
@@ -601,6 +616,8 @@ check_dependencies() {
     [[ ! -f "$QUICKJS" ]] && MISSING_DEPS+=("quickjs")
     [[ ! -f "$UTF8PROC" ]] && MISSING_DEPS+=("utf8proc")
     [[ ! -f "$ONIGURUMA" ]] && MISSING_DEPS+=("oniguruma")
+    [[ ! -f "$GKLIB" ]] && MISSING_DEPS+=("gklib")
+    [[ ! -f "$METIS" ]] && MISSING_DEPS+=("metis")
     # RediSearch is now built by CMake as a subdirectory
 
     if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
@@ -1141,6 +1158,130 @@ build_oniguruma() {
 }
 
 #-----------------------------------------------------------------------------
+# Function: build_gklib
+# Build GKlib (METIS's support library) using cmake, then install it into a
+# private prefix so METIS's build can find matching include/ and lib/ dirs.
+# OpenMP is enabled: GKlib's csr.c/graph.c use "#pragma omp" and are called
+# from METIS's coarsening/graph routines, so this is what actually makes
+# METIS partitioning parallelize.
+#-----------------------------------------------------------------------------
+build_gklib() {
+    if [[ -f "$GKLIB" ]] && [[ "$FORCE" != "1" ]]; then
+        return 0
+    fi
+
+    start_group "Building GKlib"
+    log_info "Building GKlib..."
+
+    local src_dir="${ROOT}/deps/KarypisLab/GKlib"
+    local build_dir="$GKLIB_BUILD_DIR"
+
+    mkdir -p "$build_dir"
+    cd "$build_dir"
+
+    local cmake_args=(
+        -DCMAKE_INSTALL_PREFIX="$GKLIB_BINDIR"
+        -DSHARED=OFF
+        -DOPENMP=1
+        -DGKLIB_BUILD_APPS=OFF
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DCMAKE_C_FLAGS="-fPIC"
+    )
+
+    if [[ "$DEPS_DEBUG" == "1" ]]; then
+        cmake_args+=(-DCMAKE_BUILD_TYPE=Debug)
+    else
+        # Use RelWithDebInfo for debug symbols, but override to -O3 for max optimization
+        cmake_args+=(
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+            "-DCMAKE_C_FLAGS_RELWITHDEBINFO=-O3 -g -DNDEBUG -fPIC"
+        )
+    fi
+
+    log_info "Configuring GKlib..."
+    if ! cmake "$src_dir" "${cmake_args[@]}"; then
+        log_error "Failed to configure GKlib"
+        cd "$ROOT"
+        end_group
+        exit 1
+    fi
+
+    log_info "Building GKlib..."
+    if ! cmake --build . --config RelWithDebInfo -j "$NPROC"; then
+        log_error "Failed to build GKlib"
+        cd "$ROOT"
+        end_group
+        exit 1
+    fi
+
+    log_info "Installing GKlib into private prefix..."
+    if ! cmake --install . --config RelWithDebInfo; then
+        log_error "Failed to install GKlib"
+        cd "$ROOT"
+        end_group
+        exit 1
+    fi
+
+    cd "$ROOT"
+
+    log_success "GKlib built successfully"
+    end_group
+}
+
+#-----------------------------------------------------------------------------
+# Function: build_metis
+# Build METIS's static library using its own Makefile/CMake wrapper.
+#
+# Unlike the other deps, METIS's CMakeLists.txt references an in-source
+# "build/xinclude" path (relative to the source tree, not the build dir cmake
+# was invoked from), which is where the width macros below get injected ahead
+# of the public header. That means it cannot be configured into an
+# out-of-tree directory the way GraphBLAS/LAGraph/oniguruma are -- it must be
+# built at deps/KarypisLab/METIS/build, matching upstream's own workflow.
+#
+# Only the "metis" library target is built (not the gpmetis/ndmetis/etc CLI
+# programs), so the GKlib static archive never needs to be located at link
+# time here -- static-archive creation doesn't invoke the linker.
+#
+# idx_t/real_t are built as 64-bit (i64/r64) to match FalkorDB's own indices.
+# OpenMP is requested for consistency with GKlib, though METIS's own library
+# code has no "#pragma omp" of its own -- the parallelism comes from GKlib.
+#-----------------------------------------------------------------------------
+build_metis() {
+    if [[ -f "$METIS" ]] && [[ "$FORCE" != "1" ]]; then
+        return 0
+    fi
+
+    start_group "Building METIS"
+    log_info "Building METIS..."
+
+    local src_dir="${ROOT}/deps/KarypisLab/METIS"
+
+    cd "$src_dir"
+
+    log_info "Configuring METIS..."
+    if ! make config gklib_path="$GKLIB_BINDIR" prefix="$GKLIB_BINDIR" i64=1 r64=1 openmp=1; then
+        log_error "Failed to configure METIS"
+        cd "$ROOT"
+        end_group
+        exit 1
+    fi
+
+    log_info "Building METIS..."
+    if ! make -C build metis -j "$NPROC"; then
+        log_error "Failed to build METIS"
+        cd "$ROOT"
+        end_group
+        exit 1
+    fi
+
+    cd "$ROOT"
+
+    log_success "METIS built successfully"
+    end_group
+}
+
+#-----------------------------------------------------------------------------
 # Function: build_dependencies
 # Build all required dependencies
 #-----------------------------------------------------------------------------
@@ -1163,6 +1304,8 @@ build_dependencies() {
     build_quickjs
     build_utf8proc
     build_oniguruma
+    build_gklib
+    build_metis
 
     log_success "All dependencies built successfully"
 }
@@ -1618,6 +1761,13 @@ do_clean() {
         log_info "Removing entire bin directory and deps..."
         rm -rf "${ROOT}/bin" "${DEPS_BINDIR}"
 
+        # METIS builds in-tree (its CMakeLists.txt hardcodes an in-source
+        # build/xinclude path), so its build dir lives outside bin/ and needs
+        # explicit cleanup here.
+        if [[ -d "${ROOT}/deps/KarypisLab/METIS" ]]; then
+            make -C "${ROOT}/deps/KarypisLab/METIS" distclean 2>/dev/null || true
+        fi
+
         # Also clean libcypher-parser autogen if AUTOGEN=1
         if [[ "$CLEAN_AUTOGEN" == "1" ]]; then
             log_info "Cleaning libcypher-parser autogen files..."
@@ -1651,10 +1801,17 @@ do_clean() {
             rm -rf "$LIBCURL_BINDIR" 2>/dev/null || true
             rm -rf "$LIBCSV_BINDIR" 2>/dev/null || true
             rm -rf "$LIBCYPHER_PARSER_BINDIR" 2>/dev/null || true
+            rm -rf "$GKLIB_BUILD_DIR" 2>/dev/null || true
+            rm -rf "$GKLIB_BINDIR" 2>/dev/null || true
 
             # Clean quickjs in-source build
             if [[ -d "${ROOT}/deps/quickjs" ]]; then
                 make -C "${ROOT}/deps/quickjs" clean 2>/dev/null || true
+            fi
+
+            # Clean METIS in-source build (see comment in CLEAN_ALL branch above)
+            if [[ -d "${ROOT}/deps/KarypisLab/METIS" ]]; then
+                make -C "${ROOT}/deps/KarypisLab/METIS" distclean 2>/dev/null || true
             fi
         fi
     fi
