@@ -17,9 +17,6 @@
 //! ┌──────────────────────────────────────────────────────────────────────┐
 //! │                         Graph Structure                             │
 //! ├──────────────────────────┬───────────────────────────────────────────┤
-//! │ all_nodes_matrix         │ Diagonal matrix: node_id -> bool         │
-//! │                          │ (set for every live node)                │
-//! ├──────────────────────────┼───────────────────────────────────────────┤
 //! │ adjacancy_matrix         │ Boolean matrix: src x dst -> bool        │
 //! │                          │ (union of all relationship types)        │
 //! ├──────────────────────────┼───────────────────────────────────────────┤
@@ -276,8 +273,6 @@ pub struct Graph {
     node_labels_matrix: VersionedMatrix<bool>,
     /// Matrix mapping relationships to their types
     relationship_type_matrix: VersionedMatrix<bool>,
-    /// Matrix with all nodes (for full scans)
-    all_nodes_matrix: VersionedMatrix<bool>,
     /// Per-label matrices (label ID → node membership)
     labels_matices: Vec<VersionedMatrix<bool>>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
@@ -743,7 +738,6 @@ impl Graph {
             adjacancy_matrix: VersionedMatrix::<bool>::new(n, n),
             node_labels_matrix: VersionedMatrix::<bool>::new(0, 0),
             relationship_type_matrix: VersionedMatrix::<bool>::new(0, 0),
-            all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Arc::new(EndpointIndex::default()),
@@ -780,7 +774,6 @@ impl Graph {
         adjacancy_matrix: VersionedMatrix<bool>,
         node_labels_matrix: VersionedMatrix<bool>,
         relationship_type_matrix: VersionedMatrix<bool>,
-        all_nodes_matrix: VersionedMatrix<bool>,
         labels_matices: Vec<VersionedMatrix<bool>>,
         relationship_matrices: Vec<Tensor>,
         node_labels: Vec<Arc<String>>,
@@ -854,7 +847,6 @@ impl Graph {
             adjacancy_matrix,
             node_labels_matrix,
             relationship_type_matrix,
-            all_nodes_matrix,
             labels_matices,
             relationship_matrices,
             edge_endpoints: Arc::new(edge_endpoints),
@@ -881,7 +873,6 @@ impl Graph {
 
     /// Rebuild derived matrices after RDB load.
     ///
-    /// - `all_nodes_matrix`: diagonal `(id, id) = true` for all live nodes
     /// - `relationship_type_matrix`: `(edge_id, type_index) = true` for all edges
     /// - Tensor backward (`mt`): transpose of forward (`m`)
     pub fn rebuild_derived_matrices(&mut self) {
@@ -892,18 +883,6 @@ impl Graph {
         let rc = self.relationship_cap;
         self.relationship_type_matrix
             .resize(rc, self.relationship_types.len() as u64);
-
-        // Rebuild all_nodes_matrix from all live node IDs (0..=max_id skipping deleted).
-        // Cannot rebuild only from label matrices: unlabeled nodes do not appear in any
-        // label matrix but still need to be in all_nodes_matrix for MATCH (n) scans.
-        if self.node_count > 0 {
-            let max_id = self.node_count + self.deleted_nodes.len() - 1;
-            for id in 0..=max_id {
-                if !self.deleted_nodes.contains(id) {
-                    self.all_nodes_matrix.set(id, id, true);
-                }
-            }
-        }
 
         // Rebuild relationship_type_matrix and tensor backward matrices
         for (type_idx, tensor) in self.relationship_matrices.iter_mut().enumerate() {
@@ -954,7 +933,6 @@ impl Graph {
             adjacancy_matrix: self.adjacancy_matrix.dup(),
             node_labels_matrix: self.node_labels_matrix.dup(),
             relationship_type_matrix: self.relationship_type_matrix.dup(),
-            all_nodes_matrix: self.all_nodes_matrix.dup(),
             labels_matices: self
                 .labels_matices
                 .iter()
@@ -1435,9 +1413,6 @@ impl Graph {
         }
 
         self.resize();
-
-        self.all_nodes_matrix
-            .set_all::<true>(nodes.iter().map(|id| (id, id)));
     }
 
     #[must_use]
@@ -1798,10 +1773,6 @@ impl Graph {
         // `delta_invariants_hold_across_mutation_sequences`, and this specific
         // substitution is machine-checked as
         // `eff_removeMask_eq_foldl_remove` in `proofs/versioned_matrix`.
-        for id in deleted_nodes {
-            self.all_nodes_matrix.remove(id, id);
-        }
-
         // Which labels each deleted node carries. Collected first because the
         // iterator borrows `node_labels_matrix` for the duration and the removals
         // below need it mutably.
@@ -1964,10 +1935,14 @@ impl Graph {
     ) -> Box<dyn Iterator<Item = NodeId>> {
         if labels.is_empty() {
             // Full scan: live node IDs are exactly `0..=max_node_id` minus the
-            // deleted set, identical to the diagonal of `all_nodes_matrix`.
-            // A range walk with a roaring-bitmap membership check avoids the
-            // per-element GraphBLAS row-iterator overhead, which dominates the
-            // cost of unfiltered `MATCH (n)` scans.
+            // deleted set. A range walk with a roaring-bitmap membership check
+            // avoids the per-element GraphBLAS row-iterator overhead, which
+            // dominates the cost of unfiltered `MATCH (n)` scans.
+            //
+            // It is also why no matrix of live nodes is kept: the bitmap
+            // already answers the question, and maintaining a parallel
+            // GraphBLAS diagonal made every write pay structural upkeep
+            // proportional to the graph rather than to the write.
             if self.node_count == 0 {
                 return Box::new(std::iter::empty());
             }
@@ -2191,7 +2166,6 @@ impl Graph {
     /// fold pathology cannot occur, and deferring to the next version's
     /// `dup`/`flush` would leave the final command's deltas unfolded.
     pub fn flush_for_bulk(&mut self) {
-        self.all_nodes_matrix.fold_latched();
         self.node_labels_matrix.fold_latched();
         for m in &mut self.labels_matices {
             m.fold_latched();
@@ -2224,8 +2198,6 @@ impl Graph {
         self.node_labels_matrix.wait_base();
         self.relationship_type_matrix.fold_oversized();
         self.relationship_type_matrix.wait_base();
-        self.all_nodes_matrix.fold_oversized();
-        self.all_nodes_matrix.wait_base();
         for m in &mut self.labels_matices {
             m.fold_oversized();
             m.wait_base();
@@ -2244,7 +2216,6 @@ impl Graph {
         self.adjacancy_matrix.wait_all();
         self.node_labels_matrix.wait_all();
         self.relationship_type_matrix.wait_all();
-        self.all_nodes_matrix.wait_all();
         for m in &self.labels_matices {
             m.wait_all();
         }
@@ -2263,7 +2234,6 @@ impl Graph {
             && self.adjacancy_matrix.is_synced()
             && self.node_labels_matrix.is_synced()
             && self.relationship_type_matrix.is_synced()
-            && self.all_nodes_matrix.is_synced()
             && self.labels_matices.iter().all(VersionedMatrix::is_synced)
             && self.relationship_matrices.iter().all(Tensor::is_synced)
     }
@@ -2827,7 +2797,6 @@ impl Graph {
         self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
         self.node_labels_matrix
             .resize(self.node_cap, self.labels_matices.len() as u64);
-        self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
         for label_matrix in &mut self.labels_matices {
             label_matrix.resize(self.node_cap, self.node_cap);
         }
@@ -3975,27 +3944,6 @@ impl Graph {
         result
     }
 
-    /// Build a diagonal boolean matrix of nodes matching any of the given labels.
-    /// If `labels` is empty, returns the all_nodes matrix.
-    #[must_use]
-    pub fn build_node_mask_matrix(
-        &self,
-        labels: &[Arc<String>],
-    ) -> Matrix<bool> {
-        if labels.is_empty() {
-            self.all_nodes_matrix.extract()
-        } else {
-            let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
-            for label in labels {
-                if let Some(label_id) = self.get_label_id(label) {
-                    let m = self.labels_matices[usize::from(label_id)].extract();
-                    result.element_wise_add(None, None, Some(&m), None);
-                }
-            }
-            result
-        }
-    }
-
     /// Compute a detailed breakdown of memory usage for `GRAPH.MEMORY USAGE`.
     ///
     /// `samples` controls how many entities are sampled per label/type when
@@ -4024,16 +3972,17 @@ impl Graph {
         }
 
         // --- node block storage ---
-        // Everything a node costs that is not its property values: the matrix
-        // recording that the node exists (the Rust stand-in for C's per-node
-        // DataBlock item, and the reason an attribute-less node is not free),
-        // the attribute store's unattributed bytes, and the deleted-id bitmap.
-        // Property values are reported under the attribute components, and
+        // Everything a node costs that is not its property values: the
+        // attribute store's unattributed bytes (the per-node slot, which is
+        // what makes an attribute-less node not free, and the counterpart of
+        // C's per-node DataBlock item) and the deleted-id bitmap. Node
+        // existence itself costs nothing beyond those — it is the id range
+        // minus that bitmap, not a stored structure. Property values are
+        // reported under the attribute components, and
         // `structural_memory_usage` excludes exactly those, so the two halves
         // cover the store without overlap.
-        let node_block_storage_sz: usize = self.all_nodes_matrix.memory_usage()
-            + self.node_attrs.structural_memory_usage()
-            + self.deleted_nodes.serialized_size();
+        let node_block_storage_sz: usize =
+            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
         // Mirrors the node side: the matrix recording each edge's existence and
@@ -4098,14 +4047,16 @@ impl Graph {
         let total_nodes = self.node_count;
         let unlabeled_count = total_nodes.saturating_sub(total_labeled);
         let unlabeled_node_attr_sz = if unlabeled_count > 0 {
-            // Sample unlabeled nodes from all_nodes_matrix, skipping labeled ones.
+            // Sample unlabeled nodes, skipping labeled ones. Live ids are the
+            // id range minus the deleted set — the same walk `get_nodes` uses
+            // for an unfiltered scan.
             let mut sampled_mem: usize = 0;
             let mut sampled_count: usize = 0;
-            for (node_id, _) in self.all_nodes_matrix.iter(0, u64::MAX) {
+            for node_id in 0..=self.max_node_id() {
                 if sampled_count >= samples {
                     break;
                 }
-                if seen[node_id as usize] {
+                if self.deleted_nodes.contains(node_id) || seen[node_id as usize] {
                     continue;
                 }
                 sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);
