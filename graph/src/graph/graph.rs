@@ -687,6 +687,39 @@ fn grow_cap(
     cap
 }
 
+/// Append the next `count` reclaimable ids from `pool` to `out`.
+///
+/// `base` is how many of the pool's ids are already reserved, so this yields
+/// exactly what `pool.iter().skip(base).take(count)` would.
+///
+/// It gets there by rank rather than by walking. `select(base)` finds the
+/// base-th id by summing container cardinalities — a container holds 65,536
+/// ids, so that is on the order of sixteen steps for a million-id pool — and
+/// `Iter::advance_to` then seeks to that value. Expressed as `skip(base)` it
+/// walked `base` elements instead, and `CREATE` reserves once per BATCH_SIZE
+/// rows with `base` only reset at commit, so a create of N ids walked the pool
+/// N/BATCH_SIZE times: O(N^2 / BATCH_SIZE). A 1M-node create over a 1M-id pool
+/// spent about 2s of its 2.5s there.
+///
+/// (`select` is only cheap per *batch*. Per id — the shape this replaced
+/// earlier — N calls of O(containers) is its own quadratic.)
+fn reclaim_ids<T: From<u64>>(
+    pool: &RoaringTreemap,
+    base: u64,
+    count: u64,
+    out: &mut Vec<T>,
+) {
+    if count == 0 {
+        return;
+    }
+    let Some(start) = pool.select(base) else {
+        return;
+    };
+    let mut iter = pool.iter();
+    iter.advance_to(start);
+    out.extend(iter.take(count as usize).map(T::from));
+}
+
 impl Graph {
     #[must_use]
     pub fn new(
@@ -1367,21 +1400,12 @@ impl Graph {
 
         // First reclaim from deleted nodes.
         //
-        // One ordered walk, not a rank lookup per id: `RoaringTreemap::select(i)`
-        // restarts at the first container every call, summing cardinalities until
-        // it reaches `i` and then scanning words inside that container, so a
-        // batch of N reclaims costs O(N * position) rather than O(pool). It was
-        // the hottest single leaf in the module on a create-after-delete profile.
-        // `skip` walks the same iterator once, so the whole batch is one pass.
+        // One rank lookup for the batch, then an ordered walk of it — see
+        // [`reclaim_ids`]. Walking to `base` per batch, which is what
+        // `iter().skip(base)` did, made a large create quadratic.
         let base = self.reserved_node_count;
         self.reserved_node_count += reclaimed;
-        ids.extend(
-            self.deleted_nodes
-                .iter()
-                .skip(base as usize)
-                .take(reclaimed as usize)
-                .map(NodeId),
-        );
+        reclaim_ids(&self.deleted_nodes, base, reclaimed, &mut ids);
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -2081,18 +2105,11 @@ impl Graph {
         let available = deleted_len.saturating_sub(self.reserved_relationship_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted relationships. One ordered walk rather than a
-        // rank lookup per id — see `reserve_nodes` for why `select` per id is
-        // quadratic across a batch.
+        // First reclaim from deleted relationships — same shape as
+        // `reserve_nodes`, see [`reclaim_ids`].
         let base = self.reserved_relationship_count;
         self.reserved_relationship_count += reclaimed;
-        ids.extend(
-            self.deleted_relationships
-                .iter()
-                .skip(base as usize)
-                .take(reclaimed as usize)
-                .map(RelationshipId),
-        );
+        reclaim_ids(&self.deleted_relationships, base, reclaimed, &mut ids);
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -4325,5 +4342,116 @@ mod attr_id_space_tests {
                 "RDB position {id} disagrees with the live id for {name}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reclaim_ids_tests {
+    use super::*;
+
+    /// The plain walk `reclaim_ids` has to stay equivalent to.
+    fn walk(
+        pool: &RoaringTreemap,
+        base: u64,
+        count: u64,
+    ) -> Vec<u64> {
+        pool.iter()
+            .skip(base as usize)
+            .take(count as usize)
+            .collect()
+    }
+
+    fn reclaim(
+        pool: &RoaringTreemap,
+        base: u64,
+        count: u64,
+    ) -> Vec<u64> {
+        let mut out: Vec<u64> = Vec::new();
+        reclaim_ids(pool, base, count, &mut out);
+        out
+    }
+
+    /// Reclaiming in batches must hand out the same ids as one big reclaim.
+    /// This is the property the whole optimisation rests on.
+    #[test]
+    fn batched_reclaim_matches_single_walk() {
+        let pool: RoaringTreemap = (0..5_000u64).map(|i| i * 3).collect();
+
+        let mut batched: Vec<u64> = Vec::new();
+        let mut base = 0;
+        while base < pool.len() {
+            let count = 97.min(pool.len() - base);
+            reclaim_ids(&pool, base, count, &mut batched);
+            base += count;
+        }
+
+        assert_eq!(batched, walk(&pool, 0, pool.len()));
+    }
+
+    /// Rank-based seeking has to agree with walking at *every* base, including
+    /// across container boundaries — `select` sums container cardinalities, so a
+    /// pool spread over several containers is where an off-by-one would show.
+    #[test]
+    fn agrees_with_walk_at_every_base() {
+        let pool: RoaringTreemap = (0..300u64)
+            .map(|i| i * 1_000)
+            .chain(70_000..70_400)
+            .chain(1_000_000..1_000_050)
+            .collect();
+
+        for base in 0..pool.len() {
+            for count in [1u64, 13, 97] {
+                assert_eq!(
+                    reclaim(&pool, base, count),
+                    walk(&pool, base, count),
+                    "base {base}, count {count}"
+                );
+            }
+        }
+    }
+
+    /// Ids freed below where reclaiming had reached shift every later position.
+    /// Rank is read from the pool on each call, so the answer tracks the pool
+    /// with no state to go stale — this is what the previous cursor-based
+    /// version needed a cardinality guard to get right.
+    #[test]
+    fn reflects_a_pool_that_changed_between_calls() {
+        let mut pool: RoaringTreemap = (100..200u64).collect();
+
+        assert_eq!(reclaim(&pool, 0, 10), (100..110).collect::<Vec<_>>());
+
+        // Free some lower ids, as returning a pending-created id does.
+        pool.insert(0);
+        pool.insert(1);
+
+        assert_eq!(reclaim(&pool, 10, 10), walk(&pool, 10, 10));
+    }
+
+    /// Asking for more than the pool holds yields what there is, and a base past
+    /// the end yields nothing rather than panicking.
+    #[test]
+    fn handles_requests_past_the_end() {
+        let pool: RoaringTreemap = (0..5u64).collect();
+
+        assert_eq!(reclaim(&pool, 0, 5), vec![0, 1, 2, 3, 4]);
+        assert_eq!(reclaim(&pool, 0, 9), vec![0, 1, 2, 3, 4]);
+        assert!(reclaim(&pool, 5, 3).is_empty());
+        assert!(reclaim(&pool, 99, 3).is_empty());
+    }
+
+    /// A zero-count request appends nothing.
+    #[test]
+    fn zero_count_yields_nothing() {
+        let pool: RoaringTreemap = (0..100u64).collect();
+        assert!(reclaim(&pool, 0, 0).is_empty());
+        assert!(reclaim(&pool, 50, 0).is_empty());
+    }
+
+    /// An empty pool has nothing to reclaim at any base.
+    #[test]
+    fn empty_pool_yields_nothing() {
+        let pool = RoaringTreemap::new();
+        assert!(reclaim(&pool, 0, 10).is_empty());
+        assert!(reclaim(&pool, 7, 10).is_empty());
     }
 }
