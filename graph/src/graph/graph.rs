@@ -2465,27 +2465,37 @@ impl Graph {
         for type_idx in 0..self.relationship_matrices.len() {
             let mut rels: Vec<(u64, u64, u64)> = Vec::new();
 
-            // Collect all edges for deleted nodes from this tensor
-            for node_id in deleted_nodes {
-                // Outgoing edges
-                for (src, dst, edge_id) in
-                    self.relationship_matrices[type_idx].iter(node_id, node_id, false)
-                {
-                    if !explicit_rels.contains(edge_id) {
-                        rels.push((edge_id, src, dst));
+            // Collect all edges for deleted nodes from this tensor.
+            //
+            // One iterator pair for the whole type, re-seeked per node, rather
+            // than a fresh pair per node: building one allocates a
+            // `GxB_Iterator` per layer and waits the tensor, so per-node
+            // construction cost scales with the deleted set and the number of
+            // relationship types while having nothing to do with how many edges
+            // those nodes actually have. Deleting a million edgeless nodes over
+            // six types built twelve million iterators to yield nothing.
+            {
+                let tensor = &self.relationship_matrices[type_idx];
+                let mut outgoing = tensor.iter(0, 0, false);
+                let mut incoming = tensor.iter(0, 0, true);
+                for node_id in deleted_nodes {
+                    outgoing.seek(node_id, node_id);
+                    for (src, dst, edge_id) in &mut outgoing {
+                        if !explicit_rels.contains(edge_id) {
+                            rels.push((edge_id, src, dst));
+                        }
                     }
-                }
-                // Incoming edges — skip if source is also a deleted node
-                // (those edges are already collected from the source's
-                // outgoing iteration), and skip self-loops already found above.
-                for (src, dst, edge_id) in
-                    self.relationship_matrices[type_idx].iter(node_id, node_id, true)
-                {
-                    if src != node_id
-                        && !deleted_nodes.contains(src)
-                        && !explicit_rels.contains(edge_id)
-                    {
-                        rels.push((edge_id, src, dst));
+                    // Incoming edges — skip if source is also a deleted node
+                    // (those edges are already collected from the source's
+                    // outgoing iteration), and skip self-loops already found above.
+                    incoming.seek(node_id, node_id);
+                    for (src, dst, edge_id) in &mut incoming {
+                        if src != node_id
+                            && !deleted_nodes.contains(src)
+                            && !explicit_rels.contains(edge_id)
+                        {
+                            rels.push((edge_id, src, dst));
+                        }
                     }
                 }
             }
