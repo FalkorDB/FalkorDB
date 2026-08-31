@@ -106,6 +106,15 @@ typedef struct {
 	double **up_w ;
 	double **dn_w ;
 
+	// per-arc "middle" node, laid out parallel to 'up' -- the elimination rank
+	// of the lower-ranked apex through which the customized weight was achieved
+	// (up_w[a][i] came from the triangle a -> up_mid[a][i] -> up[a][i]), or -1
+	// when the arc's weight is just its original road edge (no detour, nothing
+	// to unpack). this is what lets a shortcut be recursively expanded back into
+	// the original road edges it stands for. NULL until CCH_Customize runs.
+	int64_t **up_mid ;
+	int64_t **dn_mid ;
+
 	//--------------------------------------------------------------------------
 	// Phase 3 (query) scratch -- reused across CCH_Query calls
 	//--------------------------------------------------------------------------
@@ -188,12 +197,18 @@ void CCH_Customize
 // original edges, exactly classic CH's shortcut set. everywhere else the
 // original road edge already carries the correct weight, so no shortcut is
 // emitted. requires Phase 2 (CCH_Customize) to have run against this same 'W'.
-// caller owns and frees '*S'.
+// caller owns and frees '*S' and '*M'. 'M' (node-id space GrB_INT64) is emitted
+// in lockstep with 'S': M[u][v] is the node id of the middle vertex the shortcut
+// u -> v routes through, i.e. the arc expands to u -> M[u][v] -> v, each half of
+// which is itself a road or shortcut edge to be unpacked recursively. every
+// emitted shortcut has a middle (a shortcut only exists because a detour beat
+// the road edge), so M has an entry for exactly the same (u,v) pairs as S.
 void CCH_ExtractShortcuts
 (
 	const CCH   *cch,
 	GrB_Matrix   W,   // road weight matrix (same one Customize ran with)
-	GrB_Matrix  *S    // [output] improving shortcuts, node-id space FP64
+	GrB_Matrix  *S,   // [output] improving shortcut weights, node-id space FP64
+	GrB_Matrix  *M    // [output] shortcut middle node ids, node-id space INT64
 ) ;
 
 // Phase 3 (query): exact point-to-point shortest distance from 'src' to 'dst'

@@ -65,6 +65,20 @@ void CCH_Free
 		rm_free (cch->dn_w) ;
 	}
 
+	if (cch->up_mid != NULL) {
+		for (int64_t rank = 0 ; rank < cch->n ; rank++) {
+			rm_free (cch->up_mid [rank]) ;
+		}
+		rm_free (cch->up_mid) ;
+	}
+
+	if (cch->dn_mid != NULL) {
+		for (int64_t rank = 0 ; rank < cch->n ; rank++) {
+			rm_free (cch->dn_mid [rank]) ;
+		}
+		rm_free (cch->dn_mid) ;
+	}
+
 	if (cch->q_df != NULL) rm_free (cch->q_df) ;
 	if (cch->q_db != NULL) rm_free (cch->q_db) ;
 
@@ -478,9 +492,19 @@ void CCH_Customize
 		for (int64_t r = 0 ; r < n ; r++) rm_free (cch->dn_w [r]) ;
 		rm_free (cch->dn_w) ;
 	}
+	if (cch->up_mid != NULL) {
+		for (int64_t r = 0 ; r < n ; r++) rm_free (cch->up_mid [r]) ;
+		rm_free (cch->up_mid) ;
+	}
+	if (cch->dn_mid != NULL) {
+		for (int64_t r = 0 ; r < n ; r++) rm_free (cch->dn_mid [r]) ;
+		rm_free (cch->dn_mid) ;
+	}
 
-	double **up_w = rm_malloc (sizeof (double *) * n) ;
-	double **dn_w = rm_malloc (sizeof (double *) * n) ;
+	double **up_w   = rm_malloc (sizeof (double *)  * n) ;
+	double **dn_w   = rm_malloc (sizeof (double *)  * n) ;
+	int64_t **up_mid = rm_malloc (sizeof (int64_t *) * n) ;
+	int64_t **dn_mid = rm_malloc (sizeof (int64_t *) * n) ;
 
 	//--------------------------------------------------------------------------
 	// seed: original edges take their weight from W, shortcut arcs +INFINITY
@@ -492,8 +516,11 @@ void CCH_Customize
 
 		// deg can be 0 (a root with no upper neighbors); keep a 1-slot alloc
 		// so the pointer is always non-NULL and freeable
-		up_w [rank] = rm_malloc (sizeof (double) * (deg > 0 ? deg : 1)) ;
-		dn_w [rank] = rm_malloc (sizeof (double) * (deg > 0 ? deg : 1)) ;
+		int64_t slots = (deg > 0 ? deg : 1) ;
+		up_w   [rank] = rm_malloc (sizeof (double)  * slots) ;
+		dn_w   [rank] = rm_malloc (sizeof (double)  * slots) ;
+		up_mid [rank] = rm_malloc (sizeof (int64_t) * slots) ;
+		dn_mid [rank] = rm_malloc (sizeof (int64_t) * slots) ;
 
 		for (int64_t i = 0 ; i < deg ; i++) {
 			int64_t v = cch->perm [cch->up [rank] [i]] ; // upper neighbor node id
@@ -508,6 +535,10 @@ void CCH_Customize
 			dn_w [rank] [i] =
 				(GrB_Matrix_extractElement_FP64 (&w, W, v, u) == GrB_SUCCESS)
 				? w : INFINITY ;
+
+			// -1 => arc is (so far) just its road edge, nothing to unpack
+			up_mid [rank] [i] = -1 ;
+			dn_mid [rank] [i] = -1 ;
 		}
 	}
 
@@ -540,36 +571,50 @@ void CCH_Customize
 
 				int64_t k = _find_upper (cch, y, z) ; // slot of arc (y,z) in up[y]
 
-				// improve up(y,z) via the detour y -> x -> z
+				// improve up(y,z) via the detour y -> x -> z; remember x as the
+				// arc's middle so it can later be unpacked into y -> x -> z
 				double cand_up = wxy_dn + wxz_up ;
-				if (cand_up < up_w [y] [k]) up_w [y] [k] = cand_up ;
+				if (cand_up < up_w [y] [k]) {
+					up_w   [y] [k] = cand_up ;
+					up_mid [y] [k] = x ;
+				}
 
 				// improve dn(y,z) via the detour z -> x -> y
 				double cand_dn = wxz_dn + wxy_up ;
-				if (cand_dn < dn_w [y] [k]) dn_w [y] [k] = cand_dn ;
+				if (cand_dn < dn_w [y] [k]) {
+					dn_w   [y] [k] = cand_dn ;
+					dn_mid [y] [k] = x ;
+				}
 			}
 		}
 	}
 
-	cch->up_w = up_w ;
-	cch->dn_w = dn_w ;
+	cch->up_w   = up_w ;
+	cch->dn_w   = dn_w ;
+	cch->up_mid = up_mid ;
+	cch->dn_mid = dn_mid ;
 }
 
 void CCH_ExtractShortcuts
 (
 	const CCH   *cch,
 	GrB_Matrix   W,
-	GrB_Matrix  *S
+	GrB_Matrix  *S,
+	GrB_Matrix  *M
 ) {
-	ASSERT (cch       != NULL) ;
-	ASSERT (cch->up_w != NULL) ;   // Phase 2 must have run
-	ASSERT (W         != NULL) ;
-	ASSERT (S         != NULL) ;
+	ASSERT (cch         != NULL) ;
+	ASSERT (cch->up_w   != NULL) ;   // Phase 2 must have run
+	ASSERT (cch->up_mid != NULL) ;
+	ASSERT (W           != NULL) ;
+	ASSERT (S           != NULL) ;
+	ASSERT (M           != NULL) ;
 
 	int64_t n = cch->n ;
 
 	GrB_Matrix _S = NULL ;
-	GrB_OK (GrB_Matrix_new (&_S, GrB_FP64, n, n)) ;
+	GrB_Matrix _M = NULL ;
+	GrB_OK (GrB_Matrix_new (&_S, GrB_FP64,  n, n)) ;
+	GrB_OK (GrB_Matrix_new (&_M, GrB_INT64, n, n)) ;
 
 	for (int64_t a = 0 ; a < n ; a++) {
 		int64_t  u   = cch->perm [a] ;                   // lower-rank node id
@@ -585,12 +630,17 @@ void CCH_ExtractShortcuts
 			// up arc u -> v: emit only if it improves on (or replaces a
 			// missing) road edge. up_w is seeded from W and only ever
 			// decreases, so up_w == road (bit-identical) means the road edge
-			// is already optimal and no shortcut is needed.
+			// is already optimal and no shortcut is needed. an improving arc
+			// always got its weight from a triangle, so it has a middle.
 			if (up_w != INFINITY) {
 				GrB_Info info =
 					GrB_Matrix_extractElement_FP64 (&road, W, u, v) ;
 				if (info != GrB_SUCCESS || up_w < road) {
+					int64_t mid = cch->up_mid [a] [i] ;
+					ASSERT (mid != -1) ;
 					GrB_OK (GrB_Matrix_setElement_FP64 (_S, up_w, u, v)) ;
+					GrB_OK (GrB_Matrix_setElement_INT64 (_M,
+								cch->perm [mid], u, v)) ;
 				}
 			}
 
@@ -599,14 +649,20 @@ void CCH_ExtractShortcuts
 				GrB_Info info =
 					GrB_Matrix_extractElement_FP64 (&road, W, v, u) ;
 				if (info != GrB_SUCCESS || dn_w < road) {
+					int64_t mid = cch->dn_mid [a] [i] ;
+					ASSERT (mid != -1) ;
 					GrB_OK (GrB_Matrix_setElement_FP64 (_S, dn_w, v, u)) ;
+					GrB_OK (GrB_Matrix_setElement_INT64 (_M,
+								cch->perm [mid], v, u)) ;
 				}
 			}
 		}
 	}
 
 	GrB_OK (GrB_Matrix_wait (_S, GrB_MATERIALIZE)) ;
+	GrB_OK (GrB_Matrix_wait (_M, GrB_MATERIALIZE)) ;
 	*S = _S ;
+	*M = _M ;
 }
 
 //------------------------------------------------------------------------------

@@ -67,23 +67,27 @@ static bool _read_config
 	RelationID **relTypeIDs,    // [output] relation types forming the graph
 	AttributeID *weightAtt,     // [output] edge weight attribute
 	RelationID *shortcutRelID,  // [output] relation type for shortcut edges
-	AttributeID *rankAttrID     // [output] node attribute for elimination rank
+	AttributeID *rankAttrID,    // [output] node attribute for elimination rank
+	AttributeID *middleAttrID   // [output] shortcut-edge attribute for middle id
 ) {
 	ASSERT (weightAtt        != NULL)  ;
 	ASSERT (relTypeIDs       != NULL)  ;
 	ASSERT (rankAttrID       != NULL)  ;
 	ASSERT (shortcutRelID    != NULL)  ;
+	ASSERT (middleAttrID     != NULL)  ;
 	ASSERT (SI_TYPE (config) == T_MAP) ;
 
 	*weightAtt     = ATTRIBUTE_ID_NONE ;
 	*relTypeIDs    = NULL ;
 	*rankAttrID    = ATTRIBUTE_ID_NONE ;
 	*shortcutRelID = GRAPH_NO_RELATION ;
+	*middleAttrID  = ATTRIBUTE_ID_NONE ;
 
 	uint n = Map_KeyCount (config) ;
-	if (n != 4) {
-		ErrorCtx_SetError ("algo.CCH configuration expects exactly 4 keys: "
-				"relTypes, weightProp, shortcutRelType, rankProperty") ;
+	if (n != 5) {
+		ErrorCtx_SetError ("algo.CCH configuration expects exactly 5 keys: "
+				"relTypes, weightProp, shortcutRelType, rankProperty, "
+				"middleProp") ;
 		return false ;
 	}
 
@@ -188,6 +192,25 @@ static bool _read_config
 	}
 
 	*rankAttrID = GraphHub_FindOrAddAttribute (gc, v.stringval, true) ;
+
+	//--------------------------------------------------------------------------
+	// middleProp -- shortcut-edge attribute holding the middle node's id, used
+	// to unpack a shortcut back into the two (road or shortcut) edges it spans
+	//--------------------------------------------------------------------------
+
+	if (!MAP_GETCASEINSENSITIVE (config, "middleProp", v)) {
+		ErrorCtx_SetError ("algo.CCH configuration missing required key: "
+				"middleProp") ;
+		goto error ;
+	}
+
+	if (!(SI_TYPE (v) & T_STRING)) {
+		ErrorCtx_SetError ("algo.CCH configuration, 'middleProp' should be a "
+				"string") ;
+		goto error ;
+	}
+
+	*middleAttrID = GraphHub_FindOrAddAttribute (gc, v.stringval, true) ;
 
 	return true ;
 
@@ -345,8 +368,10 @@ static int64_t _materialize_shortcuts
 	GraphContext *gc,
 	Graph *g,
 	GrB_Matrix S,
+	GrB_Matrix M,
 	RelationID shortcutRelID,
-	AttributeID weightAtt
+	AttributeID weightAtt,
+	AttributeID middleAtt
 ) {
 	GrB_Index nvals ;
 	GrB_OK (GrB_Matrix_nvals (&nvals, S)) ;
@@ -374,6 +399,11 @@ static int64_t _materialize_shortcuts
 		GxB_Matrix_Iterator_getIndex (it, &r, &c) ;
 		double w = GxB_Iterator_get_FP64 (it) ;
 
+		// middle node id for this shortcut -- M has an entry for exactly the
+		// same (r,c) pairs S does (see CCH_ExtractShortcuts)
+		int64_t mid ;
+		GrB_OK (GrB_Matrix_extractElement_INT64 (&mid, M, r, c)) ;
+
 		// src_id/dest_id are the only fields the caller must set --
 		// GraphHub_CreateEdges fills in id/relationID/attributes itself
 		Edge *e = rm_calloc (1, sizeof (Edge)) ;
@@ -383,7 +413,9 @@ static int64_t _materialize_shortcuts
 
 		AttributeSet set = NULL ;
 		SIValue wv = SI_DoubleVal (w) ;
+		SIValue mv = SI_LongVal (mid) ;
 		AttributeSet_Add (&set, &weightAtt, &wv, 1, true) ;
+		AttributeSet_Add (&set, &middleAtt, &mv, 1, true) ;
 		arr_append (sets, set) ;
 
 		info = GxB_Matrix_Iterator_next (it) ;
@@ -493,9 +525,10 @@ static ProcedureResult Proc_CCHInvoke
 	AttributeID weightAtt     = ATTRIBUTE_ID_NONE ;
 	RelationID  shortcutRelID = GRAPH_NO_RELATION ;
 	AttributeID rankAttrID    = ATTRIBUTE_ID_NONE ;
+	AttributeID middleAttrID  = ATTRIBUTE_ID_NONE ;
 
 	if (!_read_config (args [0], &relTypeIDs, &weightAtt, &shortcutRelID,
-				&rankAttrID)) {
+				&rankAttrID, &middleAttrID)) {
 		return PROCEDURE_ERR ;
 	}
 
@@ -538,17 +571,20 @@ static ProcedureResult Proc_CCHInvoke
 	//--------------------------------------------------------------------------
 
 	GrB_Matrix S = NULL ;
-	CCH_ExtractShortcuts (cch, W, &S) ;
+	GrB_Matrix M = NULL ;
+	CCH_ExtractShortcuts (cch, W, &S, &M) ;
 	GrB_OK (GrB_free (&W)) ;
 
 	GrB_Vector rank = _build_rank_vector (g, cch) ;
 	CCH_Free (cch) ;   // no CCH structure lingers in RAM
 
 	pdata->shortcuts_created =
-		_materialize_shortcuts (gc, g, S, shortcutRelID, weightAtt) ;
+		_materialize_shortcuts (gc, g, S, M, shortcutRelID, weightAtt,
+				middleAttrID) ;
 	_set_ranks (gc, g, rank, rankAttrID) ;
 
 	GrB_OK (GrB_free (&S)) ;
+	GrB_OK (GrB_free (&M)) ;
 	GrB_OK (GrB_free (&rank)) ;
 
 	RedisModule_Log (rm_ctx, "notice",
