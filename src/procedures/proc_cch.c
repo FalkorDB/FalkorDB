@@ -24,13 +24,13 @@
 // CALL algo.CCH({relTypes: ['ROAD'],
 //                weightProp: 'cost',
 //                shortcutRelType: 'SHORTCUT',
-//                rankProperty: 'rank'}) YIELD shortcutsCreated
+//                rankProp: 'rank'}) YIELD shortcutsCreated
 //
 // Builds a Customizable Contraction Hierarchy over the sub-graph induced by
 // 'relTypes', for the metric 'weightProp', and commits it to the graph:
 //   - every improving chordal arc becomes a 'shortcutRelType' edge carrying
 //     the customized weight under 'weightProp'
-//   - every node receives 'rankProperty' = its elimination rank
+//   - every node receives 'rankProp' = its elimination rank
 // A later rank-aware bidirectional Dijkstra over ROAD + SHORTCUT edges then
 // answers point-to-point shortest paths quickly.
 
@@ -86,7 +86,7 @@ static bool _read_config
 	uint n = Map_KeyCount (config) ;
 	if (n != 5) {
 		ErrorCtx_SetError ("algo.CCH configuration expects exactly 5 keys: "
-				"relTypes, weightProp, shortcutRelType, rankProperty, "
+				"relTypes, weightProp, shortcutRelType, rankProp, "
 				"middleProp") ;
 		return false ;
 	}
@@ -176,17 +176,17 @@ static bool _read_config
 	*shortcutRelID = Schema_GetID (s) ;
 
 	//--------------------------------------------------------------------------
-	// rankProperty
+	// rankProp
 	//--------------------------------------------------------------------------
 
-	if (!MAP_GETCASEINSENSITIVE (config, "rankProperty", v)) {
+	if (!MAP_GETCASEINSENSITIVE (config, "rankProp", v)) {
 		ErrorCtx_SetError ("algo.CCH configuration missing required key: "
-				"rankProperty") ;
+				"rankProp") ;
 		goto error ;
 	}
 
 	if (!(SI_TYPE (v) & T_STRING)) {
-		ErrorCtx_SetError ("algo.CCH configuration, 'rankProperty' should be a "
+		ErrorCtx_SetError ("algo.CCH configuration, 'rankProp' should be a "
 				"string") ;
 		goto error ;
 	}

@@ -12,11 +12,11 @@ import random
 # engineered to have a unique shortest path (ties legitimately differ).
 
 BUILD = ("CALL algo.CCH({relTypes:['ROAD'], weightProp:'w', "
-         "shortcutRelType:'SHORTCUT', rankProperty:'rank', middleProp:'mid'}) "
+         "shortcutRelType:'SHORTCUT', rankProp:'rank', middleProp:'mid'}) "
          "YIELD shortcutsCreated RETURN shortcutsCreated")
 
 QUERY = ("CALL algo.CCH.query({sourceNode:a, targetNode:b, relTypes:['ROAD'], "
-         "shortcutRelType:'SHORTCUT', weightProp:'w', rankProperty:'rank', "
+         "shortcutRelType:'SHORTCUT', weightProp:'w', rankProp:'rank', "
          "middleProp:'mid'}) YIELD pathWeight, path "
          "RETURN pathWeight, [n IN nodes(path) | n.v] AS vs, "
          "[r IN relationships(path) | type(r)] AS ts, "
@@ -60,7 +60,7 @@ class testCCH(FlowTestsBase):
         # algo.CCH: unknown relationship type
         try:
             g.query("CALL algo.CCH({relTypes:['NOPE'], weightProp:'w', "
-                    "shortcutRelType:'SC', rankProperty:'rank', "
+                    "shortcutRelType:'SC', rankProp:'rank', "
                     "middleProp:'mid'})")
             self.env.assertTrue(False)
         except Exception as e:

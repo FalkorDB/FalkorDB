@@ -21,7 +21,7 @@
 
 // CALL algo.CCH.query({sourceNode: s, targetNode: t,
 //                      relTypes: ['ROAD'], shortcutRelType: 'SHORTCUT',
-//                      weightProp: 'w', rankProperty: 'rank',
+//                      weightProp: 'w', rankProp: 'rank',
 //                      middleProp: 'mid'}) YIELD pathWeight, path
 
 #define KEY(id) ((void *)(uintptr_t)(id))
@@ -393,8 +393,8 @@ static bool _read_config
 	*rels     = _rels;
 	*relCount = arr_len(_rels);
 
-	// weightProp / rankProperty / middleProp
-	const char *props[3] = { "weightProp", "rankProperty", "middleProp" };
+	// weightProp / rankProp / middleProp
+	const char *props[3] = { "weightProp", "rankProp", "middleProp" };
 	AttributeID *outs[3]  = { weightAtt, rankAtt, middleAtt };
 	for(int i = 0; i < 3; i++) {
 		if(!MAP_GETCASEINSENSITIVE(config, props[i], v) ||
