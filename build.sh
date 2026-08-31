@@ -1181,6 +1181,11 @@ build_gklib() {
 
     local cmake_args=(
         -DCMAKE_INSTALL_PREFIX="$GKLIB_BINDIR"
+        # GKlib pulls in GNUInstallDirs, which resolves the archive dir to lib64
+        # on RHEL/Fedora-family systems (e.g. the Linux CI image) but lib on
+        # macOS/Debian. Pin it to lib so the installed archive always lands at
+        # ${GKLIB_BINDIR}/lib/libGKlib.a -- the exact path exported as $GKLIB.
+        -DCMAKE_INSTALL_LIBDIR=lib
         -DSHARED=OFF
         -DOPENMP=1
         -DGKLIB_BUILD_APPS=OFF
