@@ -76,16 +76,23 @@ static inline bool _get_node_latlon
 }
 
 // admissible heuristic: haversine distance from 'id' to the fixed goal
-// (dst_lat, dst_lon), or 0 if dst's coordinates were never resolved or
-// 'id' itself lacks a numeric lat/lon -- either case degrades gracefully
-// to Dijkstra-like behavior for the affected node rather than erroring
-// mid-search.
+// (dst_lat, dst_lon) scaled into the weight's units by 'heur_scale', or 0 if
+// dst's coordinates were never resolved or 'id' itself lacks a numeric lat/lon
+// -- either case degrades gracefully to Dijkstra-like behavior for the affected
+// node rather than erroring mid-search.
+//
+// 'heur_scale' converts raw meters to the weightProp's units and MUST be a
+// lower bound on the weight accrued per meter of straight-line progress for the
+// heuristic to stay admissible (see AStar.h). e.g. weightProp == distance in
+// meters -> heur_scale == 1; weightProp == travel time in hours -> heur_scale
+// == 1 / (max_speed in meters-per-hour).
 static inline double _heuristic
 (
 	Graph *g,
 	NodeID id,
 	AttributeID lat_prop,
 	AttributeID lon_prop,
+	double heur_scale,
 	bool dst_has_coords,
 	double dst_lat,
 	double dst_lon
@@ -99,7 +106,7 @@ static inline double _heuristic
 		return 0;
 	}
 
-	return _haversine_meters(lat, lon, dst_lat, dst_lon);
+	return heur_scale * _haversine_meters(lat, lon, dst_lat, dst_lon);
 }
 
 // per-node search record used by the A* search below (best-known cost g, cached
@@ -137,6 +144,7 @@ typedef struct AStarCtx {
 	AttributeID     weight_prop;       // weight attribute id
 	AttributeID     lat_prop;          // latitude attribute id (heuristic)
 	AttributeID     lon_prop;          // longitude attribute id (heuristic)
+	double          heur_scale;        // meters -> weight-units heuristic scale
 
 	// expansion directions derived from 'dir', computed once at construction
 	int             ndirs;
@@ -161,7 +169,8 @@ static AStarCtx *AStarCtx_New
 	int relationCount,
 	AttributeID weight_prop,
 	AttributeID lat_prop,
-	AttributeID lon_prop
+	AttributeID lon_prop,
+	double heur_scale
 ) {
 	AStarCtx *ac = rm_calloc(1, sizeof(AStarCtx));
 
@@ -173,6 +182,7 @@ static AStarCtx *AStarCtx_New
 	ac->weight_prop      = weight_prop;
 	ac->lat_prop         = lat_prop;
 	ac->lon_prop         = lon_prop;
+	ac->heur_scale       = heur_scale;
 
 	ac->ndirs = 0;
 	if(dir == GRAPH_EDGE_DIR_OUTGOING || dir == GRAPH_EDGE_DIR_BOTH) {
@@ -228,15 +238,17 @@ static bool AStarCtx_Run
 	// resolve dst's coordinates once, up front: every heuristic evaluation
 	// during this search targets this fixed goal. if dst has no numeric
 	// lat/lon, the heuristic degrades to 0 for the entire search (i.e. plain
-	// Dijkstra) rather than erroring.
+	// Dijkstra) rather than erroring. a non-positive heur_scale also disables
+	// the heuristic graph-wide (h == 0 -> plain Dijkstra), so skip the lookup.
 	double dst_lat = 0;
 	double dst_lon = 0;
 	bool dst_has_coords = (ac->weight_prop != ATTRIBUTE_ID_NONE) &&
+			(ac->heur_scale > 0)                                 &&
 			_get_node_latlon(ac->g, dst_id, ac->lat_prop, ac->lon_prop, &dst_lat, &dst_lon);
 
 	// seed the source: g_score 0, priority f = 0 + h(src).
 	double src_h = _heuristic(ac->g, src_id, ac->lat_prop, ac->lon_prop,
-			dst_has_coords, dst_lat, dst_lon);
+			ac->heur_scale, dst_has_coords, dst_lat, dst_lon);
 	AStarLabel src_label =
 		{ .parent = src_id, .g_score = 0, .h = src_h, .finalized = false };
 
@@ -344,7 +356,7 @@ static bool AStarCtx_Run
 				} else {
 					// first discovery: compute and cache h(nid).
 					h = _heuristic(ac->g, nid, ac->lat_prop, ac->lon_prop,
-							dst_has_coords, dst_lat, dst_lon);
+							ac->heur_scale, dst_has_coords, dst_lat, dst_lon);
 					AStarLabel fresh = { .h = h, .finalized = false };
 					arr_append(ac->records, fresh);
 					*nslot = arr_len(ac->records);
@@ -456,14 +468,15 @@ bool AStar_ShortestPath
 	int relationCount,
 	AttributeID weight_prop,
 	AttributeID lat_prop,
-	AttributeID lon_prop
+	AttributeID lon_prop,
+	double heur_scale
 ) {
 	ASSERT(g      != NULL);
 	ASSERT(path   != NULL);
 	ASSERT(weight != NULL);
 
 	AStarCtx *ac = AStarCtx_New(g, dir, relationIDs, relationMatrices,
-			relationCount, weight_prop, lat_prop, lon_prop);
+			relationCount, weight_prop, lat_prop, lon_prop, heur_scale);
 
 	bool found = AStarCtx_Run(ac, src_id, dst_id, NULL, NULL);
 
@@ -636,6 +649,7 @@ uint AStar_KShortestPaths
 	AttributeID weight_prop,
 	AttributeID lat_prop,
 	AttributeID lon_prop,
+	double heur_scale,
 	Path ***paths,
 	double **weights
 ) {
@@ -655,7 +669,7 @@ uint AStar_KShortestPaths
 	}
 
 	AStarCtx *ac = AStarCtx_New(g, dir, relationIDs, relationMatrices,
-			relationCount, weight_prop, lat_prop, lon_prop);
+			relationCount, weight_prop, lat_prop, lon_prop, heur_scale);
 
 	// A[0]: the global shortest path. if dst is unreachable there are none.
 	if(!AStarCtx_Run(ac, src, dst, NULL, NULL)) {
