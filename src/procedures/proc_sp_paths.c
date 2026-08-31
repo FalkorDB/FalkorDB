@@ -498,10 +498,10 @@ static double _sum_path_cost
 	const Path *p,
 	AttributeID cost_prop
 ) {
-	if(cost_prop == ATTRIBUTE_ID_NONE) {
-		return 0;
-	}
-
+	// sum costProp over the path's edges, defaulting a missing value to 1.
+	// when no costProp is given (cost_prop == ATTRIBUTE_ID_NONE) every edge
+	// contributes 1, so pathCost is the hop count -- matching what the
+	// exhaustive DFS reports, rather than 0.
 	double cost = 0;
 	uint edge_count = Path_EdgeCount (p);
 	for(uint i = 0; i < edge_count; i++) {
@@ -998,7 +998,7 @@ static ProcedureResult Proc_SPpathsInvoke
 				single_pair_ctx->path_count, single_pair_ctx->dir,
 				single_pair_ctx->relationIDs, single_pair_ctx->relationMatrices,
 				single_pair_ctx->relationCount, single_pair_ctx->weight_prop,
-				&paths, &weights) ;
+				single_pair_ctx->cost_prop, &paths, &weights) ;
 
 		// load results into the same max-heap Proc_SPpathsStep drains, exactly
 		// as SPpaths_k_minimal does, so downstream behavior is unchanged.

@@ -585,3 +585,47 @@ class testAStar(FlowTestsBase):
         for rd in ("outgoing", "incoming", "both"):
             self._astar_vs_sppaths(g, 0, 3, 1,   rel_dir=rd, rel_types=["AR", "AS"])
             self._astar_vs_sppaths(g, 0, 3, 100, rel_dir=rd, rel_types=["AR", "AS"])
+
+    def test17_astar_inconsistent_heuristic_reopens(self):
+        # mixing coordinate-bearing and coordinate-less nodes makes the
+        # haversine heuristic admissible but NOT consistent, so a finalized
+        # node must be reopened when a strictly shorter route to it appears --
+        # otherwise A* returns a suboptimal path.
+        #
+        # graph (weights, all in "metres" so h stays admissible):
+        #   S -[5]-> P            P has NO coordinates -> h(P) = 0
+        #   S -[1]-> Q -[1]-> P   Q is ~50 m from T   -> h(Q) ~= 50
+        #   P -[99]-> T
+        # P is popped/finalized early at g=5 (f = 5 + 0); Q pops later
+        # (f = 1 + ~50) and only then exposes the g=2 route to P. Without
+        # reopening, A* keeps P at g=5 and returns S-P-T = 104; the optimum is
+        # S-Q-P-T = 101, which Dijkstra (algo.SPpaths) always finds.
+        g = self.db.select_graph("astar_reopen")
+        g.query("""
+            CREATE (s:AK {id:0, lat:37.00001, lon:-122.0}),
+                   (q:AK {id:1, lat:37.00045, lon:-122.0}),
+                   (p:AK {id:2}),
+                   (t:AK {id:3, lat:37.0, lon:-122.0}),
+                   (s)-[:AE {weight:1}]->(q),
+                   (s)-[:AE {weight:5}]->(p),
+                   (q)-[:AE {weight:1}]->(p),
+                   (p)-[:AE {weight:99}]->(t)
+        """)
+
+        astar = g.query("""
+            MATCH (u:AK {id:0}), (v:AK {id:3})
+            CALL algo.AStar({sourceNode:u, targetNode:v, weightProp:'weight',
+                latitudeProperty:'lat', longitudeProperty:'lon'})
+            YIELD pathWeight RETURN pathWeight
+        """)
+        sp = g.query("""
+            MATCH (u:AK {id:0}), (v:AK {id:3})
+            CALL algo.SPpaths({sourceNode:u, targetNode:v, weightProp:'weight',
+                pathCount:1})
+            YIELD pathWeight RETURN pathWeight
+        """)
+
+        self.env.assertEquals(len(astar.result_set), 1)
+        self.env.assertAlmostEqual(astar.result_set[0][0], 101, delta=1e-9)
+        self.env.assertAlmostEqual(astar.result_set[0][0],
+                                   sp.result_set[0][0], delta=1e-9)

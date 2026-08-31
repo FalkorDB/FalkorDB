@@ -17,11 +17,17 @@
 typedef struct {
 	Path   *path;    // the candidate path
 	double  weight;  // its total weight
+	double  cost;    // its total cost (secondary selection key; see comparator)
 } YenCandidate;
 
 // candidate-heap comparator: the heap keeps the *greatest* element (per this
-// cmp) on top, so invert the natural order -- smallest weight (then shortest
-// path) becomes the top, i.e. the next path to accept.
+// cmp) on top, so invert the natural order -- the smallest under the
+// (weight, cost, length) lexicographic order becomes the top, i.e. the next
+// path to accept. this mirrors proc_sp_paths' path_cmp so the k paths selected
+// here are exactly the k smallest under the same total order the results are
+// then reported in. when no cost property is supplied every edge's cost
+// defaults to 1, so 'cost' equals the hop count and the cost key collapses
+// into the length key (no behavioural change for weight-only queries).
 static int _yen_cand_cmp
 (
 	const void *a,
@@ -33,6 +39,10 @@ static int _yen_cand_cmp
 
 	if(ca->weight != cb->weight) {
 		return (ca->weight < cb->weight) ? 1 : -1;
+	}
+
+	if(ca->cost != cb->cost) {
+		return (ca->cost < cb->cost) ? 1 : -1;
 	}
 
 	size_t la = Path_Len (ca->path);
@@ -125,6 +135,27 @@ static double _root_weight
 	return w;
 }
 
+// total cost of a whole path (sum of cost_prop over its edges, defaulting a
+// missing value to 1). used only as a secondary selection key; when cost_prop
+// is ATTRIBUTE_ID_NONE this returns the hop count.
+static double _path_cost
+(
+	const Path *p,
+	AttributeID cost_prop
+) {
+	double c = 0.0;
+
+	uint ec = Path_EdgeCount (p);
+	for(uint j = 0; j < ec; j++) {
+		SIValue v = _get_value_or_default(
+				(GraphEntity *) Path_GetEdge (p, j),
+				cost_prop, SI_LongVal(1));
+		c += SI_GET_NUMERIC(v);
+	}
+
+	return c;
+}
+
 // build root(prev, i) ++ spur: prev's first i edges/i+1 nodes, then the spur
 // path (whose first node is prev.nodes[i], already included, so it is skipped).
 static Path *_concat
@@ -175,6 +206,13 @@ static Path *_concat
 // produces, a false collision (which would drop a distinct path) is
 // astronomically unlikely.
 //
+// the k paths are selected by the lexicographic order (weight, cost, length),
+// where cost is the sum of 'cost_prop' over a path's edges (each missing value
+// defaulting to 1). pass ATTRIBUTE_ID_NONE for cost_prop to leave it
+// unspecified -- cost then equals the hop count and the cost key has no effect
+// beyond the length tie-break. this matches proc_sp_paths' path_cmp so the
+// selected set and the reported ordering agree.
+//
 // returns the number of paths found (<= k; 0 if dst is unreachable). '*paths'
 // and '*weights' are set to newly allocated parallel array_t buffers (Path*
 // and its total weight, ascending); the caller owns both arrays and each Path.
@@ -189,6 +227,7 @@ uint Yen_KShortestPaths
 	Tensor *relationMatrices,  // relation matrix per relationIDs entry
 	int relationCount,         // length of relationIDs
 	AttributeID weight_prop,   // weight attribute id
+	AttributeID cost_prop,     // secondary tie-break attribute, or NONE
 	Path ***paths,             // [output] array_t of Path*, ascending weight
 	double **weights           // [output] array_t of matching total weights
 ) {
@@ -280,6 +319,7 @@ uint Yen_KShortestPaths
 				YenCandidate *c = rm_malloc (sizeof(YenCandidate));
 				c->path   = total;
 				c->weight = total_w;
+				c->cost   = _path_cost (total, cost_prop);
 				Heap_offer(&B, c);
 			} else {
 				Path_Free(total);  // already generated before
