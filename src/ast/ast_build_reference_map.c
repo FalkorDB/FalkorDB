@@ -26,7 +26,8 @@ static void _AST_MapReferencedEntitiesInPath
 static void _ASTClause_BuildReferenceMap
 (
 	AST *ast,
-	const cypher_astnode_t *clause
+	const cypher_astnode_t *clause,
+	bool scope_has_star
 ) ;
 
 // check if a path is a named path or shortest path
@@ -176,6 +177,30 @@ static void _AST_MapReferencedEdge
 	}
 }
 
+// returns true if the AST subtree rooted at 'node' contains a star
+// aggregation, e.g. count(*)
+static bool _AST_ContainsStarAggregation
+(
+	const cypher_astnode_t *node
+) {
+	if (node == NULL) {
+		return false ;
+	}
+
+	if (cypher_astnode_type (node) == CYPHER_AST_APPLY_ALL_OPERATOR) {
+		return true ;
+	}
+
+	uint child_count = cypher_astnode_nchildren (node) ;
+	for (uint i = 0 ; i < child_count ; i++) {
+		if (_AST_ContainsStarAggregation (cypher_astnode_get_child (node, i))) {
+			return true ;
+		}
+	}
+
+	return false ;
+}
+
 // Maps entities in a given path.
 static void _AST_MapReferencedEntitiesInPath
 (
@@ -203,7 +228,8 @@ static void _AST_MapReferencedEntitiesInPath
 static void _AST_MapMatchClauseReferences
 (
 	AST *ast,
-	const cypher_astnode_t *match_clause
+	const cypher_astnode_t *match_clause,
+	bool scope_has_star
 ) {
 	// inline filters
 	const cypher_astnode_t *pattern =
@@ -214,6 +240,15 @@ static void _AST_MapMatchClauseReferences
 		const cypher_astnode_t *path =
 			cypher_ast_pattern_get_path (pattern, i) ;
 		MappingLevel mapping_level = _shouldForceMapping (path) ;
+
+		// a star aggregation (count(*)) in this scope doesn't reference any
+		// entity explicitly, yet its result depends on the multiplicity of the
+		// matched pattern; map the pattern's named entities so parallel edges
+		// aren't collapsed
+		if (scope_has_star && mapping_level == MAP_SKIP) {
+			mapping_level = MAP_IDENTIFIED ;
+		}
+
 		_AST_MapReferencedEntitiesInPath (ast, path, mapping_level) ;
 	}
 
@@ -452,11 +487,12 @@ static void _AST_MapForeachClauseReferences
 	_AST_MapExpression (ast, exp, MAP_ALL) ;
 
 	// process each clause within FOREACH body
+	// nested clauses form their own scope, so no outer star aggregation applies
 	uint nclauses = cypher_ast_foreach_nclauses (foreach_clause) ;
 	for (uint i = 0; i < nclauses; i++) {
 		const cypher_astnode_t *clause = cypher_ast_foreach_get_clause (
 				foreach_clause, i) ;
-		_ASTClause_BuildReferenceMap (ast, clause) ;
+		_ASTClause_BuildReferenceMap (ast, clause, false) ;
 	}
 }
 
@@ -468,11 +504,12 @@ static void _AST_MapCallSubqueryReferences
 ) {
 	const cypher_astnode_t *query = cypher_ast_call_subquery_get_query(
 			callsubquery_clause);
+	// the subquery forms its own scope, so no outer star aggregation applies
 	uint n_clauses = cypher_ast_query_nclauses(query);
 	for(uint i = 0; i < n_clauses; i++) {
 		const cypher_astnode_t *clause =
 			cypher_ast_query_get_clause(query, i);
-		_ASTClause_BuildReferenceMap(ast, clause);
+		_ASTClause_BuildReferenceMap(ast, clause, false);
 	}
 }
 
@@ -586,7 +623,8 @@ static void _AST_MapReturnReferredEntities
 static void _ASTClause_BuildReferenceMap
 (
 	AST *ast,
-	const cypher_astnode_t *clause
+	const cypher_astnode_t *clause,
+	bool scope_has_star
 ) {
 	if (!clause) {
 		return ;
@@ -624,7 +662,7 @@ static void _ASTClause_BuildReferenceMap
 	} else if (type == CYPHER_AST_MATCH) {
 		// add referenced aliases from MATCH clause
 		// inline filtered and explicit WHERE filter
-		_AST_MapMatchClauseReferences (ast, clause) ;
+		_AST_MapMatchClauseReferences (ast, clause, scope_has_star) ;
 	} else if (type == CYPHER_AST_CREATE) {
 		// add referenced aliases for CREATE clause
 		_AST_MapCreateClauseReferences (ast, clause) ;
@@ -684,12 +722,33 @@ void AST_BuildReferenceMap
 		_AST_MapProjectionClause (ast, project_clause) ;
 	}
 
-	// check every clause in this AST
 	uint clause_count = cypher_ast_query_nclauses (ast->root) ;
+
+	// determine whether this scope contains a star aggregation, e.g. count(*)
+	// such an aggregation doesn't reference any entity explicitly, yet its
+	// result depends on the multiplicity of every matched pattern; when present
+	// a MATCH pattern's named entities are treated as referenced so parallel
+	// edges aren't collapsed into a single record (which would under-count)
+	// the aggregation may appear in the trailing projection clause or in a
+	// projection clause within this segment's root (e.g. UNION branches)
+	bool scope_has_star =
+		(project_clause != NULL) &&
+		_AST_ContainsStarAggregation (project_clause) ;
+
+	for (uint i = 0 ; !scope_has_star && i < clause_count ; i++) {
+		const cypher_astnode_t *clause =
+			cypher_ast_query_get_clause (ast->root, i) ;
+		cypher_astnode_type_t type = cypher_astnode_type (clause) ;
+		if (type == CYPHER_AST_RETURN || type == CYPHER_AST_WITH) {
+			scope_has_star = _AST_ContainsStarAggregation (clause) ;
+		}
+	}
+
+	// check every clause in this AST
 	for (uint i = 0 ; i < clause_count ; i++) {
 		const cypher_astnode_t *clause =
 			cypher_ast_query_get_clause (ast->root, i) ;
-		_ASTClause_BuildReferenceMap (ast, clause) ;
+		_ASTClause_BuildReferenceMap (ast, clause, scope_has_star) ;
 	}
 }
 
