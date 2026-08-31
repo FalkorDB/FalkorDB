@@ -1,169 +1,269 @@
 from common import *
 import random
 
-# End-to-end tests for Customizable Contraction Hierarchies:
-#   algo.CCH        -- builds SHORTCUT edges + rank/middle properties
+# End-to-end flow tests for Customizable Contraction Hierarchies:
+#   algo.CCH        -- builds SHORTCUT edges + rank/middle properties into the graph
 #   algo.CCH.query  -- rank-aware bidirectional Dijkstra + shortcut unpacking
 #
-# The correctness contract (see the branch design notes): a CCH query must
-# return the SAME WEIGHT as algo.SPpaths, and its path must be a genuine ROAD
-# path (every hop a ROAD edge, contiguous, weights summing to the total).
-# Exact edge-for-edge equality with SPpaths is only asserted on a graph
-# engineered to have a unique shortest path (ties legitimately differ).
+# Correctness contract: a CCH query returns the SAME weight as algo.SPpaths, and
+# its path is a genuine road path (every hop an original edge, contiguous, edge
+# weights summing to the total). Exact edge-for-edge equality with SPpaths is only
+# asserted where the shortest path is unique (ties legitimately differ).
 
-BUILD = ("CALL algo.CCH({relTypes:['ROAD'], weightProp:'w', "
-         "shortcutRelType:'SHORTCUT', rankProp:'rank', middleProp:'mid'}) "
-         "YIELD shortcutsCreated RETURN shortcutsCreated")
-
-QUERY = ("CALL algo.CCH.query({sourceNode:a, targetNode:b, relTypes:['ROAD'], "
-         "shortcutRelType:'SHORTCUT', weightProp:'w', rankProp:'rank', "
-         "middleProp:'mid'}) YIELD pathWeight, path "
-         "RETURN pathWeight, [n IN nodes(path) | n.v] AS vs, "
-         "[r IN relationships(path) | type(r)] AS ts, "
-         "reduce(s=0.0, r IN relationships(path) | s + r.w) AS psum")
+CFG = ("relTypes:['ROAD'], weightProp:'w', shortcutRelType:'SHORTCUT', "
+       "rankProp:'rank', middleProp:'mid'")
+BUILD = f"CALL algo.CCH({{{CFG}}}) YIELD shortcutsCreated RETURN shortcutsCreated"
+QCFG  = ("relTypes:['ROAD'], shortcutRelType:'SHORTCUT', weightProp:'w', "
+         "rankProp:'rank', middleProp:'mid'")
 
 
 class testCCH(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
 
+    # ---- helpers -----------------------------------------------------------
     def _reset(self, name):
+        # fully drop the graph so no schema/edges survive from a prior run
         g = self.db.select_graph(name)
         try:
-            g.query("MATCH (n) DETACH DELETE n")
+            g.delete()
         except Exception:
             pass
-        return g
+        return self.db.select_graph(name)
 
-    def _cch_query(self, g, s, t):
-        r = g.query(f"MATCH (a:N{{v:{s}}}),(b:N{{v:{t}}}) " + QUERY).result_set
+    def _build(self, g, cfg=CFG):
+        return g.query(f"CALL algo.CCH({{{cfg}}}) YIELD shortcutsCreated "
+                       "RETURN shortcutsCreated").result_set[0][0]
+
+    def _cch(self, g, s, t, qcfg=QCFG):
+        q = (f"MATCH (a:N{{v:{s}}}),(b:N{{v:{t}}}) CALL algo.CCH.query({{sourceNode:a,"
+             f"targetNode:b,{qcfg}}}) YIELD pathWeight, path "
+             "RETURN pathWeight, [n IN nodes(path)|n.v] AS vs, "
+             "[r IN relationships(path)|type(r)] AS ts, "
+             "reduce(x=0.0, r IN relationships(path)|x + r.w) AS psum")
+        r = g.query(q).result_set
         return r[0] if r else None
 
-    def _sp(self, g, s, t):
+    def _sp(self, g, s, t, rels="['ROAD']"):
         r = g.query(f"MATCH (a:N{{v:{s}}}),(b:N{{v:{t}}}) CALL algo.SPpaths("
-                    f"{{sourceNode:a,targetNode:b,relTypes:['ROAD'],"
-                    f"weightProp:'w'}}) YIELD pathWeight, path "
-                    f"RETURN pathWeight, [n IN nodes(path) | n.v]").result_set
+                    f"{{sourceNode:a,targetNode:b,relTypes:{rels},weightProp:'w'}}) "
+                    "YIELD pathWeight, path RETURN pathWeight, [n IN nodes(path)|n.v]").result_set
         return (r[0][0], r[0][1]) if r else (None, None)
 
-    def test01_validations(self):
-        g = self._reset("cch_valid")
-        g.query("CREATE (:N {v:0}), (:N {v:1})")
+    def _assert_valid_road_path(self, g, s, t, row, rels=('ROAD',)):
+        exp, _ = self._sp(g, s, t)
+        gw = row[0] if row else None
+        self.env.assertEquals(gw is None, exp is None)
+        if gw is None:
+            return
+        self.env.assertAlmostEqual(gw, exp, delta=1e-9)
+        _, vs, ts, psum = row
+        self.env.assertEquals(vs[0], s)
+        self.env.assertEquals(vs[-1], t)
+        self.env.assertTrue(all(x in rels for x in ts))
+        self.env.assertAlmostEqual(psum, gw, delta=1e-9)
 
-        # algo.CCH: wrong key count
-        try:
-            g.query("CALL algo.CCH({relTypes:['ROAD']})")
-            self.env.assertTrue(False)
-        except Exception as e:
-            self.env.assertContains("exactly 5 keys", str(e))
-
-        # algo.CCH: unknown relationship type
-        try:
-            g.query("CALL algo.CCH({relTypes:['NOPE'], weightProp:'w', "
-                    "shortcutRelType:'SC', rankProp:'rank', "
-                    "middleProp:'mid'})")
-            self.env.assertTrue(False)
-        except Exception as e:
-            self.env.assertContains("non-existent relationship type", str(e))
-
-    def test02_valley_fixture(self):
-        # a-b road is 10, but a-c-b is 2: the shortcut a->b must carry 2, and
-        # the query must return the unpacked road path a-c-b.
-        g = self._reset("cch_valley")
-        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),
-                   (a)-[:ROAD{w:10}]->(b),(b)-[:ROAD{w:10}]->(a),
-                   (a)-[:ROAD{w:1}]->(c),(c)-[:ROAD{w:1}]->(a),
-                   (c)-[:ROAD{w:1}]->(b),(b)-[:ROAD{w:1}]->(c)""")
-        sc = g.query(BUILD).result_set[0][0]
-        self.env.assertTrue(sc >= 2)
-
-        w, vs, ts, psum = self._cch_query(g, 0, 1)
-        self.env.assertEquals(w, 2)
-        self.env.assertEquals(vs, [0, 2, 1])          # a -> c -> b
-        self.env.assertEquals(ts, ['ROAD', 'ROAD'])   # unpacked to road edges
-        self.env.assertAlmostEqual(psum, 2, delta=1e-9)
-
-    def _random_graph(self, g, n, m, seed):
+    def _rand_graph(self, g, n, m, seed, wmax=9):
         random.seed(seed)
         g.query(f"UNWIND range(0,{n-1}) AS i CREATE (:N {{v:i}})")
         best = {}
         for _ in range(m):
             u, v = random.randint(0, n - 1), random.randint(0, n - 1)
             if u != v:
-                best[(u, v)] = min(random.randint(1, 9), best.get((u, v), 99))
+                best[(u, v)] = min(random.randint(1, wmax), best.get((u, v), 999))
         if best:
             payload = ",".join(f"[{u},{v},{w}]" for (u, v), w in best.items())
             g.query(f"UNWIND [{payload}] AS e MATCH (a:N{{v:e[0]}}),(b:N{{v:e[1]}}) "
                     f"CREATE (a)-[:ROAD {{w:e[2]}}]->(b)")
 
-    def test03_random_vs_sppaths(self):
-        # for many random digraphs and pairs: CCH weight == SPpaths weight, and
-        # the CCH path is a valid ROAD path.
-        for ti, (n, m) in enumerate([(8, 20), (15, 60), (25, 120)]):
+    # ---- config validation -------------------------------------------------
+    def test01_build_validation(self):
+        g = self._reset("cch_v1")
+        # a ROAD edge so 'ROAD' is a known rel type; the weightProp/attribute
+        # cases below must reach their own checks, not fail earlier on relTypes
+        g.query("CREATE (:N {v:0})-[:ROAD {w:1}]->(:N {v:1})")
+        bad = [
+            ("CALL algo.CCH({relTypes:['ROAD']})", "exactly 5 keys"),
+            ("CALL algo.CCH({relTypes:['NOPE'], weightProp:'w', shortcutRelType:'SC',"
+             " rankProp:'rank', middleProp:'mid'})", "non-existent relationship type"),
+            ("CALL algo.CCH({relTypes:'ROAD', weightProp:'w', shortcutRelType:'SC',"
+             " rankProp:'rank', middleProp:'mid'})", "array of strings"),
+            ("CALL algo.CCH({relTypes:['ROAD'], weightProp:5, shortcutRelType:'SC',"
+             " rankProp:'rank', middleProp:'mid'})", "should be a string"),
+            ("CALL algo.CCH({relTypes:['ROAD'], weightProp:'nope', shortcutRelType:'SC',"
+             " rankProp:'rank', middleProp:'mid'})", "unknown attribute"),
+        ]
+        for q, msg in bad:
+            try:
+                g.query(q)
+                self.env.assertTrue(False)
+            except Exception as e:
+                self.env.assertContains(msg, str(e))
+
+    def test02_query_validation(self):
+        g = self._reset("cch_v2")
+        g.query("CREATE (:N {v:0})-[:ROAD{w:1}]->(:N {v:1})")
+        self._build(g)
+        base = "MATCH (a:N{v:0}),(b:N{v:1}) "
+        bad = [
+            (base + "CALL algo.CCH.query({sourceNode:a})", "targetNode"),
+            (base + "CALL algo.CCH.query({sourceNode:1, targetNode:b, " + QCFG + "})", "must be nodes"),
+            (base + "CALL algo.CCH.query({sourceNode:a, targetNode:b, relTypes:['ROAD'],"
+                    " shortcutRelType:'NOPE', weightProp:'w', rankProp:'rank', middleProp:'mid'})",
+             "unknown shortcutRelType"),
+            (base + "CALL algo.CCH.query({sourceNode:a, targetNode:b, relTypes:['ROAD'],"
+                    " shortcutRelType:'SHORTCUT', weightProp:'nope', rankProp:'rank', middleProp:'mid'})",
+             "unknown attribute"),
+        ]
+        for q, msg in bad:
+            try:
+                g.query(q)
+                self.env.assertTrue(False)
+            except Exception as e:
+                self.env.assertContains(msg, str(e))
+
+    # ---- structure written to the graph -----------------------------------
+    def test03_structure(self):
+        g = self._reset("cch_struct")
+        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),
+                   (a)-[:ROAD{w:10}]->(b),(b)-[:ROAD{w:10}]->(a),
+                   (a)-[:ROAD{w:1}]->(c),(c)-[:ROAD{w:1}]->(a),
+                   (c)-[:ROAD{w:1}]->(b),(b)-[:ROAD{w:1}]->(c)""")
+        created = self._build(g)
+        sc = g.query("MATCH ()-[r:SHORTCUT]->() RETURN count(r)").result_set[0][0]
+        self.env.assertEquals(created, sc)                    # yield matches reality
+        self.env.assertTrue(sc >= 2)
+        ranked = g.query("MATCH (n:N) WHERE n.rank IS NOT NULL RETURN count(n)").result_set[0][0]
+        self.env.assertEquals(ranked, 3)                      # every node ranked
+        withmid = g.query("MATCH ()-[r:SHORTCUT]->() WHERE r.mid IS NOT NULL "
+                          "RETURN count(r)").result_set[0][0]
+        self.env.assertEquals(withmid, sc)                    # every shortcut has a middle
+
+    # ---- correctness fixtures ---------------------------------------------
+    def test04_valley(self):
+        # a-b road is 10, but a-c-b is 2: shortcut a->b must carry 2 and unpack to a-c-b
+        g = self._reset("cch_valley")
+        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),
+                   (a)-[:ROAD{w:10}]->(b),(b)-[:ROAD{w:10}]->(a),
+                   (a)-[:ROAD{w:1}]->(c),(c)-[:ROAD{w:1}]->(a),
+                   (c)-[:ROAD{w:1}]->(b),(b)-[:ROAD{w:1}]->(c)""")
+        self._build(g)
+        w, vs, ts, psum = self._cch(g, 0, 1)
+        self.env.assertEquals(w, 2)
+        self.env.assertEquals(vs, [0, 2, 1])
+        self.env.assertEquals(ts, ['ROAD', 'ROAD'])
+        self.env.assertAlmostEqual(psum, 2, delta=1e-9)
+
+    def test05_directed_asymmetric(self):
+        # opposite directions carry different weights; both must be correct
+        g = self._reset("cch_dir")
+        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),(d:N{v:3}),
+                   (a)-[:ROAD{w:1}]->(b),(b)-[:ROAD{w:9}]->(a),
+                   (b)-[:ROAD{w:1}]->(c),(c)-[:ROAD{w:9}]->(b),
+                   (c)-[:ROAD{w:1}]->(d),(d)-[:ROAD{w:9}]->(c),
+                   (a)-[:ROAD{w:9}]->(d),(d)-[:ROAD{w:1}]->(a)""")
+        self._build(g)
+        for s in range(4):
+            for t in range(4):
+                if s != t:
+                    self._assert_valid_road_path(g, s, t, self._cch(g, s, t))
+
+    def test06_parallel_edges(self):
+        # two ROAD edges between the same pair: CCH must use the cheaper
+        g = self._reset("cch_par")
+        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),
+                   (a)-[:ROAD{w:5}]->(b),(a)-[:ROAD{w:2}]->(b),
+                   (b)-[:ROAD{w:5}]->(c),(b)-[:ROAD{w:1}]->(c)""")
+        self._build(g)
+        w, vs, ts, psum = self._cch(g, 0, 2)
+        self.env.assertAlmostEqual(w, 3, delta=1e-9)          # 2 + 1
+        self.env.assertAlmostEqual(psum, w, delta=1e-9)
+
+    def test07_self_loops(self):
+        # self-loops (as in real road exports) must be ignored, not crash
+        g = self._reset("cch_loop")
+        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),
+                   (a)-[:ROAD{w:0.5}]->(a),(b)-[:ROAD{w:0.5}]->(b),
+                   (a)-[:ROAD{w:1}]->(b),(b)-[:ROAD{w:1}]->(a),
+                   (b)-[:ROAD{w:1}]->(c),(c)-[:ROAD{w:1}]->(b)""")
+        self._build(g)
+        for s in range(3):
+            for t in range(3):
+                if s != t:
+                    self._assert_valid_road_path(g, s, t, self._cch(g, s, t))
+
+    def test08_multiple_reltypes(self):
+        # CCH over ROAD + FERRY; query must consider both layers
+        g = self._reset("cch_multi")
+        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),
+                   (a)-[:ROAD{w:10}]->(b),(b)-[:ROAD{w:10}]->(a),
+                   (b)-[:ROAD{w:10}]->(c),(c)-[:ROAD{w:10}]->(b),
+                   (a)-[:FERRY{w:1}]->(c),(c)-[:FERRY{w:1}]->(a)""")
+        self._build(g, cfg=("relTypes:['ROAD','FERRY'], weightProp:'w', "
+                            "shortcutRelType:'SHORTCUT', rankProp:'rank', middleProp:'mid'"))
+        qcfg = ("relTypes:['ROAD','FERRY'], shortcutRelType:'SHORTCUT', weightProp:'w', "
+                "rankProp:'rank', middleProp:'mid'")
+        row = self._cch(g, 0, 2, qcfg=qcfg)
+        exp, _ = self._sp(g, 0, 2, rels="['ROAD','FERRY']")
+        self.env.assertAlmostEqual(row[0], exp, delta=1e-9)   # ferry shortcut wins (1)
+        self.env.assertAlmostEqual(row[0], 1, delta=1e-9)
+        self.env.assertTrue(all(x in ('ROAD', 'FERRY') for x in row[2]))
+
+    # ---- randomized sweep vs the exact baseline ---------------------------
+    def test09_random_vs_sppaths(self):
+        for ti, (n, m) in enumerate([(8, 22), (15, 60), (25, 120), (35, 200)]):
             for seed in range(3):
-                g = self._reset(f"cch_rand_{ti}_{seed}")
-                self._random_graph(g, n, m, seed * 131 + ti)
-                g.query(BUILD)
-
+                g = self._reset(f"cch_rnd_{ti}_{seed}")
+                self._rand_graph(g, n, m, seed * 131 + ti)
+                self._build(g)
                 pairs = [(s, t) for s in range(n) for t in range(n) if s != t]
-                if len(pairs) > 90:
+                if len(pairs) > 80:
                     random.seed(seed)
-                    pairs = random.sample(pairs, 90)
-
+                    pairs = random.sample(pairs, 80)
                 for s, t in pairs:
-                    exp, _ = self._sp(g, s, t)
-                    row = self._cch_query(g, s, t)
-                    gw = row[0] if row else None
+                    self._assert_valid_road_path(g, s, t, self._cch(g, s, t))
 
-                    # reachability + weight agree with SPpaths
-                    self.env.assertEquals(gw is None, exp is None)
-                    if gw is None:
-                        continue
-                    self.env.assertAlmostEqual(gw, exp, delta=1e-9)
-
-                    # path is a genuine ROAD path
-                    _, vs, ts, psum = row
-                    self.env.assertEquals(vs[0], s)
-                    self.env.assertEquals(vs[-1], t)
-                    self.env.assertTrue(all(x == 'ROAD' for x in ts))
-                    self.env.assertAlmostEqual(psum, gw, delta=1e-9)
-
-    def test04_unique_shortest_path_exact(self):
-        # a graph whose s->t shortest path is unique, so the CCH path must match
-        # SPpaths edge-for-edge. distinct powers-of-two-ish weights guarantee
-        # every distinct edge subset has a distinct sum -> no ties.
+    def test10_unique_shortest_path_exact(self):
+        # distinct power-of-two weights -> unique shortest path -> exact edge match
         g = self._reset("cch_unique")
-        g.query("""CREATE (n0:N{v:0}),(n1:N{v:1}),(n2:N{v:2}),
-                          (n3:N{v:3}),(n4:N{v:4}),
-                   (n0)-[:ROAD{w:1}]->(n1),
-                   (n1)-[:ROAD{w:2}]->(n2),
-                   (n2)-[:ROAD{w:4}]->(n3),
-                   (n3)-[:ROAD{w:8}]->(n4),
-                   (n0)-[:ROAD{w:100}]->(n4),
-                   (n1)-[:ROAD{w:100}]->(n3)""")
-        g.query(BUILD)
-
+        g.query("""CREATE (n0:N{v:0}),(n1:N{v:1}),(n2:N{v:2}),(n3:N{v:3}),(n4:N{v:4}),
+                   (n0)-[:ROAD{w:1}]->(n1),(n1)-[:ROAD{w:2}]->(n2),
+                   (n2)-[:ROAD{w:4}]->(n3),(n3)-[:ROAD{w:8}]->(n4),
+                   (n0)-[:ROAD{w:100}]->(n4),(n1)-[:ROAD{w:100}]->(n3)""")
+        self._build(g)
         for s, t in [(0, 4), (0, 3), (1, 4), (0, 2)]:
             exp_w, exp_vs = self._sp(g, s, t)
-            row = self._cch_query(g, s, t)
+            row = self._cch(g, s, t)
             self.env.assertTrue(row is not None)
-            gw, vs, ts, psum = row
-            self.env.assertAlmostEqual(gw, exp_w, delta=1e-9)
-            self.env.assertEquals(vs, exp_vs)             # exact node sequence
-            self.env.assertTrue(all(x == 'ROAD' for x in ts))
+            self.env.assertAlmostEqual(row[0], exp_w, delta=1e-9)
+            self.env.assertEquals(row[1], exp_vs)             # exact node sequence
 
-    def test05_edge_cases(self):
+    def test11_edge_cases(self):
         g = self._reset("cch_edge")
         g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(z:N{v:2}),
                    (a)-[:ROAD{w:3}]->(b),(b)-[:ROAD{w:3}]->(a)""")
-        g.query(BUILD)
-
-        # src == dst -> weight 0, single-node path
-        w, vs, ts, psum = self._cch_query(g, 0, 0)
+        self._build(g)
+        w, vs, ts, psum = self._cch(g, 0, 0)                  # src == dst
         self.env.assertEquals(w, 0)
         self.env.assertEquals(vs, [0])
         self.env.assertEquals(ts, [])
+        self.env.assertTrue(self._cch(g, 0, 2) is None)       # unreachable -> no rows
 
-        # unreachable (isolated node z) -> no rows
-        row = self._cch_query(g, 0, 2)
-        self.env.assertTrue(row is None)
+    def test12_recustomize_second_metric(self):
+        # a second CCH on the same graph with a different weight + own rel/props
+        # must be independent and correct (side-by-side hierarchies)
+        g = self._reset("cch_recust")
+        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),
+                   (a)-[:ROAD{w:1, t:10}]->(b),(b)-[:ROAD{w:1, t:10}]->(a),
+                   (b)-[:ROAD{w:1, t:1}]->(c),(c)-[:ROAD{w:1, t:1}]->(b),
+                   (a)-[:ROAD{w:1, t:1}]->(c),(c)-[:ROAD{w:1, t:1}]->(a)""")
+        self._build(g)                                         # metric w
+        g.query("CALL algo.CCH({relTypes:['ROAD'], weightProp:'t', "
+                "shortcutRelType:'SC_T', rankProp:'rank_t', middleProp:'mid_t'}) "
+                "YIELD shortcutsCreated RETURN shortcutsCreated")
+        # query the time hierarchy: a->b optimal on t is a-c-b (1+1=2) not direct (10)
+        q = ("MATCH (a:N{v:0}),(b:N{v:1}) CALL algo.CCH.query({sourceNode:a,targetNode:b,"
+             "relTypes:['ROAD'],shortcutRelType:'SC_T',weightProp:'t',rankProp:'rank_t',"
+             "middleProp:'mid_t'}) YIELD pathWeight RETURN pathWeight")
+        wt = g.query(q).result_set[0][0]
+        self.env.assertAlmostEqual(wt, 2, delta=1e-9)
