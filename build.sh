@@ -618,13 +618,10 @@ check_dependencies() {
     [[ ! -f "$ONIGURUMA" ]] && MISSING_DEPS+=("oniguruma")
     [[ ! -f "$GKLIB" ]] && MISSING_DEPS+=("gklib")
     [[ ! -f "$METIS" ]] && MISSING_DEPS+=("metis")
-    # a debug / sanitizer build needs a native (non-LTO) libmetis.a; if the one
-    # already in place was built with LTO (marker absent), rebuild it so the
-    # non-LTO link doesn't fail with "file format not recognized" (see build_metis)
-    if [[ -f "$METIS" && ( "$DEBUG" == "1" || -n "$SAN" ) \
-            && ! -f "${METIS_BINDIR}/.cch_lto_stripped" ]]; then
-        MISSING_DEPS+=("metis")
-    fi
+    # FalkorDB needs a native (non-LTO) libmetis.a (see build_metis: LTO'd METIS
+    # both fails the non-LTO link and crashes the LTO release build). If the one
+    # already in place is a stale LTO archive (native marker absent), rebuild it.
+    [[ -f "$METIS" && ! -f "${METIS_BINDIR}/.cch_native" ]] && MISSING_DEPS+=("metis")
     # RediSearch is now built by CMake as a subdirectory
 
     if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
@@ -1261,27 +1258,21 @@ build_gklib() {
 #-----------------------------------------------------------------------------
 build_metis() {
     # METIS's CMakeLists force-enables INTERPROCEDURAL_OPTIMIZATION (LTO), which
-    # makes libmetis.a a bundle of LLVM bitcode. That bitcode links into an
-    # LTO-enabled final target (the release FalkorDB build handles it and keeps
-    # the optimization) but NOT into the non-LTO debug / sanitizer builds, whose
-    # link rejects it with:
-    #   libmetis.a: error adding symbols: file format not recognized
-    # So keep METIS's LTO for release, and disable it only for debug/sanitizer
-    # builds -- giving those a native archive that links.
-    local metis_native=0
-    if [[ "$DEBUG" == "1" || -n "$SAN" ]]; then metis_native=1; fi
-    # marker (lives beside the archive, inside the build dir that `make config`
-    # wipes) recording whether LTO was stripped from the archive in place
-    local metis_marker="${METIS_BINDIR}/.cch_lto_stripped"
+    # makes libmetis.a a bundle of LLVM bitcode. That bitcode is broken for
+    # FalkorDB in two ways:
+    #   * it won't link into the non-LTO debug / sanitizer builds
+    #       ("libmetis.a: error adding symbols: file format not recognized"), and
+    #   * in the LTO release build it miscompiles -- an illegal-instruction crash
+    #     (SIGILL) inside METIS's own libmetis__iset, hit on the first METIS call
+    #     CCH makes (METIS_SetDefaultOptions from CCH_EliminationOrder).
+    # So build METIS as a plain native archive for every variant. A marker file
+    # (in the build dir that `make config` wipes) records that the archive in
+    # place is the native one.
+    local metis_marker="${METIS_BINDIR}/.cch_native"
 
-    # reuse an already-built archive only when its format suits this build: a
-    # release build accepts either (a native archive links into an LTO build
-    # too), while a debug / sanitizer build needs a native (non-LTO) archive, so
-    # a stale LTO one is rebuilt.
-    if [[ -f "$METIS" ]] && [[ "$FORCE" != "1" ]]; then
-        if [[ "$metis_native" == "0" ]] || [[ -f "$metis_marker" ]]; then
-            return 0
-        fi
+    # reuse only a native archive; a stale LTO one (marker absent) is rebuilt
+    if [[ -f "$METIS" && -f "$metis_marker" ]] && [[ "$FORCE" != "1" ]]; then
+        return 0
     fi
 
     start_group "Building METIS"
@@ -1291,13 +1282,12 @@ build_metis() {
 
     cd "$src_dir"
 
-    # start from the pinned CMakeLists (undo a previous variant's patch), then --
-    # only for a debug/sanitizer build -- neutralize the forced LTO set() (a -D
-    # override can't beat it). `make config` below wipes and reconfigures.
+    # neutralize METIS's forced LTO so libmetis.a holds native objects -- a -D
+    # override can't beat the forced set(). Restore the pinned CMakeLists first
+    # (idempotent); `make config` below wipes and reconfigures.
     git checkout -- CMakeLists.txt 2>/dev/null || true
-    if [[ "$metis_native" == "1" ]] && \
-            grep -q "CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE" CMakeLists.txt; then
-        log_info "Disabling METIS LTO for debug/sanitizer build (native archive)"
+    if grep -q "CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE" CMakeLists.txt; then
+        log_info "Disabling METIS LTO (native archive; LTO'd libmetis crashes/links poorly)"
         sed 's/set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)/set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)/' \
             CMakeLists.txt > CMakeLists.txt.tmp && mv CMakeLists.txt.tmp CMakeLists.txt
     fi
@@ -1318,12 +1308,8 @@ build_metis() {
         exit 1
     fi
 
-    # record whether this archive had LTO stripped, for the reuse check above
-    if [[ "$metis_native" == "1" ]]; then
-        touch "$metis_marker"
-    else
-        rm -f "$metis_marker"
-    fi
+    # record that a native archive is in place, for the reuse check above
+    touch "$metis_marker"
 
     # leave the submodule source pristine -- the built archive no longer depends
     # on the (possibly patched) CMakeLists content
