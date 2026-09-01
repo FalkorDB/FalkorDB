@@ -252,7 +252,15 @@ fn strip_linkme_sections(archive: &Path) -> PathBuf {
     let stdout = String::from_utf8_lossy(&headers.stdout);
     let mut sections: Vec<&str> = stdout
         .lines()
-        .filter_map(|line| line.split_whitespace().find(|tok| tok.contains("linkm")))
+        // Match the linkme DATA sections only. Their names are content-hashed
+        // (`linkm2_COMMANDS_LIST`, ...), so discover them rather than hard-coding
+        // -- but anchor on the START of the name. A `contains` match also catches
+        // `.text._RNv...6linkme...static_slice...`, a CODE section whose mangled
+        // Rust symbol merely embeds "linkme"; objcopy rightly refuses to remove
+        // that one because `.rela.text` relocates into it, and whether rustc emits
+        // it as a separate section at all is a codegen-unit partitioning detail.
+        // Anchoring keeps this independent of that.
+        .filter_map(|line| line.split_whitespace().find(|tok| tok.starts_with("linkm")))
         .collect();
     sections.sort_unstable();
     sections.dedup();
