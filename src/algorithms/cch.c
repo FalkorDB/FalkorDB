@@ -79,9 +79,6 @@ void CCH_Free
 		rm_free (cch->dn_mid) ;
 	}
 
-	if (cch->q_df != NULL) rm_free (cch->q_df) ;
-	if (cch->q_db != NULL) rm_free (cch->q_db) ;
-
 	rm_free (cch) ;
 }
 
@@ -473,8 +470,8 @@ static int64_t _find_upper
 
 void CCH_Customize
 (
-	CCH        *cch,
-	GrB_Matrix  W
+	CCH             *cch,
+	const GrB_Matrix W
 ) {
 	ASSERT (cch     != NULL) ;
 	ASSERT (cch->up != NULL) ;   // Phase 1 must have run
@@ -597,10 +594,10 @@ void CCH_Customize
 
 void CCH_ExtractShortcuts
 (
-	const CCH   *cch,
-	GrB_Matrix   W,
-	GrB_Matrix  *S,
-	GrB_Matrix  *M
+	const CCH       *cch,
+	const GrB_Matrix W,
+	GrB_Matrix      *S,
+	GrB_Matrix      *M
 ) {
 	ASSERT (cch         != NULL) ;
 	ASSERT (cch->up_w   != NULL) ;   // Phase 2 must have run
@@ -665,91 +662,6 @@ void CCH_ExtractShortcuts
 	*M = _M ;
 }
 
-//------------------------------------------------------------------------------
-// Phase 3: query
-//------------------------------------------------------------------------------
-
-bool CCH_Query
-(
-	CCH     *cch,
-	int64_t  src,
-	int64_t  dst,
-	double  *weight
-) {
-	ASSERT (cch         != NULL) ;
-	ASSERT (cch->up_w   != NULL) ;   // Phase 2 must have run
-	ASSERT (cch->parent != NULL) ;
-	ASSERT (src >= 0 && src < cch->n) ;
-	ASSERT (dst >= 0 && dst < cch->n) ;
-
-	int64_t n = cch->n ;
-
-	// lazily allocate the two scratch distance arrays. they are held at
-	// +INFINITY between queries: each query touches only the O(tree-height)
-	// ancestors it walks and restores exactly those entries before returning,
-	// so the O(n) initialization here happens once, not per query.
-	if (cch->q_df == NULL) {
-		cch->q_df = rm_malloc (sizeof (double) * n) ;
-		cch->q_db = rm_malloc (sizeof (double) * n) ;
-		for (int64_t i = 0 ; i < n ; i++) {
-			cch->q_df [i] = INFINITY ;
-			cch->q_db [i] = INFINITY ;
-		}
-	}
-
-	double  *df     = cch->q_df ;
-	double  *db     = cch->q_db ;
-	int64_t *parent = cch->parent ;
-
-	int64_t rs = cch->iperm [src] ;
-	int64_t rt = cch->iperm [dst] ;
-
-	// forward search: walk src's ancestor path, relaxing up-arcs (up_w). every
-	// up-neighbor of a node on this path is itself an ancestor of src (the
-	// child-absorption property T_G is built on), so the search never leaves
-	// the path -- no priority queue needed.
-	df [rs] = 0.0 ;
-	for (int64_t x = rs ; x != -1 ; x = parent [x]) {
-		double dfx = df [x] ;
-		int64_t *ux = cch->up [x] ;
-		int64_t  dx = (int64_t) arr_len (ux) ;
-		for (int64_t i = 0 ; i < dx ; i++) {
-			double cand = dfx + cch->up_w [x] [i] ;
-			if (cand < df [ux [i]]) df [ux [i]] = cand ;
-		}
-	}
-
-	// backward search: walk dst's ancestor path, relaxing down-arcs (dn_w)
-	db [rt] = 0.0 ;
-	for (int64_t x = rt ; x != -1 ; x = parent [x]) {
-		double dbx = db [x] ;
-		int64_t *ux = cch->up [x] ;
-		int64_t  dx = (int64_t) arr_len (ux) ;
-		for (int64_t i = 0 ; i < dx ; i++) {
-			double cand = dbx + cch->dn_w [x] [i] ;
-			if (cand < db [ux [i]]) db [ux [i]] = cand ;
-		}
-	}
-
-	// combine: the optimal src->dst path's apex (its highest-ranked node) is a
-	// common ancestor of src and dst, reached by the forward search from below
-	// and the backward search from above. minimize df + db over src's ancestor
-	// path; db is finite only at nodes that are also dst's ancestors, so this
-	// implicitly ranges over the shared ancestors.
-	double best = INFINITY ;
-	for (int64_t x = rs ; x != -1 ; x = parent [x]) {
-		double s = df [x] + db [x] ;
-		if (s < best) best = s ;
-	}
-
-	// reset touched entries to +INFINITY. every df write lands on src's
-	// ancestor path and every db write on dst's, so re-walking both paths
-	// clears exactly what the two searches dirtied.
-	for (int64_t x = rs ; x != -1 ; x = parent [x]) df [x] = INFINITY ;
-	for (int64_t x = rt ; x != -1 ; x = parent [x]) db [x] = INFINITY ;
-
-	if (best == INFINITY) return false ;
-
-	*weight = best ;
-	return true ;
-}
+// Phase 3 (query) is not built into this module. The materialized SHORTCUT
+// edges + node ranks are queried by the stateless, concurrency-safe
+// rank-pruned bidirectional Dijkstra in proc_cch_query.c instead.

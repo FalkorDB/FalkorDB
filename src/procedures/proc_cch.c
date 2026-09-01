@@ -41,11 +41,11 @@ typedef struct {
 	SIValue *yield_shortcuts_created;   // yield shortcutsCreated
 } CCHProcCtx;
 
-// process procedure yield
+// resolve which output slots the caller asked to YIELD
 static void _process_yield
 (
-	CCHProcCtx *ctx,
-	const char **yield
+	CCHProcCtx *ctx,      // [in/out] procedure private context to populate
+	const char **yield    // caller-requested yield column names
 ) {
 	ctx->yield_shortcuts_created = NULL ;
 
@@ -222,37 +222,20 @@ error:
 	return false ;
 }
 
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v ;
-	if (!GraphEntity_GetProperty (ge, id, &v)) {
-		return default_value ;
-	}
-	if (SI_TYPE (v) & SI_NUMERIC) {
-		return v ;
-	}
-	return default_value ;
-}
-
 // resolves a single edge's weight, defaulting to 1 if 'attr_id' is
 // missing/non-numeric on this particular edge -- matches Dijkstra/AStar's
 // per-edge fallback convention
 static double _edge_weight
 (
-	const Graph *g,
-	AttributeID attr_id,
-	EdgeID id
+	const Graph *g,       // graph owning the edge
+	AttributeID attr_id,  // weight attribute to read
+	EdgeID id             // edge whose weight is resolved
 ) {
 	Edge e ;
 	bool found = Graph_GetEdge (g, id, &e) ;
 	ASSERT (found == true) ;
 
-	SIValue w = _get_value_or_default ((GraphEntity *)&e, attr_id,
+	SIValue w = GraphEntity_GetNumericPropertyOrDefault ((GraphEntity *)&e, attr_id,
 			SI_LongVal (1)) ;
 	return SI_GET_NUMERIC (w) ;
 }
@@ -312,10 +295,10 @@ static void _get_edge_weight
 // cheapest one via GrB_MIN_FP64.
 static GrB_Matrix _build_weight_matrix
 (
-	Graph *g,
-	const RelationID *relTypeIDs,
-	uint relCount,
-	AttributeID weightAtt
+	Graph *g,                     // graph providing the relation matrices
+	const RelationID *relTypeIDs, // relation types forming the sub-graph
+	uint relCount,                // number of relation types
+	AttributeID weightAtt         // edge attribute holding the weight
 ) {
 	GrB_Index dim = Graph_RequiredMatrixDim (g) ;
 
@@ -365,13 +348,12 @@ static GrB_Matrix _build_weight_matrix
 // weight under 'weightAtt'. returns the number of edges created.
 static int64_t _materialize_shortcuts
 (
-	GraphContext *gc,
-	Graph *g,
-	GrB_Matrix S,
-	GrB_Matrix M,
-	RelationID shortcutRelID,
-	AttributeID weightAtt,
-	AttributeID middleAtt
+	GraphContext *gc,          // graph context receiving the edges
+	GrB_Matrix S,              // improving shortcuts: (r,c) -> customized weight
+	GrB_Matrix M,              // middle nodes: (r,c) -> node id splitting the arc
+	RelationID shortcutRelID,  // relation type assigned to the created edges
+	AttributeID weightAtt,     // attribute the weight is written under
+	AttributeID middleAtt      // attribute the middle-node id is written under
 ) {
 	GrB_Index nvals ;
 	GrB_OK (GrB_Matrix_nvals (&nvals, S)) ;
@@ -380,9 +362,12 @@ static int64_t _materialize_shortcuts
 		return 0 ;
 	}
 
-	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	// pre-size the edge DataBlock for the whole batch. no matrix-policy change
+	// is needed: this is a single GraphHub_CreateEdges call, so there is no
+	// inter-batch matrix flush to defer (unlike the looped bulk-insert path)
 	Graph_AllocateEdges (g, nvals) ;
-	Graph_SetMatrixPolicy (g, SYNC_POLICY_NOP) ;
 
 	// collect every shortcut up front so they can all be introduced to the
 	// graph in a single GraphHub_CreateEdges batch
@@ -433,8 +418,6 @@ static int64_t _materialize_shortcuts
 	arr_free (edges) ;
 	arr_free (sets) ;
 
-	Graph_SetMatrixPolicy (g, policy) ;
-
 	return created ;
 }
 
@@ -443,8 +426,8 @@ static int64_t _materialize_shortcuts
 // included so _set_ranks never dereferences a missing node.
 static GrB_Vector _build_rank_vector
 (
-	Graph     *g,
-	const CCH *cch
+	Graph     *g,     // graph whose real nodes are ranked
+	const CCH *cch    // completed hierarchy providing iperm (node -> rank)
 ) {
 	GrB_Vector rank = NULL ;
 	GrB_OK (GrB_Vector_new (&rank, GrB_INT64, cch->n)) ;
@@ -466,11 +449,11 @@ static GrB_Vector _build_rank_vector
 // GraphEntity_AddProperty, which has neither.
 static void _set_ranks
 (
-	GraphContext *gc,
-	Graph *g,
-	GrB_Vector rank,
-	AttributeID rankAttrID
+	GraphContext *gc,        // graph context (undo-log + effects routing)
+	GrB_Vector rank,         // nodeID -> elimination rank
+	AttributeID rankAttrID   // node attribute the rank is written under
 ) {
+	Graph *g = GraphContext_GetGraph (gc) ;
 	EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
 
 	GxB_Iterator it ;
@@ -510,11 +493,14 @@ static void _set_ranks
 	GrB_OK (GrB_free (&it)) ;
 }
 
+// procedure entry point: validate the config, build the CCH for the requested
+// metric, and commit the shortcut edges + node ranks to the graph. all the heavy
+// work happens here; Step merely emits the single summary row afterwards.
 static ProcedureResult Proc_CCHInvoke
 (
-	ProcedureCtx *ctx,
-	const SIValue *args,
-	const char **yield
+	ProcedureCtx *ctx,     // procedure context (receives privateData)
+	const SIValue *args,   // invocation args: expects a single config map
+	const char **yield     // caller-requested yield column names
 ) {
 	if (arr_len ((SIValue *)args) != 1 || SI_TYPE (args[0]) != T_MAP) {
 		ErrorCtx_SetError ("algo.CCH expects a single map argument") ;
@@ -579,9 +565,9 @@ static ProcedureResult Proc_CCHInvoke
 	CCH_Free (cch) ;   // no CCH structure lingers in RAM
 
 	pdata->shortcuts_created =
-		_materialize_shortcuts (gc, g, S, M, shortcutRelID, weightAtt,
+		_materialize_shortcuts (gc, S, M, shortcutRelID, weightAtt,
 				middleAttrID) ;
-	_set_ranks (gc, g, rank, rankAttrID) ;
+	_set_ranks (gc, rank, rankAttrID) ;
 
 	GrB_OK (GrB_free (&S)) ;
 	GrB_OK (GrB_free (&M)) ;
@@ -594,9 +580,11 @@ static ProcedureResult Proc_CCHInvoke
 	return PROCEDURE_OK ;
 }
 
+// emit the single result row (shortcutsCreated) on the first call, then NULL on
+// every subsequent call to signal end-of-stream
 static SIValue *Proc_CCHStep
 (
-	ProcedureCtx *ctx
+	ProcedureCtx *ctx    // procedure context (holds privateData)
 ) {
 	ASSERT (ctx->privateData != NULL) ;
 
@@ -615,9 +603,10 @@ static SIValue *Proc_CCHStep
 	return pdata->output ;
 }
 
+// release the procedure's private context
 static ProcedureResult Proc_CCHFree
 (
-	ProcedureCtx *ctx
+	ProcedureCtx *ctx    // procedure context to tear down
 ) {
 	if (ctx->privateData != NULL) {
 		rm_free (ctx->privateData) ;
@@ -626,6 +615,8 @@ static ProcedureResult Proc_CCHFree
 	return PROCEDURE_OK ;
 }
 
+// construct the algo.CCH procedure descriptor: one INT64 output
+// (shortcutsCreated); write-capable, so readOnly = false
 ProcedureCtx *Proc_CCHCtx (void) {
 	ProcedureOutput *outputs = arr_newlen (ProcedureOutput, 1) ;
 	outputs[0] = (ProcedureOutput){.name = "shortcutsCreated", .type = T_INT64} ;

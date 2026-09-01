@@ -16,6 +16,7 @@
 #include "../datatypes/path/path.h"
 #include "../datatypes/path/sipath.h"
 #include "../graph/graphcontext.h"
+#include "../algorithms/utils/priority_heap.h"
 
 #include <math.h>
 
@@ -36,70 +37,13 @@ typedef struct {
 } CCHQueryCtx;
 
 //------------------------------------------------------------------------------
-// tiny binary min-heap of (weight, node) keyed on weight
-//------------------------------------------------------------------------------
-
-typedef struct { double w; NodeID id; } HItem;
-typedef struct { HItem *a; int n; int cap; } MinHeap;
-
-static void _heap_init(MinHeap *h) {
-	h->cap = 64; h->n = 0;
-	h->a = rm_malloc(sizeof(HItem) * h->cap);
-}
-
-static void _heap_free(MinHeap *h) { rm_free(h->a); }
-
-static void _heap_push(MinHeap *h, double w, NodeID id) {
-	if(h->n == h->cap) {
-		h->cap *= 2;
-		h->a = rm_realloc(h->a, sizeof(HItem) * h->cap);
-	}
-	int i = h->n++;
-	h->a[i] = (HItem){ .w = w, .id = id };
-	while(i > 0) {
-		int p = (i - 1) / 2;
-		if(h->a[p].w <= h->a[i].w) break;
-		HItem t = h->a[p]; h->a[p] = h->a[i]; h->a[i] = t;
-		i = p;
-	}
-}
-
-static bool _heap_pop(MinHeap *h, HItem *out) {
-	if(h->n == 0) return false;
-	*out = h->a[0];
-	h->a[0] = h->a[--h->n];
-	int i = 0;
-	while(true) {
-		int l = 2 * i + 1, r = 2 * i + 2, s = i;
-		if(l < h->n && h->a[l].w < h->a[s].w) s = l;
-		if(r < h->n && h->a[r].w < h->a[s].w) s = r;
-		if(s == i) break;
-		HItem t = h->a[s]; h->a[s] = h->a[i]; h->a[i] = t;
-		i = s;
-	}
-	return true;
-}
-
-//------------------------------------------------------------------------------
 // helpers
 //------------------------------------------------------------------------------
-
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v;
-	if(!GraphEntity_GetProperty(ge, id, &v)) return default_value;
-	if(SI_TYPE(v) & SI_NUMERIC) return v;
-	return default_value;
-}
 
 // read an edge's weight (defaults to 1 when missing), populating e->attributes
 static double _edge_weight(Graph *g, AttributeID weightAtt, Edge *e) {
 	Graph_GetEdge(g, e->id, e);   // populate attributes
-	SIValue w = _get_value_or_default((GraphEntity *)e, weightAtt, SI_LongVal(1));
+	SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)e, weightAtt, SI_LongVal(1));
 	return SI_GET_NUMERIC(w);
 }
 
@@ -155,28 +99,28 @@ static void _search
 	dict             *recs,      // [out] nodeid -> SRec*
 	NodeID          **visited    // [out] arr of discovered node ids
 ) {
-	MinHeap heap;
-	_heap_init(&heap);
+	NodeWeightHeap heap;
+	NodeWeightHeap_init(&heap);
 
 	SRec *s0 = rm_calloc(1, sizeof(SRec));
 	s0->dist = 0; s0->has_pred = false;
 	HashTableAdd(recs, KEY(start), s0);
 	arr_append(*visited, start);
-	_heap_push(&heap, 0.0, start);
+	NodeWeightHeap_offer(&heap, (NodeWeightItem){ .node = start, .weight = 0.0 });
 
 	GRAPH_EDGE_DIR dir =
 		forward ? GRAPH_EDGE_DIR_OUTGOING : GRAPH_EDGE_DIR_INCOMING;
 
 	Edge *edges = arr_new(Edge, 16);
 
-	HItem it;
-	while(_heap_pop(&heap, &it)) {
-		SRec *cr = HashTableFetchValue(recs, KEY(it.id));
+	NodeWeightItem it;
+	while(NodeWeightHeap_poll(&heap, &it)) {
+		SRec *cr = HashTableFetchValue(recs, KEY(it.node));
 		if(cr->finalized) continue;        // stale duplicate
 		cr->finalized = true;
 
 		double  cur_w    = cr->dist;
-		NodeID  cur      = it.id;
+		NodeID  cur      = it.node;
 		int64_t cur_rank = _node_rank(g, rankAtt, rankCache, cur);
 
 		Node cn = GE_NEW_NODE();
@@ -213,14 +157,15 @@ static void _search
 					nr->pred_node = cur;
 					nr->pred_edge = e;
 					nr->has_pred  = true;
-					_heap_push(&heap, nd, nb);
+					NodeWeightHeap_offer(&heap,
+							(NodeWeightItem){ .node = nb, .weight = nd });
 				}
 			}
 		}
 	}
 
 	arr_free(edges);
-	_heap_free(&heap);
+	NodeWeightHeap_free(&heap);
 }
 
 // find the edge realizing arc x -> y: the shortcut if one exists (it always

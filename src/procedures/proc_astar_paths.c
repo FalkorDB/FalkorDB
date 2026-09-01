@@ -121,15 +121,15 @@ static bool validate_config
 	SIValue heur_scale;     // meters -> weightProp units heuristic scale
 	SIValue path_count;     // # of paths to return
 
-	bool start_exists         = MAP_GET(config, "sourceNode",        start);
-	bool end_exists           = MAP_GET(config, "targetNode",        end);
-	bool relationships_exists = MAP_GET(config, "relTypes",          relationships);
-	bool dir_exists           = MAP_GET(config, "relDirection",      dir);
-	bool weight_prop_exists   = MAP_GET(config, "weightProp",        weight_prop);
-	bool lat_prop_exists      = MAP_GET(config, "latitudeProperty",  lat_prop);
-	bool lon_prop_exists      = MAP_GET(config, "longitudeProperty", lon_prop);
-	bool heur_scale_exists    = MAP_GET(config, "heuristicScale",    heur_scale);
-	bool path_count_exists    = MAP_GET(config, "pathCount",         path_count);
+	bool start_exists         = MAP_GETCASEINSENSITIVE (config, "sourceNode",        start) ;
+	bool end_exists           = MAP_GETCASEINSENSITIVE (config, "targetNode",        end) ;
+	bool relationships_exists = MAP_GETCASEINSENSITIVE (config, "relTypes",          relationships) ;
+	bool dir_exists           = MAP_GETCASEINSENSITIVE (config, "relDirection",      dir) ;
+	bool weight_prop_exists   = MAP_GETCASEINSENSITIVE (config, "weightProp",        weight_prop) ;
+	bool lat_prop_exists      = MAP_GETCASEINSENSITIVE (config, "latitudeProperty",  lat_prop) ;
+	bool lon_prop_exists      = MAP_GETCASEINSENSITIVE (config, "longitudeProperty", lon_prop) ;
+	bool heur_scale_exists    = MAP_GETCASEINSENSITIVE (config, "heuristicScale",    heur_scale) ;
+	bool path_count_exists    = MAP_GETCASEINSENSITIVE (config, "pathCount",         path_count) ;
 
 	if(!start_exists || !end_exists) {
 		ErrorCtx_SetError(EMSG_SPPATH_REQUIRED);

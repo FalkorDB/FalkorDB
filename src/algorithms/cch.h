@@ -114,18 +114,6 @@ typedef struct {
 	// the original road edges it stands for. NULL until CCH_Customize runs.
 	int64_t **up_mid ;
 	int64_t **dn_mid ;
-
-	//--------------------------------------------------------------------------
-	// Phase 3 (query) scratch -- reused across CCH_Query calls
-	//--------------------------------------------------------------------------
-
-	// two size-n distance arrays (rank space), held at +INFINITY between
-	// queries. CCH_Query touches only the O(tree-height) ancestors of src/dst
-	// and resets exactly those entries afterwards, so the arrays never need an
-	// O(n) clear per query. NOT reentrant -- a single CCH must not service two
-	// queries concurrently. NULL until the first CCH_Query allocates them.
-	double *q_df ;   // forward  distances (from src, upward via up_w)
-	double *q_db ;   // backward distances (from dst, upward via dn_w)
 } CCH ;
 
 // allocates a CCH context for a graph of 'n' nodes. every field besides
@@ -185,8 +173,8 @@ void CCH_ChordalTriangulation
 // to call repeatedly; frees any previous up_w/dn_w first.
 void CCH_Customize
 (
-	CCH        *cch,
-	GrB_Matrix  W    // node-id space, W[u][v] = weight of edge u -> v
+	CCH             *cch,
+	const GrB_Matrix W    // node-id space, W[u][v] = weight of edge u -> v
 ) ;
 
 // build the improving-shortcut matrix for materialization into the graph.
@@ -205,26 +193,14 @@ void CCH_Customize
 // the road edge), so M has an entry for exactly the same (u,v) pairs as S.
 void CCH_ExtractShortcuts
 (
-	const CCH   *cch,
-	GrB_Matrix   W,   // road weight matrix (same one Customize ran with)
-	GrB_Matrix  *S,   // [output] improving shortcut weights, node-id space FP64
-	GrB_Matrix  *M    // [output] shortcut middle node ids, node-id space INT64
+	const CCH       *cch,
+	const GrB_Matrix W,   // road weight matrix (same one Customize ran with)
+	GrB_Matrix      *S,   // [output] improving shortcut weights, node-id space FP64
+	GrB_Matrix      *M    // [output] shortcut middle node ids, node-id space INT64
 ) ;
 
-// Phase 3 (query): exact point-to-point shortest distance from 'src' to 'dst'
-// (both node ids). Runs the heap-free elimination-tree search -- walk src's
-// and dst's ancestor paths in T_G, relaxing up-arcs (forward, via up_w) and
-// down-arcs (backward, via dn_w), then combine at the shared ancestors. O(tree
-// height x up-degree), independent of overall graph size.
-//
-// requires Phase 2 to have run. returns true and sets *weight if 'dst' is
-// reachable from 'src'; returns false (leaving *weight untouched) otherwise.
-// NOT reentrant (uses cch->q_df / cch->q_db scratch).
-bool CCH_Query
-(
-	CCH     *cch,
-	int64_t  src,     // source node id
-	int64_t  dst,     // destination node id
-	double  *weight   // [output] shortest src -> dst distance
-) ;
+// Phase 3 (query) is not part of this API: the materialized SHORTCUT edges +
+// node ranks are queried by the stateless, concurrency-safe rank-pruned
+// bidirectional Dijkstra in proc_cch_query.c, so many queries can run against
+// the same graph in parallel without any shared CCH scratch.
 

@@ -12,7 +12,6 @@
 #include "../util/rmalloc.h"
 #include "utils/node_map.h"
 #include "utils/priority_heap.h"
-#include "utils/entity_value.h"
 
 #include <math.h>
 
@@ -336,7 +335,7 @@ static bool AStarCtx_Run
 				double edge_w = 1;
 				if(need_weight) {
 					Graph_GetEdge(ac->g, e.id, &e);  // populate e.attributes
-					SIValue w = _get_value_or_default((GraphEntity *)&e,
+					SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&e,
 							ac->weight_prop, SI_LongVal(1));
 					edge_w = SI_GET_NUMERIC(w);
 				}
@@ -597,7 +596,7 @@ static double _root_weight
 	double w = 0;
 
 	for(uint j = 0; j < i; j++) {
-		SIValue v = _get_value_or_default(
+		SIValue v = GraphEntity_GetNumericPropertyOrDefault(
 				(GraphEntity *)Path_GetEdge(prev, j),
 				weight_prop, SI_LongVal(1));
 		w += SI_GET_NUMERIC(v);
