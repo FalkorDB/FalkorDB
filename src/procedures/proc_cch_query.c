@@ -47,8 +47,10 @@ static double _edge_weight(Graph *g, AttributeID weightAtt, Edge *e) {
 	return SI_GET_NUMERIC(w);
 }
 
-// elimination rank of a node, cached across lookups (stored as rank+1 so a
-// genuine 0 rank isn't confused with "absent")
+// elimination rank of a node, cached across lookups. stored as rank+2 so that
+// both a genuine rank 0 and a missing/non-numeric rank (-1) map to non-NULL
+// sentinels (2 and 1), distinguishable from an absent cache entry (NULL);
+// decode as val-2
 static int64_t _node_rank
 (
 	Graph *g,
@@ -57,7 +59,7 @@ static int64_t _node_rank
 	NodeID id
 ) {
 	void *v = HashTableFetchValue(cache, KEY(id));
-	if(v != NULL) return (int64_t)(intptr_t)v - 1;
+	if(v != NULL) return (int64_t)(intptr_t)v - 2;
 
 	Node n = GE_NEW_NODE();
 	Graph_GetNode(g, id, &n);
@@ -69,7 +71,7 @@ static int64_t _node_rank
 		rank = (int64_t)SI_GET_NUMERIC(rv);
 	}
 
-	HashTableAdd(cache, KEY(id), (void *)(intptr_t)(rank + 1));
+	HashTableAdd(cache, KEY(id), (void *)(intptr_t)(rank + 2));
 	return rank;
 }
 
