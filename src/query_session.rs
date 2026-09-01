@@ -376,6 +376,23 @@ impl Gil {
     }
 }
 
+/// The context this thread locked the GIL through, if it locked one.
+///
+/// Borrowed, never owned: it is valid only while a [`Gil`] guard is alive on
+/// this thread, must not be freed, and a `Context` built over it must not be
+/// treated as owning — `Context` has no `Drop`, so nothing in the type says so.
+///
+/// Exists so a background thread can replicate **inside** the GIL hold it
+/// already has. Taking a second context and locking again is what re-crashed
+/// the master in #2371: `RM_ThreadSafeContextUnlock` runs
+/// `postExecutionUnitOperations`, which calls `propagateNow`, and the pause
+/// check that makes escalation safe is only sound while the GIL is held
+/// continuously from that check through the commit and the replicate.
+#[must_use]
+pub(crate) fn gil_context() -> Option<NonNull<raw::RedisModuleCtx>> {
+    GIL_CTX.get()
+}
+
 impl Drop for Gil {
     fn drop(&mut self) {
         if !self.need_release {

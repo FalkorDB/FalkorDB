@@ -246,6 +246,22 @@ pub struct MemoryUsageReport {
 ///
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
+/// Sentinel for an empty/deleted slot in [`Graph::edge_endpoints`].
+///
+/// Equals `compound_key(u32::MAX, u32::MAX)`, which would only collide with a
+/// real edge whose endpoints are both node id `u32::MAX` (4.29 billion) — not
+/// reachable in practice, since the tensor compound key caps node ids at u32.
+const EDGE_NO_ENDPOINT: u64 = u64::MAX;
+
+/// A relationship removed by [`Graph::delete_relationships`] or
+/// [`Graph::delete_implicit_edges`]: its id, **its type**, and its endpoints.
+///
+/// The type is captured here because it cannot be recovered afterwards — the
+/// edge is gone by the time effects are built — and v3's `DELETE_EDGE` groups by
+/// it. `index_remove_edge_docs` is not a substitute: it is only populated for
+/// types that actually carry an index.
+pub type DeletedEdge = (RelationshipId, u64, NodeId, NodeId);
+
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -1357,6 +1373,18 @@ impl Graph {
         self.reserved_node_count += 1;
     }
 
+    /// Reserve `n` node ids without choosing which.
+    ///
+    /// The effects apply path takes the ids from the primary, so it needs the
+    /// counter moved but not an allocation — and it knows `n` up front, so it
+    /// should not have to say so one at a time.
+    pub const fn add_reserved_node_count(
+        &mut self,
+        n: u64,
+    ) {
+        self.reserved_node_count += n;
+    }
+
     /// Reserve `count` node ids, failing instead of aborting when `count` cannot be
     /// allocated.
     ///
@@ -1429,6 +1457,42 @@ impl Graph {
             return 0;
         }
         self.relationship_count + self.deleted_relationships.len() - 1
+    }
+
+    /// Set node attributes from a record's row-major layout.
+    ///
+    /// The map form makes the caller allocate a `Vec` per entity and this
+    /// function sort them back into the id order the wire already had. See
+    /// [`AttributeStore::insert_attrs_rows`].
+    pub fn set_nodes_attributes_rows(
+        &mut self,
+        ids: &[u64],
+        attr_ids: &[u16],
+        rows: &[Value],
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    ) -> Result<(usize, usize), String> {
+        let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;
+
+        if self.node_indexer.has_indices() {
+            // Which of the record's attributes are indexed depends on the
+            // label, so this still walks per entity — but the shape is stated
+            // once, so the inner loop is over the record's attribute set rather
+            // than a per-entity vector.
+            for &id in ids {
+                for (_, label_id) in self.node_labels_matrix.iter(id, id) {
+                    let label = &self.node_labels[label_id as usize];
+                    for &attr_id in attr_ids {
+                        let Some(key) = self.attrs_name.get(attr_id as usize) else {
+                            continue;
+                        };
+                        if self.node_indexer.has_indexed_attr(label, key) {
+                            index_add_docs.entry(label_id).or_default().insert(id);
+                        }
+                    }
+                }
+            }
+        }
+        Ok((nremoved, nset))
     }
 
     pub fn set_nodes_attributes(
@@ -1681,6 +1745,71 @@ impl Graph {
     /// created in this transaction — allowing the unchecked delta insert.
     /// `SET n:Label` on pre-existing nodes may re-add a committed pair, which
     /// must go through the checked path to keep `dp ∩ m = ∅`.
+    /// Give every id in `ids` every label in `label_ids`.
+    ///
+    /// The pair form takes the cartesian product already expanded, which means
+    /// the caller allocates `ids x labels` twice over and this function then
+    /// regroups it back into the per-label lists it wanted in the first place.
+    /// A million-node create with one label spends about 24 MB of scratch
+    /// saying something the two input slices already said.
+    ///
+    /// Here the product stays an iterator: `set_all` consumes one, and each
+    /// label's diagonal is just `ids`.
+    pub fn set_node_labels_product(
+        &mut self,
+        ids: &[u64],
+        label_ids: &[u64],
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        all_new: bool,
+    ) {
+        // `node_labels_matrix` is nodes x labels, and registering a label grows
+        // the per-label matrix list without widening it — so writing the new
+        // label's column would be out of bounds. `create_nodes` resizes, which
+        // is why a CREATE_NODE carrying a fresh label is safe either way; a
+        // SET_LABELS has no create to lean on. Ablating this call fails
+        // `a_label_added_in_a_later_buffer_widens_the_label_matrix` with
+        // GrB_INVALID_INDEX.
+        self.resize();
+
+        // Which labels are indexed, decided once per label rather than once per
+        // pair. Collected before the mutations below so the immutable borrows
+        // of `node_labels` and `node_indexer` end first.
+        let indexed: Vec<u64> = label_ids
+            .iter()
+            .copied()
+            .filter(|&lid| {
+                self.node_labels
+                    .get(lid as usize)
+                    .is_some_and(|label| self.node_indexer.has_index(label))
+            })
+            .collect();
+        for lid in indexed {
+            for &id in ids {
+                if self.node_attrs.has_attributes(id) {
+                    index_add_docs.entry(lid).or_default().insert(id);
+                }
+            }
+        }
+
+        for &lid in label_ids {
+            let diag = ids.iter().map(|&id| (id, id));
+            if all_new {
+                self.labels_matices[lid as usize].set_all::<true>(diag);
+            } else {
+                self.labels_matices[lid as usize].set_all::<false>(diag);
+            }
+        }
+
+        let pairs = label_ids
+            .iter()
+            .flat_map(|&lid| ids.iter().map(move |&id| (id, lid)));
+        if all_new {
+            self.node_labels_matrix.set_all::<true>(pairs);
+        } else {
+            self.node_labels_matrix.set_all::<false>(pairs);
+        }
+    }
+
     pub fn set_nodes_labels_bulk(
         &mut self,
         label_rows: &[u64],
@@ -1740,11 +1869,22 @@ impl Graph {
         }
     }
 
+    /// Delete `deleted_nodes`, returning the `(node_id, label_id)` pairs they
+    /// carried.
+    ///
+    /// The pairs are a by-product, not extra work: clearing the label matrices
+    /// already has to collect them. Effects replication needs them because the
+    /// label set is what tells a replica which label-scoped indexes to clear,
+    /// and by the time the effect is encoded — after `commit` — the labels are
+    /// gone from the graph. Same reason `delete_relationships` hands back its
+    /// endpoints. They arrive grouped by node in ascending node order; a node
+    /// with no labels contributes none, so a caller reconciling against
+    /// `deleted_nodes` must expect gaps.
     pub fn delete_nodes(
         &mut self,
         deleted_nodes: &RoaringTreemap,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<(u64, u64)>, String> {
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
@@ -1791,7 +1931,7 @@ impl Graph {
             }
         }
 
-        for (node_id, label_id) in pairs {
+        for &(node_id, label_id) in &pairs {
             let lid = label_id as usize;
 
             let label = &self.node_labels[lid];
@@ -1809,7 +1949,7 @@ impl Graph {
         }
 
         self.node_attrs.remove_all(deleted_nodes);
-        Ok(())
+        Ok(pairs)
     }
 
     pub fn get_node_relationships(
@@ -2066,6 +2206,15 @@ impl Graph {
         self.reserved_relationship_count += 1;
     }
 
+    /// Reserve `n` relationship ids without choosing which. See
+    /// [`Self::add_reserved_node_count`].
+    pub const fn add_reserved_relationship_count(
+        &mut self,
+        n: u64,
+    ) {
+        self.reserved_relationship_count += n;
+    }
+
     /// Reserve `count` relationship ids. Fallible for the same reason as
     /// [`Self::reserve_nodes`]: `GRAPH.BULK` sizes this from a client-declared count.
     pub fn reserve_relationships(
@@ -2261,6 +2410,46 @@ impl Graph {
         self.deleted_nodes.len()
     }
 
+    /// The first node id that has never been handed out.
+    ///
+    /// Ids below this are either live or sitting in the recycle bin; ids at or
+    /// above it are untouched. Derived, not stored — `reserve_node` computes the
+    /// next id the same way — which is exactly why a replica whose `node_count`
+    /// or bin has drifted from the primary's will start allocating ids the
+    /// primary would not, the moment it is promoted.
+    ///
+    /// **Not `max_node_id() + 1`**, though the arithmetic agrees whenever the
+    /// graph holds a live node. `max_node_id` returns a 0 *sentinel* for an
+    /// empty graph, which is indistinguishable from a graph whose highest id is
+    /// 0 — so a caller asking "has this id been handed out?" reads id 0 as used
+    /// on a graph that has never allocated anything. Substituting it made
+    /// `recreating_a_recycled_id_is_allowed` reject the very first
+    /// `CREATE_NODE` of id 0 with `NodeAlreadyLive`.
+    #[must_use]
+    pub fn node_id_high_water(&self) -> u64 {
+        self.node_count + self.deleted_nodes.len()
+    }
+
+    /// Every id in `nodes` that is **not** currently in the recycle bin.
+    ///
+    /// Two roaring operations for the whole set rather than a probe per id.
+    #[must_use]
+    pub fn node_ids_not_recycled(
+        &self,
+        nodes: &RoaringTreemap,
+    ) -> RoaringTreemap {
+        nodes - &self.deleted_nodes
+    }
+
+    /// Every id in `nodes` that is already in the recycle bin.
+    #[must_use]
+    pub fn node_ids_already_recycled(
+        &self,
+        nodes: &RoaringTreemap,
+    ) -> RoaringTreemap {
+        nodes & &self.deleted_nodes
+    }
+
     #[must_use]
     pub const fn deleted_nodes(&self) -> &RoaringTreemap {
         &self.deleted_nodes
@@ -2303,7 +2492,7 @@ impl Graph {
         &mut self,
         rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
+    ) -> Result<Vec<DeletedEdge>, String> {
         if rels.is_empty() {
             return Ok(Vec::new());
         }
@@ -2339,8 +2528,7 @@ impl Graph {
         self.relationship_count -= resolved.len();
         self.relationship_attrs.remove_all(&resolved);
 
-        let mut endpoints: Vec<(RelationshipId, NodeId, NodeId)> =
-            Vec::with_capacity(resolved.len() as usize);
+        let mut endpoints: Vec<DeletedEdge> = Vec::with_capacity(resolved.len() as usize);
         // (edge_id, type_id) pairs for a single bulk removal from the type matrix.
         let mut tm_rows: Vec<u64> = Vec::with_capacity(endpoints.capacity());
         let mut tm_cols: Vec<u64> = Vec::with_capacity(endpoints.capacity());
@@ -2367,7 +2555,7 @@ impl Graph {
             for &(edge_id, src, dst) in type_rels {
                 tm_rows.push(edge_id);
                 tm_cols.push(type_id);
-                endpoints.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+                endpoints.push((RelationshipId(edge_id), type_id, NodeId(src), NodeId(dst)));
                 self.clear_edge_endpoint(edge_id);
             }
 
@@ -2422,12 +2610,12 @@ impl Graph {
         deleted_nodes: &RoaringTreemap,
         explicit_rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
+    ) -> Result<Vec<DeletedEdge>, String> {
         if self.relationship_matrices.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut all_implicit: Vec<(RelationshipId, NodeId, NodeId)> = Vec::new();
+        let mut all_implicit: Vec<DeletedEdge> = Vec::new();
         // Pairs where only one endpoint is deleted — need adjacency check
         let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> =
             std::collections::HashSet::default();
@@ -2487,7 +2675,7 @@ impl Graph {
             let type_name = &self.relationship_types[type_idx];
             let is_indexed = self.edge_indexer.has_index(type_name);
             for &(edge_id, src, dst) in &rels {
-                all_implicit.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+                all_implicit.push((RelationshipId(edge_id), type_id, NodeId(src), NodeId(dst)));
 
                 // Stage an edge-index document removal so cascade
                 // deletes don't leave stale index hits on the next
@@ -3600,6 +3788,25 @@ impl Graph {
             }
         }
 
+        // Register the label and the property names before the constraint is
+        // stored. Without this a constraint on a not-yet-seen property is
+        // persisted with attribute id 0 — `encode_constraint_block` resolves
+        // each property with `position(..).unwrap_or(0)` — and reads back as a
+        // different property entirely across any RDB save or replica sync.
+        // Replication needs the ids for the same reason. C does this in
+        // `GraphHub_AddConstraint`.
+        match entity_type {
+            EntityType::Node => {
+                self.get_label_id_mut(&label);
+            }
+            EntityType::Relationship => {
+                self.get_type_id_mut(&label);
+            }
+        }
+        for property in &properties {
+            self.add_node_attribute_name(property);
+        }
+
         let mut constraint = Constraint::new(ct, entity_type, label, properties);
 
         // Get entity count to decide sync vs async validation
@@ -3627,6 +3834,37 @@ impl Graph {
         &mut self,
         constraint: Constraint,
     ) {
+        self.constraints.push(constraint);
+    }
+
+    /// Install a constraint with the status the primary reached, adding it if
+    /// this graph does not have it yet and updating the status if it does.
+    ///
+    /// Idempotent because the primary announces a constraint **twice**: once
+    /// when it is created, still under construction, and again when validation
+    /// finishes and it is either operational or failed. A plain add would leave
+    /// a duplicate; a plain "already exists, ignore" would leave the replica
+    /// believing it is still under construction forever, which is what makes
+    /// the second announcement load-bearing rather than noise.
+    pub fn upsert_constraint_raw(
+        &mut self,
+        ct: ConstraintType,
+        entity_type: EntityType,
+        label: &Arc<String>,
+        properties: &[Arc<String>],
+        status: ConstraintStatus,
+    ) {
+        if let Some(existing) = self.constraints.iter_mut().find(|c| {
+            c.ct == ct
+                && c.entity_type == entity_type
+                && c.label == *label
+                && c.properties == properties
+        }) {
+            existing.status = status;
+            return;
+        }
+        let mut constraint = Constraint::new(ct, entity_type, label.clone(), properties.to_vec());
+        constraint.status = status;
         self.constraints.push(constraint);
     }
 

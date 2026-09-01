@@ -40,9 +40,9 @@ use crate::config::{
     CONFIGURATION_DELAY_INDEXING, CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_INDEX_WORKER_THREADS,
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER,
     CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_THRESHOLD, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
-    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
-    get_thread_count, normalize_node_creation_buffer,
+    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD, EFFECTS_VERSION, MAX_INFO_QUERIES,
+    MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
+    TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
 };
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
@@ -86,6 +86,8 @@ fn config_get_one(
         }
         "MAX_INFO_QUERIES" => RedisValue::Integer(MAX_INFO_QUERIES.load(Ordering::Relaxed)),
         "EFFECTS_THRESHOLD" => RedisValue::Integer(EFFECTS_THRESHOLD.load(Ordering::Relaxed)),
+        "EFFECTS_VERSION" => RedisValue::Integer(EFFECTS_VERSION.load(Ordering::Relaxed)),
+        "EFFECTS_COMPRESSION" => RedisValue::Integer(EFFECTS_COMPRESSION.load(Ordering::Relaxed)),
         "BOLT_PORT" => RedisValue::Integer(BOLT_PORT.load(Ordering::Relaxed)),
         "DELAY_INDEXING" => RedisValue::Integer(i64::from(*CONFIGURATION_DELAY_INDEXING.lock(ctx))),
         "IMPORT_FOLDER" => RedisValue::BulkString((*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone()),
@@ -112,12 +114,28 @@ fn validate_config_set(
         | "TIMEOUT_MAX"
         | "QUERY_MEM_CAPACITY"
         | "DELTA_MAX_PENDING_CHANGES"
-        | "EFFECTS_THRESHOLD" => {
+        | "EFFECTS_THRESHOLD"
+        | "EFFECTS_COMPRESSION" => {
             let v: i64 = value
                 .parse()
                 .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
             if v < 0 {
                 return Err(format!("Failed to set config value {name} to {value}"));
+            }
+            Ok(ConfigValue::Int(v))
+        }
+
+        // Range-checked rather than merely non-negative: any other value would
+        // stamp a version byte no peer can read, and the failure would land on
+        // the replica rather than here.
+        "EFFECTS_VERSION" => {
+            let v: i64 = value
+                .parse()
+                .map_err(|_| format!("Failed to set config value {name} to {value}"))?;
+            if !(2..=3).contains(&v) {
+                return Err(format!(
+                    "Failed to set config value {name} to {value}: expected 2 or 3"
+                ));
             }
             Ok(ConfigValue::Int(v))
         }
@@ -252,6 +270,8 @@ fn apply_config_set(
             DELTA_MAX_PENDING_CHANGES.store(val.as_i64(), Ordering::Relaxed);
         }
         "EFFECTS_THRESHOLD" => EFFECTS_THRESHOLD.store(val.as_i64(), Ordering::Relaxed),
+        "EFFECTS_VERSION" => EFFECTS_VERSION.store(val.as_i64(), Ordering::Relaxed),
+        "EFFECTS_COMPRESSION" => EFFECTS_COMPRESSION.store(val.as_i64(), Ordering::Relaxed),
         "ASYNC_DELETE" => ASYNC_DELETE.store(val.as_i64(), Ordering::Relaxed),
         "CMD_INFO" => CONFIGURATION_CMD_INFO.store(val.as_i64() != 0, Ordering::Relaxed),
         "MAX_INFO_QUERIES" => MAX_INFO_QUERIES.store(val.as_i64(), Ordering::Relaxed),

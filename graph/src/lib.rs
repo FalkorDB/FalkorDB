@@ -70,6 +70,7 @@
 //! - [`threadpool`]: Thread pool for parallel query execution
 //! - [`udf`]: User-defined function registration and dispatch
 
+pub mod effects;
 pub mod entity_type;
 pub mod graph;
 pub mod identifier_limits;

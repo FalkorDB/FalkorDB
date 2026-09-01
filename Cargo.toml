@@ -51,6 +51,19 @@ lto = true
 # Release performance (LTO on, so it mirrors the shipped build) plus full
 # DWARF debuginfo so `perf --call-graph dwarf` can unwind + symbolize (incl.
 # inlined frames) for flame graphs. Not stripped. Used by `bench profile`.
+# `cargo bench` inherits release, whose `lto = true` cannot link the prebuilt
+# GraphBLAS objects ("Can't find section __bitcode"). Thin LTO fails the same
+# way, so benches build without it. They measure self-contained Rust — the
+# codec and roaring — so what LTO would inline across the C boundary is not on
+# the path being timed. Do not read these numbers as shipped-binary numbers.
+[profile.bench]
+inherits = "release"
+lto = false
+# Symbols only — no codegen change, so timings stay comparable — but samply can
+# name the frames instead of reporting bare addresses.
+debug = true
+strip = false
+
 [profile.profiling]
 inherits = "release"
 debug = true

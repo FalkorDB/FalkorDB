@@ -16,19 +16,17 @@ use crate::{
     redis_type::GRAPH_TYPE,
 };
 use graph::{
+    effects::v2::{
+        ATTR_NODE, ATTR_REL, EFFECT_ADD_ATTRIBUTE, EFFECT_ADD_SCHEMA, EFFECT_CREATE_EDGE,
+        EFFECT_CREATE_INDEX, EFFECT_CREATE_NODE, EFFECT_DELETE_EDGE, EFFECT_DELETE_NODE,
+        EFFECT_DROP_INDEX, EFFECT_REMOVE_LABELS, EFFECT_SET_LABELS, EFFECT_UPDATE_EDGE,
+        EFFECT_UPDATE_NODE, EFFECTS_VERSION, SCHEMA_NODE_LABEL, SCHEMA_REL_TYPE, read_string,
+        read_u16, read_u64, read_value,
+    },
     entity_type::EntityType,
     graph::graph::{Graph, TypeId},
     index::IndexType,
-    runtime::{
-        pending::{
-            ATTR_NODE, ATTR_REL, EFFECT_ADD_ATTRIBUTE, EFFECT_ADD_SCHEMA, EFFECT_CREATE_EDGE,
-            EFFECT_CREATE_INDEX, EFFECT_CREATE_NODE, EFFECT_DELETE_EDGE, EFFECT_DELETE_NODE,
-            EFFECT_DROP_INDEX, EFFECT_REMOVE_LABELS, EFFECT_SET_LABELS, EFFECT_UPDATE_EDGE,
-            EFFECT_UPDATE_NODE, EFFECTS_VERSION, SCHEMA_NODE_LABEL, SCHEMA_REL_TYPE, read_string,
-            read_u16, read_u64, read_value,
-        },
-        value::Value,
-    },
+    runtime::value::Value,
 };
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
@@ -77,7 +75,15 @@ pub fn graph_effect(
 
     let result = {
         let mut g = g_arc.borrow_mut();
-        apply_effects(&mut g, buf)
+        // Dispatch on what arrived, not on what this node emits. A reader must
+        // accept every version it understands — that is what lets replicas be
+        // upgraded before masters.
+        match buf[0] {
+            graph::effects::v3::EFFECTS_VERSION => {
+                graph::effects::v3::apply::apply_effects(&mut g, buf).map_err(|e| e.to_string())
+            }
+            _ => apply_effects(&mut g, buf),
+        }
     };
 
     match result {
@@ -87,7 +93,15 @@ pub fn graph_effect(
             Ok(RedisValue::SimpleStringStatic("OK"))
         }
         Err(e) => {
+            // Rolled back, so this graph is exactly as it was — but the write
+            // the master already made is now missing here, and every later
+            // effect lands on a graph that has drifted. Redis will not break
+            // the link over an error reply, so without this the replica serves
+            // wrong data until someone notices.
             tg.graph.rollback();
+            if crate::divergence_guard::is_replayed(ctx) {
+                crate::divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e);
+            }
             Err(redis_module::RedisError::String(format!(
                 "ERR effect apply failed: {e}"
             )))

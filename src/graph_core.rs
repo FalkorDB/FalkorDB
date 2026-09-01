@@ -31,8 +31,8 @@
 
 use crate::{
     config::{
-        CONFIGURATION_IMPORT_FOLDER, EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY,
-        RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+        CONFIGURATION_IMPORT_FOLDER, MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
+        TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
     },
     reply::{reply_compact, reply_verbose},
     slow_log::SlowLog,
@@ -44,17 +44,13 @@ use crossfire::{
     mpsc::{Array, bounded_blocking},
 };
 use graph::{
+    effects::payload::take_effects_buffer,
     graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
     },
     planner::{IR, plan_is_non_deterministic},
-    runtime::{
-        pending::{
-            EFFECT_CREATE_INDEX, EFFECT_DROP_INDEX, EFFECTS_VERSION, write_string, write_u16,
-        },
-        runtime::Runtime,
-    },
+    runtime::runtime::{QueryStatistics, Runtime},
     threadpool::{pending_count, spawn},
 };
 use orx_tree::{Collection, Dfs, NodeRef};
@@ -237,10 +233,50 @@ pub struct WriteMessage {
 }
 
 /// What `commit_and_replicate` needs to publish a finished write.
-pub(crate) struct WriteQueryOk {
-    pub(crate) graph: Arc<AtomicRefCell<Graph>>,
-    pub(crate) effects_buffer: Option<Vec<u8>>,
-    pub(crate) modified: bool,
+struct WriteQueryOk {
+    graph: Arc<AtomicRefCell<Graph>>,
+    effects_buffer: Option<Vec<u8>>,
+    modified: bool,
+}
+
+impl WriteQueryOk {
+    /// Everything a finished write hands to `commit_and_replicate`, derived in
+    /// one place from the runtime that produced it.
+    ///
+    /// Both executors — `GRAPH.QUERY` and `GRAPH.RECORD`, which is a real write
+    /// and replicates like one — used to assemble this by hand, which meant two
+    /// copies of the "did this change anything" predicate and two calls to
+    /// `take_effects_buffer`. They differ only in `is_non_deterministic`, so
+    /// that is the only thing left for a caller to supply.
+    fn new(
+        runtime: &Runtime,
+        stats: &QueryStatistics,
+        is_non_deterministic: bool,
+    ) -> Self {
+        Self {
+            // The MVCC version this query built, taken from the runtime that
+            // built it rather than passed alongside, so the two cannot differ.
+            graph: Arc::clone(&runtime.g),
+            effects_buffer: take_effects_buffer(
+                runtime,
+                is_non_deterministic,
+                stats.execution_time,
+            ),
+            // `effects_count` as well as the counters: a query can replicate an
+            // effect without moving any of them — index DDL does.
+            modified: stats.nodes_created > 0
+                || stats.nodes_deleted > 0
+                || stats.relationships_created > 0
+                || stats.relationships_deleted > 0
+                || stats.properties_set > 0
+                || stats.properties_removed > 0
+                || stats.labels_added > 0
+                || stats.labels_removed > 0
+                || stats.indexes_created > 0
+                || stats.indexes_dropped > 0
+                || runtime.effects_count.get() > 0,
+        }
+    }
 }
 
 /// Result from a read-path `execute_query` call, surfacing timing metadata
@@ -731,67 +767,28 @@ pub fn execute_query_write(
             // private version: documents published by earlier `Commit`s are deleted
             // (entity never existed) or rewritten from committed values. Writer
             // mode, so no reader observes the interim state.
-            let committed = session.with_graph(|tg| tg.graph.read());
-            runtime.resync_published_indexes(&committed);
-            // Release the MVCC write slot we took above (dropping the private
-            // version with all its writes). Slot ownership lives here — callers
+            // Releases the MVCC write slot we took above, dropping the private
+            // version with all its writes. Slot ownership lives here — callers
             // must NOT roll back.
-            session.with_graph(|tg| tg.graph.rollback());
+            abandon_write(&session, &runtime);
             return Err(err);
         }
     };
 
-    // If any CreateIndex carries OPTIONS, the binary effect format can't
-    // currently round-trip them — fall back to verbatim GRAPH.QUERY
-    // replication by skipping the effects buffer entirely.
-    let has_unencodable_index = runtime
-        .plan
-        .iter()
-        .any(|node| matches!(node, IR::CreateIndex { options, .. } if options.is_some()));
-
-    // Capture effects buffer before replying (pending data is still available)
-    let mut effects_buffer = if has_unencodable_index {
-        None
-    } else {
-        should_use_effects(is_non_deterministic, &runtime, result.stats.execution_time)
-    };
-
-    // Build index effects for CreateIndex / DropIndex IR nodes (not tracked by Pending)
-    if !has_unencodable_index {
-        effects_buffer = build_index_effects(&runtime, effects_buffer);
-    }
-
     result.stats.cached = cached;
     let execution_time_ms = result.stats.execution_time;
-    let modified = result.stats.nodes_created > 0
-        || result.stats.nodes_deleted > 0
-        || result.stats.relationships_created > 0
-        || result.stats.relationships_deleted > 0
-        || result.stats.properties_set > 0
-        || result.stats.properties_removed > 0
-        || result.stats.labels_added > 0
-        || result.stats.labels_removed > 0
-        || result.stats.indexes_created > 0
-        || result.stats.indexes_dropped > 0
-        || runtime.effects_count.get() > 0;
 
     // Commit → signal WATCH → replicate, the last work that needs the GIL.
-    let wq = WriteQueryOk {
-        graph: g,
-        effects_buffer,
-        modified,
-    };
     let graph = session.graph_arc();
-    if session
-        .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, query, wq))
-        .is_none()
-    {
-        // Never escalated, so the plan's `Commit` never ran and nothing was mutated —
-        // `LIMIT 0` short-circuits above `Commit`, for instance. There is nothing to
-        // publish or replicate; just release the MVCC write slot (only
-        // commit/rollback clears it) and reply as usual.
-        session.with_graph(|tg| tg.graph.rollback());
-    }
+    finish_write(
+        &session,
+        ctx,
+        key_name,
+        query,
+        &runtime,
+        &result.stats,
+        is_non_deterministic,
+    );
     session.release_locks();
 
     // Writer window is closed. Serializing the reply reads this query's own MVCC
@@ -1240,6 +1237,13 @@ fn query_sync(
                         // slot on failure (rollback lives there now); just
                         // surface the error. Dropping the session releases the
                         // write lock.
+                        //
+                        // Unless it was the master's write: the master only
+                        // replicates a query that already succeeded there, so
+                        // this failing means the two have diverged.
+                        if crate::divergence_guard::is_replayed(ctx) {
+                            crate::divergence_guard::on_failure(ctx, key_name, "GRAPH.QUERY", &err);
+                        }
                         return Err(redis_module::RedisError::String(err));
                     }
                 }
@@ -1415,6 +1419,10 @@ fn profile_sync(
             if mem_capacity > 0 {
                 disable_tracking();
             }
+            // See `query_sync`: a replayed command failing is divergence.
+            if crate::divergence_guard::is_replayed(ctx) {
+                crate::divergence_guard::on_failure(ctx, key_name, "GRAPH.PROFILE", &err);
+            }
             return Err(redis_module::RedisError::String(err));
         }
     }
@@ -1430,7 +1438,53 @@ fn profile_sync(
 /// is fork-safe (#452) and commit+replicate are atomic against inline main-thread
 /// writers. The last work a write does under the GIL; its caller releases the locks
 /// immediately afterwards and only then serializes the reply.
-pub(crate) fn commit_and_replicate(
+/// Publish a write that succeeded: commit the version, signal WATCH, replicate.
+///
+/// The whole tail of a successful write, shared by `GRAPH.QUERY` and
+/// `GRAPH.RECORD` — RECORD adds an operator trace to a real write and must
+/// publish it identically. Both carried a copy of this, and of
+/// [`abandon_write`] below, which is how the effects decision came to be made
+/// in two places.
+pub(crate) fn finish_write(
+    session: &QuerySession,
+    ctx: &Context,
+    key_name: &Arc<str>,
+    query: &str,
+    runtime: &Runtime,
+    stats: &QueryStatistics,
+    is_non_deterministic: bool,
+) {
+    let wq = WriteQueryOk::new(runtime, stats, is_non_deterministic);
+    if session
+        .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, query, wq))
+        .is_none()
+    {
+        // Never escalated, so the plan's `Commit` never ran and nothing was
+        // mutated — `LIMIT 0` short-circuits above `Commit`, for instance. There
+        // is nothing to publish or replicate; just release the MVCC write slot,
+        // which only commit or rollback clears.
+        session.with_graph(|tg| tg.graph.rollback());
+    }
+}
+
+/// Discard a write that failed, leaving the published state as it was.
+///
+/// Documents published by earlier `Commit`s are deleted (the entity never
+/// existed) or rewritten from committed values before the private version goes,
+/// and this runs in writer mode, so no reader observes the interim state.
+///
+/// Slot ownership lives with whoever claimed it: this releases it, so a caller
+/// that did *not* claim the slot must not call this.
+pub(crate) fn abandon_write(
+    session: &QuerySession,
+    runtime: &Runtime,
+) {
+    let committed = session.with_graph(|tg| tg.graph.read());
+    runtime.resync_published_indexes(&committed);
+    session.with_graph(|tg| tg.graph.rollback());
+}
+
+fn commit_and_replicate(
     g: &mut ThreadedGraph,
     ctx: &Context,
     key_name: &Arc<str>,
@@ -1575,36 +1629,6 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     }
 }
 
-/// Decide whether to use effects replication and get the pre-built buffer.
-/// The buffer was built in `CommitOp` before pending was cleared.
-/// Returns Some(buffer) if effects should be sent, None for verbatim replication.
-pub(crate) fn should_use_effects(
-    is_non_deterministic: bool,
-    runtime: &Runtime,
-    exec_time_ms: f64,
-) -> Option<Vec<u8>> {
-    let threshold = EFFECTS_THRESHOLD.load(Ordering::Relaxed);
-
-    let buf = runtime.effects_buffer.borrow_mut().take();
-    let buf = match buf {
-        Some(b) if b.len() > 1 => b, // > 1 because version byte alone means empty
-        _ => return None,
-    };
-
-    let n_effects = runtime.effects_count.get();
-
-    let use_effects = if is_non_deterministic || threshold == 0 {
-        true
-    } else if n_effects == 0 {
-        false
-    } else {
-        let avg_mod_time_us = (exec_time_ms / n_effects as f64) * 1000.0;
-        avg_mod_time_us > threshold as f64
-    };
-
-    if use_effects { Some(buf) } else { None }
-}
-
 /// Send replication: GRAPH.EFFECT with binary buffer, or verbatim query replay.
 fn replicate_effects(
     ctx: &Context,
@@ -1612,81 +1636,26 @@ fn replicate_effects(
     effects_buffer: Option<Vec<u8>>,
     query: &str,
 ) {
-    if let Some(buf) = effects_buffer {
+    if let Some(mut buf) = effects_buffer {
+        // The one place the payload is finished: every commit has run, and
+        // `build_index_effects` has appended whatever DDL the plan carried.
+        // Compression rewrites everything after the header, so it has to happen
+        // exactly once and it has to happen last — running it per commit
+        // produced a payload that had been compressed twice and could not be
+        // read at all. Keyed off the buffer's own version byte rather than the
+        // config, so it cannot disagree with what was actually built.
+        if buf.first() == Some(&graph::effects::v3::EFFECTS_VERSION) {
+            graph::effects::v3::maybe_compress(
+                &mut buf,
+                graph::effects::v3::compression_min_bytes(),
+            );
+        }
         let args: &[&[u8]] = &[key_name.as_bytes(), &buf];
         ctx.replicate("GRAPH.EFFECT", args);
     } else {
         let args: &[&[u8]] = &[key_name.as_bytes(), query.as_bytes()];
         ctx.replicate("GRAPH.QUERY", args);
     }
-}
-
-/// Encode IndexType as u8 tag for effects buffer.
-const fn index_type_tag(it: &graph::index::IndexType) -> u8 {
-    use graph::index::IndexType;
-    match it {
-        IndexType::Range => 0,
-        IndexType::Fulltext => 1,
-        IndexType::Vector => 2,
-    }
-}
-
-/// Encode EntityType as u8 tag for effects buffer.
-const fn entity_type_tag(et: &graph::entity_type::EntityType) -> u8 {
-    use graph::entity_type::EntityType;
-    match et {
-        EntityType::Node => 0,
-        EntityType::Relationship => 1,
-    }
-}
-
-/// Scan the plan for CreateIndex / DropIndex IR nodes and append their
-/// effects to the buffer. Returns the (possibly new) effects buffer.
-/// Caller must ensure no CreateIndex carries OPTIONS — those can't currently
-/// round-trip in the binary effect format and require verbatim replication.
-pub(crate) fn build_index_effects(
-    runtime: &Runtime,
-    mut effects_buffer: Option<Vec<u8>>,
-) -> Option<Vec<u8>> {
-    for node in runtime.plan.iter() {
-        match node {
-            IR::CreateIndex {
-                label,
-                attrs,
-                index_type,
-                entity_type,
-                options: _,
-            } => {
-                let buf = effects_buffer.get_or_insert_with(|| vec![EFFECTS_VERSION]);
-                buf.push(EFFECT_CREATE_INDEX);
-                buf.push(index_type_tag(index_type));
-                buf.push(entity_type_tag(entity_type));
-                write_string(buf, label);
-                write_u16(buf, attrs.len() as u16);
-                for attr in attrs {
-                    write_string(buf, attr);
-                }
-            }
-            IR::DropIndex {
-                label,
-                attrs,
-                index_type,
-                entity_type,
-            } => {
-                let buf = effects_buffer.get_or_insert_with(|| vec![EFFECTS_VERSION]);
-                buf.push(EFFECT_DROP_INDEX);
-                buf.push(index_type_tag(index_type));
-                buf.push(entity_type_tag(entity_type));
-                write_string(buf, label);
-                write_u16(buf, attrs.len() as u16);
-                for attr in attrs {
-                    write_string(buf, attr);
-                }
-            }
-            _ => {}
-        }
-    }
-    effects_buffer
 }
 
 #[unsafe(no_mangle)]

@@ -42,6 +42,7 @@ mod allocator;
 mod commands;
 mod config;
 mod dispatch;
+mod divergence_guard;
 mod graph_core;
 mod module_init;
 mod query_session;

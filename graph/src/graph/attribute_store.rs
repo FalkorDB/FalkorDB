@@ -1177,10 +1177,65 @@ impl AttributeStore {
         }
     }
 
+    /// Insert attributes laid out row-major, as the wire carries them.
+    ///
+    /// [`Self::insert_attrs`] takes a map only to flatten it back into a
+    /// `Vec` and sort that by id — work the effects path has already done,
+    /// because a record's ids arrive ascending by contract. Building the map
+    /// first costs one heap allocation per entity for a `Vec` of two or three
+    /// pairs, plus the hash inserts and the sort, to say what `ids`,
+    /// `attr_ids` and a flat row-major slice already say.
+    ///
+    /// `attr_ids` must be ascending: it is a record's attribute set, which is
+    /// built from an already-sorted vector.
+    pub fn insert_attrs_rows(
+        &mut self,
+        ids: &[u64],
+        attr_ids: &[u16],
+        rows: &[Value],
+    ) -> Result<(usize, usize), String> {
+        debug_assert!(
+            attr_ids.windows(2).all(|w| w[0] < w[1]),
+            "the attribute set must be ascending"
+        );
+        let width = attr_ids.len();
+        debug_assert_eq!(rows.len(), ids.len() * width, "rows must be count x width");
+
+        let mut nremoved = 0;
+        let mut nset = 0;
+        let mut scratch: Vec<PackedAttr> = Vec::new();
+        // One reused buffer for the whole record, rather than a fresh `Vec`
+        // per entity.
+        let mut pairs: Vec<(u16, Value)> = Vec::with_capacity(width);
+
+        for (row, &id) in ids.iter().enumerate() {
+            pairs.clear();
+            // Nulls are passed through, not filtered. FalkorDB never *stores* a
+            // null, so a null in a row means "remove this attribute" — and
+            // `merge_span` is what performs the removal, including a fast path
+            // for a span where every pair is null. Stripping them here would
+            // turn `SET n.x = NULL` into a no-op.
+            pairs.extend(
+                attr_ids
+                    .iter()
+                    .enumerate()
+                    .map(|(col, &attr_id)| (attr_id, rows[row * width + col].clone())),
+            );
+            let (r, s) = self.data.merge_span(id, &pairs, &mut scratch);
+            nremoved += r;
+            nset += s;
+        }
+        Ok((nremoved, nset))
+    }
+
     /// Batch insert/update multiple attributes for entities.
     ///
     /// Returns `(nremoved, nset)`: the number of attributes *replaced* and
     /// the number of non-null attributes *set*.
+    ///
+    /// Takes a map because that is what accumulates one `SET` at a time on the
+    /// write path. A caller that already has its entities in id order, with the
+    /// attribute set stated once, wants [`Self::insert_attrs_rows`] instead.
     pub fn insert_attrs(
         &mut self,
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
