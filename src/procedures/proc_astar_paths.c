@@ -21,8 +21,14 @@
 //                   weightProp: 'weight',
 //                   latitudeProperty: 'lat',
 //                   longitudeProperty: 'lon',
+//                   heuristicScale: 1.0,
 //                   pathCount: 3}) YIELD path, pathWeight
 // RETURN path, pathWeight
+//
+// heuristicScale (optional, default 1.0) scales the haversine heuristic
+// (meters) into weightProp's units and must be a non-negative lower bound on
+// the weight per meter for A* to stay optimal: 1.0 for a distance-in-meters
+// weight, 1/max_speed for a travel-time weight (see AStar.h).
 
 typedef struct {
 	Node src;                    // source node
@@ -38,6 +44,7 @@ typedef struct {
 	AttributeID weight_prop;     // weight attribute id
 	AttributeID lat_prop;        // latitude attribute id (required)
 	AttributeID lon_prop;        // longitude attribute id (required)
+	double heur_scale;           // meters -> weightProp units heuristic scale
 	uint64_t path_count;         // number of paths to return (>= 1)
 	Path **paths;                // result paths (array_t, ascending weight)
 	double *weights;             // parallel total weights (array_t)
@@ -111,16 +118,18 @@ static bool validate_config
 	SIValue weight_prop;    // weight attribute name
 	SIValue lat_prop;       // latitude attribute name
 	SIValue lon_prop;       // longitude attribute name
+	SIValue heur_scale;     // meters -> weightProp units heuristic scale
 	SIValue path_count;     // # of paths to return
 
-	bool start_exists         = MAP_GET(config, "sourceNode",        start);
-	bool end_exists           = MAP_GET(config, "targetNode",        end);
-	bool relationships_exists = MAP_GET(config, "relTypes",          relationships);
-	bool dir_exists           = MAP_GET(config, "relDirection",      dir);
-	bool weight_prop_exists   = MAP_GET(config, "weightProp",        weight_prop);
-	bool lat_prop_exists      = MAP_GET(config, "latitudeProperty",  lat_prop);
-	bool lon_prop_exists      = MAP_GET(config, "longitudeProperty", lon_prop);
-	bool path_count_exists    = MAP_GET(config, "pathCount",         path_count);
+	bool start_exists         = MAP_GETCASEINSENSITIVE (config, "sourceNode",        start) ;
+	bool end_exists           = MAP_GETCASEINSENSITIVE (config, "targetNode",        end) ;
+	bool relationships_exists = MAP_GETCASEINSENSITIVE (config, "relTypes",          relationships) ;
+	bool dir_exists           = MAP_GETCASEINSENSITIVE (config, "relDirection",      dir) ;
+	bool weight_prop_exists   = MAP_GETCASEINSENSITIVE (config, "weightProp",        weight_prop) ;
+	bool lat_prop_exists      = MAP_GETCASEINSENSITIVE (config, "latitudeProperty",  lat_prop) ;
+	bool lon_prop_exists      = MAP_GETCASEINSENSITIVE (config, "longitudeProperty", lon_prop) ;
+	bool heur_scale_exists    = MAP_GETCASEINSENSITIVE (config, "heuristicScale",    heur_scale) ;
+	bool path_count_exists    = MAP_GETCASEINSENSITIVE (config, "pathCount",         path_count) ;
 
 	if(!start_exists || !end_exists) {
 		ErrorCtx_SetError(EMSG_SPPATH_REQUIRED);
@@ -233,6 +242,27 @@ static bool validate_config
 		ctx->weight_prop = GraphContext_GetAttributeID(gc, weight_prop.stringval);
 	}
 
+	// heuristicScale converts the haversine heuristic (meters) into weightProp's
+	// units. It must be a non-negative lower bound on the weight accrued per
+	// meter of straight-line progress for A* to stay admissible (see AStar.h);
+	// e.g. 1 when weightProp is a distance in meters, or 1/max_speed when it is
+	// travel time. Defaults to 1 (weightProp assumed to be a distance in meters,
+	// the historical A* contract).
+	ctx->heur_scale = 1.0;
+
+	if(heur_scale_exists) {
+		if(!(SI_TYPE(heur_scale) & SI_NUMERIC)) {
+			ErrorCtx_SetError(EMSG_MUST_BE, "heuristicScale", "a number");
+			return false;
+		}
+		double s = SI_GET_NUMERIC(heur_scale);
+		if(s < 0) {
+			ErrorCtx_SetError(EMSG_MUST_BE, "heuristicScale", "a non-negative number");
+			return false;
+		}
+		ctx->heur_scale = s;
+	}
+
 	if(path_count_exists) {
 		if(SI_TYPE(path_count) != T_INT64) {
 			ErrorCtx_SetError(EMSG_MUST_BE, "pathCount", "integer");
@@ -296,7 +326,7 @@ static ProcedureResult Proc_AStarPathsInvoke
 		bool found = AStar_ShortestPath(&path, &weight, actx->g, src_id, dst_id,
 				actx->dir, actx->relationIDs, actx->relationMatrices,
 				actx->relationCount, actx->weight_prop, actx->lat_prop,
-				actx->lon_prop);
+				actx->lon_prop, actx->heur_scale);
 
 		actx->paths   = arr_new(Path *, found ? 1 : 0);
 		actx->weights = arr_new(double, found ? 1 : 0);
@@ -309,7 +339,7 @@ static ProcedureResult Proc_AStarPathsInvoke
 		AStar_KShortestPaths(actx->g, src_id, dst_id, actx->path_count,
 				actx->dir, actx->relationIDs, actx->relationMatrices,
 				actx->relationCount, actx->weight_prop, actx->lat_prop,
-				actx->lon_prop, &actx->paths, &actx->weights);
+				actx->lon_prop, actx->heur_scale, &actx->paths, &actx->weights);
 	}
 
 	return PROCEDURE_OK;

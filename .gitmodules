@@ -25,3 +25,9 @@
 [submodule "deps/quickjs"]
 	path = deps/quickjs
 	url = https://github.com/bellard/quickjs.git
+[submodule "deps/KarypisLab/GKlib"]
+	path = deps/KarypisLab/GKlib
+	url = https://github.com/KarypisLab/GKlib.git
+[submodule "deps/KarypisLab/METIS"]
+	path = deps/KarypisLab/METIS
+	url = https://github.com/KarypisLab/METIS.git

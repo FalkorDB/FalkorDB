@@ -469,26 +469,6 @@ static void addNeighbors
 	}
 }
 
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v ;
-
-	if (!GraphEntity_GetProperty (ge, id, &v)) {
-		return default_value ;
-	}
-
-	if (SI_TYPE (v) & SI_NUMERIC) {
-		return v ;
-	}
-
-	return default_value ;
-}
-
 // sum costProp over a path's edges. cost isn't part of what the Dijkstra/Yen/
 // DAG fast paths optimize for -- it's a secondary attribute reported alongside
 // each path. returns 0 when no costProp was given, rather than defaulting
@@ -505,7 +485,7 @@ static double _sum_path_cost
 	double cost = 0;
 	uint edge_count = Path_EdgeCount (p);
 	for(uint i = 0; i < edge_count; i++) {
-		SIValue c = _get_value_or_default ((GraphEntity *) Path_GetEdge(p, i),
+		SIValue c = GraphEntity_GetNumericPropertyOrDefault ((GraphEntity *) Path_GetEdge(p, i),
 				cost_prop, SI_LongVal(1));
 		cost += SI_GET_NUMERIC(c);
 	}
@@ -635,8 +615,8 @@ static void _find_bound_path
 			ASSERT(idx != 0);
 			BoundParentRecord *rec = records + (idx - 1);
 
-			SIValue c = _get_value_or_default((GraphEntity *)&rec->edge, ctx->cost_prop,   SI_LongVal(1));
-			SIValue w = _get_value_or_default((GraphEntity *)&rec->edge, ctx->weight_prop, SI_LongVal(1));
+			SIValue c = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&rec->edge, ctx->cost_prop,   SI_LongVal(1));
+			SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&rec->edge, ctx->weight_prop, SI_LongVal(1));
 			cost   += SI_GET_NUMERIC(c);
 			weight += SI_GET_NUMERIC(w);
 
@@ -690,8 +670,8 @@ static void SPpaths_next
 			// if depth is 0 this is the source node, there is no leading edge to it.
 			// For depth > 0 for each frontier node, there is a leading edge.
 			if(depth > 0) {
-				SIValue c = _get_value_or_default((GraphEntity *)&frontierConnection.edge, ctx->cost_prop, SI_LongVal(1));
-				SIValue w = _get_value_or_default((GraphEntity *)&frontierConnection.edge, ctx->weight_prop, SI_LongVal(1));
+				SIValue c = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&frontierConnection.edge, ctx->cost_prop, SI_LongVal(1));
+				SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&frontierConnection.edge, ctx->weight_prop, SI_LongVal(1));
 				if(p->cost + SI_GET_NUMERIC(c) <= ctx->max_cost && p->weight + SI_GET_NUMERIC(w) <= max_weight) {
 					p->cost += SI_GET_NUMERIC(c);
 					p->weight += SI_GET_NUMERIC(w);
@@ -725,8 +705,8 @@ static void SPpaths_next
 			Path_PopNode(ctx->path);
 			if(Path_EdgeCount(ctx->path)) {
 				Edge e = Path_PopEdge(ctx->path);
-				SIValue c = _get_value_or_default((GraphEntity *)&e, ctx->cost_prop, SI_LongVal(1));
-				SIValue w = _get_value_or_default((GraphEntity *)&e, ctx->weight_prop, SI_LongVal(1));
+				SIValue c = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&e, ctx->cost_prop, SI_LongVal(1));
+				SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&e, ctx->weight_prop, SI_LongVal(1));
 				p->cost -= SI_GET_NUMERIC(c);
 				p->weight -= SI_GET_NUMERIC(w);
 			}

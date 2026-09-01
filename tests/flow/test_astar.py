@@ -585,3 +585,94 @@ class testAStar(FlowTestsBase):
         for rd in ("outgoing", "incoming", "both"):
             self._astar_vs_sppaths(g, 0, 3, 1,   rel_dir=rd, rel_types=["AR", "AS"])
             self._astar_vs_sppaths(g, 0, 3, 100, rel_dir=rd, rel_types=["AR", "AS"])
+
+    def test17_astar_heuristic_scale_validation(self):
+        # heuristicScale must be a non-negative number.
+        g = self.db.select_graph("astar_heur_scale_validations")
+        g.query("""CREATE (:AK {id: 0, lat: 37.0, lon: -122.0}),
+                           (:AK {id: 1, lat: 37.1, lon: -122.0})""")
+
+        for bad, msg in (("'x'", "heuristicScale must be a number"),
+                         ("true", "heuristicScale must be a number"),
+                         ("-0.5", "heuristicScale must be a non-negative number"),
+                         ("-1",   "heuristicScale must be a non-negative number")):
+            query = f"""MATCH (n:AK {{id: 0}}), (m:AK {{id: 1}})
+                CALL algo.AStar({{sourceNode: n, targetNode: m,
+                    latitudeProperty: 'lat', longitudeProperty: 'lon',
+                    weightProp: 'weight', heuristicScale: {bad}}})
+                YIELD path RETURN path"""
+            try:
+                g.query(query)
+                self.env.assertTrue(False)  # should have raised
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains(msg, str(e))
+
+    def test18_astar_heuristic_scale_semantics(self):
+        # A time-weighted graph where the weight (travel time) is decoupled
+        # from geographic distance, so the raw haversine-meters heuristic
+        # (heuristicScale defaulting to 1) is grossly inadmissible.
+        #
+        #   S -[t=10]-> A -[t=10]-> T   (A sits between S and T -> small h)
+        #   S -[t= 1]-> B -[t= 1]-> T   (B detours north -> larger h)
+        #
+        # The true fastest S->T route is S-B-T (time 2), but with a meters
+        # heuristic A is geographically nearer T, so A* finalizes T via the
+        # slow S-A-T route (time 20) before ever expanding B. Scaling the
+        # heuristic into the weight's (time) units restores optimality; a
+        # scale of 0 disables the heuristic entirely (== Dijkstra).
+        g = self.db.select_graph("astar_heur_scale")
+        g.query("""
+            CREATE (s:AK {id: 0, lat: 0.0,  lon: 0.0}),
+                   (a:AK {id: 1, lat: 0.0,  lon: 0.01}),
+                   (b:AK {id: 2, lat: 0.01, lon: 0.0}),
+                   (t:AK {id: 3, lat: 0.0,  lon: 0.02}),
+                   (s)-[:AE {weight: 10}]->(a),
+                   (a)-[:AE {weight: 10}]->(t),
+                   (s)-[:AE {weight: 1}]->(b),
+                   (b)-[:AE {weight: 1}]->(t)
+        """)
+
+        def astar_weight(extra):
+            r = g.query(f"""
+                MATCH (n:AK {{id: 0}}), (m:AK {{id: 3}})
+                CALL algo.AStar({{sourceNode: n, targetNode: m, weightProp: 'weight',
+                    latitudeProperty: 'lat', longitudeProperty: 'lon'{extra}}})
+                YIELD pathWeight RETURN pathWeight""")
+            return r.result_set[0][0]
+
+        # trusted oracle: Dijkstra -> the true optimum is 2 (S-B-T)
+        dij = g.query("""
+            MATCH (n:AK {id: 0}), (m:AK {id: 3})
+            CALL algo.SPpaths({sourceNode: n, targetNode: m,
+                weightProp: 'weight', pathCount: 1})
+            YIELD pathWeight RETURN pathWeight""").result_set[0][0]
+        self.env.assertAlmostEqual(dij, 2, delta=1e-9)
+
+        # default heuristicScale (== 1): meters heuristic is inadmissible here,
+        # so A* returns the suboptimal S-A-T route (time 20). This documents
+        # the pre-fix behavior and that the default is unchanged.
+        self.env.assertAlmostEqual(astar_weight(""), 20, delta=1e-9)
+        self.env.assertAlmostEqual(astar_weight(", heuristicScale: 1.0"), 20, delta=1e-9)
+
+        # admissible scale (<= min edge weight/length ~= 4e-4 s/m here) and the
+        # heuristic-disabling scale 0 both recover the true optimum.
+        self.env.assertAlmostEqual(astar_weight(", heuristicScale: 0.0001"), 2, delta=1e-9)
+        self.env.assertAlmostEqual(astar_weight(", heuristicScale: 0"), 2, delta=1e-9)
+
+        # the same holds for K-shortest: with an admissible scale A*-Yen must
+        # return the exact same path set/weights as Dijkstra-Yen.
+        def k_ids_weights(call):
+            r = g.query(f"""
+                MATCH (n:AK {{id: 0}}), (m:AK {{id: 3}})
+                {call} YIELD path, pathWeight
+                RETURN [nd IN nodes(path) | nd.id] AS ids, pathWeight""")
+            return sorted((tuple(row[0]), round(row[1], 6)) for row in r.result_set)
+
+        astar_k = k_ids_weights("""CALL algo.AStar({sourceNode: n, targetNode: m,
+            weightProp: 'weight', latitudeProperty: 'lat', longitudeProperty: 'lon',
+            heuristicScale: 0.0001, pathCount: 2})""")
+        sp_k = k_ids_weights("""CALL algo.SPpaths({sourceNode: n, targetNode: m,
+            weightProp: 'weight', pathCount: 2})""")
+        self.env.assertEquals(astar_k, sp_k)
+        # both routes are found (weights 2 and 20)
+        self.env.assertEquals(sorted(w for _, w in astar_k), [2, 20])

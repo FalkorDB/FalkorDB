@@ -9,7 +9,6 @@
 #include "../value.h"
 #include "../util/arr.h"
 #include "../util/dict.h"
-#include "utils/entity_value.h"
 
 #include <float.h>
 
@@ -173,7 +172,7 @@ uint AllWeightedShortestPaths
 					// (u->v) must be tight: d_src(u)+w == d_src(v). exact for
 					// integer weights (see header note). a strictly-greater sum
 					// means this edge isn't on any shortest path to v.
-					SIValue w = _get_value_or_default((GraphEntity *)e,
+					SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)e,
 							weight_prop, SI_LongVal(1));
 					if(d_src_u + SI_GET_NUMERIC(w) != d_src_v) {
 						continue;

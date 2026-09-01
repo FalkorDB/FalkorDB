@@ -69,6 +69,27 @@ bool GraphEntity_GetProperty
 	SIValue *v             // attribute value
 );
 
+// read a numeric attribute from a graph entity, returning 'default_value' when
+// the attribute is absent or not numeric
+static inline SIValue GraphEntity_GetNumericPropertyOrDefault
+(
+	const GraphEntity *ge,
+	AttributeID id,
+	SIValue default_value
+) {
+	SIValue v ;
+
+	if (!GraphEntity_GetProperty (ge, id, &v)) {
+		return default_value ;
+	}
+
+	if (SI_TYPE (v) & SI_NUMERIC) {
+		return v ;
+	}
+
+	return default_value ;
+}
+
 // returns an SIArray of all keys in graph entity properties
 SIValue GraphEntity_Keys
 (
@@ -110,3 +131,4 @@ int GraphEntity_ClearAttributes
 (
 	GraphEntity *e
 );
+
