@@ -314,3 +314,110 @@ class testAggregations():
             self.graph.query("MATCH (n:M) RETURN sum(n.v)").result_set, [[4]])
         self.env.assertEqual(
             self.graph.query("MATCH ()-[r:R]->() RETURN sum(r.w)").result_set, [[2]])
+
+    def test_computed_group_key_matches_a_precomputed_one(self):
+        # A grouping key that is not a bare variable or property used to send
+        # the *whole* aggregate operator down the per-row path — aggregate
+        # inputs losing their bulk extraction along with it. The oracle for the
+        # columnar key is the same key computed in a `WITH`, which reaches the
+        # aggregate as a plain variable and so takes the path that always
+        # existed. The two must agree on values, on grouping, and on order.
+        self.graph.delete()
+        self.graph.query(
+            "UNWIND range(0, 99) AS i CREATE (:K {i: i, s: toString(i % 7)})")
+
+        for key in ["k.i % 5", "k.i / 10", "k.s + '!'", "toUpper(k.s)",
+                    "k.i % 5 + k.i % 3", "abs(k.i - 50)", "[k.i % 4]",
+                    "k.missing", "k.i % 2 = 0"]:
+            direct = self.graph.query(
+                f"MATCH (k:K) RETURN {key} AS g, count(*) AS c ORDER BY c, g").result_set
+            oracle = self.graph.query(
+                f"MATCH (k:K) WITH {key} AS g RETURN g, count(*) AS c ORDER BY c, g").result_set
+            self.env.assertEqual(direct, oracle)
+
+        # Two keys, one of each kind, and an aggregate input that is itself a
+        # computed column: the paths compose or they do not.
+        direct = self.graph.query(
+            "MATCH (k:K) RETURN k.i % 3 AS a, k.s AS b, sum(k.i * 2) AS t ORDER BY a, b").result_set
+        oracle = self.graph.query(
+            "MATCH (k:K) WITH k, k.i % 3 AS a RETURN a, k.s AS b, sum(k.i * 2) AS t ORDER BY a, b").result_set
+        self.env.assertEqual(direct, oracle)
+
+    def test_computed_group_key_keeps_integers_exact(self):
+        # The bulk key extractor deliberately avoids the column classifier's
+        # float lane, because promoting a mixed int/float column would round
+        # 9007199254740993 to 9007199254740992 and merge two distinct groups
+        # into one. The computed-key path has to hold that line too: the float
+        # in this graph is what makes the column mixed.
+        self.graph.delete()
+        self.graph.query(
+            "CREATE (:P {v: 9007199254740993}), (:P {v: 9007199254740992}), (:P {v: 1.5})")
+
+        expected = [[1.5, 1], [9007199254740992, 1], [9007199254740993, 1]]
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (p:P) RETURN p.v + 0 AS k, count(*) ORDER BY k").result_set,
+            expected)
+        # And the two big keys are still integers, not floats that happen to
+        # print without a fraction.
+        types = self.graph.query(
+            "MATCH (p:P) RETURN p.v + 0 AS k, count(*) ORDER BY k").result_set
+        self.env.assertEqual([type(r[0]) for r in types], [float, int, int])
+
+    def test_distinct_over_a_computed_argument(self):
+        # `DISTINCT <expr>` used to be restricted to a bare variable or
+        # property; anything else fell back. Deduplication happens per value
+        # after the column is built, so the shape of the expression that built
+        # it cannot matter — these check that it does not.
+        self.graph.delete()
+        self.graph.query("UNWIND range(0, 99) AS i CREATE (:D {i: i})")
+
+        self.env.assertEqual(
+            self.graph.query("MATCH (d:D) RETURN count(DISTINCT d.i % 10)").result_set,
+            [[10]])
+        self.env.assertEqual(
+            self.graph.query("MATCH (d:D) RETURN size(collect(DISTINCT d.i % 4))").result_set,
+            [[4]])
+        self.env.assertEqual(
+            self.graph.query("MATCH (d:D) RETURN sum(DISTINCT d.i % 3)").result_set,
+            [[3]])
+        # Grouped, so the dedup state is per group and not shared across them.
+        direct = self.graph.query(
+            "MATCH (d:D) RETURN d.i % 2 AS g, count(DISTINCT d.i % 10) AS c ORDER BY g").result_set
+        self.env.assertEqual(direct, [[0, 5], [1, 5]])
+        # Null never accumulates, distinct or not.
+        self.env.assertEqual(
+            self.graph.query("MATCH (d:D) RETURN count(DISTINCT d.missing)").result_set,
+            [[0]])
+
+    def test_multi_argument_aggregation_validates_its_constant(self):
+        # `percentileDisc(x, 0.5)` is the multi-argument shape. Bringing it onto
+        # the columnar path meant carrying the trailing constant through the
+        # accumulate loop, and that loop checked argument *types* but not their
+        # *domain* — so an out-of-range percentile reached a kernel that indexes
+        # by it and crashed the server. These are the cases that crashed.
+        self.graph.delete()
+        self.graph.query("UNWIND range(1, 5) AS i CREATE (:Q {v: i})")
+
+        self.env.assertEqual(
+            self.graph.query("MATCH (q:Q) RETURN percentileDisc(q.v, 0.5)").result_set, [[3]])
+        self.env.assertEqual(
+            self.graph.query("MATCH (q:Q) RETURN percentileCont(q.v, 0.25)").result_set, [[2]])
+        # A computed first argument, and a grouped form.
+        self.env.assertEqual(
+            self.graph.query("MATCH (q:Q) RETURN percentileDisc(q.v * 2, 0.5)").result_set, [[6]])
+        direct = self.graph.query(
+            "MATCH (q:Q) RETURN q.v % 2 AS g, percentileDisc(q.v, 1.0) AS p ORDER BY g").result_set
+        self.env.assertEqual(direct, [[0, 4], [1, 5]])
+
+        for bad, msg in [("1.2", "must be a number in the range 0.0 to 1.0"),
+                         ("-0.5", "must be a number in the range 0.0 to 1.0"),
+                         ("null", "Type mismatch")]:
+            try:
+                self.graph.query(f"MATCH (q:Q) RETURN percentileDisc(q.v, {bad})")
+                self.env.assertTrue(False, depth=1)
+            except Exception as e:
+                self.env.assertContains(msg, str(e))
+        # The server is still there — the point of the domain check.
+        self.env.assertEqual(
+            self.graph.query("MATCH (q:Q) RETURN count(*)").result_set, [[5]])
