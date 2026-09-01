@@ -171,49 +171,53 @@ static void _search
 }
 
 // find the edge realizing arc x -> y: the shortcut if one exists (it always
-// improves on any road edge), otherwise the cheapest road edge. exactly one
-// applies, since a chordal arc is materialized as a shortcut precisely when it
-// beats the road edge there.
-static Edge _best_subedge
+// improves on any road edge), otherwise the cheapest road edge. writes it to
+// '*out' and returns true. normally exactly one applies, since a chordal arc is
+// materialized as a shortcut precisely when it beats the road edge there --
+// returns false only when NEITHER exists, i.e. the shortcut layer is
+// inconsistent with the caller's shortcutRelType (e.g. a middle node that
+// doesn't actually connect here).
+static bool _best_subedge
 (
 	Graph      *g,
 	NodeID      x,
 	NodeID      y,
 	RelationID  shortcutRelID,
-	AttributeID weightAtt
+	AttributeID weightAtt,
+	Edge       *out               // [output] realizing edge (set iff true)
 ) {
 	Edge *tmp = arr_new(Edge, 4);
 
 	Graph_GetEdgesConnectingNodes(g, x, y, shortcutRelID, &tmp);
 	if(arr_len(tmp) > 0) {
-		Edge e = tmp[0];
-		e.relationID = shortcutRelID;
+		*out = tmp[0];
+		out->relationID = shortcutRelID;
 		arr_free(tmp);
-		return e;
+		return true;
 	}
 
 	// cheapest road (non-shortcut) edge
 	arr_clear(tmp);
 	Graph_GetEdgesConnectingNodes(g, x, y, GRAPH_NO_RELATION, &tmp);
-	Edge   best;
 	double bw    = INFINITY;
 	bool   found = false;
 	for(uint32_t i = 0; i < arr_len(tmp); i++) {
 		Edge e = tmp[i];
 		if(e.relationID == shortcutRelID) continue;
 		double w = _edge_weight(g, weightAtt, &e);
-		if(w < bw) { bw = w; best = e; found = true; }
+		if(w < bw) { bw = w; *out = e; found = true; }
 	}
 	arr_free(tmp);
 
-	ASSERT(found && "sub-arc of a shortcut has no realizing edge");
-	return best;
+	return found;
 }
 
 // expand 'e' into road edges, appended in order to 'out'. a shortcut recurses
 // through its middle node (e -> src..mid, mid..dst); a road edge is emitted
-// as-is.
-static void _unpack
+// as-is. returns false if the shortcut layer is inconsistent -- a shortcut with
+// no numeric middleProp, or a sub-arc with no realizing edge -- so the caller
+// can fail loudly instead of building a garbage path.
+static bool _unpack
 (
 	Graph      *g,
 	Edge        e,
@@ -224,20 +228,26 @@ static void _unpack
 ) {
 	if(e.relationID != shortcutRelID) {
 		arr_append(*out, e);           // a genuine road hop
-		return;
+		return true;
 	}
 
 	// shortcut: read its middle node id, then unpack the two halves
 	Graph_GetEdge(g, e.id, &e);        // ensure attributes
 	SIValue mv;
-	bool ok = GraphEntity_GetProperty((GraphEntity *)&e, middleAtt, &mv);
-	ASSERT(ok && (SI_TYPE(mv) & SI_NUMERIC));
+	if(!GraphEntity_GetProperty((GraphEntity *)&e, middleAtt, &mv) ||
+			!(SI_TYPE(mv) & SI_NUMERIC)) {
+		return false;                  // shortcut missing its middle node
+	}
 	NodeID mid = (NodeID)SI_GET_NUMERIC(mv);
 
-	Edge a = _best_subedge(g, e.src_id,  mid,        shortcutRelID, weightAtt);
-	Edge b = _best_subedge(g, mid,       e.dest_id,  shortcutRelID, weightAtt);
-	_unpack(g, a, shortcutRelID, weightAtt, middleAtt, out);
-	_unpack(g, b, shortcutRelID, weightAtt, middleAtt, out);
+	Edge a, b;
+	if(!_best_subedge(g, e.src_id, mid,       shortcutRelID, weightAtt, &a) ||
+	   !_best_subedge(g, mid,      e.dest_id, shortcutRelID, weightAtt, &b)) {
+		return false;                  // a sub-arc has no realizing edge
+	}
+
+	return _unpack(g, a, shortcutRelID, weightAtt, middleAtt, out) &&
+	       _unpack(g, b, shortcutRelID, weightAtt, middleAtt, out);
 }
 
 // free a search's records dict + its SRec values
@@ -435,6 +445,8 @@ static ProcedureResult Proc_CCHQueryInvoke
 		if(tot < best) { best = tot; meet = nid; }
 	}
 
+	ProcedureResult res = PROCEDURE_OK;
+
 	if(meet != (NodeID)INVALID_ENTITY_ID) {
 		// shortcut-level edge sequence src -> ... -> meet -> ... -> dst
 		Edge *hops = arr_new(Edge, 16);
@@ -462,29 +474,44 @@ static ProcedureResult Proc_CCHQueryInvoke
 			cur = r->pred_node;
 		}
 
-		// unpack every hop into road edges
+		// unpack every shortcut hop into its underlying road edges
 		Edge *road = arr_new(Edge, 32);
+		bool ok = true;
 		for(uint32_t i = 0; i < arr_len(hops); i++) {
-			_unpack(g, hops[i], shortcutRelID, weightAtt, middleAtt, &road);
+			if(!_unpack(g, hops[i], shortcutRelID, weightAtt, middleAtt, &road)) {
+				ok = false;
+				break;
+			}
 		}
 		arr_free(hops);
 
-		// build the path: n0 -e0- n1 -e1- ... nK
-		pdata->weight = best;
-		pdata->path   = Path_New(arr_len(road) + 1);
+		if(ok) {
+			// build the path: n0 -e0- n1 -e1- ... nK
+			pdata->weight = best;
+			pdata->path   = Path_New(arr_len(road) + 1);
 
-		Node n0 = GE_NEW_NODE();
-		Graph_GetNode(g, s_id, &n0);
-		Path_AppendNode(pdata->path, n0);
+			Node n0 = GE_NEW_NODE();
+			Graph_GetNode(g, s_id, &n0);
+			Path_AppendNode(pdata->path, n0);
 
-		for(uint32_t i = 0; i < arr_len(road); i++) {
-			Edge e = road[i];
-			Graph_GetEdge(g, e.id, &e);      // populate attributes for the path
-			Path_AppendEdge(pdata->path, e);
+			for(uint32_t i = 0; i < arr_len(road); i++) {
+				Edge e = road[i];
+				Graph_GetEdge(g, e.id, &e);      // populate attributes for the path
+				Path_AppendEdge(pdata->path, e);
 
-			Node nn = GE_NEW_NODE();
-			Graph_GetNode(g, e.dest_id, &nn);
-			Path_AppendNode(pdata->path, nn);
+				Node nn = GE_NEW_NODE();
+				Graph_GetNode(g, e.dest_id, &nn);
+				Path_AppendNode(pdata->path, nn);
+			}
+		} else {
+			// the shortcut layer is inconsistent with the given shortcutRelType/
+			// middleProp (or was tampered with): a shortcut is missing its middle
+			// node, or a sub-arc has no realizing edge. fail loudly rather than
+			// return a garbage path (ASSERT would be a no-op in release builds).
+			ErrorCtx_SetError("algo.CCH.query: inconsistent shortcut layer "
+					"(shortcut missing its middle node, or a sub-arc has no "
+					"realizing edge); rebuild it with algo.CCH");
+			res = PROCEDURE_ERR;
 		}
 		arr_free(road);
 	}
@@ -494,7 +521,7 @@ static ProcedureResult Proc_CCHQueryInvoke
 	HashTableRelease(rankCache);
 	arr_free(rels);
 
-	return PROCEDURE_OK;
+	return res;
 }
 
 static SIValue *Proc_CCHQueryStep(ProcedureCtx *ctx) {

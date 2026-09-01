@@ -296,6 +296,51 @@ class testCCH(FlowTestsBase):
         w = g.ro_query(q).result_set[0][0]
         self.env.assertAlmostEqual(w, 2, delta=1e-9)
 
+    # ---- inconsistent shortcut layer must error, never crash ---------------
+    def test14_corrupt_shortcut_layer_errors_gracefully(self):
+        # a middleProp that SHORTCUT edges don't actually carry makes shortcut
+        # unpacking fail. That path must raise a graceful error (or, when the
+        # reconstruction happens to use only road hops, succeed) -- it must never
+        # crash the server or return garbage. In release builds the old ASSERTs
+        # in _unpack/_best_subedge were no-ops, so this exercises the runtime
+        # validation that replaced them.
+        g = self._reset("cch_corrupt")
+        n, m = 60, 320
+        random.seed(5)
+        g.query(f"UNWIND range(0,{n-1}) AS i CREATE (:N {{v:i}})")
+        best = {}
+        for _ in range(m):
+            u, v = random.randint(0, n - 1), random.randint(0, n - 1)
+            if u != v:
+                best[(u, v)] = min(random.randint(1, 9), best.get((u, v), 999))
+        payload = ",".join(f"[{u},{v},{w}]" for (u, v), w in best.items())
+        g.query(f"UNWIND [{payload}] AS e MATCH (a:N{{v:e[0]}}),(b:N{{v:e[1]}}) "
+                f"CREATE (a)-[:ROAD {{w:e[2]}}]->(b)")
+        g.query(BUILD)
+
+        # 'rank' is a real attribute (on nodes) but SHORTCUT edges don't carry it,
+        # so unpacking any shortcut hop fails its middle-node lookup.
+        graceful = 0
+        random.seed(9)
+        for _ in range(60):
+            s, t = random.randint(0, n - 1), random.randint(0, n - 1)
+            if s == t:
+                continue
+            q = (f"MATCH (a:N{{v:{s}}}),(b:N{{v:{t}}}) CALL algo.CCH.query({{"
+                 f"sourceNode:a, targetNode:b, relTypes:['ROAD'], "
+                 f"shortcutRelType:'SHORTCUT', weightProp:'w', rankProp:'rank', "
+                 f"middleProp:'rank'}}) YIELD pathWeight RETURN pathWeight")
+            try:
+                g.ro_query(q)               # road-only reconstruction is fine
+            except Exception as e:
+                # a crash would surface as a connection error, not this message
+                self.env.assertContains("inconsistent shortcut layer", str(e))
+                graceful += 1
+
+        # at least one pair exercised the error path, and the server is alive
+        self.env.assertTrue(graceful > 0)
+        self.env.assertEquals(g.query("RETURN 1").result_set[0][0], 1)
+
 
 # CCH is a write procedure: running algo.CCH on the master must replicate every
 # modification it makes -- SHORTCUT edges (with weight + middle node) and per-node
