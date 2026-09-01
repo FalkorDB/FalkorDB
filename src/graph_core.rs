@@ -59,7 +59,7 @@ use graph::{
 };
 use orx_tree::{Collection, Dfs, NodeRef};
 use parking_lot::RwLock;
-use redis_module::{Context, ContextFlags, RedisResult, RedisValue, raw};
+use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
     collections::HashMap,
     os::raw::{c_char, c_void},
@@ -75,6 +75,62 @@ use crate::allocator::{
 };
 use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
+
+/// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
+///
+/// This is the whole of C's NUL handling, in one place. C reads both the graph name and
+/// the query text out of a `RedisModuleString` with the length discarded
+/// (`RM_StringPtrLen(x, NULL)`) and treats what it gets as a C string from there on, so
+/// a NUL simply ends the value: the query `RETURN 1\0<anything>` runs as `RETURN 1`, and
+/// a graph addressed as `a\0b` is named `a`. Truncating the same way is what keeps the
+/// two engines answering alike, and it is also what keeps a NUL out of the `CString`
+/// conversions that used to abort the process (#2490).
+#[must_use]
+pub fn up_to_nul(s: &str) -> &str {
+    match s.find('\0') {
+        Some(end) => &s[..end],
+        None => s,
+    }
+}
+
+/// The graph name the C engine would see for `key`: [`up_to_nul`] of its bytes.
+///
+/// C `rm_strdup`s this name into the `GraphContext`, and everything downstream sees only
+/// it — the registry, the `telemetry{%s}` stream name, and every reply that names a
+/// graph or a schema.
+///
+/// Note that this is the *name*, not the key the command addressed: C looks a graph up
+/// by the full key bytes and only rebuilds a key from the name when it creates one.
+/// See [`c_graph_key`].
+#[must_use]
+pub fn c_graph_name(key: &RedisString) -> String {
+    up_to_nul(&key.to_string_lossy()).to_owned()
+}
+
+/// The Redis key C stores a *newly created* graph under: [`c_graph_name`], rebuilt into
+/// a key name. Identical to `key` unless it holds a NUL.
+///
+/// This is `GraphContext_SetKey`, which opens
+/// `RM_CreateString(gc->graph_name, strlen(gc->graph_name))` rather than the key the
+/// command named. C is genuinely asymmetric here — it looks a graph up by the full key
+/// bytes but stores a new one under the truncated name — so a graph asked for as
+/// `a\0b` lands at key `a`, is not found by a later lookup of `a\0b`, and is replaced
+/// by whatever the next create under that name produces. Reproduced deliberately: the
+/// point of this path is that both engines answer the same thing.
+#[must_use]
+pub fn c_graph_key(
+    ctx: &Context,
+    key: &RedisString,
+) -> RedisString {
+    // Built from the bytes, not from `c_graph_name`: a Redis key name is binary and
+    // need not be UTF-8 (`test_binary_key_name_scan_skip` keeps a graph under
+    // `\xc3\x28...`), so rebuilding it through a lossy `String` would replace those
+    // bytes and store the graph under a key nobody can address. Truncation is the only
+    // difference this is allowed to make.
+    let bytes = key.as_slice();
+    let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
+    RedisString::create_from_slice(ctx.get_raw(), &bytes[..end])
+}
 
 /// Global registry of all live graph instances.
 /// Used by the pthread_atfork prepare handler to sync all GraphBLAS matrices
@@ -1080,7 +1136,7 @@ pub fn query_mut(
                             is_write: false,
                             timed_out: read_result.timed_out,
                         };
-                        telemetry::enqueue_entry(&key_name, entry);
+                        telemetry::enqueue_entry(&key_name, &graph, entry);
                         drop(bc);
                         unsafe { ffi::free_thread_safe_context(ctx.ctx) };
                     }
@@ -1177,7 +1233,7 @@ fn query_sync(
                             is_write: true,
                             timed_out: false,
                         };
-                        telemetry::enqueue_entry(key_name, entry);
+                        telemetry::enqueue_entry(key_name, graph, entry);
                     }
                     Err(err) => {
                         // execute_query_write already released the MVCC write
@@ -1205,7 +1261,7 @@ fn query_sync(
                     is_write: false,
                     timed_out: read_result.timed_out,
                 };
-                telemetry::enqueue_entry(key_name, entry);
+                telemetry::enqueue_entry(key_name, graph, entry);
             }
         }
         Err(err) => {
@@ -1460,6 +1516,11 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
         // The session lives only for this block, so its locks are released — the read
         // lock, or the GIL + write lock if the query escalated — on every path out,
         // including the error returns, and before the reply below.
+        //
+        // Plain `begin`: a client sent this write to this instance, so escalation
+        // re-authorizes it against the pause state and role that are live *then* — both
+        // can have changed since it was admitted and queued. Replicated commands never
+        // reach here; they run inline (see `query_mut`).
         let res = execute_query_write(
             QuerySession::begin(graph),
             &ctx,
@@ -1496,7 +1557,7 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
                     is_write: true,
                     timed_out: false,
                 };
-                telemetry::enqueue_entry(&key_name, entry);
+                telemetry::enqueue_entry(&key_name, graph, entry);
                 drop(bc);
             }
             Err(err) => {

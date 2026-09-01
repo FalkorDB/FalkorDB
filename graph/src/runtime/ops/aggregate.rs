@@ -19,24 +19,26 @@
 //!            output one row per group
 //! ```
 //!
-//! When all key and aggregation-input expressions are simple (variable
-//! passthrough or `entity.property`), the operator uses a vectorized path
-//! that extracts values in bulk via [`Runtime::materialize_node_property`]
-//! instead of per-row `run_expr` evaluation.  This includes single-argument
-//! `DISTINCT` aggregations (e.g. `count(DISTINCT n.id)`): the property column
-//! is still extracted in bulk and per-group deduplication is applied during
-//! accumulation.  For other complex expressions it falls back to per-row
-//! evaluation.
+//! Key and aggregation-input expressions are evaluated in bulk: a variable
+//! passthrough or `entity.property` is a single bulk attribute read, and any
+//! other input tree (`sum(n.age * 3)`) goes through
+//! [`VectorEval`](crate::runtime::vector_expr::VectorEval), which evaluates it
+//! column at a time. This includes single-argument `DISTINCT` aggregations
+//! (e.g. `count(DISTINCT n.id)`): the property column is still extracted in
+//! bulk and per-group deduplication is applied during accumulation. Inputs
+//! containing a nested aggregate, and multi-argument aggregations, still fall
+//! back to per-row evaluation.
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
-    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column, NullBitmap},
+    batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow},
     functions::{FnType, GraphFn},
     row::{Row, RowView},
     runtime::Runtime,
     value::{Value, ValuesDeduper},
+    vector_expr::VectorEval,
 };
 use ahash::RandomState;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
@@ -103,17 +105,20 @@ enum KeyExprKind {
 enum AggInputKind {
     /// Simple variable: `sum(x)`
     Variable(Variable),
-    /// Property access: `sum(n.age)`
-    Property { var: Variable, attr: Arc<String> },
-    /// Any other expression: `sum(i * 3)`, `sum(n.age + 1)`, …
+    /// Any other expression, `sum(n.age)` and `sum(i * 3)` alike.
     ///
-    /// The column is built by evaluating the expression once per active row —
-    /// a loop, but confined to materialising this one column. What matters is
-    /// that the rest of the vectorized path is kept: bulk key extraction and
-    /// the columnar accumulate loop. Falling back to `consume_input_per_row`
-    /// instead abandons those too and rebuilds a full owned `Row` per row,
-    /// measured at ~1,320 instructions/row for a single multiply (`sum(i)`
-    /// 620,879 instr vs `sum(i * 3)` 1,948,488, over 1000 rows).
+    /// The column is built by [`VectorEval`], so the whole input tree is
+    /// evaluated column at a time — a bare `n.age` is still one bulk attribute
+    /// fetch — and the rest of the vectorized path (bulk key extraction, the
+    /// columnar accumulate loop) is kept. Falling back to
+    /// `consume_input_per_row` instead abandons those too and rebuilds a full
+    /// owned `Row` per row.
+    ///
+    /// Property access had its own variant until #2555: it read the column
+    /// through a hand-rolled node/relationship lookup that answered `null` for
+    /// every other value, so `collect(row.t)` over map rows silently
+    /// aggregated nothing. The variant is gone rather than fixed — one
+    /// evaluator, nothing left to disagree with.
     Computed {
         tree: QueryExpr<Variable>,
         idx: NodeIdx<Dyn<ExprIR<Variable>>>,
@@ -289,16 +294,13 @@ impl<'a> AggregateOp<'a> {
             let inner = distinct.child(0);
             let input = match inner.data() {
                 ExprIR::Variable(var) => AggInputKind::Variable(var.clone()),
-                ExprIR::Property(attr) => {
-                    if inner.num_children() != 1 {
+                ExprIR::Property(_) if inner.num_children() == 1 => {
+                    if !matches!(inner.child(0).data(), ExprIR::Variable(_)) {
                         return None;
                     }
-                    let ExprIR::Variable(var) = inner.child(0).data() else {
-                        return None;
-                    };
-                    AggInputKind::Property {
-                        var: var.clone(),
-                        attr: attr.clone(),
+                    AggInputKind::Computed {
+                        tree: tree.clone(),
+                        idx: inner.idx(),
                     }
                 }
                 _ => return None,
@@ -320,19 +322,6 @@ impl<'a> AggregateOp<'a> {
             let arg = root.child(0);
             match arg.data() {
                 ExprIR::Variable(var) => Some(AggInputKind::Variable(var.clone())),
-                ExprIR::Property(attr) => {
-                    if arg.num_children() != 1 {
-                        return None;
-                    }
-                    if let ExprIR::Variable(var) = arg.child(0).data() {
-                        Some(AggInputKind::Property {
-                            var: var.clone(),
-                            attr: attr.clone(),
-                        })
-                    } else {
-                        return None;
-                    }
-                }
                 ExprIR::Constant(
                     Value::Bool(true) | Value::Int(_) | Value::Float(_) | Value::String(_),
                 ) if func.name.eq_ignore_ascii_case("count") => {
@@ -427,20 +416,19 @@ impl<'a> AggregateOp<'a> {
             };
 
             // --- Phase 2: Extract aggregation input columns in bulk ---
-            let Ok(agg_input_columns) =
-                Self::extract_agg_input_columns(self.runtime, &batch, &active, &analysis.agg_kinds)
-            else {
-                Self::consume_batch_per_row(
-                    self.runtime,
-                    self.keys,
-                    self.agg,
-                    self.copy_from_parent,
-                    &batch,
-                    &default_acc,
-                    &mut groups,
-                    &mut errors,
-                );
-                continue;
+            let agg_input_columns = match Self::extract_agg_input_columns(
+                self.runtime,
+                &batch,
+                &active,
+                &analysis.agg_kinds,
+            ) {
+                Ok(columns) => columns,
+                // An input expression failed to evaluate: the query fails with
+                // that error, exactly as it would on the per-row path.
+                Err(e) => {
+                    errors.push(e);
+                    break;
+                }
             };
 
             // --- Phase 3: Group rows and accumulate ---
@@ -629,8 +617,11 @@ impl<'a> AggregateOp<'a> {
                 KeyExprKind::Property { var, attr } => {
                     let node_ids = batch.extract_node_ids(var.id).ok_or(())?;
                     let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
-                    let (col, nulls) = runtime.materialize_node_property(&active_ids, attr);
-                    key_columns.push(column_to_values(&col, &nulls, active.len()));
+                    // Unclassified: a grouping key must be the stored value, and
+                    // the classifier's float lane would promote a mixed
+                    // int/float column, merging 9007199254740993 and
+                    // 9007199254740992 into one group.
+                    key_columns.push(runtime.materialize_node_property_values(&active_ids, attr));
                 }
             }
         }
@@ -638,12 +629,18 @@ impl<'a> AggregateOp<'a> {
     }
 
     /// Extracts aggregation input values for all active rows in a batch.
+    ///
+    /// Unlike [`extract_key_columns`](Self::extract_key_columns), which reports
+    /// "this batch cannot take the bulk path" with `Err(())`, every input shape
+    /// is evaluable here — [`VectorEval`] is total. So an `Err` is a genuine
+    /// evaluation error (`Division by zero`) and is returned as such, rather
+    /// than sending the batch down the per-row path only to raise it again.
     fn extract_agg_input_columns(
         runtime: &'a Runtime<'a>,
         batch: &Batch<'a>,
         active: &[usize],
         agg_kinds: &[VectorizableAgg],
-    ) -> Result<Vec<Vec<Value>>, ()> {
+    ) -> Result<Vec<Vec<Value>>, String> {
         let mut agg_columns = Vec::with_capacity(agg_kinds.len());
         for agg in agg_kinds {
             match &agg.input {
@@ -658,58 +655,16 @@ impl<'a> AggregateOp<'a> {
                         .collect();
                     agg_columns.push(col);
                 }
-                Some(AggInputKind::Property { var, attr }) => {
-                    // `sum(r.prop)` over a *relationship* classifies as
-                    // `Property` exactly as a node one does, so both need a bulk
-                    // materializer. Without the relationship arm the batch used
-                    // to fail here and fall to `consume_batch_per_row`, which
-                    // calls `to_owned_row()` per row — a `Vec` of every column,
-                    // for every row. Measured at 1,260 instructions per edge on
-                    // `MATCH ()-[r:R]->() RETURN sum(r.k)`, which is why wrapping
-                    // the same property in any expression (`sum(r.k * 2)`) was
-                    // 40% *cheaper*: that classifies as `Computed` and stays on
-                    // this path.
-                    if let Some(node_ids) = batch.extract_node_ids(var.id) {
-                        let active_ids: Vec<_> = active.iter().map(|&i| node_ids[i]).collect();
-                        let (col, nulls) = runtime.materialize_node_property(&active_ids, attr);
-                        agg_columns.push(column_to_values(&col, &nulls, active.len()));
-                    } else if let Some(rel_ids) = batch.extract_rel_ids(var.id) {
-                        let active_ids: Vec<_> = active.iter().map(|&i| rel_ids[i]).collect();
-                        let (col, nulls) =
-                            runtime.materialize_relationship_property(&active_ids, attr);
-                        agg_columns.push(column_to_values(&col, &nulls, active.len()));
-                    } else {
-                        // Neither a node nor a relationship id column — e.g. a
-                        // `Values` column carrying entities past a `WITH`. Read
-                        // per row rather than failing the batch: one property
-                        // lookup per row is what the expression path pays, and
-                        // far less than an owned row per row.
-                        let mut col = Vec::with_capacity(active.len());
-                        for &row in active {
-                            col.push(match batch.value_at(var.id, row) {
-                                Some(Value::Relationship(rel)) => runtime
-                                    .get_relationship_attribute(rel, attr)
-                                    .unwrap_or(Value::Null),
-                                Some(Value::Node(id)) => {
-                                    runtime.get_node_attribute(id, attr).unwrap_or(Value::Null)
-                                }
-                                _ => Value::Null,
-                            });
-                        }
-                        agg_columns.push(col);
-                    }
-                }
                 Some(AggInputKind::Computed { tree, idx }) => {
-                    // Evaluated against `BatchRow` directly: the per-row path
-                    // calls `to_owned_row()` first, which allocates a `Vec` of
-                    // every column for every row.
-                    let mut col = Vec::with_capacity(active.len());
-                    let eval = ExprEval::from_runtime(runtime);
-                    for &row in active {
-                        let view = BatchRow::new(batch, row);
-                        col.push(eval.eval(tree, *idx, Some(&view), None).map_err(|_| ())?);
-                    }
-                    agg_columns.push(col);
+                    // Evaluated columnarly: `sum(n.age * 3)` costs one bulk
+                    // attribute fetch and one pass per operator, where the
+                    // per-row path re-walked the tree — and re-read the
+                    // property — for every row.
+                    agg_columns.push(VectorEval::new(runtime).eval_values(
+                        &tree.node(*idx),
+                        batch,
+                        active,
+                    )?);
                 }
             }
         }
@@ -1074,37 +1029,6 @@ impl<'a> Iterator for AggregateOp<'a> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Converts a `Column` + `NullBitmap` from `materialize_node_property` into
-/// a `Vec<Value>` for use in grouping and accumulation.
-fn column_to_values(
-    col: &Column,
-    nulls: &NullBitmap,
-    len: usize,
-) -> Vec<Value> {
-    match col {
-        Column::Ints(data) => (0..len)
-            .map(|i| {
-                if nulls.is_null(i) {
-                    Value::Null
-                } else {
-                    Value::Int(data[i])
-                }
-            })
-            .collect(),
-        Column::Floats(data) => (0..len)
-            .map(|i| {
-                if nulls.is_null(i) {
-                    Value::Null
-                } else {
-                    Value::Float(data[i])
-                }
-            })
-            .collect(),
-        Column::Values(data) => data.clone(),
-        _ => vec![Value::Null; len],
-    }
-}
 
 /// Recursively walks an expression tree and unbinds each aggregate function's
 /// accumulator variable from the environment. This mirrors the recursion in

@@ -260,3 +260,57 @@ class testAggregations():
         ]
 
         self.env.assertEqual(res, expected)
+
+    def test_aggregate_over_map_property(self):
+        # Issue #2555: an aggregation whose only argument is a bare one-level
+        # dot access on a *map* aggregated nothing at all — `collect()` gave
+        # `[]`, `count()` gave 0, `sum()` gave 0 — with no error. The bulk
+        # aggregate-input path read the column through its own node/edge
+        # lookup, which answered null for a map; every shape that missed that
+        # path (bracket index, a wrapping function, a grouping key) was fine,
+        # which is what made it so easy to miss.
+        rows = "UNWIND [{t:'a', n:1}, {t:'b', n:2}] AS row"
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN collect(row.t)").result_set, [[['a', 'b']]])
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN count(row.t)").result_set, [[2]])
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN max(row.t)").result_set, [['b']])
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN sum(row.n)").result_set, [[3]])
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN collect(row.t), count(*)").result_set,
+            [[['a', 'b'], 2]])
+        self.env.assertEqual(
+            self.graph.query("WITH {t:'a'} AS row RETURN collect(row.t)").result_set,
+            [[['a']]])
+
+        # The shapes that always worked must keep working: whichever path an
+        # aggregation input takes, it has to agree with the others.
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN collect(row['t'])").result_set, [[['a', 'b']]])
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN collect(toUpper(row.t))").result_set,
+            [[['A', 'B']]])
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN 1 AS k, collect(row.t)").result_set,
+            [[1, ['a', 'b']]])
+        self.env.assertEqual(
+            self.graph.query("UNWIND [{m:{k:'a'}},{m:{k:'b'}}] AS row RETURN collect(row.m.k)").result_set,
+            [[['a', 'b']]])
+        # DISTINCT takes its own analysis branch.
+        self.env.assertEqual(
+            self.graph.query("UNWIND [{t:'a'},{t:'a'},{t:'b'}] AS row RETURN count(DISTINCT row.t)").result_set,
+            [[2]])
+
+        # A missing map key is null, and null does not accumulate.
+        self.env.assertEqual(
+            self.graph.query(f"{rows} RETURN count(row.missing), collect(row.missing)").result_set,
+            [[0, []]])
+
+        # Node and relationship properties still take the bulk path.
+        self.graph.query("CREATE (:M {v: 1})-[:R {w: 2}]->(:M {v: 3})")
+        self.env.assertEqual(
+            self.graph.query("MATCH (n:M) RETURN sum(n.v)").result_set, [[4]])
+        self.env.assertEqual(
+            self.graph.query("MATCH ()-[r:R]->() RETURN sum(r.w)").result_set, [[2]])

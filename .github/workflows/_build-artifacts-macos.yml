@@ -13,10 +13,21 @@ name: Build artifacts macOS (reusable)
 on:
   workflow_call:
     inputs:
-      commit_sha:
-        description: "Commit SHA to check out and build"
+      revision:
+        description: "Git revision (commit SHA) to check out and build"
         required: true
         type: string
+      trusted_revision:
+        description: >-
+          Whether `revision` is already-reviewed code (release tags, the default
+          branch, a maintainer dispatch). Defaults to FALSE — a caller must opt
+          in — so a caller that forwards a pull-request head is untrusted by
+          construction. Untrusted builds never WRITE a cache, which is what keeps
+          a PR build from poisoning the native deps / Rust artefacts a later
+          release build restores.
+        required: false
+        type: boolean
+        default: false
       suffix:
         description: "Asset suffix → falkordb-<suffix>.so"
         required: false
@@ -39,9 +50,17 @@ jobs:
       GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
       GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
     steps:
+      # This job compiles caller-supplied code that may come from a pull request.
+      # `persist-credentials: false` keeps no GITHUB_TOKEN on disk, `permissions`
+      # is read-only, callers pass no secrets, and every cache WRITE below is
+      # gated on `trusted_revision` so an untrusted build cannot seed artefacts
+      # that a later release build restores.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.commit_sha }}
+          # redisearch.sh builds the deps/RediSearch submodule and no longer
+          # clones it, so it must be checked out here.
+          submodules: recursive
+          ref: ${{ inputs.revision }}
           persist-credentials: false
 
       - name: Install Homebrew build deps
@@ -64,10 +83,20 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: "macos-artifact-release"
+          # Untrusted revisions restore the cache but never save it.
+          save-if: ${{ inputs.trusted_revision }}
 
       # Hosted macOS has no Docker toolchain image, so rebuild GraphBLAS +
       # LAGraph + RediSearch from source and cache them (keyed on the build
       # scripts + vendored PreJIT + the exact Homebrew LLVM version).
+      # The RediSearch pin used to ride along in hashFiles('redisearch.sh')
+      # (REDISEARCH_REF lived there). It is now only the submodule gitlink, which
+      # hashFiles cannot see and which hashing the 60MB checkout would be a silly
+      # way to reach -- so read the SHA and put it in the key directly.
+      - name: Resolve the deps/RediSearch pin
+        id: rs-pin
+        run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+
       - name: Restore GraphBLAS + RediSearch native builds
         id: native-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
@@ -75,8 +104,8 @@ jobs:
           path: |
             .deps/graphblas
             lagraph_lib
-            redisearch/RediSearch/bin
-          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-llvm${{ env.BREW_LLVM_VERSION }}
+            deps/RediSearch/bin
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-rs${{ steps.rs-pin.outputs.sha }}-llvm${{ env.BREW_LLVM_VERSION }}
 
       - name: Build GraphBLAS + LAGraph
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -87,13 +116,17 @@ jobs:
         run: ./redisearch.sh
 
       - name: Save GraphBLAS + RediSearch native builds
-        if: steps.native-cache.outputs.cache-hit != 'true'
+        # Only a trusted revision may WRITE this cache. `graphblas.sh` /
+        # `redisearch.sh` come from the checked-out tree, so on a PR build their
+        # output is attacker-controlled and must never be published for a later
+        # release build to restore.
+        if: ${{ inputs.trusted_revision && steps.native-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: |
             .deps/graphblas
             lagraph_lib
-            redisearch/RediSearch/bin
+            deps/RediSearch/bin
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Build libfalkordb.dylib

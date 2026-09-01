@@ -25,9 +25,11 @@
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_THRESHOLD, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
-    TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    EFFECTS_THRESHOLD, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
+    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+    get_thread_count, normalize_node_creation_buffer,
 };
+use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
 use graph::{
@@ -182,6 +184,23 @@ pub fn graph_init(
                     continue;
                 }
                 ctx.log_warning(&format!("Invalid value for {name} module argument"));
+                return Status::Err;
+            }
+            if name == "MAX_INFO_QUERIES" {
+                // Clamped rather than rejected, the same way C's setter caps it
+                // and the same way GRAPH.CONFIG SET does at run-time.
+                if i + 1 < args_str.len()
+                    && let Ok(v) = args_str[i + 1].parse::<i64>()
+                    && v >= 0
+                {
+                    MAX_INFO_QUERIES.store(
+                        v.min(MAX_INFO_QUERIES_CAP),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    i += 2;
+                    continue;
+                }
+                ctx.log_warning("Invalid value for MAX_INFO_QUERIES module argument");
                 return Status::Err;
             }
             if name == "MAX_QUEUED_QUERIES" {
@@ -390,12 +409,15 @@ pub fn graph_init(
 
     // Start the background telemetry flusher: workers enqueue entries
     // lock-free; this thread batches them and writes XADDs under a single
-    // GIL acquisition per batch.
+    // GIL acquisition per batch. `CMD_INFO` needs no publishing step: it is an
+    // atomic that the config registration and `GRAPH.CONFIG SET` both write, so
+    // `enqueue_entry` reads the live value straight off the main thread.
     telemetry::start_flusher_thread();
 
-    // Initialize cached replica state and subscribe to role-change events
-    // so telemetry is suppressed when this instance is a replica (master's
-    // XADDs replicate to us automatically).
+    // Initialize cached replica state and subscribe to role-change events so
+    // telemetry is suppressed when this instance is a replica: a replica must not
+    // create keys of its own, and its stream is the master's, brought over by the
+    // last full resync.
     telemetry::set_is_replica(ctx.get_flags().contains(ContextFlags::SLAVE));
     unsafe {
         let res = RedisModule_SubscribeToServerEvent.unwrap()(
@@ -546,19 +568,32 @@ unsafe extern "C" fn on_keyspace_event(
     let key_ptr =
         unsafe { redis_module::raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut key_len) };
     let key_bytes = unsafe { std::slice::from_raw_parts(key_ptr.cast(), key_len) };
-    let Ok(key_name) = std::str::from_utf8(key_bytes) else {
-        return 0;
-    };
+    // Lossy rather than rejected: a Redis key name is arbitrary bytes, and every other
+    // producer of a registry name converts the same lossy way — `register_graph` off
+    // `RedisString::to_string`, the virtual-key builder and `graph_rdb_save` off
+    // `String::from_utf8_lossy`. Bailing out here left a renamed non-UTF-8 graph
+    // (`test_binary_key_name_scan_skip` keeps one under `\xc3\x28...`) with a stale
+    // registry entry under the key it no longer occupies.
+    let key_name = String::from_utf8_lossy(key_bytes);
 
     match event_str {
         "rename_from" => {
+            // Keys, not names: `GRAPH_REGISTRY` is the module's index of the *keyspace*
+            // — `graph_rdb_save`, the virtual-key builder and the telemetry flusher all
+            // open a Redis key by the name they find there — so a rename has to re-key
+            // it to the key bytes Redis itself now holds. Truncating here left the
+            // registry naming `c` for a graph living at `c\0d`, which reads back as no
+            // graph at all: telemetry dropped its entries and an RDB save persisted the
+            // empty virtual-key placeholders as junk keys.
             *RENAME_OLD_NAME.lock() = Some(key_name.to_string());
         }
         "rename_to" => {
             let old = RENAME_OLD_NAME.lock().take();
             if let Some(old_name) = old {
-                crate::graph_core::rename_graph(&old_name, key_name);
+                rename_graph(&old_name, &key_name);
                 let context = Context::new(ctx);
+                // The stream, in contrast, is named after the *graph*, and
+                // `telemetry::stream_name` truncates to it.
                 telemetry::delete_stream(&context, &old_name);
             }
         }

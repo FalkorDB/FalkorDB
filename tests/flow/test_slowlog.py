@@ -18,9 +18,17 @@ class testSlowLog():
             db = FalkorDB(connection_pool=pool)
             g = db.select_graph(GRAPH_ID)
 
+            # Sized to run an order of magnitude past the slowlog's 10ms floor
+            # (SLOW_LOG_MIN_REQ_LATENCY), the same way test01's own slow query
+            # is. range(0, 250000) used to measure ~11ms, which stopped
+            # qualifying once `WHERE x % i = 0` moved onto the columnar
+            # expression path and the same query dropped to ~4.7ms — the
+            # entries silently stopped being logged and the assertions below
+            # started reading 2 instead of 10. range(0, 2500000) measures
+            # ~47ms.
             tasks = []
             for i in range(1, n):
-                q = f"""UNWIND range(0, 250000) AS x
+                q = f"""UNWIND range(0, 2500000) AS x
                        WITH x
                        WHERE x % {i} = 0
                        RETURN count(x)"""

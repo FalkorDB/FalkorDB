@@ -64,12 +64,22 @@ pub trait Decode<const VERSION: u64>: Sized {
     fn decode(r: &mut dyn Reader) -> Result<Self, String>;
 
     /// Decode `count` entities from the reader into `self`.
+    ///
+    /// `attr_limit` is the length of the graph's attribute dictionary: any
+    /// attribute id at or above it names nothing and must be dropped. It rides on
+    /// the trait rather than on an inherent method so the bound cannot be skipped
+    /// — an earlier revision had `AttributeStore` satisfy this signature by
+    /// assuming `usize::MAX`, which silently disabled the check on two of the
+    /// three load paths, including the multi-key one (every graph large enough to
+    /// be split across virtual keys). Implementors that decode no attributes
+    /// ignore it.
     fn decode_with_count(
         &mut self,
         r: &mut dyn Reader,
         count: u64,
+        attr_limit: usize,
     ) -> Result<(), String> {
-        let _ = (r, count);
+        let _ = (r, count, attr_limit);
         unimplemented!()
     }
 }
@@ -196,6 +206,7 @@ impl Decode<19> for RoaringTreemap {
         &mut self,
         r: &mut dyn Reader,
         count: u64,
+        _attr_limit: usize,
     ) -> Result<(), String> {
         let bytes = r.read_buffer()?;
         let expected_len = count as usize * 8;
