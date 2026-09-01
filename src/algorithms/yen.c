@@ -11,7 +11,6 @@
 #include "../util/heap.h"
 #include "../util/dict.h"
 #include "../util/rmalloc.h"
-#include "utils/entity_value.h"
 
 // a Yen candidate path waiting in the candidate heap
 typedef struct {
@@ -116,7 +115,7 @@ static double _root_weight
 	double w = 0.0;
 
 	for(uint j = 0; j < i; j++) {
-		SIValue v = _get_value_or_default(
+		SIValue v = GraphEntity_GetNumericPropertyOrDefault(
 				(GraphEntity *) Path_GetEdge (prev, j),
 				weight_prop, SI_LongVal(1));
 		w += SI_GET_NUMERIC(v);

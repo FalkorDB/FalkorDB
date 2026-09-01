@@ -128,14 +128,13 @@ static Record ProcCallConsume
 		Proc_Free(op->procedure);
 		op->procedure = Proc_Get(op->proc_name);
 
-		// at the moment the only two procedures that can modify the graph are:
-		// proc_fulltext_create_index
-		// proc_fulltext_drop_index
-		// both perform the modification once invoked without returning any
-		// additional data (consume/step) function
-		// this is why acquiring the write lock as we do below works
-		// we will have to revisit this logic once new "write" procedures are
-		// introduced
+		// write procedures -- those with Procedure_IsReadOnly() == false --
+		// perform ALL of their graph modifications inside Invoke and return only
+		// summary data via Step/Consume, so acquiring the write lock here, once,
+		// before Invoke covers every mutation they make. current write
+		// procedures: db.idx.fulltext.createNodeIndex, db.idx.fulltext.drop and
+		// algo.CCH. a future procedure that instead mutated the graph from
+		// Step/Consume would take this lock too late and require revisiting.
 
 		// lock if procedure can modify the graph
 		if (!Procedure_IsReadOnly (op->procedure)) {
