@@ -87,7 +87,7 @@ jobs:
         #     stack rebuilds the tag for this PR.
         run: |
           set -euo pipefail
-          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|deps/RediSearch|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
+          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
           if [ "$EVENT" = "merge_group" ]; then
             RANGE="HEAD~1 HEAD"
           else
@@ -267,6 +267,12 @@ jobs:
       - name: Lint
         run: |
           CXX=clang++-22 cargo clippy --all-targets
+      - name: Format (native-deps)
+        run: cargo fmt --all --check --manifest-path native-deps/Cargo.toml
+      - name: Lint (native-deps)
+        run: cargo clippy --all-targets --manifest-path native-deps/Cargo.toml
+      - name: deps/native-deps.lock is in step with the gitlinks
+        run: cargo run --offline --manifest-path native-deps/Cargo.toml -- lock --check
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 40

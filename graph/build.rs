@@ -1,24 +1,48 @@
-use std::fs;
+//! Link FalkorDB against its native dependencies.
+//!
+//! Everything about *producing* GraphBLAS, LAGraph and RediSearch lives in the
+//! `native-deps` crate (a path build-dependency, so this is a plain function
+//! call -- no nested cargo, nothing to inherit `RUSTFLAGS` from). This script's
+//! job is narrower: turn the resolved prefixes into `cargo:rustc-link-*`
+//! directives, in the right order, plus two fix-ups that only make sense at
+//! link time.
 
-// Suppress too_many_lines: this build script handles multiple platform/configuration
-// cases and splitting it would reduce clarity.
-#[allow(clippy::too_many_lines)]
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use native_deps::{Dep, Request, Resolved};
+
 fn main() {
-    // libomp linking strategy (same shape on Linux + macOS):
-    //   * if `${LIBOMP_PREFIX:-/opt/libomp}/lib/libomp.a` exists → link static.
-    //     This makes libfalkordb.{so,dylib} self-contained for OpenMP and is
-    //     the path CI/Docker takes (build/libomp.sh installs to /opt/libomp).
-    //   * otherwise → fall back to dynamic `-lomp`, resolved against the
-    //     system search path (apt's libomp-22-dev on Linux, homebrew's
-    //     /opt/homebrew/opt/llvm/lib/libomp.dylib on macOS).
-    // The LIBOMP_PREFIX env var lets local devs point at a non-root install
-    // (e.g. PREFIX=$HOME/libomp ./build/libomp.sh) without needing sudo.
-    let libomp_prefix =
-        std::env::var("LIBOMP_PREFIX").unwrap_or_else(|_| "/opt/libomp".to_string());
-    let libomp_static = std::path::Path::new(&libomp_prefix)
-        .join("lib/libomp.a")
-        .exists();
-    println!("cargo:rustc-link-search={libomp_prefix}/lib");
+    let request = Request::from_env().unwrap_or_else(|e| panic!("native-deps: {e}"));
+
+    for var in Request::env_inputs() {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
+    for path in native_deps::watch_paths(&request.root) {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+
+    let deps = native_deps::ensure(&request).unwrap_or_else(|e| panic!("native-deps: {e}"));
+    for (_, resolved) in deps.iter() {
+        // A key change moves the prefix, so watching the stamp is enough to make
+        // cargo re-run this script whenever a dependency is rebuilt.
+        println!("cargo:rerun-if-changed={}", resolved.stamp_path().display());
+    }
+
+    let graphblas = deps.get(Dep::GraphBlas).expect("graphblas resolved");
+    let lagraph = deps.get(Dep::LaGraph).expect("lagraph resolved");
+    let redisearch = deps.get(Dep::RediSearch).expect("redisearch resolved");
+
+    link_openmp_search_paths();
+    link_graphblas(graphblas, lagraph);
+    link_cxx_and_openssl();
+    link_redisearch(redisearch);
+}
+
+/// Search paths for libomp and the LLVM runtime, emitted before any `-l` so the
+/// linker can resolve whichever OpenMP flavour `native-deps` built against.
+fn link_openmp_search_paths() {
+    println!("cargo:rustc-link-search={}/lib", libomp_prefix());
 
     #[cfg(target_os = "macos")]
     {
@@ -32,21 +56,24 @@ fn main() {
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
     }
+}
 
-    // libgraphblas.a search path. Defaults to /usr/local/lib (what
-    // graphblas.sh installs to). Set GRAPHBLAS_LIB_DIR to point at a
-    // local out-of-tree build directory — used by gen_prejit.sh to
-    // avoid needing sudo for the harvest's intermediate GraphBLAS build.
-    let graphblas_lib_dir =
-        std::env::var("GRAPHBLAS_LIB_DIR").unwrap_or_else(|_| "/usr/local/lib".to_string());
-    println!("cargo:rerun-if-env-changed=GRAPHBLAS_LIB_DIR");
-    println!("cargo:rustc-link-search={graphblas_lib_dir}");
+fn libomp_prefix() -> String {
+    std::env::var("LIBOMP_PREFIX").unwrap_or_else(|_| "/opt/libomp".to_string())
+}
 
-    // LAGraph static libraries
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    let lagraph_dir = std::path::Path::new(&manifest_dir).join("../lagraph_lib");
-    println!("cargo:rustc-link-search=native={}", lagraph_dir.display());
-    println!("cargo:rustc-link-search=native=/data/lagraph_lib");
+fn link_graphblas(
+    graphblas: &Resolved,
+    lagraph: &Resolved,
+) {
+    println!(
+        "cargo:rustc-link-search=native={}",
+        graphblas.lib().display()
+    );
+    println!("cargo:rustc-link-search=native={}", lagraph.lib().display());
+
+    // Link order is load-bearing: GNU ld resolves static archives left-to-right,
+    // so dependents must precede dependencies -- lagraphx -> lagraph -> graphblas.
     println!("cargo:rustc-link-lib=static=lagraphx");
     println!("cargo:rustc-link-lib=static=lagraph");
     println!("cargo:rustc-link-lib=static=graphblas");
@@ -55,12 +82,19 @@ fn main() {
     // left-to-right, and those archives reference __kmpc_* symbols. The wrong
     // order goes unnoticed for the cdylib (shared links tolerate undefined
     // symbols) but breaks test executables with static libomp.
-    if libomp_static {
+    //
+    // Static when `${LIBOMP_PREFIX:-/opt/libomp}/lib/libomp.a` exists -- the path
+    // CI/Docker takes (build/libomp.sh installs there), which makes
+    // libfalkordb.{so,dylib} self-contained for OpenMP. Otherwise dynamic
+    // `-lomp`, resolved against apt's libomp-NN-dev or Homebrew's libomp.
+    if Path::new(&libomp_prefix()).join("lib/libomp.a").exists() {
         println!("cargo:rustc-link-lib=static=omp");
     } else {
         println!("cargo:rustc-link-lib=omp");
     }
+}
 
+fn link_cxx_and_openssl() {
     // VecSim/RediSearch are built with a C++ toolchain.
     // - macOS uses libc++ / libc++abi
     // - Linux generally uses libstdc++ (and does not need explicit c++abi)
@@ -91,110 +125,30 @@ fn main() {
         println!("cargo:rustc-link-lib=ssl");
         println!("cargo:rustc-link-lib=crypto");
     }
+}
 
-    // ---- RediSearch 8.6, embedded as a static library ----
-    // `redisearch.sh` builds the fork (the deps/RediSearch submodule) into
-    // deps/RediSearch/bin/<variant>/search-community. The main archive is
-    // `redisearch.so` (an ar archive despite the suffix); its C/C++ dependencies are
-    // sibling .a files; the Rust crate is a separate libredisearch_rs.a one level up.
-    // Local dev (and the asan Dockerfile, which runs redisearch.sh in-tree)
-    // build into `<repo>/deps/RediSearch/bin`; the Docker toolchain image
-    // (build/Dockerfile) builds into `/data/deps/RediSearch/bin`. Take the
-    // first that exists so the same build.rs works in every environment.
-    // `redisearch/RediSearch` is the pre-submodule layout, kept last so an
-    // existing local checkout still links until it is removed.
-    let rs_bin = [
-        std::path::Path::new(&manifest_dir).join("../deps/RediSearch/bin"),
-        std::path::PathBuf::from("/data/deps/RediSearch/bin"),
-        std::path::Path::new(&manifest_dir).join("../redisearch/RediSearch/bin"),
-        std::path::PathBuf::from("/data/redisearch/RediSearch/bin"),
-    ]
-    .into_iter()
-    .find_map(|p| p.canonicalize().ok().filter(|p| p.is_dir()))
-    .expect("deps/RediSearch/bin missing - run ./redisearch.sh first");
-
-    // The main archive is `redisearch.so` (macOS release) or `redisearch.a`
-    // (Linux / sanitizer `debug-asan`), an ar archive in both cases. The
-    // sanitizer build also emits two variant dirs (e.g. linux-aarch64-debug-asan
-    // and linux-arm64v8-debug-asan), only one of which holds the archive, so
-    // require its presence when picking the search dir.
-    let main_names = ["libredisearch.a", "redisearch.a", "redisearch.so"];
-    // Sort the candidate variant dirs so the choice is deterministic rather than
-    // dependent on `read_dir` traversal order (which could otherwise pick a
-    // different flavor — e.g. release vs debug-asan — across builds).
-    let mut variant_dirs: Vec<std::path::PathBuf> = fs::read_dir(&rs_bin)
-        .unwrap()
-        .flatten()
-        .map(|e| e.path().join("search-community"))
-        .collect();
-    variant_dirs.sort();
-    // Detect whether *this* build is ASAN-instrumented (the asan Dockerfile sets
-    // `-Zsanitizer=address` via RUSTFLAGS / CARGO_TARGET_<triple>_RUSTFLAGS) and
-    // prefer the matching RediSearch flavor, so a normal build never links the
-    // `debug-asan` archive (or vice-versa) when both happen to exist locally.
-    // CI images only ever build one flavor, so this is a no-op there.
-    let asan_build = std::env::vars().any(|(k, v)| {
-        (k == "RUSTFLAGS"
-            || k == "CARGO_ENCODED_RUSTFLAGS"
-            || (k.starts_with("CARGO_TARGET_") && k.ends_with("_RUSTFLAGS")))
-            && v.contains("sanitizer=address")
-    });
-    let pick = |want_asan: bool| {
-        variant_dirs
-            .iter()
-            .find(|p| {
-                p.is_dir()
-                    && main_names.iter().any(|n| p.join(n).exists())
-                    && p.to_string_lossy().contains("asan") == want_asan
-            })
-            .cloned()
-    };
-    let search_dir = pick(asan_build)
-        // Fall back to the other flavor if only it was built.
-        .or_else(|| pick(!asan_build))
-        .expect(
-            "search-community dir with a redisearch archive not found - run ./redisearch.sh first",
-        );
-
-    // Expose the main archive under a lib*.a name so `-l static=redisearch` can
-    // find it. This matters: unlike `cargo:rustc-link-arg`, link-lib/link-search
-    // directives propagate from this (dependency) build script to the dependent
-    // `falkordb` cdylib's final link, where RediSearch symbols are resolved.
-    let main_a = search_dir.join("libredisearch.a");
-    if !main_a.exists() {
-        // `exists()` follows symlinks, so a *broken* `libredisearch.a` symlink
-        // left by a previous build flavor reads as "missing" yet still occupies
-        // the path, making `symlink()` below fail with EEXIST. Clear any stale
-        // entry first (a no-op if the path is genuinely empty) so local rebuilds
-        // across flavors stay deterministic.
-        let _ = fs::remove_file(&main_a);
-        let src = ["redisearch.a", "redisearch.so"]
-            .iter()
-            .map(|n| search_dir.join(n))
-            .find(|p| p.exists())
-            .expect("RediSearch main archive (redisearch.a/.so) not found");
-        std::os::unix::fs::symlink(src, &main_a).expect("failed to create libredisearch.a symlink");
-    }
-
+/// RediSearch 8.6, embedded as a static library.
+///
+/// `native-deps` publishes it under stable names, so there is no variant-dir
+/// scan and no flavour guessing here any more: the sanitizer flavour is a
+/// cache-key input, which means the prefix we were handed is already the right
+/// one.
+fn link_redisearch(redisearch: &Resolved) {
     // Link the main archive FIRST, then the dependency archives. GNU ld resolves
     // static archives left-to-right and won't rescan earlier ones, so the main
-    // `libredisearch.a` — which references symbols defined in its VecSim / C
-    // deps — must precede them. (Redundant archives are otherwise harmless: the
+    // `libredisearch.a` -- which references symbols defined in its VecSim / C
+    // deps -- must precede them. (Redundant archives are otherwise harmless: the
     // linker only pulls members that resolve an undefined symbol.)
-    link_static(&main_a);
-    for archive in find_archives(&search_dir) {
-        if archive != main_a {
-            link_static(&archive);
-        }
+    let main = redisearch.lib().join("libredisearch.a");
+    assert!(
+        main.is_file(),
+        "{} missing - run `native-deps ensure --force --dep redisearch`",
+        main.display()
+    );
+    link_static(&main);
+    for archive in find_archives(&redisearch.lib().join("deps")) {
+        link_static(&archive);
     }
-
-    // RediSearch's Rust crate is a separate archive one level up. The profile
-    // subdir is `release` for a normal build but `debug-asan` (etc.) under a
-    // sanitizer build, so search for it by name rather than hard-coding the path.
-    let rs_rs = find_archives(&rs_bin.join("redisearch_rs"))
-        .into_iter()
-        .find(|p| p.file_name().and_then(|n| n.to_str()) == Some("libredisearch_rs.a"))
-        .expect("libredisearch_rs.a missing under redisearch_rs/ - run ./redisearch.sh first");
 
     // libredisearch_rs.a embeds its own copy of the `redis-module` crate (pulled
     // by rlookup / redis_mock). That crate unconditionally defines linkme
@@ -204,7 +158,7 @@ fn main() {
     // `duplicate #[distributed_slice] with name "COMMANDS_LIST"`. In RediSearch's
     // library build those slices are empty and never iterated, so we strip the
     // linkme sections from a private copy of the archive and link that instead.
-    let patched = strip_linkme_sections(&rs_rs);
+    let patched = strip_linkme_sections(&redisearch.redisearch_rs_archive());
     link_static(&patched);
 }
 
@@ -213,7 +167,12 @@ fn main() {
 /// time. Produce a copy in `OUT_DIR` with every linkme section removed and return
 /// its path. The slices are empty in RediSearch's library build, so dropping them
 /// only removes dead bookkeeping.
-fn strip_linkme_sections(archive: &std::path::Path) -> std::path::PathBuf {
+fn strip_linkme_sections(archive: &Path) -> PathBuf {
+    assert!(
+        archive.is_file(),
+        "{} missing - run `native-deps ensure --force --dep redisearch`",
+        archive.display()
+    );
     println!("cargo:rerun-if-changed={}", archive.display());
 
     let objdump = llvm_tool("LLVM_OBJDUMP", "llvm-objdump");
@@ -241,7 +200,7 @@ fn strip_linkme_sections(archive: &std::path::Path) -> std::path::PathBuf {
     sections.dedup();
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
-    let patched = std::path::Path::new(&out_dir).join("libredisearch_rs.a");
+    let patched = Path::new(&out_dir).join("libredisearch_rs.a");
     fs::copy(archive, &patched).expect("failed to copy libredisearch_rs.a into OUT_DIR");
 
     if sections.is_empty() {
@@ -287,7 +246,7 @@ fn llvm_tool(
     }
     // macOS: Homebrew LLVM.
     let brew = format!("/opt/homebrew/opt/llvm/bin/{bin}");
-    if std::path::Path::new(&brew).exists() {
+    if Path::new(&brew).exists() {
         return brew;
     }
     // Linux toolchain images install versioned binaries via apt.llvm.org
@@ -299,7 +258,7 @@ fn llvm_tool(
         format!("{bin}-21"),
         format!("{bin}-20"),
     ] {
-        if std::path::Path::new(&format!("/usr/bin/{cand}")).exists() {
+        if Path::new(&format!("/usr/bin/{cand}")).exists() {
             return cand;
         }
     }
@@ -308,7 +267,7 @@ fn llvm_tool(
 
 /// Emit link-search + link-lib for a static archive at `archive`, deriving the
 /// `-l` name from its `lib<name>.a` filename.
-fn link_static(archive: &std::path::Path) {
+fn link_static(archive: &Path) {
     let dir = archive.parent().unwrap();
     let stem = archive.file_stem().unwrap().to_str().unwrap();
     let name = stem.strip_prefix("lib").unwrap_or(stem);
@@ -317,7 +276,7 @@ fn link_static(archive: &std::path::Path) {
 }
 
 /// Recursively collect every `.a` archive under `dir`.
-fn find_archives(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+fn find_archives(dir: &Path) -> Vec<PathBuf> {
     let mut archives = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {

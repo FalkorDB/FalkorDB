@@ -53,35 +53,42 @@ RUN LLVMORG_VERSION=$(clang --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head
     CC=clang CXX=clang++ /tmp/libomp.sh "${LLVMORG_VERSION}" && \
     rm -f /tmp/libomp.sh
 
-# GraphBLAS + LAGraph (static) → /usr/local/lib/libgraphblas.a + /data/lagraph_lib
-COPY graphblas.sh /data/graphblas.sh
-COPY build/graphblas /data/build/graphblas
-RUN CC=clang CXX=clang++ LAGRAPH_INSTALL_DIR=/data/lagraph_lib /data/graphblas.sh && \
-    rm -rf /data/graphblas.sh /data/build
+# GraphBLAS + LAGraph + RediSearch, built by the native-deps crate.
+# It owns the recipes AND a content-addressed cache keyed on the submodule
+# revisions, the GB_control patch, the vendored PreJIT kernels, $CC/$CXX and the
+# OpenMP flavour -- so the key computed by `cargo build` below matches what is
+# published here. CC/CXX/LIBOMP_PREFIX are pinned as ENV rather than passed per
+# RUN because they are cache-key inputs: cmake probing a different `cc` would
+# silently produce a different key and rebuild everything.
+#
+# The submodule sources come from the build context, so this needs
+# `submodules: recursive` on actions/checkout. native-deps handles the missing
+# `.git` itself (recipes::ensure_git_root), so no marker directory here.
+# Declared HERE, above the dep build, and exported as ENV so the dep build and
+# the `cargo build` below observe identical values. They are cache-key inputs:
+# if they disagreed, the key computed by graph/build.rs would miss what was just
+# published and rebuild all three deps from source.
+ARG CC=clang
+ARG CXX=clang++
+ENV CC=${CC}
+ENV CXX=${CXX}
+ENV LIBOMP_PREFIX=/opt/libomp
+COPY native-deps           /data/native-deps
+COPY deps/native-deps.lock /data/deps/native-deps.lock
+COPY build/graphblas       /data/build/graphblas
+COPY deps/GraphBLAS        /data/deps/GraphBLAS
+COPY deps/LAGraph          /data/deps/LAGraph
+COPY deps/RediSearch       /data/deps/RediSearch
+RUN cd /data && \
+    cargo run --offline --manifest-path native-deps/Cargo.toml -- ensure --all && \
+    rm -rf /data/native-deps /data/build
 
-# RediSearch (static) → /data/deps/RediSearch/bin
-# Source comes from the deps/RediSearch submodule in the build context (git owns
-# the pin; redisearch.sh only builds). Needs `submodules: recursive` on checkout.
-COPY redisearch.sh /data/redisearch.sh
-COPY deps/RediSearch /data/deps/RediSearch
-# RediSearch's redisearch_rs build scripts find their source root by walking up
-# for a `.git` entry (build_utils::git_root; existence check only, never invokes
-# git). All git metadata is .dockerignore'd, so create an empty marker -- see
-# .dockerignore for why this is a marker rather than the real gitlink.
-RUN mkdir -p /data/deps/RediSearch/.git && \
-    CC=clang CXX=clang++ bash /data/redisearch.sh && \
-    rm -f /data/redisearch.sh
-
-# Build the cdylib from the repo source. Deps resolve via graph/build.rs's
-# absolute fallbacks (/data/lagraph_lib, /data/deps/RediSearch/bin),
-# GRAPHBLAS_LIB_DIR (/usr/local/lib default) and LIBOMP_PREFIX (/opt/libomp).
-ARG CXX
+# Build the cdylib from the repo source. graph/build.rs calls native_deps::ensure(),
+# which recomputes the same keys and hits the entries published above -- no path
+# probing, no GRAPHBLAS_LIB_DIR, no lagraph_lib.
 WORKDIR /src
 COPY . .
-RUN GBDIR="$(dirname "$(find /usr/local /usr /opt -name libgraphblas.a 2>/dev/null | head -1)")" && \
-    test -n "$GBDIR" || { echo "FAIL: libgraphblas.a not found"; exit 1; } && \
-    echo "Using GRAPHBLAS_LIB_DIR=$GBDIR" && \
-    CXX="$CXX" LIBOMP_PREFIX=/opt/libomp GRAPHBLAS_LIB_DIR="$GBDIR" cargo build --release && \
+RUN cargo build --release && \
     mkdir -p /out && cp target/release/libfalkordb.so /out/falkordb.so && \
     echo "=== verify single-.so contract on libfalkordb.so ===" && \
     deps="$(ldd /out/falkordb.so | awk '{print $1}' | sort -u)" && \
