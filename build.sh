@@ -618,10 +618,11 @@ check_dependencies() {
     [[ ! -f "$ONIGURUMA" ]] && MISSING_DEPS+=("oniguruma")
     [[ ! -f "$GKLIB" ]] && MISSING_DEPS+=("gklib")
     [[ ! -f "$METIS" ]] && MISSING_DEPS+=("metis")
-    # FalkorDB needs a native (non-LTO) libmetis.a (see build_metis: LTO'd METIS
-    # both fails the non-LTO link and crashes the LTO release build). If the one
-    # already in place is a stale LTO archive (native marker absent), rebuild it.
-    [[ -f "$METIS" && ! -f "${METIS_BINDIR}/.cch_native" ]] && MISSING_DEPS+=("metis")
+    # FalkorDB needs a portable, non-LTO libmetis.a (see build_metis: LTO'd METIS
+    # fails the non-LTO link and crashes; a -march=native METIS faults cross-CPU
+    # in CI). If the one in place is a stale native/LTO archive (portable marker
+    # absent), rebuild it.
+    [[ -f "$METIS" && ! -f "${METIS_BINDIR}/.cch_portable" ]] && MISSING_DEPS+=("metis")
     # RediSearch is now built by CMake as a subdirectory
 
     if [[ ${#MISSING_DEPS[@]} -gt 0 ]]; then
@@ -1265,12 +1266,18 @@ build_metis() {
     #   * in the LTO release build it miscompiles -- an illegal-instruction crash
     #     (SIGILL) inside METIS's own libmetis__iset, hit on the first METIS call
     #     CCH makes (METIS_SetDefaultOptions from CCH_EliminationOrder).
-    # So build METIS as a plain native archive for every variant. A marker file
-    # (in the build dir that `make config` wipes) records that the archive in
-    # place is the native one.
-    local metis_marker="${METIS_BINDIR}/.cch_native"
+    # Separately, conf/gkbuild.cmake compiles METIS with -march=native on GCC,
+    # baking in the build host's exact CPU instructions; when CI builds and runs
+    # on different CPUs that faults with SIGILL inside METIS_NodeND (seen on
+    # alpine-x64 during algo.CCH). So build METIS as a plain, portable
+    # (-mtune=generic, no -march=native) non-LTO archive for every variant. A
+    # marker file (in the build dir that `make config` wipes) records that the
+    # archive in place is the portable one; the marker name is bumped so a cached
+    # native/LTO archive from an older build.sh is treated as stale.
+    local metis_marker="${METIS_BINDIR}/.cch_portable"
 
-    # reuse only a native archive; a stale LTO one (marker absent) is rebuilt
+    # reuse only a portable archive; a stale native/LTO one (marker absent) is
+    # rebuilt
     if [[ -f "$METIS" && -f "$metis_marker" ]] && [[ "$FORCE" != "1" ]]; then
         return 0
     fi
@@ -1290,6 +1297,18 @@ build_metis() {
         log_info "Disabling METIS LTO (native archive; LTO'd libmetis crashes/links poorly)"
         sed 's/set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)/set(CMAKE_INTERPROCEDURAL_OPTIMIZATION FALSE)/' \
             CMakeLists.txt > CMakeLists.txt.tmp && mv CMakeLists.txt.tmp CMakeLists.txt
+    fi
+
+    # retarget METIS off -march=native (see above) to a portable, cross-arch
+    # tuning so the archive runs on any CPU of this architecture -- -mtune=generic
+    # keeps a tuning hint without locking the instruction set (unlike a hardcoded
+    # -march=x86-64, which would be invalid on aarch64). Restore first
+    # (idempotent); `make config` reconfigures from the patched file.
+    git checkout -- conf/gkbuild.cmake 2>/dev/null || true
+    if grep -q -- "-march=native" conf/gkbuild.cmake; then
+        log_info "Retargeting METIS off -march=native (portable build; native faults cross-CPU in CI)"
+        sed 's/-march=native")/-mtune=generic")/' conf/gkbuild.cmake > conf/gkbuild.cmake.tmp \
+            && mv conf/gkbuild.cmake.tmp conf/gkbuild.cmake
     fi
 
     log_info "Configuring METIS..."
@@ -1312,8 +1331,9 @@ build_metis() {
     touch "$metis_marker"
 
     # leave the submodule source pristine -- the built archive no longer depends
-    # on the (possibly patched) CMakeLists content
+    # on the (possibly patched) CMakeLists / gkbuild.cmake content
     git checkout -- CMakeLists.txt 2>/dev/null || true
+    git checkout -- conf/gkbuild.cmake 2>/dev/null || true
 
     cd "$ROOT"
 
