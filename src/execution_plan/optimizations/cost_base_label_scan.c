@@ -9,9 +9,14 @@
 #include "../ops/op_expand_into.h"
 #include "../ops/op_node_by_label_scan.h"
 #include "../ops/op_conditional_traverse.h"
+#include "../ops/op_cond_var_len_traverse.h"
 #include "../execution_plan_build/execution_plan_util.h"
 #include "../execution_plan_build/execution_plan_modify.h"
 #include "../../arithmetic/algebraic_expression/utils.h"
+
+//------------------------------------------------------------------------------
+// Cost-based label scan optimization for execution plans.
+//------------------------------------------------------------------------------
 
 // this optimization scans through each label-scan operation
 // in case the node being scaned is associated with multiple labels
@@ -273,6 +278,46 @@ static bool _transposeExpression
 	return true;
 }
 
+/**
+ * @brief Extracts algebraic expression from a traversal operation.
+ *
+ * Retrieves the algebraic expression from various traversal operation types
+ * including conditional traverse, expand_into, and variable-length traverse.
+ *
+ * @param op Pointer to the operation base.
+ *
+ * @return Pointer to the algebraic expression, or NULL if not found.
+ */
+static AlgebraicExpression *_TraversalAlgebraicExpression
+(
+	OpBase *op
+) {
+	if(op == NULL) {
+		return NULL;
+	}
+
+	switch(OpBase_Type(op)) {
+		case OPType_CONDITIONAL_TRAVERSE:
+		case OPType_OPTIONAL_CONDITIONAL_TRAVERSE:
+			return ((OpCondTraverse*)op)->ae;
+		case OPType_EXPAND_INTO:
+			return ((OpExpandInto*)op)->ae;
+		case OPType_CONDITIONAL_VAR_LEN_TRAVERSE:
+		case OPType_CONDITIONAL_VAR_LEN_TRAVERSE_EXPAND_INTO:
+			return ((CondVarLenTraverse*)op)->ae;
+		default:
+			return NULL;
+	}
+}
+
+/**
+ * @brief Performs cost-based label scan optimization.
+ *
+ * Scans through each label-scan operation and optimizes by preferring
+ * the label with the least number of nodes when multiple labels are present.
+ *
+ * @param scan Pointer to the node by label scan operation.
+ */
 static void _costBaseLabelScan
 (
 	NodeByLabelScan *scan
@@ -287,24 +332,19 @@ static void _costBaseLabelScan
 	const char *node_alias = n_ctx->alias ;
 
 	// determine the parent traversal op (if any) below filters
-	// (CondTraverse or ExpandInto) - its algebraic expression is the
-	// authoritative source of truth for which labels are in scope on
-	// this scan's alias
+	// its algebraic expression is the authoritative source of truth
+	// for which labels are in scope on this scan's alias
 
 	OpBase *parent = op->parent ;
 	while (parent != NULL && OpBase_Type (parent) == OPType_FILTER) {
 		parent = parent->parent ;
 	}
 
-	OPType t = (parent != NULL) ? OpBase_Type (parent) : OPType_AGGREGATE ;
-	if (t != OPType_CONDITIONAL_TRAVERSE && t != OPType_EXPAND_INTO) {
+	AlgebraicExpression *ae = _TraversalAlgebraicExpression(parent);
+	if (ae == NULL) {
 		// no AE to swap operands on; nothing to do here
 		return ;
 	}
-
-	AlgebraicExpression *ae = (t == OPType_CONDITIONAL_TRAVERSE)
-		? ((OpCondTraverse*) parent)->ae
-		: ((OpExpandInto*)   parent)->ae ;
 
 	// collect operands from the parent AE
 	uint operand_n = 0 ;
