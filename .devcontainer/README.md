@@ -10,7 +10,7 @@ The development container includes:
 - **Redis server** installed via apt
 - **Rust toolchain** with all necessary components
 - **LLVM 21** with clang, clang++, llvm-cov, and llvm-profdata for building and code coverage
-- **GraphBLAS** (v10.5.0), **LAGraph** and **RediSearch** (with vector
+- **GraphBLAS**, **LAGraph** and **RediSearch** (with vector
   similarity support) prebuilt by the `native-deps` crate into its artifact
   cache, so `cargo build` in the container links them without recompiling
 - **Python 3 virtual environment** at `/data/venv` with all test dependencies

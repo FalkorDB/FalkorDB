@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::error::Result;
-use crate::util::{env_opt, host_triple, jobs, version_line};
+use crate::util::{capture_opt, env_opt, host_triple, version_line};
 
 /// How OpenMP gets wired into the cmake builds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,7 +104,6 @@ pub struct Toolchain {
     pub cxx_version: String,
     pub target: String,
     pub openmp: OpenMp,
-    pub jobs: usize,
 }
 
 impl Toolchain {
@@ -122,7 +121,6 @@ impl Toolchain {
             cxx,
             target: host_triple(),
             openmp: detect_openmp(),
-            jobs: jobs(),
         })
     }
 
@@ -156,7 +154,7 @@ fn detect_openmp() -> OpenMp {
         return OpenMp::Static { prefix };
     }
     if cfg!(target_os = "macos")
-        && let Some(brew) = crate::util::capture_opt("brew", &["--prefix", "libomp"])
+        && let Some(brew) = capture_opt("brew", &["--prefix", "libomp"])
     {
         let brew = PathBuf::from(brew.trim());
         if brew.join("lib/libomp.dylib").is_file() {

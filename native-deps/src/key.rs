@@ -17,7 +17,7 @@ use crate::error::Result;
 use crate::lock::LockFile;
 use crate::sha256::sha256_hex;
 use crate::toolchain::Toolchain;
-use crate::util::{hash_file, hash_tree};
+use crate::util::{hash_file, hash_tree, is_prejit_kernel};
 
 /// Hex characters of the SHA-256 digest kept as the key. 64 bits is ample for a
 /// per-developer artifact cache and keeps paths readable.
@@ -125,10 +125,7 @@ impl KeyContext<'_> {
                     "skipped".to_owned()
                 } else {
                     hash_tree(&self.root.join("build/graphblas/PreJIT"), &|p| {
-                        p.extension().is_some_and(|e| e == "c")
-                            && p.file_name()
-                                .and_then(|n| n.to_str())
-                                .is_some_and(|n| n.starts_with("GB_jit_"))
+                        is_prejit_kernel(p)
                     })?
                 };
                 m.set("prejit", prejit);
