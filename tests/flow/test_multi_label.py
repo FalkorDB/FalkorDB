@@ -329,3 +329,47 @@ class testMultiLabel():
         self.env.assertEqual(res.result_set, [])
         res = g.query("MATCH (n:E:F) WHERE n.v > 0 REMOVE n:F WITH n MATCH (m:E:F) WHERE m.v > 0 RETURN m.v")
         self.env.assertEqual(res.result_set, [])
+
+    def test12_label_predicate_column_kernel_matches_per_row(self):
+        """`n:Label` over a bound node column is answered by a column kernel:
+           the label names resolve once for the batch and each row is one bit of
+           the label matrix, instead of materializing a value per row and
+           re-resolving the name inside the function.
+
+           The kernel only claims the shape it recognises — a node column and a
+           list of string constants — and everything else stays on the generic
+           lane. These pin that both lanes give the same answer, over enough
+           rows to span more than one batch."""
+
+        g = self.db.select_graph('label_predicate_kernel')
+        g.query("UNWIND range(1, 3000) AS i CREATE (:A {i: i})")
+        g.query("UNWIND range(1, 1500) AS i CREATE (:A:B {i: i})")
+        g.query("UNWIND range(1, 700) AS i CREATE (:C {i: i})")
+
+        # the fast path: a bound node column, over several batches
+        self.env.assertEqual(g.query("MATCH (n) WHERE n:A RETURN count(n)").result_set, [[4500]])
+        self.env.assertEqual(g.query("MATCH (n) WHERE n:B RETURN count(n)").result_set, [[1500]])
+        self.env.assertEqual(g.query("MATCH (n) WHERE n:A AND n:B RETURN count(n)").result_set, [[1500]])
+        self.env.assertEqual(g.query("MATCH (n) WHERE n:A:B RETURN count(n)").result_set, [[1500]])
+        self.env.assertEqual(g.query("MATCH (n) WHERE NOT n:A RETURN count(n)").result_set, [[700]])
+        self.env.assertEqual(g.query("MATCH (n) WHERE n:A OR n:C RETURN count(n)").result_set, [[5200]])
+
+        # a label the graph never registered is on no node
+        self.env.assertEqual(g.query("MATCH (n) WHERE n:Nope RETURN count(n)").result_set, [[0]])
+        self.env.assertEqual(g.query("MATCH (n) WHERE NOT n:Nope RETURN count(n)").result_set, [[5200]])
+
+        # combined with a property predicate, which takes its own column lane
+        self.env.assertEqual(
+            g.query("MATCH (n) WHERE n:A AND n.i <= 10 RETURN count(n)").result_set, [[20]])
+
+        # the kernel must agree with the projection of the same predicate
+        res = g.query("MATCH (n:A) WHERE n.i = 1 RETURN n:A, n:B, n:C ORDER BY n:B")
+        self.env.assertEqual(res.result_set, [[True, False, False], [True, True, False]])
+
+        # fallback: an unmatched OPTIONAL MATCH leaves a null, not a node column
+        res = g.query("OPTIONAL MATCH (n:Nope) RETURN n:A")
+        self.env.assertEqual(res.result_set, [[None]])
+
+        # fallback: a null node mixed in with real ones stays three-valued
+        res = g.query("MATCH (n:C) WITH n LIMIT 1 OPTIONAL MATCH (m:Nope) RETURN n:C, m:C")
+        self.env.assertEqual(res.result_set, [[True, None]])

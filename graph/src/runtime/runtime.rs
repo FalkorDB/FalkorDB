@@ -38,7 +38,7 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
 use crate::{
-    graph::graph::{Graph, NodeId, RelationshipId},
+    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
@@ -1680,21 +1680,48 @@ impl<'a> Runtime<'a> {
         id: NodeId,
         name: &str,
     ) -> bool {
-        let g = self.g.borrow();
         // A name the graph has never registered is on no node at all, not even
         // one this query just created: `CREATE (:L)` registers `L` before it
         // stages the label. Resolving a known name is a walk over the label
         // names — a handful of entries, no allocation.
-        let Some(label_id) = g.get_label_id(name) else {
+        let Some(label_id) = self.label_id(name) else {
             return false;
         };
+        self.node_has_label_id(id, label_id)
+    }
+
+    /// The registered id for a label name, or `None` when the graph has never
+    /// seen it.
+    ///
+    /// Split out so a caller testing the same label across many rows resolves
+    /// the name once instead of per row — see the `hasLabels` column kernel.
+    #[must_use]
+    pub fn label_id(
+        &self,
+        name: &str,
+    ) -> Option<LabelId> {
+        self.g.borrow().get_label_id(name)
+    }
+
+    /// [`Self::node_has_label`] with the name already resolved.
+    ///
+    /// Same three-way answer in the same order: a node this query deleted
+    /// answers from the labels captured at the delete, a label this query
+    /// staged answers from the staged state, and everything else is one bit of
+    /// the committed label matrix.
+    #[must_use]
+    pub fn node_has_label_id(
+        &self,
+        id: NodeId,
+        label_id: LabelId,
+    ) -> bool {
         if let Some(deleted) = self.deleted_nodes.borrow().get(&id) {
             return deleted.labels.contains(&label_id);
         }
         self.pending
             .borrow()
             .node_has_label(id, label_id)
-            .unwrap_or_else(|| g.node_has_label_id(id, label_id))
+            .unwrap_or_else(|| self.g.borrow().node_has_label_id(id, label_id))
     }
 
     pub fn get_node_attrs(
