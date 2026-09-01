@@ -10,13 +10,11 @@
 //! the `.stamp` so `diff`ing two stamps says exactly which input moved.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use crate::dep::Dep;
 use crate::error::Result;
-use crate::lock::LockFile;
+use crate::recipes::Ctx;
 use crate::sha256::sha256_hex;
-use crate::toolchain::Toolchain;
 use crate::util::{hash_file, hash_tree, is_prejit_kernel};
 
 /// Hex characters of the SHA-256 digest kept as the key. 64 bits is ample for a
@@ -74,18 +72,7 @@ impl Manifest {
 }
 
 /// Everything outside the manifest that the key computation needs.
-pub struct KeyContext<'a> {
-    pub root: &'a Path,
-    pub lock: &'a LockFile,
-    pub toolchain: &'a Toolchain,
-    /// `Some("address")` for a sanitizer build of RediSearch.
-    pub san: Option<&'a str>,
-    /// Harvest mode deliberately produces a GraphBLAS with *no* PreJIT kernels,
-    /// so it must not collide with the shipped one.
-    pub prejit_harvest: bool,
-}
-
-impl KeyContext<'_> {
+impl Ctx<'_> {
     /// Inputs shared by every dep.
     fn common(
         &self,

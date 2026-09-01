@@ -36,7 +36,6 @@ pub use crate::lock::LockFile;
 pub use crate::toolchain::Toolchain;
 
 use crate::cache::BuildLock;
-use crate::key::KeyContext;
 use crate::recipes::Ctx;
 use crate::util::{env_flag, env_opt, find_repo_root, log, now_secs};
 
@@ -171,18 +170,10 @@ pub fn ensure(req: &Request) -> Result<Resolution> {
     let toolchain = Toolchain::detect()?;
     let cache = Cache::discover()?;
 
-    let kctx = KeyContext {
-        root: &req.root,
-        lock: &lock,
-        toolchain: &toolchain,
-        san: req.san.as_deref(),
-        prejit_harvest: req.prejit_harvest,
-    };
     let ctx = Ctx {
         root: &req.root,
         lock: &lock,
         toolchain: &toolchain,
-        cache: &cache,
         san: req.san.as_deref(),
         prejit_harvest: req.prejit_harvest,
     };
@@ -199,16 +190,7 @@ pub fn ensure(req: &Request) -> Result<Resolution> {
         if !wanted.contains(&dep) {
             continue;
         }
-        let graphblas_key = out.0.get(&Dep::GraphBlas).map(|r| r.key.clone());
-        let resolved = resolve_one(
-            req,
-            &ctx,
-            &kctx,
-            &cache,
-            dep,
-            graphblas_key.as_deref(),
-            &out,
-        )?;
+        let resolved = resolve_one(req, &ctx, &cache, dep, &out)?;
         out.0.insert(dep, resolved);
     }
     Ok(out)
@@ -219,7 +201,7 @@ pub fn ensure(req: &Request) -> Result<Resolution> {
 pub fn keys(req: &Request) -> Result<BTreeMap<Dep, String>> {
     let lock = LockFile::load(&req.root)?;
     let toolchain = Toolchain::detect()?;
-    let kctx = KeyContext {
+    let ctx = Ctx {
         root: &req.root,
         lock: &lock,
         toolchain: &toolchain,
@@ -230,7 +212,7 @@ pub fn keys(req: &Request) -> Result<BTreeMap<Dep, String>> {
     let mut out = BTreeMap::new();
     let mut graphblas_key = None;
     for dep in Dep::ALL {
-        let key = kctx.manifest(dep, graphblas_key.as_deref())?.key();
+        let key = ctx.manifest(dep, graphblas_key.as_deref())?.key();
         if dep == Dep::GraphBlas {
             graphblas_key = Some(key.clone());
         }
@@ -244,12 +226,17 @@ pub fn keys(req: &Request) -> Result<BTreeMap<Dep, String>> {
 fn resolve_one(
     req: &Request,
     ctx: &Ctx<'_>,
-    kctx: &KeyContext<'_>,
     cache: &Cache,
     dep: Dep,
-    graphblas_key: Option<&str>,
     resolved_so_far: &Resolution,
 ) -> Result<Resolved> {
+    // LAGraph's key includes GraphBLAS's, and the loop in `ensure` always
+    // resolves GraphBLAS first, so read it back rather than threading it
+    // through as a second, redundant parameter.
+    let graphblas_key = resolved_so_far
+        .0
+        .get(&Dep::GraphBlas)
+        .map(|r| r.key.as_str());
     if let Some(prefix) = override_prefix(dep) {
         log(&format!(
             "{dep}: using override prefix {}",
@@ -259,7 +246,7 @@ fn resolve_one(
         return Ok(Resolved { dep, key, prefix });
     }
 
-    let manifest = kctx.manifest(dep, graphblas_key)?;
+    let manifest = ctx.manifest(dep, graphblas_key)?;
     let key = manifest.key();
 
     if !req.force
