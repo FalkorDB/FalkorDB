@@ -138,7 +138,7 @@ pub fn init(
         //   * Default — GxB_JIT_RUN: mirror the FalkorDB C module
         //     (src/module.c:106). PreJIT kernels statically linked into
         //     libgraphblas.a (vendored from build/graphblas/PreJIT/ by
-        //     graphblas.sh) are used for hot ops; RUN additionally permits
+        //     the native-deps GraphBLAS recipe) are used for hot ops; RUN additionally permits
         //     dlopen of any kernel already present in the on-disk cache,
         //     without any runtime compilation. In the shipped runtime image
         //     the cache is empty and no compiler is installed, so any op
@@ -155,7 +155,7 @@ pub fn init(
         //     a shipped binary. Used exclusively by gen_prejit.sh to
         //     populate ~/.SuiteSparse/GrBx.y.z/c/ with the .c kernel
         //     sources we then check in as the next generation of vendored
-        //     PreJIT (see graphblas.sh harvest mode).
+        //     PreJIT (see gen_prejit.sh harvest mode).
         #[cfg(feature = "prejit_harvest")]
         let (jit_level, jit_name) = (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)");
         #[cfg(not(feature = "prejit_harvest"))]

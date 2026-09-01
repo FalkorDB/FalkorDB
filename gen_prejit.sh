@@ -5,7 +5,7 @@
 #   1. Clears the vendored PreJIT kernel sources (build/graphblas/PreJIT/*.c)
 #      and the SuiteSparse JIT runtime cache (~/.SuiteSparse/GrBx.y.z/).
 #   2. Rebuilds GraphBLAS + falkordb-rs with the JIT engine ENABLED:
-#      - FALKORDB_PREJIT_HARVEST=1 tells graphblas.sh to skip PreJIT
+#      - FALKORDB_PREJIT_HARVEST=1 tells the native-deps GraphBLAS recipe to skip PreJIT
 #        vendoring so the build starts with an empty PreJIT directory.
 #      - `cargo build --features prejit_harvest` selects GxB_JIT_ON in
 #        matrix.rs instead of the default GxB_JIT_RUN. The runtime JIT
@@ -23,7 +23,7 @@
 #   * The rust port starts exercising new GraphBLAS op shapes that aren't
 #     in the vendored PreJIT set (symptom: GxB_JIT_ERROR / generic-only
 #     slowdown on a new query pattern).
-#   * GraphBLAS version is bumped in graphblas.sh.
+#   * the deps/GraphBLAS submodule pin is bumped.
 #
 # HARMONIC HLL KERNELS: the LAGraph HyperLogLog dot4 semiring kernels
 # (GB_jit__AxB_dot4__*__lg_hll_merge_lg_hll_second, plus lg_hll_count /
@@ -56,19 +56,34 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREJIT_DIR="${REPO_DIR}/build/graphblas/PreJIT"
 
 # ---------------------------------------------------------------------------
-# Detect GraphBLAS version (we don't keep a checked-in GraphBLAS source tree,
-# so derive it from graphblas.sh's pinned GRAPHBLAS_VERSION default).
+# Detect GraphBLAS version.
+#
+# Read it from the deps/GraphBLAS submodule, which is now the single source of
+# truth for the pin (there is no graphblas.sh to grep any more). NOTE: v10.5.0
+# renamed these fields from GraphBLAS_VERSION_* to GraphBLAS_VER_*, so accept
+# either rather than silently failing on one side of that bump.
 # ---------------------------------------------------------------------------
-GRAPHBLAS_VERSION="${GRAPHBLAS_VERSION:-$(grep -E '^GRAPHBLAS_VERSION=' "${REPO_DIR}/graphblas.sh" | head -1 | sed -E 's/.*[:-]v([0-9.]+).*/\1/')}"
-[[ -n "${GRAPHBLAS_VERSION}" ]] || { echo "ERROR: could not detect GraphBLAS version" >&2; exit 1; }
+GB_VERSION_CMAKE="${REPO_DIR}/deps/GraphBLAS/cmake_modules/GraphBLAS_version.cmake"
+if [[ -z "${GRAPHBLAS_VERSION:-}" ]]; then
+    [[ -f "${GB_VERSION_CMAKE}" ]] || {
+        echo "ERROR: ${GB_VERSION_CMAKE} not found." >&2
+        echo "       Run: git submodule update --init --recursive deps/GraphBLAS" >&2
+        exit 1
+    }
+    gb_field() {
+        grep -E "^set \( GraphBLAS_(VER|VERSION)_$1 " "${GB_VERSION_CMAKE}" \
+            | head -1 | grep -oE '[0-9]+' | head -1
+    }
+    GRAPHBLAS_VERSION="$(gb_field MAJOR).$(gb_field MINOR).$(gb_field SUB)"
+fi
+[[ "${GRAPHBLAS_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "ERROR: could not detect GraphBLAS version (got '${GRAPHBLAS_VERSION}')" >&2
+    exit 1
+}
 
 # ~/.SuiteSparse uses a single dotted directory: GrB<MAJOR>.<MINOR>.<SUB>.
 SUITESPARSE_GRB="${HOME}/.SuiteSparse/GrB${GRAPHBLAS_VERSION}"
 
-# Use a writable, out-of-tree install prefix so we don't need sudo for the
-# harvest build. graphblas.sh CMAKE_INSTALL_PREFIX + build.rs's
-# GRAPHBLAS_LIB_DIR keep both halves of the build in sync.
-HARVEST_PREFIX="${HARVEST_PREFIX:-${REPO_DIR}/.graphblas-harvest}"
 
 # On macOS, the system /usr/bin/clang doesn't ship OpenMP support. Point
 # CC/CXX at homebrew LLVM if not already set so the GraphBLAS + LAGraph
@@ -127,7 +142,6 @@ echo " Repo root     : ${REPO_DIR}"
 echo " GraphBLAS     : v${GRAPHBLAS_VERSION}"
 echo " Vendored dir  : ${PREJIT_DIR}"
 echo " JIT cache     : ${SUITESPARSE_GRB}"
-echo " Harvest prefix: ${HARVEST_PREFIX}"
 echo "============================================================"
 echo ""
 
@@ -198,29 +212,24 @@ fi
 
 # ---------------------------------------------------------------------------
 # Step 3 – Rebuild GraphBLAS + falkordb-rs in HARVEST mode.
-#            * FALKORDB_PREJIT_HARVEST=1 tells graphblas.sh to skip vendoring
-#              PreJIT *.c (so the GraphBLAS build starts with an empty PreJIT
-#              directory; whatever the JIT engine compiles at runtime is what
-#              we'll capture). graphblas.sh runs outside cargo, so it stays
-#              env-var driven.
 #            * --features prejit_harvest selects GxB_JIT_ON in matrix.rs
 #              (full JIT — cache load AND compile-on-demand) at build time;
 #              a shipped binary without the feature can never enable on-demand
 #              compilation, even if the env var leaks into its process.
 # ---------------------------------------------------------------------------
-echo "[Step 3a] Rebuilding GraphBLAS (HARVEST mode → ${HARVEST_PREFIX})..."
+# FALKORDB_PREJIT_HARVEST=1 makes the native-deps GraphBLAS recipe skip
+# vendoring PreJIT *.c, so the build starts from an empty PreJIT directory and
+# whatever the JIT engine compiles at runtime is what we capture. It is also a
+# cache-key input, so the harvest build gets its own entry and can never
+# clobber the normal one.
 export FALKORDB_PREJIT_HARVEST=1
-export GRAPHBLAS_INSTALL_PREFIX="${HARVEST_PREFIX}"
-export GRAPHBLAS_LIB_DIR="${HARVEST_PREFIX}/lib"
 # RELEASE=1 makes tests/common.py load target/release/libfalkordb.{so,dylib}
-# instead of target/debug. Without this, pytest would load a stale debug
-# .dylib (built against /usr/local/libgraphblas.a, which has the old
-# C-derived PreJIT baked in) and the JIT would rarely fire → empty cache.
+# instead of target/debug, so the JIT actually fires against the harvest build.
 export RELEASE=1
-mkdir -p "${HARVEST_PREFIX}"
-run_with_retry "graphblas.sh" "${REPO_DIR}/graphblas.sh"
 
-echo "[Step 3b] Rebuilding falkordb-rs release (--features prejit_harvest)..."
+# cargo build drives the GraphBLAS build itself (graph/build.rs ->
+# native_deps::ensure()), so there is no separate dep step to run first.
+echo "[Step 3] Rebuilding falkordb-rs release (--features prejit_harvest)..."
 (cd "${REPO_DIR}" && run_with_retry "cargo build" cargo build --release --features prejit_harvest)
 
 # ---------------------------------------------------------------------------
@@ -290,7 +299,7 @@ run_bench_queries
 echo "[Step 5] Harvesting JIT kernels..."
 KERNEL_SRC_DIR="${SUITESPARSE_GRB}/c"
 [[ -d "${KERNEL_SRC_DIR}" ]] || die "JIT kernel source dir not found: ${KERNEL_SRC_DIR}
-Did the JIT actually run? Check FALKORDB_PREJIT_HARVEST is exported (for graphblas.sh)
+Did the JIT actually run? Check FALKORDB_PREJIT_HARVEST is exported
 and the cargo build was invoked with --features prejit_harvest (for matrix.rs)."
 
 KERNEL_COUNT=$(find "${KERNEL_SRC_DIR}" -name 'GB*.c' | wc -l | tr -d ' ')
@@ -313,7 +322,6 @@ echo "[Step 6a] Rebuilding GraphBLAS with vendored PreJIT kernels..."
 # /usr/local would need sudo (interactive prompt on dev machines). Only the
 # harvest-mode flag is dropped so the vendored kernels get baked in.
 unset FALKORDB_PREJIT_HARVEST
-run_with_retry "graphblas.sh (normal)" "${REPO_DIR}/graphblas.sh"
 
 echo "[Step 6b] Rebuilding falkordb-rs release (normal)..."
 (cd "${REPO_DIR}" && run_with_retry "cargo build" cargo build --release)
