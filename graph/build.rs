@@ -29,6 +29,8 @@ fn main() {
         println!("cargo:rerun-if-changed={}", resolved.stamp_path().display());
     }
 
+    assert_sanitizer_agrees(&request);
+
     let graphblas = deps.get(Dep::GraphBlas).expect("graphblas resolved");
     let lagraph = deps.get(Dep::LaGraph).expect("lagraph resolved");
     let redisearch = deps.get(Dep::RediSearch).expect("redisearch resolved");
@@ -41,6 +43,62 @@ fn main() {
 
 /// Search paths for libomp and the LLVM runtime, emitted before any `-l` so the
 /// linker can resolve whichever OpenMP flavour `native-deps` built against.
+/// Cross-check `REDISEARCH_SAN` against the sanitizer the Rust side is actually
+/// being built with.
+///
+/// The sanitizer flavour is a cache-key input rather than something sniffed out
+/// of `RUSTFLAGS`, which is what lets an instrumented and a clean RediSearch
+/// coexist in the cache. The cost of that is a second source of truth: if a
+/// sanitizer build forgets to set `REDISEARCH_SAN`, the key resolves to the
+/// CLEAN archive and links it into an ASAN module -- which produces confusing
+/// interceptor failures at runtime rather than an honest build error.
+///
+/// This does not re-introduce the RUSTFLAGS *guess* it replaced: nothing here
+/// decides anything. It only refuses a combination that is definitely wrong.
+fn assert_sanitizer_agrees(request: &Request) {
+    println!("cargo:rerun-if-env-changed=RUSTFLAGS");
+    println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
+
+    // The flags may arrive three ways, and this repo really does use the third:
+    // build/runtime/Dockerfile.asan sets
+    // `CARGO_TARGET_<TRIPLE>_RUSTFLAGS=-Zsanitizer=address ...` rather than a
+    // plain RUSTFLAGS, so checking only the first two would miss the exact
+    // configuration this guard is for.
+    let mut sources = vec![
+        std::env::var("CARGO_ENCODED_RUSTFLAGS")
+            .map(|v| v.replace('\x1f', " "))
+            .unwrap_or_default(),
+        std::env::var("RUSTFLAGS").unwrap_or_default(),
+    ];
+    if let Ok(target) = std::env::var("TARGET") {
+        let var = format!(
+            "CARGO_TARGET_{}_RUSTFLAGS",
+            target.replace('-', "_").to_uppercase()
+        );
+        println!("cargo:rerun-if-env-changed={var}");
+        sources.push(std::env::var(&var).unwrap_or_default());
+    }
+
+    let rust_san = sources
+        .iter()
+        .flat_map(|f| f.split_whitespace())
+        .find_map(|f| f.strip_prefix("-Zsanitizer="))
+        .map(str::to_owned);
+
+    match (rust_san.as_deref(), request.san.as_deref()) {
+        (Some(rust), None) => panic!(
+            "native-deps: building with -Zsanitizer={rust} but REDISEARCH_SAN is unset, \
+             so the CLEAN RediSearch archive would be linked into an instrumented \
+             module. Set REDISEARCH_SAN={rust}."
+        ),
+        (Some(rust), Some(dep)) if rust != dep => panic!(
+            "native-deps: -Zsanitizer={rust} disagrees with REDISEARCH_SAN={dep}; \
+             the RediSearch archive would not match the module's sanitizer."
+        ),
+        _ => {}
+    }
+}
+
 fn link_openmp_search_paths() {
     println!("cargo:rustc-link-search={}/lib", libomp_prefix());
 

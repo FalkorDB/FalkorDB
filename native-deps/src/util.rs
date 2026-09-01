@@ -304,3 +304,23 @@ pub fn env_opt(name: &str) -> Option<String> {
         .map(|v| v.trim().to_owned())
         .filter(|v| !v.is_empty())
 }
+
+/// Is `path` one of the vendored GraphBLAS PreJIT kernels?
+///
+/// SHARED ON PURPOSE. Two callers must agree on this exactly:
+///   * `key::KeyContext::manifest`, which hashes the kernel set into the
+///     GraphBLAS cache key, and
+///   * `recipes::graphblas::vendor_prejit`, which copies that set into the
+///     source tree before the build.
+///
+/// If the two predicates drifted, the key would stop covering what is actually
+/// baked into libgraphblas.a -- i.e. a stale-ABI cache hit, the exact failure
+/// this cache exists to prevent. One definition makes that drift impossible.
+#[must_use]
+pub fn is_prejit_kernel(path: &Path) -> bool {
+    path.extension().is_some_and(|e| e == "c")
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("GB_jit_"))
+}

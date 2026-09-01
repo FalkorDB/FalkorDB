@@ -52,9 +52,14 @@ pub struct Request {
     pub prejit_harvest: bool,
     /// Rebuild even on a cache hit.
     pub force: bool,
-    /// Turn a cache miss into an actionable error instead of a build. Set in
-    /// the runtime Docker images, where a miss means the prebuilt artifacts
-    /// don't match the sources and we want to hear about it loudly.
+    /// Turn a cache miss into an actionable error instead of a build.
+    ///
+    /// Nothing in this repo sets it: the images deliberately let a miss fall
+    /// through to a rebuild so that editing a recipe inside the toolchain
+    /// container still works. It exists for callers that want the opposite --
+    /// notably a CI step asserting that an image's prebuilt artifacts really do
+    /// match the checked-out sources, where a 12-minute silent rebuild is a bug
+    /// worth failing on rather than absorbing.
     pub offline: bool,
 }
 
@@ -152,7 +157,10 @@ impl Resolution {
 /// Order of preference, per dep:
 ///
 /// 1. `GRAPHBLAS_PREFIX` / `LAGRAPH_PREFIX` / `REDISEARCH_PREFIX` -- used
-///    verbatim, no key check.
+///    verbatim, BYPASSING the key. This is an explicit escape hatch for
+///    supplying a hand-built or distro-packaged artifact; because it skips the
+///    key it cannot detect an ABI mismatch, so taking it logs a warning. It is
+///    opt-in per dep and nothing in this repo sets these.
 /// 2. A read-only prebuilt root from `FALKORDB_NATIVE_DEPS_PREBUILT` holding an
 ///    entry for this exact key (how the Docker images ship prebuilt deps).
 /// 3. The writable cache.
@@ -320,7 +328,18 @@ fn override_prefix(dep: Dep) -> Option<PathBuf> {
         Dep::LaGraph => "LAGRAPH_PREFIX",
         Dep::RediSearch => "REDISEARCH_PREFIX",
     };
-    env_opt(var).map(PathBuf::from)
+    let prefix = env_opt(var).map(PathBuf::from)?;
+    // Taking this path skips the cache key entirely, so nothing here can tell
+    // whether these artifacts were built by the compiler that is about to link
+    // them. Say so out loud: a silent stale-ABI reuse is precisely what the key
+    // exists to prevent, and an escape hatch that is quiet is indistinguishable
+    // from the bug.
+    log(&format!(
+        "WARNING: {var} is set, using {} verbatim -- the cache key is NOT \
+         checked, so an ABI mismatch with $CC/$CXX will not be detected",
+        prefix.display()
+    ));
+    Some(prefix)
 }
 
 fn indent(text: &str) -> String {

@@ -6,7 +6,7 @@ pub mod lagraph;
 pub mod redisearch;
 
 use std::collections::BTreeMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -239,7 +239,7 @@ impl CMake {
             self.build.clone().into(),
         ];
         argv.extend(self.args.iter().map(OsString::from));
-        let refs: Vec<&std::ffi::OsStr> = argv.iter().map(AsRef::as_ref).collect();
+        let refs: Vec<&OsStr> = argv.iter().map(AsRef::as_ref).collect();
         run("cmake", &refs, &self.source, &BTreeMap::new())
     }
 
@@ -251,13 +251,13 @@ impl CMake {
             "-j".into(),
             jobs.into(),
         ];
-        let refs: Vec<&std::ffi::OsStr> = argv.iter().map(AsRef::as_ref).collect();
+        let refs: Vec<&OsStr> = argv.iter().map(AsRef::as_ref).collect();
         run("cmake", &refs, &self.source, &BTreeMap::new())
     }
 
     pub fn install(&self) -> Result<()> {
         let argv: Vec<OsString> = vec!["--install".into(), self.build.clone().into()];
-        let refs: Vec<&std::ffi::OsStr> = argv.iter().map(AsRef::as_ref).collect();
+        let refs: Vec<&OsStr> = argv.iter().map(AsRef::as_ref).collect();
         run("cmake", &refs, &self.source, &BTreeMap::new())
     }
 

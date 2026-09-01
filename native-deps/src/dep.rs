@@ -27,9 +27,9 @@ impl Dep {
 
     pub fn parse(s: &str) -> Result<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "graphblas" | "graph_blas" | "gb" => Ok(Self::GraphBlas),
-            "lagraph" | "la_graph" => Ok(Self::LaGraph),
-            "redisearch" | "rs" | "search" => Ok(Self::RediSearch),
+            "graphblas" => Ok(Self::GraphBlas),
+            "lagraph" => Ok(Self::LaGraph),
+            "redisearch" => Ok(Self::RediSearch),
             other => Err(err!(
                 "unknown dep `{other}` (expected one of: graphblas, lagraph, redisearch)"
             )),

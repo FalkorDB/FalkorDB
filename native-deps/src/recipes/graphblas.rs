@@ -25,7 +25,7 @@ use std::path::Path;
 use crate::err;
 use crate::error::Result;
 use crate::recipes::{CMake, Ctx, SourceGuard, cleanup_build_dir, prepare_entry};
-use crate::util::{copy_file, log, run};
+use crate::util::{copy_file, is_prejit_kernel, log, run};
 
 /// Build GraphBLAS and install it into `entry`, which becomes a cmake prefix
 /// (`include/suitesparse`, `lib/libgraphblas.a`, `lib/cmake/GraphBLAS`).
@@ -114,12 +114,7 @@ fn vendor_prejit(
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| {
-            p.extension().is_some_and(|e| e == "c")
-                && p.file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|n| n.starts_with("GB_jit_"))
-        })
+        .filter(|p| is_prejit_kernel(p))
         .collect();
     kernels.sort();
 

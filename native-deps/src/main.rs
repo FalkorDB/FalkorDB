@@ -9,8 +9,10 @@ use std::process::ExitCode;
 
 use native_deps::key::RECIPE_HASH;
 use native_deps::lock::{self, LOCK_RELPATH, LockFile};
-use native_deps::util::{env_flag, env_opt, find_repo_root};
+use native_deps::sha256::sha256_hex;
+use native_deps::util::{capture, env_flag, env_opt, find_repo_root};
 use native_deps::{Dep, Request, Resolution, Result, ensure, err, keys};
+use std::path::PathBuf;
 
 const USAGE: &str = "\
 native-deps -- build and cache FalkorDB's native dependencies
@@ -117,7 +119,7 @@ fn run() -> Result<()> {
 
 fn request(args: &Args) -> Result<Request> {
     let root = match &args.root {
-        Some(dir) => std::path::PathBuf::from(dir),
+        Some(dir) => PathBuf::from(dir),
         None => find_repo_root(&std::env::current_dir()?)?,
     };
     let deps = if args.deps.is_empty() {
@@ -154,7 +156,7 @@ fn cmd_key(args: &Args) -> Result<()> {
     if args.combined {
         // One hash over every selected dep, for a single CI cache key.
         let joined: String = keys.iter().map(|(d, k)| format!("{d}={k}\n")).collect();
-        let mut digest = native_deps::sha256::sha256_hex(joined.as_bytes());
+        let mut digest = sha256_hex(joined.as_bytes());
         digest.truncate(16);
         println!("{digest}");
         return Ok(());
@@ -176,14 +178,14 @@ fn cmd_key(args: &Args) -> Result<()> {
 
 fn cmd_lock(args: &Args) -> Result<()> {
     let root = match &args.root {
-        Some(dir) => std::path::PathBuf::from(dir),
+        Some(dir) => PathBuf::from(dir),
         None => {
             // `lock` is the one command that can run before the lock file
             // exists, so fall back to the git toplevel.
             let cwd = std::env::current_dir()?;
             find_repo_root(&cwd).or_else(|e| {
-                native_deps::util::capture("git", &["rev-parse", "--show-toplevel"], Some(&cwd))
-                    .map(|t| std::path::PathBuf::from(t.trim()))
+                capture("git", &["rev-parse", "--show-toplevel"], Some(&cwd))
+                    .map(|t| PathBuf::from(t.trim()))
                     .map_err(|_| e)
             })?
         }
@@ -195,7 +197,29 @@ fn cmd_lock(args: &Args) -> Result<()> {
     if args.check {
         let current =
             fs::read_to_string(&path).map_err(|e| err!("cannot read {}: {e}", path.display()))?;
-        if current == generated {
+
+        // Compare the SEMANTIC fields, not the rendered text.
+        //
+        // `pin` is a human-readable tag/branch that `from_git` recovers with
+        // `git describe` run *inside* the submodule, and it is deliberately not
+        // part of the cache key (see lock::Entry::pin). A checkout without
+        // submodules -- which is exactly what the lint job uses, and what any
+        // `--check` really needs -- cannot run that describe, so it falls back
+        // to the short rev. Comparing rendered text would then fail on a
+        // perfectly correct lock file. Only path/url/rev actually bind a build
+        // to a commit, so only those are enforced.
+        let want = LockFile::parse(&generated, &path)?;
+        let have = LockFile::parse(&current, &path)?;
+        let key = |l: &LockFile| -> Vec<(String, String, String, String)> {
+            let mut v: Vec<_> = l
+                .entries
+                .iter()
+                .map(|e| (e.name.clone(), e.path.clone(), e.url.clone(), e.rev.clone()))
+                .collect();
+            v.sort();
+            v
+        };
+        if key(&want) == key(&have) {
             println!("{LOCK_RELPATH} is up to date");
             return Ok(());
         }
