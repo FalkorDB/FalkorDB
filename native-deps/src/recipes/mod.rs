@@ -10,7 +10,6 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cache::Cache;
 use crate::err;
 use crate::error::Result;
 use crate::lock::LockFile;
@@ -22,9 +21,10 @@ pub struct Ctx<'a> {
     pub root: &'a Path,
     pub lock: &'a LockFile,
     pub toolchain: &'a Toolchain,
-    pub cache: &'a Cache,
     /// Sanitizer flavor, e.g. `Some("address")`.
     pub san: Option<&'a str>,
+    /// Harvest mode deliberately produces a GraphBLAS with *no* PreJIT kernels,
+    /// so it must not collide with the shipped one.
     pub prejit_harvest: bool,
 }
 
