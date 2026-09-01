@@ -25,7 +25,7 @@ use crate::{
     entity_type::EntityType,
     graph::graph::{Graph, TypeId},
     index::{IndexType, indexer::IndexOptions},
-    runtime::{runtime::map_to_index_options, value::Value},
+    runtime::{pending::IndexDocs, runtime::map_to_index_options, value::Value},
 };
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
@@ -161,10 +161,9 @@ impl std::fmt::Display for LocalName {
 /// Index bookkeeping that accumulates across a buffer and is committed once.
 #[derive(Default)]
 struct IndexOps {
-    add_docs: FxHashMap<u64, RoaringTreemap>,
-    remove_docs: FxHashMap<u64, RoaringTreemap>,
-    add_edge_docs: FxHashMap<u64, RoaringTreemap>,
-    remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    /// The same type the write path collects into, rather than a second set of
+    /// four maps that has to agree with it by inspection.
+    docs: IndexDocs,
     touched: bool,
     /// The first never-used node id as of **before** this buffer, and the ids
     /// this buffer has created so far.
@@ -214,8 +213,8 @@ pub fn apply_effects(
         apply_record(g, record?, &mut ops)?;
     }
 
-    g.commit_index(&mut ops.add_docs, &mut ops.remove_docs);
-    g.commit_edge_index(&mut ops.add_edge_docs, &mut ops.remove_edge_docs);
+    g.commit_index(&mut ops.docs.node_adds, &mut ops.docs.node_removes);
+    g.commit_edge_index(&mut ops.docs.edge_adds, &mut ops.docs.edge_removes);
     if ops.touched {
         g.populate_indexes_sync();
     }
@@ -281,11 +280,11 @@ fn apply_record(
             let ids = ids.to_vec();
             if !labels.is_empty() {
                 let label_ids = checked_label_ids(g, &labels)?;
-                g.set_node_labels_product(&ids, &label_ids, &mut ops.add_docs, true);
+                g.set_node_labels_product(&ids, &label_ids, &mut ops.docs.node_adds, true);
             }
             if !attr_ids.is_empty() {
                 check_attr_shape(g, &ids, &attr_ids, &rows)?;
-                g.set_nodes_attributes_rows(&ids, &attr_ids, &rows, &mut ops.add_docs)?;
+                g.set_nodes_attributes_rows(&ids, &attr_ids, &rows, &mut ops.docs.node_adds)?;
             }
             Ok(())
         }
@@ -306,7 +305,7 @@ fn apply_record(
 
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                g.set_relationships_attributes(&map, &mut ops.add_edge_docs)?;
+                g.set_relationships_attributes(&map, &mut ops.docs.edge_adds)?;
             }
             Ok(())
         }
@@ -326,13 +325,13 @@ fn apply_record(
             match entity {
                 EntityType::Node => {
                     check_attr_shape(g, &ids, &attr_ids, &rows)?;
-                    g.set_nodes_attributes_rows(&ids, &attr_ids, &rows, &mut ops.add_docs)?;
+                    g.set_nodes_attributes_rows(&ids, &attr_ids, &rows, &mut ops.docs.node_adds)?;
                 }
                 EntityType::Relationship => {
                     // Edges still go through the map form; only the node store
                     // has the row-major entry point so far.
                     let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                    g.set_relationships_attributes(&map, &mut ops.add_edge_docs)?;
+                    g.set_relationships_attributes(&map, &mut ops.docs.edge_adds)?;
                 }
             }
             Ok(())
@@ -341,7 +340,12 @@ fn apply_record(
         Record::Labels { add, ids, labels } => {
             let label_ids = checked_label_ids(g, &labels)?;
             if add {
-                g.set_node_labels_product(&ids.to_vec(), &label_ids, &mut ops.add_docs, false);
+                g.set_node_labels_product(
+                    &ids.to_vec(),
+                    &label_ids,
+                    &mut ops.docs.node_adds,
+                    false,
+                );
             } else {
                 // Removal still takes the expanded pairs; only the add path has
                 // been given the compact form so far.
@@ -353,7 +357,7 @@ fn apply_record(
                         cols.push(lid);
                     }
                 }
-                g.remove_nodes_labels(&rows, &cols, &mut ops.remove_docs);
+                g.remove_nodes_labels(&rows, &cols, &mut ops.docs.node_removes);
             }
             Ok(())
         }
@@ -366,7 +370,7 @@ fn apply_record(
             // range — the one shape that has no vector to hand over.
             let nodes: RoaringTreemap = ids.iter().collect();
             verify_deletable(g, &nodes, ops)?;
-            g.delete_nodes(&nodes, &mut ops.remove_docs)?;
+            g.delete_nodes(&nodes, &mut ops.docs.node_removes)?;
             // Deleting releases the id back to the bin, so a *later* record in
             // this same buffer may legitimately create it again: a multi-commit
             // query (`CREATE (n) WITH n DELETE n WITH 1 AS z CREATE ()`) commits
@@ -379,7 +383,7 @@ fn apply_record(
 
         Record::DeleteEdge { ids, .. } => {
             let edges: RoaringTreemap = ids.iter().collect();
-            g.delete_relationships(&edges, &mut ops.remove_edge_docs)?;
+            g.delete_relationships(&edges, &mut ops.docs.edge_removes)?;
             Ok(())
         }
 

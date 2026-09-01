@@ -26,6 +26,7 @@ use graph::{
     entity_type::EntityType,
     graph::graph::{Graph, TypeId},
     index::IndexType,
+    runtime::pending::{EdgeDocRemovals, IndexDocs},
     runtime::value::Value,
 };
 use parking_lot::RwLock;
@@ -125,11 +126,8 @@ fn apply_effects(
         return Err(format!("unsupported effects version: {version}"));
     }
 
-    let mut index_add_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-    let mut index_remove_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-    let mut index_add_edge_docs: FxHashMap<u64, RoaringTreemap> = FxHashMap::default();
-    let mut index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>> =
-        FxHashMap::default();
+    // The same type the write path and the v3 applier collect into.
+    let mut docs = IndexDocs::default();
     let mut has_index_ops = false;
 
     // Entity effects reference labels, relationship types, and attributes by
@@ -160,13 +158,13 @@ fn apply_effects(
         // effects still take hold in stream order. Only one batch is ever
         // non-empty: starting one flushes the other.
         match effect_type {
-            EFFECT_DELETE_EDGE => flush_del_nodes(g, &mut del_nodes, &mut index_remove_docs)?,
+            EFFECT_DELETE_EDGE => flush_del_nodes(g, &mut del_nodes, &mut docs.node_removes)?,
             EFFECT_DELETE_NODE => {
-                flush_del_edges(g, &mut del_edges, &mut index_remove_edge_docs)?;
+                flush_del_edges(g, &mut del_edges, &mut docs.edge_removes)?;
             }
             _ => {
-                flush_del_edges(g, &mut del_edges, &mut index_remove_edge_docs)?;
-                flush_del_nodes(g, &mut del_nodes, &mut index_remove_docs)?;
+                flush_del_edges(g, &mut del_edges, &mut docs.edge_removes)?;
+                flush_del_nodes(g, &mut del_nodes, &mut docs.node_removes)?;
             }
         }
 
@@ -195,7 +193,7 @@ fn apply_effects(
 
                 // Apply labels
                 if label_count > 0 {
-                    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs, true);
+                    g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.node_adds, true);
                 }
 
                 // Attributes
@@ -204,7 +202,7 @@ fn apply_effects(
                     let attrs = read_attrs(buf, &mut offset, attr_count, node_attr_count)?;
                     let mut attr_map = FxHashMap::default();
                     attr_map.insert(node_id_raw, attrs);
-                    g.set_nodes_attributes(&attr_map, &mut index_add_docs)?;
+                    g.set_nodes_attributes(&attr_map, &mut docs.node_adds)?;
                 }
             }
 
@@ -230,7 +228,7 @@ fn apply_effects(
                     let attrs = read_attrs(buf, &mut offset, attr_count, rel_attr_count)?;
                     let mut attr_map = FxHashMap::default();
                     attr_map.insert(rel_id_raw, attrs);
-                    g.set_relationships_attributes(&attr_map, &mut index_add_edge_docs)?;
+                    g.set_relationships_attributes(&attr_map, &mut docs.edge_adds)?;
                 }
             }
 
@@ -240,7 +238,7 @@ fn apply_effects(
                 let attrs = read_attrs(buf, &mut offset, attr_count, node_attr_count)?;
                 let mut attr_map = FxHashMap::default();
                 attr_map.insert(node_id, attrs);
-                g.set_nodes_attributes(&attr_map, &mut index_add_docs)?;
+                g.set_nodes_attributes(&attr_map, &mut docs.node_adds)?;
             }
 
             EFFECT_UPDATE_EDGE => {
@@ -249,7 +247,7 @@ fn apply_effects(
                 let attrs = read_attrs(buf, &mut offset, attr_count, rel_attr_count)?;
                 let mut attr_map = FxHashMap::default();
                 attr_map.insert(rel_id, attrs);
-                g.set_relationships_attributes(&attr_map, &mut index_add_edge_docs)?;
+                g.set_relationships_attributes(&attr_map, &mut docs.edge_adds)?;
             }
 
             EFFECT_SET_LABELS => {
@@ -265,7 +263,7 @@ fn apply_effects(
                     label_rows.push(node_id);
                     label_cols.push(label_id as u64);
                 }
-                g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut index_add_docs, false);
+                g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.node_adds, false);
             }
 
             EFFECT_REMOVE_LABELS => {
@@ -281,7 +279,7 @@ fn apply_effects(
                     label_rows.push(node_id);
                     label_cols.push(label_id as u64);
                 }
-                g.remove_nodes_labels(&label_rows, &label_cols, &mut index_remove_docs);
+                g.remove_nodes_labels(&label_rows, &label_cols, &mut docs.node_removes);
             }
 
             EFFECT_DELETE_NODE => {
@@ -364,11 +362,11 @@ fn apply_effects(
         }
     }
 
-    flush_del_edges(g, &mut del_edges, &mut index_remove_edge_docs)?;
-    flush_del_nodes(g, &mut del_nodes, &mut index_remove_docs)?;
+    flush_del_edges(g, &mut del_edges, &mut docs.edge_removes)?;
+    flush_del_nodes(g, &mut del_nodes, &mut docs.node_removes)?;
 
-    g.commit_index(&mut index_add_docs, &mut index_remove_docs);
-    g.commit_edge_index(&mut index_add_edge_docs, &mut index_remove_edge_docs);
+    g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
+    g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
 
     if has_index_ops {
         g.populate_indexes_sync();
@@ -381,12 +379,12 @@ fn apply_effects(
 fn flush_del_nodes(
     g: &mut Graph,
     nodes: &mut RoaringTreemap,
-    index_remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    removals: &mut FxHashMap<u64, RoaringTreemap>,
 ) -> Result<(), String> {
     if nodes.is_empty() {
         return Ok(());
     }
-    g.delete_nodes(nodes, index_remove_docs)?;
+    g.delete_nodes(nodes, removals)?;
     nodes.clear();
     Ok(())
 }
@@ -395,12 +393,12 @@ fn flush_del_nodes(
 fn flush_del_edges(
     g: &mut Graph,
     rels: &mut RoaringTreemap,
-    index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    removals: &mut EdgeDocRemovals,
 ) -> Result<(), String> {
     if rels.is_empty() {
         return Ok(());
     }
-    g.delete_relationships(rels, index_remove_edge_docs)?;
+    g.delete_relationships(rels, removals)?;
     rels.clear();
     Ok(())
 }

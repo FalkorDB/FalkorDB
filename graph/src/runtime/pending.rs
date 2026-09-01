@@ -24,7 +24,7 @@
 //!
 //! On error or ROLLBACK, the Pending is simply dropped without applying.
 
-use std::{cell::RefCell, ops::BitOrAssign, sync::Arc};
+use std::{cell::RefCell, sync::Arc};
 
 use rustc_hash::FxHashMap;
 
@@ -155,24 +155,12 @@ pub struct Pending {
     pub(crate) set_labels: FxHashMap<u64, Vec<u64>>,
     /// Labels to remove: node_id → [label_ids]
     pub(crate) remove_labels: FxHashMap<u64, Vec<u64>>,
-    /// Documents to add to indexes (keyed by label id)
-    pub(crate) index_add_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Documents to remove from indexes (keyed by label id)
-    pub(crate) index_remove_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to add to indexes (keyed by relationship type id)
-    pub(crate) index_add_edge_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to remove from indexes: `type_id → { edge_id → (src, dst) }`.
-    /// `(src, dst)` is captured at deletion time — the edge is gone
-    /// from the tensor by the time `commit_edge_index` runs so the
-    /// 24-byte RediSearch key must be reconstructable from here.
-    pub(crate) index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    /// Deferred index operations — accumulated across commit cycles,
-    /// applied only after the full query succeeds so that a failed
-    /// query never leaves stale entries in RediSearch.
-    pub(crate) deferred_index_adds: FxHashMap<u64, RoaringTreemap>,
-    pub(crate) deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
-    pub(crate) deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
-    pub(crate) deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    /// Index documents this `Commit` produced.
+    pub(crate) index_docs: IndexDocs,
+    /// Index documents accumulated across the query's commits, applied only
+    /// once the whole query succeeds so a failed one never leaves stale
+    /// entries in RediSearch.
+    pub(crate) deferred_docs: IndexDocs,
     /// Union of every index document this query has published, accumulated across
     /// all of its `Commit`s, so a later failure can resync them against committed
     /// state (see [`Self::resync_published_indexes`]).
@@ -180,7 +168,7 @@ pub struct Pending {
     /// Deliberately **not** reset by [`Self::clear`], which runs after every
     /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
     /// Per-query state — `Pending` belongs to one `Runtime`.
-    published: DeferredIndexes,
+    published: IndexDocs,
     /// Schema baseline: number of labels when the current commit window started.
     pub(crate) schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
@@ -191,17 +179,68 @@ pub struct Pending {
     pub(crate) schema_rel_attr_count: usize,
 }
 
-/// One `Commit`'s index document changes, collected while applying `pending` and
-/// written to RediSearch as a batch.
+/// Edge documents to remove, keyed by relationship type: `type_id -> { edge_id
+/// -> (src, dst) }`.
+///
+/// The endpoints ride along because they are captured at deletion time — the
+/// edge is gone from the tensor by the time the 24-byte RediSearch key has to
+/// be rebuilt, so they cannot be looked up again.
+pub type EdgeDocRemovals = FxHashMap<u64, FxHashMap<u64, (u64, u64)>>;
+
+/// The index documents a unit of work produced, in both directions and for
+/// both entity kinds.
+///
+/// One type rather than four parallel maps, and used for both the per-commit
+/// set and the deferred one it folds into. They have to stay in
+/// correspondence — a document added to the wrong half is a stale RediSearch
+/// entry that nothing later notices — and four loose fields on `Pending` made
+/// that the caller's job at every site.
 #[derive(Default)]
-pub struct DeferredIndexes {
-    pub(crate) node_adds: FxHashMap<u64, RoaringTreemap>,
-    pub(crate) node_removes: FxHashMap<u64, RoaringTreemap>,
-    pub(crate) edge_adds: FxHashMap<u64, RoaringTreemap>,
-    pub(crate) edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+pub struct IndexDocs {
+    /// Node documents to add, keyed by label id.
+    pub node_adds: FxHashMap<u64, RoaringTreemap>,
+    /// Node documents to remove, keyed by label id.
+    pub node_removes: FxHashMap<u64, RoaringTreemap>,
+    /// Edge documents to add, keyed by relationship type id.
+    pub edge_adds: FxHashMap<u64, RoaringTreemap>,
+    /// Edge documents to remove — see [`EdgeDocRemovals`].
+    pub edge_removes: EdgeDocRemovals,
 }
 
-impl DeferredIndexes {
+impl IndexDocs {
+    /// True when nothing was produced, so a caller can skip the work of
+    /// publishing an empty set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.node_adds.is_empty()
+            && self.node_removes.is_empty()
+            && self.edge_adds.is_empty()
+            && self.edge_removes.is_empty()
+    }
+
+    /// Fold `other` in, leaving it empty.
+    ///
+    /// Replaces four hand-written loops that folded a commit's documents into
+    /// the query's deferred set — one per map, each a chance to fold the wrong
+    /// pair together.
+    pub fn absorb(
+        &mut self,
+        other: &mut Self,
+    ) {
+        for (slot, ids) in other.node_adds.drain() {
+            *self.node_adds.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.node_removes.drain() {
+            *self.node_removes.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.edge_adds.drain() {
+            *self.edge_adds.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.edge_removes.drain() {
+            self.edge_removes.entry(slot).or_default().extend(ids);
+        }
+    }
+
     /// Fold `other` in, for accumulating everything one query published.
     fn merge(
         &mut self,
@@ -285,15 +324,9 @@ impl Pending {
             existing_relationships_attrs: FxHashMap::default(),
             set_labels: FxHashMap::default(),
             remove_labels: FxHashMap::default(),
-            index_add_docs: FxHashMap::default(),
-            index_remove_docs: FxHashMap::default(),
-            index_add_edge_docs: FxHashMap::default(),
-            index_remove_edge_docs: FxHashMap::default(),
-            published: DeferredIndexes::default(),
-            deferred_index_adds: FxHashMap::default(),
-            deferred_index_removes: FxHashMap::default(),
-            deferred_edge_index_adds: FxHashMap::default(),
-            deferred_edge_index_removes: FxHashMap::default(),
+            index_docs: IndexDocs::default(),
+            published: IndexDocs::default(),
+            deferred_docs: IndexDocs::default(),
             schema_label_count: 0,
             schema_rel_type_count: 0,
             schema_node_attr_count: 0,
@@ -965,14 +998,18 @@ impl Pending {
                 .set_labels
                 .keys()
                 .all(|id| self.created_nodes.contains(*id));
-            g.borrow_mut()
-                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_add_docs, all_new);
+            g.borrow_mut().set_nodes_labels_bulk(
+                &rows,
+                &cols,
+                &mut self.index_docs.node_adds,
+                all_new,
+            );
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
             g.borrow_mut()
-                .remove_nodes_labels(&rows, &cols, &mut self.index_remove_docs);
+                .remove_nodes_labels(&rows, &cols, &mut self.index_docs.node_removes);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
             let mut g = g.borrow_mut();
@@ -980,13 +1017,15 @@ impl Pending {
                 let nset = g.import_node_attrs(
                     &self.new_nodes_attrs,
                     &self.set_labels,
-                    &mut self.index_add_docs,
+                    &mut self.index_docs.node_adds,
                 );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_nodes_attrs.is_empty() {
-                let (nremoved, nset) =
-                    g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_add_docs)?;
+                let (nremoved, nset) = g.set_nodes_attributes(
+                    &self.existing_nodes_attrs,
+                    &mut self.index_docs.node_adds,
+                )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
                 s.properties_removed += nremoved;
@@ -999,14 +1038,14 @@ impl Pending {
             if !self.new_relationships_attrs.is_empty() {
                 let nset = g.import_relationship_attrs(
                     &self.new_relationships_attrs,
-                    &mut self.index_add_edge_docs,
+                    &mut self.index_docs.edge_adds,
                 );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
                 let (nremoved, nset) = g.set_relationships_attributes(
                     &self.existing_relationships_attrs,
-                    &mut self.index_add_edge_docs,
+                    &mut self.index_docs.edge_adds,
                 )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
@@ -1017,7 +1056,7 @@ impl Pending {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             self.deleted_node_labels = g
                 .borrow_mut()
-                .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
+                .delete_nodes(&self.deleted_nodes, &mut self.index_docs.node_removes)?;
         }
         // Take relationship deletions BEFORE implicit edge processing
         // so we can pass them to delete_implicit_edges for dedup.
@@ -1031,7 +1070,7 @@ impl Pending {
             let implicit_edges = g.borrow_mut().delete_implicit_edges(
                 &self.deleted_nodes,
                 &explicit_rels,
-                &mut self.index_remove_edge_docs,
+                &mut self.index_docs.edge_removes,
             )?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
@@ -1044,7 +1083,7 @@ impl Pending {
         if !explicit_rels.is_empty() {
             let endpoints = g
                 .borrow_mut()
-                .delete_relationships(&explicit_rels, &mut self.index_remove_edge_docs)?;
+                .delete_relationships(&explicit_rels, &mut self.index_docs.edge_removes)?;
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.
             stats.borrow_mut().relationships_deleted += endpoints.len();
@@ -1062,31 +1101,8 @@ impl Pending {
         // the full query succeeds to avoid stale RediSearch entries on
         // rollback.
 
-        // Accumulate index operations into deferred fields.
-        for (k, v) in self.index_add_docs.drain() {
-            self.deferred_index_adds
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_remove_docs.drain() {
-            self.deferred_index_removes
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_add_edge_docs.drain() {
-            self.deferred_edge_index_adds
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_remove_edge_docs.drain() {
-            self.deferred_edge_index_removes
-                .entry(k)
-                .or_default()
-                .extend(v);
-        }
+        // Accumulate this commit's documents into the query's deferred set.
+        self.deferred_docs.absorb(&mut self.index_docs);
 
         Ok(())
     }
@@ -1326,13 +1342,8 @@ impl Pending {
     }
 
     /// Take the accumulated index document changes, leaving pending empty.
-    pub fn take_deferred_indexes(&mut self) -> DeferredIndexes {
-        DeferredIndexes {
-            node_adds: std::mem::take(&mut self.deferred_index_adds),
-            node_removes: std::mem::take(&mut self.deferred_index_removes),
-            edge_adds: std::mem::take(&mut self.deferred_edge_index_adds),
-            edge_removes: std::mem::take(&mut self.deferred_edge_index_removes),
-        }
+    pub fn take_deferred_indexes(&mut self) -> IndexDocs {
+        std::mem::take(&mut self.deferred_docs)
     }
 
     /// Undo the index documents earlier `Commit`s published, after this query
@@ -1464,10 +1475,10 @@ impl Pending {
         self.deleted_relationships.clear();
         self.deleted_endpoints.clear();
         self.deleted_node_labels.clear();
-        self.index_add_docs.clear();
-        self.index_remove_docs.clear();
-        self.index_add_edge_docs.clear();
-        self.index_remove_edge_docs.clear();
+        self.index_docs.node_adds.clear();
+        self.index_docs.node_removes.clear();
+        self.index_docs.edge_adds.clear();
+        self.index_docs.edge_removes.clear();
     }
 
     /// Returns the number of effects (operations) tracked in this Pending.

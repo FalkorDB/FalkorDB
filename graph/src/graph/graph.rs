@@ -246,13 +246,6 @@ pub struct MemoryUsageReport {
 ///
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
-/// Sentinel for an empty/deleted slot in [`Graph::edge_endpoints`].
-///
-/// Equals `compound_key(u32::MAX, u32::MAX)`, which would only collide with a
-/// real edge whose endpoints are both node id `u32::MAX` (4.29 billion) — not
-/// reachable in practice, since the tensor compound key caps node ids at u32.
-const EDGE_NO_ENDPOINT: u64 = u64::MAX;
-
 /// A relationship removed by [`Graph::delete_relationships`] or
 /// [`Graph::delete_implicit_edges`]: its id, **its type**, and its endpoints.
 ///
