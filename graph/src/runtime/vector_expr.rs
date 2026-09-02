@@ -563,6 +563,47 @@ impl<'a> VectorEval<'a> {
             columns.push(self.eval(&child, batch, rows)?);
         }
 
+        // Every argument one value shared by the whole batch means the answer
+        // is one value too — call the function once and hand back a `Scalar`
+        // rather than the same call `len` times into a materialized column.
+        //
+        // This composes, which is the point. In
+        // `split(replace(trim('  a,b,c  '), ',', ';'), ';')` the literal is a
+        // `Scalar`, so `trim` returns one, so `replace` sees a `Scalar` and
+        // returns one, and `split` likewise: the whole chain collapses to three
+        // calls per batch from three per row. Measured on the
+        // `split+trim+replace` benchmark row, 100 rows of exactly that:
+        // 3,578 instructions per row in `split` alone before this.
+        //
+        // Three guards, and only the first is load-bearing today.
+        //
+        // Requiring an argument is what actually keeps `rand()` and
+        // `randomUUID()` per row: they take none, so there would be nothing
+        // here to prove them constant from, and folding would hand every row
+        // in the batch one draw.
+        //
+        // `non_deterministic` is belt and braces on top of that. Every volatile
+        // function in the registry is zero-argument or is flagged only for its
+        // zero-argument "now" form — `date('2020-01-01')` answers the same
+        // thing however often it is asked — so removing this check changes no
+        // result today. It is here so that a volatile function which does take
+        // an argument (a seeded `rand`, a `now(tz)`) cannot be added later and
+        // silently start folding.
+        //
+        // The empty-batch check is the same kind of guard: operators drop empty
+        // batches before reaching this, so a call that would raise is not
+        // reached at zero rows either way. Stating it here keeps that a
+        // property of this function rather than of every caller.
+        if len > 0
+            && !func.non_deterministic
+            && !columns.is_empty()
+            && columns.iter().all(|c| matches!(c, ExprColumn::Scalar(_)))
+        {
+            let args: Vec<Value> = columns.iter().map(|c| c.get(0)).collect();
+            func.validate_args_type(&args)?;
+            return Ok(ExprColumn::Scalar(func.func.call(self.runtime, &args)?));
+        }
+
         let mut out = Vec::with_capacity(len);
         let mut args = Vec::with_capacity(columns.len());
         for i in 0..len {
