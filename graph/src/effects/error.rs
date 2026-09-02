@@ -95,7 +95,7 @@ pub enum DecodeError {
 
     /// A `Range` block whose `base + count` would wrap past `u64`.
     #[error("id range starting at {base} cannot hold {count} ids")]
-    BadRange { base: u64, count: u32 },
+    BadRange { base: u64, count: u64 },
 
     /// More ids in one record than any real query produces.
     ///
