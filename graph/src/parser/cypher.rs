@@ -109,7 +109,9 @@ use crate::tree;
 use crate::{
     parser::lexer::Token::RParen,
     runtime::{
+        eval::evaluate_param,
         functions::{FnType, get_functions},
+        ordermap::OrderMap,
         value::Value,
     },
 };
@@ -117,6 +119,36 @@ use itertools::Itertools;
 use orx_tree::{DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use thin_vec::ThinVec;
+/// Opening of every rejection [`Parser::too_deep`] produces, and what
+/// [`is_too_deep`] recognises.
+const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
+
+/// Rejections [`evaluate_param`] produces for a value that is not a literal.
+///
+/// Each already names the parameter problem exactly, so like
+/// [`is_identifier_too_long`] they survive the "Failed to parse the value of
+/// parameter" summary that would otherwise replace them.
+const PARAM_VALUE_ERRORS: [&str; 3] = [
+    "Invalid parameter expression.",
+    "Map parameter key must be a string",
+    "ArgumentError: integer overflow in unary minus",
+];
+
+fn is_param_value_error(err: &str) -> bool {
+    PARAM_VALUE_ERRORS.contains(&err)
+}
+
+/// Whether `err` is a rejection produced by [`Parser::too_deep`].
+///
+/// Lets a caller that would otherwise replace a nested failure with its own
+/// summary pass this one through, for the same reason
+/// [`is_identifier_too_long`] is passed through: it names the definite thing
+/// the user has to change, which "could not parse this" would hide.
+fn is_too_deep(err: &str) -> bool {
+    err.starts_with(TOO_DEEP)
+}
+
 #[derive(Debug)]
 enum ExpressionListType {
     OneOrMore,
@@ -155,16 +187,74 @@ pub struct Parser<'a> {
     lexer: Lexer<'a>,
     /// Counter for generating unique anonymous variable names
     anon_counter: u32,
+    /// Nesting level of the two recursive descents, see [`Parser::MAX_NESTING`].
+    depth: u32,
 }
 
 impl<'a> Parser<'a> {
+    /// How deeply expressions and subqueries may nest.
+    ///
+    /// Operator chains run on an explicit stack, but a nested expression
+    /// (`{k:{k:..}}`, `abs(abs(..))`, `[x IN [x IN ..]]`) re-enters
+    /// [`Parser::parse_expr`], and `CALL {}` re-enters
+    /// [`Parser::parse_query`]. Both are plain call-stack recursion, so
+    /// without a cap a few kilobytes of nesting overflow the stack and abort
+    /// the server. Rust cannot catch that, so the depth is bounded instead.
+    ///
+    /// 100 is far past any hand-written or generated query and leaves room for
+    /// builds with fatter stack frames than release (debug, sanitizers).
+    const MAX_NESTING: u32 = 100;
+
+    /// How deep an expression tree may get.
+    ///
+    /// Constructs that build on [`Parser::parse_expr_inner`]'s own stack
+    /// (`[[..]]`, `-(-(..))`, `x[0][0]`) cost no call frames here, but the
+    /// binder, planner and evaluator all walk the result recursively, so the
+    /// tree still has to be bounded - just by what those stages can walk
+    /// rather than by what this one can.
+    ///
+    /// Looser than [`Self::MAX_NESTING`] for that reason, and deliberately so:
+    /// `(((1)))` collapses to `1` and test_parentheses pins 10000 of them,
+    /// while test_nested_list pins 100 genuinely nested lists.
+    ///
+    /// 256 sits above the 100 that test pins and well below the shallowest
+    /// depth that overflowed a worker stack before this cap existed (1024,
+    /// for `-(-(..))`), leaving room for builds with fatter frames.
+    const MAX_TREE_DEPTH: usize = 256;
+
     /// Creates a new parser for the given query string.
     #[must_use]
     pub fn new(str: &'a str) -> Self {
         Self {
             lexer: Lexer::new(str),
             anon_counter: 0,
+            depth: 0,
         }
+    }
+
+    /// The rejection every nesting guard shares, naming the limit that fired.
+    fn too_deep(
+        &self,
+        limit: usize,
+    ) -> String {
+        self.lexer.format_error(&format!("{TOO_DEEP} {limit}"))
+    }
+
+    /// Runs `descend` one nesting level down, or fails if that is too deep.
+    ///
+    /// The level is released however `descend` returns, so a caller that
+    /// backtracks over a failed speculative parse keeps its depth budget.
+    fn nested<T>(
+        &mut self,
+        descend: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        if self.depth >= Self::MAX_NESTING {
+            return Err(self.too_deep(Self::MAX_NESTING as usize));
+        }
+        self.depth += 1;
+        let res = descend(self);
+        self.depth -= 1;
+        res
     }
 
     fn save_state(&self) -> ParserState {
@@ -186,9 +276,7 @@ impl<'a> Parser<'a> {
     ///
     /// Handles queries like: `CYPHER param1=value1 param2=value2 MATCH ...`
     /// Returns the parameters map and the remaining query string.
-    pub fn parse_parameters(
-        &mut self
-    ) -> Result<(HashMap<String, DynTree<ExprIR<Arc<String>>>>, &'a str), String> {
+    pub fn parse_parameters(&mut self) -> Result<(HashMap<String, Value>, &'a str), String> {
         let mut params = HashMap::new();
         while let Ok(Token::IdentifierOrKeyword {
             ident: id,
@@ -198,17 +286,19 @@ impl<'a> Parser<'a> {
             if id.as_str() == "CYPHER" {
                 self.lexer.next();
                 let mut state = self.save_state();
-                while let Ok(id) = self.parse_ident() {
+                while let Some(id) = self.try_parse_ident() {
                     if !optional_match_token!(self.lexer, Equal) {
                         self.restore_state(state);
                         break;
                     }
-                    let value = self.parse_expr(false).map_err(|e| {
-                        // An over-long map key inside the value names the exact
-                        // thing to fix, so it survives; a syntax error inside a
-                        // parameter is more useful reported as the parameter
-                        // that failed (see test_params).
-                        if is_identifier_too_long(&e) {
+                    let value = self.parse_param_value().map_err(|e| {
+                        // An over-long map key or too-deep nesting inside the
+                        // value names the exact thing to fix, so it survives; a
+                        // syntax error inside a parameter is more useful
+                        // reported as the parameter that failed (see
+                        // test_params).
+                        if is_identifier_too_long(&e) || is_too_deep(&e) || is_param_value_error(&e)
+                        {
                             e
                         } else {
                             format!("Failed to parse the value of parameter '{}'", id.as_str())
@@ -222,6 +312,123 @@ impl<'a> Parser<'a> {
             }
         }
         Ok((params, &self.lexer.str[self.lexer.pos(true)..]))
+    }
+
+    /// Parses one `CYPHER name=<value>` value.
+    ///
+    /// A parameter is a literal - [`evaluate_param`] accepts nothing else - so
+    /// the common case is read straight into a [`Value`], skipping the
+    /// expression tree that used to be built and then walked twice (once for
+    /// the optimizer, once for the runtime). On a bulk-loader payload that
+    /// tree is one node per literal, which dominated the whole query.
+    ///
+    /// Anything the fast path does not recognise, or that turns out to be an
+    /// expression rather than a literal, is handed back to `parse_expr` so its
+    /// result and its error message are exactly what they were before.
+    fn parse_param_value(&mut self) -> Result<Value, String> {
+        let state = self.save_state();
+        if let Ok(value) = self.parse_literal()
+            // A literal that runs into an operator (`p=1+2`) or an index
+            // (`p=[1,2][0]`) was never a literal; only an identifier - the
+            // next `name=` or the start of the query - or the end of input
+            // means the value stopped here.
+            && matches!(
+                self.lexer.current(),
+                Ok(Token::IdentifierOrKeyword { .. } | Token::EndOfFile)
+            )
+        {
+            return Ok(value);
+        }
+        self.restore_state(state);
+        evaluate_param(&self.parse_expr(false)?.root())
+    }
+
+    /// Reads a literal: `null`, a boolean, a number, a string, a list, a map,
+    /// or one of those negated.
+    fn parse_literal(&mut self) -> Result<Value, String> {
+        if optional_match_token!(self.lexer, Dash) {
+            // One `-` only: `--1` is not a literal, and was rejected before.
+            return Ok(match self.parse_unsigned_literal()? {
+                // `-9223372036854775808` is the one integer whose negation is
+                // itself; the lexer already hands back i64::MIN for the digits.
+                Value::Int(i64::MIN) => Value::Int(i64::MIN),
+                Value::Int(i) => Value::Int(i.checked_neg().ok_or_else(|| {
+                    String::from("ArgumentError: integer overflow in unary minus")
+                })?),
+                Value::Float(f) => Value::Float(-f),
+                // Negating anything else is Null, as `evaluate_param` had it.
+                _ => Value::Null,
+            });
+        }
+        let value = self.parse_unsigned_literal()?;
+        if matches!(value, Value::Int(i64::MIN)) {
+            // Unnegated, those digits were i64::MAX + 1.
+            return Err(format!(
+                "Integer overflow '{}'",
+                9_223_372_036_854_775_808_u64
+            ));
+        }
+        Ok(value)
+    }
+
+    fn parse_unsigned_literal(&mut self) -> Result<Value, String> {
+        let value = match self.lexer.current()? {
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::Null),
+                ..
+            } => Value::Null,
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::True),
+                ..
+            } => Value::Bool(true),
+            Token::IdentifierOrKeyword {
+                keyword: Some(Keyword::False),
+                ..
+            } => Value::Bool(false),
+            Token::Integer(i) => Value::Int(i),
+            Token::Float(f) => Value::Float(f),
+            Token::String(s) => Value::String(s),
+            // Nesting recurses, so it is bounded like every other descent.
+            Token::LBrace => return self.nested(Self::parse_literal_list),
+            Token::LBracket => return self.nested(Self::parse_literal_map),
+            token => {
+                return Err(self.lexer.format_error(&format!("Invalid input {token:?}")));
+            }
+        };
+        self.lexer.next();
+        Ok(value)
+    }
+
+    fn parse_literal_list(&mut self) -> Result<Value, String> {
+        self.lexer.next(); // '['
+        let mut items = ThinVec::new();
+        if optional_match_token!(self.lexer, RBrace) {
+            return Ok(Value::List(Arc::new(items)));
+        }
+        loop {
+            items.push(self.parse_literal()?);
+            if optional_match_token!(self.lexer, RBrace) {
+                return Ok(Value::List(Arc::new(items)));
+            }
+            match_token!(self.lexer, Comma);
+        }
+    }
+
+    fn parse_literal_map(&mut self) -> Result<Value, String> {
+        self.lexer.next(); // '{'
+        let mut entries = OrderMap::default();
+        if optional_match_token!(self.lexer, RBracket) {
+            return Ok(Value::Map(Arc::new(entries)));
+        }
+        loop {
+            let key = self.parse_ident()?;
+            match_token!(self.lexer, Colon);
+            entries.insert(key, self.parse_literal()?);
+            if optional_match_token!(self.lexer, RBracket) {
+                return Ok(Value::Map(Arc::new(entries)));
+            }
+            match_token!(self.lexer, Comma);
+        }
     }
 
     /// Consumes any trailing semicolons, then verifies end-of-file.
@@ -723,7 +930,7 @@ impl<'a> Parser<'a> {
         // CALL { subquery } — parse body as a self-contained query
         if self.lexer.current()? == Token::LBracket {
             self.lexer.next();
-            let body = self.parse_query()?;
+            let body = self.nested(Self::parse_query)?;
             match_token!(self.lexer, RBracket);
             let is_returning = Self::body_has_return(&body);
             return Ok(vec![QueryIR::CallSubquery {
@@ -1062,7 +1269,7 @@ impl<'a> Parser<'a> {
         let mut query_graph = QueryGraph::default();
         let mut nodes_alias = HashSet::new();
         loop {
-            if let Ok(ident) = self.parse_ident() {
+            if let Some(ident) = self.try_parse_ident() {
                 match_token!(self.lexer, Equal);
 
                 // Check for shortestPath/allShortestPaths in MATCH clause
@@ -1469,7 +1676,7 @@ impl<'a> Parser<'a> {
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (rel_types, min_hops, max_hops, has_edge_filter) = if has_details {
             // Optional alias (ignored)
-            let _alias = self.parse_ident().ok();
+            let _alias = self.try_parse_ident();
 
             // Relationship types
             let mut types = Vec::new();
@@ -1849,14 +2056,35 @@ impl<'a> Parser<'a> {
         Ok(tree!(ExprIR::Property(ident), expr))
     }
 
-    #[allow(clippy::too_many_lines)]
-    #[allow(clippy::cognitive_complexity)]
+    /// Parses one expression, one nesting level below its caller.
+    ///
+    /// Precedence climbing itself runs on `stack` and costs no call frames;
+    /// the level is spent by the sub-expressions inside maps, lists, calls and
+    /// comprehensions, which re-enter here.
     fn parse_expr(
         &mut self,
         allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        self.nested(|s| s.parse_expr_inner(allow_pattern_predicate))
+    }
+
+    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::cognitive_complexity)]
+    fn parse_expr_inner(
+        &mut self,
+        allow_pattern_predicate: bool,
+    ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
         let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>)];
+        // Stack heights at which a tree level is still open. Constructs that
+        // nest on `stack` rather than the call stack are invisible to
+        // `nested`, so their depth is counted here instead. A level closes
+        // when the frame that opened it is popped, which is what the prune
+        // below detects.
+        let mut open: Vec<usize> = Vec::new();
         while let Some((current, res)) = stack.pop() {
+            while open.last().is_some_and(|&at| at >= stack.len()) {
+                open.pop();
+            }
             let Some(res) = res else {
                 if current < 3 || (current > 3 && current < 9) || current == 10 {
                     stack.push((current, None));
@@ -1890,6 +2118,12 @@ impl<'a> Parser<'a> {
                     }
 
                     let res = if is_negate {
+                        // `-(-(-1))` keeps a Negate per level even though the
+                        // parens around it collapse, so this is a real level.
+                        if open.len() >= Self::MAX_TREE_DEPTH {
+                            return Err(self.too_deep(Self::MAX_TREE_DEPTH));
+                        }
+                        open.push(stack.len());
                         Some(tree!(ExprIR::Negate))
                     } else {
                         None
@@ -1900,6 +2134,15 @@ impl<'a> Parser<'a> {
                     // primary expression
                     let (res, recurse) = self.parse_primary_expr(allow_pattern_predicate)?;
                     if recurse {
+                        // A list keeps a node per level; a parenthesis does
+                        // not - `(((1)))` collapses to `1` however deep it
+                        // goes, and test_parentheses pins 10000 of them.
+                        if !matches!(res.root().data(), ExprIR::Paren) {
+                            if open.len() >= Self::MAX_TREE_DEPTH {
+                                return Err(self.too_deep(Self::MAX_TREE_DEPTH));
+                            }
+                            open.push(stack.len());
+                        }
                         stack.push((current, Some(res)));
                         stack.push((0, None));
                         continue;
@@ -2202,7 +2445,18 @@ impl<'a> Parser<'a> {
                 10 => {
                     // None arithmetic operators
                     let mut res = res;
+                    // Each postfix step wraps what came before, so a chain
+                    // like `x[0][0][0]...` leans one level deeper per step
+                    // while the brackets stay balanced and this stack stays
+                    // flat - neither of the other two guards sees it. Wrapping
+                    // copies the accumulated tree, so an unbounded chain is
+                    // quadratic as well as deep.
+                    let mut steps = 0u32;
                     loop {
+                        steps += 1;
+                        if steps > Self::MAX_TREE_DEPTH as u32 {
+                            return Err(self.too_deep(Self::MAX_TREE_DEPTH));
+                        }
                         match self.lexer.current()? {
                             Token::LBrace => {
                                 self.lexer.next();
@@ -2288,6 +2542,23 @@ impl<'a> Parser<'a> {
                 "Invalid input '{}': expected an identifier",
                 self.lexer.current_str(),
             ))),
+        }
+    }
+
+    /// [`Self::parse_ident`] for speculative parses, which discard the error.
+    ///
+    /// Formatting a message nobody reads is pure cost, and the alternatives a
+    /// parser probes for are the common case, not the exception: `[` alone
+    /// asks this twice before settling on a plain list literal.
+    fn try_parse_ident(&mut self) -> Option<Arc<String>> {
+        match self.lexer.current() {
+            Ok(Token::IdentifierOrKeyword { ident: id, .. })
+                if validate_identifier_len(id.as_str(), "Identifier").is_ok() =>
+            {
+                self.lexer.next();
+                Some(id)
+            }
+            _ => None,
         }
     }
 
@@ -2382,7 +2653,7 @@ impl<'a> Parser<'a> {
         let saved = self.save_state();
 
         // 1) Try list comprehension: [var IN ...]
-        if let Ok(var) = self.parse_ident()
+        if let Some(var) = self.try_parse_ident()
             && optional_match_token!(self.lexer => In)
         {
             return Ok((
@@ -2393,7 +2664,7 @@ impl<'a> Parser<'a> {
         self.restore_state(saved);
 
         // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
-        if let Ok(var) = self.parse_ident()
+        if let Some(var) = self.try_parse_ident()
             && optional_match_token!(self.lexer, Equal)
             && self.lexer.current()? == Token::LParen
             && let Ok(result) = self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
@@ -2522,7 +2793,7 @@ impl<'a> Parser<'a> {
 
     fn parse_node_pattern(&mut self) -> Result<Arc<QueryNode<Arc<String>, Arc<String>>>, String> {
         match_token!(self.lexer, LParen);
-        let alias = if let Ok(id) = self.parse_ident() {
+        let alias = if let Some(id) = self.try_parse_ident() {
             id
         } else {
             let name = Arc::new(format!("_anon_{}", self.anon_counter));
@@ -2558,7 +2829,7 @@ impl<'a> Parser<'a> {
         match_token!(self.lexer, Dash);
         let has_details = optional_match_token!(self.lexer, LBrace);
         let (alias, types, attrs, var_len) = if has_details {
-            let alias = if let Ok(id) = self.parse_ident() {
+            let alias = if let Some(id) = self.try_parse_ident() {
                 id
             } else {
                 let name = Arc::new(format!("_anon_{}", self.anon_counter));
@@ -3025,5 +3296,346 @@ impl<'a> Parser<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::functions::init_functions;
+
+    /// The function registry is a process-wide `OnceLock`; parsing `abs(..)`
+    /// or a quantifier looks names up in it.
+    fn with_functions() {
+        let _ = init_functions();
+    }
+
+    /// `CYPHER batch=[{v:[..]}, ..]` - the shape a bulk loader sends, one list
+    /// literal per row on top of the outer one.
+    fn list_heavy_params(rows: usize) -> String {
+        let vec = std::iter::repeat_n("0.123456", 200).join(",");
+        let rows = (0..rows)
+            .map(|i| format!("{{`id`:{i},`v`:[{vec}]}}"))
+            .join(",");
+        format!("CYPHER `batch`=[{rows}] RETURN 1")
+    }
+
+    // Regression: `[` sends the parser probing for a list comprehension and a
+    // pattern comprehension before it settles on a plain list literal, and both
+    // probes used to build - then discard - an error message quoting the whole
+    // query. That made parsing quadratic in the payload: doubling the rows
+    // below took ~32x longer, so a 6.7MB bulk-load batch spent 1.7s in the
+    // parser alone. Time must now grow with the input, not with its square.
+    #[test]
+    fn list_literals_parse_in_linear_time() {
+        let small = list_heavy_params(250);
+        let large = list_heavy_params(2000);
+        let parse = |q: &str| Parser::new(q).parse_parameters().map(|(p, _)| p.len());
+
+        // Warm the allocator so the first parse is not charged for it.
+        assert_eq!(parse(&small).unwrap(), 1);
+
+        let t = std::time::Instant::now();
+        parse(&small).unwrap();
+        let small_elapsed = t.elapsed();
+
+        let t = std::time::Instant::now();
+        parse(&large).unwrap();
+        let large_elapsed = t.elapsed();
+
+        // 8x the input. Linear lands near 8x, the quadratic bug near 64x; the
+        // bound sits between the two with room for a noisy CI machine.
+        assert!(
+            large_elapsed < small_elapsed * 24,
+            "parse time grew super-linearly: {small_elapsed:?} for 250 rows \
+             vs {large_elapsed:?} for 2000",
+        );
+    }
+
+    /// Every way a query can nest, at a depth that used to abort the process.
+    ///
+    /// The parser reaches these three different ways - plain call recursion
+    /// (`{k:{k:..}}`, `CALL {}`), iteration on `parse_expr`'s own stack
+    /// (`[[..]]`, `-(-(..))`), and left-leaning postfix chains (`x[0][0]`) -
+    /// so each needs its own guard, and each is listed here.
+    fn nesting_shapes(n: usize) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "map",
+                format!(
+                    "CYPHER `b`={}1{} RETURN 1",
+                    "{`k`:".repeat(n),
+                    "}".repeat(n)
+                ),
+            ),
+            (
+                "list",
+                format!("CYPHER `b`={}1{} RETURN 1", "[".repeat(n), "]".repeat(n)),
+            ),
+            (
+                "func",
+                format!("RETURN {}1{}", "abs(".repeat(n), ")".repeat(n)),
+            ),
+            (
+                "case",
+                format!(
+                    "RETURN {}1{}",
+                    "CASE WHEN true THEN ".repeat(n),
+                    " END".repeat(n)
+                ),
+            ),
+            (
+                "listcomp",
+                format!("RETURN {}[1]{}", "[x IN ".repeat(n), "|x]".repeat(n)),
+            ),
+            (
+                "quantifier",
+                format!(
+                    "RETURN {}[1]{}",
+                    "all(x IN ".repeat(n),
+                    " WHERE true)".repeat(n)
+                ),
+            ),
+            (
+                "subquery",
+                format!("{} RETURN 1 AS v{}", "CALL {".repeat(n), "}".repeat(n)),
+            ),
+            (
+                "inline prop",
+                format!(
+                    "MATCH (a {{`k`:{}1{}}}) RETURN 1",
+                    "{`k`:".repeat(n),
+                    "}".repeat(n)
+                ),
+            ),
+            ("index", format!("RETURN [1]{}", "[0]".repeat(n))),
+            (
+                "unary minus",
+                format!("RETURN {}1{}", "-(".repeat(n), ")".repeat(n)),
+            ),
+            (
+                "map projection",
+                format!("MATCH (a) RETURN {}a{{.k}}{}", "[".repeat(n), "]".repeat(n)),
+            ),
+        ]
+    }
+
+    fn parse_fully(query: &str) -> Result<(), String> {
+        Parser::new(query)
+            .parse_parameters()
+            .and_then(|(_, rest)| Parser::new(rest).parse().map(|_| ()))
+    }
+
+    // Regression: nesting was unbounded, so a few kilobytes of `{k:{k:...`
+    // overflowed the stack and aborted the whole server - a remote client
+    // could kill it with one small query, and Rust cannot catch that. Every
+    // shape must now come back as an error, and quickly: rejecting only after
+    // building the tree would still let a deep literal burn quadratic time
+    // (20000 nested lists took 5.8s that way, and 65536 still died).
+    #[test]
+    fn deep_nesting_is_rejected_not_fatal() {
+        with_functions();
+        for (name, query) in nesting_shapes(20_000) {
+            let t = std::time::Instant::now();
+            let err =
+                parse_fully(&query).expect_err(&format!("{name}: 20000-deep nesting was accepted"));
+            // Inline properties refuse a map this shape long before depth
+            // enters into it; every other shape must name the depth.
+            assert!(
+                is_too_deep(&err) || name == "inline prop",
+                "{name}: rejected for the wrong reason: {err}",
+            );
+            assert!(
+                t.elapsed() < std::time::Duration::from_secs(5),
+                "{name}: took {:?} to reject - it is building the tree first",
+                t.elapsed(),
+            );
+        }
+    }
+
+    // Nesting that collapses costs the later stages nothing, so it is not
+    // capped: `(((1)))` folds to `1` and `NOT NOT x` to `x`, however many
+    // there are. test_parentheses in the e2e suite pins the first at 10000.
+    #[test]
+    fn collapsing_nesting_is_not_capped() {
+        for (name, query) in [
+            (
+                "paren",
+                format!("RETURN {}1{}", "(".repeat(20_000), ")".repeat(20_000)),
+            ),
+            ("not chain", format!("RETURN {}true", "NOT ".repeat(20_000))),
+        ] {
+            assert!(
+                parse_fully(&query).is_ok(),
+                "{name}: capped although it collapses"
+            );
+        }
+    }
+
+    // The cap must not be so eager that ordinary nesting stops working.
+    #[test]
+    fn ordinary_nesting_still_parses() {
+        with_functions();
+        for (name, query) in nesting_shapes(16) {
+            if let Err(e) = parse_fully(&query) {
+                // `CALL {}` nested this way is a semantic error on any build;
+                // what matters is that it is not rejected for being too deep.
+                assert!(
+                    !is_too_deep(&e),
+                    "{name}: 16 levels rejected as too deep: {e}"
+                );
+            }
+        }
+    }
+
+    // A parameter's nesting error must survive the wrapper `parse_parameters`
+    // puts around failures, or it reads as an unexplained "could not parse".
+    #[test]
+    fn nesting_error_survives_the_parameter_wrapper() {
+        let q = format!(
+            "CYPHER `b`={}1{} RETURN 1",
+            "[".repeat(500),
+            "]".repeat(500)
+        );
+        let err = Parser::new(&q).parse_parameters().unwrap_err();
+        assert!(is_too_deep(&err), "wrapper hid the reason: {err}");
+    }
+
+    /// Parameter values that the fast literal path must handle, and that the
+    /// old `parse_expr` + `evaluate_param` path handled before it.
+    const LITERAL_PARAMS: [&str; 27] = [
+        "1",
+        "-1",
+        "0",
+        "-0",
+        "9223372036854775807",
+        "-9223372036854775808",
+        "1.5",
+        "-1.5",
+        "1e3",
+        "-1e-3",
+        ".5",
+        "-.5",
+        "0x1f",
+        "0o17",
+        "0b101",
+        "true",
+        "false",
+        "null",
+        "\"hi\"",
+        "'hi'",
+        "\"a\\nb\\tc\"",
+        "\"h\u{e9}llo\u{2192}\"",
+        "[]",
+        "[1,2,3]",
+        "[1,\"a\",true,null,1.5,-2,[3,[4]]]",
+        "{}",
+        "{`a`:1,`b`:{`c`:[1,-2]},`d`:null,`e`:\"x\"}",
+    ];
+
+    fn param_of(value: &str) -> Result<Value, String> {
+        Parser::new(&format!("CYPHER `p`={value} RETURN 1"))
+            .parse_parameters()
+            .map(|(mut p, _)| p.remove("p").expect("parameter p"))
+    }
+
+    /// The old path, kept as the oracle: parse the value as an expression and
+    /// evaluate it, which is what every parameter used to go through.
+    fn param_via_expr(value: &str) -> Result<Value, String> {
+        evaluate_param(&Parser::new(value).parse_expr(false)?.root())
+    }
+
+    // The fast literal path exists only to be faster - never to decide
+    // anything differently. Compared on `Debug` rather than `PartialEq`, which
+    // is Cypher's comparison and would call two nulls unequal.
+    #[test]
+    fn literal_params_match_the_expression_path() {
+        for value in LITERAL_PARAMS {
+            let fast = param_of(value);
+            let slow = param_via_expr(value);
+            assert_eq!(
+                fast.as_ref().map(|v| format!("{v:?}")),
+                slow.as_ref().map(|v| format!("{v:?}")),
+                "parameter `{value}` differs between the fast and expression paths",
+            );
+        }
+    }
+
+    // Negation of a non-number is Null, and i64::MIN negates to itself. Both
+    // were `evaluate_param`'s behaviour and both are easy to lose.
+    #[test]
+    fn negated_param_edge_cases() {
+        assert_eq!(
+            format!("{:?}", param_of("-9223372036854775808").unwrap()),
+            format!("{:?}", Value::Int(i64::MIN))
+        );
+        for value in ["-true", "-'a'", "-[1]", "-{`a`:1}", "-null"] {
+            assert_eq!(
+                format!("{:?}", param_of(value).unwrap()),
+                "Null",
+                "negating {value} should be Null"
+            );
+        }
+        // Unnegated, those digits are i64::MAX + 1 and must still be refused.
+        assert!(param_of("9223372036854775808").is_err());
+        // A second `-` is not part of a literal, and never parsed before.
+        assert!(param_of("--1").is_err());
+    }
+
+    // A value that is not a literal falls back to the expression path, so it
+    // must fail exactly the way it used to - including the message, which
+    // `parse_parameters` would otherwise replace with its own summary.
+    #[test]
+    fn non_literal_params_report_what_they_did_before() {
+        for value in ["1+2", "abs(-1)", "x", "$a", "[1,2][0]"] {
+            assert_eq!(
+                param_of(value).unwrap_err(),
+                "Invalid parameter expression.",
+                "parameter `{value}`",
+            );
+        }
+    }
+
+    // Malformed literals are parse errors, named by the parameter that failed.
+    #[test]
+    fn malformed_params_name_the_parameter() {
+        for value in ["[1,2", "{`a`:1", "{1:2}", "[1,]", "[,]", "{`a`}"] {
+            let err = param_of(value).unwrap_err();
+            assert!(
+                err.starts_with("Failed to parse the value of parameter 'p'"),
+                "parameter `{value}` gave: {err}",
+            );
+        }
+    }
+
+    // Several parameters, later ones shadowing earlier ones, and the query
+    // text that follows must all survive being read straight into values.
+    #[test]
+    fn parameters_and_remaining_query() {
+        let (params, rest) = Parser::new("CYPHER a=1 b=[2] a=3 MATCH (n) RETURN n")
+            .parse_parameters()
+            .unwrap();
+        assert_eq!(rest.trim_start(), "MATCH (n) RETURN n");
+        assert_eq!(format!("{:?}", params["a"]), format!("{:?}", Value::Int(3)));
+        assert_eq!(params.len(), 2);
+    }
+
+    // The speculative-ident path must still recognise what it probes for.
+    #[test]
+    fn bracket_alternatives_still_parse() {
+        with_functions();
+        for query in [
+            "RETURN [1, 2, 3] AS l",
+            "RETURN [x IN [1, 2] | x + 1] AS l",
+            "MATCH (a) RETURN [(a)-->(b) | b] AS l",
+            "MATCH (a) RETURN [p = (a)-->(b) | p] AS l",
+            "MATCH (n)-[r:R]->(m) RETURN n, r, m",
+            "MATCH ()-[:R]->() RETURN 1",
+        ] {
+            assert!(
+                Parser::new(query).parse().is_ok(),
+                "failed to parse: {query}"
+            );
+        }
     }
 }
