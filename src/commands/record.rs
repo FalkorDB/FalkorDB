@@ -103,15 +103,7 @@ fn record_mut(
         // or how a failed one is undone.
         match &outcome {
             Err(_) => abandon_write(&session, &runtime),
-            Ok(result) => finish_write(
-                &session,
-                ctx,
-                key_name,
-                query,
-                &runtime,
-                &result.stats,
-                false,
-            ),
+            Ok(result) => finish_write(&session, ctx, key_name, &runtime, &result.stats),
         }
     }
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();

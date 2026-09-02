@@ -26,9 +26,9 @@ use crate::commands::constraint::{Settling, settle_async_constraint};
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD, EFFECTS_VERSION, MAX_INFO_QUERIES,
-    MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE,
-    TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
+    EFFECTS_COMPRESSION, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
+    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
+    get_thread_count, normalize_node_creation_buffer,
 };
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
@@ -174,8 +174,6 @@ pub fn graph_init(
                 "RESULTSET_SIZE" => Some(&RESULTSET_SIZE),
                 "QUERY_MEM_CAPACITY" => Some(&QUERY_MEM_CAPACITY),
                 "DELTA_MAX_PENDING_CHANGES" => Some(&DELTA_MAX_PENDING_CHANGES),
-                "EFFECTS_THRESHOLD" => Some(&EFFECTS_THRESHOLD),
-                "EFFECTS_VERSION" => Some(&EFFECTS_VERSION),
                 "EFFECTS_COMPRESSION" => Some(&EFFECTS_COMPRESSION),
                 "OMP_THREAD_COUNT" => Some(&OMP_THREAD_COUNT),
                 _ => None,

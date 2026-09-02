@@ -1,11 +1,8 @@
 //! Replication effects: the `GRAPH.EFFECT` payload a write produces and a
 //! replica applies.
 //!
-//! Split by wire version, because two of them coexist during a migration:
-//!
-//! - [`v3`] — the format both engines can read. Batched, C-compatible widths.
-//! - [`v2`] — Rust's own, predating C compatibility. On its way out; deleting
-//!   the directory is what retires it.
+//! One wire version, [`v3`] — the format both engines can read. Batched,
+//! C-compatible widths.
 //!
 //! [`Reader`] and [`DecodeError`] sit here rather than under a version because
 //! a bounds-checked cursor over a byte slice is not version-specific, and a v4
@@ -27,69 +24,11 @@
 pub mod error;
 pub mod payload;
 pub mod reader;
-pub mod v2;
 pub mod v3;
 pub mod writer;
 
 pub use error::DecodeError;
 pub use reader::Reader;
-
-use std::sync::atomic::{AtomicI64, Ordering};
-
-/// Which effects wire format this node **emits**.
-///
-/// Reading is version-dispatched, so a node always reads both. This only picks
-/// what it writes, and it defaults to 2: a master emitting v3 at a peer that
-/// cannot read it is silent data loss, not a degraded mode. The ordering is the
-/// ordinary one — upgrade readers, then flip writers.
-///
-/// Lives here rather than in the module's config because choosing *between*
-/// the versions is this module's job; `GRAPH.CONFIG SET EFFECTS_VERSION`
-/// forwards to it.
-pub static EFFECTS_EMIT_VERSION: AtomicI64 = AtomicI64::new(2);
-
-/// How long a mutation must have taken, on average, before its effects are
-/// worth sending instead of replaying the query verbatim. Microseconds; 0 sends
-/// them always.
-///
-/// Lives here rather than in the module's config for the same reason
-/// [`EFFECTS_EMIT_VERSION`] does: the code that weighs it is the code that built
-/// the payload. `GRAPH.CONFIG SET EFFECTS_THRESHOLD` forwards to it.
-pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
-
-/// The buffer builder matching [`EFFECTS_EMIT_VERSION`].
-///
-/// Only correct for a buffer that does not exist yet — use [`emit_v3_for`] to
-/// add to one that does.
-#[must_use]
-pub fn emit_v3() -> bool {
-    EFFECTS_EMIT_VERSION.load(Ordering::Relaxed) >= 3
-}
-
-/// Which wire version `buf` is being built in: its own header if it has one,
-/// otherwise the configured version.
-///
-/// The config decides only the *first* record. `EFFECTS_EMIT_VERSION` is a
-/// `Relaxed` load and `GRAPH.CONFIG SET EFFECTS_VERSION` runs on the main
-/// thread, so it can change part-way through a query — and a query commits more
-/// than once into one buffer (`FOREACH`, `MERGE`, `UNION`, a `WITH` after a
-/// write). Re-reading the config per commit therefore let one buffer be stamped
-/// `[3, flags]` in commit 1 and carry v2 records appended in commit 2. Nothing
-/// downstream catches that: both builders write a header only when the buffer is
-/// empty and neither inspects the version already there, `header_len` reads the
-/// v3 byte and accepts the length, so the replica routes the whole payload to
-/// `v3::apply` and loses the mutation to a `BadOpcode`.
-///
-/// Keyed off the buffer's own header for the same reason `replicate_effects`
-/// keys compression off it: it cannot then disagree with what was actually
-/// built.
-#[must_use]
-pub fn emit_v3_for(buf: &[u8]) -> bool {
-    match buf.first() {
-        Some(&version) => version >= v3::EFFECTS_VERSION,
-        None => emit_v3(),
-    }
-}
 
 /// Types that can write themselves into an effects payload of a given version.
 ///

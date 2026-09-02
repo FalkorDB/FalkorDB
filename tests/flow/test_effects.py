@@ -9,22 +9,9 @@ GRAPH_ID = "effects"
 MONITOR_ATTACHED = False
 
 class testEffects():
-    # enable effects replication
-    def effects_enable(self):
-       self.db.config_set("EFFECTS_THRESHOLD", 0)
-
-    # disable effects replication
-    def effects_disable(self):
-        self.db.config_set("EFFECTS_THRESHOLD", 999999)
-
-    # checks if effects replication is enabled
-    def effects_enabled(self):
-        threshold = self.db.config_get("EFFECTS_THRESHOLD")
-        return (threshold == 0)
-
-    # checks if effects replication is enabled
-    def effects_disabled(self):
-        return not self.effects_enabled()
+    # Effects are the only way a write reaches a replica now — there is no
+    # query-replay alternative to switch to, so nothing here enables or
+    # disables them.
 
     def _monitor_loop(self):
         global MONITOR_ATTACHED
@@ -96,7 +83,6 @@ class testEffects():
         # wait for replica and master to sync
         self.master.wait(1, 0)
 
-        self.effects_enable()
 
         # daemon=True so a stuck listen() (replica killed mid-MONITOR, container
         # gone, …) doesn't keep the test process alive past test completion.
@@ -111,10 +97,6 @@ class testEffects():
         # stops monitor thread
         self.replica.shutdown()
     
-    def test01_effect_default_config(self):
-        # make sure effects are enabled by default
-        self.env.assertTrue(self.effects_enabled())
-
     def test02_add_schema_effect(self, expect_effect=True):
         # test the introduction of a schema by an effect
 
@@ -792,43 +774,6 @@ class testEffects():
             self.wait_for_query()
             # graphs will likely differ.
 
-    def test16_rerun_disable_effects(self):
-        # test replication works when effects are disabled
-
-        # no leftovers from previous test
-        self.env.assertFalse(self.monitor_containt_effect())
-
-        # update graph key
-        global GRAPH_ID
-        GRAPH_ID = "effects_disabled"
-
-        # update graph objects to use new graph key
-        self.master_graph  = Graph(self.master,  GRAPH_ID)
-        self.replica_graph = Graph(self.replica, GRAPH_ID)
-
-        # disable effects replication
-        self.effects_disable()
-
-        # re-run tests, this time effects is turned off
-        # replication should be done via query replication
-        self.test02_add_schema_effect(False)
-        self.test03_add_attribute_effect(False)
-        self.test04_create_node_effect(False)
-        self.test05_create_edge_effect(False)
-        self.test06_update_node_effect(False)
-        self.test07_update_edge_effect(False)
-        self.test08_set_labels_effect(False)
-        self.test09_remove_labels_effect(False)
-        self.test10_delete_edge_effect(False)
-        self.test11_delete_node_effect(False)
-        self.test12_merge_node(False)
-        self.test13_merge_edge(False)
-        self.test14_empty_vector(False)
-        self.test15_create_node_with_random_and_timestamp_effect(True) # non deterministic
-
-        # make sure no effects had been recieved
-        self.env.assertFalse(self.monitor_containt_effect())
-
     def test17_random_ops(self):
         # update graph key
         global GRAPH_ID
@@ -839,7 +784,6 @@ class testEffects():
         self.replica_graph = Graph(self.replica, GRAPH_ID)
 
         # enable effects replication
-        self.effects_enable()
 
         from random_graph import create_random_schema, create_random_graph, run_random_graph_ops, ALL_OPS
         nodes, edges = create_random_schema()
@@ -859,7 +803,6 @@ class testEffects():
         """Test the creation & deletion of multiple nodes."""
 
         self.env.flush()  # clean slate
-        self.effects_enable()
 
         # labels
         lbls = ["L0", "L1", "L2", "L3"]
@@ -896,7 +839,6 @@ class testEffects():
         """Test the creation & deletion of multiple edges."""
 
         self.env.flush()  # clean slate
-        self.effects_enable()
 
         # relation types
         types = ["R0", "R1", "R2", "R3"]
@@ -933,7 +875,6 @@ class testEffects():
         """Test creation & deletion of multiple entities with a single randomized delete query."""
 
         self.env.flush()  # clean slate
-        self.effects_enable()
 
         # labels and relation types
         lbls = ["L0", "L1", "L2", "L3"]
@@ -1031,10 +972,16 @@ class testEffects():
         self.env.assertEqual(replica_edge_count, master_edge_count)
 
     def test21_mandatory_effects(self):
-        """Make sure non deterministic queries always uses effects"""
+        """A non deterministic query still replicates correctly.
+
+        It used to be the case that these had to *force* effects, because a
+        cheap write would otherwise replay the query and the two sides would
+        evaluate `rand()` or `date()` separately. Effects are now the only
+        mechanism, so the hazard is gone — but the queries are still worth
+        replicating and comparing.
+        """
 
         self.env.flush()        # clean slate
-        self.effects_disable()  # disable effects
 
         self.master_graph  = Graph(self.master, GRAPH_ID)
         self.replica_graph = Graph(self.replica, GRAPH_ID)
@@ -1092,7 +1039,6 @@ class testEffects():
         self.env.flush()
 
         # replicate via effects
-        self.effects_enable()
 
         self.master_graph  = Graph(self.master, GRAPH_ID)
         self.replica_graph = Graph(self.replica, GRAPH_ID)

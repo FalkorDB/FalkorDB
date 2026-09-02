@@ -730,24 +730,10 @@ mod tests {
     use super::*;
     use crate::effects::v3::staging::StagePending;
     use crate::effects::v3::{Record, read_buffer};
-    use crate::effects::{EFFECTS_EMIT_VERSION, emit_v3};
     use crate::entity_type::EntityType;
     use crate::graph::graphblas::test_init::ensure_init;
     use crate::runtime::pending::Pending;
     use atomic_refcell::AtomicRefCell;
-    use std::sync::{Mutex, MutexGuard};
-
-    /// Serializes the tests that read or write `EFFECTS_EMIT_VERSION`.
-    ///
-    /// It is process-global and `cargo test` runs these in parallel in one
-    /// process, so a test that stores into it races any test asserting its value.
-    /// Poisoning is ignored: a panic elsewhere in the guarded section is the
-    /// failure being reported, and turning it into a second failure here hides it.
-    static EMIT_VERSION_LOCK: Mutex<()> = Mutex::new(());
-
-    fn lock_emit_version() -> MutexGuard<'static, ()> {
-        EMIT_VERSION_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     fn graph() -> AtomicRefCell<Graph> {
         // GrB_init is process-wide and may only run once.
@@ -1291,33 +1277,6 @@ mod tests {
     }
 
     #[test]
-    fn the_emit_switch_selects_the_format_and_defaults_to_v2() {
-        let _guard = lock_emit_version();
-        // Default must be 2. A master emitting v3 at a peer that cannot read it
-        // is silent data loss, so this is a safety property, not a preference.
-        assert_eq!(
-            EFFECTS_EMIT_VERSION.load(std::sync::atomic::Ordering::Relaxed),
-            2,
-            "v3 must not be the default until every peer can read it"
-        );
-        assert!(!emit_v3());
-
-        let g = graph();
-        let mut p = Pending::default();
-        p.set_schema_baseline(&g);
-        p.stage_created_node(1, &[], &[]);
-
-        let mut v2 = Vec::new();
-        crate::effects::v2::build_effects_buffer(&p, &g, &mut v2);
-        let mut v3 = Vec::new();
-        build_effects_buffer(&p, &g, &mut v3);
-
-        // The version byte is what a reader dispatches on, so it has to differ.
-        assert_eq!(v2[0], 2);
-        assert_eq!(v3[0], 3);
-    }
-
-    #[test]
     fn gather_rows_merges_rather_than_searching() {
         // Within a group every entity has exactly the shape's attributes, so the
         // merge normally walks in lockstep. These are the cases that are not
@@ -1449,45 +1408,14 @@ mod tests {
     }
 
     #[test]
-    fn one_buffer_keeps_one_wire_version() {
-        // `EFFECTS_VERSION` can be set mid-query — `GRAPH.CONFIG SET` runs on the
-        // main thread and the emit version is a Relaxed load re-read per commit —
-        // and a query commits more than once into ONE buffer. So the version has
-        // to come from the buffer, not the config: both builders write a header
-        // only when the buffer is empty and neither inspects what is already
-        // there, so re-reading the config appended v2 records behind a v3 header.
-        // `header_len` accepts that, the replica routes it all to v3 and loses the
-        // mutation to a BadOpcode.
-        use crate::effects::{EFFECTS_EMIT_VERSION, emit_v3_for};
-        use std::sync::atomic::Ordering;
-
-        let _guard = lock_emit_version();
-        let restore = EFFECTS_EMIT_VERSION.load(Ordering::Relaxed);
-
-        // An empty buffer follows the config...
-        EFFECTS_EMIT_VERSION.store(3, Ordering::Relaxed);
-        assert!(emit_v3_for(&[]));
-        EFFECTS_EMIT_VERSION.store(2, Ordering::Relaxed);
-        assert!(!emit_v3_for(&[]));
-
-        // ...but a buffer that already has a header keeps it, whatever the config
-        // now says.
-        let v3_buf = v3::new_buffer();
-        assert!(
-            emit_v3_for(&v3_buf),
-            "a v3 buffer must stay v3 under config 2"
-        );
-        EFFECTS_EMIT_VERSION.store(3, Ordering::Relaxed);
-        assert!(
-            !emit_v3_for(&[2_u8]),
-            "a v2 buffer must stay v2 under config 3"
-        );
-
-        EFFECTS_EMIT_VERSION.store(restore, Ordering::Relaxed);
-    }
-
-    #[test]
-    fn v3_is_smaller_than_v2_for_the_motivating_query() {
+    fn the_motivating_query_stays_one_record() {
+        // `UNWIND range(0, 9999) AS i CREATE (:Person {v: i})` — one shape, so
+        // one record however many nodes, which is the whole point of grouping
+        // by shape.
+        //
+        // Pinned as an absolute size now that there is no v2 to measure
+        // against. For the record, v2 encoded this same query in 260,001 bytes,
+        // one record per node; the ratio was what justified the format.
         let g = graph();
         with_attrs(&g, &["v"]);
         let mut p = Pending::default();
@@ -1496,12 +1424,13 @@ mod tests {
             p.stage_created_node(id, &[0], &[(0, Value::Int(id as i64))]);
         }
 
-        let mut v2 = Vec::new();
-        crate::effects::v2::build_effects_buffer(&p, &g, &mut v2);
-        let mut v3 = Vec::new();
-        build_effects_buffer(&p, &g, &mut v3);
-        println!("\n  10,000 nodes: v2 {} B -> v3 {} B", v2.len(), v3.len());
-        assert!(v3.len() * 2 < v2.len(), "v2 {} v3 {}", v2.len(), v3.len());
-        assert_eq!(read_buffer(&v3).unwrap().len(), 1);
+        let mut buf = Vec::new();
+        build_effects_buffer(&p, &g, &mut buf);
+        assert_eq!(read_buffer(&buf).unwrap().len(), 1, "one shape, one record");
+        assert!(
+            buf.len() < 130_000,
+            "10,000 nodes should encode in ~120 KB, got {}",
+            buf.len()
+        );
     }
 }

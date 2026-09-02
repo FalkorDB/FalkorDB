@@ -4,7 +4,6 @@ use crate::{
     graph_core::{ThreadedGraph, c_graph_key, c_graph_name, register_graph},
     redis_type::GRAPH_TYPE,
 };
-use graph::effects::emit_v3;
 use graph::effects::v3::emit::{AnnouncedConstraint, SchemaBaseline, build_constraint_buffer};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::{ConstraintStatus, ConstraintType};
@@ -172,7 +171,7 @@ fn attempt_settle(
             let settled = Arc::clone(&g_arc);
             tg.graph.commit(g_arc);
 
-            if was_replicated || !emit_v3() {
+            if was_replicated {
                 return;
             }
             let g = settled.borrow();
@@ -449,28 +448,22 @@ pub fn graph_constraint(
                     )
                 };
                 let mut buf = Vec::new();
-                let encoded = emit_v3()
-                    && build_constraint_buffer(
-                        &mutated.borrow(),
-                        is_create,
-                        &AnnouncedConstraint {
-                            ct,
-                            entity_type,
-                            status,
-                            label: &label,
-                            properties: &properties,
-                        },
-                        &baseline,
-                        &mut buf,
-                    )
-                    .is_ok();
-                if encoded {
+                if build_constraint_buffer(
+                    &mutated.borrow(),
+                    is_create,
+                    &AnnouncedConstraint {
+                        ct,
+                        entity_type,
+                        status,
+                        label: &label,
+                        properties: &properties,
+                    },
+                    &baseline,
+                    &mut buf,
+                )
+                .is_ok()
+                {
                     ctx.replicate("GRAPH.EFFECT", &[key_str.as_slice(), buf.as_slice()]);
-                } else {
-                    ctx.replicate_verbatim();
-                    if is_create {
-                        ctx.replicate_verbatim();
-                    }
                 }
             }
             if is_create {

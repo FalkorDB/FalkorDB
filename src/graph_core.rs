@@ -49,7 +49,7 @@ use graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
     },
-    planner::{IR, plan_is_non_deterministic},
+    planner::IR,
     runtime::runtime::{QueryStatistics, Runtime},
     threadpool::{pending_count, spawn},
 };
@@ -245,23 +245,16 @@ impl WriteQueryOk {
     ///
     /// Both executors — `GRAPH.QUERY` and `GRAPH.RECORD`, which is a real write
     /// and replicates like one — used to assemble this by hand, which meant two
-    /// copies of the "did this change anything" predicate and two calls to
-    /// `take_effects_buffer`. They differ only in `is_non_deterministic`, so
-    /// that is the only thing left for a caller to supply.
+    /// copies of the "did this change anything" predicate.
     fn new(
         runtime: &Runtime,
         stats: &QueryStatistics,
-        is_non_deterministic: bool,
     ) -> Self {
         Self {
             // The MVCC version this query built, taken from the runtime that
             // built it rather than passed alongside, so the two cannot differ.
             graph: Arc::clone(&runtime.g),
-            effects_buffer: take_effects_buffer(
-                runtime,
-                is_non_deterministic,
-                stats.execution_time,
-            ),
+            effects_buffer: take_effects_buffer(runtime),
             // `effects_count` as well as the counters: a query can replicate an
             // effect without moving any of them — index DDL does.
             modified: stats.nodes_created > 0
@@ -728,7 +721,6 @@ pub fn execute_query_write(
         IR::Commit | IR::CreateIndex { .. } | IR::DropIndex { .. }
     )));
 
-    let is_non_deterministic = plan_is_non_deterministic(&plan);
     // Compute the timeout before taking the MVCC write slot, so an error
     // here cannot leak the slot.
     let timeout_ms = compute_effective_timeout(per_query_timeout, true)?;
@@ -780,15 +772,7 @@ pub fn execute_query_write(
 
     // Commit → signal WATCH → replicate, the last work that needs the GIL.
     let graph = session.graph_arc();
-    finish_write(
-        &session,
-        ctx,
-        key_name,
-        query,
-        &runtime,
-        &result.stats,
-        is_non_deterministic,
-    );
+    finish_write(&session, ctx, key_name, &runtime, &result.stats);
     session.release_locks();
 
     // Writer window is closed. Serializing the reply reads this query's own MVCC
@@ -1449,14 +1433,12 @@ pub(crate) fn finish_write(
     session: &QuerySession,
     ctx: &Context,
     key_name: &Arc<str>,
-    query: &str,
     runtime: &Runtime,
     stats: &QueryStatistics,
-    is_non_deterministic: bool,
 ) {
-    let wq = WriteQueryOk::new(runtime, stats, is_non_deterministic);
+    let wq = WriteQueryOk::new(runtime, stats);
     if session
-        .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, query, wq))
+        .with_graph_mut(|tg| commit_and_replicate(tg, ctx, key_name, wq))
         .is_none()
     {
         // Never escalated, so the plan's `Commit` never ran and nothing was
@@ -1488,7 +1470,6 @@ fn commit_and_replicate(
     g: &mut ThreadedGraph,
     ctx: &Context,
     key_name: &Arc<str>,
-    query: &str,
     wq: WriteQueryOk,
 ) {
     // Index document changes were already applied by each `CommitOp` while this
@@ -1499,7 +1480,7 @@ fn commit_and_replicate(
     unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
     // Send replication while the GIL is held.
     if wq.modified {
-        replicate_effects(ctx, key_name, wq.effects_buffer, query);
+        replicate_effects(ctx, key_name, wq.effects_buffer);
     }
 }
 
@@ -1629,33 +1610,28 @@ pub fn process_write_queued_query(graph: &Arc<RwLock<ThreadedGraph>>) {
     }
 }
 
-/// Send replication: GRAPH.EFFECT with binary buffer, or verbatim query replay.
+/// Send replication: `GRAPH.EFFECT` with the binary buffer.
+///
+/// There is no query-replay alternative. A write either ships as effects or is
+/// not replicated at all, so a replica's state is only ever built from effects
+/// or from a native Redis sync — never from re-executing a query, which is the
+/// one path where the two engines could reach different answers from the same
+/// input.
 fn replicate_effects(
     ctx: &Context,
-    key_name: &str,
+    key_name: &Arc<str>,
     effects_buffer: Option<Vec<u8>>,
-    query: &str,
 ) {
-    if let Some(mut buf) = effects_buffer {
-        // The one place the payload is finished: every commit has run, and
-        // `build_index_effects` has appended whatever DDL the plan carried.
-        // Compression rewrites everything after the header, so it has to happen
-        // exactly once and it has to happen last — running it per commit
-        // produced a payload that had been compressed twice and could not be
-        // read at all. Keyed off the buffer's own version byte rather than the
-        // config, so it cannot disagree with what was actually built.
-        if buf.first() == Some(&graph::effects::v3::EFFECTS_VERSION) {
-            graph::effects::v3::maybe_compress(
-                &mut buf,
-                graph::effects::v3::compression_min_bytes(),
-            );
-        }
-        let args: &[&[u8]] = &[key_name.as_bytes(), &buf];
-        ctx.replicate("GRAPH.EFFECT", args);
-    } else {
-        let args: &[&[u8]] = &[key_name.as_bytes(), query.as_bytes()];
-        ctx.replicate("GRAPH.QUERY", args);
-    }
+    let Some(mut buf) = effects_buffer else {
+        return;
+    };
+    // The one place the payload is finished: every commit has run and the index
+    // DDL is in. Compression rewrites everything after the header, so it has to
+    // happen exactly once and last — running it per commit produced a payload
+    // compressed twice that could not be read at all.
+    graph::effects::v3::maybe_compress(&mut buf, graph::effects::v3::compression_min_bytes());
+    let args: &[&[u8]] = &[key_name.as_bytes(), buf.as_slice()];
+    ctx.replicate("GRAPH.EFFECT", args);
 }
 
 #[unsafe(no_mangle)]

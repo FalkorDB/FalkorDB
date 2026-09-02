@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 25 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -42,8 +42,6 @@ class testConfig(FlowTestsBase):
                 ("NODE_CREATION_BUFFER", 16384),
                 ("CMD_INFO", 1),
                 ("MAX_INFO_QUERIES", 1000),
-                ("EFFECTS_THRESHOLD", 300),
-                ("EFFECTS_VERSION", 2),
                 ("EFFECTS_COMPRESSION", 0),
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),

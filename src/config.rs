@@ -75,13 +75,6 @@ pub static TIMEOUT_MAX: AtomicI64 = AtomicI64::new(0);
 pub static RESULTSET_SIZE: AtomicI64 = AtomicI64::new(-1);
 pub static QUERY_MEM_CAPACITY: AtomicI64 = AtomicI64::new(0);
 pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
-/// Which effects wire format this node **emits**.
-///
-/// Re-exported from the `graph` crate rather than duplicated: the emit decision
-/// is made there, and two statics would drift the moment one path set only one
-/// of them. `GRAPH.CONFIG SET` and the load-time argument both land here.
-pub use graph::effects::EFFECTS_EMIT_VERSION as EFFECTS_VERSION;
-pub use graph::effects::EFFECTS_THRESHOLD;
 /// Smallest v3 effects payload worth compressing, in bytes; 0 disables it.
 /// Re-exported for the same reason as `EFFECTS_VERSION`: the decision is made
 /// in the graph crate, and two statics would drift.
@@ -140,8 +133,6 @@ pub const CONFIG_NAMES: &[&str] = &[
     "NODE_CREATION_BUFFER",
     "CMD_INFO",
     "MAX_INFO_QUERIES",
-    "EFFECTS_THRESHOLD",
-    "EFFECTS_VERSION",
     "EFFECTS_COMPRESSION",
     "BOLT_PORT",
     "DELAY_INDEXING",

@@ -21,7 +21,6 @@
 //!
 //! Only allowed in write queries; returns an error for `GRAPH.RO_QUERY`.
 
-use crate::effects::emit_v3_for;
 use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp},
@@ -109,18 +108,11 @@ impl<'a> Iterator for CommitOp<'a> {
                     if self.runtime.build_effects.get() {
                         let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
                         let buf = buf_ref.get_or_insert_with(Vec::new);
-                        // Keyed off the buffer, not the config: this query may
-                        // have committed already, and the version cannot change
-                        // half-way through one payload.
-                        let n_effects = if emit_v3_for(buf) {
-                            crate::effects::v3::emit::build_effects_buffer(
-                                &pending,
-                                &self.runtime.g,
-                                buf,
-                            )
-                        } else {
-                            crate::effects::v2::build_effects_buffer(&pending, &self.runtime.g, buf)
-                        };
+                        let n_effects = crate::effects::v3::emit::build_effects_buffer(
+                            &pending,
+                            &self.runtime.g,
+                            buf,
+                        );
                         self.runtime
                             .effects_count
                             .set(self.runtime.effects_count.get() + n_effects);

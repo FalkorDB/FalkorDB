@@ -105,13 +105,9 @@ pub(crate) fn drop_index<'a>(
 
 /// Append this statement to the query's effects buffer.
 ///
-/// v3 only. v2 cannot encode `OPTIONS {...}`, so under v2 index DDL is still
-/// collected by `graph_core::build_index_effects` scanning the plan, and a
-/// statement carrying options falls back to verbatim replication.
-///
-/// The version dispatch is here rather than inside the emitter for the same
-/// reason it is in `CommitOp`: the caller is what knows a mutation happened, and
-/// asking the v3 module whether v3 applies would invert that.
+/// Index DDL does not go through `Pending`, so it cannot ride `CommitOp`'s
+/// emission and appends here instead — in plan order, from the one place the
+/// evaluated `OPTIONS` map exists.
 fn emit_effect(
     runtime: &Runtime<'_>,
     create: bool,
@@ -125,13 +121,6 @@ fn emit_effect(
         return Ok(());
     }
     let mut buf_ref = runtime.effects_buffer.borrow_mut();
-    // Keyed off the buffer rather than the config, so a mid-query
-    // `GRAPH.CONFIG SET EFFECTS_VERSION` cannot mix the two formats in one
-    // payload. Read before creating one, so a v2 query does not leave an empty
-    // buffer behind.
-    if !crate::effects::emit_v3_for(buf_ref.as_deref().unwrap_or(&[])) {
-        return Ok(());
-    }
     let buf = buf_ref.get_or_insert_with(Vec::new);
     build_index_buffer(
         &runtime.pending.borrow(),

@@ -1027,7 +1027,7 @@ class testConstraintReplication():
             with self.replica.monitor() as m:
                 MONITOR_ATTACHED = True
                 for cmd in m.listen():
-                    if 'GRAPH.CONSTRAINT' in cmd['command']:
+                    if 'GRAPH.EFFECT' in cmd['command']:
                         self.monitor.append(cmd)
         except:
             pass
@@ -1057,18 +1057,32 @@ class testConstraintReplication():
         for c in constraints:
             self.env.assertEqual(c.status, 'OPERATIONAL')
 
-        # each constraint should be replicated twice from source to replica:
-        # 1. upon creation
-        # 2. upon constraint becoming activate
+        # Constraints reach the replica as GRAPH.EFFECT, and the replica ends
+        # up with the same six, all OPERATIONAL.
+        #
+        # This used to count twelve verbatim GRAPH.CONSTRAINT commands — two per
+        # create, because the replica treated the second copy as the activation
+        # signal. Neither half of that holds now. The status rides the record, so
+        # the replica installs the master's outcome instead of inferring it from
+        # a repeat; and a constraint below the async threshold validates inline,
+        # so there is nothing to re-announce and it is sent once. Counting wire
+        # commands here would also be wrong for a subtler reason: one buffer can
+        # carry a schema addition *and* the constraint, and the index each helper
+        # creates first is an effect too.
+        #
+        # `test_effects_v3.py` pins the announcement counts exactly, per shape.
         self.source.execute_command("WAIT", 1, 0)
 
-        # wait for all 12 GRAPH.CONSTRAINT commands to be replicated
         elapsed = 10
-        while len(self.monitor) < 12 and elapsed > 0:
+        while len(self.monitor) < 6 and elapsed > 0:
             time.sleep(0.2)
             elapsed -= 0.2
+        self.env.assertGreaterEqual(len(self.monitor), 6)
 
-        self.env.assertEqual(len(self.monitor), 12)
+        replica_constraints = list_constraints(Graph(self.replica, GRAPH_ID))
+        self.env.assertEqual(len(replica_constraints), 6)
+        for c in replica_constraints:
+            self.env.assertEqual(c.status, 'OPERATIONAL')
 
     def test_02_async_validation_reaches_operational_on_replica(self):
         # Regression guard for the pause/role re-check added in #2371.
