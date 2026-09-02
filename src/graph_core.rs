@@ -506,13 +506,27 @@ pub mod ffi {
     }
 }
 
-/// Sticky flag: set once any replica has ever attached (ReplicaChange
-/// server event) and never cleared — a disconnected replica may resume
-/// from the replication backlog, so effects buffers must keep being
-/// built after the first attach. While false (and AOF is off) write
-/// queries skip serializing effects entirely; the replication layer's
-/// verbatim-query fallback is then a no-op propagation.
-pub static REPLICATION_CONSUMERS: AtomicBool = AtomicBool::new(false);
+/// Sticky flag: replication may have a consumer. Set on any replica attach,
+/// role change or fork, and never cleared — a disconnected replica may resume
+/// from the backlog, so buffers must keep being built after the first attach.
+///
+/// **Starts `true`, and that is a correctness requirement rather than
+/// caution.** While it is false (and AOF is off) a write skips serializing
+/// effects altogether, which used to be safe because `replicate_effects` fell
+/// back to replaying the query text. With that fallback gone there is nothing
+/// behind this: a write that builds no buffer is a write the replica never
+/// hears about, permanently.
+///
+/// `false` was reachable in the ordinary case, not a corner: `ReplicaChange`
+/// fires from Redis's `replicaPutOnline`, i.e. *after* the snapshot has been
+/// delivered, so every write between the sync's fork and the replica coming
+/// online produced no buffer. Latching earlier does not close it either —
+/// writes run on the thread pool and read this at query start, so one already
+/// in flight when the fork happens still commits without a buffer.
+///
+/// Skipping is therefore an optimisation that needs a *positive* proof nothing
+/// consumes replication. We do not currently have one, so we do not skip.
+pub static REPLICATION_CONSUMERS: AtomicBool = AtomicBool::new(true);
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
@@ -1472,6 +1486,16 @@ fn commit_and_replicate(
     key_name: &Arc<str>,
     wq: WriteQueryOk,
 ) {
+    // A write that changed something and produced no payload is data the
+    // replica will never see, and since query replay was removed there is
+    // nothing to recover it. Loud rather than silent: this is how the
+    // first-full-sync window went unnoticed.
+    if wq.modified && wq.effects_buffer.is_none() {
+        redis_module::logging::log_warning(format!(
+            "graph '{key_name}' was modified but produced no effects payload; \
+             the change will not reach replicas or the AOF"
+        ));
+    }
     // Index document changes were already applied by each `CommitOp` while this
     // query held the write lock (so a later operator in the same query could see
     // them); nothing left to publish but the matrix version.
