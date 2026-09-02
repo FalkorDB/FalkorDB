@@ -259,6 +259,12 @@ impl<'a> VectorEval<'a> {
                         .children()
                         .any(|c| matches!(c.data(), ExprIR::Distinct)) =>
             {
+                if let Some(column) = (func.name == "hasLabels")
+                    .then(|| self.eval_has_labels(node, batch, rows))
+                    .flatten()
+                {
+                    return Ok(column);
+                }
                 self.eval_function(node, batch, rows)
             }
             _ => self.eval_per_row(node, batch, rows),
@@ -566,6 +572,88 @@ impl<'a> VectorEval<'a> {
             out.push(func.func.call(self.runtime, &args)?);
         }
         Ok(ExprColumn::Values(out))
+    }
+
+    /// `n:A:B` over a bound node column, as one boolean column.
+    ///
+    /// The generic function lane materializes a `Vec<Value>` of the operand and
+    /// another of the result — 32 bytes a row before the call — and re-resolves
+    /// every label *name* to its id on every row inside `hasLabels` itself. A
+    /// label test needs neither: the names resolve once for the batch, and each
+    /// row is then one bit of the label matrix written straight into a
+    /// `Bools` column. `MATCH (n) WHERE n:Person RETURN count(n)` allocated
+    /// 976 KB over 10k rows on the benchmark graph against 6 KB for the same
+    /// scan filtering on a property.
+    ///
+    /// `None` whenever the shape is not exactly that — an unbound or
+    /// heterogeneous operand column, or a label list that is not all string
+    /// constants — and the caller takes the generic lane, which stays the
+    /// definition of the answer.
+    ///
+    /// A name the graph has never registered is on no node, so an unresolvable
+    /// label makes the whole conjunction false for every row. That is the same
+    /// answer `Runtime::node_has_label` gives, reached without touching a
+    /// matrix.
+    fn eval_has_labels(
+        &self,
+        node: &ExprNode<'_>,
+        batch: &Batch<'_>,
+        rows: &[usize],
+    ) -> Option<ExprColumn> {
+        if node.num_children() != 2 {
+            return None;
+        }
+        let operand = node.child(0);
+        let ExprIR::Variable(var) = operand.data() else {
+            return None;
+        };
+        let Column::NodeIds(ids) = batch.column(var.id) else {
+            // `Unbound` is all-null and `Values` may hold nulls or non-nodes;
+            // both are the generic lane's business.
+            return None;
+        };
+
+        let list = node.child(1);
+        if !matches!(list.data(), ExprIR::List) || list.num_children() == 0 {
+            return None;
+        }
+        // Two passes, and the order matters. `hasLabels` type-checks every
+        // element of the list even once an earlier one has settled the answer,
+        // so `hasLabels(n, ['NeverUsed', 1])` is a type error and not `false`.
+        // Claiming the shape before checking the whole list would swallow that
+        // error, which `test11_label_predicate_against_pending_labels` pins.
+        let mut names = Vec::with_capacity(list.num_children());
+        for child in list.children() {
+            let ExprIR::Constant(Value::String(name)) = child.data() else {
+                return None;
+            };
+            names.push(name.clone());
+        }
+        let mut label_ids = Vec::with_capacity(names.len());
+        for name in &names {
+            match self.runtime.label_id(name) {
+                Some(id) => label_ids.push(id),
+                // Unregistered: on no node, so false everywhere with no
+                // per-row work at all.
+                None => {
+                    return Some(ExprColumn::Bools(
+                        vec![false; rows.len()],
+                        NullBitmap::none(rows.len()),
+                    ));
+                }
+            }
+        }
+
+        let mut out = Vec::with_capacity(rows.len());
+        for &row in rows {
+            let id = ids[row];
+            out.push(
+                label_ids
+                    .iter()
+                    .all(|&label| self.runtime.node_has_label_id(id, label)),
+            );
+        }
+        Some(ExprColumn::Bools(out, NullBitmap::none(rows.len())))
     }
 
     /// The universal fallback: evaluate this subtree once per row, through the
