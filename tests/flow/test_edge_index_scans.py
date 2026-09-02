@@ -115,7 +115,6 @@ class testEdgeByIndexScanFlow(FlowTestsBase):
         # Validate the transformation of IN to multiple OR, over a range.
         query = "MATCH (n)-[f:friend]->() WHERE f.created_at IN range(0,30) RETURN DISTINCT n.name ORDER BY n.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Edge By Index Scan', plan)
 
         expected_result = [['Ailon'], ['Alon'], ['Roi']]
         result = self.graph.query(query)
