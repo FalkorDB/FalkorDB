@@ -30,4 +30,50 @@ updates:
     interval: weekly
   cooldown:
     default-days: 7
+# Python test dependencies for the e2e / TCK / flow suites.
+#
+# `redis` in tests/requirements.txt carries an explicit upper bound with a
+# documented reason (redis-py 8.1.0 put `himport_registry` into
+# `connection_kwargs`; falkordb-py < 1.7.0 forwarded it to the sync client).
+# Dependabot honours declared constraints and will not widen the bound, so it
+# holds until someone edits it by hand.
+- directory: /tests
+  package-ecosystem: pip
+  schedule:
+    interval: weekly
+  groups:
+    python-test-deps:
+      patterns:
+        - "*"
+
+# The benchmark harness is a separate uv project (bench/pyproject.toml +
+# bench/uv.lock) rather than part of the tests/ virtualenv, so it needs its
+# own entry; `pip` would not read the lockfile.
+- directory: /bench
+  package-ecosystem: uv
+  schedule:
+    interval: weekly
+  groups:
+    bench-deps:
+      patterns:
+        - "*"
+
+# Base images for the build, runtime and devcontainer images.
+#
+# /bench is deliberately absent: bench/Dockerfile is `FROM ${C_IMAGE}`, an
+# entirely ARG-driven base that Dependabot cannot resolve to a registry tag.
+# build/runtime/Dockerfile is included for its pinned stages (debian, node);
+# its $BUILD_IMAGE and $BROWSER_TAG stages are skipped for the same reason.
+- package-ecosystem: docker
+  directories:
+    - /build
+    - /build/runtime
+    - /.devcontainer
+  schedule:
+    interval: weekly
+  groups:
+    docker-base-images:
+      patterns:
+        - "*"
+
 version: 2

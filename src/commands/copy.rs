@@ -1,6 +1,9 @@
 use crate::{
-    commands::EMPTY_KEY_ERR, config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph,
-    redis_type::GRAPH_TYPE, serializers,
+    commands::EMPTY_KEY_ERR,
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{ThreadedGraph, register_graph, up_to_nul},
+    redis_type::GRAPH_TYPE,
+    serializers,
 };
 use graph::graph::graphblas::matrix::set_nthreads;
 use graph::graph::mvcc_graph::MvccGraph;
@@ -35,6 +38,17 @@ pub fn graph_copy(
 
     let dest_name = std::str::from_utf8(dest_key_name.as_slice())
         .map_err(|_| RedisError::Str("ERR destination key is not valid UTF-8"))?;
+
+    // The destination *key* is the full bytes the command named, for the existence
+    // check as much as for the write: C opens `copy_ctx->rm_dest` both times and never
+    // rebuilds it from the name, so `c_graph_key` has no business here. Guarding one
+    // key and writing another would let `GRAPH.COPY src "victim\0bypass"` pass a check
+    // on the empty `victim\0bypass` and then overwrite the live `victim`.
+    //
+    // The graph's own *name* is truncated, which is what C does in the forked child:
+    // `GraphContext_Rename(ctx, gc, copy_ctx->dest)` renames it to a C string, so the
+    // truncated name is what lands in the dump header the decoder reads back.
+    let graph_name = up_to_nul(dest_name);
 
     // Open src key (read) and verify it holds a graph.
     let src_key = ctx.open_key(&src_key_name);
@@ -100,7 +114,7 @@ pub fn graph_copy(
     drop(g);
     drop(tg);
 
-    let result = serializers::decoder::pipe_load_graph(read_fd, cache_size, dest_name);
+    let result = serializers::decoder::pipe_load_graph(read_fd, cache_size, graph_name);
 
     // Wait for child, retrying on EINTR.
     let mut status = 0i32;
@@ -140,9 +154,15 @@ pub fn graph_copy(
     let boxed = Arc::new(RwLock::new(tg));
 
     dest_key.set_value(&GRAPH_TYPE, boxed.clone())?;
-    crate::graph_core::register_graph(dest_name.to_string(), boxed);
+    // Registered under the key it was written to: the registry is the module's index of
+    // the *keyspace*, and `graph_rdb_save`, the virtual-key builder and the telemetry
+    // flusher all address Redis by the name they find here.
+    register_graph(dest_name.to_string(), boxed);
 
-    // Replicate via GRAPH.RESTORE so replicas receive the serialized graph data.
+    // Replicate via GRAPH.RESTORE so replicas receive the serialized graph data. The
+    // full key bytes, not `graph_name`: C sends the truncated C string here and leaves
+    // the replica holding a different key than the master, which is a divergence rather
+    // than a behaviour worth reproducing.
     ctx.replicate("GRAPH.RESTORE", &[dest_name.as_bytes(), &serialized]);
 
     Ok(RedisValue::SimpleStringStatic("OK"))

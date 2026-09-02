@@ -1,4 +1,5 @@
 from common import *
+import time
 
 
 class testRdbLoad():
@@ -10,6 +11,17 @@ class testRdbLoad():
     def validate_key_count(self, n):
         keys = self.conn.keys('*')
         self.env.assertEqual(len(keys), n)
+
+    # The telemetry stream is written by a background thread on its own
+    # schedule — batched, so it lands a few milliseconds after the query that
+    # produced it. Counting the keyspace right after a query and expecting the
+    # stream to be in it was a race; wait for it instead.
+    def _wait_for_telemetry(self, timeout=30):
+        deadline = time.monotonic() + timeout
+        while self.conn.type('telemetry{x}') == 'none':
+            if time.monotonic() >= deadline:
+                raise AssertionError("telemetry stream never appeared")
+            time.sleep(0.01)
 
     # validate that the imported data exists
     def _test_data(self):
@@ -31,6 +43,7 @@ class testRdbLoad():
         self.env.assertEqual(aux, 1)
 
         # Dump all keys (graphdata + graphmeta virtual keys + telemetry stream)
+        self._wait_for_telemetry()
         all_keys = self.conn.keys('*')
         self.env.assertEqual(len(all_keys), 4)  # 1 graphdata key + 2 graphmeta keys + 1 telemetry stream
         dumps = {}

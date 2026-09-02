@@ -38,6 +38,33 @@ class TestQuerySet:
         # Everything from the first sized write query onward must also be sized.
         assert sized_idx == list(range(first_sized, len(qs.QUERIES)))
 
+    def test_sized_write_queries_ascend_in_magnitude(self):
+        """No sized row may be preceded by one an order of magnitude larger.
+
+        A write costs more while the engine still carries a large deletion:
+        creating one node measured 0.05 ms after a 10k delete and 0.69 ms after
+        a 1M one. With the create/delete pairs grouped after the mixed rows,
+        `create 100` ran directly after `write 1m` and measured recovery from it
+        rather than the cost of a create -- 4.4x C, where a fresh graph shows
+        1.28x. Ascending order keeps each row's context comparable to its own
+        size, and only a test keeps it that way; the previous ordering rule was
+        a comment and drifted.
+        """
+        sized = [
+            q.name
+            for q in qs.QUERIES
+            if any(q.name.startswith(p) for p in ("write ", "create ", "delete "))
+            and q.name.split()[-1][0].isdigit()
+        ]
+        suffix = {"": 1, "k": 1_000, "m": 1_000_000}
+
+        def magnitude(name: str) -> int:
+            n = name.split()[-1]
+            return int(n.rstrip("km")) * suffix[n[-1] if n[-1] in "km" else ""]
+
+        sizes = [magnitude(n) for n in sized]
+        assert sizes == sorted(sizes), f"sized rows must ascend in magnitude, got {sized}"
+
     def test_reps_are_positive_when_set(self):
         for q in qs.QUERIES:
             assert q.reps is None or q.reps > 0, q.name

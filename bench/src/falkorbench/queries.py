@@ -335,6 +335,13 @@ QUERIES = [
     # MULTI corpus so no other row's numbers move.
     Q("multi-edge agg",      False, "MATCH ()-[r:MULTI]->() RETURN sum(r.k)"),
     Q("multi-edge undirected", False, "MATCH (a:MEnd {id: 0})-[r:MULTI]-(b) RETURN count(r)"),
+    # Return whole *relationship entities*, not scalars off them, so the compact reply
+    # path serializes a relationship's property map (`reply.rs`, Value::Relationship)
+    # rather than a single value. `entities` also returns `r`; this row is distinct in
+    # returning property-bearing :SIMILAR edges, so the map it serializes is populated
+    # — :KNOWS has no edge properties, and returning those would frame an empty map and
+    # measure nothing. Every other edge query here returns `r.prop` or an aggregate.
+    Q("rel entity return",   False, "MATCH ()-[r:SIMILAR]->() RETURN r"),
     Q("multi-edge demote/promote", True, "MATCH (a:MEnd {id: 0})-[r:MULTI]->(b:MEnd {id: 1}) WHERE r.k > 1 DELETE r WITH DISTINCT a, b CREATE (a)-[:MULTI {k: 2}]->(b), (a)-[:MULTI {k: 3}]->(b)", 500),
     Q("UDF echo scalars",    False, "UNWIND range(0, 99) AS i RETURN count(bench.echo(i) + bench.echo(1.5)), bench.echo(true), bench.echo(null), bench.echo('s')"),
     Q("UDF echo bigint",     False, "RETURN bench.echo(9007199254740993)"),
@@ -552,25 +559,47 @@ QUERIES = [
     # Distance index scan over the Geo point index (IndexQuery::Point).
     Q("distance index scan geo", False, "MATCH (g:Geo) WHERE distance(g.loc, point({latitude: 0.0, longitude: 0.0})) < 10000 RETURN count(g)"),
 
+    # ---- columnar expression evaluation ------------------------------------
+    # Unindexed 10k-Person scans whose predicate/aggregate input is a computed
+    # tree, i.e. the shapes that fall off the columnar path onto per-row
+    # expression evaluation. `expr prop cmp` is the control: the same scan with
+    # a bare `property <op> constant` predicate, which the kernels already take.
+    Q("expr prop cmp",       False, "MATCH (p:Person) WHERE p.age > 45 RETURN count(p)", cg=True),
+    Q("expr mod filter",     False, "MATCH (p:Person) WHERE p.age % 7 = 3 RETURN count(p)", cg=True),
+    Q("expr arith filter",   False, "MATCH (p:Person) WHERE p.age * 2 + 1 > 100 RETURN count(p)", cg=True),
+    Q("expr or filter",      False, "MATCH (p:Person) WHERE p.age > 70 OR p.score < 100.0 RETURN count(p)", cg=True),
+    Q("expr not filter",     False, "MATCH (p:Person) WHERE NOT p.age > 70 RETURN count(p)", cg=True),
+    Q("expr starts with",    False, "MATCH (p:Person) WHERE p.name STARTS WITH 'p1' RETURN count(p)", cg=True),
+    Q("expr func filter",    False, "MATCH (p:Person) WHERE toUpper(p.name) = 'P100' RETURN count(p)", cg=True),
+    Q("expr sum computed",   False, "MATCH (p:Person) RETURN sum(p.age * 3 + 1)", cg=True),
+    Q("expr case filter",    False, "MATCH (p:Person) WHERE (CASE WHEN p.age > 40 THEN 1 ELSE 2 END) = 1 RETURN count(p)", cg=True),
+    Q("expr project computed", False, "MATCH (p:Person) WITH p.age * 2 AS d RETURN count(d)", cg=True),
+
     # ---- sized writes ------------------------------------------------------
     # Kept LAST: they inflate node capacity / matrix dimension to max(N),
     # which would slow every full-graph query measured after them.
     # "write N" is the mixed create+delete round-trip; the "create N" /
     # "delete N" pairs measure the two halves separately.
+    # Ordered by the amount of churn each row causes, ascending, so no row is
+    # preceded by one an order of magnitude larger. Grouping the mixed
+    # "write N" rows ahead of the create/delete pairs instead put `create 100`
+    # and `create 10k` directly after `write 1m`, and a write costs more while
+    # the engine still carries a large deletion: creating a single node costs
+    # 0.05 ms after a 10k delete and 0.69 ms after a 1M one. Those two rows were
+    # measuring recovery from `write 1m` rather than the cost of a create, and
+    # read as a 4.4x / 3.0x regression against C that a fresh graph does not
+    # show (there Rust is at 1.28x and 0.74x).
     Q("write 1",             True,  "UNWIND range(1, 1) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 1000),
     Q("write 10",            True,  "UNWIND range(1, 10) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 1000),
     Q("write 100",           True,  "UNWIND range(1, 100) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 500),
-    Q("write 1k",            True,  "UNWIND range(1, 1000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 200),
-    Q("write 10k",           True,  "UNWIND range(1, 10000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 50),
-    Q("write 100k",          True,  "UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 10),
-    Q("write 1m",            True,  "UNWIND range(1, 1000000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 2),
-    # The pure create/delete pairs accumulate up to reps*N entities before the
-    # delete row drains them, inflating capacity even further — keep them
-    # after the mixed "write N" rows so those keep a stable context.
     Q("create 100",          True,  "UNWIND range(1, 100) AS i CREATE (:Tmp {x: i})", 500),
     Q("delete 100",          True,  "MATCH (t:Tmp) WITH t LIMIT 100 DELETE t", 500),
+    Q("write 1k",            True,  "UNWIND range(1, 1000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 200),
+    Q("write 10k",           True,  "UNWIND range(1, 10000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 50),
     Q("create 10k",          True,  "UNWIND range(1, 10000) AS i CREATE (:Tmp {x: i})", 50),
     Q("delete 10k",          True,  "MATCH (t:Tmp) WITH t LIMIT 10000 DELETE t", 50),
+    Q("write 100k",          True,  "UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 10),
+    Q("write 1m",            True,  "UNWIND range(1, 1000000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 2),
 ]
 
 # Expected-error queries: run only in --once (coverage) mode, never timed.

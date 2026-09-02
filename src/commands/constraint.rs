@@ -1,5 +1,9 @@
-use crate::query_session::QuerySession;
-use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+use crate::query_session::{QuerySession, WriteFacts};
+use crate::{
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{ThreadedGraph, c_graph_key, c_graph_name, register_graph},
+    redis_type::GRAPH_TYPE,
+};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::ConstraintType;
 use graph::identifier_limits::validate_identifier_len;
@@ -137,12 +141,17 @@ pub fn graph_constraint(
                 "Unable to drop constraint, no such constraint.".into(),
             ));
         }
+        let name = c_graph_name(&key_str);
         let g = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
+            &name,
         )));
-        key.set_value(&GRAPH_TYPE, g.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), g.clone());
+        // Created under the name C derives from the key, and stored at the key
+        // rebuilt from that name (`GraphContext_SetKey`) — not at the key the
+        // command addressed, which differs once it holds a NUL.
+        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        create_key.set_value(&GRAPH_TYPE, g.clone())?;
+        register_graph(name, g.clone());
         g
     };
 
@@ -186,7 +195,24 @@ pub fn graph_constraint(
                     // Phase 1: the long-running validation runs as a reader, so
                     // concurrent `db.constraints()` still sees the constraint UNDER
                     // CONSTRUCTION.
-                    let session = QuerySession::begin(&graph_clone);
+                    //
+                    // `replicates: false` — this thread emits no replication of its
+                    // own, so no pause window can be propagated into. #2419 adds a
+                    // GRAPH.EFFECT re-announce here, and must flip this to `true` in
+                    // the same commit.
+                    //
+                    // `originated_here: false` — it also runs on a replica, applying
+                    // the master's replicated GRAPH.CONSTRAINT, where a READONLY
+                    // rejection would strand the constraint UNDER CONSTRUCTION and
+                    // diverge. Covered by testConstraintReplication::
+                    // test_02_async_validation_reaches_operational_on_replica.
+                    let session = QuerySession::begin_with(
+                        &graph_clone,
+                        WriteFacts {
+                            replicates: false,
+                            originated_here: false,
+                        },
+                    );
                     let results = session.with_graph(|tg| {
                         tg.graph
                             .read()
