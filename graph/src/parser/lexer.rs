@@ -58,6 +58,7 @@
 //! [`crate::parser::string_escape::cypher_unescape`].
 
 use crate::parser::string_escape::cypher_unescape;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::{num::IntErrorKind, str::Chars};
 
@@ -757,12 +758,42 @@ impl<'a> Lexer<'a> {
         )
     }
 
+    /// Longest run of query text quoted on either side of the error position.
+    ///
+    /// The whole query used to be echoed back verbatim. Parameter payloads
+    /// bulk loaders send run to megabytes, so every error message copied the
+    /// entire input — and the parser builds error messages on speculative
+    /// paths that discard them, making a single parse quadratic in the payload
+    /// size. A window keeps the message useful and its cost constant.
+    const ERR_CTX_WINDOW: usize = 80;
+
+    /// The slice of the query quoted back in an error message: everything when
+    /// the query is short, otherwise a window around the error position.
+    fn err_ctx(&self) -> Cow<'a, str> {
+        // Both round away from `pos` to a char boundary, and both clamp to the
+        // string's length, so a window that runs off either end is still a
+        // slice this can take.
+        let pos = self.pos.min(self.str.len());
+        let start = self
+            .str
+            .floor_char_boundary(pos.saturating_sub(Self::ERR_CTX_WINDOW));
+        let end = self
+            .str
+            .ceil_char_boundary(pos.saturating_add(Self::ERR_CTX_WINDOW));
+        if start == 0 && end == self.str.len() {
+            return Cow::Borrowed(self.str);
+        }
+        let prefix = if start == 0 { "" } else { "..." };
+        let suffix = if end == self.str.len() { "" } else { "..." };
+        Cow::Owned(format!("{prefix}{}{suffix}", &self.str[start..end]))
+    }
+
     #[must_use]
     pub fn format_error(
         &self,
         err: &str,
     ) -> String {
-        format!("{}, errCtx: {}, pos {}", err, self.str, self.pos)
+        format!("{}, errCtx: {}, pos {}", err, self.err_ctx(), self.pos)
     }
 
     pub fn set_pos(
@@ -793,6 +824,51 @@ mod tests {
             lexer.next();
         }
         Ok(tokens)
+    }
+
+    #[test]
+    fn format_error_quotes_a_short_query_whole() {
+        let lexer = Lexer::new("MATCH (n) RETURN");
+        assert_eq!(
+            lexer.format_error("boom"),
+            "boom, errCtx: MATCH (n) RETURN, pos 0"
+        );
+    }
+
+    // Regression: the whole query used to be embedded in every error message,
+    // so a multi-megabyte parameter payload paid a multi-megabyte copy per
+    // error - and the parser builds errors on speculative paths it discards.
+    #[test]
+    fn format_error_windows_a_long_query() {
+        let query = format!("{}NEEDLE{}", "a".repeat(5000), "b".repeat(5000));
+        let mut lexer = Lexer::new(&query);
+        lexer.set_pos(5000);
+        let msg = lexer.format_error("boom");
+        assert!(
+            msg.len() < 300,
+            "error message not bounded: {} bytes",
+            msg.len()
+        );
+        assert!(msg.contains("NEEDLE"), "window lost the error site: {msg}");
+        assert!(
+            msg.contains("errCtx: ...a"),
+            "missing elision marker: {msg}"
+        );
+        assert!(
+            msg.ends_with("..., pos 5000"),
+            "missing elision marker: {msg}"
+        );
+    }
+
+    // The window is cut on char boundaries, not byte offsets: slicing a
+    // multi-byte character in half would panic.
+    #[test]
+    fn format_error_window_respects_char_boundaries() {
+        let query = format!("{}x", "é".repeat(5000));
+        let mut lexer = Lexer::new(&query);
+        lexer.set_pos(5000);
+        let msg = lexer.format_error("boom");
+        assert!(msg.contains('é'));
     }
 
     #[test]
