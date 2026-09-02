@@ -355,20 +355,36 @@ fn parse_config(args: &[Value]) -> Result<OrderMap<Arc<String>, Value>, String> 
     }
 }
 
-/// Create an LAGraph_Graph from a raw GrB_Matrix.
-/// The graph takes ownership of the matrix pointer—caller must NOT free it
-/// after this call.
+/// Create an `LAGraph_Graph` over `adj`.
+///
+/// `borrowed` says who owns the matrix handle afterwards, and it decides one
+/// thing only: what happens to `adj` if `LAGraph_New` fails.
+///
+/// * `borrowed = false` — LAGraph takes the handle. The caller must not free
+///   it, and must tear the graph down with
+///   [`delete_lagraph_graph_maybe_borrowed`] passing `false`. On failure
+///   `LAGraph_New` has not taken the handle, so this frees it rather than leak
+///   a matrix nothing else refers to.
+/// * `borrowed = true` — the caller keeps the handle (typically inside a
+///   `Matrix` that will free it) and lends it for the graph's lifetime. Nothing
+///   is freed here on failure, because the caller's owner still holds it, and
+///   the teardown must detach `G->A` first.
 unsafe fn create_lagraph_graph(
     adj: crate::graph::graphblas::GrB_Matrix,
     kind: LAGraph_Kind,
+    borrowed: bool,
 ) -> Result<LAGraph_Graph, String> {
     let mut g: LAGraph_Graph = null_mut();
     let mut msg = new_msg();
     let mut adj_mut = adj;
     let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
     if info != 0 {
-        // LAGraph_New did not take ownership; free the matrix to avoid a leak.
-        crate::graph::graphblas::GrB_Matrix_free(&raw mut adj_mut);
+        // `LAGraph_New` only fails before taking the matrix, so the handle is
+        // still live here. Free it when this call owned it; leave it alone when
+        // it was lent, or the caller's owner would double-free.
+        if !borrowed {
+            crate::graph::graphblas::GrB_Matrix_free(&raw mut adj_mut);
+        }
         return Err(format!("LAGraph_New failed: {info}"));
     }
     if g.is_null() {
@@ -381,27 +397,6 @@ unsafe fn create_lagraph_graph(
 unsafe fn delete_lagraph_graph(g: &mut LAGraph_Graph) {
     let mut msg = new_msg();
     lagraph_bindings::LAGraph_Delete(g, msg.as_mut_ptr());
-}
-
-/// Create an LAGraph_Graph that borrows `adj`: the caller keeps ownership of
-/// the matrix and must free the graph with [`delete_lagraph_graph_borrowed`].
-/// `LAGraph_New` only fails before taking the matrix, so the error path never
-/// leaves the handle inside a graph.
-unsafe fn create_lagraph_graph_borrowed(
-    adj: crate::graph::graphblas::GrB_Matrix,
-    kind: LAGraph_Kind,
-) -> Result<LAGraph_Graph, String> {
-    let mut g: LAGraph_Graph = null_mut();
-    let mut msg = new_msg();
-    let mut adj_mut = adj;
-    let info = lagraph_bindings::LAGraph_New(&raw mut g, &raw mut adj_mut, kind, msg.as_mut_ptr());
-    if info != 0 {
-        return Err(format!("LAGraph_New failed: {info}"));
-    }
-    if g.is_null() {
-        return Err(String::from("LAGraph_New returned null graph"));
-    }
-    Ok(g)
 }
 
 /// Free an LAGraph_Graph whose adjacency matrix is borrowed: detach `G->A`
@@ -756,11 +751,8 @@ fn register_pagerank(funcs: &mut Functions) {
                 };
 
                 let borrowed = owned_adj.is_some();
-                let mut lag_g = if borrowed {
-                    create_lagraph_graph_borrowed(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?
-                } else {
-                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?
-                };
+                let mut lag_g =
+                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
 
                 // Cache AT and OutDegree (required for PageRank)
                 let mut msg = new_msg();
@@ -867,11 +859,8 @@ fn register_wcc(funcs: &mut Functions) {
                 };
 
                 let borrowed = owned_adj.is_some();
-                let mut lag_g = if borrowed {
-                    create_lagraph_graph_borrowed(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?
-                } else {
-                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?
-                };
+                let mut lag_g =
+                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED, borrowed)?;
 
                 // Cache symmetric structure
                 let mut msg = new_msg();
@@ -987,11 +976,8 @@ fn register_betweenness(funcs: &mut Functions) {
                 };
 
                 let borrowed = owned_adj.is_some();
-                let mut lag_g = if borrowed {
-                    create_lagraph_graph_borrowed(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?
-                } else {
-                    create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED)?
-                };
+                let mut lag_g =
+                    create_lagraph_graph(compact_adj, LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED, borrowed)?;
 
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
@@ -1115,9 +1101,10 @@ fn register_bfs(funcs: &mut Functions) {
                 // to LAGraph instead of duplicating it; the borrowed delete
                 // detaches `G->A` so only the `Matrix` wrapper frees it.
                 let compact_source = u64::from(source_id);
-                let mut lag_g = create_lagraph_graph_borrowed(
+                let mut lag_g = create_lagraph_graph(
                     adj.inner(),
                     LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                    true,
                 )?;
 
                 let mut msg = new_msg();
@@ -1280,11 +1267,8 @@ fn register_cdlp(funcs: &mut Functions) {
                 };
 
                 let borrowed = owned_adj.is_some();
-                let mut lag_g = if borrowed {
-                    create_lagraph_graph_borrowed(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?
-                } else {
-                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED)?
-                };
+                let mut lag_g =
+                    create_lagraph_graph(lag_adj, LAGraph_Kind::LAGraph_ADJACENCY_UNDIRECTED, borrowed)?;
 
                 let mut msg = new_msg();
                 let lag_g_ref = lag_g.as_mut().ok_or_else(|| String::from("LAGraph graph pointer is null"))?;
@@ -2780,6 +2764,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                 let mut lag_g = create_lagraph_graph(
                     compact_adj,
                     LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                    false,
                 )?;
 
                 let mut msg = new_msg();
@@ -3223,6 +3208,7 @@ fn register_maxflow(funcs: &mut Functions) {
                 let mut lag_g = create_lagraph_graph(
                     cap_mtx,
                     LAGraph_Kind::LAGraph_ADJACENCY_DIRECTED,
+                    false,
                 )?;
                 let mut msg = new_msg();
                 lagraph_bindings::LAGraph_Cached_AT(lag_g, msg.as_mut_ptr());
