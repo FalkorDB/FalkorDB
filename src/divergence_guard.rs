@@ -17,6 +17,9 @@
 //! on `master`), including its three failure modes, because a replica has to
 //! behave the same way whichever engine is running it.
 
+// `log_warning` is the most severe level Redis offers a module: `RedisLogLevel`
+// is Debug | Notice | Verbose | Warning, and the binding maps `log::Level::Error`
+// onto Warning. Redis prints it with `#`, which is what an operator greps for.
 use redis_module::logging::log_warning;
 use redis_module::{Context, ContextFlags};
 use std::time::Duration;
@@ -50,6 +53,13 @@ pub fn on_failure(
     cmd_name: &str,
     detail: &str,
 ) {
+    // The gate lives here rather than at the call site. A caller that forgets it
+    // hands any client a way to force a replica to resync — or, under `LOADING`,
+    // to `exit(1)` — by sending one malformed `GRAPH.EFFECT`. That is not a
+    // check to leave as a convention.
+    if !is_replayed(ctx) {
+        return;
+    }
     if ctx.get_flags().contains(ContextFlags::LOADING) {
         log_warning(format!(
             "Diverged applying {cmd_name} on graph '{graph_name}' while loading from disk: \

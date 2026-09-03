@@ -70,9 +70,9 @@ pub fn graph_effect(
             // the link over an error reply, so without this the replica serves
             // wrong data until someone notices.
             tg.graph.rollback();
-            if crate::divergence_guard::is_replayed(ctx) {
-                crate::divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e);
-            }
+            // `on_failure` decides for itself whether this was replayed; a
+            // client-sent payload returns the error below and nothing more.
+            crate::divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e);
             Err(redis_module::RedisError::String(format!(
                 "ERR effect apply failed: {e}"
             )))

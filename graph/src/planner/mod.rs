@@ -333,58 +333,6 @@ pub fn subtree_contains(
         .any(|n| predicate(n.data()))
 }
 
-/// Returns true if a QueryExpr tree contains any non-deterministic function call.
-fn expr_has_non_deterministic(expr: &DynTree<ExprIR<Variable>>) -> bool {
-    expr.root()
-        .walk_with(&mut Traversal.bfs().over_nodes())
-        .any(|n| matches!(n.data(), ExprIR::FuncInvocation(func) if func.non_deterministic))
-}
-
-/// Returns true if a SetItem references any non-deterministic expression.
-fn set_item_has_non_deterministic(item: &SetItem<Arc<String>, Variable>) -> bool {
-    match item {
-        SetItem::Attribute { target, value, .. } => {
-            expr_has_non_deterministic(target) || expr_has_non_deterministic(value)
-        }
-        SetItem::Label { .. } => false,
-    }
-}
-
-/// Returns true if a QueryGraph (CREATE/MERGE pattern) contains non-deterministic expressions.
-fn query_graph_has_non_deterministic(qg: &QueryGraph<Arc<String>, Arc<String>, Variable>) -> bool {
-    for node in qg.nodes() {
-        if expr_has_non_deterministic(&node.attrs) {
-            return true;
-        }
-    }
-    for rel in qg.relationships() {
-        if expr_has_non_deterministic(&rel.attrs) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Returns true if an IndexQuery tree contains any non-deterministic function call.
-fn index_query_has_non_deterministic(query: &IndexQuery<QueryExpr<Variable>>) -> bool {
-    match query {
-        IndexQuery::Range { min, max, .. } => {
-            min.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
-                || max.as_ref().is_some_and(|e| expr_has_non_deterministic(e))
-        }
-        IndexQuery::And(queries) | IndexQuery::Or(queries) => {
-            queries.iter().any(index_query_has_non_deterministic)
-        }
-        IndexQuery::Point { point, radius, .. } => {
-            expr_has_non_deterministic(point) || expr_has_non_deterministic(radius)
-        }
-        IndexQuery::InList { list, .. } => expr_has_non_deterministic(list),
-        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
-            expr_has_non_deterministic(value)
-        }
-    }
-}
-
 /// Formats a relationship for variable-length traverse display, e.g.
 /// `(n)-[e:R*1..INF]->(m)`.
 ///

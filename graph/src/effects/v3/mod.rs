@@ -90,9 +90,22 @@ use std::sync::atomic::{AtomicI64, Ordering};
 pub static EFFECTS_COMPRESSION: AtomicI64 = AtomicI64::new(0);
 
 /// The size threshold, as a `usize`. Negative or absurd values read as off.
-#[must_use]
-pub fn compression_min_bytes() -> usize {
+fn compression_min_bytes() -> usize {
     usize::try_from(EFFECTS_COMPRESSION.load(Ordering::Relaxed)).unwrap_or(0)
+}
+
+/// Finish a payload: compress it if the configuration says it is worth it.
+///
+/// The one entry point the replication layer needs. It used to reach in for
+/// `maybe_compress` and `compression_min_bytes` separately, which put the
+/// decision of *whether* to compress outside the format — and made the
+/// threshold `pub` for no other reason.
+///
+/// Call once, on a complete buffer. `maybe_compress` refuses a payload already
+/// marked compressed, so a second call is a no-op rather than corruption, but
+/// the contract is once.
+pub fn seal(buf: &mut Vec<u8>) {
+    maybe_compress(buf, compression_min_bytes());
 }
 
 pub use blocks::*;
