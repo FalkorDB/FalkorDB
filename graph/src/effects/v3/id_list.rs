@@ -16,6 +16,52 @@
 //! * [`Segment::Ascending`] — a roaring bitmap, which several consecutive ranges
 //!   collapse into when they ascend and the bitmap is genuinely cheaper.
 //!
+//! ## What one push does
+//!
+//! ```text
+//!                            push(id)
+//!                               |
+//!            does it extend the segment already there?
+//!                               |
+//!         +---------------------+---------------------+
+//!         | yes                                       | no
+//!         v                                           v
+//!   Range{base,len}  id == base+len  -> len += 1     (open a new one)
+//!   Repeat{id,count} id == id        -> count += 1          |
+//!   Ascending{bm}    id >  max       -> bm.insert(id)       |
+//!         |                                                 |
+//!         v                                                 v
+//!       done, no new segment                   does it ascend past last.max()?
+//!                                                            |
+//!                                        +-------------------+-----------------+
+//!                                        | yes                                 | no
+//!                                        v                                     v
+//!                              push Range{id,1}                  the run ENDS here
+//!                              the run absorbs the                        |
+//!                              segment it just closed        last is Range{b,1}, b == id?
+//!                                        |                         |            |
+//!                                        |                     yes |            | no
+//!                                        |                         v            v
+//!                                        |              becomes Repeat{id,2}  push Range{id,1}
+//!                                        |                         |            |
+//!                                        |                         +-----+------+
+//!                                        |                               v
+//!                                        |                        run.restart()
+//!                                        v
+//!                      range_bytes >= 32  AND  5 + bitmap_bytes < range_bytes ?
+//!                                        |
+//!                                    yes |
+//!                                        v
+//!                    the run's Ranges collapse into one Ascending
+//!                    (one insert_range per Range, then optimize())
+//! ```
+//!
+//! Two things that chart is making explicit. A **repeat ends a run** — it does
+//! not ascend, and a bitmap holds a value once, so it can never join one. And
+//! the collapse test is evaluated on **every new segment**, against the run's
+//! own shape, never on a schedule: that is what makes the segmentation a
+//! function of the ids rather than of when an encoder looked.
+//!
 //! That second rule is decided by `serialized_size()`, which roaring reports
 //! without serializing, so the comparison is exact rather than estimated — and
 //! therefore reproducible by a second implementation, which is what makes it
