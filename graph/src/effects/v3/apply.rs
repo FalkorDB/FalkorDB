@@ -275,9 +275,9 @@ fn apply_record(
             g.create_nodes(&nodes);
             ops.created_here |= &nodes;
 
-            // The graph's bulk APIs take `&[u64]`, so a range is materialized
+            // The graph's bulk APIs take `&[u64]`, so the ids are materialized
             // once here rather than per call.
-            let ids = ids.to_vec();
+            let ids: Vec<u64> = ids.iter().collect();
             if !labels.is_empty() {
                 let label_ids = checked_label_ids(g, &labels)?;
                 g.set_node_labels_product(&ids, &label_ids, &mut ops.docs.node_adds, true);
@@ -299,8 +299,12 @@ fn apply_record(
         } => {
             let type_name = resolve_type(g, relation_id)?;
             g.add_reserved_relationship_count(ids.len() as u64);
-            // `&[u64]` for the bulk APIs; a range is materialized once.
-            let (ids, src, dst) = (ids.to_vec(), src.to_vec(), dst.to_vec());
+            // `&[u64]` for the bulk APIs; materialized once each.
+            let (ids, src, dst): (Vec<u64>, Vec<u64>, Vec<u64>) = (
+                ids.iter().collect(),
+                src.iter().collect(),
+                dst.iter().collect(),
+            );
             g.create_relationships_bulk(&type_name, &src, &dst, &ids);
 
             if !attr_ids.is_empty() {
@@ -321,7 +325,7 @@ fn apply_record(
             attr_ids,
             rows,
         } => {
-            let ids = ids.to_vec();
+            let ids: Vec<u64> = ids.iter().collect();
             match entity {
                 EntityType::Node => {
                     check_attr_shape(g, &ids, &attr_ids, &rows)?;
@@ -341,7 +345,7 @@ fn apply_record(
             let label_ids = checked_label_ids(g, &labels)?;
             if add {
                 g.set_node_labels_product(
-                    &ids.to_vec(),
+                    &ids.iter().collect::<Vec<_>>(),
                     &label_ids,
                     &mut ops.docs.node_adds,
                     false,

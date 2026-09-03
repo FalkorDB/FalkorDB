@@ -925,7 +925,7 @@ mod tests {
                 let Record::CreateNode { ids, labels, .. } = r else {
                     panic!("wrong record: {r:?}");
                 };
-                (labels.clone(), ids.to_vec())
+                (labels.clone(), ids.iter().collect::<Vec<_>>())
             })
             .collect();
         seen.sort();
@@ -996,7 +996,7 @@ mod tests {
                     panic!("wrong record: {r:?}");
                 };
                 assert_eq!(*entity, EntityType::Node);
-                (labels.clone(), ids.to_vec())
+                (labels.clone(), ids.iter().collect::<Vec<_>>())
             })
             .collect();
         seen.sort();
@@ -1021,7 +1021,7 @@ mod tests {
                 let Record::DeleteNode { ids, labels } = r else {
                     panic!("wrong record: {r:?}");
                 };
-                (labels.clone(), ids.to_vec())
+                (labels.clone(), ids.iter().collect::<Vec<_>>())
             })
             .collect();
         seen.sort();
@@ -1047,7 +1047,7 @@ mod tests {
                 let Record::DeleteNode { ids, labels } = r else {
                     panic!("wrong record: {r:?}");
                 };
-                (labels.clone(), ids.to_vec())
+                (labels.clone(), ids.iter().collect::<Vec<_>>())
             })
             .collect();
         seen.sort();

@@ -713,15 +713,6 @@ impl IdList {
         u32::try_from(self.len).expect("a record cannot carry more than u32::MAX entities")
     }
 
-    /// The ids as a slice, materializing to produce one.
-    ///
-    /// Prefer [`Self::iter`]: this exists for the graph's bulk APIs, which take
-    /// `&[u64]`, and every call undoes the allocation the segments avoid.
-    #[must_use]
-    pub fn to_vec(&self) -> Vec<u64> {
-        self.iter().collect()
-    }
-
     /// Write the block: `u32 n_segments`, then each segment.
     ///
     /// Nothing is decided here. The segments already are the encoding, so this
