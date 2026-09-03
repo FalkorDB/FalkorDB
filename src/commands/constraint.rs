@@ -11,7 +11,7 @@ use graph::identifier_limits::validate_identifier_len;
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Validate that a name is a valid identifier: starts with a letter or underscore,
 /// followed by letters, digits, or underscores.
@@ -59,19 +59,25 @@ fn find_status(
 /// `db.constraints()` keeps seeing the constraint UNDER CONSTRUCTION; the write
 /// lock is taken only to publish the outcome.
 ///
-/// Retried until it succeeds or the work stops being this node's, because
-/// giving up strands the constraint permanently: the master keeps it UNDER
-/// CONSTRUCTION, never enforces it, accepts writes it should reject, and nothing
-/// can re-drive it — `GRAPH.CONSTRAINT CREATE` returns `Constraint already
-/// exists` from then on. A `CLIENT PAUSE ... WRITE` or an in-flight `FAILOVER`
-/// refuses the escalation, and both are transient by nature.
+/// Retried while the refusal is transient, because giving up leaves the
+/// constraint UNDER CONSTRUCTION: the master never enforces it and
+/// `GRAPH.CONSTRAINT CREATE` answers `Constraint already exists` from then on,
+/// since `create_constraint` only clears a FAILED one out of the way. A
+/// `CLIENT PAUSE ... WRITE` or an in-flight `FAILOVER` refuses the escalation,
+/// and both end on their own.
 ///
-/// Deliberately unbounded rather than capped at some number of attempts. Nothing
-/// bounds a `CLIENT PAUSE` — its timeout is whatever the caller passed — so any
-/// cap is a guess, and the case it would fire in is a long pause, which is
-/// exactly when silently abandoning the constraint is worst. The two `return`
-/// arms below are the real exit conditions: this loop ends when the graph is
-/// gone or this node is no longer the one that should finish the work.
+/// **Bounded by [`RETRY_BUDGET`], not unbounded.** Nothing bounds a
+/// `CLIENT PAUSE` — its timeout is whatever the caller passed — so retrying
+/// until it lifts means an OS thread that may never exit, one per pending
+/// constraint. On exhaustion the thread logs what happened and stops.
+///
+/// Stranded is recoverable, which is what makes stopping safe:
+/// [`Graph::drop_constraint`] has no status guard, so `GRAPH.CONSTRAINT DROP`
+/// removes a constraint stuck UNDER CONSTRUCTION and it can then be created
+/// again. The give-up log says exactly that, because nothing else will.
+///
+/// Publishing FAILED instead is not available here: that is a write, and a
+/// write being refused is the reason we are giving up.
 ///
 /// **C has no equivalent, because C has nothing here that can fail.** Its
 /// enforcement thread sets the status in place under a *read* lock
@@ -96,21 +102,56 @@ pub struct Settling {
     pub properties: Vec<Arc<String>>,
 }
 
+/// How long a settling thread will keep trying before it gives up.
+///
+/// Long enough that no ordinary `CLIENT PAUSE` or failover outlasts it — both
+/// are measured in seconds — and short enough that a thread cannot outlive the
+/// reason it exists. There is no principled value, because there is no bound on
+/// a pause; what matters is that one exists.
+const RETRY_BUDGET: Duration = Duration::from_secs(300);
+
+/// Between attempts. Flat rather than exponential: the wait is for an external
+/// window to close, so backing off further only delays noticing that it has.
+const BACKOFF: Duration = Duration::from_millis(100);
+
 pub fn settle_async_constraint(
     graph: &Arc<RwLock<ThreadedGraph>>,
     announce: &[Settling],
     key: &str,
     was_replicated: bool,
 ) {
-    const BACKOFF: Duration = Duration::from_millis(100);
+    let deadline = Instant::now() + RETRY_BUDGET;
+    let mut attempts = 0_u32;
 
     loop {
+        attempts += 1;
         match attempt_settle(graph, announce, key, was_replicated) {
             Ok(()) => return,
             // Transient: the window closes on its own. Nothing is held here —
             // `attempt_settle` has dropped its session, and with it the GIL and
             // the write lock — so sleeping is safe.
-            Err(WriteAbort::ReplicaTrafficPaused) => std::thread::sleep(BACKOFF),
+            Err(WriteAbort::ReplicaTrafficPaused) => {
+                if Instant::now() >= deadline {
+                    for c in announce {
+                        redis_module::logging::log_warning(format!(
+                            "constraint on {:?} {} ({}) is stuck UNDER CONSTRUCTION: writes were \
+                             refused for {}s across {attempts} attempts, so validation could not \
+                             publish its result. It is not being enforced. Recover with \
+                             GRAPH.CONSTRAINT DROP on graph '{key}' followed by CREATE.",
+                            c.entity_type,
+                            c.label,
+                            c.properties
+                                .iter()
+                                .map(|p| p.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            RETRY_BUDGET.as_secs(),
+                        ));
+                    }
+                    return;
+                }
+                std::thread::sleep(BACKOFF);
+            }
             // The graph is gone, or this node is no longer a master. Neither
             // resolves by waiting: on a demoted node the constraint is the new
             // master's to finish, and `enforce_pending_constraints_after_promotion`
