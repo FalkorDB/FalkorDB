@@ -76,9 +76,18 @@ pub static RESULTSET_SIZE: AtomicI64 = AtomicI64::new(-1);
 pub static QUERY_MEM_CAPACITY: AtomicI64 = AtomicI64::new(0);
 pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
 /// Smallest v3 effects payload worth compressing, in bytes; 0 disables it.
-/// Re-exported for the same reason as `EFFECTS_VERSION`: the decision is made
-/// in the graph crate, and two statics would drift.
+/// Re-exported because the decision is made in the graph crate, and two statics
+/// would drift.
 pub use graph::effects::v3::EFFECTS_COMPRESSION;
+/// **Deprecated and ignored.** v3 is the only wire format and effects are the
+/// only mechanism, so there is nothing left for either knob to select.
+///
+/// Kept settable rather than removed. Removing them made `GRAPH.CONFIG SET
+/// EFFECTS_THRESHOLD` answer `Unknown configuration field`, which is a startup
+/// failure for any config file that names one and broke five flow suites that
+/// set it. A value is accepted, stored, reported back, and read by nothing.
+pub static EFFECTS_VERSION_DEPRECATED: AtomicI64 = AtomicI64::new(3);
+pub static EFFECTS_THRESHOLD_DEPRECATED: AtomicI64 = AtomicI64::new(0);
 /// Toggles the telemetry stream that backs `GRAPH.INFO`. Atomic rather than
 /// GIL-guarded because the query hot path reads it off the main thread, and
 /// because C lets `GRAPH.CONFIG SET CMD_INFO yes|no` flip it at runtime.
@@ -134,6 +143,8 @@ pub const CONFIG_NAMES: &[&str] = &[
     "CMD_INFO",
     "MAX_INFO_QUERIES",
     "EFFECTS_COMPRESSION",
+    "EFFECTS_VERSION",
+    "EFFECTS_THRESHOLD",
     "BOLT_PORT",
     "DELAY_INDEXING",
     "IMPORT_FOLDER",
