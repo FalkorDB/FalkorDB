@@ -86,10 +86,14 @@ fn assert_sanitizer_agrees(request: &Request) {
         .map(str::to_owned);
 
     match (rust_san.as_deref(), request.san.as_deref()) {
-        (Some(rust), None) => panic!(
-            "native-deps: building with -Zsanitizer={rust} but REDISEARCH_SAN is unset, \
-             so the CLEAN RediSearch archive would be linked into an instrumented \
-             module. Set REDISEARCH_SAN={rust}."
+        // Instrumenting only the Rust side is a REAL configuration, not a
+        // mistake: `cargo fuzz` builds the fuzz target with -Zsanitizer=address
+        // for coverage while deliberately linking the clean RediSearch archive.
+        // Warn rather than fail -- a hard error here breaks the fuzz job.
+        (Some(rust), None) => println!(
+            "cargo:warning=building with -Zsanitizer={rust} while REDISEARCH_SAN is \
+             unset: the CLEAN RediSearch archive will be linked. Set \
+             REDISEARCH_SAN={rust} if you meant to instrument it too."
         ),
         (Some(rust), Some(dep)) if rust != dep => panic!(
             "native-deps: -Zsanitizer={rust} disagrees with REDISEARCH_SAN={dep}; \

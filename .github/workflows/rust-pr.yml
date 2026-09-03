@@ -181,7 +181,12 @@ jobs:
       - name: Lint (native-deps)
         run: cargo clippy --all-targets --manifest-path native-deps/Cargo.toml
       - name: deps/native-deps.lock is in step with the gitlinks
-        run: cargo run --offline --manifest-path native-deps/Cargo.toml -- lock --check
+        # `lock --check` reads the gitlinks with `git ls-files`. This job runs in
+        # a container whose user differs from the checkout's owner, so git refuses
+        # with "detected dubious ownership" unless the workspace is marked safe.
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cargo run --offline --manifest-path native-deps/Cargo.toml -- lock --check
   test:
     runs-on: ubuntu-latest
     container:
