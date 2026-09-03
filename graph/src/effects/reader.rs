@@ -167,7 +167,7 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effects::v3::{BlockEncoding, IdList, MAX_RECORD_IDS, read_ids};
+    use crate::effects::v3::{IdList, MAX_RECORD_IDS, read_ids};
     use crate::effects::writer::write_u64;
 
     // ── malformed input ──
@@ -186,44 +186,40 @@ mod tests {
 
     #[test]
     fn an_absurd_count_is_rejected_before_allocating() {
-        // Two independent guards, and the tiny buffers here are the point: none
-        // of these may reserve for the count they claim.
+        // Two independent guards, and the tiny buffers here are the point:
+        // neither may reserve for the count the record claims.
         //
         // The absolute cap is checked first, because it is the only one that can
-        // bound `Range` and `Sorted` — both describe any count in a handful of
-        // bytes, so weighing count against remaining bytes sees nothing wrong.
-        for enc in [
-            BlockEncoding::Plain,
-            BlockEncoding::Compressed,
-            BlockEncoding::Sorted,
-            BlockEncoding::Range,
-        ] {
-            let buf = [enc as u8, 8, 0, 0];
-            let mut r = Reader::new(&buf);
-            assert_eq!(
-                read_ids(&mut r, u32::MAX),
-                Err(DecodeError::TooManyIds {
-                    count: u64::from(u32::MAX),
-                    max: MAX_RECORD_IDS,
-                }),
-                "{enc:?} accepted u32::MAX ids"
-            );
-        }
+        // bound a segment list at all — one range describes any number of ids in
+        // a handful of bytes, so weighing the count against the bytes remaining
+        // sees nothing wrong.
+        let buf = [1_u8, 0, 0, 0, 0x08, 0];
+        let mut r = Reader::new(&buf);
+        assert_eq!(
+            read_ids(&mut r, u32::MAX),
+            Err(DecodeError::TooManyIds {
+                count: u64::from(u32::MAX),
+                max: MAX_RECORD_IDS,
+            })
+        );
 
-        // Under the cap, the length guard is what catches a count the buffer
-        // cannot possibly hold — this is the one `Range` and `Sorted` escape.
-        let under_cap = (MAX_RECORD_IDS - 1) as u32;
-        let buf = [BlockEncoding::Plain as u8, 8, 0, 0];
+        // Under the cap, the guard that bites is arithmetic rather than
+        // length-based: no list can hold more segments than ids, because every
+        // segment carries at least one.
+        let buf = [0xFF_u8, 0xFF, 0, 0, 0x08, 0];
         let mut r = Reader::new(&buf);
         assert!(matches!(
-            read_ids(&mut r, under_cap),
+            read_ids(&mut r, 4),
             Err(DecodeError::ImplausibleCount { .. })
         ));
     }
 
     #[test]
     fn a_bad_encoding_byte_is_rejected() {
-        let buf = [0xEE_u8];
+        // A segment header with its reserved bits set, behind a well-formed
+        // segment count: refused rather than masked off, so a future segment
+        // shape cannot be silently misread as a range by a build predating it.
+        let buf = [1_u8, 0, 0, 0, 0xEE, 0];
         let mut r = Reader::new(&buf);
         assert_eq!(read_ids(&mut r, 1), Err(DecodeError::BadEncoding(0xEE)));
     }

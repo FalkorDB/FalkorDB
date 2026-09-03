@@ -307,45 +307,6 @@ pub const fn constraint_from_tag(v: u32) -> Result<ConstraintType, DecodeError> 
     }
 }
 
-// ── block encodings ──
-
-wire_enum! {
-    /// How an `IdList` stores its ids.
-    BlockEncoding: u8 => BadEncoding {
-        /// Raw ids at the narrowest width that holds the largest of them:
-        /// `u8 width` then `uint(width) x count`.
-        ///
-        /// A separate full-width encoding would be this one with `width == 8`, so
-        /// there is no reason for both. Finding the maximum is one pass and no
-        /// allocation.
-        Plain = 0,
-        /// A roaring64 dictionary of the distinct ids, plus one rank per row.
-        /// Order and duplication live in the ranks, so the ids themselves are
-        /// stored as a set.
-        Compressed = 1,
-        /// A bare run-optimized roaring64 bitmap, no per-row bytes at all.
-        ///
-        /// Only selectable when the ids handed to the encoder are **already**
-        /// ascending and unique — the encoder never sorts to qualify, because row
-        /// *k* belongs to the k-th id as written and reordering would rebind every
-        /// row. Sequential id allocation means bulk create and delete-by-label
-        /// produce exactly that, and a run costs bytes per *run* rather than per
-        /// row: a million consecutive ids are 247 bytes here against 4 MB plain.
-        Sorted = 2,
-        /// A consecutive run, sent as its base alone: `u8 width · uint(width)`.
-        ///
-        /// The count is already in the record, so `base .. base + count` is the
-        /// whole list. Selectable only when the ids arrive consecutive and
-        /// ascending, which is what sequential allocation produces.
-        ///
-        /// This is the encoding with no floor. Roaring costs ~27 bytes whatever it
-        /// holds, so [`Self::Sorted`] only wins above about 25 ids; a base wins
-        /// from two ids upward and never loses. It also spares the replica a
-        /// bitmap deserialize-and-iterate on the commonest payload there is.
-        Range = 3,
-    }
-}
-
 // ── SIValue type tags ──
 //
 // Derived from `serialization::si_type` rather than restated: the RDB encoder

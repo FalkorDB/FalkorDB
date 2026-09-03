@@ -858,6 +858,18 @@ pub fn read_buffer(buf: &[u8]) -> Result<Vec<Record>, DecodeError> {
 /// thread while it holds the GIL — and the corpus is highly repetitive, so the
 /// cheapest level already gets most of the ratio. Not configurable because no
 /// measurement has yet shown a level worth choosing between.
+/// zstd level for the payload frame.
+///
+/// **Level 1's ratio on effects payloads is a coin flip on alignment.** Its fast
+/// match-finder phase-locks onto the record period, so shifting a payload by one
+/// byte swings the output: measured on 10,000 `CREATE_NODE` value rows, the same
+/// bytes compress to 10,399 at one alignment and ~31,100 at the other eight.
+/// Level 3 gives 27,250 at every alignment — worse than level 1's lucky case,
+/// better than its common one, and stable, which a wire format wants more than
+/// it wants an occasional 3x.
+///
+/// Left at 1 for now because raising it is a CPU trade that has not been
+/// measured on the write thread; tracked separately.
 const COMPRESSION_LEVEL: i32 = 1;
 
 pub fn maybe_compress(
@@ -918,7 +930,7 @@ mod tests {
                 "03 00 00 00 01 00 00 00 ",            // CREATE_NODE, count = 1
                 "01 00 07 00 00 00 ",                  // LabelSet: n = 1, label 7
                 "01 00 00 00 ",                        // AttrIds: n = 1, attr 0
-                "03 01 00 ",                           // IdList: range, width 1, base 0
+                "01 00 00 00 08 00 ", // IdList: 1 segment; range, base 0, length implied
                 "00 20 00 00 01 00 00 00 00 00 00 00"  // AttrValues: T_INT64, 1
             )
         );
@@ -938,7 +950,9 @@ mod tests {
         // Schema first: header ends at 10, LabelSet (6 B) then AttrIds (4 B),
         // so the id block starts at 20. Sequentially allocated ids are a
         // consecutive run, so all ten thousand of them are three bytes.
-        assert_eq!(&buf[20..23], &[BlockEncoding::Range as u8, 1, 0]);
+        // One segment, and it leaves its length implied: header byte then the
+        // narrowed base. Flat in the count — ten thousand ids cost what one does.
+        assert_eq!(&buf[20..27], &[1, 0, 0, 0, 0x08, 0, 0]);
 
         let records = read_buffer(&buf).unwrap();
         assert_eq!(records.len(), 1);
@@ -1290,12 +1304,14 @@ mod tests {
             );
         }
 
-        // The floor is now parity with v2, not the +15% the design budgeted
-        // for: merging the full-width and narrowed encodings gave back what the
-        // count field costs.
+        // The floor moved deliberately, and this records by how much. Segments
+        // state their count on the wire — a decoder cannot otherwise tell a
+        // truncated list from a complete one — and that is four bytes per
+        // record, which on ten thousand single-id records is the whole
+        // difference between this bound and the 340,001 that preceded it.
         let worst = create_10k_in_shapes(10_000);
         assert!(
-            worst.len() <= 340_001,
+            worst.len() <= 370_001,
             "singleton floor regressed: {}",
             worst.len()
         );
@@ -1323,15 +1339,17 @@ mod tests {
 
     #[test]
     fn a_singleton_costs_about_what_v2_charged() {
-        // The price of one uniform record shape is a count field and an
-        // encoding byte — but narrowing the id gives most of it back, so the
-        // "+15% on singletons" the design was budgeted for did not materialize.
-        // v2 spent 34 bytes on this record.
+        // The price of one uniform record shape. v2 spent 34 bytes on this
+        // record; segments spend 36, and the three-byte difference is the
+        // stated segment count — a decoder cannot otherwise tell a truncated
+        // segment list from a complete one. The id itself still narrows, and the
+        // final segment's length is implied by the record's count, so a lone id
+        // is a header byte and a base.
         //
-        //   4 opcode + 4 count + IdSet + 6 LabelSet + 16 AttrSet
+        //   4 opcode + 4 count + IdList + 6 LabelSet + 16 AttrSet
         let mut small = Vec::new();
         write_create_node(&mut small, &IdList::from([0]), &[7], &[0], &[Value::Int(1)]);
-        assert_eq!(small.len(), 33, "id 0 narrows to one byte");
+        assert_eq!(small.len(), 36, "id 0 narrows to one byte");
 
         let mut mid = Vec::new();
         write_create_node(
@@ -1341,7 +1359,7 @@ mod tests {
             &[0],
             &[Value::Int(1)],
         );
-        assert_eq!(mid.len(), 34, "a mid-size graph's id takes two: exactly v2");
+        assert_eq!(mid.len(), 37, "a mid-size graph's id takes two");
 
         let mut large = Vec::new();
         write_create_node(
@@ -1351,7 +1369,7 @@ mod tests {
             &[0],
             &[Value::Int(1)],
         );
-        assert_eq!(large.len(), 36, "past 2^16 the id takes four");
+        assert_eq!(large.len(), 39, "past 2^16 the id takes four");
     }
 
     // ── index and constraint records ──
@@ -1670,8 +1688,16 @@ mod tests {
         assert!(maybe_compress(&mut buf, 1024), "should compress");
         assert_eq!(buf[0], EFFECTS_VERSION, "the header stays plaintext");
         assert_eq!(buf[1], FLAG_COMPRESSED);
+        // A third, not a quarter — and the change is not a regression in the
+        // format. At `COMPRESSION_LEVEL = 1` zstd's fast match-finder phase-locks
+        // onto this payload's 12-byte record period, so the ratio depends on
+        // where the records happen to start. Measured on this exact body,
+        // shifted one byte at a time: 31,098 / 10,399 / 31,105 / 31,105 / 31,109
+        // ... one alignment in nine compresses 3x better than the rest, and the
+        // encoding this replaces happened to sit on it. Level 3 is 27,250 at
+        // every alignment. See the note in `maybe_compress`.
         assert!(
-            buf.len() < plain.len() / 4,
+            buf.len() < plain.len() / 3,
             "{} vs {}",
             buf.len(),
             plain.len()

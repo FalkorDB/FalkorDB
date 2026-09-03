@@ -64,19 +64,17 @@ const fn width_of_code(code: u8) -> u8 {
     }
 }
 
-/// Segment count at which a collapse is attempted, and the factor it grows by.
+/// Segments in an ascending run before a collapse is first attempted.
 ///
-/// Collapsing is O(n) in the segments and builds a bitmap, so it is amortised
-/// rather than run per push: it fires when the count reaches
-/// `COLLAPSE_FLOOR << k`. Below the floor there is nothing to win — roaring has
-/// a floor of its own around 27 bytes, which a handful of ranges never exceed.
-const COLLAPSE_FLOOR: usize = 16;
-
-/// Smallest range-bytes total worth building a bitmap to try to beat.
+/// The trigger is the run's own segment count, which is a function of the ids —
+/// so every implementation crosses it at the same push, and the bytes do not
+/// depend on when an encoder chose to look. A counter over the whole list would
+/// not have that property.
 ///
-/// Roaring cannot serialize smaller than this, so a run costing less is not
-/// worth the allocation to measure.
-const ROARING_FLOOR_BYTES: usize = 32;
+/// Eight because a bitmap cannot possibly win below it: roaring's smallest
+/// serialization is around 27 bytes and a one-id range costs about three, so
+/// there is nothing to weigh until the run is at least that long.
+const COLLAPSE_ATTEMPT_AT: usize = 8;
 
 /// One run of ids, and the only two shapes the wire knows.
 ///
@@ -89,7 +87,12 @@ pub enum Segment {
     ///
     /// A single id is `len == 1`, so this variant alone can describe any list,
     /// however unordered — which is why there is no plain or dictionary form.
-    Range { base: u64, len: u64 },
+    ///
+    /// `len` is a `u32` rather than a `u64` because [`MAX_RECORD_IDS`] caps a
+    /// record at 2^27 ids. That is not cosmetic: a list that cannot collapse
+    /// holds one segment per id, so the eight bytes saved here are eight per
+    /// id.
+    Range { base: u64, len: u32 },
     /// Strictly ascending ids with gaps, as a run-optimized roaring bitmap.
     ///
     /// Only produced by [`IdList::collapse`], never by a push: a bitmap holds
@@ -102,7 +105,7 @@ pub enum Segment {
     /// are read on the encode path.
     Ascending {
         bitmap: RoaringTreemap,
-        len: u64,
+        len: u32,
         max: u64,
     },
 }
@@ -135,20 +138,12 @@ mod hdr {
 }
 
 impl Segment {
-    /// How many ids this segment carries.
-    #[must_use]
-    pub const fn len(&self) -> u64 {
-        match self {
-            Self::Range { len, .. } | Self::Ascending { len, .. } => *len,
-        }
-    }
-
     /// The largest id in the segment, which is also the last one — both shapes
     /// are ascending internally.
     #[must_use]
     pub const fn max(&self) -> u64 {
         match self {
-            Self::Range { base, len } => *base + *len - 1,
+            Self::Range { base, len } => *base + *len as u64 - 1,
             Self::Ascending { max, .. } => *max,
         }
     }
@@ -168,7 +163,7 @@ impl Segment {
                     + if len_implied {
                         0
                     } else {
-                        width_for(*len) as usize
+                        width_for(u64::from(*len)) as usize
                     }
             }
             Self::Ascending { bitmap, .. } => 1 + 4 + bitmap.serialized_size(),
@@ -195,12 +190,12 @@ impl Segment {
                     write_u8(buf, h);
                     write_narrow(buf, *base, bw);
                 } else {
-                    let lw = width_for(*len);
+                    let lw = width_for(u64::from(*len));
                     h |= width_code(lw) << hdr::LEN_W_SHIFT;
                     buf.reserve(1 + bw as usize + lw as usize);
                     write_u8(buf, h);
                     write_narrow(buf, *base, bw);
-                    write_narrow(buf, *len, lw);
+                    write_narrow(buf, u64::from(*len), lw);
                 }
             }
             Self::Ascending { bitmap, .. } => {
@@ -248,6 +243,9 @@ impl Segment {
                 });
             }
             let max = bitmap.max().unwrap_or(0);
+            // `remaining` is bounded by `MAX_RECORD_IDS`, which is under
+            // `u32::MAX`, so the narrowing above it cannot lose bits.
+            let len = len as u32;
             return Ok(Self::Ascending { bitmap, len, max });
         }
 
@@ -265,7 +263,10 @@ impl Segment {
         // than fail.
         base.checked_add(len - 1)
             .ok_or(DecodeError::BadRange { base, count: len })?;
-        Ok(Self::Range { base, len })
+        Ok(Self::Range {
+            base,
+            len: len as u32,
+        })
     }
 
     /// The ids of this segment, in order.
@@ -274,18 +275,8 @@ impl Segment {
     /// row on the apply path, and a `Box` there is an allocation per segment.
     pub fn iter(&self) -> Either<std::ops::Range<u64>, roaring::treemap::Iter<'_>> {
         match self {
-            Self::Range { base, len } => Either::Left(*base..*base + *len),
+            Self::Range { base, len } => Either::Left(*base..*base + u64::from(*len)),
             Self::Ascending { bitmap, .. } => Either::Right(bitmap.iter()),
-        }
-    }
-
-    /// The first id in the segment. Both shapes are ascending internally.
-    fn min_id(&self) -> u64 {
-        match self {
-            Self::Range { base, .. } => *base,
-            // Only ever built by `collapse` from a non-empty ascending run, so
-            // the minimum always exists.
-            Self::Ascending { bitmap, .. } => bitmap.min().unwrap_or(0),
         }
     }
 }
@@ -301,8 +292,20 @@ pub struct IdList {
     /// so the list itself costs no allocation either.
     segments: SmallVec<[Segment; 2]>,
     len: usize,
-    /// Segment count at which the next collapse is attempted.
-    next_collapse: usize,
+    /// Index of the first segment of the ascending run currently being built.
+    ///
+    /// A run ends the moment an id arrives that does not ascend past the last
+    /// segment; the next one starts there. Only a run can become a bitmap.
+    run_start: usize,
+    /// Segments in that run, and the count at which the next collapse is tried.
+    ///
+    /// Both are functions of the ids alone, which is what keeps the encoding
+    /// reproducible: the same sequence crosses the same thresholds at the same
+    /// pushes on any implementation. `attempt_at` is `usize::MAX` once the run
+    /// has collapsed, because further ascending ids then go straight into the
+    /// bitmap and there is nothing left to weigh.
+    run_segments: usize,
+    attempt_at: usize,
 }
 
 /// By the ids, not by how they are segmented: the same sequence reached by
@@ -324,7 +327,9 @@ impl IdList {
         Self {
             segments: SmallVec::new(),
             len: 0,
-            next_collapse: COLLAPSE_FLOOR,
+            run_start: 0,
+            run_segments: 0,
+            attempt_at: COLLAPSE_ATTEMPT_AT,
         }
     }
 
@@ -340,17 +345,28 @@ impl IdList {
     }
 
     /// Add an id, extending the current segment or opening a new one.
+    ///
+    /// The collapse decision is made here, in flight, rather than deferred to
+    /// encode: the segments are the encoding, so what is held is what is
+    /// written.
     pub fn push(
         &mut self,
         id: u64,
     ) {
         self.len += 1;
+
+        // The two hot paths, in order of how often they are taken. Both extend
+        // the segment already there and neither touches the run bookkeeping,
+        // because neither changes how many segments the run has.
         match self.segments.last_mut() {
-            // The overwhelmingly common path: one more consecutive id.
-            Some(Segment::Range { base, len }) if id == *base + *len => {
+            // One more consecutive id — every bulk create, every
+            // delete-by-label, from first push to last.
+            Some(Segment::Range { base, len }) if id == *base + u64::from(*len) => {
                 *len += 1;
                 return;
             }
+            // The run already collapsed, and this id continues it. Straight into
+            // the bitmap, no new segment and nothing to re-weigh.
             Some(Segment::Ascending { bitmap, len, max }) if id > *max => {
                 bitmap.insert(id);
                 *len += 1;
@@ -359,87 +375,70 @@ impl IdList {
             }
             _ => {}
         }
+
+        // A new segment. Whether it extends the current ascending run or starts
+        // a fresh one is what decides if a bitmap is still reachable.
+        let continues_run = self.segments.last().is_some_and(|last| id > last.max());
         self.segments.push(Segment::Range { base: id, len: 1 });
-        if self.segments.len() >= self.next_collapse {
-            self.collapse();
-            // Grow the trigger whether or not anything collapsed: a list that
-            // cannot collapse — anything not ascending — must not rescan on
-            // every push.
-            self.next_collapse = self.segments.len().max(COLLAPSE_FLOOR) * 2;
+
+        if continues_run {
+            self.run_segments += 1;
+            if self.run_segments >= self.attempt_at {
+                self.try_collapse_run();
+            }
+        } else {
+            // A repeat or a step backwards ends the run: a bitmap can hold
+            // neither, so everything before this is settled.
+            self.run_start = self.segments.len() - 1;
+            self.run_segments = 1;
+            self.attempt_at = COLLAPSE_ATTEMPT_AT;
         }
     }
 
-    /// Fold maximal ascending runs of ranges into bitmaps, where that is
-    /// cheaper on the wire.
+    /// Weigh the current run against the bitmap that would replace it, exactly.
     ///
-    /// Two conditions, both from the design: the run has to ascend — a bitmap
-    /// holds neither a repeat nor a step backwards — and the bitmap has to be
-    /// smaller than the ranges it replaces. The second is measured with
-    /// `serialized_size()`, so it is the same answer on any implementation.
-    fn collapse(&mut self) {
-        if self.segments.len() < 2 {
-            return;
-        }
-        let mut out: SmallVec<[Segment; 2]> = SmallVec::new();
-        let mut i = 0;
-        while i < self.segments.len() {
-            // How far the ascending run starting at `i` reaches, and what the
-            // ranges in it cost.
-            let mut j = i;
-            let mut range_bytes = 0_usize;
-            while j < self.segments.len() {
-                if !matches!(self.segments[j], Segment::Range { .. }) {
-                    break;
-                }
-                if j > i && self.segments[j].min_id() <= self.segments[j - 1].max() {
-                    break;
-                }
-                // Sized as a non-final segment: the run being weighed is compared
-                // against one bitmap, and only the list's very last segment can leave
-                // its length implied. Costing them all as explicit is the
-                // conservative side of the comparison.
-                range_bytes += self.segments[j].encoded_len(false);
-                j += 1;
-            }
+    /// Called only at the thresholds above, so the bitmap is built O(log n)
+    /// times over a list rather than per push — and each time the comparison is
+    /// against `serialized_size()`, which is what roaring will actually write,
+    /// not an estimate. That is what lets the rule be stated in the spec and
+    /// reproduced.
+    ///
+    /// A decline doubles the threshold rather than retiring the run. The
+    /// comparison is not monotone — crossing a 2^16 boundary adds a container
+    /// and steps the bitmap's size up — so a run that loses now can win later.
+    fn try_collapse_run(&mut self) {
+        let run = &self.segments[self.run_start..];
+        debug_assert!(run.len() >= 2, "a collapse needs a run to fold");
 
-            // One segment is never worth a bitmap, and neither is a run whose
-            // ranges already cost less than roaring's floor.
-            if j - i < 2 || range_bytes < ROARING_FLOOR_BYTES {
-                if j == i {
-                    out.push(self.segments[i].clone());
-                    i += 1;
-                } else {
-                    out.extend(self.segments[i..j].iter().cloned());
-                    i = j;
-                }
-                continue;
-            }
+        let range_bytes: usize = run.iter().map(|s| s.encoded_len(false)).sum();
 
-            let mut bitmap = RoaringTreemap::new();
-            let mut len = 0_u64;
-            for seg in &self.segments[i..j] {
-                let Segment::Range { base, len: n } = seg else {
-                    unreachable!("the run was built from ranges only")
-                };
-                // One container operation per run, however many ids it spans.
-                bitmap.insert_range(*base..=*base + *n - 1);
-                len += *n;
-            }
-            // `optimize()` is **normative**, not a tuning knob: an unoptimized
-            // bitmap serializes to different bytes, so two engines that
-            // disagree about calling it produce different buffers for the same
-            // set.
-            bitmap.optimize();
-            let max = self.segments[j - 1].max();
-            let candidate = Segment::Ascending { bitmap, len, max };
-            if candidate.encoded_len(false) < range_bytes {
-                out.push(candidate);
-            } else {
-                out.extend(self.segments[i..j].iter().cloned());
-            }
-            i = j;
+        let mut bitmap = RoaringTreemap::new();
+        let mut len = 0_u32;
+        for seg in run {
+            let Segment::Range { base, len: n } = seg else {
+                unreachable!("a run under consideration holds only ranges")
+            };
+            // One container operation per range, however many ids it spans.
+            bitmap.insert_range(*base..=*base + u64::from(*n) - 1);
+            len += *n;
         }
-        self.segments = out;
+        // `optimize()` is **normative**, not a tuning knob: an unoptimized
+        // bitmap serializes to different bytes, so two engines that disagree
+        // about calling it produce different buffers for the same set.
+        bitmap.optimize();
+        let max = run[run.len() - 1].max();
+        let candidate = Segment::Ascending { bitmap, len, max };
+
+        if candidate.encoded_len(false) < range_bytes {
+            self.segments.truncate(self.run_start);
+            self.segments.push(candidate);
+            self.run_segments = 1;
+            // Nothing further to weigh: ascending ids now go straight into the
+            // bitmap on the hot path above.
+            self.attempt_at = usize::MAX;
+        } else {
+            self.attempt_at *= 2;
+        }
     }
 
     #[must_use]
@@ -499,13 +498,17 @@ impl IdList {
         &self,
         buf: &mut Vec<u8>,
     ) {
-        // No segment count on the wire. The record already carries how many ids
-        // it holds, so the reader takes segments until that is satisfied — which
-        // also lets the last one leave its length implied. Writing the count
-        // instead cost four bytes per record and showed up as +14.6% on a
-        // payload of ten thousand single-id records.
+        // Stated, not inferred from the record's id count. A reader could stop
+        // once the ids are accounted for and save these four bytes, but then a
+        // segment list would only be well-formed in the context of its record —
+        // a truncated list and a complete one would be indistinguishable
+        // without it.
+        write_u32(buf, self.segments.len() as u32);
         let last = self.segments.len().saturating_sub(1);
         for (i, seg) in self.segments.iter().enumerate() {
+            // The final segment leaves its length implied: the record's count
+            // already fixes it, which is what keeps one consecutive run — the
+            // commonest shape there is — at a header byte and a base.
             seg.encode(buf, i == last);
         }
     }
@@ -616,19 +619,34 @@ pub fn read_ids(
             max: MAX_RECORD_IDS,
         });
     }
+    let n_segments = u64::from(r.u32()?);
+    // No list can hold more segments than ids, since every segment carries at
+    // least one. A tighter bound than the byte-length one, and it does not
+    // depend on which shapes the segments turn out to be.
+    if n_segments > u64::from(count) {
+        return Err(DecodeError::ImplausibleCount {
+            count: n_segments,
+            remaining: count as usize,
+        });
+    }
+    // The smallest segment is a header byte and a one-byte base.
+    let n_segments = r.guard_count(n_segments, 2)?;
+
     let mut out: Vec<u64> = Vec::with_capacity(count as usize);
-    // Bounded by the count, not by a segment count off the wire: every segment
-    // carries at least one id, so this cannot run longer than `count` turns,
-    // and `count` is already capped above.
-    while (out.len() as u64) < u64::from(count) {
+    for _ in 0..n_segments {
         let remaining = u64::from(count) - out.len() as u64;
         let seg = Segment::decode(r, remaining)?;
         out.extend(seg.iter());
     }
-    // `Segment::decode` refuses a segment longer than what remains, so an
-    // overshoot cannot happen — but the invariant is what keeps row *k* bound
-    // to the k-th id, so it is asserted rather than assumed.
-    debug_assert_eq!(out.len() as u64, u64::from(count));
+    // The guard that keeps row *k* bound to the k-th id: a segment list that
+    // does not total the record's count would shift every later row onto the
+    // wrong entity rather than fail.
+    if out.len() as u64 != u64::from(count) {
+        return Err(DecodeError::CardinalityMismatch {
+            expected: u64::from(count),
+            actual: out.len() as u64,
+        });
+    }
     Ok(out)
 }
 
@@ -676,7 +694,7 @@ mod tests {
         // record's count, and there is no segment count. Two bytes, where the
         // encoding this replaces charged three.
         let buf = roundtrip(&[0]);
-        assert_eq!(hex(&buf), "08 00");
+        assert_eq!(hex(&buf), "01 00 00 00 08 00");
     }
 
     #[test]
@@ -713,7 +731,11 @@ mod tests {
         let list = IdList::from(ids.as_slice());
         assert_eq!(list.segment_count(), 2);
         let buf = roundtrip(&ids);
-        assert!(buf.len() < 32, "two ranges should be tiny, got {}", buf.len());
+        assert!(
+            buf.len() < 32,
+            "two ranges should be tiny, got {}",
+            buf.len()
+        );
     }
 
     #[test]
@@ -771,7 +793,7 @@ mod tests {
 
     #[test]
     fn an_absurd_count_is_rejected_before_allocating() {
-        let buf = [0x08_u8, 0];
+        let buf = [1_u8, 0, 0, 0, 0x08, 0];
         let mut r = Reader::new(&buf);
         assert_eq!(
             read_ids(&mut r, u32::MAX),
@@ -786,7 +808,9 @@ mod tests {
     fn a_segment_longer_than_the_record_is_rejected() {
         // The guard that keeps row k bound to the k-th id: a run claiming more
         // ids than the record holds would shift every later row.
-        let buf = [0x00_u8, 0, 200];
+        let mut buf = Vec::new();
+        write_u32(&mut buf, 1);
+        buf.extend_from_slice(&[0x00, 0, 200]);
         let mut r = Reader::new(&buf);
         assert!(matches!(
             read_ids(&mut r, 4),
@@ -799,7 +823,9 @@ mod tests {
         // Forward compatibility: the two spare bits are refused rather than
         // masked off, so a future segment shape cannot be silently misread as a
         // range by a build that predates it.
-        let buf = [0xC8_u8, 0];
+        let mut buf = Vec::new();
+        write_u32(&mut buf, 1);
+        buf.extend_from_slice(&[0xC8, 0]);
         let mut r = Reader::new(&buf);
         assert_eq!(read_ids(&mut r, 1), Err(DecodeError::BadEncoding(0xC8)));
     }
@@ -807,6 +833,7 @@ mod tests {
     #[test]
     fn a_range_that_would_wrap_is_rejected() {
         let mut buf = Vec::new();
+        write_u32(&mut buf, 1);
         write_u8(
             &mut buf,
             (width_code(8) << hdr::BASE_W_SHIFT) | (width_code(8) << hdr::LEN_W_SHIFT),
@@ -821,24 +848,26 @@ mod tests {
     }
 
     #[test]
-    fn a_segment_list_that_falls_short_of_the_count_is_rejected() {
-        // Segments are read until the record's count is satisfied, so a list
-        // that does not reach it runs out of bytes rather than applying a
-        // prefix. The final segment is the one exception by design: it leaves
-        // its length implied and takes whatever the count has left, exactly as
-        // the range encoding this replaces did.
+    fn a_segment_list_that_does_not_total_the_count_is_rejected() {
+        // The stated segment count and the record's id count have to agree.
+        // One explicit-length range of two ids, declared as the whole list,
+        // against a record claiming four: the ids fall short and the record is
+        // refused rather than applied as a prefix.
         let mut buf = Vec::new();
-        // One explicit-length range of two, and nothing after it.
+        write_u32(&mut buf, 1);
         write_u8(
             &mut buf,
             (width_code(1) << hdr::BASE_W_SHIFT) | (width_code(1) << hdr::LEN_W_SHIFT),
         );
         buf.extend_from_slice(&[1, 2]);
         let mut r = Reader::new(&buf);
-        assert!(matches!(
+        assert_eq!(
             read_ids(&mut r, 4),
-            Err(DecodeError::UnexpectedEof { .. })
-        ));
+            Err(DecodeError::CardinalityMismatch {
+                expected: 4,
+                actual: 2,
+            })
+        );
     }
 
     #[test]
