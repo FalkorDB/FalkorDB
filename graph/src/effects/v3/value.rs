@@ -50,7 +50,18 @@ impl EffectEncode<3> for Value {
                 write_f64(buf, *f);
             }
             Value::String(s) => {
-                write_tag(buf, si_type::T_STRING);
+                // The intern bit rides along, as it does in the RDB encoding.
+                // Without it a replica rebuilds every string as a fresh `Arc`
+                // and its pool stays empty, so repeated strings cost it what
+                // interning exists to avoid — `test_intern_string`'s
+                // replication case measured an empty pool where the primary
+                // held one entry.
+                let tag = if crate::runtime::string_pool::global().is_interned(s) {
+                    si_type::T_INTERN | si_type::T_STRING
+                } else {
+                    si_type::T_STRING
+                };
+                write_tag(buf, tag);
                 write_string(buf, s);
             }
             Value::List(items) => {
@@ -150,7 +161,17 @@ fn decode_at(
         si_type::T_BOOL => Value::Bool(r.u8()? != 0),
         si_type::T_INT64 => Value::Int(r.i64()?),
         si_type::T_DOUBLE => Value::Float(r.f64()?),
-        si_type::T_STRING => Value::String(Arc::new(r.string()?)),
+        // Both spellings, and the bit decides whether the string joins this
+        // node's pool. A pattern cannot name `T_INTERN | T_STRING`, so this is a
+        // guard — the same shape the RDB decoder uses.
+        t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
+            let s = r.string()?;
+            if t == (si_type::T_INTERN | si_type::T_STRING) {
+                Value::String(crate::runtime::string_pool::global().intern(Arc::new(s)))
+            } else {
+                Value::String(Arc::new(s))
+            }
+        }
         si_type::T_ARRAY => {
             let n = r.u32()?;
             // A list entry is at least a 4-byte type tag.
