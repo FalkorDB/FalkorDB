@@ -86,12 +86,26 @@ const ROARING_FLOOR_BYTES: usize = 32;
 /// for the same ids. `predicted_matches_roaring` pins the exactness separately.
 #[derive(Clone, Debug, Default)]
 struct RunCost {
-    /// One entry per 2^16 container the run touches, ascending: the container's
-    /// key, how many ids fall in it, and how many maximal runs they form.
+    /// One tally per 2^16 container the run touches, in ascending key order.
     ///
-    /// Only ever appended to or updated in its last element, because a run's
-    /// ids ascend.
-    containers: Vec<(u64, u64, u32)>,
+    /// Per-container rather than aggregated because a container's cost is a
+    /// *minimum* over three stores — so totals cannot reconstruct it.
+    ///
+    /// Only ever appended to, or updated in its last element, because a run's
+    /// ids ascend. That is what makes adding a segment O(1) instead of
+    /// re-walking and re-splitting the whole run on every push.
+    containers: Vec<ContainerTally>,
+}
+
+/// What one 2^16 container of a run holds, which is all its size depends on.
+#[derive(Clone, Copy, Debug)]
+struct ContainerTally {
+    /// The container's key: `id >> 16`.
+    key: u64,
+    /// Ids falling in it — what an array or bitset store would cost.
+    ids: u64,
+    /// Maximal consecutive runs they form — what a run store would cost.
+    runs: u32,
 }
 
 // Roaring's serialized layout, as the pieces this arithmetic needs. Names here
@@ -146,28 +160,35 @@ impl RunCost {
             let piece_end = end.min(container_end);
             let n = piece_end - lo + 1;
             match self.containers.last_mut() {
-                Some((k, ids, runs)) if *k == hi => {
-                    *ids += n;
-                    *runs += 1;
+                Some(tally) if tally.key == hi => {
+                    tally.ids += n;
+                    tally.runs += 1;
                 }
-                _ => self.containers.push((hi, n, 1)),
+                _ => self.containers.push(ContainerTally {
+                    key: hi,
+                    ids: n,
+                    runs: 1,
+                }),
             }
             lo = piece_end + 1;
         }
     }
 
     /// The bytes `RoaringTreemap::serialized_size()` would report.
+    ///
+    /// O(containers), not O(segments) — and a container spans 65,536 ids, so for
+    /// a graph's densely-allocated ids that is a handful however long the run.
     fn predicted(&self) -> usize {
         // The treemap prefix: a `u64` count of its 2^32 entries.
         let mut total = size_of::<u64>();
         let mut i = 0;
         while i < self.containers.len() {
-            let entry = self.containers[i].0 >> 16;
+            let entry = self.containers[i].key >> 16;
             let mut nc = 0_usize;
             let mut has_run = false;
             let mut body = 0_usize;
-            while i < self.containers.len() && self.containers[i].0 >> 16 == entry {
-                let (_, ids, runs) = self.containers[i];
+            while i < self.containers.len() && self.containers[i].key >> 16 == entry {
+                let ContainerTally { ids, runs, .. } = self.containers[i];
                 // Array up to 4,096 values, bitset past it — which is exactly
                 // `min`, because 2 x 4,096 is the bitset's fixed size.
                 let plain = (ids as usize * ARRAY_ELEMENT_BYTES).min(BITSET_CONTAINER_BYTES);
