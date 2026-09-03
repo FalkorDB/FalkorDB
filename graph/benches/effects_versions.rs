@@ -358,7 +358,7 @@ fn writer_breakdown(c: &mut Criterion) {
         b.iter(|| {
             let mut buf = Vec::new();
             v3::write_attr_ids(&mut buf, &[0, 1]);
-            v3::write_attr_values(&mut buf, 2, black_box(&rows));
+            v3::write_attr_values(&mut buf, black_box(&rows));
             black_box(buf.len())
         });
     });
