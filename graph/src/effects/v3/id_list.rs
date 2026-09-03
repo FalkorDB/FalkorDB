@@ -22,7 +22,6 @@
 //! safe to put in the spec.
 
 use crate::narrow_int::width_for;
-use itertools::Either;
 use roaring::RoaringTreemap;
 use smallvec::SmallVec;
 
@@ -383,6 +382,16 @@ enum Segment {
     /// cannot collapse holds one segment per id, so the four bytes saved here
     /// are four per id.
     Range { base: u64, len: u32 },
+    /// One id, `count` times over.
+    ///
+    /// A repeat is not a degenerate range and cannot be folded into one: a range
+    /// ascends by one per step, a repeat does not move. Nor can it become a
+    /// bitmap, which holds a value once. It is its own run.
+    ///
+    /// The shape that needs it is edge endpoints. Every edge out of a supernode
+    /// carries the same source id, so `CREATE_EDGE`'s `src` list is one value
+    /// repeated — 10,000 of them was 10,000 one-id segments, and is now one.
+    Repeat { id: u64, count: u32 },
     /// Strictly ascending ids with gaps, as a run-optimized roaring bitmap.
     ///
     /// Only produced by [`IdList::collapse`], never by a push: a bitmap holds
@@ -406,21 +415,26 @@ enum Segment {
 /// singleton-heavy list from paying much for its own structure.
 ///
 /// ```text
-/// bit 0    kind: 0 = Range, 1 = Ascending
-/// bits 1-2 base width code   (Range)
-/// bits 3-4 length width code (Range)
-/// bits 5-7 reserved, must be zero
+/// bits 0-1  kind: 0 = Range, 1 = Ascending, 2 = Repeat
+/// bits 2-3  value width code   (Range base, Repeat id)
+/// bits 4-5  count width code   (Range len,  Repeat count)
+/// bits 6-7  reserved, must be zero
 /// ```
-const SEG_ASCENDING: u8 = 0b0000_0001;
-const SEG_BASE_WIDTH_SHIFT: u8 = 1;
-const SEG_LEN_WIDTH_SHIFT: u8 = 3;
-const SEG_RESERVED: u8 = 0b1110_0000;
+const SEG_KIND_MASK: u8 = 0b0000_0011;
+const SEG_KIND_RANGE: u8 = 0;
+const SEG_KIND_ASCENDING: u8 = 1;
+const SEG_KIND_REPEAT: u8 = 2;
+const SEG_VALUE_WIDTH_SHIFT: u8 = 2;
+const SEG_COUNT_WIDTH_SHIFT: u8 = 4;
+const SEG_RESERVED: u8 = 0b1100_0000;
 
 impl Segment {
     /// How many ids this segment carries.
     const fn len(&self) -> u32 {
         match self {
-            Self::Range { len, .. } | Self::Ascending { len, .. } => *len,
+            Self::Range { len, .. }
+            | Self::Ascending { len, .. }
+            | Self::Repeat { count: len, .. } => *len,
         }
     }
 
@@ -429,6 +443,7 @@ impl Segment {
     const fn max(&self) -> u64 {
         match self {
             Self::Range { base, len } => *base + *len as u64 - 1,
+            Self::Repeat { id, .. } => *id,
             Self::Ascending { max, .. } => *max,
         }
     }
@@ -442,6 +457,9 @@ impl Segment {
             Self::Range { base, len } => {
                 1 + width_for(*base) as usize + width_for(u64::from(*len)) as usize
             }
+            Self::Repeat { id, count } => {
+                1 + width_for(*id) as usize + width_for(u64::from(*count)) as usize
+            }
             Self::Ascending { bitmap, .. } => 1 + 4 + bitmap.serialized_size(),
         }
     }
@@ -453,24 +471,14 @@ impl Segment {
     ) {
         match self {
             Self::Range { base, len } => {
-                let bw = width_for(*base);
-                let lw = width_for(u64::from(*len));
-                buf.reserve(1 + bw as usize + lw as usize);
-                // Both widths in one byte with the kind: a second header byte
-                // per segment is four bytes per thousand ids in a
-                // singleton-heavy list, which is the shape that can least
-                // afford it.
-                write_u8(
-                    buf,
-                    (width_code(bw) << SEG_BASE_WIDTH_SHIFT)
-                        | (width_code(lw) << SEG_LEN_WIDTH_SHIFT),
-                );
-                write_narrow(buf, *base, bw);
-                write_narrow(buf, u64::from(*len), lw);
+                Self::write_pair(buf, SEG_KIND_RANGE, *base, u64::from(*len));
+            }
+            Self::Repeat { id, count } => {
+                Self::write_pair(buf, SEG_KIND_REPEAT, *id, u64::from(*count));
             }
             Self::Ascending { bitmap, .. } => {
                 let n = bitmap.serialized_size();
-                write_u8(buf, SEG_ASCENDING);
+                write_u8(buf, SEG_KIND_ASCENDING);
                 write_u32(buf, n as u32);
                 // Reserve first: roaring writes itself in many small pieces and
                 // would otherwise grow the payload buffer under itself, each
@@ -489,6 +497,26 @@ impl Segment {
         }
     }
 
+    /// `Range` and `Repeat` are the same three fields — a kind, a value and a
+    /// count — so they share a writer rather than drifting apart.
+    fn write_pair(
+        buf: &mut Vec<u8>,
+        kind: u8,
+        value: u64,
+        count: u64,
+    ) {
+        let vw = width_for(value);
+        let cw = width_for(count);
+        buf.reserve(1 + vw as usize + cw as usize);
+        write_u8(
+            buf,
+            kind | (width_code(vw) << SEG_VALUE_WIDTH_SHIFT)
+                | (width_code(cw) << SEG_COUNT_WIDTH_SHIFT),
+        );
+        write_narrow(buf, value, vw);
+        write_narrow(buf, count, cw);
+    }
+
     /// Read one segment back.
     ///
     /// `remaining` is how many ids the record still owes, and bounds this
@@ -502,7 +530,7 @@ impl Segment {
         if h & SEG_RESERVED != 0 {
             return Err(DecodeError::BadEncoding(h));
         }
-        if h & SEG_ASCENDING != 0 {
+        if h & SEG_KIND_MASK == SEG_KIND_ASCENDING {
             let blob_len = r.u32()? as usize;
             let blob = r.take(blob_len)?;
             let bitmap = RoaringTreemap::deserialize_from(blob)
@@ -521,30 +549,41 @@ impl Segment {
             return Ok(Self::Ascending { bitmap, len, max });
         }
 
-        let base = read_narrow(r, width_of_code(h >> SEG_BASE_WIDTH_SHIFT))?;
-        let len = read_narrow(r, width_of_code(h >> SEG_LEN_WIDTH_SHIFT))?;
-        if len == 0 || len > remaining {
-            return Err(DecodeError::BadRange { base, count: len });
+        let value = read_narrow(r, width_of_code(h >> SEG_VALUE_WIDTH_SHIFT))?;
+        let count = read_narrow(r, width_of_code(h >> SEG_COUNT_WIDTH_SHIFT))?;
+        if count == 0 || count > remaining {
+            return Err(DecodeError::BadRange { base: value, count });
         }
-        // A run that would wrap past u64 describes ids that cannot exist, and
-        // silently truncating it would bind rows to the wrong entities rather
-        // than fail.
-        base.checked_add(len - 1)
-            .ok_or(DecodeError::BadRange { base, count: len })?;
-        Ok(Self::Range {
-            base,
-            len: len as u32,
-        })
+        match h & SEG_KIND_MASK {
+            SEG_KIND_RANGE => {
+                // A run that would wrap past u64 describes ids that cannot
+                // exist, and silently truncating it would bind rows to the
+                // wrong entities rather than fail.
+                value
+                    .checked_add(count - 1)
+                    .ok_or(DecodeError::BadRange { base: value, count })?;
+                Ok(Self::Range {
+                    base: value,
+                    len: count as u32,
+                })
+            }
+            SEG_KIND_REPEAT => Ok(Self::Repeat {
+                id: value,
+                count: count as u32,
+            }),
+            other => Err(DecodeError::BadEncoding(other)),
+        }
     }
 
     /// The ids of this segment, in order.
     ///
     /// `Either` rather than a boxed trait object: a list is iterated once per
     /// row on the apply path, and a `Box` there is an allocation per segment.
-    fn iter(&self) -> Either<std::ops::Range<u64>, roaring::treemap::Iter<'_>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = u64> + '_> {
         match self {
-            Self::Range { base, len } => Either::Left(*base..*base + u64::from(*len)),
-            Self::Ascending { bitmap, .. } => Either::Right(bitmap.iter()),
+            Self::Range { base, len } => Box::new(*base..*base + u64::from(*len)),
+            Self::Repeat { id, count } => Box::new(std::iter::repeat_n(*id, *count as usize)),
+            Self::Ascending { bitmap, .. } => Box::new(bitmap.iter()),
         }
     }
 }
@@ -611,6 +650,12 @@ impl IdList {
                 *len += 1;
                 return;
             }
+            // One more of the same id — a supernode's endpoint list, where this
+            // is every push after the first.
+            Some(Segment::Repeat { id: rid, count }) if *rid == id => {
+                *count += 1;
+                return;
+            }
             // The run already collapsed and this id continues it: straight into
             // the bitmap, no new segment and nothing left to weigh.
             Some(Segment::Ascending { bitmap, len, max }) if id > *max => {
@@ -634,9 +679,19 @@ impl IdList {
             self.maybe_collapse_run();
         } else {
             // A repeat or a step backwards ends the run: a bitmap holds
-            // neither, so everything before this is settled and a new run starts
-            // at the segment being pushed.
-            self.segments.push(Segment::Range { base: id, len: 1 });
+            // neither, so everything before this is settled.
+            //
+            // A repeat of the *immediately preceding* id folds into a `Repeat`
+            // rather than opening another segment — the supernode case, where a
+            // whole endpoint list is one value.
+            match self.segments.last_mut() {
+                Some(Segment::Range { base, len: 1 }) if *base == id => {
+                    let id = *base;
+                    self.segments.pop();
+                    self.segments.push(Segment::Repeat { id, count: 2 });
+                }
+                _ => self.segments.push(Segment::Range { base: id, len: 1 }),
+            }
             self.run.restart(self.segments.len() - 1);
         }
     }
@@ -720,6 +775,11 @@ impl IdList {
                     out.insert_range(*base..=*base + u64::from(*len) - 1);
                 }
                 Segment::Ascending { bitmap, .. } => out |= bitmap,
+                // A bitmap holds a value once, so a repeat contributes exactly
+                // its id — the reason a repeat can never *become* a bitmap.
+                Segment::Repeat { id, .. } => {
+                    out.insert(*id);
+                }
             }
         }
         out
@@ -980,7 +1040,9 @@ mod tests {
             list.push(id);
         }
         assert_eq!(list, [10, 11, 20, 20, 5]);
-        assert_eq!(list.segment_count(), 4);
+        // Range(10..12), Repeat(20 x2), Range(5) — the two 20s fold rather than
+        // opening a segment each.
+        assert_eq!(list.segment_count(), 3);
         roundtrip(&[10, 11, 20, 20, 5]);
     }
 
@@ -1080,7 +1142,7 @@ mod tests {
         write_u32(&mut buf, 1);
         write_u8(
             &mut buf,
-            (width_code(1) << SEG_BASE_WIDTH_SHIFT) | (width_code(4) << SEG_LEN_WIDTH_SHIFT),
+            (width_code(1) << SEG_VALUE_WIDTH_SHIFT) | (width_code(4) << SEG_COUNT_WIDTH_SHIFT),
         );
         buf.push(0);
         buf.extend_from_slice(&u32::MAX.to_le_bytes());
@@ -1143,7 +1205,7 @@ mod tests {
         write_u32(&mut buf, 1);
         write_u8(
             &mut buf,
-            (width_code(8) << SEG_BASE_WIDTH_SHIFT) | (width_code(8) << SEG_LEN_WIDTH_SHIFT),
+            (width_code(8) << SEG_VALUE_WIDTH_SHIFT) | (width_code(8) << SEG_COUNT_WIDTH_SHIFT),
         );
         buf.extend_from_slice(&(u64::MAX - 1).to_le_bytes());
         buf.extend_from_slice(&100_u64.to_le_bytes());
@@ -1164,7 +1226,7 @@ mod tests {
         write_u32(&mut buf, 1);
         write_u8(
             &mut buf,
-            (width_code(1) << SEG_BASE_WIDTH_SHIFT) | (width_code(1) << SEG_LEN_WIDTH_SHIFT),
+            (width_code(1) << SEG_VALUE_WIDTH_SHIFT) | (width_code(1) << SEG_COUNT_WIDTH_SHIFT),
         );
         buf.extend_from_slice(&[1, 2]);
         let mut r = Reader::new(&buf);
@@ -1332,6 +1394,55 @@ mod tests {
             let by_id: RoaringTreemap = ids.iter().copied().collect();
             assert_eq!(by_segment, by_id, "same set either way");
         }
+    }
+
+    #[test]
+    fn a_repeated_id_is_one_segment_however_many_times() {
+        // The supernode shape: every edge out of one node carries the same
+        // source id. Ten thousand of them was ten thousand one-id segments.
+        let src: Vec<u64> = std::iter::repeat_n(4_000_000_000_u64, 10_000).collect();
+        let list = IdList::from(src.as_slice());
+        assert_eq!(
+            list.segment_count(),
+            1,
+            "one repeat, not ten thousand ranges"
+        );
+        assert_eq!(list.len(), 10_000);
+
+        let mut buf = Vec::new();
+        list.encode(&mut buf);
+        assert!(
+            buf.len() < 16,
+            "a repeat is a header and two narrowed fields, got {}",
+            buf.len()
+        );
+
+        let mut r = Reader::new(&buf);
+        assert_eq!(
+            read_ids(&mut r, 10_000).unwrap().iter().collect::<Vec<_>>(),
+            src
+        );
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn a_repeat_is_not_a_range_and_never_becomes_a_bitmap() {
+        // Three distinct sources interleaved, as real endpoints arrive: each run
+        // of equal ids is its own `Repeat`, and none of them can join an
+        // ascending run because a repeat does not ascend.
+        let ids: Vec<u64> = (0..300_u64).map(|i| [7, 7, 9][i as usize % 3]).collect();
+        let list = IdList::from(ids.as_slice());
+        let mut buf = Vec::new();
+        list.encode(&mut buf);
+        let mut r = Reader::new(&buf);
+        assert_eq!(
+            read_ids(&mut r, 300).unwrap().iter().collect::<Vec<_>>(),
+            ids
+        );
+
+        // And a bitmap would have collapsed the duplicates away entirely.
+        assert_eq!(list.to_roaring().len(), 2, "the set is {{7, 9}}");
+        assert_eq!(list.len(), 300, "the list is still 300 ids");
     }
 
     #[test]

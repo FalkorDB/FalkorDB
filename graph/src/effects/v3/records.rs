@@ -966,7 +966,7 @@ mod tests {
         // consecutive run, so all ten thousand of them are three bytes.
         // One segment: count, header byte carrying both widths, then the base
         // and the length. Flat in the id count — a million ids cost what ten do.
-        assert_eq!(&buf[20..28], &[1, 0, 0, 0, 0x08, 0, 0x10, 0x27]);
+        assert_eq!(&buf[20..28], &[1, 0, 0, 0, 0x10, 0, 0x10, 0x27]);
 
         let records = read_buffer(&buf).unwrap();
         assert_eq!(records.len(), 1);
