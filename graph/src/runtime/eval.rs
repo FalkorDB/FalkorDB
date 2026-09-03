@@ -53,7 +53,7 @@ use thin_vec::{ThinVec, thin_vec};
 
 use crate::{
     graph::graph::NodeId,
-    parser::ast::{ExprIR, QuantifierType, RegexFn, RegexFnKind, Variable},
+    parser::ast::{ExprIR, QuantifierType, RegexFn, Variable},
     runtime::{
         batch::{Batch, BatchRow, Column, FloatLane, NullBitmap, classify_numeric},
         functions::{FnType, Type, apply_pow, regex_captures_list},
@@ -1257,16 +1257,16 @@ impl<'a> ExprEval<'a> {
 
         let text = self.eval_node(&node.child(0), env, agg_group_key)?;
         check_string_or_null(&text)?;
-        match rf.kind {
-            RegexFnKind::Matches => match text {
-                Value::String(s) => Ok(Value::Bool(rf.regex.is_match(s.as_str()))),
+        match rf {
+            RegexFn::Matches(_) => match text {
+                Value::String(s) => Ok(Value::Bool(rf.is_match(s.as_str()))),
                 _ => Ok(Value::Null),
             },
-            RegexFnKind::MatchList => match text {
-                Value::String(s) => Ok(regex_captures_list(&rf.regex, s.as_str())),
+            RegexFn::MatchList(regex) => match text {
+                Value::String(s) => Ok(regex_captures_list(regex, s.as_str())),
                 _ => Ok(Value::List(Arc::new(thin_vec![]))),
             },
-            RegexFnKind::Replace => {
+            RegexFn::Replace(regex) => {
                 let replacement = if node.num_children() > 1 {
                     let r = self.eval_node(&node.child(1), env, agg_group_key)?;
                     check_string_or_null(&r)?;
@@ -1279,13 +1279,11 @@ impl<'a> ExprEval<'a> {
                 };
                 match replacement {
                     None => Ok(Value::String(Arc::new(
-                        rf.regex.replace_all(text.as_str(), "").into_owned(),
+                        regex.replace_all(text.as_str(), "").into_owned(),
                     ))),
                     Some(Value::Null) => Ok(Value::Null),
                     Some(Value::String(repl)) => Ok(Value::String(Arc::new(
-                        rf.regex
-                            .replace_all(text.as_str(), repl.as_str())
-                            .into_owned(),
+                        regex.replace_all(text.as_str(), repl.as_str()).into_owned(),
                     ))),
                     Some(_) => unreachable!(),
                 }

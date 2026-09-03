@@ -67,6 +67,7 @@ use std::{collections::HashSet, fmt::Display, hash::Hash, sync::Arc};
 
 use itertools::Itertools;
 use orx_tree::{Dfs, DynTree, NodeRef};
+use regex_automata::{Anchored, Input, MatchKind, meta, util::syntax};
 
 use crate::{
     entity_type::EntityType,
@@ -283,9 +284,10 @@ pub enum ExprIR<TVar> {
 
 /// Payload of [`ExprIR::CompiledRegex`].
 #[derive(Clone, Debug)]
-pub struct RegexFn {
-    pub kind: RegexFnKind,
-    pub regex: Arc<regex::Regex>,
+pub enum RegexFn {
+    Matches(Arc<meta::Regex>),
+    MatchList(Arc<regex::Regex>),
+    Replace(Arc<regex::Regex>),
 }
 
 /// Which regex function [`ExprIR::CompiledRegex`] replaces.
@@ -297,6 +299,128 @@ pub enum RegexFnKind {
     MatchList,
     /// `string.replaceRegEx(text, pattern[, replacement])`
     Replace,
+}
+
+impl RegexFn {
+    pub(crate) fn compile_matches(pattern: &str) -> Result<meta::Regex, regex::Error> {
+        meta::Regex::builder()
+            // Anchoring fixes the start offset; All keeps searching past a
+            // shorter alternative so a later branch can consume all input.
+            .configure(
+                meta::Regex::config()
+                    .match_kind(MatchKind::All)
+                    .utf8_empty(true),
+            )
+            .syntax(syntax::Config::new().utf8(true))
+            .build(pattern)
+            .map_err(|error| {
+                if let Some(limit) = error.size_limit() {
+                    regex::Error::CompiledTooBig(limit)
+                } else if let Some(error) = error.syntax_error() {
+                    regex::Error::Syntax(error.to_string())
+                } else {
+                    regex::Error::Syntax(error.to_string())
+                }
+            })
+    }
+
+    pub(crate) fn is_full_match(
+        regex: &meta::Regex,
+        text: &str,
+    ) -> bool {
+        regex
+            .find(Input::new(text).anchored(Anchored::Yes))
+            .is_some_and(|matched| matched.end() == text.len())
+    }
+
+    pub(crate) fn compile(
+        kind: RegexFnKind,
+        pattern: &str,
+    ) -> Result<Self, regex::Error> {
+        match kind {
+            RegexFnKind::Matches => {
+                Self::compile_matches(pattern).map(|regex| Self::Matches(Arc::new(regex)))
+            }
+            RegexFnKind::MatchList => {
+                regex::Regex::new(pattern).map(|regex| Self::MatchList(Arc::new(regex)))
+            }
+            RegexFnKind::Replace => {
+                regex::Regex::new(pattern).map(|regex| Self::Replace(Arc::new(regex)))
+            }
+        }
+    }
+
+    pub(crate) fn is_match(
+        &self,
+        text: &str,
+    ) -> bool {
+        match self {
+            Self::Matches(regex) => Self::is_full_match(regex, text),
+            Self::MatchList(regex) | Self::Replace(regex) => regex.is_match(text),
+        }
+    }
+}
+
+#[cfg(test)]
+mod regex_fn_tests {
+    use super::{RegexFn, RegexFnKind};
+
+    fn assert_matches(
+        pattern: &str,
+        text: &str,
+        expected: bool,
+    ) {
+        let regex = RegexFn::compile(RegexFnKind::Matches, pattern).unwrap();
+        assert_eq!(expected, regex.is_match(text), "{pattern:?} on {text:?}");
+    }
+
+    #[test]
+    fn matches_entire_string() {
+        assert_matches("Alpha", "Alpha", true);
+        assert_matches("Alph", "Alpha", false);
+        assert_matches("A.*", "Alpha", true);
+        assert_matches("A.*", "xAlpha", false);
+        assert_matches("a|ab", "ab", true);
+        assert_matches("|a", "a", true);
+        assert_matches("a+?", "aaa", true);
+        assert_matches("(?i)alpha", "Alpha", true);
+        assert_matches(r"\w+", "δ", true);
+        assert_matches("", "", true);
+        assert_matches("", "a", false);
+        assert_matches("a", "a\n", false);
+        assert_matches("a$", "a\n", false);
+    }
+
+    #[test]
+    fn matches_verbose_patterns_without_rewriting_them() {
+        assert_matches("(?x)a#comment", "a", true);
+        assert_matches("(?x)a # comment\n b", "ab", true);
+    }
+
+    #[test]
+    fn preserves_unanchored_search_functions() {
+        for kind in [RegexFnKind::MatchList, RegexFnKind::Replace] {
+            let regex = RegexFn::compile(kind, "Alpha").unwrap();
+            assert!(regex.is_match("xAlpha"));
+        }
+    }
+
+    #[test]
+    fn reports_errors_from_the_original_pattern() {
+        let error = RegexFn::compile(RegexFnKind::Matches, "[").unwrap_err();
+        assert!(error.to_string().contains("unclosed character class"));
+    }
+
+    #[test]
+    fn matches_large_inputs_across_threads() {
+        let regex = RegexFn::compile(RegexFnKind::Matches, "a+").unwrap();
+        let text = "a".repeat(100_000);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| assert!(regex.is_match(&text)));
+            }
+        });
+    }
 }
 
 /// Payload of [`ExprIR::Reduce`].
@@ -379,10 +503,10 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             Self::Pattern(_) => write!(f, "<pattern>"),
             Self::ShortestPath(_) => write!(f, "shortestPath()"),
             Self::MapProjection => write!(f, "map_projection"),
-            Self::CompiledRegex(rf) => match rf.kind {
-                RegexFnKind::Matches => write!(f, "regex_matches()"),
-                RegexFnKind::MatchList => write!(f, "string.matchRegEx()"),
-                RegexFnKind::Replace => write!(f, "string.replaceRegEx()"),
+            Self::CompiledRegex(rf) => match rf {
+                RegexFn::Matches(_) => write!(f, "regex_matches()"),
+                RegexFn::MatchList(_) => write!(f, "string.matchRegEx()"),
+                RegexFn::Replace(_) => write!(f, "string.replaceRegEx()"),
             },
             Self::Case { .. } => write!(f, "CASE"),
         }

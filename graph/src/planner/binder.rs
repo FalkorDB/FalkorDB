@@ -2506,18 +2506,12 @@ fn rewrite_compiled_regex(
     else {
         return (new_data, children);
     };
-    let Ok(regex) = regex::Regex::new(pattern.as_str()) else {
+    let Ok(regex) = RegexFn::compile(kind, pattern) else {
         return (new_data, children);
     };
     let mut children = children;
     children.remove(1);
-    (
-        ExprIR::CompiledRegex(RegexFn {
-            kind,
-            regex: Arc::new(regex),
-        }),
-        children,
-    )
+    (ExprIR::CompiledRegex(regex), children)
 }
 
 /// Recursively walk an ORDER BY expression tree and replace any aggregation
