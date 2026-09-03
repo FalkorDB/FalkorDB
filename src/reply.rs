@@ -23,6 +23,7 @@
 //! machine-oriented or human-oriented output.
 
 use graph::runtime::{
+    double_format::{G_BUF_LEN, format_g_into},
     runtime::{QueryStatistics, ResultSummary, Runtime},
     value::Value,
 };
@@ -106,30 +107,6 @@ fn reply_with_str(
     raw::reply_with_string_buffer(ctx.ctx, s.as_ptr().cast::<c_char>(), s.len());
 }
 
-/// Format a double using C's `%.*g` (`precision` significant digits, shortest
-/// of %e/%f with trailing zeros stripped). Calls libc snprintf for exact parity
-/// with FalkorDB C output.
-pub fn format_g(
-    d: f64,
-    precision: i32,
-) -> String {
-    let fmt = c"%.*g";
-    let mut buf = [0u8; 64];
-    let n = unsafe {
-        libc::snprintf(
-            buf.as_mut_ptr().cast::<c_char>(),
-            buf.len(),
-            fmt.as_ptr(),
-            precision,
-            d,
-        )
-    };
-    let n = n.max(0) as usize;
-    std::str::from_utf8(&buf[..n.min(buf.len() - 1)])
-        .unwrap_or("")
-        .to_owned()
-}
-
 #[allow(clippy::too_many_lines)]
 pub fn reply_compact_value(
     ctx: &Context,
@@ -152,8 +129,8 @@ pub fn reply_compact_value(
         }
         Value::Float(x) => {
             raw::reply_with_long_long(ctx.ctx, 5);
-            let str = format_g(*x, 15);
-            reply_with_str(ctx, &str);
+            let mut buf = [0u8; G_BUF_LEN];
+            reply_with_str(ctx, format_g_into(*x, 15, &mut buf));
         }
         Value::String(x) => {
             raw::reply_with_long_long(ctx.ctx, 2);
@@ -334,10 +311,9 @@ pub fn reply_compact_value(
             raw::reply_with_long_long(ctx.ctx, 11);
             raw::reply_with_array(ctx.ctx, 2);
 
-            let lat_str = format_g(f64::from(point.latitude), 15);
-            reply_with_str(ctx, &lat_str);
-            let lon_str = format_g(f64::from(point.longitude), 15);
-            reply_with_str(ctx, &lon_str);
+            let mut buf = [0u8; G_BUF_LEN];
+            reply_with_str(ctx, format_g_into(f64::from(point.latitude), 15, &mut buf));
+            reply_with_str(ctx, format_g_into(f64::from(point.longitude), 15, &mut buf));
         }
     }
 }
@@ -360,8 +336,8 @@ pub fn reply_verbose_value(
             raw::reply_with_long_long(ctx.ctx, *x as _);
         }
         Value::Float(x) => {
-            let str = format_g(*x, 15);
-            reply_with_str(ctx, &str);
+            let mut buf = [0u8; G_BUF_LEN];
+            reply_with_str(ctx, format_g_into(*x, 15, &mut buf));
         }
         Value::String(x) => {
             raw::reply_with_string_buffer(ctx.ctx, x.as_str().as_ptr().cast::<c_char>(), x.len());
