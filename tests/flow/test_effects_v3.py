@@ -2745,6 +2745,107 @@ class testEffectsV3_06e_AofReplay(_EffectsV3Base):
             int(self.master.info("persistence")["aof_enabled"]), 0)
 
 
+#-----------------------------------------------------------------------------
+# 8. the same write produces the same bytes
+#-----------------------------------------------------------------------------
+
+class testEffectsV3_08_ByteDeterminism(_EffectsV3Base):
+    """The bytes, not just the state.
+
+    Every other class here asserts that the replica *agrees* — which an encoder
+    could satisfy while emitting a different payload every time. That is not
+    enough for #2698: a second implementation is validated by producing
+    **identical** bytes for the same write, so an encoder nobody has pinned is
+    a spec nobody can implement against.
+
+    Four things in the format exist only for this, and none of them was covered
+    end to end: record groups are sorted, `optimize()` is called on every
+    bitmap, a bitmap is built by range rather than id by id, and the collapse
+    rule is a function of the ids rather than of when the encoder looked.
+    """
+
+    GRAPH_ID = "effects_v3_determinism"
+
+    def __init__(self):
+        self._setup()
+        self.start_monitor('GRAPH.EFFECT')
+
+    def _payload_for(self, key, query):
+        """The single effect payload `query` produces against a fresh `key`."""
+        self.monitor_mark()
+        self.db.select_graph(key).query(query)
+        self.wait_for_replica_offset()
+        window = self.monitor_mark()
+        payloads = self.effect_payloads(window, key)
+        if len(payloads) != 1:
+            raise AssertionError(
+                f"expected exactly one effect for {key}, got {len(payloads)}")
+        return payloads[0]
+
+    def test01_the_same_write_twice_produces_identical_bytes(self):
+        # Two graphs, empty and therefore identical, given the same query. Ids
+        # are allocated densely from zero, so the two writes describe the same
+        # entities and must serialize the same way.
+        #
+        # A shape deliberately wide enough to exercise the parts that could
+        # differ run to run: several labels so the label sets have to be
+        # grouped, differing property shapes so there is more than one record
+        # partition, and enough rows that grouping is not trivially ordered.
+        self.set_effects_config()
+        q = """
+            UNWIND range(0, 199) AS i
+            CREATE (:A:B {v: i, s: 'x' + i}),
+                   (:B {v: i}),
+                   (:A {w: i * 2, t: true})
+        """
+        first = self._payload_for(f"{self.GRAPH_ID}_det_1", q)
+        second = self._payload_for(f"{self.GRAPH_ID}_det_2", q)
+        if first != second:
+            raise AssertionError(
+                "the same write serialized differently — record order, bitmap "
+                "construction or the collapse rule is not a function of the ids")
+        self.env.assertTrue(len(first) > 0)
+
+    def test02_a_supernode_fanout_replicates(self):
+        # `Repeat`'s end-to-end case. Every edge out of one node carries the
+        # same source id, which is one segment rather than one per edge — the
+        # shape that has no compact form without it.
+        self.set_effects_config()
+        g = self.master_graph
+        g.query("CREATE (:Hub {name: 'hub'})")
+        self.query_and_sync("""
+            MATCH (h:Hub {name: 'hub'})
+            UNWIND range(0, 999) AS i
+            CREATE (h)-[:OUT {i: i}]->(:Leaf {i: i})
+        """)
+        self.assert_agree("MATCH (:Hub)-[r:OUT]->(:Leaf) RETURN count(r)", [[1000]])
+        # Every edge really does leave the one hub, so the source list is one
+        # repeated id rather than a thousand distinct ones.
+        self.assert_agree(
+            "MATCH (h:Hub)-[:OUT]->() RETURN count(DISTINCT h)", [[1]])
+        self.assert_graph_eq()
+
+    def test03_a_permuted_id_order_is_not_silently_sorted(self):
+        # Row *k* belongs to the k-th id **as written**. Nothing may reorder a
+        # list to make an encoding eligible, so a scrambled update order has to
+        # land each value on its own entity.
+        self.set_effects_config()
+        self.query_and_sync(
+            "UNWIND range(0, 49) AS i CREATE (:P {v: i})")
+        # A deliberately non-ascending traversal: the multiplier scatters the
+        # match order, so the ids reach the emitter out of order.
+        self.query_and_sync("""
+            UNWIND range(0, 49) AS i
+            WITH (i * 37) % 50 AS k
+            MATCH (n:P {v: k})
+            SET n.tag = 'tag-' + k
+        """)
+        self.assert_agree(
+            "MATCH (n:P) RETURN n.v, n.tag ORDER BY n.v",
+            [[i, f"tag-{i}"] for i in range(50)])
+        self.assert_graph_eq()
+
+
 class testEffectsV3_07_PromotedReplica(_EffectsV3Base):
     """A replica promoted while holding a constraint UNDER CONSTRUCTION must
     settle it itself.
