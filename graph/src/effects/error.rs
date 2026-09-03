@@ -97,17 +97,6 @@ pub enum DecodeError {
     #[error("id range starting at {base} cannot hold {count} ids")]
     BadRange { base: u64, count: u64 },
 
-    /// A record's ids could not be allocated for.
-    ///
-    /// Reported rather than capped. A segment describes any number of ids in a
-    /// handful of bytes, so a corrupt count and a genuinely large consecutive
-    /// write are byte-identical on the wire — which means no ceiling can tell
-    /// them apart, and any ceiling low enough to bound a hostile buffer would
-    /// refuse legitimate writes. So the allocation is attempted and its failure
-    /// is the answer.
-    #[error("could not allocate for the {count} ids this record declares")]
-    IdAllocationFailed { count: u64 },
-
     /// A list or map nested deeper than the decoder will recurse.
     ///
     /// Width is bounded by `guard_count`; depth costs one stack frame and about

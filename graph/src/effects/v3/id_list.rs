@@ -431,6 +431,13 @@ const SEG_LEN_WIDTH_SHIFT: u8 = 3;
 const SEG_RESERVED: u8 = 0b1110_0000;
 
 impl Segment {
+    /// How many ids this segment carries.
+    const fn len(&self) -> u32 {
+        match self {
+            Self::Range { len, .. } | Self::Ascending { len, .. } => *len,
+        }
+    }
+
     /// The largest id in the segment, which is also the last one — both shapes
     /// are ascending internally.
     const fn max(&self) -> u64 {
@@ -741,7 +748,29 @@ impl IdList {
         r: &mut Reader<'_>,
         count: u32,
     ) -> Result<Self, DecodeError> {
-        Ok(read_ids(r, count)?.into_iter().collect())
+        read_ids(r, count)
+    }
+
+    /// Adopt segments read off the wire, verbatim.
+    ///
+    /// The run tally starts fresh at the last segment rather than being
+    /// reconstructed. A decoded list is iterated, not extended, and the tally is
+    /// read by [`Self::push`] alone — so the only consequence is that a later
+    /// push would not collapse across the boundary, and encoding is unaffected
+    /// because it writes the segments as they are.
+    fn from_segments(
+        segments: SmallVec<[Segment; 2]>,
+        len: usize,
+    ) -> Self {
+        let start = segments.len().saturating_sub(1);
+        Self {
+            segments,
+            len,
+            run: Run {
+                start,
+                ..Run::default()
+            },
+        }
     }
 }
 
@@ -816,45 +845,29 @@ fn read_narrow(
     })
 }
 
-/// The ids of one block, whatever segments carried them.
+/// One block's ids, as the segments the wire carried.
 ///
-/// The ids are allocated for **fallibly** rather than bounded by a ceiling.
-/// Run-length encoding is the point of the format, so a single valid segment
-/// describes four billion ids in about seven bytes — which makes a corrupt
-/// count and a genuinely large consecutive write byte-identical on the wire.
-/// No ceiling can distinguish them, and one low enough to bound a hostile
-/// buffer would refuse `MATCH (n:Person) SET n.active = true` on a large graph
-/// — a legitimate write, which a replica would then read as divergence and
-/// answer with a full resync that failed again the same way, for ever.
+/// **Nothing is materialized.** A segment is what the format already holds, so
+/// decoding stops at the segments rather than expanding them: one valid
+/// `Range { base: 0, len: 4_294_967_295 }` is seven bytes on the wire and
+/// sixteen in memory, where expanding it would be 32 GB. That is not a
+/// micro-optimisation — it is the difference between a decoder whose cost is
+/// bounded by its input and one that is not, and this runs on the Redis main
+/// thread with no timeout and no cancellation.
 ///
-/// **What actually bounds the damage is not `try_reserve`.** Measured, an
-/// overcommitting OS grants the reservation: 1 GiB, 16 GiB and 32 GiB all
-/// return `Ok` on macOS, because the mapping is virtual until written. What
-/// bounds it is that the segments have to *supply* the ids, and the total is
-/// checked against the count below — so a buffer claiming four billion and
-/// carrying three reserves address space, writes three, and fails. Peak
-/// committed memory stays tiny.
+/// Expanding the ids is the caller's decision, made in `apply` where the graph
+/// is in scope and the memory is inherent to the write rather than amplified by
+/// the encoding.
 ///
-/// The case that no check here can refuse is a payload that claims four billion
-/// ids **and supplies them**, as one seven-byte range. That is not a hole to
-/// close: it is byte-identical to a legitimate write of the same size, a replica
-/// rejects a client's `GRAPH.EFFECT` outright as a read-only write, and a client
-/// that *can* write to a master could ask for the same memory with
-/// `UNWIND range(0, 4e9) AS x CREATE (:N)`. So the command grants no capability
-/// ordinary Cypher does not.
-///
-/// `try_reserve` still earns its place, for the environments where an unbounded
-/// reservation genuinely fails rather than being handed out lazily: a cgroup
-/// memory limit, `vm.overcommit_memory=2`, a 32-bit target.
-///
-/// The check still worth adding is about integrity rather than memory — a
-/// record whose ids must *already exist* cannot name more of them than this
-/// graph holds, whoever sent it. That needs the entity counts threaded into the
-/// decoder, and it cannot cover creates, so it is filed rather than done here.
+/// Decoding into segments rather than through a `Vec` also keeps the
+/// segmentation the wire chose. Re-pushing every id would re-run
+/// [`Run::prefers_bitmap`] and could group them differently from the peer that
+/// sent them, so a buffer decoded and re-encoded would not come back
+/// byte-identical — which any cross-engine comparison rests on.
 pub fn read_ids(
     r: &mut Reader<'_>,
     count: u32,
-) -> Result<Vec<u64>, DecodeError> {
+) -> Result<IdList, DecodeError> {
     let n_segments = u64::from(r.u32()?);
     // No list can hold more segments than ids, since every segment carries at
     // least one. A tighter bound than the byte-length one, and it does not
@@ -865,29 +878,29 @@ pub fn read_ids(
             remaining: count as usize,
         });
     }
-    // The smallest segment is a header byte and a one-byte base.
+    // The smallest segment is a header byte and a one-byte base, so this bounds
+    // the segment list by the bytes actually present — which is what makes the
+    // whole decode proportional to its input.
     let n_segments = r.guard_count(n_segments, 2)?;
 
-    let mut out: Vec<u64> = Vec::new();
-    out.try_reserve(count as usize)
-        .map_err(|_| DecodeError::IdAllocationFailed {
-            count: u64::from(count),
-        })?;
+    let mut segments: SmallVec<[Segment; 2]> = SmallVec::new();
+    let mut len = 0_u64;
     for _ in 0..n_segments {
-        let remaining = u64::from(count) - out.len() as u64;
+        let remaining = u64::from(count) - len;
         let seg = Segment::decode(r, remaining)?;
-        out.extend(seg.iter());
+        len += u64::from(seg.len());
+        segments.push(seg);
     }
     // The guard that keeps row *k* bound to the k-th id: a segment list that
     // does not total the record's count would shift every later row onto the
     // wrong entity rather than fail.
-    if out.len() as u64 != u64::from(count) {
+    if len != u64::from(count) {
         return Err(DecodeError::CardinalityMismatch {
             expected: u64::from(count),
-            actual: out.len() as u64,
+            actual: len,
         });
     }
-    Ok(out)
+    Ok(IdList::from_segments(segments, len as usize))
 }
 
 #[cfg(test)]
@@ -900,16 +913,20 @@ mod tests {
         (0..5_000).chain(100_000..105_000).collect()
     }
 
+    /// The ids a block decodes to, expanded for comparison.
+    fn decoded(
+        r: &mut Reader<'_>,
+        count: u32,
+    ) -> Vec<u64> {
+        read_ids(r, count).unwrap().iter().collect()
+    }
+
     fn roundtrip(ids: &[u64]) -> Vec<u8> {
         let list = IdList::from(ids);
         let mut buf = Vec::new();
         list.encode(&mut buf);
         let mut r = Reader::new(&buf);
-        assert_eq!(
-            read_ids(&mut r, ids.len() as u32).unwrap(),
-            ids,
-            "round-trip"
-        );
+        assert_eq!(decoded(&mut r, ids.len() as u32), ids, "round-trip");
         assert!(r.is_empty(), "{} bytes left over", r.remaining());
         buf
     }
@@ -1032,22 +1049,44 @@ mod tests {
     }
 
     #[test]
-    fn an_absurd_count_fails_cleanly() {
-        // One segment holding one id, behind a count of `u32::MAX` — about 34 GB
-        // of `Vec<u64>` if taken at face value.
+    fn an_absurd_count_is_refused_without_expanding_anything() {
+        // One segment holding one id, behind a count of `u32::MAX`.
         //
-        // No ceiling refuses it, deliberately: run-length encoding makes this
-        // byte-identical to a legitimate four-billion-id consecutive write, so a
-        // ceiling low enough to catch the first would refuse the second. What is
-        // pinned is that both outcomes are clean errors — the reservation is
-        // refused, or it succeeds and the segments then fail to total the count.
-        // Which one depends on the allocator, so the test admits either.
+        // Nothing is allocated for the claim: decoding stops at the segments,
+        // so the cost of this buffer is the cost of reading seven bytes. The
+        // count is then found not to match what the segments carry, and the
+        // record is refused — exactly, and cheaply.
         let buf = [1_u8, 0, 0, 0, 0x00, 0, 1];
         let mut r = Reader::new(&buf);
-        assert!(matches!(
+        assert_eq!(
             read_ids(&mut r, u32::MAX),
-            Err(DecodeError::IdAllocationFailed { .. } | DecodeError::CardinalityMismatch { .. })
-        ));
+            Err(DecodeError::CardinalityMismatch {
+                expected: u64::from(u32::MAX),
+                actual: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn a_huge_consecutive_range_decodes_without_expanding() {
+        // The payload that used to be a denial of service: four billion ids in
+        // seven bytes. Expanding them would be 32 GB on the Redis main thread
+        // with no timeout; holding them as one segment is sixteen bytes.
+        let mut buf = Vec::new();
+        write_u32(&mut buf, 1);
+        write_u8(
+            &mut buf,
+            (width_code(1) << SEG_BASE_WIDTH_SHIFT) | (width_code(4) << SEG_LEN_WIDTH_SHIFT),
+        );
+        buf.push(0);
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+
+        let mut r = Reader::new(&buf);
+        let list = read_ids(&mut r, u32::MAX).expect("a valid range, however large");
+        assert_eq!(list.len(), u32::MAX as usize);
+        assert_eq!(list.segment_count(), 1, "one segment, not four billion ids");
+        // And it is still lazy: taking three ids costs three ids.
+        assert_eq!(list.iter().take(3).collect::<Vec<_>>(), vec![0, 1, 2]);
     }
 
     #[test]
@@ -1227,7 +1266,7 @@ mod tests {
             cost.add_range(i * 2, 1);
         }
         let mut r = Reader::new(&buf);
-        assert_eq!(read_ids(&mut r, 10_000).unwrap(), ids);
+        assert_eq!(decoded(&mut r, 10_000), ids);
     }
 
     /// `optimize()` is not a function of the set alone.

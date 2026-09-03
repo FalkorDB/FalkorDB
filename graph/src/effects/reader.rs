@@ -185,17 +185,16 @@ mod tests {
     }
 
     #[test]
-    fn an_absurd_count_fails_cleanly() {
-        // A tiny buffer behind a count of `u32::MAX`. There is no ceiling to
-        // refuse it — run-length encoding makes an absurd count and a genuinely
-        // large consecutive write byte-identical — so what is pinned is that the
-        // outcome is a clean error either way: the reservation is refused, or it
-        // succeeds and the segments fail to total the count.
+    fn an_absurd_count_is_refused_without_expanding_anything() {
+        // A tiny buffer behind a count of `u32::MAX`. Nothing is allocated for
+        // the claim — decoding stops at the segments — so this costs the seven
+        // bytes it is, and the mismatch between the count and what the segments
+        // carry is what refuses it.
         let buf = [1_u8, 0, 0, 0, 0x00, 0, 1];
         let mut r = Reader::new(&buf);
         assert!(matches!(
             read_ids(&mut r, u32::MAX),
-            Err(DecodeError::IdAllocationFailed { .. } | DecodeError::CardinalityMismatch { .. })
+            Err(DecodeError::CardinalityMismatch { .. })
         ));
 
         // The guard that *is* exact, and runs before any reservation: every
