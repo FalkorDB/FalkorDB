@@ -31,12 +31,17 @@ outg
 data
 tests/flow/logs
 tests/flow/csvs
-# legacy pre-submodule RediSearch checkout (now deps/RediSearch)
+# legacy pre-submodule dep checkouts and build outputs. GraphBLAS, LAGraph and
+# RediSearch are now git submodules under deps/, and their build artefacts live
+# in the native-deps cache ($FALKORDB_DEPS_CACHE, default
+# $HOME/.cache/falkordb/native-deps) rather than in the worktree.
 /redisearch/
 lagraph_lib
 /GraphBLAS/
 /LAGraph/
-/.graphblas-harvest/
+# RediSearch builds in place (its build.sh insists on $ROOT/bin).
+deps/RediSearch/bin/
+deps/RediSearch/.install/
 .venv/
 .zed/
 .github/copilot-instructions.md

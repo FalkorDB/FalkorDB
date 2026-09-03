@@ -5,7 +5,7 @@
 # to the C-parity `.so` name (Redis loads modules by path, extension-agnostic).
 #
 # The build mirrors the proven native-macOS setup from #551 (brew toolchain +
-# the CC/CXX-driven graphblas.sh / redisearch.sh + static Homebrew libomp), but
+# the CC/CXX-driven native-deps recipes + static Homebrew libomp), but
 # only the artifact-producing steps — no test suites.
 
 name: Build artifacts macOS (reusable)
@@ -45,10 +45,9 @@ jobs:
       # matching the Linux single-.so contract). graph/build.rs links static
       # when ${LIBOMP_PREFIX}/lib/libomp.a exists.
       LIBOMP_PREFIX: /opt/homebrew/opt/libomp
-      # Workspace-local GraphBLAS install (no sudo; cacheable). graphblas.sh
-      # reads GRAPHBLAS_INSTALL_PREFIX; build.rs reads GRAPHBLAS_LIB_DIR.
-      GRAPHBLAS_INSTALL_PREFIX: ${{ github.workspace }}/.deps/graphblas
-      GRAPHBLAS_LIB_DIR: ${{ github.workspace }}/.deps/graphblas/lib
+      # Workspace-local native-deps cache (no sudo; cacheable). Both the
+      # `ensure` step and graph/build.rs read it from here.
+      FALKORDB_DEPS_CACHE: ${{ github.workspace }}/.deps/native-deps
     steps:
       # This job compiles caller-supplied code that may come from a pull request.
       # `persist-credentials: false` keeps no GITHUB_TOKEN on disk, `permissions`
@@ -57,8 +56,8 @@ jobs:
       # that a later release build restores.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # redisearch.sh builds the deps/RediSearch submodule and no longer
-          # clones it, so it must be checked out here.
+          # native-deps builds the submodules in-place and never clones, so
+          # they must be checked out here.
           submodules: recursive
           ref: ${{ inputs.revision }}
           persist-credentials: false
@@ -73,9 +72,6 @@ jobs:
           echo "${LLVM_PREFIX}/bin"             >> "$GITHUB_PATH"
           echo "CC=${LLVM_PREFIX}/bin/clang"    >> "$GITHUB_ENV"
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> "$GITHUB_ENV"
-          # Bust the native-deps cache when Homebrew LLVM moves (the C artefacts
-          # are ABI-tied to it).
-          echo "BREW_LLVM_VERSION=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_ENV"
 
       - name: Install Rust stable
         run: rustup default stable
@@ -86,47 +82,40 @@ jobs:
           # Untrusted revisions restore the cache but never save it.
           save-if: ${{ inputs.trusted_revision }}
 
-      # Hosted macOS has no Docker toolchain image, so rebuild GraphBLAS +
-      # LAGraph + RediSearch from source and cache them (keyed on the build
-      # scripts + vendored PreJIT + the exact Homebrew LLVM version).
-      # The RediSearch pin used to ride along in hashFiles('redisearch.sh')
-      # (REDISEARCH_REF lived there). It is now only the submodule gitlink, which
-      # hashFiles cannot see and which hashing the 60MB checkout would be a silly
-      # way to reach -- so read the SHA and put it in the key directly.
-      - name: Resolve the deps/RediSearch pin
-        id: rs-pin
-        run: echo "sha=$(git rev-parse HEAD:deps/RediSearch)" >> "$GITHUB_OUTPUT"
+      # Hosted macOS has no Docker toolchain image, so build the three deps
+      # from source and cache them.
+      #
+      # The key comes from native-deps itself rather than a hand-rolled
+      # hashFiles(): `key --all --combined` hashes exactly what the artefacts
+      # are ABI-tied to -- submodule revisions, the GB_control patch, the
+      # vendored PreJIT kernels, the recipe sources, $CC/$CXX --version, the
+      # target triple and the OpenMP flavour. That subsumes the old
+      # hashFiles(scripts) + explicit RediSearch pin + BREW_LLVM_VERSION trio,
+      # and cannot drift out of step with what actually goes into the build.
+      - name: Compute the native-deps cache key
+        id: deps-key
+        run: echo "key=$(cargo run -q --offline --manifest-path native-deps/Cargo.toml -- key --all --combined)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore GraphBLAS + RediSearch native builds
+      - name: Restore native deps
         id: native-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
-          path: |
-            .deps/graphblas
-            lagraph_lib
-            deps/RediSearch/bin
-          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('graphblas.sh', 'redisearch.sh', 'build/graphblas/**') }}-rs${{ steps.rs-pin.outputs.sha }}-llvm${{ env.BREW_LLVM_VERSION }}
+          path: .deps/native-deps
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.deps-key.outputs.key }}
 
-      - name: Build GraphBLAS + LAGraph
+      - name: Build GraphBLAS + LAGraph + RediSearch
         if: steps.native-cache.outputs.cache-hit != 'true'
-        run: ./graphblas.sh
+        run: cargo run --offline --manifest-path native-deps/Cargo.toml -- ensure --all
 
-      - name: Build RediSearch
-        if: steps.native-cache.outputs.cache-hit != 'true'
-        run: ./redisearch.sh
-
-      - name: Save GraphBLAS + RediSearch native builds
-        # Only a trusted revision may WRITE this cache. `graphblas.sh` /
-        # `redisearch.sh` come from the checked-out tree, so on a PR build their
-        # output is attacker-controlled and must never be published for a later
-        # release build to restore.
+      - name: Save native deps
+        # Only a trusted revision may WRITE this cache. The recipes come from
+        # the checked-out tree, so on a PR build their output is
+        # attacker-controlled and must never be published for a later release
+        # build to restore.
         if: ${{ inputs.trusted_revision && steps.native-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
-          path: |
-            .deps/graphblas
-            lagraph_lib
-            deps/RediSearch/bin
+          path: .deps/native-deps
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
 
       - name: Build libfalkordb.dylib

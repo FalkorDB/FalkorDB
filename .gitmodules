@@ -1,3 +1,18 @@
 [submodule "deps/RediSearch"]
 	path = deps/RediSearch
 	url = https://github.com/FalkorDB/RediSearch.git
+	branch = falkordb/llapi-extensions-8.6
+	# `ignore = dirty` because the build strips -Werror from VectorSimilarity
+	# and RediSearch's build.sh writes into bin/ inside the worktree.
+	ignore = dirty
+[submodule "deps/GraphBLAS"]
+	path = deps/GraphBLAS
+	url = https://github.com/DrTimothyAldenDavis/GraphBLAS.git
+	# Pinned to a tag; `ignore = dirty` because the build applies
+	# build/graphblas/GB_control.patch and vendors build/graphblas/PreJIT/*.c
+	# into the worktree.
+	ignore = dirty
+[submodule "deps/LAGraph"]
+	path = deps/LAGraph
+	url = https://github.com/GraphBLAS/LAGraph.git
+	branch = v1.3.x
