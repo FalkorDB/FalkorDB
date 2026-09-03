@@ -44,8 +44,7 @@ pub fn write_label_set(
 /// Inverse of [`write_label_set`].
 pub fn read_label_set(r: &mut Reader<'_>) -> Result<Vec<i32>, DecodeError> {
     let n = r.u16()?;
-    let n = r.guard_count(u64::from(n), 4)?;
-    r.read_n(n, i32::from_le_bytes)
+    r.take_n(u64::from(n), i32::from_le_bytes)
 }
 
 // ── AttrSet ──
@@ -74,8 +73,7 @@ pub fn write_attr_ids(
 /// Inverse of [`write_attr_ids`].
 pub fn read_attr_ids(r: &mut Reader<'_>) -> Result<Vec<u16>, DecodeError> {
     let n = r.u16()?;
-    let n = r.guard_count(u64::from(n), 2)?;
-    r.read_n(n, u16::from_le_bytes)
+    r.take_n(u64::from(n), u16::from_le_bytes)
 }
 
 /// `AttrValues` — `SIValue × (count × n)`, row-major. The data half.
@@ -89,13 +87,8 @@ pub fn read_attr_ids(r: &mut Reader<'_>) -> Result<Vec<u16>, DecodeError> {
 /// justify a second layout two engines must match byte-for-byte.
 pub fn write_attr_values(
     buf: &mut Vec<u8>,
-    width: usize,
     rows: &[Value],
 ) {
-    debug_assert!(
-        width == 0 || rows.len().is_multiple_of(width),
-        "rows must be a whole number of records"
-    );
     // A floor, not the size: a value is at least its 4-byte type tag, and most
     // carry a payload after it. Still worth reserving — this is the largest
     // block in a record by far.
@@ -105,13 +98,16 @@ pub fn write_attr_values(
     }
 }
 
-/// Inverse of [`write_attr_values`], reading `count × width` values.
+/// Inverse of [`write_attr_values`], reading `count × attrs_per_row` values.
+///
+/// `attrs_per_row` is a *number of attributes*, not a byte width — the two sit
+/// next to each other in this module and used to share the name `width`.
 pub fn read_attr_values(
     r: &mut Reader<'_>,
     count: u32,
-    width: usize,
+    attrs_per_row: usize,
 ) -> Result<Vec<Value>, DecodeError> {
-    let total = u64::from(count).saturating_mul(width as u64);
+    let total = u64::from(count).saturating_mul(attrs_per_row as u64);
     // Every value is at least its 4-byte type tag.
     let total = r.guard_count(total, 4)?;
     let mut rows = Vec::with_capacity(total);
@@ -156,7 +152,7 @@ mod tests {
         assert_eq!(hex(&ids), "01 00 00 00");
 
         let mut vals = Vec::new();
-        write_attr_values(&mut vals, 1, &[Value::Int(1), Value::Int(2)]);
+        write_attr_values(&mut vals, &[Value::Int(1), Value::Int(2)]);
         assert_eq!(
             hex(&vals),
             "00 20 00 00 01 00 00 00 00 00 00 00 \
@@ -181,7 +177,6 @@ mod tests {
         let mut buf = Vec::new();
         write_attr_values(
             &mut buf,
-            2,
             &[Value::Int(1), Value::Null, Value::Null, Value::Int(2)],
         );
         let mut r = Reader::new(&buf);

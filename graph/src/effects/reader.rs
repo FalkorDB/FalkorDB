@@ -53,14 +53,17 @@ impl<'a> Reader<'a> {
     }
 
     /// Reject a count the remaining bytes could not possibly satisfy, *before*
-    /// it reaches `Vec::with_capacity`.
+    /// it reaches a `Vec::with_capacity` or a loop bound.
+    ///
+    /// **Only for counts a read cannot bound itself.** A fixed-width run goes
+    /// through [`Self::take_n`], which checks and reads in one step, so it needs
+    /// nothing here. What is left is variable-width: a loop over strings, values
+    /// or segments, where the count is known before the items' sizes are. There
+    /// the bound is the smallest an item can be — `min_bytes_each` — which caps
+    /// the loop without having to predict the payload.
     ///
     /// `pub(super)` rather than public: the blocks need it, but nothing outside
     /// the codec should be inventing its own bounds checks.
-    ///
-    /// `min_bytes_each` is the smallest number of bytes one entry can occupy —
-    /// for a variable-width entry that is its fixed prefix, which bounds the
-    /// allocation without having to predict the payload.
     pub(super) fn guard_count(
         &self,
         count: u64,
@@ -122,22 +125,33 @@ impl<'a> Reader<'a> {
         Ok(f64::from_le_bytes(self.take_array()?))
     }
 
-    /// A C string: `u64` length **including** the NUL, then the bytes.
-    /// `n` fixed-width values in one go.
+    /// `count` fixed-width values, bounded and read in one step.
     ///
-    /// One bounds check and one allocation for the whole run, where a `for`
-    /// loop over `u16()` or `i32()` pays a check per element and cannot be
-    /// vectorized. Callers still `guard_count` first, so `n` is already known
-    /// to be plausible against the bytes left.
-    pub fn read_n<const W: usize, T>(
+    /// The bound is not a separate call because it cannot be: `count * W` bytes
+    /// either exist or they do not, and the check is the same arithmetic the
+    /// read needs anyway. Nothing here can over-allocate — the `Vec` is built
+    /// from a slice that is already proven present, so its capacity comes from
+    /// the bytes rather than from the claim.
+    ///
+    /// One bounds check and one allocation for the whole run, where a `for` loop
+    /// over `u16()` or `i32()` pays a check per element and cannot be
+    /// vectorized.
+    pub fn take_n<const W: usize, T>(
         &mut self,
-        n: usize,
+        count: u64,
         from_le: fn([u8; W]) -> T,
     ) -> Result<Vec<T>, DecodeError> {
-        // Saturating, so an `n` that would overflow the product asks for more
-        // bytes than exist and fails the bounds check rather than wrapping to a
-        // small read. Callers `guard_count` first, so this is belt and braces.
-        let bytes = self.take(n.saturating_mul(W))?;
+        // Saturating, so a count that would overflow the product asks for more
+        // bytes than exist and fails the check rather than wrapping to a small
+        // read.
+        let need = count.saturating_mul(W as u64);
+        if need > self.remaining() as u64 {
+            return Err(DecodeError::ImplausibleCount {
+                count,
+                remaining: self.remaining(),
+            });
+        }
+        let bytes = self.take(need as usize)?;
         Ok(bytes
             .chunks_exact(W)
             .map(|c| {
@@ -148,12 +162,17 @@ impl<'a> Reader<'a> {
             .collect())
     }
 
+    /// A C string: `u64` length **including** the NUL, then the bytes.
     pub fn string(&mut self) -> Result<String, DecodeError> {
         let len = self.u64()?;
         if len == 0 {
             return Err(DecodeError::BadString);
         }
-        let n = self.guard_count(len, 1)?;
+        // No separate bound: the length is a byte count, so `take` is the check.
+        let n = usize::try_from(len).map_err(|_| DecodeError::ImplausibleCount {
+            count: len,
+            remaining: self.remaining(),
+        })?;
         let raw = self.take(n)?;
         // The last byte is the terminator C requires; it is not part of the value.
         let (body, nul) = raw.split_at(n - 1);

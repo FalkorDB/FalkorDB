@@ -43,7 +43,7 @@ pub fn write_create_node(
     write_label_set(buf, labels);
     write_attr_ids(buf, attr_ids);
     ids.encode(buf);
-    write_attr_values(buf, attr_ids.len(), rows);
+    write_attr_values(buf, rows);
 }
 
 /// `4 CREATE_EDGE` — `count · IdList · RelType · IdList(src) · IdList(dst) · AttrSet`.
@@ -68,7 +68,7 @@ pub fn write_create_edge(
     ids.encode(buf);
     src.encode(buf);
     dst.encode(buf);
-    write_attr_values(buf, attr_ids.len(), rows);
+    write_attr_values(buf, rows);
 }
 
 /// `1 UPDATE_NODE` — `count · IdList · LabelSet · AttrSet`.
@@ -97,7 +97,7 @@ pub fn write_update(
     }
     write_attr_ids(buf, attr_ids);
     ids.encode(buf);
-    write_attr_values(buf, attr_ids.len(), rows);
+    write_attr_values(buf, rows);
 }
 
 /// `5 DELETE_NODE` — `count · IdList · LabelSet`.
