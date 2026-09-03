@@ -50,12 +50,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Runtime RC images — both targets, both architectures all share the
-          # rc-pr-<N>(...) tag prefix produced by build-image.yml.
-          - { repo: falkordb,        pattern: '^rc-pr-' }
-          - { repo: falkordb-server, pattern: '^rc-pr-' }
-          # Toolchain — pr-<N>(-x64|-arm64v8)? produced by build-toolchain.yml.
-          - { repo: falkordb-build,  pattern: '^pr-' }
+          # Runtime RC images — every per-run tag is rc-<ci_key>, where ci_key
+          # is pr-<N> on a pull request and mg-<sha> in the merge queue. The
+          # pattern must match BOTH: the sweep keeps only versions where EVERY
+          # tag matches, so a tag shape the pattern misses does not leak — it
+          # switches the sweep off for that version entirely.
+          - { repo: falkordb,        pattern: '^rc-' }
+          - { repo: falkordb-server, pattern: '^rc-' }
+          # Toolchain — <ci_key>(-x64|-arm64v8)? produced by build-toolchain.yml.
+          - { repo: falkordb-build,  pattern: '^(pr|mg)-' }
     steps:
       - name: Sweep tags older than TTL (${{ matrix.repo }}, /${{ matrix.pattern }}/)
         env:

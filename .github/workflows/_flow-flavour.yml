@@ -1,7 +1,7 @@
 # Reusable workflow: run the flow-test matrix for ONE flavour.
 #
 # Why reusable: GHA caps a single workflow run's matrix at 256 cells.
-# `97 services-bucket files × multiple flavours × multiple archs` blows past
+# `108 services-bucket files x multiple flavours x multiple archs` blows past
 # that limit, and GHA silently drops the over-budget matrix. By calling this
 # workflow once per flavour from rust-pr.yml, each call gets its own 256-cell
 # budget — so adding a new flavour (tsan/ubsan/msan) is one more `uses:`
@@ -41,10 +41,6 @@ on:
         type: string
       build_image:
         description: "Toolchain image used as the job container (cargo + pytest + clang)"
-        required: true
-        type: string
-      pr_number:
-        description: "PR number — used for log-artifact naming + coverage image lookup"
         required: true
         type: string
       sanitizer_env:
@@ -116,6 +112,12 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # persist-credentials defaults to true, which writes the token into
+          # .git/config — and the next step runs ./flow.sh, which is test code
+          # from the pull request, in this same workspace. Under merge_group
+          # that token is the base repository's.
+          persist-credentials: false
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
@@ -207,6 +209,12 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # persist-credentials defaults to true, which writes the token into
+          # .git/config — and the next step runs ./flow.sh, which is test code
+          # from the pull request, in this same workspace. Under merge_group
+          # that token is the base repository's.
+          persist-credentials: false
       - name: Pre-create cov dir (coverage flavour only)
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"

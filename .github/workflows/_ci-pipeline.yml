@@ -186,8 +186,6 @@ jobs:
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
-      pr_number: ${{ inputs.ci_key }}
-    secrets: inherit
 
   flow-asan:
     needs: [build-rc-asan-image]
@@ -205,6 +203,4 @@ jobs:
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
-      pr_number: ${{ inputs.ci_key }}
       sanitizer_env: address
-    secrets: inherit
