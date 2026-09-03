@@ -91,7 +91,7 @@ unsafe extern "C" fn graph_rdb_load(
             graph_arc.borrow().set_indexer_graph(graph_arc.clone());
             let tg = ThreadedGraph::from_mvcc(mvcc);
             let arc = Arc::new(RwLock::new(tg));
-            crate::graph_core::register_graph(key_name, arc.clone());
+            crate::graph_core::register_decoded_graph(key_name, arc.clone());
             let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
             Box::into_raw(boxed).cast()
         }
@@ -117,7 +117,7 @@ unsafe extern "C" fn graph_rdb_load(
                     } else {
                         let tg = ThreadedGraph::from_mvcc(mvcc);
                         let arc = Arc::new(RwLock::new(tg));
-                        crate::graph_core::register_graph(key_name.clone(), arc.clone());
+                        crate::graph_core::register_decoded_graph(key_name.clone(), arc.clone());
                         arc
                     };
                     let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
@@ -138,7 +138,7 @@ unsafe extern "C" fn graph_rdb_load(
                     .insert(key_name.clone(), arc.clone());
             }
 
-            crate::graph_core::register_graph(key_name, arc.clone());
+            crate::graph_core::register_decoded_graph(key_name, arc.clone());
 
             // Hand ownership of a Box<Arc<...>> to Redis.
             let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
