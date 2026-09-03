@@ -71,8 +71,18 @@ const fn width_of_code(code: u8) -> u8 {
 /// less than this cannot lose to one, and there is nothing to compute.
 const ROARING_FLOOR_BYTES: usize = 32;
 
-/// What the bitmap for an ascending run *would* serialize to, tracked as the
-/// run grows so that it never has to be built to find out.
+/// The ascending run of segments currently being built, and what it would cost
+/// encoded either way.
+///
+/// A run ends the moment an id arrives that does not ascend past the last
+/// segment, and only a run can become a bitmap — so this is the whole context
+/// the collapse decision needs: where the run starts, what its segments cost as
+/// ranges, and what roaring would charge for the same ids. The three used to be
+/// loose fields on [`IdList`], which meant resetting them was three statements
+/// in two places.
+///
+/// The bitmap side is tracked as the run grows so that it never has to be built
+/// to find out.
 ///
 /// Roaring's serialized size is a closed-form function of three things — how
 /// many ids, how many maximal runs, and how they spread across buckets — and a
@@ -133,7 +143,16 @@ const ROARING_FLOOR_BYTES: usize = 32;
 /// break parity with the other engine with or without this formula. `roaring`
 /// is pinned exactly for that reason — see the note in `graph/Cargo.toml`.
 #[derive(Clone, Debug, Default)]
-struct RunCost {
+struct Run {
+    /// Where the run starts in the segment list.
+    start: usize,
+    /// What its segments cost as ranges — the comparison's other side.
+    ///
+    /// Counts only *closed* segments: the open one can still grow, so charging
+    /// it would make the answer depend on where in the sequence the question
+    /// was asked.
+    range_bytes: usize,
+
     /// Whether any id has been folded in. Distinguishes an empty run from one
     /// whose open bucket happens to start at zero.
     started: bool,
@@ -191,6 +210,9 @@ const CONTAINER_OFFSET_BYTES: usize = 4;
 const OFFSET_TABLE_MIN_CONTAINERS: usize = 4;
 /// A treemap's own prefix: a `u64` count of the bitmaps in it.
 const TREEMAP_COUNT_BYTES: usize = 8;
+/// An [`Segment::Ascending`] segment's own overhead, on top of the blob: its
+/// header byte and the `u32` length prefix.
+const ASCENDING_SEGMENT_OVERHEAD: usize = 1 + 4;
 /// Each bitmap in a treemap is preceded by its `u32` key.
 const BITMAP_KEY_BYTES: usize = 4;
 
@@ -242,9 +264,40 @@ const fn bitmap_header(
     }
 }
 
-impl RunCost {
-    fn clear(&mut self) {
-        *self = Self::default();
+impl Run {
+    /// Begin a new run at `start`, discarding what the old one had tallied.
+    fn restart(
+        &mut self,
+        start: usize,
+    ) {
+        *self = Self {
+            start,
+            ..Self::default()
+        };
+    }
+
+    /// Fold a segment that has stopped growing into both sides of the
+    /// comparison.
+    fn absorb(
+        &mut self,
+        base: u64,
+        len: u64,
+    ) {
+        self.range_bytes += Segment::Range {
+            base,
+            len: len as u32,
+        }
+        .encoded_len(false);
+        self.add_range(base, len);
+    }
+
+    /// Whether the bitmap has already won, so one is worth building.
+    ///
+    /// Both sides are exact. Nothing speculative is constructed to answer it.
+    fn prefers_bitmap(&self) -> bool {
+        // Below roaring's own floor there is nothing to weigh.
+        self.range_bytes >= ROARING_FLOOR_BYTES
+            && ASCENDING_SEGMENT_OVERHEAD + self.bitmap_bytes() < self.range_bytes
     }
 
     /// Fold one consecutive range into the tally.
@@ -309,12 +362,12 @@ impl RunCost {
         self.closed_has_run = false;
     }
 
-    /// The bytes `RoaringTreemap::serialized_size()` would report.
+    /// The bytes `RoaringTreemap::serialized_size()` would report for this run.
     ///
     /// O(1): everything but the open bucket and the open bitmap is already
     /// summed, and those two are closed out arithmetically without being
     /// committed.
-    fn predicted(&self) -> usize {
+    fn bitmap_bytes(&self) -> usize {
         if !self.started {
             return TREEMAP_COUNT_BYTES;
         }
@@ -544,20 +597,11 @@ pub struct IdList {
     /// so the list itself costs no allocation either.
     segments: SmallVec<[Segment; 2]>,
     len: usize,
-    /// Index of the first segment of the ascending run currently being built.
+    /// The ascending run currently being built, and what it would cost encoded
+    /// either way.
     ///
-    /// A run ends the moment an id arrives that does not ascend past the last
-    /// segment; the next one starts there. Only a run can become a bitmap.
-    run_start: usize,
-    /// What that run's bitmap would serialize to, and what its ranges cost —
-    /// both for the segments of the run that are *closed*, which is all of them
-    /// but the one still being extended.
-    ///
-    /// Maintained as the run grows so the choice between the two is arithmetic.
-    /// The bitmap is built once, when it has already won; nothing is ever built
-    /// in order to be measured and discarded.
-    run_cost: RunCost,
-    run_range_bytes: usize,
+    /// Everything the collapse decision needs, in one place — see [`Run`].
+    run: Run,
 }
 
 /// By the ids, not by how they are segmented: the same sequence reached by
@@ -579,9 +623,7 @@ impl IdList {
         Self {
             segments: SmallVec::new(),
             len: 0,
-            run_start: 0,
-            run_cost: RunCost::default(),
-            run_range_bytes: 0,
+            run: Run::default(),
         }
     }
 
@@ -634,12 +676,7 @@ impl IdList {
             // the moment its contribution is known.
             if let Some(Segment::Range { base, len }) = self.segments.last() {
                 let (base, len) = (*base, u64::from(*len));
-                self.run_cost.add_range(base, len);
-                self.run_range_bytes += Segment::Range {
-                    base,
-                    len: len as u32,
-                }
-                .encoded_len(false);
+                self.run.absorb(base, len);
             }
             self.segments.push(Segment::Range { base: id, len: 1 });
             self.maybe_collapse_run();
@@ -648,50 +685,41 @@ impl IdList {
             // neither, so everything before this is settled and a new run starts
             // at the segment being pushed.
             self.segments.push(Segment::Range { base: id, len: 1 });
-            self.run_start = self.segments.len() - 1;
-            self.run_cost.clear();
-            self.run_range_bytes = 0;
+            self.run.restart(self.segments.len() - 1);
         }
     }
 
-    /// Replace the current run with its bitmap, if the arithmetic says so.
-    ///
-    /// The comparison is over the run's *closed* segments, which is what makes
-    /// it a pure function of the ids: the open segment can still grow, so
-    /// counting it would make the answer depend on where in the sequence the
-    /// question was asked.
+    /// Replace the current run with its bitmap, if [`Run::prefers_bitmap`] says
+    /// the arithmetic has already gone that way.
     fn maybe_collapse_run(&mut self) {
-        if self.run_range_bytes < ROARING_FLOOR_BYTES {
-            return;
-        }
-        // The `Ascending` segment's own overhead: its header byte and the
-        // `u32` length prefix in front of the blob.
-        if 1 + 4 + self.run_cost.predicted() >= self.run_range_bytes {
+        if !self.run.prefers_bitmap() {
             return;
         }
 
         let mut bitmap = RoaringTreemap::new();
         let mut len = 0_u32;
-        for seg in &self.segments[self.run_start..] {
+        for seg in &self.segments[self.run.start..] {
             let Segment::Range { base, len: n } = seg else {
                 unreachable!("a run under consideration holds only ranges")
             };
-            // One container operation per range, however many ids it spans.
+            // One bucket operation per range, however many ids it spans.
             bitmap.insert_range(*base..=*base + u64::from(*n) - 1);
             len += *n;
         }
         // `optimize()` is **normative**, not a tuning knob: an unoptimized
         // bitmap serializes to different bytes, so two engines that disagree
-        // about calling it produce different buffers for the same set.
+        // about calling it produce different buffers for the same set. So is
+        // building it by range rather than id by id — see
+        // `construction_order_changes_the_bytes`.
         bitmap.optimize();
         let max = self.segments[self.segments.len() - 1].max();
-        self.segments.truncate(self.run_start);
+        let start = self.run.start;
+        self.segments.truncate(start);
         self.segments.push(Segment::Ascending { bitmap, len, max });
-        // Nothing further to weigh for this run: ascending ids now go straight
-        // into the bitmap on the hot path above, and anything else starts a new
-        // run.
-        self.run_cost.clear();
-        self.run_range_bytes = 0;
+        // The run is now that one segment, with nothing left to weigh: ascending
+        // ids go straight into the bitmap on the hot path above, and anything
+        // else starts a new run.
+        self.run.restart(start);
     }
 
     #[must_use]
@@ -1177,7 +1205,7 @@ mod tests {
         ];
 
         for (name, ranges) in cases {
-            let mut cost = RunCost::default();
+            let mut cost = Run::default();
             let mut bitmap = RoaringTreemap::new();
             for &(base, len) in *ranges {
                 cost.add_range(base, len);
@@ -1185,10 +1213,10 @@ mod tests {
             }
             bitmap.optimize();
             assert_eq!(
-                cost.predicted(),
+                cost.bitmap_bytes(),
                 bitmap.serialized_size(),
                 "{name}: the formula and the crate disagree. If this fires after a \
-             `roaring` bump, the arithmetic in `RunCost` needs re-deriving from \
+             `roaring` bump, the arithmetic in `Run` needs re-deriving from \
              the new release *and* the wire format has changed under the other \
              engine — see #2698 before relaxing it."
             );
@@ -1210,7 +1238,7 @@ mod tests {
             "this shape should have collapsed"
         );
 
-        let mut cost = RunCost::default();
+        let mut cost = Run::default();
         cost.add_range(0, 1);
         for i in 1..10_000_u64 {
             cost.add_range(i * 2, 1);
@@ -1257,11 +1285,11 @@ mod tests {
              about construction order can be relaxed"
         );
         // And ours is the by-range one, which is what `RunCost` models.
-        let mut cost = RunCost::default();
+        let mut cost = Run::default();
         for (base, len) in ranges {
             cost.add_range(base, len);
         }
-        assert_eq!(cost.predicted(), by_range.serialized_size());
+        assert_eq!(cost.bitmap_bytes(), by_range.serialized_size());
     }
 
     #[test]
