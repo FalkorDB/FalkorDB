@@ -614,12 +614,12 @@ fn digest_deleted_nodes(
     let mut labels: Vec<i32> = Vec::new();
 
     for id in &p.deleted_nodes {
-        while cursor < pairs.len() && pairs[cursor].0 < id {
+        while cursor < pairs.len() && pairs[cursor].node < id {
             cursor += 1;
         }
         labels.clear();
-        while cursor < pairs.len() && pairs[cursor].0 == id {
-            labels.push(pairs[cursor].1 as i32);
+        while cursor < pairs.len() && pairs[cursor].node == id {
+            labels.push(pairs[cursor].label as i32);
             cursor += 1;
         }
         labels.sort_unstable();

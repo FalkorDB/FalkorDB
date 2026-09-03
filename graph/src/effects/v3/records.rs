@@ -326,10 +326,7 @@ pub fn write_constraint(
         label,
         props,
     } = *c;
-    debug_assert!(
-        props.len() <= u8::MAX as usize,
-        "C reads the count as uint8"
-    );
+
     write_header(
         buf,
         if create {
@@ -363,7 +360,15 @@ pub fn write_constraint(
     write_string(buf, label);
     // Floor, as above: 2 bytes of id and an 8-byte length per property.
     buf.reserve(1 + props.len() * 10);
-    write_u8(buf, props.len() as u8);
+    // Not `as u8`, and not a `debug_assert`. C reads this count as a `uint8`, so
+    // a 256th property would write **0** and replicate a constraint over no
+    // properties at all — silently, and only in release, where an assert is
+    // compiled out. `GRAPH.CONSTRAINT` caps the count at 255 so this cannot
+    // fire, which is exactly why it must be loud rather than truncating: if it
+    // ever does, the guard three layers up has gone.
+    let n = u8::try_from(props.len())
+        .expect("GRAPH.CONSTRAINT caps properties at 255; C reads the count as uint8");
+    write_u8(buf, n);
     for AttrRef { id, name } in props {
         write_u16(buf, *id);
         write_string(buf, name);

@@ -31,7 +31,7 @@ use rustc_hash::FxHashMap;
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
-use crate::graph::graph::DeletedEdge;
+use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
 
 use crate::{
     entity_type::EntityType,
@@ -141,7 +141,7 @@ pub struct Pending {
     /// as flat pairs rather than grouped: `delete_nodes` already built this
     /// exact vector, so keeping it costs a move, while grouping would charge
     /// every delete for a partitioning only a replicating server reads.
-    pub(crate) deleted_node_labels: Vec<(u64, u64)>,
+    pub(crate) deleted_node_labels: Vec<DeletedNodeLabel>,
     /// Property updates for newly created nodes (fast path: skip fjall).
     /// Values are attribute-id-resolved, sorted by id, unique.
     pub(crate) new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,

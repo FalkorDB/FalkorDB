@@ -253,6 +253,17 @@ pub struct MemoryUsageReport {
 /// edge is gone by the time effects are built — and v3's `DELETE_EDGE` groups by
 /// it. `index_remove_edge_docs` is not a substitute: it is only populated for
 /// types that actually carry an index.
+/// One label a deleted node carried, as [`Graph::delete_nodes`] reports them.
+///
+/// Named for the same reason as [`DeletedEdge`] and `AttrRef`: two `u64`s side
+/// by side, where transposing them attributes every label to the wrong node and
+/// nothing about the types would notice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DeletedNodeLabel {
+    pub node: u64,
+    pub label: u64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DeletedEdge {
     /// The edge's own id.
@@ -1888,7 +1899,7 @@ impl Graph {
         &mut self,
         deleted_nodes: &RoaringTreemap,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
-    ) -> Result<Vec<(u64, u64)>, String> {
+    ) -> Result<Vec<DeletedNodeLabel>, String> {
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
@@ -1926,16 +1937,23 @@ impl Graph {
         // per-node iterator construction that the full scan had replaced. There
         // is no size threshold: this is O(|deleted|) for every delete, so there
         // is no shape of input the old whole-matrix scan would win.
-        let mut pairs: Vec<(u64, u64)> = Vec::with_capacity(deleted_nodes.len() as usize);
+        let mut pairs: Vec<DeletedNodeLabel> = Vec::with_capacity(deleted_nodes.len() as usize);
         {
             let mut it = self.node_labels_matrix.iter(0, self.node_cap);
             for node_id in deleted_nodes {
                 it.seek(node_id, node_id);
-                pairs.extend(it.by_ref());
+                pairs.extend(
+                    it.by_ref()
+                        .map(|(node, label)| DeletedNodeLabel { node, label }),
+                );
             }
         }
 
-        for &(node_id, label_id) in &pairs {
+        for &DeletedNodeLabel {
+            node: node_id,
+            label: label_id,
+        } in &pairs
+        {
             let lid = label_id as usize;
 
             let label = &self.node_labels[lid];

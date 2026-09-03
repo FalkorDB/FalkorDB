@@ -16,7 +16,7 @@
 //! by the time effects are encoded. Those are set directly here.
 
 use crate::{
-    graph::graph::{DeletedEdge, LabelId, NodeId, RelationshipId},
+    graph::graph::{DeletedEdge, DeletedNodeLabel, LabelId, NodeId, RelationshipId},
     runtime::{orderset::OrderSet, pending::Pending, value::Value},
 };
 
@@ -125,7 +125,8 @@ impl StagePending for Pending {
     ) {
         self.deleted_node(NodeId::from(id));
         for &label in labels {
-            self.deleted_node_labels.push((id, label));
+            self.deleted_node_labels
+                .push(DeletedNodeLabel { node: id, label });
         }
         // `Graph::delete_nodes` yields these in ascending node order and the
         // emitter walks the two in step, so a test staging out of order must
