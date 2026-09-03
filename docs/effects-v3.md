@@ -156,6 +156,14 @@ than its common one, and stable. The level is still 1, because raising it is a
 CPU trade that has not been measured on the write thread — but a ratio quoted
 from level 1 is a measurement of one payload's alignment, not of the format.
 
+**Every compressed figure in this document is a level-1 figure**, including the
+`v3 + zstd-1` column below and the motivating query's 10,446 B. If the level
+ever moves, those numbers must be re-measured *in the same change* — otherwise
+the document keeps a lucky-alignment ratio that a second implementation will try
+and fail to reproduce. The level does not affect interoperability: a decoder
+reads any zstd frame, and byte-for-byte comparison between engines is done on
+uncompressed payloads.
+
 ## Design rule
 
 **Every batchable record is `u32 opcode · u32 count · blocks…`, built from five
