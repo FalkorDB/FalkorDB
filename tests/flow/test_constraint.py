@@ -1027,7 +1027,11 @@ class testConstraintReplication():
             with self.replica.monitor() as m:
                 MONITOR_ATTACHED = True
                 for cmd in m.listen():
-                    if 'GRAPH.EFFECT' in cmd['command']:
+                    # Both, because which one arrives is the point: constraints
+                    # must reach a replica as effects and never as a replayed
+                    # GRAPH.CONSTRAINT.
+                    if ('GRAPH.EFFECT' in cmd['command']
+                            or 'GRAPH.CONSTRAINT' in cmd['command']):
                         self.monitor.append(cmd)
         except:
             pass
@@ -1057,32 +1061,40 @@ class testConstraintReplication():
         for c in constraints:
             self.env.assertEqual(c.status, 'OPERATIONAL')
 
-        # Constraints reach the replica as GRAPH.EFFECT, and the replica ends
-        # up with the same six, all OPERATIONAL.
+        # What is worth asserting here is *which command* carries a constraint to
+        # a replica, and that the replica converges — not how many payloads went
+        # past.
         #
-        # This used to count twelve verbatim GRAPH.CONSTRAINT commands — two per
-        # create, because the replica treated the second copy as the activation
-        # signal. Neither half of that holds now. The status rides the record, so
-        # the replica installs the master's outcome instead of inferring it from
-        # a repeat; and a constraint below the async threshold validates inline,
-        # so there is nothing to re-announce and it is sent once. Counting wire
-        # commands here would also be wrong for a subtler reason: one buffer can
-        # carry a schema addition *and* the constraint, and the index each helper
-        # creates first is an effect too.
+        # Counting them was wrong twice over. A GRAPH.EFFECT payload is binary,
+        # so MONITOR cannot tell a constraint's effect from a node-create's, and
+        # the count is not six anyway: each `create_unique_*` helper builds a
+        # supporting index first, which is another effect. Measured, these six
+        # creates put eleven effects on the wire, so `>= 6` was passing with five
+        # to spare and functioning as a sleep.
         #
-        # `test_effects_v3.py` pins the announcement counts exactly, per shape.
+        # `test_effects_v3.py` pins the per-shape announcement counts, where the
+        # payloads are constructed rather than observed through MONITOR.
         self.source.execute_command("WAIT", 1, 0)
 
-        elapsed = 10
-        while len(self.monitor) < 6 and elapsed > 0:
-            time.sleep(0.2)
-            elapsed -= 0.2
-        self.env.assertGreaterEqual(len(self.monitor), 6)
+        replica_g = Graph(self.replica, GRAPH_ID)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            self.source.execute_command("WAIT", 1, 0)
+            cs = list_constraints(replica_g)
+            if len(cs) == 6 and all(c.status == 'OPERATIONAL' for c in cs):
+                break
+            time.sleep(0.25)
 
-        replica_constraints = list_constraints(Graph(self.replica, GRAPH_ID))
+        replica_constraints = list_constraints(replica_g)
         self.env.assertEqual(len(replica_constraints), 6)
         for c in replica_constraints:
             self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        # And the mechanism, which MONITOR *can* answer from the command name:
+        # effects carried them, and no verbatim GRAPH.CONSTRAINT was replayed.
+        seen = [c['command'] for c in self.monitor]
+        self.env.assertGreater(len([c for c in seen if 'GRAPH.EFFECT' in c]), 0)
+        self.env.assertEqual([c for c in seen if 'GRAPH.CONSTRAINT' in c], [])
 
     def test_02_async_validation_reaches_operational_on_replica(self):
         # Regression guard for the pause/role re-check added in #2371.
