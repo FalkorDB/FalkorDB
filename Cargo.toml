@@ -30,7 +30,13 @@ lazy_static = "1.5.0"
 libc = "0.2"
 parking_lot = { version = "0.12.5", features = ["arc_lock"] }
 redis-module = { git = "https://github.com/AviAvni/redismodule-rs", branch = "master" }
-roaring = "0.11.4"
+# Pinned exactly, not caret-matched. Two engines have to serialize the same
+# ids to the same bytes (#2698), and roaring's output is not stable across
+# releases by contract: `optimize()` is path-dependent, and the container
+# heuristics it uses are internal. A patch bump that changes a tie-break
+# changes the wire, silently, on one side only. `predicted_matches_roaring`
+# in `effects/v3/id_list.rs` is the canary; this pin is the seatbelt.
+roaring = "=0.11.5"
 rustc-hash = "2"
 ryu = "1.0.23"
 thin-vec = "0.2.18"
