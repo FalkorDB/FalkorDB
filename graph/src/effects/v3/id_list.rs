@@ -96,9 +96,14 @@ const fn width_of_code(code: u8) -> u8 {
 
 /// Smallest run-of-ranges worth doing the bitmap arithmetic on.
 ///
-/// The smallest treemap roaring can serialize is 30 bytes — an 8-byte count, a
-/// 4-byte key, a 16-byte header and a 2-byte array container — so a run costing
-/// less than this cannot lose to one, and there is nothing to compute.
+/// The smallest treemap roaring can serialize is 27 bytes — a run container, the
+/// cheapest of the three — so a run costing less than that cannot lose to one
+/// and there is nothing to compute. 32 rather than 27 because the arithmetic
+/// below is only worth running once a bitmap is plausibly competitive, not the
+/// instant it becomes possible.
+///
+/// (30 is the *array* container's floor. The C side measured both while
+/// checking parity; the constant is unchanged, its stated reason was wrong.)
 const ROARING_FLOOR_BYTES: usize = 32;
 
 /// The ascending run of segments currently being built, and what it would cost
