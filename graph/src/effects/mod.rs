@@ -56,20 +56,3 @@ pub trait EffectDecode<const VERSION: u8>: Sized {
     /// describe a shape this version does not have.
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError>;
 }
-
-/// Helpers the byte-pinning tests share.
-///
-/// They live here rather than in one submodule's `mod tests` because the pins
-/// are spread across `id_list`, `blocks`, `records` and `value` — each beside
-/// the bytes it pins — and a `#[cfg(test)]` item is not importable from a
-/// sibling's test module unless it sits above them.
-#[cfg(test)]
-pub(crate) mod testing {
-    /// Render bytes the way the pins are written: lowercase, space-separated.
-    pub(crate) fn hex(buf: &[u8]) -> String {
-        buf.iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-}

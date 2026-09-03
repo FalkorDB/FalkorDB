@@ -296,7 +296,6 @@ fn read_one(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effects::testing::hex;
 
     // ── SIValue ──
 
@@ -310,7 +309,11 @@ mod tests {
 
         buf.clear();
         Value::Null.encode(&mut buf);
-        assert_eq!(hex(&buf), "00 80 00 00", "T_NULL = 1 << 15, no payload");
+        assert_eq!(
+            format!("{buf:02x?}"),
+            "[00, 80, 00, 00]",
+            "T_NULL = 1 << 15, no payload"
+        );
     }
 
     #[test]
@@ -329,7 +332,10 @@ mod tests {
         let mut buf = Vec::new();
         Value::String(Arc::new("ab".into())).encode(&mut buf);
         // type tag, then len = 3 (including NUL), then "ab\0"
-        assert_eq!(hex(&buf), "00 08 00 00 03 00 00 00 00 00 00 00 61 62 00");
+        assert_eq!(
+            format!("{buf:02x?}"),
+            "[00, 08, 00, 00, 03, 00, 00, 00, 00, 00, 00, 00, 61, 62, 00]"
+        );
     }
 
     #[test]

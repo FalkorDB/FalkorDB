@@ -253,7 +253,18 @@ pub struct MemoryUsageReport {
 /// edge is gone by the time effects are built — and v3's `DELETE_EDGE` groups by
 /// it. `index_remove_edge_docs` is not a substitute: it is only populated for
 /// types that actually carry an index.
-pub type DeletedEdge = (RelationshipId, u64, NodeId, NodeId);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeletedEdge {
+    /// The edge's own id.
+    pub id: RelationshipId,
+    /// Its relationship type.
+    pub type_id: u64,
+    /// Its endpoints, in wire order. Named rather than positional because both
+    /// are `NodeId`: a transposition here reverses every deleted edge and
+    /// nothing about the types would catch it.
+    pub src: NodeId,
+    pub dst: NodeId,
+}
 
 pub struct Graph {
     /// Graph name (Redis key name)
@@ -2548,7 +2559,12 @@ impl Graph {
             for &(edge_id, src, dst) in type_rels {
                 tm_rows.push(edge_id);
                 tm_cols.push(type_id);
-                endpoints.push((RelationshipId(edge_id), type_id, NodeId(src), NodeId(dst)));
+                endpoints.push(DeletedEdge {
+                    id: RelationshipId(edge_id),
+                    type_id,
+                    src: NodeId(src),
+                    dst: NodeId(dst),
+                });
                 self.clear_edge_endpoint(edge_id);
             }
 
@@ -2668,7 +2684,12 @@ impl Graph {
             let type_name = &self.relationship_types[type_idx];
             let is_indexed = self.edge_indexer.has_index(type_name);
             for &(edge_id, src, dst) in &rels {
-                all_implicit.push((RelationshipId(edge_id), type_id, NodeId(src), NodeId(dst)));
+                all_implicit.push(DeletedEdge {
+                    id: RelationshipId(edge_id),
+                    type_id,
+                    src: NodeId(src),
+                    dst: NodeId(dst),
+                });
 
                 // Stage an edge-index document removal so cascade
                 // deletes don't leave stale index hits on the next

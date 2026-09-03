@@ -27,7 +27,7 @@ use crate::{
     effects::v3::{self as v3, EffectEncode, IdList, Record},
     entity_type::EntityType,
     graph::constraint::{ConstraintStatus, ConstraintType},
-    graph::graph::{Graph, NodeId},
+    graph::graph::{DeletedEdge, Graph, NodeId},
     index::IndexType,
     runtime::{pending::Pending, value::Value},
 };
@@ -495,7 +495,13 @@ fn digest_deleted_edges(
     out: &mut impl FnMut(Record),
 ) {
     let mut groups: FxHashMap<u64, Vec<(u64, u64, u64)>> = FxHashMap::default();
-    for &(rel_id, type_id, from, to) in &p.deleted_endpoints {
+    for &DeletedEdge {
+        id: rel_id,
+        type_id,
+        src: from,
+        dst: to,
+    } in &p.deleted_endpoints
+    {
         groups.entry(type_id).or_default().push((
             u64::from(rel_id),
             u64::from(from),
@@ -1257,9 +1263,24 @@ mod tests {
         let mut p = Pending::default();
         p.set_schema_baseline(&g);
         p.stage_deleted_edges(vec![
-            (1.into(), 0, 10.into(), 11.into()),
-            (2.into(), 1, 12.into(), 13.into()),
-            (3.into(), 0, 14.into(), 15.into()),
+            DeletedEdge {
+                id: 1.into(),
+                type_id: 0,
+                src: 10.into(),
+                dst: 11.into(),
+            },
+            DeletedEdge {
+                id: 2.into(),
+                type_id: 1,
+                src: 12.into(),
+                dst: 13.into(),
+            },
+            DeletedEdge {
+                id: 3.into(),
+                type_id: 0,
+                src: 14.into(),
+                dst: 15.into(),
+            },
         ]);
 
         let records = build(&p, &g);

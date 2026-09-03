@@ -120,7 +120,6 @@ pub fn read_attr_values(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effects::testing::hex;
 
     // ── IdList, enc 2: the sorted bitmap ──
 
@@ -128,7 +127,7 @@ mod tests {
     fn rel_type_is_four_signed_bytes() {
         let mut buf = Vec::new();
         write_rel_type(&mut buf, 7);
-        assert_eq!(hex(&buf), "07 00 00 00");
+        assert_eq!(format!("{buf:02x?}"), "[07, 00, 00, 00]");
         let mut r = Reader::new(&buf);
         assert_eq!(read_rel_type(&mut r).unwrap(), 7);
     }
@@ -137,7 +136,10 @@ mod tests {
     fn label_set_pins_its_bytes() {
         let mut buf = Vec::new();
         write_label_set(&mut buf, &[7, 9]);
-        assert_eq!(hex(&buf), "02 00 07 00 00 00 09 00 00 00");
+        assert_eq!(
+            format!("{buf:02x?}"),
+            "[02, 00, 07, 00, 00, 00, 09, 00, 00, 00]"
+        );
         let mut r = Reader::new(&buf);
         assert_eq!(read_label_set(&mut r).unwrap(), vec![7, 9]);
     }
@@ -149,14 +151,16 @@ mod tests {
         // schema before any of its data.
         let mut ids = Vec::new();
         write_attr_ids(&mut ids, &[0]);
-        assert_eq!(hex(&ids), "01 00 00 00");
+        assert_eq!(format!("{ids:02x?}"), "[01, 00, 00, 00]");
 
         let mut vals = Vec::new();
         write_attr_values(&mut vals, &[Value::Int(1), Value::Int(2)]);
         assert_eq!(
-            hex(&vals),
-            "00 20 00 00 01 00 00 00 00 00 00 00 \
-             00 20 00 00 02 00 00 00 00 00 00 00"
+            format!("{vals:02x?}"),
+            concat!(
+                "[00, 20, 00, 00, 01, 00, 00, 00, 00, 00, 00, 00, ",
+                "00, 20, 00, 00, 02, 00, 00, 00, 00, 00, 00, 00]"
+            )
         );
 
         let mut r = Reader::new(&ids);

@@ -1075,9 +1075,20 @@ impl Pending {
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
             // Record in deleted_relationships so effects buffer can serialize them
-            for (rel_id, type_id, from, to) in implicit_edges {
+            for DeletedEdge {
+                id: rel_id,
+                type_id,
+                src: from,
+                dst: to,
+            } in implicit_edges
+            {
                 self.deleted_relationships.insert(u64::from(rel_id));
-                self.deleted_endpoints.push((rel_id, type_id, from, to));
+                self.deleted_endpoints.push(DeletedEdge {
+                    id: rel_id,
+                    type_id,
+                    src: from,
+                    dst: to,
+                });
             }
         }
         if !explicit_rels.is_empty() {
@@ -1088,7 +1099,7 @@ impl Pending {
             // stale/missing ids) for stats and effects/constraint bookkeeping.
             stats.borrow_mut().relationships_deleted += endpoints.len();
             self.deleted_relationships
-                .extend(endpoints.iter().map(|(id, _, _, _)| u64::from(*id)));
+                .extend(endpoints.iter().map(|e| u64::from(e.id)));
             self.deleted_endpoints.extend(endpoints);
         }
         // Enforce constraints before accumulating index operations.

@@ -892,7 +892,6 @@ pub fn read_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effects::testing::hex;
 
     /// 10,000 ids in two runs: two segments, and cheaper than any bitmap.
     fn run_structured() -> Vec<u64> {
@@ -937,7 +936,7 @@ mod tests {
         // record's count, and there is no segment count. Two bytes, where the
         // encoding this replaces charged three.
         let buf = roundtrip(&[0]);
-        assert_eq!(hex(&buf), "01 00 00 00 00 00 01");
+        assert_eq!(format!("{buf:02x?}"), "[01, 00, 00, 00, 00, 00, 01]");
     }
 
     #[test]

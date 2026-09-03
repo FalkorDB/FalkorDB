@@ -923,7 +923,6 @@ pub fn maybe_compress(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effects::testing::hex;
 
     // ── records ──
 
@@ -934,14 +933,14 @@ mod tests {
         let mut buf = new_buffer();
         write_create_node(&mut buf, &IdList::from([0]), &[7], &[0], &[Value::Int(1)]);
         assert_eq!(
-            hex(&buf),
+            format!("{buf:02x?}"),
             concat!(
-                "03 00 ",                              // version, flags
-                "03 00 00 00 01 00 00 00 ",            // CREATE_NODE, count = 1
-                "01 00 07 00 00 00 ",                  // LabelSet: n = 1, label 7
-                "01 00 00 00 ",                        // AttrIds: n = 1, attr 0
-                "01 00 00 00 00 00 01 ",               // IdList: 1 segment; range, base 0, len 1
-                "00 20 00 00 01 00 00 00 00 00 00 00"  // AttrValues: T_INT64, 1
+                "[03, 00, ",                                       // version, flags
+                "03, 00, 00, 00, 01, 00, 00, 00, ",                // CREATE_NODE, count = 1
+                "01, 00, 07, 00, 00, 00, ",                        // LabelSet: n = 1, label 7
+                "01, 00, 00, 00, ",                                // AttrIds: n = 1, attr 0
+                "01, 00, 00, 00, 00, 00, 01, ", // IdList: 1 segment; range, base 0, len 1
+                "00, 20, 00, 00, 01, 00, 00, 00, 00, 00, 00, 00]"  // AttrValues: T_INT64, 1
             )
         );
     }
@@ -1282,7 +1281,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(hex(&again), hex(&buf), "encode(decode(x)) must equal x");
+        assert_eq!(again, buf, "encode(decode(x)) must equal x");
     }
 
     /// One `CREATE_NODE` record per distinct shape, for 10,000 nodes split
