@@ -62,4 +62,7 @@ twitter_thread.md
 .claude/worktrees/
 local-build.so
 bench/tests/flow/.ci-tmp/
+# LDBC datasets, downloaded on demand by `bench ldbc fetch` (18 MB at SF0.1,
+# 230 MB at SF1, and several GB once extracted).
+bench/ldbc-data/
 bin/
