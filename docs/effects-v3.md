@@ -44,7 +44,8 @@ records* — the same record family this proposal changes again.
 | --- | --- | --- |
 | `CREATE_NODE` | `LabelSet` + `AttrSet` ids | id, values |
 | `CREATE_EDGE` | `RelType` + `AttrSet` ids | id, src, dst, values |
-| `UPDATE_NODE` / `UPDATE_EDGE` | `AttrSet` ids only | id, values |
+| `UPDATE_NODE` | `LabelSet` + `AttrSet` ids | id, values |
+| `UPDATE_EDGE` | `RelType` + `AttrSet` ids | id, values |
 | `SET_LABELS` / `REMOVE_LABELS` | `LabelSet` | id |
 | `DELETE_NODE` | — nothing to hoist | id |
 | `DELETE_EDGE` | `RelType` | id, src, dst |
@@ -379,9 +380,13 @@ For the v2 byte layouts themselves see
       v2   ushort n_rels · RelationID · EntityID src · EntityID dest · AttributeSet
       v3   u32 count · IdList · RelType · IdList(src) · IdList(dst) · AttrSet
 
-    1·2 UPDATE_NODE / UPDATE_EDGE
+    1 UPDATE_NODE
       v2   EntityID id · AttributeID attr_id · SIValue value       (one record per (entity, attribute))
-      v3   u32 count · IdList · AttrSet
+      v3   u32 count · LabelSet · AttrIds · IdList · AttrValues
+
+    2 UPDATE_EDGE
+      v2   EntityID id · RelationID · src · dest · AttributeID attr_id · SIValue value
+      v3   u32 count · RelType · AttrIds · IdList · AttrValues     (no src/dst — see below)
 
     5·6 DELETE_NODE / DELETE_EDGE
       v2   EntityID id                       | EntityID id · RelationID · src · dest
@@ -618,6 +623,43 @@ not a substitute — it is only populated for types that carry an index
 So `delete_relationships` and `delete_implicit_edges` now return
 `DeletedEdge = (RelationshipId, type_id, NodeId, NodeId)`. Both already resolved
 the type internally and were discarding it.
+
+### `UPDATE_EDGE` carries its type, and deliberately not its endpoints
+
+Both update forms fill the same slot with the entity's schema membership: a
+node's `LabelSet`, an edge's `RelType`. Neither is an instruction. The replica
+re-derives what it needs to maintain its own indexes either way —
+`set_nodes_attributes` walks `node_labels_matrix` per node and never reads the
+wire's label set at all — so what they are for is the partition key, and the
+identity the replica can check the record against before it mutates anything.
+
+C already worked this way. `EFFECT_UPDATE_EDGE` has carried the relation id
+since it was written, and `update_edge_effect.c` reads it back to refuse a
+record whose `r_id` is negative or past the local edge-schema count, logging
+"references relationship type %d which doesn't exist locally". An earlier draft
+of v3 omitted it, which dropped a divergence check C performs — on the format
+meant to replace C's.
+
+Stating it once per record also buys the replica the cheap path.
+`track_edge_index_updates` calls `get_relationship_type_id` per edge, and that
+is a `relationship_type_matrix.iter(id, id)` each time — the per-entity delta
+iteration `import_node_attrs` exists to avoid. With the type known for the whole
+record, apply takes `track_edge_index_updates_of_type`, which the create path
+already used.
+
+C's record additionally carries `src` and `dst`. v3 does not, and that is a
+choice rather than an omission: they are per *edge*, not per record, so they
+would cost two more `IdList`s where the type costs four bytes — and their only
+use in C is a `Graph_HasEdge` that an id-based existence check answers here.
+The delete records still carry endpoints, for the reason below: a deleted edge's
+endpoints cannot be recovered afterwards, and an updated edge's can.
+
+One consequence for the emitter. It now reads each updated edge's type, and
+`MATCH ()-[e]->() SET e.x = 1 DELETE e` leaves that edge in
+`existing_relationships_attrs` after `commit` has already cleared it from the
+type matrix. The lookup is therefore the fallible `type_id_for_edge`, and such
+an update is dropped rather than sent — the payload already carries the
+`DELETE_EDGE`, so the replica ends in the same place either way.
 
 ## Applying a v3 payload
 
