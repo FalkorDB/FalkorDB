@@ -143,7 +143,10 @@ jobs:
           # Per-flavour + per-arch buildcache so each flavour's cache is
           # independent and concurrent flavour builds don't fight.
           cache-from: type=registry,ref=ghcr.io/falkordb/${{ matrix.repo }}:buildcache-${{ inputs.flavour }}-${{ matrix.arch }}
-          cache-to:   type=registry,ref=ghcr.io/falkordb/${{ matrix.repo }}:buildcache-${{ inputs.flavour }}-${{ matrix.arch }},mode=max
+          # Read the shared cache always; write it only from a trunk. Any other
+          # ref — a PR branch, a queue entry — would otherwise publish layers
+          # into the ref main's own builds restore from.
+          cache-to: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) && format('type=registry,ref=ghcr.io/falkordb/{1}:buildcache-{2}-{0},mode=max', matrix.arch, matrix.repo, inputs.flavour) || '' }}
 
   # Manifest combining job — only for multi-arch (release).
   # For each unique repo in `cells`, combines the per-arch tags into a
