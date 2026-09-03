@@ -42,6 +42,7 @@ use crate::runtime::{
 };
 use ahash::RandomState;
 use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -61,11 +62,29 @@ type GroupMap = HashMap<GroupKey, (Row, Row), RandomState>;
 // GroupKey — collision-free composite grouping key
 // ---------------------------------------------------------------------------
 
+/// Backing store for a [`GroupKey`]'s values.
+///
+/// The key is rebuilt for *every input row* so it can be looked up in
+/// [`GroupMap`], but it is only retained for the first row of each group. With a
+/// `Vec` that was one malloc/free pair per row whose result was thrown away as
+/// soon as the group turned out to already exist: grouping 10k rows into 100
+/// groups paid 10k allocations to keep 100.
+///
+/// One inline slot, not two. Every extra slot widens the key unconditionally
+/// (`Value` is 16 bytes, so `SmallVec` measures 32 bytes at one slot and 48 at
+/// two, against `Vec`'s 24), and that width is carried by every group of every
+/// shape — including the empty key that *keyless* aggregation holds, which is
+/// the most common shape of all. One slot covers single-key grouping, which is
+/// where the allocations actually were; wider keys stay correct and merely keep
+/// allocating, spilling to the heap past the inline capacity exactly as the
+/// `Vec` always did.
+type GroupKeyVec = SmallVec<[Value; 1]>;
+
 /// A composite grouping key — a vector of evaluated key values.
 ///
 /// Uses `Value::hash` for bucket placement and `Value::eq` for collision
 /// resolution, eliminating the silent-merge bug of raw `u64` hash keys.
-struct GroupKey(Vec<Value>);
+struct GroupKey(GroupKeyVec);
 
 impl PartialEq for GroupKey {
     fn eq(
@@ -378,7 +397,7 @@ impl<'a> AggregateOp<'a> {
         // Pre-insert default group for keyless aggregation.
         if self.keys.is_empty() {
             let key_env = Row::new();
-            groups.insert(GroupKey(vec![]), (key_env, default_acc.clone()));
+            groups.insert(GroupKey(GroupKeyVec::new()), (key_env, default_acc.clone()));
         }
 
         for batch_result in child {
@@ -452,7 +471,7 @@ impl<'a> AggregateOp<'a> {
                         )
                 })
             {
-                let entry = groups.get_mut(&GroupKey(vec![])).unwrap();
+                let entry = groups.get_mut(&GroupKey(GroupKeyVec::new())).unwrap();
                 let acc = &mut entry.1;
                 let mut batch_err: Option<String> = None;
                 for (agg_idx, agg) in analysis.agg_kinds.iter().enumerate() {
@@ -509,7 +528,7 @@ impl<'a> AggregateOp<'a> {
             }
 
             for row_idx in 0..num_active {
-                let key_values: Vec<Value> =
+                let key_values: GroupKeyVec =
                     key_columns.iter().map(|col| col[row_idx].clone()).collect();
                 let group_key = GroupKey(key_values);
 
@@ -686,7 +705,7 @@ impl<'a> AggregateOp<'a> {
         // Pre-insert default group for keyless aggregation.
         if self.keys.is_empty() {
             let key_env = Row::new();
-            groups.insert(GroupKey(vec![]), (key_env, default_acc.clone()));
+            groups.insert(GroupKey(GroupKeyVec::new()), (key_env, default_acc.clone()));
         }
 
         for batch_result in child {
@@ -730,7 +749,7 @@ impl<'a> AggregateOp<'a> {
         for row in batch.active_indices() {
             let vars = BatchRow::new(batch, row).to_owned_row();
             let (key_values, key_env) = match (|| {
-                let mut key_values = Vec::with_capacity(keys.len());
+                let mut key_values = GroupKeyVec::with_capacity(keys.len());
                 let mut key_env = Row::new();
                 for (name, tree) in keys {
                     let value = ExprEval::from_runtime(runtime).eval(
@@ -748,7 +767,7 @@ impl<'a> AggregateOp<'a> {
                         key_env.insert(new_var, val.clone());
                     }
                 }
-                Ok::<(Vec<Value>, Row), String>((key_values, key_env))
+                Ok::<(GroupKeyVec, Row), String>((key_values, key_env))
             })() {
                 Ok(kv) => kv,
                 Err(e) => {
