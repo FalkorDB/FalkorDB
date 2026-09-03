@@ -258,6 +258,9 @@ pub enum IR {
     Apply,
     /// Semi-join: passes through left row when right produces at least one result
     SemiApply,
+    /// Runs a `CALL {}` body that returns nothing, once per input row, so the
+    /// body's writes all happen while the row count is left alone.
+    UnitSubquery,
     /// Anti-semi-join: passes through left row when right produces NO results
     AntiSemiApply,
     /// Or-apply-multiplexer: for each row from child 0 (bound branch),
@@ -637,6 +640,7 @@ impl Display for IR {
             Self::ValueHashJoin { .. } => write!(f, "Value Hash Join"),
             Self::Apply => write!(f, "Apply"),
             Self::SemiApply => write!(f, "Semi Apply"),
+            Self::UnitSubquery => write!(f, "Unit Subquery"),
             Self::AntiSemiApply => write!(f, "Anti Semi Apply"),
             Self::OrApplyMultiplexer(_) => write!(f, "Or Apply Multiplexer"),
             Self::LoadCsv { .. } => write!(f, "Load CSV"),
@@ -2730,13 +2734,18 @@ impl Planner {
     }
 
     /// Walk the plan tree and insert an `Argument` node as child(0) of any
-    /// `Apply` that only has one child (the sub-plan).
+    /// `Apply` or `UnitSubquery` that only has one child (the sub-plan).
+    ///
+    /// Both take (input, sub-plan); a query that opens on the node, such as
+    /// one starting with `CALL {}`, has no clause to supply the input.
     fn ensure_apply_has_input(tree: &mut DynTree<IR>) {
         let apply_idxs: Vec<_> = {
             let mut tr = orx_tree::Traversal.bfs().over_nodes();
             tree.root()
                 .walk_with(&mut tr)
-                .filter(|n| matches!(n.data(), IR::Apply) && n.num_children() == 1)
+                .filter(|n| {
+                    matches!(n.data(), IR::Apply | IR::UnitSubquery) && n.num_children() == 1
+                })
                 .map(|n| n.idx())
                 .collect()
         };
@@ -3156,9 +3165,11 @@ impl Planner {
                         }
                     }
                 } else {
-                    // Non-returning: side-effect only, wrap in Optional so
-                    // outer row survives even if inner produces nothing
-                    tree!(IR::Apply, tree!(IR::Optional(vec![]), inner_plan))
+                    // Non-returning, so a unit subquery: the body runs for each
+                    // input row and contributes no rows of its own. Wrapping it
+                    // in Apply(Optional(..)) let the body's own fan-out through,
+                    // which multiplied the outer row count.
+                    tree!(IR::UnitSubquery, inner_plan)
                 }
             }
             QueryIR::ForEach {
