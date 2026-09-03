@@ -64,6 +64,18 @@ class testCCH(FlowTestsBase):
         self.env.assertTrue(all(x in rels for x in ts))
         self.env.assertAlmostEqual(psum, gw, delta=1e-9)
 
+    def _assert_hops_forward_directed(self, g, vs, rels=('ROAD',)):
+        # every consecutive (u,v) in the returned node sequence must be realized
+        # by a REAL directed edge u->v of one of 'rels' -- i.e. the path never
+        # walks an edge backwards. This is the direct guard against a one-way
+        # street being traversed in its forbidden direction.
+        rel_pattern = "|".join(f":{r}" for r in rels)
+        for i in range(len(vs) - 1):
+            u, v = vs[i], vs[i + 1]
+            cnt = g.query(f"MATCH (a:N{{v:{u}}})-[{rel_pattern}]->(b:N{{v:{v}}}) "
+                          "RETURN count(*)").result_set[0][0]
+            self.env.assertTrue(cnt > 0)   # a forward edge u->v really exists
+
     def _rand_graph(self, g, n, m, seed, wmax=9):
         random.seed(seed)
         g.query(f"UNWIND range(0,{n-1}) AS i CREATE (:N {{v:i}})")
@@ -340,6 +352,62 @@ class testCCH(FlowTestsBase):
         # at least one pair exercised the error path, and the server is alive
         self.env.assertTrue(graceful > 0)
         self.env.assertEquals(g.query("RETURN 1").result_set[0][0], 1)
+
+    # ---- one-way streets: direction must be respected end to end -----------
+    def test15_one_way_streets(self):
+        # A one-way street is an edge present in only ONE direction. CCH -- both
+        # the build (shortcut customization) and the query (bidirectional search
+        # + unpacking) -- must never route a leg the wrong way down such an edge.
+        #
+        # Layout (weights all 1):
+        #   0 -> 1                      ONE-WAY street (no 1 -> 0)
+        #   1 <-> 2, 2 <-> 3, 3 <-> 0   a two-way ring around the back
+        #   0 -> 4                      ONE-WAY into a dead-end sink (4 has no
+        #                               outgoing edges at all)
+        g = self._reset("cch_oneway")
+        g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),(d:N{v:3}),(e:N{v:4}),
+                   (a)-[:ROAD{w:1}]->(b),
+                   (b)-[:ROAD{w:1}]->(c),(c)-[:ROAD{w:1}]->(b),
+                   (c)-[:ROAD{w:1}]->(d),(d)-[:ROAD{w:1}]->(c),
+                   (d)-[:ROAD{w:1}]->(a),(a)-[:ROAD{w:1}]->(d),
+                   (a)-[:ROAD{w:1}]->(e)""")
+        self._build(g)
+
+        # forward: 0 -> 1 takes the one-way street directly (weight 1), not the
+        # 3-hop back-ring detour 0 -> 3 -> 2 -> 1
+        row = self._cch(g, 0, 1)
+        self._assert_valid_road_path(g, 0, 1, row)
+        w, vs, ts, psum = row
+        self.env.assertAlmostEqual(w, 1, delta=1e-9)
+        self.env.assertEquals(vs, [0, 1])
+        self._assert_hops_forward_directed(g, vs)
+
+        # reverse: 1 -> 0 must NOT reuse the 0 -> 1 street backwards; it is
+        # forced onto the legal detour 1 -> 2 -> 3 -> 0 (weight 3)
+        row = self._cch(g, 1, 0)
+        self._assert_valid_road_path(g, 1, 0, row)
+        w, vs, ts, psum = row
+        self.env.assertAlmostEqual(w, 3, delta=1e-9)
+        self.env.assertEquals(vs, [1, 2, 3, 0])
+        self._assert_hops_forward_directed(g, vs)
+
+        # a node reachable only via a one-way edge (0 -> 4, and 4 is a sink) is
+        # reachable one way but has NO path back -- CCH must not fabricate a
+        # 4 -> 0 leg out of the 0 -> 4 edge
+        self.env.assertAlmostEqual(self._cch(g, 0, 4)[0], 1, delta=1e-9)
+        self.env.assertTrue(self._cch(g, 4, 0) is None)
+
+        # exhaustive: every CCH answer matches the SPpaths oracle (itself
+        # direction-respecting), and every hop of every returned path is a real
+        # forward-directed edge -- so no reverse traversal can slip through
+        for s in range(5):
+            for t in range(5):
+                if s == t:
+                    continue
+                row = self._cch(g, s, t)
+                self._assert_valid_road_path(g, s, t, row)
+                if row is not None and row[0] is not None:
+                    self._assert_hops_forward_directed(g, row[1])
 
 
 # CCH is a write procedure: running algo.CCH on the master must replicate every
