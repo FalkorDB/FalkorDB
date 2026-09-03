@@ -600,6 +600,28 @@ QUERIES = [
     Q("delete 10k",          True,  "MATCH (t:Tmp) WITH t LIMIT 10000 DELETE t", 50),
     Q("write 100k",          True,  "UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 10),
     Q("write 1m",            True,  "UNWIND range(1, 1000000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 2),
+
+    # ---- one write against a large EDGE population -------------------------
+    # Every sized row above creates and deletes *nodes*, so the edge count
+    # stays at SETUP's ~10k for the whole run and no row in the suite is
+    # sensitive to the cost of a write scaling with |E|. That hid #2687, where
+    # the edge-endpoint index was copied whole on the first edge mutation of
+    # every write transaction: 2,676,794 bytes allocated to create one edge
+    # against 200k of them, against 52,454 once paged. On this graph the same
+    # bug is worth 40 KB, so the suite read it as a 9% row.
+    #
+    # `edge create at 200k` measures the same create/delete round-trip as
+    # `urel create delete`, three orders of magnitude further up the edge count.
+    # It DEPENDS on `bulk edges 200k` having run first: a name-filtered run that
+    # picks it alone measures it at 10k edges instead, quietly and without
+    # failing, exactly as `delete 100` depends on `create 100`. The pairing is
+    # held by a test.
+    #
+    # Both go last so the 200k edges cannot shift any other row, and the
+    # measured row follows a large *create* rather than a large delete, so it
+    # is not reading recovery from `write 1m` the way `create 100` once did.
+    Q("bulk edges 200k",     True,  "UNWIND range(1, 200000) AS i CREATE (:Wide)-[:WIDE]->(:Wide)", 1),
+    Q("edge create at 200k", True,  "MATCH (a:Person {id: 1}), (b:Person {id: 2}) CREATE (a)-[r:WIDEX]->(b) WITH r DELETE r", 100),
 ]
 
 # Expected-error queries: run only in --once (coverage) mode, never timed.
