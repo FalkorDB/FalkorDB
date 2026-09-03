@@ -60,39 +60,6 @@ use crate::{
     },
 };
 
-/// A wire enum: the discriminants, the repr, and the parse, from one list.
-///
-/// Written twice over before this — once as the enum and once as a `match` in
-/// `TryFrom` — which is two places to forget when a variant is added, and the
-/// kind of omission that shows up as a decode error on the far engine rather
-/// than a compile error here.
-macro_rules! wire_enum {
-    (
-        $(#[$meta:meta])*
-        $name:ident : $repr:ty => $err:ident {
-            $($(#[$vmeta:meta])* $variant:ident = $value:literal),* $(,)?
-        }
-    ) => {
-        $(#[$meta])*
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        #[repr($repr)]
-        pub enum $name {
-            $($(#[$vmeta])* $variant = $value),*
-        }
-
-        impl TryFrom<$repr> for $name {
-            type Error = DecodeError;
-
-            fn try_from(v: $repr) -> Result<Self, Self::Error> {
-                Ok(match v {
-                    $($value => Self::$variant,)*
-                    other => return Err(DecodeError::$err(other)),
-                })
-            }
-        }
-    };
-}
-
 /// Buffer header. C accepts any version `<= EFFECTS_VERSION` and branches per
 /// version, so raising this is its established mechanism rather than a break —
 /// but C must be raised to 3 as well before it can read what we write.
@@ -107,6 +74,7 @@ pub mod records;
 mod staging;
 pub mod value;
 
+use num_enum::TryFromPrimitive;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 /// Smallest v3 payload worth compressing, in bytes. **0 disables it.**
@@ -148,23 +116,30 @@ pub use super::{DecodeError, EffectDecode, EffectEncode, Reader};
 // match handles it, which is the failure mode worth having. The bit-flag sets
 // below stay constants for the opposite reason — several of those OR together,
 // which no enum can express.
-wire_enum! {
-    Opcode: u32 => BadOpcode {
-        UpdateNode = 1,
-        UpdateEdge = 2,
-        CreateNode = 3,
-        CreateEdge = 4,
-        DeleteNode = 5,
-        DeleteEdge = 6,
-        SetLabels = 7,
-        RemoveLabels = 8,
-        AddSchema = 9,
-        AddAttribute = 10,
-        CreateIndex = 11,
-        DropIndex = 12,
-        CreateConstraint = 13,
-        DropConstraint = 14,
-    }
+/// The discriminants, the repr and the parse from one declaration.
+///
+/// `TryFromPrimitive` rather than a hand-rolled macro: `num_enum` is already a
+/// dependency and already derived this way on three enums in
+/// `index::redisearch`, and its `error_type` yields
+/// `TryFrom<u32, Error = DecodeError>` directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
+#[num_enum(error_type(name = DecodeError, constructor = DecodeError::BadOpcode))]
+#[repr(u32)]
+pub enum Opcode {
+    UpdateNode = 1,
+    UpdateEdge = 2,
+    CreateNode = 3,
+    CreateEdge = 4,
+    DeleteNode = 5,
+    DeleteEdge = 6,
+    SetLabels = 7,
+    RemoveLabels = 8,
+    AddSchema = 9,
+    AddAttribute = 10,
+    CreateIndex = 11,
+    DropIndex = 12,
+    CreateConstraint = 13,
+    DropConstraint = 14,
 }
 
 impl Opcode {

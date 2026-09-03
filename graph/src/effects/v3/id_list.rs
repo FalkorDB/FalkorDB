@@ -21,26 +21,12 @@
 //! therefore reproducible by a second implementation, which is what makes it
 //! safe to put in the spec.
 
+use crate::narrow_int::width_for;
 use itertools::Either;
 use roaring::RoaringTreemap;
 use smallvec::SmallVec;
 
 use super::{DecodeError, Reader, write_u8, write_u32};
-
-/// The narrowest unsigned width that holds `max`.
-///
-/// One function for both jobs it has: sizing an id and sizing a run length.
-//
-// NOTE: `cow_btree/leaf/mod.rs` has `pow2_bytes_for` with identical arms. They
-// are being folded into one shared helper — see review thread on `blocks.rs:115`.
-const fn width_for(max: u64) -> u8 {
-    match max {
-        0..=0xFF => 1,
-        0x100..=0xFFFF => 2,
-        0x1_0000..=0xFFFF_FFFF => 4,
-        _ => 8,
-    }
-}
 
 /// A width as the two bits that go on the wire: 1, 2, 4, 8 → 0, 1, 2, 3.
 const fn width_code(width: u8) -> u8 {

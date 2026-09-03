@@ -76,6 +76,7 @@ pub mod graph;
 pub mod identifier_limits;
 pub mod index;
 pub mod locks;
+pub mod narrow_int;
 pub mod parser;
 pub mod planner;
 pub mod runtime;
