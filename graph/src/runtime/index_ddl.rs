@@ -136,8 +136,5 @@ fn emit_effect(
         buf,
     )?;
     runtime.effects_count.set(runtime.effects_count.get() + 1);
-    // Index DDL must not be dropped by the effects/verbatim heuristic: under v2
-    // it was appended after that check ran and so always replicated as an effect.
-    runtime.force_effects.set(true);
     Ok(())
 }

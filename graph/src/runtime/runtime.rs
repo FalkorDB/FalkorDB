@@ -174,22 +174,14 @@ pub struct Runtime<'a> {
     pub effects_buffer: RefCell<Option<Vec<u8>>>,
     /// Total number of effect records across all commits in this query.
     pub effects_count: Cell<u64>,
-    /// Whether commits should serialize an effects buffer. Callers clear
-    /// this when replication has no possible consumer (no AOF, no replica
-    /// has ever attached); the replication layer then falls back to
-    /// verbatim query propagation, which Redis discards for free.
-    pub build_effects: Cell<bool>,
-    /// Set when the buffer holds a record the effects/verbatim heuristic must
-    /// not discard.
+    /// Whether commits should serialize an effects buffer.
     ///
-    /// `should_use_effects` weighs execution time against `EFFECTS_THRESHOLD` to
-    /// decide whether a payload is worth sending, which is the right trade for
-    /// data records — replaying the query gets the replica to the same place.
-    /// Index DDL is not that: under v2 it was appended *after* the heuristic ran
-    /// and so always replicated as an effect, and a fast `CREATE INDEX` on a
-    /// small label would otherwise now fall under the threshold and silently
-    /// change which mechanism carries it.
-    pub force_effects: Cell<bool>,
+    /// Cleared only when replication has no possible consumer — no AOF, and no
+    /// replica has ever attached — because there is no fallback behind it any
+    /// more: with verbatim query propagation gone, a write that builds no
+    /// buffer is a write nothing can replay. `REPLICATION_CONSUMERS` is
+    /// therefore sticky once set, and defaults to set.
+    pub build_effects: Cell<bool>,
     /// Timestamp captured at the start of the transaction/query.
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
     /// so every call in the same transaction returns the same value.
@@ -441,7 +433,6 @@ impl<'a> Runtime<'a> {
             effects_buffer: RefCell::new(None),
             effects_count: Cell::new(0),
             build_effects: Cell::new(true),
-            force_effects: Cell::new(false),
             transaction_timestamp: Utc::now(),
             profile,
             profile_data: RefCell::new(HashMap::new()),

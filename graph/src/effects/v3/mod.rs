@@ -12,24 +12,29 @@
 //!
 //! | block | layout |
 //! | --- | --- |
-//! | `IdSet` | `u8 enc` · (`u64 × count` \| `u32 blob_len · roaring64[blob_len]`) |
-//! | `IdList` | `u8 enc` · (`u64 × count` \| `u32 dict_len · roaring64 · u8 w · uint(w) × count`) |
+//! | `IdList` | `u32 n_segments` · `Segment × n_segments` |
 //! | `RelType` | `i32` |
 //! | `LabelSet` | `u16 n` · `i32 × n` |
-//! | `AttrSet` | `u16 n` · `u16 attr_id × n` · `SIValue × (count × n)` |
+//! | `AttrIds` | `u16 n` · `u16 attr_id × n` |
+//! | `AttrValues` | `SIValue × (count × n)`, row-major |
 //!
-//! `IdSet` and `IdList` are deliberately distinct types. A roaring bitmap is a
-//! *set*: it deduplicates and it sorts. Edge endpoints do neither — many edges
-//! share a source, and each endpoint must stay positionally aligned with its edge
-//! id — so encoding them as a set would drop duplicates and misalign every row
-//! after the first repeat.
+//! An `IdList` is a sequence of self-describing segments, each either a
+//! consecutive `Range` or an `Ascending` roaring bitmap — see
+//! [`id_list`](self::IdList). There is no plain form and no dictionary: a
+//! `Range` of one describes a single id, so duplicates and disorder are the
+//! ordinary case rather than encodings of their own.
 //!
 //! ## Row order is id order
 //!
-//! Row *k* belongs to the k-th smallest id in the record's `IdSet`. No per-row id
-//! is sent. That is why [`read_id_set`] asserts the decoded cardinality equals
-//! `count`: a bitmap that round-tripped one id short would land every later row
-//! on the wrong entity, silently.
+//! Row *k* belongs to the k-th id in the record's `IdList`, **as written** — not
+//! the k-th smallest. No per-row id is sent, so the segment list must total the
+//! record's count and an `Ascending` segment's cardinality must match what the
+//! record still owes: one id short would land every later row on the wrong
+//! entity, silently.
+//!
+//! Nothing may reorder a list to make an encoding eligible. A bitmap sorts and
+//! deduplicates, so it is only ever reached by collapsing ranges that were
+//! already ascending.
 //!
 //! ## Why the widths matter more than usual
 //!

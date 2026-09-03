@@ -398,7 +398,13 @@ pub fn graph_constraint(
         ));
     };
 
-    let is_replicated = ctx.get_flags().contains(ContextFlags::REPLICATED);
+    // Not for replication: nothing propagates `GRAPH.CONSTRAINT` any more, so
+    // this can only be set while replaying an AOF written by a build that did.
+    // Such a file holds the command **twice** per create — the old verbatim pair,
+    // where the second copy was the activation signal — so both the announce
+    // suppression below and the `Constraint already exists` arm at the bottom
+    // exist to load one without erroring.
+    let is_replayed = ctx.get_flags().contains(ContextFlags::REPLICATED);
 
     // Before the mutation: `create_constraint` registers the label and the
     // property names, and those registrations have to be announced ahead of the
@@ -439,7 +445,7 @@ pub fn graph_constraint(
                     let label = Arc::clone(&label);
                     let properties = properties.clone();
                     let key = key_str.to_string();
-                    let was_replicated = is_replicated;
+                    let was_replicated = is_replayed;
                     move || {
                         settle_async_constraint(
                             &graph,
@@ -456,7 +462,7 @@ pub fn graph_constraint(
                 });
             }
 
-            if !is_replicated {
+            if !is_replayed {
                 // Announce the outcome, not the command. The replica installs
                 // the status this node reached rather than validating on its
                 // own — it would scan at a different time against different
@@ -467,12 +473,6 @@ pub fn graph_constraint(
                 // for, carrying the final status; the apply side upserts, so it
                 // converges on this one instead of duplicating it.
                 //
-                // Verbatim is the v2 path, and it needs the command twice: the
-                // replica treats the second copy as the activation signal and
-                // its handler hits the `Constraint already exists` branch.
-                // `replicate_verbatim` rather than the parameterized
-                // `RM_Replicate`, which in this Redis version returns OK from a
-                // module command handler without actually propagating.
                 // A drop carries no status. A create carries the one this node
                 // reached: still building if the caller spawned validation,
                 // otherwise whatever `create_constraint` decided inline — read
@@ -513,9 +513,10 @@ pub fn graph_constraint(
                 Ok(RedisValue::SimpleStringStatic("OK"))
             }
         }
-        Err(e) if is_replicated && e == "Constraint already exists" => {
-            // Activation signal on replica — constraint already created by
-            // the first replicated command, silently succeed.
+        Err(e) if is_replayed && e == "Constraint already exists" => {
+            // The second half of a v2-era AOF's verbatim pair: the constraint
+            // was created by the first copy, so this one has nothing to do.
+            // Erroring here would fail the load of an otherwise valid file.
             tg.graph.rollback();
             Ok(RedisValue::SimpleStringStatic("OK"))
         }

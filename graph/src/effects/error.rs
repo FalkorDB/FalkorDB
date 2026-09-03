@@ -22,9 +22,10 @@ pub enum DecodeError {
     #[error("effects record claims {count} entries but only {remaining} bytes remain")]
     ImplausibleCount { count: u64, remaining: usize },
 
-    /// An encoding discriminator that is neither [`ENC_PLAIN`] nor
-    /// [`ENC_COMPRESSED`].
-    #[error("unknown block encoding {0}")]
+    /// A segment header this build cannot read — an unknown kind, or one of
+    /// the reserved bits set. Refused rather than masked off, so a future
+    /// segment shape is not misread as a range by a build that predates it.
+    #[error("unknown segment header {0:#04x}")]
     BadEncoding(u8),
 
     /// The roaring blob did not deserialize.
