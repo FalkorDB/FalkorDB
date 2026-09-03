@@ -1055,7 +1055,18 @@ class testConstraintReplication():
         # create unique edge constraint over Knows since
         create_unique_edge_constraint(self.g, 'Knows', 'since', sync=True)
 
-        # validate constrains
+        # Six constraints, not six anything-else. The number that used to be
+        # here was 12: v2 replicated each `GRAPH.CONSTRAINT` *twice* — once on
+        # creation and once more as the signal that validation had finished,
+        # because the command had no way to carry a status. v3 carries the
+        # status in the announcement, so the repeat is not a signal any more.
+        #
+        # Each of these is announced once because this graph is empty, so
+        # validation runs inline on the main thread and the status is settled
+        # before the command returns. Above the async threshold there are two
+        # announcements — UNDER CONSTRUCTION, then the settled status — and
+        # that is `testEffectsV3_03_ConstraintConvergence`, which asserts both
+        # of them are CREATE_CONSTRAINT records rather than merely two effects.
         constraints = list_constraints(self.g)
         self.env.assertEqual(len(constraints), 6)
         for c in constraints:
