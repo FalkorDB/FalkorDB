@@ -17,9 +17,6 @@
 //! ┌──────────────────────────────────────────────────────────────────────┐
 //! │                         Graph Structure                             │
 //! ├──────────────────────────┬───────────────────────────────────────────┤
-//! │ all_nodes_matrix         │ Diagonal matrix: node_id -> bool         │
-//! │                          │ (set for every live node)                │
-//! ├──────────────────────────┼───────────────────────────────────────────┤
 //! │ adjacancy_matrix         │ Boolean matrix: src x dst -> bool        │
 //! │                          │ (union of all relationship types)        │
 //! ├──────────────────────────┼───────────────────────────────────────────┤
@@ -276,8 +273,6 @@ pub struct Graph {
     node_labels_matrix: VersionedMatrix<bool>,
     /// Matrix mapping relationships to their types
     relationship_type_matrix: VersionedMatrix<bool>,
-    /// Matrix with all nodes (for full scans)
-    all_nodes_matrix: VersionedMatrix<bool>,
     /// Per-label matrices (label ID → node membership)
     labels_matices: Vec<VersionedMatrix<bool>>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
@@ -687,6 +682,39 @@ fn grow_cap(
     cap
 }
 
+/// Append the next `count` reclaimable ids from `pool` to `out`.
+///
+/// `base` is how many of the pool's ids are already reserved, so this yields
+/// exactly what `pool.iter().skip(base).take(count)` would.
+///
+/// It gets there by rank rather than by walking. `select(base)` finds the
+/// base-th id by summing container cardinalities — a container holds 65,536
+/// ids, so that is on the order of sixteen steps for a million-id pool — and
+/// `Iter::advance_to` then seeks to that value. Expressed as `skip(base)` it
+/// walked `base` elements instead, and `CREATE` reserves once per BATCH_SIZE
+/// rows with `base` only reset at commit, so a create of N ids walked the pool
+/// N/BATCH_SIZE times: O(N^2 / BATCH_SIZE). A 1M-node create over a 1M-id pool
+/// spent about 2s of its 2.5s there.
+///
+/// (`select` is only cheap per *batch*. Per id — the shape this replaced
+/// earlier — N calls of O(containers) is its own quadratic.)
+fn reclaim_ids<T: From<u64>>(
+    pool: &RoaringTreemap,
+    base: u64,
+    count: u64,
+    out: &mut Vec<T>,
+) {
+    if count == 0 {
+        return;
+    }
+    let Some(start) = pool.select(base) else {
+        return;
+    };
+    let mut iter = pool.iter();
+    iter.advance_to(start);
+    out.extend(iter.take(count as usize).map(T::from));
+}
+
 impl Graph {
     #[must_use]
     pub fn new(
@@ -710,7 +738,6 @@ impl Graph {
             adjacancy_matrix: VersionedMatrix::<bool>::new(n, n),
             node_labels_matrix: VersionedMatrix::<bool>::new(0, 0),
             relationship_type_matrix: VersionedMatrix::<bool>::new(0, 0),
-            all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
             edge_endpoints: Arc::new(EndpointIndex::default()),
@@ -747,7 +774,6 @@ impl Graph {
         adjacancy_matrix: VersionedMatrix<bool>,
         node_labels_matrix: VersionedMatrix<bool>,
         relationship_type_matrix: VersionedMatrix<bool>,
-        all_nodes_matrix: VersionedMatrix<bool>,
         labels_matices: Vec<VersionedMatrix<bool>>,
         relationship_matrices: Vec<Tensor>,
         node_labels: Vec<Arc<String>>,
@@ -821,7 +847,6 @@ impl Graph {
             adjacancy_matrix,
             node_labels_matrix,
             relationship_type_matrix,
-            all_nodes_matrix,
             labels_matices,
             relationship_matrices,
             edge_endpoints: Arc::new(edge_endpoints),
@@ -848,7 +873,6 @@ impl Graph {
 
     /// Rebuild derived matrices after RDB load.
     ///
-    /// - `all_nodes_matrix`: diagonal `(id, id) = true` for all live nodes
     /// - `relationship_type_matrix`: `(edge_id, type_index) = true` for all edges
     /// - Tensor backward (`mt`): transpose of forward (`m`)
     pub fn rebuild_derived_matrices(&mut self) {
@@ -859,18 +883,6 @@ impl Graph {
         let rc = self.relationship_cap;
         self.relationship_type_matrix
             .resize(rc, self.relationship_types.len() as u64);
-
-        // Rebuild all_nodes_matrix from all live node IDs (0..=max_id skipping deleted).
-        // Cannot rebuild only from label matrices: unlabeled nodes do not appear in any
-        // label matrix but still need to be in all_nodes_matrix for MATCH (n) scans.
-        if self.node_count > 0 {
-            let max_id = self.node_count + self.deleted_nodes.len() - 1;
-            for id in 0..=max_id {
-                if !self.deleted_nodes.contains(id) {
-                    self.all_nodes_matrix.set(id, id, true);
-                }
-            }
-        }
 
         // Rebuild relationship_type_matrix and tensor backward matrices
         for (type_idx, tensor) in self.relationship_matrices.iter_mut().enumerate() {
@@ -921,7 +933,6 @@ impl Graph {
             adjacancy_matrix: self.adjacancy_matrix.dup(),
             node_labels_matrix: self.node_labels_matrix.dup(),
             relationship_type_matrix: self.relationship_type_matrix.dup(),
-            all_nodes_matrix: self.all_nodes_matrix.dup(),
             labels_matices: self
                 .labels_matices
                 .iter()
@@ -1367,21 +1378,12 @@ impl Graph {
 
         // First reclaim from deleted nodes.
         //
-        // One ordered walk, not a rank lookup per id: `RoaringTreemap::select(i)`
-        // restarts at the first container every call, summing cardinalities until
-        // it reaches `i` and then scanning words inside that container, so a
-        // batch of N reclaims costs O(N * position) rather than O(pool). It was
-        // the hottest single leaf in the module on a create-after-delete profile.
-        // `skip` walks the same iterator once, so the whole batch is one pass.
+        // One rank lookup for the batch, then an ordered walk of it — see
+        // [`reclaim_ids`]. Walking to `base` per batch, which is what
+        // `iter().skip(base)` did, made a large create quadratic.
         let base = self.reserved_node_count;
         self.reserved_node_count += reclaimed;
-        ids.extend(
-            self.deleted_nodes
-                .iter()
-                .skip(base as usize)
-                .take(reclaimed as usize)
-                .map(NodeId),
-        );
+        reclaim_ids(&self.deleted_nodes, base, reclaimed, &mut ids);
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -1411,9 +1413,6 @@ impl Graph {
         }
 
         self.resize();
-
-        self.all_nodes_matrix
-            .set_all::<true>(nodes.iter().map(|id| (id, id)));
     }
 
     #[must_use]
@@ -1774,10 +1773,6 @@ impl Graph {
         // `delta_invariants_hold_across_mutation_sequences`, and this specific
         // substitution is machine-checked as
         // `eff_removeMask_eq_foldl_remove` in `proofs/versioned_matrix`.
-        for id in deleted_nodes {
-            self.all_nodes_matrix.remove(id, id);
-        }
-
         // Which labels each deleted node carries. Collected first because the
         // iterator borrows `node_labels_matrix` for the duration and the removals
         // below need it mutably.
@@ -1940,10 +1935,14 @@ impl Graph {
     ) -> Box<dyn Iterator<Item = NodeId>> {
         if labels.is_empty() {
             // Full scan: live node IDs are exactly `0..=max_node_id` minus the
-            // deleted set, identical to the diagonal of `all_nodes_matrix`.
-            // A range walk with a roaring-bitmap membership check avoids the
-            // per-element GraphBLAS row-iterator overhead, which dominates the
-            // cost of unfiltered `MATCH (n)` scans.
+            // deleted set. A range walk with a roaring-bitmap membership check
+            // avoids the per-element GraphBLAS row-iterator overhead, which
+            // dominates the cost of unfiltered `MATCH (n)` scans.
+            //
+            // It is also why no matrix of live nodes is kept: the bitmap
+            // already answers the question, and maintaining a parallel
+            // GraphBLAS diagonal made every write pay structural upkeep
+            // proportional to the graph rather than to the write.
             if self.node_count == 0 {
                 return Box::new(std::iter::empty());
             }
@@ -2081,18 +2080,11 @@ impl Graph {
         let available = deleted_len.saturating_sub(self.reserved_relationship_count);
         let reclaimed = count.min(available);
 
-        // First reclaim from deleted relationships. One ordered walk rather than a
-        // rank lookup per id — see `reserve_nodes` for why `select` per id is
-        // quadratic across a batch.
+        // First reclaim from deleted relationships — same shape as
+        // `reserve_nodes`, see [`reclaim_ids`].
         let base = self.reserved_relationship_count;
         self.reserved_relationship_count += reclaimed;
-        ids.extend(
-            self.deleted_relationships
-                .iter()
-                .skip(base as usize)
-                .take(reclaimed as usize)
-                .map(RelationshipId),
-        );
+        reclaim_ids(&self.deleted_relationships, base, reclaimed, &mut ids);
 
         // Allocate remaining from the end
         let remaining = count - reclaimed;
@@ -2174,7 +2166,6 @@ impl Graph {
     /// fold pathology cannot occur, and deferring to the next version's
     /// `dup`/`flush` would leave the final command's deltas unfolded.
     pub fn flush_for_bulk(&mut self) {
-        self.all_nodes_matrix.fold_latched();
         self.node_labels_matrix.fold_latched();
         for m in &mut self.labels_matices {
             m.fold_latched();
@@ -2207,8 +2198,6 @@ impl Graph {
         self.node_labels_matrix.wait_base();
         self.relationship_type_matrix.fold_oversized();
         self.relationship_type_matrix.wait_base();
-        self.all_nodes_matrix.fold_oversized();
-        self.all_nodes_matrix.wait_base();
         for m in &mut self.labels_matices {
             m.fold_oversized();
             m.wait_base();
@@ -2227,7 +2216,6 @@ impl Graph {
         self.adjacancy_matrix.wait_all();
         self.node_labels_matrix.wait_all();
         self.relationship_type_matrix.wait_all();
-        self.all_nodes_matrix.wait_all();
         for m in &self.labels_matices {
             m.wait_all();
         }
@@ -2246,7 +2234,6 @@ impl Graph {
             && self.adjacancy_matrix.is_synced()
             && self.node_labels_matrix.is_synced()
             && self.relationship_type_matrix.is_synced()
-            && self.all_nodes_matrix.is_synced()
             && self.labels_matices.iter().all(VersionedMatrix::is_synced)
             && self.relationship_matrices.iter().all(Tensor::is_synced)
     }
@@ -2448,27 +2435,37 @@ impl Graph {
         for type_idx in 0..self.relationship_matrices.len() {
             let mut rels: Vec<(u64, u64, u64)> = Vec::new();
 
-            // Collect all edges for deleted nodes from this tensor
-            for node_id in deleted_nodes {
-                // Outgoing edges
-                for (src, dst, edge_id) in
-                    self.relationship_matrices[type_idx].iter(node_id, node_id, false)
-                {
-                    if !explicit_rels.contains(edge_id) {
-                        rels.push((edge_id, src, dst));
+            // Collect all edges for deleted nodes from this tensor.
+            //
+            // One iterator pair for the whole type, re-seeked per node, rather
+            // than a fresh pair per node: building one allocates a
+            // `GxB_Iterator` per layer and waits the tensor, so per-node
+            // construction cost scales with the deleted set and the number of
+            // relationship types while having nothing to do with how many edges
+            // those nodes actually have. Deleting a million edgeless nodes over
+            // six types built twelve million iterators to yield nothing.
+            {
+                let tensor = &self.relationship_matrices[type_idx];
+                let mut outgoing = tensor.iter(0, 0, false);
+                let mut incoming = tensor.iter(0, 0, true);
+                for node_id in deleted_nodes {
+                    outgoing.seek(node_id, node_id);
+                    for (src, dst, edge_id) in &mut outgoing {
+                        if !explicit_rels.contains(edge_id) {
+                            rels.push((edge_id, src, dst));
+                        }
                     }
-                }
-                // Incoming edges — skip if source is also a deleted node
-                // (those edges are already collected from the source's
-                // outgoing iteration), and skip self-loops already found above.
-                for (src, dst, edge_id) in
-                    self.relationship_matrices[type_idx].iter(node_id, node_id, true)
-                {
-                    if src != node_id
-                        && !deleted_nodes.contains(src)
-                        && !explicit_rels.contains(edge_id)
-                    {
-                        rels.push((edge_id, src, dst));
+                    // Incoming edges — skip if source is also a deleted node
+                    // (those edges are already collected from the source's
+                    // outgoing iteration), and skip self-loops already found above.
+                    incoming.seek(node_id, node_id);
+                    for (src, dst, edge_id) in &mut incoming {
+                        if src != node_id
+                            && !deleted_nodes.contains(src)
+                            && !explicit_rels.contains(edge_id)
+                        {
+                            rels.push((edge_id, src, dst));
+                        }
                     }
                 }
             }
@@ -2800,7 +2797,6 @@ impl Graph {
         self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
         self.node_labels_matrix
             .resize(self.node_cap, self.labels_matices.len() as u64);
-        self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
         for label_matrix in &mut self.labels_matices {
             label_matrix.resize(self.node_cap, self.node_cap);
         }
@@ -3948,27 +3944,6 @@ impl Graph {
         result
     }
 
-    /// Build a diagonal boolean matrix of nodes matching any of the given labels.
-    /// If `labels` is empty, returns the all_nodes matrix.
-    #[must_use]
-    pub fn build_node_mask_matrix(
-        &self,
-        labels: &[Arc<String>],
-    ) -> Matrix<bool> {
-        if labels.is_empty() {
-            self.all_nodes_matrix.extract()
-        } else {
-            let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
-            for label in labels {
-                if let Some(label_id) = self.get_label_id(label) {
-                    let m = self.labels_matices[usize::from(label_id)].extract();
-                    result.element_wise_add(None, None, Some(&m), None);
-                }
-            }
-            result
-        }
-    }
-
     /// Compute a detailed breakdown of memory usage for `GRAPH.MEMORY USAGE`.
     ///
     /// `samples` controls how many entities are sampled per label/type when
@@ -3997,16 +3972,17 @@ impl Graph {
         }
 
         // --- node block storage ---
-        // Everything a node costs that is not its property values: the matrix
-        // recording that the node exists (the Rust stand-in for C's per-node
-        // DataBlock item, and the reason an attribute-less node is not free),
-        // the attribute store's unattributed bytes, and the deleted-id bitmap.
-        // Property values are reported under the attribute components, and
+        // Everything a node costs that is not its property values: the
+        // attribute store's unattributed bytes (the per-node slot, which is
+        // what makes an attribute-less node not free, and the counterpart of
+        // C's per-node DataBlock item) and the deleted-id bitmap. Node
+        // existence itself costs nothing beyond those — it is the id range
+        // minus that bitmap, not a stored structure. Property values are
+        // reported under the attribute components, and
         // `structural_memory_usage` excludes exactly those, so the two halves
         // cover the store without overlap.
-        let node_block_storage_sz: usize = self.all_nodes_matrix.memory_usage()
-            + self.node_attrs.structural_memory_usage()
-            + self.deleted_nodes.serialized_size();
+        let node_block_storage_sz: usize =
+            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
         // Mirrors the node side: the matrix recording each edge's existence and
@@ -4071,14 +4047,16 @@ impl Graph {
         let total_nodes = self.node_count;
         let unlabeled_count = total_nodes.saturating_sub(total_labeled);
         let unlabeled_node_attr_sz = if unlabeled_count > 0 {
-            // Sample unlabeled nodes from all_nodes_matrix, skipping labeled ones.
+            // Sample unlabeled nodes, skipping labeled ones. Live ids are the
+            // id range minus the deleted set — the same walk `get_nodes` uses
+            // for an unfiltered scan.
             let mut sampled_mem: usize = 0;
             let mut sampled_count: usize = 0;
-            for (node_id, _) in self.all_nodes_matrix.iter(0, u64::MAX) {
+            for node_id in 0..=self.max_node_id() {
                 if sampled_count >= samples {
                     break;
                 }
-                if seen[node_id as usize] {
+                if self.deleted_nodes.contains(node_id) || seen[node_id as usize] {
                     continue;
                 }
                 sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);
@@ -4325,5 +4303,116 @@ mod attr_id_space_tests {
                 "RDB position {id} disagrees with the live id for {name}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod reclaim_ids_tests {
+    use super::*;
+
+    /// The plain walk `reclaim_ids` has to stay equivalent to.
+    fn walk(
+        pool: &RoaringTreemap,
+        base: u64,
+        count: u64,
+    ) -> Vec<u64> {
+        pool.iter()
+            .skip(base as usize)
+            .take(count as usize)
+            .collect()
+    }
+
+    fn reclaim(
+        pool: &RoaringTreemap,
+        base: u64,
+        count: u64,
+    ) -> Vec<u64> {
+        let mut out: Vec<u64> = Vec::new();
+        reclaim_ids(pool, base, count, &mut out);
+        out
+    }
+
+    /// Reclaiming in batches must hand out the same ids as one big reclaim.
+    /// This is the property the whole optimisation rests on.
+    #[test]
+    fn batched_reclaim_matches_single_walk() {
+        let pool: RoaringTreemap = (0..5_000u64).map(|i| i * 3).collect();
+
+        let mut batched: Vec<u64> = Vec::new();
+        let mut base = 0;
+        while base < pool.len() {
+            let count = 97.min(pool.len() - base);
+            reclaim_ids(&pool, base, count, &mut batched);
+            base += count;
+        }
+
+        assert_eq!(batched, walk(&pool, 0, pool.len()));
+    }
+
+    /// Rank-based seeking has to agree with walking at *every* base, including
+    /// across container boundaries — `select` sums container cardinalities, so a
+    /// pool spread over several containers is where an off-by-one would show.
+    #[test]
+    fn agrees_with_walk_at_every_base() {
+        let pool: RoaringTreemap = (0..300u64)
+            .map(|i| i * 1_000)
+            .chain(70_000..70_400)
+            .chain(1_000_000..1_000_050)
+            .collect();
+
+        for base in 0..pool.len() {
+            for count in [1u64, 13, 97] {
+                assert_eq!(
+                    reclaim(&pool, base, count),
+                    walk(&pool, base, count),
+                    "base {base}, count {count}"
+                );
+            }
+        }
+    }
+
+    /// Ids freed below where reclaiming had reached shift every later position.
+    /// Rank is read from the pool on each call, so the answer tracks the pool
+    /// with no state to go stale — this is what the previous cursor-based
+    /// version needed a cardinality guard to get right.
+    #[test]
+    fn reflects_a_pool_that_changed_between_calls() {
+        let mut pool: RoaringTreemap = (100..200u64).collect();
+
+        assert_eq!(reclaim(&pool, 0, 10), (100..110).collect::<Vec<_>>());
+
+        // Free some lower ids, as returning a pending-created id does.
+        pool.insert(0);
+        pool.insert(1);
+
+        assert_eq!(reclaim(&pool, 10, 10), walk(&pool, 10, 10));
+    }
+
+    /// Asking for more than the pool holds yields what there is, and a base past
+    /// the end yields nothing rather than panicking.
+    #[test]
+    fn handles_requests_past_the_end() {
+        let pool: RoaringTreemap = (0..5u64).collect();
+
+        assert_eq!(reclaim(&pool, 0, 5), vec![0, 1, 2, 3, 4]);
+        assert_eq!(reclaim(&pool, 0, 9), vec![0, 1, 2, 3, 4]);
+        assert!(reclaim(&pool, 5, 3).is_empty());
+        assert!(reclaim(&pool, 99, 3).is_empty());
+    }
+
+    /// A zero-count request appends nothing.
+    #[test]
+    fn zero_count_yields_nothing() {
+        let pool: RoaringTreemap = (0..100u64).collect();
+        assert!(reclaim(&pool, 0, 0).is_empty());
+        assert!(reclaim(&pool, 50, 0).is_empty());
+    }
+
+    /// An empty pool has nothing to reclaim at any base.
+    #[test]
+    fn empty_pool_yields_nothing() {
+        let pool = RoaringTreemap::new();
+        assert!(reclaim(&pool, 0, 10).is_empty());
+        assert!(reclaim(&pool, 7, 10).is_empty());
     }
 }

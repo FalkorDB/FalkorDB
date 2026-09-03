@@ -684,6 +684,172 @@ class testGraphDeletionFlow(FlowTestsBase):
             res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
             self.env.assertEqual(res.result_set[0][0], 0)
 
+    def test30_deleted_edges_readable_after_node_delete(self):
+        # Deleting a node has to snapshot the edges it carried so later clauses
+        # can still read them. This pins that snapshot while the mechanism that
+        # collects it changes from a full scan of every relationship tensor to a
+        # per-node adjacency lookup.
+        #
+        # The edge here sits between two nodes that are both deleted, so it is
+        # reachable from either end and must still be reported exactly once with
+        # its pre-delete property.
+        self.graph.delete()
+
+        self.graph.query("CREATE (:A {n: 1})-[:R {w: 7}]->(:B {n: 2})")
+
+        res = self.graph.query("""
+            MATCH (a:A)-[r:R]->(b:B)
+            DELETE a, b
+            RETURN r.w, type(r), startNode(r).n, endNode(r).n"""
+        )
+        self.env.assertEqual(res.result_set, [[7, "R", 1, 2]])
+        self.env.assertEqual(res.nodes_deleted, 2)
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        res = self.graph.query("MATCH (n) RETURN count(n)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
+    def test31_deleted_edges_readable_across_batches(self):
+        # Same snapshot, but over more rows than one runtime batch (1024), so the
+        # delete runs as several batches and an edge may be snapshotted by one
+        # batch and revisited by a later one. Every edge must still come back
+        # with its own property.
+        self.graph.delete()
+
+        n = 2500
+        self.graph.query(f"""
+            UNWIND range(1, {n}) AS i
+            CREATE (:Src {{i: i}})-[:E {{i: i}}]->(:Dst {{i: i}})"""
+        )
+
+        res = self.graph.query("MATCH (a:Src)-[r:E]->(b:Dst) DELETE a, b RETURN sum(r.i), count(r)")
+        self.env.assertEqual(res.result_set, [[n * (n + 1) // 2, n]])
+        self.env.assertEqual(res.nodes_deleted, 2 * n)
+        self.env.assertEqual(res.relationships_deleted, n)
+
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
+    def test32_detach_delete_snapshots_only_incident_edges(self):
+        # Unrelated edges must be left alone. The scan this replaces filtered a
+        # full pass by endpoint membership; a per-node lookup has to reach exactly
+        # the same edge set.
+        self.graph.delete()
+
+        self.graph.query("CREATE (:Keep {n: 1})-[:K {w: 1}]->(:Keep {n: 2})")
+        self.graph.query("CREATE (:Drop {n: 3})-[:D {w: 2}]->(:Other {n: 4})")
+
+        res = self.graph.query("MATCH (d:Drop) DETACH DELETE d RETURN d.n")
+        self.env.assertEqual(res.result_set, [[3]])
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        # the untouched edge and both its endpoints survive
+        res = self.graph.query("MATCH (a:Keep)-[r:K]->(b:Keep) RETURN a.n, r.w, b.n")
+        self.env.assertEqual(res.result_set, [[1, 1, 2]])
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set[0][0], 1)
+        res = self.graph.query("MATCH (o:Other) RETURN o.n")
+        self.env.assertEqual(res.result_set, [[4]])
+
+    def test33_delete_node_that_is_only_an_edge_destination(self):
+        # The deleted node is the *destination* of its edge, never the source. A
+        # per-node lookup that followed only outgoing rows would find nothing
+        # here and silently leave the edge behind.
+        self.graph.delete()
+
+        self.graph.query("CREATE (:Live {n: 1})-[:E {w: 9}]->(:Sink {n: 2})")
+
+        res = self.graph.query("MATCH (s:Sink) DETACH DELETE s RETURN s.n")
+        self.env.assertEqual(res.result_set, [[2]])
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+        # the surviving source keeps no dangling degree
+        res = self.graph.query("MATCH (l:Live) RETURN l.n, outdegree(l)")
+        self.env.assertEqual(res.result_set, [[1, 0]])
+
+    def test34_edge_props_readable_when_only_destination_deleted(self):
+        # This is the case the snapshot exists for: the edge is read *after* the
+        # node it hangs off is deleted, and the deleted node is the edge's
+        # destination. The snapshot is collected per deleted node, so a lookup
+        # that followed only outgoing rows would never see this edge and the
+        # RETURN would come back empty instead of carrying its property.
+        self.graph.delete()
+
+        self.graph.query("CREATE (:Live {n: 1})-[:E {w: 9}]->(:Sink {n: 2})")
+
+        res = self.graph.query("""
+            MATCH (l:Live)-[r:E]->(s:Sink)
+            DELETE s
+            RETURN r.w, type(r), startNode(r).n"""
+        )
+        self.env.assertEqual(res.result_set, [[9, "E", 1]])
+
+    def test35_edge_props_readable_when_only_source_deleted(self):
+        # The mirror of test34, so neither direction can be dropped.
+        self.graph.delete()
+
+        self.graph.query("CREATE (:Live {n: 1})-[:E {w: 9}]->(:Sink {n: 2})")
+
+        res = self.graph.query("""
+            MATCH (l:Live)-[r:E]->(s:Sink)
+            DELETE l
+            RETURN r.w, type(r), endNode(r).n"""
+        )
+        self.env.assertEqual(res.result_set, [[9, "E", 2]])
+
+    def test36_implicit_edge_cascade_across_types_and_directions(self):
+        # `delete_implicit_edges` reuses one iterator pair per relationship type
+        # and re-seeks it for each deleted node, instead of building a fresh pair
+        # per node. A seek that failed to reposition would still find the first
+        # node's edges and silently miss the rest, which reads as a large speedup
+        # rather than as a failure — so this pins the cascade over many nodes and
+        # over every type and direction.
+        self.graph.delete()
+
+        # one hub carrying both directions of four types, plus a self-loop
+        self.graph.query("CREATE (h:Hub {n: 0})")
+        for t in range(1, 5):
+            self.graph.query(f"MATCH (h:Hub) CREATE (h)-[:T{t} {{w: {t}}}]->(:Out {{n: {t}}})")
+            self.graph.query(f"MATCH (h:Hub) CREATE (:In {{n: {t}}})-[:T{t} {{w: {t}}}]->(h)")
+        self.graph.query("MATCH (h:Hub) CREATE (h)-[:T1 {w: 99}]->(h)")
+
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set[0][0], 9)
+
+        res = self.graph.query("MATCH (h:Hub) DELETE h")
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.relationships_deleted, 9)
+
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+        # the far endpoints survive
+        res = self.graph.query("MATCH (n) RETURN count(n)")
+        self.env.assertEqual(res.result_set[0][0], 8)
+
+    def test37_implicit_edge_cascade_over_many_nodes(self):
+        # The same cascade spanning more nodes than one runtime batch, with each
+        # node's edges reachable only by re-seeking the shared iterator.
+        self.graph.delete()
+
+        n = 5000
+        self.graph.query(f"UNWIND range(1, {n}) AS i CREATE (:H2 {{i: i}})-[:TA]->(:E1 {{i: i}})")
+        self.graph.query(
+            f"UNWIND range(1, {n}) AS i MATCH (h:H2 {{i: i}}) CREATE (:E2 {{i: i}})-[:TB]->(h)")
+
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set[0][0], 2 * n)
+
+        res = self.graph.query("MATCH (h:H2) DELETE h")
+        self.env.assertEqual(res.nodes_deleted, n)
+        self.env.assertEqual(res.relationships_deleted, 2 * n)
+
+        res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
