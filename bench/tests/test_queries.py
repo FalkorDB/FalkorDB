@@ -24,19 +24,29 @@ class TestQuerySet:
         for q in qs.QUERIES:
             assert q.cypher.strip(), q.name
 
-    def test_sized_write_queries_stay_last(self):
-        """They inflate node capacity / matrix dimension to max(N), which would
-        slow every full-graph query measured after them."""
+    def test_graph_inflating_queries_stay_last(self):
+        """The suite ends in one block of rows that grow the graph for good.
+
+        The sized writes inflate node capacity and matrix dimension to max(N);
+        the two edge rows add 200k edges. Either would slow every full-graph
+        query measured after them, so the property to hold is that the tail is
+        *entirely* that block -- not that every row in it is a sized write.
+        `bulk edges 200k` and `edge create at 200k` belong to it by what they do
+        to the graph rather than by their names, so they are named here.
+        """
         sized_prefixes = ("write ", "create ", "delete ")
-        sized_idx = [
-            i
-            for i, q in enumerate(qs.QUERIES)
-            if any(q.name.startswith(p) for p in sized_prefixes) and q.name.split()[-1][0].isdigit()
-        ]
-        assert sized_idx, "expected to find the sized write queries"
-        first_sized = min(sized_idx)
-        # Everything from the first sized write query onward must also be sized.
-        assert sized_idx == list(range(first_sized, len(qs.QUERIES)))
+        edge_rows = ("bulk edges 200k", "edge create at 200k")
+
+        def inflating(q) -> bool:
+            return q.name in edge_rows or (
+                any(q.name.startswith(p) for p in sized_prefixes)
+                and q.name.split()[-1][0].isdigit()
+            )
+
+        idx = [i for i, q in enumerate(qs.QUERIES) if inflating(q)]
+        assert idx, "expected to find the graph-inflating queries"
+        # Everything from the first one onward must also inflate the graph.
+        assert idx == list(range(min(idx), len(qs.QUERIES)))
 
     def test_sized_write_queries_ascend_in_magnitude(self):
         """No sized row may be preceded by one an order of magnitude larger.
@@ -64,6 +74,40 @@ class TestQuerySet:
 
         sizes = [magnitude(n) for n in sized]
         assert sizes == sorted(sizes), f"sized rows must ascend in magnitude, got {sized}"
+
+    def test_large_edge_row_follows_its_builder(self):
+        """`edge create at 200k` is meaningless unless the bulk row ran first.
+
+        It measures a write against a large edge population, which only exists
+        because `bulk edges 200k` built it. Selected alone -- or reordered ahead
+        of the builder -- it measures the same write at SETUP's ~10k edges and
+        reports a number that looks fine, the same way a `cg` row running dry
+        quietly measures a no-op. Nothing else in the suite is sensitive to |E|,
+        so there is no second row to catch the mistake.
+        """
+        names = [q.name for q in qs.QUERIES]
+        assert "bulk edges 200k" in names
+        assert "edge create at 200k" in names
+        assert names.index("bulk edges 200k") < names.index("edge create at 200k")
+
+    def test_sized_row_guard_ignores_the_edge_rows(self):
+        """The ascending-magnitude rule is about node churn, not these two.
+
+        `test_sized_write_queries_ascend_in_magnitude` collects rows by name
+        shape, and `... 200k` after `write 1m` would look like a violation. They
+        are exempt because the rule exists to stop a row measuring recovery from
+        a larger *deletion*, and the builder in front of these creates without
+        deleting. This pins the exemption to the naming rather than leaving it
+        to chance if a row is renamed.
+        """
+        sized = [
+            q.name
+            for q in qs.QUERIES
+            if any(q.name.startswith(p) for p in ("write ", "create ", "delete "))
+            and q.name.split()[-1][0].isdigit()
+        ]
+        assert "edge create at 200k" not in sized
+        assert "bulk edges 200k" not in sized
 
     def test_reps_are_positive_when_set(self):
         for q in qs.QUERIES:
