@@ -266,7 +266,7 @@ fn apply_record(
             attr_ids,
             rows,
         } => {
-            let nodes: RoaringTreemap = ids.iter().collect();
+            let nodes = ids.to_roaring();
             verify_creatable(g, &nodes, ops)?;
             g.add_reserved_node_count(ids.len() as u64);
             g.create_nodes(&nodes);
@@ -369,7 +369,7 @@ fn apply_record(
             // Borrowed, not consumed: a by-value `into_iter` materialized a
             // `Vec<u64>` first, and a delete-by-label arrives as a consecutive
             // range — the one shape that has no vector to hand over.
-            let nodes: RoaringTreemap = ids.iter().collect();
+            let nodes = ids.to_roaring();
             verify_deletable(g, &nodes, ops)?;
             g.delete_nodes(&nodes, &mut ops.docs.node_removes)?;
             // Deleting releases the id back to the bin, so a *later* record in
@@ -383,7 +383,7 @@ fn apply_record(
         }
 
         Record::DeleteEdge { ids, .. } => {
-            let edges: RoaringTreemap = ids.iter().collect();
+            let edges = ids.to_roaring();
             g.delete_relationships(&edges, &mut ops.docs.edge_removes)?;
             Ok(())
         }

@@ -706,6 +706,25 @@ impl IdList {
         u32::try_from(self.len).expect("a record cannot carry more than u32::MAX entities")
     }
 
+    /// The ids as a roaring bitmap, one container operation per segment.
+    ///
+    /// `iter().collect()` costs one insert per id, which for a consecutive run
+    /// is a million `BTreeMap` lookups to describe what `insert_range` states
+    /// once. The segments already are the runs roaring wants.
+    #[must_use]
+    pub fn to_roaring(&self) -> RoaringTreemap {
+        let mut out = RoaringTreemap::new();
+        for seg in &self.segments {
+            match seg {
+                Segment::Range { base, len } => {
+                    out.insert_range(*base..=*base + u64::from(*len) - 1);
+                }
+                Segment::Ascending { bitmap, .. } => out |= bitmap,
+            }
+        }
+        out
+    }
+
     /// Write the block: `u32 n_segments`, then each segment.
     ///
     /// Nothing is decided here. The segments already are the encoding, so this
@@ -1297,6 +1316,22 @@ mod tests {
             cost.add_range(base, len);
         }
         assert_eq!(cost.bitmap_bytes(), by_range.serialized_size());
+    }
+
+    #[test]
+    fn to_roaring_matches_the_ids_and_costs_one_op_per_segment() {
+        // Consecutive, gapped, and a repeat — the last of which a bitmap cannot
+        // hold, so it is only ever built from lists that are ascending.
+        for ids in [
+            (0..10_000_u64).collect::<Vec<_>>(),
+            (0..10_000).map(|i| i * 2).collect(),
+            vec![5, 6, 7, 100, 101],
+        ] {
+            let list = IdList::from(ids.as_slice());
+            let by_segment = list.to_roaring();
+            let by_id: RoaringTreemap = ids.iter().copied().collect();
+            assert_eq!(by_segment, by_id, "same set either way");
+        }
     }
 
     #[test]
