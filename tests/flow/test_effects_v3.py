@@ -31,8 +31,9 @@ from constraint_utils import (create_mandatory_node_constraint,
                               drop_unique_node_constraint,
                               get_constraint, list_constraints)
 from graph_utils import graph_eq
-from index_utils import (create_node_range_index, drop_node_range_index,
-                         list_indicies, wait_for_indices_to_sync)
+from index_utils import (create_edge_range_index, create_node_range_index,
+                         drop_node_range_index, list_indicies,
+                         wait_for_indices_to_sync)
 
 # A plain Redis key the tests SET on the primary purely so its replicated form
 # shows up in the replica's MONITOR feed as a fence post. See `monitor_mark`.
@@ -1502,6 +1503,124 @@ class testEffectsV3_04c_HarderShapes(_EffectsV3Base):
         self.assert_agree(
             """MATCH ()-[e:TB]->() RETURN count(e), min(e.w), max(e.w)""",
             [[50, 1001, 1050]])
+        self.assert_graph_eq()
+
+
+#-----------------------------------------------------------------------------
+# 4f. The replica's indexes, for the schemas the query never named
+#-----------------------------------------------------------------------------
+
+class testEffectsV3_04f_IndexesTheQueryNeverNamed(_EffectsV3Base):
+    """An update touches every index the entity belongs to, not the one the
+    pattern matched on.
+
+    `MATCH (n:A) SET n.x = 2` on an `(:A:B)` node has to leave **`:B`'s** index
+    on `x` correct too, and the query never says `B`. Same for edges: an
+    untyped `MATCH ()-[r]->() SET r.x = 2` has to leave `:R`'s index correct.
+
+    The interesting half is the replica. The primary can see the entity and
+    walk its own matrices; the replica only has the record. So these assert
+    through the index rather than through a scan — a stale index does not
+    return nothing, it returns the value the entity used to have, which a
+    `count(*)` over a full scan would never notice.
+    """
+
+    GRAPH_ID = "effects_v3_derived_indexes"
+
+    def __init__(self):
+        self._setup()
+
+    def _assert_uses_index(self, q, op):
+        # Otherwise the assertions below pass on a full scan and prove nothing
+        # about index maintenance at all.
+        #
+        # The primary only: `GRAPH.EXPLAIN` is refused on a replica with
+        # "You can't write against a read only replica" even though it plans
+        # rather than executes. The planner is the same code on both sides and
+        # what this asserts is a property of the *query*, so the primary's plan
+        # answers it.
+        self.env.assertContains(op, str(self.master_graph.explain(q)))
+
+    def test01_a_second_label_index_the_query_never_mentioned(self):
+        self.set_effects_config()
+        create_node_range_index(self.master_graph, 'A', 'x', sync=True)
+        create_node_range_index(self.master_graph, 'B', 'x', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync("CREATE (:A:B {x: 1}), (:A {x: 1}), (:B {x: 1})")
+
+        by_b = "MATCH (n:B) WHERE n.x = $v RETURN count(n)"
+        self._assert_uses_index(
+            "MATCH (n:B) WHERE n.x = 1 RETURN count(n)", 'Node By Index Scan')
+        self.assert_agree(by_b, [[2]], params={'v': 1})
+
+        # only :A is named, and only the :A:B node and the :A node match
+        res = self.query_and_sync("MATCH (n:A) SET n.x = 2")
+        self.env.assertEqual(res.properties_set, 2)
+
+        # B's index has to have followed the :A:B node to its new value. The
+        # sharp assertion is the second one: a stale index still holds x = 1,
+        # so it answers this with 2 rather than 1.
+        self.assert_agree(by_b, [[1]], params={'v': 2})
+        self.assert_agree(by_b, [[1]], params={'v': 1})
+
+        # and the index agrees with an unindexed read of the same thing
+        self.assert_agree(
+            "MATCH (n:B) RETURN n.x ORDER BY n.x", [[1], [2]])
+        self.assert_graph_eq()
+
+    def test02_an_edge_type_index_the_query_never_mentioned(self):
+        # The reason UPDATE_EDGE carries its RelType: an untyped pattern still
+        # has to leave the type-scoped index correct on the replica.
+        self.set_effects_config()
+        create_edge_range_index(self.master_graph, 'R', 'x', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync(
+            """CREATE (a:EN {i: 1})-[:R {x: 1}]->(b:EN {i: 2}),
+                      (b)-[:R {x: 1}]->(a)""")
+
+        by_r = "MATCH ()-[r:R]->() WHERE r.x = $v RETURN count(r)"
+        self._assert_uses_index(
+            "MATCH ()-[r:R]->() WHERE r.x = 1 RETURN count(r)",
+            'Edge By Index Scan')
+        self.assert_agree(by_r, [[2]], params={'v': 1})
+
+        # untyped — the query never says R
+        res = self.query_and_sync("MATCH ()-[r]->() SET r.x = 2")
+        self.env.assertEqual(res.properties_set, 2)
+
+        self.assert_agree(by_r, [[2]], params={'v': 2})
+        self.assert_agree(by_r, [[0]], params={'v': 1})
+        self.assert_agree(
+            "MATCH ()-[r:R]->() RETURN r.x ORDER BY r.x", [[2], [2]])
+        self.assert_graph_eq()
+
+    def test03_two_edge_types_one_indexed(self):
+        # The record splits by type, so the unindexed type must not drag the
+        # indexed one's rows into its record — and the indexed type's index
+        # must still see every row that belongs to it.
+        self.set_effects_config()
+        create_edge_range_index(self.master_graph, 'IX', 'x', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync(
+            """UNWIND range(1, 20) AS i
+               CREATE (a:TN {i: i})-[:IX {x: i}]->(b:TN {i: -i}),
+                      (a)-[:NOIX {x: i}]->(b)""")
+        self.assert_agree(
+            "MATCH ()-[r:IX]->() WHERE r.x > 10 RETURN count(r)", [[10]])
+
+        res = self.query_and_sync("MATCH ()-[r:IX|NOIX]->() SET r.x = r.x + 100")
+        self.env.assertEqual(res.properties_set, 40)
+
+        self.assert_agree(
+            "MATCH ()-[r:IX]->() WHERE r.x > 110 RETURN count(r)", [[10]])
+        self.assert_agree(
+            "MATCH ()-[r:IX]->() WHERE r.x <= 100 RETURN count(r)", [[0]])
+        self.assert_agree(
+            "MATCH ()-[r:NOIX]->() RETURN count(r), min(r.x), max(r.x)",
+            [[20, 101, 120]])
         self.assert_graph_eq()
 
 
