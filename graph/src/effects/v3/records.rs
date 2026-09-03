@@ -1831,24 +1831,30 @@ mod tests {
     }
 
     #[test]
-    fn a_tiny_buffer_cannot_ask_the_replica_for_a_34gb_allocation() {
-        // The whole path, not just `read_ids`: a DELETE_NODE whose Range block is
-        // three bytes but whose count is u32::MAX. Materializing it would be a
-        // ~34 GB `Vec<u64>`, and the Range encoding carries no bytes proportional
-        // to the count for a length guard to weigh.
+    fn a_tiny_buffer_with_an_absurd_count_fails_cleanly() {
+        // The whole path, not just `read_ids`: a DELETE_NODE whose segment list
+        // is a few bytes but whose count is `u32::MAX` — a ~34 GB `Vec<u64>` if
+        // taken at face value.
+        //
+        // There is deliberately no ceiling to refuse it. Run-length encoding is
+        // the point of the format, so this is byte-identical to a legitimate
+        // four-billion-id consecutive write, and a ceiling low enough to catch
+        // the first would refuse the second — which a replica would read as
+        // divergence and answer with a resync that failed again the same way.
+        //
+        // What is pinned is that either outcome is a clean error: the
+        // reservation is refused, or it succeeds and the segments then fail to
+        // total the count. Never a crash, and never a partial apply.
         let mut buf = new_buffer();
         write_delete_node(&mut buf, &IdList::from([0, 1, 2]), &[]);
         // Patch the count that follows the opcode: `header = u32 opcode · u32 count`.
         let count_at = 2 + 4;
         buf[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
 
-        assert_eq!(
+        assert!(matches!(
             read_buffer(&buf),
-            Err(DecodeError::TooManyIds {
-                count: u64::from(u32::MAX),
-                max: MAX_RECORD_IDS,
-            })
-        );
+            Err(DecodeError::IdAllocationFailed { .. } | DecodeError::CardinalityMismatch { .. })
+        ));
     }
 
     #[test]

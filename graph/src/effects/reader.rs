@@ -167,7 +167,7 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effects::v3::{IdList, MAX_RECORD_IDS, read_ids};
+    use crate::effects::v3::{IdList, read_ids};
     use crate::effects::writer::write_u64;
 
     // ── malformed input ──
@@ -185,28 +185,23 @@ mod tests {
     }
 
     #[test]
-    fn an_absurd_count_is_rejected_before_allocating() {
-        // Two independent guards, and the tiny buffers here are the point:
-        // neither may reserve for the count the record claims.
-        //
-        // The absolute cap is checked first, because it is the only one that can
-        // bound a segment list at all — one range describes any number of ids in
-        // a handful of bytes, so weighing the count against the bytes remaining
-        // sees nothing wrong.
-        let buf = [1_u8, 0, 0, 0, 0x08, 0];
+    fn an_absurd_count_fails_cleanly() {
+        // A tiny buffer behind a count of `u32::MAX`. There is no ceiling to
+        // refuse it — run-length encoding makes an absurd count and a genuinely
+        // large consecutive write byte-identical — so what is pinned is that the
+        // outcome is a clean error either way: the reservation is refused, or it
+        // succeeds and the segments fail to total the count.
+        let buf = [1_u8, 0, 0, 0, 0x00, 0, 1];
         let mut r = Reader::new(&buf);
-        assert_eq!(
+        assert!(matches!(
             read_ids(&mut r, u32::MAX),
-            Err(DecodeError::TooManyIds {
-                count: u64::from(u32::MAX),
-                max: MAX_RECORD_IDS,
-            })
-        );
+            Err(DecodeError::IdAllocationFailed { .. } | DecodeError::CardinalityMismatch { .. })
+        ));
 
-        // Under the cap, the guard that bites is arithmetic rather than
-        // length-based: no list can hold more segments than ids, because every
-        // segment carries at least one.
-        let buf = [0xFF_u8, 0xFF, 0, 0, 0x08, 0];
+        // The guard that *is* exact, and runs before any reservation: every
+        // segment carries at least one id, so a list cannot hold more segments
+        // than the record has ids.
+        let buf = [0xFF_u8, 0xFF, 0, 0, 0x00, 0, 1];
         let mut r = Reader::new(&buf);
         assert!(matches!(
             read_ids(&mut r, 4),

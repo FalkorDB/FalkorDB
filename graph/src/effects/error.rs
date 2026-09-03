@@ -97,14 +97,16 @@ pub enum DecodeError {
     #[error("id range starting at {base} cannot hold {count} ids")]
     BadRange { base: u64, count: u64 },
 
-    /// More ids in one record than any real query produces.
+    /// A record's ids could not be allocated for.
     ///
-    /// `ImplausibleCount` weighs a claimed count against the bytes left to read,
-    /// which is the right guard when each item costs bytes. `Range` and `Sorted`
-    /// describe any count in a handful of bytes, so they need an absolute cap
-    /// instead — see `id_list::MAX_RECORD_IDS`.
-    #[error("record claims {count} ids, more than the {max} a record may carry")]
-    TooManyIds { count: u64, max: u64 },
+    /// Reported rather than capped. A segment describes any number of ids in a
+    /// handful of bytes, so a corrupt count and a genuinely large consecutive
+    /// write are byte-identical on the wire — which means no ceiling can tell
+    /// them apart, and any ceiling low enough to bound a hostile buffer would
+    /// refuse legitimate writes. So the allocation is attempted and its failure
+    /// is the answer.
+    #[error("could not allocate for the {count} ids this record declares")]
+    IdAllocationFailed { count: u64 },
 
     /// A list or map nested deeper than the decoder will recurse.
     ///

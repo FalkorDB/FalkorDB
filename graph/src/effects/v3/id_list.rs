@@ -392,10 +392,10 @@ enum Segment {
     /// A single id is `len == 1`, so this variant alone can describe any list,
     /// however unordered — which is why there is no plain or dictionary form.
     ///
-    /// `len` is a `u32` rather than a `u64` because [`MAX_RECORD_IDS`] caps a
-    /// record at 2^27 ids. That is not cosmetic: a list that cannot collapse
-    /// holds one segment per id, so the eight bytes saved here are eight per
-    /// id.
+    /// `len` is a `u32` because a record's id count is a `u32` on the wire, so
+    /// no single segment can exceed one. That is not cosmetic: a list that
+    /// cannot collapse holds one segment per id, so the four bytes saved here
+    /// are four per id.
     Range { base: u64, len: u32 },
     /// Strictly ascending ids with gaps, as a run-optimized roaring bitmap.
     ///
@@ -522,8 +522,8 @@ impl Segment {
                 });
             }
             let max = bitmap.max().unwrap_or(0);
-            // `remaining` is bounded by `MAX_RECORD_IDS`, which is under
-            // `u32::MAX`, so the narrowing above it cannot lose bits.
+            // `remaining` counts down from the record's `u32` id count, so the
+            // narrowing cannot lose bits.
             let len = len as u32;
             return Ok(Self::Ascending { bitmap, len, max });
         }
@@ -816,32 +816,38 @@ fn read_narrow(
     })
 }
 
-/// The most ids one record may carry, and so the largest `Vec<u64>` a single
-/// block can be talked into allocating.
-///
-/// `Reader::guard_count` bounds a count by weighing it against the bytes left to
-/// read, which works whenever each item costs bytes on the wire. A segment does
-/// not: one `Range` describes any count in a handful of bytes, and a roaring run
-/// container holds 2^32 ids in about half a megabyte. For those the only
-/// available bound is an absolute one.
-///
-/// `1 << 27` ids is a 1 GiB `Vec<u64>`. The largest record the benchmarks
-/// produce is 10^6, so this leaves three orders of magnitude of headroom.
-pub const MAX_RECORD_IDS: u64 = 1 << 27;
-
 /// The ids of one block, whatever segments carried them.
+///
+/// The ids are allocated for **fallibly** rather than bounded by a ceiling.
+/// Run-length encoding is the point of the format, so a single valid segment
+/// describes four billion ids in about seven bytes — which makes a corrupt
+/// count and a genuinely large consecutive write byte-identical on the wire.
+/// No ceiling can distinguish them, and one low enough to bound a hostile
+/// buffer would refuse `MATCH (n:Person) SET n.active = true` on a large graph
+/// — a legitimate write, which a replica would then read as divergence and
+/// answer with a full resync that failed again the same way, for ever.
+///
+/// **What actually bounds the damage is not `try_reserve`.** Measured, an
+/// overcommitting OS grants the reservation: 1 GiB, 16 GiB and 32 GiB all
+/// return `Ok` on macOS, because the mapping is virtual until written. What
+/// bounds it is that the segments have to *supply* the ids, and the total is
+/// checked against the count below — so a buffer claiming four billion and
+/// carrying three reserves address space, writes three, and fails. Peak
+/// committed memory stays tiny.
+///
+/// The case that is genuinely unbounded is a payload that claims four billion
+/// ids **and supplies them**, as one seven-byte range. That is indistinguishable
+/// from a legitimate write of the same size, so nothing here can refuse it —
+/// and it is reachable by any client, because `GRAPH.EFFECT` is not restricted
+/// to the replication link. Bounding it needs a different guard: per-record-type
+/// limits from this graph's own counts (a delete cannot exceed what exists), or
+/// refusing client-sent effects outright. Tracked separately; the ceiling this
+/// replaces did not address it either, since it refused legitimate writes to
+/// prevent a reservation that costs nothing.
 pub fn read_ids(
     r: &mut Reader<'_>,
     count: u32,
 ) -> Result<Vec<u64>, DecodeError> {
-    // Before anything is read: a segment can describe an enormous count from a
-    // few bytes, so `guard_count` alone would see nothing wrong.
-    if u64::from(count) > MAX_RECORD_IDS {
-        return Err(DecodeError::TooManyIds {
-            count: u64::from(count),
-            max: MAX_RECORD_IDS,
-        });
-    }
     let n_segments = u64::from(r.u32()?);
     // No list can hold more segments than ids, since every segment carries at
     // least one. A tighter bound than the byte-length one, and it does not
@@ -855,7 +861,11 @@ pub fn read_ids(
     // The smallest segment is a header byte and a one-byte base.
     let n_segments = r.guard_count(n_segments, 2)?;
 
-    let mut out: Vec<u64> = Vec::with_capacity(count as usize);
+    let mut out: Vec<u64> = Vec::new();
+    out.try_reserve(count as usize)
+        .map_err(|_| DecodeError::IdAllocationFailed {
+            count: u64::from(count),
+        })?;
     for _ in 0..n_segments {
         let remaining = u64::from(count) - out.len() as u64;
         let seg = Segment::decode(r, remaining)?;
@@ -1015,14 +1025,38 @@ mod tests {
     }
 
     #[test]
-    fn an_absurd_count_is_rejected_before_allocating() {
+    fn an_absurd_count_fails_cleanly() {
+        // One segment holding one id, behind a count of `u32::MAX` — about 34 GB
+        // of `Vec<u64>` if taken at face value.
+        //
+        // No ceiling refuses it, deliberately: run-length encoding makes this
+        // byte-identical to a legitimate four-billion-id consecutive write, so a
+        // ceiling low enough to catch the first would refuse the second. What is
+        // pinned is that both outcomes are clean errors — the reservation is
+        // refused, or it succeeds and the segments then fail to total the count.
+        // Which one depends on the allocator, so the test admits either.
         let buf = [1_u8, 0, 0, 0, 0x00, 0, 1];
         let mut r = Reader::new(&buf);
-        assert_eq!(
+        assert!(matches!(
             read_ids(&mut r, u32::MAX),
-            Err(DecodeError::TooManyIds {
-                count: u64::from(u32::MAX),
-                max: MAX_RECORD_IDS,
+            Err(DecodeError::IdAllocationFailed { .. } | DecodeError::CardinalityMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn more_segments_than_ids_is_rejected_before_allocating() {
+        // The one guard that is exact, and it runs before the reservation: every
+        // segment carries at least one id, so a list cannot have more segments
+        // than the record has ids.
+        let mut buf = Vec::new();
+        write_u32(&mut buf, 1_000);
+        buf.extend_from_slice(&[0x00, 0, 1]);
+        let mut r = Reader::new(&buf);
+        assert_eq!(
+            read_ids(&mut r, 4),
+            Err(DecodeError::ImplausibleCount {
+                count: 1_000,
+                remaining: 4,
             })
         );
     }
