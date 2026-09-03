@@ -16,7 +16,6 @@
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 #include "../algorithms/Dijkstra.h"
-#include "../algorithms/yen.h"
 #include "../algorithms/AStar.h"
 #include "../algorithms/all_weighted_shortest_paths.h"
 

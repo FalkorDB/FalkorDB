@@ -549,8 +549,10 @@ bool AStar_ShortestPath
 
 // a Yen candidate path waiting in the candidate heap
 typedef struct {
-	Path   *path;    // the candidate path
-	double  weight;  // its total weight
+	Path   *path;     // the candidate path
+	double  weight;   // its total weight
+	uint    dev_idx;  // spur index it deviated from its parent at (Lawler's rule:
+	                  // once accepted, its own spurs need only start here)
 } AStarCandidate;
 
 // candidate-heap comparator: the heap keeps the *greatest* element (per this
@@ -768,13 +770,20 @@ static uint _astar_kshortest
 	dict *blocked_nodes = HashTableCreate(&def_dt);
 	dict *blocked_edges = HashTableCreate(&def_dt);
 
+	// Lawler's rule: a newly accepted path only needs spurs from the index it
+	// deviated from its parent at -- spurs before that share the parent's root
+	// prefix (with the same blocked sets) and were already generated into B when
+	// the parent was processed. A[0] (the global shortest) has no parent, so it
+	// spurs from 0.
+	uint prev_dev = 0;
+
 	while(arr_len(A) < k) {
 		Path *prev       = arr_tail (A);
 		uint  prev_nodes = Path_NodeCount(prev);
 
-		// spur node ranges over prev's nodes [0 .. prev_nodes-2] (its last node
-		// is dst, which can't spur).
-		for(uint i = 0; i + 1 < prev_nodes; i++) {
+		// spur node ranges over prev's nodes [prev_dev .. prev_nodes-2] (its last
+		// node is dst, which can't spur; indices < prev_dev are covered already).
+		for(uint i = prev_dev; i + 1 < prev_nodes; i++) {
 			NodeID spur = ENTITY_GET_ID(Path_GetNode(prev, i));
 
 			// block the edge leaving the spur node in every already-found path
@@ -813,8 +822,9 @@ static uint _astar_kshortest
 
 			if(_mark_seen(seen, total)) {
 				AStarCandidate *c = rm_malloc(sizeof(AStarCandidate));
-				c->path   = total;
-				c->weight = total_w;
+				c->path    = total;
+				c->weight  = total_w;
+				c->dev_idx = i;  // where this candidate branched off prev
 				Heap_offer(&B, c);
 			} else {
 				Path_Free(total);  // already generated before
@@ -829,6 +839,7 @@ static uint _astar_kshortest
 
 		arr_append(A, best->path);
 		arr_append(AW, best->weight);
+		prev_dev = best->dev_idx;  // Lawler: next iteration spurs prev from here
 		rm_free(best);
 	}
 
