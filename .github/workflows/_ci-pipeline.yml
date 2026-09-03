@@ -84,20 +84,6 @@ jobs:
 
   # Build the coverage-instrumented runtime image (amd64-only).
 
-  build-rc-coverage-image:
-    uses: ./.github/workflows/_build-flavour.yml
-    permissions:
-      contents: read
-      packages: write
-    with:
-      flavour: coverage
-      tag: rc-${{ inputs.ci_key }}-coverage
-      commit_sha: ${{ inputs.commit_sha }}
-      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"}]'
-      dockerfile: build/runtime/Dockerfile.coverage
-      build_image: ${{ inputs.build_image }}
-      create_manifest: false
-
   test-image:
     runs-on: ubuntu-latest
     container:
@@ -221,22 +207,4 @@ jobs:
       build_image: ${{ inputs.build_image }}
       pr_number: ${{ inputs.ci_key }}
       sanitizer_env: address
-    secrets: inherit
-
-  flow-coverage:
-    needs: [build-rc-coverage-image]
-    if: ${{ inputs.run_flow && (!cancelled() && needs.build-rc-coverage-image.result == 'success') }}
-    uses: ./.github/workflows/_flow-flavour.yml
-    permissions:
-      contents: read
-      packages: read
-    with:
-      flavour: coverage
-      image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}-coverage
-      archs: '["amd64"]'
-      services_files: ${{ inputs.services_files }}
-      spawn_files: ${{ inputs.spawn_files }}
-      build_image: ${{ inputs.build_image }}
-      pr_number: ${{ inputs.ci_key }}
-      collect_coverage: true
     secrets: inherit
