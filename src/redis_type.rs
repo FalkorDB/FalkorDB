@@ -18,6 +18,7 @@
 //! RDB load (aux payload)   | graph_aux_load()   | Deserialize + register UDFs
 //! RDB save (per-key)       | graph_rdb_save()   | Encode graph to RDB stream
 //! RDB load (per-key)       | graph_rdb_load()   | Decode graph from RDB stream
+//! AOF rewrite (per-key)    | graph_aof_rewrite()| Emit GRAPH.RESTORE for no-preamble AOF
 //! ```
 //!
 //! ## UDF persistence
@@ -199,6 +200,69 @@ unsafe extern "C" fn graph_rdb_save(
         let graph = g.borrow();
         serializers::encoder::rdb_save_graph(rdb, &graph);
     }
+}
+
+/// AOF rewrite for `aof-use-rdb-preamble no`: emit one `GRAPH.RESTORE` that
+/// rebuilds the whole graph, using the same byte format `GRAPH.COPY` already
+/// replicates (`vec_save_graph` / `graph_restore`). Without this callback
+/// Redis calls a null `aof_rewrite` unconditionally and the rewrite child
+/// segfaults (#2710).
+///
+/// Virtual keys are skipped: they only exist to split one graph's RDB image
+/// across multiple Redis keys, and the primary key's `GRAPH.RESTORE` already
+/// reconstructs the whole graph, so emitting per virtual key would duplicate it.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graph_aof_rewrite(
+    aof: *mut RedisModuleIO,
+    key: *mut raw::RedisModuleString,
+    value: *mut c_void,
+) {
+    unsafe {
+        let mut len: usize = 0;
+        let ptr = raw::RedisModule_StringPtrLen.unwrap()(key, &raw mut len);
+        let key_name =
+            String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string();
+
+        if VKEY_STATE.lock().vkey_map.contains_key(&key_name) {
+            return;
+        }
+
+        // Direct encoding: use data_ptr() to bypass parking_lot RwLock, which
+        // deadlocks in the BGREWRITEAOF fork child for the same reason noted
+        // in graph_rdb_save above.
+        let graph_arc = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
+        let tg: &ThreadedGraph = &*graph_arc.data_ptr();
+        let g = tg.graph.read();
+        let graph = g.borrow();
+        let payload = serializers::encoder::vec_save_graph(&graph);
+
+        let cmd = CString::new("GRAPH.RESTORE").unwrap();
+        let fmt = CString::new("sb").unwrap();
+        raw::RedisModule_EmitAOF.unwrap()(
+            aof,
+            cmd.as_ptr(),
+            fmt.as_ptr(),
+            key,
+            payload.as_ptr().cast::<std::os::raw::c_char>(),
+            payload.len(),
+        );
+    }
+}
+
+/// No-op AOF rewrite for graphmeta virtual keys.
+///
+/// Rust never creates graphmeta keys itself (see module doc); this exists so
+/// that if one from a loaded C RDB survives to an AOF rewrite, Redis calls a
+/// real (empty) callback instead of a null `aof_rewrite`, which segfaults the
+/// rewrite child (#2710). Same defensive stance `graphmeta_rdb_save` already
+/// takes.
+#[allow(clippy::missing_const_for_fn)]
+#[unsafe(no_mangle)]
+unsafe extern "C" fn graphmeta_aof_rewrite(
+    _aof: *mut RedisModuleIO,
+    _key: *mut raw::RedisModuleString,
+    _value: *mut c_void,
+) {
 }
 
 // ---------------------------------------------------------------------------
@@ -855,7 +919,7 @@ pub static GRAPH_TYPE: RedisType = RedisType::new(
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graph_rdb_load),
         rdb_save: Some(graph_rdb_save),
-        aof_rewrite: None,
+        aof_rewrite: Some(graph_aof_rewrite),
         free: Some(graph_free),
 
         mem_usage: None,
@@ -949,7 +1013,7 @@ pub static GRAPHMETA_TYPE: RedisType = RedisType::new(
         version: REDISMODULE_TYPE_METHOD_VERSION as u64,
         rdb_load: Some(graphmeta_rdb_load),
         rdb_save: Some(graphmeta_rdb_save),
-        aof_rewrite: None,
+        aof_rewrite: Some(graphmeta_aof_rewrite),
         free: Some(graphmeta_free),
 
         mem_usage: None,
