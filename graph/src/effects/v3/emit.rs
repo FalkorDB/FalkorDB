@@ -27,7 +27,7 @@ use crate::{
     effects::v3::{self as v3, EffectEncode, IdList, Record},
     entity_type::EntityType,
     graph::constraint::{ConstraintStatus, ConstraintType},
-    graph::graph::{DeletedEdge, Graph, NodeId},
+    graph::graph::{DeletedEdge, Graph, NodeId, RelationshipId},
     index::IndexType,
     runtime::{pending::Pending, value::Value},
 };
@@ -336,17 +336,18 @@ pub fn for_each_record(
     digest_created_nodes(p, out);
     digest_created_edges(p, g, out);
     {
-        // The nodes still exist here — effects are encoded after `commit`
-        // applies — so their labels are read straight off the graph.
+        // The entities still exist here — effects are encoded after `commit`
+        // applies — so a node's labels and an edge's type are read straight off
+        // the graph.
         let graph = g.borrow();
-        digest_updates(&p.existing_nodes_attrs, EntityType::Node, Some(&graph), out);
+        digest_updates(&p.existing_nodes_attrs, EntityType::Node, &graph, out);
+        digest_updates(
+            &p.existing_relationships_attrs,
+            EntityType::Relationship,
+            &graph,
+            out,
+        );
     }
-    digest_updates(
-        &p.existing_relationships_attrs,
-        EntityType::Relationship,
-        None,
-        out,
-    );
     // A created node carries its labels in its CREATE_NODE record already.
     digest_labels(&p.set_labels, Some(&p.created_nodes), true, out);
     digest_labels(&p.remove_labels, None, false, out);
@@ -533,24 +534,57 @@ fn digest_deleted_edges(
 fn digest_updates(
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
     entity: EntityType,
-    graph: Option<&Graph>,
+    graph: &Graph,
     out: &mut impl FnMut(Record),
 ) {
-    let mut groups: FxHashMap<(Vec<i32>, Vec<u16>), Vec<u64>> = FxHashMap::default();
+    // The shape is the entity's schema membership plus its attribute ids —
+    // labels for a node, the one relationship type for an edge. Both go in the
+    // key, because both go on the wire, and a record can only state one of
+    // them for the whole group.
+    let mut groups: FxHashMap<(Vec<i32>, Option<i32>, Vec<u16>), Vec<u64>> = FxHashMap::default();
     for (id, pairs) in attrs {
         let attr_ids: Vec<u16> = pairs.iter().map(|(aid, _)| *aid).collect();
         let mut labels: Vec<i32> = Vec::new();
-        if let Some(g) = graph {
-            labels.extend(g.get_node_label_ids(NodeId::from(*id)).map(|l| l.0 as i32));
-            // Ascending and deduplicated, matching `digest_created_nodes`: the
-            // same label set has to hash to the same shape and serialize to the
-            // same bytes on both engines.
-            labels.sort_unstable();
-            labels.dedup();
+        let mut relation_id: Option<i32> = None;
+        match entity {
+            EntityType::Node => {
+                labels.extend(
+                    graph
+                        .get_node_label_ids(NodeId::from(*id))
+                        .map(|l| l.0 as i32),
+                );
+                // Ascending and deduplicated, matching `digest_created_nodes`:
+                // the same label set has to hash to the same shape and
+                // serialize to the same bytes on both engines.
+                labels.sort_unstable();
+                labels.dedup();
+            }
+            // One lookup per updated edge, on the primary, so the replica does
+            // not repeat it per edge inside `track_edge_index_updates`. The
+            // primary already pays this in its own commit whenever an edge
+            // index exists; the replica pays it unconditionally today.
+            //
+            // `type_id_for_edge`, not `get_relationship_type_id`, and that is
+            // load-bearing: `MATCH ()-[e]->() SET e.x = 1 DELETE e` leaves the
+            // edge in `existing_relationships_attrs` while `commit` has already
+            // cleared it from the type matrix, so the panicking form would take
+            // the server down on a legitimate query. Such an edge is dropped
+            // here rather than sent: the payload already carries the
+            // `DELETE_EDGE`, and an update to an entity that does not survive
+            // the transaction lands the replica in the same place either way.
+            EntityType::Relationship => {
+                let Some(type_id) = graph.type_id_for_edge(RelationshipId::from(*id)) else {
+                    continue;
+                };
+                relation_id = Some(type_id.0 as i32);
+            }
         }
-        groups.entry((labels, attr_ids)).or_default().push(*id);
+        groups
+            .entry((labels, relation_id, attr_ids))
+            .or_default()
+            .push(*id);
     }
-    for ((labels, attr_ids), mut ids) in sorted_groups(groups) {
+    for ((labels, relation_id, attr_ids), mut ids) in sorted_groups(groups) {
         // Ascending, so the rows below are gathered in that order and the run
         // encodings stay eligible. A hash map has no order of its own, so this
         // is also what makes the output reproducible.
@@ -576,6 +610,7 @@ fn digest_updates(
             entity,
             ids,
             labels,
+            relation_id,
             attr_ids,
             rows,
         });
@@ -853,6 +888,17 @@ mod tests {
         }
     }
 
+    /// A committed edge of the named type, so the emitter has a type to read.
+    fn with_edge(
+        g: &AtomicRefCell<Graph>,
+        type_name: &str,
+        id: u64,
+    ) {
+        let mut graph = g.borrow_mut();
+        graph.add_reserved_relationship_count(1);
+        graph.create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id]);
+    }
+
     fn build(
         p: &Pending,
         g: &AtomicRefCell<Graph>,
@@ -1064,11 +1110,14 @@ mod tests {
     }
 
     #[test]
-    fn an_edge_update_carries_no_labels() {
-        // The asymmetry: set_relationships_attributes never looks a type up, so
-        // UPDATE_EDGE derives nothing and puts nothing on the wire.
+    fn an_edge_update_carries_its_type_not_labels() {
+        // The two forms fill the same slot differently: a node's labels, an
+        // edge's one relationship type. C's own UPDATE_EDGE has always carried
+        // the relation id — see `update_edge_effect.c`, which refuses a record
+        // naming a type it does not have.
         let g = graph();
         with_attrs(&g, &["x"]);
+        with_edge(&g, "R", 5);
         let mut p = Pending::default();
         p.set_schema_baseline(&g);
         p.stage_updated_edge(5, &[(0, Value::Int(1))]);
@@ -1079,6 +1128,7 @@ mod tests {
             entity,
             ids,
             labels,
+            relation_id,
             ..
         } = &records[0]
         else {
@@ -1087,6 +1137,56 @@ mod tests {
         assert_eq!(*entity, EntityType::Relationship);
         assert_eq!(ids, &[5]);
         assert!(labels.is_empty(), "an edge update carries no label set");
+        assert_eq!(*relation_id, Some(0), "it carries its type instead");
+    }
+
+    #[test]
+    fn two_types_do_not_share_one_update_record() {
+        // The type is stated once for the whole record, so it has to be part of
+        // the group key. Sharing the shape but not the type must split.
+        let g = graph();
+        with_attrs(&g, &["x"]);
+        with_edge(&g, "R", 5);
+        with_edge(&g, "S", 6);
+        let mut p = Pending::default();
+        p.set_schema_baseline(&g);
+        p.stage_updated_edge(5, &[(0, Value::Int(1))]);
+        p.stage_updated_edge(6, &[(0, Value::Int(2))]);
+
+        let records = build(&p, &g);
+        let mut types: Vec<Option<i32>> = records
+            .iter()
+            .map(|r| match r {
+                Record::Update { relation_id, .. } => *relation_id,
+                other => panic!("wrong record: {other:?}"),
+            })
+            .collect();
+        types.sort_unstable();
+        assert_eq!(types, vec![Some(0), Some(1)], "{records:#?}");
+    }
+
+    #[test]
+    fn an_edge_updated_then_deleted_in_one_transaction_is_not_a_panic() {
+        // `MATCH ()-[e]->() SET e.x = 1 DELETE e` leaves the edge in
+        // `existing_relationships_attrs` after `commit` has already cleared it
+        // from the type matrix. Reading its type with the panicking
+        // `get_relationship_type_id` took the server down here; the update is
+        // dropped instead, because the payload's DELETE_EDGE lands the replica
+        // in the same place.
+        let g = graph();
+        with_attrs(&g, &["x"]);
+        let mut p = Pending::default();
+        p.set_schema_baseline(&g);
+        // Staged against an edge the graph has no row for — exactly the state
+        // `commit` leaves behind for an edge deleted in the same transaction.
+        p.stage_updated_edge(5, &[(0, Value::Int(1))]);
+
+        let records = build(&p, &g);
+        assert!(
+            records.is_empty(),
+            "an update for an edge that did not survive the transaction must not \
+             be emitted, and must not panic: {records:#?}"
+        );
     }
 
     #[test]

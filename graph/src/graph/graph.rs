@@ -2419,6 +2419,28 @@ impl Graph {
         Ok((nremoved, nset))
     }
 
+    /// As [`Self::set_relationships_attributes`], for edges already known to
+    /// share one type.
+    ///
+    /// The difference is entirely in the index bookkeeping: the general form
+    /// calls `get_relationship_type_id` per edge, and that is a
+    /// `relationship_type_matrix.iter(id, id)` each time — the per-entity delta
+    /// iteration `import_node_attrs` documents as O(accumulated delta). Every
+    /// caller that already knows the type should state it.
+    ///
+    /// The v3 `UPDATE_EDGE` record does, since #2570: its group key is the
+    /// relationship type, so one record is one type by construction.
+    pub fn set_relationships_attributes_of_type(
+        &mut self,
+        type_id: TypeId,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
+        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    ) -> Result<(usize, usize), String> {
+        let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
+        self.track_edge_index_updates_of_type(type_id, attrs, index_add_edge_docs);
+        Ok((nremoved, nset))
+    }
+
     #[must_use]
     pub fn is_node_deleted(
         &self,
@@ -2913,12 +2935,28 @@ impl Graph {
         &self,
         id: RelationshipId,
     ) -> TypeId {
+        self.type_id_for_edge(id)
+            .expect("relationship must have a type in type_matrix")
+    }
+
+    /// The edge's type, or `None` if it has no row in the type matrix.
+    ///
+    /// The fallible counterpart of [`Self::get_relationship_type_id`], in the
+    /// same relation as [`Self::endpoints_for_edge`] to
+    /// `get_relationship_endpoints`. An edge deleted earlier in this same
+    /// transaction is exactly this case: `commit` clears the matrices before
+    /// effects are built, so anything reading a type on the emit path has to
+    /// tolerate the edge already being gone rather than panic on it.
+    #[must_use]
+    pub fn type_id_for_edge(
+        &self,
+        id: RelationshipId,
+    ) -> Option<TypeId> {
         #[allow(clippy::cast_possible_truncation)]
         self.relationship_type_matrix
             .iter(id.0, id.0)
             .map(|(_, l)| TypeId(l as usize))
             .next()
-            .expect("relationship must have a type in type_matrix")
     }
 
     /// Decode the (src, dst) endpoints for an edge from the graph-wide reverse

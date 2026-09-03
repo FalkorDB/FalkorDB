@@ -319,6 +319,7 @@ fn apply_record(
             // its graph to maintain the indexes. Carrying it groups the rows
             // and lets a future divergence check compare the two.
             labels: _,
+            relation_id,
             attr_ids,
             rows,
         } => {
@@ -329,10 +330,15 @@ fn apply_record(
                     g.set_nodes_attributes_rows(&ids, &attr_ids, &rows, &mut ops.docs.node_adds)?;
                 }
                 EntityType::Relationship => {
+                    // Stated once for the record, so the index bookkeeping does
+                    // not re-derive it per edge. `set_relationships_attributes`
+                    // calls `get_relationship_type_id` for every id, which is a
+                    // delta-matrix `iter` each time.
+                    let type_id = checked_type_id(g, relation_id)?;
                     // Edges still go through the map form; only the node store
                     // has the row-major entry point so far.
                     let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                    g.set_relationships_attributes(&map, &mut ops.docs.edge_adds)?;
+                    g.set_relationships_attributes_of_type(type_id, &map, &mut ops.docs.edge_adds)?;
                 }
             }
             Ok(())
@@ -650,6 +656,25 @@ fn resolve_type(
         .ok_or_else(out_of_range)
 }
 
+/// An `UPDATE_EDGE`'s relationship type, checked against this graph.
+///
+/// The same check C's `ApplyUpdateEdge` opens with — it refuses a record whose
+/// `r_id` is negative or past the local edge-schema count, logging "references
+/// relationship type %d which doesn't exist locally". A replica that has not
+/// seen the `ADD_SCHEMA` yet must fail here rather than index the rows under a
+/// type it invented.
+fn checked_type_id(
+    g: &Graph,
+    relation_id: Option<i32>,
+) -> Result<TypeId, ApplyError> {
+    let relation_id = relation_id.ok_or(ApplyError::IdOutOfRange {
+        kind: "relationship type",
+        id: -1,
+    })?;
+    resolve_type(g, relation_id)?;
+    Ok(TypeId(relation_id as usize))
+}
+
 /// Expand `(ids, labels)` into the row/column pairs the bulk label API takes,
 /// bounds-checking every label id on the way.
 /// The label ids, checked against this graph's dictionary.
@@ -960,6 +985,7 @@ mod tests {
             EntityType::Node,
             &IdList::from([0, 1]),
             &[0],
+            None,
             &[1],
             &[Value::Null, Value::Null],
         );
@@ -1331,6 +1357,7 @@ mod tests {
                 EntityType::Node,
                 &IdList::from([0]),
                 &[],
+                None,
                 &bad,
                 &[Value::Int(1), Value::Int(2)],
             );

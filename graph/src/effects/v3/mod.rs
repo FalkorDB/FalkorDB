@@ -18,11 +18,13 @@
 //! | `AttrIds` | `u16 n` · `u16 attr_id × n` |
 //! | `AttrValues` | `SIValue × (count × n)`, row-major |
 //!
-//! An `IdList` is a sequence of self-describing segments, each either a
-//! consecutive `Range` or an `Ascending` roaring bitmap — see
-//! [`id_list`](self::IdList). There is no plain form and no dictionary: a
-//! `Range` of one describes a single id, so duplicates and disorder are the
-//! ordinary case rather than encodings of their own.
+//! An `IdList` is a sequence of self-describing segments, each a consecutive
+//! `Range`, a `Repeat` of one id, or an `Ascending` roaring bitmap — see
+//! [`IdList`]. There is no plain form and no dictionary: a `Range` of one
+//! describes a single id, so duplicates and disorder are the ordinary case
+//! rather than encodings of their own. A supernode's endpoint column, which is
+//! one id repeated, is a `Repeat` and cannot become a bitmap — a bitmap holds a
+//! value once, and the column's whole content is that it does not.
 //!
 //! ## Row order is id order
 //!
@@ -49,8 +51,12 @@
 //!
 //! Batchable records are `u32 opcode · u32 count · blocks…`. `ADD_SCHEMA` and
 //! `ADD_ATTRIBUTE` are inherently singular — one schema, one name — so they
-//! carry an opcode but no count. Index and constraint records (11–14) are not
-//! in this module yet.
+//! carry an opcode but no count.
+//!
+//! Where a record names the entity's schema membership, node and edge forms
+//! fill the same slot with different blocks: `UPDATE_NODE` a `LabelSet`,
+//! `UPDATE_EDGE` a `RelType`. Both are the group's partition key and the
+//! identity the replica can check the record against — see [`write_update`].
 
 use crate::{
     entity_type::EntityType,

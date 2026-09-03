@@ -71,29 +71,56 @@ pub fn write_create_edge(
     write_attr_values(buf, rows);
 }
 
-/// `1 UPDATE_NODE` — `count · IdList · LabelSet · AttrSet`.
-/// `2 UPDATE_EDGE` — `count · IdList · AttrSet`.
+/// `1 UPDATE_NODE` — `count · LabelSet · AttrIds · IdList · AttrValues`.
+/// `2 UPDATE_EDGE` — `count · RelType · AttrIds · IdList · AttrValues`.
 ///
 /// v2 wrote one record per *(entity, attribute)*; v3 writes one per shape. A
 /// property being removed is `T_NULL` in its slot — the tag's only meaning here.
 ///
-/// The node form carries a `LabelSet` and the edge form does not, because a
-/// node's labels are what say which label-scoped indexes to touch and a node
-/// may hold several — `set_nodes_attributes` walks `node_labels_matrix` per
-/// node to work that out. An edge has exactly one type and
-/// `set_relationships_attributes` never looks it up, so a type here would be a
-/// field nothing reads. `labels` is ignored for [`EntityType::Relationship`].
+/// Each form carries the entity's schema membership in the same slot: a node's
+/// `LabelSet`, an edge's `RelType`. Neither is an instruction — the replica
+/// re-derives what it needs to maintain its own indexes either way — so what
+/// they are for is stated where they are used, in `apply`: they are the group's
+/// partition key, and the identity the replica can check the record against
+/// before it mutates anything.
+///
+/// The edge form carried nothing here until [#2570 (comment)]. That was a
+/// mistake with two parts. C's own `EFFECT_UPDATE_EDGE` has always carried the
+/// relation id — `update_edge_effect.c` refuses a record whose `r_id` is not a
+/// live edge schema, and again whose `(id, src, dst, r_id)` is not a live edge —
+/// so omitting it dropped a divergence check C performs, on the format meant to
+/// replace C's. And the reason given for the asymmetry was wrong in itself:
+/// `set_nodes_attributes` does not read the wire's `LabelSet` at all, it walks
+/// `node_labels_matrix` per node, so "the node form needs its labels for the
+/// indexes" was never why that field was there.
+///
+/// The type also buys the replica the cheap path. `track_edge_index_updates`
+/// calls `get_relationship_type_id` per edge, which is a delta-matrix `iter` per
+/// edge — the pattern `import_node_attrs` exists to avoid — while
+/// `track_edge_index_updates_of_type` takes it once for the whole record.
+///
+/// C's record additionally carries `src` and `dst`, and this one deliberately
+/// does not: they are per *edge*, not per record, so they would cost two more
+/// `IdList`s where the type costs four bytes, and their only use in C is a
+/// `Graph_HasEdge` that an id-based existence check answers here.
+///
+/// [#2570 (comment)]: https://github.com/FalkorDB/FalkorDB/pull/2570#discussion_r3928425902
 pub fn write_update(
     buf: &mut Vec<u8>,
     entity: EntityType,
     ids: &IdList,
     labels: &[i32],
+    relation_id: Option<i32>,
     attr_ids: &[u16],
     rows: &[Value],
 ) {
     write_header(buf, update_opcode(entity), Some(ids.count()));
-    if entity == EntityType::Node {
-        write_label_set(buf, labels);
+    match entity {
+        EntityType::Node => write_label_set(buf, labels),
+        EntityType::Relationship => write_rel_type(
+            buf,
+            relation_id.expect("UPDATE_EDGE carries its relationship type"),
+        ),
     }
     write_attr_ids(buf, attr_ids);
     ids.encode(buf);
@@ -382,8 +409,11 @@ pub enum Record {
         entity: EntityType,
         ids: IdList,
         /// The nodes' derived labels. Always empty for [`EntityType::Relationship`],
-        /// which carries none on the wire.
+        /// which carries a [`Self::Update::relation_id`] in the same slot instead.
         labels: Vec<i32>,
+        /// The edges' one relationship type. `None` for [`EntityType::Node`],
+        /// whose membership is the label set above.
+        relation_id: Option<i32>,
         attr_ids: Vec<u16>,
         rows: Vec<Value>,
     },
@@ -465,10 +495,14 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             } else {
                 EntityType::Relationship
             };
-            let labels = if entity == EntityType::Node {
-                read_label_set(r)?
+            // One slot, read as whichever the opcode says it is. A decoder that
+            // reads the wrong one here does not fail — it consumes the next
+            // block's first bytes as a count and misaligns everything after it,
+            // which is the class of bug the fixtures exist to catch.
+            let (labels, relation_id) = if entity == EntityType::Node {
+                (read_label_set(r)?, None)
             } else {
-                Vec::new()
+                (Vec::new(), Some(read_rel_type(r)?))
             };
             let attr_ids = read_attr_ids(r)?;
             let ids = IdList::decode(r, count)?;
@@ -477,6 +511,7 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
                 entity,
                 ids,
                 labels,
+                relation_id,
                 attr_ids,
                 rows,
             }
@@ -645,9 +680,10 @@ impl EffectEncode<3> for Record {
                 entity,
                 ids,
                 labels,
+                relation_id,
                 attr_ids,
                 rows,
-            } => write_update(buf, *entity, ids, labels, attr_ids, rows),
+            } => write_update(buf, *entity, ids, labels, *relation_id, attr_ids, rows),
             Record::Labels { add, ids, labels } => write_labels(buf, *add, ids, labels),
             Record::DeleteNode { ids, labels } => write_delete_node(buf, ids, labels),
             Record::DeleteEdge {
@@ -1090,6 +1126,7 @@ mod tests {
             EntityType::Node,
             &IdList::from([1]),
             &[7],
+            None,
             &[0],
             &[Value::Int(9)],
         );
@@ -1098,6 +1135,7 @@ mod tests {
             EntityType::Relationship,
             &IdList::from([5]),
             &[],
+            Some(1),
             &[0],
             &[Value::Null],
         );
@@ -1199,10 +1237,19 @@ mod tests {
                     entity,
                     ids,
                     labels,
+                    relation_id,
                     attr_ids,
                     rows,
                 } => {
-                    write_update(&mut again, *entity, ids, labels, attr_ids, rows);
+                    write_update(
+                        &mut again,
+                        *entity,
+                        ids,
+                        labels,
+                        *relation_id,
+                        attr_ids,
+                        rows,
+                    );
                 }
                 Record::Labels { add, ids, labels } => {
                     write_labels(&mut again, *add, ids, labels);
