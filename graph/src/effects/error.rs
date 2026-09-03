@@ -97,13 +97,4 @@ pub enum DecodeError {
     /// A `Range` block whose `base + count` would wrap past `u64`.
     #[error("id range starting at {base} cannot hold {count} ids")]
     BadRange { base: u64, count: u64 },
-
-    /// A list or map nested deeper than a [`Value`] can be handled at.
-    ///
-    /// Not a decoder limitation. `Value` is a recursive type, so *every*
-    /// operation on one recurses — `Drop` above all — and the decoder being
-    /// iterative only moves the overflow to whatever touches the value next.
-    /// Measured: 50,000 levels decode fine and then abort on drop.
-    #[error("value nested deeper than the maximum of {max}")]
-    ValueTooDeep { max: usize },
 }

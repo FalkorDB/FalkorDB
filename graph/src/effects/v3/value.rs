@@ -123,25 +123,6 @@ impl EffectEncode<3> for Value {
     }
 }
 
-/// How deep a list or map may nest.
-///
-/// **This bounds the type, not the decoder.** `Value` holds its children behind
-/// `Arc<ThinVec<Value>>`, so every operation on a nested one recurses — `Drop`,
-/// `PartialEq`, `Debug`, `encode`. Making the decoder iterative removed its own
-/// recursion and nothing else's: measured, 50,000 levels now decode without
-/// touching the stack and then abort in `Drop`, because dropping the chain
-/// recurses once per level.
-///
-/// So a depth bound is not a decoder shortcut standing in for trusting the
-/// encoder. It is the only thing between a nested value and a SIGSEGV in code
-/// that never looks at the wire at all.
-///
-/// 256 mirrors `Parser::MAX_TREE_DEPTH`. A value only reaches an effect by being
-/// parsed and evaluated first, so nothing legitimate can arrive nested deeper
-/// than the parser would accept, and that limit already sits well above the 100
-/// nested lists the parser's own tests pin.
-const MAX_VALUE_DEPTH: usize = 256;
-
 /// One unfinished container, while its children are being read.
 ///
 /// A map keeps the key it is waiting on: an entry is a key then a value, and the
@@ -171,11 +152,19 @@ impl EffectDecode<3> for Value {
     /// legitimate input to bound a hostile one.
     ///
     /// With an explicit stack, depth costs heap instead — one `Frame` per open
-    /// container. That removes the decoder's own recursion, which is worth
-    /// having, but it does **not** remove the need for [`MAX_VALUE_DEPTH`]:
-    /// `Value` is recursive, so dropping a deeply nested one overflows the stack
-    /// whatever built it. The bound is enforced here because this is where the
-    /// depth becomes known, not because decoding is the fragile part.
+    /// container — so the decoder itself has no depth limit and needs none.
+    ///
+    /// There is deliberately no cap. A depth ceiling here refused values the
+    /// primary had already built, stored and read back: at 256 a legitimate
+    /// `CREATE (:Deep {v: reduce(acc = [], x IN range(1, 300) | [acc])})`
+    /// reached the replica, failed to decode, and started a forced-resync loop
+    /// that failed again identically. The primary surviving construction *is*
+    /// the validation — a value it cannot hold never gets encoded, because it
+    /// takes the process down first.
+    ///
+    /// `Value` is still recursive and still overflows the stack when dropped
+    /// deep enough, on either side. That bound belongs where the value is built,
+    /// not where it is read; see the issue on unbounded nesting.
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
         let mut stack: Vec<Frame> = Vec::new();
 
@@ -222,16 +211,6 @@ impl EffectDecode<3> for Value {
     }
 }
 
-/// Refuse another level before one is opened.
-fn check_depth(stack: &[Frame]) -> Result<(), DecodeError> {
-    if stack.len() >= MAX_VALUE_DEPTH {
-        return Err(DecodeError::ValueTooDeep {
-            max: MAX_VALUE_DEPTH,
-        });
-    }
-    Ok(())
-}
-
 /// Read one tag and either return a finished value or open a container.
 ///
 /// `Ok(None)` means a frame was pushed: the value is not known until its
@@ -267,7 +246,6 @@ fn read_one(
             if n == 0 {
                 return Ok(Some(Value::List(Arc::new(ThinVec::new()))));
             }
-            check_depth(stack)?;
             stack.push(Frame::List {
                 items: ThinVec::with_capacity(n),
                 left: n,
@@ -281,7 +259,6 @@ fn read_one(
             if n == 0 {
                 return Ok(Some(Value::Map(Arc::new(OrderMap::default()))));
             }
-            check_depth(stack)?;
             let key = Arc::new(r.string()?);
             stack.push(Frame::Map {
                 map: OrderMap::default(),
@@ -385,43 +362,28 @@ mod tests {
     }
 
     #[test]
-    fn deep_nesting_is_refused_because_the_value_cannot_be_dropped() {
-        // The bound is not about decoding. With an iterative decoder, a payload
-        // 50,000 levels deep decodes without touching the stack — and then
-        // aborts in `Drop`, because `Value` holds its children behind an `Arc`
-        // and dropping the chain recurses once per level. `std::mem::forget` on
-        // the decoded value is what proves it: forget it and nothing crashes.
+    fn deep_nesting_decodes_because_the_primary_already_survived_it() {
+        // No depth ceiling. One at 256 refused a value the primary builds,
+        // stores and reads back — `reduce(acc = [], x IN range(1, 300) | [acc])`
+        // — so the replica could not apply it and looped on forced resyncs.
         //
-        // So the refusal happens where the depth first becomes known, and it
-        // protects code that never looks at the wire.
+        // 5,000 levels here rather than 50,000: the decoder handles either, but
+        // *dropping* the result recurses once per level, and that is a property
+        // of `Value` on both sides rather than of this codec. The primary dies
+        // on its own somewhere past 10,000, which is what bounds this in
+        // practice.
+        let levels = 5_000_usize;
         let mut buf = Vec::new();
-        for _ in 0..MAX_VALUE_DEPTH + 50 {
+        for _ in 0..levels {
             buf.extend_from_slice(&(si_type::T_ARRAY as u32).to_le_bytes());
             buf.extend_from_slice(&1_u32.to_le_bytes());
         }
         buf.extend_from_slice(&(si_type::T_NULL as u32).to_le_bytes());
 
         let mut r = Reader::new(&buf);
-        assert_eq!(
-            Value::decode(&mut r),
-            Err(DecodeError::ValueTooDeep {
-                max: MAX_VALUE_DEPTH
-            })
-        );
+        let v = Value::decode(&mut r).expect("depth is not the decoder's business");
+        assert!(r.is_empty());
 
-        // And right up to the limit still decodes, so the bound is not quietly
-        // rejecting legitimate data.
-        let mut buf = Vec::new();
-        for _ in 0..MAX_VALUE_DEPTH {
-            buf.extend_from_slice(&(si_type::T_ARRAY as u32).to_le_bytes());
-            buf.extend_from_slice(&1_u32.to_le_bytes());
-        }
-        buf.extend_from_slice(&(si_type::T_NULL as u32).to_le_bytes());
-        let mut r = Reader::new(&buf);
-        let v = Value::decode(&mut r).expect("at the limit must still decode");
-
-        // Walked iteratively, and dropped normally at the end of scope — which
-        // is the operation the bound exists for.
         let mut depth = 0_usize;
         let mut cur = &v;
         while let Value::List(items) = cur {
@@ -429,7 +391,7 @@ mod tests {
             cur = &items[0];
             depth += 1;
         }
-        assert_eq!(depth, MAX_VALUE_DEPTH);
+        assert_eq!(depth, levels);
         assert_eq!(*cur, Value::Null);
     }
 
@@ -439,7 +401,7 @@ mod tests {
         // ordinary one: a payload promising children it does not carry fails on
         // the read rather than producing a partial value.
         let mut buf = Vec::new();
-        for _ in 0..MAX_VALUE_DEPTH - 1 {
+        for _ in 0..1_000 {
             buf.extend_from_slice(&(si_type::T_ARRAY as u32).to_le_bytes());
             buf.extend_from_slice(&1_u32.to_le_bytes());
         }
