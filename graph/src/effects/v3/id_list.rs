@@ -94,20 +94,36 @@ struct RunCost {
     containers: Vec<(u64, u64, u32)>,
 }
 
-/// Roaring's array store: two bytes a value.
+// Roaring's serialized layout, as the pieces this arithmetic needs. Names here
+// describe the field's job; roaring's own names, and the format spec's, are
+// given alongside so a reader cross-checking the crate can find them.
+//
+// Layout: <magic> [<container count>] <per-container descriptor> x n
+//         [<per-container offset> x n] <container bodies>
+// See https://github.com/RoaringBitmap/RoaringFormatSpec
+
+/// An array container: one `u16` per value.
 const ARRAY_ELEMENT_BYTES: usize = 2;
-/// Roaring's bitset store, a fixed 1024 x u64.
-const BITMAP_BYTES: usize = 8192;
-/// A run container: a `u16` count, then `u16 start` + `u16 length` per run.
-const RUN_NUM_BYTES: usize = 2;
-const RUN_ELEMENT_BYTES: usize = 4;
-/// Roaring's per-bitmap header pieces.
-const COOKIE_BYTES: usize = 4;
-const SIZE_BYTES: usize = 4;
-const DESCRIPTION_BYTES: usize = 4;
-const OFFSET_BYTES: usize = 4;
-/// Below this many containers the run-flavoured header omits the offset table.
-const NO_OFFSET_THRESHOLD: usize = 4;
+/// A bitset container: a fixed 1024 x `u64`, whatever it holds.
+const BITSET_CONTAINER_BYTES: usize = 8192;
+/// A run container: a `u16` count of intervals, then each interval.
+const RUN_COUNT_BYTES: usize = 2;
+/// One interval: `u16 start` and `u16 length`.
+const RUN_INTERVAL_BYTES: usize = 4;
+/// The leading magic number, which selects the container layout that follows.
+///
+/// Roaring and the format spec call this the *cookie*: `12346` introduces the
+/// layout without run containers, `12347` the one with them.
+const MAGIC_BYTES: usize = 4;
+/// The `u32` container count, present only in the no-run-container layout —
+/// the other packs it into the magic number's high bits.
+const CONTAINER_COUNT_BYTES: usize = 4;
+/// One container's descriptor: its `u16` key and its `u16` cardinality.
+const CONTAINER_DESC_BYTES: usize = 4;
+/// One container's `u32` offset into the body.
+const CONTAINER_OFFSET_BYTES: usize = 4;
+/// Below this many containers the run-container layout omits the offset table.
+const OFFSET_TABLE_MIN_CONTAINERS: usize = 4;
 
 impl RunCost {
     fn clear(&mut self) {
@@ -154,8 +170,8 @@ impl RunCost {
                 let (_, ids, runs) = self.containers[i];
                 // Array up to 4,096 values, bitset past it — which is exactly
                 // `min`, because 2 x 4,096 is the bitset's fixed size.
-                let plain = (ids as usize * ARRAY_ELEMENT_BYTES).min(BITMAP_BYTES);
-                let as_run = RUN_NUM_BYTES + RUN_ELEMENT_BYTES * runs as usize;
+                let plain = (ids as usize * ARRAY_ELEMENT_BYTES).min(BITSET_CONTAINER_BYTES);
+                let as_run = RUN_COUNT_BYTES + RUN_INTERVAL_BYTES * runs as usize;
                 // A tie keeps the run container, not the array. That is not a
                 // detail: `optimize()` is path-dependent — from an `Array`
                 // store it converts only on a strict win, but from a `Run`
@@ -175,13 +191,15 @@ impl RunCost {
             }
             let header = if has_run {
                 let run_flags = nc.div_ceil(8);
-                if nc >= NO_OFFSET_THRESHOLD {
-                    COOKIE_BYTES + (DESCRIPTION_BYTES + OFFSET_BYTES) * nc + run_flags
+                if nc >= OFFSET_TABLE_MIN_CONTAINERS {
+                    MAGIC_BYTES + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * nc + run_flags
                 } else {
-                    COOKIE_BYTES + DESCRIPTION_BYTES * nc + run_flags
+                    MAGIC_BYTES + CONTAINER_DESC_BYTES * nc + run_flags
                 }
             } else {
-                COOKIE_BYTES + SIZE_BYTES + (DESCRIPTION_BYTES + OFFSET_BYTES) * nc
+                MAGIC_BYTES
+                    + CONTAINER_COUNT_BYTES
+                    + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * nc
             };
             // Each 2^32 entry is a `u32` key then the bitmap itself.
             total += size_of::<u32>() + header + body;
