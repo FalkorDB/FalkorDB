@@ -314,11 +314,16 @@ fn apply_record(
         Record::Update {
             entity,
             ids,
-            // The node label set is the partition key, not an instruction: the
-            // replica's own `set_nodes_attributes` re-derives the labels from
-            // its graph to maintain the indexes. Carrying it groups the rows
-            // and lets a future divergence check compare the two.
-            labels: _,
+            // Both of these are *used*, not re-derived. The record states the
+            // schema membership the primary saw, so indexing under it makes
+            // this graph's index hold what the primary's holds; re-deriving
+            // would make it agree with local state instead, which is the same
+            // answer only until something has diverged and a silently
+            // different one afterwards. Bounds-checked against this graph's
+            // dictionaries first, so a record naming a label or type the
+            // replica has not seen fails the buffer rather than indexing under
+            // an id it invented.
+            labels,
             relation_id,
             attr_ids,
             rows,
@@ -327,7 +332,14 @@ fn apply_record(
             match entity {
                 EntityType::Node => {
                     check_attr_shape(g, &ids, &attr_ids, &rows)?;
-                    g.set_nodes_attributes_rows(&ids, &attr_ids, &rows, &mut ops.docs.node_adds)?;
+                    let label_ids = checked_label_ids(g, &labels)?;
+                    g.set_nodes_attributes_rows_of_labels(
+                        &ids,
+                        &label_ids,
+                        &attr_ids,
+                        &rows,
+                        &mut ops.docs.node_adds,
+                    )?;
                 }
                 EntityType::Relationship => {
                     // Stated once for the record, so the index bookkeeping does

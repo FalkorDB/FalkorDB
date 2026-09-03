@@ -1479,6 +1479,57 @@ impl Graph {
     /// The map form makes the caller allocate a `Vec` per entity and this
     /// function sort them back into the id order the wire already had. See
     /// [`AttributeStore::insert_attrs_rows`].
+    /// As [`Self::set_nodes_attributes_rows`], for nodes already known to share
+    /// one label set.
+    ///
+    /// The labels come from the caller rather than from this graph, and on the
+    /// replication path that is the point: a v3 `UPDATE_NODE` states the label
+    /// set the **primary** saw, so indexing under it makes the replica's index
+    /// hold what the primary's holds. Re-deriving would make the replica agree
+    /// with its own label matrix instead — which is the same thing only while
+    /// nothing has diverged, and silently different once something has.
+    ///
+    /// It is also the cheap form, for the same reason
+    /// [`Self::set_relationships_attributes_of_type`] is. The general form
+    /// walks `node_labels_matrix.iter(id, id)` per node; here the record's
+    /// grouping has already established that every id shares the set, so the
+    /// indexed-attribute test runs once for the whole record and what remains
+    /// per node is an insert.
+    ///
+    /// `label_ids` must be within this graph's dictionary — `apply` bounds-checks
+    /// them through `checked_label_ids` before calling, the way C's
+    /// `ApplyUpdateEdge` checks its `r_id`.
+    pub fn set_nodes_attributes_rows_of_labels(
+        &mut self,
+        ids: &[u64],
+        label_ids: &[u64],
+        attr_ids: &[u16],
+        rows: &[Value],
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    ) -> Result<(usize, usize), String> {
+        let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;
+
+        if self.node_indexer.has_indices() {
+            for &label_id in label_ids {
+                let Some(label) = self.node_labels.get(label_id as usize) else {
+                    continue;
+                };
+                // Once per (label, attribute) for the whole record, rather than
+                // once per (node, label, attribute).
+                let indexed = attr_ids.iter().any(|&attr_id| {
+                    self.attrs_name
+                        .get(attr_id as usize)
+                        .is_some_and(|key| self.node_indexer.has_indexed_attr(label, key))
+                });
+                if indexed {
+                    let docs = index_add_docs.entry(label_id).or_default();
+                    docs.extend(ids.iter().copied());
+                }
+            }
+        }
+        Ok((nremoved, nset))
+    }
+
     pub fn set_nodes_attributes_rows(
         &mut self,
         ids: &[u64],
