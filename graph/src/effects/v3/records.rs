@@ -930,7 +930,7 @@ mod tests {
                 "03 00 00 00 01 00 00 00 ",            // CREATE_NODE, count = 1
                 "01 00 07 00 00 00 ",                  // LabelSet: n = 1, label 7
                 "01 00 00 00 ",                        // AttrIds: n = 1, attr 0
-                "01 00 00 00 08 00 ", // IdList: 1 segment; range, base 0, length implied
+                "01 00 00 00 00 00 01 ",               // IdList: 1 segment; range, base 0, len 1
                 "00 20 00 00 01 00 00 00 00 00 00 00"  // AttrValues: T_INT64, 1
             )
         );
@@ -950,9 +950,9 @@ mod tests {
         // Schema first: header ends at 10, LabelSet (6 B) then AttrIds (4 B),
         // so the id block starts at 20. Sequentially allocated ids are a
         // consecutive run, so all ten thousand of them are three bytes.
-        // One segment, and it leaves its length implied: header byte then the
-        // narrowed base. Flat in the count — ten thousand ids cost what one does.
-        assert_eq!(&buf[20..27], &[1, 0, 0, 0, 0x08, 0, 0]);
+        // One segment: count, header byte carrying both widths, then the base
+        // and the length. Flat in the id count — a million ids cost what ten do.
+        assert_eq!(&buf[20..28], &[1, 0, 0, 0, 0x08, 0, 0x10, 0x27]);
 
         let records = read_buffer(&buf).unwrap();
         assert_eq!(records.len(), 1);
@@ -1304,14 +1304,15 @@ mod tests {
             );
         }
 
-        // The floor moved deliberately, and this records by how much. Segments
-        // state their count on the wire — a decoder cannot otherwise tell a
-        // truncated list from a complete one — and that is four bytes per
-        // record, which on ten thousand single-id records is the whole
-        // difference between this bound and the 340,001 that preceded it.
+        // The floor moved deliberately, and this records by how much. A segment
+        // list states both its segment count and every segment's length, so
+        // that it is well-formed on its own rather than only inside the record
+        // carrying it. That is five bytes per single-id record — four for the
+        // count, one for the length — which is the whole difference between
+        // this bound and the 340,001 that preceded the segment format.
         let worst = create_10k_in_shapes(10_000);
         assert!(
-            worst.len() <= 370_001,
+            worst.len() <= 380_001,
             "singleton floor regressed: {}",
             worst.len()
         );
@@ -1349,7 +1350,7 @@ mod tests {
         //   4 opcode + 4 count + IdList + 6 LabelSet + 16 AttrSet
         let mut small = Vec::new();
         write_create_node(&mut small, &IdList::from([0]), &[7], &[0], &[Value::Int(1)]);
-        assert_eq!(small.len(), 36, "id 0 narrows to one byte");
+        assert_eq!(small.len(), 37, "id 0 narrows to one byte");
 
         let mut mid = Vec::new();
         write_create_node(
@@ -1359,7 +1360,7 @@ mod tests {
             &[0],
             &[Value::Int(1)],
         );
-        assert_eq!(mid.len(), 37, "a mid-size graph's id takes two");
+        assert_eq!(mid.len(), 38, "a mid-size graph's id takes two");
 
         let mut large = Vec::new();
         write_create_node(
@@ -1369,7 +1370,7 @@ mod tests {
             &[0],
             &[Value::Int(1)],
         );
-        assert_eq!(large.len(), 39, "past 2^16 the id takes four");
+        assert_eq!(large.len(), 40, "past 2^16 the id takes four");
     }
 
     // ── index and constraint records ──

@@ -33,8 +33,7 @@ use super::{DecodeError, Reader, write_u8, write_u32};
 //
 // NOTE: `cow_btree/leaf/mod.rs` has `pow2_bytes_for` with identical arms. They
 // are being folded into one shared helper — see review thread on `blocks.rs:115`.
-#[must_use]
-pub const fn width_for(max: u64) -> u8 {
+const fn width_for(max: u64) -> u8 {
     match max {
         0..=0xFF => 1,
         0x100..=0xFFFF => 2,
@@ -287,7 +286,7 @@ impl Run {
             base,
             len: len as u32,
         }
-        .encoded_len(false);
+        .encoded_len();
         self.add_range(base, len);
     }
 
@@ -387,7 +386,7 @@ impl Run {
 /// enum mapping a representation onto an encoding, and no way for the two to
 /// disagree.
 #[derive(Clone, Debug)]
-pub enum Segment {
+enum Segment {
     /// `len` consecutive ids ascending from `base`. `len` is never 0.
     ///
     /// A single id is `len == 1`, so this variant alone can describe any list,
@@ -418,35 +417,23 @@ pub enum Segment {
 /// The segment header byte.
 ///
 /// One byte carries everything but the payload, which is what keeps a
-/// singleton-heavy list from paying for its own structure: a lone id is this
-/// byte plus its narrowed base, two bytes in all.
+/// singleton-heavy list from paying much for its own structure.
 ///
 /// ```text
 /// bit 0    kind: 0 = Range, 1 = Ascending
 /// bits 1-2 base width code   (Range)
-/// bit 3    length is implied (Range) - see `LEN_IMPLIED`
-/// bits 4-5 length width code (Range, when bit 3 is clear)
-/// bits 6-7 reserved, must be zero
+/// bits 3-4 length width code (Range)
+/// bits 5-7 reserved, must be zero
 /// ```
-mod hdr {
-    pub const ASCENDING: u8 = 0b0000_0001;
-    pub const BASE_W_SHIFT: u8 = 1;
-    /// The segment runs to the end of the record, so its length is whatever
-    /// the record's count has left over and is not written.
-    ///
-    /// Only ever set on the final segment. It is what makes the common shapes
-    /// free: one consecutive run of any size is a header and a base, and so is
-    /// a record carrying a single id.
-    pub const LEN_IMPLIED: u8 = 0b0000_1000;
-    pub const LEN_W_SHIFT: u8 = 4;
-    pub const RESERVED: u8 = 0b1100_0000;
-}
+const SEG_ASCENDING: u8 = 0b0000_0001;
+const SEG_BASE_WIDTH_SHIFT: u8 = 1;
+const SEG_LEN_WIDTH_SHIFT: u8 = 3;
+const SEG_RESERVED: u8 = 0b1110_0000;
 
 impl Segment {
     /// The largest id in the segment, which is also the last one — both shapes
     /// are ascending internally.
-    #[must_use]
-    pub const fn max(&self) -> u64 {
+    const fn max(&self) -> u64 {
         match self {
             Self::Range { base, len } => *base + *len as u64 - 1,
             Self::Ascending { max, .. } => *max,
@@ -457,55 +444,40 @@ impl Segment {
     ///
     /// Exact, not an estimate: `serialized_size()` is what roaring itself will
     /// write, so the collapse decision below compares like with like.
-    #[must_use]
-    pub fn encoded_len(
-        &self,
-        len_implied: bool,
-    ) -> usize {
+    fn encoded_len(&self) -> usize {
         match self {
             Self::Range { base, len } => {
-                1 + width_for(*base) as usize
-                    + if len_implied {
-                        0
-                    } else {
-                        width_for(u64::from(*len)) as usize
-                    }
+                1 + width_for(*base) as usize + width_for(u64::from(*len)) as usize
             }
             Self::Ascending { bitmap, .. } => 1 + 4 + bitmap.serialized_size(),
         }
     }
 
     /// The header byte, then whatever the variant needs.
-    ///
-    /// `len_implied` says this is the record's final segment, so its length is
-    /// whatever the count has left and does not go on the wire. The caller owns
-    /// that fact; the segment owns everything else about its own bytes.
-    pub fn encode(
+    fn encode(
         &self,
         buf: &mut Vec<u8>,
-        len_implied: bool,
     ) {
         match self {
             Self::Range { base, len } => {
                 let bw = width_for(*base);
-                let mut h = width_code(bw) << hdr::BASE_W_SHIFT;
-                if len_implied {
-                    h |= hdr::LEN_IMPLIED;
-                    buf.reserve(1 + bw as usize);
-                    write_u8(buf, h);
-                    write_narrow(buf, *base, bw);
-                } else {
-                    let lw = width_for(u64::from(*len));
-                    h |= width_code(lw) << hdr::LEN_W_SHIFT;
-                    buf.reserve(1 + bw as usize + lw as usize);
-                    write_u8(buf, h);
-                    write_narrow(buf, *base, bw);
-                    write_narrow(buf, u64::from(*len), lw);
-                }
+                let lw = width_for(u64::from(*len));
+                buf.reserve(1 + bw as usize + lw as usize);
+                // Both widths in one byte with the kind: a second header byte
+                // per segment is four bytes per thousand ids in a
+                // singleton-heavy list, which is the shape that can least
+                // afford it.
+                write_u8(
+                    buf,
+                    (width_code(bw) << SEG_BASE_WIDTH_SHIFT)
+                        | (width_code(lw) << SEG_LEN_WIDTH_SHIFT),
+                );
+                write_narrow(buf, *base, bw);
+                write_narrow(buf, u64::from(*len), lw);
             }
             Self::Ascending { bitmap, .. } => {
                 let n = bitmap.serialized_size();
-                write_u8(buf, hdr::ASCENDING);
+                write_u8(buf, SEG_ASCENDING);
                 write_u32(buf, n as u32);
                 // Reserve first: roaring writes itself in many small pieces and
                 // would otherwise grow the payload buffer under itself, each
@@ -524,18 +496,20 @@ impl Segment {
         }
     }
 
-    /// Read one segment back. `remaining` is how many ids the record still
-    /// owes, which is both the bound on this segment and the value an implied
-    /// length takes.
+    /// Read one segment back.
+    ///
+    /// `remaining` is how many ids the record still owes, and bounds this
+    /// segment: a run claiming more than the record has left would shift every
+    /// later row onto the wrong entity.
     fn decode(
         r: &mut Reader<'_>,
         remaining: u64,
     ) -> Result<Self, DecodeError> {
         let h = r.u8()?;
-        if h & hdr::RESERVED != 0 {
+        if h & SEG_RESERVED != 0 {
             return Err(DecodeError::BadEncoding(h));
         }
-        if h & hdr::ASCENDING != 0 {
+        if h & SEG_ASCENDING != 0 {
             let blob_len = r.u32()? as usize;
             let blob = r.take(blob_len)?;
             let bitmap = RoaringTreemap::deserialize_from(blob)
@@ -554,12 +528,8 @@ impl Segment {
             return Ok(Self::Ascending { bitmap, len, max });
         }
 
-        let base = read_narrow(r, width_of_code(h >> hdr::BASE_W_SHIFT))?;
-        let len = if h & hdr::LEN_IMPLIED != 0 {
-            remaining
-        } else {
-            read_narrow(r, width_of_code(h >> hdr::LEN_W_SHIFT))?
-        };
+        let base = read_narrow(r, width_of_code(h >> SEG_BASE_WIDTH_SHIFT))?;
+        let len = read_narrow(r, width_of_code(h >> SEG_LEN_WIDTH_SHIFT))?;
         if len == 0 || len > remaining {
             return Err(DecodeError::BadRange { base, count: len });
         }
@@ -578,7 +548,7 @@ impl Segment {
     ///
     /// `Either` rather than a boxed trait object: a list is iterated once per
     /// row on the apply path, and a `Box` there is an allocation per segment.
-    pub fn iter(&self) -> Either<std::ops::Range<u64>, roaring::treemap::Iter<'_>> {
+    fn iter(&self) -> Either<std::ops::Range<u64>, roaring::treemap::Iter<'_>> {
         match self {
             Self::Range { base, len } => Either::Left(*base..*base + u64::from(*len)),
             Self::Ascending { bitmap, .. } => Either::Right(bitmap.iter()),
@@ -625,17 +595,6 @@ impl IdList {
             len: 0,
             run: Run::default(),
         }
-    }
-
-    /// A list expected to hold `n` ids.
-    ///
-    /// A hint and deliberately not an allocation: the segment count has no
-    /// relationship to the id count — a million consecutive ids are one segment
-    /// — so reserving by `n` would be wrong in the common case and wasteful in
-    /// the rest.
-    #[must_use]
-    pub fn with_capacity(_n: usize) -> Self {
-        Self::new()
     }
 
     /// Add an id, extending the current segment or opening a new one.
@@ -732,10 +691,10 @@ impl IdList {
         self.len == 0
     }
 
-    /// How many segments the list currently holds. The shape, for tests and
-    /// benchmarks.
-    #[must_use]
-    pub fn segment_count(&self) -> usize {
+    /// How many segments the list currently holds — its shape, for the tests
+    /// that pin which encoding a given push sequence produces.
+    #[cfg(test)]
+    fn segment_count(&self) -> usize {
         self.segments.len()
     }
 
@@ -752,14 +711,6 @@ impl IdList {
     #[must_use]
     pub fn count(&self) -> u32 {
         u32::try_from(self.len).expect("a record cannot carry more than u32::MAX entities")
-    }
-
-    /// Whether the whole list is one consecutive run.
-    #[must_use]
-    pub fn is_consecutive(&self) -> bool {
-        self.len > 0
-            && self.segments.len() == 1
-            && matches!(self.segments[0], Segment::Range { .. })
     }
 
     /// The ids as a slice, materializing to produce one.
@@ -779,18 +730,18 @@ impl IdList {
         &self,
         buf: &mut Vec<u8>,
     ) {
-        // Stated, not inferred from the record's id count. A reader could stop
-        // once the ids are accounted for and save these four bytes, but then a
-        // segment list would only be well-formed in the context of its record —
-        // a truncated list and a complete one would be indistinguishable
-        // without it.
+        // Both the segment count and every segment's length are stated, and for
+        // the same reason: a list has to be well-formed on its own, not only in
+        // the context of the record that carries it. Leaving the last length
+        // implied by the record's count would save a byte a record and reopen
+        // exactly the hole the stated count closes — a wrong count would be
+        // silently absorbed by the final segment, binding rows to the wrong
+        // entities instead of failing. Measured at 10,000 bytes on a payload of
+        // ten thousand single-id records, which is not worth a silent
+        // corruption path.
         write_u32(buf, self.segments.len() as u32);
-        let last = self.segments.len().saturating_sub(1);
-        for (i, seg) in self.segments.iter().enumerate() {
-            // The final segment leaves its length implied: the record's count
-            // already fixes it, which is what keeps one consecutive run — the
-            // commonest shape there is — at a header byte and a base.
-            seg.encode(buf, i == last);
+        for seg in &self.segments {
+            seg.encode(buf);
         }
     }
 
@@ -963,7 +914,7 @@ mod tests {
             let ids: Vec<u64> = (0..n).collect();
             let list = IdList::from(ids.as_slice());
             assert_eq!(list.segment_count(), 1, "n = {n}");
-            assert!(list.is_consecutive(), "n = {n}");
+            assert!(matches!(list.segments[0], Segment::Range { .. }), "n = {n}");
             roundtrip(&ids);
         }
     }
@@ -975,7 +926,7 @@ mod tests {
         // record's count, and there is no segment count. Two bytes, where the
         // encoding this replaces charged three.
         let buf = roundtrip(&[0]);
-        assert_eq!(hex(&buf), "01 00 00 00 08 00");
+        assert_eq!(hex(&buf), "01 00 00 00 00 00 01");
     }
 
     #[test]
@@ -1074,7 +1025,7 @@ mod tests {
 
     #[test]
     fn an_absurd_count_is_rejected_before_allocating() {
-        let buf = [1_u8, 0, 0, 0, 0x08, 0];
+        let buf = [1_u8, 0, 0, 0, 0x00, 0, 1];
         let mut r = Reader::new(&buf);
         assert_eq!(
             read_ids(&mut r, u32::MAX),
@@ -1106,9 +1057,9 @@ mod tests {
         // range by a build that predates it.
         let mut buf = Vec::new();
         write_u32(&mut buf, 1);
-        buf.extend_from_slice(&[0xC8, 0]);
+        buf.extend_from_slice(&[0xE0, 0, 1]);
         let mut r = Reader::new(&buf);
-        assert_eq!(read_ids(&mut r, 1), Err(DecodeError::BadEncoding(0xC8)));
+        assert_eq!(read_ids(&mut r, 1), Err(DecodeError::BadEncoding(0xE0)));
     }
 
     #[test]
@@ -1117,7 +1068,7 @@ mod tests {
         write_u32(&mut buf, 1);
         write_u8(
             &mut buf,
-            (width_code(8) << hdr::BASE_W_SHIFT) | (width_code(8) << hdr::LEN_W_SHIFT),
+            (width_code(8) << SEG_BASE_WIDTH_SHIFT) | (width_code(8) << SEG_LEN_WIDTH_SHIFT),
         );
         buf.extend_from_slice(&(u64::MAX - 1).to_le_bytes());
         buf.extend_from_slice(&100_u64.to_le_bytes());
@@ -1138,7 +1089,7 @@ mod tests {
         write_u32(&mut buf, 1);
         write_u8(
             &mut buf,
-            (width_code(1) << hdr::BASE_W_SHIFT) | (width_code(1) << hdr::LEN_W_SHIFT),
+            (width_code(1) << SEG_BASE_WIDTH_SHIFT) | (width_code(1) << SEG_LEN_WIDTH_SHIFT),
         );
         buf.extend_from_slice(&[1, 2]);
         let mut r = Reader::new(&buf);
