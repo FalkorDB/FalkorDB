@@ -97,14 +97,41 @@ struct RunCost {
     containers: Vec<ContainerTally>,
 }
 
-/// What one 2^16 container of a run holds, which is all its size depends on.
+/// What one container of a run holds, which is all its size depends on.
+///
+/// **A container is not a range.** It is a fixed 65,536-wide window of the id
+/// space — a partition of the *addresses*, not of the data. Roaring splits ids
+/// by their high bits, gives each window its own store, and picks the cheapest
+/// of three for what landed there:
+///
+/// | store  | cost                                    | suits      |
+/// |--------|-----------------------------------------|------------|
+/// | array  | 2 B per id, its low 16 bits             | sparse     |
+/// | bitset | a fixed 8,192 B, one bit per address     | dense      |
+/// | run    | 4 B per interval, `u16` start + length   | consecutive|
+///
+/// So a *run* is one of the three encodings **inside** a container, and that is
+/// where our segments land: one [`Segment::Range`] is one run — except where it
+/// straddles a window boundary, which makes it a run in each window it touches.
+/// That, and only that, is why [`RunCost::add_range`] splits.
+///
+/// Ids are 64-bit, so there are two levels: a `RoaringTreemap` is a `BTreeMap`
+/// keyed by `id >> 32`, each value a `RoaringBitmap` whose containers cover the
+/// next 16 bits. `window` below flattens both — it is a global window index
+/// rather than roaring's own 16-bit container key, which is why it is not
+/// called one.
 #[derive(Clone, Copy, Debug)]
 struct ContainerTally {
-    /// The container's key: `id >> 16`.
-    key: u64,
-    /// Ids falling in it — what an array or bitset store would cost.
+    /// Which 65,536-wide window of the id space this is: `id >> 16`.
+    ///
+    /// Its high bits are the `RoaringTreemap` entry it belongs to, so
+    /// `window >> 16` groups windows into bitmaps — which is what
+    /// [`RunCost::predicted`] does, because the per-bitmap header is charged
+    /// once per group.
+    window: u64,
+    /// Ids falling in this window — what an array or bitset store would cost.
     ids: u64,
-    /// Maximal consecutive runs they form — what a run store would cost.
+    /// Maximal consecutive stretches they form — what a run store would cost.
     runs: u32,
 }
 
@@ -144,9 +171,11 @@ impl RunCost {
         self.containers.clear();
     }
 
-    /// Fold one consecutive range into the tally, splitting it at the 2^16
-    /// container boundaries it crosses — each piece is one more run in its own
-    /// container.
+    /// Fold one consecutive range into the tally.
+    ///
+    /// Split at the 65,536 window boundaries it crosses, because a container
+    /// covers a fixed slice of the id space rather than a stretch of data: a
+    /// range spanning three windows is three runs, one in each, not one run.
     fn add_range(
         &mut self,
         base: u64,
@@ -156,16 +185,16 @@ impl RunCost {
         let mut lo = base;
         while lo <= end {
             let hi = lo >> 16;
-            let container_end = ((hi + 1) << 16) - 1;
-            let piece_end = end.min(container_end);
+            let window_end = ((hi + 1) << 16) - 1;
+            let piece_end = end.min(window_end);
             let n = piece_end - lo + 1;
             match self.containers.last_mut() {
-                Some(tally) if tally.key == hi => {
+                Some(tally) if tally.window == hi => {
                     tally.ids += n;
                     tally.runs += 1;
                 }
                 _ => self.containers.push(ContainerTally {
-                    key: hi,
+                    window: hi,
                     ids: n,
                     runs: 1,
                 }),
@@ -183,11 +212,13 @@ impl RunCost {
         let mut total = size_of::<u64>();
         let mut i = 0;
         while i < self.containers.len() {
-            let entry = self.containers[i].key >> 16;
+            // One `RoaringBitmap` per 2^32 slice, and its header is charged
+            // once for all the windows inside it.
+            let entry = self.containers[i].window >> 16;
             let mut nc = 0_usize;
             let mut has_run = false;
             let mut body = 0_usize;
-            while i < self.containers.len() && self.containers[i].key >> 16 == entry {
+            while i < self.containers.len() && self.containers[i].window >> 16 == entry {
                 let ContainerTally { ids, runs, .. } = self.containers[i];
                 // Array up to 4,096 values, bitset past it — which is exactly
                 // `min`, because 2 x 4,096 is the bitset's fixed size.
