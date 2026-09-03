@@ -31,9 +31,9 @@ from constraint_utils import (create_mandatory_node_constraint,
                               drop_unique_node_constraint,
                               get_constraint, list_constraints)
 from graph_utils import graph_eq
-from index_utils import (create_edge_range_index, create_node_range_index,
-                         drop_node_range_index, list_indicies,
-                         wait_for_indices_to_sync)
+from index_utils import (create_edge_range_index, create_node_fulltext_index,
+                         create_node_range_index, drop_node_range_index,
+                         list_indicies, wait_for_indices_to_sync)
 
 # A plain Redis key the tests SET on the primary purely so its replicated form
 # shows up in the replica's MONITOR feed as a fence post. See `monitor_mark`.
@@ -1534,11 +1534,17 @@ class testEffectsV3_04f_IndexesTheQueryNeverNamed(_EffectsV3Base):
         # Otherwise the assertions below pass on a full scan and prove nothing
         # about index maintenance at all.
         #
-        # The primary only: `GRAPH.EXPLAIN` is refused on a replica with
-        # "You can't write against a read only replica" even though it plans
-        # rather than executes. The planner is the same code on both sides and
-        # what this asserts is a property of the *query*, so the primary's plan
-        # answers it.
+        # **The primary only**, and that is a real limit rather than a
+        # convenience: `GRAPH.EXPLAIN` is registered `write` (`src/lib.rs`, and
+        # C registers it the same way), so a replica refuses it with "You can't
+        # write against a read only replica" even though it plans rather than
+        # executes. There is no way to read a replica's plan.
+        #
+        # So on the replica these tests assert the *answer*, and that the
+        # answer matches the primary's — which is index-backed only to the
+        # extent that the replica's planner makes the same choice, which is an
+        # inference. `test04` closes that hole: a fulltext procedure reads the
+        # index and nothing else, so there is no plan to infer about.
         self.env.assertContains(op, str(self.master_graph.explain(q)))
 
     def test01_a_second_label_index_the_query_never_mentioned(self):
@@ -1621,6 +1627,36 @@ class testEffectsV3_04f_IndexesTheQueryNeverNamed(_EffectsV3Base):
         self.assert_agree(
             "MATCH ()-[r:NOIX]->() RETURN count(r), min(r.x), max(r.x)",
             [[20, 101, 120]])
+        self.assert_graph_eq()
+
+
+    def test04_the_replica_index_itself_answers(self):
+        # The other three assert what the replica *returns*, which goes through
+        # its planner, and a replica's plan cannot be read — GRAPH.EXPLAIN is a
+        # `write` command on both engines. So they establish the answer is
+        # right without establishing the index produced it.
+        #
+        # `db.idx.fulltext.queryNodes` has no such gap: it reads the fulltext
+        # index directly. If the replica never added the :FB document when the
+        # :FA half of the pattern was updated, this returns nothing, whatever
+        # the planner would have preferred.
+        self.set_effects_config()
+        create_node_fulltext_index(self.master_graph, 'FA', 'body', sync=True)
+        create_node_fulltext_index(self.master_graph, 'FB', 'body', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync("CREATE (:FA:FB {body: 'alpha'})")
+        probe = ("CALL db.idx.fulltext.queryNodes('FB', $t) "
+                 "YIELD node RETURN count(node)")
+        self.assert_agree(probe, [[1]], params={'t': 'alpha'})
+
+        # only :FA is named; :FB's index has to follow the same node
+        res = self.query_and_sync("MATCH (n:FA) SET n.body = 'omega'")
+        self.env.assertEqual(res.properties_set, 1)
+
+        self.assert_agree(probe, [[1]], params={'t': 'omega'})
+        # and the old term is gone from it — a stale index still answers 'alpha'
+        self.assert_agree(probe, [[0]], params={'t': 'alpha'})
         self.assert_graph_eq()
 
 
