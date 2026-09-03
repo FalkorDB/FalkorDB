@@ -835,15 +835,22 @@ fn read_narrow(
 /// carrying three reserves address space, writes three, and fails. Peak
 /// committed memory stays tiny.
 ///
-/// The case that is genuinely unbounded is a payload that claims four billion
-/// ids **and supplies them**, as one seven-byte range. That is indistinguishable
-/// from a legitimate write of the same size, so nothing here can refuse it —
-/// and it is reachable by any client, because `GRAPH.EFFECT` is not restricted
-/// to the replication link. Bounding it needs a different guard: per-record-type
-/// limits from this graph's own counts (a delete cannot exceed what exists), or
-/// refusing client-sent effects outright. Tracked separately; the ceiling this
-/// replaces did not address it either, since it refused legitimate writes to
-/// prevent a reservation that costs nothing.
+/// The case that no check here can refuse is a payload that claims four billion
+/// ids **and supplies them**, as one seven-byte range. That is not a hole to
+/// close: it is byte-identical to a legitimate write of the same size, a replica
+/// rejects a client's `GRAPH.EFFECT` outright as a read-only write, and a client
+/// that *can* write to a master could ask for the same memory with
+/// `UNWIND range(0, 4e9) AS x CREATE (:N)`. So the command grants no capability
+/// ordinary Cypher does not.
+///
+/// `try_reserve` still earns its place, for the environments where an unbounded
+/// reservation genuinely fails rather than being handed out lazily: a cgroup
+/// memory limit, `vm.overcommit_memory=2`, a 32-bit target.
+///
+/// The check still worth adding is about integrity rather than memory — a
+/// record whose ids must *already exist* cannot name more of them than this
+/// graph holds, whoever sent it. That needs the entity counts threaded into the
+/// decoder, and it cannot cover creates, so it is filed rather than done here.
 pub fn read_ids(
     r: &mut Reader<'_>,
     count: u32,
