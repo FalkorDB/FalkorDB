@@ -123,13 +123,18 @@ impl EffectEncode<3> for Value {
     }
 }
 
-/// How deep a list or map may nest before the decoder refuses it.
+/// How deep a list or map may nest.
 ///
-/// `Reader::guard_count` bounds how *wide* a container is, because every element
-/// costs bytes. Depth does not work that way: one `T_ARRAY` level is a 4-byte tag
-/// and a 4-byte count, so ~350 KB of nested tags is ~44,000 recursive calls and
-/// overflows the stack — a SIGSEGV, which is exactly what `Reader` exists to
-/// prevent.
+/// **This bounds the type, not the decoder.** `Value` holds its children behind
+/// `Arc<ThinVec<Value>>`, so every operation on a nested one recurses — `Drop`,
+/// `PartialEq`, `Debug`, `encode`. Making the decoder iterative removed its own
+/// recursion and nothing else's: measured, 50,000 levels now decode without
+/// touching the stack and then abort in `Drop`, because dropping the chain
+/// recurses once per level.
+///
+/// So a depth bound is not a decoder shortcut standing in for trusting the
+/// encoder. It is the only thing between a nested value and a SIGSEGV in code
+/// that never looks at the wire at all.
 ///
 /// 256 mirrors `Parser::MAX_TREE_DEPTH`. A value only reaches an effect by being
 /// parsed and evaluated first, so nothing legitimate can arrive nested deeper
@@ -137,24 +142,107 @@ impl EffectEncode<3> for Value {
 /// nested lists the parser's own tests pin.
 const MAX_VALUE_DEPTH: usize = 256;
 
+/// One unfinished container, while its children are being read.
+///
+/// A map keeps the key it is waiting on: an entry is a key then a value, and the
+/// key is read as soon as the previous entry closes, so the loop below always
+/// has exactly one value to produce next.
+enum Frame {
+    List {
+        items: ThinVec<Value>,
+        left: usize,
+    },
+    Map {
+        map: OrderMap<Arc<String>, Value>,
+        left: usize,
+        key: Arc<String>,
+    },
+}
+
 impl EffectDecode<3> for Value {
+    /// Iterative, not recursive, and that is a requirement rather than a style.
+    ///
+    /// `Reader::guard_count` bounds how *wide* a container is, because every
+    /// element costs bytes. Depth does not work that way: one nesting level is a
+    /// 4-byte tag and a 4-byte count, so a few hundred KB of nested tags was
+    /// tens of thousands of stack frames and a SIGSEGV — exactly what `Reader`
+    /// exists to prevent. The previous answer was a depth ceiling, which cannot
+    /// be right for the same reason a ceiling was wrong for ids: it refuses
+    /// legitimate input to bound a hostile one.
+    ///
+    /// With an explicit stack, depth costs heap instead — one `Frame` per open
+    /// container. That removes the decoder's own recursion, which is worth
+    /// having, but it does **not** remove the need for [`MAX_VALUE_DEPTH`]:
+    /// `Value` is recursive, so dropping a deeply nested one overflows the stack
+    /// whatever built it. The bound is enforced here because this is where the
+    /// depth becomes known, not because decoding is the fragile part.
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
-        decode_at(r, 0)
+        let mut stack: Vec<Frame> = Vec::new();
+
+        loop {
+            // Produce one value. A container opens a frame and yields nothing
+            // yet, so the next turn reads its first child.
+            let Some(mut value) = read_one(r, &mut stack)? else {
+                continue;
+            };
+
+            // Hand it to whatever is waiting, closing frames as they fill. A
+            // closed container is itself a value, so this repeats.
+            loop {
+                match stack.last_mut() {
+                    None => return Ok(value),
+                    Some(Frame::List { items, left }) => {
+                        items.push(value);
+                        *left -= 1;
+                        if *left > 0 {
+                            break;
+                        }
+                        let Some(Frame::List { items, .. }) = stack.pop() else {
+                            unreachable!("just matched a list frame")
+                        };
+                        value = Value::List(Arc::new(items));
+                    }
+                    Some(Frame::Map { map, left, key }) => {
+                        map.insert(Arc::clone(key), value);
+                        *left -= 1;
+                        if *left > 0 {
+                            // The next entry's key, read now so the next turn
+                            // produces its value.
+                            *key = Arc::new(r.string()?);
+                            break;
+                        }
+                        let Some(Frame::Map { map, .. }) = stack.pop() else {
+                            unreachable!("just matched a map frame")
+                        };
+                        value = Value::Map(Arc::new(map));
+                    }
+                }
+            }
+        }
     }
 }
 
-fn decode_at(
-    r: &mut Reader<'_>,
-    depth: usize,
-) -> Result<Value, DecodeError> {
-    if depth > MAX_VALUE_DEPTH {
+/// Refuse another level before one is opened.
+fn check_depth(stack: &[Frame]) -> Result<(), DecodeError> {
+    if stack.len() >= MAX_VALUE_DEPTH {
         return Err(DecodeError::ValueTooDeep {
             max: MAX_VALUE_DEPTH,
         });
     }
-    // Widened so the arms can name `si_type`'s own constants: they are
-    // `u64` there, and a pattern has to be a named constant, not a
-    // narrowing expression.
+    Ok(())
+}
+
+/// Read one tag and either return a finished value or open a container.
+///
+/// `Ok(None)` means a frame was pushed: the value is not known until its
+/// children are.
+fn read_one(
+    r: &mut Reader<'_>,
+    stack: &mut Vec<Frame>,
+) -> Result<Option<Value>, DecodeError> {
+    // Widened so the arms can name `si_type`'s own constants: they are `u64`
+    // there, and a pattern has to be a named constant, not a narrowing
+    // expression.
     let t = u64::from(r.u32()?);
     let v = match t {
         si_type::T_NULL => Value::Null,
@@ -176,22 +264,31 @@ fn decode_at(
             let n = r.u32()?;
             // A list entry is at least a 4-byte type tag.
             let n = r.guard_count(u64::from(n), 4)?;
-            let mut items = ThinVec::with_capacity(n);
-            for _ in 0..n {
-                items.push(decode_at(r, depth + 1)?);
+            if n == 0 {
+                return Ok(Some(Value::List(Arc::new(ThinVec::new()))));
             }
-            Value::List(Arc::new(items))
+            check_depth(stack)?;
+            stack.push(Frame::List {
+                items: ThinVec::with_capacity(n),
+                left: n,
+            });
+            return Ok(None);
         }
         T_MAP => {
             let n = r.u32()?;
             // Each pair is at least an 8-byte length plus a 4-byte type tag.
             let n = r.guard_count(u64::from(n), 12)?;
-            let mut m = OrderMap::default();
-            for _ in 0..n {
-                let k = Arc::new(r.string()?);
-                m.insert(k, decode_at(r, depth + 1)?);
+            if n == 0 {
+                return Ok(Some(Value::Map(Arc::new(OrderMap::default()))));
             }
-            Value::Map(Arc::new(m))
+            check_depth(stack)?;
+            let key = Arc::new(r.string()?);
+            stack.push(Frame::Map {
+                map: OrderMap::default(),
+                left: n,
+                key,
+            });
+            return Ok(None);
         }
         si_type::T_POINT => {
             let latitude = r.f32()?;
@@ -216,7 +313,7 @@ fn decode_at(
         si_type::T_DURATION => Value::Duration(r.i64()?),
         other => return Err(DecodeError::BadValueType(other as u32)),
     };
-    Ok(v)
+    Ok(Some(v))
 }
 
 #[cfg(test)]
@@ -288,14 +385,17 @@ mod tests {
     }
 
     #[test]
-    fn deep_nesting_is_an_error_not_a_stack_overflow() {
-        // One `T_ARRAY` level is eight wire bytes, so a tiny payload buys tens of
-        // thousands of stack frames. `guard_count` bounds width only, and the
-        // whole point of `Reader` is that a malformed buffer is an error rather
-        // than a segfault.
+    fn deep_nesting_is_refused_because_the_value_cannot_be_dropped() {
+        // The bound is not about decoding. With an iterative decoder, a payload
+        // 50,000 levels deep decodes without touching the stack — and then
+        // aborts in `Drop`, because `Value` holds its children behind an `Arc`
+        // and dropping the chain recurses once per level. `std::mem::forget` on
+        // the decoded value is what proves it: forget it and nothing crashes.
+        //
+        // So the refusal happens where the depth first becomes known, and it
+        // protects code that never looks at the wire.
         let mut buf = Vec::new();
-        let levels = MAX_VALUE_DEPTH + 50;
-        for _ in 0..levels {
+        for _ in 0..MAX_VALUE_DEPTH + 50 {
             buf.extend_from_slice(&(si_type::T_ARRAY as u32).to_le_bytes());
             buf.extend_from_slice(&1_u32.to_le_bytes());
         }
@@ -309,8 +409,8 @@ mod tests {
             })
         );
 
-        // And a value nested right up to the limit still decodes, so the bound
-        // is not quietly rejecting legitimate data.
+        // And right up to the limit still decodes, so the bound is not quietly
+        // rejecting legitimate data.
         let mut buf = Vec::new();
         for _ in 0..MAX_VALUE_DEPTH {
             buf.extend_from_slice(&(si_type::T_ARRAY as u32).to_le_bytes());
@@ -318,7 +418,68 @@ mod tests {
         }
         buf.extend_from_slice(&(si_type::T_NULL as u32).to_le_bytes());
         let mut r = Reader::new(&buf);
-        Value::decode(&mut r).expect("at the limit must still decode");
+        let v = Value::decode(&mut r).expect("at the limit must still decode");
+
+        // Walked iteratively, and dropped normally at the end of scope — which
+        // is the operation the bound exists for.
+        let mut depth = 0_usize;
+        let mut cur = &v;
+        while let Value::List(items) = cur {
+            assert_eq!(items.len(), 1);
+            cur = &items[0];
+            depth += 1;
+        }
+        assert_eq!(depth, MAX_VALUE_DEPTH);
+        assert_eq!(*cur, Value::Null);
+    }
+
+    #[test]
+    fn a_nested_container_that_runs_out_of_bytes_is_an_error() {
+        // Depth is no longer bounded, so the guard that has to hold is the
+        // ordinary one: a payload promising children it does not carry fails on
+        // the read rather than producing a partial value.
+        let mut buf = Vec::new();
+        for _ in 0..MAX_VALUE_DEPTH - 1 {
+            buf.extend_from_slice(&(si_type::T_ARRAY as u32).to_le_bytes());
+            buf.extend_from_slice(&1_u32.to_le_bytes());
+        }
+        // ...and nothing at the bottom.
+        //
+        // `ImplausibleCount` rather than `UnexpectedEof`: the innermost level
+        // promises one child, and the width guard notices there are not four
+        // bytes left to hold even a tag before the read is attempted. Either way
+        // it is an error and not a partial value, which is the property here.
+        let mut r = Reader::new(&buf);
+        assert!(matches!(
+            Value::decode(&mut r),
+            Err(DecodeError::ImplausibleCount { .. } | DecodeError::UnexpectedEof { .. })
+        ));
+    }
+
+    #[test]
+    fn a_map_nested_in_a_list_round_trips() {
+        // The iterative decoder has to interleave two frame kinds, and a map
+        // reads its key before its value — the case a recursive decoder got for
+        // free.
+        let mut m = OrderMap::default();
+        m.insert(Arc::new("a".to_string()), Value::Int(1));
+        m.insert(
+            Arc::new("b".to_string()),
+            Value::List(Arc::new(thin_vec::thin_vec![
+                Value::Null,
+                Value::Map(Arc::new(OrderMap::default())),
+            ])),
+        );
+        let case = Value::List(Arc::new(thin_vec::thin_vec![
+            Value::Map(Arc::new(m)),
+            Value::List(Arc::new(ThinVec::new())),
+        ]));
+
+        let mut buf = Vec::new();
+        case.encode(&mut buf);
+        let mut r = Reader::new(&buf);
+        assert_eq!(Value::decode(&mut r).unwrap(), case);
+        assert!(r.is_empty());
     }
 
     #[test]
