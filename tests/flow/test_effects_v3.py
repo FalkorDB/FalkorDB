@@ -1455,6 +1455,56 @@ class testEffectsV3_04c_HarderShapes(_EffectsV3Base):
         self.assert_graph_eq()
 
 
+    def test05_an_edge_updated_and_deleted_in_one_query(self):
+        # UPDATE_EDGE carries its relationship type, which the emitter reads off
+        # the graph *after* commit has applied. `SET e.x = 1 DELETE e` leaves
+        # the edge in `existing_relationships_attrs` while its row in the type
+        # matrix is already gone, so a panicking type lookup takes the primary
+        # down here — on a legitimate query, before anything reaches a replica.
+        self.set_effects_config()
+        self.query_and_sync(
+            """CREATE (a:Doomed {i: 1})-[:GONE {w: 0}]->(b:Doomed {i: 2})""")
+
+        res = self.query_and_sync(
+            "MATCH (a:Doomed)-[e:GONE]->(b) SET e.w = 99 DELETE e")
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.assert_agree("MATCH ()-[e:GONE]->() RETURN count(e)", [[0]])
+        # both endpoints survive: only the edge was named
+        self.assert_agree("MATCH (n:Doomed) RETURN count(n)", [[2]])
+
+        # and in bulk, where the update and the delete land in one buffer with
+        # many rows rather than one
+        self.query_and_sync(
+            """UNWIND range(1, 200) AS i
+               CREATE (:Src {i: i})-[:ALSOGONE {w: i}]->(:Dst {i: i})""")
+        res = self.query_and_sync(
+            "MATCH ()-[e:ALSOGONE]->() SET e.w = e.w * 2 DELETE e")
+        self.env.assertEqual(res.relationships_deleted, 200)
+        self.assert_agree("MATCH ()-[e:ALSOGONE]->() RETURN count(e)", [[0]])
+        self.assert_graph_eq()
+
+    def test06_edges_of_two_types_updated_in_one_query(self):
+        # The type is stated once per record, so it is part of the group key:
+        # two types sharing an attribute shape must split into two records
+        # rather than land in one under whichever type was seen first.
+        self.set_effects_config()
+        self.query_and_sync(
+            """UNWIND range(1, 50) AS i
+               CREATE (a:Two {i: i}), (b:Two {i: -i}),
+                      (a)-[:TA {w: i}]->(b), (a)-[:TB {w: i}]->(b)""")
+
+        res = self.query_and_sync(
+            "MATCH ()-[e:TA|TB]->() SET e.w = e.w + 1000")
+        self.env.assertEqual(res.properties_set, 100)
+        self.assert_agree(
+            """MATCH ()-[e:TA]->() RETURN count(e), min(e.w), max(e.w)""",
+            [[50, 1001, 1050]])
+        self.assert_agree(
+            """MATCH ()-[e:TB]->() RETURN count(e), min(e.w), max(e.w)""",
+            [[50, 1001, 1050]])
+        self.assert_graph_eq()
+
+
 #-----------------------------------------------------------------------------
 # 4d. GRAPH.RECORD is a real write
 #-----------------------------------------------------------------------------
