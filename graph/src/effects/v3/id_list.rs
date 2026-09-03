@@ -78,61 +78,57 @@ const ROARING_FLOOR_BYTES: usize = 32;
 /// many ids, how many maximal runs, and how they spread across containers — and
 /// a segment list already knows all three. So the choice between ranges and a
 /// bitmap is arithmetic, and a bitmap is built exactly once: when it has already
-/// won. Nothing is ever built to be measured and thrown away.
+/// won. Nothing is ever built in order to be measured and thrown away.
 ///
-/// Sizes below are roaring 0.11.4's own constants. Being byte-exact against the
-/// crate is desirable but not what makes the format safe: what matters is that
-/// both engines evaluate the *same* arithmetic, so they reach the same encoding
-/// for the same ids. `predicted_matches_roaring` pins the exactness separately.
+/// **Constant space, and no per-container list.** A run's ids ascend, so an
+/// added range can only extend the newest window or open one after it — which
+/// means every window behind the cursor has its ids and runs frozen for good,
+/// and so does its cost. The same goes for whole bitmaps. Everything behind the
+/// cursor therefore collapses into one accumulated integer, and only the open
+/// window and the open bitmap need their parts kept. Every operation here is
+/// O(1); nothing is re-walked.
+///
+/// **On depending on a crate's internals.** The constants below are roaring's,
+/// and there is no public API that reports what a bitmap *would* cost without
+/// building it — `serialized_size()` needs the bitmap, which is the thing being
+/// avoided. Two things make that safe to live with:
+///
+/// * This is a decision *rule*, not a size oracle. The bytes written come from
+///   `serialize_into` whatever they are, so if a release drifts from the
+///   arithmetic the encoder makes a marginally worse choice — never a wrong
+///   one — and both engines still agree, because agreement comes from running
+///   the same arithmetic rather than from matching the crate.
+/// * `predicted_matches_roaring` fails the moment they diverge, which is what
+///   a dependency bump should do rather than drift quietly.
+///
+/// The larger risk is the serialized *bytes* changing under a bump, which would
+/// break parity with the other engine with or without this formula. `roaring`
+/// is pinned exactly for that reason — see the note in `graph/Cargo.toml`.
 #[derive(Clone, Debug, Default)]
 struct RunCost {
-    /// One tally per 2^16 container the run touches, in ascending key order.
-    ///
-    /// Per-container rather than aggregated because a container's cost is a
-    /// *minimum* over three stores — so totals cannot reconstruct it.
-    ///
-    /// Only ever appended to, or updated in its last element, because a run's
-    /// ids ascend. That is what makes adding a segment O(1) instead of
-    /// re-walking and re-splitting the whole run on every push.
-    containers: Vec<ContainerTally>,
-}
+    /// Whether any id has been folded in. Distinguishes an empty run from one
+    /// whose open window happens to start at zero.
+    started: bool,
+    /// Bytes of every `RoaringBitmap` that is finished — the run has moved past
+    /// its 2^32 slice, so nothing can change it again.
+    closed_bitmaps: usize,
 
-/// What one container of a run holds, which is all its size depends on.
-///
-/// **A container is not a range.** It is a fixed 65,536-wide window of the id
-/// space — a partition of the *addresses*, not of the data. Roaring splits ids
-/// by their high bits, gives each window its own store, and picks the cheapest
-/// of three for what landed there:
-///
-/// | store  | cost                                    | suits      |
-/// |--------|-----------------------------------------|------------|
-/// | array  | 2 B per id, its low 16 bits             | sparse     |
-/// | bitset | a fixed 8,192 B, one bit per address     | dense      |
-/// | run    | 4 B per interval, `u16` start + length   | consecutive|
-///
-/// So a *run* is one of the three encodings **inside** a container, and that is
-/// where our segments land: one [`Segment::Range`] is one run — except where it
-/// straddles a window boundary, which makes it a run in each window it touches.
-/// That, and only that, is why [`RunCost::add_range`] splits.
-///
-/// Ids are 64-bit, so there are two levels: a `RoaringTreemap` is a `BTreeMap`
-/// keyed by `id >> 32`, each value a `RoaringBitmap` whose containers cover the
-/// next 16 bits. `window` below flattens both — it is a global window index
-/// rather than roaring's own 16-bit container key, which is why it is not
-/// called one.
-#[derive(Clone, Copy, Debug)]
-struct ContainerTally {
-    /// Which 65,536-wide window of the id space this is: `id >> 16`.
+    /// The 2^32 slice being filled: `id >> 32`.
+    bitmap_key: u64,
+    /// Windows in it that are finished, their total body bytes, and whether any
+    /// of them chose a run store — which is what selects the header flavour.
+    closed_windows: usize,
+    closed_body: usize,
+    closed_has_run: bool,
+
+    /// The window still being filled: `id >> 16`, and what has landed in it.
     ///
-    /// Its high bits are the `RoaringTreemap` entry it belongs to, so
-    /// `window >> 16` groups windows into bitmaps — which is what
-    /// [`RunCost::predicted`] does, because the per-bitmap header is charged
-    /// once per group.
+    /// Kept apart from the frozen totals because it is the one thing an
+    /// extending range can still change, and because whether *it* chooses a run
+    /// store can flip either way as it grows.
     window: u64,
-    /// Ids falling in this window — what an array or bitset store would cost.
-    ids: u64,
-    /// Maximal consecutive stretches they form — what a run store would cost.
-    runs: u32,
+    window_ids: u64,
+    window_runs: u32,
 }
 
 // Roaring's serialized layout, as the pieces this arithmetic needs. Names here
@@ -165,10 +161,62 @@ const CONTAINER_DESC_BYTES: usize = 4;
 const CONTAINER_OFFSET_BYTES: usize = 4;
 /// Below this many containers the run-container layout omits the offset table.
 const OFFSET_TABLE_MIN_CONTAINERS: usize = 4;
+/// A treemap's own prefix: a `u64` count of the bitmaps in it.
+const TREEMAP_COUNT_BYTES: usize = 8;
+/// Each bitmap in a treemap is preceded by its `u32` key.
+const BITMAP_KEY_BYTES: usize = 4;
+
+/// What one window's body costs, and whether it chose a run store.
+///
+/// Array up to 4,096 ids and bitset past it — which is exactly `min`, because
+/// two bytes times 4,096 is the bitset's fixed size. A tie goes to the run
+/// store: roaring's `optimize()` leaves a `Run` container alone unless strictly
+/// beaten, and ours are built by range so they start as runs.
+const fn window_body(
+    ids: u64,
+    runs: u32,
+) -> (usize, bool) {
+    // Not `min`: `Ord` is not const yet, and this wants to fold at compile time
+    // where the widths are known.
+    let sparse = ids as usize * ARRAY_ELEMENT_BYTES;
+    let plain = if sparse < BITSET_CONTAINER_BYTES {
+        sparse
+    } else {
+        BITSET_CONTAINER_BYTES
+    };
+    let as_run = RUN_COUNT_BYTES + RUN_INTERVAL_BYTES * runs as usize;
+    if as_run <= plain {
+        (as_run, true)
+    } else {
+        (plain, false)
+    }
+}
+
+/// One bitmap's header, given how many windows it holds and whether any of them
+/// is a run container.
+const fn bitmap_header(
+    windows: usize,
+    has_run: bool,
+) -> usize {
+    if has_run {
+        // The run-container layout adds a bitset marking which windows are runs,
+        // and only carries the offset table once there are enough windows.
+        let run_flags = windows.div_ceil(8);
+        if windows >= OFFSET_TABLE_MIN_CONTAINERS {
+            MAGIC_BYTES + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * windows + run_flags
+        } else {
+            MAGIC_BYTES + CONTAINER_DESC_BYTES * windows + run_flags
+        }
+    } else {
+        MAGIC_BYTES
+            + CONTAINER_COUNT_BYTES
+            + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * windows
+    }
+}
 
 impl RunCost {
     fn clear(&mut self) {
-        self.containers.clear();
+        *self = Self::default();
     }
 
     /// Fold one consecutive range into the tally.
@@ -184,79 +232,71 @@ impl RunCost {
         let end = base + len - 1;
         let mut lo = base;
         while lo <= end {
-            let hi = lo >> 16;
-            let window_end = ((hi + 1) << 16) - 1;
+            let window = lo >> 16;
+            let window_end = ((window + 1) << 16) - 1;
             let piece_end = end.min(window_end);
-            let n = piece_end - lo + 1;
-            match self.containers.last_mut() {
-                Some(tally) if tally.window == hi => {
-                    tally.ids += n;
-                    tally.runs += 1;
+            let ids = piece_end - lo + 1;
+
+            if !self.started {
+                self.started = true;
+                self.bitmap_key = window >> 16;
+                self.window = window;
+                self.window_ids = ids;
+                self.window_runs = 1;
+            } else if window == self.window {
+                // Still the same window: one more run in it.
+                self.window_ids += ids;
+                self.window_runs += 1;
+            } else {
+                // Moved on, so the open window is now frozen and can be folded
+                // into its bitmap's totals — and if the bitmap changed too, that
+                // bitmap is frozen as well.
+                self.freeze_window();
+                let bitmap_key = window >> 16;
+                if bitmap_key != self.bitmap_key {
+                    self.freeze_bitmap();
+                    self.bitmap_key = bitmap_key;
                 }
-                _ => self.containers.push(ContainerTally {
-                    window: hi,
-                    ids: n,
-                    runs: 1,
-                }),
+                self.window = window;
+                self.window_ids = ids;
+                self.window_runs = 1;
             }
             lo = piece_end + 1;
         }
     }
 
+    fn freeze_window(&mut self) {
+        let (body, is_run) = window_body(self.window_ids, self.window_runs);
+        self.closed_body += body;
+        self.closed_has_run |= is_run;
+        self.closed_windows += 1;
+    }
+
+    fn freeze_bitmap(&mut self) {
+        self.closed_bitmaps += BITMAP_KEY_BYTES
+            + bitmap_header(self.closed_windows, self.closed_has_run)
+            + self.closed_body;
+        self.closed_windows = 0;
+        self.closed_body = 0;
+        self.closed_has_run = false;
+    }
+
     /// The bytes `RoaringTreemap::serialized_size()` would report.
     ///
-    /// O(containers), not O(segments) — and a container spans 65,536 ids, so for
-    /// a graph's densely-allocated ids that is a handful however long the run.
+    /// O(1): everything but the open window and the open bitmap is already
+    /// summed, and those two are closed out arithmetically without being
+    /// committed.
     fn predicted(&self) -> usize {
-        // The treemap prefix: a `u64` count of its 2^32 entries.
-        let mut total = size_of::<u64>();
-        let mut i = 0;
-        while i < self.containers.len() {
-            // One `RoaringBitmap` per 2^32 slice, and its header is charged
-            // once for all the windows inside it.
-            let entry = self.containers[i].window >> 16;
-            let mut nc = 0_usize;
-            let mut has_run = false;
-            let mut body = 0_usize;
-            while i < self.containers.len() && self.containers[i].window >> 16 == entry {
-                let ContainerTally { ids, runs, .. } = self.containers[i];
-                // Array up to 4,096 values, bitset past it — which is exactly
-                // `min`, because 2 x 4,096 is the bitset's fixed size.
-                let plain = (ids as usize * ARRAY_ELEMENT_BYTES).min(BITSET_CONTAINER_BYTES);
-                let as_run = RUN_COUNT_BYTES + RUN_INTERVAL_BYTES * runs as usize;
-                // A tie keeps the run container, not the array. That is not a
-                // detail: `optimize()` is path-dependent — from an `Array`
-                // store it converts only on a strict win, but from a `Run`
-                // store it *stays* run unless strictly beaten. Our bitmaps are
-                // built with `insert_range` per segment, so their containers
-                // start as runs, and the tie goes that way. An engine that
-                // built the same set id-by-id would land on the array and emit
-                // a different header. See `construction_order_changes_the_bytes`.
-                if as_run <= plain {
-                    has_run = true;
-                    body += as_run;
-                } else {
-                    body += plain;
-                }
-                nc += 1;
-                i += 1;
-            }
-            let header = if has_run {
-                let run_flags = nc.div_ceil(8);
-                if nc >= OFFSET_TABLE_MIN_CONTAINERS {
-                    MAGIC_BYTES + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * nc + run_flags
-                } else {
-                    MAGIC_BYTES + CONTAINER_DESC_BYTES * nc + run_flags
-                }
-            } else {
-                MAGIC_BYTES
-                    + CONTAINER_COUNT_BYTES
-                    + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * nc
-            };
-            // Each 2^32 entry is a `u32` key then the bitmap itself.
-            total += size_of::<u32>() + header + body;
+        if !self.started {
+            return TREEMAP_COUNT_BYTES;
         }
-        total
+        let (body, is_run) = window_body(self.window_ids, self.window_runs);
+        TREEMAP_COUNT_BYTES
+            + self.closed_bitmaps
+            + BITMAP_KEY_BYTES
+            + bitmap_header(self.closed_windows + 1, self.closed_has_run || is_run)
+            + self.closed_body
+            + body
     }
 }
 
