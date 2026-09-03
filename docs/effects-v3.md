@@ -627,11 +627,25 @@ the type internally and were discarding it.
 ### `UPDATE_EDGE` carries its type, and deliberately not its endpoints
 
 Both update forms fill the same slot with the entity's schema membership: a
-node's `LabelSet`, an edge's `RelType`. Neither is an instruction. The replica
-re-derives what it needs to maintain its own indexes either way —
-`set_nodes_attributes` walks `node_labels_matrix` per node and never reads the
-wire's label set at all — so what they are for is the partition key, and the
-identity the replica can check the record against before it mutates anything.
+node's `LabelSet`, an edge's `RelType`. **The replica indexes under what the
+record states, and does not re-derive it.** That is the point of carrying them:
+re-deriving makes the replica's index agree with the replica's own matrices,
+which is the same answer only while nothing has diverged and a silently
+different one once something has. Indexing under the primary's answer makes the
+two indexes hold the same thing.
+
+Both are bounds-checked against the local dictionaries first — labels through
+`checked_label_ids`, the type through `checked_type_id` — so a record naming a
+schema this replica has not seen fails the buffer rather than indexing under an
+id it invented. Same shape as C's check in `ApplyUpdateEdge`.
+
+An earlier draft of v3 had `apply` discard the label set and walk
+`node_labels_matrix` per node instead. That was inference, and it was also the
+expensive form: the record's grouping has already established that every id in
+it shares the label set, so the indexed-attribute test belongs once per record
+rather than once per (node, label, attribute). `set_nodes_attributes_rows_of_labels`
+and `set_relationships_attributes_of_type` are the two entry points that take
+the record's word for it.
 
 C already worked this way. `EFFECT_UPDATE_EDGE` has carried the relation id
 since it was written, and `update_edge_effect.c` reads it back to refuse a
