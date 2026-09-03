@@ -1711,6 +1711,17 @@ def test_nested_list():
     assert res.result_set == [expected]
 
 
+def test_deep_expression_nesting_is_rejected():
+    # Parentheses that cannot collapse - each one wraps an operator - used to
+    # build a tree deep enough to overflow the stack of the stages that walk
+    # it, taking the server down for every connected client with a raw SIGSEGV
+    # no panic handler could report. It has to come back as an error instead,
+    # and the server has to survive it.
+    n = 1000
+    query_exception(f"RETURN {'(' * n}1{'+1)' * n}", "Query nesting exceeds")
+    assert query("RETURN 1").result_set == [[1]]
+
+
 def test_index():
     res = query(
         "UNWIND range(1, 100000) AS x CREATE (n:Node {vi: x, vs: tostring(x)})",
