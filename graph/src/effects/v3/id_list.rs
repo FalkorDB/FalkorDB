@@ -75,17 +75,45 @@ const ROARING_FLOOR_BYTES: usize = 32;
 /// run grows so that it never has to be built to find out.
 ///
 /// Roaring's serialized size is a closed-form function of three things — how
-/// many ids, how many maximal runs, and how they spread across containers — and
-/// a segment list already knows all three. So the choice between ranges and a
+/// many ids, how many maximal runs, and how they spread across buckets — and a
+/// segment list already knows all three. So the choice between ranges and a
 /// bitmap is arithmetic, and a bitmap is built exactly once: when it has already
 /// won. Nothing is ever built in order to be measured and thrown away.
 ///
+/// # How roaring is laid out, since none of the below reads without it
+///
+/// **A bucket is not a range.** It is a fixed 65,536-wide slice of the id
+/// *space* — a partition of the addresses, not of the data. Roaring splits ids
+/// by their high bits and gives each bucket its own store, choosing the
+/// cheapest of three for whatever landed there:
+///
+/// | store  | cost                                   | suits       |
+/// |--------|----------------------------------------|-------------|
+/// | array  | 2 B per id, its low 16 bits            | sparse      |
+/// | bitset | a fixed 8,192 B, one bit per address    | dense       |
+/// | run    | 4 B per interval, `u16` start + length  | consecutive |
+///
+/// So a *run* is one of the three encodings **inside** a bucket, and that is
+/// where our segments land: one [`Segment::Range`] is one run — except where it
+/// straddles a bucket boundary, which makes it a run in each bucket it touches.
+/// That, and only that, is why [`Self::add_range`] splits.
+///
+/// Ids are 64-bit, so there are two levels: a `RoaringTreemap` is a `BTreeMap`
+/// keyed by `id >> 32`, each value a `RoaringBitmap` holding the buckets of that
+/// slice. Each bitmap is charged one header, so buckets are grouped by
+/// `bucket >> 16` to size them.
+///
+/// The crate itself names none of this — it has only
+/// `Container { key: u16, store: Store }`, which fuses the address with the
+/// storage. Roaring's papers call the slice a *chunk*; "bucket" is the same
+/// thing and reads without having read them.
+///
 /// **Constant space, and no per-container list.** A run's ids ascend, so an
-/// added range can only extend the newest window or open one after it — which
-/// means every window behind the cursor has its ids and runs frozen for good,
+/// added range can only extend the newest bucket or open one after it — which
+/// means every bucket behind the cursor has its ids and runs frozen for good,
 /// and so does its cost. The same goes for whole bitmaps. Everything behind the
 /// cursor therefore collapses into one accumulated integer, and only the open
-/// window and the open bitmap need their parts kept. Every operation here is
+/// bucket and the open bitmap need their parts kept. Every operation here is
 /// O(1); nothing is re-walked.
 ///
 /// **On depending on a crate's internals.** The constants below are roaring's,
@@ -107,7 +135,7 @@ const ROARING_FLOOR_BYTES: usize = 32;
 #[derive(Clone, Debug, Default)]
 struct RunCost {
     /// Whether any id has been folded in. Distinguishes an empty run from one
-    /// whose open window happens to start at zero.
+    /// whose open bucket happens to start at zero.
     started: bool,
     /// Bytes of every `RoaringBitmap` that is finished — the run has moved past
     /// its 2^32 slice, so nothing can change it again.
@@ -115,20 +143,20 @@ struct RunCost {
 
     /// The 2^32 slice being filled: `id >> 32`.
     bitmap_key: u64,
-    /// Windows in it that are finished, their total body bytes, and whether any
+    /// Buckets in it that are finished, their total body bytes, and whether any
     /// of them chose a run store — which is what selects the header flavour.
-    closed_windows: usize,
+    closed_buckets: usize,
     closed_body: usize,
     closed_has_run: bool,
 
-    /// The window still being filled: `id >> 16`, and what has landed in it.
+    /// The bucket still being filled: `id >> 16`, and what has landed in it.
     ///
     /// Kept apart from the frozen totals because it is the one thing an
     /// extending range can still change, and because whether *it* chooses a run
     /// store can flip either way as it grows.
-    window: u64,
-    window_ids: u64,
-    window_runs: u32,
+    bucket: u64,
+    bucket_ids: u64,
+    bucket_runs: u32,
 }
 
 // Roaring's serialized layout, as the pieces this arithmetic needs. Names here
@@ -166,13 +194,13 @@ const TREEMAP_COUNT_BYTES: usize = 8;
 /// Each bitmap in a treemap is preceded by its `u32` key.
 const BITMAP_KEY_BYTES: usize = 4;
 
-/// What one window's body costs, and whether it chose a run store.
+/// What one bucket's body costs, and whether it chose a run store.
 ///
 /// Array up to 4,096 ids and bitset past it — which is exactly `min`, because
 /// two bytes times 4,096 is the bitset's fixed size. A tie goes to the run
 /// store: roaring's `optimize()` leaves a `Run` container alone unless strictly
 /// beaten, and ours are built by range so they start as runs.
-const fn window_body(
+const fn bucket_body(
     ids: u64,
     runs: u32,
 ) -> (usize, bool) {
@@ -192,25 +220,25 @@ const fn window_body(
     }
 }
 
-/// One bitmap's header, given how many windows it holds and whether any of them
+/// One bitmap's header, given how many buckets it holds and whether any of them
 /// is a run container.
 const fn bitmap_header(
-    windows: usize,
+    buckets: usize,
     has_run: bool,
 ) -> usize {
     if has_run {
-        // The run-container layout adds a bitset marking which windows are runs,
-        // and only carries the offset table once there are enough windows.
-        let run_flags = windows.div_ceil(8);
-        if windows >= OFFSET_TABLE_MIN_CONTAINERS {
-            MAGIC_BYTES + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * windows + run_flags
+        // The run-container layout adds a bitset marking which buckets are runs,
+        // and only carries the offset table once there are enough buckets.
+        let run_flags = buckets.div_ceil(8);
+        if buckets >= OFFSET_TABLE_MIN_CONTAINERS {
+            MAGIC_BYTES + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * buckets + run_flags
         } else {
-            MAGIC_BYTES + CONTAINER_DESC_BYTES * windows + run_flags
+            MAGIC_BYTES + CONTAINER_DESC_BYTES * buckets + run_flags
         }
     } else {
         MAGIC_BYTES
             + CONTAINER_COUNT_BYTES
-            + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * windows
+            + (CONTAINER_DESC_BYTES + CONTAINER_OFFSET_BYTES) * buckets
     }
 }
 
@@ -221,9 +249,9 @@ impl RunCost {
 
     /// Fold one consecutive range into the tally.
     ///
-    /// Split at the 65,536 window boundaries it crosses, because a container
+    /// Split at the 65,536 bucket boundaries it crosses, because a container
     /// covers a fixed slice of the id space rather than a stretch of data: a
-    /// range spanning three windows is three runs, one in each, not one run.
+    /// range spanning three buckets is three runs, one in each, not one run.
     fn add_range(
         &mut self,
         base: u64,
@@ -232,69 +260,69 @@ impl RunCost {
         let end = base + len - 1;
         let mut lo = base;
         while lo <= end {
-            let window = lo >> 16;
-            let window_end = ((window + 1) << 16) - 1;
-            let piece_end = end.min(window_end);
+            let bucket = lo >> 16;
+            let bucket_end = ((bucket + 1) << 16) - 1;
+            let piece_end = end.min(bucket_end);
             let ids = piece_end - lo + 1;
 
             if !self.started {
                 self.started = true;
-                self.bitmap_key = window >> 16;
-                self.window = window;
-                self.window_ids = ids;
-                self.window_runs = 1;
-            } else if window == self.window {
-                // Still the same window: one more run in it.
-                self.window_ids += ids;
-                self.window_runs += 1;
+                self.bitmap_key = bucket >> 16;
+                self.bucket = bucket;
+                self.bucket_ids = ids;
+                self.bucket_runs = 1;
+            } else if bucket == self.bucket {
+                // Still the same bucket: one more run in it.
+                self.bucket_ids += ids;
+                self.bucket_runs += 1;
             } else {
-                // Moved on, so the open window is now frozen and can be folded
+                // Moved on, so the open bucket is now frozen and can be folded
                 // into its bitmap's totals — and if the bitmap changed too, that
                 // bitmap is frozen as well.
-                self.freeze_window();
-                let bitmap_key = window >> 16;
+                self.freeze_bucket();
+                let bitmap_key = bucket >> 16;
                 if bitmap_key != self.bitmap_key {
                     self.freeze_bitmap();
                     self.bitmap_key = bitmap_key;
                 }
-                self.window = window;
-                self.window_ids = ids;
-                self.window_runs = 1;
+                self.bucket = bucket;
+                self.bucket_ids = ids;
+                self.bucket_runs = 1;
             }
             lo = piece_end + 1;
         }
     }
 
-    fn freeze_window(&mut self) {
-        let (body, is_run) = window_body(self.window_ids, self.window_runs);
+    fn freeze_bucket(&mut self) {
+        let (body, is_run) = bucket_body(self.bucket_ids, self.bucket_runs);
         self.closed_body += body;
         self.closed_has_run |= is_run;
-        self.closed_windows += 1;
+        self.closed_buckets += 1;
     }
 
     fn freeze_bitmap(&mut self) {
         self.closed_bitmaps += BITMAP_KEY_BYTES
-            + bitmap_header(self.closed_windows, self.closed_has_run)
+            + bitmap_header(self.closed_buckets, self.closed_has_run)
             + self.closed_body;
-        self.closed_windows = 0;
+        self.closed_buckets = 0;
         self.closed_body = 0;
         self.closed_has_run = false;
     }
 
     /// The bytes `RoaringTreemap::serialized_size()` would report.
     ///
-    /// O(1): everything but the open window and the open bitmap is already
+    /// O(1): everything but the open bucket and the open bitmap is already
     /// summed, and those two are closed out arithmetically without being
     /// committed.
     fn predicted(&self) -> usize {
         if !self.started {
             return TREEMAP_COUNT_BYTES;
         }
-        let (body, is_run) = window_body(self.window_ids, self.window_runs);
+        let (body, is_run) = bucket_body(self.bucket_ids, self.bucket_runs);
         TREEMAP_COUNT_BYTES
             + self.closed_bitmaps
             + BITMAP_KEY_BYTES
-            + bitmap_header(self.closed_windows + 1, self.closed_has_run || is_run)
+            + bitmap_header(self.closed_buckets + 1, self.closed_has_run || is_run)
             + self.closed_body
             + body
     }
