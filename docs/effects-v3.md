@@ -181,13 +181,14 @@ each segment writes itself:
 
 ```text
 Segment := u8 header · payload
-  header bit 0     kind: 0 = Range, 1 = Ascending
-         bits 1-2  base width code   (Range)
-         bits 3-4  length width code (Range)
-         bits 5-7  reserved, MUST be zero — a decoder rejects a header that
+  header bits 0-1  kind: 0 = Range, 1 = Ascending, 2 = Repeat
+         bits 2-3  value width code   (Range base, Repeat id)
+         bits 4-5  count width code   (Range len,  Repeat count)
+         bits 6-7  reserved, MUST be zero — a decoder rejects a header that
                    sets them rather than masking them off
 
-  Range     := uint(base_width) base · uint(len_width) len
+  Range     := uint(value_width) base · uint(count_width) len
+  Repeat    := uint(value_width) id   · uint(count_width) count
   Ascending := u32 blob_len · roaring64[blob_len]
 ```
 
@@ -195,10 +196,21 @@ A width code is `0,1,2,3` for `1,2,4,8` bytes. Ids and lengths are written at
 the narrowest width that holds them; FalkorDB allocates entity ids densely from
 zero and reuses them from a free list, so the width tracks the graph's size.
 
-**`Range` alone can describe any list.** A single id is `len == 1`, so a
-shuffled list is one segment per id and a repeated id is simply another segment.
-That is why the dictionary encoding v2 needed is gone: duplicates and disorder
-are the ordinary case, not a special one.
+**`Range` alone can describe any list**, and `Repeat` is what stops that being
+expensive. A single id is `len == 1`, so a shuffled list is one segment per id.
+A *repeated* id would be one segment each too — and edge endpoints are nothing
+but repeats, since every edge out of a supernode carries the same source. So
+`Repeat { id, count }` is its own kind:
+
+* it is **not** a degenerate range — a range ascends by one per step, a repeat
+  does not move;
+* and it can **never** become a bitmap, which holds a value once.
+
+That is the third kind's whole justification, and it is what replaces v2's
+dictionary encoding. Measured on 10,000 edges out of one supernode: the
+dictionary was 10,058 B, segments without `Repeat` were 60,031 B, and with it
+the whole record is **43 B** — the sources are one `Repeat`, the destinations
+one `Range`, the edge ids another.
 
 **`Ascending` is what several ranges collapse into** when a bitmap is cheaper.
 It only ever describes ranges that were already ascending, because a bitmap
@@ -644,20 +656,23 @@ single-int case quoted elsewhere in this document.
 
 ### Payload
 
-> **These rows predate the segment format** and are being re-measured with the
-> benchmarks that produce them. Segments add four bytes of segment count per
-> record plus a length per segment, so the v3 column is a few bytes light per
-> record — visible at `nodes = 1`, negligible by `nodes = 1,000`. The v2 column
-> and the shape of the conclusion are unaffected.
-
 | nodes | v2 | v3 | v3/v2 | v3 + zstd-1 | vs v2 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 40 B | 52 B | **130%** | 52 B | 130% |
-| 100 | 3,991 B | 2,844 B | 71.3% | 336 B | 8.4% |
-| 1,000 | 40,891 B | 28,944 B | 70.8% | 1,781 B | 4.4% |
-| 10,000 | 418,891 B | 298,944 B | 71.4% | 11,124 B | 2.7% |
-| 100,000 | 4,288,891 B | 3,088,954 B | 72.0% | 39,094 B | 0.9% |
-| 1,000,000 | 43,888,891 B | 31,889,159 B | 72.7% | 258,662 B | **0.6%** |
+| 1 | 40 B | 56 B | **140%** | 56 B | 140% |
+| 100 | 3,991 B | 2,819 B | 70.6% | 319 B | 8.0% |
+| 1,000 | 40,891 B | 28,920 B | 70.7% | 1,766 B | 4.3% |
+| 10,000 | 418,891 B | 298,920 B | 71.4% | 11,101 B | 2.7% |
+| 100,000 | 4,288,891 B | 3,088,922 B | 72.0% | 39,060 B | 0.9% |
+| 1,000,000 | 43,888,891 B | 31,888,922 B | 72.7% | 1,607,295 B | 3.7% |
+
+The v3 and compressed columns are re-measured on the segment format; the v2
+column is historical, from when v2 existed to measure.
+
+Two rows are worth reading against the rest. The **1-node** row is 40% larger
+under v3, not 30%: a segment states its own count and length, so the smallest
+possible record pays for structure it cannot amortise. And the **1,000,000** row
+compresses far worse than the 100,000 one — 3.7% against 0.9% — which is not a
+property of the format but of zstd level 1; see the alignment note above.
 
 Two things this says that the single-int figures do not. **A single-node write is
 30% larger under v3** — the 4-byte opcode, the 4-byte count and the 4-byte label
