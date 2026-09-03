@@ -20,7 +20,8 @@
 
 use crate::{
     effects::v3::{
-        DecodeError, INDEX_FLD_FULLTEXT, INDEX_FLD_VECTOR, Record, entity_tag, open_payload,
+        AttrRef, DecodeError, INDEX_FLD_FULLTEXT, INDEX_FLD_VECTOR, Record, entity_tag,
+        open_payload,
     },
     entity_type::EntityType,
     graph::graph::{Graph, TypeId},
@@ -398,12 +399,12 @@ fn apply_record(
         } => {
             verify_schema(g, schema_type, label_id, &label)?;
             for field in &fields {
-                verify_attribute(g, field.attr_id, &field.attr)?;
+                verify_attribute(g, field.id, &field.name)?;
             }
             let entity_type = schema_type;
             let index_type = index_type_of(field_type);
             let label = Arc::new(label);
-            let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.attr)).collect();
+            let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
             if create {
                 // Population is spawned, not run here. `populate_indexes_sync`
                 // ran on the Redis main thread, so a replica applying an index
@@ -443,14 +444,14 @@ fn apply_record(
             props,
         } => {
             verify_schema(g, entity_type, label_id, &label)?;
-            for (attr_id, name) in &props {
-                verify_attribute(g, *attr_id, name)?;
+            for AttrRef { id, name } in &props {
+                verify_attribute(g, *id, name)?;
             }
 
             let ct = constraint_type;
             let et = entity_type;
             let properties: Vec<Arc<String>> =
-                props.into_iter().map(|(_, n)| Arc::new(n)).collect();
+                props.into_iter().map(|p| Arc::new(p.name)).collect();
 
             if create {
                 // Install the master's outcome rather than re-deriving it. A
@@ -791,7 +792,7 @@ mod tests {
     use crate::effects::v3::ConstraintSpec;
     use crate::effects::v3::staging::StagePending;
     use crate::effects::v3::{
-        INDEX_FLD_RANGE, IdList, IndexField, new_buffer, write_add_attribute, write_add_schema,
+        AttrRef, INDEX_FLD_RANGE, IdList, new_buffer, write_add_attribute, write_add_schema,
         write_constraint, write_create_index, write_create_node, write_labels, write_update,
     };
     use crate::graph::constraint::{ConstraintStatus, ConstraintType};
@@ -1145,10 +1146,7 @@ mod tests {
             0,
             "Expected",
             INDEX_FLD_RANGE,
-            &[IndexField {
-                attr_id: 0,
-                attr: "a",
-            }],
+            &[AttrRef { id: 0, name: "a" }],
             &Value::Null,
         );
         let err = apply_effects(&mut g, &buf).expect_err("must refuse");
@@ -1194,7 +1192,10 @@ mod tests {
                     status: Some(status),
                     label_id: 0,
                     label: "Person",
-                    props: &[(0, "email")],
+                    props: &[AttrRef {
+                        id: 0,
+                        name: "email",
+                    }],
                 },
             );
             apply_effects(&mut g, &buf).expect("announcement must apply");
@@ -1227,7 +1228,10 @@ mod tests {
                 status: Some(ConstraintStatus::Operational),
                 label_id: 0,
                 label: "Person",
-                props: &[(0, "email")],
+                props: &[AttrRef {
+                    id: 0,
+                    name: "email",
+                }],
             },
         );
 

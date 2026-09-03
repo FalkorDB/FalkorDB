@@ -194,16 +194,17 @@ pub fn write_add_attribute(
     write_string(buf, name);
 }
 
-/// One indexed field: which attribute, and how it is indexed.
+/// One attribute, by id and name — the pair every schema-bearing record carries.
 ///
-/// Grouped rather than passed as three loose arguments because `label_id` and
-/// `attr_id` are both small integers next to each other on the wire —
-/// transposing them is precisely the kind of mistake that does not fail on the
-/// far side.
+/// A struct rather than a `(u16, S)` tuple because the id sits next to other
+/// small integers on the wire, and transposing two of those is precisely the
+/// mistake that does not fail on the far side. It was a struct for index fields
+/// and a bare tuple for constraint properties, which is one wire concept with
+/// two spellings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct IndexField<S> {
-    pub attr_id: u16,
-    pub attr: S,
+pub struct AttrRef<S> {
+    pub id: u16,
+    pub name: S,
 }
 
 /// `11 CREATE_INDEX` — **one record per field**, matching C.
@@ -222,7 +223,7 @@ pub fn write_create_index(
     label_id: i32,
     label: &str,
     field_type: u32,
-    fields: &[IndexField<&str>],
+    fields: &[AttrRef<&str>],
     options: &Value,
 ) {
     write_header(buf, Opcode::CreateIndex, None);
@@ -234,7 +235,7 @@ pub fn write_create_index(
     options.encode(buf);
 }
 
-/// Every field of one index statement: `u16 n` then `(attr_id, attr) x n`.
+/// Every field of one index statement: `u16 n` then `(id, name) x n`.
 ///
 /// A statement, not a field — C sends one record per field, and this
 /// deliberately does not. Applying two single-field records is not equivalent to
@@ -250,27 +251,27 @@ pub fn write_create_index(
 /// them from the index — and a per-field type would vanish with the fields.
 fn write_index_fields(
     buf: &mut Vec<u8>,
-    fields: &[IndexField<&str>],
+    fields: &[AttrRef<&str>],
 ) {
     // Floor: 2 bytes of id and an 8-byte length per field, the same minimum
     // `read_index_fields` guards the count against.
     buf.reserve(2 + fields.len() * 10);
     write_u16(buf, fields.len() as u16);
     for field in fields {
-        write_u16(buf, field.attr_id);
-        write_string(buf, field.attr);
+        write_u16(buf, field.id);
+        write_string(buf, field.name);
     }
 }
 
-fn read_index_fields(r: &mut Reader<'_>) -> Result<Vec<IndexField<String>>, DecodeError> {
+fn read_index_fields(r: &mut Reader<'_>) -> Result<Vec<AttrRef<String>>, DecodeError> {
     let n = r.u16()?;
     // Each field is at least 2 bytes of id plus an 8-byte length.
     let n = r.guard_count(u64::from(n), 10)?;
     let mut fields = Vec::with_capacity(n);
     for _ in 0..n {
-        fields.push(IndexField {
-            attr_id: r.u16()?,
-            attr: r.string()?,
+        fields.push(AttrRef {
+            id: r.u16()?,
+            name: r.string()?,
         });
     }
     Ok(fields)
@@ -283,7 +284,7 @@ pub fn write_drop_index(
     label_id: i32,
     label: &str,
     field_type: u32,
-    fields: &[IndexField<&str>],
+    fields: &[AttrRef<&str>],
 ) {
     write_header(buf, Opcode::DropIndex, None);
     write_u32(buf, schema_tag(schema_type));
@@ -300,7 +301,7 @@ pub fn write_drop_index(
 /// index records do.
 /// A constraint as a record carries it.
 ///
-/// Grouped for the same reason as [`IndexField`]: the writer took eight
+/// Grouped for the same reason as [`AttrRef`]: the writer took eight
 /// positional arguments, six of which described one constraint.
 pub struct ConstraintSpec<'a> {
     pub constraint_type: ConstraintType,
@@ -309,7 +310,7 @@ pub struct ConstraintSpec<'a> {
     pub status: Option<ConstraintStatus>,
     pub label_id: i32,
     pub label: &'a str,
-    pub props: &'a [(u16, &'a str)],
+    pub props: &'a [AttrRef<&'a str>],
 }
 
 pub fn write_constraint(
@@ -363,8 +364,8 @@ pub fn write_constraint(
     // Floor, as above: 2 bytes of id and an 8-byte length per property.
     buf.reserve(1 + props.len() * 10);
     write_u8(buf, props.len() as u8);
-    for (attr_id, name) in props {
-        write_u16(buf, *attr_id);
+    for AttrRef { id, name } in props {
+        write_u16(buf, *id);
         write_string(buf, name);
     }
 }
@@ -427,7 +428,7 @@ pub enum Record {
         /// C's index-field flags. A property of the statement, not of a field.
         field_type: u32,
         /// Every field of the statement. See [`write_index_fields`].
-        fields: Vec<IndexField<String>>,
+        fields: Vec<AttrRef<String>>,
         /// `None` on a drop, which carries no options.
         options: Option<Value>,
     },
@@ -439,7 +440,7 @@ pub enum Record {
         status: Option<ConstraintStatus>,
         label_id: i32,
         label: String,
-        props: Vec<(u16, String)>,
+        props: Vec<AttrRef<String>>,
     },
 }
 
@@ -589,7 +590,10 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             let mut props = Vec::with_capacity(n);
             for _ in 0..n {
                 let attr_id = r.u16()?;
-                props.push((attr_id, r.string()?));
+                props.push(AttrRef {
+                    id: attr_id,
+                    name: r.string()?,
+                });
             }
             Record::Constraint {
                 create,
@@ -656,11 +660,11 @@ impl EffectEncode<3> for Record {
                 fields,
                 options,
             } => {
-                let borrowed: Vec<IndexField<&str>> = fields
+                let borrowed: Vec<AttrRef<&str>> = fields
                     .iter()
-                    .map(|f| IndexField {
-                        attr_id: f.attr_id,
-                        attr: f.attr.as_str(),
+                    .map(|f| AttrRef {
+                        id: f.id,
+                        name: f.name.as_str(),
                     })
                     .collect();
                 if *create {
@@ -686,7 +690,13 @@ impl EffectEncode<3> for Record {
                 label,
                 props,
             } => {
-                let props: Vec<(u16, &str)> = props.iter().map(|(i, n)| (*i, n.as_str())).collect();
+                let props: Vec<AttrRef<&str>> = props
+                    .iter()
+                    .map(|p| AttrRef {
+                        id: p.id,
+                        name: p.name.as_str(),
+                    })
+                    .collect();
                 write_constraint(
                     buf,
                     *create,
@@ -1103,9 +1113,9 @@ mod tests {
             7,
             "L",
             INDEX_FLD_RANGE,
-            &[IndexField {
-                attr_id: 0,
-                attr: "since",
+            &[AttrRef {
+                id: 0,
+                name: "since",
             }],
             &Value::Null,
         );
@@ -1115,9 +1125,9 @@ mod tests {
             7,
             "L",
             INDEX_FLD_RANGE,
-            &[IndexField {
-                attr_id: 0,
-                attr: "since",
+            &[AttrRef {
+                id: 0,
+                name: "since",
             }],
         );
         write_constraint(
@@ -1129,7 +1139,10 @@ mod tests {
                 status: Some(ConstraintStatus::Operational),
                 label_id: 7,
                 label: "L",
-                props: &[(0, "since")],
+                props: &[AttrRef {
+                    id: 0,
+                    name: "since",
+                }],
             },
         );
         write_constraint(
@@ -1210,11 +1223,11 @@ mod tests {
                     fields,
                     options,
                 } => {
-                    let borrowed: Vec<IndexField<&str>> = fields
+                    let borrowed: Vec<AttrRef<&str>> = fields
                         .iter()
-                        .map(|f| IndexField {
-                            attr_id: f.attr_id,
-                            attr: f.attr.as_str(),
+                        .map(|f| AttrRef {
+                            id: f.id,
+                            name: f.name.as_str(),
                         })
                         .collect();
                     if *create {
@@ -1247,8 +1260,13 @@ mod tests {
                     label,
                     props,
                 } => {
-                    let props: Vec<(u16, &str)> =
-                        props.iter().map(|(id, n)| (*id, n.as_str())).collect();
+                    let props: Vec<AttrRef<&str>> = props
+                        .iter()
+                        .map(|p| AttrRef {
+                            id: p.id,
+                            name: p.name.as_str(),
+                        })
+                        .collect();
                     write_constraint(
                         &mut again,
                         *create,
@@ -1411,9 +1429,9 @@ mod tests {
             3,
             "Person",
             INDEX_FLD_RANGE,
-            &[IndexField {
-                attr_id: 9,
-                attr: "name",
+            &[AttrRef {
+                id: 9,
+                name: "name",
             }],
             &Value::Null,
         );
@@ -1426,9 +1444,9 @@ mod tests {
                 label_id: 3,
                 label: "Person".into(),
                 field_type: INDEX_FLD_RANGE,
-                fields: vec![IndexField {
-                    attr_id: 9,
-                    attr: "name".into(),
+                fields: vec![AttrRef {
+                    id: 9,
+                    name: "name".into(),
                 }],
                 options: Some(Value::Null),
             }
@@ -1444,9 +1462,9 @@ mod tests {
         // for label 'D'", because index-level options belong to the index and
         // cannot be set twice. Verified against a live server.
         let mut buf = new_buffer();
-        let fields: Vec<IndexField<&str>> = [(0_u16, "a"), (1, "b"), (2, "c")]
+        let fields: Vec<AttrRef<&str>> = [(0_u16, "a"), (1, "b"), (2, "c")]
             .into_iter()
-            .map(|(attr_id, attr)| IndexField { attr_id, attr })
+            .map(|(id, name)| AttrRef { id, name })
             .collect();
         write_create_index(
             &mut buf,
@@ -1466,7 +1484,7 @@ mod tests {
         assert_eq!(
             fields
                 .iter()
-                .map(|f| (f.attr_id, f.attr.as_str()))
+                .map(|f| (f.id, f.name.as_str()))
                 .collect::<Vec<_>>(),
             vec![(0, "a"), (1, "b"), (2, "c")]
         );
@@ -1481,9 +1499,9 @@ mod tests {
             1,
             "KNOWS",
             INDEX_FLD_RANGE,
-            &[IndexField {
-                attr_id: 0,
-                attr: "since",
+            &[AttrRef {
+                id: 0,
+                name: "since",
             }],
         );
         let records = read_buffer(&buf).unwrap();
@@ -1541,7 +1559,16 @@ mod tests {
                 status: Some(ConstraintStatus::Operational),
                 label_id: 3,
                 label: "Person",
-                props: &[(0, "first"), (1, "last")],
+                props: &[
+                    AttrRef {
+                        id: 0,
+                        name: "first",
+                    },
+                    AttrRef {
+                        id: 1,
+                        name: "last",
+                    },
+                ],
             },
         );
         // opcode, ct, et, status, label_id, then the string, then a single
@@ -1562,7 +1589,16 @@ mod tests {
                 status: Some(ConstraintStatus::Operational),
                 label_id: 3,
                 label: "Person",
-                props: &[(0, "first"), (1, "last")],
+                props: &[
+                    AttrRef {
+                        id: 0,
+                        name: "first",
+                    },
+                    AttrRef {
+                        id: 1,
+                        name: "last",
+                    },
+                ],
             },
         );
         write_constraint(
@@ -1574,7 +1610,10 @@ mod tests {
                 status: None,
                 label_id: 1,
                 label: "KNOWS",
-                props: &[(2, "since")],
+                props: &[AttrRef {
+                    id: 2,
+                    name: "since",
+                }],
             },
         );
 
@@ -1588,7 +1627,16 @@ mod tests {
                 status: Some(ConstraintStatus::Operational),
                 label_id: 3,
                 label: "Person".into(),
-                props: vec![(0, "first".into()), (1, "last".into())],
+                props: vec![
+                    AttrRef {
+                        id: 0,
+                        name: "first".into()
+                    },
+                    AttrRef {
+                        id: 1,
+                        name: "last".into()
+                    }
+                ],
             }
         );
         let Record::Constraint {
@@ -1602,7 +1650,13 @@ mod tests {
         };
         assert!(!create);
         assert_eq!(*entity_type, EntityType::Relationship);
-        assert_eq!(props, &vec![(2_u16, "since".to_string())]);
+        assert_eq!(
+            props,
+            &vec![AttrRef {
+                id: 2,
+                name: "since".to_string()
+            }]
+        );
     }
 
     #[test]
@@ -1615,10 +1669,7 @@ mod tests {
             1,
             "L",
             INDEX_FLD_RANGE,
-            &[IndexField {
-                attr_id: 0,
-                attr: "a",
-            }],
+            &[AttrRef { id: 0, name: "a" }],
         );
         assert_eq!(&buf[..4], &(Opcode::DropIndex as u32).to_le_bytes());
         assert_eq!(
@@ -1888,7 +1939,10 @@ mod tests {
             status,
             label_id: 3,
             label: "Person",
-            props: &[(0, "email")],
+            props: &[AttrRef {
+                id: 0,
+                name: "email",
+            }],
         };
 
         let mut created = new_buffer();

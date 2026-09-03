@@ -141,13 +141,16 @@ pub fn build_constraint_buffer(
         as i32;
 
     let names = g.get_node_attribute_names();
-    let props: Vec<(u16, &str)> = properties
+    let props: Vec<v3::AttrRef<&str>> = properties
         .iter()
         .map(|p| {
             names
                 .iter()
                 .position(|n| n == p)
-                .map(|i| (i as u16, p.as_str()))
+                .map(|i| v3::AttrRef {
+                    id: i as u16,
+                    name: p.as_str(),
+                })
                 .ok_or_else(|| format!("constraint property '{p}' is not registered"))
         })
         .collect::<Result<_, _>>()?;
@@ -227,16 +230,16 @@ pub fn build_index_buffer(
         as i32;
 
     let names = g.get_node_attribute_names();
-    let fields: Vec<v3::IndexField<&str>> = ix
+    let fields: Vec<v3::AttrRef<&str>> = ix
         .fields
         .iter()
         .map(|f| {
             names
                 .iter()
                 .position(|n| n == f)
-                .map(|i| v3::IndexField {
-                    attr_id: i as u16,
-                    attr: f.as_str(),
+                .map(|i| v3::AttrRef {
+                    id: i as u16,
+                    name: f.as_str(),
                 })
                 .ok_or_else(|| format!("index field '{f}' is not registered"))
         })
@@ -806,7 +809,7 @@ mod tests {
         assert_eq!((label_id, label.as_str()), (0, "D"));
         assert_eq!(field_type, v3::INDEX_FLD_FULLTEXT);
         assert_eq!(fields.len(), 1);
-        assert_eq!((fields[0].attr_id, fields[0].attr.as_str()), (0, "body"));
+        assert_eq!((fields[0].id, fields[0].name.as_str()), (0, "body"));
         // the map itself, not an approximation of it — this is what v2 could not do
         assert!(matches!(options, Some(Value::Map(_))));
     }
