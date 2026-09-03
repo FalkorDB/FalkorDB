@@ -26,6 +26,14 @@ on:
         description: "Toolchain image used as the job container and the chef stage base"
         required: true
         type: string
+      services_files:
+        description: "JSON array of services-bucket flow test files (from the caller's flow-test-matrix)"
+        required: true
+        type: string
+      spawn_files:
+        description: "JSON array of spawn-bucket flow test files"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -81,7 +89,7 @@ jobs:
       build_image: ${{ inputs.build_image }}
       create_manifest: false
 
-  test:
+  test-image:
     runs-on: ubuntu-latest
     container:
       image: ${{ inputs.build_image }}
@@ -160,25 +168,7 @@ jobs:
           path: tests/flow/logs/
           if-no-files-found: ignore
 
-  flow-test-matrix:
-    runs-on: ubuntu-latest
-    outputs:
-      services_files: ${{ steps.set-matrix.outputs.services_files }}
-      spawn_files: ${{ steps.set-matrix.outputs.spawn_files }}
-      # Union of services_files + spawn_files for callers like coverage-flow
-      # that don't go through docker and just need every test file.
-      test_files: ${{ steps.set-matrix.outputs.test_files }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Generate test matrix
-        id: set-matrix
-        # tests/flow/test_matrix_split.py classifies each entry in
-        # flow_tests_done.txt: files whose Env() invocations never pass
-        # special flags (moduleArgs / useSlaves / enableDebugCommand /
-        # oss-cluster / shardsCount) go to services_files (cheap shared
-        # service); the rest go to spawn_files (private docker run per class).
-        run: |
-          python3 tests/flow/test_matrix_split.py >> $GITHUB_OUTPUT
+
   # Per-flavour flow-test cells. Each `flow-<flavour>` block calls
   # _flow-flavour.yml, which runs the services + spawn matrices for that
   # one flavour. Calling the reusable workflow once per flavour gives each
@@ -188,8 +178,8 @@ jobs:
   # one build-rc-<f>-image job.
 
   flow-release:
-    needs: [flow-test-matrix, build-rc-image]
-    if: ${{ !cancelled() && needs.flow-test-matrix.result == 'success' && needs.build-rc-image.result == 'success' }}
+    needs: [build-rc-image]
+    if: ${{ !cancelled() && needs.build-rc-image.result == 'success' }}
     uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
@@ -198,15 +188,15 @@ jobs:
       flavour: release
       image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ inputs.pr_number }}
       archs: '["amd64", "arm64"]'
-      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
-      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      services_files: ${{ inputs.services_files }}
+      spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
       pr_number: ${{ inputs.pr_number }}
     secrets: inherit
 
   flow-asan:
-    needs: [flow-test-matrix, build-rc-asan-image]
-    if: ${{ !cancelled() && needs.flow-test-matrix.result == 'success' && needs.build-rc-asan-image.result == 'success' }}
+    needs: [build-rc-asan-image]
+    if: ${{ !cancelled() && needs.build-rc-asan-image.result == 'success' }}
     uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
@@ -217,16 +207,16 @@ jobs:
       # — historical from when the asan image bundled the browser stage.
       image: ghcr.io/falkordb/falkordb:rc-pr-${{ inputs.pr_number }}-asan
       archs: '["amd64"]'
-      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
-      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      services_files: ${{ inputs.services_files }}
+      spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
       pr_number: ${{ inputs.pr_number }}
       sanitizer_env: address
     secrets: inherit
 
   flow-coverage:
-    needs: [flow-test-matrix, build-rc-coverage-image]
-    if: ${{ !cancelled() && needs.flow-test-matrix.result == 'success' && needs.build-rc-coverage-image.result == 'success' }}
+    needs: [build-rc-coverage-image]
+    if: ${{ !cancelled() && needs.build-rc-coverage-image.result == 'success' }}
     uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
@@ -235,8 +225,8 @@ jobs:
       flavour: coverage
       image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ inputs.pr_number }}-coverage
       archs: '["amd64"]'
-      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
-      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      services_files: ${{ inputs.services_files }}
+      spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
       pr_number: ${{ inputs.pr_number }}
       collect_coverage: true

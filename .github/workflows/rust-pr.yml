@@ -99,12 +99,27 @@ jobs:
     # build-toolchain.yml only uses the auto-injected GITHUB_TOKEN; no
     # custom secrets to forward, so we don't need `secrets: inherit`.
 
+  # Flow-test file split, shared by the image-free tier below and by the
+  # RC pipeline. One definition; both callers read the same buckets.
+  flow-test-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      services_files: ${{ steps.set-matrix.outputs.services_files }}
+      spawn_files: ${{ steps.set-matrix.outputs.spawn_files }}
+      test_files: ${{ steps.set-matrix.outputs.test_files }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Generate test matrix
+        id: set-matrix
+        run: |
+          python3 tests/flow/test_matrix_split.py >> $GITHUB_OUTPUT
+
   # The half of CI that needs a published rc-pr-<N> image: the RC builds
   # themselves, `test` against the release image, and the three flow flavours.
   # Extracted to _ci-pipeline.yml so a second caller can drive the same
   # definition — see that file's header.
   rc-pipeline:
-    needs: [check-files, docker]
+    needs: [check-files, docker, flow-test-matrix]
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     uses: ./.github/workflows/_ci-pipeline.yml
     permissions:
@@ -114,6 +129,8 @@ jobs:
       pr_number: ${{ github.event.pull_request.number }}
       commit_sha: ${{ github.event.pull_request.head.sha }}
       build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
+      spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
     secrets: inherit
 
   lint:
@@ -264,3 +281,149 @@ jobs:
           else                                                              
             echo "No fuzz artifacts found or directory is empty"           
           fi                                                                
+
+  # ── Image-free tier ────────────────────────────────────────────────────
+  # Everything below builds libfalkordb.so in the toolchain container, ships
+  # it as a job artifact, and tests against it. No image is built and nothing
+  # is pushed to a registry, so these run on a read-only GITHUB_TOKEN — which
+  # is what a pull_request from a fork gets. Shapes lifted from rust-push.yml.
+
+  build-release:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "release"
+      - name: Build
+        run: cargo build --release
+      - name: Upload release binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-binary
+          path: target/release/libfalkordb.so
+
+  test:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "release"
+      - name: Build
+        run: cargo build --release
+      - name: Run unit tests
+        run: |
+          # Doctests are linked separately by rustdoc (which ignores RUSTFLAGS /
+          # .cargo rustflags), so they need the duplicate-symbol allowance for
+          # libredisearch_rs.a's bundled std via RUSTDOCFLAGS. Also disable release
+          # LTO for the test build: the embedded C/Rust archives carry no LLVM
+          # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc".
+          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+      - name: Run tests
+        run: |
+          . /data/venv/bin/activate
+          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+      - name: Run TCK tests
+        run: |
+          . /data/venv/bin/activate
+          RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+
+  flow:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    needs: [check-files, docker, flow-test-matrix, build-release]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-release.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download release binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-binary
+          path: target/release
+      - run: chmod +x target/release/libfalkordb.so
+      - name: Run Flow test - ${{ matrix.test_file }}
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
+        run: |
+          . /data/venv/bin/activate
+          RELEASE=1 TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: flow-logs-${{ strategy.job-index }}
+          path: tests/flow/logs/
+          if-no-files-found: ignore
+
+  build-coverage:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    needs: [check-files, docker]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "coverage"
+          env-vars: "RUSTFLAGS"
+      - name: Build with coverage
+        run: |
+          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
+      - name: Upload coverage binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-binary
+          path: target/debug/libfalkordb.so
+
+  coverage-flow:
+    runs-on: ubuntu-latest
+    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    needs: [check-files, docker, flow-test-matrix, build-coverage]
+    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-coverage.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download coverage binary
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: coverage-binary
+          path: target/debug
+      - run: chmod +x target/debug/libfalkordb.so
+      - name: Run coverage - ${{ matrix.test_file }}
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
+        run: |
+          . /data/venv/bin/activate
+          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
+          llvm-profdata-22 merge --sparse $(find . -name "*.profraw") -o cov.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-flow-logs-${{ strategy.job-index }}
+          path: tests/flow/logs/
+          if-no-files-found: ignore
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: flow-coverage
