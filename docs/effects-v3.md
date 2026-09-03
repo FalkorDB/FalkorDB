@@ -61,9 +61,9 @@ Four rules, and everything else follows from them:
    independently.
 3. **Inside a record**: the count once, the ids once, the shape once, then
    `count × n` values.
-4. **Row *k* belongs to the k-th smallest id in the `IdSet`.** Ascending id order is
+4. **Row *k* belongs to the k-th id in the `IdList`, as written.** Id order is
    the only thing binding values to entities — no per-row id is sent. This is why
-   `IdSet` decode must assert cardinality: a bitmap that round-trips one id short
+   An `Ascending` segment's decode must check its cardinality: a bitmap one id short
    would land every subsequent row on the wrong entity.
 
 "Partition key" and "shape" are the same thing — the first is its role, and the
@@ -129,11 +129,32 @@ constraint.
 
 Even when enabled the smaller form wins — zstd inflates an already-minimal
 buffer, and batched records are already most of the way there. On the motivating
-query the three sizes are **340,001 B (v2) → 120,052 B (v3) → 8,582 B
+query the three sizes are **340,001 B (v2) → 120,028 B (v3) → 10,446 B
 (v3 + zstd-1)**.
 
 Compression runs last, after the record stream is complete, because it rewrites
 everything after the header.
+
+#### Level 1's ratio is a coin flip on alignment
+
+Worth knowing before quoting a ratio from this document. zstd level 1's fast
+match-finder phase-locks onto a payload's record period, so the ratio depends on
+where the records happen to start. Two payloads that differ by a few bytes of
+prefix and are otherwise the same ten thousand value rows compress to **10,446**
+and **31,136** bytes. Padding the same body one byte at a time shows the shape
+of it — one alignment in nine is ~3x better than the other eight:
+
+| pad | level 1 | level 3 |
+| --- | --- | --- |
+| 0 | 31,098 | 27,253 |
+| 1 | **10,399** | 27,250 |
+| 2 | 31,105 | 27,254 |
+| 3–8 | ~31,10x | ~27,25x |
+
+Level 3 is ~27,250 at every alignment: worse than level 1's lucky case, better
+than its common one, and stable. The level is still 1, because raising it is a
+CPU trade that has not been measured on the write thread — but a ratio quoted
+from level 1 is a measurement of one payload's alignment, not of the format.
 
 ## Design rule
 
@@ -147,83 +168,138 @@ The blocks are written and tested once each, then recombined:
 
 | block | layout |
 | --- | --- |
-| `IdSet` | `u8 enc` · (`u8 width · uint(width) × count` \| `u32 blob_len · roaring64[blob_len]`) — unique, **ascending** |
-| `IdList` | `u8 enc` · (`u8 width · uint(width) × count` \| `u32 dict_len · roaring64 · u8 w · uint(w) × count`) — ordered, duplicates kept |
+| `IdList` | `u32 n_segments` · `Segment × n_segments` — ordered, duplicates kept |
 | `RelType` | `i32` — one per record |
 | `LabelSet` | `u16 n` · `i32 × n` — **n, not count**; hoisted, always plain |
 | `AttrSet` | `u16 n` · `u16 attr_id × n` · `SIValue × (count × n)` — attribute ids stated **once**, rows row-major |
 
-### Two encodings, not three
+### An `IdList` is a sequence of segments
 
-`ENC_PLAIN = 0` carries a width byte, so ids are written at the narrowest width
-that holds the largest of them. A separate full-width encoding would be this one
-with `width == 8`, so there is no reason for both. Finding the maximum is one
-pass and no allocation, and FalkorDB allocates node ids densely from zero and
-reuses them from a free list, so the width tracks the graph's size.
+There is no plain form, no dictionary, and no encoding discriminator for the
+list as a whole. A list is a **count of segments followed by the segments**, and
+each segment writes itself:
 
-`ENC_COMPRESSED = 1` is roaring: a bitmap for `IdSet`, a dictionary plus one rank
-per row for `IdList`. Roaring bitmaps are **run-optimized before sizing or
-serializing** — `optimize()` is normative, not a tuning knob, because an
-unoptimized bitmap serializes to different bytes. A contiguous 10k set is 8,220
-bytes unoptimized and 27 optimized.
+```text
+Segment := u8 header · payload
+  header bit 0     kind: 0 = Range, 1 = Ascending
+         bits 1-2  base width code   (Range)
+         bits 3-4  length width code (Range)
+         bits 5-7  reserved, MUST be zero — a decoder rejects a header that
+                   sets them rather than masking them off
 
-### How an encoding is chosen
+  Range     := uint(base_width) base · uint(len_width) len
+  Ascending := u32 blob_len · roaring64[blob_len]
+```
 
-Never by a count threshold. Roaring's cost tracks how ids are *spread*, not how
-many there are: 1,024 ids spread 2^32 apart serialize to 22,536 bytes against the
-raw form's 8,192, so no threshold is safe at any count. Both libraries report a
-bitmap's serialized size without serializing it
-(`RoaringTreemap::serialized_size()`, `roaring64_bitmap_portable_size_in_bytes()`),
-so comparing costs nothing.
+A width code is `0,1,2,3` for `1,2,4,8` bytes. Ids and lengths are written at
+the narrowest width that holds them; FalkorDB allocates entity ids densely from
+zero and reuses them from a free list, so the width tracks the graph's size.
 
-- **`IdSet`** compares `4 + roaring_size(ids)` against `1 + count × width`.
-- **`IdList`** compares `5 + roaring_size(distinct) + count × rank_width` against
-  `1 + count × width`, but only after the probe below.
+**`Range` alone can describe any list.** A single id is `len == 1`, so a
+shuffled list is one segment per id and a repeated id is simply another segment.
+That is why the dictionary encoding v2 needed is gone: duplicates and disorder
+are the ordinary case, not a special one.
 
-Smaller wins; ties go to the raw form.
+**`Ascending` is what several ranges collapse into** when a bitmap is cheaper.
+It only ever describes ranges that were already ascending, because a bitmap
+holds neither a repeat nor a step backwards.
 
-### The `IdList` dictionary is gated on duplication, not size
+The whole shape is decided as the ids arrive, not rediscovered at encode time —
+so a bulk create or a delete-by-label is one `Range` from the first push to the
+last and never allocates. The segments *are* the encoding.
 
-Size alone cannot decide this one, because a dictionary has to be *built* to be
-measured and building it is the entire cost. Measured at 10,000 rows, taking the
-dictionary for an 8% size win cost **2,455×** what those bytes are worth on the
-write thread — the same trap that made compression default-off.
+#### Both counts are stated, deliberately
 
-So the encoder first checks a necessary condition that is free (`width > 1`: if
-raw ids already fit in one byte, no dictionary can beat them), then probes 128
-rows strided across the list for repeats. Expected distinct in a sample of 128
-drawn from *n*: n=100 gives ~72 (57%), n=1,000 gives ~120 (94%), n=10,000 gives
-~127 (99%) — three quarters separates the case the dictionary wins from the ones
-it does not.
+The segment count is on the wire, and so is every segment's length, including
+the last. Either could be inferred — the record's own id count fixes the total —
+and doing so would save four bytes per record plus one for the final length.
+Measured on ten thousand single-id records that is 40,000 and 10,000 bytes
+respectively, and it is refused for the same reason in both cases: **a segment
+list has to be well-formed on its own, not only inside the record carrying it.**
+Inferring either makes a truncated list indistinguishable from a complete one,
+and lets a wrong record count be silently absorbed by the final segment —
+binding rows to the wrong entities instead of failing.
 
-**Correctness never depends on the probe.** A wrong answer either builds a
-dictionary the size comparison then rejects, or skips one that would have been
-slightly smaller. Both decode identically, and the decoder always supports every
-encoding — so unlike the wire layout, this heuristic does **not** have to match
-between the two engines, and either side can tune it without a version bump.
+### When ranges collapse into a bitmap
 
-Measured, 10,000 rows (`cargo bench -p graph --bench effects_blocks`):
+The rule is normative. Two engines must reach the same segmentation for the same
+ids, or the same write produces different bytes.
 
-| shape | picked | bytes | encode | decode |
-| --- | --- | --- | --- | --- |
-| 10k-node graph, 100 distinct | dictionary | 10,234 | 58.9 µs | 4.5 µs |
-| 10k-node graph, 10k distinct | raw | 20,002 | 5.03 µs | 0.76 µs |
-| 5M-node graph, 100 distinct | dictionary | 10,834 | 60.7 µs | 5.6 µs |
-| 5M-node graph, 10k distinct | raw | 40,002 | 5.19 µs | 0.82 µs |
+An encoder tracks the ascending **run** it is currently building — the segments
+since the last id that did not ascend — and collapses it when the bitmap is
+strictly cheaper than the ranges it would replace:
 
-The last row gives up 3,020 bytes (7.5%) to save 165 µs, which is the trade the
-probe exists to make.
+```text
+collapse when  range_bytes >= 32  and  5 + bitmap_bytes < range_bytes
+```
 
-### Why `IdSet` and `IdList` are distinct types
+`range_bytes` is the run's segments as they would be written, counting only
+those that have stopped growing. The `5` is the `Ascending` segment's own header
+byte and `u32` length prefix. The `32` is a floor: roaring cannot serialize
+smaller than 30 bytes, so a cheaper run has nothing to weigh.
+
+Three properties of that rule matter more than its constants:
+
+**It is evaluated on every new segment, and the trigger is the run's own shape.**
+Not a counter over the list, and not a pass at encode time. A counter would make
+the comparison point arbitrary — twenty ascending segments weighed at sixteen and
+the same twenty weighed together can disagree — so the bytes would depend on when
+an encoder chose to look rather than on the ids.
+
+**`bitmap_bytes` is arithmetic, not a trial build.** Roaring's serialized size is
+a closed-form function of how many ids there are, how many maximal runs they
+form, and how they spread across 65,536-wide buckets, and a segment list already
+knows all three. Nothing is ever built in order to be measured and discarded; a
+bitmap is constructed once, after it has already won. The formula is in
+`RunCost`/`Run` in `graph/src/effects/v3/id_list.rs`, and
+`predicted_matches_roaring` pins it against the crate on every bucket shape.
+
+**A decline doubles nothing and retires nothing.** The comparison is not
+monotone — crossing a bucket boundary adds a container and steps the bitmap's
+size up — so a run that loses now can win later and is re-weighed on the next
+segment.
+
+### Constructing a bitmap is normative too, not just optimizing it
+
+Roaring's `optimize()` is **path-dependent**. From an `Array` store a container
+converts to runs only on a strict win; from a `Run` store it *stays* runs unless
+strictly beaten — and a run-flavoured bitmap carries a different header. So the
+same set serializes to different bytes depending on how it was built: four
+three-id buckets are **73 bytes** built by ranges and **76** built id by id.
+
+Calling `optimize()` is therefore necessary but not sufficient. **A bitmap
+segment MUST be built with one range insertion per contributing range**
+(`RoaringTreemap::insert_range`, `roaring64_bitmap_add_range`), never id by id.
+`construction_order_changes_the_bytes` pins the difference.
+
+The pinned `roaring` version is part of this too: the crate's container
+heuristics are internal and not stable across releases by contract, so a patch
+bump can move the wire. It is pinned exactly rather than caret-matched.
+
+### Why the ids are never expanded while decoding
+
+`read_ids` returns the segments, not the ids. That is a hard requirement rather
+than an optimisation: one valid segment describes four billion ids in seven
+bytes, so expanding while decoding makes a decoder whose cost is unbounded by
+its input — and `GRAPH.EFFECT` is applied inline on the server's main thread,
+with no timeout and no cancellation. Expanding is the applier's decision, made
+where the graph is in scope and the memory is inherent to the write.
+
+Decoding into segments also keeps the segmentation the peer chose, so a buffer
+decoded and re-encoded comes back byte-identical. Re-pushing the ids would
+re-run the collapse rule and could group them differently.
+
+### Duplicates and order are the ordinary case
 
 A roaring bitmap is a *set*: it deduplicates and it sorts. Edge endpoints do
 neither — many edges share a source, and each endpoint must stay positionally
-aligned with its edge id — so encoding them as a set would drop duplicates and
-misalign every row after the first repeat.
+aligned with its edge id. v2 needed a separate dictionary encoding for that;
+segments do not, because a repeat is just another `Range` of one.
 
-`IdSet` decode **must assert cardinality == count** for the same reason: row *k*
-belongs to the k-th smallest id, so a bitmap one id short would land every later
-row on the wrong entity rather than fail.
+An `Ascending` segment's decode **must check its cardinality against the ids the
+record still owes**, and the segment list as a whole must total the record's
+count. Row *k* belongs to the k-th id as written, so a bitmap one id short would
+land every later row on the wrong entity rather than fail.
 
 ### Values stay fixed-width
 
@@ -277,23 +353,23 @@ For the v2 byte layouts themselves see
 
     3 CREATE_NODE
       v2   ushort n_labels · LabelID[n_labels] · AttributeSet      (one record per node, no id)
-      v3   u32 count · IdSet · LabelSet · AttrSet
+      v3   u32 count · IdList · LabelSet · AttrSet
 
     4 CREATE_EDGE
       v2   ushort n_rels · RelationID · EntityID src · EntityID dest · AttributeSet
-      v3   u32 count · IdSet · RelType · IdList(src) · IdList(dst) · AttrSet
+      v3   u32 count · IdList · RelType · IdList(src) · IdList(dst) · AttrSet
 
     1·2 UPDATE_NODE / UPDATE_EDGE
       v2   EntityID id · AttributeID attr_id · SIValue value       (one record per (entity, attribute))
-      v3   u32 count · IdSet · AttrSet
+      v3   u32 count · IdList · AttrSet
 
     5·6 DELETE_NODE / DELETE_EDGE
       v2   EntityID id                       | EntityID id · RelationID · src · dest
-      v3   u32 count · IdSet                 | u32 count · IdSet · RelType · IdList(src) · IdList(dst)
+      v3   u32 count · IdList                | u32 count · IdList · RelType · IdList(src) · IdList(dst)
 
     7·8 SET_LABELS / REMOVE_LABELS
       v2   GrB_Index blob_size · GxB_Vector_serialize(nodes)[blob_size]
-      v3   u32 count · IdSet(nodes) · LabelSet
+      v3   u32 count · IdList(nodes) · LabelSet
 
     9 ADD_SCHEMA
       v2   t · SchemaType · string name          (no id — the replica infers it)
@@ -379,7 +455,7 @@ and once assignment is pinned they no longer need one. Two consequences:
 
 `SET_LABELS` carries *the labels, and all their nodes* — not one
 `(node_id, label_id)` pair per node. That is what makes the node ids a contiguous
-`IdSet` roaring can run-encode: for 10,000 consecutive nodes gaining one label,
+a single `Range` segment describes: for 10,000 consecutive nodes gaining one label,
 the pair form is 120,008 B and the grouped form is **46 B** (2,609× smaller raw,
 261× after zstd-1; measured).
 
@@ -568,6 +644,12 @@ single-int case quoted elsewhere in this document.
 
 ### Payload
 
+> **These rows predate the segment format** and are being re-measured with the
+> benchmarks that produce them. Segments add four bytes of segment count per
+> record plus a length per segment, so the v3 column is a few bytes light per
+> record — visible at `nodes = 1`, negligible by `nodes = 1,000`. The v2 column
+> and the shape of the conclusion are unaffected.
+
 | nodes | v2 | v3 | v3/v2 | v3 + zstd-1 | vs v2 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 40 B | 52 B | **130%** | 52 B | 130% |
@@ -629,7 +711,7 @@ what is left of the whole encode once those are removed.
 | --- | --- | --- | --- |
 | grouping + row gathering | 4.72 ms | **2.04 ms** | 67% |
 | writing values (`AttrSet`) | 0.70 ms | 0.70 ms | 23% |
-| roaring ids (`IdSet`) | 0.31 ms | 0.32 ms | 10% |
+| roaring ids (bitmap segment) | 0.31 ms | 0.32 ms | 10% |
 | whole encode | 5.73 ms | **3.05 ms** | 100% |
 
 The writer started at 18% of its time actually writing bytes and 82% in the
@@ -900,7 +982,8 @@ What the unit tests do cover (`cargo test -p graph --lib effects`, and
 - **Every truncation** of a buffer is an error rather than a panic, and every
   count read off the wire is checked against the bytes remaining before it
   reaches `Vec::with_capacity`, so a corrupt length cannot OOM us.
-- The **cardinality assertion** on `IdSet`, and an out-of-range `IdList` rank.
+- The **cardinality checks**: an `Ascending` segment against what the record still
+  owes, and the segment list's total against the record's count.
 - On the emit path: that label order does not split a shape, that differing
   shapes do split, that a created node's labels do not also produce a
   `SET_LABELS` record, that deleted edges group by type, and that two
