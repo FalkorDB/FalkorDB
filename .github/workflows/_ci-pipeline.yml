@@ -14,8 +14,8 @@ name: RC pipeline (reusable)
 on:
   workflow_call:
     inputs:
-      pr_number:
-        description: "PR number — used for the rc-pr-<N> image tags and log-artifact names"
+      ci_key:
+        description: "Per-run key: pr-<N> on a pull request, mg-<sha> in the merge queue. Runtime tags are rc-<ci_key>."
         required: true
         type: string
       commit_sha:
@@ -34,6 +34,15 @@ on:
         description: "JSON array of spawn-bucket flow test files"
         required: true
         type: string
+      run_flow:
+        description: >
+          Run the image-based test and flow matrices. True in the merge queue,
+          where this is the authoritative gate. False on a pull request, where
+          the image-free tier has already run the same suites and the only
+          reason to publish rc-<ci_key> is so release-image.yml can retag it.
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -46,7 +55,7 @@ jobs:
       packages: write
     with:
       flavour: release
-      tag: rc-pr-${{ inputs.pr_number }}
+      tag: rc-${{ inputs.ci_key }}
       commit_sha: ${{ inputs.commit_sha }}
       cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
       browser_tag: edge
@@ -66,7 +75,7 @@ jobs:
       flavour: a-sanitizer
       # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
       # — historical from when the asan image bundled the browser stage.
-      tag: rc-pr-${{ inputs.pr_number }}-asan
+      tag: rc-${{ inputs.ci_key }}-asan
       commit_sha: ${{ inputs.commit_sha }}
       cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb"}]'
       dockerfile: build/runtime/Dockerfile.asan
@@ -82,7 +91,7 @@ jobs:
       packages: write
     with:
       flavour: coverage
-      tag: rc-pr-${{ inputs.pr_number }}-coverage
+      tag: rc-${{ inputs.ci_key }}-coverage
       commit_sha: ${{ inputs.commit_sha }}
       cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"}]'
       dockerfile: build/runtime/Dockerfile.coverage
@@ -99,13 +108,13 @@ jobs:
       # silent no-op (and could mask the upload-artifact step).
       options: --volume /var/run/docker.sock:/var/run/docker.sock
     needs: [build-rc-image]
-    if: ${{ !cancelled() && needs.build-rc-image.result == 'success' }}
+    if: ${{ inputs.run_flow && (!cancelled() && needs.build-rc-image.result == 'success') }}
     permissions:
       contents: read
       packages: read
     services:
       falkordb:
-        image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ inputs.pr_number }}
+        image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
@@ -179,24 +188,24 @@ jobs:
 
   flow-release:
     needs: [build-rc-image]
-    if: ${{ !cancelled() && needs.build-rc-image.result == 'success' }}
+    if: ${{ inputs.run_flow && (!cancelled() && needs.build-rc-image.result == 'success') }}
     uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
       packages: read
     with:
       flavour: release
-      image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ inputs.pr_number }}
+      image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}
       archs: '["amd64", "arm64"]'
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
-      pr_number: ${{ inputs.pr_number }}
+      pr_number: ${{ inputs.ci_key }}
     secrets: inherit
 
   flow-asan:
     needs: [build-rc-asan-image]
-    if: ${{ !cancelled() && needs.build-rc-asan-image.result == 'success' }}
+    if: ${{ inputs.run_flow && (!cancelled() && needs.build-rc-asan-image.result == 'success') }}
     uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
@@ -205,29 +214,29 @@ jobs:
       flavour: a-sanitizer
       # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
       # — historical from when the asan image bundled the browser stage.
-      image: ghcr.io/falkordb/falkordb:rc-pr-${{ inputs.pr_number }}-asan
+      image: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-asan
       archs: '["amd64"]'
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
-      pr_number: ${{ inputs.pr_number }}
+      pr_number: ${{ inputs.ci_key }}
       sanitizer_env: address
     secrets: inherit
 
   flow-coverage:
     needs: [build-rc-coverage-image]
-    if: ${{ !cancelled() && needs.build-rc-coverage-image.result == 'success' }}
+    if: ${{ inputs.run_flow && (!cancelled() && needs.build-rc-coverage-image.result == 'success') }}
     uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
       packages: read
     with:
       flavour: coverage
-      image: ghcr.io/falkordb/falkordb-server:rc-pr-${{ inputs.pr_number }}-coverage
+      image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}-coverage
       archs: '["amd64"]'
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
       build_image: ${{ inputs.build_image }}
-      pr_number: ${{ inputs.pr_number }}
+      pr_number: ${{ inputs.ci_key }}
       collect_coverage: true
     secrets: inherit

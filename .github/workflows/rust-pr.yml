@@ -1,28 +1,27 @@
 name: Rust PR
 
 on:
+  # No `branches:` filter. A pull request based on another feature branch — a
+  # stack — does not match a trunk filter, so stacked PRs got no engine CI at
+  # all. Nothing below needs a registry write, so there is no reason to
+  # withhold it from them.
   pull_request:
-    # Fire on PRs to a trunk AND to version branches (e.g. "6.0", "7.1").
-    # Backport PRs from batch-backport.yml target the version branch directly,
-    # so they need the same RC build + flow gate as trunk PRs. rc-pr-<N> tags are
-    # globally unique by PR number so there's no collision across base branches.
-    #
-    # Two trunks exist during the migration to FalkorDB/FalkorDB (see the repo
-    # migration plan): `main` here, and `main-rs` — the interim Rust branch in
-    # FalkorDB/FalkorDB, which carries this tree on unrelated history while the
-    # C engine keeps `master`. Both must build/test identically.
-    #
-    # GHA branch filters are glob patterns, not regex — `*` matches a run of
-    # chars, `[0-9]` is a digit class, so `[0-9]*.[0-9]*` matches `6.0`, `7.1`,
-    # `10.5`, etc. (A literal `+` would NOT have matched anything.)
-    branches:
-      - "main"
-      - "main-rs"
-      - "[0-9]*.[0-9]*"
+  # The merge queue tests the merge candidate on a branch in THIS repo, so the
+  # token is the base repo's and `packages: write` is available — including for
+  # a pull request from a fork, with no pull_request_target anywhere.
+  merge_group:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  # github.ref, not the PR number: under merge_group the PR-number expression is
+  # empty, so every queue entry would collapse into one group and cancel its
+  # predecessor — which then reports no conclusion and hangs the queue until
+  # check_response_timeout_minutes. github.ref is documented and non-empty for
+  # both events: refs/pull/<N>/merge for pull_request (stable across pushes to
+  # the same PR, so superseded runs still cancel) and the queue ref for
+  # merge_group (unique per entry).
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a queue entry: a cancelled run reports nothing at all.
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -36,66 +35,130 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       file_changed: ${{ steps.check.outputs.changed }}
+      # One key for every per-run tag: `pr-<N>` on a pull request (byte-identical
+      # to what this workflow produced before) and `mg-<sha>` in the queue. The
+      # runtime images are `rc-<ci_key>`, the toolchain is `<ci_key>`.
+      ci_key: ${{ steps.key.outputs.ci_key }}
+      # Resolved once, read everywhere. This expression used to be repeated at
+      # eleven call sites; a missed one fails closed in the ugliest way — a PR
+      # that mostly works.
+      toolchain_tag: ${{ steps.toolchain.outputs.tag }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Resolve the CI key
+        id: key
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "merge_group" ]; then
+            echo "ci_key=mg-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ci_key=pr-${PR_NUM}" >> "$GITHUB_OUTPUT"
+          fi
+          cat "$GITHUB_OUTPUT"
+
       - name: Check if specific file changed
         id: check
         env:
+          EVENT: ${{ github.event_name }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         # Pick the right diff target for "did the toolchain change":
+        #   - merge_group → the queue commit's parent is the previous trunk tip,
+        #     so HEAD~1..HEAD is exactly this entry's contribution.
         #   - PRs targeting a trunk (main, or the interim main-rs in
         #     FalkorDB/FalkorDB) or a version branch (e.g. 6.0, 7.1, set by
         #     batch-backport.yml) → diff against that base's own merge-base.
-        #     For a version branch :latest already exists on GHCR (it was cut
-        #     from a released trunk), so an immediate-base diff is correct and
-        #     avoids spuriously rebuilding when trunk and the version branch
-        #     diverge on the Dockerfile.
-        #   - Stacked feat/ branches that ultimately land on a trunk → diff
-        #     against the trunk's merge-base. Catches toolchain changes
-        #     anywhere in the stack so the :pr-<N> tag is rebuilt for this PR
-        #     (downstream jobs would otherwise fall back to :latest, which
-        #     doesn't exist on GHCR until the stack lands).
+        #   - Stacked branches that ultimately land on a trunk → diff against
+        #     the trunk's merge-base, so a toolchain change anywhere in the
+        #     stack rebuilds the tag for this PR.
         run: |
-          # actions/checkout above used fetch-depth: 0 so we have full history,
-          # but only the PR's branch is fetched by default — pull the diff
-          # target as a ref too so merge-base can find the actual divergence.
-          #
-          # The trunk fallback is resolved against the remote rather than
-          # hardcoded: FalkorDB/FalkorDB has `main-rs` (+ C's `master`) and no
-          # `main`, so a bare `git fetch origin main` there would fail.
-          if [[ "$BASE_REF" =~ ^[0-9]+\.[0-9]+$ || "$BASE_REF" == "main" || "$BASE_REF" == "main-rs" ]]; then
-            DIFF_TARGET="$BASE_REF"
-          elif git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
-            DIFF_TARGET="main"
+          set -euo pipefail
+          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|deps/RediSearch|\.gitmodules|\.github/workflows/build-toolchain\.yml)$"
+          if [ "$EVENT" = "merge_group" ]; then
+            RANGE="HEAD~1 HEAD"
           else
-            DIFF_TARGET="main-rs"
+            # The trunk fallback is resolved against the remote rather than
+            # hardcoded: FalkorDB/FalkorDB has `main-rs` (+ C's `master`) and no
+            # `main`, so a bare `git fetch origin main` there would fail.
+            if [[ "$BASE_REF" =~ ^[0-9]+\.[0-9]+$ || "$BASE_REF" == "main" || "$BASE_REF" == "main-rs" ]]; then
+              DIFF_TARGET="$BASE_REF"
+            elif git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
+              DIFF_TARGET="main"
+            else
+              DIFF_TARGET="main-rs"
+            fi
+            git fetch --no-tags origin "$DIFF_TARGET"
+            MERGE_BASE=$(git merge-base "origin/$DIFF_TARGET" "$HEAD_SHA")
+            RANGE="$MERGE_BASE $HEAD_SHA"
           fi
-          git fetch --no-tags origin "$DIFF_TARGET"
-          MERGE_BASE=$(git merge-base "origin/$DIFF_TARGET" "$HEAD_SHA")
-          if git diff --name-only "$MERGE_BASE" "$HEAD_SHA" | grep -qE "^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|deps/RediSearch|\.gitmodules|\.github/workflows/build-toolchain\.yml)$"; then
-            echo "changed=true"
-            echo "changed=true" >> $GITHUB_OUTPUT
+          # shellcheck disable=SC2086
+          if git diff --name-only $RANGE | grep -qE "$PATTERN"; then
+            echo "changed=true" | tee -a "$GITHUB_OUTPUT"
           else
-            echo "changed=false"
-            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "changed=false" | tee -a "$GITHUB_OUTPUT"
           fi
+          # shellcheck disable=SC2086
+          git diff --name-only $RANGE > /tmp/changed-files.txt
+
+      # Infrastructure changes from a fork are refused rather than handled.
+      # Rationale: of the fork PRs this repo has received that target a trunk,
+      # none has ever touched build/ or .github/ — so the cost is theoretical,
+      # while the alternative is real. Building a fork's Dockerfile needs
+      # packages: write and writes a buildcache ref shared with main's own
+      # toolchain builds; silently falling back to :latest instead produces
+      # errors that look nothing like their cause. Refusing says what happened.
+      - name: Refuse fork changes to build or CI infrastructure
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          set -euo pipefail
+          BLOCKED=$(grep -E "^(build/|\.github/)" /tmp/changed-files.txt || true)
+          if [ -n "$BLOCKED" ]; then
+            echo "::error::This pull request changes build or CI infrastructure, which is not accepted from a fork."
+            echo "::error::Paths: $(echo "$BLOCKED" | tr '\n' ' ')"
+            echo "::error::These run with the base repository's credentials, so they are maintainer-owned."
+            echo "::error::Ask a maintainer to land the infrastructure change separately, or to take over the branch."
+            exit 1
+          fi
+
+      - name: Resolve the toolchain tag
+        id: toolchain
+        env:
+          CHANGED: ${{ steps.check.outputs.changed }}
+          CI_KEY: ${{ steps.key.outputs.ci_key }}
+          IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          set -euo pipefail
+          # A fork cannot publish a toolchain image, so it runs in the public
+          # :latest one. The refusal above means a fork that reaches this point
+          # did not change the toolchain, so :latest is also correct.
+          if [ "$CHANGED" = "true" ] && [ "$IS_FORK" != "true" ]; then
+            echo "tag=ghcr.io/falkordb/falkordb-build:${CI_KEY}" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "tag=ghcr.io/falkordb/falkordb-build:latest" | tee -a "$GITHUB_OUTPUT"
+          fi
+
   # When build/Dockerfile changes, rebuild the toolchain image at a PR-scoped
   # tag (ghcr.io/falkordb/falkordb-build:pr-<N>, multi-arch). Other jobs in
   # this workflow pick up the new toolchain via the `container:` references
   # and the build-rc-image's build_image input.
   docker:
     needs: check-files
-    if: needs.check-files.outputs.file_changed == 'true'
+    # Forks are excluded above, so file_changed is only ever true here for a
+    # branch in this repo or a merge-queue entry — both of which can push.
+    if: ${{ needs.check-files.outputs.file_changed == 'true' }}
     uses: ./.github/workflows/build-toolchain.yml
     permissions:
       contents: read
       packages: write
     with:
-      tag: pr-${{ github.event.pull_request.number }}
+      tag: ${{ needs.check-files.outputs.ci_key }}
     # build-toolchain.yml only uses the auto-injected GITHUB_TOKEN; no
     # custom secrets to forward, so we don't need `secrets: inherit`.
 
@@ -114,28 +177,38 @@ jobs:
         run: |
           python3 tests/flow/test_matrix_split.py >> $GITHUB_OUTPUT
 
-  # The half of CI that needs a published rc-pr-<N> image: the RC builds
-  # themselves, `test` against the release image, and the three flow flavours.
-  # Extracted to _ci-pipeline.yml so a second caller can drive the same
-  # definition — see that file's header.
+  # The half of CI that needs a published RC image.
+  #
+  # In the merge queue this is the authoritative gate: it builds the images and
+  # runs the image-based suites against them, on the exact commit that will land.
+  #
+  # On a pull request it runs with run_flow=false — the images are published so
+  # release-image.yml can retag one later, but the suites are not re-run, because
+  # the image-free tier above has already run them against the same tree. Skipped
+  # entirely for a fork, which cannot push to the registry.
   rc-pipeline:
     needs: [check-files, docker, flow-test-matrix]
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
+    if: >-
+      ${{ !cancelled()
+          && (needs.docker.result == 'success' || needs.docker.result == 'skipped')
+          && (github.event_name == 'merge_group'
+              || github.event.pull_request.head.repo.full_name == github.repository) }}
     uses: ./.github/workflows/_ci-pipeline.yml
     permissions:
       contents: read
       packages: write
     with:
-      pr_number: ${{ github.event.pull_request.number }}
-      commit_sha: ${{ github.event.pull_request.head.sha }}
-      build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
+      ci_key: ${{ needs.check-files.outputs.ci_key }}
+      commit_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      run_flow: ${{ github.event_name == 'merge_group' }}
+      build_image: ${{ needs.check-files.outputs.toolchain_tag }}
       services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
       spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
     secrets: inherit
 
   lint:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs:
       - check-files
       - docker
@@ -153,7 +226,7 @@ jobs:
           CXX=clang++-22 cargo clippy --all-targets
   coverage:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs:
       - check-files
       - docker
@@ -211,7 +284,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
   fuzz:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs:
       - check-files
       - docker
@@ -290,7 +363,7 @@ jobs:
 
   build-release:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs: [check-files, docker]
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
@@ -309,7 +382,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs: [check-files, docker]
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
@@ -339,7 +412,7 @@ jobs:
 
   flow:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs: [check-files, docker, flow-test-matrix, build-release]
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-release.result == 'success' }}
     strategy:
@@ -370,7 +443,7 @@ jobs:
 
   build-coverage:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs: [check-files, docker]
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
@@ -391,7 +464,7 @@ jobs:
 
   coverage-flow:
     runs-on: ubuntu-latest
-    container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
+    container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs: [check-files, docker, flow-test-matrix, build-coverage]
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-coverage.result == 'success' }}
     strategy:
@@ -427,3 +500,35 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: flow-coverage
+
+  # The one check to require in branch protection and in the merge queue.
+  #
+  # A required check must be reported by BOTH the pull_request run and the
+  # merge_group run, or the merge fails on a status that never arrives. The two
+  # events deliberately run different jobs, so a single aggregate is the only
+  # name that can satisfy both.
+  #
+  # `skipped` counts as passing because the tier split legitimately skips jobs —
+  # which is safe only as long as every conditional skip is an explicit `if:` on
+  # the event or the head repo, and no job that must not be skipped sits behind
+  # an `if: !cancelled()` chain whose dependency failed.
+  ci-gate:
+    runs-on: ubuntu-latest
+    if: ${{ !cancelled() }}
+    needs:
+      - check-files
+      - lint
+      - test
+      - flow
+      - coverage
+      - coverage-flow
+      - rc-pipeline
+    steps:
+      - name: Assert no dependency failed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS" | jq .
+          echo "$RESULTS" | jq -e 'to_entries
+            | all(.value.result == "success" or .value.result == "skipped")' > /dev/null
