@@ -25,6 +25,7 @@ RUN apt install -y \
     libc++-22-dev \
     libc++abi-22-dev \
     libzstd-dev \
+    libssl-dev \
     python3-dev \
     python3-pip \
     python3-venv \
@@ -57,9 +58,10 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 # Set working directory for build scripts
 WORKDIR /data
 
-# Copy build scripts, and the RediSearch submodule they build (git owns the pin;
+# Copy build scripts, GraphBLAS patch + PreJIT kernels, and the RediSearch submodule they build (git owns the pin;
 # redisearch.sh only builds what is checked out, so the source must be present)
 COPY graphblas.sh redisearch.sh /data/
+COPY build/graphblas /data/build/graphblas
 COPY deps/RediSearch /data/deps/RediSearch
 
 # Build and install GraphBLAS using project script
