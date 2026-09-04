@@ -982,12 +982,12 @@ static ProcedureResult Proc_SPpathsInvoke
 	if (fast && single_pair_ctx->path_count > 1) {
 		Path   **paths ;
 		double  *weights ;
-		uint n = AStar_KShortestPaths (single_pair_ctx->g, src_id, dst_id,
+		uint n = AStar_KShortestPaths (&paths, &weights,
+				single_pair_ctx->g, src_id, dst_id,
 				single_pair_ctx->path_count, single_pair_ctx->dir,
 				single_pair_ctx->relationIDs, single_pair_ctx->relationMatrices,
 				single_pair_ctx->relationCount, single_pair_ctx->weight_prop,
-				ATTRIBUTE_ID_NONE, ATTRIBUTE_ID_NONE, 0.0,
-				&paths, &weights) ;
+				ATTRIBUTE_ID_NONE, ATTRIBUTE_ID_NONE, 0.0) ;
 
 		// load results into the same max-heap Proc_SPpathsStep drains, exactly
 		// as SPpaths_k_minimal does, so downstream behavior is unchanged.

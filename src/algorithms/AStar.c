@@ -50,13 +50,16 @@ static inline double _haversine_meters
 // untouched and the caller should treat h(node) as 0.
 static inline bool _get_node_latlon
 (
-	Graph *g,
+	double *lat,  // [output] latitude coordinate
+	double *lon,  // [output] longitude coordinate
+	const Graph *g,
 	NodeID id,
 	AttributeID lat_prop,
-	AttributeID lon_prop,
-	double *lat,
-	double *lon
+	AttributeID lon_prop
 ) {
+	ASSERT (lat != NULL) ;
+	ASSERT (lon != NULL) ;
+
 	Node n = GE_NEW_NODE();
 	Graph_GetNode(g, id, &n);
 
@@ -88,7 +91,7 @@ static inline bool _get_node_latlon
 // == 1 / (max_speed in meters-per-hour).
 static inline double _heuristic
 (
-	Graph *g,
+	const Graph *g,
 	NodeID id,
 	AttributeID lat_prop,
 	AttributeID lon_prop,
@@ -102,7 +105,7 @@ static inline double _heuristic
 	}
 
 	double lat, lon;
-	if(!_get_node_latlon(g, id, lat_prop, lon_prop, &lat, &lon)) {
+	if(!_get_node_latlon(&lat, &lon, g, id, lat_prop, lon_prop)) {
 		return 0;
 	}
 
@@ -136,15 +139,15 @@ typedef struct {
 // spur node to the same dst, over a subgraph with some nodes/edges blocked.
 typedef struct AStarCtx {
 	// graph + search parameters (borrowed, owned by the caller)
-	Graph          *g;                 // graph to traverse
-	GRAPH_EDGE_DIR  dir;               // traverse direction
-	RelationID     *relationIDs;       // edge type(s) to traverse
-	Tensor         *relationMatrices;  // relation matrix per relationIDs entry
-	int             relationCount;     // length of relationIDs
-	AttributeID     weight_prop;       // weight attribute id
-	AttributeID     lat_prop;          // latitude attribute id (heuristic)
-	AttributeID     lon_prop;          // longitude attribute id (heuristic)
-	double          heur_scale;        // meters -> weight-units heuristic scale
+	const Graph      *g;                 // graph to traverse
+	GRAPH_EDGE_DIR   dir;                // traverse direction
+	const RelationID *relationIDs;       // edge type(s) to traverse
+	const Tensor     *relationMatrices;  // relation matrix per relationIDs entry
+	int              relationCount;      // length of relationIDs
+	AttributeID      weight_prop;        // weight attribute id
+	AttributeID      lat_prop;           // latitude attribute id (heuristic)
+	AttributeID      lon_prop;           // longitude attribute id (heuristic)
+	double           heur_scale;         // meters -> weight-units heuristic scale
 
 	// optional landmark potential: another AStarCtx run single-source (see
 	// AStarCtx_Run with dst == INVALID_ENTITY_ID) on the *reverse* graph from
@@ -171,10 +174,10 @@ typedef struct AStarCtx {
 
 static AStarCtx *AStarCtx_New
 (
-	Graph *g,
+	const Graph *g,
 	GRAPH_EDGE_DIR dir,
-	RelationID *relationIDs,
-	Tensor *relationMatrices,
+	const RelationID *relationIDs,
+	const Tensor *relationMatrices,
 	int relationCount,
 	AttributeID weight_prop,
 	AttributeID lat_prop,
@@ -290,7 +293,8 @@ static bool AStarCtx_Run
 	bool dst_has_coords = !single_source                          &&
 			(ac->weight_prop != ATTRIBUTE_ID_NONE)               &&
 			(ac->heur_scale > 0)                                 &&
-			_get_node_latlon(ac->g, dst_id, ac->lat_prop, ac->lon_prop, &dst_lat, &dst_lon);
+			_get_node_latlon (&dst_lat, &dst_lon,
+				ac->g, dst_id, ac->lat_prop, ac->lon_prop);
 
 	// seed the source: g_score 0, priority f = 0 + h(src).
 	double src_h = _astar_node_h(ac, src_id, dst_has_coords, dst_lat, dst_lon);
@@ -506,19 +510,19 @@ static void AStarCtx_Free
 
 bool AStar_ShortestPath
 (
-	Path **path,
-	double *weight,
-	Graph *g,
-	NodeID src_id,
-	NodeID dst_id,
-	GRAPH_EDGE_DIR dir,
-	RelationID *relationIDs,
-	Tensor *relationMatrices,
-	int relationCount,
-	AttributeID weight_prop,
-	AttributeID lat_prop,
-	AttributeID lon_prop,
-	double heur_scale
+	Path **path,               // [output] src -> dst path
+	double *weight,            // [output] total path weight
+	const Graph *g,            // graph to traverse
+	NodeID src_id,             // source node
+	NodeID dst_id,             // destination node
+	GRAPH_EDGE_DIR dir,        // traverse direction
+	RelationID *relationIDs,   // edge type(s) to traverse
+	Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,         // length of relationIDs
+	AttributeID weight_prop,   // weight attribute id
+	AttributeID lat_prop,      // latitude attribute id, used for the heuristic
+	AttributeID lon_prop,      // longitude attribute id, used for the heuristic
+	double heur_scale          // meters -> weightProp units heuristic scale
 ) {
 	ASSERT(g      != NULL);
 	ASSERT(path   != NULL);
@@ -542,10 +546,6 @@ bool AStar_ShortestPath
 //------------------------------------------------------------------------------
 // AStar_KShortestPaths: Yen's algorithm driven by A* spur searches
 //------------------------------------------------------------------------------
-//
-// this mirrors the Yen orchestration in yen.c; the two are kept deliberately
-// separate (each engine self-contained) rather than sharing a generic driver,
-// so the A* variant stays fully enclosed in this module.
 
 // a Yen candidate path waiting in the candidate heap
 typedef struct {
@@ -715,13 +715,13 @@ static inline GRAPH_EDGE_DIR _reverse_dir
 // the caller creates and frees it.
 static uint _astar_kshortest
 (
+	Path      ***paths,   // [output] the accepted paths
+	double     **weights, // [output] path weights (parallel)
 	AStarCtx    *ac,
 	NodeID       src,
 	NodeID       dst,
-	uint64_t     k,
-	AttributeID  weight_prop,
-	Path      ***paths,
-	double     **weights
+	uint64_t     k,       // number of paths
+	AttributeID  weight_prop
 ) {
 	// A: accepted paths (ascending weight); AW: their weights (parallel)
 	Path   **A  = arr_new(Path *, 0);
@@ -878,20 +878,20 @@ static uint _astar_kshortest
 // landmark acceleration.
 uint AStar_KShortestPaths
 (
-	Graph *g,
-	NodeID src,
-	NodeID dst,
-	uint64_t k,
-	GRAPH_EDGE_DIR dir,
-	RelationID *relationIDs,
-	Tensor *relationMatrices,
-	int relationCount,
-	AttributeID weight_prop,
-	AttributeID lat_prop,
-	AttributeID lon_prop,
-	double heur_scale,
-	Path ***paths,
-	double **weights
+	Path ***paths,             // [output] array_t of Path*, ascending weight
+	double **weights,          // [output] array_t of matching total weights
+	const Graph *g,            // graph to traverse
+	NodeID src,                // source node
+	NodeID dst,                // destination node
+	uint64_t k,                // number of paths to find
+	GRAPH_EDGE_DIR dir,        // traverse direction
+	RelationID *relationIDs,   // edge type(s) to traverse
+	Tensor *relationMatrices,  // relation matrix per relationIDs entry
+	int relationCount,         // length of relationIDs
+	AttributeID weight_prop,   // weight attribute id
+	AttributeID lat_prop,      // latitude attribute id, used for the heuristic
+	AttributeID lon_prop,      // longitude attribute id, used for the heuristic
+	double heur_scale          // meters -> weightProp units heuristic scale
 ) {
 	ASSERT(g       != NULL);
 	ASSERT(paths   != NULL);
@@ -900,7 +900,7 @@ uint AStar_KShortestPaths
 	AStarCtx *ac = AStarCtx_New(g, dir, relationIDs, relationMatrices,
 			relationCount, weight_prop, lat_prop, lon_prop, heur_scale);
 
-	uint n = _astar_kshortest(ac, src, dst, k, weight_prop, paths, weights);
+	uint n = _astar_kshortest(paths, weights, ac, src, dst, k, weight_prop);
 
 	AStarCtx_Free(ac);
 	return n;
