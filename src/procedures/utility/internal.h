@@ -7,6 +7,7 @@
 
 #include "GraphBLAS.h"
 #include "../../graph/graph.h"
+#include "value.h"
 
 
 // compose multiple label & relation matrices into a single matrix
@@ -60,3 +61,55 @@ GrB_Info get_sub_weight_matrix
 	bool symmetric                 // build a symmetric matrix
 ) ;
 
+// reduction strategy to project graph
+typedef enum {
+	PROJECT_TO_ANY,  // choose any Edge
+	PROJECT_TO_MIN,  // choose the minimum Edge
+	PROJECT_TO_MAX   // choose the maximum Edge
+} project_strategy;
+
+typedef struct {
+	const Graph      *g;           // graph
+	const LabelID    *lbls;        // labels to consider
+								   // will consider all labels if NULL
+	unsigned short    n_lbls;      // number of labels
+	const RelationID *rels;        // relationships to consider
+								   // will consider all relationships if NULL
+	unsigned short    n_rels;      // number of relationships
+	AttributeID       edge_weight; // Attribute to use for edge weights. Will
+								   // use default_ew, or boolean true if NULL
+	SIValue           default_ew;  // Default edge weight. SI_NullVal will
+	                               // error if a candidate edge does not have
+	                               // the given weight attribute
+	AttributeID       node_weight; // Attribute to use for node weights will
+								   // use default_nw, or boolean true if NULL
+	SIValue           default_nw;  // Default node weight, SI_NullVal will
+	                               // error if a candidate node does not have
+	                               // the given weight attribute
+	project_strategy  strategy;    // strategy for deduping edges
+	GRAPH_EDGE_DIR    direction;   // projection direction:
+								   // OUTGOING->default
+								   // INCOMING->transpose
+								   // BOTH->symmetric
+	bool              compact;     // if true, return only the rows which were
+								   // selected (ie nvals of rows equals nrows of
+								   // A)
+} PGTM_config ;
+// In the default config, all edges and nodes are considered. No weights are
+// added, and A is returned as a boolean true matrix.
+
+#define DEFAULT_PGTM_CONFIG (PGTM_config) {                                    \
+	.g = NULL, .lbls = NULL, .n_lbls = 0, .rels = NULL, .n_rels = 0,           \
+	.edge_weight = ATTRIBUTE_ID_NONE, .default_ew = SI_NullVal(),               \
+	.node_weight = ATTRIBUTE_ID_NONE, .default_nw = SI_NullVal(),               \
+	.strategy = PROJECT_TO_ANY, .direction = GRAPH_EDGE_DIR_OUTGOING,           \
+	.compact = false                                                             \
+}
+
+// Make a matrix out of a graph, given an input configuration object
+GrB_Info project_graph_to_matrix
+(
+	GrB_Matrix *A,     // [optional output] matrix weights
+	GrB_Vector *rows,  // [optional output] filtered rows
+	PGTM_config conf   // input configuration
+) ;

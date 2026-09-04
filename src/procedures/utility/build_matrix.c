@@ -47,8 +47,7 @@ GrB_Info Build_Matrix
 	ASSERT(D != NULL);
 
 	// export relation matrix to A
-	info = Delta_Matrix_export(&_A, D, GrB_BOOL, NULL);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (Delta_Matrix_export(&_A, D, GrB_BOOL, NULL));
 
 	// in case there are multiple relation types, include them in A
 	for(unsigned short i = 1; i < n_rels; i++) {
@@ -65,19 +64,16 @@ GrB_Info Build_Matrix
 		GrB_Matrix_free(&M);
 	}
 
-	info = GrB_Matrix_nrows(&nrows, _A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_nrows(&nrows, _A));
 
-	info = GrB_Matrix_ncols(&ncols, _A);
-	ASSERT(info == GrB_SUCCESS);
+	GrB_OK (GrB_Matrix_ncols(&ncols, _A));
 
 	// expecting a square matrix
 	ASSERT(nrows == ncols);
 
 	// create vector N denoting all nodes passing the labels filter
 	if(rows != NULL) {
-		info = GrB_Vector_new(&_N, GrB_BOOL, nrows);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GrB_Vector_new(&_N, GrB_BOOL, nrows));
 	}
 
 	// enforce labels
@@ -131,7 +127,7 @@ GrB_Info Build_Matrix
 		info = GrB_Vector_assign_Scalar(_N, NULL, NULL, scalar, GrB_ALL, nrows,
 				NULL);
 		ASSERT(info == GrB_SUCCESS);
-    
+
 		info = GrB_free(&scalar);
 		ASSERT(info == GrB_SUCCESS);
 	}

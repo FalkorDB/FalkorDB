@@ -3,6 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "GraphBLAS.h"
 #include "RG.h"
 #include "delta_matrix.h"
 #include "../../util/rmalloc.h"
@@ -58,10 +59,19 @@ GrB_Info Delta_Matrix_export
 	// in case there are items to delete use mask otherwise just copy
 	GrB_Matrix     mask = deletions ? dm : NULL;
 	GrB_Descriptor desc = deletions ? GrB_DESC_RSC : GrB_DESC_R;
-    GrB_BinaryOp   add  = (type == GrB_BOOL) ? GrB_ONEB_BOOL : GxB_ANY_UINT64 ;
 
-	// export in one go
-	GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (_A, mask, NULL, add, m, dp, desc)) ;
+	// use union to make _A iso if it should be bool.
+	if (type == GrB_BOOL) {
+		GrB_Scalar one_s = NULL ;
+		GrB_OK (GrB_Scalar_new (&one_s, GrB_BOOL)) ;
+		GrB_OK (GrB_Scalar_setElement_BOOL (one_s, true)) ;
+		GrB_OK (GxB_Matrix_eWiseUnion (
+			_A, mask, NULL, GrB_ONEB_BOOL, m, one_s, dp, one_s, desc)) ;
+	} else {
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (
+			_A, mask, NULL, GxB_ANY_UINT64, m, dp, desc)) ;
+	}
+
 
 	*A = _A ;
 	return GrB_SUCCESS ;
