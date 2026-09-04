@@ -336,10 +336,11 @@ static ProcedureResult Proc_AStarPathsInvoke
 		}
 	} else {
 		// k shortest loopless paths: Yen driven by A* spur searches.
-		AStar_KShortestPaths(actx->g, src_id, dst_id, actx->path_count,
-				actx->dir, actx->relationIDs, actx->relationMatrices,
-				actx->relationCount, actx->weight_prop, actx->lat_prop,
-				actx->lon_prop, actx->heur_scale, &actx->paths, &actx->weights);
+		AStar_KShortestPaths(&actx->paths, &actx->weights,
+				actx->g, src_id, dst_id, actx->path_count, actx->dir,
+				actx->relationIDs, actx->relationMatrices, actx->relationCount,
+				actx->weight_prop, actx->lat_prop, actx->lon_prop,
+				actx->heur_scale);
 	}
 
 	return PROCEDURE_OK;
