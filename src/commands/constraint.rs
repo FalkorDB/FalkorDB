@@ -259,7 +259,7 @@ fn attempt_settle(
                 // through this replicate, which is what keeps the check sound:
                 // the propagation is flushed when the session's guard releases
                 // it, inside the window the check validated.
-                if EffectsPayload::build_constraint(
+                match EffectsPayload::build_constraint(
                     &g,
                     true,
                     &AnnouncedConstraint {
@@ -271,10 +271,27 @@ fn attempt_settle(
                     },
                     &SchemaBaseline::of(&g),
                     &mut buf,
-                )
-                .is_ok()
-                {
-                    EffectsPayload::replicate(&CtxSink(ctx), key.as_bytes(), buf);
+                ) {
+                    Ok(()) => EffectsPayload::replicate(&CtxSink(ctx), key.as_bytes(), buf),
+                    // Swallowing this left the replica's constraint UNDER
+                    // CONSTRUCTION permanently: the master has settled it, the
+                    // announcement that would carry that never went out, and
+                    // nothing can re-drive it because `GRAPH.CONSTRAINT CREATE`
+                    // answers "already exists". Silent, and only visible as a
+                    // replica that enforces a constraint the master does not.
+                    Err(e) => redis_module::logging::log_warning(format!(
+                        "constraint on {:?} {} ({}) settled locally but could not be \
+                         announced ({e}); replicas will keep reporting it UNDER \
+                         CONSTRUCTION. Recover with GRAPH.CONSTRAINT DROP on graph \
+                         '{key}' followed by CREATE.",
+                        c.entity_type,
+                        c.label,
+                        c.properties
+                            .iter()
+                            .map(|p| p.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )),
                 }
             }
         })
@@ -511,7 +528,7 @@ pub fn graph_constraint(
                     )
                 };
                 let mut buf = Vec::new();
-                if EffectsPayload::build_constraint(
+                match EffectsPayload::build_constraint(
                     &mutated.borrow(),
                     is_create,
                     &AnnouncedConstraint {
@@ -523,10 +540,22 @@ pub fn graph_constraint(
                     },
                     &baseline,
                     &mut buf,
-                )
-                .is_ok()
-                {
-                    EffectsPayload::replicate(&CtxSink(ctx), key_str.as_slice(), buf);
+                ) {
+                    Ok(()) => {
+                        EffectsPayload::replicate(&CtxSink(ctx), key_str.as_slice(), buf);
+                    }
+                    // The write has already committed, so there is nothing to
+                    // undo and an error reply would be a lie — the constraint
+                    // does exist here. What is lost is the announcement, which
+                    // means it exists *only* here, on every replica and in the
+                    // AOF. Same shape as `graph_core`'s "modified but produced
+                    // no effects payload", and loud for the same reason: it is
+                    // divergence that nothing else will report.
+                    Err(e) => redis_module::logging::log_warning(format!(
+                        "constraint {} on {entity_type:?} '{label}' was applied but could \
+                         not be announced ({e}); it will not reach replicas or the AOF",
+                        if is_create { "CREATE" } else { "DROP" },
+                    )),
                 }
             }
             if is_create {
