@@ -1,7 +1,7 @@
-use crate::query_session::{QuerySession, WriteAbort, WriteFacts, replicate_under_gil};
+use crate::query_session::{QuerySession, WriteAbort, WriteFacts};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, c_graph_key, c_graph_name, register_graph},
+    graph_core::{ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
     redis_type::GRAPH_TYPE,
 };
 use graph::effects::v3::emit::{AnnouncedConstraint, SchemaBaseline, build_constraint_buffer};
@@ -120,13 +120,32 @@ pub fn settle_async_constraint(
     key: &str,
     was_replicated: bool,
 ) {
+    // A detached thread-safe context, made once for this thread and freed at the
+    // end — the same shape as `telemetry`'s flusher, which is the other
+    // background thread in the process that has to reach the dataset with no
+    // client behind it. A worker serving a query builds its context from the
+    // blocked client instead (`ffi::get_thread_safe_context(bc.inner)`); this
+    // thread has no client, which is the only reason it differs.
+    //
+    // It is a handle, not a lock: the GIL is taken by `upgrade_to_write` inside
+    // each attempt and released with the session, and this context is never
+    // locked or unlocked. That is what keeps #2371 shut — the crash there came
+    // from a *second* GIL acquire whose `RM_ThreadSafeContextUnlock` ran
+    // `postExecutionUnitOperations` outside the pause check, not from the
+    // existence of a second context.
+    //
+    // SAFETY: a null blocked-client yields a detached context, which is what is
+    // wanted here — the GIL and the dataset, not a client to reply to.
+    let ctx = unsafe { ffi::get_thread_safe_context(std::ptr::null_mut()) };
+    let ctx = Context::new(ctx);
+
     let deadline = Instant::now() + RETRY_BUDGET;
     let mut attempts = 0_u32;
 
     loop {
         attempts += 1;
-        match attempt_settle(graph, announce, key, was_replicated) {
-            Ok(()) => return,
+        match attempt_settle(graph, &ctx, announce, key, was_replicated) {
+            Ok(()) => break,
             // Transient: the window closes on its own. Nothing is held here —
             // `attempt_settle` has dropped its session, and with it the GIL and
             // the write lock — so sleeping is safe.
@@ -148,7 +167,7 @@ pub fn settle_async_constraint(
                             RETRY_BUDGET.as_secs(),
                         ));
                     }
-                    return;
+                    break;
                 }
                 std::thread::sleep(BACKOFF);
             }
@@ -156,9 +175,14 @@ pub fn settle_async_constraint(
             // resolves by waiting: on a demoted node the constraint is the new
             // master's to finish, and `enforce_pending_constraints_after_promotion`
             // is what picks it up.
-            Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => return,
+            Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => break,
         }
     }
+
+    // Every exit above `break`s rather than returns, so this runs on all of
+    // them. SAFETY: the context was made by this thread at the top and has not
+    // been freed; nothing borrows it past here.
+    unsafe { ffi::free_thread_safe_context(ctx.ctx) };
 }
 
 /// One attempt at the two-phase settle. Takes a fresh session each time.
@@ -171,6 +195,7 @@ pub fn settle_async_constraint(
 /// to be dropped before anything sleeps.
 fn attempt_settle(
     graph: &Arc<RwLock<ThreadedGraph>>,
+    ctx: &Context,
     announce: &[Settling],
     key: &str,
     was_replicated: bool,
@@ -228,12 +253,11 @@ fn attempt_settle(
                     continue;
                 };
                 let mut buf = Vec::new();
-                // Re-announce with the status validation settled on. Inside this
-                // closure the GIL is still held from `upgrade_to_write`'s pause
-                // check, and `replicate_under_gil` goes through that same
-                // context, which is what keeps the check sound — a second
-                // context would unlock separately and propagate outside it
-                // (#2371).
+                // Re-announce with the status validation settled on. The GIL is
+                // still held here, from `upgrade_to_write`'s pause check
+                // through this replicate, which is what keeps the check sound:
+                // the propagation is flushed when the session's guard releases
+                // it, inside the window the check validated.
                 if build_constraint_buffer(
                     &g,
                     true,
@@ -249,7 +273,7 @@ fn attempt_settle(
                 )
                 .is_ok()
                 {
-                    replicate_under_gil("GRAPH.EFFECT", &[key.as_bytes(), buf.as_slice()]);
+                    ctx.replicate("GRAPH.EFFECT", &[key.as_bytes(), buf.as_slice()]);
                 }
             }
         })

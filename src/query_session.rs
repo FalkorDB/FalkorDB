@@ -376,44 +376,6 @@ impl Gil {
     }
 }
 
-/// Replicate a command **inside** the GIL hold this thread already has.
-///
-/// The context is not handed out, because the point is not to have a context —
-/// it is that this particular one is used. `RM_ThreadSafeContextUnlock` runs
-/// `postExecutionUnitOperations`, which calls `propagateNow`, so a second
-/// context taken for the occasion unlocks separately and propagates *outside*
-/// the pause check that made the escalation safe. That is what re-crashed the
-/// master in #2371. Keeping the pointer inside this module is what stops a
-/// caller reaching for `GetThreadSafeContext` and reintroducing it.
-///
-/// # Panics
-///
-/// If this thread holds no GIL guard, which is a caller bug rather than a state
-/// to branch on. It used to be one: the caller took an `Option` and skipped
-/// replicating on `None`, which would leave a replica's constraint UNDER
-/// CONSTRUCTION forever with nothing logged and no way to re-drive it, since
-/// `GRAPH.CONSTRAINT CREATE` answers "already exists". There is no recovery
-/// from a missing context there, so failing loudly beats dropping a replicated
-/// write in silence.
-///
-/// [`Gil::acquire`] records the context only when it actually locks — the main
-/// thread's implicit hold records nothing — so the precondition is "a worker
-/// thread that has escalated", which `QuerySession::upgrade_to_write`
-/// establishes.
-pub(crate) fn replicate_under_gil(
-    cmd: &str,
-    args: &[&[u8]],
-) {
-    let ctx = GIL_CTX
-        .get()
-        .expect("replicate_under_gil requires a GIL guard held by this thread");
-    // SAFETY: `ctx` is the context this thread locked in `Gil::acquire` and still
-    // holds. `Context` is a borrowing wrapper with no `Drop`, so it frees
-    // nothing — the same construction `reauthorize_write` uses just above.
-    let ctx = Context::new(ctx.as_ptr());
-    ctx.replicate(cmd, args);
-}
-
 impl Drop for Gil {
     fn drop(&mut self) {
         if !self.need_release {
