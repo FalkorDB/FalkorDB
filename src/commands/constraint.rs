@@ -1,4 +1,4 @@
-use crate::query_session::{QuerySession, WriteAbort, WriteFacts, gil_context};
+use crate::query_session::{QuerySession, WriteAbort, WriteFacts, replicate_under_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{ThreadedGraph, c_graph_key, c_graph_name, register_graph},
@@ -201,20 +201,6 @@ fn attempt_settle(
     // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
     // shape as bulk_insert's Phase 2.
     session.upgrade_to_write()?;
-    // Taken here rather than inside the closure below, and unconditionally.
-    //
-    // `escalate` stores the `Gil` guard in the session, and neither caller of
-    // this function runs on the main thread — both `std::thread::spawn` — so
-    // the GIL was locked by *this* thread and its context is recorded. There is
-    // no case where it is absent, and treating it as one is what the previous
-    // `if let Some(..)` did: on a `None` it skipped the re-announcement, and a
-    // replica whose constraint never leaves UNDER CONSTRUCTION cannot be
-    // re-driven, because `GRAPH.CONSTRAINT CREATE` answers "already exists".
-    //
-    // Before the closure because `with_graph_mut` holds the session's `mode`
-    // borrow for its whole body, so anything reading the session from inside it
-    // panics on the `RefCell`.
-    let raw_ctx = gil_context();
     session
         .with_graph_mut(|tg| {
             let Some(g_arc) = tg.graph.write() else {
@@ -244,9 +230,10 @@ fn attempt_settle(
                 let mut buf = Vec::new();
                 // Re-announce with the status validation settled on. Inside this
                 // closure the GIL is still held from `upgrade_to_write`'s pause
-                // check, and replicating through that same context is what keeps
-                // the check sound — a second context would unlock separately and
-                // propagate outside it (#2371).
+                // check, and `replicate_under_gil` goes through that same
+                // context, which is what keeps the check sound — a second
+                // context would unlock separately and propagate outside it
+                // (#2371).
                 if build_constraint_buffer(
                     &g,
                     true,
@@ -262,10 +249,7 @@ fn attempt_settle(
                 )
                 .is_ok()
                 {
-                    // SAFETY: borrowed for the life of the GIL guard this thread
-                    // holds; `Context` has no `Drop`, so nothing frees it.
-                    let ctx = Context::new(raw_ctx.as_ptr());
-                    ctx.replicate("GRAPH.EFFECT", &[key.as_bytes(), buf.as_slice()]);
+                    replicate_under_gil("GRAPH.EFFECT", &[key.as_bytes(), buf.as_slice()]);
                 }
             }
         })
