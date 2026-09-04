@@ -71,6 +71,7 @@ use crate::allocator::{
     current_thread_usage, disable_tracking, enable_tracking, net_thread_usage, reset_counter,
 };
 use crate::dispatch::must_run_inline;
+use crate::divergence_guard;
 use crate::query_session::QuerySession;
 
 /// The prefix of `s` before its first NUL byte, or all of `s` if it holds none.
@@ -1240,9 +1241,7 @@ fn query_sync(
                         // Unless it was the master's write: the master only
                         // replicates a query that already succeeded there, so
                         // this failing means the two have diverged.
-                        if crate::divergence_guard::is_replayed(ctx) {
-                            crate::divergence_guard::on_failure(ctx, key_name, "GRAPH.QUERY", &err);
-                        }
+                        divergence_guard::on_failure(ctx, key_name, "GRAPH.QUERY", &err);
                         return Err(redis_module::RedisError::String(err));
                     }
                 }
@@ -1419,9 +1418,7 @@ fn profile_sync(
                 disable_tracking();
             }
             // See `query_sync`: a replayed command failing is divergence.
-            if crate::divergence_guard::is_replayed(ctx) {
-                crate::divergence_guard::on_failure(ctx, key_name, "GRAPH.PROFILE", &err);
-            }
+            divergence_guard::on_failure(ctx, key_name, "GRAPH.PROFILE", &err);
             return Err(redis_module::RedisError::String(err));
         }
     }

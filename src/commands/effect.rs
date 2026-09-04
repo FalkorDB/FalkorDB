@@ -10,6 +10,7 @@
 //! GRAPH.EFFECT <key> <effects_buffer>
 //! ```
 
+use crate::divergence_guard;
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
 use graph::effects::EffectsPayload;
 use parking_lot::RwLock;
@@ -75,7 +76,7 @@ pub fn graph_effect(
             tg.graph.rollback();
             // `on_failure` decides for itself whether this was replayed; a
             // client-sent payload returns the error below and nothing more.
-            crate::divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e);
+            divergence_guard::on_failure(ctx, &key_str.to_string(), "GRAPH.EFFECT", &e);
             Err(redis_module::RedisError::String(format!(
                 "ERR effect apply failed: {e}"
             )))

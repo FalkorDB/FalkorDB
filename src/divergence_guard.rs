@@ -34,8 +34,10 @@ use std::time::Duration;
 ///
 /// C guards `GRAPH.EFFECT` unconditionally
 /// (`cmd_effect.c`); this is a deliberate difference, for that reason.
-#[must_use]
-pub fn is_replayed(ctx: &Context) -> bool {
+///
+/// Private: [`on_failure`] applies it, and a caller that could apply it itself
+/// is a caller that could forget to.
+fn is_replayed(ctx: &Context) -> bool {
     ctx.get_flags()
         .intersects(ContextFlags::REPLICATED | ContextFlags::LOADING)
 }
