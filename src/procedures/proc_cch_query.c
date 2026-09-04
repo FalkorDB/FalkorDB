@@ -41,7 +41,12 @@ typedef struct {
 //------------------------------------------------------------------------------
 
 // read an edge's weight (defaults to 1 when missing), populating e->attributes
-static double _edge_weight(Graph *g, AttributeID weightAtt, Edge *e) {
+static double _edge_weight
+(
+	const Graph *g,
+	AttributeID weightAtt,
+	Edge *e
+) {
 	Graph_GetEdge(g, e->id, e);   // populate attributes
 	SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)e, weightAtt, SI_LongVal(1));
 	return SI_GET_NUMERIC(w);
@@ -53,16 +58,16 @@ static double _edge_weight(Graph *g, AttributeID weightAtt, Edge *e) {
 // decode as val-2
 static int64_t _node_rank
 (
-	Graph *g,
+	const Graph *g,
 	AttributeID rankAtt,
 	dict *cache,
 	NodeID id
 ) {
-	void *v = HashTableFetchValue(cache, KEY(id));
+	void *v = HashTableFetchValue (cache, KEY (id)) ;
 	if(v != NULL) return (int64_t)(intptr_t)v - 2;
 
 	Node n = GE_NEW_NODE();
-	Graph_GetNode(g, id, &n);
+	Graph_GetNode (g, id, &n) ;
 
 	SIValue rv;
 	int64_t rank = -1;
@@ -90,16 +95,16 @@ typedef struct {
 // (nodeid -> SRec*) and appends every discovered node id to 'visited'.
 static void _search
 (
-	Graph            *g,
-	NodeID            start,
-	bool              forward,
-	const RelationID *rels,      // road types followed by the shortcut type
-	int               relCount,
-	AttributeID       weightAtt,
-	AttributeID       rankAtt,
-	dict             *rankCache,
-	dict             *recs,      // [out] nodeid -> SRec*
-	NodeID          **visited    // [out] arr of discovered node ids
+	const Graph *g,
+	NodeID start,
+	bool forward,
+	const RelationID *rels,  // road types followed by the shortcut type
+	int relCount,
+	AttributeID weightAtt,
+	AttributeID rankAtt,
+	dict *rankCache,
+	dict *recs,             // [out] nodeid -> SRec*
+	NodeID **visited        // [out] arr of discovered node ids
 ) {
 	NodeWeightHeap heap;
 	NodeWeightHeap_init(&heap);
@@ -123,14 +128,14 @@ static void _search
 
 		double  cur_w    = cr->dist;
 		NodeID  cur      = it.node;
-		int64_t cur_rank = _node_rank(g, rankAtt, rankCache, cur);
+		int64_t cur_rank = _node_rank (g, rankAtt, rankCache, cur) ;
 
 		Node cn = GE_NEW_NODE();
 		Graph_GetNode(g, cur, &cn);
 
 		for(int r = 0; r < relCount; r++) {
 			arr_clear(edges);
-			Graph_GetNodeEdges(g, &cn, dir, rels[r], &edges);
+			Graph_GetNodeEdges (g, &cn, dir, rels[r], &edges) ;
 
 			uint32_t m = arr_len(edges);
 			for(uint32_t i = 0; i < m; i++) {
@@ -139,7 +144,7 @@ static void _search
 				if(nb == cur) continue;    // self-loop
 
 				// rank pruning: both searches only ever climb in rank
-				int64_t nb_rank = _node_rank(g, rankAtt, rankCache, nb);
+				int64_t nb_rank = _node_rank (g, rankAtt, rankCache, nb) ;
 				if(nb_rank <= cur_rank) continue;
 
 				double ew = _edge_weight(g, weightAtt, &e);
@@ -179,31 +184,44 @@ static void _search
 // doesn't actually connect here).
 static bool _best_subedge
 (
-	Graph      *g,
-	NodeID      x,
-	NodeID      y,
-	RelationID  shortcutRelID,
+	const Graph *g,
+	NodeID x,
+	NodeID y,
+	RelationID shortcutRelID,
+	RelationID *rels,
 	AttributeID weightAtt,
-	Edge       *out               // [output] realizing edge (set iff true)
+	Edge *out               // [output] realizing edge (set iff true)
 ) {
-	Edge *tmp = arr_new(Edge, 4);
+	Edge *tmp = arr_new (Edge, 4) ;
 
-	Graph_GetEdgesConnectingNodes(g, x, y, shortcutRelID, &tmp);
-	if(arr_len(tmp) > 0) {
-		*out = tmp[0];
-		out->relationID = shortcutRelID;
-		arr_free(tmp);
-		return true;
+	Graph_GetEdgesConnectingNodes (g, x, y, shortcutRelID, &tmp);
+	if (arr_len (tmp) > 0) {
+		*out = tmp [0] ;
+		out->relationID = shortcutRelID ;
+		arr_free (tmp) ;
+		return true ;
 	}
 
 	// cheapest road (non-shortcut) edge
-	arr_clear(tmp);
-	Graph_GetEdgesConnectingNodes(g, x, y, GRAPH_NO_RELATION, &tmp);
+	arr_clear (tmp) ;
+
+	// collect all edges connecting `x` to `y` via each one of the users
+	// specified relationship types
+	int n = arr_len (rels) ;
+	for (int i = 0 ; i < n ; i++)
+	{
+		// skip shortcuts
+		if (rels [i] == shortcutRelID) {
+			continue ;
+		}
+
+		Graph_GetEdgesConnectingNodes (g, x, y, rels [i], &tmp) ;
+	}
+
 	double bw    = INFINITY;
 	bool   found = false;
-	for(uint32_t i = 0; i < arr_len(tmp); i++) {
-		Edge e = tmp[i];
-		if(e.relationID == shortcutRelID) continue;
+	for (uint32_t i = 0; i < arr_len (tmp); i++) {
+		Edge e = tmp [i] ;
 		double w = _edge_weight(g, weightAtt, &e);
 		if(w < bw) { bw = w; *out = e; found = true; }
 	}
@@ -219,12 +237,13 @@ static bool _best_subedge
 // can fail loudly instead of building a garbage path.
 static bool _unpack
 (
-	Graph      *g,
-	Edge        e,
-	RelationID  shortcutRelID,
+	const Graph *g,
+	Edge e,
+	RelationID shortcutRelID,
+	RelationID *rels,
 	AttributeID weightAtt,
 	AttributeID middleAtt,
-	Edge      **out
+	Edge **out
 ) {
 	if(e.relationID != shortcutRelID) {
 		arr_append(*out, e);           // a genuine road hop
@@ -232,22 +251,29 @@ static bool _unpack
 	}
 
 	// shortcut: read its middle node id, then unpack the two halves
-	Graph_GetEdge(g, e.id, &e);        // ensure attributes
-	SIValue mv;
-	if(!GraphEntity_GetProperty((GraphEntity *)&e, middleAtt, &mv) ||
-			!(SI_TYPE(mv) & SI_NUMERIC)) {
-		return false;                  // shortcut missing its middle node
-	}
-	NodeID mid = (NodeID)SI_GET_NUMERIC(mv);
-
-	Edge a, b;
-	if(!_best_subedge(g, e.src_id, mid,       shortcutRelID, weightAtt, &a) ||
-	   !_best_subedge(g, mid,      e.dest_id, shortcutRelID, weightAtt, &b)) {
-		return false;                  // a sub-arc has no realizing edge
+	Graph_GetEdge (g, e.id, &e) ;        // ensure attributes
+	SIValue mv ;
+	if (!GraphEntity_GetProperty ((GraphEntity *)&e, middleAtt, &mv) ||
+		!(SI_TYPE (mv) & SI_NUMERIC)) {
+		return false ;                  // shortcut missing its middle node
 	}
 
-	return _unpack(g, a, shortcutRelID, weightAtt, middleAtt, out) &&
-	       _unpack(g, b, shortcutRelID, weightAtt, middleAtt, out);
+	NodeID mid = (NodeID)SI_GET_NUMERIC (mv) ;
+
+	// make sure node exists
+	if (unlikely (Graph_HasNode (g, mid) == false))
+	{
+		return false ;
+	}
+
+	Edge a, b ;
+	if(!_best_subedge (g, e.src_id, mid,       shortcutRelID, rels, weightAtt, &a) ||
+	   !_best_subedge (g, mid,      e.dest_id, shortcutRelID, rels, weightAtt, &b)) {
+		return false ;  // a sub-arc has no realizing edge
+	}
+
+	return _unpack (g, a, shortcutRelID, rels, weightAtt, middleAtt, out) &&
+	       _unpack (g, b, shortcutRelID, rels, weightAtt, middleAtt, out) ;
 }
 
 // free a search's records dict + its SRec values
@@ -351,25 +377,26 @@ static bool _read_config
 	*relCount = arr_len(_rels);
 
 	// weightProp / rankProp / middleProp
-	const char *props[3] = { "weightProp", "rankProp", "middleProp" };
-	AttributeID *outs[3]  = { weightAtt, rankAtt, middleAtt };
-	for(int i = 0; i < 3; i++) {
-		if(!MAP_GETCASEINSENSITIVE(config, props[i], v) ||
-				!(SI_TYPE(v) & T_STRING)) {
-			ErrorCtx_SetError("algo.CCH.query requires string %s", props[i]);
-			arr_free(_rels);
-			return false;
+	const char *props [3] = { "weightProp", "rankProp", "middleProp" };
+	AttributeID *outs [3]  = { weightAtt, rankAtt, middleAtt };
+	for (int i = 0; i < 3; i++) {
+		if (!MAP_GETCASEINSENSITIVE (config, props [i], v) ||
+				!(SI_TYPE (v) & T_STRING)) {
+			ErrorCtx_SetError ("algo.CCH.query requires string %s", props [i]) ;
+			arr_free (_rels) ;
+			return false ;
 		}
-		*outs[i] = GraphContext_GetAttributeID(gc, v.stringval);
-		if(*outs[i] == ATTRIBUTE_ID_NONE) {
-			ErrorCtx_SetError("algo.CCH.query, unknown attribute: %s",
-					v.stringval);
-			arr_free(_rels);
-			return false;
+
+		*outs [i] = GraphContext_GetAttributeID (gc, v.stringval) ;
+		if (*outs [i] == ATTRIBUTE_ID_NONE) {
+			ErrorCtx_SetError ("algo.CCH.query, unknown attribute: %s",
+					v.stringval) ;
+			arr_free (_rels) ;
+			return false ;
 		}
 	}
 
-	return true;
+	return true ;
 }
 
 //------------------------------------------------------------------------------
@@ -404,7 +431,7 @@ static ProcedureResult Proc_CCHQueryInvoke
 	ctx->privateData = pdata;
 	_process_yield(pdata, yield);
 
-	Graph *g = QueryCtx_GetGraph();
+	Graph *g = QueryCtx_GetGraph () ;
 
 	NodeID s_id = ENTITY_GET_ID(&src);
 	NodeID t_id = ENTITY_GET_ID(&dst);
@@ -428,9 +455,9 @@ static ProcedureResult Proc_CCHQueryInvoke
 	NodeID *fvis = arr_new(NodeID, 16);
 	NodeID *bvis = arr_new(NodeID, 16);
 
-	_search(g, s_id, true,  rels, relCount, weightAtt, rankAtt, rankCache,
+	_search (g, s_id, true,  rels, relCount, weightAtt, rankAtt, rankCache,
 			fwd, &fvis);
-	_search(g, t_id, false, rels, relCount, weightAtt, rankAtt, rankCache,
+	_search (g, t_id, false, rels, relCount, weightAtt, rankAtt, rankCache,
 			bwd, &bvis);
 
 	// meet at the shared ancestor minimizing fwd.dist + bwd.dist
@@ -478,7 +505,8 @@ static ProcedureResult Proc_CCHQueryInvoke
 		Edge *road = arr_new(Edge, 32);
 		bool ok = true;
 		for(uint32_t i = 0; i < arr_len(hops); i++) {
-			if(!_unpack(g, hops[i], shortcutRelID, weightAtt, middleAtt, &road)) {
+			if (!_unpack (g, hops[i], shortcutRelID, rels, weightAtt, middleAtt,
+						&road)) {
 				ok = false;
 				break;
 			}

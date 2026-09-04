@@ -288,6 +288,22 @@ static void _get_edge_weight
 	*z = min_w ;
 }
 
+static GrB_Type         ctx_type    = NULL              ;
+static GrB_IndexUnaryOp get_weight  = NULL              ;
+static pthread_once_t index_op_once = PTHREAD_ONCE_INIT ;
+
+static void _init_tensor_ops
+(
+	void
+) {
+	GrB_OK (GrB_Type_new (&ctx_type, sizeof (EdgeWeightContext))) ;
+
+	GrB_OK (GrB_IndexUnaryOp_new (&get_weight,
+			(GxB_index_unary_function)_get_edge_weight, GrB_FP64, GrB_UINT64,
+			ctx_type)) ;
+}
+
+// TODO: switch to get_sub_weight_matrix
 // builds a plain GrB_FP64 weight matrix over 'g's full NodeID space (row/col k
 // IS NodeID k, always). each relation type's matrix is exported and its EdgeID
 // entries resolved to weights in bulk via the IndexUnaryOp above; entries from
@@ -307,16 +323,12 @@ static GrB_Matrix _build_weight_matrix
 
 	EdgeWeightContext w_ctx = { .g = g, .attr_id = weightAtt } ;
 
-	GrB_Type         ctx_type   = NULL ;
-	GrB_Scalar       ctx_scalar = NULL ;
-	GrB_IndexUnaryOp get_weight = NULL ;
+	GrB_Scalar ctx_scalar = NULL ;
 
-	GrB_OK (GrB_Type_new (&ctx_type, sizeof (EdgeWeightContext))) ;
+	pthread_once (&index_op_once, _init_tensor_ops) ;
+
 	GrB_OK (GrB_Scalar_new (&ctx_scalar, ctx_type)) ;
 	GrB_OK (GrB_Scalar_setElement_UDT (ctx_scalar, (void *)&w_ctx)) ;
-	GrB_OK (GrB_IndexUnaryOp_new (&get_weight,
-			(GxB_index_unary_function)_get_edge_weight,
-			GrB_FP64, GrB_UINT64, ctx_type)) ;
 
 	for (uint r = 0; r < relCount; r++) {
 		Delta_Matrix R = Graph_GetRelationMatrix (g, relTypeIDs [r], false) ;
@@ -337,8 +349,6 @@ static GrB_Matrix _build_weight_matrix
 	}
 
 	GrB_OK (GrB_free (&ctx_scalar)) ;
-	GrB_OK (GrB_free (&ctx_type)) ;
-	GrB_OK (GrB_free (&get_weight)) ;
 
 	return A_w ;
 }
@@ -432,12 +442,8 @@ static GrB_Vector _build_rank_vector
 	GrB_Vector rank = NULL ;
 	GrB_OK (GrB_Vector_new (&rank, GrB_INT64, cch->n)) ;
 
-	DataBlockIterator *it = Graph_ScanNodes (g) ;
-	uint64_t id ;
-	while (DataBlockIterator_Next (it, &id) != NULL) {
-		GrB_OK (GrB_Vector_setElement_INT64 (rank, cch->iperm [id], id)) ;
-	}
-	DataBlockIterator_Free (it) ;
+	GrB_OK (GxB_Vector_load (rank, (void **)(&cch->iperm), GrB_INT64, cch->n,
+				sizeof (int64_t) * cch->n, GrB_DEFAULT, NULL)) ;
 
 	GrB_OK (GrB_Vector_wait (rank, GrB_MATERIALIZE)) ;
 	return rank ;
@@ -466,8 +472,10 @@ static void _set_ranks
 		int64_t   r   = GxB_Iterator_get_INT64 (it) ;
 
 		Node n = GE_NEW_NODE () ;
-		bool found = Graph_GetNode (g, (NodeID)idx, &n) ;
-		ASSERT (found) ;
+		if (!Graph_GetNode (g, (NodeID)idx, &n)) {
+			info = GxB_Vector_Iterator_next (it) ;
+			continue ;
+		}
 
 		AttributeSet cur     = GraphEntity_GetAttributes ((GraphEntity *)&n) ;
 		AttributeSet new_set = AttributeSet_Clone (cur) ;
@@ -561,6 +569,8 @@ static ProcedureResult Proc_CCHInvoke
 	CCH_ExtractShortcuts (cch, W, &S, &M) ;
 	GrB_OK (GrB_free (&W)) ;
 
+	// TODO: we don't need the rank vector, simply use cch->iperm to set node
+	// ranks
 	GrB_Vector rank = _build_rank_vector (g, cch) ;
 	CCH_Free (cch) ;   // no CCH structure lingers in RAM
 
