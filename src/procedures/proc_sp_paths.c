@@ -16,7 +16,7 @@
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 #include "../algorithms/Dijkstra.h"
-#include "../algorithms/yen.h"
+#include "../algorithms/AStar.h"
 #include "../algorithms/all_weighted_shortest_paths.h"
 
 #include <float.h>
@@ -971,14 +971,23 @@ static ProcedureResult Proc_SPpathsInvoke
 
 	// k shortest loopless paths via Yen's algorithm, instead of exhaustive DFS
 	// enumeration bounded by the k-th best weight found so far.
+	//
+	// driven by AStar_KShortestPaths with no geographic heuristic (lat/lon ==
+	// ATTRIBUTE_ID_NONE, heur_scale == 0), so A[0] and short-route spurs are
+	// plain Dijkstra -- identical to the classic Yen this replaced. for long
+	// routes it decides at runtime, from k and the length of the first shortest
+	// path, to build a landmark potential (one reverse sweep from dst) that makes
+	// the many spur searches goal-directed. results are identical; only the
+	// exploration on long routes shrinks.
 	if (fast && single_pair_ctx->path_count > 1) {
 		Path   **paths ;
 		double  *weights ;
-		uint n = Yen_KShortestPaths (single_pair_ctx->g, src_id, dst_id,
+		uint n = AStar_KShortestPaths (&paths, &weights,
+				single_pair_ctx->g, src_id, dst_id,
 				single_pair_ctx->path_count, single_pair_ctx->dir,
 				single_pair_ctx->relationIDs, single_pair_ctx->relationMatrices,
 				single_pair_ctx->relationCount, single_pair_ctx->weight_prop,
-				&paths, &weights) ;
+				ATTRIBUTE_ID_NONE, ATTRIBUTE_ID_NONE, 0.0) ;
 
 		// load results into the same max-heap Proc_SPpathsStep drains, exactly
 		// as SPpaths_k_minimal does, so downstream behavior is unchanged.

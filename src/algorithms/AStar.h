@@ -54,7 +54,7 @@ bool AStar_ShortestPath
 (
 	Path **path,               // [output] src -> dst path
 	double *weight,            // [output] total path weight
-	Graph *g,                  // graph to traverse
+	const Graph *g,            // graph to traverse
 	NodeID src_id,             // source node
 	NodeID dst_id,             // destination node
 	GRAPH_EDGE_DIR dir,        // traverse direction
@@ -81,7 +81,9 @@ bool AStar_ShortestPath
 // and its total weight, ascending); the caller owns both arrays and each Path.
 uint AStar_KShortestPaths
 (
-	Graph *g,                  // graph to traverse
+	Path ***paths,             // [output] array_t of Path*, ascending weight
+	double **weights,          // [output] array_t of matching total weights
+	const Graph *g,            // graph to traverse
 	NodeID src,                // source node
 	NodeID dst,                // destination node
 	uint64_t k,                // number of paths to find
@@ -92,8 +94,6 @@ uint AStar_KShortestPaths
 	AttributeID weight_prop,   // weight attribute id
 	AttributeID lat_prop,      // latitude attribute id, used for the heuristic
 	AttributeID lon_prop,      // longitude attribute id, used for the heuristic
-	double heur_scale,         // meters -> weightProp units heuristic scale
-	Path ***paths,             // [output] array_t of Path*, ascending weight
-	double **weights           // [output] array_t of matching total weights
+	double heur_scale          // meters -> weightProp units heuristic scale
 );
 
