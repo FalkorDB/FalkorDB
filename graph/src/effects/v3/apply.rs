@@ -20,8 +20,7 @@
 
 use crate::{
     effects::v3::{
-        AttrRef, DecodeError, INDEX_FLD_FULLTEXT, INDEX_FLD_VECTOR, Record, entity_tag,
-        open_payload,
+        AttrRef, INDEX_FLD_FULLTEXT, INDEX_FLD_VECTOR, Record, entity_tag, open_payload,
     },
     entity_type::EntityType,
     graph::graph::{Graph, TypeId},

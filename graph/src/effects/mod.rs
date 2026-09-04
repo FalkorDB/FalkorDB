@@ -23,6 +23,7 @@
 //! What *is* shared is shared: the `SIValue` tags and index-field flags come
 //! from `serialization::{si_type, index_field_type}` rather than being restated.
 
+pub mod announce;
 pub mod error;
 pub mod payload;
 pub mod reader;
@@ -33,7 +34,11 @@ pub use error::DecodeError;
 pub use reader::Reader;
 
 use crate::graph::graph::Graph;
+use announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
+use atomic_refcell::AtomicRefCell;
 use error::ApplyError;
+
+use crate::runtime::pending::Pending;
 
 /// Where a finished payload goes.
 ///
@@ -100,6 +105,53 @@ pub trait EffectsFormat<const VERSION: u8> {
         graph: &mut Graph,
         buf: &[u8],
     ) -> Result<(), ApplyError>;
+
+    // ── the write side ──
+    //
+    // Here for the same reason `apply` is: without it, reading dispatched
+    // through this trait and writing did not dispatch at all — it went through
+    // free functions re-exported out of one version's `emit`, which is how the
+    // host came to import `build_constraint_buffer` directly. The input types
+    // are [`announce`]'s, which describe a mutation rather than a wire, so a
+    // second version encodes the same three types rather than defining its own.
+
+    /// Digest a committed write into `buf`, appending to whatever is already
+    /// there.
+    ///
+    /// Returns how many records were written.
+    fn build(
+        pending: &Pending,
+        graph: &AtomicRefCell<Graph>,
+        buf: &mut Vec<u8>,
+    ) -> u64;
+
+    /// Append one index DDL statement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the statement names a label or property this graph
+    /// has not registered, which would mean the DDL did not run.
+    fn build_index(
+        pending: &Pending,
+        graph: &AtomicRefCell<Graph>,
+        create: bool,
+        index: &AnnouncedIndex<'_>,
+        buf: &mut Vec<u8>,
+    ) -> Result<(), String>;
+
+    /// Append one constraint statement, with the status this node reached.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a property is not registered, which would mean
+    /// `create_constraint` did not run or did not register it.
+    fn build_constraint(
+        graph: &Graph,
+        create: bool,
+        constraint: &AnnouncedConstraint<'_>,
+        baseline: &SchemaBaseline,
+        buf: &mut Vec<u8>,
+    ) -> Result<(), String>;
 }
 
 /// The version this build **writes**.
@@ -127,6 +179,47 @@ impl EffectsPayload {
     #[must_use]
     pub fn is_empty(buf: &[u8]) -> bool {
         <Self as EffectsFormat<WIRE_VERSION>>::is_empty(buf)
+    }
+
+    /// Digest a committed write, in the version this build writes.
+    pub fn build(
+        pending: &Pending,
+        graph: &AtomicRefCell<Graph>,
+        buf: &mut Vec<u8>,
+    ) -> u64 {
+        <Self as EffectsFormat<WIRE_VERSION>>::build(pending, graph, buf)
+    }
+
+    /// Append one index DDL statement, in the version this build writes.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the format reports — see [`EffectsFormat::build_index`].
+    pub fn build_index(
+        pending: &Pending,
+        graph: &AtomicRefCell<Graph>,
+        create: bool,
+        index: &AnnouncedIndex<'_>,
+        buf: &mut Vec<u8>,
+    ) -> Result<(), String> {
+        <Self as EffectsFormat<WIRE_VERSION>>::build_index(pending, graph, create, index, buf)
+    }
+
+    /// Append one constraint statement, in the version this build writes.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the format reports — see [`EffectsFormat::build_constraint`].
+    pub fn build_constraint(
+        graph: &Graph,
+        create: bool,
+        constraint: &AnnouncedConstraint<'_>,
+        baseline: &SchemaBaseline,
+        buf: &mut Vec<u8>,
+    ) -> Result<(), String> {
+        <Self as EffectsFormat<WIRE_VERSION>>::build_constraint(
+            graph, create, constraint, baseline, buf,
+        )
     }
 
     /// Finish a payload and send it, in the version this build writes.
@@ -196,13 +289,7 @@ pub trait EffectDecode<const VERSION: u8>: Sized {
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError>;
 }
 
-/// The emitter's surface, re-exported so no caller names a version to reach it.
-///
-/// These are the written format's types by definition — an `AnnouncedIndex` is
-/// how *this* wire describes an index — so the version belongs in one line here
-/// rather than in every import that needs one.
+/// The one thing left that names a version, and it is configuration rather
+/// than format: the compression threshold is read by `seal` itself, so the
+/// setting stays behind the format boundary.
 pub use v3::EFFECTS_COMPRESSION;
-pub use v3::emit::{
-    AnnouncedConstraint, AnnouncedIndex, SchemaBaseline, build_constraint_buffer,
-    build_effects_buffer, build_index_buffer,
-};

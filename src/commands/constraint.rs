@@ -4,7 +4,8 @@ use crate::{
     graph_core::{ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
     redis_type::GRAPH_TYPE,
 };
-use graph::effects::{AnnouncedConstraint, SchemaBaseline, build_constraint_buffer};
+use graph::effects::EffectsPayload;
+use graph::effects::announce::{AnnouncedConstraint, SchemaBaseline};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::{ConstraintStatus, ConstraintType};
 use graph::identifier_limits::validate_identifier_len;
@@ -258,7 +259,7 @@ fn attempt_settle(
                 // through this replicate, which is what keeps the check sound:
                 // the propagation is flushed when the session's guard releases
                 // it, inside the window the check validated.
-                if build_constraint_buffer(
+                if EffectsPayload::build_constraint(
                     &g,
                     true,
                     &AnnouncedConstraint {
@@ -510,7 +511,7 @@ pub fn graph_constraint(
                     )
                 };
                 let mut buf = Vec::new();
-                if build_constraint_buffer(
+                if EffectsPayload::build_constraint(
                     &mutated.borrow(),
                     is_create,
                     &AnnouncedConstraint {

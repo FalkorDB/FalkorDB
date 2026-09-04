@@ -21,40 +21,15 @@ use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 
-use std::sync::Arc;
-
 use crate::{
     effects::v3::{self as v3, EffectEncode, IdList, Record},
     entity_type::EntityType,
-    graph::constraint::{ConstraintStatus, ConstraintType},
     graph::graph::{DeletedEdge, Graph, NodeId, RelationshipId},
     index::IndexType,
     runtime::{pending::Pending, value::Value},
 };
 
-/// How many schemas and attributes a graph held before some mutation.
-///
-/// Records carry bare ids, so a buffer is only meaningful to a replica that
-/// numbers its dictionaries the same way. Anything registered after this
-/// baseline has to be announced in the same buffer, ahead of the records that
-/// reference it.
-pub struct SchemaBaseline {
-    pub labels: usize,
-    pub types: usize,
-    pub attrs: usize,
-}
-
-impl SchemaBaseline {
-    /// The counts as they stand now.
-    #[must_use]
-    pub fn of(g: &Graph) -> Self {
-        Self {
-            labels: g.get_labels().len(),
-            types: g.get_types().len(),
-            attrs: g.get_node_attribute_names().len(),
-        }
-    }
-}
+use crate::effects::announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
 
 /// Announce every schema and attribute registered since `baseline`.
 pub fn emit_schema_additions(
@@ -109,15 +84,6 @@ pub fn emit_schema_additions(
 ///
 /// Returns an error if a property is not registered, which would mean
 /// `create_constraint` did not run or did not register it.
-pub struct AnnouncedConstraint<'a> {
-    pub ct: ConstraintType,
-    pub entity_type: EntityType,
-    /// The status this node reached, and `None` for a drop — which carries no
-    /// status field at all.
-    pub status: Option<ConstraintStatus>,
-    pub label: &'a str,
-    pub properties: &'a [Arc<String>],
-}
 
 pub fn build_constraint_buffer(
     g: &Graph,
@@ -172,20 +138,6 @@ pub fn build_constraint_buffer(
         },
     );
     Ok(())
-}
-
-/// One index DDL statement, as the runtime evaluated it.
-///
-/// `options` is the raw `OPTIONS {...}` map rather than the parsed
-/// `IndexOptions`: v2 could not encode it at all and forced the whole statement
-/// to replicate as a verbatim query, whereas v3 puts the map on the wire so the
-/// replica rebuilds exactly what the master built instead of approximating it.
-pub struct AnnouncedIndex<'a> {
-    pub entity_type: EntityType,
-    pub index_type: &'a IndexType,
-    pub label: &'a str,
-    pub fields: &'a [Arc<String>],
-    pub options: Option<&'a Value>,
 }
 
 /// `IndexFieldType` is a bit flag set rather than a discriminant, so this is a
@@ -778,6 +730,10 @@ mod tests {
     use crate::graph::graphblas::test_init::ensure_init;
     use crate::runtime::pending::Pending;
     use atomic_refcell::AtomicRefCell;
+    // The module itself no longer needs these — the announced types moved to
+    // `effects::announce` — but the tests still build the values they carry.
+    use crate::graph::constraint::{ConstraintStatus, ConstraintType};
+    use std::sync::Arc;
 
     fn graph() -> AtomicRefCell<Graph> {
         // GrB_init is process-wide and may only run once.

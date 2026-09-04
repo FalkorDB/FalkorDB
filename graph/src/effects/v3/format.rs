@@ -5,9 +5,14 @@
 //! to the dispatch, and touching nothing else — the trait's module stays free
 //! of any single version's rules.
 
+use atomic_refcell::AtomicRefCell;
+
+use super::emit::{build_constraint_buffer, build_effects_buffer, build_index_buffer};
 use super::{EFFECTS_VERSION, apply::ApplyError, apply::apply_effects, seal};
+use crate::effects::announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
 use crate::effects::{EffectsFormat, EffectsPayload, ReplicationSink};
 use crate::graph::graph::Graph;
+use crate::runtime::pending::Pending;
 
 impl EffectsFormat<EFFECTS_VERSION> for EffectsPayload {
     fn is_empty(buf: &[u8]) -> bool {
@@ -34,6 +39,34 @@ impl EffectsFormat<EFFECTS_VERSION> for EffectsPayload {
         buf: &[u8],
     ) -> Result<(), ApplyError> {
         apply_effects(graph, buf)
+    }
+
+    fn build(
+        pending: &Pending,
+        graph: &AtomicRefCell<Graph>,
+        buf: &mut Vec<u8>,
+    ) -> u64 {
+        build_effects_buffer(pending, graph, buf)
+    }
+
+    fn build_index(
+        pending: &Pending,
+        graph: &AtomicRefCell<Graph>,
+        create: bool,
+        index: &AnnouncedIndex<'_>,
+        buf: &mut Vec<u8>,
+    ) -> Result<(), String> {
+        build_index_buffer(pending, graph, create, index, buf)
+    }
+
+    fn build_constraint(
+        graph: &Graph,
+        create: bool,
+        constraint: &AnnouncedConstraint<'_>,
+        baseline: &SchemaBaseline,
+        buf: &mut Vec<u8>,
+    ) -> Result<(), String> {
+        build_constraint_buffer(graph, create, constraint, baseline, buf)
     }
 }
 
