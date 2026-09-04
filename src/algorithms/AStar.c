@@ -283,14 +283,15 @@ static bool AStarCtx_Run
 
 	bool single_source = (dst_id == (NodeID)INVALID_ENTITY_ID);
 
-	// resolve dst's coordinates once, up front: every heuristic evaluation
-	// during this search targets this fixed goal. if dst has no numeric lat/lon,
-	// heur_scale is non-positive, this is a single-source sweep, or a landmark
-	// potential is driving h, the haversine term degrades to 0 -- the potential
-	// branch in _astar_node_h ignores these anyway.
+	// resolve dst's coordinates once, up front: every haversine evaluation during
+	// this search targets this fixed goal. skip the lookup entirely when the
+	// haversine term can't contribute -- a single-source sweep, a landmark
+	// potential driving h (its branch in _astar_node_h ignores coords), no weight
+	// prop, or a non-positive scale -- and, finally, when dst has no numeric lat/lon.
 	double dst_lat = 0;
 	double dst_lon = 0;
 	bool dst_has_coords = !single_source                          &&
+			(ac->potential == NULL)                              &&
 			(ac->weight_prop != ATTRIBUTE_ID_NONE)               &&
 			(ac->heur_scale > 0)                                 &&
 			_get_node_latlon (&dst_lat, &dst_lon,
