@@ -201,6 +201,20 @@ fn attempt_settle(
     // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
     // shape as bulk_insert's Phase 2.
     session.upgrade_to_write()?;
+    // Taken here rather than inside the closure below, and unconditionally.
+    //
+    // `escalate` stores the `Gil` guard in the session, and neither caller of
+    // this function runs on the main thread — both `std::thread::spawn` — so
+    // the GIL was locked by *this* thread and its context is recorded. There is
+    // no case where it is absent, and treating it as one is what the previous
+    // `if let Some(..)` did: on a `None` it skipped the re-announcement, and a
+    // replica whose constraint never leaves UNDER CONSTRUCTION cannot be
+    // re-driven, because `GRAPH.CONSTRAINT CREATE` answers "already exists".
+    //
+    // Before the closure because `with_graph_mut` holds the session's `mode`
+    // borrow for its whole body, so anything reading the session from inside it
+    // panics on the `RefCell`.
+    let raw_ctx = gil_context();
     session
         .with_graph_mut(|tg| {
             let Some(g_arc) = tg.graph.write() else {
@@ -247,7 +261,6 @@ fn attempt_settle(
                     &mut buf,
                 )
                 .is_ok()
-                    && let Some(raw_ctx) = gil_context()
                 {
                     // SAFETY: borrowed for the life of the GIL guard this thread
                     // holds; `Context` has no `Drop`, so nothing frees it.

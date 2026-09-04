@@ -376,7 +376,7 @@ impl Gil {
     }
 }
 
-/// The context this thread locked the GIL through, if it locked one.
+/// The context this thread locked the GIL through.
 ///
 /// Borrowed, never owned: it is valid only while a [`Gil`] guard is alive on
 /// this thread, must not be freed, and a `Context` built over it must not be
@@ -388,9 +388,25 @@ impl Gil {
 /// `postExecutionUnitOperations`, which calls `propagateNow`, and the pause
 /// check that makes escalation safe is only sound while the GIL is held
 /// continuously from that check through the commit and the replicate.
+///
+/// # Panics
+///
+/// If this thread holds no GIL guard. That is a caller bug rather than a state
+/// to branch on, and it used to be one: the single caller tested the `Option`
+/// and skipped replicating when it was `None`, which would have left the
+/// replica's constraint UNDER CONSTRUCTION forever with nothing logged. There
+/// is no recovery from a missing context at that point, so failing loudly beats
+/// a branch that silently drops a replicated write.
+///
+/// [`Gil::acquire`] records the context only when it actually locks — the main
+/// thread's implicit hold sets nothing — so the precondition is "a worker
+/// thread that has escalated", which is what `QuerySession::upgrade_to_write`
+/// establishes.
 #[must_use]
-pub(crate) fn gil_context() -> Option<NonNull<raw::RedisModuleCtx>> {
-    GIL_CTX.get()
+pub(crate) fn gil_context() -> NonNull<raw::RedisModuleCtx> {
+    GIL_CTX
+        .get()
+        .expect("gil_context requires a GIL guard held by this thread")
 }
 
 impl Drop for Gil {
