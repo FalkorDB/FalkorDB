@@ -40,10 +40,9 @@ use crate::config::{
     CONFIGURATION_DELAY_INDEXING, CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_INDEX_WORKER_THREADS,
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER,
     CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, EFFECTS_VERSION_DEPRECATED,
-    MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES, OMP_THREAD_COUNT,
-    QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count,
-    normalize_node_creation_buffer,
+    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
+    MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
+    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
 };
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
@@ -88,9 +87,6 @@ fn config_get_one(
         "MAX_INFO_QUERIES" => RedisValue::Integer(MAX_INFO_QUERIES.load(Ordering::Relaxed)),
         "EFFECTS_COMPRESSION" => RedisValue::Integer(EFFECTS_COMPRESSION.load(Ordering::Relaxed)),
         // Deprecated and read by nothing; reported so a GET round-trips a SET.
-        "EFFECTS_VERSION" => {
-            RedisValue::Integer(EFFECTS_VERSION_DEPRECATED.load(Ordering::Relaxed))
-        }
         "EFFECTS_THRESHOLD" => {
             RedisValue::Integer(EFFECTS_THRESHOLD_DEPRECATED.load(Ordering::Relaxed))
         }
@@ -121,7 +117,6 @@ fn validate_config_set(
         | "QUERY_MEM_CAPACITY"
         | "DELTA_MAX_PENDING_CHANGES"
         | "EFFECTS_COMPRESSION"
-        | "EFFECTS_VERSION"
         | "EFFECTS_THRESHOLD" => {
             let v: i64 = value
                 .parse()
@@ -263,7 +258,6 @@ fn apply_config_set(
             DELTA_MAX_PENDING_CHANGES.store(val.as_i64(), Ordering::Relaxed);
         }
         "EFFECTS_COMPRESSION" => EFFECTS_COMPRESSION.store(val.as_i64(), Ordering::Relaxed),
-        "EFFECTS_VERSION" => EFFECTS_VERSION_DEPRECATED.store(val.as_i64(), Ordering::Relaxed),
         "EFFECTS_THRESHOLD" => {
             EFFECTS_THRESHOLD_DEPRECATED.store(val.as_i64(), Ordering::Relaxed);
         }

@@ -79,18 +79,23 @@ pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
 /// Re-exported because the decision is made in the graph crate, and two statics
 /// would drift.
 pub use graph::effects::EFFECTS_COMPRESSION;
-/// **Deprecated and ignored.** v3 is the only wire format and effects are the
-/// only mechanism, so there is nothing left for either knob to select.
+/// **Deprecated and ignored.** Effects are the only replication mechanism now,
+/// so there is nothing left for the threshold to select.
 ///
-/// Kept settable rather than removed. Removing them made `GRAPH.CONFIG SET
+/// Kept settable rather than removed. Removing it made `GRAPH.CONFIG SET
 /// EFFECTS_THRESHOLD` answer `Unknown configuration field`, which is a startup
-/// failure for any config file that names one and broke five flow suites that
+/// failure for any config file that names it and broke five flow suites that
 /// set it. A value is accepted, stored, reported back, and read by nothing.
-pub static EFFECTS_VERSION_DEPRECATED: AtomicI64 = AtomicI64::new(3);
-/// 300, as it always was. The knob is ignored, but its *reported* value is
-/// still observable — changing it would break a client or config check that
+///
+/// Still 300, as it always was. The knob is ignored, but its *reported* value
+/// is observable — changing it would break a client or config check that
 /// asserts the default, for no benefit, which is the opposite of keeping it for
 /// compatibility.
+///
+/// There is deliberately no `EFFECTS_VERSION` beside it. That one never
+/// shipped in either engine — `main` has 23 configs and only this one, and C's
+/// `config.h` has `Config_EFFECTS_THRESHOLD` and no version knob — so a
+/// deprecated no-op for it would be compatibility with nothing.
 pub static EFFECTS_THRESHOLD_DEPRECATED: AtomicI64 = AtomicI64::new(300);
 /// Toggles the telemetry stream that backs `GRAPH.INFO`. Atomic rather than
 /// GIL-guarded because the query hot path reads it off the main thread, and
@@ -147,7 +152,6 @@ pub const CONFIG_NAMES: &[&str] = &[
     "CMD_INFO",
     "MAX_INFO_QUERIES",
     "EFFECTS_COMPRESSION",
-    "EFFECTS_VERSION",
     "EFFECTS_THRESHOLD",
     "BOLT_PORT",
     "DELAY_INDEXING",
