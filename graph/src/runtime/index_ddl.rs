@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use crate::parser::ast::{QueryExpr, Variable};
 use crate::{
-    effects::v3::emit::{AnnouncedIndex, build_index_buffer},
+    effects::{AnnouncedIndex, build_index_buffer},
     entity_type::EntityType,
     index::indexer::IndexType,
     runtime::{

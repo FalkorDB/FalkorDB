@@ -11,6 +11,7 @@
 //! ```
 
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+use graph::effects::{Current, EffectsFormat};
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
@@ -51,10 +52,10 @@ pub fn graph_effect(
 
     let result = {
         let mut g = g_arc.borrow_mut();
-        // v3 is the only format. A buffer announcing anything else came from a
-        // peer speaking a language this build does not, which is divergence —
-        // `apply_effects` rejects it and the guard below forces a resync.
-        graph::effects::v3::apply::apply_effects(&mut g, buf).map_err(|e| e.to_string())
+        // Whatever version this build speaks. A buffer announcing another came
+        // from a peer speaking a language this one does not, which is
+        // divergence — `apply` rejects it and the guard below forces a resync.
+        Current::apply(&mut g, buf).map_err(|e| e.to_string())
     };
 
     match result {

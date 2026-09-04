@@ -5,10 +5,11 @@
 //! over, or found to be empty.
 //!
 //! It lives in this crate rather than beside the command handlers because the
-//! buffer and the counters belong to `Runtime`. The one thing the host still
-//! owns is transport — compressing the payload and handing it to
-//! `RM_Replicate`.
+//! buffer and the counters belong to `Runtime`. The host owns transport alone:
+//! when a payload is sent, under which key, over which context. What the bytes
+//! are is [`crate::effects::EffectsFormat`]'s.
 
+use crate::effects::{Current, EffectsFormat};
 use crate::runtime::runtime::Runtime;
 
 /// Decide whether to use effects replication and get the pre-built buffer.
@@ -24,10 +25,7 @@ use crate::runtime::runtime::Runtime;
 /// disagreeing about which mechanism carried a given write.
 pub fn take_effects_buffer(runtime: &Runtime) -> Option<Vec<u8>> {
     let buf = runtime.effects_buffer.borrow_mut().take()?;
-    // A payload holding nothing but its header carries no records. The header
-    // is two bytes — version and flags — so this cannot be a constant.
-    (buf.len() > HEADER_LEN).then_some(buf)
+    // A payload holding nothing but its header carries no records. How long a
+    // header is belongs to the format, not to this function.
+    (!Current::is_empty(&buf)).then_some(buf)
 }
-
-/// `u8 version` + `u8 flags`.
-const HEADER_LEN: usize = 2;

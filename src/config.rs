@@ -78,7 +78,7 @@ pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
 /// Smallest v3 effects payload worth compressing, in bytes; 0 disables it.
 /// Re-exported because the decision is made in the graph crate, and two statics
 /// would drift.
-pub use graph::effects::v3::EFFECTS_COMPRESSION;
+pub use graph::effects::EFFECTS_COMPRESSION;
 /// **Deprecated and ignored.** v3 is the only wire format and effects are the
 /// only mechanism, so there is nothing left for either knob to select.
 ///

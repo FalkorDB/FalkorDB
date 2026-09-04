@@ -45,6 +45,7 @@ use crossfire::{
 };
 use graph::{
     effects::payload::take_effects_buffer,
+    effects::{Current, EffectsFormat},
     graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
@@ -1649,15 +1650,10 @@ fn replicate_effects(
     let Some(mut buf) = effects_buffer else {
         return;
     };
-    // The one place the payload is finished: every commit has run and the index
-    // DDL is in. Compression rewrites everything after the header, so it has to
-    // happen exactly once and last — running it per commit produced a payload
-    // compressed twice that could not be read at all.
-    //
-    // What "worth compressing" means is the codec's to decide, not this
-    // module's: `seal` reads the threshold itself, so the configuration stays
-    // behind the format boundary.
-    graph::effects::v3::seal(&mut buf);
+    // The last moment the payload can be finished: every commit has run and the
+    // index DDL is in. *What* finishing does is the format's — see
+    // `EffectsFormat::finish` — and this module deliberately does not know.
+    Current::finish(&mut buf);
     let args: &[&[u8]] = &[key_name.as_bytes(), buf.as_slice()];
     ctx.replicate("GRAPH.EFFECT", args);
 }

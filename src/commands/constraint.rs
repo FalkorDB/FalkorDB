@@ -4,7 +4,7 @@ use crate::{
     graph_core::{ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
     redis_type::GRAPH_TYPE,
 };
-use graph::effects::v3::emit::{AnnouncedConstraint, SchemaBaseline, build_constraint_buffer};
+use graph::effects::{AnnouncedConstraint, SchemaBaseline, build_constraint_buffer};
 use graph::entity_type::EntityType;
 use graph::graph::constraint::{ConstraintStatus, ConstraintType};
 use graph::identifier_limits::validate_identifier_len;
