@@ -45,7 +45,7 @@ use crossfire::{
 };
 use graph::{
     effects::payload::take_effects_buffer,
-    effects::{Current, EffectsFormat},
+    effects::{EffectsFormat, EffectsWire, ReplicationSink},
     graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
@@ -1647,15 +1647,30 @@ fn replicate_effects(
     key_name: &Arc<str>,
     effects_buffer: Option<Vec<u8>>,
 ) {
-    let Some(mut buf) = effects_buffer else {
+    let Some(buf) = effects_buffer else {
         return;
     };
-    // The last moment the payload can be finished: every commit has run and the
-    // index DDL is in. *What* finishing does is the format's — see
-    // `EffectsFormat::finish` — and this module deliberately does not know.
-    Current::finish(&mut buf);
-    let args: &[&[u8]] = &[key_name.as_bytes(), buf.as_slice()];
-    ctx.replicate("GRAPH.EFFECT", args);
+    // Handed over whole, unread and untouched. This is the last moment a
+    // payload can be sent — every commit has run and the index DDL is in — and
+    // that timing is the only thing this module knows about it. What the bytes
+    // are, and what still has to happen to them, is the format's.
+    EffectsWire::replicate(&CtxSink(ctx), key_name.as_bytes(), buf);
+}
+
+/// `RM_Replicate`, as the [`ReplicationSink`] the format sends through.
+///
+/// A newtype because both the trait and `Context` are foreign to this crate, so
+/// the impl needs a local type to hang on.
+struct CtxSink<'a>(&'a Context);
+
+impl ReplicationSink for CtxSink<'_> {
+    fn replicate(
+        &self,
+        cmd: &str,
+        args: &[&[u8]],
+    ) {
+        self.0.replicate(cmd, args);
+    }
 }
 
 #[unsafe(no_mangle)]

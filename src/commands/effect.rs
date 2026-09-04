@@ -11,7 +11,7 @@
 //! ```
 
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
-use graph::effects::{Current, EffectsFormat};
+use graph::effects::{EffectsFormat, EffectsWire};
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
@@ -55,7 +55,7 @@ pub fn graph_effect(
         // Whatever version this build speaks. A buffer announcing another came
         // from a peer speaking a language this one does not, which is
         // divergence — `apply` rejects it and the guard below forces a resync.
-        Current::apply(&mut g, buf).map_err(|e| e.to_string())
+        EffectsWire::apply(&mut g, buf).map_err(|e| e.to_string())
     };
 
     match result {

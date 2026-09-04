@@ -33,6 +33,24 @@ pub use reader::Reader;
 use crate::graph::graph::Graph;
 use v3::apply::ApplyError;
 
+/// Where a finished payload goes.
+///
+/// The seam, and the reason there is one: this crate has no Redis dependency
+/// and must not grow one, but the format is what should be sending the payload
+/// — the host has no business holding a half-finished buffer, and while it did,
+/// it also ended up deciding what finishing meant.
+///
+/// So the format says *that* the bytes are sent and what they are; the host
+/// says what sending means. One impl, over `redis_module::Context`, in the
+/// crate that owns it.
+pub trait ReplicationSink {
+    fn replicate(
+        &self,
+        cmd: &str,
+        args: &[&[u8]],
+    );
+}
+
 /// A whole `GRAPH.EFFECT` payload, end to end.
 ///
 /// [`EffectEncode`] and [`EffectDecode`] describe one *record*; this describes
@@ -40,15 +58,19 @@ use v3::apply::ApplyError;
 /// the header names it, and whether the bytes are compressed is a property of
 /// the payload rather than of any record in it.
 ///
-/// It exists so that nothing outside this module has to name a version. The
-/// host module handles transport: it decides when a payload is sent, to which
-/// key, and over which context. It does not decide what the bytes are. Before
-/// this trait it did, in two places — `graph_core` called `v3::seal` to
-/// compress, and `payload` carried its own copy of the header length to tell an
-/// empty payload from a full one — so "which version" was spelled out at call
-/// sites that have no business knowing.
+/// It exists so that nothing outside this module has to name a version. Before
+/// it, `graph_core` called `v3::seal` to compress and explained in a comment
+/// which bytes that rewrote, and `payload` kept its own copy of the header
+/// length to tell an empty payload from a full one — so "which version" was
+/// spelled out at call sites that have no business knowing.
 ///
-/// A v4 lands as a second impl and one line changed in [`Current`].
+/// Note what is **not** here: a way to finish a payload without sending it.
+/// Finishing has to happen exactly once and last — running it per commit
+/// produced a payload compressed twice that could not be read at all — and the
+/// way to make that unrepeatable is to give no caller the option.
+/// [`Self::replicate`] takes the buffer by value and is the only exit.
+///
+/// A v4 lands as a second impl and one changed line in [`EffectsWire`].
 pub trait EffectsFormat {
     /// The version byte a payload written by this format opens with.
     const VERSION: u8;
@@ -60,14 +82,14 @@ pub trait EffectsFormat {
     /// the header grows.
     fn is_empty(buf: &[u8]) -> bool;
 
-    /// Finish a payload: whatever has to happen to the bytes after the last
-    /// record is written and before they go on the wire.
+    /// Finish `buf` and send it as one `GRAPH.EFFECT` under `key`.
     ///
-    /// Call once, on a complete buffer, at the last possible moment. For v3
-    /// that is compression, which rewrites everything after the header — so
-    /// running it per commit produced a payload compressed twice that could not
-    /// be read at all.
-    fn finish(buf: &mut Vec<u8>);
+    /// By value, because a finished payload has no second use.
+    fn replicate(
+        sink: &dyn ReplicationSink,
+        key: &[u8],
+        buf: Vec<u8>,
+    );
 
     /// Apply a payload to `graph`.
     ///
@@ -93,8 +115,18 @@ impl EffectsFormat for V3 {
         buf.len() <= 2
     }
 
-    fn finish(buf: &mut Vec<u8>) {
-        v3::seal(buf);
+    fn replicate(
+        sink: &dyn ReplicationSink,
+        key: &[u8],
+        mut buf: Vec<u8>,
+    ) {
+        // Compression, and the last thing that touches the bytes. It rewrites
+        // everything after the header, so it can only run once and only here —
+        // which is why it is not reachable on its own. What "worth compressing"
+        // means is `seal`'s: it reads the threshold itself, so the
+        // configuration stays behind this boundary too.
+        v3::seal(&mut buf);
+        sink.replicate("GRAPH.EFFECT", &[key, buf.as_slice()]);
     }
 
     fn apply(
@@ -105,12 +137,12 @@ impl EffectsFormat for V3 {
     }
 }
 
-/// The format this build writes, and the only one it reads.
+/// The effects wire this build speaks, and the only one it reads.
 ///
 /// A payload announcing any other version came from a peer speaking a language
 /// this build does not, which is divergence rather than a compatibility case —
 /// [`EffectsFormat::apply`] rejects it and the host forces a resync.
-pub type Current = V3;
+pub type EffectsWire = V3;
 
 /// The emitter's surface, re-exported so no caller names a version to reach it.
 ///

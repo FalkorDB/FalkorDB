@@ -9,7 +9,7 @@
 //! when a payload is sent, under which key, over which context. What the bytes
 //! are is [`crate::effects::EffectsFormat`]'s.
 
-use crate::effects::{Current, EffectsFormat};
+use crate::effects::{EffectsFormat, EffectsWire};
 use crate::runtime::runtime::Runtime;
 
 /// Decide whether to use effects replication and get the pre-built buffer.
@@ -27,5 +27,5 @@ pub fn take_effects_buffer(runtime: &Runtime) -> Option<Vec<u8>> {
     let buf = runtime.effects_buffer.borrow_mut().take()?;
     // A payload holding nothing but its header carries no records. How long a
     // header is belongs to the format, not to this function.
-    (!Current::is_empty(&buf)).then_some(buf)
+    (!EffectsWire::is_empty(&buf)).then_some(buf)
 }
