@@ -1660,8 +1660,14 @@ fn replicate_effects(
 /// `RM_Replicate`, as the [`ReplicationSink`] the format sends through.
 ///
 /// A newtype because both the trait and `Context` are foreign to this crate, so
-/// the impl needs a local type to hang on.
-struct CtxSink<'a>(&'a Context);
+/// the impl needs a local type to hang on. The only impl there is, and the only
+/// thing in the process that knows a payload reaches a replica by being
+/// replicated under a key — which is what the host owns and the format does not.
+///
+/// `pub(crate)` because the constraint command sends payloads of its own, from
+/// outside any query. They are still payloads, so they still go out through the
+/// format.
+pub(crate) struct CtxSink<'a>(pub(crate) &'a Context);
 
 impl ReplicationSink for CtxSink<'_> {
     fn replicate(

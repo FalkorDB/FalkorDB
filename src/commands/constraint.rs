@@ -1,7 +1,7 @@
 use crate::query_session::{QuerySession, WriteAbort, WriteFacts};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
+    graph_core::{CtxSink, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
     redis_type::GRAPH_TYPE,
 };
 use graph::effects::EffectsPayload;
@@ -274,7 +274,7 @@ fn attempt_settle(
                 )
                 .is_ok()
                 {
-                    ctx.replicate("GRAPH.EFFECT", &[key.as_bytes(), buf.as_slice()]);
+                    EffectsPayload::replicate(&CtxSink(ctx), key.as_bytes(), buf);
                 }
             }
         })
@@ -526,7 +526,7 @@ pub fn graph_constraint(
                 )
                 .is_ok()
                 {
-                    ctx.replicate("GRAPH.EFFECT", &[key_str.as_slice(), buf.as_slice()]);
+                    EffectsPayload::replicate(&CtxSink(ctx), key_str.as_slice(), buf);
                 }
             }
             if is_create {
