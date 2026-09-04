@@ -87,7 +87,11 @@ pub use graph::effects::EFFECTS_COMPRESSION;
 /// failure for any config file that names one and broke five flow suites that
 /// set it. A value is accepted, stored, reported back, and read by nothing.
 pub static EFFECTS_VERSION_DEPRECATED: AtomicI64 = AtomicI64::new(3);
-pub static EFFECTS_THRESHOLD_DEPRECATED: AtomicI64 = AtomicI64::new(0);
+/// 300, as it always was. The knob is ignored, but its *reported* value is
+/// still observable — changing it would break a client or config check that
+/// asserts the default, for no benefit, which is the opposite of keeping it for
+/// compatibility.
+pub static EFFECTS_THRESHOLD_DEPRECATED: AtomicI64 = AtomicI64::new(300);
 /// Toggles the telemetry stream that backs `GRAPH.INFO`. Atomic rather than
 /// GIL-guarded because the query hot path reads it off the main thread, and
 /// because C lets `GRAPH.CONFIG SET CMD_INFO yes|no` flip it at runtime.

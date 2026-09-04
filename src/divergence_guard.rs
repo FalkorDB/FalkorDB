@@ -121,7 +121,7 @@ fn force_full_resync(
         std::process::exit(1);
     }
 
-    redis_module::logging::log_notice(format!(
+    log_warning(format!(
         "Forced full resync with master {host}:{port} initiated after divergence detected \
          on graph '{graph_name}'"
     ));
