@@ -1,8 +1,10 @@
 //! Replication effects: the `GRAPH.EFFECT` payload a write produces and a
 //! replica applies.
 //!
-//! One wire version, [`v3`] — the format both engines can read. Batched,
-//! C-compatible widths.
+//! One wire version so far, [`v3`] — the format both engines can read. Batched,
+//! C-compatible widths. [`EffectsPayload`] is what the rest of the codebase
+//! names; the version lives here and in the `impl EffectsFormat<N>` under each
+//! version's module, nowhere else.
 //!
 //! [`Reader`] and [`DecodeError`] sit here rather than under a version because
 //! a bounds-checked cursor over a byte slice is not version-specific, and a v4
@@ -31,7 +33,7 @@ pub use error::DecodeError;
 pub use reader::Reader;
 
 use crate::graph::graph::Graph;
-use v3::apply::ApplyError;
+use error::ApplyError;
 
 /// Where a finished payload goes.
 ///
@@ -51,35 +53,31 @@ pub trait ReplicationSink {
     );
 }
 
-/// A whole `GRAPH.EFFECT` payload, end to end.
+/// A whole `GRAPH.EFFECT` payload, end to end, in one wire version.
 ///
 /// [`EffectEncode`] and [`EffectDecode`] describe one *record*; this describes
 /// the buffer that carries them, which is where the version actually lives —
 /// the header names it, and whether the bytes are compressed is a property of
-/// the payload rather than of any record in it.
+/// the payload rather than of any record in it. The version is a parameter for
+/// the same reason it is on those two: so that a v4 is `impl EffectsFormat<4>
+/// for EffectsPayload` beside the v3 impl and the compiler picks between them,
+/// rather than a module name a caller has to spell.
 ///
-/// It exists so that nothing outside this module has to name a version. Before
-/// it, `graph_core` called `v3::seal` to compress and explained in a comment
-/// which bytes that rewrote, and `payload` kept its own copy of the header
-/// length to tell an empty payload from a full one — so "which version" was
-/// spelled out at call sites that have no business knowing.
+/// Nothing outside this module implements or names it. The entry points are
+/// [`EffectsPayload`]'s inherent methods, which decide *which* version applies
+/// — and that decision is the whole reason the parameter is not a marker type.
 ///
 /// Note what is **not** here: a way to finish a payload without sending it.
 /// Finishing has to happen exactly once and last — running it per commit
 /// produced a payload compressed twice that could not be read at all — and the
 /// way to make that unrepeatable is to give no caller the option.
 /// [`Self::replicate`] takes the buffer by value and is the only exit.
-///
-/// A v4 lands as a second impl and one changed line in [`EffectsWire`].
-pub trait EffectsFormat {
-    /// The version byte a payload written by this format opens with.
-    const VERSION: u8;
-
+pub trait EffectsFormat<const VERSION: u8> {
     /// True for a payload that carries no records — a bare header.
     ///
-    /// What "bare" means is the format's: v3's header is two bytes, and a
-    /// caller counting them itself is a caller that has to be revisited when
-    /// the header grows.
+    /// What "bare" means is the format's, because how long a header is belongs
+    /// to it. A caller counting the bytes itself is a caller that has to be
+    /// revisited when a version grows one.
     fn is_empty(buf: &[u8]) -> bool;
 
     /// Finish `buf` and send it as one `GRAPH.EFFECT` under `key`.
@@ -104,56 +102,72 @@ pub trait EffectsFormat {
     ) -> Result<(), ApplyError>;
 }
 
-/// The v3 wire format.
-pub struct V3;
+/// The version this build **writes**.
+///
+/// What it *reads* is every version [`EffectsPayload::apply`] can dispatch to,
+/// which is not the same set and is not meant to be: a rolling upgrade runs a
+/// new primary against old replicas and an old primary against new ones, so a
+/// build that could only read its own output could never be deployed without
+/// downtime. Today the two coincide because v3 is the only version that exists.
+pub const WIRE_VERSION: u8 = v3::EFFECTS_VERSION;
 
-impl EffectsFormat for V3 {
-    const VERSION: u8 = v3::EFFECTS_VERSION;
+/// A `GRAPH.EFFECT` payload, whatever version it is in.
+///
+/// The one type the rest of the codebase names. Its methods pick the format:
+/// writing is always [`WIRE_VERSION`], and reading is whatever the buffer
+/// declares in its first byte.
+pub struct EffectsPayload;
 
-    fn is_empty(buf: &[u8]) -> bool {
-        // `u8 version` + `u8 flags`, and nothing after them.
-        buf.len() <= 2
+impl EffectsPayload {
+    /// True for a payload this build would have written that carries no
+    /// records.
+    ///
+    /// About a buffer *being built here*, so it asks the version being written
+    /// rather than reading a header that is not there yet.
+    #[must_use]
+    pub fn is_empty(buf: &[u8]) -> bool {
+        <Self as EffectsFormat<WIRE_VERSION>>::is_empty(buf)
     }
 
-    fn replicate(
+    /// Finish a payload and send it, in the version this build writes.
+    pub fn replicate(
         sink: &dyn ReplicationSink,
         key: &[u8],
-        mut buf: Vec<u8>,
+        buf: Vec<u8>,
     ) {
-        // Compression, and the last thing that touches the bytes. It rewrites
-        // everything after the header, so it can only run once and only here —
-        // which is why it is not reachable on its own. What "worth compressing"
-        // means is `seal`'s: it reads the threshold itself, so the
-        // configuration stays behind this boundary too.
-        v3::seal(&mut buf);
-        sink.replicate("GRAPH.EFFECT", &[key, buf.as_slice()]);
+        <Self as EffectsFormat<WIRE_VERSION>>::replicate(sink, key, buf);
     }
 
-    fn apply(
+    /// Apply a payload, in the version **it** declares.
+    ///
+    /// Dispatch on the header rather than on `WIRE_VERSION`, because the sender
+    /// is a different process on a different build: during a rolling upgrade a
+    /// replica is routinely older or newer than its primary. A build reads
+    /// every version it has an impl for.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError::UnsupportedVersion`] for a version with no impl here —
+    /// which is not a compatibility case but divergence, since it means a peer
+    /// is speaking a language this build has never had. Also any
+    /// [`ApplyError`] the chosen format returns.
+    pub fn apply(
         graph: &mut Graph,
         buf: &[u8],
     ) -> Result<(), ApplyError> {
-        v3::apply::apply_effects(graph, buf)
+        // An empty buffer has no version byte to read. Nothing to apply either,
+        // so this is not an error.
+        let Some(&version) = buf.first() else {
+            return Ok(());
+        };
+        match version {
+            v3::EFFECTS_VERSION => {
+                <Self as EffectsFormat<{ v3::EFFECTS_VERSION }>>::apply(graph, buf)
+            }
+            other => Err(DecodeError::UnsupportedVersion(other).into()),
+        }
     }
 }
-
-/// The effects wire this build speaks, and the only one it reads.
-///
-/// A payload announcing any other version came from a peer speaking a language
-/// this build does not, which is divergence rather than a compatibility case —
-/// [`EffectsFormat::apply`] rejects it and the host forces a resync.
-pub type EffectsWire = V3;
-
-/// The emitter's surface, re-exported so no caller names a version to reach it.
-///
-/// These are the current format's types by definition — an `AnnouncedIndex` is
-/// how *this* wire describes an index — so the version belongs in one line here
-/// rather than in every import that needs one.
-pub use v3::EFFECTS_COMPRESSION;
-pub use v3::emit::{
-    AnnouncedConstraint, AnnouncedIndex, SchemaBaseline, build_constraint_buffer,
-    build_effects_buffer, build_index_buffer,
-};
 
 /// Types that can write themselves into an effects payload of a given version.
 ///
@@ -181,3 +195,14 @@ pub trait EffectDecode<const VERSION: u8>: Sized {
     /// describe a shape this version does not have.
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError>;
 }
+
+/// The emitter's surface, re-exported so no caller names a version to reach it.
+///
+/// These are the written format's types by definition — an `AnnouncedIndex` is
+/// how *this* wire describes an index — so the version belongs in one line here
+/// rather than in every import that needs one.
+pub use v3::EFFECTS_COMPRESSION;
+pub use v3::emit::{
+    AnnouncedConstraint, AnnouncedIndex, SchemaBaseline, build_constraint_buffer,
+    build_effects_buffer, build_index_buffer,
+};

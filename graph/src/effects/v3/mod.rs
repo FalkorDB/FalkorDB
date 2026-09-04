@@ -74,6 +74,7 @@ pub const EFFECTS_VERSION: u8 = 3;
 pub mod apply;
 pub mod blocks;
 pub mod emit;
+pub mod format;
 mod id_list;
 pub mod records;
 #[cfg(test)]

@@ -11,7 +11,7 @@
 //! ```
 
 use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
-use graph::effects::{EffectsFormat, EffectsWire};
+use graph::effects::EffectsPayload;
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
@@ -52,10 +52,12 @@ pub fn graph_effect(
 
     let result = {
         let mut g = g_arc.borrow_mut();
-        // Whatever version this build speaks. A buffer announcing another came
-        // from a peer speaking a language this one does not, which is
-        // divergence — `apply` rejects it and the guard below forces a resync.
-        EffectsWire::apply(&mut g, buf).map_err(|e| e.to_string())
+        // Dispatched on the version the buffer declares, not on the one this
+        // build writes — during a rolling upgrade the primary is routinely on a
+        // different build. A version with no impl at all is divergence rather
+        // than a compatibility case; `apply` rejects it and the guard below
+        // forces a resync.
+        EffectsPayload::apply(&mut g, buf).map_err(|e| e.to_string())
     };
 
     match result {

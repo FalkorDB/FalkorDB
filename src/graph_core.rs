@@ -45,7 +45,7 @@ use crossfire::{
 };
 use graph::{
     effects::payload::take_effects_buffer,
-    effects::{EffectsFormat, EffectsWire, ReplicationSink},
+    effects::{EffectsPayload, ReplicationSink},
     graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
@@ -1654,7 +1654,7 @@ fn replicate_effects(
     // payload can be sent — every commit has run and the index DDL is in — and
     // that timing is the only thing this module knows about it. What the bytes
     // are, and what still has to happen to them, is the format's.
-    EffectsWire::replicate(&CtxSink(ctx), key_name.as_bytes(), buf);
+    EffectsPayload::replicate(&CtxSink(ctx), key_name.as_bytes(), buf);
 }
 
 /// `RM_Replicate`, as the [`ReplicationSink`] the format sends through.
