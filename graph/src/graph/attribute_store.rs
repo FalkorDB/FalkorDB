@@ -347,6 +347,80 @@ struct Block {
     slack: u32,
 }
 
+/// One entity's attribute updates for [`Block::merge_span`], ascending by id.
+///
+/// A trait rather than a slice because the two callers hold the same
+/// information in different shapes and neither should have to build the
+/// other's. `insert_attrs` already owns `(id, value)` pairs. `insert_attrs_rows`
+/// has the record's shared `attr_ids` beside one row of a row-major value
+/// block, and materializing pairs from those meant cloning every `Value` in the
+/// record — `count x width` clones to pass values that were already laid out
+/// exactly as the merge reads them, one row at a time.
+///
+/// Indexed rather than iterated because the merge walks it with a cursor
+/// against the existing span, and re-reads the entry at `ni` several times per
+/// step.
+trait AttrUpdates {
+    fn len(&self) -> usize;
+    fn id(
+        &self,
+        i: usize,
+    ) -> u16;
+    fn value(
+        &self,
+        i: usize,
+    ) -> &Value;
+}
+
+impl AttrUpdates for &[(u16, Value)] {
+    fn len(&self) -> usize {
+        <[(u16, Value)]>::len(self)
+    }
+
+    fn id(
+        &self,
+        i: usize,
+    ) -> u16 {
+        self[i].0
+    }
+
+    fn value(
+        &self,
+        i: usize,
+    ) -> &Value {
+        &self[i].1
+    }
+}
+
+/// One row of a row-major value block, against the record's shared ids.
+///
+/// The two slices are parallel and the same length; nothing is copied to put
+/// them together.
+struct RowUpdates<'a> {
+    ids: &'a [u16],
+    values: &'a [Value],
+}
+
+impl AttrUpdates for RowUpdates<'_> {
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+
+    fn id(
+        &self,
+        i: usize,
+    ) -> u16 {
+        self.ids[i]
+    }
+
+    fn value(
+        &self,
+        i: usize,
+    ) -> &Value {
+        &self.values[i]
+    }
+}
+
 impl Block {
     /// Pack a value into a tag + 8-byte payload. Out-of-line values are
     /// pushed into `self.heap` (recycling `heap_free` holes) and the payload
@@ -562,7 +636,7 @@ impl Block {
     fn merge_span(
         &mut self,
         slot_idx: usize,
-        pairs: &[(u16, Value)],
+        pairs: &impl AttrUpdates,
         scratch: &mut Vec<PackedAttr>,
     ) -> (usize, usize) {
         self.grow_slots(slot_idx);
@@ -575,30 +649,32 @@ impl Block {
         if old.cap != 0 {
             let s = old.offset as usize;
             let span = &self.arena[s..s + old.len as usize];
-            if pairs.iter().all(|(id, v)| {
-                !matches!(v, Value::Null) && span.binary_search_by_key(id, |e| e.id).is_ok()
+            if (0..pairs.len()).all(|i| {
+                !matches!(pairs.value(i), Value::Null)
+                    && span.binary_search_by_key(&pairs.id(i), |e| e.id).is_ok()
             }) {
-                for (id, v) in pairs {
+                for i in 0..pairs.len() {
+                    let id = pairs.id(i);
                     let span = &self.arena[s..s + old.len as usize];
-                    let pos = span.binary_search_by_key(id, |e| e.id).unwrap();
+                    let pos = span.binary_search_by_key(&id, |e| e.id).unwrap();
                     self.release_heap_value(self.arena[s + pos]);
-                    self.store_packed_value(s + pos, *id, v.clone());
+                    self.store_packed_value(s + pos, id, pairs.value(i).clone());
                 }
                 return (pairs.len(), pairs.len());
             }
 
             // Fast path: pure removal (every pair null). Shift surviving
             // entries left within the span, releasing removed heap values.
-            if pairs.iter().all(|(_, v)| matches!(v, Value::Null)) {
+            if (0..pairs.len()).all(|i| matches!(pairs.value(i), Value::Null)) {
                 let mut w = s;
                 let mut ni = 0;
                 let mut nremoved = 0;
                 for r in s..s + old.len as usize {
                     let e = self.arena[r];
-                    while ni < pairs.len() && pairs[ni].0 < e.id {
+                    while ni < pairs.len() && pairs.id(ni) < e.id {
                         ni += 1;
                     }
-                    if ni < pairs.len() && pairs[ni].0 == e.id {
+                    if ni < pairs.len() && pairs.id(ni) == e.id {
                         nremoved += 1;
                         self.release_heap_value(e);
                         continue;
@@ -629,26 +705,25 @@ impl Block {
         {
             let (mut ci, mut ni) = (0usize, 0usize);
             while ci < scratch.len() && ni < pairs.len() {
-                match scratch[ci].id.cmp(&pairs[ni].0) {
+                match scratch[ci].id.cmp(&pairs.id(ni)) {
                     Ordering::Less => {
                         new_len += 1;
                         ci += 1;
                     }
                     Ordering::Equal => {
-                        new_len += usize::from(!matches!(pairs[ni].1, Value::Null));
+                        new_len += usize::from(!matches!(pairs.value(ni), Value::Null));
                         ci += 1;
                         ni += 1;
                     }
                     Ordering::Greater => {
-                        new_len += usize::from(!matches!(pairs[ni].1, Value::Null));
+                        new_len += usize::from(!matches!(pairs.value(ni), Value::Null));
                         ni += 1;
                     }
                 }
             }
             new_len += scratch.len() - ci;
-            new_len += pairs[ni..]
-                .iter()
-                .filter(|(_, v)| !matches!(v, Value::Null))
+            new_len += (ni..pairs.len())
+                .filter(|&i| !matches!(pairs.value(i), Value::Null))
                 .count();
         }
 
@@ -674,22 +749,22 @@ impl Block {
         let (mut ci, mut ni) = (0usize, 0usize);
         while ci < scratch.len() || ni < pairs.len() {
             let take_old =
-                ni >= pairs.len() || (ci < scratch.len() && scratch[ci].id < pairs[ni].0);
+                ni >= pairs.len() || (ci < scratch.len() && scratch[ci].id < pairs.id(ni));
             if take_old {
                 self.arena[w] = scratch[ci];
                 w += 1;
                 ci += 1;
                 continue;
             }
-            if ci < scratch.len() && scratch[ci].id == pairs[ni].0 {
+            if ci < scratch.len() && scratch[ci].id == pairs.id(ni) {
                 nremoved += 1;
                 self.release_heap_value(scratch[ci]);
                 ci += 1;
             }
-            let (id, v) = &pairs[ni];
+            let v = pairs.value(ni);
             if !matches!(v, Value::Null) {
                 nset += 1;
-                self.store_packed_value(w, *id, v.clone());
+                self.store_packed_value(w, pairs.id(ni), v.clone());
                 w += 1;
             }
             ni += 1;
@@ -933,7 +1008,7 @@ impl DataBlock {
     fn merge_span(
         &mut self,
         entity_id: u64,
-        pairs: &[(u16, Value)],
+        pairs: &impl AttrUpdates,
         scratch: &mut Vec<PackedAttr>,
     ) -> (usize, usize) {
         let (block_idx, slot_idx) = Self::locate(entity_id);
@@ -942,7 +1017,7 @@ impl DataBlock {
         let has_span = self
             .block(block_idx)
             .is_some_and(|block| block.slots.get(slot_idx).is_some_and(|slot| slot.cap != 0));
-        if !has_span && pairs.iter().all(|(_, v)| matches!(v, Value::Null)) {
+        if !has_span && (0..pairs.len()).all(|i| matches!(pairs.value(i), Value::Null)) {
             return (0, 0);
         }
         let block = self.block_mut(block_idx);
@@ -1204,24 +1279,25 @@ impl AttributeStore {
         let mut nremoved = 0;
         let mut nset = 0;
         let mut scratch: Vec<PackedAttr> = Vec::new();
-        // One reused buffer for the whole record, rather than a fresh `Vec`
-        // per entity.
-        let mut pairs: Vec<(u16, Value)> = Vec::with_capacity(width);
 
         for (row, &id) in ids.iter().enumerate() {
-            pairs.clear();
+            // The row is handed over where it lies. `attr_ids` is the record's
+            // and shared by every row; the values are the row's slice of the
+            // block. Building `(id, value)` pairs from them cloned every
+            // `Value` in the record — `count x width` clones to say what the
+            // two slices already said, since `merge_span` clones again at the
+            // point it stores.
+            //
             // Nulls are passed through, not filtered. FalkorDB never *stores* a
             // null, so a null in a row means "remove this attribute" — and
             // `merge_span` is what performs the removal, including a fast path
-            // for a span where every pair is null. Stripping them here would
+            // for a span where every value is null. Stripping them here would
             // turn `SET n.x = NULL` into a no-op.
-            pairs.extend(
-                attr_ids
-                    .iter()
-                    .enumerate()
-                    .map(|(col, &attr_id)| (attr_id, rows[row * width + col].clone())),
-            );
-            let (r, s) = self.data.merge_span(id, &pairs, &mut scratch);
+            let updates = RowUpdates {
+                ids: attr_ids,
+                values: &rows[row * width..(row + 1) * width],
+            };
+            let (r, s) = self.data.merge_span(id, &updates, &mut scratch);
             nremoved += r;
             nset += s;
         }
@@ -1258,7 +1334,9 @@ impl AttributeStore {
         items.sort_unstable_by_key(|&(key, _)| key);
 
         for (key, entity_attrs) in items {
-            let (r, s) = self.data.merge_span(key, entity_attrs, &mut scratch);
+            let (r, s) = self
+                .data
+                .merge_span(key, &entity_attrs.as_slice(), &mut scratch);
             nremoved += r;
             nset += s;
         }
@@ -2096,3 +2174,4 @@ mod tests {
         );
     }
 }
+
