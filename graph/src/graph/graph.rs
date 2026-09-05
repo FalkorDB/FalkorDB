@@ -1479,8 +1479,8 @@ impl Graph {
     /// The map form makes the caller allocate a `Vec` per entity and this
     /// function sort them back into the id order the wire already had. See
     /// [`AttributeStore::insert_attrs_rows`].
-    /// As [`Self::set_nodes_attributes_rows`], for nodes already known to share
-    /// one label set.
+    /// Set node attributes from a record's row-major layout, for nodes already
+    /// known to share one label set.
     ///
     /// The labels come from the caller rather than from this graph, and on the
     /// replication path that is the point: a v3 `UPDATE_NODE` states the label
@@ -1490,11 +1490,18 @@ impl Graph {
     /// nothing has diverged, and silently different once something has.
     ///
     /// It is also the cheap form, for the same reason
-    /// [`Self::set_relationships_attributes_of_type`] is. The general form
-    /// walks `node_labels_matrix.iter(id, id)` per node; here the record's
-    /// grouping has already established that every id shares the set, so the
+    /// [`Self::set_relationships_attributes_of_type`] is.
+    /// [`Self::set_nodes_attributes`] walks `node_labels_matrix.iter(id, id)`
+    /// per node to answer the same question; here the record's grouping has
+    /// already established that every id shares the set, so the
     /// indexed-attribute test runs once for the whole record and what remains
     /// per node is an insert.
+    ///
+    /// There is no label-deriving row-major counterpart any more. Both callers
+    /// on the apply path — `CREATE_NODE` and `UPDATE_NODE` — carry a
+    /// `LabelSet`, so one existed only to re-derive what the record had already
+    /// stated. `set_nodes_attributes` stays for the query path, where the node
+    /// is being read anyway and no record has spoken for it.
     ///
     /// `label_ids` must be within this graph's dictionary — `apply` bounds-checks
     /// them through `checked_label_ids` before calling, the way C's
@@ -1524,37 +1531,6 @@ impl Graph {
                 if indexed {
                     let docs = index_add_docs.entry(label_id).or_default();
                     docs.extend(ids.iter().copied());
-                }
-            }
-        }
-        Ok((nremoved, nset))
-    }
-
-    pub fn set_nodes_attributes_rows(
-        &mut self,
-        ids: &[u64],
-        attr_ids: &[u16],
-        rows: &[Value],
-        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
-    ) -> Result<(usize, usize), String> {
-        let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;
-
-        if self.node_indexer.has_indices() {
-            // Which of the record's attributes are indexed depends on the
-            // label, so this still walks per entity — but the shape is stated
-            // once, so the inner loop is over the record's attribute set rather
-            // than a per-entity vector.
-            for &id in ids {
-                for (_, label_id) in self.node_labels_matrix.iter(id, id) {
-                    let label = &self.node_labels[label_id as usize];
-                    for &attr_id in attr_ids {
-                        let Some(key) = self.attrs_name.get(attr_id as usize) else {
-                            continue;
-                        };
-                        if self.node_indexer.has_indexed_attr(label, key) {
-                            index_add_docs.entry(label_id).or_default().insert(id);
-                        }
-                    }
                 }
             }
         }

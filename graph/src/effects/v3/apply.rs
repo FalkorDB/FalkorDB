@@ -157,13 +157,26 @@ fn apply_record(
             // The graph's bulk APIs take `&[u64]`, so the ids are materialized
             // once here rather than per call.
             let ids: Vec<u64> = ids.iter().collect();
-            if !labels.is_empty() {
-                let label_ids = checked_label_ids(g, &labels)?;
+            // Resolved once and used twice. The attribute call needs the same
+            // label set to know which label-scoped indexes an indexed property
+            // belongs to, and deriving it there instead meant a
+            // `node_labels_matrix.iter(id, id)` per created node — a
+            // delta-matrix iteration for a question this record has already
+            // answered, on the path where a bulk create makes it a million of
+            // them.
+            let label_ids = checked_label_ids(g, &labels)?;
+            if !label_ids.is_empty() {
                 g.set_node_labels_product(&ids, &label_ids, &mut ops.docs.node_adds, true);
             }
             if !attr_ids.is_empty() {
                 check_attr_shape(g, &ids, &attr_ids, &rows)?;
-                g.set_nodes_attributes_rows(&ids, &attr_ids, &rows, &mut ops.docs.node_adds)?;
+                g.set_nodes_attributes_rows_of_labels(
+                    &ids,
+                    &label_ids,
+                    &attr_ids,
+                    &rows,
+                    &mut ops.docs.node_adds,
+                )?;
             }
             Ok(())
         }
