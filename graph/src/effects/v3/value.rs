@@ -11,10 +11,7 @@ use crate::runtime::{
 
 use crate::graph::graphblas::serialization::si_type;
 
-use super::{
-    DecodeError, EffectDecode, EffectEncode, Reader, T_MAP, write_f64, write_i64, write_string,
-    write_tag, write_u8, write_u32,
-};
+use super::{DecodeError, EffectDecode, EffectEncode, EffectWrite, Reader, T_MAP, write_tag};
 
 // ── SIValue ──
 
@@ -39,15 +36,15 @@ impl EffectEncode<3> for Value {
             Value::Null => write_tag(buf, si_type::T_NULL),
             Value::Bool(b) => {
                 write_tag(buf, si_type::T_BOOL);
-                write_u8(buf, u8::from(*b));
+                buf.u8(u8::from(*b));
             }
             Value::Int(i) => {
                 write_tag(buf, si_type::T_INT64);
-                write_i64(buf, *i);
+                buf.i64(*i);
             }
             Value::Float(f) => {
                 write_tag(buf, si_type::T_DOUBLE);
-                write_f64(buf, *f);
+                buf.f64(*f);
             }
             Value::String(s) => {
                 // The intern bit rides along, as it does in the RDB encoding.
@@ -62,12 +59,12 @@ impl EffectEncode<3> for Value {
                     si_type::T_STRING
                 };
                 write_tag(buf, tag);
-                write_string(buf, s);
+                buf.string(s);
             }
             Value::List(items) => {
                 write_tag(buf, si_type::T_ARRAY);
                 // u32, not u64: C reads the count as `uint32`.
-                write_u32(buf, items.len() as u32);
+                buf.u32(items.len() as u32);
                 // Floor: every element is at least its own type tag.
                 buf.reserve(items.len() * 4);
                 for item in items.iter() {
@@ -76,13 +73,13 @@ impl EffectEncode<3> for Value {
             }
             Value::Map(m) => {
                 write_tag(buf, T_MAP);
-                write_u32(buf, m.len() as u32);
+                buf.u32(m.len() as u32);
                 // Floor: an 8-byte key length plus the value's type tag.
                 buf.reserve(m.len() * 12);
                 for (k, v) in m.iter() {
                     // Keys are strings on both sides; C writes the key as a bare
                     // string, not as a nested SIValue.
-                    write_string(buf, k);
+                    buf.string(k);
                     v.encode(buf);
                 }
             }
@@ -97,24 +94,24 @@ impl EffectEncode<3> for Value {
                 write_tag(buf, si_type::T_VECTOR_F32);
                 // Exact: count then a fixed 4 bytes per element.
                 buf.reserve(4 + v.len() * 4);
-                write_u32(buf, v.len() as u32);
+                buf.u32(v.len() as u32);
                 buf.extend(v.iter().flat_map(|f| f.to_le_bytes()));
             }
             Value::Datetime(ts) => {
                 write_tag(buf, si_type::T_DATETIME);
-                write_i64(buf, *ts);
+                buf.i64(*ts);
             }
             Value::Date(ts) => {
                 write_tag(buf, si_type::T_DATE);
-                write_i64(buf, *ts);
+                buf.i64(*ts);
             }
             Value::Time(ts) => {
                 write_tag(buf, si_type::T_TIME);
-                write_i64(buf, *ts);
+                buf.i64(*ts);
             }
             Value::Duration(d) => {
                 write_tag(buf, si_type::T_DURATION);
-                write_i64(buf, *d);
+                buf.i64(*d);
             }
             // Nodes, edges and paths are never property values, so they cannot reach
             // an effect. Encoding one as NULL would corrupt the stream silently.

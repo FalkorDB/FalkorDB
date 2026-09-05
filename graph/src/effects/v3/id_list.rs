@@ -71,7 +71,7 @@ use crate::narrow_int::width_for;
 use roaring::RoaringTreemap;
 use smallvec::SmallVec;
 
-use super::{DecodeError, Reader, write_u8, write_u32};
+use super::{DecodeError, EffectWrite, Reader};
 
 /// A width as the two bits that go on the wire: 1, 2, 4, 8 → 0, 1, 2, 3.
 const fn width_code(width: u8) -> u8 {
@@ -529,8 +529,8 @@ impl Segment {
             }
             Self::Ascending { bitmap, .. } => {
                 let n = bitmap.serialized_size();
-                write_u8(buf, SEG_KIND_ASCENDING);
-                write_u32(buf, n as u32);
+                buf.u8(SEG_KIND_ASCENDING);
+                buf.u32(n as u32);
                 // Reserve first: roaring writes itself in many small pieces and
                 // would otherwise grow the payload buffer under itself, each
                 // realloc copying every byte written so far.
@@ -559,11 +559,9 @@ impl Segment {
         let vw = width_for(value);
         let cw = width_for(count);
         buf.reserve(1 + vw as usize + cw as usize);
-        write_u8(
-            buf,
-            kind | (width_code(vw) << SEG_VALUE_WIDTH_SHIFT)
-                | (width_code(cw) << SEG_COUNT_WIDTH_SHIFT),
-        );
+        buf.u8(kind
+            | (width_code(vw) << SEG_VALUE_WIDTH_SHIFT)
+            | (width_code(cw) << SEG_COUNT_WIDTH_SHIFT));
         write_narrow(buf, value, vw);
         write_narrow(buf, count, cw);
     }
@@ -853,7 +851,7 @@ impl IdList {
         // entities instead of failing. Measured at 10,000 bytes on a payload of
         // ten thousand single-id records, which is not worth a silent
         // corruption path.
-        write_u32(buf, self.segments.len() as u32);
+        buf.u32(self.segments.len() as u32);
         for seg in &self.segments {
             seg.encode(buf);
         }
@@ -1190,11 +1188,8 @@ mod tests {
         // seven bytes. Expanding them would be 32 GB on the Redis main thread
         // with no timeout; holding them as one segment is sixteen bytes.
         let mut buf = Vec::new();
-        write_u32(&mut buf, 1);
-        write_u8(
-            &mut buf,
-            (width_code(1) << SEG_VALUE_WIDTH_SHIFT) | (width_code(4) << SEG_COUNT_WIDTH_SHIFT),
-        );
+        buf.u32(1);
+        buf.u8((width_code(1) << SEG_VALUE_WIDTH_SHIFT) | (width_code(4) << SEG_COUNT_WIDTH_SHIFT));
         buf.push(0);
         buf.extend_from_slice(&u32::MAX.to_le_bytes());
 
@@ -1212,7 +1207,7 @@ mod tests {
         // segment carries at least one id, so a list cannot have more segments
         // than the record has ids.
         let mut buf = Vec::new();
-        write_u32(&mut buf, 1_000);
+        buf.u32(1_000);
         buf.extend_from_slice(&[0x00, 0, 1]);
         let mut r = Reader::new(&buf);
         assert_eq!(
@@ -1229,7 +1224,7 @@ mod tests {
         // The guard that keeps row k bound to the k-th id: a run claiming more
         // ids than the record holds would shift every later row.
         let mut buf = Vec::new();
-        write_u32(&mut buf, 1);
+        buf.u32(1);
         buf.extend_from_slice(&[0x00, 0, 200]);
         let mut r = Reader::new(&buf);
         assert!(matches!(
@@ -1244,7 +1239,7 @@ mod tests {
         // masked off, so a future segment shape cannot be silently misread as a
         // range by a build that predates it.
         let mut buf = Vec::new();
-        write_u32(&mut buf, 1);
+        buf.u32(1);
         buf.extend_from_slice(&[0xE0, 0, 1]);
         let mut r = Reader::new(&buf);
         assert_eq!(read_ids(&mut r, 1), Err(DecodeError::BadEncoding(0xE0)));
@@ -1253,11 +1248,8 @@ mod tests {
     #[test]
     fn a_range_that_would_wrap_is_rejected() {
         let mut buf = Vec::new();
-        write_u32(&mut buf, 1);
-        write_u8(
-            &mut buf,
-            (width_code(8) << SEG_VALUE_WIDTH_SHIFT) | (width_code(8) << SEG_COUNT_WIDTH_SHIFT),
-        );
+        buf.u32(1);
+        buf.u8((width_code(8) << SEG_VALUE_WIDTH_SHIFT) | (width_code(8) << SEG_COUNT_WIDTH_SHIFT));
         buf.extend_from_slice(&(u64::MAX - 1).to_le_bytes());
         buf.extend_from_slice(&100_u64.to_le_bytes());
         let mut r = Reader::new(&buf);
@@ -1274,11 +1266,8 @@ mod tests {
         // against a record claiming four: the ids fall short and the record is
         // refused rather than applied as a prefix.
         let mut buf = Vec::new();
-        write_u32(&mut buf, 1);
-        write_u8(
-            &mut buf,
-            (width_code(1) << SEG_VALUE_WIDTH_SHIFT) | (width_code(1) << SEG_COUNT_WIDTH_SHIFT),
-        );
+        buf.u32(1);
+        buf.u8((width_code(1) << SEG_VALUE_WIDTH_SHIFT) | (width_code(1) << SEG_COUNT_WIDTH_SHIFT));
         buf.extend_from_slice(&[1, 2]);
         let mut r = Reader::new(&buf);
         assert_eq!(

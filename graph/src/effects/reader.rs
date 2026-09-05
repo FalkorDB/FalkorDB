@@ -187,7 +187,7 @@ impl<'a> Reader<'a> {
 mod tests {
     use super::*;
     use crate::effects::v3::{IdList, read_ids};
-    use crate::effects::writer::write_u64;
+    use crate::effects::writer::EffectWrite;
 
     // ── malformed input ──
 
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn a_string_without_its_nul_is_rejected() {
         let mut buf = Vec::new();
-        write_u64(&mut buf, 3);
+        buf.u64(3);
         buf.extend_from_slice(b"abc"); // no terminator
         let mut r = Reader::new(&buf);
         assert_eq!(r.string(), Err(DecodeError::BadString));

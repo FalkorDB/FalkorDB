@@ -6,7 +6,7 @@
 
 use crate::runtime::value::Value;
 
-use super::{DecodeError, EffectDecode, EffectEncode, Reader, write_label_id, write_u16};
+use super::{DecodeError, EffectDecode, EffectEncode, EffectWrite, Reader};
 
 // ── RelType ──
 
@@ -15,7 +15,7 @@ pub fn write_rel_type(
     buf: &mut Vec<u8>,
     relation_id: i32,
 ) {
-    write_label_id(buf, relation_id);
+    buf.label_id(relation_id);
 }
 
 /// Inverse of [`write_rel_type`].
@@ -37,7 +37,7 @@ pub fn write_label_set(
     // Count and payload together, before either is written: the exact size is
     // known here, so the block costs at most one growth however long it is.
     buf.reserve(2 + labels.len() * 4);
-    write_u16(buf, labels.len() as u16);
+    buf.u16(labels.len() as u16);
     buf.extend(labels.iter().flat_map(|&l| l.to_le_bytes()));
 }
 
@@ -66,7 +66,7 @@ pub fn write_attr_ids(
     attr_ids: &[u16],
 ) {
     buf.reserve(2 + attr_ids.len() * 2);
-    write_u16(buf, attr_ids.len() as u16);
+    buf.u16(attr_ids.len() as u16);
     buf.extend(attr_ids.iter().flat_map(|&id| id.to_le_bytes()));
 }
 

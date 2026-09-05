@@ -338,13 +338,10 @@ const fn narrow_flag(v: u64) -> u32 {
 /// copy to drift. The assertion is what stands between a wider C constant and a
 /// silently truncated tag.
 pub fn write_tag(
-    buf: &mut Vec<u8>,
+    buf: &mut impl EffectWrite,
     v: u64,
 ) {
-    write_u32(
-        buf,
-        u32::try_from(v).expect("a C constant must fit the 4 bytes the wire reads"),
-    );
+    buf.u32(u32::try_from(v).expect("a C constant must fit the 4 bytes the wire reads"));
 }
 
 /// `T_MAP` has no RDB counterpart — the RDB path never stores a bare map — so

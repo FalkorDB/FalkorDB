@@ -22,9 +22,9 @@ fn write_header(
         opcode.is_batchable(),
         "{opcode:?} was given the wrong kind of header"
     );
-    write_u32(buf, opcode as u32);
+    buf.u32(opcode as u32);
     if let Some(count) = count {
-        write_u32(buf, count);
+        buf.u32(count);
     }
 }
 
@@ -198,9 +198,9 @@ pub fn write_add_schema(
     name: &str,
 ) {
     write_header(buf, Opcode::AddSchema, None);
-    write_u32(buf, schema_tag(schema_type));
-    write_label_id(buf, id);
-    write_string(buf, name);
+    buf.u32(schema_tag(schema_type));
+    buf.label_id(id);
+    buf.string(name);
 }
 
 /// `10 ADD_ATTRIBUTE` — `id · name`. Singular, so no count.
@@ -217,8 +217,8 @@ pub fn write_add_attribute(
     name: &str,
 ) {
     write_header(buf, Opcode::AddAttribute, None);
-    write_u16(buf, id);
-    write_string(buf, name);
+    buf.u16(id);
+    buf.string(name);
 }
 
 /// One attribute, by id and name — the pair every schema-bearing record carries.
@@ -254,10 +254,10 @@ pub fn write_create_index(
     options: &Value,
 ) {
     write_header(buf, Opcode::CreateIndex, None);
-    write_u32(buf, schema_tag(schema_type));
-    write_label_id(buf, label_id);
-    write_string(buf, label);
-    write_u32(buf, field_type);
+    buf.u32(schema_tag(schema_type));
+    buf.label_id(label_id);
+    buf.string(label);
+    buf.u32(field_type);
     write_index_fields(buf, fields);
     options.encode(buf);
 }
@@ -283,10 +283,10 @@ fn write_index_fields(
     // Floor: 2 bytes of id and an 8-byte length per field, the same minimum
     // `read_index_fields` guards the count against.
     buf.reserve(2 + fields.len() * 10);
-    write_u16(buf, fields.len() as u16);
+    buf.u16(fields.len() as u16);
     for field in fields {
-        write_u16(buf, field.id);
-        write_string(buf, field.name);
+        buf.u16(field.id);
+        buf.string(field.name);
     }
 }
 
@@ -314,10 +314,10 @@ pub fn write_drop_index(
     fields: &[AttrRef<&str>],
 ) {
     write_header(buf, Opcode::DropIndex, None);
-    write_u32(buf, schema_tag(schema_type));
-    write_label_id(buf, label_id);
-    write_string(buf, label);
-    write_u32(buf, field_type);
+    buf.u32(schema_tag(schema_type));
+    buf.label_id(label_id);
+    buf.string(label);
+    buf.u32(field_type);
     write_index_fields(buf, fields);
 }
 
@@ -368,8 +368,8 @@ pub fn write_constraint(
         status.is_some(),
         "status belongs to a create record and only to a create record"
     );
-    write_u32(buf, constraint_tag(constraint_type));
-    write_u32(buf, entity_tag(entity_type));
+    buf.u32(constraint_tag(constraint_type));
+    buf.u32(entity_tag(entity_type));
     // Create only, and the one place v3 deliberately carries more than C: C's
     // `EffectsBuffer_AddCreateConstraintEffect` sends no status, so its replica
     // cannot tell an enforcing constraint from one still being built. A replica
@@ -381,10 +381,10 @@ pub fn write_constraint(
     // never reads the field. Sending one anyway was a `u32` C does not send, on
     // a record that had no use for it.
     if let Some(status) = status {
-        write_u32(buf, constraint_status_tag(status));
+        buf.u32(constraint_status_tag(status));
     }
-    write_label_id(buf, label_id);
-    write_string(buf, label);
+    buf.label_id(label_id);
+    buf.string(label);
     // Floor, as above: 2 bytes of id and an 8-byte length per property.
     buf.reserve(1 + props.len() * 10);
     // Not `as u8`, and not a `debug_assert`. C reads this count as a `uint8`, so
@@ -395,10 +395,10 @@ pub fn write_constraint(
     // ever does, the guard three layers up has gone.
     let n = u8::try_from(props.len())
         .expect("GRAPH.CONSTRAINT caps properties at 255; C reads the count as uint8");
-    write_u8(buf, n);
+    buf.u8(n);
     for AttrRef { id, name } in props {
-        write_u16(buf, *id);
-        write_string(buf, name);
+        buf.u16(*id);
+        buf.string(name);
     }
 }
 
@@ -1741,8 +1741,8 @@ mod tests {
     #[test]
     fn an_unknown_opcode_is_refused() {
         let mut buf = new_buffer();
-        write_u32(&mut buf, 99);
-        write_u32(&mut buf, 0);
+        buf.u32(99);
+        buf.u32(0);
         assert_eq!(read_buffer(&buf), Err(DecodeError::BadOpcode(99)));
     }
 
