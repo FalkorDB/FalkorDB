@@ -21,6 +21,7 @@ tests/flow/test_distinct
 tests/flow/test_edge_index_scans.py
 tests/flow/test_edge_index_updates.py
 tests/flow/test_effects.py
+tests/flow/test_effects_v3.py
 tests/flow/test_empty_query
 tests/flow/test_encode_decode.py
 tests/flow/test_entity_update
@@ -63,7 +64,6 @@ tests/flow/test_multi_pattern
 tests/flow/test_multi_writer.py
 tests/flow/test_multiple_edges
 tests/flow/test_node_by_id
-tests/flow/test_nul_bytes.py
 tests/flow/test_null_handling.py
 tests/flow/test_opening_node.py
 tests/flow/test_optimizations_plan.py
