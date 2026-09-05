@@ -2522,7 +2522,7 @@ impl Graph {
     /// `recreating_a_recycled_id_is_allowed` reject the very first
     /// `CREATE_NODE` of id 0 with `NodeAlreadyLive`.
     #[must_use]
-    pub fn node_id_high_water(&self) -> u64 {
+    pub fn first_unallocated_node_id(&self) -> u64 {
         self.node_count + self.deleted_nodes.len()
     }
 
@@ -2535,7 +2535,7 @@ impl Graph {
     /// not-yet-recycled ids let a caller assemble that judgement itself, and
     /// there is only one right way to assemble it.
     ///
-    /// `high_water` is the caller's, not this graph's current one:
+    /// `first_unallocated` is the caller's, not this graph's current one:
     /// `apply_effects` freezes it at buffer entry because records within a
     /// buffer are not in id order — a create of 500..600 may precede 0..500 —
     /// so mid-buffer `node_count` is a count rather than a bound.
@@ -2545,19 +2545,19 @@ impl Graph {
     pub fn first_uncreatable_node(
         &self,
         nodes: &RoaringTreemap,
-        high_water: u64,
+        first_unallocated: u64,
     ) -> Option<u64> {
         (nodes - &self.deleted_nodes)
             .min()
-            .filter(|&id| id < high_water)
+            .filter(|&id| id < first_unallocated)
     }
 
     /// The lowest id in `nodes` that is already in the recycle bin, or `None`
     /// when none of them is.
     ///
     /// The half of "is this node live" that only the bin can answer; the other
-    /// half is the high-water comparison, which is the caller's because the
-    /// mark is.
+    /// half is the comparison against the first unallocated id, which is the
+    /// caller's because that boundary is.
     #[must_use]
     pub fn first_recycled_node(
         &self,

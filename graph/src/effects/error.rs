@@ -148,7 +148,8 @@ pub enum ApplyError {
     },
 
     /// A `CREATE_NODE` names an id that is neither in this replica's recycle
-    /// bin nor past its high-water mark — so the id is already live here.
+    /// bin nor past the first id it has never allocated — so it is already live
+    /// here.
     ///
     /// Node ids are not carried by any record that could report a disagreement
     /// about them: the next fresh id is derived from `node_count` and the bin,
@@ -156,9 +157,13 @@ pub enum ApplyError {
     /// it. Left unchecked, a drift stays invisible until the replica is
     /// promoted and hands out an id that is already in use.
     #[error(
-        "effects buffer creates node {id}, which is already live on this replica          (recycle bin holds {bin} ids, high-water mark {high_water}). The two engines          have diverged; the buffer was not applied."
+        "effects buffer creates node {id}, which is already live on this replica          (recycle bin holds {bin} ids, first unallocated id {first_unallocated}). The two engines          have diverged; the buffer was not applied."
     )]
-    NodeAlreadyLive { id: u64, bin: u64, high_water: u64 },
+    NodeAlreadyLive {
+        id: u64,
+        bin: u64,
+        first_unallocated: u64,
+    },
 
     /// A `DELETE_NODE` names an id this replica does not hold live — either it
     /// is already in the recycle bin, or it was never allocated.

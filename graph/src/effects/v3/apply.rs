@@ -57,10 +57,10 @@ struct IndexOps {
     /// mark as it was on entry, plus what this buffer has already added, is
     /// stable under that reordering.
     ///
-    /// `Graph::node_id_high_water` rather than `max_node_id() + 1`: the latter
+    /// `Graph::first_unallocated_node_id` rather than `max_node_id() + 1`: the latter
     /// has a 0 sentinel for an empty graph, which reads as "id 0 was handed
     /// out" and rejects the first create of id 0.
-    pre_high_water: u64,
+    entry_unallocated: u64,
     /// The ids this buffer has created and not since deleted. A delete removes
     /// its ids again, because the allocator may hand a freed id back within the
     /// same buffer.
@@ -87,7 +87,7 @@ pub fn apply_effects(
     let payload = open_payload(buf)?;
 
     let mut ops = IndexOps {
-        pre_high_water: g.node_id_high_water(),
+        entry_unallocated: g.first_unallocated_node_id(),
         ..IndexOps::default()
     };
 
@@ -408,7 +408,7 @@ fn apply_add_schema(
 
 /// The check v2 could not make.
 /// Every id a `CREATE_NODE` names must be one this replica could legitimately
-/// hand out: recycled, or past the high-water mark. Anything else is already
+/// hand out: recycled, or past the first id it has never allocated. Anything else is already
 /// live, and creating it would double-count `node_count` and shift every
 /// subsequent fresh id.
 ///
@@ -423,11 +423,11 @@ fn verify_creatable(
     // Not in the bin means it was never freed; below the entry mark means it
     // was already handed out. Both together mean it is live here, and creating
     // it would double-count `node_count` and shift every later fresh id.
-    if let Some(lowest) = g.first_uncreatable_node(nodes, ops.pre_high_water) {
+    if let Some(lowest) = g.first_uncreatable_node(nodes, ops.entry_unallocated) {
         return Err(ApplyError::NodeAlreadyLive {
             id: lowest,
             bin: g.deleted_nodes_count(),
-            high_water: ops.pre_high_water,
+            first_unallocated: ops.entry_unallocated,
         });
     }
     // Two records in one buffer claiming the same id is divergence too, and the
@@ -436,14 +436,14 @@ fn verify_creatable(
         return Err(ApplyError::NodeAlreadyLive {
             id: twice,
             bin: g.deleted_nodes_count(),
-            high_water: ops.pre_high_water,
+            first_unallocated: ops.entry_unallocated,
         });
     }
     Ok(())
 }
 
 /// Every id a `DELETE_NODE` names must currently be live: not already in the
-/// recycle bin, and below the high-water mark.
+/// recycle bin, and below the first id this graph has never allocated.
 fn verify_deletable(
     g: &Graph,
     nodes: &RoaringTreemap,
@@ -460,7 +460,7 @@ fn verify_deletable(
     // create a node and then delete it.
     if let Some(id) = (nodes - &ops.created_here)
         .max()
-        .filter(|&id| id >= ops.pre_high_water)
+        .filter(|&id| id >= ops.entry_unallocated)
     {
         return Err(ApplyError::NodeNotLive {
             id,
@@ -762,9 +762,9 @@ mod tests {
     }
 
     #[test]
-    fn creating_a_fresh_id_past_the_high_water_mark_is_allowed() {
+    fn creating_a_fresh_id_past_the_last_allocated_one_is_allowed() {
         // Sequential allocation on the primary can outrun this replica's
-        // high-water mark without anything being wrong.
+        // last allocated id without anything being wrong.
         let mut g = graph();
         let mut buf = new_buffer();
         write_create_node(&mut buf, &IdList::from([0, 1]), &[], &[], &[]);
@@ -798,7 +798,7 @@ mod tests {
 
     #[test]
     fn one_buffer_claiming_an_id_twice_aborts() {
-        // Neither record's ids were live on entry, so the high-water mark alone
+        // Neither record's ids were live on entry, so that boundary alone
         // cannot see this. It is still divergence.
         let mut g = graph();
         let mut buf = new_buffer();
