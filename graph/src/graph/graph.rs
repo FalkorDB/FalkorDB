@@ -1114,6 +1114,12 @@ impl Graph {
         let id = self.intern_label(&Arc::new(label.to_string()));
         self.labels_matices
             .push(VersionedMatrix::<bool>::new(self.node_cap, self.node_cap));
+        // Registering a label changes a matrix dimension — `node_labels_matrix`
+        // is nodes x labels — so it is reconciled here, where the dimension
+        // changed, rather than by whichever write reaches the new column first.
+        // Once per label ever, and `resize` is four comparisons when nothing
+        // else moved.
+        self.resize();
         id
     }
 
@@ -1283,6 +1289,7 @@ impl Graph {
         if id.0 == self.labels_matices.len() {
             let m = VersionedMatrix::<bool>::new(self.node_cap, self.node_cap);
             self.labels_matices.insert(id.0, m);
+            self.resize();
         }
         &mut self.labels_matices[id.0]
     }
@@ -1298,6 +1305,11 @@ impl Graph {
                 self.relationship_types.len() - 1,
                 Tensor::new(self.node_cap, self.node_cap),
             );
+            // As for labels above: `relationship_type_matrix` is relationships
+            // x types, so registering a type changes one of its dimensions.
+            // `create_relationships_bulk` reconciles too, but that is the write
+            // catching up rather than the change accounting for itself.
+            self.resize();
         }
 
         self.relationship_types
@@ -1804,15 +1816,6 @@ impl Graph {
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         all_new: bool,
     ) {
-        // `node_labels_matrix` is nodes x labels, and registering a label grows
-        // the per-label matrix list without widening it — so writing the new
-        // label's column would be out of bounds. `create_nodes` resizes, which
-        // is why a CREATE_NODE carrying a fresh label is safe either way; a
-        // SET_LABELS has no create to lean on. Ablating this call fails
-        // `a_label_added_in_a_later_buffer_widens_the_label_matrix` with
-        // GrB_INVALID_INDEX.
-        self.resize();
-
         // Which labels are indexed, decided once per label rather than once per
         // pair. Collected before the mutations below so the immutable borrows
         // of `node_labels` and `node_indexer` end first.
