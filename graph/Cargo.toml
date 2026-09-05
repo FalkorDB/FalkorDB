@@ -64,3 +64,17 @@ thin-vec = "0.2.18"
 thiserror = "2"
 zstd = { version = "0.13.3", default-features = false, features = ["arrays", "legacy", "zdict_builder"] }
 crc32fast = "1.4"
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+# Depending on ourselves is the documented way to enable a feature for dev
+# targets alone: benches link this build, a release build does not.
+graph = { path = ".", features = ["test-util"] }
+
+[[bench]]
+name = "effects_blocks"
+harness = false
+
+[[bench]]
+name = "effects_versions"
+harness = false
