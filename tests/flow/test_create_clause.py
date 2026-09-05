@@ -113,3 +113,23 @@ class testCreateClause():
         self.env.assertEqual(v, 2)
         self.env.assertEqual(d, "B")
 
+    def test_04_create_with_keys_function(self):
+        """Test that CREATE with keys() function on nodes being created doesn't crash"""
+
+        try:
+            q = "CREATE (root:Root {name: 'x'}), (child1:TextNode {var: floor(any(v4 IN [2] WHERE child1 = [root IN keys(root)]))}), (child2:IntNode {v0: 0})"
+            self.g.query(q)
+            self.env.assertFalse(True, "Expected type mismatch error")
+        except Exception as e:
+            self.env.assertIn("Type mismatch", str(e))
+
+        q = "CREATE (a {x: 1}), (b {y: keys(a)})"
+        result = self.g.query(q)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.properties_set, 2)
+
+        q = "CREATE (n1), (n2 {prop: properties(n1)})"
+        result = self.g.query(q)
+        self.env.assertEqual(result.nodes_created, 2)
+        self.env.assertEqual(result.properties_set, 1)
+
