@@ -25,6 +25,8 @@ import itertools
 import threading
 import time
 
+import codecs
+
 from common import *
 from constraint_utils import (create_mandatory_node_constraint,
                               create_unique_node_constraint,
@@ -261,6 +263,105 @@ class _EffectsV3Base():
     # byte is FLAG_COMPRESSED. MONITOR renders the two as escape sequences.
     HEADER_PLAIN      = r'\x03\x00'
     HEADER_COMPRESSED = r'\x03\x01'
+
+    # v3 opcodes, from `graph/src/effects/v3/mod.rs`. Named here so a failure
+    # reads as "got CREATE_NODE, wanted CREATE_CONSTRAINT" rather than "got 3,
+    # wanted 13".
+    OPCODES = {
+        1: 'UPDATE_NODE',      2: 'UPDATE_EDGE',
+        3: 'CREATE_NODE',      4: 'CREATE_EDGE',
+        5: 'DELETE_NODE',      6: 'DELETE_EDGE',
+        7: 'SET_LABELS',       8: 'REMOVE_LABELS',
+        9: 'ADD_SCHEMA',      10: 'ADD_ATTRIBUTE',
+        11: 'CREATE_INDEX',   12: 'DROP_INDEX',
+        13: 'CREATE_CONSTRAINT', 14: 'DROP_CONSTRAINT',
+    }
+
+    # The wire tags a CREATE_CONSTRAINT record carries, from
+    # `graph/src/effects/v3/mod.rs`. Written out here rather than derived,
+    # because the status numbering is C's and is *reversed* against Rust's enum
+    # — C is `CT_ACTIVE = 0, CT_PENDING = 1`, Rust reads `UnderConstruction,
+    # Operational`. A test that read the tag through the Rust enum would agree
+    # with a regression that replaced `constraint_status_tag` with `as u32`;
+    # this one disagrees, which is the point of asserting on bytes.
+    CONSTRAINT_STATUS = {0: 'OPERATIONAL', 1: 'UNDER_CONSTRUCTION', 2: 'FAILED'}
+    CONSTRAINT_TYPE   = {0: 'UNIQUE', 1: 'MANDATORY'}
+    ENTITY_TAG        = {1: 'NODE', 2: 'RELATIONSHIP'}
+
+    @staticmethod
+    def payload_bytes(payload):
+        """The buffer MONITOR rendered, back as bytes.
+
+        MONITOR uses `sdscatrepr`, whose escapes are a subset of Python's, so
+        `unicode_escape` reverses it and `latin-1` maps the code points back to
+        bytes one for one.
+        """
+        return codecs.decode(payload, 'unicode_escape').encode('latin-1')
+
+    @classmethod
+    def constraint_announcements(cls, window, key):
+        """`(type, entity, status)` for every CREATE_CONSTRAINT in `window`.
+
+        Reading the status off the wire is the only way to tell the two
+        announcements of an asynchronously validated constraint apart. Counting
+        payloads says two things crossed; reading the opcode says both were
+        constraints; only this says the first said UNDER CONSTRUCTION and the
+        second said OPERATIONAL, which is the property the record exists for.
+
+        The layout is fixed up to the status, so no record walking is needed:
+        `u8 version · u8 flags · u32 opcode · u32 type · u32 entity · u32
+        status`. Anything that is not a CREATE_CONSTRAINT is skipped — a UNIQUE
+        constraint puts its supporting index on the wire first.
+        """
+        out = []
+        for payload in cls.effect_payloads(window, key):
+            raw = cls.payload_bytes(payload)
+            if len(raw) < 18 or int.from_bytes(raw[2:6], 'little') != 13:
+                continue
+            out.append((
+                cls.CONSTRAINT_TYPE.get(int.from_bytes(raw[6:10], 'little')),
+                cls.ENTITY_TAG.get(int.from_bytes(raw[10:14], 'little')),
+                cls.CONSTRAINT_STATUS.get(int.from_bytes(raw[14:18], 'little')),
+            ))
+        return out
+
+    @classmethod
+    def payload_opcodes(cls, payload):
+        """Every record opcode in one MONITOR-rendered payload, named.
+
+        Counting `GRAPH.EFFECT` lines says how many payloads crossed the wire
+        and nothing about what was in them — a constraint announcement and a
+        node create are both "one effect". Reading the opcodes is what makes an
+        assertion about constraints an assertion about constraints.
+
+        MONITOR renders the buffer with `sdscatrepr`, whose escapes are a
+        subset of Python's, so `unicode_escape` reverses it and `latin-1`
+        recovers the bytes one-for-one. Then the payload is
+        `u8 version · u8 flags`, and after it a run of records, each opening
+        with a `u32` opcode.
+
+        Only the opcode and count are read, and the blocks between them are
+        skipped by *this* function knowing each record's shape — which it
+        cannot, so it stops after the first record. That is enough: a payload
+        is built by one commit, and the tests that use this care about which
+        kind of record a payload leads with.
+        """
+        raw = cls.payload_bytes(payload)
+        if len(raw) < 6:
+            return []
+        if raw[1] & 1:
+            # FLAG_COMPRESSED — the records are inside a zstd frame, and these
+            # tests run uncompressed, so this is a setup error rather than a
+            # case to handle.
+            raise AssertionError("payload is compressed; opcodes are not readable")
+        return [cls.OPCODES.get(int.from_bytes(raw[2:6], 'little'), 'UNKNOWN')]
+
+    @classmethod
+    def leading_opcodes(cls, window, key):
+        """The first record's opcode of every effect payload in `window`."""
+        return [op
+                for payload in cls.effect_payloads(window, key)
+                for op in cls.payload_opcodes(payload)]
 
     @staticmethod
     def effect_payloads(window, key):
@@ -738,6 +839,15 @@ class testEffectsV3_02_ConstraintAsEffect(_EffectsV3Base):
         self.wait_for_replica_offset()
         window = self.monitor_mark()
 
+        # Not just "one effect" — one effect that is the constraint. Counting
+        # GRAPH.EFFECT lines cannot tell a constraint announcement from a node
+        # create, so the opcode is what makes this an assertion about
+        # constraints at all.
+        # One announcement, and it already carries the settled status — there
+        # is no UNDER CONSTRUCTION phase to observe when validation ran inline.
+        self.env.assertEqual(
+            self.constraint_announcements(window, self.GRAPH_ID),
+            [('MANDATORY', 'NODE', 'OPERATIONAL')])
         self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
         self.env.assertEqual(self.count_in(window, 'GRAPH.CONSTRAINT'), 0)
 
@@ -757,7 +867,8 @@ class testEffectsV3_02_ConstraintAsEffect(_EffectsV3Base):
         self.wait_for_replica_offset()
         window = self.monitor_mark()
 
-        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
+        self.env.assertEqual(
+            self.leading_opcodes(window, self.GRAPH_ID), ['DROP_CONSTRAINT'])
         self.env.assertEqual(self.count_in(window, 'GRAPH.CONSTRAINT'), 0)
 
         self.env.assertEqual(self.constraint_rows(self.master_graph, 'Small'), [])
@@ -777,7 +888,13 @@ class testEffectsV3_02_ConstraintAsEffect(_EffectsV3Base):
         self.wait_for_replica_offset()
         window = self.monitor_mark()
         self.env.assertEqual(self.count_in(window, 'GRAPH.CONSTRAINT'), 0)
-        self.env.assertGreater(self.count_in(window, 'GRAPH.EFFECT'), 0)
+        # UNIQUE builds its supporting index first, so the window opens with a
+        # CREATE_INDEX. What matters is that the failure is on the wire — the
+        # replica installs FAILED because it was told, not because it re-ran a
+        # scan and reached the same conclusion.
+        self.env.assertEqual(
+            self.constraint_announcements(window, self.GRAPH_ID),
+            [('UNIQUE', 'NODE', 'FAILED')])
 
         master_rows  = self.constraint_rows(self.master_graph,  'Dup')
         replica_rows = self.wait_for_constraint_settled(self.replica_graph, 'Dup')
@@ -828,7 +945,18 @@ class testEffectsV3_03_ConstraintConvergence(_EffectsV3Base):
         self.wait_for_replica_offset()
         window = self.monitor_mark()
 
-        # exactly two: UNDER CONSTRUCTION, then the settled status
+        # The whole property, read off the wire: two announcements, the first
+        # saying the constraint is still being built and the second saying it
+        # is enforcing. Counting payloads would pass on any two effects;
+        # checking the opcode would pass if both said OPERATIONAL, which is the
+        # bug where the command announces a status it has not reached yet.
+        #
+        # MANDATORY needs no supporting index, so these two are the whole
+        # window.
+        self.env.assertEqual(
+            self.constraint_announcements(window, self.GRAPH_ID),
+            [('MANDATORY', 'NODE', 'UNDER_CONSTRUCTION'),
+             ('MANDATORY', 'NODE', 'OPERATIONAL')])
         self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 2)
         self.env.assertEqual(self.count_in(window, 'GRAPH.CONSTRAINT'), 0)
 
@@ -1659,6 +1787,42 @@ class testEffectsV3_04f_IndexesTheQueryNeverNamed(_EffectsV3Base):
         self.assert_agree(probe, [[0]], params={'t': 'alpha'})
         self.assert_graph_eq()
 
+    def test05_deleting_a_node_clears_the_index_of_a_label_it_was_not_matched_by(self):
+        """A deleted node leaves every label index it was in, not just the
+        matched one.
+
+        This is the half that cannot be re-derived. `delete_nodes` clears the
+        label matrices, so by the time effects are built the node's labels are
+        gone from the graph — they are captured during the delete as flat
+        `(node, label)` pairs and regrouped per node by the emitter. If that
+        capture or that regrouping dropped a label, the replica would keep
+        serving a deleted node out of that label's index, and the node no
+        longer exists to notice it with.
+
+        Fulltext again, for the reason in `test04`: it reads the index directly,
+        so the replica assertion does not depend on what its planner chose.
+        """
+        self.set_effects_config()
+        create_node_fulltext_index(self.master_graph, 'DFA', 'body', sync=True)
+        create_node_fulltext_index(self.master_graph, 'DFB', 'body', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync(
+            "CREATE (:DFA:DFB {body: 'alpha'}), (:DFB {body: 'beta'})")
+        probe = ("CALL db.idx.fulltext.queryNodes('DFB', $t) "
+                 "YIELD node RETURN count(node)")
+        self.assert_agree(probe, [[1]], params={'t': 'alpha'})
+
+        # only :DFA is named
+        res = self.query_and_sync("MATCH (n:DFA) DELETE n")
+        self.env.assertEqual(res.nodes_deleted, 1)
+
+        # gone from :DFB's index too, and the :DFB-only node is untouched
+        self.assert_agree(probe, [[0]], params={'t': 'alpha'})
+        self.assert_agree(probe, [[1]], params={'t': 'beta'})
+        self.assert_agree("MATCH (n:DFB) RETURN count(n)", [[1]])
+        self.assert_graph_eq()
+
 
 #-----------------------------------------------------------------------------
 # 4d. GRAPH.RECORD is a real write
@@ -2181,6 +2345,53 @@ class testEffectsV3_06_Compression(_EffectsV3Base):
             self.env.assertEqual(r, m)
             answers.append(m)
         return answers, payloads
+
+    def test03_a_constraint_announcement_is_sealed_like_any_other_payload(self):
+        """A constraint announcement goes out through the format, not around it.
+
+        Both constraint sites used to call `ctx.replicate("GRAPH.EFFECT", ..)`
+        themselves, on a buffer the format had never finished — so
+        EFFECTS_COMPRESSION silently did not apply to them while it applied to
+        every other payload. They go through `EffectsPayload::replicate` now,
+        which is the only place that seals.
+
+        The constraint is deliberately wide. `maybe_compress` refuses a frame
+        that does not pay for its own 8 bytes of length and checksum, and a
+        two-property constraint does not — so a narrow one would leave this
+        asserting nothing, whichever way the code went.
+        """
+        key = "effects_v3_comp_constraint"
+        self.master_graph  = Graph(self.master,  key)
+        self.replica_graph = Graph(self.replica, key)
+        self.set_effects_config(64)
+
+        props = [f"property_with_a_deliberately_long_name_{i:02d}" for i in range(12)]
+        # Carrying every property the constraint will require, so it settles
+        # OPERATIONAL. A node missing them is a legitimate FAILED, which would
+        # test the failure path rather than this one.
+        self.query_and_sync(
+            "CREATE (:Wide {%s})" % ", ".join(f"{p}: {i}" for i, p in enumerate(props)))
+
+        self.monitor_mark()
+        create_mandatory_node_constraint(self.master_graph, 'Wide', *props)
+        self.wait_for_constraint_settled(self.master_graph, 'Wide')
+        self.wait_for_replica_offset()
+        payloads = self.effect_payloads(self.monitor_mark(), key)
+
+        self.env.assertGreater(len(payloads), 0)
+        # A plain `raise`, not `env.assertTrue(cond, msg)` — RLTest's second
+        # positional argument is `depth`, an int, so a message there is a
+        # TypeError rather than a failure report.
+        if not any(p.startswith(self.HEADER_COMPRESSED) for p in payloads):
+            raise AssertionError(
+                f"the constraint announcement was not sealed: {len(payloads)} "
+                f"payload(s), none framed compressed")
+
+        # and it is still a constraint on the far side
+        rows = self.wait_for_constraint_settled(self.replica_graph, 'Wide')
+        self.env.assertEqual(rows, self.constraint_rows(self.master_graph, 'Wide'))
+        self.env.assertEqual(rows[0][0], 'MANDATORY')
+        self.env.assertEqual(rows[0][4], 'OPERATIONAL')
 
     def test01_compressed_and_uncompressed_reach_the_same_state(self):
         plain, plain_payloads = self._run_workload("effects_v3_comp_off", 0)
