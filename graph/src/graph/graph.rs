@@ -1523,7 +1523,7 @@ impl Graph {
         ids: &[u64],
         label_ids: &[u64],
         attr_ids: &[u16],
-        rows: &[Value],
+        rows: &mut [Value],
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(usize, usize), String> {
         let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;

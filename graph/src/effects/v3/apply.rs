@@ -146,7 +146,7 @@ fn apply_record(
             ids,
             labels,
             attr_ids,
-            rows,
+            mut rows,
         } => {
             let nodes = ids.to_roaring();
             verify_creatable(g, &nodes, ops)?;
@@ -170,11 +170,15 @@ fn apply_record(
             }
             if !attr_ids.is_empty() {
                 check_attr_shape(g, &ids, &attr_ids, &rows)?;
+                // `&mut`, because the store moves each value out rather than
+                // copying it — see `AttrUpdates::take`. The row is this
+                // record's and every value in it is stored at most once, so
+                // nothing reads a vacated slot.
                 g.set_nodes_attributes_rows_of_labels(
                     &ids,
                     &label_ids,
                     &attr_ids,
-                    &rows,
+                    &mut rows,
                     &mut ops.docs.node_adds,
                 )?;
             }
@@ -221,7 +225,7 @@ fn apply_record(
             labels,
             relation_id,
             attr_ids,
-            rows,
+            mut rows,
         } => {
             let ids: Vec<u64> = ids.iter().collect();
             match entity {
@@ -232,7 +236,7 @@ fn apply_record(
                         &ids,
                         &label_ids,
                         &attr_ids,
-                        &rows,
+                        &mut rows,
                         &mut ops.docs.node_adds,
                     )?;
                 }

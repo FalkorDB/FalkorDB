@@ -360,6 +360,13 @@ struct Block {
 /// Indexed rather than iterated because the merge walks it with a cursor
 /// against the existing span, and re-reads the entry at `ni` several times per
 /// step.
+///
+/// [`Self::take`] is the reason this is `&mut`. Every read of a value precedes
+/// the single take of it — the merge's first pass sizes the result by reading
+/// each one, the second pass stores each one once — so a caller that owns its
+/// values can hand them over instead of copying them. One that does not still
+/// has to copy, which is why `take` is a method rather than the only way to
+/// read.
 trait AttrUpdates {
     fn len(&self) -> usize;
     fn id(
@@ -370,6 +377,12 @@ trait AttrUpdates {
         &self,
         i: usize,
     ) -> &Value;
+    /// The value at `i`, to keep. Called at most once per index, after every
+    /// read of it.
+    fn take(
+        &mut self,
+        i: usize,
+    ) -> Value;
 }
 
 impl AttrUpdates for &[(u16, Value)] {
@@ -390,6 +403,15 @@ impl AttrUpdates for &[(u16, Value)] {
     ) -> &Value {
         &self[i].1
     }
+
+    /// A clone: this impl borrows a slice it does not own, so there is nothing
+    /// to give away. `insert_attrs` pays what it always paid.
+    fn take(
+        &mut self,
+        i: usize,
+    ) -> Value {
+        self[i].1.clone()
+    }
 }
 
 /// One row of a row-major value block, against the record's shared ids.
@@ -398,7 +420,7 @@ impl AttrUpdates for &[(u16, Value)] {
 /// them together.
 struct RowUpdates<'a> {
     ids: &'a [u16],
-    values: &'a [Value],
+    values: &'a mut [Value],
 }
 
 impl AttrUpdates for RowUpdates<'_> {
@@ -418,6 +440,16 @@ impl AttrUpdates for RowUpdates<'_> {
         i: usize,
     ) -> &Value {
         &self.values[i]
+    }
+
+    /// Moved out, leaving `Null` behind. The row belongs to the record being
+    /// applied and every value in it is stored at most once, so the vacated
+    /// slot is never read again — the merge's second pass only moves forward.
+    fn take(
+        &mut self,
+        i: usize,
+    ) -> Value {
+        std::mem::replace(&mut self.values[i], Value::Null)
     }
 }
 
@@ -636,7 +668,7 @@ impl Block {
     fn merge_span(
         &mut self,
         slot_idx: usize,
-        pairs: &impl AttrUpdates,
+        pairs: &mut impl AttrUpdates,
         scratch: &mut Vec<PackedAttr>,
     ) -> (usize, usize) {
         self.grow_slots(slot_idx);
@@ -658,7 +690,8 @@ impl Block {
                     let span = &self.arena[s..s + old.len as usize];
                     let pos = span.binary_search_by_key(&id, |e| e.id).unwrap();
                     self.release_heap_value(self.arena[s + pos]);
-                    self.store_packed_value(s + pos, id, pairs.value(i).clone());
+                    let v = pairs.take(i);
+                    self.store_packed_value(s + pos, id, v);
                 }
                 return (pairs.len(), pairs.len());
             }
@@ -761,10 +794,11 @@ impl Block {
                 self.release_heap_value(scratch[ci]);
                 ci += 1;
             }
-            let v = pairs.value(ni);
-            if !matches!(v, Value::Null) {
+            if !matches!(pairs.value(ni), Value::Null) {
                 nset += 1;
-                self.store_packed_value(w, pairs.id(ni), v.clone());
+                let id = pairs.id(ni);
+                let v = pairs.take(ni);
+                self.store_packed_value(w, id, v);
                 w += 1;
             }
             ni += 1;
@@ -1008,7 +1042,7 @@ impl DataBlock {
     fn merge_span(
         &mut self,
         entity_id: u64,
-        pairs: &impl AttrUpdates,
+        pairs: &mut impl AttrUpdates,
         scratch: &mut Vec<PackedAttr>,
     ) -> (usize, usize) {
         let (block_idx, slot_idx) = Self::locate(entity_id);
@@ -1267,7 +1301,7 @@ impl AttributeStore {
         &mut self,
         ids: &[u64],
         attr_ids: &[u16],
-        rows: &[Value],
+        rows: &mut [Value],
     ) -> Result<(usize, usize), String> {
         debug_assert!(
             attr_ids.windows(2).all(|w| w[0] < w[1]),
@@ -1293,11 +1327,11 @@ impl AttributeStore {
             // `merge_span` is what performs the removal, including a fast path
             // for a span where every value is null. Stripping them here would
             // turn `SET n.x = NULL` into a no-op.
-            let updates = RowUpdates {
+            let mut updates = RowUpdates {
                 ids: attr_ids,
-                values: &rows[row * width..(row + 1) * width],
+                values: &mut rows[row * width..(row + 1) * width],
             };
-            let (r, s) = self.data.merge_span(id, &updates, &mut scratch);
+            let (r, s) = self.data.merge_span(id, &mut updates, &mut scratch);
             nremoved += r;
             nset += s;
         }
@@ -1336,7 +1370,7 @@ impl AttributeStore {
         for (key, entity_attrs) in items {
             let (r, s) = self
                 .data
-                .merge_span(key, &entity_attrs.as_slice(), &mut scratch);
+                .merge_span(key, &mut entity_attrs.as_slice(), &mut scratch);
             nremoved += r;
             nset += s;
         }
@@ -2174,4 +2208,3 @@ mod tests {
         );
     }
 }
-
