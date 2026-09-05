@@ -78,6 +78,17 @@ pub fn read_attr_ids(r: &mut Reader<'_>) -> Result<Vec<u16>, DecodeError> {
 
 /// `AttrValues` — `SIValue × (count × n)`, row-major. The data half.
 ///
+/// Two numbers describe the block and neither is on the wire, because both are
+/// already stated: `count` is the record's header — how many entities it covers
+/// — and `n` is the length of its `AttrIds`, how many attributes each of them
+/// carries. So `rows` is `count × n` values, entity by entity, and the k-th
+/// entity's j-th attribute is at `k * n + j`.
+///
+/// This side takes neither: `rows` is the whole block and the record already
+/// knows its own shape, so a `width` argument here could only disagree with it.
+/// The reader takes both, because it has to size a `Vec` before it has read
+/// anything.
+///
 /// `T_NULL` in a slot means "remove this attribute": FalkorDB never stores a null
 /// property, so `SET n.x = NULL` is a removal and this is how it replicates.
 /// Shapes are therefore exact — see `emit::gather_rows` for why no row is padded.
