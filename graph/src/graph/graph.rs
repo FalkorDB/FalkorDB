@@ -1829,8 +1829,24 @@ impl Graph {
             })
             .collect();
         for lid in indexed {
+            let label = self.node_labels[lid as usize].clone();
             for &id in ids {
-                if self.node_attrs.has_attributes(id) {
+                // The node has to hold an attribute this label *indexes*, not
+                // merely some attribute.
+                //
+                // The point is symmetry with the remove side rather than a
+                // demonstrated leak. `delete_nodes` has always tested exactly
+                // this, so with the looser test here a node whose attributes
+                // are none of them indexed was added to the index and never
+                // matched by a removal. Whether RediSearch materializes a
+                // document for a node with no indexed field is not observable
+                // from outside the module — it is linked in, so `FT.INFO` is
+                // not reachable — so this makes the two predicates the same
+                // rather than fixing something measured.
+                if self
+                    .attr_names(&self.node_attrs, id)
+                    .any(|attr| self.node_indexer.has_indexed_attr(&label, &attr))
+                {
                     index_add_docs.entry(lid).or_default().insert(id);
                 }
             }
