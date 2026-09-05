@@ -275,13 +275,13 @@ impl Indexer {
             let field = if let Some(ref vopts) = vector_options {
                 Arc::new(Field::new_with_vector_options(
                     CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
-                    index_type.clone(),
+                    *index_type,
                     vopts.clone(),
                 ))
             } else {
                 Arc::new(Field::new(
                     CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
-                    index_type.clone(),
+                    *index_type,
                     field_options.clone(),
                 ))
             };

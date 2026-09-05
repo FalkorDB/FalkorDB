@@ -174,10 +174,13 @@ pub struct Runtime<'a> {
     pub effects_buffer: RefCell<Option<Vec<u8>>>,
     /// Total number of effect records across all commits in this query.
     pub effects_count: Cell<u64>,
-    /// Whether commits should serialize an effects buffer. Callers clear
-    /// this when replication has no possible consumer (no AOF, no replica
-    /// has ever attached); the replication layer then falls back to
-    /// verbatim query propagation, which Redis discards for free.
+    /// Whether commits should serialize an effects buffer.
+    ///
+    /// Cleared only when replication has no possible consumer — no AOF, and no
+    /// replica has ever attached — because there is no fallback behind it any
+    /// more: with verbatim query propagation gone, a write that builds no
+    /// buffer is a write nothing can replay. `REPLICATION_CONSUMERS` is
+    /// therefore sticky once set, and defaults to set.
     pub build_effects: Cell<bool>,
     /// Timestamp captured at the start of the transaction/query.
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
@@ -1231,66 +1234,20 @@ impl<'a> Runtime<'a> {
                 index_type,
                 entity_type,
                 options,
-            } => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-                let index_options = match options {
-                    Some(expr) => {
-                        let val = {
-                            let this = &self;
-                            let idx = expr.root().idx();
-                            super::eval::ExprEval::from_runtime(this).eval(
-                                expr,
-                                idx,
-                                super::eval::NO_ROW,
-                                None,
-                            )
-                        }?;
-                        match val {
-                            Value::Map(map) => map_to_index_options(index_type, &map)?,
-                            _ => return Err("Index options must be a map".into()),
-                        }
-                    }
-                    None => None,
-                };
-                // Index DDL mutates the shared, non-MVCC index directly (not via
-                // `pending`) and calls host FFI that needs the global lock, so
-                // become a writer first — same contract as `CommitOp`.
-                self.write_escalation().upgrade_to_write()?;
-                self.g.borrow_mut().create_index(
-                    index_type,
-                    entity_type,
-                    label,
-                    attrs,
-                    index_options,
-                )?;
-                self.stats.borrow_mut().indexes_created += attrs.len();
-                Ok(BatchOp::Once(None))
-            }
+            } => super::index_ddl::create_index(
+                self,
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options.as_ref(),
+            ),
             IR::DropIndex {
                 label,
                 attrs,
                 index_type,
                 entity_type,
-            } => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-
-                // See `CreateIndex` above: DDL runs in writer mode.
-                self.write_escalation().upgrade_to_write()?;
-                let dropped =
-                    self.g
-                        .borrow_mut()
-                        .drop_index(index_type, entity_type, label, attrs)?;
-                self.stats.borrow_mut().indexes_dropped += dropped;
-                Ok(BatchOp::Once(None))
-            }
+            } => super::index_ddl::drop_index(self, label, attrs, index_type, entity_type),
         }
     }
 
@@ -1860,7 +1817,13 @@ impl<'a> Runtime<'a> {
     }
 }
 
-fn map_to_index_options(
+/// Convert a Cypher `OPTIONS {...}` map into typed index options.
+///
+/// Public because the v3 effects apply path needs it too: v3 carries the
+/// options map on the wire (v2 dropped it), and the replica has to turn it back
+/// into the same `IndexOptions` the master built, not a re-derived
+/// approximation.
+pub fn map_to_index_options(
     index_type: &IndexType,
     kv_map: &OrderMap<Arc<String>, Value>,
 ) -> Result<Option<IndexOptions>, String> {

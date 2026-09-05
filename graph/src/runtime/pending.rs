@@ -24,12 +24,14 @@
 //!
 //! On error or ROLLBACK, the Pending is simply dropped without applying.
 
-use std::{cell::RefCell, ops::BitOrAssign, sync::Arc};
+use std::{cell::RefCell, sync::Arc};
 
 use rustc_hash::FxHashMap;
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
+
+use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
 
 use crate::{
     entity_type::EntityType,
@@ -109,50 +111,56 @@ fn lookup_sorted(
 ///
 /// All mutations during query execution are collected here and applied
 /// atomically at the end. This enables transactional semantics.
+/// All mutations during query execution, applied atomically at the end.
+///
+/// The fields are `pub(crate)` rather than hidden behind per-format view
+/// structs. Those views were a projection — every field a reference to the same
+/// type — so they documented the dependency surface and did nothing else, while
+/// costing a struct and a constructor per wire format. What states that surface
+/// now is `effects_v3_emit::digest`, whose return type says precisely what
+/// replication makes of this.
 pub struct Pending {
     /// Nodes created in this transaction
-    created_nodes: RoaringTreemap,
+    pub(crate) created_nodes: RoaringTreemap,
     /// Relationships created, grouped by type: type_name → [(rel_id, from, to)]
-    created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
+    pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
-    created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
+    pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
     /// Nodes to be deleted
-    deleted_nodes: RoaringTreemap,
+    pub(crate) deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted
-    deleted_relationships: RoaringTreemap,
+    pub(crate) deleted_relationships: RoaringTreemap,
     /// Endpoints for deleted relationships — populated by commit(), used by build_effects_buffer().
-    deleted_endpoints: Vec<(RelationshipId, NodeId, NodeId)>,
+    pub(crate) deleted_endpoints: Vec<DeletedEdge>,
+    /// `(node_id, label_id)` for every deleted node that carried a label —
+    /// populated by commit(), used by the effects emitter.
+    ///
+    /// Captured here because `delete_nodes` clears the label matrices, so by
+    /// the time effects are encoded the labels are unrecoverable; and a label
+    /// set is what tells a replica which label-scoped indexes to clear. Stored
+    /// as flat pairs rather than grouped: `delete_nodes` already built this
+    /// exact vector, so keeping it costs a move, while grouping would charge
+    /// every delete for a partitioning only a replicating server reads.
+    pub(crate) deleted_node_labels: Vec<DeletedNodeLabel>,
     /// Property updates for newly created nodes (fast path: skip fjall).
     /// Values are attribute-id-resolved, sorted by id, unique.
-    new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
+    pub(crate) new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for existing nodes (full merge path)
-    existing_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
+    pub(crate) existing_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for newly created relationships (fast path)
-    new_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
+    pub(crate) new_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Property updates for existing relationships (full merge path)
-    existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
+    pub(crate) existing_relationships_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
     /// Labels to add: node_id → [label_ids]
-    set_labels: FxHashMap<u64, Vec<u64>>,
+    pub(crate) set_labels: FxHashMap<u64, Vec<u64>>,
     /// Labels to remove: node_id → [label_ids]
-    remove_labels: FxHashMap<u64, Vec<u64>>,
-    /// Documents to add to indexes (keyed by label id)
-    index_add_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Documents to remove from indexes (keyed by label id)
-    index_remove_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to add to indexes (keyed by relationship type id)
-    index_add_edge_docs: FxHashMap<u64, RoaringTreemap>,
-    /// Edge documents to remove from indexes: `type_id → { edge_id → (src, dst) }`.
-    /// `(src, dst)` is captured at deletion time — the edge is gone
-    /// from the tensor by the time `commit_edge_index` runs so the
-    /// 24-byte RediSearch key must be reconstructable from here.
-    index_remove_edge_docs: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    /// Deferred index operations — accumulated across commit cycles,
-    /// applied only after the full query succeeds so that a failed
-    /// query never leaves stale entries in RediSearch.
-    deferred_index_adds: FxHashMap<u64, RoaringTreemap>,
-    deferred_index_removes: FxHashMap<u64, RoaringTreemap>,
-    deferred_edge_index_adds: FxHashMap<u64, RoaringTreemap>,
-    deferred_edge_index_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+    pub(crate) remove_labels: FxHashMap<u64, Vec<u64>>,
+    /// Index documents this `Commit` produced.
+    pub(crate) index_docs: IndexDocs,
+    /// Index documents accumulated across the query's commits, applied only
+    /// once the whole query succeeds so a failed one never leaves stale
+    /// entries in RediSearch.
+    pub(crate) deferred_docs: IndexDocs,
     /// Union of every index document this query has published, accumulated across
     /// all of its `Commit`s, so a later failure can resync them against committed
     /// state (see [`Self::resync_published_indexes`]).
@@ -160,28 +168,79 @@ pub struct Pending {
     /// Deliberately **not** reset by [`Self::clear`], which runs after every
     /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
     /// Per-query state — `Pending` belongs to one `Runtime`.
-    published: DeferredIndexes,
+    published: IndexDocs,
     /// Schema baseline: number of labels when the current commit window started.
-    schema_label_count: usize,
+    pub(crate) schema_label_count: usize,
     /// Schema baseline: number of relationship types when the current commit window started.
-    schema_rel_type_count: usize,
+    pub(crate) schema_rel_type_count: usize,
     /// Schema baseline: number of node attribute names when the current commit window started.
-    schema_node_attr_count: usize,
+    pub(crate) schema_node_attr_count: usize,
     /// Schema baseline: number of relationship attribute names when the current commit window started.
-    schema_rel_attr_count: usize,
+    pub(crate) schema_rel_attr_count: usize,
 }
 
-/// One `Commit`'s index document changes, collected while applying `pending` and
-/// written to RediSearch as a batch.
+/// Edge documents to remove, keyed by relationship type: `type_id -> { edge_id
+/// -> (src, dst) }`.
+///
+/// The endpoints ride along because they are captured at deletion time — the
+/// edge is gone from the tensor by the time the 24-byte RediSearch key has to
+/// be rebuilt, so they cannot be looked up again.
+pub type EdgeDocRemovals = FxHashMap<u64, FxHashMap<u64, (u64, u64)>>;
+
+/// The index documents a unit of work produced, in both directions and for
+/// both entity kinds.
+///
+/// One type rather than four parallel maps, and used for both the per-commit
+/// set and the deferred one it folds into. They have to stay in
+/// correspondence — a document added to the wrong half is a stale RediSearch
+/// entry that nothing later notices — and four loose fields on `Pending` made
+/// that the caller's job at every site.
 #[derive(Default)]
-pub struct DeferredIndexes {
-    node_adds: FxHashMap<u64, RoaringTreemap>,
-    node_removes: FxHashMap<u64, RoaringTreemap>,
-    edge_adds: FxHashMap<u64, RoaringTreemap>,
-    edge_removes: FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
+pub struct IndexDocs {
+    /// Node documents to add, keyed by label id.
+    pub node_adds: FxHashMap<u64, RoaringTreemap>,
+    /// Node documents to remove, keyed by label id.
+    pub node_removes: FxHashMap<u64, RoaringTreemap>,
+    /// Edge documents to add, keyed by relationship type id.
+    pub edge_adds: FxHashMap<u64, RoaringTreemap>,
+    /// Edge documents to remove — see [`EdgeDocRemovals`].
+    pub edge_removes: EdgeDocRemovals,
 }
 
-impl DeferredIndexes {
+impl IndexDocs {
+    /// True when nothing was produced, so a caller can skip the work of
+    /// publishing an empty set.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.node_adds.is_empty()
+            && self.node_removes.is_empty()
+            && self.edge_adds.is_empty()
+            && self.edge_removes.is_empty()
+    }
+
+    /// Fold `other` in, leaving it empty.
+    ///
+    /// Replaces four hand-written loops that folded a commit's documents into
+    /// the query's deferred set — one per map, each a chance to fold the wrong
+    /// pair together.
+    pub fn absorb(
+        &mut self,
+        other: &mut Self,
+    ) {
+        for (slot, ids) in other.node_adds.drain() {
+            *self.node_adds.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.node_removes.drain() {
+            *self.node_removes.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.edge_adds.drain() {
+            *self.edge_adds.entry(slot).or_default() |= ids;
+        }
+        for (slot, ids) in other.edge_removes.drain() {
+            self.edge_removes.entry(slot).or_default().extend(ids);
+        }
+    }
+
     /// Fold `other` in, for accumulating everything one query published.
     fn merge(
         &mut self,
@@ -258,21 +317,16 @@ impl Pending {
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
             deleted_endpoints: Vec::new(),
+            deleted_node_labels: Vec::new(),
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
             new_relationships_attrs: FxHashMap::default(),
             existing_relationships_attrs: FxHashMap::default(),
             set_labels: FxHashMap::default(),
             remove_labels: FxHashMap::default(),
-            index_add_docs: FxHashMap::default(),
-            index_remove_docs: FxHashMap::default(),
-            index_add_edge_docs: FxHashMap::default(),
-            index_remove_edge_docs: FxHashMap::default(),
-            published: DeferredIndexes::default(),
-            deferred_index_adds: FxHashMap::default(),
-            deferred_index_removes: FxHashMap::default(),
-            deferred_edge_index_adds: FxHashMap::default(),
-            deferred_edge_index_removes: FxHashMap::default(),
+            index_docs: IndexDocs::default(),
+            published: IndexDocs::default(),
+            deferred_docs: IndexDocs::default(),
             schema_label_count: 0,
             schema_rel_type_count: 0,
             schema_node_attr_count: 0,
@@ -280,8 +334,8 @@ impl Pending {
         }
     }
 
-    /// Record the current schema sizes so `build_effects_buffer` can emit
-    /// EFFECT_ADD_SCHEMA / EFFECT_ADD_ATTRIBUTE for newly added entries.
+    /// Record the current dictionary sizes, so an effects emitter can tell
+    /// which labels, types and attributes this query added.
     pub fn set_schema_baseline(
         &mut self,
         g: &AtomicRefCell<Graph>,
@@ -317,7 +371,11 @@ impl Pending {
         if attrs.is_empty() {
             return Ok(());
         }
-        debug_assert!(attrs.is_sorted_by_key(|(k, _)| *k));
+        // Strict: the doc above requires unique ids too, and
+        // `AttributeStore::insert_attrs_rows` asserts strictly ascending at the
+        // other end, so a non-strict check here would pass a duplicate along to
+        // an assert that rejects it.
+        debug_assert!(attrs.windows(2).all(|w| w[0].0 < w[1].0));
         let is_new = self.created_nodes.contains(id.into());
         if is_new {
             self.new_nodes_attrs.insert(id.into(), attrs);
@@ -608,7 +666,11 @@ impl Pending {
         if attrs.is_empty() {
             return Ok(());
         }
-        debug_assert!(attrs.is_sorted_by_key(|(k, _)| *k));
+        // Strict: the doc above requires unique ids too, and
+        // `AttributeStore::insert_attrs_rows` asserts strictly ascending at the
+        // other end, so a non-strict check here would pass a duplicate along to
+        // an assert that rejects it.
+        debug_assert!(attrs.windows(2).all(|w| w[0].0 < w[1].0));
         if self.created_rel_types.contains_key(&id) {
             self.new_relationships_attrs.insert(id.into(), attrs);
         } else {
@@ -936,14 +998,18 @@ impl Pending {
                 .set_labels
                 .keys()
                 .all(|id| self.created_nodes.contains(*id));
-            g.borrow_mut()
-                .set_nodes_labels_bulk(&rows, &cols, &mut self.index_add_docs, all_new);
+            g.borrow_mut().set_nodes_labels_bulk(
+                &rows,
+                &cols,
+                &mut self.index_docs.node_adds,
+                all_new,
+            );
         }
         if !self.remove_labels.is_empty() {
             let (rows, cols) = flatten_label_map(&self.remove_labels);
             stats.borrow_mut().labels_removed += rows.len();
             g.borrow_mut()
-                .remove_nodes_labels(&rows, &cols, &mut self.index_remove_docs);
+                .remove_nodes_labels(&rows, &cols, &mut self.index_docs.node_removes);
         }
         if !self.new_nodes_attrs.is_empty() || !self.existing_nodes_attrs.is_empty() {
             let mut g = g.borrow_mut();
@@ -951,13 +1017,15 @@ impl Pending {
                 let nset = g.import_node_attrs(
                     &self.new_nodes_attrs,
                     &self.set_labels,
-                    &mut self.index_add_docs,
+                    &mut self.index_docs.node_adds,
                 );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_nodes_attrs.is_empty() {
-                let (nremoved, nset) =
-                    g.set_nodes_attributes(&self.existing_nodes_attrs, &mut self.index_add_docs)?;
+                let (nremoved, nset) = g.set_nodes_attributes(
+                    &self.existing_nodes_attrs,
+                    &mut self.index_docs.node_adds,
+                )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
                 s.properties_removed += nremoved;
@@ -970,14 +1038,14 @@ impl Pending {
             if !self.new_relationships_attrs.is_empty() {
                 let nset = g.import_relationship_attrs(
                     &self.new_relationships_attrs,
-                    &mut self.index_add_edge_docs,
+                    &mut self.index_docs.edge_adds,
                 );
                 stats.borrow_mut().properties_set += nset;
             }
             if !self.existing_relationships_attrs.is_empty() {
                 let (nremoved, nset) = g.set_relationships_attributes(
                     &self.existing_relationships_attrs,
-                    &mut self.index_add_edge_docs,
+                    &mut self.index_docs.edge_adds,
                 )?;
                 let mut s = stats.borrow_mut();
                 s.properties_set += nset;
@@ -986,8 +1054,9 @@ impl Pending {
         }
         if !self.deleted_nodes.is_empty() {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
-            g.borrow_mut()
-                .delete_nodes(&self.deleted_nodes, &mut self.index_remove_docs)?;
+            self.deleted_node_labels = g
+                .borrow_mut()
+                .delete_nodes(&self.deleted_nodes, &mut self.index_docs.node_removes)?;
         }
         // Take relationship deletions BEFORE implicit edge processing
         // so we can pass them to delete_implicit_edges for dedup.
@@ -1001,25 +1070,36 @@ impl Pending {
             let implicit_edges = g.borrow_mut().delete_implicit_edges(
                 &self.deleted_nodes,
                 &explicit_rels,
-                &mut self.index_remove_edge_docs,
+                &mut self.index_docs.edge_removes,
             )?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
             // Record in deleted_relationships so effects buffer can serialize them
-            for (rel_id, from, to) in implicit_edges {
+            for DeletedEdge {
+                id: rel_id,
+                type_id,
+                src: from,
+                dst: to,
+            } in implicit_edges
+            {
                 self.deleted_relationships.insert(u64::from(rel_id));
-                self.deleted_endpoints.push((rel_id, from, to));
+                self.deleted_endpoints.push(DeletedEdge {
+                    id: rel_id,
+                    type_id,
+                    src: from,
+                    dst: to,
+                });
             }
         }
         if !explicit_rels.is_empty() {
             let endpoints = g
                 .borrow_mut()
-                .delete_relationships(&explicit_rels, &mut self.index_remove_edge_docs)?;
+                .delete_relationships(&explicit_rels, &mut self.index_docs.edge_removes)?;
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.
             stats.borrow_mut().relationships_deleted += endpoints.len();
             self.deleted_relationships
-                .extend(endpoints.iter().map(|(id, _, _)| u64::from(*id)));
+                .extend(endpoints.iter().map(|e| u64::from(e.id)));
             self.deleted_endpoints.extend(endpoints);
         }
         // Enforce constraints before accumulating index operations.
@@ -1032,31 +1112,8 @@ impl Pending {
         // the full query succeeds to avoid stale RediSearch entries on
         // rollback.
 
-        // Accumulate index operations into deferred fields.
-        for (k, v) in self.index_add_docs.drain() {
-            self.deferred_index_adds
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_remove_docs.drain() {
-            self.deferred_index_removes
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_add_edge_docs.drain() {
-            self.deferred_edge_index_adds
-                .entry(k)
-                .or_default()
-                .bitor_assign(&v);
-        }
-        for (k, v) in self.index_remove_edge_docs.drain() {
-            self.deferred_edge_index_removes
-                .entry(k)
-                .or_default()
-                .extend(v);
-        }
+        // Accumulate this commit's documents into the query's deferred set.
+        self.deferred_docs.absorb(&mut self.index_docs);
 
         Ok(())
     }
@@ -1296,13 +1353,8 @@ impl Pending {
     }
 
     /// Take the accumulated index document changes, leaving pending empty.
-    pub fn take_deferred_indexes(&mut self) -> DeferredIndexes {
-        DeferredIndexes {
-            node_adds: std::mem::take(&mut self.deferred_index_adds),
-            node_removes: std::mem::take(&mut self.deferred_index_removes),
-            edge_adds: std::mem::take(&mut self.deferred_edge_index_adds),
-            edge_removes: std::mem::take(&mut self.deferred_edge_index_removes),
-        }
+    pub fn take_deferred_indexes(&mut self) -> IndexDocs {
+        std::mem::take(&mut self.deferred_docs)
     }
 
     /// Undo the index documents earlier `Commit`s published, after this query
@@ -1433,10 +1485,11 @@ impl Pending {
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
         self.deleted_endpoints.clear();
-        self.index_add_docs.clear();
-        self.index_remove_docs.clear();
-        self.index_add_edge_docs.clear();
-        self.index_remove_edge_docs.clear();
+        self.deleted_node_labels.clear();
+        self.index_docs.node_adds.clear();
+        self.index_docs.node_removes.clear();
+        self.index_docs.edge_adds.clear();
+        self.index_docs.edge_removes.clear();
     }
 
     /// Returns the number of effects (operations) tracked in this Pending.
@@ -1460,505 +1513,5 @@ impl Pending {
                 .values()
                 .map(|v| v.len() as u64)
                 .sum::<u64>()
-    }
-
-    /// Build a binary effects buffer from the accumulated mutations.
-    /// Must be called before `clear()` resets the pending data.
-    /// Appends to an existing buffer if provided, so multiple commits
-    /// in the same query accumulate into a single effects buffer.
-    /// Returns the number of effect records written.
-    pub fn build_effects_buffer(
-        &self,
-        g: &AtomicRefCell<Graph>,
-        buf: &mut Vec<u8>,
-    ) -> u64 {
-        let mut n_effects = 0u64;
-
-        // Pre-allocate buffer: entity headers plus ~12 bytes per attribute
-        // (2-byte attribute id + tagged value payload).
-        let attr_bytes: usize = self
-            .new_nodes_attrs
-            .values()
-            .chain(self.existing_nodes_attrs.values())
-            .chain(self.new_relationships_attrs.values())
-            .chain(self.existing_relationships_attrs.values())
-            .map(|m| m.len() * 12)
-            .sum();
-        let estimated_bytes = (self.created_nodes.len() as usize) * 15
-            + self.created_rel_types.len() * 30
-            + (self.deleted_nodes.len() as usize) * 10
-            + (self.deleted_relationships.len() as usize) * 25
-            + attr_bytes;
-        buf.reserve(estimated_bytes);
-
-        // Version header (only write once at the start)
-        if buf.is_empty() {
-            buf.push(EFFECTS_VERSION);
-        }
-
-        // --- Schema additions (new labels, relationship types) ---
-        {
-            let graph = g.borrow();
-            let labels = graph.get_labels();
-            for label in labels.iter().skip(self.schema_label_count) {
-                buf.push(EFFECT_ADD_SCHEMA);
-                buf.push(SCHEMA_NODE_LABEL);
-                write_string(buf, label);
-                n_effects += 1;
-            }
-            let types = graph.get_types();
-            for rel_type in types.iter().skip(self.schema_rel_type_count) {
-                buf.push(EFFECT_ADD_SCHEMA);
-                buf.push(SCHEMA_REL_TYPE);
-                write_string(buf, rel_type);
-                n_effects += 1;
-            }
-
-            // --- Attribute additions (new node/rel attribute names) ---
-            let node_attrs = graph.get_node_attribute_names();
-            for attr in node_attrs.iter().skip(self.schema_node_attr_count) {
-                buf.push(EFFECT_ADD_ATTRIBUTE);
-                buf.push(ATTR_NODE);
-                write_string(buf, attr);
-                n_effects += 1;
-            }
-            let rel_attrs = graph.get_relationship_attribute_names();
-            for attr in rel_attrs.iter().skip(self.schema_rel_attr_count) {
-                buf.push(EFFECT_ADD_ATTRIBUTE);
-                buf.push(ATTR_REL);
-                write_string(buf, attr);
-                n_effects += 1;
-            }
-        }
-
-        // Attribute keys, label ids, and relationship type ids are encoded
-        // as u16 ids; the id → name mapping is established on the replica by
-        // the EFFECT_ADD_SCHEMA / EFFECT_ADD_ATTRIBUTE records above (and by
-        // in-order replay of earlier queries), which mirror the master's
-        // registration order exactly.
-
-        // --- Created nodes ---
-        for node_id in &self.created_nodes {
-            buf.push(EFFECT_CREATE_NODE);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-
-            // Labels
-            if let Some(label_ids) = self.set_labels.get(&node_id) {
-                write_u16(buf, label_ids.len() as u16);
-                for &label_id in label_ids {
-                    write_u16(buf, label_id as u16);
-                }
-            } else {
-                write_u16(buf, 0);
-            }
-
-            // Attributes
-            if let Some(attrs) = self.new_nodes_attrs.get(&node_id) {
-                write_u16(buf, attrs.len() as u16);
-                for (attr_id, value) in attrs {
-                    write_u16(buf, *attr_id);
-                    write_value(buf, value);
-                }
-            } else {
-                write_u16(buf, 0);
-            }
-            n_effects += 1;
-        }
-
-        // --- Created relationships ---
-        if !self.created_rels_by_type.is_empty() {
-            let graph = g.borrow();
-            for (type_name, entries) in &self.created_rels_by_type {
-                let type_id = graph
-                    .get_type_id(type_name)
-                    .expect("created relationship type must be registered")
-                    .0 as u16;
-                for &(rel_id, from, to) in entries {
-                    buf.push(EFFECT_CREATE_EDGE);
-                    buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
-                    buf.extend_from_slice(&u64::from(from).to_le_bytes());
-                    buf.extend_from_slice(&u64::from(to).to_le_bytes());
-                    write_u16(buf, type_id);
-
-                    if let Some(attrs) = self.new_relationships_attrs.get(&u64::from(rel_id)) {
-                        write_u16(buf, attrs.len() as u16);
-                        for (attr_id, value) in attrs {
-                            write_u16(buf, *attr_id);
-                            write_value(buf, value);
-                        }
-                    } else {
-                        write_u16(buf, 0);
-                    }
-                    n_effects += 1;
-                }
-            }
-        }
-
-        // --- Updated node attributes (existing nodes only) ---
-        for (node_id, attrs) in &self.existing_nodes_attrs {
-            buf.push(EFFECT_UPDATE_NODE);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-            write_u16(buf, attrs.len() as u16);
-            for (attr_id, value) in attrs {
-                write_u16(buf, *attr_id);
-                write_value(buf, value);
-            }
-            n_effects += 1;
-        }
-
-        // --- Updated relationship attributes (existing rels only) ---
-        for (rel_id, attrs) in &self.existing_relationships_attrs {
-            buf.push(EFFECT_UPDATE_EDGE);
-            buf.extend_from_slice(&rel_id.to_le_bytes());
-            write_u16(buf, attrs.len() as u16);
-            for (attr_id, value) in attrs {
-                write_u16(buf, *attr_id);
-                write_value(buf, value);
-            }
-            n_effects += 1;
-        }
-
-        // --- Set labels (non-created nodes only) ---
-        for (&node_id, label_ids) in &self.set_labels {
-            if !self.created_nodes.contains(node_id) {
-                buf.push(EFFECT_SET_LABELS);
-                buf.extend_from_slice(&node_id.to_le_bytes());
-                write_u16(buf, label_ids.len() as u16);
-                for &label_id in label_ids {
-                    write_u16(buf, label_id as u16);
-                }
-                n_effects += 1;
-            }
-        }
-
-        // --- Remove labels ---
-        for (&node_id, label_ids) in &self.remove_labels {
-            buf.push(EFFECT_REMOVE_LABELS);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-            write_u16(buf, label_ids.len() as u16);
-            for &label_id in label_ids {
-                write_u16(buf, label_id as u16);
-            }
-            n_effects += 1;
-        }
-
-        // --- Deleted relationships (before nodes, so replica removes edges first) ---
-        for &(rel_id, from, to) in &self.deleted_endpoints {
-            buf.push(EFFECT_DELETE_EDGE);
-            buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
-            buf.extend_from_slice(&u64::from(from).to_le_bytes());
-            buf.extend_from_slice(&u64::from(to).to_le_bytes());
-            n_effects += 1;
-        }
-
-        // --- Deleted nodes ---
-        for node_id in &self.deleted_nodes {
-            buf.push(EFFECT_DELETE_NODE);
-            buf.extend_from_slice(&node_id.to_le_bytes());
-            n_effects += 1;
-        }
-
-        n_effects
-    }
-}
-
-// ── Effects buffer constants and helpers ──
-
-pub const EFFECTS_VERSION: u8 = 2;
-
-pub const EFFECT_UPDATE_NODE: u8 = 1;
-pub const EFFECT_UPDATE_EDGE: u8 = 2;
-pub const EFFECT_CREATE_NODE: u8 = 3;
-pub const EFFECT_CREATE_EDGE: u8 = 4;
-pub const EFFECT_DELETE_NODE: u8 = 5;
-pub const EFFECT_DELETE_EDGE: u8 = 6;
-pub const EFFECT_SET_LABELS: u8 = 7;
-pub const EFFECT_REMOVE_LABELS: u8 = 8;
-pub const EFFECT_ADD_SCHEMA: u8 = 9;
-pub const EFFECT_ADD_ATTRIBUTE: u8 = 10;
-pub const EFFECT_CREATE_INDEX: u8 = 11;
-pub const EFFECT_DROP_INDEX: u8 = 12;
-
-// Schema type tags (used in EFFECT_ADD_SCHEMA)
-pub const SCHEMA_NODE_LABEL: u8 = 0;
-pub const SCHEMA_REL_TYPE: u8 = 1;
-
-// Attribute type tags (used in EFFECT_ADD_ATTRIBUTE)
-pub const ATTR_NODE: u8 = 0;
-pub const ATTR_REL: u8 = 1;
-
-// Value type tags for effect serialization
-const VALUE_NULL: u8 = 0;
-const VALUE_BOOL: u8 = 1;
-const VALUE_INT: u8 = 2;
-const VALUE_FLOAT: u8 = 3;
-const VALUE_STRING: u8 = 4;
-const VALUE_LIST: u8 = 5;
-const VALUE_POINT: u8 = 6;
-const VALUE_VECF32: u8 = 7;
-const VALUE_DATETIME: u8 = 8;
-const VALUE_DATE: u8 = 9;
-const VALUE_TIME: u8 = 10;
-const VALUE_DURATION: u8 = 11;
-const VALUE_INTERN_STRING: u8 = 12;
-
-pub fn write_u16(
-    buf: &mut Vec<u8>,
-    v: u16,
-) {
-    buf.extend_from_slice(&v.to_le_bytes());
-}
-
-pub fn write_string(
-    buf: &mut Vec<u8>,
-    s: &str,
-) {
-    buf.extend_from_slice(&(s.len() as u64).to_le_bytes());
-    buf.extend_from_slice(s.as_bytes());
-}
-
-fn write_value(
-    buf: &mut Vec<u8>,
-    value: &Value,
-) {
-    match value {
-        Value::Null => buf.push(VALUE_NULL),
-        Value::Bool(b) => {
-            buf.push(VALUE_BOOL);
-            buf.push(u8::from(*b));
-        }
-        Value::Int(i) => {
-            buf.push(VALUE_INT);
-            buf.extend_from_slice(&i.to_le_bytes());
-        }
-        Value::Float(f) => {
-            buf.push(VALUE_FLOAT);
-            buf.extend_from_slice(&f.to_le_bytes());
-        }
-        Value::String(s) => {
-            if crate::runtime::string_pool::global().is_interned(s) {
-                buf.push(VALUE_INTERN_STRING);
-            } else {
-                buf.push(VALUE_STRING);
-            }
-            write_string(buf, s);
-        }
-        Value::List(items) => {
-            buf.push(VALUE_LIST);
-            buf.extend_from_slice(&(items.len() as u64).to_le_bytes());
-            for item in items.iter() {
-                write_value(buf, item);
-            }
-        }
-        Value::Point(p) => {
-            buf.push(VALUE_POINT);
-            buf.extend_from_slice(&(p.latitude as f64).to_le_bytes());
-            buf.extend_from_slice(&(p.longitude as f64).to_le_bytes());
-        }
-        Value::VecF32(v) => {
-            buf.push(VALUE_VECF32);
-            buf.extend_from_slice(&(v.len() as u64).to_le_bytes());
-            for f in v.iter() {
-                buf.extend_from_slice(&f.to_le_bytes());
-            }
-        }
-        Value::Datetime(ts) => {
-            buf.push(VALUE_DATETIME);
-            buf.extend_from_slice(&ts.to_le_bytes());
-        }
-        Value::Date(ts) => {
-            buf.push(VALUE_DATE);
-            buf.extend_from_slice(&ts.to_le_bytes());
-        }
-        Value::Time(ts) => {
-            buf.push(VALUE_TIME);
-            buf.extend_from_slice(&ts.to_le_bytes());
-        }
-        Value::Duration(dur) => {
-            buf.push(VALUE_DURATION);
-            buf.extend_from_slice(&dur.to_le_bytes());
-        }
-        _ => {
-            debug_assert!(false, "Unsupported value type in effects buffer: {value:?}");
-            buf.push(VALUE_NULL); // Fallback for unsupported types
-        }
-    }
-}
-
-pub fn read_string(
-    buf: &[u8],
-    offset: &mut usize,
-) -> Result<Arc<String>, String> {
-    if *offset + 8 > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let len = u64::from_le_bytes(buf[*offset..*offset + 8].try_into().unwrap()) as usize;
-    *offset += 8;
-    if *offset + len > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let s = std::str::from_utf8(&buf[*offset..*offset + len])
-        .map_err(|e| format!("invalid utf8 in effects buffer: {e}"))?;
-    *offset += len;
-    Ok(Arc::new(s.to_string()))
-}
-
-pub fn read_u16(
-    buf: &[u8],
-    offset: &mut usize,
-) -> Result<u16, String> {
-    if *offset + 2 > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let v = u16::from_le_bytes(buf[*offset..*offset + 2].try_into().unwrap());
-    *offset += 2;
-    Ok(v)
-}
-
-pub fn read_u64(
-    buf: &[u8],
-    offset: &mut usize,
-) -> Result<u64, String> {
-    if *offset + 8 > buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let v = u64::from_le_bytes(buf[*offset..*offset + 8].try_into().unwrap());
-    *offset += 8;
-    Ok(v)
-}
-
-pub fn read_value(
-    buf: &[u8],
-    offset: &mut usize,
-) -> Result<Value, String> {
-    if *offset >= buf.len() {
-        return Err("effects buffer truncated".to_string());
-    }
-    let tag = buf[*offset];
-    *offset += 1;
-    match tag {
-        VALUE_NULL => Ok(Value::Null),
-        VALUE_BOOL => {
-            if *offset >= buf.len() {
-                return Err("effects buffer truncated".to_string());
-            }
-            let b = buf[*offset] != 0;
-            *offset += 1;
-            Ok(Value::Bool(b))
-        }
-        VALUE_INT => {
-            let v = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Int(v))
-        }
-        VALUE_FLOAT => {
-            let v = f64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Float(v))
-        }
-        VALUE_STRING => {
-            let s = read_string(buf, offset)?;
-            Ok(Value::String(s))
-        }
-        VALUE_INTERN_STRING => {
-            let s = read_string(buf, offset)?;
-            Ok(Value::String(
-                crate::runtime::string_pool::global().intern(s),
-            ))
-        }
-        VALUE_LIST => {
-            let len = read_u64(buf, offset)? as usize;
-            let mut items = thin_vec::ThinVec::with_capacity(len);
-            for _ in 0..len {
-                items.push(read_value(buf, offset)?);
-            }
-            Ok(Value::List(Arc::new(items)))
-        }
-        VALUE_POINT => {
-            let lat = f64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            let lon = f64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Point(crate::runtime::value::Point {
-                latitude: lat as f32,
-                longitude: lon as f32,
-            }))
-        }
-        VALUE_VECF32 => {
-            let len = read_u64(buf, offset)? as usize;
-            let mut v = Vec::with_capacity(len);
-            for _ in 0..len {
-                let f = f32::from_le_bytes(
-                    buf.get(*offset..*offset + 4)
-                        .ok_or("truncated")?
-                        .try_into()
-                        .unwrap(),
-                );
-                *offset += 4;
-                v.push(f);
-            }
-            Ok(Value::VecF32(Arc::new(v.into())))
-        }
-        VALUE_DATETIME => {
-            let ts = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Datetime(ts))
-        }
-        VALUE_DATE => {
-            let ts = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Date(ts))
-        }
-        VALUE_TIME => {
-            let ts = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Time(ts))
-        }
-        VALUE_DURATION => {
-            let dur = i64::from_le_bytes(
-                buf.get(*offset..*offset + 8)
-                    .ok_or("truncated")?
-                    .try_into()
-                    .unwrap(),
-            );
-            *offset += 8;
-            Ok(Value::Duration(dur))
-        }
-        _ => Err(format!("unknown value tag in effects buffer: {tag}")),
     }
 }

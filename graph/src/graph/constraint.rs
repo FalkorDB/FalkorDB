@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::entity_type::EntityType;
 
 /// Type of constraint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ConstraintType {
     Unique,
     Mandatory,
@@ -23,7 +23,7 @@ impl std::fmt::Display for ConstraintType {
 }
 
 /// Status of a constraint.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstraintStatus {
     UnderConstruction,
     Operational,

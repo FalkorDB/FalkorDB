@@ -559,6 +559,29 @@ impl Delta<bool> {
         *self.count.get_mut() += 1;
     }
 
+    /// Add every pair in `rows` x `cols` and count them, in one GraphBLAS
+    /// call.
+    ///
+    /// The product is formed inside GraphBLAS by `GrB_Matrix_assign`, so
+    /// nothing here enumerates it — the two things this layer keeps alongside
+    /// the matrix are maintained without it. The row filter takes one `add` per
+    /// *row*, not per pair, which is what it would have received anyway. The
+    /// count moves by `rows.len() * cols.len()`, and it is the same approximate
+    /// counter [`Delta::insert`] maintains: a duplicate index in either list
+    /// overshoots it, which is the drift the fold policy already tolerates and
+    /// [`Delta::resync`] corrects.
+    pub(super) fn insert_product(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+    ) {
+        for &i in rows {
+            self.rows.add(i);
+        }
+        self.layer.assign_product_true(rows, cols);
+        *self.count.get_mut() += (rows.len() * cols.len()) as u64;
+    }
+
     /// `self<mask> = mask ∩ base`: tombstone every committed entry the mask
     /// selects, then resync. Keeps the resync with the bulk write that
     /// invalidates the counter rather than leaving it to the caller.
@@ -1144,6 +1167,52 @@ impl VersionedMatrix<bool> {
     /// (unlike a delta, `m` is never pending — see [`Self::wait`]), so the
     /// skipped check survives as a `debug_assert` rather than being dropped for
     /// the reasons [`Self::remove`] documents.
+    /// Set every pair in `rows` x `cols`, without enumerating the product.
+    ///
+    /// The bulk form of [`Self::set_all`], and it can only take the one-call
+    /// path where that method's two per-entry obligations do not apply.
+    ///
+    /// `NEW` is the first: without it, `set_all` probes the committed base per
+    /// entry to keep `dp ∩ m = ∅`, and an assign cannot ask that question. An
+    /// empty `dm` is the second: with tombstones present a pair cannot be added
+    /// blindly, which is why `set_all` itself degrades to per-entry `set`
+    /// there. When either fails this falls back to exactly that method, so the
+    /// behaviour is identical and only the speed differs.
+    ///
+    /// `CREATE_NODE`'s label set is the case that qualifies — the ids are fresh
+    /// by construction, so a million nodes taking one label is one GraphBLAS
+    /// call rather than a million `setElement`s.
+    pub fn set_product<const NEW: bool>(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+    ) {
+        if rows.is_empty() || cols.is_empty() {
+            return;
+        }
+        self.flush();
+        // As in `set_all`: `nvals` on a pending matrix merges its tuples, which
+        // is a mutation, so materialize through the guarded wait first.
+        self.dm.wait();
+        if !NEW || self.dm.nvals() != 0 {
+            let product = rows.iter().flat_map(|&i| cols.iter().map(move |&j| (i, j)));
+            self.set_all::<NEW>(product);
+            return;
+        }
+        // The check `NEW` lets the fast path skip, kept where it costs nothing
+        // in a release build — the same bargain `set_all` documents.
+        #[cfg(debug_assertions)]
+        for &i in rows {
+            for &j in cols {
+                debug_assert!(
+                    self.m.get(i, j).is_none(),
+                    "set_product::<true> on ({i}, {j}), which is live in the committed base"
+                );
+            }
+        }
+        self.dp.insert_product(rows, cols);
+    }
+
     pub fn set_all<const NEW: bool>(
         &mut self,
         entries: impl Iterator<Item = (u64, u64)>,

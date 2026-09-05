@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 24 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -42,6 +42,10 @@ class testConfig(FlowTestsBase):
                 ("NODE_CREATION_BUFFER", 16384),
                 ("CMD_INFO", 1),
                 ("MAX_INFO_QUERIES", 1000),
+                ("EFFECTS_COMPRESSION", 0),
+                # Deprecated and read by nothing, kept settable at its original
+                # default so a config file or client that names it does not
+                # fail. See src/config.rs.
                 ("EFFECTS_THRESHOLD", 300),
                 ("BOLT_PORT", 65535),
                 ("DELAY_INDEXING", 0),

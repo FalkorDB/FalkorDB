@@ -22,16 +22,18 @@
 //! Any hard failure during critical init steps returns `Status::Err` so Redis
 //! can reject loading an incomplete module.
 
+use crate::commands::constraint::{Settling, settle_async_constraint};
 use crate::config::{
     CONFIGURATION_INDEX_WORKER_THREADS, CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE,
     CONFIGURATION_NODE_CREATION_BUFFER, CONFIGURATION_TEMP_FOLDER, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_THRESHOLD, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
-    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
-    get_thread_count, normalize_node_creation_buffer,
+    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
+    MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
+    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
 };
 use crate::graph_core::rename_graph;
 use crate::redis_type::on_persistence;
 use crate::telemetry;
+use graph::graph::constraint::ConstraintStatus;
 use graph::{
     graph::graphblas::matrix::init,
     index::redisearch::{
@@ -47,7 +49,7 @@ use redis_module::{
     RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
     Status, logging::log_warning,
 };
-use std::{os::raw::c_int, os::raw::c_void, panic, sync::atomic::AtomicI64};
+use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc, sync::atomic::AtomicI64};
 
 /// Redis event ID for FlushDB event (database flush/clear).
 #[allow(non_upper_case_globals)]
@@ -83,6 +85,7 @@ static RedisModuleEvent_ReplicaChange: RedisModuleEvent = RedisModuleEvent { id:
 static RedisModuleEvent_Shutdown: RedisModuleEvent = RedisModuleEvent { id: 5, dataver: 1 };
 
 /// Subevent: this instance is now a replica.
+const REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER: u64 = 0;
 const REDISMODULE_EVENT_REPLROLECHANGED_NOW_REPLICA: u64 = 1;
 
 unsafe extern "C" {
@@ -171,7 +174,8 @@ pub fn graph_init(
                 "RESULTSET_SIZE" => Some(&RESULTSET_SIZE),
                 "QUERY_MEM_CAPACITY" => Some(&QUERY_MEM_CAPACITY),
                 "DELTA_MAX_PENDING_CHANGES" => Some(&DELTA_MAX_PENDING_CHANGES),
-                "EFFECTS_THRESHOLD" => Some(&EFFECTS_THRESHOLD),
+                "EFFECTS_COMPRESSION" => Some(&EFFECTS_COMPRESSION),
+                "EFFECTS_THRESHOLD" => Some(&EFFECTS_THRESHOLD_DEPRECATED),
                 "OMP_THREAD_COUNT" => Some(&OMP_THREAD_COUNT),
                 _ => None,
             };
@@ -516,6 +520,82 @@ unsafe extern "C" fn on_role_change(
     // A role change means a replication topology exists (or is being set
     // up); keep building effects buffers from here on.
     crate::graph_core::REPLICATION_CONSUMERS.store(true, std::sync::atomic::Ordering::Relaxed);
+
+    if subevent == REDISMODULE_EVENT_REPLROLECHANGED_NOW_MASTER {
+        enforce_pending_constraints_after_promotion();
+    }
+}
+
+/// Finish validating any constraint this node inherited under construction.
+///
+/// A replica never validates: it installs the status the primary reached,
+/// because validating independently would scan at a different time against
+/// different interleavings and could legitimately disagree. That is right while
+/// it is a replica and wrong the moment it is promoted — a constraint the old
+/// primary was still building is now this node's to finish, and until it does
+/// the constraint is neither enforcing nor failed and writes that should be
+/// rejected are not.
+///
+/// On its own thread: validation scans the whole label and this runs from a
+/// server-event callback on the main thread, where a large graph would stall
+/// every client. Each graph is taken under its own write lock, so a graph being
+/// queried is not blocked longer than one constraint's validation.
+fn enforce_pending_constraints_after_promotion() {
+    // Name and graph both: re-announcing needs the key to replicate under, and
+    // the registry is the only place the two are paired.
+    let graphs: Vec<(String, _)> = crate::graph_core::GRAPH_REGISTRY
+        .lock()
+        .iter()
+        .map(|(name, g)| (name.clone(), g.clone()))
+        .collect();
+    if graphs.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        for (key, tg) in graphs {
+            // What this node inherited under construction. Read under a read
+            // lock and copied out, so the settle below can take its own locks.
+            let pending: Vec<Settling> = {
+                let guard = tg.read();
+                let g = guard.graph.read();
+                g.borrow()
+                    .constraints()
+                    .iter()
+                    .filter(|c| c.status == ConstraintStatus::UnderConstruction)
+                    .map(|c| Settling {
+                        ct: c.ct,
+                        entity_type: c.entity_type,
+                        label: Arc::clone(&c.label),
+                        properties: c.properties.clone(),
+                    })
+                    .collect()
+            };
+            if pending.is_empty() {
+                continue;
+            }
+            // The write path's own settler, rather than a second copy of the
+            // two-phase dance. Three things came with it that this loop was
+            // missing:
+            //
+            // * The GIL. This was the only writer in the process publishing a
+            //   graph version without it. `commit` folds oversized deltas — real
+            //   GraphBLAS mutation — before swapping, and `on_fork_child` calls
+            //   `std::process::abort()` on any graph that is not synced, so a
+            //   BGSAVE or replica full-sync forking mid-commit killed the child.
+            //   The GIL is what makes that unreachable everywhere else.
+            // * Re-announcement. A promoted master applied the settled status
+            //   locally and replicated nothing, so its own replicas stayed UNDER
+            //   CONSTRUCTION forever — and nothing could re-drive them, because
+            //   `GRAPH.CONSTRAINT CREATE` answers `Constraint already exists`.
+            // * The role and registration re-checks in `upgrade_to_write`, so a
+            //   role flip or a `GRAPH.DELETE` part-way through this loop aborts
+            //   instead of committing into a graph nobody holds.
+            //
+            // `was_replicated: false` — this node is the master now, so the
+            // settled status is its to announce.
+            settle_async_constraint(&tg, &pending, &key, false);
+        }
+    });
 }
 
 /// Any replica attach/detach latches the sticky "replication has
