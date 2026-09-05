@@ -423,8 +423,7 @@ fn verify_creatable(
     // Not in the bin means it was never freed; below the entry mark means it
     // was already handed out. Both together mean it is live here, and creating
     // it would double-count `node_count` and shift every later fresh id.
-    let fresh = g.node_ids_not_recycled(nodes);
-    if let Some(lowest) = fresh.min().filter(|&id| id < ops.pre_high_water) {
+    if let Some(lowest) = g.first_uncreatable_node(nodes, ops.pre_high_water) {
         return Err(ApplyError::NodeAlreadyLive {
             id: lowest,
             bin: g.deleted_nodes_count(),
@@ -450,7 +449,7 @@ fn verify_deletable(
     nodes: &RoaringTreemap,
     ops: &IndexOps,
 ) -> Result<(), ApplyError> {
-    if let Some(id) = g.node_ids_already_recycled(nodes).min() {
+    if let Some(id) = g.first_recycled_node(nodes) {
         return Err(ApplyError::NodeNotLive {
             id,
             reason: "it is already in the recycle bin",

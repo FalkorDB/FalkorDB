@@ -2526,24 +2526,44 @@ impl Graph {
         self.node_count + self.deleted_nodes.len()
     }
 
-    /// Every id in `nodes` that is **not** currently in the recycle bin.
+    /// The lowest id in `nodes` this graph cannot create — one it has already
+    /// handed out and not freed — or `None` when every one of them is
+    /// available.
+    ///
+    /// Available means in the recycle bin *or* never allocated, and the caller
+    /// gets the answer rather than the bin. Handing out the set of
+    /// not-yet-recycled ids let a caller assemble that judgement itself, and
+    /// there is only one right way to assemble it.
+    ///
+    /// `high_water` is the caller's, not this graph's current one:
+    /// `apply_effects` freezes it at buffer entry because records within a
+    /// buffer are not in id order — a create of 500..600 may precede 0..500 —
+    /// so mid-buffer `node_count` is a count rather than a bound.
     ///
     /// Two roaring operations for the whole set rather than a probe per id.
     #[must_use]
-    pub fn node_ids_not_recycled(
+    pub fn first_uncreatable_node(
         &self,
         nodes: &RoaringTreemap,
-    ) -> RoaringTreemap {
-        nodes - &self.deleted_nodes
+        high_water: u64,
+    ) -> Option<u64> {
+        (nodes - &self.deleted_nodes)
+            .min()
+            .filter(|&id| id < high_water)
     }
 
-    /// Every id in `nodes` that is already in the recycle bin.
+    /// The lowest id in `nodes` that is already in the recycle bin, or `None`
+    /// when none of them is.
+    ///
+    /// The half of "is this node live" that only the bin can answer; the other
+    /// half is the high-water comparison, which is the caller's because the
+    /// mark is.
     #[must_use]
-    pub fn node_ids_already_recycled(
+    pub fn first_recycled_node(
         &self,
         nodes: &RoaringTreemap,
-    ) -> RoaringTreemap {
-        nodes & &self.deleted_nodes
+    ) -> Option<u64> {
+        (nodes & &self.deleted_nodes).min()
     }
 
     #[must_use]
