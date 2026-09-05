@@ -54,9 +54,12 @@ records* — the same record family this proposal changes again.
 Four rules, and everything else follows from them:
 
 1. **One `GRAPH.EFFECT` per query.** Batching removes per-record framing; it never
-   multiplies commands. There is exactly one `ctx.replicate("GRAPH.EFFECT", args)`
-   (`src/graph_core.rs:1582`), fed by one `build_effects_buffer` call at commit
-   (`graph/src/runtime/ops/commit.rs:111`).
+   multiplies commands. A query appends into a single buffer however many times
+   it commits, and that buffer is sent once — see
+   [the emission pipeline](#the-emission-pipeline) for the three places records
+   are appended and the one place a payload is sent. Constraint announcements
+   are the exception, and deliberately so: they are not part of any query's
+   buffer, and an asynchronously validated one is announced twice.
 2. **One record per `(opcode, partition key)`.** Shapes are compared only within a record
    type, so a query that creates *and* updates *and* deletes groups each family
    independently.
@@ -552,9 +555,55 @@ lands at parity with v2. A single record is 33 bytes for a one-byte id, 34 for a
 two-byte id (exactly v2) and 36 past 2^16. A regression test asserts the worst
 case stays at or under v2's 340,001 bytes.
 
+## The emission pipeline
+
+Where payloads come from, and when. The wire format above says what a buffer
+holds; this says what causes one to exist, which the other implementation has to
+match even though none of it is on the wire.
+
+    ┌ during a query ─────────────────────────────────────────────────────┐
+    │  CommitOp          per commit, and a query may commit several times │
+    │  index DDL         per CREATE/DROP INDEX statement                  │
+    │      both append into the same buffer, held on `Runtime`            │
+    └─────────────────────────────────────────────────────────────────────┘
+                                     │  once, at the end of the write
+                                     ▼
+                       finish → compress if configured → send
+                                     ▲
+    ┌ outside any query ──────────────┘                                   ┐
+    │  GRAPH.CONSTRAINT   its own payload, sent by the command            │
+    │  settle thread      a second payload, when validation was async     │
+    └─────────────────────────────────────────────────────────────────────┘
+
+Four things follow that are not visible in the bytes:
+
+**A query's payload accumulates across commits.** `CREATE ... WITH ... CREATE`
+commits more than once, and each commit appends to the buffer the previous one
+left. The version and flags header is written by whichever append finds the
+buffer empty, so it appears once however many commits there were.
+
+**Finishing happens exactly once, and last.** Compression rewrites everything
+after the header, so a payload compressed per commit is compressed twice and
+cannot be read at all. In the Rust implementation the buffer is moved into the
+send by value and there is no way to finish one without sending it, which is
+what makes the mistake unrepeatable rather than merely documented.
+
+**Index DDL shares the query's buffer; constraints do not.** An index statement
+is part of the query that ran it, so its record sits in the same payload,
+ordered ahead of the data records that depend on the ids it registers. A
+constraint is announced by `GRAPH.CONSTRAINT` itself — there is no query — and
+when validation runs asynchronously the settle thread announces it a *second*
+time with the status it reached. Both are complete payloads with their own
+header, sent the same way as any other.
+
+**Nothing is emitted for a write that changes nothing**, and a write that
+changes something but produces no payload is logged as a warning rather than
+passing silently: it would reach neither a replica nor the AOF, and since query
+replay was removed there is nothing left to recover it.
+
 ## Building a v3 payload
 
-`graph/src/effects/v3/emit.rs`, the mirror of `effects_v3_apply.rs` —
+`graph/src/effects/v3/emit.rs`, the mirror of `graph/src/effects/v3/apply.rs` —
 and deliberately shaped like it:
 
     emit    Pending  --digest-->  Record  --encode-->  bytes
@@ -568,11 +617,9 @@ is a testable surface for the grouping — the emit tests assert on records rath
 than on decoded buffers — and a round-trip that compares values:
 `digest(pending) == read_buffer(encode(digest(pending)))`.
 
-The v2 emitter sits beside it in `effects/v2/`, whole and separate, so
-retiring the old format is deleting a file rather than untangling one. Neither
-lives in `pending.rs`: a mutation accumulator should not know what a replication
-frame looks like. `Pending`'s fields are `pub(crate)` and the wire knowledge
-lives in the emitters.
+It does not live in `pending.rs`: a mutation accumulator should not know what a
+replication frame looks like. `Pending`'s fields are `pub(crate)` and the wire
+knowledge lives in the emitter.
 
 An earlier revision put a per-format view struct between them. Those views were
 a pure projection — every field a reference to the same type in `Pending` — so
@@ -1006,9 +1053,9 @@ the format can be reviewed and tested byte-for-byte on its own.
 | the five blocks, encode + decode | done |
 | records 1–10, encode + decode, `read_buffer` | done |
 | ids on `ADD_SCHEMA` / `ADD_ATTRIBUTE` | done |
-| grouping `Pending` into v3 records (`effects_v3_emit.rs`) | done, wired behind `EFFECTS_VERSION` |
+| grouping `Pending` into v3 records (`v3/emit.rs`) | done |
 | records 11–14 (index, constraint) | done |
-| applying v3 on the replica (`effects_v3_apply.rs`) | done, always active — reads are version-dispatched |
+| applying v3 on the replica (`v3/apply.rs`) | done — reads dispatch on the version the payload declares |
 | the C side | not yet — nothing can ship until this exists |
 
 ### The switch
