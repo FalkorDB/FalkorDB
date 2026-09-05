@@ -1861,13 +1861,19 @@ impl Graph {
             }
         }
 
-        let pairs = label_ids
-            .iter()
-            .flat_map(|&lid| ids.iter().map(move |&id| (id, lid)));
+        // The cartesian product, handed to GraphBLAS as two index lists rather
+        // than enumerated here. `GrB_Matrix_assign` forms `ids x label_ids`
+        // itself, so a million nodes taking one label is one call instead of a
+        // million `setElement`s — and the slices are already exactly the `I`
+        // and `J` it wants, so nothing is built to pass them.
+        //
+        // `set_product::<false>` cannot take that path — an existing node's
+        // pair may already be live in the committed base, which only a
+        // per-entry probe can tell — so it degrades to the iterator form.
         if all_new {
-            self.node_labels_matrix.set_all::<true>(pairs);
+            self.node_labels_matrix.set_product::<true>(ids, label_ids);
         } else {
-            self.node_labels_matrix.set_all::<false>(pairs);
+            self.node_labels_matrix.set_product::<false>(ids, label_ids);
         }
     }
 
