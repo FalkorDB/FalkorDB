@@ -158,30 +158,87 @@ pub enum ApplyError {
         id: i64,
     },
 
-    /// A `CREATE_NODE` names an id that is neither in this replica's recycle
-    /// bin nor past the first id it has never allocated — so it is already live
-    /// here.
+    /// A create names an id that is neither in this replica's recycle bin nor
+    /// past the first id it has never allocated — so it is already live here.
+    /// `kind` says which entity: nodes and relationships are checked the same
+    /// way, against the same [`crate::graph::id_space::IdSpace`].
     ///
-    /// Node ids are not carried by any record that could report a disagreement
-    /// about them: the next fresh id is derived from `node_count` and the bin,
-    /// and `create_nodes` removes ids from the bin whether or not they were in
-    /// it. Left unchecked, a drift stays invisible until the replica is
-    /// promoted and hands out an id that is already in use.
+    /// Ids are not carried by any record that could report a disagreement about
+    /// them: the next fresh id is derived from the entity's count and its bin,
+    /// and the create removes ids from the bin whether or not they were in it.
+    /// Left unchecked, a drift stays invisible until the replica is promoted and
+    /// hands out an id that is already in use.
     #[error(
-        "effects buffer creates node {id}, which is already live on this replica          (recycle bin holds {bin} ids, first unallocated id {first_unallocated}). The two engines          have diverged; the buffer was not applied."
+        "effects buffer creates {kind} {id}, which is already live on this replica (the \
+         boundary it was judged against is {first_unallocated}). The two engines have \
+         diverged; the buffer was not applied."
     )]
-    NodeAlreadyLive {
+    AlreadyLive {
+        kind: &'static str,
         id: u64,
-        bin: u64,
         first_unallocated: u64,
     },
 
-    /// A `DELETE_NODE` names an id this replica does not hold live — either it
-    /// is already in the recycle bin, or it was never allocated.
+    /// A delete names an id this replica does not hold live — either it is
+    /// already in the recycle bin, or it was never allocated. `kind` says which
+    /// entity: nodes and relationships are checked the same way, against the same
+    /// [`crate::graph::id_space::IdSpace`].
     #[error(
-        "effects buffer deletes node {id}, which is not live on this replica          ({reason}). The two engines have diverged; the buffer was not applied."
+        "effects buffer deletes {kind} {id}, which is not live on this replica ({reason}). \
+         The two engines have diverged; the buffer was not applied."
     )]
-    NodeNotLive { id: u64, reason: &'static str },
+    NotLive {
+        kind: &'static str,
+        id: u64,
+        reason: &'static str,
+    },
+
+    /// A record names an id with nothing past it.
+    ///
+    /// `u64::MAX` cannot be created: there is no boundary above it, and a master
+    /// that had genuinely handed out 2^64 ids would have exhausted memory long
+    /// before reaching the top.
+    #[error(
+        "effects buffer creates {kind} {id}, which is past the end of the id space. \
+         The two engines have diverged; the buffer was not applied."
+    )]
+    IdPastEndOfSpace { kind: &'static str, id: u64 },
+
+    /// The batch left ids allocated between the boundary it started from and the
+    /// highest id it created, without creating them.
+    ///
+    /// An allocator hands out the lowest free id, so it cannot reach an id
+    /// without having handed out everything below it. A buffer that leaves a
+    /// hole was not produced by one — the likeliest cause is a replica that has
+    /// missed a buffer, and accepting it would leave an id space the master does
+    /// not have.
+    #[error(
+        "effects buffer allocated {kind} ids {entry_bound}..={highest} but created only \
+         {created} of them. The two engines have diverged; the buffer was not applied."
+    )]
+    IdsHaveAHole {
+        kind: &'static str,
+        entry_bound: u64,
+        highest: u64,
+        created: u64,
+    },
+
+    /// The graph's own id boundary for `kind` is not where the ids it was given
+    /// put it.
+    ///
+    /// The entity's count is an independent counter, so the same id applied twice
+    /// moves it twice while the set of ids does not change. This is the only
+    /// place anything checks that counter against a value not derived from it.
+    #[error(
+        "effects buffer left this replica's {kind} id boundary at {graph_bound}, but the \
+         ids it carried put it at {expected}. The two engines have diverged; the buffer \
+         was not applied."
+    )]
+    CountMiscounted {
+        kind: &'static str,
+        graph_bound: u64,
+        expected: u64,
+    },
 
     /// A schema id the local dictionary does not hold.
     ///

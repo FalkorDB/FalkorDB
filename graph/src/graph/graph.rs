@@ -79,6 +79,7 @@ use lru::LruCache;
 use orx_tree::DynTree;
 use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
+use thiserror::Error;
 
 use crate::{
     entity_type::EntityType,
@@ -92,6 +93,7 @@ use crate::{
             tensor::Tensor,
             versioned_matrix::{self, VersionedMatrix},
         },
+        id_space::{IdSpace, IdSpaceError},
     },
     index::{
         Field,
@@ -269,28 +271,19 @@ pub struct DeletedEdge {
 /// Typed rather than a `String` because the effects apply path renders these
 /// into a divergence report an operator reads, and "which id, and which of the
 /// two ways it was wrong" is the whole content of that report.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum NodeOpError {
-    /// Already handed out and not freed, so creating it would double-count
-    /// `node_count` and shift every later fresh id.
-    AlreadyLive(u64),
-    /// Already in the recycle bin, so it is not live to delete.
-    AlreadyRecycled(u64),
     /// Anything the graph itself reported while doing the work.
+    #[error("{0}")]
     Graph(String),
-}
 
-impl std::fmt::Display for NodeOpError {
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter<'_>,
-    ) -> std::fmt::Result {
-        match self {
-            Self::AlreadyLive(id) => write!(f, "node {id} is already live"),
-            Self::AlreadyRecycled(id) => write!(f, "node {id} is already in the recycle bin"),
-            Self::Graph(e) => f.write_str(e),
-        }
-    }
+    /// The ids do not fit the graph's id space. Every judgement about whether a
+    /// node is live is made there rather than here — see
+    /// [`crate::graph::id_space`] — because half of it needs a batch and half of
+    /// it needs only the recycle bin, and splitting them across two types is how
+    /// the two halves drift apart.
+    #[error(transparent)]
+    IdSpace(#[from] IdSpaceError),
 }
 
 impl From<String> for NodeOpError {
@@ -1403,11 +1396,30 @@ impl Graph {
         self.attrs_name.get_index_of(attr)
     }
 
+    /// Give back `n` of a reservation counter, without wrapping.
+    ///
+    /// The counter says how many ids are outstanding, so consuming more than
+    /// were reserved is a bookkeeping bug — and an unchecked `-=` would wrap it
+    /// to something near `u64::MAX` in release, at which point `reserve_nodes`
+    /// believes the whole recycle bin is spoken for and hands out only fresh
+    /// ids forever. Loud in tests, harmless in release.
+    fn dec_reserved(
+        &self,
+        counter: u64,
+        n: u64,
+    ) -> u64 {
+        debug_assert!(
+            counter >= n,
+            "consuming {n} reservations of {counter} outstanding"
+        );
+        counter.saturating_sub(n)
+    }
+
     pub fn return_node_id(
         &mut self,
         id: NodeId,
     ) {
-        self.reserved_node_count -= 1;
+        self.reserved_node_count = self.dec_reserved(self.reserved_node_count, 1);
         self.deleted_nodes.insert(id.into());
     }
 
@@ -1415,7 +1427,7 @@ impl Graph {
         &mut self,
         id: RelationshipId,
     ) {
-        self.reserved_relationship_count -= 1;
+        self.reserved_relationship_count = self.dec_reserved(self.reserved_relationship_count, 1);
         self.deleted_relationships.insert(id.into());
     }
 
@@ -1437,9 +1449,11 @@ impl Graph {
 
     /// Reserve `n` node ids without choosing which.
     ///
-    /// The effects apply path takes the ids from the primary, so it needs the
-    /// counter moved but not an allocation — and it knows `n` up front, so it
-    /// should not have to say so one at a time.
+    /// No production caller left. The effects apply path used this to fake a
+    /// reservation it never made, so that `create_nodes` had something to
+    /// decrement; the reservation is consumed by
+    /// [`Self::create_allocated_nodes`] now, which is the only path that makes
+    /// one. Kept for tests that stand a graph up by hand.
     pub const fn add_reserved_node_count(
         &mut self,
         n: u64,
@@ -1484,35 +1498,12 @@ impl Graph {
         Ok(ids)
     }
 
-    /// Delete every node in `nodes`, or refuse and change nothing.
-    ///
-    /// # Errors
-    ///
-    /// [`NodeOpError::AlreadyRecycled`] for the lowest id already in the bin —
-    /// the half of "is this node live" only the bin can answer. The other half,
-    /// whether an id was ever allocated *here*, needs a mark frozen before the
-    /// caller's batch plus the ids that batch has itself created, and neither
-    /// is something this graph has a concept of; `apply_effects` keeps that.
-    ///
-    /// Refusing rather than proceeding, because the body subtracts from
-    /// `node_count` unconditionally and a delete of an already-freed id
-    /// underflowed it.
-    fn refuse_undeletable(
-        &self,
-        nodes: &RoaringTreemap,
-    ) -> Result<(), NodeOpError> {
-        match (nodes & &self.deleted_nodes).min() {
-            Some(id) => Err(NodeOpError::AlreadyRecycled(id)),
-            None => Ok(()),
-        }
-    }
-
     /// Create nodes this graph's own allocator issued.
     ///
     /// Unchecked, and it has to be. `return_node_id` puts a *cancelled
     /// reservation* into the recycle bin while `node_count` has not moved, so
-    /// mid-transaction `first_unallocated_node_id()` counts an id that was
-    /// never live and overstates the boundary. `CREATE (a)-[:R]->(b) DELETE b`
+    /// mid-transaction the boundary `node_count + deleted_nodes.len()` counts
+    /// an id that was never live and overstates itself. `CREATE (a)-[:R]->(b) DELETE b`
     /// reaches exactly that: b's id goes to the bin, the boundary becomes 1,
     /// and the checked form then rejects a's id 0 as already live — a
     /// legitimate query refused.
@@ -1524,43 +1515,98 @@ impl Graph {
     ///
     /// The underlying flaw is that `reserved_node_count` is a count standing in
     /// for a set — see the follow-up replacing it with an exact reservation.
+    ///
+    /// The counterpart is [`Self::create_nodes`], for ids that did *not* come
+    /// from this allocator. Two entry points rather than one with an optional
+    /// check, because the difference is which question is being asked, and a
+    /// caller that has to decide between them cannot express "checked, but
+    /// against nothing".
     pub fn create_allocated_nodes(
         &mut self,
         nodes: &RoaringTreemap,
     ) {
-        let _ = self.create_nodes(nodes, 0);
+        // Consuming the reservation is this path's, not the mutation's. Ids that
+        // arrive from somewhere else — an effects buffer — were never reserved
+        // here, and making the mutation decrement unconditionally forced that
+        // caller to fake a reservation first purely so the counter had something
+        // to give back.
+        self.reserved_node_count = self.dec_reserved(self.reserved_node_count, nodes.len());
+        self.mark_nodes_live(nodes);
     }
 
-    /// Create every node in `nodes`, or refuse and change nothing.
+    /// Where the node id space ends: ids below were handed out, ids at or above
+    /// never were. True as stated only between batches, where the space is dense
+    /// — which is exactly when an [`IdSpace`] is opened against it.
+    #[must_use]
+    pub fn node_id_bound(&self) -> u64 {
+        self.node_count + self.deleted_nodes.len()
+    }
+
+    /// The same for relationships.
+    #[must_use]
+    pub fn relationship_id_bound(&self) -> u64 {
+        self.relationship_count + self.deleted_relationships.len()
+    }
+
+    /// Create every node in `nodes` as part of a batch, or refuse and change
+    /// nothing.
+    ///
+    /// The batch is required rather than optional because it is the only thing
+    /// that can say what "already live" means here. Records inside one effects
+    /// buffer are grouped by shape rather than ordered by id, so a create of
+    /// 500..600 may precede one of 0..500; judged against a boundary this graph
+    /// derives, the second is rejected — the derived boundary has advanced to
+    /// 100 — even though the buffer is legitimate. The batch carries the boundary
+    /// as it stood before any of that, which is the only one the whole buffer can
+    /// be judged against.
+    ///
+    /// Reading the boundary off the batch rather than taking it as a parameter of
+    /// its own is what stops a caller handing over a boundary that disagrees with
+    /// the batch it is handing over with it.
+    ///
+    /// A caller with no batch wants [`Self::create_allocated_nodes`], which is a
+    /// different question rather than this one with a piece missing: its ids came
+    /// from the allocator, so there is nothing to check.
     ///
     /// # Errors
     ///
-    /// [`NodeOpError::AlreadyLive`] for the lowest id it cannot create — one
-    /// already handed out and not freed. Refusing is the point: the body below adds to `node_count` and
-    /// subtracts from `reserved_node_count` unconditionally, so an already-live
-    /// id used to double-count silently and shift every later fresh id. A
-    /// caller cannot forget the check when the operation itself is the check.
+    /// [`IdSpaceError::AlreadyLive`], wrapped, for the lowest id it cannot
+    /// create — one already handed out and not freed. Refusing is the point:
+    /// [`Self::mark_nodes_live`] moves the counters unconditionally, so an
+    /// already-live id used to double-count silently and shift every later fresh
+    /// id. A caller cannot forget the check when the operation itself is the
+    /// check.
     ///
-    /// `first_unallocated` is the caller's rather than [`Self::first_unallocated_node_id`],
-    /// and it has to be: records inside one effects buffer are grouped by shape
-    /// rather than ordered by id, so a create of 500..600 may precede one of
-    /// 0..500. Judged against this graph's *live* mark, the second of those is
-    /// rejected — the mark has already advanced to 100 — even though the buffer
-    /// is legitimate. `apply_effects` freezes the mark at buffer entry for that
-    /// reason and passes it here.
+    /// [`NodeOpError::IdSpace`] if the ids do not fit the batch — see
+    /// [`crate::graph::id_space`].
     pub fn create_nodes(
         &mut self,
         nodes: &RoaringTreemap,
-        first_unallocated: u64,
+        id_space: &mut IdSpace,
     ) -> Result<(), NodeOpError> {
-        if let Some(live) = (nodes - &self.deleted_nodes)
-            .min()
-            .filter(|&id| id < first_unallocated)
-        {
-            return Err(NodeOpError::AlreadyLive(live));
-        }
+        // One call, checked and recorded together. The bin is this graph's half
+        // of "is it live" and it is handed over; the boundary is the batch's, and
+        // the batch keeps it. An id reaches the graph through this function or
+        // not at all, so nothing that creates a node can be added later and
+        // forget to account for it.
+        id_space.record_created(nodes, &self.deleted_nodes)?;
+        self.mark_nodes_live(nodes);
+        Ok(())
+    }
+
+    /// Move `nodes` from reserved to live, and size the matrices to hold them.
+    ///
+    /// What the two create paths have in common is this and only this — they
+    /// differ in what they check *before* it, not in what they do. Factoring the
+    /// check instead meant a boundary parameter with `0` standing for "do not
+    /// check", which is a value pretending to be a mode: it made the unchecked
+    /// path return a `Result` that could not be anything but `Ok`, and left the
+    /// reader to work out why.
+    fn mark_nodes_live(
+        &mut self,
+        nodes: &RoaringTreemap,
+    ) {
         self.node_count += nodes.len();
-        self.reserved_node_count -= nodes.len();
         self.deleted_nodes -= nodes;
 
         // Ensure capacity covers the highest node ID (effects replay may
@@ -1574,7 +1620,6 @@ impl Graph {
         }
 
         self.resize();
-        Ok(())
     }
 
     #[must_use]
@@ -2058,8 +2103,15 @@ impl Graph {
         &mut self,
         deleted_nodes: &RoaringTreemap,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        id_space: Option<&IdSpace>,
     ) -> Result<Vec<DeletedNodeLabel>, NodeOpError> {
-        self.refuse_undeletable(deleted_nodes)?;
+        // Both halves of "is this node live", and both belong to the id space:
+        // the bin's half needs only the bin, so it is asked whether or not there
+        // is a batch, and the boundary's half needs one.
+        IdSpace::refuse_recycled(deleted_nodes, &self.deleted_nodes)?;
+        if let Some(space) = id_space {
+            space.refuse_undeletable(deleted_nodes)?;
+        }
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
@@ -2426,18 +2478,49 @@ impl Graph {
         Ok(ids)
     }
 
-    /// Create relationships of a single type using flat arrays.
-    /// Avoids HashMap overhead while using individual GraphBLAS set calls.
-    pub fn create_relationships_bulk(
+    /// Create relationships this graph's own allocator issued.
+    ///
+    /// The counterpart of [`Self::create_allocated_nodes`], and for the same
+    /// reason: consuming the reservation belongs to the path that made one.
+    /// Ids arriving from an effects buffer were reserved on the *master*, so
+    /// [`Self::create_relationships_bulk`] leaves the counter alone and this
+    /// wrapper is what the write path calls.
+    pub fn create_allocated_relationships(
         &mut self,
         type_name: &Arc<String>,
         srcs: &[u64],
         dsts: &[u64],
         rel_ids: &[u64],
     ) {
+        self.reserved_relationship_count =
+            self.dec_reserved(self.reserved_relationship_count, srcs.len() as u64);
+        let _ = self.create_relationships_bulk(type_name, srcs, dsts, rel_ids, None);
+    }
+
+    /// Create relationships of a single type using flat arrays.
+    ///
+    /// Avoids HashMap overhead while using individual GraphBLAS set calls. Takes
+    /// ids from wherever the caller got them and consumes no reservation — the
+    /// write path wants [`Self::create_allocated_relationships`].
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError`], wrapped, when `id_space` is given and the ids do not fit
+    /// it — the relationship counterpart of what [`Self::create_nodes`] refuses.
+    pub fn create_relationships_bulk(
+        &mut self,
+        type_name: &Arc<String>,
+        srcs: &[u64],
+        dsts: &[u64],
+        rel_ids: &[u64],
+        id_space: Option<&mut IdSpace>,
+    ) -> Result<(), NodeOpError> {
+        if let Some(space) = id_space {
+            let ids: RoaringTreemap = rel_ids.iter().copied().collect();
+            space.record_created(&ids, &self.deleted_relationships)?;
+        }
         let count = srcs.len() as u64;
         self.relationship_count += count;
-        self.reserved_relationship_count -= count;
 
         for &id in rel_ids {
             if self.deleted_relationships.is_empty() {
@@ -2488,6 +2571,7 @@ impl Graph {
         let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
             .set_all::<true>(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+        Ok(())
     }
 
     /// Fold oversized delta-plus into the base for all shared matrices at
@@ -2614,26 +2698,6 @@ impl Graph {
         self.deleted_nodes.len()
     }
 
-    /// The first node id that has never been handed out.
-    ///
-    /// Ids below this are either live or sitting in the recycle bin; ids at or
-    /// above it are untouched. Derived, not stored — `reserve_node` computes the
-    /// next id the same way — which is exactly why a replica whose `node_count`
-    /// or bin has drifted from the primary's will start allocating ids the
-    /// primary would not, the moment it is promoted.
-    ///
-    /// **Not `max_node_id() + 1`**, though the arithmetic agrees whenever the
-    /// graph holds a live node. `max_node_id` returns a 0 *sentinel* for an
-    /// empty graph, which is indistinguishable from a graph whose highest id is
-    /// 0 — so a caller asking "has this id been handed out?" reads id 0 as used
-    /// on a graph that has never allocated anything. Substituting it made
-    /// `recreating_a_recycled_id_is_allowed` reject the very first
-    /// `CREATE_NODE` of id 0 with `NodeAlreadyLive`.
-    #[must_use]
-    pub fn first_unallocated_node_id(&self) -> u64 {
-        self.node_count + self.deleted_nodes.len()
-    }
-
     #[must_use]
     pub const fn deleted_nodes(&self) -> &RoaringTreemap {
         &self.deleted_nodes
@@ -2676,9 +2740,16 @@ impl Graph {
         &mut self,
         rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    ) -> Result<Vec<DeletedEdge>, String> {
+        id_space: Option<&IdSpace>,
+    ) -> Result<Vec<DeletedEdge>, NodeOpError> {
         if rels.is_empty() {
             return Ok(Vec::new());
+        }
+        // Both halves of "is this relationship live", exactly as the node side
+        // asks them: the bin needs no batch, the boundary needs one.
+        IdSpace::refuse_recycled(rels, &self.deleted_relationships)?;
+        if let Some(space) = id_space {
+            space.refuse_undeletable(rels)?;
         }
         let num_types = self.relationship_matrices.len();
 

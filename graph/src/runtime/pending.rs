@@ -1031,7 +1031,7 @@ impl Pending {
                     dsts.push(to.into());
                     ids.push(rel_id.into());
                 }
-                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids);
+                g.create_allocated_relationships(type_name, &srcs, &dsts, &ids);
             }
         }
         if !self.set_labels.is_empty() {
@@ -1101,7 +1101,13 @@ impl Pending {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             self.deleted_node_labels = g
                 .borrow_mut()
-                .delete_nodes(&self.deleted_nodes, &mut self.index_docs.node_removes)
+                .delete_nodes(
+                    &self.deleted_nodes,
+                    &mut self.index_docs.node_removes,
+                    // The write path allocates its own ids, so the id space is
+                    // dense by construction and there is no batch to validate.
+                    None,
+                )
                 .map_err(|e| e.to_string())?;
         }
         // Take relationship deletions BEFORE implicit edge processing
@@ -1140,7 +1146,13 @@ impl Pending {
         if !explicit_rels.is_empty() {
             let endpoints = g
                 .borrow_mut()
-                .delete_relationships(&explicit_rels, &mut self.index_docs.edge_removes)?;
+                .delete_relationships(
+                    &explicit_rels,
+                    &mut self.index_docs.edge_removes,
+                    // No batch: the write path allocated these ids itself.
+                    None,
+                )
+                .map_err(|e| e.to_string())?;
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.
             stats.borrow_mut().relationships_deleted += endpoints.len();

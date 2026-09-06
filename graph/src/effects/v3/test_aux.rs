@@ -62,8 +62,9 @@ pub(crate) fn with_edge(
     id: u64,
 ) {
     let mut graph = g.borrow_mut();
-    graph.add_reserved_relationship_count(1);
-    graph.create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id]);
+    graph
+        .create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id], None)
+        .expect("no batch, nothing to refuse");
 }
 
 /// One live node, labelled.
