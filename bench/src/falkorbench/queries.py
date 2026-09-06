@@ -612,16 +612,16 @@ QUERIES = [
     #
     # `edge create at 200k` measures the same create/delete round-trip as
     # `urel create delete`, three orders of magnitude further up the edge count.
-    # It DEPENDS on `bulk edges 200k` having run first: a name-filtered run that
-    # picks it alone measures it at 10k edges instead, quietly and without
-    # failing, exactly as `delete 100` depends on `create 100`. The pairing is
-    # held by a test.
+    # It DEPENDS on `bulk edges 200k` having run first, which `needs=` declares
+    # so that selecting it by name pulls the builder in. Without that a named
+    # run measures it at 10k edges instead, quietly and without failing.
     #
     # Both go last so the 200k edges cannot shift any other row, and the
     # measured row follows a large *create* rather than a large delete, so it
     # is not reading recovery from `write 1m` the way `create 100` once did.
     Q("bulk edges 200k",     True,  "UNWIND range(1, 200000) AS i CREATE (:Wide)-[:WIDE]->(:Wide)", 1),
-    Q("edge create at 200k", True,  "MATCH (a:Person {id: 1}), (b:Person {id: 2}) CREATE (a)-[r:WIDEX]->(b) WITH r DELETE r", 100),
+    Q("edge create at 200k", True,  "MATCH (a:Person {id: 1}), (b:Person {id: 2}) CREATE (a)-[r:WIDEX]->(b) WITH r DELETE r", 100,
+      needs=("bulk edges 200k",)),
 ]
 
 # Expected-error queries: run only in --once (coverage) mode, never timed.

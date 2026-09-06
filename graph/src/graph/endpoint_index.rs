@@ -214,16 +214,38 @@ impl<T: Endpoint> Paged<T> {
         self.len * size_of::<(T, T)>()
     }
 
-    /// Replace page `p` with a longer one, empty past what it already held.
+    /// Replace `page` with a longer one, empty past what it already held.
     fn regrow(
-        &mut self,
-        p: usize,
+        page: &mut Page<T>,
         slots: usize,
     ) {
         let mut next = vec![(T::EMPTY, T::EMPTY); slots];
-        let held = self.pages[p].len().min(slots);
-        next[..held].copy_from_slice(&self.pages[p][..held]);
-        self.pages[p] = Arc::from(next);
+        let held = page.len().min(slots);
+        next[..held].copy_from_slice(&page[..held]);
+        *page = Arc::from(next);
+    }
+
+    /// Build a tier of exactly `len` slots from `it`, one allocation per page.
+    ///
+    /// `promote` used to `push` each slot, which re-derived the page index and
+    /// re-checked the page count for every element of a tier it had already
+    /// sized. Filling each page from the iterator instead makes promotion one
+    /// `extend` per page.
+    fn from_slots<I: Iterator<Item = (T, T)>>(
+        mut it: I,
+        len: usize,
+    ) -> Self {
+        let mut pages = Vec::with_capacity(len.div_ceil(PAGE_SLOTS));
+        let mut left = len;
+        while left > 0 {
+            let n = left.min(PAGE_SLOTS);
+            let mut page: Vec<(T, T)> = Vec::with_capacity(n);
+            page.extend(it.by_ref().take(n));
+            debug_assert_eq!(page.len(), n, "iterator shorter than the stated length");
+            pages.push(Arc::from(page));
+            left -= n;
+        }
+        Self { pages, len }
     }
 
     /// Make the pages address at least `slots` positions.
@@ -242,22 +264,23 @@ impl<T: Endpoint> Paged<T> {
         let tail = slots - (want - 1) * PAGE_SLOTS;
 
         if self.pages.len() < want {
-            if let Some(last) = self.pages.len().checked_sub(1)
-                && self.pages[last].len() < PAGE_SLOTS
+            // The page that is about to stop being last has to be full first.
+            if let Some(last) = self.pages.last_mut()
+                && last.len() < PAGE_SLOTS
             {
-                self.regrow(last, PAGE_SLOTS);
+                Self::regrow(last, PAGE_SLOTS);
             }
-            while self.pages.len() + 1 < want {
-                self.pages.push(empty_page(PAGE_SLOTS));
-            }
+            // Grows only: this branch is `pages.len() < want`, so `want - 1` is
+            // never below the current length and `resize_with` cannot truncate.
+            self.pages.resize_with(want - 1, || empty_page(PAGE_SLOTS));
             self.pages.push(empty_page(tail));
             return;
         }
 
-        let last = want - 1;
-        if self.pages[last].len() < tail {
-            let grown = tail.max(self.pages[last].len() * 2).min(PAGE_SLOTS);
-            self.regrow(last, grown);
+        let last = self.pages.last_mut().expect("want >= 1, so a page exists");
+        if last.len() < tail {
+            let grown = tail.max(last.len() * 2).min(PAGE_SLOTS);
+            Self::regrow(last, grown);
         }
     }
 
@@ -276,16 +299,6 @@ impl<T: Endpoint> Paged<T> {
             self.pages[p] = Arc::from(self.pages[p].to_vec());
         }
         Arc::get_mut(&mut self.pages[p]).expect("unique after the copy above")
-    }
-
-    fn push(
-        &mut self,
-        value: (T, T),
-    ) {
-        self.ensure_pages(self.len + 1);
-        let at = self.len;
-        self.page_mut(at)[at % PAGE_SLOTS] = value;
-        self.len += 1;
     }
 }
 
@@ -332,19 +345,20 @@ fn promote<A: Endpoint, B: Endpoint>(
     if old.is_empty() {
         return;
     }
-    let mut merged: Paged<B> = Paged::default();
-    merged.ensure_pages(old.len() + into.len());
-    for (s, d) in old.iter() {
-        merged.push(if s.vacant() && d.vacant() {
+    // A slot is empty only when *both* endpoints are — `EMPTY` is a sentinel
+    // value of the field type, so a live edge may legitimately hold it in one
+    // endpoint. Widening reads through `get`/`put`, which would turn a narrow
+    // tier's sentinel into a real id at the wider width, so an empty slot is
+    // carried across as the wider tier's own sentinel instead.
+    let widened = old.iter().map(|(s, d)| {
+        if s.vacant() && d.vacant() {
             (B::EMPTY, B::EMPTY)
         } else {
             (B::put(s.get()), B::put(d.get()))
-        });
-    }
-    for i in 0..into.len() {
-        merged.push(into.at(i));
-    }
-    *into = merged;
+        }
+    });
+    let total = old.len() + into.len();
+    *into = Paged::from_slots(widened.chain((0..into.len()).map(|i| into.at(i))), total);
 }
 
 /// Run `$body` for each tier in id order, with `$v` bound to `&Option<Paged<_>>`.
@@ -761,7 +775,7 @@ impl<T: Endpoint> TierOps for Paged<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Endpoint, EndpointIndex, U24};
+    use super::{Endpoint, EndpointIndex, PAGE_SLOTS, U24};
 
     /// Each width has to keep its all-ones value spare, or a legitimate pair
     /// reads back as a deleted slot. The boundaries are where an off-by-one
@@ -1043,6 +1057,41 @@ mod tests {
         }
     }
 
+    /// Promotion across a page boundary.
+    ///
+    /// `from_slots` fills whole `PAGE_SLOTS` pages and `at` divides by the same
+    /// constant; a mistake in either is invisible while the promoted tier fits
+    /// in one page, which is true of every other test in this file. Halving the
+    /// page size inside `from_slots` passes all of them and fails this.
+    #[test]
+    fn promoting_a_tier_larger_than_a_page_preserves_every_slot() {
+        let n = u64::try_from(PAGE_SLOTS * 2 + 37).unwrap();
+        let mut ix = EndpointIndex::default();
+        for e in 0..n {
+            ix.set(e, e % 60_000, (e + 1) % 60_000);
+        }
+        // A tombstone in the first page and one past the boundary, so the
+        // empty-slot carry is exercised on both sides of it.
+        let past = u64::try_from(PAGE_SLOTS).unwrap() + 11;
+        ix.clear(5);
+        ix.clear(past);
+
+        // Reusing a low id with endpoints too wide for `u16` promotes the
+        // whole tier into `u32`, rewriting every slot at the new width.
+        ix.set(1, 5_000_000_000, 5_000_000_001);
+
+        assert_eq!(ix.get(1), Some((5_000_000_000, 5_000_000_001)));
+        assert_eq!(ix.get(5), None, "tombstone before the page boundary");
+        assert_eq!(ix.get(past), None, "tombstone after the page boundary");
+        for e in (0..n).filter(|e| *e != 1 && *e != 5 && *e != past) {
+            assert_eq!(
+                ix.get(e),
+                Some((e % 60_000, (e + 1) % 60_000)),
+                "edge {e} did not survive promotion"
+            );
+        }
+    }
+
     /// A small tier allocates the slots it uses, not a whole page.
     ///
     /// The first cut of the paged layout gave every page exactly `PAGE_SLOTS`
@@ -1164,7 +1213,7 @@ mod cow_bench {
         let seq_i = read_instr().zip(i0).map(|(a, b)| a - b);
         std::hint::black_box(acc);
 
-        // Random: the page-pointer array is 8 bytes per 4096 slots, so for this
+        // Random: the page-pointer array is 16 bytes per 4096 slots, so for this
         // index it is ~20 KB and stays cached even when the slots do not. That
         // is the case where an extra indirection would hurt if it were going to.
         let reps = 10_000_000u64;

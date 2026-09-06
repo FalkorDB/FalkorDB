@@ -90,6 +90,44 @@ class TestQuerySet:
         assert "edge create at 200k" in names
         assert names.index("bulk edges 200k") < names.index("edge create at 200k")
 
+        # Declared, not just ordered: selection has to pull the builder in.
+        measured = next(q for q in qs.QUERIES if q.name == "edge create at 200k")
+        assert "bulk edges 200k" in measured.needs
+
+    def test_named_selection_pulls_in_prerequisites(self):
+        """Selecting the measured row alone must still run its builder.
+
+        `_select` keeps only what is named, so without `needs` a run picking
+        `edge create at 200k` measures the same write against SETUP's ~10k edges
+        and reports a plausible, wrong number -- the failure mode has no symptom.
+        """
+        from falkorbench.cli import _select
+
+        chosen = [q.name for q in _select(("edge create at 200k",))]
+        assert chosen == ["bulk edges 200k", "edge create at 200k"]
+
+        # And an unrelated selection is not dragged into building 200k edges.
+        assert [q.name for q in _select(("RETURN 1",))] == ["RETURN 1"]
+
+    def test_edge_rows_come_after_the_sized_writes(self):
+        """The edge rows must not slip in front of `write 1m`.
+
+        `test_graph_inflating_queries_stay_last` only proves the inflating rows
+        form a tail; it still passes with the edge rows first. They would then
+        run straight after the 1M-node delete and measure recovery from it
+        rather than an edge write -- the confound the ascending-magnitude rule
+        exists to prevent.
+        """
+        names = [q.name for q in qs.QUERIES]
+        sized_last = max(
+            i
+            for i, q in enumerate(qs.QUERIES)
+            if any(q.name.startswith(p) for p in ("write ", "create ", "delete "))
+            and q.name.split()[-1][0].isdigit()
+        )
+        assert names.index("bulk edges 200k") > sized_last
+        assert names.index("edge create at 200k") > sized_last
+
     def test_sized_row_guard_ignores_the_edge_rows(self):
         """The ascending-magnitude rule is about node churn, not these two.
 
