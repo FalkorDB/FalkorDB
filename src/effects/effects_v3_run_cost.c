@@ -82,6 +82,9 @@
 // how many ids share one bucket
 #define BUCKET_WIDTH_BITS 16
 
+// an id's offset within its bucket
+#define BUCKET_OFFSET_MASK ((uint64_t)0xFFFF)
+
 // what one bucket's body costs, and whether it chose a run store
 //
 // array up to 4,096 ids and bitset past it - which is exactly a min, because
@@ -187,17 +190,24 @@ void EffectsV3Run_AddRange
 		return;
 	}
 
-	uint64_t end = base + len - 1;
+	// grouped as base + (len - 1), not base + len - 1. The two agree for every
+	// input, but the second computes base + len first, which wraps through zero
+	// for a range ending at the top of the id space and only lands on the right
+	// answer via the following subtraction. Grouping it this way keeps the
+	// arithmetic inside the range's own validity condition - a well-formed
+	// ascending range satisfies len - 1 <= UINT64_MAX - base, which is exactly
+	// the statement that this addition does not overflow
+	uint64_t end = base + (len - 1);
 	uint64_t lo  = base;
 
 	while(true) {
 		uint64_t bucket = lo >> BUCKET_WIDTH_BITS;
 
-		// the last id this bucket can hold. Computed without overflowing on
-		// the topmost bucket, where (bucket + 1) << 16 would wrap to zero
-		uint64_t bucket_end = (bucket == (UINT64_MAX >> BUCKET_WIDTH_BITS))
-			? UINT64_MAX
-			: (((bucket + 1) << BUCKET_WIDTH_BITS) - 1);
+		// the last id this bucket can hold: lo with its low bits filled in.
+		// Exact for every bucket including the topmost, and it says what it
+		// means - a bucket is a fixed slice of the id space, so its end is
+		// just its start with the offset saturated
+		uint64_t bucket_end = lo | BUCKET_OFFSET_MASK;
 
 		uint64_t piece_end = (end < bucket_end) ? end : bucket_end;
 		uint64_t ids       = piece_end - lo + 1;
@@ -230,6 +240,13 @@ void EffectsV3Run_AddRange
 		}
 
 		// guard the increment as well: piece_end == UINT64_MAX would wrap
+		// test for the end BEFORE advancing rather than at the top of the loop.
+		// A range reaching UINT64_MAX makes piece_end + 1 wrap to zero, and a
+		// `while (lo <= end)` condition would then restart from the bottom of
+		// the id space and never terminate. Nothing to do with overflow being
+		// trapped - it is defined and silent on unsigned in C - the wrapped
+		// value is simply a valid loop index, which is what makes it a hang
+		// rather than a fault
 		if(piece_end >= end) {
 			break;
 		}
