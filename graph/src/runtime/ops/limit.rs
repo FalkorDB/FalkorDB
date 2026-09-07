@@ -33,6 +33,11 @@ pub struct LimitOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     remaining: usize,
+    /// True when the operator was constructed with `LIMIT 0`. Tracked
+    /// separately from `remaining` so a positive limit that has been fully
+    /// consumed still terminates immediately instead of re-entering the
+    /// zero-limit path and pulling an extra child batch.
+    limit_zero: bool,
     /// For LIMIT 0, we still need to pull one batch from the child to
     /// execute any side effects and preserve output schema, then return
     /// an empty batch. This flag tracks whether we've done that.
@@ -41,6 +46,7 @@ pub struct LimitOp<'a> {
 }
 
 impl<'a> LimitOp<'a> {
+    /// Creates a limit operator yielding at most `limit` active rows.
     pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -51,6 +57,7 @@ impl<'a> LimitOp<'a> {
             runtime,
             child,
             remaining: limit,
+            limit_zero: limit == 0,
             limit_zero_emitted: false,
             idx,
         }
@@ -62,27 +69,32 @@ impl<'a> LimitOp<'a> {
 impl<'a> Iterator for LimitOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
+    /// Yields the next batch, trimmed to the remaining limit window.
     fn next(&mut self) -> Option<Self::Item> {
         // Special handling for LIMIT 0: we must still pull one batch from
         // the child to execute any side effects (e.g., pending mutations in
         // write queries) and to preserve the output schema. We return an
-        // empty batch once, then exhaust.
-        if self.remaining == 0 {
+        // empty batch once, then exhaust. Gated on the construction-time
+        // `limit_zero` flag so an exhausted positive limit keeps returning
+        // `None` immediately without consuming another child batch.
+        if self.limit_zero {
             if !self.limit_zero_emitted {
                 self.limit_zero_emitted = true;
                 // Pull one batch from child to execute side effects, then
                 // return an empty batch with the same schema.
-                if let Some(child_result) = self.child.next() {
-                    let mut batch = child_result?;
-                    // Trim to 0 active rows while preserving schema.
-                    batch.set_selection(Vec::new());
-                    return Some(Ok(batch));
-                }
-                // Child yielded nothing — return empty batch from default.
-                let mut batch = self.runtime.default_batch();
+                let mut batch = match self.child.next() {
+                    Some(Ok(batch)) => batch,
+                    Some(Err(error)) => return Some(Err(error)),
+                    None => return None,
+                };
+                // Trim to 0 active rows while preserving schema.
                 batch.set_selection(Vec::new());
                 return Some(Ok(batch));
             }
+            return None;
+        }
+
+        if self.remaining == 0 {
             return None;
         }
 
