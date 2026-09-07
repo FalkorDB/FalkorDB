@@ -351,6 +351,9 @@ void EffectsV3_RecordsFree
 // A truncation corpus needs decode alone, so it can run a PR earlier than a
 // round trip.
 
+// EffectsV3_Decode and EffectsV3_RecordsFree are defined
+#define EFFECTS_V3_DECODE_READY 1
+
 // EffectsV3_ENCODE_READY is defined by the writer when EffectsV3_Encode lands
 
 #if defined(EFFECTS_V3_DECODE_READY) && defined(EFFECTS_V3_ENCODE_READY)
