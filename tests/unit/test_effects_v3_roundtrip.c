@@ -12,34 +12,49 @@
 // inspecting a field. That is deliberate -- it means this harness cannot be
 // quietly bent to agree with either half's idea of the record layout.
 //
-// GATING: the seam is declared on the wire-primitives branch but EffectsV3_Decode
-// / _Encode / _RecordsFree are not defined yet, so linking this in now would
-// break `make unit-tests` for everyone. The bodies are therefore compiled only
-// when EFFECTS_V3_CODEC_READY is defined, which the reader's decode PR turns on
-// (the intended home for the define is effects_v3.h, alongside the contract it
-// describes). Until then these report as skips, not as passes.
+// GATING. The seam is declared on the wire-primitives branch, but linking a
+// harness against an undefined entry point would break `make unit-tests` for
+// everyone, so each test compiles only once the half it needs exists:
+//
+//   EFFECTS_V3_DECODE_READY   the reader's decode PR defines it
+//   EFFECTS_V3_ENCODE_READY   the writer's encode PR defines it
+//
+// Both live in effects_v3.h alongside the contract they describe, so they flip
+// exactly when the implementations do. One flag with two owners could not work:
+// defining it on decode alone would link the round trip against an undefined
+// EffectsV3_Encode, which is the failure this gate exists to prevent.
+//
+// The truncation corpus and the rejection cases need only decode, so they land
+// a PR earlier than the round trip. Truncation's one encode-dependent clause --
+// that an ACCEPTED prefix re-encodes to itself -- is gated separately, and the
+// test says so when it is running without that half.
 
 #include "tests/unit/effects_v3_corpus.h"
 
-#ifdef EFFECTS_V3_CODEC_READY
+#if defined(EFFECTS_V3_DECODE_READY) && defined(EFFECTS_V3_ENCODE_READY)
+#define EFFECTS_V3_CODEC_READY 1
+#endif
+
+#ifdef EFFECTS_V3_DECODE_READY
 #include "src/effects/effects_v3.h"
 #endif
 
 #include "acutest.h"
 
-#ifndef EFFECTS_V3_CODEC_READY
+// a macro rather than a function so that an unused skip cannot warn
+#define V3_SKIP(what, needs)                                                  \
+	do {                                                                      \
+		TEST_CASE("pending " needs);                                          \
+		TEST_MSG("skipped: %s needs %s, declared in src/effects/effects_v3.h " \
+				"but not yet defined", what, needs);                          \
+		TEST_ASSERT(1);                                                       \
+	} while(0)
 
-static void _skip(const char *what) {
-	TEST_MSG("skipped: %s needs EffectsV3_Decode, which is declared in "
-			"src/effects/effects_v3.h but not yet defined. Define "
-			"EFFECTS_V3_CODEC_READY once the reader's decode lands.", what);
-	TEST_CASE("pending the reader's decode");
-	TEST_ASSERT(1);
-}
+#ifndef EFFECTS_V3_DECODE_READY
 
-void test_effectsV3_roundTrip(void)   { _skip("the round-trip harness");   }
-void test_effectsV3_truncation(void)  { _skip("the truncation corpus");   }
-void test_effectsV3_rejections(void)  { _skip("the rejection cases");     }
+void test_effectsV3_roundTrip(void)  { V3_SKIP("the round-trip harness", "EffectsV3_Decode"); }
+void test_effectsV3_truncation(void) { V3_SKIP("the truncation corpus",  "EffectsV3_Decode"); }
+void test_effectsV3_rejections(void) { V3_SKIP("the rejection cases",    "EffectsV3_Decode"); }
 
 #else
 
@@ -54,6 +69,8 @@ void test_effectsV3_rejections(void)  { _skip("the rejection cases");     }
 // read every field one width narrow, write it back one width narrow, and pass
 // all of its own tests. That is the failure that segfaulted C in
 // AttributeSet_Update when it was handed a Rust buffer.
+#ifdef EFFECTS_V3_CODEC_READY
+
 static void _round_trip(const EffectsV3CorpusEntry *e) {
 	EffectsV3Fixture f = EffectsV3Corpus_Load(e->name);
 	TEST_ASSERT_(f.buf != NULL, "%s: %s", e->name, f.err);
@@ -109,6 +126,14 @@ void test_effectsV3_roundTrip(void) {
 		_round_trip(EFFECTS_V3_CORPUS + i);
 	}
 }
+
+#else
+
+void test_effectsV3_roundTrip(void) {
+	V3_SKIP("the round-trip harness", "EffectsV3_Encode");
+}
+
+#endif  // EFFECTS_V3_CODEC_READY
 
 //------------------------------------------------------------------------------
 // truncation
@@ -166,7 +191,10 @@ void test_effectsV3_truncation(void) {
 				TEST_ASSERT_(records != NULL,
 						"%s[..%zu]: OK with no records", e->name, len);
 
-				// an accepted prefix must reproduce itself
+#ifdef EFFECTS_V3_ENCODE_READY
+				// an accepted prefix must reproduce itself -- the clause that
+				// stops a permissive decoder from passing, and the only part of
+				// this test that needs the encoder
 				EffectsBuffer *eb = EffectsBuffer_New();
 				if(EffectsV3_Encode(records, eb)) {
 					size_t n = 0;
@@ -182,6 +210,7 @@ void test_effectsV3_truncation(void) {
 							e->name, len);
 				}
 				EffectsBuffer_Free(eb);
+#endif
 				EffectsV3_RecordsFree(records);
 			} else {
 				TEST_ASSERT_(records == NULL,
@@ -199,8 +228,14 @@ void test_effectsV3_truncation(void) {
 		EffectsV3Corpus_Free(&f);
 	}
 
-	TEST_MSG("%zu prefixes decoded, %zu accepted as valid shorter payloads",
-			prefixes, accepted);
+	TEST_MSG("%zu prefixes decoded, %zu accepted as valid shorter payloads%s",
+			prefixes, accepted,
+#ifdef EFFECTS_V3_ENCODE_READY
+			" and re-encoded"
+#else
+			" (re-encode check off: no encoder yet)"
+#endif
+			);
 	TEST_ASSERT(prefixes > 0);
 }
 
@@ -231,39 +266,56 @@ void test_effectsV3_rejections(void) {
 	const size_t OFF_FLAGS   = 1;
 	const size_t OFF_SEG_HDR = 16;
 
+	// seg_repeat has the same shape, so its header is at the same offset:
+	// 2 preamble + 4 opcode + 4 count + 2 label count + 4 segment count.
+	//
+	// ONLY BIT 7 IS RESERVED. Bit 6 is `descending`, added in 08dca4a1e after
+	// this corpus was cut (graph/src/effects/v3/id_list.rs:518-519,
+	// SEG_DESCENDING = 0b0100_0000, SEG_RESERVED = 0b1000_0000). A descending
+	// Range reads its base as the first and HIGHEST id, and Ascending's blob is
+	// a set, so the two directions differ in exactly that bit. Setting bit 6 on
+	// a Range or an Ascending is therefore legal and must NOT be asserted as
+	// malformed -- there are no descending fixtures yet, so this corpus cannot
+	// exercise the accepting side of that rule at all.
+	//
+	// Repeat is the exception: one id however many times has no direction, so
+	// the bit is rejected there rather than ignored (id_list.rs:721,
+	// `SEG_KIND_REPEAT if descending => Err(...)`). That one needs no fixture,
+	// which is why it is pinned here.
 	struct {
+		const char     *fixture;   // case to mutate
 		const char     *what;      // what is being mutated
 		size_t          off;       // byte to change
 		unsigned char   val;       // value to write
 		EffectsV3Status expect;    // required status
 	} cases[] = {
-		{ "a version above what this build reads",
+		{ "seg_range", "a version above what this build reads",
 		  OFF_VERSION, 0x04, EFFECTS_V3_UNSUPPORTED_VERSION },
 
-		{ "a version below v3 reaching the v3 decoder",
+		{ "seg_range", "a version below v3 reaching the v3 decoder",
 		  OFF_VERSION, 0x02, EFFECTS_V3_UNSUPPORTED_VERSION },
 
-		{ "a flag bit outside the mask we understand",
+		{ "seg_range", "a flag bit outside the mask we understand",
 		  OFF_FLAGS, 0x80, EFFECTS_V3_UNSUPPORTED_FLAGS },
 
-		// the spec makes bits 6-7 of a segment header reserved and says they
-		// MUST be rejected if set. a decoder that masks them off instead will
-		// decode this buffer happily, which is why this asserts MALFORMED and
-		// not merely "not OK"
-		{ "reserved bits 6-7 of a segment header set",
-		  OFF_SEG_HDR, 0xC0, EFFECTS_V3_MALFORMED },
-
-		{ "reserved bit 6 alone",
-		  OFF_SEG_HDR, 0x40, EFFECTS_V3_MALFORMED },
-
-		{ "reserved bit 7 alone",
+		// bit 7 is reserved and MUST be rejected if set. a decoder that masks
+		// it off instead decodes these happily, which is why this asserts
+		// MALFORMED and not merely "not OK"
+		{ "seg_range", "reserved bit 7 set on a Range header",
 		  OFF_SEG_HDR, 0x80, EFFECTS_V3_MALFORMED },
+
+		{ "seg_repeat", "reserved bit 7 set on a Repeat header",
+		  OFF_SEG_HDR, 0x82, EFFECTS_V3_MALFORMED },
+
+		// the descending bit on a kind that has no direction
+		{ "seg_repeat", "the descending bit on a Repeat",
+		  OFF_SEG_HDR, 0x42, EFFECTS_V3_MALFORMED },
 	};
 
 	for(size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		TEST_CASE(cases[i].what);
 
-		EffectsV3Fixture f = EffectsV3Corpus_Load("seg_range");
+		EffectsV3Fixture f = EffectsV3Corpus_Load(cases[i].fixture);
 		TEST_ASSERT_(f.buf != NULL, "%s", f.err);
 		if(f.buf == NULL) continue;
 
@@ -291,20 +343,34 @@ void test_effectsV3_rejections(void) {
 	}
 }
 
-#endif  // EFFECTS_V3_CODEC_READY
+#endif  // EFFECTS_V3_DECODE_READY
 
 // acutest has no notion of a skipped test, so the gated state says so in the
-// test's NAME. Without this the run prints three [ OK ] lines and reads as
-// three passing conformance tests, which is the opposite of true.
-#ifdef EFFECTS_V3_CODEC_READY
-#define V3_TEST(name) "EffectsV3." name
+// test's NAME. Without this the run prints [ OK ] lines that read as passing
+// conformance tests, which is the opposite of true. The two halves are named
+// separately because they land in different PRs, and truncation is marked
+// PARTIAL rather than skipped in the window where decode exists and encode does
+// not: it really is testing something then, just not its strongest clause.
+#ifdef EFFECTS_V3_DECODE_READY
+#define V3_DEC_SUFFIX ""
 #else
-#define V3_TEST(name) "EffectsV3." name " (SKIPPED: no codec yet)"
+#define V3_DEC_SUFFIX " (SKIPPED: no decode yet)"
+#endif
+
+#if !defined(EFFECTS_V3_DECODE_READY)
+#define V3_RT_SUFFIX    " (SKIPPED: no decode yet)"
+#define V3_TRUNC_SUFFIX " (SKIPPED: no decode yet)"
+#elif !defined(EFFECTS_V3_ENCODE_READY)
+#define V3_RT_SUFFIX    " (SKIPPED: no encode yet)"
+#define V3_TRUNC_SUFFIX " (PARTIAL: no re-encode check)"
+#else
+#define V3_RT_SUFFIX    ""
+#define V3_TRUNC_SUFFIX ""
 #endif
 
 TEST_LIST = {
-	{ V3_TEST("roundTrip"),   test_effectsV3_roundTrip  },
-	{ V3_TEST("truncation"),  test_effectsV3_truncation },
-	{ V3_TEST("rejections"),  test_effectsV3_rejections },
+	{ "EffectsV3.roundTrip"  V3_RT_SUFFIX,    test_effectsV3_roundTrip  },
+	{ "EffectsV3.truncation" V3_TRUNC_SUFFIX, test_effectsV3_truncation },
+	{ "EffectsV3.rejections" V3_DEC_SUFFIX,   test_effectsV3_rejections },
 	{ NULL, NULL }
 };

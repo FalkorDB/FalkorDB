@@ -62,6 +62,26 @@ Payloads are uncompressed. Compression is an encoder choice — a level, and a
 zstd version — and pinning one here would bind the far side to a compressor
 rather than to a format.
 
+## A known gap: no descending segments
+
+This corpus was cut before the segment header gained a direction bit, so it
+does not exercise it at all. As of `08dca4a1e` on `feat/effects-v3`
+(`graph/src/effects/v3/id_list.rs:518-519`):
+
+- bit 6 is `descending`, **not** reserved. A descending `Range` reads its base
+  as the first and *highest* id; an `Ascending` blob is a set and has no
+  direction, so the two directions of the same ids differ in exactly that bit.
+- bit 7 alone is reserved and must be rejected.
+- `Repeat` has no direction, so the bit is rejected there rather than ignored
+  (`id_list.rs:721`).
+
+So there are no `Range` or `Ascending` fixtures with bit 6 set, and the
+accepting side of that rule is unpinned by these files. The rejecting side
+needs no fixture and is covered in `tests/unit/test_effects_v3_roundtrip.c`,
+which mutates `seg_repeat`'s header. A regeneration should add an ascending and
+a descending form of the same ids, since that pair is what makes the bit's
+meaning checkable rather than merely present.
+
 ## Cases
 
 | case | records | bytes |
