@@ -15,6 +15,7 @@ const char *EffectsV3Status_ToString
 		case EFFECTS_V3_MALFORMED:            return "malformed" ;
 		case EFFECTS_V3_UNSUPPORTED_VERSION:  return "unsupported version" ;
 		case EFFECTS_V3_UNSUPPORTED_FLAGS:    return "unsupported flags" ;
+		case EFFECTS_V3_UNIMPLEMENTED:        return "unimplemented record" ;
 		default:                              return "unknown" ;
 	}
 }

@@ -71,8 +71,16 @@ typedef struct EffectsV3Records EffectsV3Records;
 // why a buffer was refused
 //
 // separated rather than collapsed to a bool so a test can pin WHICH check
-// fired - notably that a segment header with its reserved bits 6-7 set is
-// rejected as malformed rather than silently masked off
+// fired - notably that a segment header setting the reserved bit is rejected
+// as malformed rather than silently masked off
+//
+// UNIMPLEMENTED is deliberately distinct from MALFORMED. A record this build
+// has not implemented yet is not a corrupt one, and reporting it as corrupt
+// sends an operator hunting a wire problem that does not exist. It is still a
+// refusal - the buffer is rejected and the caller treats it as divergence,
+// because silently skipping a record it cannot apply is data loss. It exists
+// so the log names the real cause while records 11-14 are outstanding, and it
+// becomes unreachable once they land.
 typedef enum {
 	EFFECTS_V3_OK = 0,             // decoded cleanly
 	EFFECTS_V3_TRUNCATED,          // ran out of bytes mid-field
@@ -83,6 +91,8 @@ typedef enum {
 	EFFECTS_V3_UNSUPPORTED_VERSION,// version byte above what this build reads
 	EFFECTS_V3_UNSUPPORTED_FLAGS,  // a flag bit outside the mask we understand,
 	                               // e.g. compression before zstd is vendored
+	EFFECTS_V3_UNIMPLEMENTED,      // a well-formed record this build does not
+	                               // implement yet
 } EffectsV3Status;
 
 // human readable form of a status, for logs and test failures
