@@ -82,6 +82,39 @@ which mutates `seg_repeat`'s header. A regeneration should add an ascending and
 a descending form of the same ids, since that pair is what makes the bit's
 meaning checkable rather than merely present.
 
+## A second known gap: the segment header's width fields
+
+A segment header packs a kind, a value width code and a count width code. Only
+one fixture in this corpus exercises a non-zero width code, so most of that
+layout is pinned by a single case. Measured across every id-carrying fixture:
+
+| field | codes present | where |
+| --- | --- | --- |
+| value width | `0` (1 byte), `1` (2 bytes) | code `1` **only** in `collapse_below` |
+| count width | `0` (1 byte) only | nowhere else |
+
+`collapse_below` earns that on its own: 17 of its 18 segments carry bases of
+1024, 2048, 3072 and up, which need two bytes, so their headers are `0x04`
+rather than `0x00`.
+
+Two consequences for anyone taking a subset or reading a green run:
+
+- **A subset without `collapse_below` does not pin the header layout.** Every
+  `seg_*` fixture has one-byte ids, so both width codes are zero and swapping
+  the two shifts moves a zero onto a zero. The writer found this by breaking
+  their encoder exactly that way: all the `seg_*` cases still passed. Picking
+  the obviously-segment-shaped fixtures for a quick check is the natural move
+  and it silently drops this coverage.
+- **It has to be `collapse_below` specifically, not "a collapse case".**
+  `collapse_above` is a single `Ascending` segment, which carries a `u32`
+  blob length and no width fields at all.
+
+And what no fixture covers: value width codes `2` and `3` (four- and
+eight-byte ids) and any non-zero count width. A wrong width table for the
+larger sizes, or a count-width bug of any kind, passes this corpus
+unchallenged. A regeneration should add a case with ids past 2^32 and one with
+a count past 255.
+
 ## Cases
 
 | case | records | bytes |
