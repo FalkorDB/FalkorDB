@@ -8,6 +8,7 @@
 #include "effects.h"
 #include "../util/arr.h"
 #include "effects_internal.h"
+#include "effects_v3.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
@@ -725,6 +726,33 @@ bool Effects_Apply
 		// replica/primary out of sync
 		fclose (stream) ;
 		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// v3 is decoded whole, not streamed
+	//--------------------------------------------------------------------------
+	//
+	// v1 and v2 walk the buffer straight into the graph. v3 splits decode from
+	// apply (see effects_v3.h): the payload carries a flags byte the older
+	// versions have no room for, and decode returns a record model as a plain
+	// value so it can be round-tripped and fuzzed without a graph. So the v3
+	// branch takes the whole buffer rather than the stream.
+	if (version == 3) {
+		fclose (stream) ;
+
+		EffectsV3Records *records = NULL ;
+		EffectsV3Status status = EffectsV3_Decode (effects_buff, l, &records) ;
+
+		if (status != EFFECTS_V3_OK) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT v3 payload refused: %s",
+					EffectsV3Status_ToString (status)) ;
+			return false ;
+		}
+
+		bool applied = EffectsV3_Apply (gc, records) ;
+		EffectsV3_RecordsFree (records) ;
+		return applied ;
 	}
 
 	bool ok = true ;
