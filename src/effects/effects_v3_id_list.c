@@ -289,7 +289,15 @@ void EffectsV3IdListBuilder_Push
 
 	if(last != NULL) {
 		if(last->kind == EFFECTS_V3_SEG_RANGE) {
+			// "is this the id one past the end?" - a question with no answer at
+			// the top of the id space, where base + len leaves it. The wrap is
+			// defined in C rather than a trap, which makes it worse here than
+			// undefined: base = UINT64_MAX, len = 1 computes 0, so pushing id 0
+			// after the highest id extends the range instead of starting a new
+			// segment, and the result claims an id that does not exist and
+			// reports max below min. So the sum is only asked for when it exists
 			if(!last->descending &&
+			   last->range.base <= UINT64_MAX - (uint64_t)last->range.len &&
 			   id == last->range.base + (uint64_t)last->range.len) {
 				// one more consecutive id: every bulk create, every
 				// delete-by-label, from first push to last
@@ -340,7 +348,11 @@ void EffectsV3IdListBuilder_Push
 	   !last->descending && last->range.len == 1) {
 		uint64_t base = last->range.base;
 
-		if(id + 1 == base) {
+		// the mirror question - "is this the id one BELOW base?" - and it has no
+		// answer when base is 0. Asked as id + 1 == base it wraps instead:
+		// pushing UINT64_MAX after id 0 computes 0 and rewrites the segment
+		// descending from base 0, which then steps below the id space
+		if(base > 0 && id == base - 1) {
 			// it steps down: the same payload, read the other way
 			last->descending = true;
 			last->range.len  = 2;
