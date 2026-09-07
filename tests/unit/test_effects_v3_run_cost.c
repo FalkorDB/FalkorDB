@@ -211,6 +211,36 @@ void test_effectsV3RunCost_bucketSplitCountsRuns(void) {
 			EffectsV3Run_BitmapBytes(&split), EffectsV3Run_BitmapBytes(&one));
 }
 
+// a range reaching the very top of the id space terminates
+//
+// AddRange walks bucket by bucket and advances with piece_end + 1, which wraps
+// to zero once piece_end is UINT64_MAX. That wrap is defined on unsigned in C,
+// so it is not a fault - it is a valid loop index, and a loop condition tested
+// after advancing would restart at the bottom of the id space and hang. This
+// test is here because a hang is the one failure a size assertion cannot show.
+void test_effectsV3RunCost_topOfIdSpaceTerminates(void) {
+	EffectsV3Run run;
+
+	// the last two ids in existence
+	EffectsV3Run_Restart(&run);
+	EffectsV3Run_AddRange(&run, UINT64_MAX - 1, 2);
+	TEST_ASSERT_(EffectsV3Run_BitmapBytes(&run) > 0,
+			"a range at the top of the id space should size, not hang");
+
+	// a single id at the very top
+	EffectsV3Run_Restart(&run);
+	EffectsV3Run_AddRange(&run, UINT64_MAX, 1);
+	TEST_ASSERT_(EffectsV3Run_BitmapBytes(&run) > 0,
+			"the topmost single id should size");
+
+	// one that ends exactly on a bucket boundary, so piece_end == end on the
+	// last iteration rather than short of it
+	EffectsV3Run_Restart(&run);
+	EffectsV3Run_AddRange(&run, 65530, 6);
+	TEST_ASSERT_(EffectsV3Run_BitmapBytes(&run) > 0,
+			"a range ending exactly on a bucket boundary should size");
+}
+
 TEST_LIST = {
 	{ "EffectsV3RunCost:predictsRoaringSize",
 		test_effectsV3RunCost_predictsRoaringSize },
@@ -222,5 +252,7 @@ TEST_LIST = {
 		test_effectsV3RunCost_declineIsNotFinal },
 	{ "EffectsV3RunCost:bucketSplitCountsRuns",
 		test_effectsV3RunCost_bucketSplitCountsRuns },
+	{ "EffectsV3RunCost:topOfIdSpaceTerminates",
+		test_effectsV3RunCost_topOfIdSpaceTerminates },
 	{ NULL, NULL }
 };
