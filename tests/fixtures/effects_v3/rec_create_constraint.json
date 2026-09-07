@@ -1,0 +1,18 @@
+{
+  "case": "rec_create_constraint",
+  "version": 3,
+  "flags": 0,
+  "bytes": 53,
+  "records": [
+    {
+      "opcode": 13,
+      "record": "CREATE_CONSTRAINT",
+      "constraint_type": "unique",
+      "entity_type": 1,
+      "status": "operational",
+      "label_id": 3,
+      "label": "Person",
+      "props": ["12=name"]
+    }
+  ]
+}

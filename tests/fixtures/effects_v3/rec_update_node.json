@@ -1,0 +1,17 @@
+{
+  "case": "rec_update_node",
+  "version": 3,
+  "flags": 0,
+  "bytes": 88,
+  "records": [
+    {
+      "opcode": 1,
+      "record": "UPDATE_NODE",
+      "count": 3,
+      "ids": ["1", "2", "3"],
+      "labels": ["1"],
+      "attr_ids": ["7", "9"],
+      "rows": ["int:1", "string:a", "null", "bool:true", "float:0.25", "int:-9"]
+    }
+  ]
+}

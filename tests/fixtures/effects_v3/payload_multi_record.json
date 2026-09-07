@@ -1,0 +1,37 @@
+{
+  "case": "payload_multi_record",
+  "version": 3,
+  "flags": 0,
+  "bytes": 134,
+  "records": [
+    {
+      "opcode": 9,
+      "record": "ADD_SCHEMA",
+      "schema_type": 0,
+      "id": 0,
+      "name": "N"
+    },
+    {
+      "opcode": 10,
+      "record": "ADD_ATTRIBUTE",
+      "id": 0,
+      "name": "p"
+    },
+    {
+      "opcode": 3,
+      "record": "CREATE_NODE",
+      "count": 4,
+      "ids": ["1", "2", "3", "4"],
+      "labels": ["0"],
+      "attr_ids": ["0"],
+      "rows": ["int:1", "int:2", "int:3", "int:4"]
+    },
+    {
+      "opcode": 5,
+      "record": "DELETE_NODE",
+      "count": 1,
+      "ids": ["2"],
+      "labels": ["0"]
+    }
+  ]
+}

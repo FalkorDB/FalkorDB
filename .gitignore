@@ -81,3 +81,9 @@ tags
 # fixtures pulled for local runs, probe scripts). Never meant to be committed -
 # ignored so that a `git add -A` cannot sweep it into a commit.
 .handover/
+
+# The effects v3 conformance corpus is checked in deliberately. The *.hex rule
+# above comes from the C/C++ template, where .hex means a compiled firmware
+# image; these are test fixtures and are the shared statement of the wire
+# format, so they must be tracked.
+!tests/fixtures/effects_v3/*.hex

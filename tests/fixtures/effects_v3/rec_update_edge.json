@@ -1,0 +1,17 @@
+{
+  "case": "rec_update_edge",
+  "version": 3,
+  "flags": 0,
+  "bytes": 86,
+  "records": [
+    {
+      "opcode": 2,
+      "record": "UPDATE_EDGE",
+      "count": 3,
+      "ids": ["1", "2", "3"],
+      "relation_id": 2,
+      "attr_ids": ["7", "9"],
+      "rows": ["int:1", "string:a", "null", "bool:true", "float:0.25", "int:-9"]
+    }
+  ]
+}

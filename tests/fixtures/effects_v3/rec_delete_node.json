@@ -1,0 +1,15 @@
+{
+  "case": "rec_delete_node",
+  "version": 3,
+  "flags": 0,
+  "bytes": 31,
+  "records": [
+    {
+      "opcode": 5,
+      "record": "DELETE_NODE",
+      "count": 3,
+      "ids": ["1", "2", "3"],
+      "labels": ["0", "1", "2"]
+    }
+  ]
+}
