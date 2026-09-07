@@ -211,6 +211,55 @@ void test_effectsV3RunCost_bucketSplitCountsRuns(void) {
 			EffectsV3Run_BitmapBytes(&split), EffectsV3Run_BitmapBytes(&one));
 }
 
+// the collapse THRESHOLD, in both directions
+//
+// The twelve shapes above pin the sizes the formula predicts. They cannot catch
+// an off-by-one in what is IN SCOPE when the rule is evaluated, because that is
+// invisible to every input except the two straddling the threshold - which is
+// exactly the mistake this test exists for.
+//
+// ONLY SEGMENTS THAT HAVE STOPPED GROWING COUNT. On pushing the nth id the nth
+// segment is still open and can still be extended, so it is excluded from
+// range_bytes and from the candidate bitmap alike. Including it makes the
+// decision depend on when the encoder happened to look rather than on the ids,
+// which is the whole reason the rule is phrased over closed segments.
+//
+// Singletons at 100, 102, ... : each closed one is a lone Range costing
+// 1 + width(base) + width(len) = 3 bytes. Charging the n-1 closed segments puts
+// the threshold at 35 - the run collapses as the 35th id arrives, weighing 34
+// frozen segments. Charging all n instead moves it to 34, and the two engines
+// then emit different buffers for the same write.
+void test_effectsV3RunCost_collapseThreshold(void) {
+	struct { int n; bool collapses; } expect[] = {
+		{ 33, false },  // 96 range-bytes against a 92-byte bitmap: 5 + 92 == 97
+		{ 34, false },  // 99 against 94: 5 + 94 == 99, not strictly less than 99
+		{ 35, true  },  // 102 against 96: 5 + 96 == 101 < 102
+		{ 36, true  },
+	};
+
+	for(size_t e = 0; e < sizeof(expect) / sizeof(expect[0]); e++) {
+		int n = expect[e].n;
+		TEST_CASE_("%d singletons", n);
+
+		EffectsV3Run run;
+		EffectsV3Run_Restart(&run);
+
+		// the n-1 segments that have stopped growing; the nth is still open
+		for(int i = 0; i < n - 1; i++) {
+			EffectsV3Run_AddRange(&run, 100 + 2 * (uint64_t)i, 1);
+			EffectsV3Run_AddRangeBytes(&run, 3);
+		}
+
+		bool got = EffectsV3Run_PrefersBitmap(&run);
+		TEST_ASSERT_(got == expect[e].collapses,
+				"%d singletons: %zu range-bytes against a %zu-byte bitmap "
+				"should%s collapse, but %s",
+				n, run.range_bytes, EffectsV3Run_BitmapBytes(&run),
+				expect[e].collapses ? "" : " not",
+				got ? "it did" : "it did not");
+	}
+}
+
 // a range reaching the very top of the id space terminates
 //
 // AddRange walks bucket by bucket and advances with piece_end + 1, which wraps
@@ -252,6 +301,8 @@ TEST_LIST = {
 		test_effectsV3RunCost_declineIsNotFinal },
 	{ "EffectsV3RunCost:bucketSplitCountsRuns",
 		test_effectsV3RunCost_bucketSplitCountsRuns },
+	{ "EffectsV3RunCost:collapseThreshold",
+		test_effectsV3RunCost_collapseThreshold },
 	{ "EffectsV3RunCost:topOfIdSpaceTerminates",
 		test_effectsV3RunCost_topOfIdSpaceTerminates },
 	{ NULL, NULL }

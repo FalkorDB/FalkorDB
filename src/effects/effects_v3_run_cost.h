@@ -112,6 +112,18 @@ void EffectsV3Run_AddRange
 );
 
 // charge a segment that has stopped growing to the range side of the tally
+//
+// CALL THIS ONLY WHEN A SEGMENT IS SUPERSEDED, never for the segment currently
+// being extended. This module cannot enforce that - it has no notion of
+// segments, only of totals - so it is the caller's contract, and getting it
+// wrong is a byte divergence rather than a wrong size.
+//
+// The open segment can still grow, so charging it makes the collapse decision
+// depend on when the encoder happened to look rather than on the ids. It moves
+// the threshold by one segment: for singletons costing 3 bytes each, charging
+// the closed n-1 collapses on the 35th id, charging all n on the 34th. Both are
+// self-consistent, which is what makes it invisible without a boundary test -
+// see collapseThreshold in tests/unit/test_effects_v3_run_cost.c
 void EffectsV3Run_AddRangeBytes
 (
 	EffectsV3Run *run,  // run to charge
