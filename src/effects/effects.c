@@ -6,31 +6,19 @@
 
 #include "RG.h"
 #include "effects.h"
+#include "effects_bytes.h"
 #include "effects_internal.h"
 #include "../query_ctx.h"
 #include "../datatypes/map.h"
 #include "../datatypes/vector.h"
 
-// determine block available space 
-#define BLOCK_AVAILABLE_SPACE(b) (b->cap - BLOCK_USED_SPACE(b))
+// initial size of a buffer's block
+#define EFFECTS_BUFFER_BLOCK_SIZE 62500
 
-// determine how many bytes been written to buffer
-#define BLOCK_USED_SPACE(b) (b->offset - b->buffer)
-
-// linked list of EffectsBufferblocks
-struct EffectsBufferBlock {
-	size_t cap;                       // block capacity
-	unsigned char *offset;            // buffer offset
-	struct EffectsBufferBlock *next;  // pointer to next buffer
-	unsigned char buffer[];           // buffer
-};
-
-// effects buffer is a linked-list of buffers
 struct _EffectsBuffer {
-	size_t block_size;                   // block size
-	struct EffectsBufferBlock *head;     // first block
-	struct EffectsBufferBlock *current;  // current block
-	uint64_t n;                          // number of effects in buffer
+	EffectsBytes *records;  // encoded records
+	uint64_t n;             // number of effects in buffer
+	uint8_t version;        // payload version this buffer emits
 };
 
 // forward declarations
@@ -56,56 +44,38 @@ static void EffectsBuffer_WriteSIVector
 	EffectsBuffer *buff  // effect buffer
 );
 
-// create a new effects-buffer block
-static struct EffectsBufferBlock *EffectsBufferBlock_New
+// number of bytes the payload header occupies for a given version
+//
+// v2 is a bare version byte. v3 adds the flags byte, which is reserved whether
+// or not compression is on - adding it later would cost another version bump
+static size_t _EffectsBuffer_HeaderLen
 (
-	size_t n  // size of block
+	uint8_t version  // payload version
 ) {
-	size_t _n = sizeof(struct EffectsBufferBlock) + n;
-	struct EffectsBufferBlock *b = rm_malloc(_n);
-
-	b->cap    = n;
-	b->next   = NULL;
-	b->offset = b->buffer;
-
-	return b;
+	return (version >= 3) ? 2 : 1;
 }
 
-// add a new block to effects-buffer
-static void EffectsBuffer_AddBlock
+// write the payload header into dst, returning dst advanced past it
+//
+// the header is written here rather than when the buffer is created, which is
+// where v2 wrote it. Two reasons, and the second is the one that forces it:
+// v3's flags byte is not settled until the record stream is complete, and a v3
+// payload's records cannot be emitted in arrival order at all - they are
+// grouped, so nothing can precede them in the buffer
+static unsigned char *_EffectsBuffer_WriteHeader
 (
-	EffectsBuffer *eb  // effects-buffer
+	const EffectsBuffer *eb,  // effects-buffer
+	unsigned char *dst        // destination
 ) {
-	// create a new block and link
-	struct EffectsBufferBlock *b = EffectsBufferBlock_New(eb->block_size);
-	eb->current->next = b;
-	eb->current       = b;
-}
+	*dst++ = eb->version;
 
-// write n bytes from ptr into block
-// returns actual number of bytes written
-// if buffer isn't large enough only a portion of the bytes will be written
-static size_t EffectsBufferBlock_WriteBytes
-(
-	const unsigned char *ptr,     // data to write
-	size_t n,                     // number of bytes to write
-	struct EffectsBufferBlock *b  // block to write to
-) {
-	// validations
-	ASSERT(n   > 0);
-	ASSERT(b   != NULL);
-	ASSERT(ptr != NULL);
+	if(eb->version >= 3) {
+		// flags; bit 0 = compressed. C does not compress yet, so this is 0,
+		// but the byte is part of the format regardless
+		*dst++ = 0;
+	}
 
-	// determine number of bytes we can write
-	n = MIN(n, BLOCK_AVAILABLE_SPACE(b));
-
-	// write n bytes to buffer
-	memcpy(b->offset, ptr, n);
-
-	// update offset
-	b->offset += n;
-
-	return n;
+	return dst;
 }
 
 // write n bytes from ptr into effects-buffer
@@ -119,21 +89,7 @@ void EffectsBuffer_WriteBytes
 	ASSERT (eb  != NULL) ;
 	ASSERT (ptr != NULL) ;
 
-	while (n > 0) {
-		struct EffectsBufferBlock *b = eb->current ;
-		size_t written = EffectsBufferBlock_WriteBytes (ptr, n, b) ;
-
-		// advance ptr
-		ptr += written ;
-
-		if (written == 0) {
-			// no bytes written block is full, create a new block
-			EffectsBuffer_AddBlock (eb) ;
-		}
-
-		// update remaining bytes to write
-		n -= written ;
-	}
+	EffectsBytes_Write (eb->records, ptr, n) ;
 }
 
 void EffectsBuffer_WriteString
@@ -344,33 +300,20 @@ void EffectsBuffer_IncEffectCount
 	buff->n++;
 }
 
-static inline void EffectsBufferBlock_Free
-(
-	struct EffectsBufferBlock *b
-) {
-	ASSERT(b != NULL);
-	rm_free(b);
-}
-
 // create a new effects-buffer
 EffectsBuffer *EffectsBuffer_New
 (
 	void
 ) {
-	size_t n = 62500;  // initial size of buffer
 	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
 
-	struct EffectsBufferBlock *b = EffectsBufferBlock_New(n);
+	eb->n       = 0;
+	eb->records = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
+	eb->version = EFFECTS_VERSION_EMIT;
 
-	eb->n          = 0;
-	eb->head       = b;
-	eb->current    = b;
-	eb->block_size = n;
-
-	// write effects version to newly created buffer
-	uint8_t v = EFFECTS_VERSION_EMIT;
-	EffectsBuffer_WriteBytes(&v, sizeof(v), eb);
-
+	// note: no header is written here. v2 stamped its version byte at
+	// construction; it is now written by EffectsBuffer_Buffer, so that the
+	// records a buffer holds are only records
 	return eb;
 }
 
@@ -381,30 +324,26 @@ void EffectsBuffer_Reset
 ) {
 	ASSERT(buff != NULL);
 
-	// free all blocks except the first one
-	struct EffectsBufferBlock *b = buff->head->next;
-	while(b != NULL) {
-		struct EffectsBufferBlock *next = b->next;
-		EffectsBufferBlock_Free(b);
-		b = next;
-	}
+	EffectsBytes_Clear(buff->records);
 
-	// clear first block
-	buff->n = 0;
-	buff->current = buff->head;
-
-	// write effects version
-	uint8_t v = EFFECTS_VERSION_EMIT;
-	EffectsBuffer_WriteBytes(&v, sizeof(v), buff);
+	buff->n       = 0;
+	buff->version = EFFECTS_VERSION_EMIT;
 }
 
 // returns number of effects in buffer
+//
+// this counts EFFECTS, not records, and must keep doing so. It is the
+// predicate deciding whether a query replicates at all, and it is the divisor
+// in the average-modification-time comparison against EFFECTS_THRESHOLD
+// (cmd_query.c), whose units are effects. Under v3 one record covers every
+// entity of its shape, so a record count would both under-report a query that
+// changed something and inflate the average until the threshold flipped
 uint64_t EffectsBuffer_Length
 (
 	const EffectsBuffer *buff  // effects-buffer
 ) {
 	ASSERT(buff != NULL);
-	
+
 	return buff->n;
 }
 
@@ -420,30 +359,17 @@ unsigned char *EffectsBuffer_Buffer
 	// determine required buffer size
 	//--------------------------------------------------------------------------
 
-	size_t l = 0;  // required buffer size
-	struct EffectsBufferBlock *b = eb->head;
-	while(b != NULL) {
-		l += BLOCK_USED_SPACE(b);
-		b = b->next;
-	}
+	size_t hdr = _EffectsBuffer_HeaderLen(eb->version);
+	size_t l   = hdr + EffectsBytes_Len(eb->records);
 
 	//--------------------------------------------------------------------------
 	// allocate buffer and populate
 	//--------------------------------------------------------------------------
 
 	unsigned char *buffer = rm_malloc(sizeof(unsigned char) * l);
-	unsigned char *offset = buffer;
+	unsigned char *offset = _EffectsBuffer_WriteHeader(eb, buffer);
 
-	b = eb->head;
-	while(b != NULL) {
-		// write block's data to buffer
-		size_t _n = BLOCK_USED_SPACE(b);
-		memcpy(offset, b->buffer, _n);
-		offset += _n;
-
-		// advance to next block
-		b = b->next;
-	}
+	EffectsBytes_CopyInto(eb->records, offset);
 
 	*n = l;
 	return buffer;
@@ -927,13 +853,7 @@ void EffectsBuffer_Free
 ) {
 	if(eb == NULL) return;
 
-	// free blocks
-	struct EffectsBufferBlock *b = eb->head;
-	while(b != NULL) {
-		struct EffectsBufferBlock *next = b->next;
-		EffectsBufferBlock_Free(b);
-		b = next;
-	}
+	EffectsBytes_Free(eb->records);
 
 	rm_free(eb);
 }
