@@ -328,6 +328,74 @@ void test_effectsV3IdList_bitmapIsNeverRecollapsed(void) {
 	EffectsV3IdListBuilder_Free(b);
 }
 
+// the extension arms ask "is this the id one past the end?", which has no
+// answer at either end of the id space
+//
+// Unsigned wraparound is DEFINED in C rather than a trap, which makes this
+// worse than undefined behaviour: base + len for base = UINT64_MAX, len = 1 is
+// 0, so pushing id 0 after the highest id silently extends the range. The
+// result claims an id that does not exist and reports a max below its min. The
+// descending arm asks the mirror question and needs the mirror guard.
+void test_effectsV3IdList_extensionAtTheEndsOfTheIdSpace(void) {
+	{
+		// the highest id, then the lowest: two unrelated ids, two segments
+		BUILD(b, UINT64_MAX, 0);
+
+		TEST_ASSERT_(EffectsV3IdListBuilder_SegmentCount(b) == 2,
+				"UINT64_MAX then 0 must be 2 segments, got %u - id 0 is not "
+				"one past the top of the id space",
+				EffectsV3IdListBuilder_SegmentCount(b));
+
+		const EffectsV3Seg *s = EffectsV3IdListBuilder_Segment(b, 0);
+		TEST_ASSERT_(EffectsV3Seg_Min(s) <= EffectsV3Seg_Max(s),
+				"segment 0 reports min %llu above max %llu",
+				(unsigned long long)EffectsV3Seg_Min(s),
+				(unsigned long long)EffectsV3Seg_Max(s));
+
+		uint64_t want[] = { UINT64_MAX, 0 };
+		_assert_ids(b, want, 2, "top then bottom");
+		EffectsV3IdListBuilder_Free(b);
+	}
+	{
+		// the mirror: the lowest id, then the highest. A descending run cannot
+		// step below zero, so this is two segments too
+		BUILD(b, 0, UINT64_MAX);
+
+		TEST_ASSERT_(EffectsV3IdListBuilder_SegmentCount(b) == 2,
+				"0 then UINT64_MAX must be 2 segments, got %u",
+				EffectsV3IdListBuilder_SegmentCount(b));
+
+		uint64_t want[] = { 0, UINT64_MAX };
+		_assert_ids(b, want, 2, "bottom then top");
+		EffectsV3IdListBuilder_Free(b);
+	}
+	{
+		// and a genuine run at the top still extends: these ARE consecutive
+		BUILD(b, UINT64_MAX - 2, UINT64_MAX - 1, UINT64_MAX);
+
+		TEST_ASSERT_(EffectsV3IdListBuilder_SegmentCount(b) == 1,
+				"the three highest ids are consecutive and must be 1 segment, "
+				"got %u - the guard must not refuse a legal run",
+				EffectsV3IdListBuilder_SegmentCount(b));
+
+		uint64_t want[] = { UINT64_MAX - 2, UINT64_MAX - 1, UINT64_MAX };
+		_assert_ids(b, want, 3, "run reaching the top");
+		EffectsV3IdListBuilder_Free(b);
+	}
+	{
+		// the descending mirror, reaching exactly zero
+		BUILD(b, 2, 1, 0);
+
+		TEST_ASSERT_(EffectsV3IdListBuilder_SegmentCount(b) == 1,
+				"2,1,0 is one descending range reaching zero exactly, got %u",
+				EffectsV3IdListBuilder_SegmentCount(b));
+
+		uint64_t want[] = { 2, 1, 0 };
+		_assert_ids(b, want, 3, "descending run reaching zero");
+		EffectsV3IdListBuilder_Free(b);
+	}
+}
+
 TEST_LIST = {
 	{ "EffectsV3IdList:ascendingRunIsOneSegment",
 		test_effectsV3IdList_ascendingRunIsOneSegment },
@@ -347,5 +415,7 @@ TEST_LIST = {
 		test_effectsV3IdList_repeatIsNeverCollapsed },
 	{ "EffectsV3IdList:bitmapIsNeverRecollapsed",
 		test_effectsV3IdList_bitmapIsNeverRecollapsed },
+	{ "EffectsV3IdList:extensionAtTheEndsOfTheIdSpace",
+		test_effectsV3IdList_extensionAtTheEndsOfTheIdSpace },
 	{ NULL, NULL }
 };
