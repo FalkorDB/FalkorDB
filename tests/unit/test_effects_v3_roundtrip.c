@@ -31,12 +31,15 @@
 
 #include "tests/unit/effects_v3_corpus.h"
 
+// Unconditionally, and BEFORE the flags are tested: effects_v3.h is where
+// EFFECTS_V3_DECODE_READY and EFFECTS_V3_ENCODE_READY are defined, so gating
+// this include on one of them would mean the include never happens and every
+// test here stayed skipped forever -- including after the codec landed, which
+// is the one outcome the gate must not produce.
+#include "src/effects/effects_v3.h"
+
 #if defined(EFFECTS_V3_DECODE_READY) && defined(EFFECTS_V3_ENCODE_READY)
 #define EFFECTS_V3_CODEC_READY 1
-#endif
-
-#ifdef EFFECTS_V3_DECODE_READY
-#include "src/effects/effects_v3.h"
 #endif
 
 #include "acutest.h"
@@ -71,6 +74,46 @@ void test_effectsV3_rejections(void) { V3_SKIP("the rejection cases",    "Effect
 // AttributeSet_Update when it was handed a Rust buffer.
 #ifdef EFFECTS_V3_CODEC_READY
 
+//------------------------------------------------------------------------------
+// records this build does not decode yet
+//------------------------------------------------------------------------------
+
+// The index and constraint DDL records, 11-14, are well-formed on the wire but
+// not yet implemented, so decode reports EFFECTS_V3_UNIMPLEMENTED for them
+// rather than MALFORMED -- calling a well-formed payload corrupt would be a lie
+// about the bytes, and would send a replica into a resync it cannot fix.
+//
+// THIS LIST MUST SHRINK. It is not a list of cases to skip: a case named here
+// is REQUIRED to report UNIMPLEMENTED, so the day one of them starts decoding,
+// this test fails and says to remove it. A tolerated status with no such
+// pressure becomes a permanent hole -- the four cases would sit here reporting
+// nothing forever, and the corpus would quietly cover 21 records instead of 25.
+//
+// These four are exactly the fixtures whose records are 11-14, checked against
+// the corpus rather than assumed: rec_create_index (11), rec_drop_index (12),
+// rec_create_constraint (13), rec_drop_constraint (14). payload_multi_record
+// carries 9, 10, 3 and 5, so it is not among them.
+static const char *EFFECTS_V3_UNIMPLEMENTED_CASES[] = {
+	"rec_create_constraint",
+	"rec_create_index",
+	"rec_drop_constraint",
+	"rec_drop_index",
+};
+
+static bool _is_unimplemented
+(
+	const char *name  // case name
+) {
+	size_t n = sizeof(EFFECTS_V3_UNIMPLEMENTED_CASES) /
+			   sizeof(EFFECTS_V3_UNIMPLEMENTED_CASES[0]);
+
+	for(size_t i = 0; i < n; i++) {
+		if(strcmp(EFFECTS_V3_UNIMPLEMENTED_CASES[i], name) == 0) return true;
+	}
+
+	return false;
+}
+
 static void _round_trip(const EffectsV3CorpusEntry *e) {
 	EffectsV3Fixture f = EffectsV3Corpus_Load(e->name);
 	TEST_ASSERT_(f.buf != NULL, "%s: %s", e->name, f.err);
@@ -79,6 +122,19 @@ static void _round_trip(const EffectsV3CorpusEntry *e) {
 	EffectsV3Records *records = NULL;
 	EffectsV3Status   st      = EffectsV3_Decode((const char*)f.buf, f.len,
 			&records);
+
+	if(_is_unimplemented(e->name)) {
+		TEST_ASSERT_(st == EFFECTS_V3_UNIMPLEMENTED,
+				"%s: expected UNIMPLEMENTED, got %s. If this record now "
+				"decodes, remove it from EFFECTS_V3_UNIMPLEMENTED_CASES so it "
+				"is held to the round trip like every other case",
+				e->name, EffectsV3Status_ToString(st));
+		TEST_ASSERT_(records == NULL,
+				"%s: refused as UNIMPLEMENTED but left records allocated",
+				e->name);
+		EffectsV3Corpus_Free(&f);
+		return;
+	}
 
 	TEST_ASSERT_(st == EFFECTS_V3_OK, "%s: decode refused a corpus fixture: %s",
 			e->name, EffectsV3Status_ToString(st));
@@ -217,10 +273,15 @@ void test_effectsV3_truncation(void) {
 						"%s[..%zu]: rejected as %s but left records allocated",
 						e->name, len, EffectsV3Status_ToString(st));
 
+				// UNIMPLEMENTED is legitimate here: a prefix long enough to
+				// carry a complete records 11-14 opcode is refused for that
+				// reason and not for its length
 				TEST_ASSERT_(st == EFFECTS_V3_TRUNCATED ||
-							 st == EFFECTS_V3_MALFORMED,
+							 st == EFFECTS_V3_MALFORMED ||
+							 st == EFFECTS_V3_UNIMPLEMENTED,
 						"%s[..%zu]: rejected as %s; a prefix of a valid v3 "
-						"payload is either truncated or malformed",
+						"payload is truncated, malformed, or a record this "
+						"build does not implement",
 						e->name, len, EffectsV3Status_ToString(st));
 			}
 		}
