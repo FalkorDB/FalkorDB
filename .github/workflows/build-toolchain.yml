@@ -90,7 +90,10 @@ jobs:
           provenance: false
           tags: ghcr.io/falkordb/falkordb-build:${{ inputs.tag || 'latest' }}-${{ matrix.arch }}
           cache-from: type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-${{ matrix.arch }}
-          cache-to:   type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-${{ matrix.arch }},mode=max
+          # Read the shared cache always; write it only from a trunk. Any other
+          # ref — a PR branch, a queue entry — would otherwise publish layers
+          # into the ref main's own builds restore from.
+          cache-to: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) && format('type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-{0},mode=max', matrix.arch) || '' }}
 
   manifest:
     needs: build

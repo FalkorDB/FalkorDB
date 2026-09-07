@@ -1,0 +1,13 @@
+# Paths that execute with the repository's own credentials.
+#
+# A change under any of these runs during CI rather than merely being tested by
+# it: workflows and Dockerfiles execute directly, and tests/ is what flow.sh
+# runs. Requiring an owner's review is the enforced version of "read the diff
+# before you queue it".
+#
+# Fork pull requests are refused outright for /build/ and /.github/ in
+# rust-pr.yml's check-files, so this covers same-repo changes.
+
+/build/          @FalkorDB/maintainers
+/.github/        @FalkorDB/maintainers
+/tests/          @FalkorDB/maintainers
