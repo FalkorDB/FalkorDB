@@ -81,12 +81,29 @@ RELEASE=1 VERBOSE=0 TEST=test_name ./flow.sh
 
 ## Dependencies
 
-Before building, GraphBLAS and RediSearch must be compiled and installed:
-- GraphBLAS: `./graphblas.sh` or build manually with `make static CMAKE_OPTIONS='-DGRAPHBLAS_COMPACT=1 -DCMAKE_POSITION_INDEPENDENT_CODE=on'`
-- RediSearch: `git submodule update --init --recursive` then `./redisearch.sh`.
-  git owns `deps/RediSearch`; the script only builds what is checked out, and the
-  gitlink is the only record of the pinned commit. The Docker images COPY that
-  submodule in, so any workflow feeding one needs `submodules: recursive`.
+GraphBLAS, LAGraph and RediSearch are git submodules under `deps/`, built by
+the `native-deps` crate:
+
+```bash
+git submodule update --init --recursive
+cargo build   # graph/build.rs calls native-deps; nothing else to run
+```
+
+git owns those checkouts — `native-deps` only builds what is there, and the
+gitlink is the only record of each pinned commit. The Docker images COPY the
+submodules in, so any workflow feeding one needs `submodules: recursive`.
+
+`native-deps` caches its output at
+`$HOME/.cache/falkordb/native-deps/<dep>/<key>/` (`$FALKORDB_DEPS_CACHE`
+overrides the root). The key covers the submodule revision, the GB_control
+patch, the vendored PreJIT kernels, the recipe sources, `$CC`/`$CXX --version`,
+the target triple and the OpenMP/sanitizer flavour — so worktrees share archives
+and a compiler bump never yields a stale-ABI cache hit. Build them explicitly
+with `cargo run --manifest-path native-deps/Cargo.toml -- ensure --all`.
+
+To bump a dependency, move the gitlink and re-run
+`cargo run --manifest-path native-deps/Cargo.toml -- lock`; CI enforces that
+`deps/native-deps.lock` matches via `lock --check`.
 
 ### PreJIT kernels (`build/graphblas/PreJIT/`)
 

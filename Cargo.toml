@@ -3,6 +3,9 @@ members = [
     "graph",
     "fuzz",
     "runtime-fuzz-target", ]
+# native-deps is its own workspace: graph/build.rs uses it as a build-dependency,
+# so it must not inherit this workspace's RUSTFLAGS/target (e.g. an ASAN build).
+exclude = ["native-deps"]
 
 [package]
 name = "falkordb-rs"
