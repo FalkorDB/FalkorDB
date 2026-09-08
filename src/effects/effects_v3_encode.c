@@ -174,10 +174,11 @@ static void _write_name
 	EffectsBuffer_Free(wrapper);
 }
 
-void EffectsV3_EncodeRecord
+static void _encode_record
 (
-	const EffectsV3Record *r,  // record to write
-	EffectsBytes *out          // sink
+	const EffectsV3Record *r,    // record to write
+	const EffectsBytes *raw,     // pre-encoded AttrValues, or NULL
+	EffectsBytes *out            // sink
 ) {
 	ASSERT(r   != NULL);
 	ASSERT(out != NULL);
@@ -260,5 +261,32 @@ void EffectsV3_EncodeRecord
 		EffectsV3_EncodeIdList(&r->dst, out);
 	}
 
-	_write_attr_values(r, out);
+	if(raw != NULL) {
+		size_t n = EffectsBytes_Len(raw);
+		if(n > 0) {
+			unsigned char *buf = rm_malloc(n);
+			EffectsBytes_CopyInto(raw, buf);
+			EffectsBytes_Write(out, buf, n);
+			rm_free(buf);
+		}
+	} else {
+		_write_attr_values(r, out);
+	}
+}
+
+void EffectsV3_EncodeRecord
+(
+	const EffectsV3Record *r,  // record to write
+	EffectsBytes *out          // sink
+) {
+	_encode_record(r, NULL, out);
+}
+
+void EffectsV3_EncodeRecordWithRawValues
+(
+	const EffectsV3Record *r,    // record to write
+	const EffectsBytes *values,  // the AttrValues block, already encoded
+	EffectsBytes *out            // sink
+) {
+	_encode_record(r, values, out);
 }
