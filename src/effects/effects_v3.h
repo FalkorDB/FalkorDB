@@ -8,6 +8,7 @@
 #include "effects.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdbool.h>
 
 //------------------------------------------------------------------------------
@@ -64,8 +65,188 @@
 //
 //------------------------------------------------------------------------------
 
-// opaque to everything except the reader (which defines it) and the writer
-// (which consumes it)
+//------------------------------------------------------------------------------
+// the record model - published by THE READER, consumed by THE WRITER
+//------------------------------------------------------------------------------
+//
+// TRANSCRIBED FROM THE BYTES, NOT FROM THE RECORD TABLE. The spec described
+// record layout twice and the two disagreed: the INVARIANT put the shape before
+// the rows, while the "Changed in v3" table put the IdList first for records 3
+// through 8 and omitted the LabelSet from DELETE_NODE entirely.
+//
+// The invariant is right and the table was an earlier draft. Established by
+// decoding all 25 fixtures in .handover/fixtures/ against their .json - under
+// the table's ordering, none of the id-carrying records decode at all - then
+// ruled on by the Rust side, which owns the format. SIX of the eight batchable
+// records were documented backwards, not the two found first: DELETE_EDGE and
+// SET/REMOVE_LABELS too. Spec corrected at e3e227f77 on feat/effects-v3, which
+// is also where it now lives.
+//
+// So every batchable record is:
+//
+//     u32 opcode
+//     u32 count
+//     <shape>      LabelSet (node-shaped) | RelType (edge-shaped)
+//     <attr ids>   AttrSet header, only on records that carry values
+//     IdList       the entity ids, positionally bound to the rows
+//     IdList x2    src then dst, only on CREATE_EDGE / DELETE_EDGE
+//     <values>     count * n_attrs SIValues, row-major
+//
+//   record            shape        attr ids  ids  src/dst  values
+//   1  UPDATE_NODE    LabelSet     yes       yes  -        yes
+//   2  UPDATE_EDGE    RelType      yes       yes  -        yes
+//   3  CREATE_NODE    LabelSet     yes       yes  -        yes
+//   4  CREATE_EDGE    RelType      yes       yes  yes      yes
+//   5  DELETE_NODE    LabelSet     -         yes  -        -
+//   6  DELETE_EDGE    RelType      -         yes  yes      -
+//   7  SET_LABELS     LabelSet     -         yes  -        -
+//   8  REMOVE_LABELS  LabelSet     -         yes  -        -
+//   9  ADD_SCHEMA     inherently singular - no count, no ids
+//   10 ADD_ATTRIBUTE  inherently singular - no count, no ids
+//
+// DELETE_NODE carrying a LabelSet is not a transcription slip: the fixture
+// rec_delete_node.hex holds labels [0,1,2] ahead of its IdList, and the record
+// does not decode without them. A replica deleting a node needs its labels to
+// maintain the label matrices and indexes, so this reads as deliberate.
+
+// width code -> width in bytes: 0 -> 1, 1 -> 2, 2 -> 4, 3 -> 8
+#define EFFECTS_V3_WIDTH_BYTES(code) (1 << (code))
+
+// segment header bit fields
+//
+//   bits 0-1  kind
+//   bits 2-3  value width code
+//   bits 4-5  count width code
+//   bit  6    descending
+//   bit  7    reserved - MUST be rejected
+//
+// bit 6 became 'descending' at 08dca4a1e, after the first cut of the fixture
+// corpus. It is covered now, by encoder-generated fixtures rather than by
+// hand-patched headers, and the corpus confirms it two ways:
+//
+//   * dir_ascending / dir_descending - 19 bytes each, differing in exactly two:
+//     the header (0x00 / 0x40) and the base (200 / 207, lowest vs highest).
+//     A decoder that ignored bit 6 would read the descending file as the
+//     ascending one and return the ids REVERSED rather than malformed - then
+//     re-encode what it thought it read, so a round trip would still pass.
+//     Only comparing the two files catches that.
+//   * dir_descending_bitmap / collapse_above - a roaring blob is a SET and has
+//     no direction, so the two carry byte-identical 66-byte blobs and bit 6 is
+//     the only thing that distinguishes them.
+#define EFFECTS_V3_SEG_KIND_MASK    0x03  // bits 0-1
+#define EFFECTS_V3_SEG_VWIDTH_SHIFT 2     // bits 2-3
+#define EFFECTS_V3_SEG_CWIDTH_SHIFT 4     // bits 4-5
+#define EFFECTS_V3_SEG_DESCENDING   0x40  // bit 6
+#define EFFECTS_V3_SEG_RESERVED     0x80  // bit 7 - MUST be zero
+
+typedef enum {
+	EFFECTS_V3_SEG_RANGE     = 0,  // base, len  - steps by one
+	EFFECTS_V3_SEG_ASCENDING = 1,  // roaring64 blob - several ranges collapsed
+	EFFECTS_V3_SEG_REPEAT    = 2,  // id, count  - does not move
+} EffectsV3SegmentKind;
+
+// one segment of an IdList
+//
+// the observed width codes are RETAINED rather than recomputed on re-encode.
+// The spec has the encoder pick the narrowest width that holds each value, so
+// recomputing would usually agree - but "usually" is not byte-identical, and a
+// round trip that recomputes is testing our own arithmetic rather than the
+// peer's bytes. A record built fresh (not decoded) must set these to the
+// narrowest holding width; EFFECTS_V3_SEG_ASCENDING ignores both.
+typedef struct {
+	EffectsV3SegmentKind kind;
+	uint8_t value_width;  // header bits 2-3: Range base, Repeat id
+	uint8_t count_width;  // header bits 4-5: Range len,  Repeat count
+
+	// header bit 6: the same payload read the other way
+	//
+	// a descending Range's 'base' is its FIRST id and therefore its HIGHEST:
+	// it describes base, base-1, ... base-(len-1). An Ascending segment's blob
+	// is a set, so the ascending and descending forms of the same ids differ in
+	// exactly this bit and nowhere else.
+	//
+	// A REPEAT HAS NO DIRECTION. It holds one id 'count' times, so both
+	// readings are the same sequence and the bit carries no information - which
+	// means a peer that set it meant something this build does not know. The
+	// decoder REJECTS it there rather than ignoring it.
+	bool descending;
+	union {
+		struct {
+			uint64_t base;  // first id
+			uint64_t len;   // how many, ascending by one
+		} range;
+		struct {
+			uint64_t id;     // the id, held once
+			uint64_t count;  // how many times it repeats
+		} repeat;
+		struct {
+			unsigned char *blob;   // serialized roaring64, owned
+			uint32_t       n;      // blob length, as the u32 on the wire
+			uint64_t       cardinality;  // ids described; checked at decode
+		} ascending;
+	};
+} EffectsV3Segment;
+
+// an ordered, duplicate-preserving list of entity ids, held AS SEGMENTS
+//
+// never expanded at decode time: one valid segment describes four billion ids
+// in seven bytes. EffectsV3_Apply expands, where the graph is in scope.
+typedef struct {
+	EffectsV3Segment *segments;  // owned, 'n' entries
+	uint32_t          n;         // segment count, as the u32 on the wire
+} EffectsV3IdList;
+
+// a single decoded record
+//
+// 'opcode' selects which of the remaining fields carry meaning - see the table
+// above. A field a record does not use is zeroed: NULL pointers, zero counts.
+typedef struct {
+	EffectType opcode;
+	uint32_t   count;  // entities in this record; 0 for records 9 and 10
+
+	// the shape, hoisted once per record
+	LabelID    *labels;       // node-shaped records, owned
+	uint16_t    n_labels;     // as the u16 on the wire - n, NOT count
+	RelationID  relation_id;  // edge-shaped records
+
+	// the AttrSet header - ids stated once, values row-major below
+	AttributeID *attr_ids;  // owned
+	uint16_t     n_attrs;   // as the u16 on the wire
+
+	// the rows
+	EffectsV3IdList ids;  // positionally bound to 'values'
+	EffectsV3IdList src;  // CREATE_EDGE / DELETE_EDGE only
+	EffectsV3IdList dst;  // CREATE_EDGE / DELETE_EDGE only
+
+	// count * n_attrs values, row-major: row k is values[k * n_attrs ..]
+	// and belongs to the k-th id in 'ids' AS WRITTEN
+	//
+	// T_NULL in a slot means REMOVE THIS ATTRIBUTE - it is not padding and must
+	// not be filtered out, or every property removal becomes a no-op
+	SIValue *values;    // owned; each freed with SIValue_Free
+	uint64_t n_values;  // count * n_attrs
+
+	// records 9 and 10 only
+	SchemaType  schema_type;  // ADD_SCHEMA
+	int         schema_id;    // ADD_SCHEMA - LabelID or RelationID
+	AttributeID attr_id;      // ADD_ATTRIBUTE
+	char       *name;         // owned, NUL terminated
+} EffectsV3Record;
+
+// a decoded payload: the header, then the records in apply order
+//
+// defined here rather than left opaque because the writer encodes from it and
+// the reader decodes into it - the definition IS the contract between them
+struct EffectsV3Records {
+	uint8_t version;  // the version byte the payload declared
+	uint8_t flags;    // the flags byte; bit 0 = compressed
+
+	EffectsV3Record *records;  // owned, 'n' entries, in apply order
+	uint32_t         n;        // records decoded
+};
+
+// opaque to everything except the reader (which defines it above) and the
+// writer (which consumes it)
 typedef struct EffectsV3Records EffectsV3Records;
 
 // why a buffer was refused
@@ -150,3 +331,32 @@ void EffectsV3_RecordsFree
 (
 	EffectsV3Records *records
 );
+
+//------------------------------------------------------------------------------
+// readiness - what is actually linkable
+//------------------------------------------------------------------------------
+//
+// The entry points above are declared before they are defined, so a test that
+// links one that does not exist yet breaks the build for everyone. These flags
+// say what is safe to call.
+//
+// Deliberately TWO flags with one owner each, rather than one shared flag.
+// Decode and free are the reader's; encode is the writer's. A single
+// EFFECTS_V3_CODEC_READY could only be defined honestly by whichever of the two
+// landed second, and defining it on decode alone would link a round-trip test
+// against an undefined EffectsV3_Encode - the exact failure the flag exists to
+// prevent. Same conflation EFFECTS_VERSION had before it was split into a read
+// ceiling and an emit version.
+//
+// A truncation corpus needs decode alone, so it can run a PR earlier than a
+// round trip.
+
+// EffectsV3_Decode and EffectsV3_RecordsFree are defined
+#define EFFECTS_V3_DECODE_READY 1
+
+// EffectsV3_ENCODE_READY is defined by the writer when EffectsV3_Encode lands
+
+#if defined(EFFECTS_V3_DECODE_READY) && defined(EFFECTS_V3_ENCODE_READY)
+// both directions are linkable, so a round trip can be built
+#define EFFECTS_V3_CODEC_READY 1
+#endif
