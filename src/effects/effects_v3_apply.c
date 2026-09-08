@@ -7,6 +7,7 @@
 #include "effects_v3.h"
 #include "effects_internal.h"
 #include "../graph/graph_hub.h"
+#include "../util/arr.h"
 #include "../util/rmalloc.h"
 #include "../util/roaring_include.h"
 
@@ -454,6 +455,61 @@ static bool _ApplyCreateNode
 	return ok ;
 }
 
+// flush a batch of pending edge creations through the BULK entry point
+//
+// ONE CALL PER BATCH, NOT ONE PER EDGE, and this is load-bearing rather than
+// tidy. v2 accumulated into a 4096-edge batch for a measured reason: applying
+// a node's edges one at a time made a replica ~40x slower than the master that
+// produced the writes. v3 does not get to drop that machinery for free - a
+// record already IS the batch, so it goes straight to the bulk call instead of
+// reconstructing one.
+//
+// The first version of this function called the singular GraphHub_CreateEdge
+// inside the loop, which dropped v2's batching without adding the bulk call
+// meant to replace it. Measured on a C replica, 1000 edges: 178.6M instructions
+// against v2's 11.2M - a 16x regression on a payload 3.5x SMALLER on the wire
+// (12,087 bytes against 42,037). Edge creation touches the relationship tensor
+// and the adjacency matrix, and the bulk path amortises a matrix operation
+// across the batch, which is why the per-call cost does not shrink with the
+// bytes.
+//
+// 'wire_ids' holds what the master allocated, positionally aligned with the
+// batch. The check happens after the flush because the bulk call is what fills
+// each Edge's id.
+static bool _FlushEdges
+(
+	GraphContext *gc,
+	RelationID r,
+	Edge **batch,             // arr of Edge*, cleared on return
+	AttributeSet *sets,       // arr of AttributeSet, cleared on return
+	const uint64_t *wire_ids  // ids the master allocated, batch-aligned
+) {
+	const uint32_t n = arr_len (batch) ;
+	if (n == 0) {
+		return true ;
+	}
+
+	// the sets are handed over here - they end up owned by the edges
+	GraphHub_CreateEdges (gc, batch, r, sets, false) ;
+
+	bool ok = true ;
+	for (uint32_t i = 0 ; i < n ; i++) {
+		if (batch[i]->id != wire_ids[i]) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_EDGE allocated edge %" PRIu64
+					" locally but the master allocated %" PRIu64
+					" - edge id allocation has diverged",
+					batch[i]->id, wire_ids[i]) ;
+			ok = false ;
+			break ;
+		}
+	}
+
+	arr_clear (batch) ;
+	arr_clear (sets) ;
+	return ok ;
+}
+
 static bool _ApplyCreateEdge
 (
 	GraphContext *gc,
@@ -479,9 +535,19 @@ static bool _ApplyCreateEdge
 	_IdIter_Init (&srcs, &rec->src) ;
 	_IdIter_Init (&dsts, &rec->dst) ;
 
+	// storage for the batch, plus the two arr views the bulk call takes.
+	// Chunked at APPLY_BATCH rather than sized by the record, so a record
+	// describing a very large batch costs a bounded amount of memory - the
+	// point is one bulk call per chunk, not one per edge.
+	Edge         storage[APPLY_BATCH] ;
+	uint64_t     wire_ids[APPLY_BATCH] ;
+	Edge        **batch = arr_new (Edge *, APPLY_BATCH) ;
+	AttributeSet *sets  = arr_new (AttributeSet, APPLY_BATCH) ;
+
 	bool ok = true ;
 	uint64_t id, src, dst ;
 	uint64_t k = 0 ;
+	uint32_t n = 0 ;
 
 	while (ok && _IdIter_Next (&ids, &id)) {
 		// the three lists are positionally aligned by construction, and decode
@@ -496,7 +562,7 @@ static bool _ApplyCreateEdge
 		}
 
 		// endpoints must exist before an edge can join them. Checked here
-		// because GraphHub_CreateEdge does not check for us.
+		// because the bulk path only asserts it, and ASSERT compiles out.
 		if (!Graph_HasNode (g, src) || !Graph_HasNode (g, dst)) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT CREATE_EDGE references nodes %" PRIu64
@@ -506,25 +572,41 @@ static bool _ApplyCreateEdge
 			break ;
 		}
 
-		AttributeSet set = _RowAttributes (rec, k) ;
+		// the bulk call reads the endpoints off the Edge rather than taking
+		// them as arguments, so they are set here
+		storage[n] = GE_NEW_LABELED_EDGE (rel_name, rec->relation_id) ;
+		Edge_SetSrcNodeID  (storage + n, src) ;
+		Edge_SetDestNodeID (storage + n, dst) ;
 
-		Edge e = GE_NEW_LABELED_EDGE (rel_name, rec->relation_id) ;
-		GraphHub_CreateEdge (gc, &e, src, dst, rec->relation_id, set, false) ;
+		wire_ids[n] = id ;
+		arr_append (batch, storage + n) ;
+		arr_append (sets, _RowAttributes (rec, k)) ;
 
-		if (e.id != id) {
-			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT CREATE_EDGE allocated edge %" PRIu64
-					" locally but the master allocated %" PRIu64
-					" - edge id allocation has diverged", e.id, id) ;
-			ok = false ;
-		}
-
+		n++ ;
 		k++ ;
+
+		if (n == APPLY_BATCH) {
+			ok = _FlushEdges (gc, rec->relation_id, batch, sets, wire_ids) ;
+			n = 0 ;
+		}
 	}
 
 	if (ok && (ids.broken || srcs.broken || dsts.broken)) {
 		ok = false ;
 	}
+
+	if (ok) {
+		ok = _FlushEdges (gc, rec->relation_id, batch, sets, wire_ids) ;
+	} else {
+		// bailing out with a partial batch: those attribute sets were built
+		// here and never handed over, so this owns them
+		for (uint32_t i = 0 ; i < arr_len (sets) ; i++) {
+			AttributeSet_Free (sets + i) ;
+		}
+	}
+
+	arr_free (batch) ;
+	arr_free (sets) ;
 
 	_IdIter_Free (&ids) ;
 	_IdIter_Free (&srcs) ;
