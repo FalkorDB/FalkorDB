@@ -19,6 +19,7 @@ struct _EffectsBuffer {
 	EffectsBytes *records;  // encoded records
 	uint64_t n;             // number of effects in buffer
 	uint8_t version;        // payload version this buffer emits
+	bool owns_records;      // whether freeing the buffer frees the sink
 };
 
 // forward declarations
@@ -307,9 +308,10 @@ EffectsBuffer *EffectsBuffer_New
 ) {
 	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
 
-	eb->n       = 0;
-	eb->records = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
-	eb->version = EFFECTS_VERSION_EMIT;
+	eb->n            = 0;
+	eb->records      = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
+	eb->version      = EFFECTS_VERSION_EMIT;
+	eb->owns_records = true;
 
 	// note: no header is written here. v2 stamped its version byte at
 	// construction; it is now written by EffectsBuffer_Buffer, so that the
@@ -853,8 +855,38 @@ void EffectsBuffer_Free
 ) {
 	if(eb == NULL) return;
 
-	EffectsBytes_Free(eb->records);
+	if(eb->owns_records) {
+		EffectsBytes_Free(eb->records);
+	}
 
 	rm_free(eb);
+}
+
+// wrap a byte sink the caller owns as an effects-buffer
+//
+// This exists so v3 can use the SHARED SIValue codec against its own sinks
+// without a second copy of it. A v3 record is one record per (opcode, shape),
+// so a group's values accumulate in that group's sink rather than in a
+// buffer's record stream - but they must be encoded by exactly the codec v2
+// uses, because writing a second one is how the Rust side acquired a bug where
+// a replica's string pool stayed empty.
+//
+// The returned buffer borrows the sink: freeing it frees the wrapper only. It
+// carries no header and does not count effects, because it is not a payload -
+// it is a handle for the writers that take one.
+EffectsBuffer *EffectsBuffer_Wrap
+(
+	EffectsBytes *sink  // sink to write into; not owned
+) {
+	ASSERT(sink != NULL);
+
+	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
+
+	eb->n            = 0;
+	eb->records      = sink;
+	eb->version      = EFFECTS_VERSION_EMIT;
+	eb->owns_records = false;
+
+	return eb;
 }
 
