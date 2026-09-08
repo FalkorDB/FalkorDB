@@ -58,6 +58,7 @@
 void test_effectsV3_roundTrip(void)  { V3_SKIP("the round-trip harness", "EffectsV3_Decode"); }
 void test_effectsV3_truncation(void) { V3_SKIP("the truncation corpus",  "EffectsV3_Decode"); }
 void test_effectsV3_rejections(void) { V3_SKIP("the rejection cases",    "EffectsV3_Decode"); }
+void test_effectsV3_handBuiltRejections(void) { V3_SKIP("the hand-built rejections", "EffectsV3_Decode"); }
 
 #else
 
@@ -404,6 +405,90 @@ void test_effectsV3_rejections(void) {
 	}
 }
 
+//------------------------------------------------------------------------------
+// hand-built payloads: shapes no fixture should carry
+//------------------------------------------------------------------------------
+
+// A deliberately-invalid payload needs no fixture. Generating one would put a
+// shape into the corpus that no conforming encoder produces, and the corpus is
+// the record of what the engines AGREE on -- so these are built here, byte by
+// byte, the way the mutation cases above are.
+//
+// ZERO-COUNT RECORDS ARE ILLEGAL, and this is the one case where both engines
+// accept today what they have agreed to refuse. Measured rather than assumed:
+//
+//   * Rust's read_ids decodes n_segments segments and then asserts len ==
+//     count, so n_segments = 0 with count = 0 never calls Segment::decode and
+//     returns an empty list
+//   * C's _ReadIdList mirrors it exactly -- effects_v3_decode.c:304-306
+//     returns OK when the segment count is zero and nothing is owed
+//
+// The ruling puts the check at the record header where count is read, NOT in
+// the id-list path: count governs every block, so rejecting it there removes
+// the zero-length parse path through AttrIds, AttrValues and LabelSet from the
+// surface both engines must agree on, instead of requiring agreement on each.
+// In C that is effects_v3_decode.c:680, immediately after
+// `_ReadU32 (stream, &rec->count)` and before the shape is read at :686.
+//
+// Gated because neither engine implements it yet and a red build helps nobody.
+// The reader's PR that adds the check defines EFFECTS_V3_ZERO_COUNT_REJECTED in
+// effects_v3.h, exactly as the readiness flags work, and this goes live with it.
+void test_effectsV3_handBuiltRejections(void) {
+#ifndef EFFECTS_V3_ZERO_COUNT_REJECTED
+	V3_SKIP("the zero-count rejection", "EFFECTS_V3_ZERO_COUNT_REJECTED");
+#else
+	// version . flags . opcode . count . u16 label count . u32 segment count
+	//   03      00       05         00        0000              00000000
+	// A DELETE_NODE that is well-formed in every field except the one that
+	// makes it meaningless: it names no entities, so it states nothing, and
+	// applying nothing silently would slip past the divergence report.
+	const unsigned char zero_count[] = {
+		0x03, 0x00,                                      // v3, uncompressed
+		0x05, 0x00, 0x00, 0x00,                          // DELETE_NODE
+		0x00, 0x00, 0x00, 0x00,                          // count = 0
+		0x00, 0x00,                                      // no labels
+		0x00, 0x00, 0x00, 0x00,                          // no segments
+	};
+
+	EffectsV3Records *records = NULL;
+	EffectsV3Status   st      = EffectsV3_Decode((const char*)zero_count,
+			sizeof(zero_count), &records);
+
+	TEST_CASE("a record covering zero entities");
+	TEST_ASSERT_(st == EFFECTS_V3_MALFORMED,
+			"a zero-count record decoded as %s; it is well-sized and invalid, "
+			"which is what MALFORMED means",
+			EffectsV3Status_ToString(st));
+
+	TEST_ASSERT_(records == NULL,
+			"a zero-count record was refused but left records allocated");
+
+	// and the same shape with a non-zero count must still be accepted, so the
+	// check cannot be satisfied by refusing the shape rather than the count
+	unsigned char one_id[] = {
+		0x03, 0x00,
+		0x05, 0x00, 0x00, 0x00,
+		0x01, 0x00, 0x00, 0x00,                          // count = 1
+		0x00, 0x00,                                      // no labels
+		0x01, 0x00, 0x00, 0x00,                          // one segment
+		0x00,                                            // Range, widths 0
+		0x07,                                            // base 7
+		0x01,                                            // len 1
+	};
+
+	EffectsV3Records *ok_records = NULL;
+	EffectsV3Status   ok_st      = EffectsV3_Decode((const char*)one_id,
+			sizeof(one_id), &ok_records);
+
+	TEST_CASE("the same shape with one entity still decodes");
+	TEST_ASSERT_(ok_st == EFFECTS_V3_OK,
+			"a one-id record decoded as %s; the zero-count check must reject "
+			"the count, not the shape", EffectsV3Status_ToString(ok_st));
+
+	if(ok_st == EFFECTS_V3_OK) EffectsV3_RecordsFree(ok_records);
+#endif
+}
+
 #endif  // EFFECTS_V3_DECODE_READY
 
 // acutest has no notion of a skipped test, so the gated state says so in the
@@ -416,6 +501,17 @@ void test_effectsV3_rejections(void) {
 #define V3_DEC_SUFFIX ""
 #else
 #define V3_DEC_SUFFIX " (SKIPPED: no decode yet)"
+#endif
+
+// the hand-built cases carry a second gate of their own, so the name has to
+// say which one is holding them back -- a bare [ OK ] on a test that skipped
+// internally is the misleading green this naming exists to prevent
+#if !defined(EFFECTS_V3_DECODE_READY)
+#define V3_HB_SUFFIX " (SKIPPED: no decode yet)"
+#elif !defined(EFFECTS_V3_ZERO_COUNT_REJECTED)
+#define V3_HB_SUFFIX " (SKIPPED: zero-count check not implemented)"
+#else
+#define V3_HB_SUFFIX ""
 #endif
 
 #if !defined(EFFECTS_V3_DECODE_READY)
@@ -433,5 +529,6 @@ TEST_LIST = {
 	{ "EffectsV3.roundTrip"  V3_RT_SUFFIX,    test_effectsV3_roundTrip  },
 	{ "EffectsV3.truncation" V3_TRUNC_SUFFIX, test_effectsV3_truncation },
 	{ "EffectsV3.rejections" V3_DEC_SUFFIX,   test_effectsV3_rejections },
+	{ "EffectsV3.handBuilt"  V3_HB_SUFFIX,    test_effectsV3_handBuiltRejections },
 	{ NULL, NULL }
 };
