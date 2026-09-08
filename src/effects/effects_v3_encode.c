@@ -25,8 +25,8 @@ void EffectsV3_WriteUint
 
 void EffectsV3_EncodeSegment
 (
-	const EffectsV3Seg *s,  // segment to write
-	EffectsBytes *out       // sink
+	const EffectsV3Segment *s,  // segment to write
+	EffectsBytes *out           // sink
 ) {
 	uint8_t header = 0;
 
@@ -40,8 +40,8 @@ void EffectsV3_EncodeSegment
 
 	switch(s->kind) {
 		case EFFECTS_V3_SEG_RANGE: {
-			uint8_t vw = EffectsV3_WidthFor(s->range.base);
-			uint8_t cw = EffectsV3_WidthFor(s->range.len);
+			uint8_t vw = s->value_width;
+			uint8_t cw = s->count_width;
 
 			header |= EFFECTS_V3_SEG_RANGE;
 			header |= (uint8_t)(EffectsV3_WidthCode(vw)
@@ -61,8 +61,8 @@ void EffectsV3_EncodeSegment
 		}
 
 		case EFFECTS_V3_SEG_REPEAT: {
-			uint8_t vw = EffectsV3_WidthFor(s->repeat.id);
-			uint8_t cw = EffectsV3_WidthFor(s->repeat.count);
+			uint8_t vw = s->value_width;
+			uint8_t cw = s->count_width;
 
 			header |= EFFECTS_V3_SEG_REPEAT;
 			header |= (uint8_t)(EffectsV3_WidthCode(vw)
@@ -79,23 +79,13 @@ void EffectsV3_EncodeSegment
 		default: {
 			// a bitmap carries its own length and needs no width codes, so both
 			// fields stay zero
-			header |= EFFECTS_V3_SEG_BITMAP;
+			header |= EFFECTS_V3_SEG_ASCENDING;
 			EffectsBytes_Write(out, &header, 1);
 
-			size_t n = roaring64_bitmap_portable_size_in_bytes(s->bitmap.bitmap);
-
-			// the count is a u32 on the wire, and a record's id count is a u32
-			// too, so no single blob can outrun it
-			ASSERT(n <= UINT32_MAX);
-			EffectsV3_WriteUint(out, (uint64_t)n, 4);
-
-			char *blob = rm_malloc(n);
-			size_t written =
-				roaring64_bitmap_portable_serialize(s->bitmap.bitmap, blob);
-			ASSERT(written == n);
-
-			EffectsBytes_Write(out, blob, written);
-			rm_free(blob);
+			// the blob was serialized when the list was converted, or read
+			// off the wire; either way it is written back verbatim
+			EffectsV3_WriteUint(out, s->ascending.n, 4);
+			EffectsBytes_Write(out, s->ascending.blob, s->ascending.n);
 			break;
 		}
 	}
@@ -103,14 +93,12 @@ void EffectsV3_EncodeSegment
 
 void EffectsV3_EncodeIdList
 (
-	const EffectsV3IdListBuilder *b,  // list to write
-	EffectsBytes *out                 // sink
+	const EffectsV3IdList *l,  // list to write
+	EffectsBytes *out          // sink
 ) {
-	uint32_t n = EffectsV3IdListBuilder_SegmentCount(b);
+	EffectsV3_WriteUint(out, l->n, 4);
 
-	EffectsV3_WriteUint(out, n, 4);
-
-	for(uint32_t i = 0; i < n; i++) {
-		EffectsV3_EncodeSegment(EffectsV3IdListBuilder_Segment(b, i), out);
+	for(uint32_t i = 0; i < l->n; i++) {
+		EffectsV3_EncodeSegment(l->segments + i, out);
 	}
 }
