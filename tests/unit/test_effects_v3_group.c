@@ -440,15 +440,22 @@ void test_effectsV3Group_emptyBlocks(void) {
 // side. This pins what the C ENCODER does with the same shape, because if C
 // emits one against a Rust replica we would have built the mirror of that bug.
 //
-// The record is emitted rather than dropped. That is deliberate and it is the
-// conservative choice: suppressing it is a decision about semantics - whether
-// setting no labels is a no-op worth no record - and the encoder is not where
-// that belongs. An empty block is well-formed on the wire, both engines can
-// represent it, and a decoder that refuses it is the thing being fixed.
+// The record is emitted rather than dropped, and the reason is AGREEMENT, not
+// a position on whether it should exist: a Rust master emits one today, so a C
+// master emitting one means the two engines produce the same bytes for the same
+// query. Divergence between the encoders is worse than both emitting a record
+// that may later be suppressed.
 //
-// If the format later rules that a zero-label label record must not be emitted,
-// this test is what changes, and it says so out loud rather than leaving the
-// behaviour to whatever the accumulator happened to do.
+// This is NOT a ruling that an encoder should never suppress. Rust's stated
+// position is that a label record carrying no labels is the same "carries no
+// information" shape that made `count = 0` illegal, and they intend to guard it
+// in their emitter and rule it invalid. If they do, suppressing is not a
+// workaround for a strict decoder - it IS the format, and both encoders change
+// together.
+//
+// So this test asserts the choice rather than recording an accident, which is
+// what makes the flip cheap: when the ruling lands, this is the one thing that
+// changes.
 void test_effectsV3Group_zeroLabelLabelRecord(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 
