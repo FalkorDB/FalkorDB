@@ -211,6 +211,145 @@ void test_effectsV3Encode_collapseBoundaryFromCorpus(void) {
 	}
 }
 
+// DIRECTION AND WIDTH, against the corpus.
+//
+// These eight cases exist because the original corpus could not distinguish a
+// correct header layout from several wrong ones: every seg_* case has one-byte
+// ids, so both width fields are zero, and swapping the two width shifts left
+// all of them passing. Now codes 2 and 3 appear in the value field and codes 1
+// and 2 in the count field, which nothing touched before at all.
+//
+// The direction pair is an encoder test rather than a decoder one.
+// dir_ascending and dir_descending are the same eight ids in opposite orders
+// and their payloads differ in exactly two bytes: the header (0x00 -> 0x40) and
+// the base (200 -> 207, lowest vs highest). That is the builder's descending
+// rules expressed as bytes rather than as my reading of them.
+//
+// Each case also asserts the header carries the field its NAME claims, with
+// dir_ascending's cleared bit as the control. Without that a case named
+// value_width_8_bytes that quietly encoded as width 0 would sit in the table
+// looking like coverage - the same defect as four passing seg_* cases proving
+// nothing about widths.
+void test_effectsV3Encode_directionAndWidthFromCorpus(void) {
+	struct {
+		const char *name;
+		uint64_t    first;        // ids are first + step * k
+		int64_t     step;
+		size_t      n;
+		uint8_t     want_header;  // the field this case is named for
+		const char *hex;
+	} cases[] = {
+		{ "dir_ascending",          200, 1, 8, 0x00,
+		  "0300050000000800000000000100000000c808" },
+		{ "dir_descending",         207, -1, 8, 0x40,
+		  "0300050000000800000000000100000040cf08" },
+		{ "dir_descending_to_zero",   7, -1, 8, 0x40,
+		  "03000500000008000000000001000000400708" },
+		{ "value_width_4_bytes",  65536, 1, 8, 0x08,
+		  "03000500000008000000000001000000080000010008" },
+		{ "value_width_8_bytes", 4294967296ULL, 1, 8, 0x0c,
+		  "030005000000080000000000010000000c000000000100000008" },
+		{ "count_width_2_bytes",      0, 1, 300, 0x10,
+		  "0300050000002c01000000000100000010002c01" },
+		{ "count_width_4_bytes",      0, 1, 70000, 0x20,
+		  "03000500000070110100000001000000200070110100" },
+		{ "dir_descending_bitmap", 18432, -1024, 19, 0x41,
+		  "0300050000001300000000000100000041420000000100000000000000000000"
+		  "003a300000010000000000120010000000000000040008000c00100014001800"
+		  "1c002000240028002c003000340038003c004000440048" },
+	};
+
+	for(size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		TEST_CASE(cases[i].name);
+
+		EffectsV3IdListBuilder *b = EffectsV3IdListBuilder_New();
+		for(size_t k = 0; k < cases[i].n; k++) {
+			EffectsV3IdListBuilder_Push(b,
+					cases[i].first + (uint64_t)(cases[i].step * (int64_t)k));
+		}
+
+		EffectsBytes *out = EffectsBytes_New(1024);
+		EffectsV3_EncodeIdList(b, out);
+
+		size_t got_n = EffectsBytes_Len(out);
+		unsigned char *got = malloc(got_n);
+		EffectsBytes_CopyInto(out, got);
+
+		size_t want_all_n = 0;
+		unsigned char *want_all = _unhex(cases[i].hex, &want_all_n);
+		const unsigned char *want = want_all + DELETE_NODE_PREFIX;
+		size_t want_n = want_all_n - DELETE_NODE_PREFIX;
+
+		char *got_s  = _hex(got, got_n);
+		char *want_s = _hex(want, want_n);
+
+		TEST_ASSERT_(got_n == want_n && memcmp(got, want, want_n) == 0,
+				"%s: the corpus and this encoder disagree\n"
+				"      got %s\n  expected %s",
+				cases[i].name, got_s, want_s);
+
+		// the case carries the field it is named for; got[4] is the first
+		// segment's header, after the u32 segment count
+		TEST_ASSERT_(got_n > 4 && got[4] == cases[i].want_header,
+				"%s: header 0x%02x, expected 0x%02x - a case that does not "
+				"carry the field it is named for is not coverage",
+				cases[i].name, got_n > 4 ? got[4] : 0, cases[i].want_header);
+
+		free(got_s);
+		free(want_s);
+		free(want_all);
+		free(got);
+		EffectsBytes_Free(out);
+		EffectsV3IdListBuilder_Free(b);
+	}
+}
+
+// a set has no direction, so the two bitmap forms differ in the header alone
+//
+// the same ids ascending and descending must produce byte-identical blobs, with
+// only bit 6 distinguishing them. If the bitmap were built in push order rather
+// than over the set, the two would diverge in the payload
+void test_effectsV3Encode_bitmapDirectionIsOnlyTheHeaderBit(void) {
+	unsigned char *bytes[2];
+	size_t lens[2];
+
+	for(int d = 0; d < 2; d++) {
+		EffectsV3IdListBuilder *b = EffectsV3IdListBuilder_New();
+		for(size_t k = 0; k < 19; k++) {
+			// ascending 0, 1024, ... then the same set descending
+			uint64_t id = d ? (18432 - 1024 * (uint64_t)k) : (1024 * (uint64_t)k);
+			EffectsV3IdListBuilder_Push(b, id);
+		}
+
+		EffectsBytes *out = EffectsBytes_New(512);
+		EffectsV3_EncodeIdList(b, out);
+		lens[d] = EffectsBytes_Len(out);
+		bytes[d] = malloc(lens[d]);
+		EffectsBytes_CopyInto(out, bytes[d]);
+
+		EffectsBytes_Free(out);
+		EffectsV3IdListBuilder_Free(b);
+	}
+
+	TEST_ASSERT_(lens[0] == lens[1],
+			"the two directions encode to %zu and %zu bytes; a set has no "
+			"direction, so only the header bit may differ",
+			lens[0], lens[1]);
+
+	TEST_ASSERT_(bytes[0][4] == 0x01 && bytes[1][4] == 0x41,
+			"expected headers 0x01 ascending and 0x41 descending, got 0x%02x "
+			"and 0x%02x", bytes[0][4], bytes[1][4]);
+
+	// everything except that one header byte must match
+	bytes[1][4] = bytes[0][4];
+	TEST_ASSERT_(memcmp(bytes[0], bytes[1], lens[0]) == 0,
+			"the blobs differ beyond the header bit - the bitmap is being "
+			"built in push order rather than over the id set");
+
+	free(bytes[0]);
+	free(bytes[1]);
+}
+
 // the header byte's fields, pinned individually
 //
 // A width or a shift that is wrong by one still produces a plausible byte, and
@@ -324,6 +463,10 @@ TEST_LIST = {
 		test_effectsV3Encode_matchesFixtureSegments },
 	{ "EffectsV3Encode:collapseBoundaryFromCorpus",
 		test_effectsV3Encode_collapseBoundaryFromCorpus },
+	{ "EffectsV3Encode:directionAndWidthFromCorpus",
+		test_effectsV3Encode_directionAndWidthFromCorpus },
+	{ "EffectsV3Encode:bitmapDirectionIsOnlyTheHeaderBit",
+		test_effectsV3Encode_bitmapDirectionIsOnlyTheHeaderBit },
 	{ "EffectsV3Encode:headerFields",
 		test_effectsV3Encode_headerFields },
 	{ "EffectsV3Encode:littleEndian",
