@@ -72,6 +72,21 @@ bool EffectsV3_MaybeCompress
 		return false ;
 	}
 
+	// only v3 and up have a flags byte to set or a twelve byte prefix to carry.
+	// A v2 header is ONE byte, so treating a v2 payload as compressible would
+	// read its first record byte as flags and overwrite it - a corrupt wire
+	// from a caller mistake.
+	//
+	// Checked from the payload's own version byte rather than taken as a
+	// parameter, so a caller cannot get it wrong. That matters more than it
+	// looks: EFFECTS_VERSION_EMIT is still 2, so every payload reaching this
+	// today is a v2 one and this is the branch that fires. The guard is what
+	// makes attaching the hook safe BEFORE the version switch rather than as
+	// part of it.
+	if ((uint8_t)buff[0] < 3) {
+		return false ;
+	}
+
 	// the threshold is measured against the RECORD STREAM, not the whole
 	// payload - the two header bytes are not what an operator is trading
 	// bandwidth for
