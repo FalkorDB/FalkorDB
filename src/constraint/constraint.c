@@ -350,8 +350,12 @@ void Constraint_Replicate
 	const char **attr_names ;
 	uint8_t n = Constraint_GetAttributes (c, &attr_ids, &attr_names) ;
 
-	// build a standalone effects buffer encoding the constraint creation
-	EffectsBuffer *eb = EffectsBuffer_New () ;
+	// v2 explicitly: this buffer carries only constraint DDL, which the v3
+	// encoder has no records for, and there is no query to replicate verbatim
+	// instead because GRAPH.CONSTRAINT is not a GRAPH.QUERY. A v3 buffer here
+	// would emit a header with no records and the replica would silently have
+	// no constraint
+	EffectsBuffer *eb = EffectsBuffer_NewV2 () ;
 	EffectsBuffer_AddCreateConstraintEffect (eb, Constraint_GetType (c), et,
 			label_id, label, attr_ids, attr_names, n) ;
 
