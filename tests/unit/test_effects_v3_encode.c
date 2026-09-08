@@ -110,8 +110,9 @@ void test_effectsV3Encode_matchesFixtureSegments(void) {
 			EffectsV3IdListBuilder_Push(b, c->ids[k]);
 		}
 
+		EffectsV3IdList list = EffectsV3IdListBuilder_ToIdList(b);
 		EffectsBytes *out = EffectsBytes_New(256);
-		EffectsV3_EncodeIdList(b, out);
+		EffectsV3_EncodeIdList(&list, out);
 
 		size_t got_n = EffectsBytes_Len(out);
 		unsigned char *got = malloc(got_n);
@@ -134,6 +135,7 @@ void test_effectsV3Encode_matchesFixtureSegments(void) {
 		free(want_all);
 		free(got);
 		EffectsBytes_Free(out);
+		EffectsV3IdListBuilder_FreeIdList(&list);
 		EffectsV3IdListBuilder_Free(b);
 	}
 }
@@ -182,8 +184,9 @@ void test_effectsV3Encode_collapseBoundaryFromCorpus(void) {
 			EffectsV3IdListBuilder_Push(b, 1024 * (uint64_t)k);
 		}
 
+		EffectsV3IdList list = EffectsV3IdListBuilder_ToIdList(b);
 		EffectsBytes *out = EffectsBytes_New(512);
-		EffectsV3_EncodeIdList(b, out);
+		EffectsV3_EncodeIdList(&list, out);
 
 		size_t got_n = EffectsBytes_Len(out);
 		unsigned char *got = malloc(got_n);
@@ -207,6 +210,7 @@ void test_effectsV3Encode_collapseBoundaryFromCorpus(void) {
 		free(want_all);
 		free(got);
 		EffectsBytes_Free(out);
+		EffectsV3IdListBuilder_FreeIdList(&list);
 		EffectsV3IdListBuilder_Free(b);
 	}
 }
@@ -268,8 +272,9 @@ void test_effectsV3Encode_directionAndWidthFromCorpus(void) {
 					cases[i].first + (uint64_t)(cases[i].step * (int64_t)k));
 		}
 
+		EffectsV3IdList list = EffectsV3IdListBuilder_ToIdList(b);
 		EffectsBytes *out = EffectsBytes_New(1024);
-		EffectsV3_EncodeIdList(b, out);
+		EffectsV3_EncodeIdList(&list, out);
 
 		size_t got_n = EffectsBytes_Len(out);
 		unsigned char *got = malloc(got_n);
@@ -300,6 +305,7 @@ void test_effectsV3Encode_directionAndWidthFromCorpus(void) {
 		free(want_all);
 		free(got);
 		EffectsBytes_Free(out);
+		EffectsV3IdListBuilder_FreeIdList(&list);
 		EffectsV3IdListBuilder_Free(b);
 	}
 }
@@ -321,13 +327,15 @@ void test_effectsV3Encode_bitmapDirectionIsOnlyTheHeaderBit(void) {
 			EffectsV3IdListBuilder_Push(b, id);
 		}
 
+		EffectsV3IdList list = EffectsV3IdListBuilder_ToIdList(b);
 		EffectsBytes *out = EffectsBytes_New(512);
-		EffectsV3_EncodeIdList(b, out);
+		EffectsV3_EncodeIdList(&list, out);
 		lens[d] = EffectsBytes_Len(out);
 		bytes[d] = malloc(lens[d]);
 		EffectsBytes_CopyInto(out, bytes[d]);
 
 		EffectsBytes_Free(out);
+		EffectsV3IdListBuilder_FreeIdList(&list);
 		EffectsV3IdListBuilder_Free(b);
 	}
 
@@ -382,8 +390,9 @@ void test_effectsV3Encode_headerFields(void) {
 			EffectsV3IdListBuilder_Push(b, cases[i].ids[k]);
 		}
 
+		EffectsV3IdList list = EffectsV3IdListBuilder_ToIdList(b);
 		EffectsBytes *out = EffectsBytes_New(64);
-		EffectsV3_EncodeIdList(b, out);
+		EffectsV3_EncodeIdList(&list, out);
 
 		size_t n = EffectsBytes_Len(out);
 		unsigned char *got = malloc(n);
@@ -399,8 +408,56 @@ void test_effectsV3Encode_headerFields(void) {
 
 		free(got);
 		EffectsBytes_Free(out);
+		EffectsV3IdListBuilder_FreeIdList(&list);
 		EffectsV3IdListBuilder_Free(b);
 	}
+}
+
+// a width WIDER than the value needs is written back as it stands
+//
+// This is the re-encode path, and it is the reason the shared segment struct
+// carries the widths as fields rather than deriving them. A freshly built
+// segment gets the narrowest width that holds each value; a DECODED one
+// carries whatever its peer chose, and a peer may legitimately write a value
+// wider than it needs. Narrowing on the way back out produces different bytes
+// for the same ids, which fails a round trip and looks like a decoder bug.
+//
+// Built here by hand rather than through the builder, because the builder
+// cannot produce this - which is exactly why it needs its own test.
+void test_effectsV3Encode_observedWidthsArePreserved(void) {
+	// base 5 and len 3 both fit in one byte, but say four
+	EffectsV3Segment s = {
+		.kind        = EFFECTS_V3_SEG_RANGE,
+		.descending  = false,
+		.value_width = 4,
+		.count_width = 4,
+		.range       = { .base = 5, .len = 3 },
+	};
+	EffectsV3IdList l = { .segments = &s, .n = 1 };
+
+	EffectsBytes *out = EffectsBytes_New(64);
+	EffectsV3_EncodeIdList(&l, out);
+
+	size_t n = EffectsBytes_Len(out);
+	unsigned char *got = malloc(n);
+	EffectsBytes_CopyInto(out, got);
+
+	// u32 count, header, then two 4-byte values
+	TEST_ASSERT_(n == 4 + 1 + 4 + 4,
+			"expected 13 bytes for a segment declaring 4-byte fields, got %zu "
+			"- the widths were recomputed rather than preserved", n);
+
+	// value width code 2 in bits 2-3, count width code 2 in bits 4-5
+	TEST_ASSERT_(got[4] == 0x28,
+			"expected header 0x28 (both widths code 2), got 0x%02x", got[4]);
+
+	unsigned char want[] = { 0x01,0x00,0x00,0x00, 0x28,
+	                         0x05,0x00,0x00,0x00, 0x03,0x00,0x00,0x00 };
+	TEST_ASSERT_(memcmp(got, want, sizeof(want)) == 0,
+			"the declared widths must be written verbatim");
+
+	free(got);
+	EffectsBytes_Free(out);
 }
 
 // values are written little-endian regardless of the host
@@ -437,8 +494,9 @@ void test_effectsV3Encode_countsAreStated(void) {
 			EffectsV3IdListBuilder_Push(b, ids[i]);
 		}
 
+		EffectsV3IdList list = EffectsV3IdListBuilder_ToIdList(b);
 		EffectsBytes *out = EffectsBytes_New(64);
-		EffectsV3_EncodeIdList(b, out);
+		EffectsV3_EncodeIdList(&list, out);
 
 		size_t n = EffectsBytes_Len(out);
 		unsigned char *got = malloc(n);
@@ -454,6 +512,7 @@ void test_effectsV3Encode_countsAreStated(void) {
 
 		free(got);
 		EffectsBytes_Free(out);
+		EffectsV3IdListBuilder_FreeIdList(&list);
 		EffectsV3IdListBuilder_Free(b);
 	}
 }
@@ -469,6 +528,8 @@ TEST_LIST = {
 		test_effectsV3Encode_bitmapDirectionIsOnlyTheHeaderBit },
 	{ "EffectsV3Encode:headerFields",
 		test_effectsV3Encode_headerFields },
+	{ "EffectsV3Encode:observedWidthsArePreserved",
+		test_effectsV3Encode_observedWidthsArePreserved },
 	{ "EffectsV3Encode:littleEndian",
 		test_effectsV3Encode_littleEndian },
 	{ "EffectsV3Encode:countsAreStated",
