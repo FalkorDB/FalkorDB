@@ -255,7 +255,7 @@ void test_effectsV3IdList_gappedRunCollapses(void) {
 	uint32_t n = EffectsV3IdListBuilder_SegmentCount(b);
 	for(uint32_t i = 0; i < n; i++) {
 		if(EffectsV3IdListBuilder_Segment(b, i)->kind ==
-				EFFECTS_V3_SEG_BITMAP) {
+				EFFECTS_V3_SEG_ASCENDING) {
 			saw_bitmap = true;
 		}
 	}
