@@ -411,6 +411,114 @@ class testRefusalControls():
         self.env.assertEquals(res.result_set[0][0], 0)
 
 
+class testEntitiesWithoutProperties():
+    """The commonest write in the language: create with no properties.
+
+    `CREATE (:Person)` and `CREATE (a)-[:R]->(b)` produce a record whose
+    attribute set is EMPTY - n_attrs 0, no value rows. An earlier decoder
+    refused that as malformed, reasoning that a record with entities but no
+    attribute ids "states nothing about them". It has it backwards: the empty
+    shape states precisely that these entities have no properties.
+
+    No fixture in the conformance corpus exercises it - every create case there
+    carries attributes - so a full corpus run stayed green while the most
+    ordinary write there is was being rejected.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        self.graph.query("CREATE (:L {v: 1})")   # node 0, label :L = 0
+
+    def _send(self, buf):
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, buf)
+
+    def test01_create_node_with_no_properties(self):
+        self._send(payload(rec_create_node(
+            count  = 2,
+            labels = [0],
+            attrs  = [],                       # no properties at all
+            ids    = id_list(seg_range(1, 2)),
+            values = [],
+        )))
+
+        res = self.graph.query("MATCH (n:L) RETURN count(n)")
+        self.env.assertEquals(res.result_set[0][0], 3)
+
+    def test02_create_edge_with_no_properties(self):
+        self._send(payload(rec_add_schema(SCHEMA_EDGE, 0, "R")))
+        self._send(payload(rec_create_edge(
+            count  = 2,
+            r      = 0,
+            attrs  = [],
+            ids    = id_list(seg_range(0, 2)),
+            src    = id_list(seg_repeat(0, 2)),
+            dst    = id_list(seg_range(1, 2)),
+            values = [],
+        )))
+
+        res = self.graph.query(
+            "MATCH (a)-[e:R]->(b) RETURN id(a), id(b) ORDER BY id(b)")
+        self.env.assertEquals(res.result_set, [[0, 1], [0, 2]])
+
+
+class testEdgeBatchBoundary():
+    """Cross the bulk-flush boundary.
+
+    Edge creation goes through GraphHub_CreateEdges one batch at a time rather
+    than one edge at a time - the singular call measured 16x slower on a
+    payload 3.5x smaller. Every other edge test here creates two edges, so none
+    of them reaches the flush inside the loop.
+
+    4097 is deliberate: one full batch plus a remainder of one, which is where
+    an off-by-one in the flush or in the wire-id alignment would show.
+    """
+
+    BATCH = 4096
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        self.graph.query("CREATE (), ()")      # nodes 0 and 1
+
+    def test01_one_record_spanning_two_batches(self):
+        n = self.BATCH + 1
+
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID,
+                payload(rec_add_schema(SCHEMA_EDGE, 0, "R")))
+
+        # every edge out of node 0 into node 1: the supernode shape, so both
+        # endpoint columns are a single Repeat and the whole record is tiny
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID,
+                payload(rec_create_edge(
+                    count  = n,
+                    r      = 0,
+                    attrs  = [],
+                    ids    = id_list(seg_range(0, n)),
+                    src    = id_list(seg_repeat(0, n)),
+                    dst    = id_list(seg_repeat(1, n)),
+                    values = [],
+                )))
+
+        res = self.graph.query("MATCH ()-[e:R]->() RETURN count(e)")
+        self.env.assertEquals(res.result_set[0][0], n)
+
+        # the ids must be exactly 0..n-1 with none lost or duplicated across
+        # the flush - a wire-id misalignment would have been refused, but a
+        # dropped remainder would not
+        res = self.graph.query(
+            "MATCH ()-[e:R]->() RETURN min(id(e)), max(id(e)), count(e)")
+        self.env.assertEquals(res.result_set, [[0, n - 1, n]])
+
+
 class testExpansionAtTheExtremes():
     """Range expansion at the ends of the id space.
 
