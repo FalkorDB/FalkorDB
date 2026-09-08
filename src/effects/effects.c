@@ -10,6 +10,7 @@
 #include "effects_internal.h"
 #include "effects_v3_group.h"
 #include "../configuration/config.h"
+#include "../util/identifier_limits.h"
 #include "../query_ctx.h"
 #include "../datatypes/map.h"
 #include "../datatypes/vector.h"
@@ -96,6 +97,22 @@ void EffectsBuffer_WriteBytes
 	ASSERT (n   > 0) ;
 	ASSERT (eb  != NULL) ;
 	ASSERT (ptr != NULL) ;
+
+	// A v2 record written while v3 is active means some Add*Effect was never
+	// routed into the accumulator. EffectsBuffer_Buffer serializes the groups
+	// and ignores this stream in v3, so the record would be SILENTLY DROPPED -
+	// a replica that never learns of the mutation, which is worse than a
+	// refused payload because nothing reports it.
+	//
+	// Logged rather than asserted: ASSERT compiles to nothing without RG_DEBUG,
+	// and this is exactly the case that must not pass quietly in a release
+	// build.
+	if(unlikely(eb->v3 != NULL)) {
+		RedisModule_Log(NULL, "warning",
+			"GRAPH.EFFECT v3 buffer received a v2 record write; an effect was "
+			"not routed and will be lost");
+		return;
+	}
 
 	EffectsBytes_Write (eb->records, ptr, n) ;
 }
@@ -963,8 +980,14 @@ static void _StageV3Labels
 	GrB_Vector nodes,     // nodes the label applies to
 	EffectType opcode     // SET_LABELS or REMOVE_LABELS
 ) {
-	char *lbl_name = NULL;
-	GrB_OK(GrB_get(nodes, (char *)&lbl_name, GrB_NAME));
+	// a real buffer, not a pointer's address. GrB_get with GrB_NAME COPIES the
+	// name into what you hand it, so passing &lbl_name wrote the label's
+	// characters into the pointer variable itself and the next line
+	// dereferenced them as an address - strcmp on a pointer built out of the
+	// label's own letters. The (char *) cast I had here is what silenced the
+	// char** / char* mismatch that would otherwise have caught it
+	char lbl_name[MAX_IDENTIFIER_LEN + 1] = {0};
+	GrB_OK(GrB_get(nodes, lbl_name, GrB_NAME));
 
 	GraphContext *gc = QueryCtx_GetGraphCtx();
 	const Schema *sch = GraphContext_GetSchema(gc, lbl_name, SCHEMA_NODE);
@@ -1046,6 +1069,12 @@ void EffectsBuffer_AddRemoveLabelsEffect
 	GrB_OK (GrB_Vector_nvals (&nvals, nodes)) ;
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->labels_removed += nvals ;
+
+	if(buff->v3 != NULL) {
+		_StageV3Labels(buff, nodes, EFFECT_REMOVE_LABELS);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
 
 	EffectType t = EFFECT_REMOVE_LABELS ;
 	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
