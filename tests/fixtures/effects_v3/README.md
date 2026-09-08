@@ -126,6 +126,51 @@ bytes this engine did not produce. An encoder wrong by a few bytes in its cost
 arithmetic produces two files that are each internally consistent and
 collectively on the wrong side of the boundary.
 
+## The rule: every optional block needs a present case AND an absent case
+
+The 33 cases read as one per feature, which is why a missing *absent*-block
+case was never obviously missing — it was not a hole in a grid, it was a case
+nobody thought of. It cost a real bug: the C decoder returned MALFORMED for a
+create with zero attributes, refusing `CREATE (:Person)`, while a full green
+corpus run and 26 green flow tests said nothing (fixed in `377f82a85`). No
+fixture here has an empty attribute set, so nothing contradicted it.
+
+So the rule, stated so the holes are visible as gaps in a grid:
+
+> Every block whose cardinality can be zero needs a case where it is present
+> and a case where it is empty. If the empty form is *invalid*, the absent case
+> is a rejection case rather than a fixture.
+
+That second clause matters, because "empty" is not one thing:
+
+- **Valid and degenerate** — the empty form is a legal payload the engine
+  really emits, and a decoder must accept it. `CREATE (:Person)` has no
+  attributes; `CREATE ()` has no labels. These need real generated fixtures.
+- **Invalid** — the empty form states nothing and must be refused. A
+  `SET_LABELS` with no labels, an index with no fields. These need **no
+  fixture**: they are hand-built mutations in the rejection cases, like the
+  reserved-bit and descending-on-Repeat cases already there.
+
+Which side a given block falls on is a format question, settled against the
+emitter and the spec, not something this corpus can decide.
+
+Measured across all 33 cases, only ONE block has both forms today:
+
+| block | present | empty |
+| --- | ---: | ---: |
+| `DELETE_NODE.labels` | 2 | 16 |
+
+Every other optional block appears in one form only — 26 of them present with
+no empty counterpart, and two (`DROP_CONSTRAINT.status`, `DROP_INDEX.options`)
+empty with no present counterpart. The empty-attribute-set gap was one of those
+26, not a one-off.
+
+**Enforcement belongs in the generator, not here.** Checking this grid means
+reading each record's blocks as structures, and the C harness deliberately
+reads bytes and no JSON — the `.json` files are documentation with no
+verification power. The side that holds the records in hand is the generator,
+which can assert the grid is complete as it writes the corpus.
+
 ## What the corpus still does not pin
 
 Earlier revisions of this file recorded three gaps — no descending segments, no
