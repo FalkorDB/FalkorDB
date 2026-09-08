@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 21 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -46,7 +46,11 @@ class testConfig(FlowTestsBase):
                 ("IMPORT_FOLDER", "/var/lib/FalkorDB/import/"),
                 ("TEMP_FOLDER", "/tmp"),
                 ("JS_HEAP_SIZE", 256 * 1024 * 1024),
-                ("JS_STACK_SIZE", 1024 * 1024)
+                ("JS_STACK_SIZE", 1024 * 1024),
+                # appended, not inserted: this list is checked POSITIONALLY
+                # against the enum order, so a new configuration has to go last
+                # in both places or every row after it fails
+                ("EFFECTS_VERSION", 2)
         ]
 
         for i, config in enumerate(response):
