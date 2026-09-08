@@ -121,8 +121,21 @@ void EffectsBuffer_WriteBytes
 		//
 		// Marking the buffer incomplete is what stops that. The caller then
 		// replicates the query verbatim instead, which is how the DDL reaches
-		// the replica correctly until the encoder implements those records.
-		// Dropping the write here is harmless once the buffer will not be sent.
+		// the replica until the encoder implements those records. Dropping the
+		// write here is harmless once the buffer will not be sent.
+		//
+		// WHAT VERBATIM ASSUMES: that the replica can execute the same query
+		// text. Between two C engines that is exact, and a replica whose replay
+		// fails escalates through DivergenceGuard_OnFailure (cmd_query.c), so a
+		// failure is loud. Across engines it is only as good as their query
+		// surfaces matching - measured: a Rust replica rejects
+		// db.idx.fulltext.createNodeIndex on arity, logs, and continues without
+		// escalating, leaving it quietly without the index.
+		//
+		// So this fallback is correct for C-to-C and is an interim for
+		// C-to-Rust. Records 11-14 in the encoder are what remove the
+		// assumption; until then a mixed-engine deployment should not run DDL
+		// on a v3-emitting C master.
 		if(!eb->v3_incomplete) {
 			RedisModule_Log(NULL, "notice",
 				"GRAPH.EFFECT v3 cannot encode this effect; replicating the "
