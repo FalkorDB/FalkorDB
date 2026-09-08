@@ -18,6 +18,19 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 # process env var that could leak into a shipped binary.
 prejit_harvest = []
 
+# Exposes `EffectsBuffer::as_slice`, which exists only to be measured: a bench
+# has to read back the bytes it just wrote, and in production `replicate` is
+# the only way a payload leaves. An accessor letting a caller take the bytes
+# and send them itself would reopen the seam that type exists to close — the
+# host would be back to holding a half-finished buffer and deciding what
+# finishing meant.
+#
+# `cfg(test)` cannot serve, because a bench is its own compilation unit and
+# would lose it. The self dev-dependency below is what turns this on for tests
+# and benches only, so `cargo bench` needs no extra flag and a release build
+# never compiles it.
+test-util = []
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -53,3 +66,17 @@ thin-vec = "0.2.18"
 thiserror = "2"
 zstd = { version = "0.13.3", default-features = false, features = ["arrays", "legacy", "zdict_builder"] }
 crc32fast = "1.4"
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+# Depending on ourselves is the documented way to enable a feature for dev
+# targets alone: benches link this build, a release build does not.
+graph = { path = ".", features = ["test-util"] }
+
+[[bench]]
+name = "effects_blocks"
+harness = false
+
+[[bench]]
+name = "effects_versions"
+harness = false
