@@ -521,13 +521,26 @@ class testLabelChangeWithNoLabels():
         # would have taken it down before this ran.
         #
         # A NEW label deliberately, not one the nodes already carry. An earlier
-        # version of this re-set an existing label and failed, which turned out
-        # not to be a fault in the no-op at all: applying a label a node ALREADY
-        # HAS duplicates it in the label matrix, so `MATCH (n:L) RETURN count(n)`
-        # answered 3 over two nodes while `id(n)` returned two rows. The query
-        # path filters to genuinely-new labels first and is unaffected; the
-        # effects path passes the record through. Reported - not worked around
-        # here, and not what this test is for.
+        # version re-set an existing label and failed, which turned out not to
+        # be a fault in the no-op at all.
+        #
+        # Applying a label a node ALREADY HAS drifts the label STATISTIC, not
+        # the matrix: Graph_LabelNode's two Delta_Matrix_setElement_BOOL calls
+        # are idempotent, but GraphStatistics_IncNodeCount after them is
+        # unconditional, and Graph_LabeledNodeCount is a straight stats read
+        # rather than a matrix scan. So over two nodes `count(n)` answers 3
+        # while `id(n)` correctly returns two rows - one counter wrong, no
+        # duplicate anywhere.
+        #
+        # (An earlier note here said the matrix held a duplicate. It does not,
+        # and that would be the more serious bug - worth stating plainly so
+        # nobody goes looking in the wrong structure.)
+        #
+        # The query path filters to genuinely-new labels before calling in, so
+        # it never triggers it; the effects path passes the record through.
+        # Reported, and not worked around here - the non-idempotent function is
+        # Graph_LabelNode, which is shared, and the spec's "label add is an
+        # idempotent set operation" is a claim about exactly that function.
         self._send(payload(rec_add_schema(SCHEMA_NODE, 1, "Fresh")))
         self._send(payload(rec_set_labels(
             count  = 1,
