@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "effects_v3.h"
 #include "../util/roaring.h"
 
 #include <stdbool.h>
@@ -39,17 +40,10 @@
 //     same both ways, so the bit would carry no information and a decoder
 //     rejects it there rather than ignoring it
 
-// which of the three wire kinds a segment is
-//
-// direction is a separate flag rather than more kinds, because a descending
-// segment is the same payload read the other way: a Range gains a
-// first-and-highest base instead of a first-and-lowest one, and a bitmap holds
-// a set, which has no direction at all
-typedef enum {
-	EFFECTS_V3_SEG_RANGE     = 0,  // consecutive ids, stepping by one
-	EFFECTS_V3_SEG_BITMAP    = 1,  // ids with gaps, as a roaring bitmap
-	EFFECTS_V3_SEG_REPEAT    = 2,  // one id, several times
-} EffectsV3SegKind;
+// the kind enum and the header-bit macros come from effects_v3.h, which is the
+// shared contract: duplicating them here would let the two drift apart, and a
+// segment kind that differs between the encoder and the decoder is precisely
+// the disagreement the corpus exists to catch.
 
 // one segment under construction
 //
@@ -60,7 +54,7 @@ typedef enum {
 // push and, if it ever reaches a range insertion, fabricates ids the set does
 // not hold
 typedef struct {
-	EffectsV3SegKind kind;
+	EffectsV3SegmentKind kind;
 	bool descending;  // header bit 6; always false for a Repeat
 	union {
 		struct {
@@ -121,6 +115,31 @@ const EffectsV3Seg *EffectsV3IdListBuilder_Segment
 void EffectsV3IdListBuilder_Free
 (
 	EffectsV3IdListBuilder *b  // builder
+);
+
+// convert what the builder holds into the shared wire representation
+//
+// This is where a freshly built list acquires its width codes: each value is
+// given the narrowest width that holds it, and each bitmap is serialized to a
+// blob. A DECODED list already carries the widths its peer chose, and those are
+// preserved rather than recomputed - so the two paths meet at the same struct
+// and the encoder never has to know which one it is writing.
+//
+// Recomputing on the re-encode path would be wrong even though it usually
+// agrees: a peer may legitimately write a value wider than it needs, and a
+// round trip that narrows it produces different bytes from the ones it read.
+//
+// the caller owns the result and must free it with
+// EffectsV3IdListBuilder_FreeIdList
+EffectsV3IdList EffectsV3IdListBuilder_ToIdList
+(
+	const EffectsV3IdListBuilder *b  // builder
+);
+
+// free an IdList produced by EffectsV3IdListBuilder_ToIdList
+void EffectsV3IdListBuilder_FreeIdList
+(
+	EffectsV3IdList *l  // list to free
 );
 
 //------------------------------------------------------------------------------
