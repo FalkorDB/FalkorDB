@@ -349,6 +349,63 @@ void test_short_expansion_is_still_a_mismatch() {
 	rm_free(p);
 }
 
+//------------------------------------------------------------------------------
+// the wire bytes
+//------------------------------------------------------------------------------
+
+// the three header fields are LITTLE ENDIAN, pinned as bytes
+//
+// This is here because a round trip cannot detect a byte-order bug: swap the
+// store and the load together and every round-trip test still passes, because
+// the error is symmetric. It only shows up against the other engine, as a
+// refused payload with a plausible-looking length in the log.
+//
+// Rust writes these with to_le_bytes, so the wire is defined as little endian
+// rather than as native. On every target either engine builds for that is the
+// same bytes a memcpy would produce, which is exactly why an accidental swap
+// would go unnoticed locally.
+void test_header_fields_are_little_endian() {
+	size_t  records_len = 4000;                  // 0x00000FA0
+	size_t  len;
+	char   *p = _payload(records_len, true, &len);
+
+	char *records = rm_malloc(records_len);
+	memcpy(records, p + 2, records_len);
+	uint32_t expect_crc = CRC32(records, records_len);
+
+	TEST_ASSERT(EffectsV3_MaybeCompress(&p, &len, 64) == true);
+
+	const unsigned char *b = (const unsigned char *)p;
+
+	// uncompressed_length == 4000 == 0x00000FA0, low byte first
+	TEST_ASSERT(b[2] == 0xA0);
+	TEST_ASSERT(b[3] == 0x0F);
+	TEST_ASSERT(b[4] == 0x00);
+	TEST_ASSERT(b[5] == 0x00);
+
+	// compressed_length is whatever is left after header and prefix
+	size_t frame_len = len - EFFECTS_V3_HEADER_LEN - EFFECTS_V3_COMPRESSED_PREFIX;
+	TEST_ASSERT(b[6] == (unsigned char)( frame_len        & 0xFF));
+	TEST_ASSERT(b[7] == (unsigned char)((frame_len >> 8)  & 0xFF));
+	TEST_ASSERT(b[8] == (unsigned char)((frame_len >> 16) & 0xFF));
+	TEST_ASSERT(b[9] == (unsigned char)((frame_len >> 24) & 0xFF));
+
+	// checksum of the PLAINTEXT, not the frame
+	TEST_ASSERT(b[10] == (unsigned char)( expect_crc        & 0xFF));
+	TEST_ASSERT(b[11] == (unsigned char)((expect_crc >> 8)  & 0xFF));
+	TEST_ASSERT(b[12] == (unsigned char)((expect_crc >> 16) & 0xFF));
+	TEST_ASSERT(b[13] == (unsigned char)((expect_crc >> 24) & 0xFF));
+
+	// and the checksum really is over the plaintext: the frame's own bytes
+	// hash to something else, so a reader that checksummed the frame would
+	// disagree with this
+	TEST_ASSERT(CRC32(p + EFFECTS_V3_HEADER_LEN + EFFECTS_V3_COMPRESSED_PREFIX,
+				frame_len) != expect_crc);
+
+	rm_free(records);
+	rm_free(p);
+}
+
 TEST_LIST = {
 	{ "crc32_known_answers",                   test_crc32_known_answers},
 	{ "worth_it_boundary",                     test_worth_it_boundary},
@@ -359,5 +416,6 @@ TEST_LIST = {
 	{ "refusals",                              test_refusals},
 	{ "declared_length_is_an_allocation_ceiling", test_declared_length_is_an_allocation_ceiling},
 	{ "short_expansion_is_still_a_mismatch",   test_short_expansion_is_still_a_mismatch},
+	{ "header_fields_are_little_endian",       test_header_fields_are_little_endian},
 	{ NULL, NULL }
 };
