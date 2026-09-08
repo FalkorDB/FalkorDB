@@ -257,11 +257,13 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 - **No case combines a non-zero count width with the collapse boundary.** The
   two `count_width_*` cases are single ranges well clear of it, so an encoder
   whose cost arithmetic mishandles a wide count would not be caught here.
-- **A zero-count record is illegal and refused by both engines.** Ruled after
+- **A zero-count record is illegal.** Ruled after
   the grid work found both accepting it while both rejected the same idea one
   level down at the segment. Rust has landed it as an `EmptyRecord` error and
   C's check goes at the record header where `count` is read; the rejection case
-  is in `tests/unit/test_effects_v3_roundtrip.c`. Pinned on both, not on one.
+  is in `tests/unit/test_effects_v3_roundtrip.c`, gated until C's lands. So:
+  **ruled on both engines, implemented on Rust, pending on C** — not yet an
+  invariant either engine can rely on the other to hold.
 - **Count width code 3 (eight bytes) is unreachable for an ENCODER, and must
   still be handled by a DECODER.** A record's id count is a `u32` and a
   segment's count is bounded by it, so four bytes is the widest a conforming
