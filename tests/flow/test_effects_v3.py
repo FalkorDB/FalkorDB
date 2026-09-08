@@ -801,3 +801,95 @@ class testFutureVersionRefused(_RefusedCase):
         self._refuse(_u8(FUTURE_EFFECTS_VERSION) + _u32(EFFECT_ADD_ATTRIBUTE),
                      "a version above this build's read ceiling",
                      expect_log="version mismatch")
+
+class testRemoveAllKeepsIndexesConsistent():
+    """`SET n = {}` must leave the indexes in the same state whichever path
+    applied it.
+
+    v3 has no remove-all sentinel: the ruling is that the emitter resolves to
+    end state and states every removed attribute explicitly as a T_NULL. That
+    means a remove-all never reaches v2's `attr_id == ATTRIBUTE_ID_ALL` branch,
+    which calls Schema_RemoveNodeFromIndex - it takes the per-attribute path
+    instead, which RE-INDEXES. Re-index and remove are not obviously the same
+    operation, and this codebase has been bitten by exactly that distinction
+    before: a deletion path that was never reached left entries orphaned in
+    HNSW, so a KNN query kept returning them.
+
+    So this compares the two paths on index CONTENTS rather than graph
+    contents, which is what a test asserting node counts would miss. Both a
+    range index and a vector index, because the earlier bug was vector-only.
+
+    Measured: they agree. The per-attribute re-index does remove the entry.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn = self.env.getConnection()
+
+    def _range_graph(self, name):
+        g = Graph(self.conn, name)
+        g.query("CREATE INDEX FOR (n:P) ON (n.v)")
+        g.query("CREATE (:P {v: 5})")
+        return g
+
+    def _vec_graph(self, name):
+        g = Graph(self.conn, name)
+        g.create_node_vector_index("P", "emb", dim=2,
+                                   similarity_function="euclidean")
+        g.query("CREATE (:P {emb: vecf32([1.0, 1.0])})")
+        return g
+
+    def _remove_all_via_effect(self, name):
+        # one UPDATE_NODE naming the attribute with a T_NULL value - the shape
+        # the ruling says a remove-all arrives as
+        self.conn.execute_command("GRAPH.EFFECT", name, payload(
+            rec_update_node(count=1, labels=[0], attrs=[0],
+                            ids=id_list(seg_range(0, 1)),
+                            values=[v_null()])))
+
+    def test01_range_index(self):
+        # control first: the lookup must actually USE the index, or the test
+        # proves nothing. GRAPH.EXPLAIN shows "Node By Index Scan".
+        q = self._range_graph("ra_query")
+        plan = self.conn.execute_command("GRAPH.EXPLAIN", "ra_query",
+                "MATCH (n:P) WHERE n.v = 5 RETURN count(n)")
+        self.env.assertContains("Index Scan", "\n".join(plan))
+        self.env.assertEquals(
+            q.query("MATCH (n:P) WHERE n.v = 5 RETURN count(n)").result_set[0][0], 1)
+
+        q.query("MATCH (n:P) SET n = {}")
+        via_query = q.query("MATCH (n:P) WHERE n.v = 5 RETURN count(n)").result_set[0][0]
+
+        e = self._range_graph("ra_effect")
+        self._remove_all_via_effect("ra_effect")
+        via_effect = e.query("MATCH (n:P) WHERE n.v = 5 RETURN count(n)").result_set[0][0]
+
+        self.env.assertEquals(via_effect, via_query)
+        self.env.assertEquals(via_effect, 0)
+        # the node itself survives - only its attributes went
+        self.env.assertEquals(
+            e.query("MATCH (n:P) RETURN count(n)").result_set[0][0], 1)
+
+    def test02_vector_index(self):
+        knn = ("CALL db.idx.vector.queryNodes('P', 'emb', 3, vecf32([1.0,1.0])) "
+               "YIELD node RETURN count(node)")
+
+        q = self._vec_graph("va_query")
+        self.env.assertEquals(q.query(knn).result_set[0][0], 1)
+        q.query("MATCH (n:P) SET n = {}")
+        via_query = q.query(knn).result_set[0][0]
+
+        e = self._vec_graph("va_effect")
+        self.env.assertEquals(e.query(knn).result_set[0][0], 1)
+        self._remove_all_via_effect("va_effect")
+        via_effect = e.query(knn).result_set[0][0]
+
+        # a stale HNSW entry would show up here as a non-zero count
+        self.env.assertEquals(via_effect, via_query)
+        self.env.assertEquals(via_effect, 0)
+        self.env.assertEquals(
+            e.query("MATCH (n:P) RETURN count(n)").result_set[0][0], 1)
+
