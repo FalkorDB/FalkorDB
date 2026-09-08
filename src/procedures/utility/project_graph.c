@@ -333,27 +333,23 @@ static GrB_Info _get_rows_with_labels
 		if(info != GrB_SUCCESS) return info;
 		GrB_Matrix_free(&L);
 	} else {
-		info = GrB_Vector_new(&_rows, GrB_BOOL, n_short);
-		if(info != GrB_SUCCESS) return info;
-		info = GrB_Vector_assign_BOOL(_rows, NULL, NULL, true, GrB_ALL, n_short,
-				NULL);
-		if(info != GrB_SUCCESS) return info;
+		GrB_OK (GrB_Vector_new(&_rows, GrB_BOOL, n_short));
+		GrB_OK (GrB_Vector_assign_BOOL(_rows, NULL, NULL, true, GrB_ALL, n_short,
+				NULL));
 
-		if(Graph_DeletedNodeCount(g) > 0) {
+		if (Graph_DeletedNodeCount(g) > 0) {
 			NodeID *deleted_nodes = NULL;
 			uint64_t deleted_count = 0;
 			Graph_DeletedNodes(g, &deleted_nodes, &deleted_count);
 
 			for(uint64_t i = 0; i < deleted_count; i++) {
-				info = GrB_Vector_removeElement(_rows, deleted_nodes[i]);
-				if(info != GrB_SUCCESS && info != GrB_NO_VALUE) return info;
+				GrB_OK (GrB_Vector_removeElement(_rows, deleted_nodes[i]));
 			}
 			rm_free(deleted_nodes);
 		}
 	}
 
-	info = GrB_Vector_resize(_rows, n_short);
-	if(info != GrB_SUCCESS) return info;
+	GrB_OK (GrB_Vector_resize(_rows, n_short));
 	*rows = _rows;
 	return GrB_SUCCESS;
 }
@@ -428,29 +424,21 @@ GrB_Info _combine_matricies_and_extract
 	GrB_Matrix projected = NULL;
 	GrB_Descriptor desc = NULL;
 
-	info = GrB_Vector_nvals(&nvals, rows);
-	if(info != GrB_SUCCESS) return info;
+	GrB_OK (GrB_Vector_nvals(&nvals, rows));
 
-	info = GrB_Descriptor_new(&desc);
-	if(info != GrB_SUCCESS) return info;
-	info = GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST);
-	if(info != GrB_SUCCESS) goto cleanup;
-	info = GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST);
-	if(info != GrB_SUCCESS) goto cleanup;
+	GrB_OK (GrB_Descriptor_new(&desc));
+	GrB_OK (GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_ROWINDEX_LIST));
+	GrB_OK (GrB_Descriptor_set_INT32(desc, GxB_USE_INDICES, GxB_COLINDEX_LIST));
 
 	// DP/M carry edge IDs (possibly tensor-encoded), so keep extraction matrices
 	// as UINT64 regardless of output mode.
-	info = GrB_Matrix_new(&_A, out_type, nvals, nvals);
-	if(info != GrB_SUCCESS) goto cleanup;
-	info = GrB_Matrix_new(&adp, GrB_UINT64, nvals, nvals);
-	if(info != GrB_SUCCESS) goto cleanup;
-	info = GrB_Matrix_new(&am, GrB_UINT64, nvals, nvals);
-	if(info != GrB_SUCCESS) goto cleanup;
-	info = GrB_Matrix_new(&adm, GrB_BOOL, nvals, nvals);
-	if(info != GrB_SUCCESS) goto cleanup;
+	GrB_OK (GrB_Matrix_new(&_A, out_type, nvals, nvals));
+	GrB_OK (GrB_Matrix_new(&adp, GrB_UINT64, nvals, nvals));
+	GrB_OK (GrB_Matrix_new(&am, GrB_UINT64, nvals, nvals));
+	GrB_OK (GrB_Matrix_new(&adm, GrB_BOOL, nvals, nvals));
+
 	if(value_op != NULL) {
-		info = GrB_Matrix_new(&projected, out_type, nvals, nvals);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_Matrix_new(&projected, out_type, nvals, nvals));
 	}
 
 	for(unsigned short i = 0; i < n_mats; i++) {
@@ -459,57 +447,45 @@ GrB_Info _combine_matricies_and_extract
 		GrB_Matrix dp = Delta_Matrix_DP(mats[i]);
 
 		// accumulate pending additions (DP) in the selected sub-domain
-		info = GxB_Matrix_extract_Vector(adp, NULL, NULL, dp, rows, rows, desc);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GxB_Matrix_extract_Vector(adp, NULL, NULL, dp, rows, rows, desc));
 		if(value_op != NULL) {
-			info = GrB_Matrix_apply_IndexOp_Scalar(projected, NULL, NULL, value_op, adp,
-					thunk, NULL);
-			if(info != GrB_SUCCESS) goto cleanup;
-			info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, op, _A, projected, NULL);
-		} else {
-			info = GrB_assign(_A, adp, NULL, thunk, GrB_ALL, 0, GrB_ALL, 0,
-					GrB_DESC_S);
+			GrB_OK (GrB_Matrix_apply_IndexOp_Scalar (
+				projected, NULL, NULL, value_op, adp, thunk, NULL));
+			GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (
+				_A, NULL, NULL, op, _A, projected, NULL));
+			GrB_OK (GrB_assign (
+				_A, adp, NULL, thunk, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
 		}
-		if(info != GrB_SUCCESS) goto cleanup;
 
-		info = GrB_Matrix_clear(adp);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_Matrix_clear(adp));
+
 		if(value_op != NULL) {
-			info = GrB_Matrix_clear(projected);
-			if(info != GrB_SUCCESS) goto cleanup;
+			GrB_OK (GrB_Matrix_clear(projected));
 		}
 
 		// accumulate committed M entries that are not deleted by DM
-		info = GxB_Matrix_extract_Vector(adm, NULL, NULL, dm, rows, rows, desc);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GxB_Matrix_extract_Vector(adm, NULL, NULL, dm, rows, rows, desc));
 
-		info = GrB_Descriptor_set_INT32(desc, GrB_COMP_STRUCTURE, GrB_MASK_FIELD);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_Descriptor_set_INT32(desc, GrB_COMP_STRUCTURE, GrB_MASK_FIELD));
 
-		info = GxB_Matrix_extract_Vector(am, adm, NULL, m, rows, rows, desc);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GxB_Matrix_extract_Vector(am, adm, NULL, m, rows, rows, desc));
 
 		if(value_op != NULL) {
-			info = GrB_Matrix_apply_IndexOp_Scalar(
-				projected, NULL, NULL, value_op, am, thunk, NULL);
-			if(info != GrB_SUCCESS) goto cleanup;
-			info = GrB_Matrix_eWiseAdd_BinaryOp(_A, NULL, NULL, op, _A, projected, NULL);
+			GrB_OK (GrB_Matrix_apply_IndexOp_Scalar(
+				projected, NULL, NULL, value_op, am, thunk, NULL));
+			GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (
+				_A, NULL, NULL, op, _A, projected, NULL));
 		} else {
-			info = GrB_assign(_A, am, NULL, thunk, GrB_ALL, 0, GrB_ALL, 0,
-					GrB_DESC_S);
+			GrB_OK (GrB_assign (
+				_A, am, NULL, thunk, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
 		}
-		if(info != GrB_SUCCESS) goto cleanup;
 
-		info = GrB_Descriptor_set_INT32(desc, GrB_DEFAULT, GrB_MASK_FIELD);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_Descriptor_set_INT32(desc, GrB_DEFAULT, GrB_MASK_FIELD));
 
-		info = GrB_Matrix_clear(am);
-		if(info != GrB_SUCCESS) goto cleanup;
-		info = GrB_Matrix_clear(adm);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_Matrix_clear(am));
+		GrB_OK (GrB_Matrix_clear(adm));
 		if(value_op != NULL) {
-			info = GrB_Matrix_clear(projected);
-			if(info != GrB_SUCCESS) goto cleanup;
+			GrB_OK (GrB_Matrix_clear(projected));
 		}
 	}
 
@@ -536,12 +512,12 @@ static GrB_Info _symmetrize_matrix
 	ASSERT(A != NULL);
 
 	if(bool_matrix) {
-		GrB_OK(GrB_Matrix_eWiseAdd_BinaryOp(A, NULL, NULL, GxB_ANY_BOOL, A, A,
-				GrB_DESC_T1));
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (
+			A, NULL, NULL, GxB_ANY_BOOL, A, A, GrB_DESC_T1));
 	} else {
 		GrB_BinaryOp op = _select_reduce_op(strategy);
-		GrB_OK(GrB_Matrix_eWiseAdd_BinaryOp(A, NULL, NULL, op, A, A,
-				GrB_DESC_T1));
+		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (
+			A, NULL, NULL, op, A, A, GrB_DESC_T1));
 	}
 
 	return GrB_SUCCESS;
@@ -564,10 +540,10 @@ static GrB_Info _transpose_matrix
 
 static GrB_Info _expand_to_full_domain
 (
-	GrB_Matrix *A,     // [input/output] compact matrix to expand
-	const Graph *g,    // graph
+	GrB_Matrix *A,           // [input/output] compact matrix to expand
+	const Graph *g,          // graph
 	const GrB_Vector rows,   // row-id map used during compaction
-	bool bool_matrix   // matrix type switch
+	bool bool_matrix         // matrix type switch
 ) {
 	ASSERT(A != NULL && *A != NULL);
 	ASSERT(g != NULL);
@@ -624,6 +600,7 @@ GrB_Info project_graph_to_matrix
 	if(!_resolve_default(conf.default_ew, &edge_has_default, &edge_default)) {
 		return GrB_INVALID_VALUE;
 	}
+
 	if(!_resolve_default(conf.default_nw, &node_has_default, &node_default)) {
 		return GrB_INVALID_VALUE;
 	}
@@ -639,24 +616,16 @@ GrB_Info project_graph_to_matrix
 
 	if(n_rel_mats == 0) {
 		GrB_Index n = 0;
-		info = GrB_Vector_nvals(&n, _rows);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_Vector_nvals(&n, _rows));
 		GrB_Index dim = conf.compact ? n : Graph_UncompactedNodeCount(conf.g);
-		info = GrB_Matrix_new(&_A, bool_matrix ? GrB_BOOL : GrB_FP64, dim, dim);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_Matrix_new(&_A, bool_matrix ? GrB_BOOL : GrB_FP64, dim, dim));
 	} else if(bool_matrix) {
 		GrB_Scalar t = NULL;
-		info = GrB_Scalar_new(&t, GrB_BOOL);
-		if(info != GrB_SUCCESS) goto cleanup;
-		info = GrB_Scalar_setElement_BOOL(t, true);
-		if(info != GrB_SUCCESS) {
-			GrB_free(&t);
-			goto cleanup;
-		}
+		GrB_OK (GrB_Scalar_new(&t, GrB_BOOL));
+		GrB_OK (GrB_Scalar_setElement_BOOL(t, true));
 		info = _combine_matricies_and_extract(&_A, R, n_rel_mats, _rows,
-				GrB_BOOL,
-				GxB_ANY_BOOL, NULL, t);
-		GrB_free(&t);
+				GrB_BOOL, GxB_ANY_BOOL, NULL, t);
+		GrB_OK (GrB_free(&t));
 		if(info != GrB_SUCCESS) goto cleanup;
 	} else {
 		atomic_bool invalid_edges = false;
@@ -670,8 +639,7 @@ GrB_Info project_graph_to_matrix
 		};
 
 		GrB_Scalar ectx_s = NULL;
-		info = GrB_Scalar_new(&ectx_s, pgtm_edge_ctx_type);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_Scalar_new(&ectx_s, pgtm_edge_ctx_type));
 		info = GrB_Scalar_setElement_UDT(ectx_s, (void *)&ectx);
 		if(info != GrB_SUCCESS) {
 			GrB_free(&ectx_s);
