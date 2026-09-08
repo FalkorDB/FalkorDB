@@ -6,6 +6,7 @@
 #pragma once
 
 #include "effects.h"
+#include "effects_bytes.h"
 
 #include <stdio.h>
 
@@ -44,6 +45,18 @@ void EffectsBuffer_WriteSIValue
 void EffectsBuffer_IncEffectCount
 (
 	EffectsBuffer *buff
+);
+
+// wrap a byte sink the caller owns as an effects-buffer
+//
+// lets v3 reach the shared SIValue codec against its own sinks: a grouped
+// record's values accumulate in that group's sink rather than in a buffer's
+// record stream, and a second SIValue codec is exactly the thing not to write.
+//
+// the returned buffer BORROWS the sink - freeing it frees the wrapper only
+EffectsBuffer *EffectsBuffer_Wrap
+(
+	EffectsBytes *sink  // sink to write into; not owned
 );
 
 //------------------------------------------------------------------------------
