@@ -23,7 +23,9 @@ bool ApplyUpdateNode
 	//    attribute value
 	//--------------------------------------------------------------------------
 
-	SIValue v;            // updated value
+	// initialised because the 'fail' path frees it, and the checked read
+	// below can jump there before it is set
+	SIValue v = SI_NullVal () ;
 	AttributeID attr_id;  // entity ID
 	Graph *g = GraphContext_GetGraph (gc) ;
 
@@ -45,7 +47,9 @@ bool ApplyUpdateNode
 	// read value
 	//--------------------------------------------------------------------------
 
-	v = SIValue_FromBinary (stream) ;
+	if (!SIValue_FromBinary (stream, &v)) {
+		goto fail ;
+	}
 
 	//--------------------------------------------------------------------------
 	// validations
