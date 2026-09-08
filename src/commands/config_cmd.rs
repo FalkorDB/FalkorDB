@@ -14,7 +14,7 @@
 //! Runtime-settable (via SET):
 //!   TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX, RESULTSET_SIZE,
 //!   MAX_QUEUED_QUERIES, QUERY_MEM_CAPACITY, DELTA_MAX_PENDING_CHANGES,
-//!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE, EFFECTS_THRESHOLD,
+//!   VKEY_MAX_ENTITY_COUNT, JS_HEAP_SIZE, JS_STACK_SIZE,
 //!   CMD_INFO, MAX_INFO_QUERIES, ASYNC_DELETE, DELAY_INDEXING
 //!
 //! Read-only (SET returns an error):
@@ -40,9 +40,9 @@ use crate::config::{
     CONFIGURATION_DELAY_INDEXING, CONFIGURATION_IMPORT_FOLDER, CONFIGURATION_INDEX_WORKER_THREADS,
     CONFIGURATION_JS_HEAP_SIZE, CONFIGURATION_JS_STACK_SIZE, CONFIGURATION_NODE_CREATION_BUFFER,
     CONFIGURATION_TEMP_FOLDER, CONFIGURATION_VKEY_MAX_ENTITY_COUNT, DELTA_MAX_PENDING_CHANGES,
-    EFFECTS_THRESHOLD, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP, MAX_QUEUED_QUERIES,
-    OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT, TIMEOUT_DEFAULT, TIMEOUT_MAX,
-    get_thread_count, normalize_node_creation_buffer,
+    EFFECTS_COMPRESSION, EFFECTS_THRESHOLD_DEPRECATED, MAX_INFO_QUERIES, MAX_INFO_QUERIES_CAP,
+    MAX_QUEUED_QUERIES, OMP_THREAD_COUNT, QUERY_MEM_CAPACITY, RESULTSET_SIZE, TIMEOUT,
+    TIMEOUT_DEFAULT, TIMEOUT_MAX, get_thread_count, normalize_node_creation_buffer,
 };
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
 use std::sync::atomic::Ordering;
@@ -85,7 +85,11 @@ fn config_get_one(
             RedisValue::Integer(i64::from(CONFIGURATION_CMD_INFO.load(Ordering::Relaxed)))
         }
         "MAX_INFO_QUERIES" => RedisValue::Integer(MAX_INFO_QUERIES.load(Ordering::Relaxed)),
-        "EFFECTS_THRESHOLD" => RedisValue::Integer(EFFECTS_THRESHOLD.load(Ordering::Relaxed)),
+        "EFFECTS_COMPRESSION" => RedisValue::Integer(EFFECTS_COMPRESSION.load(Ordering::Relaxed)),
+        // Deprecated and read by nothing; reported so a GET round-trips a SET.
+        "EFFECTS_THRESHOLD" => {
+            RedisValue::Integer(EFFECTS_THRESHOLD_DEPRECATED.load(Ordering::Relaxed))
+        }
         "BOLT_PORT" => RedisValue::Integer(BOLT_PORT.load(Ordering::Relaxed)),
         "DELAY_INDEXING" => RedisValue::Integer(i64::from(*CONFIGURATION_DELAY_INDEXING.lock(ctx))),
         "IMPORT_FOLDER" => RedisValue::BulkString((*CONFIGURATION_IMPORT_FOLDER.lock(ctx)).clone()),
@@ -112,6 +116,7 @@ fn validate_config_set(
         | "TIMEOUT_MAX"
         | "QUERY_MEM_CAPACITY"
         | "DELTA_MAX_PENDING_CHANGES"
+        | "EFFECTS_COMPRESSION"
         | "EFFECTS_THRESHOLD" => {
             let v: i64 = value
                 .parse()
@@ -121,6 +126,7 @@ fn validate_config_set(
             }
             Ok(ConfigValue::Int(v))
         }
+
         // Runtime-settable boolean configs
         "ASYNC_DELETE" | "CMD_INFO" | "DELAY_INDEXING" => {
             let v = match value.to_lowercase().as_str() {
@@ -251,7 +257,10 @@ fn apply_config_set(
         "DELTA_MAX_PENDING_CHANGES" => {
             DELTA_MAX_PENDING_CHANGES.store(val.as_i64(), Ordering::Relaxed);
         }
-        "EFFECTS_THRESHOLD" => EFFECTS_THRESHOLD.store(val.as_i64(), Ordering::Relaxed),
+        "EFFECTS_COMPRESSION" => EFFECTS_COMPRESSION.store(val.as_i64(), Ordering::Relaxed),
+        "EFFECTS_THRESHOLD" => {
+            EFFECTS_THRESHOLD_DEPRECATED.store(val.as_i64(), Ordering::Relaxed);
+        }
         "ASYNC_DELETE" => ASYNC_DELETE.store(val.as_i64(), Ordering::Relaxed),
         "CMD_INFO" => CONFIGURATION_CMD_INFO.store(val.as_i64() != 0, Ordering::Relaxed),
         "MAX_INFO_QUERIES" => MAX_INFO_QUERIES.store(val.as_i64(), Ordering::Relaxed),
