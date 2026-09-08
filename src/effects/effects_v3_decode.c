@@ -810,6 +810,26 @@ EffectsV3Status EffectsV3_Decode
 	// compression is understood as a flag but not yet implemented - zstd is a
 	// separate PR. Refusing is correct until then: the alternative is reading
 	// a zstd frame as records.
+	//
+	// Refused HERE, before any length field is read, which is why the
+	// compressed header's layout does not reach this decoder. For whoever
+	// implements it, that header is (e456ec802 on feat/effects-v3):
+	//
+	//   u8 version . u8 flags . u32 plain_len . u32 comp_len . u32 checksum
+	//     . <zstd frame>
+	//
+	// twelve bytes of prefix, not eight. All little-endian. Three things the
+	// reader has to get right, and each exists because of a specific failure:
+	//
+	//   * read exactly 'comp_len' bytes as the frame, not to the end of the
+	//     buffer, and refuse a comp_len that outruns what remains BEFORE zstd
+	//     sees it
+	//   * bytes after the frame are an error, not padding - ignoring them
+	//     silently accepts a truncated-then-appended buffer
+	//   * 'plain_len' is the decompress allocation CEILING, not just a
+	//     cross-check. A ~100 byte frame of zeros expands to gigabytes, so
+	//     bound the output first, then verify the expanded length equals
+	//     plain_len, then check the CRC-32 over the plaintext. That order.
 	if (flags & FLAG_COMPRESSED) {
 		status = EFFECTS_V3_UNSUPPORTED_FLAGS ;
 		goto done ;
