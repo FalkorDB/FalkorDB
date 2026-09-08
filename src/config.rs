@@ -75,7 +75,28 @@ pub static TIMEOUT_MAX: AtomicI64 = AtomicI64::new(0);
 pub static RESULTSET_SIZE: AtomicI64 = AtomicI64::new(-1);
 pub static QUERY_MEM_CAPACITY: AtomicI64 = AtomicI64::new(0);
 pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
-pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
+/// Smallest v3 effects payload worth compressing, in bytes; 0 disables it.
+/// Re-exported because the decision is made in the graph crate, and two statics
+/// would drift.
+pub use graph::effects::EFFECTS_COMPRESSION;
+/// **Deprecated and ignored.** Effects are the only replication mechanism now,
+/// so there is nothing left for the threshold to select.
+///
+/// Kept settable rather than removed. Removing it made `GRAPH.CONFIG SET
+/// EFFECTS_THRESHOLD` answer `Unknown configuration field`, which is a startup
+/// failure for any config file that names it and broke five flow suites that
+/// set it. A value is accepted, stored, reported back, and read by nothing.
+///
+/// Still 300, as it always was. The knob is ignored, but its *reported* value
+/// is observable — changing it would break a client or config check that
+/// asserts the default, for no benefit, which is the opposite of keeping it for
+/// compatibility.
+///
+/// There is deliberately no `EFFECTS_VERSION` beside it. That one never
+/// shipped in either engine — `main` has 23 configs and only this one, and C's
+/// `config.h` has `Config_EFFECTS_THRESHOLD` and no version knob — so a
+/// deprecated no-op for it would be compatibility with nothing.
+pub static EFFECTS_THRESHOLD_DEPRECATED: AtomicI64 = AtomicI64::new(300);
 /// Toggles the telemetry stream that backs `GRAPH.INFO`. Atomic rather than
 /// GIL-guarded because the query hot path reads it off the main thread, and
 /// because C lets `GRAPH.CONFIG SET CMD_INFO yes|no` flip it at runtime.
@@ -130,6 +151,7 @@ pub const CONFIG_NAMES: &[&str] = &[
     "NODE_CREATION_BUFFER",
     "CMD_INFO",
     "MAX_INFO_QUERIES",
+    "EFFECTS_COMPRESSION",
     "EFFECTS_THRESHOLD",
     "BOLT_PORT",
     "DELAY_INDEXING",
