@@ -250,10 +250,179 @@ void test_effectsV3Corpus_hexReaderRules(void) {
 	}
 }
 
+//------------------------------------------------------------------------------
+// every gap case carries the bit its name claims
+//------------------------------------------------------------------------------
+
+// The manifest proves the corpus has not changed and that no file is unlisted.
+// It cannot prove a file tests what its NAME says: a fixture called
+// value_width_8_bytes that quietly encoded as width code 0 would hash
+// consistently, be listed, and sit in the corpus looking like coverage while
+// exercising the same path as every other case.
+//
+// So each gap case asserts the header byte it is named for. This is a byte
+// comparison at a recorded offset rather than a parse -- the loader knows no
+// format and neither does this, and the offset cannot drift silently because
+// the manifest pins the bytes it points into.
+//
+// Segment header layout (graph/src/effects/v3/id_list.rs:512-519):
+//   bits 0-1  kind: 0 Range, 1 Ascending, 2 Repeat
+//   bits 2-3  value width code   0,1,2,3 -> 1,2,4,8 bytes
+//   bits 4-5  count width code   same table
+//   bit  6    descending
+//   bit  7    reserved, rejected if set
+typedef struct {
+	const char    *name;     // case name
+	size_t         hdr_off;  // offset of the segment header
+	unsigned char  hdr;      // the byte it must be
+	const char    *claims;   // what the name promises
+} EffectsV3NamedShape;
+
+static const EffectsV3NamedShape EFFECTS_V3_NAMED_SHAPES[] = {
+	// direction, bit 6
+	{ "dir_ascending",          16, 0x00, "Range, bit 6 CLEAR -- the control" },
+	{ "dir_descending",         16, 0x40, "Range, bit 6 set" },
+	{ "dir_descending_to_zero", 16, 0x40, "Range, bit 6 set, base runs to 0" },
+	{ "dir_descending_bitmap",  16, 0x41, "Ascending, bit 6 set" },
+
+	// value width, bits 2-3
+	{ "value_width_4_bytes",    16, 0x08, "value width code 2 (4 bytes)" },
+	{ "value_width_8_bytes",    16, 0x0c, "value width code 3 (8 bytes)" },
+
+	// count width, bits 4-5
+	{ "count_width_2_bytes",    16, 0x10, "count width code 1 (2 bytes)" },
+	{ "count_width_4_bytes",    16, 0x20, "count width code 2 (4 bytes)" },
+
+	// the one pre-existing case carrying a non-zero width, kept here because a
+	// subset that drops it loses the whole value-width dimension for 2-byte ids
+	{ "collapse_below",         19, 0x04, "second segment: value width code 1" },
+};
+
+#define EFFECTS_V3_NAMED_SHAPE_COUNT \
+	(sizeof(EFFECTS_V3_NAMED_SHAPES) / sizeof(EFFECTS_V3_NAMED_SHAPES[0]))
+
+void test_effectsV3Corpus_namedShapesAreOnTheWire(void) {
+	for(size_t i = 0; i < EFFECTS_V3_NAMED_SHAPE_COUNT; i++) {
+		const EffectsV3NamedShape *n = EFFECTS_V3_NAMED_SHAPES + i;
+
+		EffectsV3Fixture f = EffectsV3Corpus_Load(n->name);
+		TEST_CASE(n->name);
+		TEST_ASSERT_(f.buf != NULL, "%s: %s", n->name, f.err);
+		if(f.buf == NULL) continue;
+
+		TEST_ASSERT_(f.len > n->hdr_off,
+				"%s: %zu bytes, no header at offset %zu",
+				n->name, f.len, n->hdr_off);
+
+		if(f.len > n->hdr_off) {
+			TEST_ASSERT_(f.buf[n->hdr_off] == n->hdr,
+					"%s: header at offset %zu is 0x%02x, expected 0x%02x (%s). "
+					"The case is not exercising what its name claims, so the "
+					"coverage it looks like it provides is not there",
+					n->name, n->hdr_off, f.buf[n->hdr_off], n->hdr, n->claims);
+		}
+
+		EffectsV3Corpus_Free(&f);
+	}
+}
+
+//------------------------------------------------------------------------------
+// the direction pairs
+//------------------------------------------------------------------------------
+
+// An engine that IGNORES bit 6 reads a descending payload as its ascending
+// twin and returns the ids REVERSED rather than refusing the buffer. Nothing
+// self-consistent catches that: decode-then-encode reproduces the bytes it
+// thinks it read, so a round trip passes. Only a same-shape pair catches it,
+// and only because the ascending control sits in the corpus beside it.
+//
+// This asserts the pairs differ in exactly the bytes direction is allowed to
+// move, which is the assertion the pair exists to support.
+typedef struct {
+	const char *ascending;   // the control
+	const char *descending;  // the same ids, other way
+	size_t      off[4];      // the only offsets allowed to differ
+	int         n_off;       // how many
+	const char *why;         // what each differing byte is
+} EffectsV3DirectionPair;
+
+static const EffectsV3DirectionPair EFFECTS_V3_DIRECTION_PAIRS[] = {
+	// a Range carries its base, which is the LOWEST id ascending and the
+	// HIGHEST descending, so two bytes move: the header and the base
+	{ "dir_ascending", "dir_descending", { 16, 17 }, 2,
+	  "offset 16 is the header's bit 6; offset 17 is the base, 200 ascending "
+	  "and 207 descending" },
+
+	// a roaring blob is a SET and has no direction, so the payloads are
+	// identical but for the bit itself. This is the strongest statement
+	// available about bit 6: one byte apart, and the 66-byte blob untouched
+	{ "collapse_above", "dir_descending_bitmap", { 16 }, 1,
+	  "offset 16 alone -- the bitmap blob is byte-identical, so bit 6 is the "
+	  "only thing carrying direction" },
+};
+
+#define EFFECTS_V3_DIRECTION_PAIR_COUNT \
+	(sizeof(EFFECTS_V3_DIRECTION_PAIRS) / \
+	 sizeof(EFFECTS_V3_DIRECTION_PAIRS[0]))
+
+void test_effectsV3Corpus_directionPairs(void) {
+	for(size_t i = 0; i < EFFECTS_V3_DIRECTION_PAIR_COUNT; i++) {
+		const EffectsV3DirectionPair *p = EFFECTS_V3_DIRECTION_PAIRS + i;
+
+		EffectsV3Fixture a = EffectsV3Corpus_Load(p->ascending);
+		EffectsV3Fixture d = EffectsV3Corpus_Load(p->descending);
+
+		TEST_CASE(p->ascending);
+
+		if(a.buf == NULL || d.buf == NULL) {
+			TEST_ASSERT_(false, "%s / %s: %s%s", p->ascending, p->descending,
+					a.err, d.err);
+			EffectsV3Corpus_Free(&a);
+			EffectsV3Corpus_Free(&d);
+			continue;
+		}
+
+		TEST_ASSERT_(a.len == d.len,
+				"%s is %zu bytes and %s is %zu; a direction pair must be the "
+				"same shape or it is not isolating the bit",
+				p->ascending, a.len, p->descending, d.len);
+
+		if(a.len == d.len) {
+			// bit 6 set in the descending half, clear in the control
+			TEST_ASSERT_((d.buf[p->off[0]] & 0x40) != 0 &&
+						 (a.buf[p->off[0]] & 0x40) == 0,
+					"%s/%s: bit 6 is not the difference at offset %zu "
+					"(0x%02x vs 0x%02x)",
+					p->ascending, p->descending, p->off[0],
+					a.buf[p->off[0]], d.buf[p->off[0]]);
+
+			for(size_t at = 0; at < a.len; at++) {
+				bool allowed = false;
+				for(int k = 0; k < p->n_off; k++) {
+					if(at == p->off[k]) { allowed = true; break; }
+				}
+
+				if(a.buf[at] == d.buf[at]) continue;
+
+				TEST_ASSERT_(allowed,
+						"%s/%s differ at offset %zu (0x%02x vs 0x%02x), which "
+						"direction is not allowed to move. %s",
+						p->ascending, p->descending, at, a.buf[at], d.buf[at],
+						p->why);
+			}
+		}
+
+		EffectsV3Corpus_Free(&a);
+		EffectsV3Corpus_Free(&d);
+	}
+}
+
 TEST_LIST = {
 	{ "EffectsV3Corpus.matchesManifest",    test_effectsV3Corpus_matchesManifest    },
 	{ "EffectsV3Corpus.manifestIsComplete", test_effectsV3Corpus_manifestIsComplete },
 	{ "EffectsV3Corpus.preamble",           test_effectsV3Corpus_preamble           },
+	{ "EffectsV3Corpus.namedShapes",        test_effectsV3Corpus_namedShapesAreOnTheWire },
+	{ "EffectsV3Corpus.directionPairs",     test_effectsV3Corpus_directionPairs     },
 	{ "EffectsV3Corpus.hexReaderRules",     test_effectsV3Corpus_hexReaderRules     },
 	{ NULL, NULL }
 };

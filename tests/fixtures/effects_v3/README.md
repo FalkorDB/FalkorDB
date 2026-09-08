@@ -62,85 +62,86 @@ Payloads are uncompressed. Compression is an encoder choice — a level, and a
 zstd version — and pinning one here would bind the far side to a compressor
 rather than to a format.
 
-## A known gap: no descending segments
+## The direction pairs
 
-This corpus was cut before the segment header gained a direction bit, so it
-does not exercise it at all. As of `08dca4a1e` on `feat/effects-v3`
-(`graph/src/effects/v3/id_list.rs:518-519`):
+Two pairs in this corpus do something no self-consistency check can.
 
-- bit 6 is `descending`, **not** reserved. A descending `Range` reads its base
-  as the first and *highest* id; an `Ascending` blob is a set and has no
-  direction, so the two directions of the same ids differ in exactly that bit.
-- bit 7 alone is reserved and must be rejected.
-- `Repeat` has no direction, so the bit is rejected there rather than ignored
-  (`id_list.rs:721`).
+    dir_ascending          / dir_descending          differ in exactly 2 bytes
+    collapse_above         / dir_descending_bitmap   differ in exactly 1 byte
 
-So there are no `Range` or `Ascending` fixtures with bit 6 set, and the
-accepting side of that rule is unpinned by these files. The rejecting side
-needs no fixture and is covered in `tests/unit/test_effects_v3_roundtrip.c`,
-which mutates `seg_repeat`'s header. A regeneration should add an ascending and
-a descending form of the same ids, since that pair is what makes the bit's
-meaning checkable rather than merely present.
+An engine that ignores the header's `descending` bit reads a descending payload
+as its ascending twin and returns the ids **reversed rather than refusing the
+buffer**. A round trip still passes: the decoder re-encodes what it thinks it
+read, and the bytes come back identical. Nothing an engine can check against
+itself detects this. Only a same-shape pair does, and only because the
+ascending control sits here beside it.
 
-## A second known gap: the segment header's width fields
+The `Range` pair moves two bytes: the header's bit 6, and the base, which is
+the *lowest* id ascending (200) and the *highest* descending (207). The bitmap
+pair moves **one** — a roaring blob is a set and has no direction, so the
+66-byte blob is byte-identical and bit 6 is the only thing that says which way
+the ids came. That makes it the strongest statement available about the bit.
 
-A segment header packs a kind, a value width code and a count width code. Only
-one fixture in this corpus exercises a non-zero width code, so most of that
-layout is pinned by a single case. Measured across every id-carrying fixture:
+Both are asserted in `tests/unit/test_effects_v3_corpus.c`, which also checks
+that every case carries the code its name claims. That is a different failure
+from the ones the manifest catches: a fixture called `value_width_8_bytes` that
+quietly encoded as width code 0 hashes consistently and is listed, so it would
+sit here looking like coverage while exercising the same path as every other
+case.
 
-| field | codes present | where |
-| --- | --- | --- |
-| value width | `0` (1 byte), `1` (2 bytes) | code `1` **only** in `collapse_below` |
-| count width | `0` (1 byte) only | nowhere else |
+## What the corpus still does not pin
 
-`collapse_below` earns that on its own: 17 of its 18 segments carry bases of
-1024, 2048, 3072 and up, which need two bytes, so their headers are `0x04`
-rather than `0x00`.
+Earlier revisions of this file recorded three gaps — no descending segments, no
+value width codes 2 or 3, no non-zero count width. All three are now covered by
+the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 
-Two consequences for anyone taking a subset or reading a green run:
-
-- **A subset without `collapse_below` does not pin the header layout.** Every
-  `seg_*` fixture has one-byte ids, so both width codes are zero and swapping
-  the two shifts moves a zero onto a zero. The writer found this by breaking
-  their encoder exactly that way: all the `seg_*` cases still passed. Picking
-  the obviously-segment-shaped fixtures for a quick check is the natural move
-  and it silently drops this coverage.
-- **It has to be `collapse_below` specifically, not "a collapse case".**
-  `collapse_above` is a single `Ascending` segment, which carries a `u32`
-  blob length and no width fields at all.
-
-And what no fixture covers: value width codes `2` and `3` (four- and
-eight-byte ids) and any non-zero count width. A wrong width table for the
-larger sizes, or a count-width bug of any kind, passes this corpus
-unchallenged. A regeneration should add a case with ids past 2^32 and one with
-a count past 255.
+- **Descending only ever appears under `DELETE_NODE`.** All four `dir_*` cases
+  are that record, so the bit is unexercised in combination with any other
+  record's blocks.
+- **No case combines a non-zero count width with the collapse boundary.** The
+  two `count_width_*` cases are single ranges well clear of it, so an encoder
+  whose cost arithmetic mishandles a wide count would not be caught here.
+- **Count width code 3 (eight bytes) is unreachable, not missing.** A record's
+  id count is a `u32` and a segment's count is bounded by it, so four bytes is
+  the widest a count can ever need. Worth stating so nobody adds a fixture for
+  it.
 
 ## Cases
 
+33 cases.
+
 | case | records | bytes |
 | --- | --- | ---: |
-| `seg_range` | 1 | 19 |
-| `seg_range_single` | 1 | 19 |
-| `seg_range_many` | 1 | 28 |
-| `seg_repeat` | 1 | 19 |
-| `seg_ascending` | 1 | 209 |
-| `collapse_below` | 1 | 87 |
 | `collapse_above` | 1 | 87 |
-| `seg_mixed` | 1 | 25 |
-| `rec_create_node` | 1 | 92 |
-| `rec_create_edge` | 1 | 100 |
-| `rec_update_node` | 1 | 88 |
-| `rec_update_edge` | 1 | 86 |
-| `rec_delete_node` | 1 | 31 |
-| `rec_delete_edge` | 1 | 35 |
-| `rec_set_labels` | 1 | 27 |
-| `rec_remove_labels` | 1 | 23 |
-| `rec_add_schema_node` | 1 | 29 |
-| `rec_add_schema_edge` | 1 | 28 |
-| `rec_add_attribute` | 1 | 21 |
-| `rec_create_index` | 1 | 96 |
-| `rec_drop_index` | 1 | 48 |
-| `rec_create_constraint` | 1 | 53 |
-| `rec_drop_constraint` | 1 | 62 |
-| `values_all_kinds` | 1 | 265 |
+| `collapse_below` | 1 | 87 |
+| `count_width_2_bytes` | 1 | 20 |
+| `count_width_4_bytes` | 1 | 22 |
+| `dir_ascending` | 1 | 19 |
+| `dir_descending` | 1 | 19 |
+| `dir_descending_bitmap` | 1 | 87 |
+| `dir_descending_to_zero` | 1 | 19 |
 | `payload_multi_record` | 4 | 134 |
+| `rec_add_attribute` | 1 | 21 |
+| `rec_add_schema_edge` | 1 | 28 |
+| `rec_add_schema_node` | 1 | 29 |
+| `rec_create_constraint` | 1 | 53 |
+| `rec_create_edge` | 1 | 100 |
+| `rec_create_index` | 1 | 96 |
+| `rec_create_node` | 1 | 92 |
+| `rec_delete_edge` | 1 | 35 |
+| `rec_delete_node` | 1 | 31 |
+| `rec_drop_constraint` | 1 | 62 |
+| `rec_drop_index` | 1 | 48 |
+| `rec_remove_labels` | 1 | 23 |
+| `rec_set_labels` | 1 | 27 |
+| `rec_update_edge` | 1 | 86 |
+| `rec_update_node` | 1 | 88 |
+| `seg_ascending` | 1 | 209 |
+| `seg_mixed` | 1 | 25 |
+| `seg_range` | 1 | 19 |
+| `seg_range_many` | 1 | 28 |
+| `seg_range_single` | 1 | 19 |
+| `seg_repeat` | 1 | 19 |
+| `value_width_4_bytes` | 1 | 22 |
+| `value_width_8_bytes` | 1 | 26 |
+| `values_all_kinds` | 1 | 265 |
