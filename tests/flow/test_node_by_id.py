@@ -231,6 +231,28 @@ class testNodeByIDFlow(FlowTestsBase):
         resultsetB = self.graph.query(query).result_set
         self.env.assertEqual(resultsetA, resultsetB)
 
+    def test_negative_id_bounds(self):
+        queries = [
+            ("MATCH (n) WHERE ID(n) < 0 RETURN count(*)", "NodeByIdSeek", 0),
+            ("MATCH (n) WHERE ID(n) < -5 RETURN count(*)", "NodeByIdSeek", 0),
+            ("MATCH (n) WHERE ID(n) <= -1 RETURN count(*)", "NodeByIdSeek", 0),
+            ("MATCH (n) WHERE ID(n) = -1 RETURN count(*)", "NodeByIdSeek", 0),
+            ("MATCH (n) WHERE ID(n) > -5 RETURN count(*)", "NodeByIdSeek", 10),
+            ("MATCH (n) WHERE ID(n) >= -5 RETURN count(*)", "NodeByIdSeek", 10),
+            ("MATCH (n) WHERE ID(n) < 3 AND ID(n) > 5 RETURN count(*)", "NodeByIdSeek", 0),
+            ("MATCH (n) WHERE ID(n) < 1 RETURN count(*)", "NodeByIdSeek", 1),
+            ("MATCH (n) WHERE ID(n) <= 0 RETURN count(*)", "NodeByIdSeek", 1),
+            ("MATCH (n:person) WHERE ID(n) <= -1 RETURN count(*)", "Node By Label and ID Scan", 0),
+            ("MATCH (n:person) WHERE ID(n) >= -5 RETURN count(*)", "Node By Label and ID Scan", 10),
+            ("MATCH (n:person) WHERE ID(n) = -1 RETURN count(*)", "Node By Label and ID Scan", 0),
+            ("MATCH (n:person) WHERE ID(n) <= 0 RETURN count(*)", "Node By Label and ID Scan", 1),
+        ]
+
+        for query, op, expected_count in queries:
+            self.env.assertContains(op, str(self.graph.explain(query)))
+            result = self.graph.query(query).result_set
+            self.env.assertEqual(result, [[expected_count]])
+
     # Try to fetch none existing entities by ID(s).
     def test_for_none_existing_entity_ids(self):
         # Try to fetch an entity with a none existing ID.
