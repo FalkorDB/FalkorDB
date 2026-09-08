@@ -78,6 +78,9 @@
 // operator reading the name will expect that it does.
 #define EFFECTS_VERSION_CONFIG "EFFECTS_VERSION"
 
+// smallest effects payload worth compressing, in bytes; 0 disables
+#define EFFECTS_COMPRESSION "EFFECTS_COMPRESSION"
+
 // delay indexing
 #define DELAY_INDEXING "DELAY_INDEXING"
 
@@ -127,6 +130,7 @@ typedef struct
 	bool cmd_info_on;				   // if true, the GRAPH.INFO is enabled
 	uint64_t effects_threshold;		   // replicate via effects when runtime exceeds threshold
 	uint64_t effects_version;		   // payload version GRAPH.EFFECT emits
+	uint64_t effects_compression;	   // compress effects payloads at or above this many bytes
 	uint64_t max_info_queries_count;   // maximum number of query info elements
 	bool delay_indexing;			   // delay index construction when decoding
 	char *import_folder;			   // path to import folder, used for CSV loading
@@ -505,6 +509,31 @@ static uint64_t Config_effects_version_get(void)
 }
 
 //------------------------------------------------------------------------------
+// effects compression
+//------------------------------------------------------------------------------
+
+// smallest record stream worth compressing, in bytes
+//
+// A BYTE THRESHOLD, not a boolean, and 0 - the default - disables compression
+// entirely. Off by default because compression is a bandwidth trade rather
+// than a CPU one: it is worth turning on when the replication link, rather
+// than the write thread, is the constraint.
+//
+// Not a level, either. The level is fixed at 1 by the wire format; see
+// EFFECTS_V3_COMPRESSION_LEVEL.
+
+static void Config_effects_compression_set(
+	uint64_t min_bytes)
+{
+	config.effects_compression = min_bytes;
+}
+
+static uint64_t Config_effects_compression_get(void)
+{
+	return config.effects_compression;
+}
+
+//------------------------------------------------------------------------------
 // delay indexing
 //------------------------------------------------------------------------------
 
@@ -680,6 +709,10 @@ bool Config_Contains_field(
 	{
 		f = Config_EFFECTS_THRESHOLD;
 	}
+	else if (!(strcasecmp(field_str, EFFECTS_COMPRESSION)))
+	{
+		f = Config_EFFECTS_COMPRESSION;
+	}
 	else if (!(strcasecmp(field_str, DELAY_INDEXING)))
 	{
 		f = Config_DELAY_INDEXING;
@@ -766,6 +799,9 @@ SIType Config_Field_type(
 		return T_INT64;
 
 	case Config_EFFECTS_VERSION:
+		return T_INT64;
+
+	case Config_EFFECTS_COMPRESSION:
 		return T_INT64;
 
 	case Config_DELAY_INDEXING:
@@ -869,6 +905,10 @@ const char *Config_Field_name(
 		name = EFFECTS_VERSION_CONFIG;
 		break;
 
+	case Config_EFFECTS_COMPRESSION:
+		name = EFFECTS_COMPRESSION;
+		break;
+
 	case Config_DELAY_INDEXING:
 		name = DELAY_INDEXING;
 		break;
@@ -968,6 +1008,8 @@ static void _Config_SetToDefaults(void)
 	// than a degraded mode. So generation lands switched off, and flipping this
 	// is a separate, deliberate change.
 	config.effects_version = 2;
+	// compression off by default: a bandwidth trade, not a CPU one
+	config.effects_compression = 0;
 
 	// index entities as they're being decoded
 	config.delay_indexing = DELAY_INDEXING_DEFAULT;
@@ -1323,6 +1365,21 @@ bool Config_Option_get(
 
 		ASSERT(effects_version != NULL);
 		(*effects_version) = Config_effects_version_get();
+	}
+	break;
+
+		//----------------------------------------------------------------------
+		// effects compression
+		//----------------------------------------------------------------------
+
+	case Config_EFFECTS_COMPRESSION:
+	{
+		va_start(ap, field);
+		uint64_t *effects_compression = va_arg(ap, uint64_t *);
+		va_end(ap);
+
+		ASSERT(effects_compression != NULL);
+		(*effects_compression) = Config_effects_compression_get();
 	}
 	break;
 
@@ -1777,6 +1834,23 @@ bool Config_Option_set
 
 			if (Config_effects_version_get () != (uint64_t)version) {
 				Config_effects_version_set ((uint64_t)version) ;
+				updated = true ;
+			}
+		}
+		break ;
+
+		//----------------------------------------------------------------------
+		// effects compression
+		//----------------------------------------------------------------------
+
+		case Config_EFFECTS_COMPRESSION:
+		{
+			long long min_bytes ;
+			if (!_Config_ParseNonNegativeInteger (val, &min_bytes)) {
+				return false ;
+			}
+			if (Config_effects_compression_get () != min_bytes) {
+				Config_effects_compression_set (min_bytes) ;
 				updated = true ;
 			}
 		}
