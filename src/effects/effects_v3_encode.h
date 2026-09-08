@@ -89,3 +89,21 @@ void EffectsV3_EncodeRecord
 	const EffectsV3Record *r,  // record to write
 	EffectsBytes *out          // sink
 );
+
+// write a record whose values are ALREADY ENCODED
+//
+// The grouping accumulator encodes each row's values as the row arrives, so by
+// emission time it holds bytes rather than SIValues - the values it was handed
+// belonged to the caller and are long gone. Re-encoding is not an option, and
+// keeping every SIValue alive until the query ends would mean owning a copy of
+// every property written.
+//
+// 'values' supplies the AttrValues block verbatim; the record's own 'values'
+// and 'n_values' are ignored. Everything before that block is written exactly
+// as EffectsV3_EncodeRecord writes it.
+void EffectsV3_EncodeRecordWithRawValues
+(
+	const EffectsV3Record *r,   // record to write
+	const EffectsBytes *values, // the AttrValues block, already encoded
+	EffectsBytes *out           // sink
+);
