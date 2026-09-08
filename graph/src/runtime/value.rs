@@ -1766,15 +1766,15 @@ impl Encode<19> for Value {
     ) {
         match self {
             Self::Bool(b) => {
-                w.write_unsigned(si_type::T_BOOL);
+                w.write_unsigned(si_type::T_BOOL.into());
                 w.write_signed(i64::from(*b));
             }
             Self::Int(i) => {
-                w.write_unsigned(si_type::T_INT64);
+                w.write_unsigned(si_type::T_INT64.into());
                 w.write_signed(*i);
             }
             Self::Float(f) => {
-                w.write_unsigned(si_type::T_DOUBLE);
+                w.write_unsigned(si_type::T_DOUBLE.into());
                 w.write_double(*f);
             }
             Self::String(s) => {
@@ -1783,7 +1783,7 @@ impl Encode<19> for Value {
                 } else {
                     si_type::T_STRING
                 };
-                w.write_unsigned(tag);
+                w.write_unsigned(tag.into());
                 let bytes: Vec<u8> = s
                     .as_bytes()
                     .iter()
@@ -1793,19 +1793,19 @@ impl Encode<19> for Value {
                 w.write_buffer(&bytes);
             }
             Self::List(list) => {
-                w.write_unsigned(si_type::T_ARRAY);
+                w.write_unsigned(si_type::T_ARRAY.into());
                 w.write_unsigned(list.len() as u64);
                 for item in list.iter() {
                     crate::graph::graphblas::serialization::Encode::encode(item, w);
                 }
             }
             Self::Point(p) => {
-                w.write_unsigned(si_type::T_POINT);
+                w.write_unsigned(si_type::T_POINT.into());
                 w.write_double(f64::from(p.latitude));
                 w.write_double(f64::from(p.longitude));
             }
             Self::VecF32(v) => {
-                w.write_unsigned(si_type::T_VECTOR_F32);
+                w.write_unsigned(si_type::T_VECTOR_F32.into());
                 let dim = v.len() as u32;
                 let mut buf = Vec::with_capacity(4 + v.len() * 4);
                 buf.extend_from_slice(&dim.to_le_bytes());
@@ -1815,31 +1815,31 @@ impl Encode<19> for Value {
                 w.write_buffer(&buf);
             }
             Self::Datetime(ts) => {
-                w.write_unsigned(si_type::T_DATETIME);
+                w.write_unsigned(si_type::T_DATETIME.into());
                 w.write_signed(*ts);
             }
             Self::Date(ts) => {
-                w.write_unsigned(si_type::T_DATE);
+                w.write_unsigned(si_type::T_DATE.into());
                 w.write_signed(*ts);
             }
             Self::Time(ts) => {
-                w.write_unsigned(si_type::T_TIME);
+                w.write_unsigned(si_type::T_TIME.into());
                 w.write_signed(*ts);
             }
             Self::Duration(ts) => {
-                w.write_unsigned(si_type::T_DURATION);
+                w.write_unsigned(si_type::T_DURATION.into());
                 w.write_signed(*ts);
             }
             // Map, Node, Relationship, Path are not stored as properties
             Self::Null => {
-                w.write_unsigned(si_type::T_NULL);
+                w.write_unsigned(si_type::T_NULL.into());
             }
             Self::Map(_) | Self::Node(_) | Self::Relationship(_) | Self::Path(_) => {
                 debug_assert!(
                     false,
                     "unsupported value type in property storage: graphs/nodes/relationships/paths cannot be persisted as attribute values"
                 );
-                w.write_unsigned(si_type::T_NULL);
+                w.write_unsigned(si_type::T_NULL.into());
             }
         }
     }
@@ -1847,7 +1847,10 @@ impl Encode<19> for Value {
 
 impl Decode<19> for Value {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
-        let tag = r.read_unsigned()?;
+        let wide = r.read_unsigned()?;
+        // Narrowed once, here: `si_type`'s constants are the `u32` C declares,
+        // and a tag that does not fit is not one of them.
+        let tag = u32::try_from(wide).map_err(|_| format!("unknown SIType tag: {wide}"))?;
         match tag {
             si_type::T_NULL => Ok(Self::Null),
             si_type::T_BOOL => Ok(Self::Bool(r.read_signed()? != 0)),

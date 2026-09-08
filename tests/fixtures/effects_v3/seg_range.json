@@ -1,0 +1,15 @@
+{
+  "case": "seg_range",
+  "version": 3,
+  "flags": 0,
+  "bytes": 19,
+  "records": [
+    {
+      "opcode": 5,
+      "record": "DELETE_NODE",
+      "count": 8,
+      "ids": ["100", "101", "102", "103", "104", "105", "106", "107"],
+      "labels": []
+    }
+  ]
+}

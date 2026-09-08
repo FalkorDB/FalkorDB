@@ -86,28 +86,39 @@ pub trait Decode<const VERSION: u64>: Sized {
 
 /// Index field type bitmask matching C FalkorDB index_field.h.
 pub mod index_field_type {
-    pub const INDEX_FLD_FULLTEXT: u64 = 0x01;
-    pub const INDEX_FLD_NUMERIC: u64 = 0x02;
-    pub const INDEX_FLD_GEO: u64 = 0x04;
-    pub const INDEX_FLD_STR: u64 = 0x08;
-    pub const INDEX_FLD_VECTOR: u64 = 0x10;
+    pub const INDEX_FLD_FULLTEXT: u32 = 0x01;
+    pub const INDEX_FLD_NUMERIC: u32 = 0x02;
+    pub const INDEX_FLD_GEO: u32 = 0x04;
+    pub const INDEX_FLD_STR: u32 = 0x08;
+    pub const INDEX_FLD_VECTOR: u32 = 0x10;
 }
 
 /// SIValue type tags for binary serialization (matching C FalkorDB format).
+///
+/// C's `SIType` is a **bitmask**, not an ordinal: each type is a distinct bit,
+/// which is why these are shifts rather than 0..12. Rust's own v2 effects codec
+/// used sequential tags, and they collide with these almost everywhere.
+///
+/// `u32`, which is the width C declares and the width the effects wire carries.
+/// RDB writes them through `write_unsigned`, which takes a `u64` and emits a
+/// type byte plus eight bytes, so that path widens at the call — one `.into()`
+/// where the widening actually happens, rather than a narrowing helper standing
+/// between the constants and every effects write.
 pub mod si_type {
-    pub const T_ARRAY: u64 = 1 << 3;
-    pub const T_DATETIME: u64 = 1 << 5;
-    pub const T_DATE: u64 = 1 << 7;
-    pub const T_TIME: u64 = 1 << 8;
-    pub const T_DURATION: u64 = 1 << 10;
-    pub const T_STRING: u64 = 1 << 11;
-    pub const T_BOOL: u64 = 1 << 12;
-    pub const T_INT64: u64 = 1 << 13;
-    pub const T_DOUBLE: u64 = 1 << 14;
-    pub const T_NULL: u64 = 1 << 15;
-    pub const T_POINT: u64 = 1 << 17;
-    pub const T_VECTOR_F32: u64 = 1 << 18;
-    pub const T_INTERN: u64 = 1 << 19;
+    pub const T_MAP: u32 = 1 << 0;
+    pub const T_ARRAY: u32 = 1 << 3;
+    pub const T_DATETIME: u32 = 1 << 5;
+    pub const T_DATE: u32 = 1 << 7;
+    pub const T_TIME: u32 = 1 << 8;
+    pub const T_DURATION: u32 = 1 << 10;
+    pub const T_STRING: u32 = 1 << 11;
+    pub const T_BOOL: u32 = 1 << 12;
+    pub const T_INT64: u32 = 1 << 13;
+    pub const T_DOUBLE: u32 = 1 << 14;
+    pub const T_NULL: u32 = 1 << 15;
+    pub const T_POINT: u32 = 1 << 17;
+    pub const T_VECTOR_F32: u32 = 1 << 18;
+    pub const T_INTERN: u32 = 1 << 19;
 }
 
 /// Identifies which payload section a key entry represents in the RDB format.

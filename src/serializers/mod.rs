@@ -364,7 +364,7 @@ fn encode_schema_index_block(
             }
             IndexType::Vector => index_field_type::INDEX_FLD_VECTOR,
         };
-        w.write_unsigned(field_type);
+        w.write_unsigned(field_type.into());
 
         let opts = f.options();
         w.write_double(opts.and_then(|o| o.weight).unwrap_or(1.0));
@@ -597,7 +597,12 @@ fn decode_schema_entry(
 fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String> {
     let name_buf = r.read_buffer()?;
     let name = strip_null_terminator(&name_buf);
-    let field_type = r.read_unsigned()?;
+    // Narrowed here for the same reason `Value::decode` narrows its type tag:
+    // `index_field_type`'s constants are the `u32` C declares, and RDB widened
+    // them only to fit `write_unsigned`.
+    let wide = r.read_unsigned()?;
+    let field_type = u32::try_from(wide)
+        .map_err(|_| format!("index field type {wide} does not fit the four bytes C declares"))?;
     let weight = r.read_double()?;
     let nostem = r.read_unsigned()? != 0;
     let phonetic_buf = r.read_buffer()?;
