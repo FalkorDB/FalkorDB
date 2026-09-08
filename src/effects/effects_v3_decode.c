@@ -595,15 +595,20 @@ static EffectsV3Status _ReadValues
 	FILE *stream,
 	EffectsV3Record *rec
 ) {
-	if (rec->n_attrs == 0) {
-		// a shape is exact: every entity in a record has precisely the
-		// attribute ids the record lists, and no row is ever padded. So a
-		// record with entities but no attribute ids states nothing about them.
-		return (rec->count == 0) ? EFFECTS_V3_OK : EFFECTS_V3_MALFORMED ;
-	}
-
 	// count is u32 and n_attrs is u16, so the product cannot overflow u64
 	const uint64_t n_values = (uint64_t)rec->count * (uint64_t)rec->n_attrs ;
+
+	// AN EMPTY ATTRIBUTE SET IS A LEGITIMATE SHAPE, not a malformed record.
+	// `CREATE (:Person)` and `CREATE (a)-[:R]->(b)` create entities with no
+	// properties at all, so n_attrs is 0 and there are simply no value rows to
+	// read - the record carries its ids and stops.
+	//
+	// An earlier version refused this, reasoning that "a shape is exact, so a
+	// record with entities but no attribute ids states nothing about them".
+	// That had it backwards: the empty shape states precisely that these
+	// entities have no properties, which is exact. It refused the most ordinary
+	// write there is, and no fixture in the corpus exercises a create with zero
+	// attributes, which is why it survived a full corpus run.
 	if (n_values == 0) {
 		return EFFECTS_V3_OK ;
 	}
