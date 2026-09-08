@@ -520,6 +520,115 @@ void test_effectsV3Group_vacuousRecordsAreNotEmitted(void) {
 	}
 }
 
+//------------------------------------------------------------------------------
+// staged updates
+//------------------------------------------------------------------------------
+
+// v2 hands over one (entity, attribute, value) at a time; a v3 record's shape
+// is the entity's WHOLE updated attribute set
+//
+// So an update cannot be filed into a group on arrival - the shape that selects
+// the group is not known until the query stops producing attributes for that
+// entity. These pin the folding.
+void test_effectsV3Group_stagedUpdates(void) {
+	{
+		// one entity, two attributes, arriving separately -> ONE record
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		LabelID labels[] = { 1 };
+		SIValue a = SI_LongVal(1), b = SI_LongVal(2);
+
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+				7, a);
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+				9, b);
+
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+				"two attributes of one entity are one record, got %u",
+				EffectsV3Grouping_RecordCount(g));
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// ATTRIBUTE ARRIVAL ORDER MUST NOT SPLIT A SHAPE. Two entities with the
+		// same attribute set, staged in opposite orders, are one record - which
+		// is what the sort at flush exists for
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		LabelID labels[] = { 1 };
+		SIValue v = SI_LongVal(1);
+
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0, 7, v);
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0, 9, v);
+
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 11, labels, 1, 0, 9, v);
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 11, labels, 1, 0, 7, v);
+
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+				"{7,9} and {9,7} are one shape however they arrive, got %u "
+				"records", EffectsV3Grouping_RecordCount(g));
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// entities with DIFFERENT attribute sets still split
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		LabelID labels[] = { 1 };
+		SIValue v = SI_LongVal(1);
+
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0, 7, v);
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 11, labels, 1, 0, 7, v);
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 11, labels, 1, 0, 9, v);
+
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+				"{7} and {7,9} are different shapes, got %u records",
+				EffectsV3Grouping_RecordCount(g));
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// setting the same attribute twice keeps ONE slot: the wire carries one
+		// value per attribute, and the query's own order decides which
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		LabelID labels[] = { 1 };
+		SIValue first = SI_LongVal(1), second = SI_LongVal(2);
+
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+				7, first);
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+				7, second);
+
+		size_t n = 0;
+		unsigned char *p = _encode(g, &n);
+
+		// u32 opcode | u32 count | u16 n_labels | i32 label | u16 n_attrs
+		TEST_ASSERT_(p[14] == 1 && p[15] == 0,
+				"setting one attribute twice is still ONE attribute in the "
+				"shape, got n_attrs %u", (unsigned)p[14]);
+
+		free(p);
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// a T_NULL is a REMOVAL and is part of the shape like any other value -
+		// filtering it would turn a property removal into a no-op
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		LabelID labels[] = { 1 };
+		SIValue null = SI_NullVal();
+
+		EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+				7, null);
+
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+				"a null-valued update is a removal and must be emitted, got %u",
+				EffectsV3Grouping_RecordCount(g));
+
+		size_t n = 0;
+		unsigned char *p = _encode(g, &n);
+		TEST_ASSERT_(p[14] == 1 && p[15] == 0,
+				"the removed attribute is still in the shape, got n_attrs %u",
+				(unsigned)p[14]);
+
+		free(p);
+		EffectsV3Grouping_Free(g);
+	}
+}
+
 TEST_LIST = {
 	{ "EffectsV3Group:sameShapeIsOneRecord",
 		test_effectsV3Group_sameShapeIsOneRecord },
@@ -535,6 +644,8 @@ TEST_LIST = {
 		test_effectsV3Group_insertionOrderDoesNotChangeBytes },
 	{ "EffectsV3Group:attributeAnnouncedOncePerPayload",
 		test_effectsV3Group_attributeAnnouncedOncePerPayload },
+	{ "EffectsV3Group:stagedUpdates",
+		test_effectsV3Group_stagedUpdates },
 	{ "EffectsV3Group:vacuousRecordsAreNotEmitted",
 		test_effectsV3Group_vacuousRecordsAreNotEmitted },
 	{ "EffectsV3Group:emptyBlocks",
