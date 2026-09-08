@@ -31,6 +31,25 @@ typedef struct {
 	uint32_t count;               // entities filed here
 } Group;
 
+// one attribute of a staged update, with its value already encoded
+typedef struct {
+	AttributeID id;
+	unsigned char *bytes;  // owned, the encoded SIValue
+	size_t n;
+} StagedAttr;
+
+// an entity's update, accumulating until the query stops producing attributes
+typedef struct {
+	EffectType opcode;
+	uint64_t   id;
+	LabelID   *labels;      // owned, ascending
+	uint16_t   n_labels;
+	RelationID relation_id;
+	StagedAttr *attrs;      // owned
+	uint32_t    n_attrs;
+	uint32_t    cap_attrs;
+} PendingUpdate;
+
 // a schema or attribute announcement, kept in arrival order
 typedef struct {
 	EffectType  opcode;  // ADD_SCHEMA or ADD_ATTRIBUTE
@@ -48,6 +67,10 @@ struct EffectsV3Grouping {
 	Announcement *announcements;
 	uint32_t n_announcements;
 	uint32_t cap_announcements;
+
+	PendingUpdate *updates;
+	uint32_t n_updates;
+	uint32_t cap_updates;
 };
 
 //------------------------------------------------------------------------------
@@ -151,6 +174,9 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	g->cap_announcements = 4;
 	g->announcements     = rm_calloc(g->cap_announcements, sizeof(Announcement));
 	g->n_announcements   = 0;
+	g->cap_updates       = 4;
+	g->updates           = rm_calloc(g->cap_updates, sizeof(PendingUpdate));
+	g->n_updates         = 0;
 
 	return g;
 }
@@ -354,10 +380,171 @@ void EffectsV3Grouping_AddAttribute
 	a->name    = rm_strdup(name);
 }
 
+static int _cmp_staged_attr(const void *a, const void *b) {
+	AttributeID x = ((const StagedAttr *)a)->id;
+	AttributeID y = ((const StagedAttr *)b)->id;
+	return (x < y) ? -1 : (x > y) ? 1 : 0;
+}
+
+// find the staged update for this entity, or open one
+static PendingUpdate *_update_for
+(
+	EffectsV3Grouping *g,   // accumulator
+	EffectType opcode,      // UPDATE_NODE or UPDATE_EDGE
+	uint64_t id,            // entity id
+	const LabelID *labels,  // normalised labels
+	uint16_t n_labels,      // how many
+	RelationID relation_id  // relationship type
+) {
+	for(uint32_t i = 0; i < g->n_updates; i++) {
+		PendingUpdate *u = g->updates + i;
+		if(u->opcode == opcode && u->id == id) {
+			return u;
+		}
+	}
+
+	if(g->n_updates == g->cap_updates) {
+		g->cap_updates *= 2;
+		g->updates = rm_realloc(g->updates,
+				g->cap_updates * sizeof(PendingUpdate));
+	}
+
+	PendingUpdate *u = g->updates + g->n_updates++;
+	memset(u, 0, sizeof(*u));
+
+	u->opcode      = opcode;
+	u->id          = id;
+	u->relation_id = relation_id;
+	u->n_labels    = n_labels;
+	u->cap_attrs   = 4;
+	u->attrs       = rm_calloc(u->cap_attrs, sizeof(StagedAttr));
+
+	if(n_labels > 0) {
+		u->labels = rm_malloc(sizeof(LabelID) * n_labels);
+		memcpy(u->labels, labels, sizeof(LabelID) * n_labels);
+	}
+
+	return u;
+}
+
+void EffectsV3Grouping_StageUpdate
+(
+	EffectsV3Grouping *g,   // accumulator
+	EffectType opcode,      // UPDATE_NODE or UPDATE_EDGE
+	uint64_t id,            // entity id
+	const LabelID *labels,  // labels, any order
+	uint16_t n_labels,      // how many
+	RelationID relation_id, // relationship type
+	AttributeID attr_id,    // the attribute being set
+	SIValue value           // its new value
+) {
+	LabelID sorted[64];
+	LabelID *norm = (n_labels <= 64)
+		? sorted
+		: rm_malloc(sizeof(LabelID) * n_labels);
+
+	if(n_labels > 0) {
+		memcpy(norm, labels, sizeof(LabelID) * n_labels);
+		qsort(norm, n_labels, sizeof(LabelID), _cmp_label);
+	}
+
+	PendingUpdate *u =
+		_update_for(g, opcode, id, norm, n_labels, relation_id);
+
+	if(norm != sorted) {
+		rm_free(norm);
+	}
+
+	// setting the same attribute twice in one query keeps the LAST value: the
+	// query's own order decides, and the wire carries one value per attribute
+	for(uint32_t i = 0; i < u->n_attrs; i++) {
+		if(u->attrs[i].id == attr_id) {
+			rm_free(u->attrs[i].bytes);
+			u->attrs[i].bytes = NULL;
+			u->attrs[i].n     = 0;
+
+			EffectsBytes *tmp = EffectsBytes_New(64);
+			EffectsBuffer *w  = EffectsBuffer_Wrap(tmp);
+			EffectsBuffer_WriteSIValue(&value, w);
+			EffectsBuffer_Free(w);
+
+			u->attrs[i].n     = EffectsBytes_Len(tmp);
+			u->attrs[i].bytes = rm_malloc(u->attrs[i].n);
+			EffectsBytes_CopyInto(tmp, u->attrs[i].bytes);
+			EffectsBytes_Free(tmp);
+			return;
+		}
+	}
+
+	if(u->n_attrs == u->cap_attrs) {
+		u->cap_attrs *= 2;
+		u->attrs = rm_realloc(u->attrs, u->cap_attrs * sizeof(StagedAttr));
+	}
+
+	StagedAttr *a = u->attrs + u->n_attrs++;
+	a->id = attr_id;
+
+	// encoded NOW: the SIValue belongs to the caller and will not outlive this
+	EffectsBytes *tmp = EffectsBytes_New(64);
+	EffectsBuffer *w  = EffectsBuffer_Wrap(tmp);
+	EffectsBuffer_WriteSIValue(&value, w);
+	EffectsBuffer_Free(w);
+
+	a->n     = EffectsBytes_Len(tmp);
+	a->bytes = rm_malloc(a->n);
+	EffectsBytes_CopyInto(tmp, a->bytes);
+	EffectsBytes_Free(tmp);
+}
+
+// fold every staged update into its group
+//
+// deferred to here because an entity's SHAPE is not known until the query stops
+// producing attributes for it, and the shape is what selects the group
+static void _flush_updates(EffectsV3Grouping *g) {
+	for(uint32_t i = 0; i < g->n_updates; i++) {
+		PendingUpdate *u = g->updates + i;
+
+		if(u->n_attrs == 0) {
+			continue;
+		}
+
+		// attribute-id order is what makes two entities with the same set land
+		// in one group however their attributes happened to arrive
+		qsort(u->attrs, u->n_attrs, sizeof(StagedAttr), _cmp_staged_attr);
+
+		AttributeID ids[256];
+		AttributeID *attr_ids = (u->n_attrs <= 256)
+			? ids
+			: rm_malloc(sizeof(AttributeID) * u->n_attrs);
+
+		for(uint32_t k = 0; k < u->n_attrs; k++) {
+			attr_ids[k] = u->attrs[k].id;
+		}
+
+		Group *grp = _group_for(g, u->opcode, u->labels, u->n_labels,
+				u->relation_id, attr_ids, (uint16_t)u->n_attrs);
+
+		EffectsV3IdListBuilder_Push(grp->ids, u->id);
+		for(uint32_t k = 0; k < u->n_attrs; k++) {
+			EffectsBytes_Write(grp->values, u->attrs[k].bytes, u->attrs[k].n);
+		}
+		grp->count++;
+
+		if(attr_ids != ids) {
+			rm_free(attr_ids);
+		}
+	}
+
+	g->n_updates = 0;
+}
+
 uint32_t EffectsV3Grouping_RecordCount
 (
-	const EffectsV3Grouping *g  // accumulator
+	EffectsV3Grouping *g  // accumulator
 ) {
+	// fold first: a staged update has no group until its shape is complete
+	_flush_updates(g);
+
 	uint32_t n = g->n_announcements;
 
 	// counts what would be EMITTED, so a vacuous group does not appear here
@@ -377,6 +564,9 @@ void EffectsV3Grouping_Encode
 	EffectsV3Grouping *g,  // accumulator
 	EffectsBytes *out      // sink
 ) {
+	// staged updates become groups before anything is counted or written
+	_flush_updates(g);
+
 	// announcements first: a bulk record carries a bare id, so the replica has
 	// to have seen the name before anything references it
 	for(uint32_t i = 0; i < g->n_announcements; i++) {
@@ -456,6 +646,16 @@ void EffectsV3Grouping_Free
 	for(uint32_t i = 0; i < g->n_announcements; i++) {
 		rm_free(g->announcements[i].name);
 	}
+
+	for(uint32_t i = 0; i < g->n_updates; i++) {
+		PendingUpdate *u = g->updates + i;
+		for(uint32_t k = 0; k < u->n_attrs; k++) {
+			rm_free(u->attrs[k].bytes);
+		}
+		rm_free(u->attrs);
+		rm_free(u->labels);
+	}
+	rm_free(g->updates);
 
 	rm_free(g->groups);
 	rm_free(g->announcements);
