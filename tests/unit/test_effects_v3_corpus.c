@@ -417,12 +417,97 @@ void test_effectsV3Corpus_directionPairs(void) {
 	}
 }
 
+//------------------------------------------------------------------------------
+// the collapse boundary, which is also a relationship between two files
+//------------------------------------------------------------------------------
+
+// read a little-endian u32 at a recorded offset -- the same discipline as the
+// header checks above: no format parser, just a field whose position the
+// manifest pins by hashing the bytes around it
+static inline uint32_t _u32_at(const unsigned char *b, size_t off) {
+	return (uint32_t)b[off]        | ((uint32_t)b[off + 1] << 8) |
+	      ((uint32_t)b[off + 2] << 16) | ((uint32_t)b[off + 3] << 24);
+}
+
+// collapse_below and collapse_above are the collapse rule's decision, stated in
+// bytes: the same ascending shape ONE ID APART, landing on opposite sides of
+//
+//     range_bytes >= 32  AND  5 + bitmap_bytes < range_bytes
+//
+// 18 ids stay as 18 Range segments; 19 collapse to a single Ascending segment.
+// Both payloads are 87 bytes, which is the cost tie made visible -- the pair
+// straddles the point where the arithmetic changes its mind.
+//
+// This is the third property in this file that lives BETWEEN two fixtures and
+// cannot be expressed by iterating them one at a time: each file round-trips
+// correctly in isolation whether or not the boundary sits where it should. An
+// encoder whose cost arithmetic is wrong by a few bytes produces two files that
+// are each internally consistent and collectively wrong.
+void test_effectsV3Corpus_collapsePair(void) {
+	// offsets: [6..9] u32 id count, [12..15] u32 segment count, [16] first
+	// segment header. Layout for a zero-label DELETE_NODE record.
+	const size_t OFF_ID_COUNT = 6;
+	const size_t OFF_N_SEG    = 12;
+	const size_t OFF_HDR      = 16;
+
+	EffectsV3Fixture lo = EffectsV3Corpus_Load("collapse_below");
+	EffectsV3Fixture hi = EffectsV3Corpus_Load("collapse_above");
+
+	if(lo.buf == NULL || hi.buf == NULL) {
+		TEST_ASSERT_(false, "collapse pair: %s%s", lo.err, hi.err);
+		EffectsV3Corpus_Free(&lo);
+		EffectsV3Corpus_Free(&hi);
+		return;
+	}
+
+	uint32_t lo_ids  = _u32_at(lo.buf, OFF_ID_COUNT);
+	uint32_t hi_ids  = _u32_at(hi.buf, OFF_ID_COUNT);
+	uint32_t lo_segs = _u32_at(lo.buf, OFF_N_SEG);
+	uint32_t hi_segs = _u32_at(hi.buf, OFF_N_SEG);
+
+	TEST_CASE("one id apart");
+	TEST_ASSERT_(hi_ids == lo_ids + 1,
+			"collapse_below carries %u ids and collapse_above %u; the pair is "
+			"only a boundary if they are adjacent",
+			lo_ids, hi_ids);
+
+	TEST_CASE("below stays ranges");
+	TEST_ASSERT_((lo.buf[OFF_HDR] & 0x03) == 0,
+			"collapse_below's first segment is kind %u, expected 0 (Range)",
+			lo.buf[OFF_HDR] & 0x03);
+	TEST_ASSERT_(lo_segs == lo_ids,
+			"collapse_below has %u segments for %u ids; the case is a run of "
+			"single-id ranges, so they should be equal",
+			lo_segs, lo_ids);
+
+	TEST_CASE("above collapses");
+	TEST_ASSERT_((hi.buf[OFF_HDR] & 0x03) == 1,
+			"collapse_above's first segment is kind %u, expected 1 (Ascending)",
+			hi.buf[OFF_HDR] & 0x03);
+	TEST_ASSERT_(hi_segs == 1,
+			"collapse_above has %u segments, expected 1 -- the whole run "
+			"should have become one bitmap", hi_segs);
+
+	// If this fires the boundary has moved. That is worth a failure rather than
+	// a shrug: it means the cost arithmetic, the roaring build path or the rule
+	// itself changed, and the two engines have to agree on where it sits.
+	TEST_CASE("the tie");
+	TEST_ASSERT_(lo.len == hi.len,
+			"the collapse pair is %zu and %zu bytes; they straddle a cost tie, "
+			"so a difference means the boundary is no longer where this corpus "
+			"recorded it", lo.len, hi.len);
+
+	EffectsV3Corpus_Free(&lo);
+	EffectsV3Corpus_Free(&hi);
+}
+
 TEST_LIST = {
 	{ "EffectsV3Corpus.matchesManifest",    test_effectsV3Corpus_matchesManifest    },
 	{ "EffectsV3Corpus.manifestIsComplete", test_effectsV3Corpus_manifestIsComplete },
 	{ "EffectsV3Corpus.preamble",           test_effectsV3Corpus_preamble           },
 	{ "EffectsV3Corpus.namedShapes",        test_effectsV3Corpus_namedShapesAreOnTheWire },
 	{ "EffectsV3Corpus.directionPairs",     test_effectsV3Corpus_directionPairs     },
+	{ "EffectsV3Corpus.collapsePair",       test_effectsV3Corpus_collapsePair       },
 	{ "EffectsV3Corpus.hexReaderRules",     test_effectsV3Corpus_hexReaderRules     },
 	{ NULL, NULL }
 };

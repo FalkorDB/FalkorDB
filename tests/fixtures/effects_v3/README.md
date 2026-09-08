@@ -62,6 +62,24 @@ Payloads are uncompressed. Compression is an encoder choice — a level, and a
 zstd version — and pinning one here would bind the far side to a compressor
 rather than to a format.
 
+## Cross-fixture invariants: file-by-file coverage is not total coverage
+
+Three of this corpus's strongest claims are **relationships between two files**,
+not properties of either one. A harness that iterates the corpus a file at a
+time structurally cannot express them: each file decodes, re-encodes and
+round-trips correctly in isolation whether or not the invariant holds. An
+encoder can be internally consistent on every case and collectively wrong.
+
+| pair | differs in | what it pins |
+| --- | --- | --- |
+| `dir_ascending` / `dir_descending` | 2 bytes | bit 6 carries direction |
+| `collapse_above` / `dir_descending_bitmap` | 1 byte | a bitmap is a set, so the bit is the *only* carrier |
+| `collapse_below` / `collapse_above` | one id | where the collapse rule changes its mind |
+
+All three are asserted in `tests/unit/test_effects_v3_corpus.c` —
+`directionPairs` and `collapsePair`. If you take a subset of this corpus, these
+are the cases that stop meaning anything when their partner is dropped.
+
 ## The direction pairs
 
 Two pairs in this corpus do something no self-consistency check can.
@@ -88,6 +106,25 @@ from the ones the manifest catches: a fixture called `value_width_8_bytes` that
 quietly encoded as width code 0 hashes consistently and is listed, so it would
 sit here looking like coverage while exercising the same path as every other
 case.
+
+## The collapse pair
+
+`collapse_below` and `collapse_above` are the collapse rule's decision written
+in bytes. The same ascending shape, **one id apart**, landing on opposite sides
+of
+
+    range_bytes >= 32  AND  5 + bitmap_bytes < range_bytes
+
+18 ids stay as 18 `Range` segments; 19 collapse into a single `Ascending`
+segment. Both payloads are **87 bytes** — the cost tie made visible, the pair
+straddling the point where the arithmetic changes its mind.
+
+That is why it pins more than its size suggests: matching both halves requires
+the cost prediction, the collapse decision, the run tracking, the segmentation
+and the roaring construction path all to agree with the other engine, against
+bytes this engine did not produce. An encoder wrong by a few bytes in its cost
+arithmetic produces two files that are each internally consistent and
+collectively on the wrong side of the boundary.
 
 ## What the corpus still does not pin
 
