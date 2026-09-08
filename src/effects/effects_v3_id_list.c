@@ -249,7 +249,7 @@ static void _maybe_collapse_run
 	roaring64_bitmap_run_optimize(bitmap);
 
 	EffectsV3Seg collapsed = {
-		.kind       = EFFECTS_V3_SEG_BITMAP,
+		.kind       = EFFECTS_V3_SEG_ASCENDING,
 		.descending = (b->run_dir == RUN_DESCENDING),
 		.bitmap     = {
 			.bitmap = bitmap,
@@ -437,11 +437,90 @@ void EffectsV3IdListBuilder_Free
 	}
 
 	for(uint32_t i = 0; i < b->n_segments; i++) {
-		if(b->segments[i].kind == EFFECTS_V3_SEG_BITMAP) {
+		if(b->segments[i].kind == EFFECTS_V3_SEG_ASCENDING) {
 			roaring64_bitmap_free(b->segments[i].bitmap.bitmap);
 		}
 	}
 
 	rm_free(b->segments);
 	rm_free(b);
+}
+
+EffectsV3IdList EffectsV3IdListBuilder_ToIdList
+(
+	const EffectsV3IdListBuilder *b  // builder
+) {
+	EffectsV3IdList l = { .segments = NULL, .n = b->n_segments };
+
+	if(b->n_segments == 0) {
+		return l;
+	}
+
+	l.segments = rm_calloc(b->n_segments, sizeof(EffectsV3Segment));
+
+	for(uint32_t i = 0; i < b->n_segments; i++) {
+		const EffectsV3Seg *s = b->segments + i;
+		EffectsV3Segment  *o = l.segments + i;
+
+		o->descending = s->descending;
+
+		switch(s->kind) {
+			case EFFECTS_V3_SEG_RANGE:
+				o->kind        = EFFECTS_V3_SEG_RANGE;
+				o->range.base  = s->range.base;
+				o->range.len   = s->range.len;
+				// a freshly built value takes the narrowest width that holds
+				// it; a decoded one keeps the width its peer chose
+				o->value_width = EffectsV3_WidthFor(s->range.base);
+				o->count_width = EffectsV3_WidthFor(s->range.len);
+				break;
+
+			case EFFECTS_V3_SEG_REPEAT:
+				o->kind         = EFFECTS_V3_SEG_REPEAT;
+				o->repeat.id    = s->repeat.id;
+				o->repeat.count = s->repeat.count;
+				o->value_width  = EffectsV3_WidthFor(s->repeat.id);
+				o->count_width  = EffectsV3_WidthFor(s->repeat.count);
+				break;
+
+			default: {
+				size_t n =
+					roaring64_bitmap_portable_size_in_bytes(s->bitmap.bitmap);
+
+				o->kind = EFFECTS_V3_SEG_ASCENDING;
+				o->ascending.blob = rm_malloc(n);
+				o->ascending.n    = (uint32_t)n;
+				o->ascending.cardinality = s->bitmap.len;
+
+				roaring64_bitmap_portable_serialize(s->bitmap.bitmap,
+						(char *)o->ascending.blob);
+
+				// a bitmap carries its own length; the width fields are unused
+				o->value_width = 1;
+				o->count_width = 1;
+				break;
+			}
+		}
+	}
+
+	return l;
+}
+
+void EffectsV3IdListBuilder_FreeIdList
+(
+	EffectsV3IdList *l  // list to free
+) {
+	if(l == NULL || l->segments == NULL) {
+		return;
+	}
+
+	for(uint32_t i = 0; i < l->n; i++) {
+		if(l->segments[i].kind == EFFECTS_V3_SEG_ASCENDING) {
+			rm_free(l->segments[i].ascending.blob);
+		}
+	}
+
+	rm_free(l->segments);
+	l->segments = NULL;
+	l->n = 0;
 }

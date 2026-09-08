@@ -19,12 +19,7 @@
 // chosen per value rather than fixed, so there is no native type to copy from
 // in the first place.
 
-// the segment header's fields
-#define EFFECTS_V3_SEG_KIND_MASK     0x03
-#define EFFECTS_V3_SEG_VWIDTH_SHIFT  2
-#define EFFECTS_V3_SEG_CWIDTH_SHIFT  4
-#define EFFECTS_V3_SEG_DESCENDING    0x40
-#define EFFECTS_V3_SEG_RESERVED      0x80
+// the segment header's field positions come from effects_v3.h
 
 // write an unsigned value at a fixed width, little-endian
 void EffectsV3_WriteUint
@@ -36,13 +31,21 @@ void EffectsV3_WriteUint
 
 // write one segment: its header byte, then its payload
 //
+// THE WIDTHS COME FROM THE SEGMENT, not from its values. A freshly built
+// segment was given the narrowest width that holds each value when the builder
+// converted it; a decoded one carries whatever width its peer chose. Writing
+// what the struct says is what makes a decode-then-encode round trip reproduce
+// the peer's bytes rather than this engine's arithmetic - a peer may
+// legitimately use a wider field than it needs, and narrowing it on the way
+// back out is a different buffer for the same ids.
+//
 // a Range and a Repeat write two values at the widths their header declares; an
 // Ascending writes a u32 blob length then the portable roaring serialization,
 // and its width fields are unused and written zero
 void EffectsV3_EncodeSegment
 (
-	const EffectsV3Seg *s,  // segment to write
-	EffectsBytes *out       // sink
+	const EffectsV3Segment *s,  // segment to write
+	EffectsBytes *out           // sink
 );
 
 // write an IdList: a u32 segment count, then the segments
@@ -55,6 +58,6 @@ void EffectsV3_EncodeSegment
 // binding rows to the wrong entities instead of failing
 void EffectsV3_EncodeIdList
 (
-	const EffectsV3IdListBuilder *b,  // list to write
-	EffectsBytes *out                 // sink
+	const EffectsV3IdList *l,  // list to write
+	EffectsBytes *out          // sink
 );
