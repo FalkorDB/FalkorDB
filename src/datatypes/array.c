@@ -293,21 +293,43 @@ XXH64_hash_t SIArray_HashCode
 // this is the reverse of SIArray_ToBinary
 // x = SIArray_FromBinary(SIArray_ToBinary(y));
 // x == y
-SIValue SIArray_FromBinary
+bool SIArray_FromBinary
 (
-	FILE *stream  // stream containing binary representation of an array
+	FILE *stream,  // stream containing binary representation of an array
+	SIValue *out   // [output] array read
 ) {
+	ASSERT (stream != NULL);
+	ASSERT (out    != NULL);
+
+	*out = SI_NullVal();
+
 	// read number of elements
 	uint32_t n;
-	fread_assert(&n, sizeof(uint32_t), stream);
+	if (!fread_checked (&n, sizeof (uint32_t), stream)) {
+		return false;
+	}
+
+	// the count is off the wire, so reject one that can't be backed by the
+	// bytes remaining before reserving for it - the smallest element on the
+	// wire is a bare SIType tag
+	long remaining = fstream_remaining (stream);
+	if (remaining < 0 || (uint64_t)n * sizeof (SIType) > (uint64_t)remaining) {
+		return false;
+	}
 
 	SIValue arr = SIArray_New(n);
 
 	for(uint32_t i = 0; i < n; i++) {
-		arr_append(arr.array, SIValue_FromBinary(stream));
+		SIValue elem;
+		if (!SIValue_FromBinary (stream, &elem)) {
+			SIArray_Free (arr);
+			return false;
+		}
+		arr_append(arr.array, elem);
 	}
 
-	return arr;
+	*out = arr;
+	return true;
 }
 
 // defrag array

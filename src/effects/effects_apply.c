@@ -59,7 +59,12 @@ static AttributeSet ReadAttributeSet
 		fread_assert(ids + i, sizeof(AttributeID), stream);
 		
 		// read attribute value
-		values[i] = SIValue_FromBinary(stream);
+		if (!SIValue_FromBinary (stream, values + i)) {
+			// forced by the shared codec's signature; the surrounding v2 reads
+			// are hardened separately
+			for (uint16_t j = 0; j < i; j++) SIValue_Free (values[j]);
+			return NULL;
+		}
 	}
 
 	AttributeSet attr_set = NULL;
