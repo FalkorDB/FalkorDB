@@ -347,6 +347,129 @@ void test_effectsV3Group_schemaAnnouncedOncePerTypeAndId(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+//------------------------------------------------------------------------------
+// empty blocks
+//------------------------------------------------------------------------------
+
+// a create with NO PROPERTIES, and a node with NO LABELS
+//
+// The conformance corpus has a present case for 26 blocks whose cardinality can
+// be zero and an empty counterpart for one of them, so it cannot arbitrate
+// these - and this suite had the same hole for the same reason, since its
+// shapes were drawn from the fixtures that exist. The decoder half of exactly
+// this gap was a live bug: C's v3 decoder refused `CREATE (:Person)` while a
+// fully green corpus and 26 green flow tests did not notice.
+//
+// So the encoder is pinned to emit them independently of when fixtures arrive.
+void test_effectsV3Group_emptyBlocks(void) {
+	{
+		// CREATE (:Person) - a label, no properties
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		LabelID labels[] = { 1 };
+
+		EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, labels, 1, 10,
+				NULL, NULL, 0);
+		EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, labels, 1, 11,
+				NULL, NULL, 0);
+
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+				"two propertyless nodes of one label are ONE record, got %u",
+				EffectsV3Grouping_RecordCount(g));
+
+		size_t n = 0;
+		unsigned char *p = _encode(g, &n);
+
+		// u32 opcode, u32 count, u16 n_labels, i32 label, u16 n_attrs
+		TEST_ASSERT_(_u32(p) == EFFECT_CREATE_NODE, "expected CREATE_NODE");
+		TEST_ASSERT_(_u32(p + 4) == 2, "expected count 2, got %u", _u32(p + 4));
+		// u32 opcode | u32 count | u16 n_labels | i32 label | u16 n_attrs
+		TEST_ASSERT_(p[8] == 1 && p[9] == 0,
+				"expected one label, got n_labels %u", (unsigned)p[8]);
+		TEST_ASSERT_(p[14] == 0 && p[15] == 0,
+				"a propertyless create must state n_attrs = 0, got %u",
+				(unsigned)p[14]);
+
+		free(p);
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// CREATE ({v:1}) - a property, no labels
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		AttributeID attrs[] = { 7 };
+		SIValue v = SI_LongVal(1);
+
+		EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, NULL, 0, 10,
+				attrs, &v, 1);
+
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+				"an unlabelled create is still a record, got %u",
+				EffectsV3Grouping_RecordCount(g));
+
+		size_t n = 0;
+		unsigned char *p = _encode(g, &n);
+		TEST_ASSERT_(p[8] == 0 && p[9] == 0,
+				"an unlabelled node must state n_labels = 0, got %u",
+				(unsigned)p[8]);
+
+		free(p);
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// a labelless node and a labelled one are DIFFERENT shapes
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		LabelID labels[] = { 1 };
+		AttributeID attrs[] = { 7 };
+		SIValue v = SI_LongVal(1);
+
+		EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, NULL, 0, 10, attrs, &v, 1);
+		EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, labels, 1, 11, attrs, &v, 1);
+
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+				"no labels and one label are different shapes, got %u records",
+				EffectsV3Grouping_RecordCount(g));
+
+		EffectsV3Grouping_Free(g);
+	}
+}
+
+// A ZERO-LABEL SET_LABELS IS EMITTED, NOT SUPPRESSED.
+//
+// `MATCH (n) SET n:Foo REMOVE n:Foo` leaves an entity whose label set empties
+// out. Rust emits a zero-label SET_LABELS for it and C's apply currently
+// refuses it, which is a forced-resync loop; the reader is fixing the apply
+// side. This pins what the C ENCODER does with the same shape, because if C
+// emits one against a Rust replica we would have built the mirror of that bug.
+//
+// The record is emitted rather than dropped. That is deliberate and it is the
+// conservative choice: suppressing it is a decision about semantics - whether
+// setting no labels is a no-op worth no record - and the encoder is not where
+// that belongs. An empty block is well-formed on the wire, both engines can
+// represent it, and a decoder that refuses it is the thing being fixed.
+//
+// If the format later rules that a zero-label label record must not be emitted,
+// this test is what changes, and it says so out loud rather than leaving the
+// behaviour to whatever the accumulator happened to do.
+void test_effectsV3Group_zeroLabelLabelRecord(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+
+	EffectsV3Grouping_AddNode(g, EFFECT_SET_LABELS, NULL, 0, 10, NULL, NULL, 0);
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+			"a zero-label SET_LABELS is emitted, not suppressed: got %u records",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n = 0;
+	unsigned char *p = _encode(g, &n);
+
+	TEST_ASSERT_(_u32(p) == EFFECT_SET_LABELS, "expected a SET_LABELS record");
+	TEST_ASSERT_(_u32(p + 4) == 1, "expected count 1, got %u", _u32(p + 4));
+	TEST_ASSERT_(p[8] == 0 && p[9] == 0,
+			"expected n_labels = 0, got %u", (unsigned)p[8]);
+
+	free(p);
+	EffectsV3Grouping_Free(g);
+}
+
 TEST_LIST = {
 	{ "EffectsV3Group:sameShapeIsOneRecord",
 		test_effectsV3Group_sameShapeIsOneRecord },
@@ -362,6 +485,10 @@ TEST_LIST = {
 		test_effectsV3Group_insertionOrderDoesNotChangeBytes },
 	{ "EffectsV3Group:attributeAnnouncedOncePerPayload",
 		test_effectsV3Group_attributeAnnouncedOncePerPayload },
+	{ "EffectsV3Group:zeroLabelLabelRecord",
+		test_effectsV3Group_zeroLabelLabelRecord },
+	{ "EffectsV3Group:emptyBlocks",
+		test_effectsV3Group_emptyBlocks },
 	{ "EffectsV3Group:schemaAnnouncedOncePerTypeAndId",
 		test_effectsV3Group_schemaAnnouncedOncePerTypeAndId },
 	{ NULL, NULL }
