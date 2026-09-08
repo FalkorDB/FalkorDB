@@ -95,6 +95,49 @@ static int _cmp_label(const void *a, const void *b) {
 	return (x < y) ? -1 : (x > y) ? 1 : 0;
 }
 
+// whether a record would say nothing about any entity it names
+//
+// The rule, which covers three categories without a per-record table:
+//
+//   A record is vacuous if removing an empty block leaves it saying nothing
+//   about any entity it names. Vacuous records must not be emitted. An empty
+//   block that DESCRIBES the entities the record names is information and is
+//   legal. A schema announcement is a binding rather than an instruction and is
+//   legal regardless of whether anything references it.
+//
+// So the distinction is which block is the record's SUBJECT, not whether a
+// block is empty:
+//
+//   DELETE_NODE with no labels    LEGAL - says these nodes carried no labels
+//   CREATE_NODE with no attrs     LEGAL - says these nodes have no properties
+//   SET_LABELS with no labels     VACUOUS - a label record's whole payload IS
+//                                 its label set, so with none it is an
+//                                 instruction to do nothing
+//   any record naming no entities VACUOUS - it cannot say anything about any
+//
+// Readers deliberately TOLERATE these rather than refusing them. Rejecting
+// count = 0 at the header removes parse surface, because every block would
+// otherwise need a zero-length path both engines agree on; rejecting a
+// zero-label record removes nothing, since DELETE_NODE and CREATE_NODE require
+// the zero-length LabelSet path anyway. So rejection buys no safety and costs a
+// resync loop against any peer still emitting one. Tolerate on read, refuse to
+// emit.
+static bool _vacuous(const Group *grp) {
+	// names no entities, so it says nothing about any
+	if(grp->count == 0) {
+		return true;
+	}
+
+	// a label record's payload is its label set
+	if((grp->opcode == EFFECT_SET_LABELS
+				|| grp->opcode == EFFECT_REMOVE_LABELS)
+			&& grp->n_labels == 0) {
+		return true;
+	}
+
+	return false;
+}
+
 //------------------------------------------------------------------------------
 // the accumulator
 //------------------------------------------------------------------------------
@@ -315,7 +358,18 @@ uint32_t EffectsV3Grouping_RecordCount
 (
 	const EffectsV3Grouping *g  // accumulator
 ) {
-	return g->n_announcements + g->n_groups;
+	uint32_t n = g->n_announcements;
+
+	// counts what would be EMITTED, so a vacuous group does not appear here
+	// either - a caller deciding whether a payload is worth sending must not
+	// be told about records that will not be in it
+	for(uint32_t i = 0; i < g->n_groups; i++) {
+		if(!_vacuous(g->groups + i)) {
+			n++;
+		}
+	}
+
+	return n;
 }
 
 void EffectsV3Grouping_Encode
@@ -343,6 +397,10 @@ void EffectsV3Grouping_Encode
 
 	for(uint32_t i = 0; i < g->n_groups; i++) {
 		Group *grp = g->groups + i;
+
+		if(_vacuous(grp)) {
+			continue;
+		}
 
 		EffectsV3IdList ids = EffectsV3IdListBuilder_ToIdList(grp->ids);
 		EffectsV3IdList src = { 0 };
