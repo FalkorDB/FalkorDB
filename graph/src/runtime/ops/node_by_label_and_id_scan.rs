@@ -31,17 +31,25 @@ pub struct NodeByLabelAndIdScanOp<'a> {
 }
 
 impl<'a> NodeByLabelAndIdScanOp<'a> {
-    pub const fn new(
+    /// `record_cap` is the downstream `Skip`+`Limit` row budget, when one
+    /// reaches this scan. It sizes the first batch only: as a leaf, the budget
+    /// is a hint rather than a bound on this operator's own output, so the
+    /// ceiling grows back to `BATCH_SIZE` if that first small batch does not
+    /// satisfy the query. See `BatchedResultEmitter::apply_hinted_record_cap`.
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         node_pattern: &'a QueryNode<Arc<String>, Variable>,
         filter: &'a Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
+        let mut emitter = BatchedResultEmitter::new(node_pattern.alias.id);
+        emitter.apply_hinted_record_cap(record_cap);
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
+            emitter,
             node_pattern,
             filter,
             idx,
