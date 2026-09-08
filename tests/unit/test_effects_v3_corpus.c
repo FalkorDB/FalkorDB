@@ -23,6 +23,18 @@
 
 #include <dirent.h>
 
+// The decoder allocates through rm_malloc, which calls the RedisModule_Alloc
+// function pointer -- NULL until Alloc_Reset() points it at malloc. Without
+// this every call into the codec segfaults on its first allocation, which is
+// exactly what happened the first time this ran against the real decoder.
+// Every other suite in tests/unit does the same; mine did not.
+#include "src/util/rmalloc.h"
+
+static void setup(void) {
+	Alloc_Reset();
+}
+
+#define TEST_INIT setup();
 #include "acutest.h"
 
 //------------------------------------------------------------------------------
