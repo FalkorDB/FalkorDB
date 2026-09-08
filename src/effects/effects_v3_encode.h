@@ -61,3 +61,31 @@ void EffectsV3_EncodeIdList
 	const EffectsV3IdList *l,  // list to write
 	EffectsBytes *out          // sink
 );
+
+// write one record: its opcode, then whatever that opcode carries
+//
+// The shape comes FIRST, before the ids, for every batchable record without
+// exception - a record is self-describing before its rows. AttrValues is the
+// one part that follows the IdList, because it is per row rather than per
+// record, which is why the attribute ids and their values are two blocks and
+// not one.
+//
+//   1 UPDATE_NODE     count · LabelSet · AttrIds · IdList · AttrValues
+//   2 UPDATE_EDGE     count · RelType  · AttrIds · IdList · AttrValues
+//   3 CREATE_NODE     count · LabelSet · AttrIds · IdList · AttrValues
+//   4 CREATE_EDGE     count · RelType  · AttrIds · IdList · src · dst · AttrValues
+//   5 DELETE_NODE     count · LabelSet · IdList
+//   6 DELETE_EDGE     count · RelType  · IdList · src · dst
+// 7·8 SET/REMOVE_LABELS   count · LabelSet · IdList
+//   9 ADD_SCHEMA      SchemaType · id · name        - no count, inherently one
+//  10 ADD_ATTRIBUTE   attr_id · name                - no count, inherently one
+//
+// DELETE_NODE's LabelSet is not decoration: they are the labels the node
+// actually held, captured as it was deleted, and a replica needs them to clear
+// the right label-scoped index documents. `MATCH (n:A) DELETE n` over an
+// (:A:B) node must clear :B's indexes too, and the pattern cannot say so.
+void EffectsV3_EncodeRecord
+(
+	const EffectsV3Record *r,  // record to write
+	EffectsBytes *out          // sink
+);
