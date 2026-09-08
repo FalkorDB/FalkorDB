@@ -406,6 +406,39 @@ void test_header_fields_are_little_endian() {
 	rm_free(p);
 }
 
+// a v2 payload is never compressed, whatever the threshold says
+//
+// v2's header is ONE byte, not two, so a v2 payload treated as compressible
+// would have its first record byte overwritten as a flags byte. The guard
+// reads the payload's own version rather than trusting a caller, which is what
+// lets this hook attach while EFFECTS_VERSION_EMIT is still 2 - today every
+// payload reaching it is a v2 one.
+void test_pre_v3_payload_is_never_compressed() {
+	size_t  len;
+	char   *p = _payload(4000, true, &len);
+
+	for(int version = 0; version < 3; version++) {
+		p[0] = (char)version;
+
+		char   *before     = p;
+		size_t  before_len = len;
+		char    first_byte = p[1];
+
+		TEST_ASSERT(EffectsV3_MaybeCompress(&p, &len, 1) == false);
+		TEST_ASSERT(p == before);
+		TEST_ASSERT(len == before_len);
+		TEST_ASSERT(p[1] == first_byte);   // nothing overwritten
+	}
+
+	// and v3 with the same bytes and threshold does compress, so the refusals
+	// above are the version and not something else
+	p[0] = 3;
+	p[1] = 0;
+	TEST_ASSERT(EffectsV3_MaybeCompress(&p, &len, 1) == true);
+
+	rm_free(p);
+}
+
 TEST_LIST = {
 	{ "crc32_known_answers",                   test_crc32_known_answers},
 	{ "worth_it_boundary",                     test_worth_it_boundary},
@@ -417,5 +450,6 @@ TEST_LIST = {
 	{ "declared_length_is_an_allocation_ceiling", test_declared_length_is_an_allocation_ceiling},
 	{ "short_expansion_is_still_a_mismatch",   test_short_expansion_is_still_a_mismatch},
 	{ "header_fields_are_little_endian",       test_header_fields_are_little_endian},
+	{ "pre_v3_payload_is_never_compressed",    test_pre_v3_payload_is_never_compressed},
 	{ NULL, NULL }
 };
