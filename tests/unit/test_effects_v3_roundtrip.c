@@ -48,9 +48,30 @@
 // exactly what happened the first time this ran against the real decoder.
 // Every other suite in tests/unit does the same; mine did not.
 #include "src/util/rmalloc.h"
+#include "src/globals.h"
+#include "src/util/thpool/pool.h"
 
 static void setup(void) {
 	Alloc_Reset();
+
+	// The decoder reaches Globals_Get_StringPool() through SI_InternStringVal
+	// for any interned string, and StringPool_rent guards a NULL pool with
+	// ASSERT -- which compiles to nothing in release, so it dereferences NULL
+	// instead. The server calls Globals_Init() at module load; a unit test has
+	// to do it itself. Once per process: Globals_Init asserts it is called
+	// once, and that assert is also empty in release.
+	// Globals_Init sizes its CommandCtx table from ThreadPool_ThreadCount(),
+	// which dereferences the pool, so the pool has to exist first. That this
+	// is the minimum to decode a byte buffer is worth noting: effects_v3.h
+	// calls decode "a pure byte-to-value transformation", and it is pure of
+	// any GRAPH, but not of module-global state.
+	static bool globals_ready = false;
+	if(!globals_ready) {
+		ThreadPool_Init();
+		ThreadPool_CreatePool(1, 64);
+		Globals_Init();
+		globals_ready = true;
+	}
 }
 
 #define TEST_INIT setup();
@@ -235,6 +256,11 @@ void test_effectsV3_roundTrip(void) {
 //
 // The accepted-prefix case is the strong half: it means a decoder cannot pass
 // by being permissive, because anything it accepts it must also reproduce.
+// Per-prefix checks use TEST_CHECK_, not TEST_ASSERT_. acutest's TEST_ASSERT_
+// longjmps out of the whole test on the first failure, which for a sweep of
+// ~1,700 prefixes means one bad prefix hides every later one -- and it is how a
+// missing string-pool init masqueraded as a single crashing prefix in this very
+// test. A sweep has to report all of its failures to be a sweep.
 void test_effectsV3_truncation(void) {
 	size_t prefixes = 0;
 	size_t accepted = 0;
@@ -244,39 +270,10 @@ void test_effectsV3_truncation(void) {
 
 		EffectsV3Fixture f = EffectsV3Corpus_Load(e->name);
 		TEST_CASE(e->name);
-		TEST_ASSERT_(f.buf != NULL, "%s: %s", e->name, f.err);
+		TEST_CHECK_(f.buf != NULL, "%s: %s", e->name, f.err);
 		if(f.buf == NULL) continue;
 
-			// QUARANTINE, with a citation. Prefixes of values_all_kinds at 156
-		// bytes and beyond SEGFAULT the decoder rather than being rejected --
-		// found by this sweep on its first run against the real codec, and
-		// bisected by exit code over six lengths: 0..155 pass, adding 156
-		// crashes. Offset 156 is byte 0 of value 9's SIType tag, and value 9
-		// is a NESTED list (list[2] whose second element is list[1]); values
-		// 0-8 -- null, bools, ints, floats, a plain string and an interned one
-		// -- all truncate cleanly.
-		//
-		// The crash is STATE-DEPENDENT: prefix 156 on its own, with no other
-		// fixture swept first, does not crash. So the mechanism is not simply
-		// "this prefix is mishandled" but something latent that surfaces once
-		// the heap has been used, which is why the sweep found it and a single
-		// case would not have. The mechanism is NOT established -- ASan would
-		// name it in one run and hangs before main in this sandbox, on a bare
-		// hello-world, so this is as far as the evidence goes here.
-		//
-		// Capping rather than skipping the fixture keeps 156 of its 265
-		// prefixes live and states the boundary exactly. Raise the cap when
-		// the crash is fixed; the whole entry goes when it reaches f.len.
-		size_t sweep_to = f.len;
-		if(strcmp(e->name, "values_all_kinds") == 0 && sweep_to > 156) {
-			sweep_to = 156;
-			TEST_MSG("%s: capped at %zu of %zu prefixes -- prefixes >= 156 "
-					"segfault the decoder. Reproduce with the whole corpus "
-					"present: prefixes 0..155 pass, adding 156 crashes.",
-					e->name, sweep_to, f.len);
-		}
-
-		for(size_t len = 0; len < sweep_to; len++) {
+			for(size_t len = 0; len < f.len; len++) {
 			EffectsV3Records *records = NULL;
 			EffectsV3Status   st      =
 				EffectsV3_Decode((const char*)f.buf, len, &records);
@@ -286,7 +283,7 @@ void test_effectsV3_truncation(void) {
 			if(st == EFFECTS_V3_OK) {
 				accepted++;
 
-				TEST_ASSERT_(records != NULL,
+				TEST_CHECK_(records != NULL,
 						"%s[..%zu]: OK with no records", e->name, len);
 
 #ifdef EFFECTS_V3_ENCODE_READY
@@ -297,13 +294,13 @@ void test_effectsV3_truncation(void) {
 				if(EffectsV3_Encode(records, eb)) {
 					size_t n = 0;
 					unsigned char *out = EffectsBuffer_Buffer(eb, &n);
-					TEST_ASSERT_(n == len && memcmp(out, f.buf, len) == 0,
+					TEST_CHECK_(n == len && memcmp(out, f.buf, len) == 0,
 							"%s[..%zu]: accepted as a valid payload but does "
 							"not round-trip (re-encoded %zu bytes)",
 							e->name, len, n);
 					rm_free(out);
 				} else {
-					TEST_ASSERT_(false,
+					TEST_CHECK_(false,
 							"%s[..%zu]: accepted by decode, refused by encode",
 							e->name, len);
 				}
@@ -311,14 +308,14 @@ void test_effectsV3_truncation(void) {
 #endif
 				EffectsV3_RecordsFree(records);
 			} else {
-				TEST_ASSERT_(records == NULL,
+				TEST_CHECK_(records == NULL,
 						"%s[..%zu]: rejected as %s but left records allocated",
 						e->name, len, EffectsV3Status_ToString(st));
 
 				// UNIMPLEMENTED is legitimate here: a prefix long enough to
 				// carry a complete records 11-14 opcode is refused for that
 				// reason and not for its length
-				TEST_ASSERT_(st == EFFECTS_V3_TRUNCATED ||
+				TEST_CHECK_(st == EFFECTS_V3_TRUNCATED ||
 							 st == EFFECTS_V3_MALFORMED ||
 							 st == EFFECTS_V3_UNIMPLEMENTED,
 						"%s[..%zu]: rejected as %s; a prefix of a valid v3 "
