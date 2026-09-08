@@ -434,6 +434,73 @@ void test_effectsV3_rejections(void) {
 // The reader's PR that adds the check defines EFFECTS_V3_ZERO_COUNT_REJECTED in
 // effects_v3.h, exactly as the readiness flags work, and this goes live with it.
 void test_effectsV3_handBuiltRejections(void) {
+	//--------------------------------------------------------------------------
+	// UNGATED: the legal empty forms must keep decoding
+	//--------------------------------------------------------------------------
+	//
+	// This half runs today and is the guard against a fix in the wrong place.
+	//
+	// Zero-empty is legal under some records and illegal under others, and the
+	// blocks are read by SHARED helpers with one call site each:
+	//
+	//   _ReadLabelSet  <- every node-shaped record (decode.c:688):
+	//                     CREATE_NODE, UPDATE_NODE, DELETE_NODE legal-empty;
+	//                     REMOVE_LABELS illegal; SET_LABELS held
+	//   _ReadAttrIds   <- every record with values (decode.c:700):
+	//                     CREATE_NODE, CREATE_EDGE legal-empty;
+	//                     UPDATE_NODE, UPDATE_EDGE illegal
+	//
+	// Both sets are SPLIT by the rulings, 3-against-2 and 2-against-2. So the
+	// obvious place to reject an empty block -- where n is read, inside the
+	// helper -- is wrong in both cases: it would refuse CREATE (:Person) and
+	// CREATE (). The check has to sit at the call site, keyed on the opcode.
+	//
+	// The label half of that hazard is already covered: seg_* and collapse_*
+	// are DELETE_NODE records with zero labels, so a blanket rejection in
+	// _ReadLabelSet fails 18 existing cases immediately. The ATTRIBUTE half is
+	// not covered by anything, because no fixture in the corpus has an empty
+	// attribute set -- that is the gap that let the decoder refuse
+	// CREATE (:Person) in the first place, and create_node_no_attrs is still
+	// owed from the generator. Until it lands, this is the only thing standing
+	// between a blanket _ReadAttrIds rejection and a green build.
+	{
+		// version . flags . CREATE_NODE . count=1 . 1 label . 0 attrs . 1 id
+		//
+		// Zero attributes means zero value rows -- count x attrs_per_row is 0 --
+		// so the payload ends after the id list and no SIValue encoding is
+		// involved. Layout verified against rec_create_node.hex field by field,
+		// and the same construction with one attribute reproduces
+		// seg_range_single byte for byte.
+		const unsigned char create_no_attrs[] = {
+			0x03, 0x00,                          // v3, uncompressed
+			0x03, 0x00, 0x00, 0x00,              // CREATE_NODE
+			0x01, 0x00, 0x00, 0x00,              // count = 1
+			0x01, 0x00,                          // one label...
+			0x00, 0x00, 0x00, 0x00,              // ...label 0
+			0x00, 0x00,                          // NO attribute ids
+			0x01, 0x00, 0x00, 0x00,              // one segment
+			0x00, 0x05, 0x01,                    // Range, base 5, len 1
+		};
+
+		EffectsV3Records *r = NULL;
+		EffectsV3Status   st = EffectsV3_Decode((const char*)create_no_attrs,
+				sizeof(create_no_attrs), &r);
+
+		TEST_CASE("CREATE (:Person) -- a create with no attributes");
+		TEST_ASSERT_(st == EFFECTS_V3_OK,
+				"a create with an empty attribute set was refused as %s. This "
+				"is the commonest statement in the language and both engines "
+				"emit it; if an empty-block check was just added, it belongs "
+				"at the call site keyed on the opcode, not inside "
+				"_ReadAttrIds, which every create also goes through",
+				EffectsV3Status_ToString(st));
+
+		if(st == EFFECTS_V3_OK) EffectsV3_RecordsFree(r);
+	}
+
+	//--------------------------------------------------------------------------
+	// GATED: shapes both engines have agreed to refuse
+	//--------------------------------------------------------------------------
 #ifndef EFFECTS_V3_ZERO_COUNT_REJECTED
 	V3_SKIP("the zero-count rejection", "EFFECTS_V3_ZERO_COUNT_REJECTED");
 #else
@@ -509,7 +576,7 @@ void test_effectsV3_handBuiltRejections(void) {
 #if !defined(EFFECTS_V3_DECODE_READY)
 #define V3_HB_SUFFIX " (SKIPPED: no decode yet)"
 #elif !defined(EFFECTS_V3_ZERO_COUNT_REJECTED)
-#define V3_HB_SUFFIX " (SKIPPED: zero-count check not implemented)"
+#define V3_HB_SUFFIX " (PARTIAL: zero-count check not implemented)"
 #else
 #define V3_HB_SUFFIX ""
 #endif
