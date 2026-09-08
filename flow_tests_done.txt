@@ -21,6 +21,7 @@ tests/flow/test_distinct
 tests/flow/test_edge_index_scans.py
 tests/flow/test_edge_index_updates.py
 tests/flow/test_effects.py
+tests/flow/test_effects_v3.py
 tests/flow/test_empty_query
 tests/flow/test_encode_decode.py
 tests/flow/test_entity_update
