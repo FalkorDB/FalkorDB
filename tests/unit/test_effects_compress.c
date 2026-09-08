@@ -439,6 +439,101 @@ void test_pre_v3_payload_is_never_compressed() {
 	rm_free(p);
 }
 
+//------------------------------------------------------------------------------
+// robustness
+//------------------------------------------------------------------------------
+
+// every field in the compressed header comes off the wire, so sweep them
+//
+// This is not a search for a specific bug; it is the test that makes the six
+// refusal paths actually execute, which is what a sanitizer run needs. Each of
+// them frees the decompression buffer on its way out, and a missed or repeated
+// free there is invisible to a test that only checks the returned status.
+//
+// Two invariants hold for EVERY input, valid or not:
+//
+//   * the status is OK or one of the refusals - never anything else, and never
+//     a crash. A truncated or corrupt payload arrives over a replication link
+//     and is applied inline on the main thread.
+//   * on any refusal '*plain' is NULL. A codec that returned a buffer
+//     alongside a failure would leak it on every corrupt payload, and the
+//     caller has no reason to look.
+//
+// When a mutation happens to produce a still-valid payload, the plaintext is
+// checked rather than merely freed - a decoder that accepted corruption and
+// returned the wrong bytes would otherwise pass this.
+static void _check_refusal_is_clean
+(
+	const char *body,
+	size_t body_len,
+	const char *expect_plain,
+	size_t expect_plain_len
+) {
+	char                   *plain = NULL;
+	size_t                  pl    = 0;
+	EffectsV3CompressFault  f     = EFFECTS_V3_COMPRESS_OK;
+
+	EffectsV3Status st = EffectsV3_OpenCompressed(body, body_len, &plain, &pl, &f);
+
+	TEST_ASSERT(st == EFFECTS_V3_OK       ||
+	            st == EFFECTS_V3_TRUNCATED ||
+	            st == EFFECTS_V3_MALFORMED);
+
+	if(st == EFFECTS_V3_OK) {
+		// a mutation can land on a still-valid payload; if it decoded, it must
+		// have decoded correctly
+		TEST_ASSERT(plain != NULL);
+		TEST_ASSERT(pl == expect_plain_len);
+		TEST_ASSERT(memcmp(plain, expect_plain, pl) == 0);
+		rm_free(plain);
+	} else {
+		TEST_ASSERT(plain == NULL);
+		TEST_ASSERT(pl == 0);
+	}
+}
+
+void test_truncation_and_corruption_sweep() {
+	size_t  records_len = 4000;
+	size_t  len;
+	char   *p = _payload(records_len, true, &len);
+
+	char *records = rm_malloc(records_len);
+	memcpy(records, p + 2, records_len);
+
+	TEST_ASSERT(EffectsV3_MaybeCompress(&p, &len, 64) == true);
+
+	const char *body     = p + EFFECTS_V3_HEADER_LEN;
+	size_t      body_len = len - EFFECTS_V3_HEADER_LEN;
+
+	// every truncation, including zero bytes
+	for(size_t take = 0; take <= body_len; take++) {
+		_check_refusal_is_clean(body, take, records, records_len);
+	}
+
+	// every byte of the body, flipped four ways. The twelve byte prefix is the
+	// part that matters most - those are the lengths that drive the allocation
+	// and the checksum that gates it - but the frame bytes are swept too, so
+	// zstd's own rejection path frees correctly as well.
+	static const unsigned char PATTERNS[] = { 0x00, 0xFF, 0x01, 0x80 };
+	char *scratch = rm_malloc(body_len);
+
+	for(size_t off = 0; off < body_len; off++) {
+		for(size_t k = 0; k < sizeof(PATTERNS); k++) {
+			memcpy(scratch, body, body_len);
+			if(PATTERNS[k] == 0x00 || PATTERNS[k] == 0xFF) {
+				scratch[off] = (char)PATTERNS[k];
+			} else {
+				scratch[off] = (char)((unsigned char)scratch[off] ^ PATTERNS[k]);
+			}
+			_check_refusal_is_clean(scratch, body_len, records, records_len);
+		}
+	}
+
+	rm_free(scratch);
+	rm_free(records);
+	rm_free(p);
+}
+
 TEST_LIST = {
 	{ "crc32_known_answers",                   test_crc32_known_answers},
 	{ "worth_it_boundary",                     test_worth_it_boundary},
@@ -451,5 +546,6 @@ TEST_LIST = {
 	{ "short_expansion_is_still_a_mismatch",   test_short_expansion_is_still_a_mismatch},
 	{ "header_fields_are_little_endian",       test_header_fields_are_little_endian},
 	{ "pre_v3_payload_is_never_compressed",    test_pre_v3_payload_is_never_compressed},
+	{ "truncation_and_corruption_sweep",       test_truncation_and_corruption_sweep},
 	{ NULL, NULL }
 };
