@@ -432,49 +432,92 @@ void test_effectsV3Group_emptyBlocks(void) {
 	}
 }
 
-// A ZERO-LABEL SET_LABELS IS EMITTED, NOT SUPPRESSED.
+// A VACUOUS RECORD IS NOT EMITTED.
 //
-// `MATCH (n) SET n:Foo REMOVE n:Foo` leaves an entity whose label set empties
-// out. Rust emits a zero-label SET_LABELS for it and C's apply currently
-// refuses it, which is a forced-resync loop; the reader is fixing the apply
-// side. This pins what the C ENCODER does with the same shape, because if C
-// emits one against a Rust replica we would have built the mirror of that bug.
+// The rule, which covers three categories without a per-record table:
 //
-// The record is emitted rather than dropped, and the reason is AGREEMENT, not
-// a position on whether it should exist: a Rust master emits one today, so a C
-// master emitting one means the two engines produce the same bytes for the same
-// query. Divergence between the encoders is worse than both emitting a record
-// that may later be suppressed.
+//   A record is vacuous if removing an empty block leaves it saying nothing
+//   about any entity it names. Vacuous records must not be emitted. An empty
+//   block that DESCRIBES the entities the record names is information and is
+//   legal. A schema announcement is a binding rather than an instruction and
+//   is legal regardless of whether anything references it.
 //
-// This is NOT a ruling that an encoder should never suppress. Rust's stated
-// position is that a label record carrying no labels is the same "carries no
-// information" shape that made `count = 0` illegal, and they intend to guard it
-// in their emitter and rule it invalid. If they do, suppressing is not a
-// workaround for a strict decoder - it IS the format, and both encoders change
-// together.
+// The distinction is which block is the record's SUBJECT, not whether a block
+// is empty - which is why the empty-block cases above stay legal while these
+// do not. `MATCH (n) SET n:Foo REMOVE n:Foo` leaves a label set that empties
+// out, and a label record's entire payload IS its label set, so with none it
+// is an instruction to do nothing.
 //
-// So this test asserts the choice rather than recording an accident, which is
-// what makes the flip cheap: when the ruling lands, this is the one thing that
-// changes.
-void test_effectsV3Group_zeroLabelLabelRecord(void) {
-	EffectsV3Grouping *g = EffectsV3Grouping_New();
+// This reverses what this test asserted before the ruling. Emitting matched
+// what a Rust master emitted at the time, which kept the two encoders
+// agreeing; the ruling found that Rust's own emitter already suppresses the
+// exactly-analogous vacuous update - set_node_attributes refuses to stage an
+// empty attribute map - so the label path was an inconsistency in their
+// emitter rather than a property of the format. Fixing the outlier beat
+// legalising it.
+//
+// Readers TOLERATE these rather than refusing them, and that asymmetry is
+// deliberate: rejecting a zero-label record removes no parse surface, because
+// DELETE_NODE and CREATE_NODE require the zero-length LabelSet path anyway, so
+// rejection would buy no safety and cost a resync loop against any peer still
+// emitting one.
+void test_effectsV3Group_vacuousRecordsAreNotEmitted(void) {
+	{
+		// a label record with no labels: its whole payload is the label set
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		EffectsV3Grouping_AddNode(g, EFFECT_SET_LABELS, NULL, 0, 10,
+				NULL, NULL, 0);
 
-	EffectsV3Grouping_AddNode(g, EFFECT_SET_LABELS, NULL, 0, 10, NULL, NULL, 0);
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 0,
+				"a zero-label SET_LABELS is vacuous and must not be emitted, "
+				"got %u records", EffectsV3Grouping_RecordCount(g));
 
-	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
-			"a zero-label SET_LABELS is emitted, not suppressed: got %u records",
-			EffectsV3Grouping_RecordCount(g));
+		size_t n = 0;
+		unsigned char *p = _encode(g, &n);
+		TEST_ASSERT_(n == 0,
+				"a payload of only vacuous records must be empty, got %zu bytes",
+				n);
 
-	size_t n = 0;
-	unsigned char *p = _encode(g, &n);
+		free(p);
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// the mirror, so the rule is not written for one opcode
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		EffectsV3Grouping_AddNode(g, EFFECT_REMOVE_LABELS, NULL, 0, 10,
+				NULL, NULL, 0);
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 0,
+				"a zero-label REMOVE_LABELS is vacuous too, got %u",
+				EffectsV3Grouping_RecordCount(g));
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// AND THE LINE HOLDS THE OTHER WAY. A DELETE_NODE with no labels says
+		// these nodes carried no labels, which is information about the
+		// entities it names - so it stays legal and must still be emitted
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		EffectsV3Grouping_AddNode(g, EFFECT_DELETE_NODE, NULL, 0, 10,
+				NULL, NULL, 0);
 
-	TEST_ASSERT_(_u32(p) == EFFECT_SET_LABELS, "expected a SET_LABELS record");
-	TEST_ASSERT_(_u32(p + 4) == 1, "expected count 1, got %u", _u32(p + 4));
-	TEST_ASSERT_(p[8] == 0 && p[9] == 0,
-			"expected n_labels = 0, got %u", (unsigned)p[8]);
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+				"a labelless DELETE_NODE describes its entities and is NOT "
+				"vacuous, got %u records", EffectsV3Grouping_RecordCount(g));
 
-	free(p);
-	EffectsV3Grouping_Free(g);
+		EffectsV3Grouping_Free(g);
+	}
+	{
+		// a schema announcement is a binding, legal whether or not anything
+		// references it
+		EffectsV3Grouping *g = EffectsV3Grouping_New();
+		EffectsV3Grouping_AddSchema(g, SCHEMA_NODE, 1, "Person");
+		EffectsV3Grouping_AddAttribute(g, 7, "name");
+
+		TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 2,
+				"announcements are bindings and stand alone, got %u",
+				EffectsV3Grouping_RecordCount(g));
+
+		EffectsV3Grouping_Free(g);
+	}
 }
 
 TEST_LIST = {
@@ -492,8 +535,8 @@ TEST_LIST = {
 		test_effectsV3Group_insertionOrderDoesNotChangeBytes },
 	{ "EffectsV3Group:attributeAnnouncedOncePerPayload",
 		test_effectsV3Group_attributeAnnouncedOncePerPayload },
-	{ "EffectsV3Group:zeroLabelLabelRecord",
-		test_effectsV3Group_zeroLabelLabelRecord },
+	{ "EffectsV3Group:vacuousRecordsAreNotEmitted",
+		test_effectsV3Group_vacuousRecordsAreNotEmitted },
 	{ "EffectsV3Group:emptyBlocks",
 		test_effectsV3Group_emptyBlocks },
 	{ "EffectsV3Group:schemaAnnouncedOncePerTypeAndId",
