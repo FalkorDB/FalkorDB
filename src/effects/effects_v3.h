@@ -288,8 +288,22 @@ const char *EffectsV3Status_ToString
 
 // decode a v3 payload into records
 //
-// takes NO GraphContext: this is a pure byte-to-value transformation, and that
-// is what makes it testable against a fixture corpus and cheap to fuzz
+// takes NO GraphContext, which is what makes it testable against a fixture
+// corpus without a graph in scope. That is the whole of what the split buys,
+// and it is worth having.
+//
+// IT IS NOT PURE. Decode is free of any GRAPH; it is not free of module-global
+// state. An interned string on the wire goes SIValue_FromBinary ->
+// SI_InternStringVal -> STRINGPOOL_RENT -> StringPool_rent ->
+// Globals_Get_StringPool -> `_globals.string_pool`, which only Globals_Init
+// creates. `StringPool_rent` guards it with ASSERT, so an uninitialised pool is
+// a null dereference in a release build rather than a diagnostic.
+//
+// So the minimum to decode a byte buffer is ThreadPool_Init,
+// ThreadPool_CreatePool and Globals_Init - a thread pool, to parse bytes.
+// Stated plainly because a harness that skips it does not get an error, it
+// gets a segfault inside the decoder, which reads as a decoder bug. That has
+// already happened once and cost a false alarm.
 //
 // on EFFECTS_V3_OK the caller owns '*records' and must free it with
 // EffectsV3_RecordsFree; on anything else '*records' is set to NULL and
