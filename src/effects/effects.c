@@ -417,6 +417,46 @@ EffectsBuffer *EffectsBuffer_New
 	return eb;
 }
 
+EffectsBuffer *EffectsBuffer_NewV2
+(
+	void
+) {
+	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
+
+	eb->n             = 0;
+	eb->records       = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
+	eb->version       = 2;
+	eb->owns_records  = true;
+	eb->v3            = NULL;
+	eb->v3_incomplete = false;
+
+	return eb;
+}
+
+bool EffectsBuffer_ForceV2
+(
+	EffectsBuffer *eb  // effects-buffer
+) {
+	ASSERT(eb != NULL);
+
+	if(eb->v3 == NULL) {
+		return true;  // already emitting v2
+	}
+
+	// effects already staged as v3 groups would be lost by switching
+	if(eb->n != 0) {
+		return false;
+	}
+
+	EffectsV3Grouping_Free(eb->v3);
+
+	eb->v3            = NULL;
+	eb->v3_incomplete = false;
+	eb->version       = 2;
+
+	return true;
+}
+
 // reset effects-buffer
 void EffectsBuffer_Reset
 (
