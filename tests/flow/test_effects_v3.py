@@ -893,3 +893,73 @@ class testRemoveAllKeepsIndexesConsistent():
         self.env.assertEquals(
             e.query("MATCH (n:P) RETURN count(n)").result_set[0][0], 1)
 
+class testRedundantLabellingIsIdempotent():
+    """Applying a label a node already has must not move the count.
+
+    This was an unbounded, silent master/replica divergence. Graph_LabelNode's
+    two matrix writes are idempotent but its GraphStatistics_IncNodeCount was
+    not, and Graph_LabeledNodeCount reads that counter rather than scanning the
+    matrix. So a replica re-applying the same label grew by N every time,
+    forever - measured at 1000/2000/3000/4000 over four applications while the
+    master stayed at 1000. No resync, no error, nothing in the log.
+
+    v3 is what makes it reachable: the emitter resolves to end state and
+    `MATCH (n) SET n:L` names every matched node rather than only those that
+    gained the label. The spec licenses that by calling label add and remove
+    idempotent set operations, so the idempotency has to be real.
+
+    It is a user-visible wrong answer on a read replica, not an internal
+    counter - `MATCH (n:Label) RETURN count(n)` drifts with write traffic.
+
+    The assertion compares the STATISTIC against a full label SCAN. A test
+    checking only one of them passes while they disagree, which is exactly how
+    this survived: a state fingerprint built on labels(n) is a matrix read and
+    stayed clean throughout.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        self.graph.query("CREATE (:P), (:P), (:P)")     # nodes 0,1,2
+
+    def _counts(self):
+        stat = self.graph.query(
+            "MATCH (n:Hot) RETURN count(n)").result_set[0][0]
+        scan = self.graph.query(
+            "MATCH (n) WHERE 'Hot' IN labels(n) RETURN count(n)").result_set[0][0]
+        return stat, scan
+
+    def test01_repeated_application_does_not_drift(self):
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID,
+                payload(rec_add_schema(SCHEMA_NODE, 1, "Hot")))
+
+        label_all = payload(rec_set_labels(
+            count = 3, labels = [1], ids = id_list(seg_range(0, 3))))
+
+        for application in range(1, 5):
+            self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, label_all)
+            stat, scan = self._counts()
+            self.env.assertEquals(
+                (application, stat), (application, 3))
+            self.env.assertEquals(
+                (application, scan), (application, 3))
+
+    def test02_partial_overlap(self):
+        # the mixed case: some nodes already carry it, some do not. The
+        # correction is a difference rather than an all-or-nothing skip, so a
+        # fix that only handled "every node already had it" would pass test01
+        # and fail here.
+        self.graph.query("CREATE (:P), (:P)")            # nodes 3,4
+
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID,
+                payload(rec_set_labels(count = 5, labels = [1],
+                                       ids = id_list(seg_range(0, 5)))))
+
+        stat, scan = self._counts()
+        self.env.assertEquals(stat, 5)
+        self.env.assertEquals(scan, 5)
+
