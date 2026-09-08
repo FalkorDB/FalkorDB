@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "LAGraphX.h"
 #include "GraphBLAS.h"
+#include <math.h>
 
 #include "proc_msf.h"
 #include "../value.h"
@@ -512,10 +513,39 @@ ProcedureResult Proc_MSFInvoke
 	GrB_Vector rows    = NULL;  // nodes involved in the procedure
 	uint64_t   *cc_arr = NULL;  // content cc
 
+	// if no weight attribute was requested at all, every edge is
+	// equally weightless - mirrors get_sub_weight_matrix's old constant-0.0
+	// fallback for weight == ATTRIBUTE_ID_NONE (LAGraph_msf needs a finite
+	// weight on every edge; +/-INFINITY would make it treat all of them as
+	// unusable).
+	//
+	// if a weight attribute WAS requested, edges that lack it (or have a
+	// non-numeric value) are treated as infinitely bad, so they're never
+	// picked over a real weighted edge when disambiguating parallel edges -
+	// mirrors get_sub_weight_matrix's old +/-INFINITY fallback for that case
+	double edge_default = (weightAtt == ATTRIBUTE_ID_NONE)
+		? 0.0
+		: (maxST ? -INFINITY : INFINITY);
+
 	// build input matrix
-	GrB_OK (get_sub_weight_matrix(&A, &A_w, &rows, g, lbls, arr_len(lbls), 
-		rels, arr_len(rels), weightAtt, maxST ? BWM_MAX : BWM_MIN, true));
-	
+	PGTM_config conf = DEFAULT_PGTM_CONFIG;
+	conf.g           = g;
+	conf.lbls        = lbls;
+	conf.n_lbls      = arr_len(lbls);
+	conf.rels        = rels;
+	conf.n_rels      = arr_len(rels);
+	conf.edge_weight = weightAtt;
+	conf.default_ew  = SI_DoubleVal(edge_default);
+	conf.strategy    = maxST ? PROJECT_TO_MAX : PROJECT_TO_MIN;
+	conf.direction   = GRAPH_EDGE_DIR_BOTH;
+	conf.compact     = true;
+
+	GrB_OK (project_graph_to_matrix(&A_w, &rows, conf));
+
+	// recover the specific EdgeID each entry in A_w came from
+	GrB_OK (Matrix_EdgeID(&A, A_w, g, rels, arr_len(rels), rows,
+			conf.direction, weightAtt, edge_default, MEID_EQUAL));
+
 	// free build matrix inputs
 	if (lbls != NULL) arr_free(lbls);
 

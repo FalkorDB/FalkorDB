@@ -67,6 +67,7 @@ GrB_Info Delta_Matrix_export
 		GrB_OK (GrB_Scalar_setElement_BOOL (one_s, true)) ;
 		GrB_OK (GxB_Matrix_eWiseUnion (
 			_A, mask, NULL, GrB_ONEB_BOOL, m, one_s, dp, one_s, desc)) ;
+		GrB_OK (GrB_Scalar_free (&one_s)) ;
 	} else {
 		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (
 			_A, mask, NULL, GxB_ANY_UINT64, m, dp, desc)) ;

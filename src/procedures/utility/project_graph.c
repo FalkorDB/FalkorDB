@@ -7,6 +7,7 @@
 #include "GraphBLAS.h"
 #include "../../util/rmalloc.h"
 #include <stdatomic.h>
+#include <pthread.h>
 
 typedef struct {
 	const Graph *g;
@@ -48,6 +49,11 @@ static GrB_Type pgtm_node_ctx_type = NULL;
 static GrB_IndexUnaryOp pgtm_edge_project_op = NULL;
 static GrB_IndexUnaryOp pgtm_row_project_op = NULL;
 
+// guards pgtm_* globals below - can't use pthread_once here since GraphBLAS
+// may be finalized/reinitialized (e.g. between unit tests in the same
+// process), which requires re-running _init_pgtm_ops more than once
+static pthread_mutex_t pgtm_ops_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static void _init_pgtm_ops
 (
 	void
@@ -68,12 +74,15 @@ static inline void _ensure_pgtm_ops
 (
 	void
 ) {
+	pthread_mutex_lock(&pgtm_ops_mutex);
+
 	if(pgtm_edge_ctx_type != NULL &&
 	   pgtm_node_ctx_type != NULL &&
 	   pgtm_edge_project_op != NULL &&
 	   pgtm_row_project_op != NULL) {
 		size_t t_size = 0;
 		if(GxB_Type_size(&t_size, pgtm_edge_ctx_type) == GrB_SUCCESS) {
+			pthread_mutex_unlock(&pgtm_ops_mutex);
 			return;
 		}
 
@@ -90,6 +99,8 @@ static inline void _ensure_pgtm_ops
 	ASSERT(pgtm_node_ctx_type != NULL);
 	ASSERT(pgtm_edge_project_op != NULL);
 	ASSERT(pgtm_row_project_op != NULL);
+
+	pthread_mutex_unlock(&pgtm_ops_mutex);
 }
 
 static inline void _mark_invalid
@@ -306,32 +317,28 @@ static GrB_Info _get_rows_with_labels
 	GrB_Vector _rows = NULL;
 
 	if(n_lbls > 0) {
-		info = GrB_Vector_new(&_rows, GrB_BOOL, n);
-		if(info != GrB_SUCCESS) return info;
+		GrB_OK (GrB_Vector_new(&_rows, GrB_BOOL, n));
 
 		Delta_Matrix DL = Graph_GetLabelMatrix(g, lbls[0]);
 		ASSERT(DL != NULL);
 
 		GrB_Matrix L = NULL;
-		info = Delta_Matrix_export(&L, DL, GrB_BOOL, NULL);
-		if(info != GrB_SUCCESS) return info;
+		GrB_OK (Delta_Matrix_export(&L, DL, GrB_BOOL, NULL));
 
 		for(unsigned short i = 1; i < n_lbls; i++) {
 			DL = Graph_GetLabelMatrix(g, lbls[i]);
 			ASSERT(DL != NULL);
 
 			GrB_Matrix M = NULL;
-			info = Delta_Matrix_export(&M, DL, GrB_BOOL, NULL);
-			if(info != GrB_SUCCESS) return info;
-			info = GrB_Matrix_assign_BOOL(
-				L, NULL, GrB_ONEB_BOOL, M, GrB_ALL, 0, GrB_ALL, 0, NULL);
-			if(info != GrB_SUCCESS) return info;
-			GrB_Matrix_free(&M);
+			GrB_OK (Delta_Matrix_export(&M, DL, GrB_BOOL, NULL));
+			// L = L U M
+			GrB_OK (GrB_Matrix_assign (
+				L, NULL, GrB_ONEB_BOOL, M, GrB_ALL, 0, GrB_ALL, 0, NULL));
+			GrB_OK (GrB_Matrix_free(&M));
 		}
 
-		info = GxB_Vector_diag(_rows, L, 0, NULL);
-		if(info != GrB_SUCCESS) return info;
-		GrB_Matrix_free(&L);
+		GrB_OK (GxB_Vector_diag(_rows, L, 0, NULL));
+		GrB_OK (GrB_Matrix_free(&L));
 	} else {
 		GrB_OK (GrB_Vector_new(&_rows, GrB_BOOL, n_short));
 		GrB_OK (GrB_Vector_assign_BOOL(_rows, NULL, NULL, true, GrB_ALL, n_short,
@@ -450,11 +457,12 @@ GrB_Info _combine_matricies_and_extract
 		GrB_OK (GxB_Matrix_extract_Vector(adp, NULL, NULL, dp, rows, rows, desc));
 		if(value_op != NULL) {
 			GrB_OK (GrB_Matrix_apply_IndexOp_Scalar (
-				projected, NULL, NULL, value_op, adp, thunk, NULL));
+				projected, NULL, NULL, value_op, adp, thunk, NULL)) ;
 			GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (
-				_A, NULL, NULL, op, _A, projected, NULL));
+				_A, NULL, NULL, op, _A, projected, NULL)) ;
+		} else {
 			GrB_OK (GrB_assign (
-				_A, adp, NULL, thunk, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
+				_A, adp, NULL, thunk, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S)) ;
 		}
 
 		GrB_OK (GrB_Matrix_clear(adp));
@@ -523,21 +531,6 @@ static GrB_Info _symmetrize_matrix
 	return GrB_SUCCESS;
 }
 
-static GrB_Info _transpose_matrix
-(
-	GrB_Matrix A
-) {
-	ASSERT(A != NULL);
-
-	GrB_Matrix T = NULL;
-	GrB_Info info = GrB_Matrix_dup(&T, A);
-	if(info != GrB_SUCCESS) return info;
-
-	info = GrB_transpose(A, NULL, NULL, T, NULL);
-	GrB_Matrix_free(&T);
-	return info;
-}
-
 static GrB_Info _expand_to_full_domain
 (
 	GrB_Matrix *A,           // [input/output] compact matrix to expand
@@ -588,6 +581,7 @@ GrB_Info project_graph_to_matrix
 
 	GrB_Matrix _A = NULL;
 	GrB_Vector _rows = NULL;
+	GrB_Vector _rows_out = NULL;
 	Delta_Matrix *R = NULL;
 	unsigned short n_rel_mats = 0;
 	GrB_Info info = GrB_SUCCESS;
@@ -608,11 +602,9 @@ GrB_Info project_graph_to_matrix
 	bool bool_matrix = (conf.edge_weight == ATTRIBUTE_ID_NONE && !edge_has_default);
 	bool bool_rows = (conf.node_weight == ATTRIBUTE_ID_NONE && !node_has_default);
 
-	info = _get_rows_with_labels(&_rows, conf.g, conf.lbls, conf.n_lbls);
-	if(info != GrB_SUCCESS) goto cleanup;
-	info = _collect_relation_matrices(conf.g, conf.rels, conf.n_rels, &R,
-			&n_rel_mats);
-	if(info != GrB_SUCCESS) goto cleanup;
+	GrB_OK (_get_rows_with_labels(&_rows, conf.g, conf.lbls, conf.n_lbls));
+	GrB_OK (_collect_relation_matrices(conf.g, conf.rels, conf.n_rels, &R,
+			&n_rel_mats));
 
 	if(n_rel_mats == 0) {
 		GrB_Index n = 0;
@@ -623,10 +615,9 @@ GrB_Info project_graph_to_matrix
 		GrB_Scalar t = NULL;
 		GrB_OK (GrB_Scalar_new(&t, GrB_BOOL));
 		GrB_OK (GrB_Scalar_setElement_BOOL(t, true));
-		info = _combine_matricies_and_extract(&_A, R, n_rel_mats, _rows,
-				GrB_BOOL, GxB_ANY_BOOL, NULL, t);
+		GrB_OK (_combine_matricies_and_extract(&_A, R, n_rel_mats, _rows,
+				GrB_BOOL, GxB_ANY_BOOL, NULL, t));
 		GrB_OK (GrB_free(&t));
-		if(info != GrB_SUCCESS) goto cleanup;
 	} else {
 		atomic_bool invalid_edges = false;
 		edge_project_ctx ectx = {
@@ -640,19 +631,14 @@ GrB_Info project_graph_to_matrix
 
 		GrB_Scalar ectx_s = NULL;
 		GrB_OK (GrB_Scalar_new(&ectx_s, pgtm_edge_ctx_type));
-		info = GrB_Scalar_setElement_UDT(ectx_s, (void *)&ectx);
-		if(info != GrB_SUCCESS) {
-			GrB_free(&ectx_s);
-			goto cleanup;
-		}
+		GrB_OK (GrB_Scalar_setElement_UDT(ectx_s, (void *)&ectx));
 
 		GrB_BinaryOp op = _select_reduce_op(conf.strategy);
-		info = _combine_matricies_and_extract(&_A, R, n_rel_mats, _rows,
+		GrB_OK (_combine_matricies_and_extract(&_A, R, n_rel_mats, _rows,
 				GrB_FP64, op,
-				pgtm_edge_project_op, ectx_s);
+				pgtm_edge_project_op, ectx_s));
 
-		GrB_free(&ectx_s);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_free(&ectx_s));
 
 		if(atomic_load_explicit(&invalid_edges, memory_order_relaxed)) {
 			info = GrB_INVALID_VALUE;
@@ -661,16 +647,13 @@ GrB_Info project_graph_to_matrix
 	}
 
 	if(conf.direction == GRAPH_EDGE_DIR_INCOMING) {
-		info = _transpose_matrix(_A);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (GrB_transpose(_A, NULL, NULL, _A, NULL));
 	} else if(conf.direction == GRAPH_EDGE_DIR_BOTH) {
-		info = _symmetrize_matrix(_A, bool_matrix, conf.strategy);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (_symmetrize_matrix(_A, bool_matrix, conf.strategy));
 	}
 
 	if(!conf.compact) {
-		info = _expand_to_full_domain(&_A, conf.g, _rows, bool_matrix);
-		if(info != GrB_SUCCESS) goto cleanup;
+		GrB_OK (_expand_to_full_domain(&_A, conf.g, _rows, bool_matrix));
 	}
 
 	if(rows != NULL) {
@@ -688,31 +671,24 @@ GrB_Info project_graph_to_matrix
 			};
 
 			GrB_Scalar nctx_s = NULL;
-			info = GrB_Scalar_new(&nctx_s, pgtm_node_ctx_type);
-			if(info != GrB_SUCCESS) goto cleanup;
-			info = GrB_Scalar_setElement_UDT(nctx_s, (void *)&nctx);
-			if(info != GrB_SUCCESS) {
-				GrB_free(&nctx_s);
-				goto cleanup;
-			}
+			GrB_OK (GrB_Scalar_new(&nctx_s, pgtm_node_ctx_type));
+			GrB_OK (GrB_Scalar_setElement_UDT(nctx_s, (void *)&nctx));
 
 			GrB_Index n = Graph_UncompactedNodeCount(conf.g);
-			info = GrB_Vector_new(rows, GrB_FP64, n);
-			if(info != GrB_SUCCESS) {
-				GrB_free(&nctx_s);
-				goto cleanup;
-			}
-			info = GrB_Vector_apply_IndexOp_Scalar(*rows, NULL, NULL,
+			GrB_OK (GrB_Vector_new(&_rows_out, GrB_FP64, n));
+			GrB_OK (GrB_Vector_apply_IndexOp_Scalar(_rows_out, NULL, NULL,
 					pgtm_row_project_op,
-					_rows, nctx_s, NULL);
+					_rows, nctx_s, NULL));
 
-			GrB_free(&nctx_s);
-			if(info != GrB_SUCCESS) goto cleanup;
+			GrB_OK (GrB_free(&nctx_s));
 
 			if (atomic_load_explicit (&invalid_nodes, memory_order_relaxed)) {
 				info = GrB_INVALID_VALUE;
 				goto cleanup;
 			}
+
+			*rows = _rows_out;
+			_rows_out = NULL;
 		}
 	}
 
@@ -722,6 +698,7 @@ GrB_Info project_graph_to_matrix
 cleanup:
 	GrB_free(&_A);
 	GrB_free(&_rows);
+	GrB_free(&_rows_out);
 	rm_free(R);
 	return info;
 }

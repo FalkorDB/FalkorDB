@@ -190,8 +190,14 @@ SIValue AR_SHORTEST_PATH
 		info = Delta_Matrix_export(&M, Graph_GetZeroMatrix(g), GrB_BOOL, NULL);
 		ASSERT(info == GrB_SUCCESS);
 	} else {
-		info = Build_Matrix(&M, NULL, g, NULL, 0, ctx->reltypes,
-				ctx->reltype_count, false, false);
+		PGTM_config conf = DEFAULT_PGTM_CONFIG;
+		conf.g         = g;
+		conf.rels      = ctx->reltypes;
+		conf.n_rels    = ctx->reltype_count;
+		conf.direction = GRAPH_EDGE_DIR_OUTGOING;
+		conf.compact   = false;
+
+		info = project_graph_to_matrix(&M, NULL, conf);
 		ASSERT(info == GrB_SUCCESS);
 	}
 
