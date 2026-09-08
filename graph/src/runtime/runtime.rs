@@ -717,11 +717,13 @@ impl<'a> Runtime<'a> {
                     IR::AllNodeScan(n) => n,
                     _ => unreachable!(),
                 };
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
                     self,
                     Box::new(child),
                     node_pattern,
                     idx,
+                    record_cap,
                 )))
             }
             IR::IncludePending { node } => {

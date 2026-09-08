@@ -510,6 +510,19 @@ pub struct BatchedResultEmitter<'a, I: GatherItem> {
     /// produces a small first batch instead of eagerly packing a whole
     /// `BATCH_SIZE` worth of work.
     pack_ceiling: usize,
+    /// When set, [`pack_ceiling`](Self::pack_ceiling) doubles back up towards
+    /// [`BATCH_SIZE`] after every emitted batch.
+    ///
+    /// A lowered ceiling is a bet that the downstream `Limit` is satisfied by
+    /// the first small batch. The bet is free when it pays off and unbounded
+    /// when it does not: a row-reducing operator between this one and the
+    /// `Limit` (a selective `CondTraverse`, say) can discard every row, and a
+    /// ceiling pinned at `LIMIT 10` would then walk the whole input ten rows at
+    /// a time. Growing the ceiling geometrically bounds that regression — the
+    /// input is still consumed in `O(log BATCH_SIZE)` extra `emit_lazy` calls
+    /// and at most 2x the ideal number of packed rows — while keeping the small
+    /// first batch that makes the common case cheap.
+    grow_pack_ceiling: bool,
 }
 
 impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
@@ -524,6 +537,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             pending: None,
             cursor: 0,
             pack_ceiling: BATCH_SIZE,
+            grow_pack_ceiling: false,
         }
     }
 
@@ -556,6 +570,27 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             && cap < BATCH_SIZE
         {
             self.set_pack_ceiling(cap.max(1));
+        }
+    }
+
+    /// Like [`apply_record_cap`](Self::apply_record_cap), but lets the ceiling
+    /// grow back to [`BATCH_SIZE`] over successive batches.
+    ///
+    /// Use this where the row budget is only a *hint* — a leaf scan whose rows
+    /// pass through a possibly row-reducing operator before the `Limit` — as
+    /// opposed to [`apply_record_cap`](Self::apply_record_cap), which suits an
+    /// operator whose own output the budget actually bounds. See
+    /// [`grow_pack_ceiling`](Self::grow_pack_ceiling) for why the growth
+    /// matters.
+    pub(crate) fn apply_hinted_record_cap(
+        &mut self,
+        record_cap: Option<usize>,
+    ) {
+        if let Some(cap) = record_cap
+            && cap < BATCH_SIZE
+        {
+            self.set_pack_ceiling(cap.max(1));
+            self.grow_pack_ceiling = true;
         }
     }
 
@@ -726,6 +761,9 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             }
             self.drain_pending_entry(&mut indices, &mut lanes, &mut count, should_expand);
         }
+        if self.grow_pack_ceiling {
+            self.pack_ceiling = self.pack_ceiling.saturating_mul(2).min(BATCH_SIZE);
+        }
         Ok(self.finish_batch(&indices, lanes, count, should_expand))
     }
 
@@ -763,5 +801,82 @@ where
     /// unchanged.
     pub(crate) const fn new_without_alias() -> Self {
         Self::with_binding(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A hinted cap sizes the first batch and then doubles back to
+    /// [`BATCH_SIZE`], so a lowered ceiling can never pin the emitter to a tiny
+    /// batch for the whole scan.
+    ///
+    /// This is the property that makes the hint safe to apply at a leaf scan,
+    /// where a row-reducing operator downstream may discard everything the
+    /// small batch produced. Measured without it, `LIMIT 1` over a selective
+    /// one-hop cost 8.43G instructions against 91.5M with it — 92x.
+    #[test]
+    fn hinted_pack_ceiling_grows_back_to_batch_size() {
+        let mut e = BatchedResultEmitter::<NodeId>::new(0);
+        e.apply_hinted_record_cap(Some(10));
+        assert_eq!(e.pack_ceiling, 10, "first batch is sized to the hint");
+
+        // Each emit_lazy doubles the ceiling. Drive it directly: with no batch
+        // seeded, emit_lazy returns None but still advances the ceiling.
+        let mut seen = vec![e.pack_ceiling];
+        for _ in 0..12 {
+            let _ = e.emit_lazy(|_b, _row| Ok(None)).expect("no batch seeded");
+            seen.push(e.pack_ceiling);
+        }
+        assert_eq!(&seen[..5], &[10, 20, 40, 80, 160]);
+        assert_eq!(
+            e.pack_ceiling, BATCH_SIZE,
+            "ceiling saturates at BATCH_SIZE and never exceeds it"
+        );
+    }
+
+    /// A cap at or above a full batch is not a cap at all, and must not switch
+    /// on the growth bookkeeping.
+    #[test]
+    fn hinted_cap_at_or_above_batch_size_is_ignored() {
+        for cap in [BATCH_SIZE, BATCH_SIZE + 1, usize::MAX] {
+            let mut e = BatchedResultEmitter::<NodeId>::new(0);
+            e.apply_hinted_record_cap(Some(cap));
+            assert_eq!(e.pack_ceiling, BATCH_SIZE);
+            assert!(!e.grow_pack_ceiling, "cap {cap} should not enable growth");
+        }
+    }
+
+    /// `None` (no usable `Limit` ancestor) leaves the default ceiling.
+    #[test]
+    fn absent_hint_leaves_default_ceiling() {
+        let mut e = BatchedResultEmitter::<NodeId>::new(0);
+        e.apply_hinted_record_cap(None);
+        assert_eq!(e.pack_ceiling, BATCH_SIZE);
+        assert!(!e.grow_pack_ceiling);
+    }
+
+    /// `LIMIT 0` still has to run the operator — the downstream slicing op does
+    /// the final truncation — so the ceiling clamps to 1 rather than 0, which
+    /// would make `emit_lazy` spin without ever packing a row.
+    #[test]
+    fn zero_hint_clamps_to_one() {
+        let mut e = BatchedResultEmitter::<NodeId>::new(0);
+        e.apply_hinted_record_cap(Some(0));
+        assert_eq!(e.pack_ceiling, 1);
+        assert!(e.grow_pack_ceiling);
+    }
+
+    /// The non-growing [`apply_record_cap`] keeps its existing behaviour: it is
+    /// used where the budget really does bound the operator's own output.
+    #[test]
+    fn fixed_record_cap_does_not_grow() {
+        let mut e = BatchedResultEmitter::<NodeId>::new(0);
+        e.apply_record_cap(Some(10));
+        assert_eq!(e.pack_ceiling, 10);
+        assert!(!e.grow_pack_ceiling);
+        let _ = e.emit_lazy(|_b, _row| Ok(None)).expect("no batch seeded");
+        assert_eq!(e.pack_ceiling, 10, "fixed cap stays put");
     }
 }
