@@ -20,10 +20,13 @@ SIValue SIVector_Clone
 );
 
 // creates a vector from its binary representation
-SIValue SIVector_FromBinary
+// returns false if the stream is truncated or malformed; 'out' is always set
+// to a value that is safe to free
+bool SIVector_FromBinary
 (
 	FILE *stream, // binary stream
-	SIType t      // vector type
+	SIType t,     // vector type
+	SIValue *out  // [output] vector read
 );
 
 // compares two vectors
