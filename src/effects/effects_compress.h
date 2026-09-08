@@ -163,6 +163,7 @@ typedef enum {
 	EFFECTS_V3_COMPRESS_BAD_FRAME,       // zstd refused it
 	EFFECTS_V3_COMPRESS_LENGTH_MISMATCH, // expanded to != uncompressed_length
 	EFFECTS_V3_COMPRESS_CHECKSUM,        // plaintext CRC-32 disagrees
+	EFFECTS_V3_COMPRESS_NO_MEMORY,       // could not allocate uncompressed_length
 } EffectsV3CompressFault;
 
 // human readable form of a fault, for logs and test failures

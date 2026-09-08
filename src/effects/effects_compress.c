@@ -106,6 +106,12 @@ bool EffectsV3_MaybeCompress
 	size_t  bound = ZSTD_compressBound (records_len) ;
 	char   *frame = rm_malloc (bound) ;
 
+	// an uncompressed payload is always correct, so a failed allocation is a
+	// refusal rather than a failed write
+	if (frame == NULL) {
+		return false ;
+	}
+
 	size_t frame_len = ZSTD_compress (frame, bound, records, records_len,
 			EFFECTS_V3_COMPRESSION_LEVEL) ;
 
@@ -125,6 +131,11 @@ bool EffectsV3_MaybeCompress
 	size_t  out_len = EFFECTS_V3_HEADER_LEN + EFFECTS_V3_COMPRESSED_PREFIX
 	                + frame_len ;
 	char   *out     = rm_malloc (out_len) ;
+
+	if (out == NULL) {
+		rm_free (frame) ;
+		return false ;
+	}
 
 	out[0] = buff[0] ;                                        // version
 	out[1] = (char)((uint8_t)buff[1] | EFFECTS_V3_FLAG_COMPRESSED) ;
@@ -167,6 +178,8 @@ const char *EffectsV3CompressFault_ToString
 			return "frame expands to a different length than declared" ;
 		case EFFECTS_V3_COMPRESS_CHECKSUM:
 			return "plaintext checksum disagrees with the header" ;
+		case EFFECTS_V3_COMPRESS_NO_MEMORY:
+			return "could not allocate the declared uncompressed length" ;
 		default:
 			return "unknown" ;
 	}
@@ -236,6 +249,21 @@ EffectsV3Status EffectsV3_OpenCompressed
 	// worth-it test - but the Rust reader accepts one, and refusing what the
 	// peer accepts is divergence
 	char *out = rm_malloc (declared_plain > 0 ? declared_plain : 1) ;
+
+	// 'declared_plain' is a u32 off the wire, so a single corrupt byte can ask
+	// for up to 4 GiB before zstd has looked at the frame. Refusing beats
+	// dereferencing NULL, and it beats the alternative of inventing a smaller
+	// ceiling: any constant we picked would also refuse a legitimate payload
+	// the peer accepts, and refusing what the peer accepts is divergence.
+	//
+	// This is not a divergence risk in the other direction either - a Rust
+	// reader allocating the same length aborts on allocation failure rather
+	// than accepting the payload, so nothing is lost by refusing it here. In
+	// the module rm_malloc aborts too; this path is reachable where it does
+	// not, which includes these tests.
+	if (out == NULL) {
+		FAIL (EFFECTS_V3_COMPRESS_NO_MEMORY, EFFECTS_V3_MALFORMED) ;
+	}
 
 	size_t got = ZSTD_decompress (out, declared_plain, frame, declared_comp) ;
 
