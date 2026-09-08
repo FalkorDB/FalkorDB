@@ -290,23 +290,53 @@ void Map_GetIdx
 // creates a map from its binary representation
 // this is the reverse of the map-writing side of SIValue_ToBinary /
 // EffectsBuffer_WriteSIValue, mirroring SIArray_FromBinary
-SIValue Map_FromBinary
+bool Map_FromBinary
 (
-	FILE *stream  // stream containing binary representation of a map
+	FILE *stream,  // stream containing binary representation of a map
+	SIValue *out   // [output] map read
 ) {
+	ASSERT (stream != NULL) ;
+	ASSERT (out    != NULL) ;
+
+	*out = SI_NullVal () ;
+
 	// read number of keys
 	uint32_t n ;
-	fread_assert (&n, sizeof (uint32_t), stream) ;
+	if (!fread_checked (&n, sizeof (uint32_t), stream)) {
+		return false ;
+	}
+
+	// the count is off the wire, so reject one that can't be backed by the
+	// bytes remaining before reserving for it - each entry is a key and a
+	// value, so at minimum two SIType tags
+	long remaining = fstream_remaining (stream) ;
+	if (remaining < 0 ||
+		(uint64_t)n * (2 * sizeof (SIType)) > (uint64_t)remaining) {
+		return false ;
+	}
 
 	SIValue map = Map_New (n) ;
 
 	for (uint32_t i = 0; i < n; i++) {
-		SIValue key = SIValue_FromBinary (stream) ;
-		SIValue val = SIValue_FromBinary (stream) ;
+		SIValue key ;
+		SIValue val ;
+
+		if (!SIValue_FromBinary (stream, &key)) {
+			Map_Free (map) ;
+			return false ;
+		}
+
+		if (!SIValue_FromBinary (stream, &val)) {
+			SIValue_Free (key) ;
+			Map_Free (map) ;
+			return false ;
+		}
+
 		Map_AddNoClone (&map, key, val) ;
 	}
 
-	return map ;
+	*out = map ;
+	return true ;
 }
 
 // checks if 'key' is in map

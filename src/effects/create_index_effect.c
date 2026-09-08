@@ -104,7 +104,10 @@ bool ApplyCreateIndex
 	IndexFieldType t ;
 	fread_assert (&t, sizeof (t), stream) ;
 
-	SIValue options = SIValue_FromBinary (stream) ;
+	SIValue options = SI_NullVal () ;
+	if (!SIValue_FromBinary (stream, &options)) {
+		return false ;
+	}
 
 	//--------------------------------------------------------------------------
 	// verify label & attribute against local state
