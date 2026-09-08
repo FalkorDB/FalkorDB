@@ -126,6 +126,29 @@ bytes this engine did not produce. An encoder wrong by a few bytes in its cost
 arithmetic produces two files that are each internally consistent and
 collectively on the wrong side of the boundary.
 
+## What completing the grid actually found
+
+Filling in a coverage grid reads like housekeeping. This one produced a live
+cross-engine bug that nobody was looking for, and the chain is worth stating in
+full because every link looks like tidying on its own:
+
+1. The grid measured 26 blocks with a present case and no empty one.
+2. That produced a request to classify all 26 — is each empty form legal or
+   refusable?
+3. Answering it made the Rust side explain their *emitter* to justify one entry,
+   `SET_LABELS.labels`: `digest_labels` has no empty guard and
+   `remove_node_labels` empties the label vector while leaving the key, so
+   `MATCH (n) SET n:Foo REMOVE n:Foo` emits a zero-label `SET_LABELS`.
+4. Reading the C side against that: decode accepts it, and **apply refuses it**
+   — `effects_v3_apply.c`, "carries no labels". A refused effect is divergence,
+   and the same buffer is refused on every retry, so it is a forced-resync loop
+   against a current master. C's encoder was then found to emit the same record
+   deliberately, so it is *both* engines emitting a record one of them refuses.
+
+None of that was visible from any single fixture, any single engine, or any
+green test run. It came out of asking what the corpus does *not* contain and
+insisting on a reason for each answer.
+
 ## The rule: every optional block needs a present case AND an absent case
 
 The 33 cases read as one per feature, which is why a missing *absent*-block

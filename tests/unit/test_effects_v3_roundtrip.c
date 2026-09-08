@@ -438,7 +438,14 @@ void test_effectsV3_handBuiltRejections(void) {
 	// UNGATED: the legal empty forms must keep decoding
 	//--------------------------------------------------------------------------
 	//
-	// This half runs today and is the guard against a fix in the wrong place.
+	// WHY THIS HALF IS NOT GATED, since it is the only ungated case in a file
+	// full of gated ones and would otherwise read as an oversight.
+	//
+	// Everything else here tests behaviour that does not exist yet, so it is
+	// gated until it does. This tests behaviour that must SURVIVE work that has
+	// not happened yet. Those are opposite requirements and they take opposite
+	// defaults: a guard against a wrong fix is worthless if it only runs once
+	// the fix is right.
 	//
 	// Zero-empty is legal under some records and illegal under others, and the
 	// blocks are read by SHARED helpers with one call site each:
@@ -497,6 +504,81 @@ void test_effectsV3_handBuiltRejections(void) {
 
 		if(st == EFFECTS_V3_OK) EffectsV3_RecordsFree(r);
 	}
+
+	//--------------------------------------------------------------------------
+	// GATED: empty blocks that are illegal under THIS record
+	//--------------------------------------------------------------------------
+	//
+	// Ruled invalid by the Rust side with an emitter citation each, so both
+	// engines are agreed. Two of the five ruled entries are here; the two
+	// constraint ones are records 13-14, which C reports UNIMPLEMENTED, so a
+	// rejection case there cannot tell "refused for empty props" from "refused
+	// because the record is not decoded". UPDATE_EDGE.attr_ids is absent
+	// because its RelType block layout is not verified against any fixture and
+	// a hand-built case may not guess one. SET_LABELS.labels is held by Rust
+	// and CREATE_INDEX.fields is unruled -- neither is built here, deliberately.
+	//
+	// The over-rejection side needs nothing new: rec_remove_labels carries one
+	// label and rec_update_node carries two attribute ids, so a check that
+	// refused the shape rather than the empty block fails those fixtures.
+#ifndef EFFECTS_V3_EMPTY_BLOCKS_REJECTED
+	V3_SKIP("the empty-block rejections", "EFFECTS_V3_EMPTY_BLOCKS_REJECTED");
+#else
+	{
+		// REMOVE_LABELS removing no labels states nothing.
+		// Layout verified against rec_remove_labels.hex, which consumes all 23
+		// of its bytes with no values block.
+		const unsigned char remove_no_labels[] = {
+			0x03, 0x00,
+			0x08, 0x00, 0x00, 0x00,              // REMOVE_LABELS
+			0x01, 0x00, 0x00, 0x00,              // count = 1
+			0x00, 0x00,                          // NO labels
+			0x01, 0x00, 0x00, 0x00,              // one segment
+			0x00, 0x05, 0x01,                    // Range, base 5, len 1
+		};
+
+		EffectsV3Records *r = NULL;
+		EffectsV3Status st = EffectsV3_Decode((const char*)remove_no_labels,
+				sizeof(remove_no_labels), &r);
+
+		TEST_CASE("REMOVE_LABELS with no labels");
+		TEST_ASSERT_(st == EFFECTS_V3_MALFORMED,
+				"decoded as %s. The check belongs at the _ReadLabelSet CALL "
+				"SITE keyed on the opcode, not inside the helper -- "
+				"CREATE_NODE, UPDATE_NODE and DELETE_NODE share it and are "
+				"legally empty", EffectsV3Status_ToString(st));
+		TEST_ASSERT_(r == NULL, "refused but left records allocated");
+	}
+
+	{
+		// An UPDATE_NODE that updates nothing. One label, so the attribute set
+		// is the only empty block and a failure cannot be blamed on the other.
+		// Layout verified against rec_update_node.hex.
+		const unsigned char update_no_attrs[] = {
+			0x03, 0x00,
+			0x01, 0x00, 0x00, 0x00,              // UPDATE_NODE
+			0x01, 0x00, 0x00, 0x00,              // count = 1
+			0x01, 0x00,                          // one label...
+			0x01, 0x00, 0x00, 0x00,              // ...label 1
+			0x00, 0x00,                          // NO attribute ids
+			0x01, 0x00, 0x00, 0x00,              // one segment
+			0x00, 0x05, 0x01,                    // Range, base 5, len 1
+		};
+
+		EffectsV3Records *r = NULL;
+		EffectsV3Status st = EffectsV3_Decode((const char*)update_no_attrs,
+				sizeof(update_no_attrs), &r);
+
+		TEST_CASE("UPDATE_NODE with no attribute ids");
+		TEST_ASSERT_(st == EFFECTS_V3_MALFORMED,
+				"decoded as %s. Note the empty-attrs fix made n_values == 0 "
+				"legal for every record that has values, so this is now "
+				"accepted and must be refused again for UPDATE only -- keyed "
+				"on the opcode, since CREATE shares the path",
+				EffectsV3Status_ToString(st));
+		TEST_ASSERT_(r == NULL, "refused but left records allocated");
+	}
+#endif
 
 	//--------------------------------------------------------------------------
 	// GATED: shapes both engines have agreed to refuse
@@ -575,8 +657,13 @@ void test_effectsV3_handBuiltRejections(void) {
 // internally is the misleading green this naming exists to prevent
 #if !defined(EFFECTS_V3_DECODE_READY)
 #define V3_HB_SUFFIX " (SKIPPED: no decode yet)"
+#elif !defined(EFFECTS_V3_ZERO_COUNT_REJECTED) && \
+      !defined(EFFECTS_V3_EMPTY_BLOCKS_REJECTED)
+#define V3_HB_SUFFIX " (PARTIAL: no empty-block or zero-count checks yet)"
 #elif !defined(EFFECTS_V3_ZERO_COUNT_REJECTED)
 #define V3_HB_SUFFIX " (PARTIAL: zero-count check not implemented)"
+#elif !defined(EFFECTS_V3_EMPTY_BLOCKS_REJECTED)
+#define V3_HB_SUFFIX " (PARTIAL: empty-block checks not implemented)"
 #else
 #define V3_HB_SUFFIX ""
 #endif
