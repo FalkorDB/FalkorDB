@@ -138,10 +138,17 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 - **No case combines a non-zero count width with the collapse boundary.** The
   two `count_width_*` cases are single ranges well clear of it, so an encoder
   whose cost arithmetic mishandles a wide count would not be caught here.
-- **Count width code 3 (eight bytes) is unreachable, not missing.** A record's
-  id count is a `u32` and a segment's count is bounded by it, so four bytes is
-  the widest a count can ever need. Worth stating so nobody adds a fixture for
-  it.
+- **Count width code 3 (eight bytes) is unreachable for an ENCODER, and must
+  still be handled by a DECODER.** A record's id count is a `u32` and a
+  segment's count is bounded by it, so four bytes is the widest a conforming
+  encoder can ever need, and no fixture should be added for code 3. But a
+  malformed or hostile payload can set those bits anyway, so a decoder that
+  switched on only the reachable codes would turn this note into a parse hole
+  the moment someone read it as permission. C is safe here for the right
+  reason: `_ReadWidth` computes `EFFECTS_V3_WIDTH_BYTES(code)`, i.e. `1 <<
+  code`, and reads that many bytes generically rather than enumerating the
+  codes it expects. Same shape as the descending bit, where the danger was a
+  decoder ignoring a bit it thought it did not need.
 
 ## Cases
 
