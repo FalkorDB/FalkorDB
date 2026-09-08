@@ -466,6 +466,83 @@ class testEntitiesWithoutProperties():
         self.env.assertEquals(res.result_set, [[0, 1], [0, 2]])
 
 
+class testLabelChangeWithNoLabels():
+    """A label record naming no labels must be a NO-OP, not a refusal.
+
+    A Rust master emits this today: `MATCH (n) SET n:Foo REMOVE n:Foo` empties
+    the label vector while leaving the entry, and their emitter has no guard
+    against digesting it.
+
+    Refusing it meant divergence, and the same buffer is refused identically on
+    every retry - a forced-resync LOOP against a live peer, which presents as a
+    flapping replica rather than a wrong answer. Decode already accepted the
+    same bytes, so the two halves of the C implementation also disagreed.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        self.graph.query("CREATE (:L {v: 1}), (:L {v: 2})")   # nodes 0, 1
+
+    def _send(self, buf):
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, buf)
+
+    def test01_set_labels_with_empty_label_set(self):
+        self._send(payload(rec_set_labels(
+            count  = 2,
+            labels = [],                       # the record Rust emits
+            ids    = id_list(seg_range(0, 2)),
+        )))
+
+        # accepted, and nothing changed
+        res = self.graph.query("MATCH (n:L) RETURN count(n)")
+        self.env.assertEquals(res.result_set[0][0], 2)
+
+    def test02_remove_labels_with_empty_label_set(self):
+        # the same guard covers REMOVE_LABELS. Rust's remove path cannot go
+        # empty today, but that is an accident of their having two code paths,
+        # and one guard is safer than a rule depending on it.
+        self._send(payload(rec_remove_labels(
+            count  = 2,
+            labels = [],
+            ids    = id_list(seg_range(0, 2)),
+        )))
+
+        res = self.graph.query("MATCH (n:L) RETURN count(n)")
+        self.env.assertEquals(res.result_set[0][0], 2)
+
+    def test03_the_server_is_still_usable_afterwards(self):
+        # the point of the bug was a resync loop, so what matters is that the
+        # instance is still alive and applying after those records - a refusal
+        # would have taken it down before this ran.
+        #
+        # A NEW label deliberately, not one the nodes already carry. An earlier
+        # version of this re-set an existing label and failed, which turned out
+        # not to be a fault in the no-op at all: applying a label a node ALREADY
+        # HAS duplicates it in the label matrix, so `MATCH (n:L) RETURN count(n)`
+        # answered 3 over two nodes while `id(n)` returned two rows. The query
+        # path filters to genuinely-new labels first and is unaffected; the
+        # effects path passes the record through. Reported - not worked around
+        # here, and not what this test is for.
+        self._send(payload(rec_add_schema(SCHEMA_NODE, 1, "Fresh")))
+        self._send(payload(rec_set_labels(
+            count  = 1,
+            labels = [1],                      # a label neither node has
+            ids    = id_list(seg_range(0, 1)),
+        )))
+
+        res = self.graph.query("MATCH (n:Fresh) RETURN id(n)")
+        self.env.assertEquals(res.result_set, [[0]])
+
+        # and the pre-existing labels are untouched
+        res = self.graph.query("MATCH (n:L) RETURN count(n)")
+        self.env.assertEquals(res.result_set[0][0], 2)
+
+
 class testEdgeBatchBoundary():
     """Cross the bulk-flush boundary.
 

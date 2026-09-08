@@ -686,6 +686,39 @@ static EffectsV3Status _ReadRecord
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
+	// A RECORD DESCRIBING NO ENTITIES IS ILLEGAL, not merely useless.
+	//
+	// Checked here, at the header, before any block is parsed - 'count' governs
+	// the length of every block that follows, so one check covers every record
+	// shape. Put it inside the id-list read instead and it would need repeating
+	// in three or four places, because that read is per-list and the count
+	// belongs to the record.
+	//
+	// Refused rather than tolerated, and the reason is NOT "it means nothing" -
+	// that invites a later reader to relax it as harmless. It is refused
+	// because a record carrying no information is a SYMPTOM of something wrong
+	// upstream, and applying nothing silently is the worst available response:
+	// the divergence guard exists for exactly this class of fault, and a no-op
+	// record would slip straight past it.
+	//
+	// Two supporting reasons. No emitter can produce one - a group only comes
+	// into existence by pushing an id into it, so every group holds at least
+	// one. And the format already refuses the same idea one level down, where a
+	// zero-length segment is malformed; accepting a zero-entity record while
+	// refusing a zero-length segment would be incoherent.
+	//
+	// Records 9 and 10 are inherently singular and carry no count at all, so
+	// they are already dispatched above and unaffected.
+	//
+	// This SHOULD carry its own status rather than MALFORMED - "the segments do
+	// not total the count" and "the count is not a legal count" are different
+	// faults, and the log line is all an operator sees. The status enum lives in
+	// the shared contract, so adding a variant is the organizer's to make; asked
+	// for, and this reverts to it when it exists.
+	if (rec->count == 0) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+
 	EffectsV3Status status ;
 
 	// the shape, hoisted once per record, and stated ahead of the rows

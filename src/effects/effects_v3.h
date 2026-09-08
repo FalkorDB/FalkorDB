@@ -356,6 +356,13 @@ void EffectsV3_RecordsFree
 
 // EffectsV3_ENCODE_READY is defined by the writer when EffectsV3_Encode lands
 
+// a record declaring count == 0 is refused at the header
+//
+// gates the referee's conformance case for it. Separate from DECODE_READY
+// because it names a format RULING this build implements, not an entry point
+// it defines - a decoder can be complete and still predate the ruling.
+#define EFFECTS_V3_ZERO_COUNT_REJECTED 1
+
 #if defined(EFFECTS_V3_DECODE_READY) && defined(EFFECTS_V3_ENCODE_READY)
 // both directions are linkable, so a round trip can be built
 #define EFFECTS_V3_CODEC_READY 1
