@@ -28,6 +28,12 @@ struct _EffectsBuffer {
 	// because a record states its count and shape ahead of its rows. NULL
 	// when this buffer emits v2
 	EffectsV3Grouping *v3;
+
+	// set when an effect arrived that the v3 encoder cannot represent - today
+	// the index and constraint DDL of records 11-14, which still write v2
+	// bytes. Such a buffer must not be sent: it would describe a subset of the
+	// query's effects and the replica would silently miss the rest
+	bool v3_incomplete;
 };
 
 // forward declarations
@@ -108,9 +114,21 @@ void EffectsBuffer_WriteBytes
 	// and this is exactly the case that must not pass quietly in a release
 	// build.
 	if(unlikely(eb->v3 != NULL)) {
-		RedisModule_Log(NULL, "warning",
-			"GRAPH.EFFECT v3 buffer received a v2 record write; an effect was "
-			"not routed and will be lost");
+		// An effect the v3 encoder cannot represent. Records 11-14 - the index
+		// and constraint DDL - still write v2 bytes into a stream that
+		// EffectsBuffer_Buffer ignores in v3 mode, so this record would simply
+		// vanish: master indexed, replica not, no error and no resync.
+		//
+		// Marking the buffer incomplete is what stops that. The caller then
+		// replicates the query verbatim instead, which is how the DDL reaches
+		// the replica correctly until the encoder implements those records.
+		// Dropping the write here is harmless once the buffer will not be sent.
+		if(!eb->v3_incomplete) {
+			RedisModule_Log(NULL, "notice",
+				"GRAPH.EFFECT v3 cannot encode this effect; replicating the "
+				"query verbatim instead");
+			((EffectsBuffer *)eb)->v3_incomplete = true;
+		}
 		return;
 	}
 
@@ -378,6 +396,7 @@ EffectsBuffer *EffectsBuffer_New
 	eb->version      = (uint8_t)emit;
 	eb->owns_records = true;
 	eb->v3           = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
+	eb->v3_incomplete = false;
 
 	// note: no header is written here. v2 stamped its version byte at
 	// construction; it is now written by EffectsBuffer_Buffer, so that the
@@ -402,6 +421,23 @@ void EffectsBuffer_Reset
 	buff->n       = 0;
 	buff->version = (uint8_t)emit;
 	buff->v3      = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
+	buff->v3_incomplete = false;
+}
+
+// whether every effect in this buffer can be encoded
+//
+// False once an effect arrives that the v3 encoder cannot represent. A buffer
+// that is not complete MUST NOT be sent: it would describe some of the query's
+// effects and silently omit the rest, which leaves a replica differing from its
+// master with nothing reporting it. The caller replicates the query verbatim
+// instead - the same fallback v2 uses for statements it cannot express.
+bool EffectsBuffer_Complete
+(
+	const EffectsBuffer *buff  // effects-buffer
+) {
+	ASSERT(buff != NULL);
+
+	return !buff->v3_incomplete;
 }
 
 // returns number of effects in buffer
@@ -1212,6 +1248,7 @@ EffectsBuffer *EffectsBuffer_Wrap
 	eb->version      = EFFECTS_VERSION_EMIT;
 	eb->owns_records = false;
 	eb->v3           = NULL;
+	eb->v3_incomplete = false;
 
 	return eb;
 }
