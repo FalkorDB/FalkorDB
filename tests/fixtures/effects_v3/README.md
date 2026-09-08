@@ -141,18 +141,49 @@ So the rule, stated so the holes are visible as gaps in a grid:
 > and a case where it is empty. If the empty form is *invalid*, the absent case
 > is a rejection case rather than a fixture.
 
-That second clause matters, because "empty" is not one thing:
+That second clause matters, because "empty" is not one thing. There are three
+kinds, and they need three different artifacts:
 
-- **Valid and degenerate** — the empty form is a legal payload the engine
-  really emits, and a decoder must accept it. `CREATE (:Person)` has no
-  attributes; `CREATE ()` has no labels. These need real generated fixtures.
-- **Invalid** — the empty form states nothing and must be refused. A
-  `SET_LABELS` with no labels, an index with no fields. These need **no
-  fixture**: they are hand-built mutations in the rejection cases, like the
+- **Legal and degenerate** — the empty form is a payload the engine really
+  emits and a decoder must accept. `CREATE (:Person)` has no attributes;
+  `CREATE ({x: 1})` has no labels. These need real generated fixtures.
+- **Invalid** — the empty form states nothing and must be refused. These need
+  no fixture: they are hand-built mutations in the rejection cases, like the
   reserved-bit and descending-on-Repeat cases already there.
+- **Mandated empty** — the empty form is the *only* legal one, and it is the
+  PRESENT form that must be refused. `DROP_INDEX` carries an empty field list
+  and no options (`docs/effects-v3.md:547`); `DROP_CONSTRAINT` omits the
+  status the create carries. So the two blocks this grid shows as "empty with
+  no present counterpart" are not gaps — they are correct, and what they need
+  is a rejection case for the present form.
 
-Which side a given block falls on is a format question, settled against the
-emitter and the spec, not something this corpus can decide.
+**The spec is silent on block cardinality, and that is the root cause of all
+26.** Searching `docs/effects-v3.md` for `empty` or `zero` returns nine hits:
+the reserved header bit, the descending base underflow, id widths, compression,
+a test note. Not one is a rule about whether a block may be empty. The corpus
+gap and the spec gap are the same gap, so filling in the corpus without filling
+in the spec would leave the next person deriving these classifications again.
+
+### Do not let one engine assert this alone
+
+Rust's block decoders accept `n = 0` unconditionally — `LabelSet::decode` and
+`AttrIds::decode` both `take_n(n)` with no zero check, and
+`AttrValues::decode_sized` computes `count * attrs_per_row`, which is zero and
+loops zero times (`graph/src/effects/v3/blocks.rs`). There is no per-block zero
+rejection anywhere. So every entry in the "invalid" list is a property **C would
+be asserting alone** until Rust agrees to it, and a decoder that refuses what
+its peer emits is the divergence this whole format exists to prevent. The
+mutations are therefore not built until the classification is confirmed on both
+sides — deliberately, not pending effort.
+
+One inference that looked safe and was wrong, recorded because it is the shape
+of the mistake: *a record carrying zero ids* is not refusable by analogy with
+the segment-level checks. `Segment::decode` does reject `count == 0` and
+`len == 0`, but `read_ids` decodes `n_segments` segments and then only asserts
+`len == count` — so `n_segments = 0` with `count = 0` never calls
+`Segment::decode` at all and returns an empty list. **Rust accepts a zero-id
+record today.** Verified against `graph/src/effects/v3/id_list.rs`. Segment-level
+and record-level are different checks and only the first exists.
 
 Measured across all 33 cases, only ONE block has both forms today:
 
