@@ -1028,10 +1028,36 @@ static bool _ApplyLabels
 		return false ;
 	}
 
+	// A LABEL CHANGE NAMING NO LABELS IS A NO-OP, NOT A REFUSAL.
+	//
+	// This refused the record, which was wrong twice over. Internally: decode
+	// accepts an empty LabelSet (_ReadLabelSet returns OK on n == 0), so the
+	// two halves of this file disagreed about the same bytes. Externally: a
+	// Rust master emits exactly this record today. `MATCH (n) SET n:Foo REMOVE
+	// n:Foo` empties the label vector while leaving the entry, and their
+	// emitter has no guard against digesting it, so the record reaches the wire.
+	//
+	// A refused effect is divergence, and the same buffer is refused identically
+	// on every retry - so the refusal produced a forced-resync LOOP against a
+	// live peer. A flapping replica rather than a wrong answer, which is harder
+	// to attribute.
+	//
+	// A no-op is correct under both futures, which is why it is the answer
+	// rather than a stopgap. If the record stays legal, setting no labels
+	// genuinely changes nothing. If Rust adds the emitter guard and the record
+	// becomes illegal, this branch is unreachable and harmless, and refusing it
+	// can be restored deliberately once the guard is shipped and verified.
+	//
+	// Deliberately NOT validating the ids on this path: the record changes
+	// nothing, so refusing it over a node that no longer exists would recreate
+	// the same loop through a narrower door.
+	//
+	// Applies to REMOVE_LABELS too. Rust's remove path cannot currently go
+	// empty - it always pushes - but the two paths differing is accidental on
+	// their side, and one guard covering both is safer than a rule that depends
+	// on that accident holding.
 	if (rec->n_labels == 0) {
-		RedisModule_Log (NULL, "warning",
-				"GRAPH.EFFECT %s carries no labels", op) ;
-		return false ;
+		return true ;
 	}
 
 	if (!_VerifyLabels (gc, rec, op)) {
