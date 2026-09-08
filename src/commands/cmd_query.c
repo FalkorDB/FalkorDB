@@ -290,7 +290,29 @@ static void _ExecuteQuery
 		if (replicate) {
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
+			// an incomplete buffer cannot be sent - see
+			// EffectsBuffer_Complete. Replicating the query verbatim is the
+			// existing fallback and it delivers the effects the buffer could
+			// not express.
+			//
+			// The one combination this cannot serve is an incomplete buffer
+			// from a NON-DETERMINISTIC query, where replay would produce
+			// different values on the replica. It is unreachable today because
+			// the only effects v3 cannot encode are index and constraint DDL,
+			// which are standalone deterministic statements - but it is logged
+			// rather than assumed, because the alternative to noticing it is a
+			// silently divergent replica
+			bool eb_complete =
+				EffectsBuffer_Complete (QueryCtx_GetEffectsBuffer ()) ;
+
+			if (!eb_complete && !exec_ctx->deterministic) {
+				RedisModule_Log (rm_ctx, "warning",
+					"GRAPH.EFFECT a non-deterministic query produced effects "
+					"v3 cannot encode; replicating verbatim may diverge") ;
+			}
+
 			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 &&
+			    eb_complete &&
 			    (!exec_ctx->deterministic || _should_replicate_effects ())) {
 				// compute effects buffer
 				size_t effects_len = 0 ;
