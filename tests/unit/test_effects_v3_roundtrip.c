@@ -430,8 +430,10 @@ void test_effectsV3_rejections(void) {
 // In C that is effects_v3_decode.c:680, immediately after
 // `_ReadU32 (stream, &rec->count)` and before the shape is read at :686.
 //
-// Gated because neither engine implements it yet and a red build helps nobody.
-// The reader's PR that adds the check defines EFFECTS_V3_ZERO_COUNT_REJECTED in
+// Rust has since landed its half as an `EmptyRecord` error, so this is no
+// longer C asserting a rule alone -- the invariant is true on one engine and
+// ruled on both. Still gated, because C's check is not in yet and a red build
+// helps nobody: the reader's PR defines EFFECTS_V3_ZERO_COUNT_REJECTED in
 // effects_v3.h, exactly as the readiness flags work, and this goes live with it.
 void test_effectsV3_handBuiltRejections(void) {
 	//--------------------------------------------------------------------------

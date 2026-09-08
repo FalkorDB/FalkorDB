@@ -126,6 +126,26 @@ bytes this engine did not produce. An encoder wrong by a few bytes in its cost
 arithmetic produces two files that are each internally consistent and
 collectively on the wrong side of the boundary.
 
+## Where the guarantee ends: no query-derived payloads
+
+Every case here is built from `Record` values, not by running a query. That is
+a deliberate boundary, not a stage the corpus has yet to reach.
+
+C filters redundant label operations and Rust does not — sending a fact already
+set is idempotent, so C optimises and Rust is more verbose. That was ruled
+**implementation, not divergence**: the two engines legitimately emit different
+bytes for the same query, and that is sanctioned rather than tolerated.
+
+So **no test may assert cross-engine byte equality for a query-derived
+payload.** A query-level corpus would be asserting something the format does
+not claim. What the format promises is that a given *record* encodes to given
+bytes; which records a given query produces is each engine's business.
+
+That is why this directory contains no "run this Cypher, compare the wire"
+cases, and why adding them would be a mistake rather than an improvement. The
+record level is not the corpus's first phase — it is the whole of what the
+corpus can be.
+
 ## What completing the grid actually found
 
 Filling in a coverage grid reads like housekeeping. This one produced a live
@@ -237,6 +257,11 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 - **No case combines a non-zero count width with the collapse boundary.** The
   two `count_width_*` cases are single ranges well clear of it, so an encoder
   whose cost arithmetic mishandles a wide count would not be caught here.
+- **A zero-count record is illegal and refused by both engines.** Ruled after
+  the grid work found both accepting it while both rejected the same idea one
+  level down at the segment. Rust has landed it as an `EmptyRecord` error and
+  C's check goes at the record header where `count` is read; the rejection case
+  is in `tests/unit/test_effects_v3_roundtrip.c`. Pinned on both, not on one.
 - **Count width code 3 (eight bytes) is unreachable for an ENCODER, and must
   still be handled by a DECODER.** A record's id count is a `u32` and a
   segment's count is bounded by it, so four bytes is the widest a conforming
