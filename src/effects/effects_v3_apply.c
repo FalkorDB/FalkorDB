@@ -12,6 +12,7 @@
 #include "../util/roaring_include.h"
 
 #include <inttypes.h>
+#include <stdlib.h>
 
 //------------------------------------------------------------------------------
 // v3 apply: records -> graph
@@ -678,6 +679,37 @@ static bool _ApplyUpdateNode
 	return ok ;
 }
 
+// (edge id -> row) for UPDATE_EDGE's tensor scan
+typedef struct { uint64_t id ; uint64_t row ; } IdRow ;
+
+// sort by id, then row, so duplicate ids land adjacent with rows ascending
+static int _IdRowCmp
+(
+	const void *a,
+	const void *b
+) {
+	const IdRow *x = a ;
+	const IdRow *y = b ;
+
+	// compared, not subtracted: a uint64 difference does not fit in an int
+	if (x->id  != y->id)  return (x->id  < y->id)  ? -1 : 1 ;
+	if (x->row != y->row) return (x->row < y->row) ? -1 : 1 ;
+	return 0 ;
+}
+
+// bsearch key comparator: the key is a bare edge id
+static int _IdRowFind
+(
+	const void *key,
+	const void *elem
+) {
+	const uint64_t id = *(const uint64_t *)key ;
+	const IdRow   *e  = elem ;
+
+	if (id != e->id) return (id < e->id) ? -1 : 1 ;
+	return 0 ;
+}
+
 // UPDATE_EDGE carries its relationship type and deliberately not its endpoints
 //
 // They are per edge rather than per record, so carrying them would cost two
@@ -722,8 +754,6 @@ static bool _ApplyUpdateEdge
 	// materialize (edge id -> row) so a single tensor scan can find each row
 	//--------------------------------------------------------------------------
 
-	typedef struct { uint64_t id ; uint64_t row ; } IdRow ;
-
 	IdRow *table = rm_malloc (rec->count * sizeof (IdRow)) ;
 
 	IdIter it ;
@@ -751,6 +781,9 @@ static bool _ApplyUpdateEdge
 	// scan the relationship tensor, updating each edge the record names
 	//--------------------------------------------------------------------------
 
+	// sorted once per record so the scan below can binary search it
+	qsort (table, rec->count, sizeof (IdRow), _IdRowCmp) ;
+
 	Tensor R = Graph_GetRelationMatrix (g, rec->relation_id, false) ;
 
 	TensorIterator ti ;
@@ -762,18 +795,34 @@ static bool _ApplyUpdateEdge
 
 	while (applied < rec->count &&
 			TensorIterator_next (&ti, &row, &col, &edge_id, NULL)) {
-		// linear over the table: the record's ids are usually one Range, so
-		// this is a scan over a handful of entries in practice. Kept simple
-		// deliberately - a sort plus binary search would be faster on a large
-		// record and is worth doing only once that shape is measured.
-		for (uint64_t i = 0; i < rec->count; i++) {
-			if (table[i].id != edge_id) {
-				continue ;
+		// binary search, not a scan of the table
+		//
+		// This was a linear scan, with a comment saying a sort plus binary
+		// search was worth doing "once that shape is measured". It has been:
+		// holding the graph at 4,000 edges and varying only how many of them
+		// one payload touches, cost per entity went 4,007 -> 5,518 -> 14,314
+		// across 250/1000/4000, a 3.57x climb where v2 is flat. v3 started 2.2x
+		// BETTER than v2 and ended 1.83x worse, so it crosses over - any single
+		// batch size would have read as a win.
+		//
+		// The scan was quadratic in the RECORD, not in the graph: the tensor
+		// walk stops once every named edge is applied, so a bigger record scans
+		// more edges AND compares each against a longer table. Both factors
+		// grow together.
+		const IdRow *hit = bsearch (&edge_id, table, rec->count,
+				sizeof (IdRow), _IdRowFind) ;
+
+		if (hit != NULL) {
+			// duplicates are adjacent and row-ascending after the sort, so
+			// walking back to the first keeps the lowest row - the same entry
+			// the linear scan would have found
+			while (hit > table && (hit - 1)->id == edge_id) {
+				hit-- ;
 			}
 
 			for (uint16_t a = 0; a < rec->n_attrs; a++) {
 				const SIValue v =
-					rec->values[table[i].row * rec->n_attrs + a] ;
+					rec->values[hit->row * rec->n_attrs + a] ;
 
 				if (rec->attr_ids[a] == ATTRIBUTE_ID_ALL &&
 						!SIValue_IsNull (v)) {
@@ -789,7 +838,6 @@ static bool _ApplyUpdateEdge
 			}
 
 			applied++ ;
-			break ;
 		}
 	}
 
