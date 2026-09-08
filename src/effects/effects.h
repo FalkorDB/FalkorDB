@@ -72,8 +72,36 @@ bool Effects_Apply
 	size_t l                   // size of buffer
 );
 
-// create a new effects-buffer
+// create a new effects-buffer, emitting the configured payload version
 EffectsBuffer *EffectsBuffer_New(void);
+
+// create a new effects-buffer that emits v2 regardless of configuration
+//
+// For callers whose effects v3 has no encoder for and which have no query to
+// fall back on. GRAPH.CONSTRAINT builds its own buffer outside any query, so
+// the verbatim path that rescues index DDL is not available to it: an
+// unencodable effect there would leave the payload empty and the replica
+// silently without the constraint.
+//
+// Emitting v2 is safe rather than a downgrade - a reader dispatches on the
+// version byte that arrived, so a v2 payload is understood by every build that
+// can read v3. This disappears when the encoder implements records 11-14.
+EffectsBuffer *EffectsBuffer_NewV2(void);
+
+// make an empty buffer emit v2, for an effect v3 cannot encode
+//
+// Returns false, changing nothing, if the buffer already holds effects - those
+// are staged as v3 groups and switching version would lose them. A caller that
+// gets false must fall back some other way; EffectsBuffer_Complete is what
+// reports the buffer can no longer be sent.
+//
+// Called where the unencodable effect ENTERS, with the buffer in hand, rather
+// than at a command's entry point - the constraint settle path runs on a
+// worker thread with no query context to fetch a buffer from.
+bool EffectsBuffer_ForceV2
+(
+	EffectsBuffer *eb  // effects-buffer
+);
 
 // reset effects-buffer
 void EffectsBuffer_Reset
