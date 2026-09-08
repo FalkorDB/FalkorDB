@@ -108,10 +108,43 @@ void EffectsV3Grouping_AddEdge
 	uint16_t n_attrs             // how many attributes
 );
 
+// stage ONE attribute of an entity's update
+//
+// v2's write API hands over one (entity, attribute, value) at a time, but a v3
+// record's shape is the entity's WHOLE updated attribute set - so an update
+// cannot be filed into a group until the query stops producing attributes for
+// that entity. These are staged per entity and folded into groups at emission.
+//
+// The value is encoded IMMEDIATELY, because the SIValue belongs to the caller
+// and will not outlive the call. It is kept tagged with its attribute id and
+// the tagged blobs are concatenated in attribute-id order at flush, which is
+// what lets attributes arrive in any order and still produce one canonical
+// shape.
+//
+// A T_NULL value is a removal and is staged like any other: the attribute is
+// part of the shape and the null is what instructs the replica to drop it.
+void EffectsV3Grouping_StageUpdate
+(
+	EffectsV3Grouping *g,   // accumulator
+	EffectType opcode,      // UPDATE_NODE or UPDATE_EDGE
+	uint64_t id,            // entity id
+	const LabelID *labels,  // the node's labels, any order; NULL for an edge
+	uint16_t n_labels,      // how many
+	RelationID relation_id, // relationship type; ignored for a node
+	AttributeID attr_id,    // the attribute being set
+	SIValue value           // its new value, or a null to remove it
+);
+
 // how many records the accumulator would emit
+//
+// NOT const: staged updates are folded into their groups here if they have not
+// been already, because an entity's shape - and therefore which group it joins
+// - is not known until the query stops producing attributes for it. Counting
+// without folding would report fewer records than the payload contains, and a
+// caller deciding whether a payload is worth sending would act on it.
 uint32_t EffectsV3Grouping_RecordCount
 (
-	const EffectsV3Grouping *g  // accumulator
+	EffectsV3Grouping *g  // accumulator
 );
 
 // write every record, schema and attribute announcements first, then the
