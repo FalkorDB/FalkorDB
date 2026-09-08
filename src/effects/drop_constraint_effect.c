@@ -34,6 +34,20 @@ void EffectsBuffer_AddDropConstraintEffect
 	//--------------------------------------------------------------------------
 
 	EffectType eff_t = EFFECT_DROP_CONSTRAINT ;
+	// constraint DDL has no v3 encoder, and GRAPH.CONSTRAINT is not a
+	// GRAPH.QUERY so there is no query text to replicate verbatim instead.
+	// Emitting this buffer as v2 is the only way the replica gets it; a v3
+	// buffer would carry a header with no records and diverge silently.
+	//
+	// Safe because a constraint command stages nothing else - if it ever did,
+	// this returns false and the buffer is marked incomplete instead.
+	if (!EffectsBuffer_ForceV2 (buff)) {
+		RedisModule_Log (NULL, "warning",
+			"GRAPH.EFFECT constraint DDL in a buffer that already holds v3 "
+			"effects; it cannot be encoded and will not be replicated") ;
+		return ;
+	}
+
 	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
 
 	EffectsBuffer_WriteBytes (&ct, sizeof (ct), buff) ;
