@@ -23,6 +23,10 @@ GRAPH_ID = "effects_v3"
 
 EFFECTS_VERSION = 3
 
+# a version ABOVE this build's read ceiling (src/effects/effects.h
+# EFFECTS_VERSION, currently 3). Must be raised whenever that rises.
+FUTURE_EFFECTS_VERSION = 4
+
 EFFECT_UPDATE_NODE   = 1
 EFFECT_UPDATE_EDGE   = 2
 EFFECT_CREATE_NODE   = 3
@@ -776,3 +780,24 @@ class testUnimplementedDDLRefused(_RefusedCase):
         rec = _u32(EFFECT_CREATE_INDEX) + _u32(SCHEMA_NODE) + _i32(0) \
             + _string("L") + _u16(0) + _string("v") + _u32(0x0E)
         self._refuse(payload(rec), "CREATE_INDEX, not implemented yet")
+
+class testFutureVersionRefused(_RefusedCase):
+    """A version above this build's read ceiling must be refused.
+
+    Carried over from test_effects_malformed.py, which was removed with the v2
+    reader-hardening work. Eight of its nine cases went with that topic; this
+    one did not belong to it - it tests the version dispatch, which is what
+    raising EFFECTS_VERSION to 3 changed, so it matters MORE here than it did
+    there.
+
+    FUTURE_EFFECTS_VERSION is deliberately a separate constant rather than
+    EFFECTS_VERSION + 1. Deriving it coupled the test to the ceiling: when C
+    learned to read v3, "one above what this file writes" silently became a
+    version the build supports, and the payload was refused for the right
+    reason under the wrong name. Raise this whenever the ceiling rises.
+    """
+
+    def test_refused(self):
+        self._refuse(_u8(FUTURE_EFFECTS_VERSION) + _u32(EFFECT_ADD_ATTRIBUTE),
+                     "a version above this build's read ceiling",
+                     expect_log="version mismatch")
