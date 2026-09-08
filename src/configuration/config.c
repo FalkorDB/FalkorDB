@@ -961,6 +961,14 @@ static void _Config_SetToDefaults(void)
 	// 0 means always replicate via GRAPH.EFFECT
 	config.effects_threshold = 0;
 
+	// emit v2 payloads
+	//
+	// The default cannot move until every reader in a deployment accepts v3: a
+	// master emitting a version its peer cannot read is silent data loss rather
+	// than a degraded mode. So generation lands switched off, and flipping this
+	// is a separate, deliberate change.
+	config.effects_version = 2;
+
 	// index entities as they're being decoded
 	config.delay_indexing = DELAY_INDEXING_DEFAULT;
 
