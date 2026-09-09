@@ -119,7 +119,8 @@ pub use records::*;
 // say `use super::*` and get everything the wire needs.
 pub use super::writer::*;
 pub use super::{
-    DecodeError, EffectDecode, EffectDecodeSized, EffectEncode, EffectEncodeSized, Reader,
+    DecodeError, EffectDecode, EffectDecodeSized, EffectEncode, EffectEncodeSized, EncodeError,
+    Reader,
 };
 
 // ── effect types ──

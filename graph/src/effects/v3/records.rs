@@ -22,16 +22,17 @@ fn write_header<W: EffectWrite + ?Sized>(
     buf: &mut W,
     opcode: Opcode,
     count: Option<u32>,
-) {
-    debug_assert_eq!(
-        count.is_some(),
-        opcode.is_batchable(),
-        "{opcode:?} was given the wrong kind of header"
-    );
+) -> Result<(), EncodeError> {
+    if count.is_some() != opcode.is_batchable() {
+        return Err(EncodeError::HeaderShapeMismatch {
+            opcode: opcode as u32,
+        });
+    }
     buf.u32(opcode as u32);
     if let Some(count) = count {
         buf.u32(count);
     }
+    Ok(())
 }
 
 /// `CREATE_INDEX`'s options: the engine's own option types, in the layout the
@@ -153,12 +154,14 @@ impl EffectEncodeSized<3> for IndexFieldOptions {
         &self,
         buf: &mut W,
         field_type: Self::Size,
-    ) {
-        debug_assert_eq!(
-            self.vector.is_some(),
-            field_type & INDEX_FLD_VECTOR != 0,
-            "vector options must be present exactly when the field type says so"
-        );
+    ) -> Result<(), EncodeError> {
+        // Refused, not asserted. In release this used to write or omit the
+        // vector half against the reader's expectation, and the reader — which
+        // has only `field_type` — would then parse the next record from the
+        // middle of five `u64`s.
+        if self.vector.is_some() != (field_type & INDEX_FLD_VECTOR != 0) {
+            return Err(EncodeError::OptionsFieldTypeMismatch { field_type });
+        }
         let t = &self.text;
         put_opt(buf, t.language.as_ref(), |b, s| b.string(s));
         put_opt(buf, t.stopwords.as_ref(), |b, sw| {
@@ -171,7 +174,11 @@ impl EffectEncodeSized<3> for IndexFieldOptions {
         put_opt(buf, t.nostem.as_ref(), |b, n| b.u8(u8::from(*n)));
         put_opt(buf, t.phonetic.as_ref(), |b, s| b.string(s));
         if field_type & INDEX_FLD_VECTOR != 0 {
-            let v = self.vector.clone().unwrap_or_default();
+            // Unwrap is sound: the check above returned if these disagreed.
+            let v = self
+                .vector
+                .clone()
+                .ok_or(EncodeError::OptionsFieldTypeMismatch { field_type })?;
             buf.u64(v.dimension);
             put_opt(buf, v.m.as_ref(), |b, x| b.u64(*x as u64));
             put_opt(buf, v.ef_construction.as_ref(), |b, x| b.u64(*x as u64));
@@ -190,6 +197,7 @@ impl EffectEncodeSized<3> for IndexFieldOptions {
                 });
             });
         }
+        Ok(())
     }
 }
 
@@ -307,7 +315,7 @@ impl<T: AsRef<str>> EffectEncode<3> for IndexFields<&[AttrRef<T>]> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         let fields = self.0;
         // Floor: 2 bytes of id and an 8-byte length per field, the same minimum
         // the decode below guards the count against.
@@ -317,6 +325,7 @@ impl<T: AsRef<str>> EffectEncode<3> for IndexFields<&[AttrRef<T>]> {
             buf.u16(field.id);
             buf.string(field.name.as_ref());
         }
+        Ok(())
     }
 }
 
@@ -688,6 +697,29 @@ fn read_constraint_props(r: &mut Reader<'_>) -> Result<Vec<AttrRef<String>>, Dec
     Ok(props)
 }
 
+/// One source and one destination per edge, or refuse the record.
+///
+/// `src` and `dst` are columns read positionally against `ids`: the k-th entry
+/// of each belongs to the k-th edge. A column one short does not truncate the
+/// record — it shifts every later value by one, and nothing downstream can
+/// tell. This was two `debug_assert`s, so in release it shipped that.
+fn check_endpoint_columns(
+    ids: &IdList,
+    src: &IdList,
+    dst: &IdList,
+) -> Result<(), EncodeError> {
+    for (column, got) in [("src", src.len()), ("dst", dst.len())] {
+        if got != ids.len() {
+            return Err(EncodeError::EndpointColumnMisaligned {
+                column,
+                expected: ids.len(),
+                got,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// The label, name and property list both constraint records end with.
 ///
 /// Shared so the create and the drop cannot drift: they differ only in the
@@ -729,7 +761,7 @@ impl EffectEncode<3> for Record {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         match self {
             // `9 ADD_SCHEMA` — `SchemaType · LabelID|RelationID · name`.
             //
@@ -737,7 +769,7 @@ impl EffectEncode<3> for Record {
             // from append order, so a dictionary of a different length assigned
             // a different id and every later record referenced the wrong entry.
             Record::AddLabel { id, name } | Record::AddRelType { id, name } => {
-                write_header(buf, Opcode::AddSchema, None);
+                write_header(buf, Opcode::AddSchema, None)?;
                 buf.u32(schema_tag(match self {
                     Record::AddLabel { .. } => EntityType::Node,
                     _ => EntityType::Relationship,
@@ -748,7 +780,7 @@ impl EffectEncode<3> for Record {
 
             // `10 ADD_ATTRIBUTE` — `AttributeID · name`. Same reason as above.
             Record::AddAttribute { id, name } => {
-                write_header(buf, Opcode::AddAttribute, None);
+                write_header(buf, Opcode::AddAttribute, None)?;
                 buf.u16(*id);
                 buf.string(name);
             }
@@ -763,11 +795,11 @@ impl EffectEncode<3> for Record {
                 attr_ids,
                 rows,
             } => {
-                write_header(buf, Opcode::CreateNode, Some(ids.count()));
-                LabelSet(labels.as_slice()).encode(buf);
-                AttrIds(attr_ids.as_slice()).encode(buf);
-                ids.encode(buf);
-                AttrValues(rows.as_slice()).encode(buf);
+                write_header(buf, Opcode::CreateNode, Some(ids.count()))?;
+                LabelSet(labels.as_slice()).encode(buf)?;
+                AttrIds(attr_ids.as_slice()).encode(buf)?;
+                ids.encode(buf)?;
+                AttrValues(rows.as_slice()).encode(buf)?;
             }
 
             // `4 CREATE_EDGE` — `count · RelType · AttrIds · IdList · IdList(src)
@@ -784,15 +816,14 @@ impl EffectEncode<3> for Record {
                 attr_ids,
                 rows,
             } => {
-                debug_assert_eq!(ids.len(), src.len(), "one source per edge");
-                debug_assert_eq!(ids.len(), dst.len(), "one destination per edge");
-                write_header(buf, Opcode::CreateEdge, Some(ids.count()));
-                RelType(*relation_id).encode(buf);
-                AttrIds(attr_ids.as_slice()).encode(buf);
-                ids.encode(buf);
-                src.encode(buf);
-                dst.encode(buf);
-                AttrValues(rows.as_slice()).encode(buf);
+                check_endpoint_columns(ids, src, dst)?;
+                write_header(buf, Opcode::CreateEdge, Some(ids.count()))?;
+                RelType(*relation_id).encode(buf)?;
+                AttrIds(attr_ids.as_slice()).encode(buf)?;
+                ids.encode(buf)?;
+                src.encode(buf)?;
+                dst.encode(buf)?;
+                AttrValues(rows.as_slice()).encode(buf)?;
             }
 
             // `1 UPDATE_NODE` — `count · LabelSet · AttrIds · IdList · AttrValues`.
@@ -819,11 +850,11 @@ impl EffectEncode<3> for Record {
                 attr_ids,
                 rows,
             } => {
-                write_header(buf, Opcode::UpdateNode, Some(ids.count()));
-                LabelSet(labels.as_slice()).encode(buf);
-                AttrIds(attr_ids.as_slice()).encode(buf);
-                ids.encode(buf);
-                AttrValues(rows.as_slice()).encode(buf);
+                write_header(buf, Opcode::UpdateNode, Some(ids.count()))?;
+                LabelSet(labels.as_slice()).encode(buf)?;
+                AttrIds(attr_ids.as_slice()).encode(buf)?;
+                ids.encode(buf)?;
+                AttrValues(rows.as_slice()).encode(buf)?;
             }
 
             Record::UpdateEdge {
@@ -832,13 +863,13 @@ impl EffectEncode<3> for Record {
                 attr_ids,
                 rows,
             } => {
-                write_header(buf, Opcode::UpdateEdge, Some(ids.count()));
+                write_header(buf, Opcode::UpdateEdge, Some(ids.count()))?;
                 // No `expect` here any more: the type carries the relationship
                 // type, so an edge update cannot be built without one.
-                RelType(*relation_id).encode(buf);
-                AttrIds(attr_ids.as_slice()).encode(buf);
-                ids.encode(buf);
-                AttrValues(rows.as_slice()).encode(buf);
+                RelType(*relation_id).encode(buf)?;
+                AttrIds(attr_ids.as_slice()).encode(buf)?;
+                ids.encode(buf)?;
+                AttrValues(rows.as_slice()).encode(buf)?;
             }
 
             // `7 SET_LABELS` / `8 REMOVE_LABELS` — `count · LabelSet · IdList`.
@@ -852,9 +883,9 @@ impl EffectEncode<3> for Record {
                 } else {
                     Opcode::RemoveLabels
                 };
-                write_header(buf, opcode, Some(ids.count()));
-                LabelSet(labels.as_slice()).encode(buf);
-                ids.encode(buf);
+                write_header(buf, opcode, Some(ids.count()))?;
+                LabelSet(labels.as_slice()).encode(buf)?;
+                ids.encode(buf)?;
             }
 
             // `5 DELETE_NODE` — `count · LabelSet · IdList`.
@@ -864,9 +895,9 @@ impl EffectEncode<3> for Record {
             // DELETE n` over an `(:A:B)` node must clear `:B`'s indexes too, and
             // the pattern cannot say so.
             Record::DeleteNode { ids, labels } => {
-                write_header(buf, Opcode::DeleteNode, Some(ids.count()));
-                LabelSet(labels.as_slice()).encode(buf);
-                ids.encode(buf);
+                write_header(buf, Opcode::DeleteNode, Some(ids.count()))?;
+                LabelSet(labels.as_slice()).encode(buf)?;
+                ids.encode(buf)?;
             }
 
             // `6 DELETE_EDGE` — `count · RelType · IdList · IdList(src) · IdList(dst)`.
@@ -880,13 +911,12 @@ impl EffectEncode<3> for Record {
                 src,
                 dst,
             } => {
-                debug_assert_eq!(ids.len(), src.len(), "one source per edge");
-                debug_assert_eq!(ids.len(), dst.len(), "one destination per edge");
-                write_header(buf, Opcode::DeleteEdge, Some(ids.count()));
-                RelType(*relation_id).encode(buf);
-                ids.encode(buf);
-                src.encode(buf);
-                dst.encode(buf);
+                check_endpoint_columns(ids, src, dst)?;
+                write_header(buf, Opcode::DeleteEdge, Some(ids.count()))?;
+                RelType(*relation_id).encode(buf)?;
+                ids.encode(buf)?;
+                src.encode(buf)?;
+                dst.encode(buf)?;
             }
 
             // `11 CREATE_INDEX` / `12 DROP_INDEX`.
@@ -904,15 +934,26 @@ impl EffectEncode<3> for Record {
                 fields,
                 options,
             } => {
-                write_header(buf, Opcode::CreateIndex, None);
+                // Checked before a single byte goes out. `encode_sized` checks
+                // this too, but it runs after the header, label and field list
+                // are already written — so refusing there left a partial record
+                // in the buffer for the next one to be appended after, which is
+                // a worse failure than the one being prevented. Found by the
+                // test below asserting the buffer is untouched on refusal.
+                if options.vector.is_some() != (field_type & INDEX_FLD_VECTOR != 0) {
+                    return Err(EncodeError::OptionsFieldTypeMismatch {
+                        field_type: *field_type,
+                    });
+                }
+                write_header(buf, Opcode::CreateIndex, None)?;
                 buf.u32(schema_tag(*schema_type));
                 buf.schema_id(*label_id);
                 buf.string(label);
                 buf.u32(*field_type);
-                IndexFields(fields.as_slice()).encode(buf);
+                IndexFields(fields.as_slice()).encode(buf)?;
                 // No `expect` here any more: a create's options are a field,
                 // not an `Option`, so a create without them cannot be built.
-                options.encode_sized(buf, *field_type);
+                options.encode_sized(buf, *field_type)?;
             }
 
             // A drop mirrors the create and stops before the options — zero
@@ -924,12 +965,12 @@ impl EffectEncode<3> for Record {
                 field_type,
                 fields,
             } => {
-                write_header(buf, Opcode::DropIndex, None);
+                write_header(buf, Opcode::DropIndex, None)?;
                 buf.u32(schema_tag(*schema_type));
                 buf.schema_id(*label_id);
                 buf.string(label);
                 buf.u32(*field_type);
-                IndexFields(fields.as_slice()).encode(buf);
+                IndexFields(fields.as_slice()).encode(buf)?;
             }
 
             // `13 CREATE_CONSTRAINT` / `14 DROP_CONSTRAINT`.
@@ -941,7 +982,7 @@ impl EffectEncode<3> for Record {
                 label,
                 props,
             } => {
-                write_header(buf, Opcode::CreateConstraint, None);
+                write_header(buf, Opcode::CreateConstraint, None)?;
                 buf.u32(constraint_tag(*constraint_type));
                 buf.u32(entity_tag(*entity_type));
                 // The one place v3 deliberately carries more than C: C's
@@ -968,12 +1009,13 @@ impl EffectEncode<3> for Record {
                 label,
                 props,
             } => {
-                write_header(buf, Opcode::DropConstraint, None);
+                write_header(buf, Opcode::DropConstraint, None)?;
                 buf.u32(constraint_tag(*constraint_type));
                 buf.u32(entity_tag(*entity_type));
                 write_constraint_tail(buf, *label_id, label, props);
             }
         }
+        Ok(())
     }
 }
 
@@ -1223,7 +1265,8 @@ mod tests {
             attr_ids: vec![0],
             rows: vec![Value::Int(1)],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert_eq!(
             format!("{buf:02x?}"),
             concat!(
@@ -1250,7 +1293,8 @@ mod tests {
             attr_ids: vec![0],
             rows: rows.to_vec(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         assert_eq!(&buf[2..6], &(Opcode::CreateNode as u32).to_le_bytes());
         assert_eq!(&buf[6..10], &10_000_u32.to_le_bytes());
@@ -1291,7 +1335,8 @@ mod tests {
             attr_ids: vec![0],
             rows: vec![Value::Int(1), Value::Int(2), Value::Int(3), Value::Int(4)],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         let records = read_buffer(&buf).unwrap();
         let Record::CreateEdge {
@@ -1331,7 +1376,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         let records = read_buffer(&buf).unwrap();
         let Record::CreateEdge {
@@ -1360,7 +1406,8 @@ mod tests {
             ids: ids.clone(),
             labels: vec![5],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert!(buf.len() < 100, "grouped should be tiny, got {}", buf.len());
 
         let records = read_buffer(&buf).unwrap();
@@ -1383,12 +1430,14 @@ mod tests {
             id: 3,
             name: "Person".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::AddAttribute {
             id: 9,
             name: "name".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         let records = read_buffer(&buf).unwrap();
         assert_eq!(
@@ -1415,7 +1464,8 @@ mod tests {
             id: 9,
             name: "n".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         // opcode, then the id straight away — no 4-byte count in between.
         assert_eq!(&buf[..4], &(Opcode::AddAttribute as u32).to_le_bytes());
         assert_eq!(&buf[4..6], &9_u16.to_le_bytes());
@@ -1428,19 +1478,22 @@ mod tests {
             id: 1,
             name: "KNOWS".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::AddAttribute {
             id: 0,
             name: "since".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateNode {
             ids: IdList::from([1, 2]),
             labels: vec![7],
             attr_ids: vec![0],
             rows: vec![Value::Int(1), Value::Null],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateEdge {
             ids: IdList::from([5, 6]),
             relation_id: 1,
@@ -1449,43 +1502,50 @@ mod tests {
             attr_ids: vec![0],
             rows: vec![Value::Int(2020), Value::Int(2021)],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::UpdateNode {
             ids: IdList::from([1]),
             labels: vec![7],
             attr_ids: vec![0],
             rows: vec![Value::Int(9)],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::UpdateEdge {
             ids: IdList::from([5]),
             relation_id: 1,
             attr_ids: vec![0],
             rows: vec![Value::Null],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::SetLabels {
             ids: IdList::from([1, 2]),
             labels: vec![7, 8],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::RemoveLabels {
             ids: IdList::from([1]),
             labels: vec![8],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::DeleteEdge {
             ids: IdList::from([5, 6]),
             relation_id: 1,
             src: IdList::from([1, 1]),
             dst: IdList::from([2, 2]),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::DeleteNode {
             ids: IdList::from([1, 2]),
             labels: vec![7],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateIndex {
             schema_type: EntityType::Node,
             label_id: 7,
@@ -1497,7 +1557,8 @@ mod tests {
             }],
             options: IndexFieldOptions::none_given(None),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::DropIndex {
             schema_type: EntityType::Node,
             label_id: 7,
@@ -1508,7 +1569,8 @@ mod tests {
                 name: "since".to_owned(),
             }],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateConstraint {
             constraint_type: ConstraintType::Unique,
             entity_type: EntityType::Node,
@@ -1520,7 +1582,8 @@ mod tests {
                 name: "since".to_owned(),
             }],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::DropConstraint {
             constraint_type: ConstraintType::Mandatory,
             entity_type: EntityType::Relationship,
@@ -1528,7 +1591,8 @@ mod tests {
             label: "KNOWS".to_owned(),
             props: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         let records = read_buffer(&buf).unwrap();
         assert_eq!(records.len(), 14, "one command, fourteen records");
@@ -1542,7 +1606,7 @@ mod tests {
         // edit.
         let mut again = new_buffer();
         for record in &records {
-            record.encode(&mut again);
+            record.encode(&mut again).unwrap();
         }
         assert_eq!(again, buf, "encode(decode(x)) must equal x");
     }
@@ -1561,7 +1625,8 @@ mod tests {
                 attr_ids: vec![s as u16],
                 rows: rows.to_vec(),
             }
-            .encode(&mut buf);
+            .encode(&mut buf)
+            .unwrap();
         }
         buf
     }
@@ -1607,14 +1672,16 @@ mod tests {
             attr_ids: vec![0],
             rows: half.to_vec(),
         }
-        .encode(&mut alt);
+        .encode(&mut alt)
+        .unwrap();
         Record::CreateNode {
             ids: odd,
             labels: vec![8],
             attr_ids: vec![0],
             rows: half,
         }
-        .encode(&mut alt);
+        .encode(&mut alt)
+        .unwrap();
         assert_eq!(read_buffer(&alt).unwrap().len(), 2);
 
         // 10,000 edges out of one supernode: one record, because the source
@@ -1628,7 +1695,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut edges);
+        .encode(&mut edges)
+        .unwrap();
         assert_eq!(read_buffer(&edges).unwrap().len(), 1);
     }
 
@@ -1649,7 +1717,8 @@ mod tests {
             attr_ids: vec![0],
             rows: vec![Value::Int(1)],
         }
-        .encode(&mut small);
+        .encode(&mut small)
+        .unwrap();
         assert_eq!(small.len(), 37, "id 0 narrows to one byte");
 
         let mut mid = Vec::new();
@@ -1659,7 +1728,8 @@ mod tests {
             attr_ids: vec![0],
             rows: vec![Value::Int(1)],
         }
-        .encode(&mut mid);
+        .encode(&mut mid)
+        .unwrap();
         assert_eq!(mid.len(), 38, "a mid-size graph's id takes two");
 
         let mut large = Vec::new();
@@ -1669,11 +1739,103 @@ mod tests {
             attr_ids: vec![0],
             rows: vec![Value::Int(1)],
         }
-        .encode(&mut large);
+        .encode(&mut large)
+        .unwrap();
         assert_eq!(large.len(), 40, "past 2^16 the id takes four");
     }
 
     // ── index and constraint records ──
+
+    /// The four checks that used to be `debug_assert`s, each fired.
+    ///
+    /// Written because "it returns an error now" is not the claim worth
+    /// testing — the claim is that a record the emitter built wrong is
+    /// *refused* rather than written, in the build where it matters. In
+    /// release each of these used to produce bytes and hand them to a replica.
+    #[test]
+    fn a_record_built_wrong_is_refused_rather_than_written() {
+        let mut buf = new_buffer();
+
+        // A short endpoint column: three edges, two sources. This does not
+        // truncate the record, it shifts every later value by one.
+        let short_src = Record::CreateEdge {
+            ids: (1..4).collect(),
+            relation_id: 0,
+            src: (10..12).collect(),
+            dst: (20..23).collect(),
+            attr_ids: vec![],
+            rows: vec![],
+        };
+        assert_eq!(
+            short_src.encode(&mut buf),
+            Err(EncodeError::EndpointColumnMisaligned {
+                column: "src",
+                expected: 3,
+                got: 2,
+            })
+        );
+
+        let short_dst = Record::DeleteEdge {
+            ids: (1..4).collect(),
+            relation_id: 0,
+            src: (10..13).collect(),
+            dst: (20..22).collect(),
+        };
+        assert_eq!(
+            short_dst.encode(&mut buf),
+            Err(EncodeError::EndpointColumnMisaligned {
+                column: "dst",
+                expected: 3,
+                got: 2,
+            })
+        );
+
+        // Options that disagree with the field type they are gated by: the
+        // reader has only the field type, so this is the desync case.
+        let vector_without_the_bit = Record::CreateIndex {
+            schema_type: EntityType::Node,
+            label_id: 0,
+            label: "L".to_owned(),
+            field_type: INDEX_FLD_STR,
+            fields: vec![AttrRef {
+                id: 0,
+                name: "v".to_owned(),
+            }],
+            options: IndexFieldOptions::none_given(Some(VectorIndexOptions {
+                dimension: 4,
+                ..Default::default()
+            })),
+        };
+        assert_eq!(
+            vector_without_the_bit.encode(&mut buf),
+            Err(EncodeError::OptionsFieldTypeMismatch {
+                field_type: INDEX_FLD_STR,
+            })
+        );
+
+        // And the mirror: the bit set with no vector half to write.
+        let bit_without_the_vector = Record::CreateIndex {
+            schema_type: EntityType::Node,
+            label_id: 0,
+            label: "L".to_owned(),
+            field_type: INDEX_FLD_VECTOR,
+            fields: vec![AttrRef {
+                id: 0,
+                name: "v".to_owned(),
+            }],
+            options: IndexFieldOptions::none_given(None),
+        };
+        assert_eq!(
+            bit_without_the_vector.encode(&mut buf),
+            Err(EncodeError::OptionsFieldTypeMismatch {
+                field_type: INDEX_FLD_VECTOR,
+            })
+        );
+
+        // Nothing was written for any of them: a refused record must not leave
+        // a prefix behind for the next one to be parsed against.
+        assert_eq!(buf, new_buffer(), "a refused record wrote bytes anyway");
+    }
 
     #[test]
     fn index_field_types_are_c_bit_flags() {
@@ -1716,7 +1878,8 @@ mod tests {
             }],
             options: IndexFieldOptions::none_given(None),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let records = read_buffer(&buf).unwrap();
         assert_eq!(
             records[0],
@@ -1758,7 +1921,8 @@ mod tests {
             fields,
             options: IndexFieldOptions::none_given(None),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         let records = read_buffer(&buf).unwrap();
         assert_eq!(records.len(), 1, "one statement, one record");
@@ -1790,7 +1954,7 @@ mod tests {
         opts.text.weight = Some(2.0);
 
         let mut buf = Vec::new();
-        opts.encode_sized(&mut buf, INDEX_FLD_FULLTEXT);
+        opts.encode_sized(&mut buf, INDEX_FLD_FULLTEXT).unwrap();
         assert_eq!(
             format!("{buf:02x?}"),
             concat!(
@@ -1821,7 +1985,7 @@ mod tests {
         let opts = IndexFieldOptions::none_given(Some(v));
 
         let mut buf = Vec::new();
-        opts.encode_sized(&mut buf, INDEX_FLD_VECTOR);
+        opts.encode_sized(&mut buf, INDEX_FLD_VECTOR).unwrap();
         assert_eq!(
             format!("{buf:02x?}"),
             concat!(
@@ -1855,7 +2019,8 @@ mod tests {
                 name: "since".to_owned(),
             }],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let records = read_buffer(&buf).unwrap();
         // A drop is a different variant now, so "carries no options" is
         // checked by matching rather than by reading a `None`.
@@ -1918,7 +2083,8 @@ mod tests {
                 },
             ],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         // opcode, ct, et, status, label_id, then the string, then a single
         // count byte.
         let after_label = 4 + 4 + 4 + 4 + 4 + (8 + "Person".len() + 1);
@@ -1945,7 +2111,8 @@ mod tests {
                 },
             ],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::DropConstraint {
             constraint_type: ConstraintType::Mandatory,
             entity_type: EntityType::Relationship,
@@ -1956,7 +2123,8 @@ mod tests {
                 name: "since".to_owned(),
             }],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         let records = read_buffer(&buf).unwrap();
         assert_eq!(
@@ -2009,7 +2177,8 @@ mod tests {
                 name: "a".to_owned(),
             }],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert_eq!(&buf[..4], &(Opcode::DropIndex as u32).to_le_bytes());
         assert_eq!(
             &buf[4..8],
@@ -2025,7 +2194,8 @@ mod tests {
             ids: IdList::from([1]),
             labels: vec![7],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         buf[0] = 2;
         assert_eq!(read_buffer(&buf), Err(DecodeError::UnsupportedVersion(2)));
     }
@@ -2049,7 +2219,8 @@ mod tests {
             attr_ids: vec![0],
             rows: vec![Value::Int(1), Value::Int(2)],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         // From 3: a header with no records after it is a valid empty payload,
         // not a truncated one.
         for cut in 3..buf.len() {
@@ -2075,7 +2246,8 @@ mod tests {
             ids: IdList::from([1]),
             labels: vec![7],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert_eq!(buf[0], EFFECTS_VERSION);
         assert_eq!(buf[1], 0, "no flags by default");
         assert_eq!(read_buffer(&buf).unwrap().len(), 1);
@@ -2094,7 +2266,8 @@ mod tests {
             attr_ids: vec![0],
             rows: rows.to_vec(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let plain = buf.clone();
 
         assert!(maybe_compress(&mut buf, 1024), "should compress");
@@ -2128,7 +2301,8 @@ mod tests {
             attr_ids: vec![0],
             rows: vec![Value::Int(1)],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let before = buf.clone();
 
         assert!(!maybe_compress(&mut buf, 0), "0 disables it");
@@ -2153,7 +2327,8 @@ mod tests {
             ids: IdList::from([1]),
             labels: vec![7],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         buf[1] = 0x80;
         assert_eq!(read_buffer(&buf), Err(DecodeError::UnknownFlags(0x80)));
     }
@@ -2174,7 +2349,8 @@ mod tests {
             attr_ids: vec![0],
             rows: rows.to_vec(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert!(maybe_compress(&mut buf, 16));
         let want = read_buffer(&buf).expect("the clean buffer must decode");
 
@@ -2209,7 +2385,8 @@ mod tests {
             attr_ids: vec![0],
             rows: rows.to_vec(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert!(maybe_compress(&mut buf, 16));
 
         // version, flags, u32 plain_len, u32 comp_len, then the checksum.
@@ -2239,7 +2416,8 @@ mod tests {
             attr_ids: vec![0],
             rows: rows.to_vec(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         assert!(maybe_compress(&mut buf, 16), "the first pass compresses");
         let once = buf.clone();
@@ -2259,7 +2437,8 @@ mod tests {
             attr_ids: vec![0],
             rows: rows.to_vec(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert!(maybe_compress(&mut buf, 16));
 
         // Truncating anywhere inside the frame must error, never panic.
@@ -2297,7 +2476,8 @@ mod tests {
             ids: IdList::from([0, 1, 2]),
             labels: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         // Patch the count that follows the opcode: `header = u32 opcode · u32 count`.
         let count_at = 2 + 4;
         buf[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
@@ -2366,7 +2546,8 @@ mod tests {
             attr_ids: vec![0],
             rows,
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert!(maybe_compress(&mut buf, 16));
 
         // version, flags, u32 plain_len, u32 comp_len, u32 checksum, frame.
@@ -2448,7 +2629,9 @@ mod tests {
         };
 
         let mut created = new_buffer();
-        announce(ConstraintStatus::Failed).encode(&mut created);
+        announce(ConstraintStatus::Failed)
+            .encode(&mut created)
+            .unwrap();
         let mut dropped = new_buffer();
         // The same fields as the create, so the only difference on the wire is
         // the status word the create carries and the drop has no field for.
@@ -2462,7 +2645,8 @@ mod tests {
                 name: "email".to_owned(),
             }],
         }
-        .encode(&mut dropped);
+        .encode(&mut dropped)
+        .unwrap();
 
         // Same fields either way apart from the status word.
         assert_eq!(

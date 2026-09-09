@@ -189,7 +189,7 @@ mod tests {
     fn truncation_is_an_error_not_a_panic() {
         let ids: Vec<u64> = (0..10).collect();
         let mut buf = Vec::new();
-        IdList::from(ids.as_slice()).encode(&mut buf);
+        IdList::from(ids.as_slice()).encode(&mut buf).unwrap();
         for cut in 0..buf.len() {
             let mut r = Reader::new(&buf[..cut]);
             // Not `is_err()`. A truncated buffer must fail *because it ran

@@ -1,8 +1,66 @@
-//! Why an effects buffer could not be decoded, or could not be applied.
+//! Why an effects buffer could not be written, decoded, or applied.
 
 use thiserror::Error;
 
 use super::v3::EFFECTS_VERSION;
+
+// ── encode errors ──
+
+/// What an encoder can refuse to write.
+///
+/// Every variant is a record the emitter built inconsistently — not bad input
+/// off a wire, which is [`DecodeError`]'s job, but a payload this engine was
+/// about to *produce* wrong. They were `debug_assert`s, which is the worst
+/// place for them: they fired in the builds where a malformed record cannot
+/// reach a replica, and were compiled out of the builds where it can. In
+/// release, each one shipped corrupt bytes to a peer and let the divergence
+/// guard sort it out.
+///
+/// Returning instead means one write fails loudly on the primary rather than
+/// one replica silently diverging.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum EncodeError {
+    /// An edge record whose endpoint columns are not the same length as its
+    /// ids.
+    ///
+    /// `src` and `dst` are columns, read positionally against `ids` — the k-th
+    /// entry of each belongs to the k-th edge. A short column does not
+    /// truncate the record, it shifts every later value by one and the reader
+    /// has no way to notice.
+    #[error("{column} column has {got} entries for {expected} edges")]
+    EndpointColumnMisaligned {
+        column: &'static str,
+        expected: usize,
+        got: usize,
+    },
+
+    /// A `CREATE_INDEX` whose options do not match the field type they are
+    /// gated by.
+    ///
+    /// The reader decides whether a vector block follows from `field_type`
+    /// alone. If the writer decides from its own `Option` instead, the two
+    /// disagree: the writer emits `u64`s the reader never consumes, and the
+    /// next record is parsed from the middle of them.
+    #[error("field type {field_type:#06x} and the options block disagree about the vector half")]
+    OptionsFieldTypeMismatch { field_type: u32 },
+
+    /// A record header whose count does not match what its opcode allows.
+    ///
+    /// A batchable opcode needs a count and a singular one must not have it —
+    /// the reader takes the next four bytes as a count for the first kind and
+    /// as the record's first field for the second, so getting it wrong shifts
+    /// everything after.
+    #[error("opcode {opcode} was given the wrong kind of header")]
+    HeaderShapeMismatch { opcode: u32 },
+
+    /// A roaring bitmap that did not serialize to the length it predicted.
+    ///
+    /// The length prefix is written from `serialized_size` before the bitmap
+    /// is asked to serialize. If they disagree the prefix lies, and every
+    /// reader takes the wrong number of bytes for it.
+    #[error("bitmap predicted {predicted} bytes and wrote {written}")]
+    BitmapLengthLied { predicted: usize, written: usize },
+}
 
 // ── decode errors ──
 

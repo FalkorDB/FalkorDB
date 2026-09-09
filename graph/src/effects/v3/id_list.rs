@@ -72,7 +72,7 @@ use roaring::RoaringTreemap;
 use smallvec::SmallVec;
 use std::fmt;
 
-use super::{DecodeError, EffectDecodeSized, EffectEncode, EffectWrite, Reader};
+use super::{DecodeError, EffectDecodeSized, EffectEncode, EffectWrite, EncodeError, Reader};
 
 /// A width as the two bits that go on the wire: 1, 2, 4, 8 → 0, 1, 2, 3.
 const fn width_code(width: u8) -> u8 {
@@ -601,7 +601,7 @@ impl Segment {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         match self {
             Self::Range { base, len } => {
                 Self::write_pair(buf, SEG_KIND_RANGE, *base, u64::from(*len));
@@ -629,13 +629,22 @@ impl Segment {
                 bitmap
                     .serialize_into(&mut *buf)
                     .expect("writing to a Vec cannot fail");
-                debug_assert_eq!(
-                    buf.written() - before,
-                    n,
-                    "serialized_size disagreed with serialize_into, so the length prefix lies"
-                );
+                // Refused, not asserted. The length prefix was written from
+                // `serialized_size` before roaring was asked to serialize; if
+                // they disagree the prefix lies, and every reader takes the
+                // wrong number of bytes for the bitmap and then parses the
+                // next segment from inside it. In release this used to ship
+                // that.
+                let written = buf.written() - before;
+                if written != n {
+                    return Err(EncodeError::BitmapLengthLied {
+                        predicted: n,
+                        written,
+                    });
+                }
             }
         }
+        Ok(())
     }
 
     /// `Range` and `Repeat` are the same three fields — a kind, a value and a
@@ -962,7 +971,21 @@ impl IdList {
         let mut bitmap = RoaringTreemap::new();
         let mut len = 0_u32;
         for seg in &self.segments[self.run.start..] {
-            debug_assert!(
+            // A real `assert!`, not a `debug_assert!`, and the only one left in
+            // this layer. The other seven became `EncodeError`s because they
+            // guarded a record the *caller* built wrong, on a path that can
+            // return. This one guards this file's own arithmetic: if a run
+            // holds anything but ranges, `restart` admitted a segment one
+            // index too low, and the loop below then treats a gapped set as a
+            // range — measured at 17 ids invented and 17 dropped on a
+            // 35-singleton collapse followed by a descending run.
+            //
+            // Threading a `Result` out of the builder would put "this module is
+            // broken" in every emit loop's error path, where no caller can act
+            // on it. Failing the write loudly is the lesser harm: the
+            // alternative, which is what a `debug_assert` gave in release, is a
+            // replica whose ids differ from the primary's and nothing saying so.
+            assert!(
                 matches!(seg, Segment::Range { .. } | Segment::RangeDescending { .. }),
                 "a run under consideration holds only ranges, found {seg:?} — whichever \
                  `restart` admitted it is one index too low"
@@ -1011,7 +1034,7 @@ impl IdList {
         // inserts every id in the span that the set does not hold and drops
         // nothing it does — measured at 17 ids invented and 17 dropped on a
         // 35-singleton collapse followed by a descending run. Silent in
-        // release; the `debug_assert` above is the invariant this restores.
+        // release; the assert above is the invariant this restores.
         //
         // Nothing is lost by excluding it: an id extending the bitmap's own
         // direction goes straight in on the hot path above, and anything else
@@ -1114,7 +1137,7 @@ impl EffectEncode<3> for IdList {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         // Both the segment count and every segment's length are stated, and for
         // the same reason: a list has to be well-formed on its own, not only in
         // the context of the record that carries it. Leaving the last length
@@ -1126,8 +1149,9 @@ impl EffectEncode<3> for IdList {
         // corruption path.
         buf.u32(self.segments.len() as u32);
         for seg in &self.segments {
-            seg.encode(buf);
+            seg.encode(buf)?;
         }
+        Ok(())
     }
 }
 
@@ -1306,7 +1330,7 @@ mod tests {
     fn roundtrip(ids: &[u64]) -> Vec<u8> {
         let list = IdList::from(ids);
         let mut buf = Vec::new();
-        list.encode(&mut buf);
+        list.encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
         assert_eq!(decoded(&mut r, ids.len() as u32), ids, "round-trip");
         assert!(r.is_empty(), "{} bytes left over", r.remaining());
@@ -1505,7 +1529,9 @@ mod tests {
         // Refuse what cannot be interpreted; accept what is merely
         // non-canonical. C reached the same answer independently.
         let mut buf = Vec::new();
-        Segment::Range { base: 42, len: 1 }.encode(&mut buf);
+        Segment::Range { base: 42, len: 1 }
+            .encode(&mut buf)
+            .unwrap();
         assert_eq!(
             buf[0] & SEG_DESCENDING,
             0,
@@ -1524,7 +1550,7 @@ mod tests {
         // And it survives a round trip, so a decoder that keeps the bit does
         // not silently rewrite a peer's buffer.
         let mut again = Vec::new();
-        seg.encode(&mut again);
+        seg.encode(&mut again).unwrap();
         assert_eq!(again, buf, "the observed bit is preserved");
     }
 
@@ -1540,7 +1566,8 @@ mod tests {
             base: u64::MAX - 7,
             len: 8,
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let mut r = Reader::new(&buf);
         assert!(
             Segment::decode(&mut r, 8).is_ok(),
@@ -1552,7 +1579,8 @@ mod tests {
             base: u64::MAX - 3,
             len: 8,
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let mut r = Reader::new(&buf);
         assert!(
             matches!(
@@ -1568,7 +1596,9 @@ mod tests {
         // The bit has no meaning on a repeat, so a peer that sets it is
         // malformed rather than something to interpret.
         let mut buf = Vec::new();
-        Segment::Repeat { id: 7, count: 3 }.encode(&mut buf);
+        Segment::Repeat { id: 7, count: 3 }
+            .encode(&mut buf)
+            .unwrap();
         buf[0] |= SEG_DESCENDING;
         let mut r = Reader::new(&buf);
         assert!(matches!(
@@ -1606,7 +1636,7 @@ mod tests {
             ),
         ] {
             let mut buf = Vec::new();
-            seg.encode(&mut buf);
+            seg.encode(&mut buf).unwrap();
             let mut r = Reader::new(&buf);
             let got = Segment::decode(&mut r, 8);
             assert_eq!(got.is_ok(), ok, "{seg:?} -> {got:?}");
@@ -1625,7 +1655,9 @@ mod tests {
         // The mirror of the wrap check: base 2 with count 5 would name ids
         // below zero, so it is refused rather than truncated.
         let mut buf = Vec::new();
-        Segment::RangeDescending { base: 2, len: 5 }.encode(&mut buf);
+        Segment::RangeDescending { base: 2, len: 5 }
+            .encode(&mut buf)
+            .unwrap();
         let mut r = Reader::new(&buf);
         assert!(matches!(
             Segment::decode(&mut r, 5),
@@ -1676,7 +1708,7 @@ mod tests {
         let flat: Vec<u64> = (0..10).rev().collect();
         for ids in [&up, &down, &flat] {
             let mut buf = Vec::new();
-            IdList::from(ids.as_slice()).encode(&mut buf);
+            IdList::from(ids.as_slice()).encode(&mut buf).unwrap();
             for cut in 0..buf.len() {
                 let mut r = Reader::new(&buf[..cut]);
                 // Not `is_err()`. A truncated buffer must fail *because it ran
@@ -1706,7 +1738,9 @@ mod tests {
         // descending bit, both widths one byte; then the base — which is the
         // *highest* id, unlike the ascending form — and the count.
         let mut buf = Vec::new();
-        IdList::from([9_u64, 8, 7, 6].as_slice()).encode(&mut buf);
+        IdList::from([9_u64, 8, 7, 6].as_slice())
+            .encode(&mut buf)
+            .unwrap();
         assert_eq!(
             buf,
             vec![
@@ -1916,7 +1950,7 @@ mod tests {
         let ids: Vec<u64> = (0..10_000).map(|i| i * 2).collect();
         let list = IdList::from(ids.as_slice());
         let mut buf = Vec::new();
-        list.encode(&mut buf);
+        list.encode(&mut buf).unwrap();
         assert!(
             list.segments
                 .iter()
@@ -2008,7 +2042,7 @@ mod tests {
         assert_eq!(list.len(), 10_000);
 
         let mut buf = Vec::new();
-        list.encode(&mut buf);
+        list.encode(&mut buf).unwrap();
         assert!(
             buf.len() < 16,
             "a repeat is a header and two narrowed fields, got {}",
@@ -2031,7 +2065,7 @@ mod tests {
         let ids: Vec<u64> = (0..300_u64).map(|i| [7, 7, 9][i as usize % 3]).collect();
         let list = IdList::from(ids.as_slice());
         let mut buf = Vec::new();
-        list.encode(&mut buf);
+        list.encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
         assert_eq!(
             read_ids(&mut r, 300).unwrap().iter().collect::<Vec<_>>(),
@@ -2098,7 +2132,7 @@ mod top_of_id_space {
         let ids: Vec<u64> = ((u64::MAX - 4)..=u64::MAX).collect();
         let list = IdList::from(ids.as_slice());
         let mut buf = Vec::new();
-        list.encode(&mut buf);
+        list.encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
         let back = read_ids(&mut r, ids.len() as u32).expect("must decode");
         assert_eq!(back.iter().collect::<Vec<_>>(), ids);
@@ -2128,7 +2162,7 @@ mod collapsed_segments_are_never_recollapsed {
         assert_eq!(list.len(), ids.len(), "and so must the count");
 
         let mut buf = Vec::new();
-        list.encode(&mut buf);
+        list.encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
         let back = read_ids(&mut r, ids.len() as u32).expect("must decode");
         assert_eq!(back.iter().collect::<Vec<_>>(), ids, "and the wire agrees");
@@ -2206,7 +2240,7 @@ mod repeats_stay_out_of_runs {
         );
 
         let mut buf = Vec::new();
-        list.encode(&mut buf);
+        list.encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
         let back = read_ids(&mut r, ids.len() as u32).expect("the buffer must not be refused");
         assert_eq!(back.iter().collect::<Vec<_>>(), ids);
@@ -2223,7 +2257,7 @@ mod repeats_stay_out_of_runs {
         assert_eq!(list.len(), ids.len());
 
         let mut buf = Vec::new();
-        list.encode(&mut buf);
+        list.encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
         let back = read_ids(&mut r, ids.len() as u32).expect("must not be refused");
         assert_eq!(back.iter().collect::<Vec<_>>(), ids);

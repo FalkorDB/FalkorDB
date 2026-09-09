@@ -8,7 +8,7 @@ use crate::runtime::value::{Point, Value};
 
 use crate::graph::graphblas::serialization::si_type;
 
-use super::{DecodeError, EffectDecode, EffectEncode, EffectWrite, Reader};
+use super::{DecodeError, EffectDecode, EffectEncode, EffectWrite, EncodeError, Reader};
 
 /// The smallest a `SIValue` can encode to: the 4-byte type tag, payload empty.
 ///
@@ -34,7 +34,7 @@ impl EffectEncode<3> for Value {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         match self {
             Value::Null => buf.u32(si_type::T_NULL as u32),
             Value::Bool(b) => {
@@ -71,7 +71,7 @@ impl EffectEncode<3> for Value {
                 // Floor: every element is at least its own type tag.
                 buf.reserve(items.len() * 4);
                 for item in items.iter() {
-                    item.encode(buf);
+                    item.encode(buf)?;
                 }
             }
             Value::Point(p) => {
@@ -110,6 +110,7 @@ impl EffectEncode<3> for Value {
             // an effect. Encoding one as NULL would corrupt the stream silently.
             other => panic!("value cannot appear in an effect: {other:?}"),
         }
+        Ok(())
     }
 }
 
@@ -264,11 +265,11 @@ mod tests {
         // The single most dangerous divergence: Rust's own codec used sequential
         // 0..12 tags, which collide with C's bitmask almost everywhere.
         let mut buf = Vec::new();
-        Value::Int(1).encode(&mut buf);
+        Value::Int(1).encode(&mut buf).unwrap();
         assert_eq!(&buf[..4], &[0x00, 0x20, 0x00, 0x00], "T_INT64 = 1 << 13");
 
         buf.clear();
-        Value::Null.encode(&mut buf);
+        Value::Null.encode(&mut buf).unwrap();
         assert_eq!(
             format!("{buf:02x?}"),
             "[00, 80, 00, 00]",
@@ -283,14 +284,17 @@ mod tests {
             latitude: 1.0,
             longitude: 2.0,
         })
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert_eq!(buf.len(), 4 + 8, "type tag plus 2 x f32, not 2 x f64");
     }
 
     #[test]
     fn value_string_carries_its_nul() {
         let mut buf = Vec::new();
-        Value::String(Arc::new("ab".into())).encode(&mut buf);
+        Value::String(Arc::new("ab".into()))
+            .encode(&mut buf)
+            .unwrap();
         // type tag, then len = 3 (including NUL), then "ab\0"
         assert_eq!(
             format!("{buf:02x?}"),
@@ -320,7 +324,7 @@ mod tests {
         ];
         for case in cases {
             let mut buf = Vec::new();
-            case.encode(&mut buf);
+            case.encode(&mut buf).unwrap();
             let mut r = Reader::new(&buf);
             assert_eq!(Value::decode(&mut r).unwrap(), case);
             assert!(r.is_empty(), "{case:?} left {} bytes", r.remaining());
@@ -408,7 +412,7 @@ mod tests {
             Value::List(Arc::new(ThinVec::new())),
         ]));
         let mut buf = Vec::new();
-        case.encode(&mut buf);
+        case.encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
         assert_eq!(Value::decode(&mut r).unwrap(), case);
         assert!(r.is_empty());

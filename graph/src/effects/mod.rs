@@ -29,7 +29,7 @@ pub mod reader;
 pub mod v3;
 pub mod writer;
 
-pub use error::DecodeError;
+pub use error::{DecodeError, EncodeError};
 pub use reader::Reader;
 pub use writer::EffectWrite;
 
@@ -45,10 +45,16 @@ pub use writer::EffectWrite;
 /// `.encode(buf)` ambiguous, and the compiler then names each site that has to
 /// choose — which a free function in a `v3/` directory could never do.
 pub trait EffectEncode<const VERSION: u8> {
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] when the value is internally inconsistent — an
+    /// edge record whose endpoint columns do not match its ids, say. These were
+    /// `debug_assert`s, which guarded the builds where a malformed record
+    /// cannot reach a replica and vanished from the builds where it can.
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    );
+    ) -> Result<(), EncodeError>;
 }
 
 /// Types that can read themselves out of an effects payload of a given version.
@@ -79,11 +85,15 @@ pub trait EffectEncodeSized<const VERSION: u8> {
     /// What the surrounding record states, which this block is shaped by.
     type Size;
 
+    /// # Errors
+    ///
+    /// Returns [`EncodeError`] when the block and the context it is written
+    /// against disagree.
     fn encode_sized<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
         size: Self::Size,
-    );
+    ) -> Result<(), EncodeError>;
 }
 
 /// Blocks whose length is not on the wire, but stated by the record around them.

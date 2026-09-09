@@ -15,7 +15,9 @@
 use crate::runtime::value::Value;
 
 use super::value::MIN_VALUE_BYTES;
-use super::{DecodeError, EffectDecode, EffectDecodeSized, EffectEncode, EffectWrite, Reader};
+use super::{
+    DecodeError, EffectDecode, EffectDecodeSized, EffectEncode, EffectWrite, EncodeError, Reader,
+};
 
 // ── RelType ──
 
@@ -27,8 +29,9 @@ impl EffectEncode<3> for RelType {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         buf.schema_id(self.0);
+        Ok(())
     }
 }
 
@@ -52,7 +55,7 @@ impl<S: AsRef<[u32]>> EffectEncode<3> for LabelSet<S> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         let labels = self.0.as_ref();
         // Count and payload together, before either is written: the exact size
         // is known here, so the block costs at most one growth however long it
@@ -62,6 +65,7 @@ impl<S: AsRef<[u32]>> EffectEncode<3> for LabelSet<S> {
         for &l in labels {
             buf.u32(l);
         }
+        Ok(())
     }
 }
 
@@ -93,13 +97,14 @@ impl<S: AsRef<[u16]>> EffectEncode<3> for AttrIds<S> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         let attr_ids = self.0.as_ref();
         buf.reserve(2 + attr_ids.len() * 2);
         buf.u16(attr_ids.len() as u16);
         for &id in attr_ids {
             buf.u16(id);
         }
+        Ok(())
     }
 }
 
@@ -142,15 +147,16 @@ impl<S: AsRef<[Value]>> EffectEncode<3> for AttrValues<S> {
     fn encode<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-    ) {
+    ) -> Result<(), EncodeError> {
         let rows = self.0.as_ref();
         // A floor, not the size: a value is at least its 4-byte type tag, and
         // most carry a payload after it. Still worth reserving — this is the
         // largest block in a record by far.
         buf.reserve(rows.len() * MIN_VALUE_BYTES);
         for value in rows {
-            value.encode(buf);
+            value.encode(buf)?;
         }
+        Ok(())
     }
 }
 
@@ -188,8 +194,8 @@ mod tests {
     fn a_count_larger_than_the_buffer_is_refused_before_allocating() {
         // Two values' worth of payload, claiming u32::MAX rows of one attribute.
         let mut buf = Vec::new();
-        Value::Int(1).encode(&mut buf);
-        Value::Int(2).encode(&mut buf);
+        Value::Int(1).encode(&mut buf).unwrap();
+        Value::Int(2).encode(&mut buf).unwrap();
         let mut r = Reader::new(&buf);
         assert!(
             matches!(
@@ -216,7 +222,7 @@ mod tests {
     #[test]
     fn rel_type_is_four_signed_bytes() {
         let mut buf = Vec::new();
-        RelType(7).encode(&mut buf);
+        RelType(7).encode(&mut buf).unwrap();
         assert_eq!(format!("{buf:02x?}"), "[07, 00, 00, 00]");
         let mut r = Reader::new(&buf);
         assert_eq!(RelType::decode(&mut r).unwrap(), RelType(7));
@@ -225,7 +231,7 @@ mod tests {
     #[test]
     fn label_set_pins_its_bytes() {
         let mut buf = Vec::new();
-        LabelSet(&[7, 9][..]).encode(&mut buf);
+        LabelSet(&[7, 9][..]).encode(&mut buf).unwrap();
         assert_eq!(
             format!("{buf:02x?}"),
             "[02, 00, 07, 00, 00, 00, 09, 00, 00, 00]"
@@ -240,11 +246,13 @@ mod tests {
         // the two halves are written apart so a record can state its whole
         // schema before any of its data.
         let mut ids = Vec::new();
-        AttrIds(&[0][..]).encode(&mut ids);
+        AttrIds(&[0][..]).encode(&mut ids).unwrap();
         assert_eq!(format!("{ids:02x?}"), "[01, 00, 00, 00]");
 
         let mut vals = Vec::new();
-        AttrValues(&[Value::Int(1), Value::Int(2)][..]).encode(&mut vals);
+        AttrValues(&[Value::Int(1), Value::Int(2)][..])
+            .encode(&mut vals)
+            .unwrap();
         assert_eq!(
             format!("{vals:02x?}"),
             concat!(
@@ -269,7 +277,9 @@ mod tests {
     fn attr_values_null_marks_an_absent_property() {
         // T_NULL is unambiguous: FalkorDB never stores a null property value.
         let mut buf = Vec::new();
-        AttrValues(&[Value::Int(1), Value::Null, Value::Null, Value::Int(2)][..]).encode(&mut buf);
+        AttrValues(&[Value::Int(1), Value::Null, Value::Null, Value::Int(2)][..])
+            .encode(&mut buf)
+            .unwrap();
         let mut r = Reader::new(&buf);
         let rows = AttrValues::decode_sized(&mut r, (2, 2)).unwrap().0;
         assert_eq!(rows[1], Value::Null);
