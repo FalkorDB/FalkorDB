@@ -18,17 +18,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tarpaulin)'] }
 # process env var that could leak into a shipped binary.
 prejit_harvest = []
 
-# Exposes the codec's forcing helpers, which exist only to be measured:
-# `IdList::write_forced` writes a *nominated* encoding, which is the one thing
-# the production API deliberately will not let a caller do — `encode` picks.
-#
-# `cfg(test)` cannot serve, because a bench is its own compilation unit and
-# would lose them. The self dev-dependency below is what turns this on for
-# tests and benches only, so `cargo bench` needs no extra flag and a release
-# build never sees them.
-test-util = []
-
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
