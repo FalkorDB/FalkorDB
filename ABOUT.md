@@ -30,12 +30,29 @@ commit that generated it, so the pairing is recorded, just not in the PR's own
 diff. The generator (`graph/src/effects/v3/fixtures.rs`) and its in-memory
 round-trip tests stay with the code and still fail on drift.
 
-## Updating it
+## The generator lives here too
 
-From an engine checkout, with the corpus worktree in place:
+`generator/fixtures.rs` is the Rust module that produces every file in this
+directory. It is here rather than in the engine for the same reason the bytes
+are: it is not production code, and it has no business in a pull request that
+reviewers read for the codec.
 
+It needs the engine's crate to compile, so regenerating means putting it back
+in place for one run. With the corpus checked out as a worktree inside an
+engine tree, from the engine root:
+
+    cp tests/fixtures/effects_v3/generator/fixtures.rs graph/src/effects/v3/
+    printf '#[cfg(test)]\nmod fixtures;\n' >> graph/src/effects/v3/mod.rs
     UPDATE_EFFECTS_FIXTURES=1 cargo test -p graph effects::v3::fixtures
+    git -C graph checkout src/effects/v3/mod.rs && rm graph/src/effects/v3/fixtures.rs
 
-then commit here, naming the engine commit in the message. A diff on this
+Then commit here, naming the engine commit that generated it. A diff on this
 branch is a wire break: for the C engine that means a version bump, not a
 patch.
+
+**What this costs, stated plainly.** With the generator out of the engine, a
+change to the encoder no longer fails `cargo test -p graph`. The drift alarm
+only rings when someone runs the four steps above. Closing that gap needs a CI
+job that checks out both this branch and the engine and runs them — until that
+exists, treat regenerating as a required step whenever the wire changes, not
+something the test suite will remind you about.
