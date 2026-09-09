@@ -38,6 +38,18 @@ void EffectsBuffer_AddCreateIndexEffect
 	//--------------------------------------------------------------------------
 
 	EffectType eff_t = EFFECT_CREATE_INDEX ;
+
+	if (EffectsBuffer_V3 (buff) != NULL) {
+		// v3 is ONE RECORD PER STATEMENT while this is called once per FIELD,
+		// so the field is staged and the record is emitted when the query
+		// stops producing fields
+		EffectsV3Grouping_AddIndexField (EffectsBuffer_V3 (buff),
+				EFFECT_CREATE_INDEX, st, label_id, label, (uint32_t) t,
+				attr_id, attr, options) ;
+		EffectsBuffer_IncEffectCount (buff) ;
+		return ;
+	}
+
 	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
 
 	EffectsBuffer_WriteBytes (&st, sizeof (st), buff) ;
