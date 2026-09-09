@@ -611,12 +611,24 @@ GrB_Info project_graph_to_matrix
 		GrB_OK (GrB_Vector_nvals(&n, _rows));
 		GrB_Index dim = conf.compact ? n : Graph_UncompactedNodeCount(conf.g);
 		GrB_OK (GrB_Matrix_new(&_A, bool_matrix ? GrB_BOOL : GrB_FP64, dim, dim));
-	} else if(bool_matrix) {
+	} else if (conf.edge_weight == ATTRIBUTE_ID_NONE) {
+		// no attribute to look up - every candidate edge ties (bool_matrix:
+		// "present" for all; otherwise: default_value for all), so skip the
+		// per-entry value_op/attribute lookup entirely and just assign a
+		// constant scalar. bool_matrix (no default either) uses GrB_BOOL/
+		// true; a default with no attribute still needs real FP64 weights.
+		GrB_Type type = bool_matrix ? GrB_BOOL : GrB_FP64;
+		GrB_BinaryOp dedup_op = bool_matrix ? GxB_ANY_BOOL : GxB_ANY_FP64;
+
 		GrB_Scalar t = NULL;
-		GrB_OK (GrB_Scalar_new(&t, GrB_BOOL));
-		GrB_OK (GrB_Scalar_setElement_BOOL(t, true));
+		GrB_OK (GrB_Scalar_new(&t, type));
+		if(bool_matrix) {
+			GrB_OK (GrB_Scalar_setElement_BOOL(t, true));
+		} else {
+			GrB_OK (GrB_Scalar_setElement_FP64(t, edge_default));
+		}
 		GrB_OK (_combine_matricies_and_extract(&_A, R, n_rel_mats, _rows,
-				GrB_BOOL, GxB_ANY_BOOL, NULL, t));
+				type, dedup_op, NULL, t));
 		GrB_OK (GrB_free(&t));
 	} else {
 		atomic_bool invalid_edges = false;
