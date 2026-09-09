@@ -424,13 +424,21 @@ void test_effectsV3Encode_headerFields(void) {
 //
 // Built here by hand rather than through the builder, because the builder
 // cannot produce this - which is exactly why it needs its own test.
+//
+// THE FIELDS ARE HEADER CODES, 0..3 - not byte counts. This test used to set
+// them to 4 meaning "four bytes" and passed, because the builder and the
+// encoder were both using byte counts: a symmetric error, invisible to any
+// test that only ever encodes. It was the decode-then-re-encode round trip
+// that exposed it, since the DECODER fills these from the header bits and
+// therefore stores 0..3 - so a decoded segment re-encoded as widths of "0
+// bytes" and dropped every value field.
 void test_effectsV3Encode_observedWidthsArePreserved(void) {
-	// base 5 and len 3 both fit in one byte, but say four
+	// base 5 and len 3 both fit in one byte; code 2 says four bytes anyway
 	EffectsV3Segment s = {
 		.kind        = EFFECTS_V3_SEG_RANGE,
 		.descending  = false,
-		.value_width = 4,
-		.count_width = 4,
+		.value_width = 2,
+		.count_width = 2,
 		.range       = { .base = 5, .len = 3 },
 	};
 	EffectsV3IdList l = { .segments = &s, .n = 1 };
@@ -517,7 +525,57 @@ void test_effectsV3Encode_countsAreStated(void) {
 	}
 }
 
+
+// the width fields are HEADER CODES, and the builder must store them that way
+//
+// The units of EffectsV3Segment.value_width are the whole contract between the
+// two directions: the DECODER fills it from header bits 2-3, so it holds 0..3.
+// The builder once stored a byte count instead - 1, 2, 4 or 8 - and every
+// encode-only test agreed with it, because the encoder made the same
+// assumption. The two halves were each self-consistent and disagreed only
+// where they meet, which is a decoded segment being re-encoded: widths of
+// "0 bytes" that dropped every value field.
+//
+// This pins the units without needing a fixture, so it fails on the spot
+// rather than waiting for a round trip to be wired up.
+void test_effectsV3Encode_builderStoresWidthCodes(void) {
+	EffectsV3IdListBuilder *b = EffectsV3IdListBuilder_New();
+
+	// 65536 needs four bytes, which is CODE 2 - not the value 4
+	EffectsV3IdListBuilder_Push(b, 65536);
+
+	EffectsV3IdList l = EffectsV3IdListBuilder_ToIdList(b);
+	TEST_ASSERT_(l.n == 1, "expected one segment, got %u", l.n);
+
+	TEST_ASSERT_(l.segments[0].value_width <= 3,
+			"value_width must be a header CODE in 0..3, got %u - a byte count "
+			"here is the units bug that only a re-encode can see",
+			l.segments[0].value_width);
+	TEST_ASSERT_(l.segments[0].value_width == 2,
+			"four bytes is code 2, got %u", l.segments[0].value_width);
+
+	// and the header the encoder writes has to agree with it
+	EffectsBytes *out = EffectsBytes_New(64);
+	EffectsV3_EncodeSegment(l.segments, out);
+
+	size_t n = EffectsBytes_Len(out);
+	unsigned char *got = malloc(n);
+	EffectsBytes_CopyInto(out, got);
+
+	const uint8_t vcode = (got[0] >> EFFECTS_V3_SEG_VWIDTH_SHIFT) & 0x03;
+	TEST_ASSERT_(vcode == l.segments[0].value_width,
+			"the header says code %u where the segment says %u",
+			vcode, l.segments[0].value_width);
+
+	free(got);
+	EffectsBytes_Free(out);
+	EffectsV3IdListBuilder_FreeIdList(&l);
+	EffectsV3IdListBuilder_Free(b);
+}
+
 TEST_LIST = {
+	{ "EffectsV3Encode:builderStoresWidthCodes",
+		test_effectsV3Encode_builderStoresWidthCodes },
 	{ "EffectsV3Encode:matchesFixtureSegments",
 		test_effectsV3Encode_matchesFixtureSegments },
 	{ "EffectsV3Encode:collapseBoundaryFromCorpus",

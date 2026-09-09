@@ -470,17 +470,26 @@ EffectsV3IdList EffectsV3IdListBuilder_ToIdList
 				o->range.base  = s->range.base;
 				o->range.len   = s->range.len;
 				// a freshly built value takes the narrowest width that holds
-				// it; a decoded one keeps the width its peer chose
-				o->value_width = EffectsV3_WidthFor(s->range.base);
-				o->count_width = EffectsV3_WidthFor(s->range.len);
+				// it; a decoded one keeps the width its peer chose.
+				//
+				// Stored as the HEADER CODE, 0..3, which is what the shared
+				// EffectsV3Segment declares the field to be - the decoder
+				// fills it from the header bits, so a byte count here would
+				// mean the two directions disagreed about the same struct
+				o->value_width =
+					EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.base));
+				o->count_width =
+					EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.len));
 				break;
 
 			case EFFECTS_V3_SEG_REPEAT:
 				o->kind         = EFFECTS_V3_SEG_REPEAT;
 				o->repeat.id    = s->repeat.id;
 				o->repeat.count = s->repeat.count;
-				o->value_width  = EffectsV3_WidthFor(s->repeat.id);
-				o->count_width  = EffectsV3_WidthFor(s->repeat.count);
+				o->value_width  =
+					EffectsV3_WidthCode(EffectsV3_WidthFor(s->repeat.id));
+				o->count_width  =
+					EffectsV3_WidthCode(EffectsV3_WidthFor(s->repeat.count));
 				break;
 
 			default: {
@@ -495,9 +504,10 @@ EffectsV3IdList EffectsV3IdListBuilder_ToIdList
 				roaring64_bitmap_portable_serialize(s->bitmap.bitmap,
 						(char *)o->ascending.blob);
 
-				// a bitmap carries its own length; the width fields are unused
-				o->value_width = 1;
-				o->count_width = 1;
+				// a bitmap carries its own length; the width fields are
+				// unused and the header bits stay clear, so the code is 0
+				o->value_width = 0;
+				o->count_width = 0;
 				break;
 			}
 		}
