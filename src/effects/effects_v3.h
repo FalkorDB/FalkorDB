@@ -34,7 +34,10 @@
 //
 //   * DECODE THEN ENCODE REPRODUCES THE INPUT BYTES. Everything a peer chose
 //     that the format leaves open - segmentation, width codes, direction - is
-//     retained rather than recomputed.
+//     retained rather than recomputed. EXCEPT COMPRESSION: a compressed payload
+//     decodes to the records it contained, and those records are the
+//     uncompressed form, so re-encoding them cannot reproduce the frame that
+//     arrived.
 
 //------------------------------------------------------------------------------
 // IdList
