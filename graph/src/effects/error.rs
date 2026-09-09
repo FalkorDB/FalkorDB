@@ -121,11 +121,13 @@ pub enum ApplyError {
     Decode(#[from] DecodeError),
 
     /// The replica would have assigned a different id to a new schema entry or
-    /// attribute. C's reader cannot see this case: it only refuses a name that
-    /// already exists locally, which misses a replica whose dictionary is a
-    /// different length, where appending the same new name yields a different
-    /// id. That is the case that silently put a property value on the wrong
-    /// attribute.
+    /// attribute. C's reader cannot see this case: its `ADD_SCHEMA` and
+    /// `ADD_ATTRIBUTE` records carry no id at all — only a name — and
+    /// `ApplyAddSchema`/`ApplyAddAttribute` refuse just the name that already
+    /// exists locally (`src/effects/effects_apply.c`). That misses a replica
+    /// whose dictionary is a different length, where appending the same new name
+    /// yields a different id. That is the case that silently put a property
+    /// value on the wrong attribute.
     #[error(
         "effects buffer assigns {kind} '{name}' id {expected}, but this replica would \
          assign {assigned}{local}. The two engines have diverged; the buffer was not applied."

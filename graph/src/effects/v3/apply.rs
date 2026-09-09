@@ -546,9 +546,10 @@ fn resolve_type(
 
 /// An `UPDATE_EDGE`'s relationship type, checked against this graph.
 ///
-/// The same check C's `ApplyUpdateEdge` opens with — it refuses a record whose
-/// `r_id` is negative or past the local edge-schema count, logging "references
-/// relationship type %d which doesn't exist locally". A replica that has not
+/// The same check C's `ApplyUpdateEdge` makes — after reading the record, it
+/// refuses one whose `r_id` is negative or past the local edge-schema count,
+/// logging "references relationship type %d which doesn't exist locally"
+/// (`src/effects/update_edge_effect.c`). A replica that has not
 /// seen the `ADD_SCHEMA` yet must fail here rather than index the rows under a
 /// type it invented.
 fn checked_type_id(
@@ -622,7 +623,9 @@ fn check_attr_shape(
     //
     // No Rust primary emits one — `Pending` keeps a sorted vec — but v3 exists so
     // that a *C* primary can write these buffers, and C's `AttributeSet` carries
-    // no such guarantee.
+    // no such guarantee: `AttributeSet_Add` appends, and `AttributeSet_Contains`
+    // finds a key by scanning the ids linearly, under a standing
+    // `// TODO: use SIMD or support sort` (`src/graph/entities/attribute_set.c`).
     if let Some(w) = attr_ids.windows(2).find(|w| w[0] >= w[1]) {
         return Err(ApplyError::AttrIdsNotAscending {
             first: w[0],
@@ -688,9 +691,16 @@ fn index_options(
         IndexType::Vector => match o.vector {
             None => None,
             Some(v) => {
-                // The wire carries C's `size_t`; this engine holds a `u32`. A
-                // cast would turn a dimension of 2^32 into 0 and index against
-                // it, so the narrowing is checked and the payload refused.
+                // The wire holds `dimension` as a `u64` because it is the one
+                // vector option with no absent form, not because either engine
+                // is that wide: C types it `uint32_t` (`src/index/index_field.h`
+                // line 45), and so does this one. The `size_t` in that struct
+                // belongs to the next three fields, `M`/`efConstruction`/
+                // `efRuntime` — which is why those cast plainly below and this
+                // does not. The wire can therefore carry a dimension neither
+                // engine can hold, and `as u32` would turn 2^32 into 0 and
+                // index against it, so the narrowing is checked and the payload
+                // refused.
                 let dimension = u32::try_from(v.dimension).map_err(|_| {
                     ApplyError::UnsupportedIndexOption(format!(
                         "vector dimension {} exceeds this engine's limit of {}",
@@ -1607,7 +1617,7 @@ mod tests {
         );
     }
 
-    /// The wire carries C's `size_t`; this engine holds a `u32`.
+    /// The wire holds `dimension` as a `u64`; both engines hold 32 bits.
     #[test]
     fn a_vector_dimension_too_large_for_this_engine_is_refused() {
         // Not `as u32`, which would make this 0 and index against it.

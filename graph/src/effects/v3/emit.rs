@@ -39,8 +39,9 @@ use crate::effects::announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseli
 /// signed `int`.
 ///
 /// Checked rather than `as i32`, and the sentinels are why. C reserves the
-/// negatives — `GRAPH_NO_LABEL` and `GRAPH_NO_RELATION` are -1,
-/// `GRAPH_UNKNOWN_LABEL` and `GRAPH_UNKNOWN_RELATION` are -2 — so a truncating
+/// negatives (`src/graph/graph.h` lines 20-23) — `GRAPH_NO_LABEL` and
+/// `GRAPH_NO_RELATION` are -1, `GRAPH_UNKNOWN_LABEL` and
+/// `GRAPH_UNKNOWN_RELATION` are -2 — so a truncating
 /// cast of a `usize` past `i32::MAX` would not merely be a wrong id, it would
 /// be one of C's "there is no label here" values, and the replica would act on
 /// it rather than reject it.
@@ -171,12 +172,18 @@ const fn index_field_flags(t: &IndexType) -> u32 {
 
 /// Encode one index DDL statement, schema announcements included.
 ///
-/// One record per *statement*, not per field. C sends one per field, and two
-/// single-field records are not equivalent to one two-field statement: applying
-/// the second is refused with "Can not override index configuration", because
-/// index-level options belong to the index and cannot be set twice. `field_type`
-/// therefore sits at the statement level — a drop sends an empty field list, and
-/// a per-field type would vanish along with the fields.
+/// One record per *statement*, not per field. C sends one per field
+/// (`src/effects/create_index_effect.c`) and gets away with it by making the
+/// index-level work idempotent, as that file says: `Index_SetLanguage` tolerates
+/// being re-set to the same value, and `Index_SetStopwords` is guarded by
+/// `Index_ContainsStopwords` because it does not.
+///
+/// This engine has no such guard, so two single-field records are not equivalent
+/// to one two-field statement here: applying the second is refused with "Can not
+/// override index configuration", because index-level options belong to the
+/// index and cannot be set twice. `field_type` therefore sits at the statement
+/// level — a drop sends an empty field list, and a per-field type would vanish
+/// along with the fields.
 pub fn build_index_buffer<W: EffectWrite + ?Sized>(
     p: &Pending,
     g: &AtomicRefCell<Graph>,
