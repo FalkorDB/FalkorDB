@@ -57,6 +57,19 @@ EffectsV3Grouping *EffectsBuffer_V3
 	const EffectsBuffer *eb  // effects-buffer
 );
 
+// take over a buffer's body so pre-built v3 records can be written into it
+//
+// Returns the sink to write into, or NULL if the buffer has already staged
+// effects of its own - those would be serialised over whatever is written here.
+// 'version' and 'flags' become the header the buffer emits, so a re-encode
+// reproduces the payload it decoded rather than the header this build prefers.
+EffectsBytes *EffectsBuffer_TakeBody
+(
+	EffectsBuffer *eb,  // effects-buffer
+	uint8_t version,    // version byte to emit
+	uint8_t flags       // flags byte to emit
+);
+
 // wrap a byte sink the caller owns as an effects-buffer
 //
 // lets v3 reach the shared SIValue codec against its own sinks: a grouped
