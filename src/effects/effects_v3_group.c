@@ -9,6 +9,9 @@
 #include "effects_internal.h"
 #include "../util/rmalloc.h"
 #include "../util/arr.h"
+#include "../datatypes/map.h"
+#include "../datatypes/array.h"
+#include "../index/index_field.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -1106,6 +1109,455 @@ void EffectsV3Grouping_AddConstraint
 	arr_append(g->announcements, r);
 }
 
+//------------------------------------------------------------------------------
+// index DDL
+//------------------------------------------------------------------------------
+
+// convert C's options map into the wire's typed block
+//
+// THE MAP KEY IS THE PRESENCE BIT. A key present in the map is exactly an
+// option the statement stated, so every field here is a lookup and never a
+// default - which is what keeps "the statement did not say" distinguishable
+// from "the statement said the default value".
+//
+// Reaching past the map to the field's stored options would break that, and
+// not subtly: C seeds every field's phonetic with the literal string "no"
+// (index_field.h:15, applied at index_field.c:24 and :57), while Rust reads
+// any non-empty phonetic as ENABLED. An unstated phonetic sent as its stored
+// default therefore turns itself on when it crosses engines. Same reasoning
+// for the other four, and language has already diverged a live replica this
+// way once - "Can not override index configuration: Language is already set".
+static void _options_from_map
+(
+	EffectsV3IndexOptions *o,  // block to fill
+	SIValue options,           // C's options map
+	uint32_t field_type        // IndexFieldType, a bit set
+) {
+	memset(o, 0, sizeof(*o));
+
+	if(SI_TYPE(options) != T_MAP) {
+		return;
+	}
+
+	SIValue v;
+
+	//--------------------------------------------------------------------------
+	// the text half
+	//--------------------------------------------------------------------------
+
+	if(MAP_GET(options, "language", v) && SI_TYPE(v) == T_STRING) {
+		o->has_language = true;
+		o->language     = rm_strdup(v.stringval);
+	}
+
+	if(MAP_GET(options, "stopwords", v) && SI_TYPE(v) == T_ARRAY) {
+		uint32_t n = SIArray_Length(v);
+		o->has_stopwords = true;
+		o->n_stopwords   = n;
+		o->stopwords     = (n > 0) ? rm_calloc(n, sizeof(char *)) : NULL;
+		for(uint32_t i = 0; i < n; i++) {
+			SIValue w = SIArray_Get(v, i);
+			o->stopwords[i] =
+				rm_strdup(SI_TYPE(w) == T_STRING ? w.stringval : "");
+		}
+	}
+
+	// weight is the one numeric C accepts as either an int or a double, since
+	// `weight: 1` and `weight: 1.0` are the same statement to a user
+	if(MAP_GET(options, "weight", v) && (SI_TYPE(v) & SI_NUMERIC)) {
+		o->has_weight = true;
+		o->weight     = SI_GET_NUMERIC(v);
+	}
+
+	if(MAP_GET(options, "nostem", v) && SI_TYPE(v) == T_BOOL) {
+		o->has_nostem = true;
+		o->nostem     = (v.longval != 0);
+	}
+
+	if(MAP_GET(options, "phonetic", v) && SI_TYPE(v) == T_STRING) {
+		o->has_phonetic = true;
+		o->phonetic     = rm_strdup(v.stringval);
+	}
+
+	// A VECTOR FIELD'S BLOCK CARRIES THE VECTOR HALF; every field type carries
+	// the text half, five clear bytes when nothing is stated. Read off the
+	// field type rather than stored in the block: the block has no flag of its
+	// own that could disagree with the record's, and the reader has only the
+	// record's
+	if((field_type & INDEX_FLD_VECTOR) == 0) {
+		return;
+	}
+
+	//--------------------------------------------------------------------------
+	// the vector half
+	//--------------------------------------------------------------------------
+
+	// dimension has no presence byte - a vector field must have one, and
+	// _parseOptions refuses a field without it, so a statement that reached
+	// here has stated it
+	if(MAP_GET(options, "dimension", v) && SI_TYPE(v) == T_INT64) {
+		o->dimension = (uint64_t)v.longval;
+	}
+
+	// the wire carries a CODE where C's statement carries a string. The codes
+	// are the VecSimMetric values, so this is C's own parser inverted; an
+	// unrecognised name is left unstated rather than guessed, since the same
+	// parser would have refused the statement outright
+	if(MAP_GET(options, "similarityFunction", v) && SI_TYPE(v) == T_STRING) {
+		if(strcasecmp(v.stringval, "euclidean") == 0) {
+			o->has_sim_func = true;
+			o->sim_func     = VecSimMetric_L2;
+		} else if(strcasecmp(v.stringval, "cosine") == 0) {
+			o->has_sim_func = true;
+			o->sim_func     = VecSimMetric_Cosine;
+		} else if(strcasecmp(v.stringval, "ip") == 0) {
+			o->has_sim_func = true;
+			o->sim_func     = VecSimMetric_IP;
+		}
+	}
+
+	if(MAP_GET(options, "M", v) && SI_TYPE(v) == T_INT64) {
+		o->has_m = true;
+		o->m     = (uint64_t)v.longval;
+	}
+
+	if(MAP_GET(options, "efConstruction", v) && SI_TYPE(v) == T_INT64) {
+		o->has_ef_construction = true;
+		o->ef_construction     = (uint64_t)v.longval;
+	}
+
+	if(MAP_GET(options, "efRuntime", v) && SI_TYPE(v) == T_INT64) {
+		o->has_ef_runtime = true;
+		o->ef_runtime     = (uint64_t)v.longval;
+	}
+}
+
+static void _options_free(EffectsV3IndexOptions *o) {
+	if(o->language != NULL) {
+		rm_free(o->language);
+	}
+	if(o->phonetic != NULL) {
+		rm_free(o->phonetic);
+	}
+	if(o->stopwords != NULL) {
+		for(uint64_t i = 0; i < o->n_stopwords; i++) {
+			rm_free(o->stopwords[i]);
+		}
+		rm_free(o->stopwords);
+	}
+	memset(o, 0, sizeof(*o));
+}
+
+static bool _streq(const char *a, const char *b) {
+	if(a == NULL || b == NULL) {
+		return a == b;
+	}
+	return strcmp(a, b) == 0;
+}
+
+// do two option blocks state THE SAME THING?
+//
+// Compared field by field rather than with memcmp: the struct holds pointers
+// and padding, so two blocks that say the same thing rarely have the same
+// bytes. Both the flag and the value must agree - a stated weight of 1.0 and
+// an unstated weight are different statements even though the value slot of
+// the second is also 1.0 by memset.
+//
+// 'vector' is the two records' shared field type, already compared by the
+// caller: whether the vector half exists at all is a property of the RECORD -
+// field_type & INDEX_FLD_VECTOR - and the block carries no second copy of it
+// that could disagree
+static bool _options_eq
+(
+	const EffectsV3IndexOptions *a,
+	const EffectsV3IndexOptions *b,
+	bool vector
+) {
+	if(a->has_language != b->has_language ||
+	   a->has_weight   != b->has_weight   ||
+	   a->has_nostem   != b->has_nostem   ||
+	   a->has_phonetic != b->has_phonetic ||
+	   a->has_stopwords != b->has_stopwords) {
+		return false;
+	}
+
+	if(a->has_language && !_streq(a->language, b->language))  return false;
+	if(a->has_phonetic && !_streq(a->phonetic, b->phonetic))  return false;
+	if(a->has_nostem   && a->nostem != b->nostem)             return false;
+
+	// compared as BITS, not as doubles: this is deciding whether two records
+	// carry the same bytes, and == would fuse a weight of -0.0 with 0.0 while
+	// the wire keeps them apart
+	if(a->has_weight) {
+		uint64_t x, y;
+		memcpy(&x, &a->weight, sizeof(x));
+		memcpy(&y, &b->weight, sizeof(y));
+		if(x != y) return false;
+	}
+
+	if(a->has_stopwords) {
+		if(a->n_stopwords != b->n_stopwords) return false;
+		for(uint64_t i = 0; i < a->n_stopwords; i++) {
+			if(!_streq(a->stopwords[i], b->stopwords[i])) return false;
+		}
+	}
+
+	if(!vector) {
+		return true;
+	}
+
+	return a->dimension           == b->dimension           &&
+	       a->has_m               == b->has_m               &&
+	       a->has_ef_construction == b->has_ef_construction &&
+	       a->has_ef_runtime      == b->has_ef_runtime      &&
+	       a->has_sim_func        == b->has_sim_func        &&
+	       (!a->has_m               || a->m               == b->m)               &&
+	       (!a->has_ef_construction || a->ef_construction == b->ef_construction) &&
+	       (!a->has_ef_runtime      || a->ef_runtime      == b->ef_runtime)      &&
+	       (!a->has_sim_func        || a->sim_func        == b->sim_func);
+}
+
+// the one schema an index statement names
+static EffectsV3SchemaRef *_schema_refs_one
+(
+	int id,            // schema id
+	const char *name   // its name, the cross-check
+) {
+	EffectsV3SchemaRef *refs = rm_calloc(1, sizeof(EffectsV3SchemaRef));
+
+	refs[0].id   = (uint32_t)id;
+	refs[0].name = rm_strdup(name);
+
+	return refs;
+}
+
+// release them, names included
+static void _schema_refs_free
+(
+	EffectsV3SchemaRef *refs,  // refs, NULL when there were none
+	uint16_t n                 // how many
+) {
+	for(uint16_t i = 0; i < n; i++) {
+		rm_free(refs[i].name);
+	}
+	rm_free(refs);
+}
+
+// append one (id, name) to a record's field list
+//
+// GROWN BY ONE, not doubled: the record type carries a count and no capacity
+// beside it, so a capacity would have to live somewhere the record cannot see
+// and be kept in step by hand. A statement names a handful of fields, and this
+// runs once per field at statement time
+static void _append_attr_ref
+(
+	EffectsV3AttrRef **attrs,  // the list to extend, NULL when empty
+	uint16_t *n,               // its length
+	AttributeID id,            // the field
+	const char *name           // its name
+) {
+	// a field already named by this record is not added twice - the same
+	// attribute cannot be indexed twice by one statement, and a duplicate
+	// would inflate the count the record states ahead of its list
+	for(uint16_t i = 0; i < *n; i++) {
+		if((*attrs)[i].id == id) {
+			return;
+		}
+	}
+
+	*attrs = rm_realloc(*attrs, (*n + 1) * sizeof(EffectsV3AttrRef));
+
+	(*attrs)[*n].id   = id;
+	(*attrs)[*n].name = rm_strdup(name);
+	(*n)++;
+}
+
+// the fields of an index record the fold compares, read off its own arm
+//
+// PER ARM, because the opcode owns the arm. Create and drop carry these in the
+// same order today, so reading one through the other would work - until a field
+// is added ahead of one of them, and then it would read the next field along
+// and still compile. Returns false for a record that is not an index record
+static bool _index_record_key
+(
+	const EffectsV3Record *r,  // record
+	SchemaType *schema_type,   // out: node or edge
+	uint32_t *schema_id,       // out: the schema it names
+	uint32_t *field_type       // out: IndexFieldType, a bit set
+) {
+	switch(r->opcode) {
+		case EFFECT_CREATE_INDEX:
+			if(r->create_index.n_schemas == 0) return false;
+			*schema_type = r->create_index.schema_type;
+			*schema_id   = r->create_index.schemas[0].id;
+			*field_type  = r->create_index.field_type;
+			return true;
+
+		case EFFECT_DROP_INDEX:
+			if(r->drop_index.n_schemas == 0) return false;
+			*schema_type = r->drop_index.schema_type;
+			*schema_id   = r->drop_index.schemas[0].id;
+			*field_type  = r->drop_index.field_type;
+			return true;
+
+		default:
+			return false;
+	}
+}
+
+// append a field to whichever index arm this record is
+static void _record_append_attr_ref
+(
+	EffectsV3Record *r,    // record to extend
+	AttributeID id,        // the field
+	const char *name       // its name
+) {
+	switch(r->opcode) {
+		case EFFECT_CREATE_INDEX:
+			_append_attr_ref(&r->create_index.attrs,
+					&r->create_index.n_attrs, id, name);
+			break;
+
+		case EFFECT_DROP_INDEX:
+			_append_attr_ref(&r->drop_index.attrs,
+					&r->drop_index.n_attrs, id, name);
+			break;
+
+		default:
+			ASSERT(false && "not an index record");
+			break;
+	}
+}
+
+void EffectsV3Grouping_AddIndexField
+(
+	EffectsV3Grouping *g,   // accumulator
+	EffectType opcode,      // CREATE_INDEX or DROP_INDEX
+	SchemaType schema_type, // node or edge
+	int schema_id,          // schema id
+	const char *label,      // schema name
+	uint32_t field_type,    // IndexFieldType, a bit set
+	AttributeID attr_id,    // the field
+	const char *attr_name,  // its name
+	SIValue options         // C's options map; ignored for a drop
+) {
+	EffectsV3IndexOptions o;
+	if(opcode == EFFECT_CREATE_INDEX) {
+		_options_from_map(&o, options, field_type);
+	} else {
+		// a drop carries no options at all - zero bytes, not an empty block,
+		// and its arm has no field to put one in
+		memset(&o, 0, sizeof(o));
+	}
+
+	//--------------------------------------------------------------------------
+	// fold into an existing record for this statement, if there is one
+	//--------------------------------------------------------------------------
+
+	// scanned rather than matched against the most recent announcement: a
+	// field's own ADD_SCHEMA and ADD_ATTRIBUTE announcements are appended
+	// between two index effects, so the record this belongs to is not the
+	// last one
+	bool index_seen = false;  // any earlier record naming the same index
+	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
+		EffectsV3Record *a = g->announcements + i;
+
+		SchemaType a_schema_type;
+		uint32_t   a_schema_id;
+		uint32_t   a_field_type;
+		if(a->opcode != opcode ||
+		   !_index_record_key(a, &a_schema_type, &a_schema_id, &a_field_type)) {
+			continue;
+		}
+
+		if(a_schema_type != schema_type || a_schema_id != (uint32_t)schema_id) {
+			continue;
+		}
+
+		index_seen = true;
+
+		if(a_field_type != field_type) {
+			continue;
+		}
+
+		// A DROP IS FOLDED ON THE KEY ALONE. It carries no options, so there
+		// is no second half of the key to agree on
+		if(opcode == EFFECT_DROP_INDEX) {
+			_record_append_attr_ref(a, attr_id, attr_name);
+			return;
+		}
+
+		if(_options_eq(&a->create_index.options, &o,
+				(field_type & INDEX_FLD_VECTOR) != 0)) {
+			_record_append_attr_ref(a, attr_id, attr_name);
+			_options_free(&o);
+			return;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// a new record
+	//--------------------------------------------------------------------------
+
+	// INDEX-LEVEL OPTIONS ARE STATED ONCE PER INDEX PER PAYLOAD. language and
+	// stopwords configure the index, not the field, and their setters are
+	// asymmetric: Index_SetLanguage (index.c:852) objects only when the
+	// language DIFFERS, but Index_SetStopwords (index.c:871) objects when
+	// stopwords are set AT ALL. Repeating them on a second record for the same
+	// index would apply cleanly for language and fail for stopwords - and no
+	// single-field statement can show it.
+	if(index_seen) {
+		if(o.has_language) {
+			rm_free(o.language);
+			o.language     = NULL;
+			o.has_language = false;
+		}
+		if(o.has_stopwords) {
+			for(uint64_t i = 0; i < o.n_stopwords; i++) {
+				rm_free(o.stopwords[i]);
+			}
+			rm_free(o.stopwords);
+			o.stopwords     = NULL;
+			o.n_stopwords   = 0;
+			o.has_stopwords = false;
+		}
+	}
+
+	// FILLED BEFORE IT IS APPENDED, so the list never holds a record whose arm
+	// was not written - the free path reads the arm the opcode names
+	EffectsV3Record r = { .opcode = opcode };
+	EffectsV3SchemaRef *schemas = _schema_refs_one(schema_id, label);
+
+	switch(opcode) {
+		case EFFECT_CREATE_INDEX:
+			r.create_index.schema_type = schema_type;
+			r.create_index.schemas     = schemas;
+			r.create_index.n_schemas   = 1;
+			r.create_index.field_type  = field_type;
+			r.create_index.has_options = true;
+			r.create_index.options     = o;
+			break;
+
+		case EFFECT_DROP_INDEX:
+			r.drop_index.schema_type = schema_type;
+			r.drop_index.schemas     = schemas;
+			r.drop_index.n_schemas   = 1;
+			r.drop_index.field_type  = field_type;
+			break;
+
+		default:
+			// nothing owns either of these once this returns
+			ASSERT(false && "not an index opcode");
+			_schema_refs_free(schemas, 1);
+			_options_free(&o);
+			return;
+	}
+
+	_record_append_attr_ref(&r, attr_id, attr_name);
+
+	arr_append(g->announcements, r);
+}
+
 uint32_t EffectsV3Grouping_RecordCount
 (
 	EffectsV3Grouping *g  // accumulator
@@ -1333,6 +1785,20 @@ void EffectsV3Grouping_Free
 				rm_free(a->drop_constraint.name);
 				_attr_refs_free(a->drop_constraint.attrs,
 						a->drop_constraint.n_attrs);
+				break;
+			case EFFECT_CREATE_INDEX:
+				_schema_refs_free(a->create_index.schemas,
+						a->create_index.n_schemas);
+				_attr_refs_free(a->create_index.attrs,
+						a->create_index.n_attrs);
+				_options_free(&a->create_index.options);
+				break;
+			case EFFECT_DROP_INDEX:
+				// no options arm at all on a drop
+				_schema_refs_free(a->drop_index.schemas,
+						a->drop_index.n_schemas);
+				_attr_refs_free(a->drop_index.attrs,
+						a->drop_index.n_attrs);
 				break;
 			default:
 				ASSERT(false && "announcement opcode has no free arm");
