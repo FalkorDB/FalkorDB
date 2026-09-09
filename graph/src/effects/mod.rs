@@ -60,6 +60,32 @@ pub trait EffectDecode<const VERSION: u8>: Sized {
     fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError>;
 }
 
+/// Blocks the record around them gates, rather than sizes.
+///
+/// The mirror of [`EffectDecodeSized`] for the writing direction, and it exists
+/// for the one case where the two are not symmetric. A *length* never needs to
+/// reach an encoder — the writer holds the whole block, so a length argument
+/// could only disagree with it, which is why [`EffectEncode`] takes none. But
+/// `CREATE_INDEX`'s options are gated by `field_type`, which is not a length,
+/// is not derivable from the data, and is what the *reader* gates on. Gating
+/// the two directions on different things desynchronises the stream: the writer
+/// emits `u64`s the reader never consumes and the next record is parsed from
+/// the middle of them.
+///
+/// So both directions take the same context and state the same version, and a
+/// v4 whose options layout differs lands as `impl EffectEncodeSized<4>` beside
+/// this one with the compiler choosing between them.
+pub trait EffectEncodeSized<const VERSION: u8> {
+    /// What the surrounding record states, which this block is shaped by.
+    type Size;
+
+    fn encode_sized<W: EffectWrite + ?Sized>(
+        &self,
+        buf: &mut W,
+        size: Self::Size,
+    );
+}
+
 /// Blocks whose length is not on the wire, but stated by the record around them.
 ///
 /// `AttrValues` is `count × attrs_per_row` values and `IdList` is `count` ids.

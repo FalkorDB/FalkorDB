@@ -137,7 +137,10 @@ fn take_opt<T>(
     }
 }
 
-impl IndexFieldOptions {
+impl EffectEncodeSized<3> for IndexFieldOptions {
+    /// The statement's `field_type`, the same context `decode_sized` takes.
+    type Size = u32;
+
     /// Write the block, gated on the statement's `field_type`.
     ///
     /// `field_type` and not `self.vector.is_some()`, because that is what the
@@ -146,10 +149,10 @@ impl IndexFieldOptions {
     /// different things desynchronises the stream — the writer emits `u64`s the
     /// reader never consumes and the next record is parsed from the middle of
     /// them.
-    fn encode_with<W: EffectWrite + ?Sized>(
+    fn encode_sized<W: EffectWrite + ?Sized>(
         &self,
         buf: &mut W,
-        field_type: u32,
+        field_type: Self::Size,
     ) {
         debug_assert_eq!(
             self.vector.is_some(),
@@ -814,7 +817,7 @@ impl EffectEncode<3> for Record {
                     options
                         .as_ref()
                         .expect("a CREATE_INDEX record carries options")
-                        .encode_with(buf, *field_type);
+                        .encode_sized(buf, *field_type);
                 }
             }
 
@@ -1713,7 +1716,7 @@ mod tests {
         opts.text.weight = Some(2.0);
 
         let mut buf = Vec::new();
-        opts.encode_with(&mut buf, INDEX_FLD_FULLTEXT);
+        opts.encode_sized(&mut buf, INDEX_FLD_FULLTEXT);
         assert_eq!(
             format!("{buf:02x?}"),
             concat!(
@@ -1744,7 +1747,7 @@ mod tests {
         let opts = IndexFieldOptions::none_given(Some(v));
 
         let mut buf = Vec::new();
-        opts.encode_with(&mut buf, INDEX_FLD_VECTOR);
+        opts.encode_sized(&mut buf, INDEX_FLD_VECTOR);
         assert_eq!(
             format!("{buf:02x?}"),
             concat!(

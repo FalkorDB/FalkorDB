@@ -119,9 +119,14 @@ impl EffectDecode<3> for AttrIds {
 /// entity's j-th attribute is at `k * n + j`.
 ///
 /// That is why decoding goes through [`EffectDecodeSized`] and encoding does
-/// not: the writer holds the whole block already, and a size argument there
+/// not: the writer holds the whole block already, and a *length* argument there
 /// could only disagree with it. The reader has to size a `Vec` before it has
 /// read anything.
+///
+/// That reasoning is about lengths and does not generalise. `EffectEncodeSized`
+/// exists for the case it does not cover — `CREATE_INDEX`'s options, which the
+/// record *gates* rather than sizes, on a `field_type` the writer cannot derive
+/// from the block and the reader has to be given.
 ///
 /// `T_NULL` in a slot means "remove this attribute": FalkorDB never stores a null
 /// property, so `SET n.x = NULL` is a removal and this is how it replicates.

@@ -117,7 +117,9 @@ pub use records::*;
 // versions, so they live a level up. Re-exported here so a record module can
 // say `use super::*` and get everything the wire needs.
 pub use super::writer::*;
-pub use super::{DecodeError, EffectDecode, EffectDecodeSized, EffectEncode, Reader};
+pub use super::{
+    DecodeError, EffectDecode, EffectDecodeSized, EffectEncode, EffectEncodeSized, Reader,
+};
 
 // ── effect types ──
 
