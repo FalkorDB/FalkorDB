@@ -1124,15 +1124,6 @@ static bool _ApplyLabels
 // records 11-14 - index and constraint DDL
 //------------------------------------------------------------------------------
 
-// the wire's simFunc codes ARE the VecSimMetric enum values - L2 0, IP 1,
-// cosine 2 (vec_sim_common.h). They are not renumbered anywhere, and must not
-// be: both engines persist the metric as that number in their RDB, so moving
-// one would make every existing file read a different metric than it was
-// written with.
-#define V3_SIMFUNC_L2     0
-#define V3_SIMFUNC_IP     1
-#define V3_SIMFUNC_COSINE 2
-
 // rebuild the options map the index constructors take
 //
 // v3 carries options as a typed block; Index_FulltextCreate and
