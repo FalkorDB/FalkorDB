@@ -196,6 +196,16 @@ typedef struct {
 	uint32_t          n;         // segment count, as the u32 on the wire
 } EffectsV3IdList;
 
+// one (attribute id, attribute name) pair, as the DDL records carry them
+//
+// the id drives the operation and the name is a cross-check that surfaces
+// divergence instead of silently trusting a stale id - the same pairing
+// VerifySchema and VerifyAttribute already use
+typedef struct {
+	AttributeID  id;
+	char        *name;  // owned, NUL terminated
+} EffectsV3AttrRef;
+
 // a single decoded record
 //
 // 'opcode' selects which of the remaining fields carry meaning - see the table
@@ -226,11 +236,55 @@ typedef struct {
 	SIValue *values;    // owned; each freed with SIValue_Free
 	uint64_t n_values;  // count * n_attrs
 
-	// records 9 and 10 only
-	SchemaType  schema_type;  // ADD_SCHEMA
-	int         schema_id;    // ADD_SCHEMA - LabelID or RelationID
+	// records 9 and 10, and reused by 11-14 for the schema they name
+	//
+	// 'schema_type', 'schema_id' and 'name' carry the same things for the DDL
+	// records that they carry for ADD_SCHEMA - a schema's type, its id and its
+	// name - so they are shared rather than duplicated under an index-specific
+	// spelling. The id is authoritative and the name is the cross-check, which
+	// is what VerifySchema already expects.
+	SchemaType  schema_type;  // ADD_SCHEMA, and 11-14
+	int         schema_id;    // LabelID or RelationID
 	AttributeID attr_id;      // ADD_ATTRIBUTE
 	char       *name;         // owned, NUL terminated
+
+	//--------------------------------------------------------------------------
+	// records 11-14 only - index and constraint DDL
+	//--------------------------------------------------------------------------
+
+	// IndexFieldType, and it is a BIT FLAG SET rather than a discriminant: a
+	// range index is NUMERIC|GEO|STR == 0x0E, so it must be tested with & and
+	// never compared for equality
+	uint32_t field_type;
+
+	// ConstraintType, and GraphEntityType which is 1-BASED because
+	// GETYPE_UNKNOWN takes 0 - a node is 1, not 0
+	uint32_t constraint_type;
+	uint32_t entity_type;
+
+	// ConstraintStatus, CREATE_CONSTRAINT only
+	//
+	// the one place v3 deliberately carries MORE than C. C sends no status, so
+	// a C replica cannot tell an enforcing constraint from one still building;
+	// a replica never validates, so the announcement is the only signal, and it
+	// is what makes the second announcement converge on the first rather than
+	// duplicate it. DROP_CONSTRAINT omits it and apply never reads it.
+	uint32_t status;
+	bool     has_status;
+
+	// the counted (attribute id, name) list both DDL families carry
+	//
+	// index fields and constraint properties are the same shape, so one array
+	// serves both. THE COUNT WIDTHS DIFFER on the wire though: an index field
+	// count is a u16 and a constraint property count is a u8.
+	EffectsV3AttrRef *attrs_ref;    // owned
+	uint16_t          n_attrs_ref;
+
+	// CREATE_INDEX only. Absent on a drop, which is why the flag exists rather
+	// than leaning on a null SIValue - a map that decoded to nothing and a map
+	// that was never sent are different faults.
+	SIValue options;
+	bool    has_options;
 } EffectsV3Record;
 
 // a decoded payload: the header, then the records in apply order
