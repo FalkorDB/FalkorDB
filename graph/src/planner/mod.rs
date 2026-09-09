@@ -2974,12 +2974,25 @@ impl Planner {
             // CREATE: only create entities not already bound.
             QueryIR::Create(pattern) => {
                 let filtered = pattern.filter_visited(&self.visited);
+                // Capture the named paths before `visited` is updated below:
+                // `filter_visited` drops any path whose var is already visited,
+                // and the loop that follows would mark this clause's own paths.
+                let paths = pattern.paths().to_vec();
                 // Add created variables to visited so subsequent clauses
                 // (e.g. FOREACH body) know they're already bound.
                 for v in pattern.variables() {
                     self.visited.insert((v.id, v.scope_id));
                 }
-                tree!(IR::Create(Box::new(filtered)))
+                let create = tree!(IR::Create(Box::new(filtered)));
+                // A named path in CREATE (`CREATE p=(n) RETURN p`) binds `p` as
+                // Type::Path in the binder, but nothing materializes the value
+                // unless PathBuilder runs over the created entities — mirroring
+                // what the MERGE branch above does.
+                if paths.is_empty() {
+                    create
+                } else {
+                    tree!(IR::PathBuilder(paths), create)
+                }
             }
             QueryIR::Delete {
                 exprs,
