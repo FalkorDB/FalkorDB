@@ -1,0 +1,15 @@
+{
+  "case": "rec_set_labels",
+  "version": 3,
+  "flags": 0,
+  "bytes": 27,
+  "records": [
+    {
+      "opcode": 7,
+      "record": "SET_LABELS",
+      "count": 3,
+      "ids": ["1", "2", "3"],
+      "labels": ["4", "6"]
+    }
+  ]
+}

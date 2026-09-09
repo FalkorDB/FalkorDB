@@ -1,0 +1,14 @@
+{
+  "case": "rec_add_attribute",
+  "version": 3,
+  "flags": 0,
+  "bytes": 21,
+  "records": [
+    {
+      "opcode": 10,
+      "record": "ADD_ATTRIBUTE",
+      "id": 12,
+      "name": "name"
+    }
+  ]
+}

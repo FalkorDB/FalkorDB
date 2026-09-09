@@ -1,0 +1,15 @@
+{
+  "case": "rec_add_schema_edge",
+  "version": 3,
+  "flags": 0,
+  "bytes": 28,
+  "records": [
+    {
+      "opcode": 9,
+      "record": "ADD_SCHEMA",
+      "schema_type": 1,
+      "id": 1,
+      "name": "KNOWS"
+    }
+  ]
+}

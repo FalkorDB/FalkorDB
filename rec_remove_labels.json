@@ -1,0 +1,15 @@
+{
+  "case": "rec_remove_labels",
+  "version": 3,
+  "flags": 0,
+  "bytes": 23,
+  "records": [
+    {
+      "opcode": 8,
+      "record": "REMOVE_LABELS",
+      "count": 3,
+      "ids": ["1", "2", "3"],
+      "labels": ["4"]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "case": "value_width_4_bytes",
+  "version": 3,
+  "flags": 0,
+  "bytes": 22,
+  "records": [
+    {
+      "opcode": 5,
+      "record": "DELETE_NODE",
+      "count": 8,
+      "ids": ["65536", "65537", "65538", "65539", "65540", "65541", "65542", "65543"],
+      "labels": []
+    }
+  ]
+}
