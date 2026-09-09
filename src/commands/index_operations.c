@@ -454,7 +454,11 @@ static void index_create
 	ASSERT(result_set != NULL);
 
 	for(uint i = 0; i < nfields; i++) {
-		idx = GraphHub_AddIndex(gc, label, fields[i], et, idx_type, options, true);
+		// one map for both: the CREATE INDEX ... OPTIONS syntax carries exactly
+		// what the statement wrote, with nothing pre-filled, so what the index
+		// is built from and what was stated are the same thing here
+		idx = GraphHub_AddIndex(gc, label, fields[i], et, idx_type, options,
+				options, true);
 		if(idx != NULL) {
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {
