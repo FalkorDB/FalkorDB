@@ -1164,3 +1164,58 @@ class testVectorZeroDimensionRefused(_RefusedCase):
             "vector index with dimension 0",
             expect_log="dimension 0")
 
+class testConstraintStatusIsAdoptedNotRecomputed():
+    """The replica replays the primary's constraint status; it does not scan.
+
+    Before this, the record's ConstraintStatus was decoded and never read - the
+    apply branched on a LOCALLY computed status and called Constraint_Enforce,
+    which scans every entity the constraint governs. That is redoing work the
+    wire already answered.
+
+    ASSERTING THE END STATE NORMALLY CANNOT SEE THIS, which is why it survived:
+    on clean data a local scan reaches the same answer the primary did, so the
+    two designs are indistinguishable. The instrument that separates them is an
+    instruction count.
+
+    Except in one case, which is this test. Send a status the local data does
+    NOT support - CT_FAILED (2) over data that would validate cleanly. A
+    replica that adopts reports FAILED; one that re-derives reports ACTIVE.
+    Now the end state distinguishes them.
+    """
+
+    CT_ACTIVE, CT_PENDING, CT_FAILED = 0, 1, 2
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        # two nodes with DISTINCT titles: a unique constraint over them would
+        # validate cleanly, so a re-deriving replica would call it ACTIVE
+        self.graph.query("CREATE (:P {title: 'a'}), (:P {title: 'b'})")
+
+    def _send(self, buf):
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, buf)
+
+    def _status(self):
+        res = self.graph.query(
+            "CALL db.constraints() YIELD status RETURN status")
+        return [row[0] for row in res.result_set]
+
+    def test01_a_failed_status_is_adopted_over_clean_data(self):
+        # the supporting index a unique constraint needs, as a master sends it
+        self._send(payload(rec_create_index(
+            schema_type = SCHEMA_NODE, label_id = 0, label = "P",
+            field_type  = 0x0E, fields = [(0, "title")],
+            options     = index_options())))
+
+        self._send(payload(rec_create_constraint(
+            ct = 0, et = 1, status = self.CT_FAILED,
+            label_id = 0, label = "P", props = [(0, "title")])))
+
+        # the data is clean, so a replica that scanned would say OPERATIONAL.
+        # Adopting the primary's answer means FAILED.
+        self.env.assertEquals(self._status(), ["FAILED"])
+
