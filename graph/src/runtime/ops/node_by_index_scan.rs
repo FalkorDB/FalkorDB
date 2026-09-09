@@ -35,6 +35,7 @@ use crate::runtime::{
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 
 use super::batched_result_emitter::{BatchedResultEmitter, RowIter};
+use crate::runtime::orderset::OrderSet;
 
 pub struct NodeByIndexScanOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
@@ -50,6 +51,10 @@ pub struct NodeByIndexScanOp<'a> {
     /// performs the shared pack-and-gather emit.
     emitter: BatchedResultEmitter<'a, NodeId>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
+    /// The pattern named no label and the optimizer borrowed one that covered
+    /// every live node, so this scan may only use the index while that still
+    /// holds. See [`coverage_holds`](Self::coverage_holds).
+    assumed_universal_label: bool,
 }
 
 impl<'a> NodeByIndexScanOp<'a> {
@@ -60,6 +65,7 @@ impl<'a> NodeByIndexScanOp<'a> {
         index: &'a Arc<String>,
         query: &'a IndexQuery<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
+        assumed_universal_label: bool,
     ) -> Self {
         let extra_labels = if node_pattern.labels.len() > 1 {
             Some(node_pattern.labels.iter().skip(1).cloned().collect())
@@ -75,7 +81,29 @@ impl<'a> NodeByIndexScanOp<'a> {
             extra_labels,
             emitter: BatchedResultEmitter::new(node_pattern.alias.id),
             idx,
+            assumed_universal_label,
         }
+    }
+
+    /// Whether the borrowed label still covers every live node.
+    ///
+    /// `utilize_index` may rewrite an unlabelled pattern into an index scan on
+    /// a label that `Graph::universal_label` proved every node carried. That is
+    /// a fact about the *data*, but plans are cached against `schema_version`,
+    /// and creating one unlabelled node falsifies it without bumping that. So
+    /// the assumption is re-proved here, once per execution, against the
+    /// snapshot this query actually runs on.
+    ///
+    /// `true` when no assumption was made, so the common path costs nothing.
+    fn coverage_holds(&self) -> bool {
+        if !self.assumed_universal_label {
+            return true;
+        }
+        self.node_pattern
+            .labels
+            .iter()
+            .next()
+            .is_some_and(|label| self.runtime.g.borrow().is_universal_label(label))
     }
 
     fn evaluate_index_query<R: crate::runtime::row::RowView + ?Sized>(
@@ -274,6 +302,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
     type Item = Result<Batch<'a>, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let coverage = self.coverage_holds();
         loop {
             // For each active parent row, evaluate the index query and queue the
             // matching node ids (falling back to a label scan when the index
@@ -288,7 +317,14 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 // Check if the index can satisfy this query. If not
                 // (e.g. non-indexable value types), fall back to a
                 // label scan.
-                let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
+                let base: Box<dyn Iterator<Item = NodeId>> = if !coverage {
+                    // The borrowed label no longer covers the whole graph, so
+                    // neither the index nor a scan of that label would see every
+                    // candidate. Widen to all live nodes; `utilize_index` kept the
+                    // original predicate above this scan precisely so that this
+                    // fallback filters rather than over-returns.
+                    Box::new(self.runtime.g.borrow().get_nodes(&OrderSet::default(), 0))
+                } else if Self::can_utilize_index(&q) {
                     Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q))
                 } else {
                     Box::new(
@@ -298,7 +334,12 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                             .get_nodes(&self.node_pattern.labels, 0),
                     )
                 };
-                let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match &self.extra_labels {
+                let extra = if coverage {
+                    self.extra_labels.as_ref()
+                } else {
+                    None
+                };
+                let iter: Box<dyn Iterator<Item = NodeId> + 'a> = match extra {
                     Some(extra) => {
                         let extra = extra.clone();
                         let runtime = self.runtime;

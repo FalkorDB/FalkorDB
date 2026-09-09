@@ -115,3 +115,4 @@ tests/flow/test_varlength_traversal
 tests/flow/test_vecsim.py
 tests/flow/test_wcc.py
 tests/flow/test_with_clause
+tests/flow/test_unlabeled_index_scan.py

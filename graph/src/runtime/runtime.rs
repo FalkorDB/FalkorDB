@@ -915,7 +915,12 @@ impl<'a> Runtime<'a> {
                     idx,
                 )))
             }
-            IR::NodeByIndexScan { node, index, query } => {
+            IR::NodeByIndexScan {
+                node,
+                index,
+                query,
+                assumed_universal_label,
+            } => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::NodeByIndexScan(NodeByIndexScanOp::new(
                     self,
@@ -924,6 +929,7 @@ impl<'a> Runtime<'a> {
                     index,
                     query,
                     idx,
+                    *assumed_universal_label,
                 )))
             }
             IR::EdgeByIndexScan {

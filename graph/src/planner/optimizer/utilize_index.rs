@@ -132,7 +132,24 @@ trait IndexSubject: Clone {
     /// (`NodeByLabelScan` for nodes, `CondTraverse` for edges). Returns
     /// `None` if the variant doesn't match or if `labels` / `types` is
     /// empty (no scan target to push the filter into).
-    fn match_scan_source(ir: &IR) -> Option<(Self, Self::Metadata)>;
+    ///
+    /// Takes `graph` because for nodes an *unlabelled* pattern is still a
+    /// candidate when some label covers the whole graph — see the node impl.
+    fn match_scan_source(
+        ir: &IR,
+        graph: &Graph,
+    ) -> Option<(Self, Self::Metadata)>;
+
+    /// Whether the label being scanned was borrowed from
+    /// `Graph::universal_label` rather than named by the pattern.
+    ///
+    /// When it was, the parent `Filter` must be retained: the runtime re-checks
+    /// the coverage proof and falls back to an all-node scan if it no longer
+    /// holds, and that fallback is only correct because the predicate is still
+    /// there to apply. Only nodes can borrow a label.
+    fn borrowed_label(_metadata: Self::Metadata) -> bool {
+        false
+    }
 
     /// Build the replacement IR after a successful pushdown
     /// (`NodeByIndexScan` or `EdgeByIndexScan`).
@@ -153,7 +170,9 @@ trait IndexSubject: Clone {
 }
 
 impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
-    type Metadata = ();
+    /// Whether the scanned label was borrowed from `universal_label` because
+    /// the pattern named none.
+    type Metadata = bool;
 
     fn alias(&self) -> &Variable {
         &self.alias
@@ -182,25 +201,55 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
     ) -> Scan<Self> {
         try_distance_index_scan(subject, attr, filter, attr_side, constant_node, label)
     }
-    fn match_scan_source(ir: &IR) -> Option<(Self, Self::Metadata)> {
-        let IR::NodeByLabelScan { node } = ir else {
-            return None;
+    fn match_scan_source(
+        ir: &IR,
+        graph: &Graph,
+    ) -> Option<(Self, Self::Metadata)> {
+        let node = match ir {
+            IR::NodeByLabelScan { node } | IR::AllNodeScan(node) => node,
+            _ => return None,
         };
-        if node.labels.is_empty() {
-            return None;
+        if !node.labels.is_empty() {
+            return Some((node.clone(), false));
         }
-        Some((node.clone(), ()))
+        // An unlabelled pattern can still reach an index, but only by borrowing
+        // a label that *every* live node carries: `MATCH (n)` and `MATCH (n:L)`
+        // then select the same set. Without this, `MATCH (n) WHERE n.id = $x`
+        // degrades to an all-node scan plus a per-node property fetch even when
+        // a perfectly good index exists — measured at 1.9M instructions against
+        // 384k for the same predicate written with the label.
+        //
+        // Borrowing a non-universal label would be wrong, not just narrower: a
+        // node can carry `id` without carrying the label. `universal_label`
+        // proves coverage rather than guessing it, and the flag returned here
+        // makes the runtime re-prove it (the proof is about data, and plans
+        // outlive the data they were compiled against).
+        let label = graph.universal_label()?;
+        let mut labels = OrderSet::default();
+        labels.insert(label);
+        Some((
+            Arc::new(QueryNode::new(
+                node.alias.clone(),
+                labels,
+                node.attrs.clone(),
+            )),
+            true,
+        ))
+    }
+    fn borrowed_label(metadata: bool) -> bool {
+        metadata
     }
     fn build_scan_ir(
         self,
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
-        _metadata: (),
+        metadata: bool,
     ) -> IR {
         IR::NodeByIndexScan {
             node: self,
             index,
             query,
+            assumed_universal_label: metadata,
         }
     }
     fn with_primary_label(
@@ -252,7 +301,10 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
     ) -> Scan<Self> {
         None
     }
-    fn match_scan_source(ir: &IR) -> Option<(Self, Self::Metadata)> {
+    fn match_scan_source(
+        ir: &IR,
+        _graph: &Graph,
+    ) -> Option<(Self, Self::Metadata)> {
         let IR::CondTraverse {
             relationship,
             transposed,
@@ -962,8 +1014,9 @@ fn rewrite_until_stable<F>(
 fn match_scan_with_filter<T: IndexSubject>(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
+    graph: &Graph,
 ) -> Option<(T, QueryExpr<Variable>, T::Metadata)> {
-    let (subject, metadata) = T::match_scan_source(plan.node(idx).data())?;
+    let (subject, metadata) = T::match_scan_source(plan.node(idx).data(), graph)?;
     let IR::Filter(filter) = plan.node(idx).parent()?.data() else {
         return None;
     };
@@ -1002,7 +1055,11 @@ fn apply_filter_pushdown<T: IndexSubject>(
     original_filter: &QueryExpr<Variable>,
     metadata: T::Metadata,
 ) {
-    let keep_filter = needs_post_filter(original_filter, subject.alias().id);
+    // A borrowed label always keeps the filter: the runtime may fall back to an
+    // all-node scan when the coverage proof no longer holds, and only the
+    // retained predicate makes that fallback correct instead of merely wider.
+    let keep_filter =
+        T::borrowed_label(metadata) || needs_post_filter(original_filter, subject.alias().id);
     let subject = reorder_subject_labels(subject, &index);
     let scan_ir = subject.build_scan_ir(index, Arc::new(query), metadata);
     let mut op = plan.node_mut(idx);
@@ -1044,7 +1101,10 @@ fn apply_inline_rewrite<T: IndexSubject>(
     inline_filter: DynTree<ExprIR<Variable>>,
     metadata: T::Metadata,
 ) {
-    if needs_inline_post_filter(&inline_filter) {
+    // Same reasoning as in `apply_filter_pushdown`: a borrowed label needs the
+    // predicate kept above the scan so the runtime's all-node fallback stays
+    // correct.
+    if T::borrowed_label(metadata) || needs_inline_post_filter(&inline_filter) {
         plan.node_mut(idx)
             .push_parent(IR::Filter(Arc::new(inline_filter.clone())));
     }
@@ -1065,7 +1125,7 @@ fn try_index_rewrite<T: IndexSubject>(
     idx: NodeIdx<Dyn<IR>>,
     graph: &Graph,
 ) -> bool {
-    if let Some((subject, filter, metadata)) = match_scan_with_filter::<T>(plan, idx)
+    if let Some((subject, filter, metadata)) = match_scan_with_filter::<T>(plan, idx, graph)
         && let Some((label, query, remaining)) = try_filter_pushdown(&subject, &filter, graph)
     {
         apply_filter_pushdown(
@@ -1074,7 +1134,7 @@ fn try_index_rewrite<T: IndexSubject>(
         return true;
     }
 
-    if let Some((subject, metadata)) = T::match_scan_source(plan.node(idx).data())
+    if let Some((subject, metadata)) = T::match_scan_source(plan.node(idx).data(), graph)
         && let Some((_, label, attr, inline_filter)) = get_inline_attr_index(graph, &subject)
     {
         apply_inline_rewrite(plan, idx, subject, label, attr, inline_filter, metadata);

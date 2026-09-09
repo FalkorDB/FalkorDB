@@ -123,6 +123,17 @@ pub enum IR {
         node: Arc<QueryNode<Arc<String>, Variable>>,
         index: Arc<String>,
         query: Arc<IndexQuery<QueryExpr<Variable>>>,
+        /// Set when the pattern named no label and the optimizer borrowed one
+        /// that `Graph::universal_label` proved every live node carries, so an
+        /// unlabelled point lookup could reach an index.
+        ///
+        /// That proof is a property of the *data*, and plans are cached against
+        /// `schema_version`, which adding an unlabelled node does not bump. So
+        /// the runtime re-checks it per execution and falls back to an all-node
+        /// scan when it no longer holds; the optimizer keeps the original
+        /// `Filter` in place for that case, which is why the fallback is
+        /// correct rather than merely wider.
+        assumed_universal_label: bool,
     },
     /// Scan edges using an index, replacing CondTraverse when a filter
     /// can be pushed into the edge index.
@@ -565,8 +576,20 @@ impl Display for IR {
             Self::IncludePending { node } => {
                 write!(f, "Include Pending | {node}")
             }
-            Self::NodeByIndexScan { node, .. } => {
-                write!(f, "Node By Index Scan | {node}")
+            Self::NodeByIndexScan {
+                node,
+                assumed_universal_label,
+                ..
+            } => {
+                if *assumed_universal_label {
+                    // Bracketed inside the existing argument segment rather than
+                    // added as another `|` field: clients split an explain line on
+                    // `|` and keep the first argument, so a new segment would be
+                    // silently dropped (and would change a stable output shape).
+                    write!(f, "Node By Index Scan | {node} [universal label]")
+                } else {
+                    write!(f, "Node By Index Scan | {node}")
+                }
             }
             Self::EdgeByIndexScan {
                 relationship: rel, ..

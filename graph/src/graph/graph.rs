@@ -982,6 +982,62 @@ impl Graph {
         self.relationship_count
     }
 
+    /// A label carried by **every** live node, if one exists.
+    ///
+    /// `MATCH (n)` and `MATCH (n:L)` select the same set when `L` is universal,
+    /// so a pattern that names no label can borrow `L` and reach `L`'s indexes
+    /// instead of degrading to an all-node scan plus a filter. That is the only
+    /// route by which an unlabelled point lookup can use an index at all:
+    /// borrowing a *non*-universal label would silently drop nodes that carry
+    /// the property without carrying the label.
+    ///
+    /// Each label matrix is diagonal, so a node contributes at most one entry
+    /// and `nvals == node_count` is exact proof of coverage rather than a
+    /// heuristic — it cannot be reached by two labels splitting the graph, and
+    /// `delete_nodes` clears a deleted node's label entries, so a stale entry
+    /// cannot inflate the count either.
+    ///
+    /// O(number of labels): `nvals` is O(1) per label once its pending work is
+    /// applied. Returns `None` for an empty graph, where there is nothing to
+    /// optimize.
+    ///
+    /// **This is a property of the data, not of the schema**, so a plan built on
+    /// it must re-check it before trusting it — adding one unlabelled node
+    /// falsifies it without bumping `schema_version`, and query plans are cached
+    /// against `schema_version`. See `IR::NodeByIndexScan::assumed_universal_label`.
+    #[must_use]
+    pub fn universal_label(&self) -> Option<Arc<String>> {
+        if self.node_count == 0 {
+            return None;
+        }
+        self.node_labels
+            .iter()
+            .enumerate()
+            .find(|(idx, _)| {
+                self.labels_matices
+                    .get(*idx)
+                    .is_some_and(|m| m.nvals() == self.node_count)
+            })
+            .map(|(_, label)| label.clone())
+    }
+
+    /// Whether `label` is still carried by every live node.
+    ///
+    /// The runtime re-check for a plan produced under
+    /// [`universal_label`](Self::universal_label); see that method for why a
+    /// re-check is required rather than optional.
+    #[must_use]
+    pub fn is_universal_label(
+        &self,
+        label: &str,
+    ) -> bool {
+        self.node_count != 0
+            && self
+                .get_label_id(label)
+                .and_then(|id| self.labels_matices.get(id.0))
+                .is_some_and(|m| m.nvals() == self.node_count)
+    }
+
     /// Number of nodes with the given label (by label index).
     #[must_use]
     pub fn label_node_count_by_idx(
@@ -4229,6 +4285,121 @@ mod attr_id_space_tests {
 
     fn attr(s: &str) -> Arc<String> {
         Arc::new(s.to_string())
+    }
+
+    /// Build a graph of `n` nodes and give the first `labeled` of them `label`.
+    fn graph_with_labeled(
+        name: &str,
+        n: usize,
+        labeled: usize,
+        label: &str,
+    ) -> Graph {
+        let mut g = Graph::new(64, 64, 1, 0, name);
+        let ids = g.reserve_nodes(n).expect("reserve");
+        let set: RoaringTreemap = ids.iter().map(|id| id.0).collect();
+        g.create_nodes(&set);
+        if labeled > 0 {
+            let label_id = g.get_label_id_mut(label);
+            let rows: Vec<u64> = ids[..labeled].iter().map(|id| id.0).collect();
+            let cols: Vec<u64> = vec![label_id.0 as u64; labeled];
+            let mut docs = FxHashMap::default();
+            g.set_nodes_labels_bulk(&rows, &cols, &mut docs, true);
+        }
+        g
+    }
+
+    /// A label every node carries is universal; one that covers only part of the
+    /// graph is not.
+    ///
+    /// This is the invariant the unlabelled-pattern index rewrite rests on. If
+    /// a partially-covering label were reported universal, `MATCH (n) WHERE
+    /// n.p = v` would be answered from that label's index and would silently
+    /// drop nodes carrying `p` without the label.
+    #[test]
+    fn universal_label_requires_covering_every_live_node() {
+        ensure_init();
+
+        let g = graph_with_labeled("universal_all", 10, 10, "Person");
+        assert_eq!(
+            g.universal_label().as_deref().map(String::as_str),
+            Some("Person"),
+            "a label on every node is universal"
+        );
+        assert!(g.is_universal_label("Person"));
+
+        let g = graph_with_labeled("universal_partial", 10, 9, "Person");
+        assert_eq!(
+            g.universal_label(),
+            None,
+            "one unlabelled node out of ten must defeat the proof"
+        );
+        assert!(!g.is_universal_label("Person"));
+
+        let g = graph_with_labeled("universal_none", 10, 0, "Person");
+        assert_eq!(
+            g.universal_label(),
+            None,
+            "no labels at all is not universal"
+        );
+    }
+
+    /// An empty graph has no universal label, and an unknown label is never one.
+    ///
+    /// Reporting a universal label for an empty graph would be vacuously true
+    /// but useless, and it would let a plan be built on a proof that the very
+    /// first `CREATE` invalidates.
+    #[test]
+    fn universal_label_edge_cases() {
+        ensure_init();
+        let g = Graph::new(64, 64, 1, 0, "universal_empty");
+        assert_eq!(g.universal_label(), None);
+        assert!(!g.is_universal_label("Person"));
+
+        let g = graph_with_labeled("universal_unknown", 4, 4, "Person");
+        assert!(
+            !g.is_universal_label("Company"),
+            "a label the graph has never seen is not universal"
+        );
+    }
+
+    /// Deleting nodes must not leave a label looking universal, or wider.
+    ///
+    /// `nvals == node_count` is only exact proof while a deleted node's label
+    /// entries are cleared. `delete_nodes` does clear them; this pins that,
+    /// because if it stopped doing so the count could match by coincidence
+    /// while a live node lacked the label.
+    #[test]
+    fn universal_label_survives_deletes() {
+        ensure_init();
+        let mut g = graph_with_labeled("universal_delete", 10, 5, "Person");
+        assert_eq!(g.universal_label(), None, "half-labelled to begin with");
+
+        // Drop the five unlabelled nodes; the label now covers what remains.
+        let doomed: RoaringTreemap = (5..10).collect();
+        let mut remove_docs = FxHashMap::default();
+        g.delete_nodes(&doomed, &mut remove_docs).expect("delete");
+        assert_eq!(
+            g.universal_label().as_deref().map(String::as_str),
+            Some("Person"),
+            "after the unlabelled nodes go, the label covers every live node"
+        );
+
+        // And the converse: dropping labelled nodes must not leave stale
+        // entries that keep the count looking right.
+        let mut g = graph_with_labeled("universal_delete2", 10, 10, "Person");
+        let doomed: RoaringTreemap = (0..5).collect();
+        let mut remove_docs = FxHashMap::default();
+        g.delete_nodes(&doomed, &mut remove_docs).expect("delete");
+        assert!(
+            g.is_universal_label("Person"),
+            "five live nodes, five label entries"
+        );
+        assert_eq!(g.node_count(), 5);
+        assert_eq!(
+            g.label_node_count_by_idx(0),
+            5,
+            "a deleted node's label entry must be gone, not stale"
+        );
     }
 
     /// A name has one id, whichever kind of entity introduced it.
