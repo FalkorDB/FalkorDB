@@ -228,7 +228,7 @@ the segment-level checks. `Segment::decode` does reject `count == 0` and
 record today.** Verified against `graph/src/effects/v3/id_list.rs`. Segment-level
 and record-level are different checks and only the first exists.
 
-Measured across all 37 cases, FIVE blocks now have both forms:
+Measured across all 39 cases, FIVE blocks now have both forms:
 
 | block | present | empty |
 | --- | ---: | ---: |
@@ -286,7 +286,7 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 
 ## Cases
 
-37 cases.
+39 cases, mirrored from `origin/effects-v3-corpus`.
 
 | case | records | bytes |
 | --- | --- | ---: |
@@ -307,7 +307,9 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 | `rec_create_constraint` | 1 | 53 |
 | `rec_create_edge` | 1 | 100 |
 | `rec_create_index` | 1 | 69 |
+| `rec_create_index_text_partial` | 1 | 73 |
 | `rec_create_index_vector` | 1 | 99 |
+| `rec_create_index_vector_partial` | 1 | 75 |
 | `rec_create_node` | 1 | 92 |
 | `rec_delete_edge` | 1 | 35 |
 | `rec_delete_node` | 1 | 31 |

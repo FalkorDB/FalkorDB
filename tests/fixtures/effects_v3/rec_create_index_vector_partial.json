@@ -1,0 +1,18 @@
+{
+  "case": "rec_create_index_vector_partial",
+  "version": 3,
+  "flags": 0,
+  "bytes": 75,
+  "records": [
+    {
+      "opcode": 11,
+      "record": "CREATE_INDEX",
+      "schema_type": 0,
+      "label_id": 0,
+      "label": "P",
+      "field_type": "0x0010",
+      "fields": ["0=embedding"],
+      "options": {"vector": {"dimension": 8, "simFunc": 1}}
+    }
+  ]
+}
