@@ -7,6 +7,7 @@
 
 #include "effects.h"
 #include "effects_bytes.h"
+#include "effects_v3_group.h"
 
 #include <stdio.h>
 
@@ -45,6 +46,15 @@ void EffectsBuffer_WriteSIValue
 void EffectsBuffer_IncEffectCount
 (
 	EffectsBuffer *buff
+);
+
+// the v3 accumulator this buffer is filling, or NULL when it emits v2
+//
+// lets the per-effect writers route into v3 without EffectsBuffer ceasing to be
+// opaque to them
+EffectsV3Grouping *EffectsBuffer_V3
+(
+	const EffectsBuffer *eb  // effects-buffer
 );
 
 // wrap a byte sink the caller owns as an effects-buffer
