@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects_v3.h"
 #include "effects_v3_stream.h"
+#include "effects_compress.h"
 #include "../util/wire_string.h"
 #include "../index/index_field.h"
 #include "../util/rmalloc.h"
@@ -1490,7 +1491,8 @@ void EffectsV3_RecordsFree
 // committing to decode anything.
 static EffectsV3Status _ReadHeader
 (
-	FILE *stream
+	FILE *stream,
+	uint8_t *flags_out   // [output] the flags byte the payload declared
 ) {
 	uint8_t version ;
 	if (!_ReadU8 (stream, &version)) {
@@ -1537,8 +1539,12 @@ static EffectsV3Status _ReadHeader
 	//     cross-check. A ~100 byte frame of zeros expands to gigabytes, so
 	//     bound the output first, then verify the expanded length equals
 	//     plain_len, then check the CRC-32 over the plaintext. That order.
-	if (flags & FLAG_COMPRESSED) {
-		return EFFECTS_V3_UNSUPPORTED_FLAGS ;
+	// compression is NOT refused here any more. This function parses the
+	// header; whether a compressed payload can be honoured is a question about
+	// what the caller can do with it, and EffectsV3_ReaderOpen is the only
+	// caller and the only place that can inflate one.
+	if (flags_out != NULL) {
+		*flags_out = flags ;
 	}
 
 	return EFFECTS_V3_OK ;
@@ -1569,9 +1575,11 @@ EffectsV3Status EffectsV3_ReaderOpen
 ) {
 	ASSERT (r != NULL) ;
 
-	r->stream = NULL ;
-	r->n      = n ;
-	r->status = EFFECTS_V3_OK ;
+	r->stream    = NULL ;
+	r->n         = n ;
+	r->status    = EFFECTS_V3_OK ;
+	r->plain     = NULL ;
+	r->plain_len = 0 ;
 
 	if (buff == NULL || n == 0) {
 		r->status = EFFECTS_V3_TRUNCATED ;
@@ -1584,7 +1592,66 @@ EffectsV3Status EffectsV3_ReaderOpen
 		return r->status ;
 	}
 
-	r->status = _ReadHeader (r->stream) ;
+	uint8_t flags = 0 ;
+	r->status = _ReadHeader (r->stream, &flags) ;
+	if (r->status != EFFECTS_V3_OK) {
+		return r->status ;
+	}
+
+	//--------------------------------------------------------------------------
+	// compression
+	//--------------------------------------------------------------------------
+
+	// A compressed payload is a zstd frame where records would be, so it has to
+	// be inflated whole before any of it can be read - the one place a payload
+	// cannot be streamed. The twelve byte prefix and the order of its checks
+	// live in EffectsV3_OpenCompressed: read exactly comp_len, refuse trailing
+	// bytes, treat plain_len as the allocation CEILING by passing it as zstd's
+	// destination capacity, then verify the expanded length, then the CRC-32
+	// over the plaintext.
+	//
+	// HERE rather than in _ReadHeader because this is the only place with all
+	// three things the inflate needs: the buffer, its length, and ownership of
+	// the stream. And because every decode path funnels through this function,
+	// one inflate site covers both the streaming and the collecting form -
+	// they cannot disagree about what a compressed payload means.
+	//
+	// The stream is re-pointed at the plaintext, which is a record stream with
+	// NO header of its own, since the header was never compressed. Everything
+	// downstream therefore reads inflated records without knowing it, and the
+	// uncompressed path is untouched.
+	//
+	// It also re-bounds every fstream_remaining check for free: those measure
+	// the stream rather than r->n, so pointing the stream at the plaintext
+	// makes them bound the inflated bytes by construction rather than by
+	// anyone remembering to update a length.
+	if (flags & FLAG_COMPRESSED) {
+		// the fault is deliberately discarded: this file has no
+		// RedisModule_Log calls by design and must not acquire one, because
+		// that symbol is a function pointer unset until module init and the
+		// unit tests reach this code directly. The shared EffectsV3Status has
+		// no compression-specific value either, so the reason collapses to
+		// MALFORMED at the boundary.
+		r->status = EffectsV3_OpenCompressed (buff + EFFECTS_V3_HEADER_LEN,
+				n - EFFECTS_V3_HEADER_LEN, &r->plain, &r->plain_len, NULL) ;
+
+		if (r->status != EFFECTS_V3_OK) {
+			return r->status ;
+		}
+
+		fclose (r->stream) ;
+		r->stream = fmemopen (r->plain, r->plain_len, "r") ;
+		if (r->stream == NULL) {
+			r->status = EFFECTS_V3_MALFORMED ;
+			return r->status ;
+		}
+
+		// kept truthful to the stream rather than left as the compressed
+		// length. Nothing reads it today, which is exactly why a struct that
+		// lies about its own length is a trap for whoever reads it next.
+		r->n = r->plain_len ;
+	}
+
 	return r->status ;
 }
 
@@ -1634,6 +1701,16 @@ void EffectsV3_ReaderClose
 	if (r->stream != NULL) {
 		fclose (r->stream) ;
 		r->stream = NULL ;
+	}
+
+	// safe to free even after a clean walk: every record owns its data, so
+	// nothing points into the plaintext. That has to hold anyway, since the
+	// uncompressed path reads from a buffer the caller may free the moment the
+	// reader is closed.
+	if (r->plain != NULL) {
+		rm_free (r->plain) ;
+		r->plain     = NULL ;
+		r->plain_len = 0 ;
 	}
 }
 
