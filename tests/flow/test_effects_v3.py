@@ -181,18 +181,37 @@ EFFECT_DROP_INDEX        = 12
 EFFECT_CREATE_CONSTRAINT = 13
 EFFECT_DROP_CONSTRAINT   = 14
 
-T_MAP = 1 << 0
+INDEX_FLD_VECTOR = 0x10
 
 
-def v_map(pairs):
-    """v3 map: u32 T_MAP, u32 n, then (u64 len + key bytes, SIValue) pairs.
+def index_options(language=None, stopwords=None, weight=None, nostem=None,
+                  phonetic=None, vector=None):
+    """CREATE_INDEX options: a TYPED BLOCK, not a map.
 
-    THE KEY IS A BARE STRING with no SIType tag - the one place v2 and v3
-    disagree about a value's framing. v2 writes a full SIValue there.
+    Each option has a PRESENCE BYTE, and absence means "the statement did not
+    say" rather than "the default" - an effect mutates an index that may
+    already exist, so writing a default where nothing was stated is what
+    produced "Can not override index configuration" on a live replica.
+
+    The text half is written whatever the field type, so a plain index carries
+    five zero bytes. Only the vector half is gated.
     """
-    out = _u32(T_MAP) + _u32(len(pairs))
-    for k, v in pairs:
-        out += _string(k) + v
+    def opt(v, enc):
+        return _u8(0) if v is None else _u8(1) + enc(v)
+
+    out  = opt(language, _string)
+    out += (_u8(0) if stopwords is None else
+            _u8(1) + _u64(len(stopwords)) + b''.join(_string(w) for w in stopwords))
+    out += opt(weight, _f64)
+    out += opt(nostem, lambda b: _u8(1 if b else 0))
+    out += opt(phonetic, _string)
+
+    if vector is not None:
+        # dimension has NO presence byte - a vector field must have one
+        out += _u64(vector["dimension"])
+        for k in ("M", "efConstruction", "efRuntime", "simFunc"):
+            out += opt(vector.get(k), _u64)
+
     return out
 
 
@@ -840,7 +859,7 @@ class testDDLDecodesButDoesNotApplyYet(_RefusedCase):
     shape of a test that survives the thing it is meant to detect.
 
     The payload here is the real v3 layout: IndexFieldType ahead of a counted
-    field list, and an options map whose key is a bare string. Decode accepts
+    field list, and a TYPED options block. Decode accepts
     it; apply has no handler for records 11-14 yet, so the buffer is refused
     there. When apply lands, this test flips to asserting the index exists.
     """
@@ -852,7 +871,7 @@ class testDDLDecodesButDoesNotApplyYet(_RefusedCase):
             label       = "L",
             field_type  = 0x0E,            # NUMERIC|GEO|STR - a bit SET
             fields      = [(0, "v")],
-            options     = v_map([("dim", v_int(4))]))
+            options     = index_options())
 
         self._refuse(payload(rec),
                      "well-formed CREATE_INDEX, apply not implemented",

@@ -206,6 +206,58 @@ typedef struct {
 	char        *name;  // owned, NUL terminated
 } EffectsV3AttrRef;
 
+// CREATE_INDEX's options, a TYPED BLOCK - not a map
+//
+// `Value::Map` has no encoding on this wire; a payload claiming T_MAP is
+// refused. Options travel in the RDB's field order, each behind a presence
+// byte:
+//
+//     u8 · string language
+//     u8 · u64 n_stopwords · string × n
+//     u8 · f64 weight
+//     u8 · u8  nostem            (1 or 0; anything else is refused)
+//     u8 · string phonetic       (algorithm code, e.g. "dm:en")
+//     if IndexFieldType & INDEX_FLD_VECTOR:
+//         u64 dimension          (NO presence byte - a vector field must have one)
+//         u8 · u64 M
+//         u8 · u64 efConstruction
+//         u8 · u64 efRuntime
+//         u8 · u64 simFunc       (0 L2, 1 IP, 2 cosine)
+//
+// THE PRESENCE BYTE IS LOAD-BEARING, and this is the part that is easy to get
+// wrong: absence means "THE STATEMENT DID NOT SAY", not "the default". An
+// effect MUTATES an index that may already exist, where the RDB writes a whole
+// one - so substituting the RDB's defaults for an absent option diverged a live
+// replica with "Can not override index configuration: Language is already set".
+//
+// The text half is written whatever the field type - five zero bytes when
+// nothing is stated - so there is ONE gate, the vector half, not two.
+typedef struct {
+	bool      has_language;
+	char     *language;            // owned
+
+	bool      has_stopwords;
+	char    **stopwords;           // owned, and each entry owned
+	uint64_t  n_stopwords;
+
+	bool      has_weight;
+	double    weight;
+
+	bool      has_nostem;
+	bool      nostem;
+
+	bool      has_phonetic;
+	char     *phonetic;            // owned
+
+	// vector half, present only when the field type has INDEX_FLD_VECTOR
+	bool      is_vector;
+	uint64_t  dimension;           // no presence byte of its own
+	bool      has_m;               uint64_t m;
+	bool      has_ef_construction; uint64_t ef_construction;
+	bool      has_ef_runtime;      uint64_t ef_runtime;
+	bool      has_sim_func;        uint64_t sim_func;
+} EffectsV3IndexOptions;
+
 // a single decoded record
 //
 // 'opcode' selects which of the remaining fields carry meaning - see the table
@@ -280,11 +332,9 @@ typedef struct {
 	EffectsV3AttrRef *attrs_ref;    // owned
 	uint16_t          n_attrs_ref;
 
-	// CREATE_INDEX only. Absent on a drop, which is why the flag exists rather
-	// than leaning on a null SIValue - a map that decoded to nothing and a map
-	// that was never sent are different faults.
-	SIValue options;
-	bool    has_options;
+	// CREATE_INDEX only
+	EffectsV3IndexOptions options;
+	bool                  has_options;
 } EffectsV3Record;
 
 // a decoded payload: the header, then the records in apply order
