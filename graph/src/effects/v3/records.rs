@@ -188,7 +188,7 @@ impl IndexOptions {
     ) {
         debug_assert_eq!(
             self.vector.is_some(),
-            field_type & index_field_type::INDEX_FLD_VECTOR != 0,
+            field_type & wire_tag::INDEX_FLD_VECTOR != 0,
             "vector options must be present exactly when the field type says so"
         );
         put_opt(buf, self.language.as_ref(), |b, s| b.string(s));
@@ -201,7 +201,7 @@ impl IndexOptions {
         put_opt(buf, self.weight.as_ref(), |b, w| b.f64(*w));
         put_opt(buf, self.nostem.as_ref(), |b, n| b.u8(u8::from(*n)));
         put_opt(buf, self.phonetic.as_ref(), |b, s| b.string(s));
-        if field_type & index_field_type::INDEX_FLD_VECTOR != 0 {
+        if field_type & wire_tag::INDEX_FLD_VECTOR != 0 {
             let v = self
                 .vector
                 .unwrap_or_else(|| VectorOptions::of_dimension(0));
@@ -242,7 +242,7 @@ impl EffectDecodeSized<3> for IndexOptions {
             }),
         })?;
         let phonetic = take_opt(r, |r| r.string())?;
-        let vector = if field_type & index_field_type::INDEX_FLD_VECTOR == 0 {
+        let vector = if field_type & wire_tag::INDEX_FLD_VECTOR == 0 {
             None
         } else {
             Some(VectorOptions {
