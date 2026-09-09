@@ -36,8 +36,8 @@
 #include "configuration/reconf_handler.h"
 #include "serializers/graphcontext_type.h"
 #include "arithmetic/arithmetic_expression.h"
-#include "serializers/encoder/v19/encode_v19.h"
-#include "serializers/decoders/current/v19/decode_v19.h"
+#include "serializers/encoder/v20/encode_v20.h"
+#include "serializers/decoders/current/v20/decode_v20.h"
 #include "serializers/encoder/encode_graph.h"
 #include "serializers/decoders/decode_graph.h"
 

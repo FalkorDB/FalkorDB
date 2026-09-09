@@ -249,7 +249,7 @@ typedef struct {
 
 // GraphBLAS IndexUnaryOp callback: reads the weight attribute off the edge(s)
 // at (i,j) and writes it to *z. a tensor cell is either a scalar EdgeID
-// (SCALAR_ENTRY) or, for parallel edges, a GrB_Vector of EdgeIDs (AS_VECTOR) --
+// (IS_SCALAR_ENTRY) or, for parallel edges, a GrB_Vector of EdgeIDs (AS_VECTOR) --
 // in the latter case the cheapest parallel edge wins.
 static void _get_edge_weight
 (
@@ -261,7 +261,7 @@ static void _get_edge_weight
 ) {
 	uint64_t entry = *(const uint64_t *)x ;
 
-	if (SCALAR_ENTRY (entry)) {
+	if (IS_SCALAR_ENTRY (entry)) {
 		*z = _edge_weight (ctx->g, ctx->attr_id, (EdgeID)entry) ;
 		return ;
 	}
