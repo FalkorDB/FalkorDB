@@ -264,9 +264,14 @@ impl EffectDecodeSized<3> for IndexOptions {
     }
 }
 
-/// The smallest an `AttrRef` can encode to: a 2-byte attribute id, then the
-/// 8-byte length of a name whose bytes may all still be ahead.
-const MIN_ATTR_REF_BYTES: usize = 10;
+/// The smallest an `AttrRef` can encode to: a 2-byte attribute id, an 8-byte
+/// name length, and the one byte that length can never go below.
+///
+/// The NUL is what makes it 11 and not 10. `EffectWrite::string` writes the
+/// terminator unconditionally, so the shortest possible name — the empty one —
+/// still costs a byte. Ten let `guard_count` accept a count a tenth higher than
+/// the buffer could hold.
+const MIN_ATTR_REF_BYTES: usize = 11;
 
 /// One attribute, by id and name — the pair every schema-bearing record carries.
 ///

@@ -226,7 +226,12 @@ mod tests {
         // A segment header with its reserved bits set, behind a well-formed
         // segment count: refused rather than masked off, so a future segment
         // shape cannot be silently misread as a range by a build predating it.
-        let buf = [1_u8, 0, 0, 0, 0xEE, 0];
+        //
+        // Three bytes after the count, not two. One segment cannot encode in
+        // fewer — header, value, count — so a shorter buffer is refused by
+        // `guard_count` before the header is ever read, and this test would be
+        // asserting the count guard rather than the encoding check.
+        let buf = [1_u8, 0, 0, 0, 0xEE, 0, 0];
         let mut r = Reader::new(&buf);
         assert_eq!(read_ids(&mut r, 1), Err(DecodeError::BadEncoding(0xEE)));
     }

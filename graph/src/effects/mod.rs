@@ -32,26 +32,6 @@ pub use error::DecodeError;
 pub use reader::Reader;
 pub use writer::EffectWrite;
 
-use std::fmt::Write as _;
-
-use atomic_refcell::AtomicRefCell;
-
-/// How much of a diverged payload the log reproduces in hex.
-///
-/// A cap rather than the whole buffer because this runs on the path where a
-/// replica is already about to resync the entire graph, and an unbounded dump
-/// would put megabytes into the server log to explain a failure the lines above
-/// it have usually already named. 2 KiB covers a typical effects payload whole
-/// — the primary only takes this path when the payload is *smaller* than
-/// shipping the query — and the total length is always reported, so a reader
-/// can see when there was more.
-const DESCRIBE_BYTE_LIMIT: usize = 2048;
-
-/// Bytes per hex line. Two hex digits each, so 64 characters of payload per
-/// line, which leaves room for the offset and the host's own prefix inside one
-/// log message.
-const DESCRIBE_BYTES_PER_LINE: usize = 32;
-
 /// Types that can write themselves into an effects payload of a given version.
 ///
 /// Mirrors `serialization::Encode<VERSION>` on the RDB side, and for the same

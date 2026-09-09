@@ -64,6 +64,13 @@ use super::*;
 /// sides of the comparison would move together. These are the numbers
 /// `docs/effects-v3.md` publishes; if the encoder stops matching them, the
 /// shape assertions below fail, which is the alarm.
+/// A single NUL byte, as a string, named rather than written.
+///
+/// Spelled this way so no control character appears in this file — a literal
+/// one makes the source unreadable in a diff and is invisible in review, which
+/// is the sort of thing this corpus exists to make visible.
+const NUL_STR: &str = "\u{0}";
+
 const KIND_RANGE: u8 = 0;
 const KIND_ASCENDING: u8 = 1;
 const KIND_REPEAT: u8 = 2;
@@ -538,6 +545,35 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
         }],
     ));
 
+    // ── a string the length field has to be trusted for ──
+    //
+    // The case that catches `strlen`. This engine stores strings containing
+    // interior NUL bytes, because openCypher's `\uXXXX` escape produces one:
+    // `RETURN size('a\u0000b')` is 3, and the value survives an RDB reload
+    // intact. So the length prefix is a byte count, and a reader that measures
+    // the payload with `strlen` instead reads this value as `a`.
+    //
+    // The spec said `uint64 len = strlen + 1`, which for this value is 2 rather
+    // than 4 — two conforming implementations, different bytes, one value. No
+    // case covered it because a `debug_assert` in `EffectWrite::string` had
+    // made such a string unencodable in exactly the builds that generate this
+    // corpus.
+    out.push((
+        "value_string_interior_nul",
+        vec![Record::CreateNode {
+            ids: IdList::from([1]),
+            labels: vec![0],
+            attr_ids: vec![0, 1],
+            rows: vec![
+                // "a\0b": three bytes, so the length field reads 4.
+                Value::String(Arc::new(String::from("a") + NUL_STR + "b")),
+                // And a value that is nothing but a terminator-looking byte,
+                // which `strlen` reports as empty.
+                Value::String(Arc::new(String::from(NUL_STR))),
+            ],
+        }],
+    ));
+
     // ── several records in one payload ──
     // Batching removes per-record framing; it never multiplies commands. A
     // decoder that stops after the first record, or that re-reads the version
@@ -649,10 +685,37 @@ fn describe_value(v: &Value) -> String {
 }
 
 /// A JSON array literal of pre-rendered scalars.
+/// Escape a string for use inside a JSON string literal.
+///
+/// The corpus's `.json` files have to parse — the far side reads them. The
+/// `value_string_interior_nul` case carries a real NUL byte, and interpolating
+/// it raw produced a file no JSON parser would accept, which also made the byte
+/// invisible in review: exactly the failure this corpus exists to prevent.
+///
+/// Control bytes become `\u00XX` rather than being dropped, so what the wire
+/// carries stays legible in the description.
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn arr<T: std::fmt::Display>(items: impl IntoIterator<Item = T>) -> String {
     let inner = items
         .into_iter()
-        .map(|i| format!("\"{i}\""))
+        .map(|i| format!("\"{}\"", json_escape(&i.to_string())))
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{inner}]")
@@ -792,13 +855,13 @@ fn describe(rec: &Record) -> Vec<(String, String)> {
                 .to_owned(),
             );
             put("id", id.to_string());
-            put("name", format!("\"{name}\""));
+            put("name", format!("\"{}\"", json_escape(name)));
         }
         Record::AddAttribute { id, name } => {
             put("opcode", "10".to_owned());
             put("record", "\"ADD_ATTRIBUTE\"".to_owned());
             put("id", id.to_string());
-            put("name", format!("\"{name}\""));
+            put("name", format!("\"{}\"", json_escape(name)));
         }
         Record::Index {
             create,
@@ -829,7 +892,7 @@ fn describe(rec: &Record) -> Vec<(String, String)> {
                 .to_owned(),
             );
             put("label_id", label_id.to_string());
-            put("label", format!("\"{label}\""));
+            put("label", format!("\"{}\"", json_escape(label)));
             // A bit set. Printed in hex so it reads as flags rather than as an
             // ordinal a reader might try to match against an enum.
             put("field_type", format!("\"{field_type:#06x}\""));
@@ -847,7 +910,9 @@ fn describe(rec: &Record) -> Vec<(String, String)> {
                             |name: &str, v: Option<String>| v.map(|s| format!("\"{name}\": {s}"));
                         parts.extend(opt(
                             "language",
-                            o.language.as_ref().map(|l| format!("\"{l}\"")),
+                            o.language
+                                .as_ref()
+                                .map(|l| format!("\"{}\"", json_escape(l))),
                         ));
                         parts.extend(opt(
                             "stopwords",
@@ -857,7 +922,9 @@ fn describe(rec: &Record) -> Vec<(String, String)> {
                         parts.extend(opt("nostem", o.nostem.map(|n| n.to_string())));
                         parts.extend(opt(
                             "phonetic",
-                            o.phonetic.as_ref().map(|p| format!("\"{p}\"")),
+                            o.phonetic
+                                .as_ref()
+                                .map(|p| format!("\"{}\"", json_escape(p))),
                         ));
                         if let Some(v) = &o.vector {
                             let mut vp = vec![format!("\"dimension\": {}", v.dimension)];
@@ -914,7 +981,7 @@ fn describe(rec: &Record) -> Vec<(String, String)> {
                 status.map_or_else(|| "null".to_owned(), |s| format!("\"{s}\"").to_lowercase()),
             );
             put("label_id", label_id.to_string());
-            put("label", format!("\"{label}\""));
+            put("label", format!("\"{}\"", json_escape(label)));
             put(
                 "props",
                 arr(props.iter().map(|p| format!("{}={}", p.id, p.name))),

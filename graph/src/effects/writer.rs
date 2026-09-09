@@ -99,15 +99,10 @@ pub trait EffectWrite: std::io::Write {
         self.bytes(&v.to_le_bytes());
     }
 
-    /// A C string: length **including** the NUL terminator, then the bytes and
-    /// the terminator. C reads these straight into a `char[]` and treats them
-    /// as C strings, so omitting the NUL makes it read the name plus whatever
-    /// follows.
-    /// Append raw bytes. The one method an implementor must write; every
-    /// width above is defaulted in terms of it, so a new sink owes three
-    /// methods rather than nine.
-    ///
     /// Append raw bytes.
+    ///
+    /// The one method an implementor must write; every width above is defaulted
+    /// in terms of it, so a new sink owes three methods rather than nine.
     ///
     /// `io::Write::write_all` would do, minus the `Result` a `Vec` can never
     /// produce and every caller would have to discard.
@@ -134,14 +129,32 @@ pub trait EffectWrite: std::io::Write {
     ) {
     }
 
+    /// A length, then that many bytes, the last of which is a NUL.
+    ///
+    /// **The length is a byte count, not `strlen`.** The two differ by exactly
+    /// one case and it is reachable: this engine stores strings containing
+    /// interior NUL bytes, because openCypher's `\uXXXX` escape can produce
+    /// one — `RETURN size('a\u0000b')` is 3, and the value survives storage
+    /// and an RDB reload intact. `strlen` on such a value reports 1, so a
+    /// writer using `strlen + 1` emits `a` where this emits `a\0b`, and two
+    /// implementations disagree on the bytes for one value. The spec said
+    /// `strlen + 1` and was wrong; a reader must honour the length and must
+    /// never call `strlen` on the payload.
+    ///
+    /// The terminator is still written, because C reads these into a `char[]`
+    /// and treats them as C strings; omitting it makes C read the value plus
+    /// whatever follows. It is a convenience for the common case, not the
+    /// authority on where the value ends — the length is.
+    ///
+    /// There is deliberately no check for interior NULs here. Refusing to
+    /// encode would turn a value the engine has already stored into a
+    /// replication failure, and the divergence guard would then force a resync
+    /// on every retry for as long as the graph holds that property. If interior
+    /// NULs are to be disallowed, it has to happen where the value is created.
     fn string(
         &mut self,
         s: &str,
     ) {
-        debug_assert!(
-            !s.as_bytes().contains(&0),
-            "an interior NUL would truncate this string on the C side"
-        );
         self.u64(s.len() as u64 + 1);
         self.bytes(s.as_bytes());
         self.u8(0);

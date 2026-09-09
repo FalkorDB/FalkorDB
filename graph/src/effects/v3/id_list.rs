@@ -885,7 +885,12 @@ impl IdList {
         // A lone id has no direction, so the one after it decides. Both of
         // these rewrite that segment rather than opening another.
         if let Some(&Segment::Range { base, len: 1 }) = self.segments.last() {
-            if id + 1 == base {
+            // `checked_add`, not `id + 1`: at the top of the id space that
+            // panics in debug and wraps to 0 in release. Unreachable from a
+            // payload — this is the builder, fed ids the engine allocated — but
+            // a wrap here would silently open a descending run against a base
+            // it has nothing to do with.
+            if id.checked_add(1) == Some(base) {
                 self.segments.pop();
                 self.segments
                     .push(Segment::RangeDescending { base, len: 2 });
@@ -1212,9 +1217,15 @@ fn read_narrow(
     })
 }
 
-/// The smallest a segment can encode to: its header byte, then one byte of
-/// the narrowest value width.
-const MIN_SEGMENT_BYTES: usize = 2;
+/// The smallest a segment can encode to: its header byte, then one byte each
+/// of the narrowest value and the narrowest count.
+///
+/// Three, not two: every `Range` and `Repeat` writes both fields through
+/// `write_pair`, and `width_for` floors at 1, so `encoded_len` can never come
+/// out below `1 + 1 + 1`. The `seg_range_single` corpus case is exactly that.
+/// Two let `guard_count` accept half again as many segments as the buffer
+/// could hold.
+const MIN_SEGMENT_BYTES: usize = 3;
 
 /// One block's ids, as the segments the wire carried.
 ///
