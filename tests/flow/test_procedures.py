@@ -366,6 +366,8 @@ class testProcedures(FlowTestsBase):
             ["READ", "algo.WCC"],
             ["READ", "algo.betweenness"],
             ["READ", "algo.labelPropagation"],
+            ["READ", "algo.leiden"],
+            ["READ", "algo.louvain"],
             ["READ", "algo.maxFlow"],
             ["READ", "algo.pageRank"],
             ["READ", "db.constraints"],
