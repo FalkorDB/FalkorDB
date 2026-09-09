@@ -10,6 +10,7 @@
 #include "proc_cch.h"
 #include "proc_cch_query.h"
 #include "proc_leiden.h"
+#include "proc_louvain.h"
 #include "proc_msf.h"
 #include "proc_wcc.h"
 #include "proc_cdlp.h"

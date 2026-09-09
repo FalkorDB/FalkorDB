@@ -45,6 +45,7 @@ void Proc_Register() {
 	_procRegister("algo.CCH",                Proc_CCHCtx);
 	_procRegister("algo.CCH.query",          Proc_CCHQueryCtx);
 	_procRegister("algo.leiden",             Proc_LeidenCtx);
+	_procRegister("algo.louvain",            Proc_LouvainCtx);
 	_procRegister("algo.MSF",                Proc_MSFCtx);
 	_procRegister("algo.WCC",                Proc_WCCCtx);
 	_procRegister("algo.maxFlow",            Proc_MaxFlowCtx);

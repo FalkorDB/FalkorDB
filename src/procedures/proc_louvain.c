@@ -8,7 +8,7 @@
 #include "GraphBLAS.h"
 #include <string.h>
 
-#include "proc_leiden.h"
+#include "proc_louvain.h"
 #include "../value.h"
 #include "../util/arr.h"
 #include "../query_ctx.h"
@@ -18,11 +18,17 @@
 #include "./utility/internal.h"
 #include "../graph/graphcontext.h"
 
-// CALL algo.leiden() YIELD node, communityId
-// CALL algo.leiden(NULL) YIELD node, communityId
-// CALL algo.leiden({nodeLabels: ['L', 'P']}) YIELD node, communityId
-// CALL algo.leiden({relationshipTypes: ['R', 'E']}) YIELD node, communityId
-// CALL algo.leiden({nodeLabels: ['L'], relationshipTypes: ['E'], weightAttribute: 'cost'}) YIELD node, communityId
+// LAGraph_louvain's own tests (LAGraph/experimental/test/test_louvain.c) use
+// these values; louvain doesn't currently expose these as tunables here.
+#define LOUVAIN_ITERMAX  6      // max modularity-improvement sweeps per level
+#define LOUVAIN_LEVELMAX 2      // max improve-and-condense levels
+#define LOUVAIN_EPSILON  1e-5f  // min modularity change considered an improvement
+
+// CALL algo.louvain() YIELD node, communityId
+// CALL algo.louvain(NULL) YIELD node, communityId
+// CALL algo.louvain({nodeLabels: ['L', 'P']}) YIELD node, communityId
+// CALL algo.louvain({relationshipTypes: ['R', 'E']}) YIELD node, communityId
+// CALL algo.louvain({nodeLabels: ['L'], relationshipTypes: ['E']}) YIELD node, communityId
 
 typedef struct {
 	Graph *g;                // graph
@@ -34,11 +40,11 @@ typedef struct {
 	SIValue output[2];       // array with up to 2 entries [node, community id]
 	SIValue *yield_node;     // yield node
 	SIValue *yield_cid;      // yield community id
-} Leiden_Context;
+} Louvain_Context;
 
 static void _process_yield
 (
-	Leiden_Context *ctx,
+	Louvain_Context *ctx,
 	const char **yield
 ) {
 	int idx = 0;
@@ -59,24 +65,21 @@ static void _process_yield
 
 static bool _read_config
 (
-	SIValue config,         // procedure configuration
-	LabelID **lbls,         // [output] labels
-	RelationID **rels,      // [output] relationships
-	AttributeID *weightAtt  // [output] relationship attribute used as weight
+	SIValue config,     // procedure configuration
+	LabelID **lbls,     // [output] labels
+	RelationID **rels   // [output] relationships
 ) {
 	ASSERT(lbls            != NULL);
 	ASSERT(rels            != NULL);
-	ASSERT(weightAtt       != NULL);
 	ASSERT(SI_TYPE(config) == T_MAP);
 
-	*lbls      = NULL;
-	*rels      = NULL;
-	*weightAtt = ATTRIBUTE_ID_NONE;
+	*lbls = NULL;
+	*rels = NULL;
 
 	uint match_fields = 0;
 	uint n = Map_KeyCount(config);
-	if(n > 3) {
-		ErrorCtx_SetError("invalid leiden configuration");
+	if(n > 2) {
+		ErrorCtx_SetError("invalid louvain configuration");
 		return false;
 	}
 
@@ -87,7 +90,7 @@ static bool _read_config
 
 	if(MAP_GETCASEINSENSITIVE(config, "nodeLabels", v)) {
 		if(SI_TYPE(v) != T_ARRAY || !SIArray_AllOfType(v, T_STRING)) {
-			ErrorCtx_SetError("leiden configuration, 'nodeLabels' should be an array of strings");
+			ErrorCtx_SetError("louvain configuration, 'nodeLabels' should be an array of strings");
 			goto error;
 		}
 
@@ -98,7 +101,7 @@ static bool _read_config
 			Schema *s = GraphContext_GetSchema(gc, lbl.stringval, SCHEMA_NODE);
 			if(s == NULL) {
 				ErrorCtx_SetError(
-					"leiden configuration contains non-existent label:%s",
+					"louvain configuration contains non-existent label:%s",
 					lbl.stringval);
 				goto error;
 			}
@@ -111,7 +114,7 @@ static bool _read_config
 
 	if(MAP_GETCASEINSENSITIVE(config, "relationshipTypes", v)) {
 		if(SI_TYPE(v) != T_ARRAY || !SIArray_AllOfType(v, T_STRING)) {
-			ErrorCtx_SetError("leiden configuration, 'relationshipTypes' should be an array of strings");
+			ErrorCtx_SetError("louvain configuration, 'relationshipTypes' should be an array of strings");
 			goto error;
 		}
 
@@ -122,7 +125,7 @@ static bool _read_config
 			Schema *s = GraphContext_GetSchema(gc, rel.stringval, SCHEMA_EDGE);
 			if(s == NULL) {
 				ErrorCtx_SetError(
-					"leiden configuration contains non-existent type:%s",
+					"louvain configuration contains non-existent type:%s",
 					rel.stringval);
 				goto error;
 			}
@@ -133,37 +136,8 @@ static bool _read_config
 		match_fields++;
 	}
 
-	bool has_weight_attribute =
-		MAP_GETCASEINSENSITIVE(config, "weightAttribute", v);
-	SIValue weight_property;
-	bool has_weight_property =
-		MAP_GETCASEINSENSITIVE(config, "weightProperty", weight_property);
-
-	if(has_weight_attribute && has_weight_property) {
-		ErrorCtx_SetError("leiden configuration can include either 'weightAttribute' or 'weightProperty', but not both");
-		goto error;
-	}
-
-	if(has_weight_attribute || has_weight_property) {
-		SIValue weight_cfg = has_weight_attribute ? v : weight_property;
-
-		if(SI_TYPE(weight_cfg) != T_STRING) {
-			ErrorCtx_SetError("leiden configuration, weight property should be a string");
-			goto error;
-		}
-
-		*weightAtt = GraphContext_GetAttributeID(gc, weight_cfg.stringval);
-		if(*weightAtt == ATTRIBUTE_ID_NONE) {
-			ErrorCtx_SetError("leiden configuration, unknown attribute: %s", weight_cfg.stringval);
-			goto error;
-		}
-
-		match_fields += has_weight_attribute ? 1 : 0;
-		match_fields += has_weight_property ? 1 : 0;
-	}
-
 	if(n != match_fields) {
-		ErrorCtx_SetError("leiden configuration contains unknown key");
+		ErrorCtx_SetError("louvain configuration contains unknown key");
 		goto error;
 	}
 
@@ -185,7 +159,7 @@ error:
 
 static void _build_node_map
 (
-	Leiden_Context *ctx
+	Louvain_Context *ctx
 ) {
 	ASSERT(ctx != NULL);
 	ASSERT(ctx->rows != NULL);
@@ -205,19 +179,19 @@ static void _build_node_map
 
 static int64_t _community_id_at
 (
-	const Leiden_Context *ctx,
+	const Louvain_Context *ctx,
 	GrB_Index idx
 ) {
 	ASSERT(ctx != NULL);
 	ASSERT(ctx->communities != NULL);
 
-	int64_t cid;
-	GrB_Info info = GrB_Vector_extractElement_INT64(&cid, ctx->communities, idx);
+	uint64_t cid;
+	GrB_Info info = GrB_Vector_extractElement_UINT64(&cid, ctx->communities, idx);
 	ASSERT(info == GrB_SUCCESS);
-	return cid;
+	return (int64_t)cid;
 }
 
-ProcedureResult Proc_LeidenInvoke
+ProcedureResult Proc_LouvainInvoke
 (
 	ProcedureCtx *ctx,
 	const SIValue *args,
@@ -225,7 +199,7 @@ ProcedureResult Proc_LeidenInvoke
 ) {
 	size_t argc = arr_len((SIValue *)args);
 	if(argc > 1) {
-		ErrorCtx_SetError("algo.leiden expects a single argument");
+		ErrorCtx_SetError("algo.louvain expects a single argument");
 		return PROCEDURE_ERR;
 	}
 
@@ -238,44 +212,34 @@ ProcedureResult Proc_LeidenInvoke
 
 	if(SI_TYPE(config) != T_MAP) {
 		SIValue_Free(config);
-		ErrorCtx_SetError("invalid argument to algo.leiden");
+		ErrorCtx_SetError("invalid argument to algo.louvain");
 		return PROCEDURE_ERR;
 	}
 
 	LabelID *lbls = NULL;
 	RelationID *rels = NULL;
-	AttributeID weightAtt = ATTRIBUTE_ID_NONE;
 
-	bool config_ok = _read_config(config, &lbls, &rels, &weightAtt);
+	bool config_ok = _read_config(config, &lbls, &rels);
 	SIValue_Free(config);
 	if(!config_ok) {
 		return PROCEDURE_ERR;
 	}
 
-	Leiden_Context *pdata = rm_calloc(1, sizeof(Leiden_Context));
+	Louvain_Context *pdata = rm_calloc(1, sizeof(Louvain_Context));
 	pdata->g = QueryCtx_GetGraph();
 	_process_yield(pdata, yield);
 	ctx->privateData = pdata;
 
 	GrB_Matrix A = NULL;
-	GrB_Matrix A_w = NULL;
-	// TODO: this should use an addition strategy
-	GrB_OK(get_sub_weight_matrix(&A, &A_w, &pdata->rows, pdata->g,
-		lbls, arr_len(lbls), rels, arr_len(rels), weightAtt, BWM_MAX, true));
+	// LAGraph_louvain requires a boolean, symmetric adjacency matrix.
+	GrB_OK(Build_Matrix(&A, &pdata->rows, pdata->g,
+		lbls, arr_len(lbls), rels, arr_len(rels), true, true));
 
 	if(lbls != NULL) arr_free(lbls);
 	if(rels != NULL) arr_free(rels);
 
-	if(weightAtt == ATTRIBUTE_ID_NONE) {
-		// Leiden requires positive weights; use a uniform weight of 1.0.
-		GrB_OK(GrB_Matrix_assign_FP64(
-			A_w, A, NULL, 1.0, GrB_ALL, 0, GrB_ALL, 0, GrB_DESC_S));
-	}
-
-	GrB_OK(GrB_free(&A));
-
 	GrB_Index n = 0;
-	GrB_OK(GrB_Matrix_nrows(&n, A_w));
+	GrB_OK(GrB_Matrix_nrows(&n, A));
 
 	if(n > 0) {
 		LAGraph_Graph G = NULL;
@@ -283,47 +247,38 @@ ProcedureResult Proc_LeidenInvoke
 		GrB_Info info;
 		msg[0] = '\0';
 
-		info = LAGraph_New(&G, &A_w, LAGraph_ADJACENCY_UNDIRECTED, msg);
+		info = LAGraph_New(&G, &A, LAGraph_ADJACENCY_UNDIRECTED, msg);
 		if(info != GrB_SUCCESS) {
-			GrB_OK(GrB_Matrix_free(&A_w));
-			ErrorCtx_SetError("algo.leiden failed creating graph (status %d): %s",
-				info, msg);
-			return PROCEDURE_ERR;
-		}
-
-		// LAGraph_Leiden requires G->emin to be cached.
-		msg[0] = '\0';
-		info = LAGraph_Cached_EMin(G, msg);
-		if(info != GrB_SUCCESS) {
-			LAGraph_Delete(&G, msg);
-			ErrorCtx_SetError("algo.leiden failed caching minimum edge weight (status %d): %s",
+			GrB_OK(GrB_Matrix_free(&A));
+			ErrorCtx_SetError("algo.louvain failed creating graph (status %d): %s",
 				info, msg);
 			return PROCEDURE_ERR;
 		}
 
 		msg[0] = '\0';
-		int leiden_res = LAGraph_Leiden(&pdata->communities, G, 0, msg);
-		char leiden_msg[LAGRAPH_MSG_LEN];
-		leiden_msg[0] = '\0';
+		info = LAGraph_louvain(&pdata->communities, G, LOUVAIN_ITERMAX,
+			LOUVAIN_LEVELMAX, LOUVAIN_EPSILON, msg);
+		char louvain_msg[LAGRAPH_MSG_LEN];
+		louvain_msg[0] = '\0';
 		if(msg[0] != '\0') {
-			strncpy(leiden_msg, msg, LAGRAPH_MSG_LEN - 1);
-			leiden_msg[LAGRAPH_MSG_LEN - 1] = '\0';
+			strncpy(louvain_msg, msg, LAGRAPH_MSG_LEN - 1);
+			louvain_msg[LAGRAPH_MSG_LEN - 1] = '\0';
 		}
 
-		info = LAGraph_Delete(&G, msg);
-		if(info != GrB_SUCCESS) {
-			ErrorCtx_SetError("algo.leiden failed deleting graph (status %d): %s",
-				info, msg);
+		GrB_Info delete_info = LAGraph_Delete(&G, msg);
+		if(delete_info != GrB_SUCCESS) {
+			ErrorCtx_SetError("algo.louvain failed deleting graph (status %d): %s",
+				delete_info, msg);
 			return PROCEDURE_ERR;
 		}
 
-		if(leiden_res != GrB_SUCCESS) {
-			ErrorCtx_SetError("algo.leiden failed running algorithm (status %d): %s",
-				leiden_res, leiden_msg);
+		if(info != GrB_SUCCESS) {
+			ErrorCtx_SetError("algo.louvain failed running algorithm (status %d): %s",
+				info, louvain_msg);
 			return PROCEDURE_ERR;
 		}
 	} else {
-		GrB_OK(GrB_Matrix_free(&A_w));
+		GrB_OK(GrB_Matrix_free(&A));
 		GrB_OK(GrB_Vector_new(&pdata->communities, GrB_UINT64, 0));
 	}
 
@@ -333,12 +288,12 @@ ProcedureResult Proc_LeidenInvoke
 	return PROCEDURE_OK;
 }
 
-SIValue *Proc_LeidenStep
+SIValue *Proc_LouvainStep
 (
 	ProcedureCtx *ctx
 ) {
 	ASSERT(ctx->privateData != NULL);
-	Leiden_Context *pdata = ctx->privateData;
+	Louvain_Context *pdata = ctx->privateData;
 
 	uint64_t n = arr_len(pdata->node_ids);
 	while(pdata->idx < n) {
@@ -363,12 +318,12 @@ SIValue *Proc_LeidenStep
 	return NULL;
 }
 
-ProcedureResult Proc_LeidenFree
+ProcedureResult Proc_LouvainFree
 (
 	ProcedureCtx *ctx
 ) {
 	if(ctx->privateData != NULL) {
-		Leiden_Context *pdata = ctx->privateData;
+		Louvain_Context *pdata = ctx->privateData;
 
 		if(pdata->communities != NULL) GrB_free(&pdata->communities);
 		if(pdata->rows != NULL) GrB_free(&pdata->rows);
@@ -380,7 +335,7 @@ ProcedureResult Proc_LeidenFree
 	return PROCEDURE_OK;
 }
 
-ProcedureCtx *Proc_LeidenCtx(void) {
+ProcedureCtx *Proc_LouvainCtx(void) {
 	ProcedureOutput *outputs         = arr_new(ProcedureOutput, 2);
 	ProcedureOutput output_node      = {.name = "node", .type = T_NODE};
 	ProcedureOutput output_community = {.name = "communityId", .type = T_INT64};
@@ -388,12 +343,12 @@ ProcedureCtx *Proc_LeidenCtx(void) {
 	arr_append(outputs, output_node);
 	arr_append(outputs, output_community);
 
-	ProcedureCtx *ctx = ProcCtxNew("algo.leiden",
+	ProcedureCtx *ctx = ProcCtxNew("algo.louvain",
 		PROCEDURE_VARIABLE_ARG_COUNT,
 		outputs,
-		Proc_LeidenStep,
-		Proc_LeidenInvoke,
-		Proc_LeidenFree,
+		Proc_LouvainStep,
+		Proc_LouvainInvoke,
+		Proc_LouvainFree,
 		NULL,
 		true);
 
