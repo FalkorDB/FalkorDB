@@ -314,3 +314,83 @@ class testAggregations():
             self.graph.query("MATCH (n:M) RETURN sum(n.v)").result_set, [[4]])
         self.env.assertEqual(
             self.graph.query("MATCH ()-[r:R]->() RETURN sum(r.w)").result_set, [[2]])
+
+    def test_computed_grouping_key(self):
+        # A grouping key that is not a bare variable or `n.prop` -- `n.id % 100`,
+        # `toUpper(n.name)`, a CASE -- used to make the aggregate operator give
+        # up its columnar path entirely, taking the bulk aggregate-input reads
+        # down with it and rebuilding an owned row per input row. Such a key now
+        # goes through the same bulk evaluator the aggregate inputs use, so what
+        # matters here is that the two paths agree on every value exactly.
+        self.get_res_and_assertEquals(
+            "UNWIND range(0, 9) AS i RETURN i % 3 AS k, count(*) AS c ORDER BY k",
+            [[0, 4], [1, 3], [2, 3]])
+        self.get_res_and_assertEquals(
+            "UNWIND range(1, 6) AS i "
+            "RETURN i % 2 AS k, sum(i) AS s, min(i) AS mn, max(i) AS mx ORDER BY k",
+            [[0, 12, 2, 6], [1, 9, 1, 5]])
+
+        # Several computed keys at once.
+        self.get_res_and_assertEquals(
+            "UNWIND range(0, 5) AS i RETURN i % 2 AS a, i % 3 AS b, count(*) AS c ORDER BY a, b",
+            [[0, 0, 1], [0, 1, 1], [0, 2, 1], [1, 0, 1], [1, 1, 1], [1, 2, 1]])
+
+        # Keys that are not numbers: strings, booleans, lists, a CASE.
+        self.get_res_and_assertEquals(
+            "UNWIND ['a', 'A', 'b'] AS s RETURN toLower(s) AS k, count(*) AS c ORDER BY k",
+            [['a', 2], ['b', 1]])
+        self.get_res_and_assertEquals(
+            "UNWIND range(0, 3) AS i RETURN i % 2 = 0 AS k, count(*) AS c ORDER BY k",
+            [[False, 2], [True, 2]])
+        self.get_res_and_assertEquals(
+            "UNWIND range(0, 3) AS i RETURN [i % 2] AS k, count(*) AS c ORDER BY k",
+            [[[0], 2], [[1], 2]])
+        self.get_res_and_assertEquals(
+            "UNWIND range(0, 3) AS i "
+            "RETURN CASE WHEN i < 2 THEN 'lo' ELSE 'hi' END AS k, count(*) AS c ORDER BY k",
+            [['hi', 2], ['lo', 2]])
+
+        # null is a group of its own.
+        self.get_res_and_assertEquals(
+            "UNWIND [1, 2, null, null] AS i RETURN i % 2 AS k, count(*) AS c ORDER BY k",
+            [[0, 1], [1, 1], [None, 2]])
+
+        # Exactness: a key column holding both ints and floats must stay exact.
+        # Rounding it into f64 would pull 2^53+1 onto 2^53 and merge two
+        # integers that are not equal, and 1 and 1.0 have to keep grouping
+        # together the way the scalar evaluator compares them.
+        self.get_res_and_assertEquals(
+            "UNWIND [9007199254740993, 9007199254740992] AS i "
+            "RETURN i + 0 AS k, count(*) AS c ORDER BY k",
+            [[9007199254740992, 1], [9007199254740993, 1]])
+        self.get_res_and_assertEquals(
+            "UNWIND [1, 1.0, 2] AS i RETURN i + 0 AS k, count(*) AS c ORDER BY k",
+            [[1, 2], [2, 1]])
+
+        # An error raised while evaluating a key is still reported.
+        try:
+            self.graph.query("UNWIND [1, 0] AS i RETURN 1 / i AS k, count(*)")
+            self.env.assertTrue(False)
+        except redis.ResponseError as e:
+            self.env.assertContains("Division by zero", str(e))
+
+        # Node and relationship properties inside a computed key, and the
+        # aggregate inputs that now ride the bulk path alongside it.
+        self.graph.query("CREATE (:CK {v: 1})-[:CKR {w: 5}]->(:CK {v: 2}), (:CK {v: 3})")
+        self.get_res_and_assertEquals(
+            "MATCH (n:CK) RETURN n.v % 2 AS k, count(*) AS c ORDER BY k",
+            [[0, 1], [1, 2]])
+        self.get_res_and_assertEquals(
+            "MATCH ()-[r:CKR]->() RETURN r.w * 2 AS k, count(*) AS c ORDER BY k",
+            [[10, 1]])
+        self.get_res_and_assertEquals(
+            "MATCH (n:CK) RETURN n.v % 2 AS k, collect(n.v) AS vs ORDER BY k",
+            [[0, [2]], [1, [1, 3]]])
+        self.get_res_and_assertEquals(
+            "MATCH (n:CK) RETURN n.v % 2 AS k, count(DISTINCT n.v) AS c ORDER BY k",
+            [[0, 1], [1, 2]])
+
+        # A nested aggregate in a key still falls back to per-row evaluation.
+        self.get_res_and_assertEquals(
+            "UNWIND [1, 2, 3] AS i WITH count(i) + 0 AS k RETURN k, count(*) AS c",
+            [[3, 1]])

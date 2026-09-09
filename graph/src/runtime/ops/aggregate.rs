@@ -21,13 +21,14 @@
 //!
 //! Key and aggregation-input expressions are evaluated in bulk: a variable
 //! passthrough or `entity.property` is a single bulk attribute read, and any
-//! other input tree (`sum(n.age * 3)`) goes through
+//! other tree — a key (`WITH n.id % 100 AS bucket`) or an input
+//! (`sum(n.age * 3)`) alike — goes through
 //! [`VectorEval`](crate::runtime::vector_expr::VectorEval), which evaluates it
 //! column at a time. This includes single-argument `DISTINCT` aggregations
 //! (e.g. `count(DISTINCT n.id)`): the property column is still extracted in
-//! bulk and per-group deduplication is applied during accumulation. Inputs
-//! containing a nested aggregate, and multi-argument aggregations, still fall
-//! back to per-row evaluation.
+//! bulk and per-group deduplication is applied during accumulation. Keys and
+//! inputs containing a nested aggregate, and multi-argument aggregations, still
+//! fall back to per-row evaluation.
 
 use crate::parser::ast::{ExprIR, QueryExpr, Variable};
 use crate::planner::IR;
@@ -99,6 +100,18 @@ enum KeyExprKind {
     Variable(Variable),
     /// Property access: `GROUP BY n.age`
     Property { var: Variable, attr: Arc<String> },
+    /// Any other key expression: `GROUP BY n.id % 100`, `GROUP BY toUpper(n.name)`,
+    /// `GROUP BY CASE ... END`.
+    ///
+    /// Built by [`VectorEval`], the same evaluator [`AggInputKind::Computed`]
+    /// uses, so the key tree is evaluated column at a time. Before this variant
+    /// existed a key of any other shape made [`AggregateOp::analyze`] give up on
+    /// the *whole operator*: not just the key, but the bulk aggregate-input
+    /// extraction and the columnar accumulate loop with it, rebuilding a full
+    /// owned `Row` per row and re-walking every key and aggregate tree on it.
+    /// A computed grouping key is ordinary Cypher (`WITH n.id % 100 AS bucket,
+    /// count(*)`), so that was the common shape paying the slowest path.
+    Computed(QueryExpr<Variable>),
 }
 
 /// How an aggregation input expression can be evaluated in bulk.
@@ -225,20 +238,21 @@ impl<'a> AggregateOp<'a> {
                 ExprIR::Variable(var) => {
                     key_kinds.push(KeyExprKind::Variable(var.clone()));
                 }
-                ExprIR::Property(attr) => {
-                    if root.num_children() != 1 {
-                        return None;
-                    }
+                ExprIR::Property(attr) if root.num_children() == 1 => {
                     if let ExprIR::Variable(var) = root.child(0).data() {
                         key_kinds.push(KeyExprKind::Property {
                             var: var.clone(),
                             attr: attr.clone(),
                         });
                     } else {
-                        return None;
+                        key_kinds.push(KeyExprKind::Computed(tree.clone()));
                     }
                 }
-                _ => return None,
+                // A nested aggregate still falls back: it needs the per-row
+                // path's group-aware evaluation, the same reason
+                // `analyze_agg_tree` refuses one in an aggregate input.
+                _ if subtree_has_aggregate(&root) => return None,
+                _ => key_kinds.push(KeyExprKind::Computed(tree.clone())),
             }
         }
 
@@ -598,6 +612,14 @@ impl<'a> AggregateOp<'a> {
     }
 
     /// Extracts key values for all active rows in a batch.
+    ///
+    /// `Err(())` means "this batch cannot take the bulk path", not "the query
+    /// failed" — the caller replays the batch through
+    /// [`consume_batch_per_row`](Self::consume_batch_per_row). A
+    /// [`KeyExprKind::Computed`] evaluation error takes that same exit rather
+    /// than being reported here, so the error a failing key raises is still the
+    /// one the per-row evaluator produces, in its order, for the row that
+    /// produces it.
     fn extract_key_columns(
         runtime: &'a Runtime<'a>,
         batch: &Batch<'a>,
@@ -622,6 +644,17 @@ impl<'a> AggregateOp<'a> {
                     // int/float column, merging 9007199254740993 and
                     // 9007199254740992 into one group.
                     key_columns.push(runtime.materialize_node_property_values(&active_ids, attr));
+                }
+                KeyExprKind::Computed(tree) => {
+                    // `eval_values` hands back the exact `Value`s the scalar
+                    // evaluator would produce — its typed lanes are built by
+                    // `classify_exact_column`, which leaves a mixed int/float
+                    // column as `Values` rather than rounding it into `f64` —
+                    // so grouping compares the same keys either way.
+                    let col = VectorEval::new(runtime)
+                        .eval_values(&tree.root(), batch, active)
+                        .map_err(|_| ())?;
+                    key_columns.push(col);
                 }
             }
         }
