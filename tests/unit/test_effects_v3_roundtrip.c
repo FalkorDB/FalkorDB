@@ -170,10 +170,21 @@ void test_effectsV3_decodesEveryFixture(void) {
 // different reasons: the first as C implements records, this one as C's core
 // types gain capability.
 //
-// The case: value_string_interior_nul carries "a\0b", four bytes on the wire.
-// C decodes it correctly, then re-encodes through EffectsBuffer_WriteString,
-// which takes its length from strlen -- so it emits two bytes and stops at the
-// NUL. Not a bug in the effects code:
+// The case: value_string_interior_nul carries TWO strings with interior NULs,
+// and the whole payload is 59 bytes where C re-encodes 56. Measured rather than
+// relayed -- the figure here was 2 until the assertion fired and made me look:
+//
+//   row 0  "a\0b"  wire length 4, bytes 61 00 62 00
+//                  strlen is 1, so C emits 2 bytes       -2
+//   row 1  "\0"    wire length 2, bytes 00 00
+//                  strlen is 0, so C emits 1 byte        -1
+//
+// 59 - 3 = 56. The second value is the one every summary of this bug omits: a
+// string that is nothing but a NUL still loses a byte, so a fix that only
+// handled embedded NULs in the middle of a string would leave this case short.
+//
+// C decodes both correctly, then re-encodes through EffectsBuffer_WriteString,
+// which takes its length from strlen. Not a bug in the effects code:
 //
 //   * SIValue holds a bare char * with no length (value.h), so giving the
 //     encoder a length to use is a core-type change, not an effects one
@@ -200,9 +211,10 @@ typedef struct {
 } EffectsV3EncodeDivergentCase;
 
 static const EffectsV3EncodeDivergentCase EFFECTS_V3_ENCODE_DIVERGENT_CASES[] = {
-	{ "value_string_interior_nul", 2,
+	{ "value_string_interior_nul", 56,
 	  "EffectsBuffer_WriteString takes its length from strlen and SIValue has "
-	  "no length to take instead, so the string stops at the interior NUL" },
+	  "no length to take instead. Two values are affected: \"a\\0b\" loses 2 "
+	  "bytes and \"\\0\" loses 1, so 59 becomes 56" },
 };
 
 #define EFFECTS_V3_ENCODE_DIVERGENT_COUNT              \
