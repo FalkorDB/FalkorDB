@@ -972,8 +972,8 @@ mod tests {
         // The false positive the delete check has to avoid: id 1 is at or above
         // the boundary the buffer started from, so "never allocated here" is what
         // it looks like to anything that only knows that boundary. What makes it
-        // legitimate is that this buffer created it, which is exactly what the
-        // ingested set remembers.
+        // legitimate is that this buffer created it, which is exactly what
+        // `IdSpace`'s created set remembers.
         let mut g = graph();
         let mut buf = new_buffer();
         Record::CreateNode {
@@ -1380,7 +1380,7 @@ mod tests {
         // recycles a freed id across commits, so `C(0) · D(0) · C(0)` is what
         // `CREATE (n) WITH n DELETE n WITH 1 AS z CREATE ()` actually ships.
         //
-        // This is why the ingested set does not shrink on a delete: id 0 was
+        // This is why the created set does not shrink on a delete: id 0 was
         // handed out once, and the recreate is the allocator reusing it rather
         // than the buffer claiming it twice. A set that dropped it on the delete
         // would have to decide which of those it was looking at, and cannot.
