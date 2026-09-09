@@ -72,8 +72,6 @@ use crate::{
 pub const EFFECTS_VERSION: u8 = 3;
 
 pub mod blocks;
-#[cfg(test)]
-mod fixtures;
 mod id_list;
 pub mod records;
 pub mod value;
