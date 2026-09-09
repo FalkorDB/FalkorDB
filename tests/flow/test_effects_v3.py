@@ -857,11 +857,96 @@ class testCardinalityMismatchRefused(_RefusedCase):
 
 
 class testUnknownLabelRefused(_RefusedCase):
+    """A label id the replica cannot resolve must be refused, at any value.
+
+    THIS TEST USED TO SEND ONLY id 99, AND THAT MADE IT NEARLY WORTHLESS.
+    Before the range check in GraphContext_GetSchemaByID, an out-of-range id
+    indexed past the end of the schema array and returned whatever was there.
+    Whether that is NULL is not random - it is a map of what sits at that
+    offset. Measured pre-fix, 20 fresh servers per id, over two sweeps:
+
+        id 2, 3, 10   20/20  20/20        id -2        20/20  20/20
+        id -100       19/20  19/20        id -1000     10/20  10/20
+        id 500         0/20   4/20        id 5000       5/20   3/20
+        id 50          0/20   1/20        id 1, -1, 99  0/20   0/20
+
+    Every acceptance deleted the node. So the old single-value test sent id
+    99 - the one value that refused reliably on the BROKEN build - and passed
+    green against the bug it was meant to catch, while ids 2 and 3, exactly
+    what a peer one label ahead of this replica sends, failed 100% of the time.
+
+    Note ids 50, 500 and 5000 moved between sweeps: what sits past the end
+    depends on heap layout, so an id that looks clean in one session accepts
+    in another. There is no value you can test once and call safe.
+
+    The classes below cover the ids that were STABLE at 100% pre-fix, so they
+    fail on a build without the range check rather than merely being likely
+    to. Verified: they fail on 28edc0991 and pass on dfec6e149.
+
+    ONE ID PER CLASS, deliberately. A refusal takes the instance down and
+    Env() does not hand back a fresh server within a class - not per extra
+    call, and not per extra test method. Both of those were tried here. The
+    second id then talks to a DEAD server, raises ConnectionError, and this
+    helper counts any exception as a refusal, so the sweep passes without
+    testing anything. Adding an id means adding a class.
+    """
+
     def test_refused(self):
-        # label ids are RESOLVED against local schema, not range-checked: an
-        # id inside the schema count can still map to nothing
-        self._refuse(payload(rec_delete_node(1, [99], id_list(seg_range(0, 1)))),
-                     "label schema 99 which does not exist locally")
+        # just past the end - the realistic divergence case, 20/20 pre-fix
+        self._refuse(payload(rec_delete_node(1, [2], id_list(seg_range(0, 1)))),
+                     "label schema 2 just past the local schema count")
+
+
+class testUnknownLabelRefused_3(_RefusedCase):
+    """See testUnknownLabelRefused. Id 3, 20/20 accepted pre-fix."""
+
+    def test_refused(self):
+        self._refuse(payload(rec_delete_node(1, [3], id_list(seg_range(0, 1)))),
+                     "label schema 3 just past the local schema count")
+
+
+class testUnknownLabelRefused_10(_RefusedCase):
+    """See testUnknownLabelRefused. Id 10, 20/20 accepted pre-fix."""
+
+    def test_refused(self):
+        self._refuse(payload(rec_delete_node(1, [10], id_list(seg_range(0, 1)))),
+                     "label schema 10 just past the local schema count")
+
+
+class testNegativeLabelRefused(_RefusedCase):
+    """See testUnknownLabelRefused. Id -2, 20/20 accepted pre-fix.
+
+    LabelID is signed and the wire carries an i32, so a negative id indexes
+    BACKWARDS off the array. This is covered by the explicit `id < 0` clause,
+    not by integer promotion - a guard comparing the signed id against an
+    unsigned arr_len would also reject it, by promoting the negative to a huge
+    unsigned, but that is an accident of the types on either side.
+    """
+
+    def test_refused(self):
+        self._refuse(payload(rec_delete_node(1, [-2], id_list(seg_range(0, 1)))),
+                     "negative label schema -2 indexing backwards")
+
+
+class testNegativeLabelFarRefused(_RefusedCase):
+    """See testNegativeLabelRefused. Id -1000, 10/20 accepted pre-fix."""
+
+    def test_refused(self):
+        self._refuse(payload(rec_delete_node(1, [-1000], id_list(seg_range(0, 1)))),
+                     "negative label schema -1000 indexing backwards")
+
+
+class testFarBeyondLabelRefused(_RefusedCase):
+    """See testUnknownLabelRefused. Id 5000 - accepted 5/20 and 3/20.
+
+    Far-out ids usually land on NULL and refuse for the wrong reason, so this
+    one is weak on its own. It is kept because it did accept in both sweeps,
+    which is what shows "far out" is not a safe category.
+    """
+
+    def test_refused(self):
+        self._refuse(payload(rec_delete_node(1, [5000], id_list(seg_range(0, 1)))),
+                     "label schema 5000 far beyond the local schema count")
 
 
 class testCountExceedingGraphRefused(_RefusedCase):
