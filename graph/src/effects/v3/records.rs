@@ -358,24 +358,32 @@ pub struct ConstraintSpec<'a> {
 /// One decoded record.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Record {
-    Update {
-        entity: EntityType,
+    /// `1 UPDATE_NODE`. Labels are the partition key: every node in the record
+    /// carries this exact set, which is what a replica checks the ids against.
+    UpdateNode {
         ids: IdList,
-        /// The nodes' derived labels. Always empty for [`EntityType::Relationship`],
-        /// which carries a [`Self::Update::relation_id`] in the same slot instead.
         labels: Vec<u32>,
-        /// The edges' one relationship type. `None` for [`EntityType::Node`],
-        /// whose membership is the label set above.
-        relation_id: Option<u32>,
         attr_ids: Vec<u16>,
         rows: Vec<Value>,
     },
+    /// `2 UPDATE_EDGE`. An edge has one relationship type where a node has a
+    /// label set, and it fills the same slot — so this is a separate variant
+    /// rather than an `Option` on one, and neither can be built with the
+    /// other's key.
+    UpdateEdge {
+        ids: IdList,
+        relation_id: u32,
+        attr_ids: Vec<u16>,
+        rows: Vec<Value>,
+    },
+    /// `3 CREATE_NODE`.
     CreateNode {
         ids: IdList,
         labels: Vec<u32>,
         attr_ids: Vec<u16>,
         rows: Vec<Value>,
     },
+    /// `4 CREATE_EDGE`.
     CreateEdge {
         ids: IdList,
         relation_id: u32,
@@ -384,48 +392,70 @@ pub enum Record {
         attr_ids: Vec<u16>,
         rows: Vec<Value>,
     },
-    DeleteNode {
-        ids: IdList,
-        labels: Vec<u32>,
-    },
+    /// `5 DELETE_NODE`.
+    DeleteNode { ids: IdList, labels: Vec<u32> },
+    /// `6 DELETE_EDGE`.
     DeleteEdge {
         ids: IdList,
         relation_id: u32,
         src: IdList,
         dst: IdList,
     },
-    Labels {
-        add: bool,
-        ids: IdList,
-        labels: Vec<u32>,
-    },
-    AddSchema {
-        schema_type: EntityType,
-        id: u32,
-        name: String,
-    },
-    AddAttribute {
-        id: u16,
-        name: String,
-    },
-    Index {
-        create: bool,
+    /// `7 SET_LABELS`.
+    AddLabels { ids: IdList, labels: Vec<u32> },
+    /// `8 REMOVE_LABELS`.
+    RemoveLabels { ids: IdList, labels: Vec<u32> },
+    /// `9 ADD_SCHEMA`, node form: a label and the id it was given.
+    ///
+    /// One opcode, two variants. The record carries a `SchemaType` byte and the
+    /// two kinds are numbered differently from the constraint records' entity
+    /// tag — 0-based here, 1-based there — so the byte is worth being unable to
+    /// get wrong.
+    AddLabel { id: u32, name: String },
+    /// `9 ADD_SCHEMA`, relationship form: a type and the id it was given.
+    AddRelType { id: u32, name: String },
+    /// `10 ADD_ATTRIBUTE`.
+    AddAttribute { id: u16, name: String },
+    /// `11 CREATE_INDEX` — one record per statement, not per field.
+    ///
+    /// `options` is not an `Option` here: a create always states its block,
+    /// even when every presence byte in it is zero. A drop has no field for one
+    /// at all, which is what makes "a drop carries no options" a fact about the
+    /// type rather than a comment.
+    CreateIndex {
         schema_type: EntityType,
         label_id: u32,
         label: String,
-        /// C's index-field flags. A property of the statement, not of a field.
         field_type: u32,
-        /// Every field of the statement, encoded as an [`IndexFields`] block.
         fields: Vec<AttrRef<String>>,
-        /// `None` on a drop, which carries no options.
-        options: Option<IndexFieldOptions>,
+        options: IndexFieldOptions,
     },
-    Constraint {
-        create: bool,
+    /// `12 DROP_INDEX` — mirrors the create, and carries no options at all.
+    DropIndex {
+        schema_type: EntityType,
+        label_id: u32,
+        label: String,
+        field_type: u32,
+        fields: Vec<AttrRef<String>>,
+    },
+    /// `13 CREATE_CONSTRAINT`.
+    ///
+    /// `status` is not an `Option`: a create always carries the primary's
+    /// outcome, which is the one place v3 sends more than C's v2 and the only
+    /// thing that tells a replica an enforcing constraint from one still being
+    /// built. A drop has no field for it.
+    CreateConstraint {
         constraint_type: ConstraintType,
         entity_type: EntityType,
-        /// The primary's outcome; `None` on a drop, which carries none.
-        status: Option<ConstraintStatus>,
+        status: ConstraintStatus,
+        label_id: u32,
+        label: String,
+        props: Vec<AttrRef<String>>,
+    },
+    /// `14 DROP_CONSTRAINT` — mirrors the create **without** the status.
+    DropConstraint {
+        constraint_type: ConstraintType,
+        entity_type: EntityType,
         label_id: u32,
         label: String,
         props: Vec<AttrRef<String>>,
@@ -466,21 +496,31 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             // reads the wrong one here does not fail — it consumes the next
             // block's first bytes as a count and misaligns everything after it,
             // which is the class of bug the fixtures exist to catch.
-            let (labels, relation_id) = if entity == EntityType::Node {
-                (LabelSet::decode(r)?.0, None)
+            //
+            // The opcode already says which form this is, so each builds its
+            // own variant and neither can end up holding the other's key.
+            if entity == EntityType::Node {
+                let labels = LabelSet::decode(r)?.0;
+                let attr_ids = AttrIds::decode(r)?.0;
+                let ids = IdList::decode_sized(r, count)?;
+                let rows = AttrValues::decode_sized(r, (count, attr_ids.len()))?.0;
+                Record::UpdateNode {
+                    ids,
+                    labels,
+                    attr_ids,
+                    rows,
+                }
             } else {
-                (Vec::new(), Some(RelType::decode(r)?.0))
-            };
-            let attr_ids = AttrIds::decode(r)?.0;
-            let ids = IdList::decode_sized(r, count)?;
-            let rows = AttrValues::decode_sized(r, (count, attr_ids.len()))?.0;
-            Record::Update {
-                entity,
-                ids,
-                labels,
-                relation_id,
-                attr_ids,
-                rows,
+                let relation_id = RelType::decode(r)?.0;
+                let attr_ids = AttrIds::decode(r)?.0;
+                let ids = IdList::decode_sized(r, count)?;
+                let rows = AttrValues::decode_sized(r, (count, attr_ids.len()))?.0;
+                Record::UpdateEdge {
+                    ids,
+                    relation_id,
+                    attr_ids,
+                    rows,
+                }
             }
         }
         Opcode::CreateNode => {
@@ -535,19 +575,20 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             // label set now precedes the ids on the wire — so these must not be
             // written in declaration order.
             let labels = LabelSet::decode(r)?.0;
-            Record::Labels {
-                add: opcode == Opcode::SetLabels,
-                ids: IdList::decode_sized(r, count)?,
-                labels,
+            let ids = IdList::decode_sized(r, count)?;
+            if opcode == Opcode::SetLabels {
+                Record::AddLabels { ids, labels }
+            } else {
+                Record::RemoveLabels { ids, labels }
             }
         }
         Opcode::AddSchema => {
             let schema_type = entity_from_schema_tag(r.u32()?)?;
             let id = r.u32()?;
-            Record::AddSchema {
-                schema_type,
-                id,
-                name: r.string()?,
+            let name = r.string()?;
+            match schema_type {
+                EntityType::Node => Record::AddLabel { id, name },
+                EntityType::Relationship => Record::AddRelType { id, name },
             }
         }
         Opcode::AddAttribute => {
@@ -558,61 +599,113 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             }
         }
         Opcode::CreateIndex | Opcode::DropIndex => {
-            let create = opcode == Opcode::CreateIndex;
             let schema_type = entity_from_schema_tag(r.u32()?)?;
             let label_id = r.u32()?;
             let label = r.string()?;
             let field_type = r.u32()?;
             let fields = IndexFields::decode(r)?.0;
-            let options = if create {
-                Some(IndexFieldOptions::decode_sized(r, field_type)?)
+            // A drop stops here — zero option bytes, not an empty block — and
+            // the variant it becomes has no field for any.
+            if opcode == Opcode::CreateIndex {
+                let options = IndexFieldOptions::decode_sized(r, field_type)?;
+                Record::CreateIndex {
+                    schema_type,
+                    label_id,
+                    label,
+                    field_type,
+                    fields,
+                    options,
+                }
             } else {
-                None
-            };
-            Record::Index {
-                create,
-                schema_type,
-                label_id,
-                label,
-                field_type,
-                fields,
-                options,
+                Record::DropIndex {
+                    schema_type,
+                    label_id,
+                    label,
+                    field_type,
+                    fields,
+                }
             }
         }
         Opcode::CreateConstraint | Opcode::DropConstraint => {
-            let create = opcode == Opcode::CreateConstraint;
             let constraint_type = constraint_from_tag(r.u32()?)?;
             let entity_type = entity_from_tag(r.u32()?)?;
-            // Present on a create only — see `write_constraint`.
-            let status = if create {
+            // The status is on a create only, and only a create has a field
+            // for it. Read before the tail, because that is its wire position.
+            let status = if opcode == Opcode::CreateConstraint {
                 Some(constraint_status_from_tag(r.u32()?)?)
             } else {
                 None
             };
             let label_id = r.u32()?;
             let label = r.string()?;
-            let n = r.u8()?;
-            let n = r.guard_count(u64::from(n), MIN_ATTR_REF_BYTES)?;
-            let mut props = Vec::with_capacity(n);
-            for _ in 0..n {
-                let attr_id = r.u16()?;
-                props.push(AttrRef {
-                    id: attr_id,
-                    name: r.string()?,
-                });
-            }
-            Record::Constraint {
-                create,
-                constraint_type,
-                entity_type,
-                status,
-                label_id,
-                label,
-                props,
+            let props = read_constraint_props(r)?;
+            match status {
+                Some(status) => Record::CreateConstraint {
+                    constraint_type,
+                    entity_type,
+                    status,
+                    label_id,
+                    label,
+                    props,
+                },
+                None => Record::DropConstraint {
+                    constraint_type,
+                    entity_type,
+                    label_id,
+                    label,
+                    props,
+                },
             }
         }
     };
     Ok(record)
+}
+
+/// The counted property list both constraint records end with.
+///
+/// The reading half of [`write_constraint_tail`], shared for the same reason:
+/// the two records differ in the status and in nothing else after it.
+fn read_constraint_props(r: &mut Reader<'_>) -> Result<Vec<AttrRef<String>>, DecodeError> {
+    let n = r.u8()?;
+    let n = r.guard_count(u64::from(n), MIN_ATTR_REF_BYTES)?;
+    let mut props = Vec::with_capacity(n);
+    for _ in 0..n {
+        let id = r.u16()?;
+        props.push(AttrRef {
+            id,
+            name: r.string()?,
+        });
+    }
+    Ok(props)
+}
+
+/// The label, name and property list both constraint records end with.
+///
+/// Shared so the create and the drop cannot drift: they differ only in the
+/// status, and that difference now lives in the types rather than in a branch.
+fn write_constraint_tail<W: EffectWrite + ?Sized>(
+    buf: &mut W,
+    label_id: u32,
+    label: &str,
+    props: &[AttrRef<String>],
+) {
+    buf.schema_id(label_id);
+    buf.string(label);
+    // Floor: 2 bytes of id and an 8-byte length per property.
+    buf.reserve(1 + props.len() * 10);
+    // Not `as u8`. C reads this count as a `uint8`, so a 256th property would
+    // write **0** and replicate a constraint over no properties at all —
+    // silently, and only in release, where an assert is compiled out.
+    // `GRAPH.CONSTRAINT` caps the count at 255 so this cannot fire, which is
+    // exactly why it must be loud rather than truncating: if it ever does, the
+    // guard three layers up has gone.
+    let n = u8::try_from(props.len())
+        .expect("GRAPH.CONSTRAINT caps properties at 255; C reads the count as uint8");
+    buf.u8(n);
+    for AttrRef { id, name } in props {
+        buf.u16(*id);
+        buf.string(name);
+    }
 }
 
 /// Write one record, whatever its opcode.
@@ -634,13 +727,12 @@ impl EffectEncode<3> for Record {
             // Carries its id, which v2 did not: the replica used to infer one
             // from append order, so a dictionary of a different length assigned
             // a different id and every later record referenced the wrong entry.
-            Record::AddSchema {
-                schema_type,
-                id,
-                name,
-            } => {
+            Record::AddLabel { id, name } | Record::AddRelType { id, name } => {
                 write_header(buf, Opcode::AddSchema, None);
-                buf.u32(schema_tag(*schema_type));
+                buf.u32(schema_tag(match self {
+                    Record::AddLabel { .. } => EntityType::Node,
+                    _ => EntityType::Relationship,
+                }));
                 buf.schema_id(*id);
                 buf.string(name);
             }
@@ -712,22 +804,29 @@ impl EffectEncode<3> for Record {
             //
             // A property being removed is `T_NULL` in its slot — the tag's only
             // meaning here.
-            Record::Update {
-                entity,
+            Record::UpdateNode {
                 ids,
                 labels,
+                attr_ids,
+                rows,
+            } => {
+                write_header(buf, Opcode::UpdateNode, Some(ids.count()));
+                LabelSet(labels.as_slice()).encode(buf);
+                AttrIds(attr_ids.as_slice()).encode(buf);
+                ids.encode(buf);
+                AttrValues(rows.as_slice()).encode(buf);
+            }
+
+            Record::UpdateEdge {
+                ids,
                 relation_id,
                 attr_ids,
                 rows,
             } => {
-                write_header(buf, update_opcode(*entity), Some(ids.count()));
-                match entity {
-                    EntityType::Node => LabelSet(labels.as_slice()).encode(buf),
-                    EntityType::Relationship => {
-                        RelType(relation_id.expect("UPDATE_EDGE carries its relationship type"))
-                            .encode(buf)
-                    }
-                }
+                write_header(buf, Opcode::UpdateEdge, Some(ids.count()));
+                // No `expect` here any more: the type carries the relationship
+                // type, so an edge update cannot be built without one.
+                RelType(*relation_id).encode(buf);
                 AttrIds(attr_ids.as_slice()).encode(buf);
                 ids.encode(buf);
                 AttrValues(rows.as_slice()).encode(buf);
@@ -738,8 +837,8 @@ impl EffectEncode<3> for Record {
             // The labels, and all their nodes — not one `(node, label)` pair per
             // node. v2 shipped a serialized GraphBLAS vector here, which is an
             // internal representation two engines cannot agree on.
-            Record::Labels { add, ids, labels } => {
-                let opcode = if *add {
+            Record::AddLabels { ids, labels } | Record::RemoveLabels { ids, labels } => {
+                let opcode = if matches!(self, Record::AddLabels { .. }) {
                     Opcode::SetLabels
                 } else {
                     Opcode::RemoveLabels
@@ -788,8 +887,7 @@ impl EffectEncode<3> for Record {
             // Only a create carries `OPTIONS`: v2 could not encode the map at
             // all and forced the whole statement to replicate as a verbatim
             // query.
-            Record::Index {
-                create,
+            Record::CreateIndex {
                 schema_type,
                 label_id,
                 label,
@@ -797,33 +895,36 @@ impl EffectEncode<3> for Record {
                 fields,
                 options,
             } => {
-                write_header(
-                    buf,
-                    if *create {
-                        Opcode::CreateIndex
-                    } else {
-                        Opcode::DropIndex
-                    },
-                    None,
-                );
+                write_header(buf, Opcode::CreateIndex, None);
                 buf.u32(schema_tag(*schema_type));
                 buf.schema_id(*label_id);
                 buf.string(label);
                 buf.u32(*field_type);
                 IndexFields(fields.as_slice()).encode(buf);
-                if *create {
-                    // A create always carries options; absent ones travel as
-                    // the RDB's defaults rather than as a presence mask.
-                    options
-                        .as_ref()
-                        .expect("a CREATE_INDEX record carries options")
-                        .encode_sized(buf, *field_type);
-                }
+                // No `expect` here any more: a create's options are a field,
+                // not an `Option`, so a create without them cannot be built.
+                options.encode_sized(buf, *field_type);
+            }
+
+            // A drop mirrors the create and stops before the options — zero
+            // bytes, not an empty block. There is no field for one to write.
+            Record::DropIndex {
+                schema_type,
+                label_id,
+                label,
+                field_type,
+                fields,
+            } => {
+                write_header(buf, Opcode::DropIndex, None);
+                buf.u32(schema_tag(*schema_type));
+                buf.schema_id(*label_id);
+                buf.string(label);
+                buf.u32(*field_type);
+                IndexFields(fields.as_slice()).encode(buf);
             }
 
             // `13 CREATE_CONSTRAINT` / `14 DROP_CONSTRAINT`.
-            Record::Constraint {
-                create,
+            Record::CreateConstraint {
                 constraint_type,
                 entity_type,
                 status,
@@ -831,53 +932,37 @@ impl EffectEncode<3> for Record {
                 label,
                 props,
             } => {
-                write_header(
-                    buf,
-                    if *create {
-                        Opcode::CreateConstraint
-                    } else {
-                        Opcode::DropConstraint
-                    },
-                    None,
-                );
-                debug_assert_eq!(
-                    *create,
-                    status.is_some(),
-                    "status belongs to a create record and only to a create record"
-                );
+                write_header(buf, Opcode::CreateConstraint, None);
                 buf.u32(constraint_tag(*constraint_type));
                 buf.u32(entity_tag(*entity_type));
-                // Create only, and the one place v3 deliberately carries more
-                // than C: C's `EffectsBuffer_AddCreateConstraintEffect` sends no
-                // status, so its replica cannot tell an enforcing constraint
-                // from one still being built. A replica does not validate, so
-                // this is the only thing that can tell it — and it is what makes
-                // the second announcement, after validation finishes, converge
+                // The one place v3 deliberately carries more than C: C's
+                // `EffectsBuffer_AddCreateConstraintEffect` sends no status, so
+                // its replica cannot tell an enforcing constraint from one
+                // still being built. A replica does not validate, so this is
+                // the only thing that can tell it — and it is what makes the
+                // second announcement, after validation finishes, converge
                 // rather than duplicate.
                 //
-                // A *drop* has no such need: the apply path calls
-                // `drop_constraint` and never reads the field.
-                if let Some(status) = status {
-                    buf.u32(constraint_status_tag(*status));
-                }
-                buf.schema_id(*label_id);
-                buf.string(label);
-                // Floor: 2 bytes of id and an 8-byte length per property.
-                buf.reserve(1 + props.len() * 10);
-                // Not `as u8`, and not a `debug_assert`. C reads this count as a
-                // `uint8`, so a 256th property would write **0** and replicate a
-                // constraint over no properties at all — silently, and only in
-                // release, where an assert is compiled out. `GRAPH.CONSTRAINT`
-                // caps the count at 255 so this cannot fire, which is exactly
-                // why it must be loud rather than truncating: if it ever does,
-                // the guard three layers up has gone.
-                let n = u8::try_from(props.len())
-                    .expect("GRAPH.CONSTRAINT caps properties at 255; C reads the count as uint8");
-                buf.u8(n);
-                for AttrRef { id, name } in props {
-                    buf.u16(*id);
-                    buf.string(name);
-                }
+                // A field rather than an `Option`, so the assert that used to
+                // pair it with `create` has nothing left to check.
+                buf.u32(constraint_status_tag(*status));
+                write_constraint_tail(buf, *label_id, label, props);
+            }
+
+            // A drop mirrors the create **without** the status: the apply path
+            // calls `drop_constraint` and never reads one, and there is no
+            // field here to write.
+            Record::DropConstraint {
+                constraint_type,
+                entity_type,
+                label_id,
+                label,
+                props,
+            } => {
+                write_header(buf, Opcode::DropConstraint, None);
+                buf.u32(constraint_tag(*constraint_type));
+                buf.u32(entity_tag(*entity_type));
+                write_constraint_tail(buf, *label_id, label, props);
             }
         }
     }
@@ -1262,8 +1347,7 @@ mod tests {
         // one label fit in a few dozen bytes because the ids are one run.
         let ids: IdList = (0..10_000).collect();
         let mut buf = new_buffer();
-        Record::Labels {
-            add: true,
+        Record::AddLabels {
             ids: ids.clone(),
             labels: vec![5],
         }
@@ -1273,8 +1357,7 @@ mod tests {
         let records = read_buffer(&buf).unwrap();
         assert_eq!(
             records[0],
-            Record::Labels {
-                add: true,
+            Record::AddLabels {
                 ids,
                 labels: vec![5],
             }
@@ -1287,8 +1370,7 @@ mod tests {
         // id from its own append order — the assumption every bare id rests on,
         // and the only one that could not be checked.
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 3,
             name: "Person".to_owned(),
         }
@@ -1303,8 +1385,7 @@ mod tests {
         assert_eq!(
             records,
             vec![
-                Record::AddSchema {
-                    schema_type: EntityType::Node,
+                Record::AddLabel {
                     id: 3,
                     name: "Person".into(),
                 },
@@ -1334,8 +1415,7 @@ mod tests {
     #[test]
     fn every_record_type_round_trips() {
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Relationship,
+        Record::AddRelType {
             id: 1,
             name: "KNOWS".to_owned(),
         }
@@ -1361,32 +1441,26 @@ mod tests {
             rows: vec![Value::Int(2020), Value::Int(2021)],
         }
         .encode(&mut buf);
-        Record::Update {
-            entity: EntityType::Node,
+        Record::UpdateNode {
             ids: IdList::from([1]),
             labels: vec![7],
-            relation_id: None,
             attr_ids: vec![0],
             rows: vec![Value::Int(9)],
         }
         .encode(&mut buf);
-        Record::Update {
-            entity: EntityType::Relationship,
+        Record::UpdateEdge {
             ids: IdList::from([5]),
-            labels: vec![],
-            relation_id: Some(1),
+            relation_id: 1,
             attr_ids: vec![0],
             rows: vec![Value::Null],
         }
         .encode(&mut buf);
-        Record::Labels {
-            add: true,
+        Record::AddLabels {
             ids: IdList::from([1, 2]),
             labels: vec![7, 8],
         }
         .encode(&mut buf);
-        Record::Labels {
-            add: false,
+        Record::RemoveLabels {
             ids: IdList::from([1]),
             labels: vec![8],
         }
@@ -1403,8 +1477,7 @@ mod tests {
             labels: vec![7],
         }
         .encode(&mut buf);
-        Record::Index {
-            create: true,
+        Record::CreateIndex {
             schema_type: EntityType::Node,
             label_id: 7,
             label: "L".to_owned(),
@@ -1413,11 +1486,10 @@ mod tests {
                 id: 0,
                 name: "since".to_owned(),
             }],
-            options: Some(IndexFieldOptions::none_given(None)),
+            options: IndexFieldOptions::none_given(None),
         }
         .encode(&mut buf);
-        Record::Index {
-            create: false,
+        Record::DropIndex {
             schema_type: EntityType::Node,
             label_id: 7,
             label: "L".to_owned(),
@@ -1426,14 +1498,12 @@ mod tests {
                 id: 0,
                 name: "since".to_owned(),
             }],
-            options: None,
         }
         .encode(&mut buf);
-        Record::Constraint {
-            create: true,
+        Record::CreateConstraint {
             constraint_type: ConstraintType::Unique,
             entity_type: EntityType::Node,
-            status: Some(ConstraintStatus::Operational),
+            status: ConstraintStatus::Operational,
             label_id: 7,
             label: "L".to_owned(),
             props: vec![AttrRef {
@@ -1442,11 +1512,9 @@ mod tests {
             }],
         }
         .encode(&mut buf);
-        Record::Constraint {
-            create: false,
+        Record::DropConstraint {
             constraint_type: ConstraintType::Mandatory,
             entity_type: EntityType::Relationship,
-            status: None,
             label_id: 1,
             label: "KNOWS".to_owned(),
             props: vec![],
@@ -1628,8 +1696,7 @@ mod tests {
     #[test]
     fn create_index_keeps_the_name_beside_each_id() {
         let mut buf = new_buffer();
-        Record::Index {
-            create: true,
+        Record::CreateIndex {
             schema_type: EntityType::Node,
             label_id: 3,
             label: "Person".to_owned(),
@@ -1638,14 +1705,13 @@ mod tests {
                 id: 9,
                 name: "name".to_owned(),
             }],
-            options: Some(IndexFieldOptions::none_given(None)),
+            options: IndexFieldOptions::none_given(None),
         }
         .encode(&mut buf);
         let records = read_buffer(&buf).unwrap();
         assert_eq!(
             records[0],
-            Record::Index {
-                create: true,
+            Record::CreateIndex {
                 schema_type: EntityType::Node,
                 label_id: 3,
                 label: "Person".into(),
@@ -1654,7 +1720,7 @@ mod tests {
                     id: 9,
                     name: "name".to_owned(),
                 }],
-                options: Some(IndexFieldOptions::none_given(None)),
+                options: IndexFieldOptions::none_given(None),
             }
         );
     }
@@ -1675,20 +1741,19 @@ mod tests {
                 name: name.to_owned(),
             })
             .collect();
-        Record::Index {
-            create: true,
+        Record::CreateIndex {
             schema_type: EntityType::Node,
             label_id: 1,
             label: "L".to_owned(),
             field_type: INDEX_FLD_RANGE,
             fields,
-            options: Some(IndexFieldOptions::none_given(None)),
+            options: IndexFieldOptions::none_given(None),
         }
         .encode(&mut buf);
 
         let records = read_buffer(&buf).unwrap();
         assert_eq!(records.len(), 1, "one statement, one record");
-        let Record::Index { fields, .. } = &records[0] else {
+        let Record::CreateIndex { fields, .. } = &records[0] else {
             panic!("wrong record: {:?}", records[0]);
         };
         assert_eq!(
@@ -1771,8 +1836,7 @@ mod tests {
     #[test]
     fn drop_index_carries_no_options() {
         let mut buf = new_buffer();
-        Record::Index {
-            create: false,
+        Record::DropIndex {
             schema_type: EntityType::Relationship,
             label_id: 1,
             label: "KNOWS".to_owned(),
@@ -1781,18 +1845,16 @@ mod tests {
                 id: 0,
                 name: "since".to_owned(),
             }],
-            options: None,
         }
         .encode(&mut buf);
         let records = read_buffer(&buf).unwrap();
-        let Record::Index {
-            create, options, ..
-        } = &records[0]
-        else {
+        // A drop is a different variant now, so "carries no options" is
+        // checked by matching rather than by reading a `None`.
+        let Record::DropIndex { .. } = &records[0] else {
             panic!("wrong record");
         };
-        assert!(!create);
-        assert_eq!(*options, None);
+        // Nothing left to assert about the options: `DropIndex` has no field
+        // for them, so a drop carrying options no longer compiles.
     }
 
     #[test]
@@ -1830,11 +1892,10 @@ mod tests {
     fn constraint_property_count_is_one_byte() {
         // C reads it as uint8_t, not the u16 used elsewhere in the format.
         let mut buf = Vec::new();
-        Record::Constraint {
-            create: true,
+        Record::CreateConstraint {
             constraint_type: ConstraintType::Unique,
             entity_type: EntityType::Node,
-            status: Some(ConstraintStatus::Operational),
+            status: ConstraintStatus::Operational,
             label_id: 3,
             label: "Person".to_owned(),
             props: vec![
@@ -1858,11 +1919,10 @@ mod tests {
     #[test]
     fn constraints_round_trip_with_their_property_names() {
         let mut buf = new_buffer();
-        Record::Constraint {
-            create: true,
+        Record::CreateConstraint {
             constraint_type: ConstraintType::Unique,
             entity_type: EntityType::Node,
-            status: Some(ConstraintStatus::Operational),
+            status: ConstraintStatus::Operational,
             label_id: 3,
             label: "Person".to_owned(),
             props: vec![
@@ -1877,11 +1937,9 @@ mod tests {
             ],
         }
         .encode(&mut buf);
-        Record::Constraint {
-            create: false,
+        Record::DropConstraint {
             constraint_type: ConstraintType::Mandatory,
             entity_type: EntityType::Relationship,
-            status: None,
             label_id: 1,
             label: "KNOWS".to_owned(),
             props: vec![AttrRef {
@@ -1894,11 +1952,10 @@ mod tests {
         let records = read_buffer(&buf).unwrap();
         assert_eq!(
             records[0],
-            Record::Constraint {
-                create: true,
+            Record::CreateConstraint {
                 constraint_type: ConstraintType::Unique,
                 entity_type: EntityType::Node,
-                status: Some(ConstraintStatus::Operational),
+                status: ConstraintStatus::Operational,
                 label_id: 3,
                 label: "Person".into(),
                 props: vec![
@@ -1913,16 +1970,12 @@ mod tests {
                 ],
             }
         );
-        let Record::Constraint {
-            create,
-            entity_type,
-            props,
-            ..
+        let Record::DropConstraint {
+            entity_type, props, ..
         } = &records[1]
         else {
             panic!("wrong record");
         };
-        assert!(!create);
         assert_eq!(*entity_type, EntityType::Relationship);
         assert_eq!(
             props,
@@ -1937,8 +1990,7 @@ mod tests {
     fn ddl_records_carry_no_count() {
         // Like the schema records, these are singular.
         let mut buf = Vec::new();
-        Record::Index {
-            create: false,
+        Record::DropIndex {
             schema_type: EntityType::Node,
             label_id: 1,
             label: "L".to_owned(),
@@ -1947,7 +1999,6 @@ mod tests {
                 id: 0,
                 name: "a".to_owned(),
             }],
-            options: None,
         }
         .encode(&mut buf);
         assert_eq!(&buf[..4], &(Opcode::DropIndex as u32).to_le_bytes());
@@ -2375,8 +2426,7 @@ mod tests {
         // only way it can learn whether the constraint enforces. A drop had no use
         // for it — the apply path calls `drop_constraint` and never reads it — so
         // carrying one was a `u32` of pure divergence.
-        let announce = |create, status| Record::Constraint {
-            create,
+        let announce = |status| Record::CreateConstraint {
             constraint_type: ConstraintType::Unique,
             entity_type: EntityType::Node,
             status,
@@ -2389,9 +2439,21 @@ mod tests {
         };
 
         let mut created = new_buffer();
-        announce(true, Some(ConstraintStatus::Failed)).encode(&mut created);
+        announce(ConstraintStatus::Failed).encode(&mut created);
         let mut dropped = new_buffer();
-        announce(false, None).encode(&mut dropped);
+        // The same fields as the create, so the only difference on the wire is
+        // the status word the create carries and the drop has no field for.
+        Record::DropConstraint {
+            constraint_type: ConstraintType::Unique,
+            entity_type: EntityType::Node,
+            label_id: 3,
+            label: "Person".to_owned(),
+            props: vec![AttrRef {
+                id: 0,
+                name: "email".to_owned(),
+            }],
+        }
+        .encode(&mut dropped);
 
         // Same fields either way apart from the status word.
         assert_eq!(
@@ -2400,16 +2462,17 @@ mod tests {
             "a create carries exactly one u32 more than a drop"
         );
 
-        // And it round-trips as present on one and absent on the other, rather
-        // than defaulting to something that reads as meaningful.
-        let Record::Constraint { status, .. } = &read_buffer(&created).unwrap()[0] else {
-            panic!("expected a constraint record");
+        // And it round-trips into the variant that has a status on one side and
+        // the variant that has no field for one on the other. The old version
+        // asserted `Some`/`None` on a shared field; now the shape carries it,
+        // so a drop that decoded a status would not be constructible.
+        let Record::CreateConstraint { status, .. } = &read_buffer(&created).unwrap()[0] else {
+            panic!("expected a create-constraint record");
         };
-        assert_eq!(*status, Some(ConstraintStatus::Failed));
-        let Record::Constraint { status, .. } = &read_buffer(&dropped).unwrap()[0] else {
-            panic!("expected a constraint record");
+        assert_eq!(*status, ConstraintStatus::Failed);
+        let Record::DropConstraint { .. } = &read_buffer(&dropped).unwrap()[0] else {
+            panic!("expected a drop-constraint record");
         };
-        assert_eq!(*status, None);
     }
 
     #[test]
