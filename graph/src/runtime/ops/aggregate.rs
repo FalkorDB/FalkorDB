@@ -45,7 +45,7 @@ use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use thin_vec::{ThinVec, thin_vec};
+use thin_vec::ThinVec;
 
 /// Group-by accumulator map, keyed by the composite [`GroupKey`].
 ///
@@ -99,6 +99,25 @@ enum KeyExprKind {
     Variable(Variable),
     /// Property access: `GROUP BY n.age`
     Property { var: Variable, attr: Arc<String> },
+    /// Any other key expression, `GROUP BY n.id % 5` included.
+    ///
+    /// The same treatment `AggInputKind::Computed` gives an aggregate's input,
+    /// for the same reason: without it a single arithmetic key sent the *whole*
+    /// operator down `consume_input_per_row`, so the aggregate inputs lost
+    /// their bulk extraction too. Measured on `p.age` vs `p.age + 0` over
+    /// 10,000 rows — same data, same groups — that cost 15.96 M instructions
+    /// against 28.29 M.
+    Computed(ComputedExpr),
+}
+
+/// An expression [`VectorEval`] evaluates as a column, and where to start.
+///
+/// The tree is carried whole because a node index means nothing without it, and
+/// keys and aggregate inputs both need exactly this pair — they are the same
+/// idea reached from two directions.
+struct ComputedExpr {
+    tree: QueryExpr<Variable>,
+    idx: NodeIdx<Dyn<ExprIR<Variable>>>,
 }
 
 /// How an aggregation input expression can be evaluated in bulk.
@@ -119,10 +138,7 @@ enum AggInputKind {
     /// every other value, so `collect(row.t)` over map rows silently
     /// aggregated nothing. The variant is gone rather than fixed — one
     /// evaluator, nothing left to disagree with.
-    Computed {
-        tree: QueryExpr<Variable>,
-        idx: NodeIdx<Dyn<ExprIR<Variable>>>,
-    },
+    Computed(ComputedExpr),
 }
 
 /// True if `node`'s subtree contains an aggregate call.
@@ -151,6 +167,64 @@ struct VectorizableAgg {
     /// per-group dedup state in [`Runtime::value_dedupers`], matching the
     /// per-row evaluator so the two paths stay consistent within a query.
     distinct_idx: Option<NodeIdx<Dyn<ExprIR<Variable>>>>,
+    /// Constant arguments after the first, for a multi-argument aggregation:
+    /// the `0.5` of `percentileDisc(n.score, 0.5)`.
+    ///
+    /// Only constants qualify. A row-dependent second argument would have to be
+    /// a column of its own, and no aggregation takes one — but more to the
+    /// point, `percentileDisc(x, n.p)` is not a meaningful aggregate, so the
+    /// per-row path stays the answer for it rather than a column nobody wants.
+    extra_args: Vec<Value>,
+}
+
+impl VectorizableAgg {
+    /// The argument list for one input value: `[value]`, or `[value, 0.5]` for
+    /// a multi-argument aggregation, validated as the per-row path validates.
+    ///
+    /// `validate_args_domain` matters as much as the type check and used to be
+    /// missing here: every aggregation on this path was single-argument and
+    /// unconstrained until `percentileDisc` joined it, and its kernel indexes
+    /// by the percentile — so an out-of-range constant crashed the server
+    /// instead of raising.
+    fn args_for(
+        &self,
+        value: Value,
+    ) -> Result<ThinVec<Value>, String> {
+        let mut inputs: ThinVec<Value> = ThinVec::with_capacity(1 + self.extra_args.len());
+        inputs.push(value);
+        inputs.extend(self.extra_args.iter().cloned());
+        self.func.validate_args_type(&inputs)?;
+        self.func.validate_args_domain(&inputs)?;
+        Ok(inputs)
+    }
+
+    /// Fold `inputs` into the accumulator `prev`.
+    ///
+    /// Prefers `batch_agg`, for the reason `run_agg_expr` states: it takes the
+    /// accumulator as an owned `Value`, so `collect` and the percentiles get a
+    /// unique `Arc` and extend their list in place. Pushing `prev` into the
+    /// argument slice instead leaves the accumulator behind a shared
+    /// reference and every row deep-clones the whole list — O(n^2). Measured
+    /// on `percentileDisc(p.score, 0.5)` over 10,000 rows: 1,787 M
+    /// instructions that way against 26 M this way.
+    fn fold(
+        &self,
+        runtime: &Runtime,
+        inputs: ThinVec<Value>,
+        prev: Value,
+    ) -> Result<Value, String> {
+        if let FnType::Aggregation {
+            batch_agg: Some(batch_fn),
+            ..
+        } = &self.func.fn_type
+        {
+            batch_fn(runtime, &inputs, 1, prev)
+        } else {
+            let mut args = inputs;
+            args.push(prev);
+            self.func.func.call(runtime, &args)
+        }
+    }
 }
 
 /// Full analysis of a vectorizable aggregate operator.
@@ -235,10 +309,36 @@ impl<'a> AggregateOp<'a> {
                             attr: attr.clone(),
                         });
                     } else {
-                        return None;
+                        key_kinds.push(KeyExprKind::Computed(ComputedExpr {
+                            tree: tree.clone(),
+                            idx: root.idx(),
+                        }));
                     }
                 }
-                _ => return None,
+                // A key holding an aggregate is not a key; that shape belongs
+                // to the per-row path, which recurses to find the aggregates.
+                //
+                // Defence, not a live branch — and this was checked rather than
+                // assumed. Replacing all four `subtree_has_aggregate` guards in
+                // this file with `panic!` leaves the whole corpus green: 1,485
+                // flow tests, 124 e2e, 2,456 TCK scenarios, 187 unit tests.
+                // Nothing reaches them, for two separate reasons: the binder
+                // refuses an aggregate inside an aggregate ("Can't use
+                // aggregate functions inside of aggregate functions"), and an
+                // expression that merely *contains* one, like
+                // `g.v % max(g.v)`, is routed as an aggregation rather than a
+                // key, so it bails at the "root is not an aggregate" arm above.
+                //
+                // They stay because `analyze` is a syntactic check over an IR
+                // tree and the invariant it would be leaning on lives in
+                // another pass. Falling back costs the operator its columnar
+                // path and nothing else; the guard being wrong the other way
+                // would evaluate an aggregate per row inside a column build.
+                _ if subtree_has_aggregate(&root) => return None,
+                _ => key_kinds.push(KeyExprKind::Computed(ComputedExpr {
+                    tree: tree.clone(),
+                    idx: root.idx(),
+                })),
             }
         }
 
@@ -294,26 +394,31 @@ impl<'a> AggregateOp<'a> {
             let inner = distinct.child(0);
             let input = match inner.data() {
                 ExprIR::Variable(var) => AggInputKind::Variable(var.clone()),
-                ExprIR::Property(_) if inner.num_children() == 1 => {
-                    if !matches!(inner.child(0).data(), ExprIR::Variable(_)) {
-                        return None;
-                    }
-                    AggInputKind::Computed {
-                        tree: tree.clone(),
-                        idx: inner.idx(),
-                    }
-                }
-                _ => return None,
+                // Any other inner expression, `DISTINCT n.id % 100` included.
+                // Deduplication is per-value and happens after the column is
+                // built, so it does not care how the value was computed — the
+                // shape restriction here was never load-bearing.
+                //
+                // The aggregate guard is defence, not a live branch — see the
+                // key guard in `analyze` for the evidence and the reasoning.
+                // Same for the two below.
+                _ if subtree_has_aggregate(&inner) => return None,
+                _ => AggInputKind::Computed(ComputedExpr {
+                    tree: tree.clone(),
+                    idx: inner.idx(),
+                }),
             };
             return Some(VectorizableAgg {
                 func: func.clone(),
                 input: Some(input),
                 acc_var: acc_var.clone(),
                 distinct_idx: Some(distinct.idx()),
+                extra_args: Vec::new(),
             });
         }
 
         // Analyze the input argument (child 0).
+        let mut extra_args: Vec<Value> = Vec::new();
         let input = if num_children == 1 {
             // No input args — this is count(*) / count() — only the accumulator var.
             None
@@ -336,16 +441,36 @@ impl<'a> AggregateOp<'a> {
                     if subtree_has_aggregate(&arg) {
                         return None;
                     }
-                    Some(AggInputKind::Computed {
+                    Some(AggInputKind::Computed(ComputedExpr {
                         tree: tree.clone(),
                         idx: arg.idx(),
-                    })
+                    }))
                 }
             }
         } else {
-            // Multi-argument aggregation (e.g., percentileDisc(n.age, 0.5)).
-            // Fall back to per-row for these.
-            return None;
+            // Multi-argument aggregation: `percentileDisc(n.score, 0.5)`. The
+            // first argument is the column; the rest must be constants, which
+            // is what these functions take — a percentile is a property of the
+            // aggregate, not of a row.
+            // One pass: `extra_args` is local, so pushing before a later
+            // argument turns out non-constant costs nothing — it is dropped
+            // with the `None`. Validating in a separate loop first only bought
+            // an `unreachable!`.
+            for i in 1..num_children - 1 {
+                let ExprIR::Constant(v) = root.child(i).data() else {
+                    return None;
+                };
+                extra_args.push(v.clone());
+            }
+            let arg = root.child(0);
+            match arg.data() {
+                ExprIR::Variable(var) => Some(AggInputKind::Variable(var.clone())),
+                _ if subtree_has_aggregate(&arg) => return None,
+                _ => Some(AggInputKind::Computed(ComputedExpr {
+                    tree: tree.clone(),
+                    idx: arg.idx(),
+                })),
+            }
         };
 
         Some(VectorizableAgg {
@@ -353,6 +478,7 @@ impl<'a> AggregateOp<'a> {
             input,
             acc_var: acc_var.clone(),
             distinct_idx: None,
+            extra_args,
         })
     }
 
@@ -469,6 +595,41 @@ impl<'a> AggregateOp<'a> {
                     } else {
                         &[]
                     };
+
+                    // A multi-argument aggregation cannot hand its whole column
+                    // to `batch_agg`, which reads the slice *as* the input
+                    // values and would take the trailing `0.5` for another
+                    // datum. It still belongs here rather than disqualifying the
+                    // operator: gating the fast path on every aggregate being
+                    // single-argument cost `agg in CALL` — six ordinary
+                    // aggregates beside one `percentileDisc` — the fast path for
+                    // all seven.
+                    if !agg.extra_args.is_empty() {
+                        let mut cur = prev;
+                        let mut per_value_err: Option<String> = None;
+                        for val in inputs {
+                            if matches!(val, Value::Null) {
+                                continue;
+                            }
+                            match agg
+                                .args_for(val.clone())
+                                .and_then(|args| agg.fold(self.runtime, args, cur))
+                            {
+                                Ok(next) => cur = next,
+                                Err(e) => {
+                                    per_value_err = Some(e);
+                                    cur = Value::Null;
+                                    break;
+                                }
+                            }
+                        }
+                        acc.insert(&agg.acc_var, cur);
+                        if let Some(e) = per_value_err {
+                            batch_err = Some(e);
+                            break;
+                        }
+                        continue;
+                    }
                     // Validate each input — the per-row path runs validate_args_type
                     // before each call; without this, batch kernels relying on
                     // `unreachable!()` for unexpected types would panic on bad data
@@ -571,18 +732,18 @@ impl<'a> AggregateOp<'a> {
 
                     let prev = acc.take(&agg.acc_var).unwrap_or(Value::Null);
 
-                    let args = thin_vec![input_val, prev];
-
-                    if let Err(e) = agg.func.validate_args_type(&args[..1]) {
-                        // Restore the accumulator that was taken above.
-                        if let Some(prev_val) = args.into_iter().nth(1) {
-                            acc.insert(&agg.acc_var, prev_val);
+                    // Validate before the fold, so a bad argument puts the
+                    // accumulator back rather than leaving the slot empty.
+                    let inputs = match agg.args_for(input_val) {
+                        Ok(inputs) => inputs,
+                        Err(e) => {
+                            acc.insert(&agg.acc_var, prev);
+                            errors.push(e);
+                            break;
                         }
-                        errors.push(e);
-                        break;
-                    }
+                    };
 
-                    match agg.func.func.call(self.runtime, &args) {
+                    match agg.fold(self.runtime, inputs, prev) {
                         Ok(new_val) => acc.insert(&agg.acc_var, new_val),
                         Err(e) => {
                             errors.push(e);
@@ -623,6 +784,18 @@ impl<'a> AggregateOp<'a> {
                     // 9007199254740992 into one group.
                     key_columns.push(runtime.materialize_node_property_values(&active_ids, attr));
                 }
+                KeyExprKind::Computed(ComputedExpr { tree, idx }) => {
+                    // An evaluation error becomes `Err(())` — "this batch cannot
+                    // take the bulk path" — rather than being reported here. The
+                    // per-row path then re-evaluates and raises it, which keeps
+                    // one authority for the error's text and its ordering
+                    // relative to the other keys.
+                    key_columns.push(
+                        VectorEval::new(runtime)
+                            .eval_values(&tree.node(*idx), batch, active)
+                            .map_err(|_| ())?,
+                    );
+                }
             }
         }
         Ok(key_columns)
@@ -655,7 +828,7 @@ impl<'a> AggregateOp<'a> {
                         .collect();
                     agg_columns.push(col);
                 }
-                Some(AggInputKind::Computed { tree, idx }) => {
+                Some(AggInputKind::Computed(ComputedExpr { tree, idx })) => {
                     // Evaluated columnarly: `sum(n.age * 3)` costs one bulk
                     // attribute fetch and one pass per operator, where the
                     // per-row path re-walked the tree — and re-read the
