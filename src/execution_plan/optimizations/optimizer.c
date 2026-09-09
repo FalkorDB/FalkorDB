@@ -46,6 +46,12 @@ void Optimizer_RuntimeOptimize
 	// tries to compact filter trees, and remove redundant filters
 	compactFilters(plan);
 
+	// fold relationship-type predicates on variable-length edges into the
+	// traversal's relationship-type set
+	// note: this is a run-time optimization as a negated type filter folds
+	// against the current number of relationship-types, which can grow over time
+	foldVariableLengthEdgeRelationFilter(plan);
+
 	// when possible, replace label scan and filter ops with index scans
 	// note: this is a run-time optimization as indices might be added/remove
 	// over time
