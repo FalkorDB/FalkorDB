@@ -171,7 +171,7 @@ insisting on a reason for each answer.
 
 ## The rule: every optional block needs a present case AND an absent case
 
-The 33 cases read as one per feature, which is why a missing *absent*-block
+The cases read as one per feature, which is why a missing *absent*-block
 case was never obviously missing — it was not a hole in a grid, it was a case
 nobody thought of. It cost a real bug: the C decoder returned MALFORMED for a
 create with zero attributes, refusing `CREATE (:Person)`, while a full green
@@ -228,16 +228,24 @@ the segment-level checks. `Segment::decode` does reject `count == 0` and
 record today.** Verified against `graph/src/effects/v3/id_list.rs`. Segment-level
 and record-level are different checks and only the first exists.
 
-Measured across all 33 cases, only ONE block has both forms today:
+Measured across all 37 cases, FIVE blocks now have both forms:
 
 | block | present | empty |
 | --- | ---: | ---: |
+| `CREATE_NODE.attr_ids` | 4 | 1 |
+| `CREATE_NODE.rows` | 4 | 1 |
+| `CREATE_EDGE.attr_ids` | 1 | 1 |
+| `CREATE_EDGE.rows` | 1 | 1 |
 | `DELETE_NODE.labels` | 2 | 16 |
 
-Every other optional block appears in one form only — 26 of them present with
-no empty counterpart, and two (`DROP_CONSTRAINT.status`, `DROP_INDEX.options`)
-empty with no present counterpart. The empty-attribute-set gap was one of those
-26, not a one-off.
+It was one when this rule was written. `create_node_no_attrs` and
+`create_edge_no_attrs` closed four holes between them, because zero attribute
+ids implies zero value rows — so requesting two fixtures covered two blocks
+each. Twenty-two blocks are still present-only.
+
+The two remaining empty-only entries, `DROP_CONSTRAINT.status` and
+`DROP_INDEX.options`, are **not** gaps: they are the mandated-empty cases
+below, and what they need is a rejection case for the *present* form.
 
 **Enforcement belongs in the generator, not here.** Checking this grid means
 reading each record's blocks as structures, and the C harness deliberately
@@ -278,7 +286,7 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 
 ## Cases
 
-33 cases.
+37 cases.
 
 | case | records | bytes |
 | --- | --- | ---: |
@@ -286,6 +294,8 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 | `collapse_below` | 1 | 87 |
 | `count_width_2_bytes` | 1 | 20 |
 | `count_width_4_bytes` | 1 | 22 |
+| `create_edge_no_attrs` | 1 | 37 |
+| `create_node_no_attrs` | 1 | 25 |
 | `dir_ascending` | 1 | 19 |
 | `dir_descending` | 1 | 19 |
 | `dir_descending_bitmap` | 1 | 87 |
@@ -296,7 +306,8 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 | `rec_add_schema_node` | 1 | 29 |
 | `rec_create_constraint` | 1 | 53 |
 | `rec_create_edge` | 1 | 100 |
-| `rec_create_index` | 1 | 96 |
+| `rec_create_index` | 1 | 69 |
+| `rec_create_index_vector` | 1 | 99 |
 | `rec_create_node` | 1 | 92 |
 | `rec_delete_edge` | 1 | 35 |
 | `rec_delete_node` | 1 | 31 |
@@ -312,6 +323,7 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 | `seg_range_many` | 1 | 28 |
 | `seg_range_single` | 1 | 19 |
 | `seg_repeat` | 1 | 19 |
+| `value_string_interior_nul` | 1 | 59 |
 | `value_width_4_bytes` | 1 | 22 |
 | `value_width_8_bytes` | 1 | 26 |
 | `values_all_kinds` | 1 | 265 |
