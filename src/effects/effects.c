@@ -93,6 +93,33 @@ void EffectsBuffer_WriteBytes
 	EffectsBytes_Write (eb->records, ptr, n) ;
 }
 
+// write a length-prefixed, NUL-terminated string
+//
+// THE SPEC NOW SAYS BYTE LENGTH, NOT strlen. The corrected rule is "the value's
+// byte length + 1, then len bytes, the last a NUL", and a reader must use the
+// length rather than call strlen, because a value may contain interior NULs.
+// Rust produces them: openCypher's \uXXXX escape can encode one, so
+// size('a<NUL>b') is 3 there where strlen would report 1.
+//
+// THIS STILL WRITES strlen + 1, deliberately, for three independent reasons:
+//
+//   * C cannot express such a value. It does not implement \uXXXX at all -
+//     measured, C reports size 6 for the escape Rust reports 1 for, and 8 where
+//     Rust reports 3 - so no input with an interior NUL can reach here.
+//
+//   * SIValue has no length for a string. `char *stringval` is the entire
+//     representation (value.h), so the byte length does not exist to be
+//     written. Conforming means changing a core type used everywhere, which is
+//     not the effects path's to change.
+//
+//   * This writer is SHARED WITH v2, whose framing must not move. Changing it
+//     alters shipped v2 bytes, so conforming would need a v3-only string
+//     writer - a second SIValue codec, which is the one thing this file must
+//     not grow.
+//
+// So C conforms by construction rather than by intent. The day C gains \uXXXX
+// support this becomes a silent truncation on the wire, and the fix then is a
+// length on SIValue rather than anything here.
 void EffectsBuffer_WriteString
 (
 	const char *str,
