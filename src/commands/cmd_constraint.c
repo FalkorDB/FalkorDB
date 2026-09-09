@@ -297,10 +297,6 @@ static bool _Constraint_Drop
 		goto cleanup ;
 	}
 
-	// this buffer carries only constraint DDL, which the v3 encoder has no
-	// records for, and GRAPH.CONSTRAINT is not a GRAPH.QUERY so there is no
-	// query text to replicate verbatim instead. A v3 buffer here emits a
-	// header with no records and the replica silently keeps the constraint
 	//--------------------------------------------------------------------------
 	// replicate DROP to replicas and persistence layer via GRAPH.EFFECT
 	//--------------------------------------------------------------------------
@@ -399,10 +395,6 @@ static bool _Constraint_Create
 		goto cleanup ;
 	}
 
-	// this buffer carries only constraint DDL, which the v3 encoder has no
-	// records for, and GRAPH.CONSTRAINT is not a GRAPH.QUERY so there is no
-	// query text to replicate verbatim instead. A v3 buffer here emits a
-	// header with no records and the replica silently never gets the constraint
 	//--------------------------------------------------------------------------
 	// replicate CREATE to replicas and persistence layer via GRAPH.EFFECT
 	//--------------------------------------------------------------------------

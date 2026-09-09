@@ -16,6 +16,7 @@ void EffectsBuffer_AddCreateConstraintEffect
 	EffectsBuffer *buff,          // effect buffer
 	ConstraintType ct,            // constraint type (unique/mandatory)
 	GraphEntityType et,           // entity type (node/edge)
+	uint32_t status,              // ConstraintStatus; v3 only
 	int label_id,                 // label/relationship-type id
 	const char *label,            // label/relationship-type name
 	const AttributeID *attr_ids,  // constrained attribute ids
@@ -34,17 +35,15 @@ void EffectsBuffer_AddCreateConstraintEffect
 	//--------------------------------------------------------------------------
 
 	EffectType eff_t = EFFECT_CREATE_CONSTRAINT ;
-	// constraint DDL has no v3 encoder, and GRAPH.CONSTRAINT is not a
-	// GRAPH.QUERY so there is no query text to replicate verbatim instead.
-	// Emitting this buffer as v2 is the only way the replica gets it; a v3
-	// buffer would carry a header with no records and diverge silently.
-	//
-	// Safe because a constraint command stages nothing else - if it ever did,
-	// this returns false and the buffer is marked incomplete instead.
-	if (!EffectsBuffer_ForceV2 (buff)) {
-		RedisModule_Log (NULL, "warning",
-			"GRAPH.EFFECT constraint DDL in a buffer that already holds v3 "
-			"effects; it cannot be encoded and will not be replicated") ;
+
+	if (EffectsBuffer_V3 (buff) != NULL) {
+		// v3 states the STATUS as well, which v2 has no field for - a replica
+		// never validates, so the announcement is the only thing that can tell
+		// it an enforcing constraint from one still building
+		EffectsV3Grouping_AddConstraint (EffectsBuffer_V3 (buff),
+				EFFECT_CREATE_CONSTRAINT, (uint32_t) ct, (uint32_t) et,
+				status, label_id, label, attr_ids, attrs, n) ;
+		EffectsBuffer_IncEffectCount (buff) ;
 		return ;
 	}
 
