@@ -401,11 +401,20 @@ pub enum Record {
         src: IdList,
         dst: IdList,
     },
-    /// `7 SET_LABELS`.
-    AddLabels { ids: IdList, labels: Vec<u32> },
+    /// `7 SET_LABELS` — attach these labels to these nodes.
+    ///
+    /// Named for the opcode rather than "AddLabels", because
+    /// [`Record::AddLabel`] is a different record entirely — that one registers
+    /// a label in the schema dictionary, this one puts labels on nodes that
+    /// exist. One letter apart for two unrelated operations is the confusion
+    /// this split exists to remove, so both names follow the wire instead.
+    SetLabels { ids: IdList, labels: Vec<u32> },
     /// `8 REMOVE_LABELS`.
     RemoveLabels { ids: IdList, labels: Vec<u32> },
-    /// `9 ADD_SCHEMA`, node form: a label and the id it was given.
+    /// `9 ADD_SCHEMA`, node form: declare a label and the id it was given.
+    ///
+    /// Registration, not assignment — [`Record::SetLabels`] is what puts a
+    /// label on a node.
     ///
     /// One opcode, two variants. The record carries a `SchemaType` byte and the
     /// two kinds are numbered differently from the constraint records' entity
@@ -577,7 +586,7 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             let labels = LabelSet::decode(r)?.0;
             let ids = IdList::decode_sized(r, count)?;
             if opcode == Opcode::SetLabels {
-                Record::AddLabels { ids, labels }
+                Record::SetLabels { ids, labels }
             } else {
                 Record::RemoveLabels { ids, labels }
             }
@@ -837,8 +846,8 @@ impl EffectEncode<3> for Record {
             // The labels, and all their nodes — not one `(node, label)` pair per
             // node. v2 shipped a serialized GraphBLAS vector here, which is an
             // internal representation two engines cannot agree on.
-            Record::AddLabels { ids, labels } | Record::RemoveLabels { ids, labels } => {
-                let opcode = if matches!(self, Record::AddLabels { .. }) {
+            Record::SetLabels { ids, labels } | Record::RemoveLabels { ids, labels } => {
+                let opcode = if matches!(self, Record::SetLabels { .. }) {
                     Opcode::SetLabels
                 } else {
                     Opcode::RemoveLabels
@@ -1347,7 +1356,7 @@ mod tests {
         // one label fit in a few dozen bytes because the ids are one run.
         let ids: IdList = (0..10_000).collect();
         let mut buf = new_buffer();
-        Record::AddLabels {
+        Record::SetLabels {
             ids: ids.clone(),
             labels: vec![5],
         }
@@ -1357,7 +1366,7 @@ mod tests {
         let records = read_buffer(&buf).unwrap();
         assert_eq!(
             records[0],
-            Record::AddLabels {
+            Record::SetLabels {
                 ids,
                 labels: vec![5],
             }
@@ -1455,7 +1464,7 @@ mod tests {
             rows: vec![Value::Null],
         }
         .encode(&mut buf);
-        Record::AddLabels {
+        Record::SetLabels {
             ids: IdList::from([1, 2]),
             labels: vec![7, 8],
         }
