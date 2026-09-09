@@ -10,7 +10,7 @@
 //!
 //! There are two kinds of segment and each writes itself:
 //!
-//! * [`Segment::Range`] — `len` consecutive ids from `base`. A single id is a
+//! * `Segment::Range` — `len` consecutive ids from `base`. A single id is a
 //!   range of one, which is why nothing else is needed to describe an arbitrary
 //!   list.
 //! * [`Segment::Ascending`] — a roaring bitmap, which several consecutive ranges
@@ -140,7 +140,7 @@ const ROARING_FLOOR_BYTES: usize = 32;
 /// | run    | 4 B per interval, `u16` start + length  | consecutive |
 ///
 /// So a *run* is one of the three encodings **inside** a bucket, and that is
-/// where our segments land: one [`Segment::Range`] is one run — except where it
+/// where our segments land: one `Segment::Range` is one run — except where it
 /// straddles a bucket boundary, which makes it a run in each bucket it touches.
 /// That, and only that, is why [`Self::add_range`] splits.
 ///
@@ -768,7 +768,7 @@ impl Segment {
 /// A record's entity ids, in row order.
 ///
 /// Most lists are one segment: every id allocator hands out consecutive ids, so
-/// a bulk create or a delete-by-label is a single [`Segment::Range`] from first
+/// a bulk create or a delete-by-label is a single `Segment::Range` from first
 /// push to last and never allocates.
 #[derive(Clone, Default)]
 pub struct IdList {
@@ -779,14 +779,14 @@ pub struct IdList {
     /// The ascending run currently being built, and what it would cost encoded
     /// either way.
     ///
-    /// Everything the collapse decision needs, in one place — see [`Run`].
+    /// Everything the collapse decision needs, in one place — see `Run`.
     run: Run,
 }
 
 /// The segments and the count, which is the whole of what the list *is* — the
 /// same pair [`PartialEq`] compares.
 ///
-/// Written out rather than derived because the derive also prints [`Run`], the
+/// Written out rather than derived because the derive also prints `Run`, the
 /// half-built segment the encoder is accumulating into. That is scratch: it
 /// says nothing about which ids the list holds, it is empty on any list that
 /// came off the wire, and at over a hundred characters it buries the segments
@@ -952,7 +952,7 @@ impl IdList {
         }
     }
 
-    /// Replace the current run with its bitmap, if [`Run::prefers_bitmap`] says
+    /// Replace the current run with its bitmap, if `Run::prefers_bitmap` says
     /// the arithmetic has already gone that way.
     fn maybe_collapse_run(&mut self) {
         if !self.run.prefers_bitmap() {
@@ -1133,7 +1133,8 @@ impl EffectEncode<3> for IdList {
 
 /// Read `count` ids back.
 ///
-/// [`EffectDecodeSized`] rather than [`EffectDecode`]: the count is the
+/// [`crate::effects::EffectDecodeSized`] rather than
+/// [`crate::effects::EffectDecode`]: the count is the
 /// record's, stated once in its header, and the list does not repeat it.
 impl EffectDecodeSized<3> for IdList {
     type Size = u32;
@@ -1243,7 +1244,7 @@ const MIN_SEGMENT_BYTES: usize = 3;
 ///
 /// Decoding into segments rather than through a `Vec` also keeps the
 /// segmentation the wire chose. Re-pushing every id would re-run
-/// [`Run::prefers_bitmap`] and could group them differently from the peer that
+/// `Run::prefers_bitmap` and could group them differently from the peer that
 /// sent them, so a buffer decoded and re-encoded would not come back
 /// byte-identical — which any cross-engine comparison rests on.
 pub fn read_ids(

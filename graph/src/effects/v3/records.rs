@@ -57,7 +57,7 @@ fn write_header<W: EffectWrite + ?Sized>(
 /// is information and travels as itself.
 ///
 /// A byte per option rather than one mask for all of them, written and read
-/// through [`put_opt`]/[`take_opt`] so a value cannot be written without its
+/// through `put_opt`/`take_opt` so a value cannot be written without its
 /// flag or read without it. The text half is written whatever the field type,
 /// with five zero bytes saying "nothing said"; only the vector half is gated,
 /// because its `dimension` has no absent form.
@@ -355,7 +355,8 @@ impl EffectDecode<3> for IndexFields<Vec<AttrRef<String>>> {
 pub struct ConstraintSpec<'a> {
     pub constraint_type: ConstraintType,
     pub entity_type: EntityType,
-    /// The primary's outcome, and `None` for a drop. See [`write_constraint`].
+    /// The primary's outcome, and `None` for a drop — a create carries the
+    /// status, a drop has none to carry.
     pub status: Option<ConstraintStatus>,
     pub label_id: u32,
     pub label: &'a str,
@@ -422,7 +423,7 @@ pub enum Record {
         label: String,
         /// C's index-field flags. A property of the statement, not of a field.
         field_type: u32,
-        /// Every field of the statement. See [`write_index_fields`].
+        /// Every field of the statement, encoded as an [`IndexFields`] block.
         fields: Vec<AttrRef<String>>,
         /// `None` on a drop, which carries no options.
         options: Option<IndexOptions>,

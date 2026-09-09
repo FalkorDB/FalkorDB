@@ -28,9 +28,9 @@
 /// This trait had one implementor and every signature below it said
 /// `&mut Vec<u8>` anyway, which made it vocabulary rather than a boundary —
 /// `buf.u32(x)` reading better than `write_u32(buf, x)`, and nothing more.
-/// [`super::EffectsBuffer`] is the second implementor and the reason it is a
-/// boundary now: it owns a payload, it is what the emitter is handed, and a
-/// `Vec<u8>` is its representation rather than its identity.
+/// The payload buffer in the layer above is the second implementor and the
+/// reason it is a boundary now: it owns a payload, it is what the emitter is
+/// handed, and a `Vec<u8>` is its representation rather than its identity.
 ///
 /// [`std::io::Write`] is a supertrait because one encoder needs it —
 /// `roaring`'s `serialize_into` takes any `io::Write` — and because getting it

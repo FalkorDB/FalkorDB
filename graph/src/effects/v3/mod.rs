@@ -56,7 +56,8 @@
 //! Where a record names the entity's schema membership, node and edge forms
 //! fill the same slot with different blocks: `UPDATE_NODE` a `LabelSet`,
 //! `UPDATE_EDGE` a `RelType`. Both are the group's partition key and the
-//! identity the replica can check the record against — see [`write_update`].
+//! identity the replica can check the record against — see the
+//! [`Record::Update`] arm of `Record`'s `EffectEncode` impl.
 
 use crate::{
     entity_type::EntityType,

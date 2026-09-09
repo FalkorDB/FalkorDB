@@ -2,9 +2,10 @@
 //! replica applies.
 //!
 //! One wire version so far, [`v3`] — the format both engines can read. Batched,
-//! C-compatible widths. [`EffectsPayload`] is what the rest of the codebase
-//! names; the version lives here and in the `impl EffectsFormat<N>` under each
-//! version's module, nowhere else.
+//! C-compatible widths. The version lives here and in the `impl
+//! EffectsFormat<N>` under each version's module, nowhere else — the payload
+//! and format types that the rest of the codebase names sit in the layer
+//! above this one, which is where a caller meets them.
 //!
 //! [`Reader`] and [`DecodeError`] sit here rather than under a version because
 //! a bounds-checked cursor over a byte slice is not version-specific, and a v4

@@ -45,7 +45,8 @@ pub enum DecodeError {
     #[error("unsupported index width {0}")]
     BadIndexWidth(u8),
 
-    /// An `SIType` bit pattern with no corresponding [`Value`].
+    /// An `SIType` bit pattern with no corresponding
+    /// [`crate::runtime::value::Value`].
     #[error("unknown SIValue type {0:#x}")]
     BadValueType(u32),
 
