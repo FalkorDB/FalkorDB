@@ -1395,6 +1395,39 @@ static bool _ApplyDropIndex
 	return true ;
 }
 
+// adopt the primary's constraint status instead of computing our own
+//
+// Constraint_SetStatus guards itself with two ASSERTs - the current status must
+// be CT_PENDING, and the new one must be CT_ACTIVE or CT_FAILED - and ASSERT is
+// empty in a release build, so calling it out of turn corrupts silently rather
+// than trapping. Both conditions are therefore checked here rather than
+// assumed.
+//
+// A record stating CT_PENDING needs no action: a freshly created constraint is
+// already pending, and the re-announcement that follows validation carries the
+// final status.
+static void _AdoptConstraintStatus
+(
+	Schema *s,
+	const EffectsV3Record *rec
+) {
+	if (rec->status == CT_PENDING) {
+		return ;
+	}
+
+	AttributeID attrs[rec->n_attrs_ref > 0 ? rec->n_attrs_ref : 1] ;
+	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
+		attrs[i] = rec->attrs_ref[i].id ;
+	}
+
+	Constraint c = Schema_GetConstraint (s, (ConstraintType)rec->constraint_type,
+			attrs, rec->n_attrs_ref) ;
+
+	if (c != NULL && Constraint_GetStatus (c) == CT_PENDING) {
+		Constraint_SetStatus (c, (ConstraintStatus)rec->status) ;
+	}
+}
+
 // CREATE_CONSTRAINT
 //
 // A REPLICA INSTALLS THE MASTER'S OUTCOME AND DOES NOT RE-VALIDATE. Scanning
@@ -1421,13 +1454,22 @@ static bool _ApplyCreateConstraint
 		return false ;
 	}
 
-	if (_VerifyDDLRefs (gc, rec, "CREATE_CONSTRAINT") == NULL) {
+	Schema *s = _VerifyDDLRefs (gc, rec, "CREATE_CONSTRAINT") ;
+	if (s == NULL) {
 		return false ;
 	}
 
 	const char *props[rec->n_attrs_ref > 0 ? rec->n_attrs_ref : 1] ;
 	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
 		props[i] = rec->attrs_ref[i].name ;
+	}
+
+	// the wire status is the PRIMARY's outcome, and it is validated before use
+	if (rec->has_status && rec->status > CT_FAILED) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' carries unknown status "
+				"%u", rec->name, rec->status) ;
+		return false ;
 	}
 
 	ConstraintCreateStatus status ;
@@ -1438,12 +1480,41 @@ static bool _ApplyCreateConstraint
 
 	switch (status) {
 		case CONSTRAINT_ALREADY_EXISTS:
-			// the convergent case the status field exists for
+			// THE CONVERGENT CASE THE STATUS FIELD EXISTS FOR.
+			//
+			// A constraint validated asynchronously is announced twice: once
+			// on creation while still pending, and again once validation
+			// finishes. This is the second one, and adopting its status is
+			// what makes it converge on the first rather than be discarded.
+			//
+			// GraphHub_AddConstraint returns NULL on this path, so the
+			// constraint has to be looked up to be updated.
+			if (rec->has_status) {
+				_AdoptConstraintStatus (s, rec) ;
+			}
 			return true ;
 
 		case CONSTRAINT_CREATED:
 			ASSERT (c != NULL) ;
-			Constraint_Enforce (c, (struct GraphContext *)gc) ;
+
+			if (rec->has_status) {
+				// THE REPLICA REPLAYS THE PRIMARY'S DECISION, IT DOES NOT
+				// RE-DERIVE IT.
+				//
+				// Constraint_Enforce scans every entity the constraint
+				// governs. The primary already did that and put the answer on
+				// the wire, so scanning again is redoing work the record
+				// answered - and it is not merely wasteful: a replica
+				// validating independently does so at a different time against
+				// different write interleavings, and can legitimately reach a
+				// different status from its primary. Re-deriving is how two
+				// engines disagree.
+				_AdoptConstraintStatus (s, rec) ;
+			} else {
+				// no status on the wire - a v2 peer, or a v3 peer predating
+				// the field. Nothing to adopt, so validate locally as before.
+				Constraint_Enforce (c, (struct GraphContext *)gc) ;
+			}
 			return true ;
 
 		case CONSTRAINT_ERROR:
