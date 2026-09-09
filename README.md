@@ -58,6 +58,32 @@ is a hint about the primary's string pool. `values_all_kinds` carries one of
 each, so a decoder that switches on the whole tag word instead of masking
 fails on exactly one of them.
 
+## The options block, and how to read it from these files
+
+Four cases pin it, and two of them exist because two did not:
+
+- `rec_create_index` — a range statement, nothing stated. Five zero
+bytes, one per text option.
+- `rec_create_index_vector` — every vector value stated. 49 bytes.
+- `rec_create_index_vector_partial` — `dimension` and `simFunc` stated,
+`M`/`efConstruction`/`efRuntime` absent. **25 bytes**, and this is the
+case that settles the layout: a fixed block with three flags clear
+and a shrinking block predict different totals here.
+- `rec_create_index_text_partial` — `language` and `weight` stated, the
+other three absent. Shows the text half is written whatever the field
+type, where the vector half is gated on `INDEX_FLD_VECTOR`.
+
+`dimension` carries **no** presence byte: a vector field cannot exist
+without one. Every other option is a presence byte then, if set, its
+value.
+
+**`DROP_INDEX` carries no options at all — zero bytes, not an empty
+block.** The spec’s "mirrors 11 without the options" reads both ways;
+`rec_drop_index` is the file that settles it.
+
+`simFunc` is the `VecSimMetric` discriminant on the wire — 0 L2, 1 IP,
+2 cosine — not the name. The `.json` prints the number for that reason.
+
 Payloads are uncompressed. Compression is an encoder choice — a level, and a
 zstd version — and pinning one here would bind the far side to a compressor
 rather than to a format.
@@ -97,6 +123,8 @@ rather than to a format.
 | `rec_add_attribute` | 1 | 21 |
 | `rec_create_index` | 1 | 69 |
 | `rec_create_index_vector` | 1 | 99 |
+| `rec_create_index_vector_partial` | 1 | 75 |
+| `rec_create_index_text_partial` | 1 | 73 |
 | `rec_drop_index` | 1 | 48 |
 | `rec_create_constraint` | 1 | 53 |
 | `rec_drop_constraint` | 1 | 62 |

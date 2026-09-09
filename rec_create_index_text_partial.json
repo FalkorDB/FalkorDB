@@ -1,0 +1,18 @@
+{
+  "case": "rec_create_index_text_partial",
+  "version": 3,
+  "flags": 0,
+  "bytes": 73,
+  "records": [
+    {
+      "opcode": 11,
+      "record": "CREATE_INDEX",
+      "schema_type": 0,
+      "label_id": 1,
+      "label": "T",
+      "field_type": "0x0008",
+      "fields": ["2=body"],
+      "options": {"language": "german", "weight": 2.5}
+    }
+  ]
+}
