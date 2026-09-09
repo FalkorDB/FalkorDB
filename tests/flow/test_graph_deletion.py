@@ -850,6 +850,84 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
+    def test38_no_phantom_edge_after_endpoint_ids_are_reused(self):
+        # #2771. Deleting an edge together with both of its endpoints used to
+        # leave the pair's bit set in the adjacency matrix, on the theory that a
+        # pair of deleted nodes is unreachable. Node ids are recycled, so the
+        # next two nodes created inherit the bit and an anonymous traversal --
+        # which reads the adjacency matrix directly, with no tensor lookup to
+        # disagree with -- reports an edge that was never created. Binding the
+        # relationship forces that lookup, so the two forms disagreed.
+        def assert_no_edges(msg):
+            anon = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n").result_set
+            bound = self.graph.query("MATCH (x)-[r]->(y) RETURN x.n, y.n").result_set
+            self.env.assertEqual(anon, [], depth=1, message=msg)
+            self.env.assertEqual(bound, [], depth=1, message=msg)
+
+        # both endpoints deleted, ids 0 and 1 then reused
+        self.graph.delete()
+        self.graph.query("CREATE (a:A {n: 'a'})-[:R]->(b:B {n: 'b'})")
+        res = self.graph.query("MATCH (a:A)-[r:R]->(b:B) DELETE a, b")
+        self.env.assertEqual(res.nodes_deleted, 2)
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.graph.query("CREATE (:C {n: 'c'}), (:D {n: 'd'})")
+        assert_no_edges("both endpoints deleted")
+
+        # self-loop: src and dst are the same recycled id
+        self.graph.delete()
+        self.graph.query("CREATE (a:A {n: 'a'})-[:R]->(a)")
+        self.graph.query("MATCH (a:A) DELETE a")
+        self.graph.query("CREATE (:C {n: 'c'})")
+        assert_no_edges("self-loop")
+
+        # parallel edges of several types, deleted across two transactions
+        self.graph.delete()
+        self.graph.query("""CREATE (a:A {n: 'a'}), (b:B {n: 'b'}),
+                                   (a)-[:R]->(b), (a)-[:R]->(b), (a)-[:S]->(b)""")
+        self.graph.query("MATCH (a:A) DETACH DELETE a")
+        self.graph.query("MATCH (b:B) DELETE b")
+        self.graph.query("CREATE (:C {n: 'c'}), (:D {n: 'd'})")
+        assert_no_edges("parallel edges")
+
+        # the edge deleted explicitly alongside its endpoints
+        self.graph.delete()
+        self.graph.query("CREATE (a:A {n: 'a'})-[:R]->(b:B {n: 'b'})")
+        self.graph.query("MATCH (a:A)-[r:R]->(b:B) DELETE r, a, b")
+        self.graph.query("CREATE (:C {n: 'c'}), (:D {n: 'd'})")
+        assert_no_edges("explicit edge and both endpoints")
+
+    def test39_surviving_edges_outlive_a_neighbour_deletion(self):
+        # The converse of test38: clearing the adjacency entry must not
+        # overreach. An edge between two surviving nodes stays visible to both
+        # traversal forms after a neighbour is deleted and its id is reused,
+        # and an edge deleted on its own leaves its endpoints intact.
+        self.graph.delete()
+        self.graph.query("""CREATE (a:A {n: 'a'})-[:R]->(b:B {n: 'b'}),
+                                   (b)-[:R]->(c:C {n: 'c'}), (b)-[:S]->(c)""")
+
+        self.graph.query("MATCH (a:A) DETACH DELETE a")
+        self.graph.query("CREATE (:D {n: 'd'})")
+
+        # d took a's id; a stale a->b bit would surface here as d->b. The
+        # anonymous form emits one row per adjacent pair, the bound form one
+        # per relationship.
+        res = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n")
+        self.env.assertEqual(res.result_set, [['b', 'c']])
+        res = self.graph.query(
+            "MATCH (x)-[r]->(y) RETURN x.n, y.n, type(r) ORDER BY type(r)")
+        self.env.assertEqual(res.result_set, [['b', 'c', 'R'], ['b', 'c', 'S']])
+
+        # dropping one of the two types leaves the pair adjacent
+        self.graph.query("MATCH (:B)-[r:S]->(:C) DELETE r")
+        res = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n")
+        self.env.assertEqual(res.result_set, [['b', 'c']])
+
+        # dropping the last one clears it
+        self.graph.query("MATCH (:B)-[r:R]->(:C) DELETE r")
+        res = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n")
+        self.env.assertEqual(res.result_set, [])
+
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
