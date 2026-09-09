@@ -6,7 +6,7 @@
 #include "RG.h"
 #include "effects_v3.h"
 #include "effects_wire.h"
-#include "../datatypes/map.h"
+#include "../index/index_field.h"
 #include "../util/rmalloc.h"
 #include "../util/roaring_include.h"
 
@@ -45,6 +45,10 @@
 // bit 0 = compressed; everything else is reserved and rejected
 #define FLAG_COMPRESSED 0x01
 #define FLAGS_KNOWN     0x01
+
+// defined with the DDL readers below; declared here because the record's free
+// path precedes them
+static void _IndexOptionsFree (EffectsV3IndexOptions *o) ;
 
 //------------------------------------------------------------------------------
 // fixed-width reads
@@ -515,6 +519,20 @@ static void _RecordFree
 		rm_free (rec->name) ;
 		rec->name = NULL ;
 	}
+
+	if (rec->attrs_ref != NULL) {
+		for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
+			rm_free (rec->attrs_ref[i].name) ;
+		}
+		rm_free (rec->attrs_ref) ;
+		rec->attrs_ref   = NULL ;
+		rec->n_attrs_ref = 0 ;
+	}
+
+	if (rec->has_options) {
+		_IndexOptionsFree (&rec->options) ;
+		rec->has_options = false ;
+	}
 }
 
 // read ADD_SCHEMA: SchemaType, the assigned id, then the name
@@ -646,111 +664,197 @@ static EffectsV3Status _ReadValues
 // records 11-14 - index and constraint DDL
 //------------------------------------------------------------------------------
 
-// read a v3 OPTIONS map
-//
-// THE ONE PLACE v2 AND v3 DISAGREE ABOUT A VALUE'S FRAMING, so it cannot go
-// through SIValue_FromBinary:
-//
-//     v3   u32 T_MAP · u32 n · (u64 len · key bytes · SIValue value) × n
-//     v2   u32 T_MAP · u32 n · (SIValue key         · SIValue value) × n
-//
-// v3 writes the key as a bare length-prefixed string. C's Map_FromBinary reads
-// it as a full SIValue, tag and all, so handing it v3 bytes makes it read the
-// key's u64 length as a SIType - for a short key that is a small number, and 4
-// is T_EDGE, which has no binary form. It refuses rather than misparsing, which
-// is loud, and is how the difference was found.
-//
-// A key needs no tag because it is always a string: map.c narrows it straight
-// back with `SI_TYPE(key) & T_STRING` at nine call sites. Tagging it would put
-// C's type-enum discriminant on the wire as if it were format.
-//
-// v2's tagged reader is untouched, so traffic between released C engines is
-// unaffected. This is the same shape effects_apply.c already uses for the label
-// records, where version 1 and version 2 take different readers.
-static EffectsV3Status _ReadOptionsMap
+// read a presence byte: 0 absent, 1 present, anything else malformed
+static EffectsV3Status _ReadPresence
 (
 	FILE *stream,
-	SIValue *out
+	bool *present
 ) {
-	*out = SI_NullVal () ;
-
-	uint32_t n ;
-	if (!_ReadU32 (stream, &n)) {
+	uint8_t p ;
+	if (!_ReadU8 (stream, &p)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
-
-	// a pair is at minimum a u64 key length and a bare SIType, so a count
-	// larger than the bytes remaining is corruption - checked before it
-	// reserves anything
-	const long remaining = fstream_remaining (stream) ;
-	const uint64_t min_pair = sizeof (uint64_t) + sizeof (uint32_t) ;
-	if (remaining < 0 || (uint64_t)n * min_pair > (uint64_t)remaining) {
+	if (p > 1) {
 		return EFFECTS_V3_MALFORMED ;
 	}
-
-	SIValue map = Map_New (n) ;
-
-	for (uint32_t i = 0 ; i < n ; i++) {
-		// the key: a bare wire string, NOT an SIValue
-		char *key = ReadWireString (stream) ;
-		if (key == NULL) {
-			Map_Free (map) ;
-			return EFFECTS_V3_MALFORMED ;
-		}
-
-		SIValue val ;
-		if (!SIValue_FromBinary (stream, &val)) {
-			rm_free (key) ;
-			Map_Free (map) ;
-			return feof (stream) ? EFFECTS_V3_TRUNCATED
-			                     : EFFECTS_V3_MALFORMED ;
-		}
-
-		// Map_AddNoClone takes ownership of both
-		Map_AddNoClone (&map, SI_TransferStringVal (key), val) ;
-	}
-
-	*out = map ;
+	*present = (p == 1) ;
 	return EFFECTS_V3_OK ;
 }
 
-// read CREATE_INDEX's options field
-//
-// always a map in practice, but the type tag is read first so a non-map is
-// delegated rather than misread. T_MAP cannot appear anywhere else in a v3
-// payload: SI_VALID_PROPERTY_VALUE (value.h) excludes it, so no node or edge
-// property can be one, and this is the only field that carries it.
-static EffectsV3Status _ReadOptions
+// read an optional u64: presence byte then, if present, the value
+static EffectsV3Status _ReadOptionalU64
 (
 	FILE *stream,
-	SIValue *out,
-	bool *has_options
+	bool *has,
+	uint64_t *v
 ) {
-	*out         = SI_NullVal () ;
-	*has_options = false ;
-
-	uint32_t t ;
-	if (!_ReadU32 (stream, &t)) {
-		return EFFECTS_V3_TRUNCATED ;
+	const EffectsV3Status status = _ReadPresence (stream, has) ;
+	if (status != EFFECTS_V3_OK || !*has) {
+		return status ;
 	}
+	return fread_checked (v, sizeof (*v), stream) ? EFFECTS_V3_OK
+	                                              : EFFECTS_V3_TRUNCATED ;
+}
 
-	if (t == T_MAP) {
-		const EffectsV3Status status = _ReadOptionsMap (stream, out) ;
-		*has_options = (status == EFFECTS_V3_OK) ;
+// read an optional wire string
+static EffectsV3Status _ReadOptionalString
+(
+	FILE *stream,
+	bool *has,
+	char **out
+) {
+	*out = NULL ;
+
+	const EffectsV3Status status = _ReadPresence (stream, has) ;
+	if (status != EFFECTS_V3_OK || !*has) {
 		return status ;
 	}
 
-	// not a map: rewind over the tag and let the shared codec have it
-	if (fseek (stream, -((long)sizeof (uint32_t)), SEEK_CUR) != 0) {
-		return EFFECTS_V3_MALFORMED ;
+	*out = ReadWireString (stream) ;
+	return (*out != NULL) ? EFFECTS_V3_OK : EFFECTS_V3_MALFORMED ;
+}
+
+static void _IndexOptionsFree
+(
+	EffectsV3IndexOptions *o
+) {
+	if (o->language != NULL) { rm_free (o->language) ; o->language = NULL ; }
+	if (o->phonetic != NULL) { rm_free (o->phonetic) ; o->phonetic = NULL ; }
+
+	if (o->stopwords != NULL) {
+		for (uint64_t i = 0 ; i < o->n_stopwords ; i++) {
+			rm_free (o->stopwords[i]) ;
+		}
+		rm_free (o->stopwords) ;
+		o->stopwords   = NULL ;
+		o->n_stopwords = 0 ;
+	}
+}
+
+// read CREATE_INDEX's options: a TYPED BLOCK, not a map
+//
+// See EffectsV3IndexOptions for the layout and for why the presence bytes
+// matter. In short: absence means the statement did not say, NOT the default -
+// an effect mutates an index that may already exist, so substituting a default
+// is what produced "Can not override index configuration" on a live replica.
+//
+// The text half is unconditional whatever the field type; only the vector half
+// is gated, on INDEX_FLD_VECTOR.
+static EffectsV3Status _ReadIndexOptions
+(
+	FILE *stream,
+	uint32_t field_type,
+	EffectsV3IndexOptions *o
+) {
+	memset (o, 0, sizeof (*o)) ;
+
+	EffectsV3Status status ;
+
+	status = _ReadOptionalString (stream, &o->has_language, &o->language) ;
+	if (status != EFFECTS_V3_OK) goto fail ;
+
+	//--------------------------------------------------------------------------
+	// stopwords: presence, then a count, then that many strings
+	//--------------------------------------------------------------------------
+
+	status = _ReadPresence (stream, &o->has_stopwords) ;
+	if (status != EFFECTS_V3_OK) goto fail ;
+
+	if (o->has_stopwords) {
+		uint64_t n ;
+		if (!fread_checked (&n, sizeof (n), stream)) {
+			status = EFFECTS_V3_TRUNCATED ;
+			goto fail ;
+		}
+
+		// the smallest stopword on the wire is a u64 length plus its NUL, so
+		// reject a count that outruns the payload before it sizes anything
+		const long remaining = fstream_remaining (stream) ;
+		if (remaining < 0 ||
+			n > (uint64_t)remaining / (sizeof (uint64_t) + 1)) {
+			status = EFFECTS_V3_MALFORMED ;
+			goto fail ;
+		}
+
+		if (n > 0) {
+			o->stopwords = rm_calloc (n, sizeof (char*)) ;
+			for (uint64_t i = 0 ; i < n ; i++) {
+				o->stopwords[i] = ReadWireString (stream) ;
+				if (o->stopwords[i] == NULL) {
+					o->n_stopwords = i ;
+					status = EFFECTS_V3_MALFORMED ;
+					goto fail ;
+				}
+			}
+		}
+		o->n_stopwords = n ;
 	}
 
-	if (!SIValue_FromBinary (stream, out)) {
-		return feof (stream) ? EFFECTS_V3_TRUNCATED : EFFECTS_V3_MALFORMED ;
+	//--------------------------------------------------------------------------
+	// weight, nostem, phonetic
+	//--------------------------------------------------------------------------
+
+	status = _ReadPresence (stream, &o->has_weight) ;
+	if (status != EFFECTS_V3_OK) goto fail ;
+	if (o->has_weight &&
+		!fread_checked (&o->weight, sizeof (o->weight), stream)) {
+		status = EFFECTS_V3_TRUNCATED ;
+		goto fail ;
 	}
 
-	*has_options = true ;
+	status = _ReadPresence (stream, &o->has_nostem) ;
+	if (status != EFFECTS_V3_OK) goto fail ;
+	if (o->has_nostem) {
+		uint8_t v ;
+		if (!_ReadU8 (stream, &v)) {
+			status = EFFECTS_V3_TRUNCATED ;
+			goto fail ;
+		}
+		// stated as 1 or 0; anything else is a value this build cannot
+		// interpret rather than a truthy byte to coerce
+		if (v > 1) {
+			status = EFFECTS_V3_MALFORMED ;
+			goto fail ;
+		}
+		o->nostem = (v == 1) ;
+	}
+
+	status = _ReadOptionalString (stream, &o->has_phonetic, &o->phonetic) ;
+	if (status != EFFECTS_V3_OK) goto fail ;
+
+	//--------------------------------------------------------------------------
+	// the vector half, gated on the field type
+	//--------------------------------------------------------------------------
+
+	if (field_type & INDEX_FLD_VECTOR) {
+		o->is_vector = true ;
+
+		// dimension has NO presence byte: a vector field must have one
+		if (!fread_checked (&o->dimension, sizeof (o->dimension), stream)) {
+			status = EFFECTS_V3_TRUNCATED ;
+			goto fail ;
+		}
+
+		status = _ReadOptionalU64 (stream, &o->has_m, &o->m) ;
+		if (status != EFFECTS_V3_OK) goto fail ;
+
+		status = _ReadOptionalU64 (stream, &o->has_ef_construction,
+				&o->ef_construction) ;
+		if (status != EFFECTS_V3_OK) goto fail ;
+
+		status = _ReadOptionalU64 (stream, &o->has_ef_runtime,
+				&o->ef_runtime) ;
+		if (status != EFFECTS_V3_OK) goto fail ;
+
+		status = _ReadOptionalU64 (stream, &o->has_sim_func, &o->sim_func) ;
+		if (status != EFFECTS_V3_OK) goto fail ;
+	}
+
 	return EFFECTS_V3_OK ;
+
+fail:
+	_IndexOptionsFree (o) ;
+	return status ;
 }
 
 // read a counted list of (attribute id, attribute name) pairs
@@ -857,7 +961,9 @@ static EffectsV3Status _ReadIndexRecord
 	}
 
 	if (create) {
-		return _ReadOptions (stream, &rec->options, &rec->has_options) ;
+		status = _ReadIndexOptions (stream, rec->field_type, &rec->options) ;
+		rec->has_options = (status == EFFECTS_V3_OK) ;
+		return status ;
 	}
 
 	return EFFECTS_V3_OK ;
