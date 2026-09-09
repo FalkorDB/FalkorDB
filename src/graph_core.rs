@@ -485,12 +485,38 @@ pub mod ffi {
 /// verbatim-query fallback is then a no-op propagation.
 pub static REPLICATION_CONSUMERS: AtomicBool = AtomicBool::new(false);
 
+/// Cosmetic name given to module-internal placeholder graphs. Only ever used
+/// for logging and for the `MvccGraph` constructor's `name` argument — never
+/// as evidence that a graph *is* a placeholder. See [`ThreadedGraph::placeholder`].
+const PLACEHOLDER_GRAPH_NAME: &str = "__placeholder__";
+
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
     pub sender: MTx<Array<Box<WriteMessage>>>,
     pub receiver: Rx<Array<Box<WriteMessage>>>,
     pub write_loop: AtomicBool,
     pub slow_log: SlowLog,
+    /// True while this value is module bookkeeping rather than a user graph:
+    /// either the stand-in returned by `graph_rdb_load` for a not-yet-complete
+    /// multi-key load, or the dummy value attached to a virtual key so Redis
+    /// will include it in an RDB save.
+    ///
+    /// This must stay a structural property. It used to be inferred from the
+    /// graph *name* (`starts_with("__placeholder")`), which a client can pick
+    /// freely — so a user graph called `__placeholder_x` was mistaken for
+    /// bookkeeping and silently deleted by the pre-save sweep (issue #2773).
+    ///
+    /// Atomic, and never observed through a lock: the pre-save sweep in
+    /// `redis_type::scan_and_clean_graphdata_keys` reads it via `data_ptr()`
+    /// without taking the `RwLock` (mandatory in the BGSAVE fork child, where
+    /// acquiring a `parking_lot` lock held by a thread that no longer exists
+    /// would deadlock). An atomic load is well defined there; a plain `bool`
+    /// read racing a store would not be.
+    ///
+    /// Only ever transitions `true -> false`, when a load placeholder is
+    /// promoted in place to the real graph it was standing in for
+    /// ([`Self::clear_placeholder`]).
+    placeholder: AtomicBool,
 }
 
 unsafe impl Send for ThreadedGraph {}
@@ -508,7 +534,19 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
+            placeholder: AtomicBool::new(false),
         }
+    }
+
+    /// Create a `ThreadedGraph` flagged as module-internal bookkeeping.
+    ///
+    /// The *only* way to produce a placeholder: the name is fixed here so no
+    /// caller-supplied string can turn a user graph into one, and no
+    /// placeholder construction site can forget to set the flag.
+    pub fn new_placeholder(cache_size: usize) -> Self {
+        let mut tg = Self::new(cache_size, PLACEHOLDER_GRAPH_NAME);
+        tg.placeholder = AtomicBool::new(true);
+        tg
     }
 
     /// Create a `ThreadedGraph` from an existing `MvccGraph`.
@@ -521,7 +559,25 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
+            placeholder: AtomicBool::new(false),
         }
+    }
+
+    /// Whether this value is module bookkeeping (see [`Self::placeholder`]).
+    ///
+    /// Safe to call on a `&ThreadedGraph` obtained without holding the
+    /// `RwLock`, which is what the pre-save sweep needs.
+    pub fn is_placeholder(&self) -> bool {
+        self.placeholder.load(Ordering::Acquire)
+    }
+
+    /// Promote a load placeholder to a real graph.
+    ///
+    /// Call *after* the finalized `MvccGraph` has been installed: the release
+    /// store publishes that write to the sweep's lock-free `Acquire` load, so
+    /// a graph is never seen as real before its data is in place.
+    pub fn clear_placeholder(&self) {
+        self.placeholder.store(false, Ordering::Release);
     }
 }
 
