@@ -1308,8 +1308,10 @@ static bool _ApplyCreateIndex
 	Index idx = NULL ;
 
 	for (uint16_t i = 0 ; i < rec->n_attrs_ref && ok ; i++) {
+		// log=false: applying an effect emits no effect of its own, so
+		// 'stated' is never read. The reconstructed map serves for both.
 		idx = GraphHub_AddIndex (gc, rec->name, rec->attrs_ref[i].name, et,
-				(IndexFieldType)rec->field_type, options, false) ;
+				(IndexFieldType)rec->field_type, options, options, false) ;
 
 		if (idx == NULL) {
 			RedisModule_Log (NULL, "warning",
