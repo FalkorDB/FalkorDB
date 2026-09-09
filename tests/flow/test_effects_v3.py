@@ -169,6 +169,67 @@ def rec_update_edge(count, r, attrs, ids, values):
         + attr_ids(*attrs) + ids + b''.join(values)
 
 
+
+# ---- DDL record builders (11-14) -------------------------------------------
+# CREATE_INDEX is ONE RECORD PER STATEMENT, with IndexFieldType ahead of a
+# COUNTED field list. v2 sent one record per field and the two are not
+# equivalent: applying a second single-field record is refused with "Can not
+# override index configuration".
+
+EFFECT_CREATE_INDEX      = 11
+EFFECT_DROP_INDEX        = 12
+EFFECT_CREATE_CONSTRAINT = 13
+EFFECT_DROP_CONSTRAINT   = 14
+
+T_MAP = 1 << 0
+
+
+def v_map(pairs):
+    """v3 map: u32 T_MAP, u32 n, then (u64 len + key bytes, SIValue) pairs.
+
+    THE KEY IS A BARE STRING with no SIType tag - the one place v2 and v3
+    disagree about a value's framing. v2 writes a full SIValue there.
+    """
+    out = _u32(T_MAP) + _u32(len(pairs))
+    for k, v in pairs:
+        out += _string(k) + v
+    return out
+
+
+def rec_create_index(schema_type, label_id, label, field_type, fields, options):
+    body = _u32(schema_type) + _i32(label_id) + _string(label) \
+        + _u32(field_type) + _u16(len(fields))
+    for aid, name in fields:
+        body += _u16(aid) + _string(name)
+    return _u32(EFFECT_CREATE_INDEX) + body + options
+
+
+def rec_drop_index(schema_type, label_id, label, field_type, fields):
+    body = _u32(schema_type) + _i32(label_id) + _string(label) \
+        + _u32(field_type) + _u16(len(fields))
+    for aid, name in fields:
+        body += _u16(aid) + _string(name)
+    return _u32(EFFECT_DROP_INDEX) + body
+
+
+def rec_create_constraint(ct, et, status, label_id, label, props):
+    # property count is a u8 here, not the u16 the index field list uses
+    body = _u32(ct) + _u32(et) + _u32(status) + _i32(label_id) \
+        + _string(label) + _u8(len(props))
+    for aid, name in props:
+        body += _u16(aid) + _string(name)
+    return _u32(EFFECT_CREATE_CONSTRAINT) + body
+
+
+def rec_drop_constraint(ct, et, label_id, label, props):
+    # mirrors create WITHOUT the status
+    body = _u32(ct) + _u32(et) + _i32(label_id) + _string(label) \
+        + _u8(len(props))
+    for aid, name in props:
+        body += _u16(aid) + _string(name)
+    return _u32(EFFECT_DROP_CONSTRAINT) + body
+
+
 class testEffectsV3Apply():
     """Valid v3 payloads, applied to a live graph, sharing one Env.
 
@@ -770,16 +831,32 @@ class testCountExceedingGraphRefused(_RefusedCase):
             "count far exceeding the local node count")
 
 
-class testUnimplementedDDLRefused(_RefusedCase):
+class testDDLDecodesButDoesNotApplyYet(_RefusedCase):
+    """A WELL-FORMED CREATE_INDEX is refused at APPLY, not at decode.
+
+    This previously sent a payload built to v2's per-field layout, so it was
+    refused as malformed and said nothing about DDL support at all - it passed
+    both before and after decode landed, for different reasons. That is the
+    shape of a test that survives the thing it is meant to detect.
+
+    The payload here is the real v3 layout: IndexFieldType ahead of a counted
+    field list, and an options map whose key is a bare string. Decode accepts
+    it; apply has no handler for records 11-14 yet, so the buffer is refused
+    there. When apply lands, this test flips to asserting the index exists.
+    """
+
     def test_refused(self):
-        # records 11-14 are a separate PR. They are refused as UNIMPLEMENTED
-        # rather than MALFORMED - the bytes are not corrupt - but refused all
-        # the same, because silently skipping a record we cannot apply is
-        # data loss.
-        EFFECT_CREATE_INDEX = 11
-        rec = _u32(EFFECT_CREATE_INDEX) + _u32(SCHEMA_NODE) + _i32(0) \
-            + _string("L") + _u16(0) + _string("v") + _u32(0x0E)
-        self._refuse(payload(rec), "CREATE_INDEX, not implemented yet")
+        rec = rec_create_index(
+            schema_type = SCHEMA_NODE,
+            label_id    = 0,
+            label       = "L",
+            field_type  = 0x0E,            # NUMERIC|GEO|STR - a bit SET
+            fields      = [(0, "v")],
+            options     = v_map([("dim", v_int(4))]))
+
+        self._refuse(payload(rec),
+                     "well-formed CREATE_INDEX, apply not implemented",
+                     expect_log="cannot apply record type 11")
 
 class testFutureVersionRefused(_RefusedCase):
     """A version above this build's read ceiling must be refused.
