@@ -23,7 +23,8 @@ void EffectsBuffer_AddCreateIndexEffect
 	AttributeID attr_id,   // attribute id
 	const char *attr,      // attribute name
 	IndexFieldType t,      // index field type (range/fulltext/vector)
-	SIValue options        // index options
+	SIValue options,       // index options - THE V2 WIRE, byte-frozen
+	SIValue stated         // the subset the statement named - v3 only
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -43,9 +44,14 @@ void EffectsBuffer_AddCreateIndexEffect
 		// v3 is ONE RECORD PER STATEMENT while this is called once per FIELD,
 		// so the field is staged and the record is emitted when the query
 		// stops producing fields
+		// 'stated', not 'options'. v3 carries a presence flag per option
+		// meaning "the statement said this", and 'options' has been pre-filled
+		// with defaults by the time it reaches here - answering the flag from
+		// it would announce options the user never wrote. v2 keeps taking
+		// 'options' below, unchanged, because its bytes are frozen.
 		EffectsV3Grouping_AddIndexField (EffectsBuffer_V3 (buff),
 				EFFECT_CREATE_INDEX, st, label_id, label, (uint32_t) t,
-				attr_id, attr, options) ;
+				attr_id, attr, stated) ;
 		EffectsBuffer_IncEffectCount (buff) ;
 		return ;
 	}
@@ -142,7 +148,10 @@ bool ApplyCreateIndex
 	// create index field
 	//--------------------------------------------------------------------------
 
-	Index idx = GraphHub_AddIndex (gc, label, attr, et, t, options, false) ;
+	// log=false, so no effect is emitted and 'stated' is never read; the
+	// decoded map is passed for both rather than inventing a second one
+	Index idx = GraphHub_AddIndex (gc, label, attr, et, t, options, options,
+			false) ;
 
 	if (idx == NULL) {
 		RedisModule_Log (NULL, "warning",
