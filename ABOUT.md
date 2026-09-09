@@ -19,7 +19,7 @@ builds and tests clean. `EFFECTS_V3_CORPUS=<dir>` points it somewhere else.
 
 ## Why it is not in the pull request
 
-These files are output, not source. Carrying 73 generated files through review
+These files are output, not source. Carrying 74 generated files through review
 buries the code that produced them, and the C engine needs to reach the corpus
 without depending on which Rust PR happens to be open. Keeping them here means
 one address that outlives any branch.

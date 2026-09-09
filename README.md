@@ -101,4 +101,5 @@ rather than to a format.
 | `rec_create_constraint` | 1 | 53 |
 | `rec_drop_constraint` | 1 | 62 |
 | `values_all_kinds` | 1 | 265 |
+| `value_string_interior_nul` | 1 | 59 |
 | `payload_multi_record` | 4 | 134 |
