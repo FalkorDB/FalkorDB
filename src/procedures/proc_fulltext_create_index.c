@@ -255,11 +255,31 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	double      weights[fields_count];
 	const char* phonetics[fields_count];
 
+	// WHICH of the three the statement actually STATED, as opposed to which
+	// ones ended up with a value - every field ends up with all three.
+	//
+	// The distinction is invisible locally, because an option left out gets
+	// the same default here that Index_FulltextCreate would apply anyway. It
+	// is not invisible on the wire: an effect carries a presence flag per
+	// option meaning "the statement said this", and an effect MUTATES an index
+	// that may already exist. Announcing a default as though it had been
+	// stated has already diverged a live replica once with language, and
+	// phonetic is worse - C's default is the literal string "no" while Rust
+	// reads any non-empty phonetic as ENABLED, so an unstated phonetic sent as
+	// its default turns itself ON when it crosses engines.
+	bool weight_stated  [fields_count];
+	bool nostem_stated  [fields_count];
+	bool phonetic_stated[fields_count];
+
 	// collect fields and configuration
 	for(uint i = 0; i < fields_count; i++) {
 		weights  [i] = INDEX_FIELD_DEFAULT_WEIGHT ;
 		nostems  [i] = INDEX_FIELD_DEFAULT_NOSTEM ;
 		phonetics[i] = INDEX_FIELD_DEFAULT_PHONETIC ;
+
+		weight_stated  [i] = false ;
+		nostem_stated  [i] = false ;
+		phonetic_stated[i] = false ;
 
 		if(SI_TYPE(fields[i]) & T_STRING) {
 			_fields[i] = fields[i].stringval;
@@ -269,13 +289,16 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 			_fields[i] = tmp.stringval;
 
 			if(MAP_GET(fields[i], "weight", tmp)) {
-				weights[i] = SI_GET_NUMERIC(tmp);
+				weights[i]       = SI_GET_NUMERIC(tmp);
+				weight_stated[i] = true;
 			}
 			if(MAP_GET(fields[i], "nostem", tmp)) {
-				nostems[i] = tmp.longval;
+				nostems[i]       = tmp.longval;
+				nostem_stated[i] = true;
 			}
 			if(MAP_GET(fields[i], "phonetic", tmp)) {
-				phonetics[i] = tmp.stringval;
+				phonetics[i]       = tmp.stringval;
+				phonetic_stated[i] = true;
 			}
 		}
 
@@ -318,12 +341,36 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 
 	for(uint i = 0; i < fields_count; i++) {
 		// construct options map
-		Map_Add(&options, SI_ConstStringVal("weight"),
-				SI_DoubleVal(weights[i]));
-		Map_Add(&options, SI_ConstStringVal("phonetic"),
-				SI_ConstStringVal(phonetics[i]));
-		Map_Add(&options, SI_ConstStringVal("nostem"),
-				SI_BoolVal(nostems[i]));
+		//
+		// ONLY WHAT THE STATEMENT STATED. The map is reused across fields, so
+		// an option this field did not state has to be REMOVED rather than
+		// merely not added - otherwise the previous field's value is still in
+		// the map and this field silently inherits it.
+		//
+		// Index_FulltextCreate seeds all three from INDEX_FIELD_DEFAULT_* and
+		// overrides only on a hit, so leaving a key out builds exactly the
+		// same field it built before. What changes is the EFFECT: an option
+		// the user never mentioned no longer travels as though they had.
+		if(weight_stated[i]) {
+			Map_Add(&options, SI_ConstStringVal("weight"),
+					SI_DoubleVal(weights[i]));
+		} else {
+			Map_Remove(options, SI_ConstStringVal("weight"));
+		}
+
+		if(phonetic_stated[i]) {
+			Map_Add(&options, SI_ConstStringVal("phonetic"),
+					SI_ConstStringVal(phonetics[i]));
+		} else {
+			Map_Remove(options, SI_ConstStringVal("phonetic"));
+		}
+
+		if(nostem_stated[i]) {
+			Map_Add(&options, SI_ConstStringVal("nostem"),
+					SI_BoolVal(nostems[i]));
+		} else {
+			Map_Remove(options, SI_ConstStringVal("nostem"));
+		}
 
 		idx = GraphHub_AddIndex(gc, label, _fields[i], GETYPE_NODE,
 				INDEX_FLD_FULLTEXT, options, true);

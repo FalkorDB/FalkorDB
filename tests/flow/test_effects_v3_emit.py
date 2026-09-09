@@ -155,6 +155,53 @@ class testEffectsV3Emit(FlowTestsBase):
             "CALL db.indexes() YIELD label, stopwords "
             "RETURN label, stopwords ORDER BY label", "stopwords")
 
+    def test05b_unstated_options_do_not_leak_between_fields(self):
+        # The fulltext procedure builds ONE options map and reuses it for every
+        # field, so an option this field did not state must be REMOVED from the
+        # map and not merely left unset - otherwise the previous field's value
+        # is still there and this field inherits it.
+        #
+        # It matters beyond the leak: v3's presence byte means "the statement
+        # said this", and the procedure used to add all three options for every
+        # field whether stated or not. An unstated phonetic then travelled as
+        # C's default string "no", which Rust reads as phonetic ENABLED.
+        self.src.query(
+            "CALL db.idx.fulltext.createNodeIndex('Mix', "
+            "{field:'p', weight:9.0, nostem:true}, {field:'q'}, "
+            "{field:'r', weight:3.0})")
+        self._sync()
+
+        master = self._fields(self.src_con, 'Mix')
+        replica = self._fields(self.replica_con, 'Mix')
+        self.env.assertEqual(master, replica,
+                message=f"mixed statedness diverged: {master} != {replica}")
+
+        # q states nothing, so it takes the default - NOT p's 9.0
+        self.env.assertEqual(replica.get('p'), 9.0)
+        self.env.assertEqual(replica.get('q'), 1.0)
+        self.env.assertEqual(replica.get('r'), 3.0)
+
+    def test05c_stated_phonetic_travels(self):
+        # A field that states phonetic and NOTHING ELSE. Unreachable until the
+        # procedure stopped adding a weight to every field: _validateOptions
+        # checks weight first and continues, so this branch was never taken,
+        # and it rejected exactly the phonetics it should accept.
+        self.src.query(
+            "CALL db.idx.fulltext.createNodeIndex('Ph', "
+            "{field:'v', phonetic:'dm:en'})")
+        self._sync()
+
+        self._assert_same(
+            "CALL db.indexes() YIELD label, properties, types "
+            "RETURN label, properties, types ORDER BY label, properties",
+            "phonetic index")
+
+        master = self._fields(self.src_con, 'Ph')
+        replica = self._fields(self.replica_con, 'Ph')
+        self.env.assertEqual(master, replica,
+                message=f"phonetic field diverged: {master} != {replica}")
+        self.env.assertEqual(list(replica.keys()), ['v'])
+
     def test06_vector_index_options(self):
         self.src.query(
             "CREATE VECTOR INDEX FOR (n:Vec) ON (n.v) "
