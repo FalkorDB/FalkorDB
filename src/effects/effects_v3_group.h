@@ -160,6 +160,49 @@ void EffectsV3Grouping_AddConstraint
 	uint8_t n                     // how many
 );
 
+// file ONE FIELD of an index statement
+//
+// The per-attribute problem again, in a second place. C emits one effect per
+// FIELD - GraphHub_AddIndex takes a single attr and emits from inside itself -
+// while a v3 CREATE_INDEX is one record per STATEMENT with a counted field
+// list. So `CREATE INDEX FOR (n:P) ON (n.a, n.b)` arrives as two calls that
+// must become one record, and the field list is not known until the statement
+// stops producing fields.
+//
+// Fields fold into an existing record when they agree on EVERY component of
+// its key: opcode, schema, field type AND the options. The options are part of
+// the key because a record carries ONE options block that apply hands to every
+// field in it, so two fields that disagree about weight cannot share a record
+// without one of them silently taking the other's. C reaches that case through
+// db.idx.fulltext.createNodeIndex, which rebuilds weight, phonetic and nostem
+// per field (proc_fulltext_create_index.c:320-327); the CREATE INDEX ...
+// OPTIONS syntax passes one map to every field (index_operations.c:457) and so
+// always makes exactly one record.
+//
+// INDEX-LEVEL OPTIONS ARE STATED ONCE PER INDEX PER PAYLOAD. language and
+// stopwords are properties of the index rather than the field, and their
+// setters are asymmetric: Index_SetLanguage objects only if the language
+// DIFFERS, but Index_SetStopwords objects if stopwords are set AT ALL. So a
+// statement that splits into two records would apply cleanly for language and
+// fail on the second record for stopwords. They are dropped from every record
+// after the first naming the same index.
+//
+// 'options' is C's own options map. A key PRESENT in it is exactly an option
+// the statement STATED, which is what the wire's presence byte means - so the
+// conversion is a lookup per key and never a default. DROP_INDEX ignores it.
+void EffectsV3Grouping_AddIndexField
+(
+	EffectsV3Grouping *g,   // accumulator
+	EffectType opcode,      // CREATE_INDEX or DROP_INDEX
+	SchemaType schema_type, // node or edge
+	int schema_id,          // label/relationship-type id
+	const char *label,      // its name, the cross-check
+	uint32_t field_type,    // IndexFieldType, a BIT SET - test with &
+	AttributeID attr_id,    // the field being indexed
+	const char *attr_name,  // its name
+	SIValue options         // C's options map; ignored for a drop
+);
+
 // how many records the accumulator would emit
 //
 // NOT const: staged updates are folded into their groups here if they have not
