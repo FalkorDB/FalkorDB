@@ -92,8 +92,59 @@ void test_effectsV3_roundTrip(void)  { V3_SKIP("the round-trip harness", "Effect
 void test_effectsV3_truncation(void) { V3_SKIP("the truncation corpus",  "EffectsV3_Decode"); }
 void test_effectsV3_rejections(void) { V3_SKIP("the rejection cases",    "EffectsV3_Decode"); }
 void test_effectsV3_handBuiltRejections(void) { V3_SKIP("the hand-built rejections", "EffectsV3_Decode"); }
+void test_effectsV3_decodesEveryFixture(void) { V3_SKIP("decoding every fixture", "EffectsV3_Decode"); }
 
 #else
+
+//------------------------------------------------------------------------------
+// every fixture decodes
+//------------------------------------------------------------------------------
+
+// The gap this closes: until encode lands the round trip does not compile, and
+// it was the ONLY test that decoded a corpus payload at its full length. So a
+// record could stop decoding entirely and this suite would stay green --
+// truncation feeds the decoder proper prefixes only, and the rejection cases
+// feed it deliberately-broken ones. Nothing asserted the corpus decodes.
+//
+// It also replaces a list. Records 11-14 used to report
+// EFFECTS_V3_UNIMPLEMENTED, and were named in a list that was REQUIRED to
+// report it so that the day they decoded, the test would fail and say to remove
+// them. They decode now -- EFFECTS_V3_UNIMPLEMENTED appears nowhere in
+// effects_v3_decode.c -- so the list is gone and every case is held to the same
+// bar. That is the ratchet finishing, not being switched off: a future
+// unimplemented record needs a new list rather than a revived one.
+void test_effectsV3_decodesEveryFixture(void) {
+	for(size_t i = 0; i < EFFECTS_V3_CORPUS_COUNT; i++) {
+		const EffectsV3CorpusEntry *e = EFFECTS_V3_CORPUS + i;
+
+		EffectsV3Fixture f = EffectsV3Corpus_Load(e->name);
+		TEST_CASE(e->name);
+		TEST_CHECK_(f.buf != NULL, "%s: %s", e->name, f.err);
+		if(f.buf == NULL) continue;
+
+		EffectsV3Records *records = NULL;
+		EffectsV3Status   st      = EffectsV3_Decode((const char*)f.buf, f.len,
+				&records);
+
+		TEST_CHECK_(st == EFFECTS_V3_OK,
+				"%s: a corpus fixture failed to decode: %s. Every case here is "
+				"a payload a conforming encoder produced, so a refusal is this "
+				"decoder's defect and not the corpus's",
+				e->name, EffectsV3Status_ToString(st));
+
+		if(st == EFFECTS_V3_OK) {
+			TEST_CHECK_(records != NULL, "%s: decoded OK with no records",
+					e->name);
+			EffectsV3_RecordsFree(records);
+		} else {
+			TEST_CHECK_(records == NULL,
+					"%s: refused as %s but left records allocated",
+					e->name, EffectsV3Status_ToString(st));
+		}
+
+		EffectsV3Corpus_Free(&f);
+	}
+}
 
 //------------------------------------------------------------------------------
 // round trip
@@ -108,46 +159,6 @@ void test_effectsV3_handBuiltRejections(void) { V3_SKIP("the hand-built rejectio
 // AttributeSet_Update when it was handed a Rust buffer.
 #ifdef EFFECTS_V3_CODEC_READY
 
-//------------------------------------------------------------------------------
-// records this build does not decode yet
-//------------------------------------------------------------------------------
-
-// The index and constraint DDL records, 11-14, are well-formed on the wire but
-// not yet implemented, so decode reports EFFECTS_V3_UNIMPLEMENTED for them
-// rather than MALFORMED -- calling a well-formed payload corrupt would be a lie
-// about the bytes, and would send a replica into a resync it cannot fix.
-//
-// THIS LIST MUST SHRINK. It is not a list of cases to skip: a case named here
-// is REQUIRED to report UNIMPLEMENTED, so the day one of them starts decoding,
-// this test fails and says to remove it. A tolerated status with no such
-// pressure becomes a permanent hole -- the four cases would sit here reporting
-// nothing forever, and the corpus would quietly cover 21 records instead of 25.
-//
-// These four are exactly the fixtures whose records are 11-14, checked against
-// the corpus rather than assumed: rec_create_index (11), rec_drop_index (12),
-// rec_create_constraint (13), rec_drop_constraint (14). payload_multi_record
-// carries 9, 10, 3 and 5, so it is not among them.
-static const char *EFFECTS_V3_UNIMPLEMENTED_CASES[] = {
-	"rec_create_constraint",
-	"rec_create_index",
-	"rec_drop_constraint",
-	"rec_drop_index",
-};
-
-static bool _is_unimplemented
-(
-	const char *name  // case name
-) {
-	size_t n = sizeof(EFFECTS_V3_UNIMPLEMENTED_CASES) /
-			   sizeof(EFFECTS_V3_UNIMPLEMENTED_CASES[0]);
-
-	for(size_t i = 0; i < n; i++) {
-		if(strcmp(EFFECTS_V3_UNIMPLEMENTED_CASES[i], name) == 0) return true;
-	}
-
-	return false;
-}
-
 static void _round_trip(const EffectsV3CorpusEntry *e) {
 	EffectsV3Fixture f = EffectsV3Corpus_Load(e->name);
 	TEST_ASSERT_(f.buf != NULL, "%s: %s", e->name, f.err);
@@ -156,19 +167,6 @@ static void _round_trip(const EffectsV3CorpusEntry *e) {
 	EffectsV3Records *records = NULL;
 	EffectsV3Status   st      = EffectsV3_Decode((const char*)f.buf, f.len,
 			&records);
-
-	if(_is_unimplemented(e->name)) {
-		TEST_ASSERT_(st == EFFECTS_V3_UNIMPLEMENTED,
-				"%s: expected UNIMPLEMENTED, got %s. If this record now "
-				"decodes, remove it from EFFECTS_V3_UNIMPLEMENTED_CASES so it "
-				"is held to the round trip like every other case",
-				e->name, EffectsV3Status_ToString(st));
-		TEST_ASSERT_(records == NULL,
-				"%s: refused as UNIMPLEMENTED but left records allocated",
-				e->name);
-		EffectsV3Corpus_Free(&f);
-		return;
-	}
 
 	TEST_ASSERT_(st == EFFECTS_V3_OK, "%s: decode refused a corpus fixture: %s",
 			e->name, EffectsV3Status_ToString(st));
@@ -720,6 +718,7 @@ void test_effectsV3_handBuiltRejections(void) {
 #endif
 
 TEST_LIST = {
+	{ "EffectsV3.decodesAll" V3_DEC_SUFFIX,   test_effectsV3_decodesEveryFixture },
 	{ "EffectsV3.roundTrip"  V3_RT_SUFFIX,    test_effectsV3_roundTrip  },
 	{ "EffectsV3.truncation" V3_TRUNC_SUFFIX, test_effectsV3_truncation },
 	{ "EffectsV3.rejections" V3_DEC_SUFFIX,   test_effectsV3_rejections },

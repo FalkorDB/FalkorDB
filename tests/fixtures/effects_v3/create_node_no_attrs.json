@@ -1,0 +1,17 @@
+{
+  "case": "create_node_no_attrs",
+  "version": 3,
+  "flags": 0,
+  "bytes": 25,
+  "records": [
+    {
+      "opcode": 3,
+      "record": "CREATE_NODE",
+      "count": 3,
+      "ids": ["1", "2", "3"],
+      "labels": ["0"],
+      "attr_ids": [],
+      "rows": []
+    }
+  ]
+}

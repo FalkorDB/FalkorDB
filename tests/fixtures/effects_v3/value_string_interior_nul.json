@@ -1,0 +1,17 @@
+{
+  "case": "value_string_interior_nul",
+  "version": 3,
+  "flags": 0,
+  "bytes": 59,
+  "records": [
+    {
+      "opcode": 3,
+      "record": "CREATE_NODE",
+      "count": 1,
+      "ids": ["1"],
+      "labels": ["0"],
+      "attr_ids": ["0", "1"],
+      "rows": ["string:a\u0000b", "string:\u0000"]
+    }
+  ]
+}
