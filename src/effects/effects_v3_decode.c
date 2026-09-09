@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects_v3.h"
 #include "effects_wire.h"
+#include "../datatypes/map.h"
 #include "../util/rmalloc.h"
 #include "../util/roaring_include.h"
 
@@ -641,6 +642,277 @@ static EffectsV3Status _ReadValues
 	return EFFECTS_V3_OK ;
 }
 
+//------------------------------------------------------------------------------
+// records 11-14 - index and constraint DDL
+//------------------------------------------------------------------------------
+
+// read a v3 OPTIONS map
+//
+// THE ONE PLACE v2 AND v3 DISAGREE ABOUT A VALUE'S FRAMING, so it cannot go
+// through SIValue_FromBinary:
+//
+//     v3   u32 T_MAP · u32 n · (u64 len · key bytes · SIValue value) × n
+//     v2   u32 T_MAP · u32 n · (SIValue key         · SIValue value) × n
+//
+// v3 writes the key as a bare length-prefixed string. C's Map_FromBinary reads
+// it as a full SIValue, tag and all, so handing it v3 bytes makes it read the
+// key's u64 length as a SIType - for a short key that is a small number, and 4
+// is T_EDGE, which has no binary form. It refuses rather than misparsing, which
+// is loud, and is how the difference was found.
+//
+// A key needs no tag because it is always a string: map.c narrows it straight
+// back with `SI_TYPE(key) & T_STRING` at nine call sites. Tagging it would put
+// C's type-enum discriminant on the wire as if it were format.
+//
+// v2's tagged reader is untouched, so traffic between released C engines is
+// unaffected. This is the same shape effects_apply.c already uses for the label
+// records, where version 1 and version 2 take different readers.
+static EffectsV3Status _ReadOptionsMap
+(
+	FILE *stream,
+	SIValue *out
+) {
+	*out = SI_NullVal () ;
+
+	uint32_t n ;
+	if (!_ReadU32 (stream, &n)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	// a pair is at minimum a u64 key length and a bare SIType, so a count
+	// larger than the bytes remaining is corruption - checked before it
+	// reserves anything
+	const long remaining = fstream_remaining (stream) ;
+	const uint64_t min_pair = sizeof (uint64_t) + sizeof (uint32_t) ;
+	if (remaining < 0 || (uint64_t)n * min_pair > (uint64_t)remaining) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+
+	SIValue map = Map_New (n) ;
+
+	for (uint32_t i = 0 ; i < n ; i++) {
+		// the key: a bare wire string, NOT an SIValue
+		char *key = ReadWireString (stream) ;
+		if (key == NULL) {
+			Map_Free (map) ;
+			return EFFECTS_V3_MALFORMED ;
+		}
+
+		SIValue val ;
+		if (!SIValue_FromBinary (stream, &val)) {
+			rm_free (key) ;
+			Map_Free (map) ;
+			return feof (stream) ? EFFECTS_V3_TRUNCATED
+			                     : EFFECTS_V3_MALFORMED ;
+		}
+
+		// Map_AddNoClone takes ownership of both
+		Map_AddNoClone (&map, SI_TransferStringVal (key), val) ;
+	}
+
+	*out = map ;
+	return EFFECTS_V3_OK ;
+}
+
+// read CREATE_INDEX's options field
+//
+// always a map in practice, but the type tag is read first so a non-map is
+// delegated rather than misread. T_MAP cannot appear anywhere else in a v3
+// payload: SI_VALID_PROPERTY_VALUE (value.h) excludes it, so no node or edge
+// property can be one, and this is the only field that carries it.
+static EffectsV3Status _ReadOptions
+(
+	FILE *stream,
+	SIValue *out,
+	bool *has_options
+) {
+	*out         = SI_NullVal () ;
+	*has_options = false ;
+
+	uint32_t t ;
+	if (!_ReadU32 (stream, &t)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	if (t == T_MAP) {
+		const EffectsV3Status status = _ReadOptionsMap (stream, out) ;
+		*has_options = (status == EFFECTS_V3_OK) ;
+		return status ;
+	}
+
+	// not a map: rewind over the tag and let the shared codec have it
+	if (fseek (stream, -((long)sizeof (uint32_t)), SEEK_CUR) != 0) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+
+	if (!SIValue_FromBinary (stream, out)) {
+		return feof (stream) ? EFFECTS_V3_TRUNCATED : EFFECTS_V3_MALFORMED ;
+	}
+
+	*has_options = true ;
+	return EFFECTS_V3_OK ;
+}
+
+// read a counted list of (attribute id, attribute name) pairs
+//
+// shared by index fields and constraint properties, which are the same shape.
+// THE COUNT WIDTH IS NOT: an index field count is a u16 and a constraint
+// property count is a u8, so the caller reads it and passes it in.
+static EffectsV3Status _ReadAttrRefs
+(
+	FILE *stream,
+	uint16_t n,
+	EffectsV3AttrRef **out,
+	uint16_t *out_n
+) {
+	*out   = NULL ;
+	*out_n = 0 ;
+
+	if (n == 0) {
+		return EFFECTS_V3_OK ;
+	}
+
+	// each pair is at least an AttributeID and a one-byte string plus its
+	// length prefix, so bound the count before it sizes an allocation
+	const long remaining = fstream_remaining (stream) ;
+	const uint64_t min_ref = sizeof (AttributeID) + sizeof (uint64_t) + 1 ;
+	if (remaining < 0 || (uint64_t)n * min_ref > (uint64_t)remaining) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+
+	EffectsV3AttrRef *refs = rm_calloc (n, sizeof (EffectsV3AttrRef)) ;
+
+	for (uint16_t i = 0 ; i < n ; i++) {
+		if (!_ReadU16 (stream, &refs[i].id)) {
+			for (uint16_t j = 0 ; j < i ; j++) rm_free (refs[j].name) ;
+			rm_free (refs) ;
+			return EFFECTS_V3_TRUNCATED ;
+		}
+
+		refs[i].name = ReadWireString (stream) ;
+		if (refs[i].name == NULL) {
+			for (uint16_t j = 0 ; j < i ; j++) rm_free (refs[j].name) ;
+			rm_free (refs) ;
+			return EFFECTS_V3_MALFORMED ;
+		}
+	}
+
+	*out   = refs ;
+	*out_n = n ;
+	return EFFECTS_V3_OK ;
+}
+
+// read CREATE_INDEX (11) and DROP_INDEX (12)
+//
+// ONE RECORD PER STATEMENT, which v2 was not - v2 sent one record per field.
+// Two single-field records are NOT equivalent to one two-field statement: the
+// second is refused with "Can not override index configuration", because
+// index-level options belong to the index and cannot be set twice. So the field
+// type is stated once at statement level, ahead of a counted field list.
+//
+// A drop carries n = 0 and no options.
+static EffectsV3Status _ReadIndexRecord
+(
+	FILE *stream,
+	EffectsV3Record *rec,
+	bool create
+) {
+	uint32_t t ;
+	if (!_ReadU32 (stream, &t)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+	if (t != SCHEMA_NODE && t != SCHEMA_EDGE) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+	rec->schema_type = (SchemaType)t ;
+
+	int32_t label_id ;
+	if (!_ReadI32 (stream, &label_id)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+	rec->schema_id = label_id ;
+
+	rec->name = ReadWireString (stream) ;
+	if (rec->name == NULL) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+
+	// IndexFieldType is a BIT FLAG SET, not a discriminant - a range index is
+	// NUMERIC|GEO|STR == 0x0E. Not range-checked here for that reason: the
+	// meaningful test is against the local index API, at apply.
+	if (!_ReadU32 (stream, &rec->field_type)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	// index field count is a u16
+	uint16_t n_fields ;
+	if (!_ReadU16 (stream, &n_fields)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	EffectsV3Status status = _ReadAttrRefs (stream, n_fields,
+			&rec->attrs_ref, &rec->n_attrs_ref) ;
+	if (status != EFFECTS_V3_OK) {
+		return status ;
+	}
+
+	if (create) {
+		return _ReadOptions (stream, &rec->options, &rec->has_options) ;
+	}
+
+	return EFFECTS_V3_OK ;
+}
+
+// read CREATE_CONSTRAINT (13) and DROP_CONSTRAINT (14)
+//
+// CREATE carries a ConstraintStatus that C never sends, and DROP omits it -
+// which is why rec_drop_constraint decoded under the old prose and the other
+// three did not.
+static EffectsV3Status _ReadConstraintRecord
+(
+	FILE *stream,
+	EffectsV3Record *rec,
+	bool create
+) {
+	if (!_ReadU32 (stream, &rec->constraint_type)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	// GraphEntityType is 1-BASED: GETYPE_UNKNOWN takes 0, so a node is 1
+	if (!_ReadU32 (stream, &rec->entity_type)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	if (create) {
+		if (!_ReadU32 (stream, &rec->status)) {
+			return EFFECTS_V3_TRUNCATED ;
+		}
+		rec->has_status = true ;
+	}
+
+	int32_t label_id ;
+	if (!_ReadI32 (stream, &label_id)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+	rec->schema_id = label_id ;
+
+	rec->name = ReadWireString (stream) ;
+	if (rec->name == NULL) {
+		return EFFECTS_V3_MALFORMED ;
+	}
+
+	// the constraint property count is a u8, NOT the u16 used everywhere else.
+	// Read from C source rather than inferred, and it is the trap in this
+	// record: reading it as a u16 swallows the first attribute id's low byte.
+	uint8_t n_props ;
+	if (!_ReadU8 (stream, &n_props)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	return _ReadAttrRefs (stream, n_props, &rec->attrs_ref,
+			&rec->n_attrs_ref) ;
+}
+
 // read one record: opcode, then whatever that opcode carries
 static EffectsV3Status _ReadRecord
 (
@@ -678,8 +950,17 @@ static EffectsV3Status _ReadRecord
 	//
 	// Rollout consequence: while this is reachable, the version switch must not
 	// flip a writer to v3, or a peer emitting DDL gets refused.
-	if (rec->opcode >= EFFECT_CREATE_INDEX) {
-		return EFFECTS_V3_UNIMPLEMENTED ;
+	switch (rec->opcode) {
+		case EFFECT_CREATE_INDEX:
+			return _ReadIndexRecord (stream, rec, true) ;
+		case EFFECT_DROP_INDEX:
+			return _ReadIndexRecord (stream, rec, false) ;
+		case EFFECT_CREATE_CONSTRAINT:
+			return _ReadConstraintRecord (stream, rec, true) ;
+		case EFFECT_DROP_CONSTRAINT:
+			return _ReadConstraintRecord (stream, rec, false) ;
+		default:
+			break ;
 	}
 
 	if (!_ReadU32 (stream, &rec->count)) {
