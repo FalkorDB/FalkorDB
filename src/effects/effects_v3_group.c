@@ -1011,6 +1011,101 @@ static void _flush_updates(EffectsV3Grouping *g) {
 	_staging_index_clear(&g->staging);
 }
 
+
+// build the id-and-name pairs a DDL record carries
+//
+// BOTH HALVES, because apply checks one against the other: a diverged
+// dictionary is then a refusal rather than an index over whatever that id
+// happens to mean on the replica. The names are copied - the caller's belong to
+// the schema, which outlives neither the payload nor this accumulator reliably
+static EffectsV3AttrRef *_attr_refs_new
+(
+	const AttributeID *ids,  // attribute ids
+	const char **names,      // their names
+	uint16_t n               // how many
+) {
+	if(n == 0) {
+		return NULL;
+	}
+
+	EffectsV3AttrRef *refs = rm_calloc(n, sizeof(EffectsV3AttrRef));
+	for(uint16_t i = 0; i < n; i++) {
+		refs[i].id   = ids[i];
+		refs[i].name = rm_strdup(names[i]);
+	}
+
+	return refs;
+}
+
+// release them, names included
+static void _attr_refs_free
+(
+	EffectsV3AttrRef *refs,  // pairs, NULL when there were none
+	uint16_t n               // how many
+) {
+	for(uint16_t i = 0; i < n; i++) {
+		rm_free(refs[i].name);
+	}
+	rm_free(refs);
+}
+
+void EffectsV3Grouping_AddConstraint
+(
+	EffectsV3Grouping *g,         // accumulator
+	EffectType opcode,            // CREATE_CONSTRAINT or DROP_CONSTRAINT
+	uint32_t constraint_type,     // unique or mandatory
+	uint32_t entity_type,         // 1-based
+	uint32_t status,              // ConstraintStatus; CREATE only
+	int label_id,                 // schema id
+	const char *label,            // schema name
+	const AttributeID *attr_ids,  // constrained attribute ids
+	const char **attr_names,      // their names
+	uint8_t n                     // how many
+) {
+	EffectsV3AttrRef *attrs = _attr_refs_new(attr_ids, attr_names, n);
+
+	// THE OPCODE PICKS THE ARM. The two constraint arms carry the same fields in
+	// the same order today and differ only in 'status', so filling one through
+	// the other would work - by the coincidence the free path refuses to rely on,
+	// and for exactly as long.
+	//
+	// FILLED BEFORE IT IS APPENDED, so the list never holds a record whose arm
+	// was not written: the free path reads the arm the opcode names, and a slot
+	// that reached it half-filled would be freeing an uninitialised pointer
+	EffectsV3Record r = { .opcode = opcode };
+
+	switch(opcode) {
+		case EFFECT_CREATE_CONSTRAINT:
+			r.create_constraint.constraint_type = constraint_type;
+			r.create_constraint.entity_type     = entity_type;
+			r.create_constraint.status          = status;
+			r.create_constraint.schema_id       = label_id;
+			r.create_constraint.name            = rm_strdup(label);
+			r.create_constraint.attrs           = attrs;
+			r.create_constraint.n_attrs         = n;
+			break;
+
+		case EFFECT_DROP_CONSTRAINT:
+			// no status: there is nothing to converge on, and the record has
+			// no field for one
+			r.drop_constraint.constraint_type = constraint_type;
+			r.drop_constraint.entity_type     = entity_type;
+			r.drop_constraint.schema_id       = label_id;
+			r.drop_constraint.name            = rm_strdup(label);
+			r.drop_constraint.attrs           = attrs;
+			r.drop_constraint.n_attrs         = n;
+			break;
+
+		default:
+			// nothing owns 'attrs' once this returns
+			ASSERT(false && "not a constraint opcode");
+			_attr_refs_free(attrs, n);
+			return;
+	}
+
+	arr_append(g->announcements, r);
+}
+
 uint32_t EffectsV3Grouping_RecordCount
 (
 	EffectsV3Grouping *g  // accumulator
@@ -1229,8 +1324,18 @@ void EffectsV3Grouping_Free
 			case EFFECT_ADD_ATTRIBUTE:
 				rm_free(a->add_attribute.name);
 				break;
+			case EFFECT_CREATE_CONSTRAINT:
+				rm_free(a->create_constraint.name);
+				_attr_refs_free(a->create_constraint.attrs,
+						a->create_constraint.n_attrs);
+				break;
+			case EFFECT_DROP_CONSTRAINT:
+				rm_free(a->drop_constraint.name);
+				_attr_refs_free(a->drop_constraint.attrs,
+						a->drop_constraint.n_attrs);
+				break;
 			default:
-				ASSERT(false && "announcement is neither schema nor attribute");
+				ASSERT(false && "announcement opcode has no free arm");
 				break;
 		}
 	}
