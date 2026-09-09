@@ -743,7 +743,8 @@ Constraint GraphHub_AddConstraint
 		uint8_t out_n = Constraint_GetAttributes (c, &out_ids, &out_names) ;
 
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
-		EffectsBuffer_AddCreateConstraintEffect (eb, ct, et, s_id, label,
+		EffectsBuffer_AddCreateConstraintEffect (eb, ct, et,
+				(uint32_t) Constraint_GetStatus (c), s_id, label,
 				out_ids, out_names, out_n) ;
 	}
 

@@ -135,6 +135,31 @@ void EffectsV3Grouping_StageUpdate
 	SIValue value           // its new value, or a null to remove it
 );
 
+// file a constraint DDL record
+//
+// Singular like a schema announcement - one statement, one record, no grouping
+// and no count. Unlike the index records it needs no statement-level
+// accumulation, because C hands over the whole property list in one call.
+//
+// 'status' is the one field v3 states that C's own writer never received: a
+// replica never validates, so the announcement is the only thing that can tell
+// it an enforcing constraint from one still building, and it is what makes the
+// second announcement converge on the first rather than duplicate it. DROP
+// ignores it.
+void EffectsV3Grouping_AddConstraint
+(
+	EffectsV3Grouping *g,         // accumulator
+	EffectType opcode,            // CREATE_CONSTRAINT or DROP_CONSTRAINT
+	uint32_t constraint_type,     // unique or mandatory
+	uint32_t entity_type,         // 1-BASED - a node is 1, not 0
+	uint32_t status,              // ConstraintStatus; CREATE only
+	int label_id,                 // label/relationship-type id
+	const char *label,            // its name, the cross-check
+	const AttributeID *attr_ids,  // constrained attribute ids
+	const char **attr_names,      // their names
+	uint8_t n                     // how many
+);
+
 // how many records the accumulator would emit
 //
 // NOT const: staged updates are folded into their groups here if they have not
