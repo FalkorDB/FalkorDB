@@ -332,12 +332,147 @@ void test_effectsV3Record_singularRecords(void) {
 	}
 }
 
+//------------------------------------------------------------------------------
+// records 11-14: index and constraint DDL
+//------------------------------------------------------------------------------
+
+// CREATE_INDEX and DROP_INDEX, and the difference between them that the spec
+// sentence does not settle
+//
+// "Mirrors 11 without the options" reads two ways. The corpus decides it:
+// rec_drop_index ends after its field list, so a drop carries NO OPTIONS BLOCK
+// AT ALL - zero bytes, not an empty one. A drop that wrote five clear presence
+// bytes would be five bytes longer than the fixture.
+void test_effectsV3Record_indexDDL(void) {
+	{
+		// two fields, options {} - the text half is still written, five clear
+		// presence bytes, because it is written whatever the field type
+		EffectsV3AttrRef refs[] = { { 12, "name" }, { 13, "age" } };
+		EffectsV3Record r = {
+			.opcode      = EFFECT_CREATE_INDEX,
+			.schema_type = SCHEMA_NODE,
+			.schema_id   = 3,
+			.name        = "Person",
+			.field_type  = 0x000a,
+			.attrs_ref   = refs,
+			.n_attrs_ref = 2,
+		};
+		_check(&r, "03000b00000000000000030000000700000000000000506572736f6e00"
+		           "0a00000002000c0005000000000000006e616d65000d00040000000000"
+		           "0000616765000000000000", "rec_create_index");
+	}
+	{
+		// a drop: same shape, and the options block absent entirely
+		EffectsV3AttrRef refs[] = { { 14, "vec" } };
+		EffectsV3Record r = {
+			.opcode      = EFFECT_DROP_INDEX,
+			.schema_type = SCHEMA_EDGE,
+			.schema_id   = 1,
+			.name        = "KNOWS",
+			.field_type  = 0x0010,
+			.attrs_ref   = refs,
+			.n_attrs_ref = 1,
+		};
+		_check(&r, "03000c000000010000000100000006000000000000004b4e4f57530010"
+		           "00000001000e00040000000000000076656300", "rec_drop_index");
+	}
+}
+
+// THE VECTOR OPTIONS BLOCK, which is the only fixture exercising options
+// non-empty and the only thing in these four records I could not derive from a
+// single example
+//
+// Five values behind FOUR presence bytes, because `dimension` has none - a
+// vector field must have one, so there is nothing for a presence byte to say.
+// That asymmetry is what made one fixture insufficient: four markers for five
+// values admits several readings that all total 49 bytes.
+//
+// The text half is written first regardless of field type, so this block opens
+// with five clear bytes before the vector half begins.
+void test_effectsV3Record_indexVectorOptions(void) {
+	EffectsV3AttrRef refs[] = { { 0, "embedding" } };
+	EffectsV3Record r = {
+		.opcode      = EFFECT_CREATE_INDEX,
+		.schema_type = SCHEMA_NODE,
+		.schema_id   = 0,
+		.name        = "P",
+		.field_type  = 0x0010,
+		.attrs_ref   = refs,
+		.n_attrs_ref = 1,
+		.options     = {
+			.is_vector           = true,
+			.dimension           = 128,
+			.has_m               = true, .m               = 32,
+			.has_ef_construction = true, .ef_construction = 400,
+			.has_ef_runtime      = true, .ef_runtime      = 20,
+			.has_sim_func        = true, .sim_func        = 2,
+		},
+	};
+
+	_check(&r, "03000b0000000000000000000000020000000000000050001000000001000000"
+	           "0a00000000000000656d62656464696e67000000000000800000000000000001"
+	           "2000000000000000019001000000000000011400000000000000010200000000"
+	           "000000", "rec_create_index_vector");
+}
+
+// CREATE_CONSTRAINT and DROP_CONSTRAINT
+//
+// Two details a constraint encoder gets wrong by reading the index record
+// beside it: the property count is a u8 where an index field count is a u16,
+// and GraphEntityType is 1-BASED because GETYPE_UNKNOWN takes 0 - so a node is
+// 1, not 0.
+//
+// And CREATE carries a ConstraintStatus that DROP does not. It is the one place
+// v3 states more than C: a replica never validates, so the announcement is the
+// only thing that can distinguish an enforcing constraint from one still
+// building.
+void test_effectsV3Record_constraintDDL(void) {
+	{
+		EffectsV3AttrRef props[] = { { 12, "name" } };
+		EffectsV3Record r = {
+			.opcode          = EFFECT_CREATE_CONSTRAINT,
+			.constraint_type = 0,   // unique
+			.entity_type     = 1,   // node, 1-based
+			.status          = 0,   // operational
+			.has_status      = true,
+			.schema_id       = 3,
+			.name            = "Person",
+			.attrs_ref       = props,
+			.n_attrs_ref     = 1,
+		};
+		_check(&r, "03000d0000000000000001000000000000000300000007000000000000"
+		           "00506572736f6e00010c0005000000000000006e616d6500",
+				"rec_create_constraint");
+	}
+	{
+		EffectsV3AttrRef props[] = { { 12, "name" }, { 13, "age" } };
+		EffectsV3Record r = {
+			.opcode          = EFFECT_DROP_CONSTRAINT,
+			.constraint_type = 1,   // mandatory
+			.entity_type     = 2,   // edge
+			.schema_id       = 1,
+			.name            = "KNOWS",
+			.attrs_ref       = props,
+			.n_attrs_ref     = 2,
+		};
+		_check(&r, "03000e00000001000000020000000100000006000000000000004b4e4f"
+		           "575300020c0005000000000000006e616d65000d000400000000000000"
+		           "61676500", "rec_drop_constraint");
+	}
+}
+
 TEST_LIST = {
 	{ "EffectsV3Record:deleteNode",       test_effectsV3Record_deleteNode },
 	{ "EffectsV3Record:labels",           test_effectsV3Record_labels },
 	{ "EffectsV3Record:deleteEdge",       test_effectsV3Record_deleteEdge },
 	{ "EffectsV3Record:nodeWithValues",   test_effectsV3Record_nodeWithValues },
 	{ "EffectsV3Record:updateEdge",       test_effectsV3Record_updateEdge },
+	{ "EffectsV3Record:indexDDL",
+		test_effectsV3Record_indexDDL },
+	{ "EffectsV3Record:indexVectorOptions",
+		test_effectsV3Record_indexVectorOptions },
+	{ "EffectsV3Record:constraintDDL",
+		test_effectsV3Record_constraintDDL },
 	{ "EffectsV3Record:singularRecords",  test_effectsV3Record_singularRecords },
 	{ NULL, NULL }
 };

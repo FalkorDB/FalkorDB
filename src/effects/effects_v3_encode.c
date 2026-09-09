@@ -8,6 +8,9 @@
 #include "effects_internal.h"
 #include "../util/rmalloc.h"
 
+// defined below; records 11-14
+static void _encode_ddl_record(const EffectsV3Record *r, EffectsBytes *out);
+
 void EffectsV3_WriteUint
 (
 	EffectsBytes *out,  // sink
@@ -185,6 +188,13 @@ static void _encode_record
 
 	EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->opcode, sizeof(EffectType));
 
+	// records 11-14 are singular too, and carry no count for the same reason:
+	// one index statement, one constraint
+	if(r->opcode >= EFFECT_CREATE_INDEX && r->opcode <= EFFECT_DROP_CONSTRAINT) {
+		_encode_ddl_record(r, out);
+		return;
+	}
+
 	// records 9 and 10 are inherently singular: one schema, one attribute. They
 	// carry no count, which is the one exception to every batchable record
 	// being `opcode . count . blocks`
@@ -289,4 +299,158 @@ void EffectsV3_EncodeRecordWithRawValues
 	EffectsBytes *out            // sink
 ) {
 	_encode_record(r, values, out);
+}
+
+//------------------------------------------------------------------------------
+// records 11-14: index and constraint DDL
+//------------------------------------------------------------------------------
+
+// the counted (attribute id, name) list both DDL families carry
+//
+// THE COUNT WIDTHS DIFFER: an index field count is a u16, a constraint property
+// count is a u8. Same payload shape, two widths, and the listing does not spell
+// it out inline - so an encoder written from the neighbouring record gets one
+// of them wrong.
+static void _write_attr_refs
+(
+	const EffectsV3Record *r,  // record whose refs to write
+	size_t count_width,        // 2 for an index, 1 for a constraint
+	EffectsBytes *out          // sink
+) {
+	EffectsV3_WriteUint(out, r->n_attrs_ref, count_width);
+
+	for(uint16_t i = 0; i < r->n_attrs_ref; i++) {
+		EffectsV3_WriteUint(out, r->attrs_ref[i].id, sizeof(AttributeID));
+		_write_name(r->attrs_ref[i].name, out);
+	}
+}
+
+// one option: its presence byte, then its value only when present
+static void _write_opt_u64
+(
+	bool present,      // whether the statement said this
+	uint64_t v,        // its value
+	EffectsBytes *out  // sink
+) {
+	EffectsV3_WriteUint(out, present ? 1 : 0, 1);
+	if(present) {
+		EffectsV3_WriteUint(out, v, 8);
+	}
+}
+
+// the index OPTIONS block
+//
+// Options travel in the RDB's field order, each behind a presence byte, and the
+// presence byte means "THE STATEMENT SAID THIS" rather than "this is the
+// default". An effect MUTATES an index that may already exist, where the RDB
+// writes a whole one - so writing a default in place of an absent option is not
+// a harmless substitution, it is an instruction to change something the
+// statement never mentioned. That diverged a live replica with "Can not
+// override index configuration: Language is already set".
+//
+// The text half is written WHATEVER the field type - five clear bytes when
+// nothing is stated - so there is one gate, the vector half, not two.
+//
+// `dimension` alone has no presence byte, because a vector field must have one.
+// That is why a vector block carries five values behind four markers.
+static void _write_index_options
+(
+	const EffectsV3Record *r,  // record whose options to write
+	EffectsBytes *out          // sink
+) {
+	const EffectsV3IndexOptions *o = &r->options;
+
+	// language
+	EffectsV3_WriteUint(out, o->has_language ? 1 : 0, 1);
+	if(o->has_language) {
+		_write_name(o->language, out);
+	}
+
+	// stopwords: a count then that many strings
+	EffectsV3_WriteUint(out, o->has_stopwords ? 1 : 0, 1);
+	if(o->has_stopwords) {
+		EffectsV3_WriteUint(out, o->n_stopwords, 8);
+		for(uint64_t i = 0; i < o->n_stopwords; i++) {
+			_write_name(o->stopwords[i], out);
+		}
+	}
+
+	// weight, an f64 written as its bits rather than through the SIValue codec
+	EffectsV3_WriteUint(out, o->has_weight ? 1 : 0, 1);
+	if(o->has_weight) {
+		uint64_t bits;
+		memcpy(&bits, &o->weight, sizeof(bits));
+		EffectsV3_WriteUint(out, bits, 8);
+	}
+
+	// nostem, one byte and only ever 1 or 0 - a decoder refuses anything else
+	EffectsV3_WriteUint(out, o->has_nostem ? 1 : 0, 1);
+	if(o->has_nostem) {
+		EffectsV3_WriteUint(out, o->nostem ? 1 : 0, 1);
+	}
+
+	// phonetic algorithm code
+	EffectsV3_WriteUint(out, o->has_phonetic ? 1 : 0, 1);
+	if(o->has_phonetic) {
+		_write_name(o->phonetic, out);
+	}
+
+	if(!o->is_vector) {
+		return;
+	}
+
+	// a vector field must have a dimension, so it carries no presence byte
+	EffectsV3_WriteUint(out, o->dimension, 8);
+
+	_write_opt_u64(o->has_m,              o->m,              out);
+	_write_opt_u64(o->has_ef_construction, o->ef_construction, out);
+	_write_opt_u64(o->has_ef_runtime,      o->ef_runtime,      out);
+	_write_opt_u64(o->has_sim_func,        o->sim_func,        out);
+}
+
+// write one DDL record: 11 CREATE_INDEX, 12 DROP_INDEX, 13 CREATE_CONSTRAINT,
+// 14 DROP_CONSTRAINT
+//
+//   11  schema_type · label_id · label · field_type · fields · OPTIONS
+//   12  the same, and NO OPTIONS AT ALL - zero bytes, not an empty block.
+//       "Mirrors 11 without the options" reads both ways; the corpus settles it
+//   13  constraint_type · entity_type · STATUS · label_id · label · props
+//   14  the same without the status
+//
+// GraphEntityType is 1-BASED - GETYPE_UNKNOWN takes 0, so a node is 1 - and
+// IndexFieldType is a BIT FLAG SET rather than a discriminant, so a range index
+// is NUMERIC|GEO|STR == 0x0E and must be tested with & rather than compared.
+static void _encode_ddl_record
+(
+	const EffectsV3Record *r,  // record to write
+	EffectsBytes *out          // sink
+) {
+	if(r->opcode == EFFECT_CREATE_INDEX || r->opcode == EFFECT_DROP_INDEX) {
+		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->schema_type,
+				sizeof(SchemaType));
+		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->schema_id, sizeof(int));
+		_write_name(r->name, out);
+		EffectsV3_WriteUint(out, r->field_type, 4);
+		_write_attr_refs(r, 2, out);
+
+		// a drop carries none, and that is not the same as carrying empty ones
+		if(r->opcode == EFFECT_CREATE_INDEX) {
+			_write_index_options(r, out);
+		}
+		return;
+	}
+
+	EffectsV3_WriteUint(out, r->constraint_type, 4);
+	EffectsV3_WriteUint(out, r->entity_type, 4);
+
+	// the one place v3 carries more than C: a replica never validates, so the
+	// announcement is the only thing that can tell it an enforcing constraint
+	// from one still building. A drop has no such need and omits it
+	if(r->opcode == EFFECT_CREATE_CONSTRAINT) {
+		EffectsV3_WriteUint(out, r->status, 4);
+	}
+
+	EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->schema_id, sizeof(int));
+	_write_name(r->name, out);
+	_write_attr_refs(r, 1, out);
 }
