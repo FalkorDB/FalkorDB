@@ -156,7 +156,7 @@ pub fn register(funcs: &mut Functions) {
                                 {
                                     attr_opts.insert(
                                         Arc::new(String::from("dimension")),
-                                        Value::Int(i64::from(vopts.dimension)),
+                                        Value::Int(vopts.dimension as i64),
                                     );
                                     attr_opts.insert(
                                         Arc::new(String::from("similarityFunction")),

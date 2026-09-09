@@ -83,6 +83,16 @@ pub enum DecodeError {
     #[error("a boolean field holds {value}, which is neither 0 nor 1")]
     BadBool { value: u64 },
 
+    /// A `simFunc` discriminant that is not a `VecSimMetric`.
+    ///
+    /// Refused rather than read as L2: silently choosing a metric would build
+    /// an index that answers different queries from the primary's and never
+    /// say so. The set is closed at 0, 1 and 2 — this engine's parser rejects
+    /// any other name at creation, so a fourth value on the wire came from
+    /// something this build does not understand.
+    #[error("unknown vector similarity function {value}")]
+    BadSimilarityFunction { value: u64 },
+
     #[error("unknown schema type {0}")]
     BadSchemaType(u32),
 

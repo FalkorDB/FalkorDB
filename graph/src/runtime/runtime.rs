@@ -1887,11 +1887,19 @@ fn map_to_index_options(
             // sets only RediSearch's default phonetic flag, which maps
             // to Double Metaphone English — other algorithm codes
             // (dm:fr / dm:pt / dm:es) aren't wired up here.
+            // Stored as the algorithm code, but the accepted set is unchanged:
+            // a bool for on/off, or the one code this engine implements. C can
+            // send `dm:fr` and the wire can carry it — that is refused when it
+            // is applied, not when it is parsed here.
             let phonetic = match get("phonetic") {
-                Some(Value::Bool(b)) => Some(*b),
+                Some(Value::Bool(b)) => Some(if *b {
+                    "dm:en".to_owned()
+                } else {
+                    String::new()
+                }),
                 Some(Value::String(s)) => {
                     if s.eq_ignore_ascii_case("dm:en") {
-                        Some(true)
+                        Some("dm:en".to_owned())
                     } else {
                         return Err(format!(
                             "Unsupported phonetic algorithm '{s}'; only 'dm:en' is supported"
@@ -1938,7 +1946,7 @@ fn map_to_index_options(
                     if *n < 0 {
                         return Err("Invalid vector index configuration: dimension must be a non-negative integer".into());
                     }
-                    *n as u32
+                    *n as u64
                 }
                 None => 0,
                 _ => {

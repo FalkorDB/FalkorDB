@@ -2,7 +2,10 @@
 
 use std::borrow::Cow;
 use std::ops::Deref;
+use std::sync::Arc;
 
+use crate::index::text_index_options::TextIndexOptions;
+use crate::index::vector_index_options::VectorIndexOptions;
 use crate::runtime::value::Value;
 
 use super::*;
@@ -31,25 +34,37 @@ fn write_header<W: EffectWrite + ?Sized>(
     }
 }
 
-/// `CREATE_INDEX`'s options, in the layout the RDB already uses.
+/// `CREATE_INDEX`'s options: the engine's own option types, in the layout the
+/// RDB already uses.
 ///
-/// Not a map. Every layer but the wire already holds these as typed fields —
-/// C's `IndexField` has two nested option structs, C's v19 RDB writes them at
-/// fixed positions, and this engine parses them into `IndexOptions` the moment
-/// they arrive. The wire carried a `T_MAP` of stringly-typed keys only because
+/// **The halves are `TextIndexOptions` and `VectorIndexOptions` themselves**,
+/// not copies of their fields. They used to be copies, which is what Avi's
+/// review asked about — and the answer was to widen the two engine fields that
+/// could not hold what the wire carries (`phonetic` was a `bool` where C sends
+/// an algorithm code, `dimension` a `u32` where C sends `size_t`) rather than
+/// to keep a parallel set of types in step by hand.
+///
+/// This wrapper survives because the *shape* differs, not the fields. The
+/// engine's `indexer::IndexOptions` is `Text` exclusive-or `Vector`; the wire
+/// writes the text half always and the vector half when `field_type` carries
+/// `INDEX_FLD_VECTOR`, and `field_type` is a bit set. So the wire can describe
+/// a field that is both, and an either/or enum cannot.
+///
+/// Not a map. Every layer already holds these as typed fields — C's
+/// `IndexField` has two nested option structs, C's v19 RDB writes them at fixed
+/// positions. The wire carried a `T_MAP` of stringly-typed keys only because
 /// C's `create_index_effect.c` had an `SIValue` in hand at the call site and
 /// passed the parser's representation straight through.
 ///
-/// The layout here mirrors `_RdbLoadIndex`/`_RdbLoadIndexField`, which is a
-/// format both engines already implement and cross-check: RDBs have been
-/// mutually loadable since #2459, so this is a tested shape rather than a new
-/// one. Reusing it means the far side can reuse its own RDB field logic, and
-/// there is no new agreement to reach about mask bits or defaults.
+/// The layout mirrors `_RdbLoadIndex`/`_RdbLoadIndexField`, a format both
+/// engines already implement and cross-check: RDBs have been mutually loadable
+/// since #2459, so the far side can reuse its own field logic and there is no
+/// new agreement to reach about mask bits or defaults.
 ///
 /// **Each option carries a presence byte**, which is the one place this layout
 /// departs from the RDB's. The RDB writes defaults for what the statement
 /// omitted and can afford to: it saves a whole index at once, so "weight 1.0"
-/// and "no weight given" produce the same index either way. An effect is an
+/// and "no weight given" load the same index either way. An effect is an
 /// instruction against an index that may already exist, and there the two are
 /// different — `create_index` refuses an explicit language when one is already
 /// set for the label. Materialising defaults here made `test_CRUD_replication`
@@ -57,55 +72,20 @@ fn write_header<W: EffectWrite + ?Sized>(
 /// is information and travels as itself.
 ///
 /// A byte per option rather than one mask for all of them, written and read
-/// through `put_opt`/`take_opt` so a value cannot be written without its
-/// flag or read without it. The text half is written whatever the field type,
-/// with five zero bytes saying "nothing said"; only the vector half is gated,
+/// through `put_opt`/`take_opt` so a value cannot be written without its flag
+/// or read without it. The text half is written whatever the field type, with
+/// five zero bytes saying "nothing said"; only the vector half is gated,
 /// because its `dimension` has no absent form.
-///
-/// `phonetic` is the algorithm code as a string, not a bool: C stores
-/// `char *phonetic` and accepts `dm:fr`/`dm:pt`/`dm:es`, which this engine
-/// currently rejects. A bool here would have baked one engine's narrowing into
-/// the format.
-///
-/// The vector block is gated on `field_type & INDEX_FLD_VECTOR` rather than a
-/// flag of its own — `field_type` is already on the wire ahead of this, and the
-/// RDB gates on exactly the same bit.
-#[derive(Clone, Debug, PartialEq, Default)]
-pub struct IndexOptions {
-    pub language: Option<String>,
-    pub stopwords: Option<Vec<String>>,
-    pub weight: Option<f64>,
-    pub nostem: Option<bool>,
-    /// The algorithm code, e.g. `"dm:en"`. `None` when the statement said
-    /// nothing; C stores `char *phonetic` and accepts codes this engine
-    /// rejects, so a bool here would bake one engine's narrowing into the wire.
-    pub phonetic: Option<String>,
-    /// Present iff the statement's `field_type` carries `INDEX_FLD_VECTOR`.
-    pub vector: Option<VectorOptions>,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct IndexFieldOptions {
+    /// Always written. All-`None` is five zero bytes, which is what a vector or
+    /// range statement carries.
+    pub text: TextIndexOptions,
+    /// Written iff the statement's `field_type` carries `INDEX_FLD_VECTOR`.
+    pub vector: Option<VectorIndexOptions>,
 }
 
-/// The HNSW half, written only for a vector field.
-///
-/// `u64` throughout, matching C's `size_t` and its RDB writer. An absent field
-/// is one the statement did not state, and the receiver supplies its own
-/// default — the same ones the RDB writes: `M` 16, `ef_construction` 200,
-/// `ef_runtime` 10, `sim_func` 0 (L2).
-///
-/// `sim_func` is the `VecSimMetric` discriminant — 0 = L2/euclidean, 1 = IP,
-/// 2 = cosine. An enum rather than a name because the RDB already persists it
-/// this way on both engines, which makes it shared format vocabulary like
-/// `IndexFieldType` and `SIType` rather than an internal representation.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct VectorOptions {
-    /// Not optional: a vector index cannot exist without one.
-    pub dimension: u64,
-    pub m: Option<u64>,
-    pub ef_construction: Option<u64>,
-    pub ef_runtime: Option<u64>,
-    pub sim_func: Option<u64>,
-}
-
-impl IndexOptions {
+impl IndexFieldOptions {
     /// The block a statement with no `OPTIONS` clause carries: nothing said.
     ///
     /// Every field absent, which is **not** every field at its default. An
@@ -113,27 +93,12 @@ impl IndexOptions {
     /// given" and "language english" are different instructions — the second is
     /// refused when a language is already set for the label. The RDB can
     /// materialise defaults because it writes a whole index at once; this wire
-    /// cannot, and a flow test proved it: an explicit "english" diverged a
-    /// replica with "Language is already set for label 'L'".
+    /// cannot, and a flow test proved it.
     #[must_use]
-    pub fn none_given(vector: Option<VectorOptions>) -> Self {
+    pub fn none_given(vector: Option<VectorIndexOptions>) -> Self {
         Self {
+            text: TextIndexOptions::default(),
             vector,
-            ..Self::default()
-        }
-    }
-}
-
-impl VectorOptions {
-    /// A vector field of the given dimension, with nothing else stated.
-    #[must_use]
-    pub const fn of_dimension(dimension: u64) -> Self {
-        Self {
-            dimension,
-            m: None,
-            ef_construction: None,
-            ef_runtime: None,
-            sim_func: None,
         }
     }
 }
@@ -172,7 +137,7 @@ fn take_opt<T>(
     }
 }
 
-impl IndexOptions {
+impl IndexFieldOptions {
     /// Write the block, gated on the statement's `field_type`.
     ///
     /// `field_type` and not `self.vector.is_some()`, because that is what the
@@ -191,30 +156,41 @@ impl IndexOptions {
             field_type & INDEX_FLD_VECTOR != 0,
             "vector options must be present exactly when the field type says so"
         );
-        put_opt(buf, self.language.as_ref(), |b, s| b.string(s));
-        put_opt(buf, self.stopwords.as_ref(), |b, sw| {
+        let t = &self.text;
+        put_opt(buf, t.language.as_ref(), |b, s| b.string(s));
+        put_opt(buf, t.stopwords.as_ref(), |b, sw| {
             b.u64(sw.len() as u64);
             for s in sw {
                 b.string(s);
             }
         });
-        put_opt(buf, self.weight.as_ref(), |b, w| b.f64(*w));
-        put_opt(buf, self.nostem.as_ref(), |b, n| b.u8(u8::from(*n)));
-        put_opt(buf, self.phonetic.as_ref(), |b, s| b.string(s));
+        put_opt(buf, t.weight.as_ref(), |b, w| b.f64(*w));
+        put_opt(buf, t.nostem.as_ref(), |b, n| b.u8(u8::from(*n)));
+        put_opt(buf, t.phonetic.as_ref(), |b, s| b.string(s));
         if field_type & INDEX_FLD_VECTOR != 0 {
-            let v = self
-                .vector
-                .unwrap_or_else(|| VectorOptions::of_dimension(0));
+            let v = self.vector.clone().unwrap_or_default();
             buf.u64(v.dimension);
-            put_opt(buf, v.m.as_ref(), |b, x| b.u64(*x));
-            put_opt(buf, v.ef_construction.as_ref(), |b, x| b.u64(*x));
-            put_opt(buf, v.ef_runtime.as_ref(), |b, x| b.u64(*x));
-            put_opt(buf, v.sim_func.as_ref(), |b, x| b.u64(*x));
+            put_opt(buf, v.m.as_ref(), |b, x| b.u64(*x as u64));
+            put_opt(buf, v.ef_construction.as_ref(), |b, x| b.u64(*x as u64));
+            put_opt(buf, v.ef_runtime.as_ref(), |b, x| b.u64(*x as u64));
+            // The VecSimMetric discriminant the RDB persists: 0 L2, 1 IP,
+            // 2 cosine. The engine holds the name, so this is where the two
+            // meet — and it is the only field the wire and the engine spell
+            // differently, because both engines' RDBs publish the number.
+            put_opt(buf, v.similarity_function.as_ref(), |b, s| {
+                b.u64(if s.eq_ignore_ascii_case("ip") {
+                    1
+                } else if s.eq_ignore_ascii_case("cosine") {
+                    2
+                } else {
+                    0
+                });
+            });
         }
     }
 }
 
-impl EffectDecodeSized<3> for IndexOptions {
+impl EffectDecodeSized<3> for IndexFieldOptions {
     /// The statement's `field_type`, which says whether a vector block follows.
     type Size = u32;
 
@@ -229,7 +205,7 @@ impl EffectDecodeSized<3> for IndexOptions {
             let n = r.guard_count(n, 9)?;
             let mut out = Vec::with_capacity(n);
             for _ in 0..n {
-                out.push(r.string()?);
+                out.push(Arc::new(r.string()?));
             }
             Ok(out)
         })?;
@@ -241,24 +217,37 @@ impl EffectDecodeSized<3> for IndexOptions {
                 value: u64::from(other),
             }),
         })?;
+        // The code as sent. C can send `dm:fr`; this decodes it faithfully and
+        // the apply path is where an algorithm this engine cannot run is
+        // refused, with a message naming it rather than a malformed-buffer
+        // error that would force a resync.
         let phonetic = take_opt(r, |r| r.string())?;
         let vector = if field_type & INDEX_FLD_VECTOR == 0 {
             None
         } else {
-            Some(VectorOptions {
+            Some(VectorIndexOptions {
                 dimension: r.u64()?,
-                m: take_opt(r, |r| r.u64())?,
-                ef_construction: take_opt(r, |r| r.u64())?,
-                ef_runtime: take_opt(r, |r| r.u64())?,
-                sim_func: take_opt(r, |r| r.u64())?,
+                m: take_opt(r, |r| r.u64())?.map(|x| x as usize),
+                ef_construction: take_opt(r, |r| r.u64())?.map(|x| x as usize),
+                ef_runtime: take_opt(r, |r| r.u64())?.map(|x| x as usize),
+                similarity_function: take_opt(r, |r| r.u64())?
+                    .map(|s| match s {
+                        1 => Ok("ip".to_owned()),
+                        2 => Ok("cosine".to_owned()),
+                        0 => Ok("euclidean".to_owned()),
+                        other => Err(DecodeError::BadSimilarityFunction { value: other }),
+                    })
+                    .transpose()?,
             })
         };
         Ok(Self {
-            language,
-            stopwords,
-            weight,
-            nostem,
-            phonetic,
+            text: TextIndexOptions {
+                weight,
+                nostem,
+                phonetic,
+                language: language.map(Arc::new),
+                stopwords,
+            },
             vector,
         })
     }
@@ -426,7 +415,7 @@ pub enum Record {
         /// Every field of the statement, encoded as an [`IndexFields`] block.
         fields: Vec<AttrRef<String>>,
         /// `None` on a drop, which carries no options.
-        options: Option<IndexOptions>,
+        options: Option<IndexFieldOptions>,
     },
     Constraint {
         create: bool,
@@ -573,7 +562,7 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             let field_type = r.u32()?;
             let fields = IndexFields::decode(r)?.0;
             let options = if create {
-                Some(IndexOptions::decode_sized(r, field_type)?)
+                Some(IndexFieldOptions::decode_sized(r, field_type)?)
             } else {
                 None
             };
@@ -1421,7 +1410,7 @@ mod tests {
                 id: 0,
                 name: "since".to_owned(),
             }],
-            options: Some(IndexOptions::none_given(None)),
+            options: Some(IndexFieldOptions::none_given(None)),
         }
         .encode(&mut buf);
         Record::Index {
@@ -1646,7 +1635,7 @@ mod tests {
                 id: 9,
                 name: "name".to_owned(),
             }],
-            options: Some(IndexOptions::none_given(None)),
+            options: Some(IndexFieldOptions::none_given(None)),
         }
         .encode(&mut buf);
         let records = read_buffer(&buf).unwrap();
@@ -1662,7 +1651,7 @@ mod tests {
                     id: 9,
                     name: "name".to_owned(),
                 }],
-                options: Some(IndexOptions::none_given(None)),
+                options: Some(IndexFieldOptions::none_given(None)),
             }
         );
     }
@@ -1690,7 +1679,7 @@ mod tests {
             label: "L".to_owned(),
             field_type: INDEX_FLD_RANGE,
             fields,
-            options: Some(IndexOptions::none_given(None)),
+            options: Some(IndexFieldOptions::none_given(None)),
         }
         .encode(&mut buf);
 
@@ -1720,8 +1709,8 @@ mod tests {
     /// and the C engine needs these positions fixed.
     #[test]
     fn a_partly_stated_options_block_pins_where_each_flag_sits() {
-        let mut opts = IndexOptions::none_given(None);
-        opts.weight = Some(2.0);
+        let mut opts = IndexFieldOptions::none_given(None);
+        opts.text.weight = Some(2.0);
 
         let mut buf = Vec::new();
         opts.encode_with(&mut buf, INDEX_FLD_FULLTEXT);
@@ -1739,7 +1728,7 @@ mod tests {
         );
 
         let mut r = Reader::new(&buf);
-        let back = IndexOptions::decode_sized(&mut r, INDEX_FLD_FULLTEXT).unwrap();
+        let back = IndexFieldOptions::decode_sized(&mut r, INDEX_FLD_FULLTEXT).unwrap();
         assert!(r.is_empty(), "the block is exactly as long as it says");
         assert_eq!(back, opts, "what was stated comes back stated, and only it");
     }
@@ -1747,9 +1736,12 @@ mod tests {
     /// The vector half: `dimension` bare, the rest flagged.
     #[test]
     fn a_vector_dimension_carries_no_flag_because_it_cannot_be_absent() {
-        let mut v = VectorOptions::of_dimension(4);
-        v.sim_func = Some(2);
-        let opts = IndexOptions::none_given(Some(v));
+        let v = VectorIndexOptions {
+            dimension: 4,
+            similarity_function: Some("cosine".to_owned()),
+            ..Default::default()
+        };
+        let opts = IndexFieldOptions::none_given(Some(v));
 
         let mut buf = Vec::new();
         opts.encode_with(&mut buf, INDEX_FLD_VECTOR);
@@ -1768,7 +1760,7 @@ mod tests {
         );
 
         let mut r = Reader::new(&buf);
-        let back = IndexOptions::decode_sized(&mut r, INDEX_FLD_VECTOR).unwrap();
+        let back = IndexFieldOptions::decode_sized(&mut r, INDEX_FLD_VECTOR).unwrap();
         assert!(r.is_empty());
         assert_eq!(back, opts);
     }
