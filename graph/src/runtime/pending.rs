@@ -1195,7 +1195,7 @@ impl Pending {
                         g.get_node_attribute(node_id.into(), prop)
                     });
                     if key.is_empty() {
-                        continue; // All NULL → no violation
+                        continue; // NULL in key → vacuously satisfied, no violation
                     }
 
                     // Build a set of all existing keys for this label in one pass

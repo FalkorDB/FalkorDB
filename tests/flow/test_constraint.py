@@ -998,6 +998,137 @@ class testConstraintEdges():
         except ResponseError as e:
             self.env.assertContains("unique constraint violation, on edge of relationship-type Artist", str(e))
 
+# a composite UNIQUE constraint is vacuously satisfied when ANY of the
+# constrained properties is NULL / absent: the composite key is unknown, and an
+# unknown key can not be proven to collide with another. see issue #2778
+COMPOSITE_NULL_GRAPH_ID = "composite_unique_nulls"
+
+class testCompositeUniqueConstraintNulls():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(COMPOSITE_NULL_GRAPH_ID)
+        self.g = self.db.select_graph(COMPOSITE_NULL_GRAPH_ID)
+
+    def test01_partial_nodes_accepted(self):
+        g = self.g
+
+        create_unique_node_constraint(g, "P", "a", "b", sync=True)
+        c = get_constraint(g, "UNIQUE", "NODE", "P", "a", "b")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        # two nodes agreeing on 'a', both missing 'b'
+        g.query("CREATE (:P {a: 1})")
+        g.query("CREATE (:P {a: 1})")
+
+        # mirrored: two nodes agreeing on 'b', both missing 'a'
+        g.query("CREATE (:P {b: 7})")
+        g.query("CREATE (:P {b: 7})")
+
+        # an explicit NULL is equivalent to an absent property
+        g.query("CREATE (:P {a: 1, b: NULL})")
+
+        self.env.assertEqual(g.query("MATCH (n:P) RETURN count(n)").result_set[0][0], 5)
+
+    def test02_full_duplicate_still_rejected(self):
+        g = self.g
+
+        # every constrained property present -> the key is known and enforced
+        g.query("CREATE (:P {a: 5, b: 6})")
+
+        try:
+            g.query("CREATE (:P {a: 5, b: 6})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type P", str(e))
+
+        # a key sharing only one component is still distinct
+        g.query("CREATE (:P {a: 5, b: 7})")
+
+        self.env.assertEqual(g.query("MATCH (n:P) RETURN count(n)").result_set[0][0], 7)
+
+    def test03_completing_a_partial_key_is_enforced(self):
+        g = self.g
+
+        # this node's key is unknown, so it is accepted
+        g.query("CREATE (:P {a: 100, tag: 'partial'})")
+
+        # filling in the missing property would produce a real duplicate
+        g.query("CREATE (:P {a: 100, b: 200})")
+        try:
+            g.query("MATCH (n:P {tag: 'partial'}) SET n.b = 200")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type P", str(e))
+
+        # completing it to a distinct key is fine, and dropping the property
+        # makes the key unknown again
+        g.query("MATCH (n:P {tag: 'partial'}) SET n.b = 201")
+        g.query("MATCH (n:P {tag: 'partial'}) REMOVE n.b")
+
+    def test04_single_property_constraint_unchanged(self):
+        # for a single property "any null" and "all null" coincide
+        g = self.g
+
+        create_unique_node_constraint(g, "S", "a", sync=True)
+        c = get_constraint(g, "UNIQUE", "NODE", "S", "a")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        g.query("CREATE (:S {a: 1})")
+
+        try:
+            g.query("CREATE (:S {a: 1})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type S", str(e))
+
+        g.query("CREATE (:S {a: 2})")
+
+        # nodes missing the constrained property do not participate
+        g.query("CREATE (:S {z: 1})")
+        g.query("CREATE (:S {z: 2})")
+
+        self.env.assertEqual(g.query("MATCH (n:S) RETURN count(n)").result_set[0][0], 4)
+
+    def test05_constraint_creation_over_existing_partial_data(self):
+        g = self.g
+
+        # partial entities must not block the constraint from becoming
+        # operational...
+        g.query("CREATE (:E {a: 1}), (:E {a: 1}), (:E {b: 2}), (:E {b: 2}), (:E {a: 3, b: 3})")
+        create_unique_node_constraint(g, "E", "a", "b", sync=True)
+        c = get_constraint(g, "UNIQUE", "NODE", "E", "a", "b")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        # ...but genuine duplicates must
+        g.query("CREATE (:D {a: 1, b: 1}), (:D {a: 1, b: 1})")
+        create_unique_node_constraint(g, "D", "a", "b", sync=True)
+        c = get_constraint(g, "UNIQUE", "NODE", "D", "a", "b")
+        self.env.assertEqual(c.status, "FAILED")
+
+    def test06_partial_edges_accepted(self):
+        g = self.g
+
+        create_unique_edge_constraint(g, "R", "a", "b", sync=True)
+        c = get_constraint(g, "UNIQUE", "RELATIONSHIP", "R", "a", "b")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        g.query("CREATE (:N {i: 1}), (:N {i: 2})")
+
+        # two edges agreeing on 'a', both missing 'b'
+        g.query("MATCH (x:N {i:1}), (y:N {i:2}) CREATE (x)-[:R {a: 1}]->(y)")
+        g.query("MATCH (x:N {i:1}), (y:N {i:2}) CREATE (x)-[:R {a: 1}]->(y)")
+
+        # a fully specified key is still enforced
+        g.query("MATCH (x:N {i:1}), (y:N {i:2}) CREATE (x)-[:R {a: 2, b: 2}]->(y)")
+        try:
+            g.query("MATCH (x:N {i:1}), (y:N {i:2}) CREATE (x)-[:R {a: 2, b: 2}]->(y)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation, on edge of relationship-type R", str(e))
+
+        self.env.assertEqual(g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0], 3)
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():
