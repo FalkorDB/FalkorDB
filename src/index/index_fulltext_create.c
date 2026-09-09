@@ -52,7 +52,13 @@ static bool _validateOptions
 
 		if(MAP_GET(options, "phonetic", tmp)) {
 			matched--;
-			if(!(SI_TYPE(tmp) != T_STRING)) {
+			// `!(t != T_STRING)` rejected exactly the phonetics it should
+			// accept. It went unnoticed because weight is checked first and
+			// `continue`s, and the fulltext procedure used to put a weight in
+			// the map for every field whether the statement named one or not -
+			// so this branch was unreachable until the map started carrying
+			// only what was actually stated
+			if(!(SI_TYPE(tmp) & T_STRING)) {
 				return false;
 			}
 			continue;
