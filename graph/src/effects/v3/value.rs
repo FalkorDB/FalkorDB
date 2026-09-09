@@ -6,7 +6,7 @@ use thin_vec::ThinVec;
 
 use crate::runtime::value::{Point, Value};
 
-use super::wire_tag;
+use crate::graph::graphblas::serialization::si_type;
 
 use super::{DecodeError, EffectDecode, EffectEncode, EffectWrite, Reader};
 
@@ -36,17 +36,17 @@ impl EffectEncode<3> for Value {
         buf: &mut W,
     ) {
         match self {
-            Value::Null => buf.u32(wire_tag::T_NULL),
+            Value::Null => buf.u32(si_type::T_NULL as u32),
             Value::Bool(b) => {
-                buf.u32(wire_tag::T_BOOL);
+                buf.u32(si_type::T_BOOL as u32);
                 buf.u8(u8::from(*b));
             }
             Value::Int(i) => {
-                buf.u32(wire_tag::T_INT64);
+                buf.u32(si_type::T_INT64 as u32);
                 buf.i64(*i);
             }
             Value::Float(f) => {
-                buf.u32(wire_tag::T_DOUBLE);
+                buf.u32(si_type::T_DOUBLE as u32);
                 buf.f64(*f);
             }
             Value::String(s) => {
@@ -57,15 +57,15 @@ impl EffectEncode<3> for Value {
                 // replication case measured an empty pool where the primary
                 // held one entry.
                 let tag = if crate::runtime::string_pool::global().is_interned(s) {
-                    wire_tag::T_INTERN | wire_tag::T_STRING
+                    si_type::T_INTERN | si_type::T_STRING
                 } else {
-                    wire_tag::T_STRING
+                    si_type::T_STRING
                 };
-                buf.u32(tag);
+                buf.u32(tag as u32);
                 buf.string(s);
             }
             Value::List(items) => {
-                buf.u32(wire_tag::T_ARRAY);
+                buf.u32(si_type::T_ARRAY as u32);
                 // u32, not u64: C reads the count as `uint32`.
                 buf.u32(items.len() as u32);
                 // Floor: every element is at least its own type tag.
@@ -75,14 +75,14 @@ impl EffectEncode<3> for Value {
                 }
             }
             Value::Point(p) => {
-                buf.u32(wire_tag::T_POINT);
+                buf.u32(si_type::T_POINT as u32);
                 // 2 x f32. Rust's own format used f64 here, which silently doubles
                 // the payload and desyncs everything after it.
                 buf.bytes(&p.latitude.to_le_bytes());
                 buf.bytes(&p.longitude.to_le_bytes());
             }
             Value::VecF32(v) => {
-                buf.u32(wire_tag::T_VECTOR_F32);
+                buf.u32(si_type::T_VECTOR_F32 as u32);
                 // Exact: count then a fixed 4 bytes per element.
                 buf.reserve(4 + v.len() * 4);
                 buf.u32(v.len() as u32);
@@ -91,19 +91,19 @@ impl EffectEncode<3> for Value {
                 }
             }
             Value::Datetime(ts) => {
-                buf.u32(wire_tag::T_DATETIME);
+                buf.u32(si_type::T_DATETIME as u32);
                 buf.i64(*ts);
             }
             Value::Date(ts) => {
-                buf.u32(wire_tag::T_DATE);
+                buf.u32(si_type::T_DATE as u32);
                 buf.i64(*ts);
             }
             Value::Time(ts) => {
-                buf.u32(wire_tag::T_TIME);
+                buf.u32(si_type::T_TIME as u32);
                 buf.i64(*ts);
             }
             Value::Duration(d) => {
-                buf.u32(wire_tag::T_DURATION);
+                buf.u32(si_type::T_DURATION as u32);
                 buf.i64(*d);
             }
             // Nodes, edges and paths are never property values, so they cannot reach
@@ -187,24 +187,26 @@ fn read_one(
     r: &mut Reader<'_>,
     stack: &mut Vec<Frame>,
 ) -> Result<Option<Value>, DecodeError> {
-    let t = r.u32()?;
+    // Four bytes on the wire, widened so the arms below can be the shared
+    // `si_type` constants themselves rather than casts of them.
+    let t = u64::from(r.u32()?);
     let v = match t {
-        wire_tag::T_NULL => Value::Null,
-        wire_tag::T_BOOL => Value::Bool(r.u8()? != 0),
-        wire_tag::T_INT64 => Value::Int(r.i64()?),
-        wire_tag::T_DOUBLE => Value::Float(r.f64()?),
+        si_type::T_NULL => Value::Null,
+        si_type::T_BOOL => Value::Bool(r.u8()? != 0),
+        si_type::T_INT64 => Value::Int(r.i64()?),
+        si_type::T_DOUBLE => Value::Float(r.f64()?),
         // Both spellings, and the bit decides whether the string joins this
         // node's pool. A pattern cannot name `T_INTERN | T_STRING`, so this is a
         // guard — the same shape the RDB decoder uses.
-        t if t == wire_tag::T_STRING || t == (wire_tag::T_INTERN | wire_tag::T_STRING) => {
+        t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
             let s = r.string()?;
-            if t == (wire_tag::T_INTERN | wire_tag::T_STRING) {
+            if t == (si_type::T_INTERN | si_type::T_STRING) {
                 Value::String(crate::runtime::string_pool::global().intern(Arc::new(s)))
             } else {
                 Value::String(Arc::new(s))
             }
         }
-        wire_tag::T_ARRAY => {
+        si_type::T_ARRAY => {
             let n = r.u32()?;
             let n = r.guard_count(u64::from(n), MIN_VALUE_BYTES)?;
             if n == 0 {
@@ -221,8 +223,8 @@ fn read_one(
         // `records::IndexOptions`. Refused rather than silently ignored: a
         // payload claiming one was written by something this build does not
         // understand.
-        wire_tag::T_MAP => return Err(DecodeError::BadValueType(wire_tag::T_MAP)),
-        wire_tag::T_POINT => {
+        si_type::T_MAP => return Err(DecodeError::BadValueType(si_type::T_MAP as u32)),
+        si_type::T_POINT => {
             let latitude = r.f32()?;
             let longitude = r.f32()?;
             Value::Point(Point {
@@ -230,7 +232,7 @@ fn read_one(
                 longitude,
             })
         }
-        wire_tag::T_VECTOR_F32 => {
+        si_type::T_VECTOR_F32 => {
             let n = r.u32()?;
             // Exact, not a lower bound: every element is one `f32`.
             let n = r.guard_count(u64::from(n), size_of::<f32>())?;
@@ -240,11 +242,13 @@ fn read_one(
             }
             Value::VecF32(Arc::new(v))
         }
-        wire_tag::T_DATETIME => Value::Datetime(r.i64()?),
-        wire_tag::T_DATE => Value::Date(r.i64()?),
-        wire_tag::T_TIME => Value::Time(r.i64()?),
-        wire_tag::T_DURATION => Value::Duration(r.i64()?),
-        other => return Err(DecodeError::BadValueType(other)),
+        si_type::T_DATETIME => Value::Datetime(r.i64()?),
+        si_type::T_DATE => Value::Date(r.i64()?),
+        si_type::T_TIME => Value::Time(r.i64()?),
+        si_type::T_DURATION => Value::Duration(r.i64()?),
+        // Back to `u32` for the error: the tag is four bytes on the wire and
+        // `other` was widened from exactly those, so this cannot truncate.
+        other => return Err(DecodeError::BadValueType(other as u32)),
     };
     Ok(Some(v))
 }
@@ -337,10 +341,10 @@ mod tests {
         let levels = 5_000_usize;
         let mut buf = Vec::new();
         for _ in 0..levels {
-            buf.bytes(&wire_tag::T_ARRAY.to_le_bytes());
+            buf.bytes(&(si_type::T_ARRAY as u32).to_le_bytes());
             buf.bytes(&1_u32.to_le_bytes());
         }
-        buf.bytes(&wire_tag::T_NULL.to_le_bytes());
+        buf.bytes(&(si_type::T_NULL as u32).to_le_bytes());
 
         let mut r = Reader::new(&buf);
         let v = Value::decode(&mut r).expect("depth is not the decoder's business");
@@ -364,7 +368,7 @@ mod tests {
         // the read rather than producing a partial value.
         let mut buf = Vec::new();
         for _ in 0..1_000 {
-            buf.bytes(&wire_tag::T_ARRAY.to_le_bytes());
+            buf.bytes(&(si_type::T_ARRAY as u32).to_le_bytes());
             buf.bytes(&1_u32.to_le_bytes());
         }
         // ...and nothing at the bottom.
@@ -387,11 +391,11 @@ mod tests {
         // payload claiming `T_MAP` came from something this build does not
         // understand — refused, not skipped.
         let mut buf = Vec::new();
-        buf.u32(wire_tag::T_MAP);
+        buf.u32(si_type::T_MAP as u32);
         buf.u32(1);
         assert!(matches!(
             Value::decode(&mut Reader::new(&buf)),
-            Err(DecodeError::BadValueType(t)) if t == wire_tag::T_MAP
+            Err(DecodeError::BadValueType(t)) if t == si_type::T_MAP as u32
         ));
     }
 

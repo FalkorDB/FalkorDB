@@ -62,6 +62,7 @@
 use crate::{
     entity_type::EntityType,
     graph::constraint::{ConstraintStatus, ConstraintType},
+    graph::graphblas::serialization::index_field_type,
 };
 
 /// Buffer header. C accepts any version `<= EFFECTS_VERSION` and branches per
@@ -242,54 +243,15 @@ pub const fn update_opcode(entity: EntityType) -> Opcode {
 // rather than having a discriminant of its own. A bit set is the one shape an
 // enum genuinely cannot model, so these stay constants.
 
-/// The wire's four-byte view of the shared type and flag constants.
-///
-/// `si_type` and `index_field_type` declare their constants `u64`, because the
-/// RDB writes them through `write_unsigned`, which takes a `u64`. This wire
-/// carries a **four-byte** tag: that is the width C declares for `SIType` and
-/// `IndexFieldType`, and what both v2 and v3 put on the wire. Changing it would
-/// change the format, not just a Rust type.
-///
-/// So the narrowing happens here and nowhere else — one `as u32` per constant,
-/// in one block, rather than a cast at each of the fourteen write sites. It is
-/// lossless by construction and
-/// `every_shared_constant_survives_the_narrowing` proves that for
-/// every constant rather than asserting it, so a wider tag added upstream
-/// fails here instead of silently truncating on the wire.
-///
-/// These keep the shared names, so a caller writes `si_type::T_STRING` for the
-/// RDB and `wire_tag::T_STRING` for the wire, and the difference is visible at
-/// the call rather than hidden in an inferred integer type.
-pub mod wire_tag {
-    use crate::graph::graphblas::serialization::{index_field_type, si_type};
-
-    pub const T_MAP: u32 = si_type::T_MAP as u32;
-    pub const T_ARRAY: u32 = si_type::T_ARRAY as u32;
-    pub const T_DATETIME: u32 = si_type::T_DATETIME as u32;
-    pub const T_DATE: u32 = si_type::T_DATE as u32;
-    pub const T_TIME: u32 = si_type::T_TIME as u32;
-    pub const T_DURATION: u32 = si_type::T_DURATION as u32;
-    pub const T_STRING: u32 = si_type::T_STRING as u32;
-    pub const T_BOOL: u32 = si_type::T_BOOL as u32;
-    pub const T_INT64: u32 = si_type::T_INT64 as u32;
-    pub const T_DOUBLE: u32 = si_type::T_DOUBLE as u32;
-    pub const T_NULL: u32 = si_type::T_NULL as u32;
-    pub const T_POINT: u32 = si_type::T_POINT as u32;
-    pub const T_VECTOR_F32: u32 = si_type::T_VECTOR_F32 as u32;
-    pub const T_INTERN: u32 = si_type::T_INTERN as u32;
-
-    pub const INDEX_FLD_FULLTEXT: u32 = index_field_type::INDEX_FLD_FULLTEXT as u32;
-    pub const INDEX_FLD_NUMERIC: u32 = index_field_type::INDEX_FLD_NUMERIC as u32;
-    pub const INDEX_FLD_GEO: u32 = index_field_type::INDEX_FLD_GEO as u32;
-    pub const INDEX_FLD_STR: u32 = index_field_type::INDEX_FLD_STR as u32;
-    pub const INDEX_FLD_VECTOR: u32 = index_field_type::INDEX_FLD_VECTOR as u32;
-}
-
-pub use wire_tag::INDEX_FLD_FULLTEXT;
-pub use wire_tag::INDEX_FLD_GEO;
-pub use wire_tag::INDEX_FLD_NUMERIC;
-pub use wire_tag::INDEX_FLD_STR;
-pub use wire_tag::INDEX_FLD_VECTOR;
+// `index_field_type`'s constants are `u64`, because the RDB writes them through
+// `write_unsigned`. The wire carries four bytes, so these are the same values at
+// the width the wire uses — cast here rather than at each of the eighteen call
+// sites across this layer, emit, apply and the corpus generator.
+pub const INDEX_FLD_FULLTEXT: u32 = index_field_type::INDEX_FLD_FULLTEXT as u32;
+pub const INDEX_FLD_NUMERIC: u32 = index_field_type::INDEX_FLD_NUMERIC as u32;
+pub const INDEX_FLD_GEO: u32 = index_field_type::INDEX_FLD_GEO as u32;
+pub const INDEX_FLD_STR: u32 = index_field_type::INDEX_FLD_STR as u32;
+pub const INDEX_FLD_VECTOR: u32 = index_field_type::INDEX_FLD_VECTOR as u32;
 
 pub const INDEX_FLD_UNKNOWN: u32 = 0x00;
 /// `INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR` = `0x0E`.
@@ -380,73 +342,41 @@ pub fn new_buffer() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::wire_tag;
     use crate::graph::graphblas::serialization::{index_field_type, si_type};
 
-    /// Every shared constant survives the four-byte narrowing.
+    /// Every shared constant fits the wire's four bytes.
     ///
-    /// `wire_tag` casts each `u64` constant to `u32` once. That is lossless
-    /// today, because the widest is `1 << 19` — but the constants live in the
-    /// RDB module and are `u64` for the RDB's own writer, so nothing stops a
-    /// `1 << 33` being added there. This is what fails when it is: loudly,
-    /// here, rather than silently truncating a type tag on a wire two engines
-    /// have to agree on byte for byte.
+    /// The codec writes these tags with `as u32`. That is lossless today —
+    /// the widest is `1 << 19` — but the constants are `u64` and live in the
+    /// RDB module for the RDB's writer, so nothing there stops a `1 << 33`
+    /// being added. This is what fails when it is, rather than a type tag
+    /// silently truncating on a wire two engines compare byte for byte.
     #[test]
-    fn every_shared_constant_survives_the_narrowing() {
-        let pairs: &[(&str, u64, u32)] = &[
-            ("T_MAP", si_type::T_MAP, wire_tag::T_MAP),
-            ("T_ARRAY", si_type::T_ARRAY, wire_tag::T_ARRAY),
-            ("T_DATETIME", si_type::T_DATETIME, wire_tag::T_DATETIME),
-            ("T_DATE", si_type::T_DATE, wire_tag::T_DATE),
-            ("T_TIME", si_type::T_TIME, wire_tag::T_TIME),
-            ("T_DURATION", si_type::T_DURATION, wire_tag::T_DURATION),
-            ("T_STRING", si_type::T_STRING, wire_tag::T_STRING),
-            ("T_BOOL", si_type::T_BOOL, wire_tag::T_BOOL),
-            ("T_INT64", si_type::T_INT64, wire_tag::T_INT64),
-            ("T_DOUBLE", si_type::T_DOUBLE, wire_tag::T_DOUBLE),
-            ("T_NULL", si_type::T_NULL, wire_tag::T_NULL),
-            ("T_POINT", si_type::T_POINT, wire_tag::T_POINT),
-            (
-                "T_VECTOR_F32",
-                si_type::T_VECTOR_F32,
-                wire_tag::T_VECTOR_F32,
-            ),
-            ("T_INTERN", si_type::T_INTERN, wire_tag::T_INTERN),
-            (
-                "INDEX_FLD_FULLTEXT",
-                index_field_type::INDEX_FLD_FULLTEXT,
-                wire_tag::INDEX_FLD_FULLTEXT,
-            ),
-            (
-                "INDEX_FLD_NUMERIC",
-                index_field_type::INDEX_FLD_NUMERIC,
-                wire_tag::INDEX_FLD_NUMERIC,
-            ),
-            (
-                "INDEX_FLD_GEO",
-                index_field_type::INDEX_FLD_GEO,
-                wire_tag::INDEX_FLD_GEO,
-            ),
-            (
-                "INDEX_FLD_STR",
-                index_field_type::INDEX_FLD_STR,
-                wire_tag::INDEX_FLD_STR,
-            ),
-            (
-                "INDEX_FLD_VECTOR",
-                index_field_type::INDEX_FLD_VECTOR,
-                wire_tag::INDEX_FLD_VECTOR,
-            ),
-        ];
-        for (name, shared, narrowed) in pairs {
+    fn every_shared_constant_fits_the_wire() {
+        for (name, value) in [
+            ("T_MAP", si_type::T_MAP),
+            ("T_ARRAY", si_type::T_ARRAY),
+            ("T_DATETIME", si_type::T_DATETIME),
+            ("T_DATE", si_type::T_DATE),
+            ("T_TIME", si_type::T_TIME),
+            ("T_DURATION", si_type::T_DURATION),
+            ("T_STRING", si_type::T_STRING),
+            ("T_BOOL", si_type::T_BOOL),
+            ("T_INT64", si_type::T_INT64),
+            ("T_DOUBLE", si_type::T_DOUBLE),
+            ("T_NULL", si_type::T_NULL),
+            ("T_POINT", si_type::T_POINT),
+            ("T_VECTOR_F32", si_type::T_VECTOR_F32),
+            ("T_INTERN", si_type::T_INTERN),
+            ("INDEX_FLD_FULLTEXT", index_field_type::INDEX_FLD_FULLTEXT),
+            ("INDEX_FLD_NUMERIC", index_field_type::INDEX_FLD_NUMERIC),
+            ("INDEX_FLD_GEO", index_field_type::INDEX_FLD_GEO),
+            ("INDEX_FLD_STR", index_field_type::INDEX_FLD_STR),
+            ("INDEX_FLD_VECTOR", index_field_type::INDEX_FLD_VECTOR),
+        ] {
             assert!(
-                *shared <= u64::from(u32::MAX),
-                "{name} = {shared:#x} does not fit the wire's four bytes"
-            );
-            assert_eq!(
-                u64::from(*narrowed),
-                *shared,
-                "{name} changed value crossing to the wire"
+                value <= u64::from(u32::MAX),
+                "{name} = {value:#x} does not fit the four bytes the wire carries"
             );
         }
     }
