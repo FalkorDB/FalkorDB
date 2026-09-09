@@ -255,26 +255,32 @@ class testEffectsV3Emit(FlowTestsBase):
             "RETURN type, label, properties ORDER BY type, label, properties",
             "after dropping a constraint")
 
-    def test10_no_verbatim_fallback_was_needed(self):
-        # THE CHECK THE STATE COMPARISONS CANNOT MAKE. When v3 cannot encode an
-        # effect the master replicates the QUERY TEXT instead; the replica then
-        # converges anyway and every assertion above passes while v3 encoded
-        # nothing. Only the master's log separates "the new path works" from
-        # "the old path was still running".
-        # globbed rather than asked for: RLTest has no accessor for it, and an
-        # earlier version of this test called one that does not exist and
-        # returned early - passing while asserting nothing. Finding no log is
-        # a FAILURE here for that reason.
+    def test10_every_effect_had_a_v3_path(self):
+        # THE CHECK THE STATE COMPARISONS CANNOT MAKE.
+        #
+        # It used to be that an effect v3 could not encode made the master
+        # replicate the QUERY TEXT instead. The replica then converged anyway
+        # and every assertion above passed while v3 encoded nothing. That
+        # fallback is gone - it was exact between two C engines and silently
+        # wrong against Rust - so an unrouted effect is now a loud refusal to
+        # replicate rather than a quiet rescue.
+        #
+        # Which makes this the test that the refusal never happens. Nothing
+        # above it would notice: an effect that is not replicated leaves the
+        # master right and the replica short, and only the master's own log
+        # says so.
         import glob
         logs = glob.glob(os.path.join('logs', '*master*.log'))
         self.env.assertTrue(len(logs) > 0,
-                message="found no master log to check for the fallback")
+                message="found no master log to check")
+
+        # copied from src/effects/effects.c. An earlier version of this test
+        # asserted a string that exists nowhere in the tree - an assertion that
+        # can never fail, the same defect as a corpus case with no payload. If
+        # the message is reworded this goes quietly vacuous, so it is cited.
+        UNROUTED = "reached a v3 buffer with no v3 encoding path"
 
         for path in logs:
             with open(path, 'r', errors='replace') as fh:
                 body = fh.read()
-            self.env.assertNotContains("v3 cannot encode this effect", body)
-
-            # and the guard behind it: an effect written as v2 into a v3 buffer
-            self.env.assertNotContains("v3 buffer received a v2 record write",
-                    body)
+            self.env.assertNotContains(UNROUTED, body)
