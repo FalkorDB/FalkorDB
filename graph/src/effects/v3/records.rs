@@ -2009,7 +2009,14 @@ mod tests {
         // From 3: a header with no records after it is a valid empty payload,
         // not a truncated one.
         for cut in 3..buf.len() {
-            assert!(read_buffer(&buf[..cut]).is_err(), "cut at {cut}");
+            assert!(
+                matches!(
+                    read_buffer(&buf[..cut]),
+                    Err(DecodeError::UnexpectedEof { .. } | DecodeError::ImplausibleCount { .. })
+                ),
+                "cut at {cut}: a truncated payload must run out of bytes, not \
+                 trip an unrelated check that happens to fire first"
+            );
         }
     }
 
@@ -2213,7 +2220,14 @@ mod tests {
 
         // Truncating anywhere inside the frame must error, never panic.
         for cut in 7..buf.len() {
-            assert!(read_buffer(&buf[..cut]).is_err(), "cut at {cut}");
+            assert!(
+                matches!(
+                    read_buffer(&buf[..cut]),
+                    Err(DecodeError::UnexpectedEof { .. } | DecodeError::ImplausibleCount { .. })
+                ),
+                "cut at {cut}: a truncated payload must run out of bytes, not \
+                 trip an unrelated check that happens to fire first"
+            );
         }
         // And a frame that expands to the wrong size is caught by the length.
         let mut lied = buf.clone();
@@ -2334,7 +2348,14 @@ mod tests {
         // rather than read past.
         let mut overlong = buf.clone();
         overlong[6..10].copy_from_slice(&(comp_len as u32 + 1).to_le_bytes());
-        assert!(open_payload(&overlong).is_err());
+        assert!(
+            matches!(
+                open_payload(&overlong),
+                Err(DecodeError::UnexpectedEof { .. })
+            ),
+            "a frame longer than the buffer must run out of bytes, not be \
+             refused by some unrelated check that happens to fire first"
+        );
     }
 
     #[test]

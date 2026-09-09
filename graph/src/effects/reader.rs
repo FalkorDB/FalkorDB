@@ -192,8 +192,22 @@ mod tests {
         IdList::from(ids.as_slice()).encode(&mut buf);
         for cut in 0..buf.len() {
             let mut r = Reader::new(&buf[..cut]);
-            // Must not panic, and must not claim success.
-            assert!(read_ids(&mut r, 10).is_err(), "cut at {cut}");
+            // Not `is_err()`. A truncated buffer must fail *because it ran
+            // out of bytes* — either directly, or via a count guard that
+            // correctly judged the claim implausible against what remains.
+            // Any other variant means this sweep is passing for a reason
+            // unrelated to truncation, and the check it is named for could
+            // have stopped working without the test noticing. That is not
+            // hypothetical: tightening `MIN_SEGMENT_BYTES` made a nearby test
+            // start failing for the wrong reason, and it surfaced only because
+            // that one names its variant.
+            assert!(
+                matches!(
+                    read_ids(&mut r, 10),
+                    Err(DecodeError::UnexpectedEof { .. } | DecodeError::ImplausibleCount { .. })
+                ),
+                "cut at {cut}: expected a truncation error"
+            );
         }
     }
 
