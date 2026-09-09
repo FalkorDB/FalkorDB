@@ -117,7 +117,7 @@ pub(crate) fn encode_all(
     g: &AtomicRefCell<Graph>,
     buf: &mut Vec<u8>,
 ) {
-    for_each_record(p, g, |record| record.encode(buf));
+    for_each_record(p, g, |record| record.encode(buf).unwrap());
 }
 
 /// Encode, then decode: what a replica would see.

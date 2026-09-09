@@ -18,9 +18,7 @@
 //! types and attributes by a bare id, and until now nothing established that the
 //! two engines had numbered them the same way.
 
-use super::records::IndexOptions as WireIndexOptions;
-use crate::index::text_index_options::TextIndexOptions;
-use crate::index::vector_index_options::VectorIndexOptions;
+use super::records::IndexFieldOptions;
 use crate::{
     effects::v3::{
         AttrRef, INDEX_FLD_FULLTEXT, INDEX_FLD_VECTOR, Record, entity_tag, open_payload,
@@ -179,11 +177,10 @@ fn apply_record(
     ops: &mut BufferOps,
 ) -> Result<(), ApplyError> {
     match record {
-        Record::AddSchema {
-            schema_type,
-            id,
-            name,
-        } => apply_add_schema(g, schema_type, id, &name),
+        // One opcode, two variants: the wire's `SchemaType` byte is now the
+        // variant itself, so neither kind can be applied as the other.
+        Record::AddLabel { id, name } => apply_add_schema(g, EntityType::Node, id, &name),
+        Record::AddRelType { id, name } => apply_add_schema(g, EntityType::Relationship, id, &name),
 
         Record::AddAttribute { id, name } => {
             // The replica appends to the same dictionary the master did, so the
@@ -281,73 +278,76 @@ fn apply_record(
             Ok(())
         }
 
-        Record::Update {
-            entity,
+        // The schema membership below is *used*, not re-derived. The record
+        // states what the primary saw, so indexing under it makes this graph's
+        // index hold what the primary's holds; re-deriving would make it agree
+        // with local state instead, which is the same answer only until
+        // something has diverged and a silently different one afterwards.
+        // Bounds-checked against this graph's dictionaries first, so a record
+        // naming a label or type the replica has not seen fails the buffer
+        // rather than indexing under an id it invented.
+        Record::UpdateNode {
             ids,
-            // Both of these are *used*, not re-derived. The record states the
-            // schema membership the primary saw, so indexing under it makes
-            // this graph's index hold what the primary's holds; re-deriving
-            // would make it agree with local state instead, which is the same
-            // answer only until something has diverged and a silently
-            // different one afterwards. Bounds-checked against this graph's
-            // dictionaries first, so a record naming a label or type the
-            // replica has not seen fails the buffer rather than indexing under
-            // an id it invented.
             labels,
+            attr_ids,
+            rows,
+        } => {
+            let ids: Vec<u64> = ids.iter().collect();
+            check_attr_shape(g, &ids, &attr_ids, &rows)?;
+            let label_ids = checked_label_ids(g, &labels)?;
+            g.set_nodes_attributes_rows_of_labels(
+                &ids,
+                &label_ids,
+                &attr_ids,
+                &rows,
+                &mut ops.docs.node_adds,
+            )?;
+            Ok(())
+        }
+
+        Record::UpdateEdge {
+            ids,
             relation_id,
             attr_ids,
             rows,
         } => {
             let ids: Vec<u64> = ids.iter().collect();
-            match entity {
-                EntityType::Node => {
-                    check_attr_shape(g, &ids, &attr_ids, &rows)?;
-                    let label_ids = checked_label_ids(g, &labels)?;
-                    g.set_nodes_attributes_rows_of_labels(
-                        &ids,
-                        &label_ids,
-                        &attr_ids,
-                        &rows,
-                        &mut ops.docs.node_adds,
-                    )?;
-                }
-                EntityType::Relationship => {
-                    // Stated once for the record, so the index bookkeeping does
-                    // not re-derive it per edge. `set_relationships_attributes`
-                    // calls `get_relationship_type_id` for every id, which is a
-                    // delta-matrix `iter` each time.
-                    let type_id = checked_type_id(g, relation_id)?;
-                    // Edges still go through the map form; only the node store
-                    // has the row-major entry point so far.
-                    let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                    g.set_relationships_attributes_of_type(type_id, &map, &mut ops.docs.edge_adds)?;
-                }
-            }
+            // Stated once for the record, so the index bookkeeping does not
+            // re-derive it per edge. `set_relationships_attributes` calls
+            // `get_relationship_type_id` for every id, which is a delta-matrix
+            // `iter` each time.
+            let type_id = checked_type_id(g, relation_id)?;
+            // Edges still go through the map form; only the node store has the
+            // row-major entry point so far.
+            let map = attr_map(g, &ids, &attr_ids, &rows)?;
+            g.set_relationships_attributes_of_type(type_id, &map, &mut ops.docs.edge_adds)?;
             Ok(())
         }
 
-        Record::Labels { add, ids, labels } => {
+        Record::SetLabels { ids, labels } => {
             let label_ids = checked_label_ids(g, &labels)?;
-            if add {
-                g.set_node_labels_product(
-                    &ids.iter().collect::<Vec<_>>(),
-                    &label_ids,
-                    &mut ops.docs.node_adds,
-                    false,
-                );
-            } else {
-                // Removal still takes the expanded pairs; only the add path has
-                // been given the compact form so far.
-                let mut rows = Vec::with_capacity(ids.len() * label_ids.len());
-                let mut cols = Vec::with_capacity(ids.len() * label_ids.len());
-                for &lid in &label_ids {
-                    for id in ids.iter() {
-                        rows.push(id);
-                        cols.push(lid);
-                    }
+            g.set_node_labels_product(
+                &ids.iter().collect::<Vec<_>>(),
+                &label_ids,
+                &mut ops.docs.node_adds,
+                false,
+            );
+            Ok(())
+        }
+
+        Record::RemoveLabels { ids, labels } => {
+            let label_ids = checked_label_ids(g, &labels)?;
+            // Removal still takes the expanded pairs; only the add path has
+            // been given the compact form so far.
+            let mut rows = Vec::with_capacity(ids.len() * label_ids.len());
+            let mut cols = Vec::with_capacity(ids.len() * label_ids.len());
+            for &lid in &label_ids {
+                for id in ids.iter() {
+                    rows.push(id);
+                    cols.push(lid);
                 }
-                g.remove_nodes_labels(&rows, &cols, &mut ops.docs.node_removes);
             }
+            g.remove_nodes_labels(&rows, &cols, &mut ops.docs.node_removes);
             Ok(())
         }
 
@@ -375,8 +375,7 @@ fn apply_record(
             Ok(())
         }
 
-        Record::Index {
-            create,
+        Record::CreateIndex {
             schema_type,
             label_id,
             label,
@@ -388,41 +387,52 @@ fn apply_record(
             for field in &fields {
                 verify_attribute(g, field.id, &field.name)?;
             }
-            let entity_type = schema_type;
             let index_type = index_type_of(field_type);
             let label = Arc::new(label);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
-            if create {
-                // Population is spawned, not run here. `populate_indexes_sync`
-                // ran on the Redis main thread, so a replica applying an index
-                // over a large label froze for the whole build — the same class
-                // of problem as expanding ids while decoding.
-                //
-                // Spawning is safe for the reason it is safe on the primary,
-                // which has always done it under concurrent writes:
-                // `populate_index_batch` populates from a snapshot in 10,000-row
-                // batches, and entities written *after* the snapshot are indexed
-                // by the write path instead (`IndexOps::docs` into
-                // `commit_index`). A later record that drops or recreates the
-                // index does not race it either — the population ticket carries
-                // a generation, and a worker whose generation is stale releases
-                // its ticket and stops rather than committing documents into the
-                // new spec.
-                g.create_index(
-                    &index_type,
-                    &entity_type,
-                    &label,
-                    &fields,
-                    index_options(&index_type, options.as_ref())?,
-                )?;
-            } else {
-                g.drop_index(&index_type, &entity_type, &label, &fields)?;
-            }
+            // Population is spawned, not run here. `populate_indexes_sync` ran
+            // on the Redis main thread, so a replica applying an index over a
+            // large label froze for the whole build — the same class of problem
+            // as expanding ids while decoding.
+            //
+            // Spawning is safe for the reason it is safe on the primary, which
+            // has always done it under concurrent writes: `populate_index_batch`
+            // populates from a snapshot in 10,000-row batches, and entities
+            // written *after* the snapshot are indexed by the write path instead
+            // (`BufferOps::docs` into `commit_index`). A later record that drops
+            // or recreates the index does not race it either — the population
+            // ticket carries a generation, and a worker whose generation is
+            // stale releases its ticket and stops rather than committing
+            // documents into the new spec.
+            g.create_index(
+                &index_type,
+                &schema_type,
+                &label,
+                &fields,
+                index_options(&index_type, &options),
+            )?;
             Ok(())
         }
 
-        Record::Constraint {
-            create,
+        Record::DropIndex {
+            schema_type,
+            label_id,
+            label,
+            field_type,
+            fields,
+        } => {
+            verify_schema(g, schema_type, label_id, &label)?;
+            for field in &fields {
+                verify_attribute(g, field.id, &field.name)?;
+            }
+            let index_type = index_type_of(field_type);
+            let label = Arc::new(label);
+            let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
+            g.drop_index(&index_type, &schema_type, &label, &fields)?;
+            Ok(())
+        }
+
+        Record::CreateConstraint {
             constraint_type,
             entity_type,
             status,
@@ -434,26 +444,41 @@ fn apply_record(
             for AttrRef { id, name } in &props {
                 verify_attribute(g, *id, name)?;
             }
-
-            let ct = constraint_type;
-            let et = entity_type;
             let properties: Vec<Arc<String>> =
                 props.into_iter().map(|p| Arc::new(p.name)).collect();
+            // Install the master's outcome rather than re-deriving it. A replica
+            // that validated independently would scan at a different time
+            // against different interleavings, and could legitimately reach a
+            // different status. The upsert is what lets the second announcement
+            // — the one carrying the validated status — land on the constraint
+            // the first one created.
+            //
+            // `status` is no longer an `Option` to unwrap: a create carries one
+            // and a drop has no field for it, so the variant settles it.
+            g.upsert_constraint_raw(
+                constraint_type,
+                entity_type,
+                &Arc::new(label),
+                &properties,
+                status,
+            );
+            Ok(())
+        }
 
-            if create {
-                // Install the master's outcome rather than re-deriving it. A
-                // replica that validated independently would scan at a
-                // different time against different interleavings, and could
-                // legitimately reach a different status. The upsert is what
-                // lets the second announcement — the one carrying the validated
-                // status — land on the constraint the first one created.
-                // A create record always carries one; the decoder builds `Some`
-                // from the opcode, so this cannot be `None` here.
-                let status = status.ok_or(ApplyError::MissingConstraintStatus)?;
-                g.upsert_constraint_raw(ct, et, &Arc::new(label), &properties, status);
-            } else {
-                g.drop_constraint(&ct, &et, &label, &properties)?;
+        Record::DropConstraint {
+            constraint_type,
+            entity_type,
+            label_id,
+            label,
+            props,
+        } => {
+            verify_schema(g, entity_type, label_id, &label)?;
+            for AttrRef { id, name } in &props {
+                verify_attribute(g, *id, name)?;
             }
+            let properties: Vec<Arc<String>> =
+                props.into_iter().map(|p| Arc::new(p.name)).collect();
+            g.drop_constraint(&constraint_type, &entity_type, &label, &properties)?;
             Ok(())
         }
     }
@@ -576,11 +601,13 @@ fn resolve_type(
 /// (`src/effects/update_edge_effect.c`). A replica that has not
 /// seen the `ADD_SCHEMA` yet must fail here rather than index the rows under a
 /// type it invented.
+/// Takes a bare `u32`: `UpdateEdge` carries a relationship type and `UpdateNode`
+/// has no field for one, so "an edge update with no type" is no longer a state
+/// this can be handed. `ApplyError::MissingRelType` went with it.
 fn checked_type_id(
     g: &Graph,
-    relation_id: Option<u32>,
+    relation_id: u32,
 ) -> Result<TypeId, ApplyError> {
-    let relation_id = relation_id.ok_or(ApplyError::MissingRelType)?;
     resolve_type(g, relation_id)?;
     Ok(TypeId(relation_id as usize))
 }
@@ -693,98 +720,33 @@ fn attr_map(
     }
     Ok(map)
 }
-
-/// Turn the record's options value back into typed index options.
+/// The record's option block as the engine's own option type.
 ///
-/// v2 dropped `OPTIONS {...}` on the wire entirely and forced those statements
-/// to replicate as verbatim queries. v3 carries the map, so the replica rebuilds
-/// the same options the master did rather than approximating them.
+/// Almost nothing left to do: `21f37287d` made the record carry
+/// `TextIndexOptions` and `VectorIndexOptions` themselves, so this picks the
+/// half the field type calls for instead of rebuilding it field by field.
+///
+/// What went with the conversion is worth naming, because it was not just
+/// copying. It checked a `dimension` that no longer needs checking — both sides
+/// hold a `u64` now — and it mapped a similarity function through a string
+/// match and a phonetic flag through a `bool`, which was the one narrow
+/// representation in the chain and silently rewrote any algorithm other than
+/// Double Metaphone English. A conversion that cannot happen cannot be wrong.
+///
+/// Absence still survives: every option carries its own presence byte, so
+/// "no language given" and "language english" stay different instructions —
+/// which matters because an effect adds a field to an index that may already
+/// exist, and a language already set for the label refuses a second one.
 fn index_options(
     index_type: &IndexType,
-    options: Option<&WireIndexOptions>,
-) -> Result<Option<IndexOptions>, ApplyError> {
-    // No string matching and no type checking left here. The wire block is
-    // already typed, so what used to be `map_to_index_options` — looking up
-    // "dim", asserting it is an integer, rejecting an unknown key — happened on
-    // the primary at parse time. A malformed option is now a decode error on a
-    // payload rather than an apply error on a graph.
-    let Some(o) = options else {
-        return Ok(None);
-    };
-    Ok(match index_type {
-        IndexType::Vector => match o.vector {
-            None => None,
-            Some(v) => {
-                // The wire holds `dimension` as a `u64` because it is the one
-                // vector option with no absent form, not because either engine
-                // is that wide: C types it `uint32_t` (`src/index/index_field.h`
-                // line 45), and so does this one. The `size_t` in that struct
-                // belongs to the next three fields, `M`/`efConstruction`/
-                // `efRuntime` — which is why those cast plainly below and this
-                // does not. The wire can therefore carry a dimension neither
-                // engine can hold, and `as u32` would turn 2^32 into 0 and
-                // index against it, so the narrowing is checked and the payload
-                // refused.
-                let dimension = u32::try_from(v.dimension).map_err(|_| {
-                    ApplyError::UnsupportedIndexOption(format!(
-                        "vector dimension {} exceeds this engine's limit of {}",
-                        v.dimension,
-                        u32::MAX
-                    ))
-                })?;
-                // The VecSimMetric numbering the RDB persists. An unrecognised
-                // discriminant is refused rather than read as L2: silently
-                // choosing a metric would build an index that answers the
-                // wrong queries and never say so.
-                let similarity_function = match v.sim_func {
-                    None => None,
-                    Some(0) => Some("euclidean".to_owned()),
-                    Some(1) => Some("ip".to_owned()),
-                    Some(2) => Some("cosine".to_owned()),
-                    Some(other) => {
-                        return Err(ApplyError::UnsupportedIndexOption(format!(
-                            "vector similarity function {other}"
-                        )));
-                    }
-                };
-                Some(IndexOptions::Vector(VectorIndexOptions {
-                    dimension,
-                    m: v.m.map(|x| x as usize),
-                    ef_construction: v.ef_construction.map(|x| x as usize),
-                    ef_runtime: v.ef_runtime.map(|x| x as usize),
-                    similarity_function,
-                }))
-            }
-        },
-        IndexType::Fulltext => {
-            // Absent stays absent. Materialising a default here is what
-            // diverged a replica: an explicit language is refused when one is
-            // already set for the label, so "nothing said" has to survive the
-            // wire as nothing said.
-            let phonetic = match o.phonetic.as_deref() {
-                None => None,
-                Some(s) if s.eq_ignore_ascii_case("dm:en") => Some(true),
-                Some("") => Some(false),
-                Some(s) => {
-                    return Err(ApplyError::UnsupportedIndexOption(format!(
-                        "phonetic algorithm '{s}'"
-                    )));
-                }
-            };
-            Some(IndexOptions::Text(TextIndexOptions {
-                weight: o.weight,
-                nostem: o.nostem,
-                phonetic,
-                language: o.language.as_ref().map(|l| Arc::new(l.clone())),
-                stopwords: o
-                    .stopwords
-                    .as_ref()
-                    .map(|sw| sw.iter().map(|s| Arc::new(s.clone())).collect()),
-            }))
-        }
+    options: &IndexFieldOptions,
+) -> Option<IndexOptions> {
+    match index_type {
+        IndexType::Vector => options.vector.clone().map(IndexOptions::Vector),
+        IndexType::Fulltext => Some(IndexOptions::Text(options.text.clone())),
         // A range index takes none of these.
         IndexType::Range => None,
-    })
+    }
 }
 
 /// `IndexFieldType` is a bit flag set, so this tests bits rather than matching
@@ -808,11 +770,11 @@ const _: () = assert!(entity_tag(EntityType::Relationship) == 2);
 mod tests {
     use super::*;
     use crate::effects::EffectEncode;
-    use crate::effects::v3::records::VectorOptions as WireVectorOptions;
     use crate::effects::v3::staging::StagePending;
     use crate::effects::v3::test_aux::graph;
     use crate::effects::v3::{AttrRef, INDEX_FLD_RANGE, IdList, Record, new_buffer};
     use crate::graph::constraint::{ConstraintStatus, ConstraintType};
+    use crate::index::vector_index_options::VectorIndexOptions;
 
     /// The delete-then-recreate cycle a replica legitimately sees.
     fn write_delete(
@@ -824,7 +786,8 @@ mod tests {
             ids: ids.clone(),
             labels: labels.to_vec(),
         }
-        .encode(buf);
+        .encode(buf)
+        .unwrap();
     }
 
     #[test]
@@ -839,7 +802,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("create must apply");
 
         let mut buf = new_buffer();
@@ -853,7 +817,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("recreating a recycled id must apply");
         assert_eq!(g.node_count(), 3);
     }
@@ -870,7 +835,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("create must apply");
 
         let mut buf = new_buffer();
@@ -880,7 +846,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("fresh ids must apply");
         assert_eq!(g.node_count(), 4);
     }
@@ -898,7 +865,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("create must apply");
 
         let mut buf = new_buffer();
@@ -908,7 +876,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let err = apply_effects(&mut g, &buf).expect_err("must refuse");
         assert!(
             matches!(
@@ -940,14 +909,16 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateNode {
             ids: IdList::from([1, 2]),
             labels: vec![],
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let err = apply_effects(&mut g, &buf).expect_err("must refuse");
         assert!(
             matches!(
@@ -982,7 +953,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         write_delete(&mut buf, &IdList::from([1]), &[]);
         apply_effects(&mut g, &buf).expect("create-then-delete must apply");
         assert_eq!(g.node_count(), 1);
@@ -998,7 +970,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("create must apply");
 
         let mut buf = new_buffer();
@@ -1031,7 +1004,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("create must apply");
 
         let mut buf = new_buffer();
@@ -1059,29 +1033,32 @@ mod tests {
         // only healed on the next resync.
         let mut g = graph();
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 0,
             name: "L".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::AddAttribute {
             id: 0,
             name: "keep".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::AddAttribute {
             id: 1,
             name: "drop".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateNode {
             ids: IdList::from([0, 1]),
             labels: vec![0],
             attr_ids: vec![0, 1],
             rows: vec![Value::Int(1), Value::Int(10), Value::Int(2), Value::Int(20)],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("create must apply");
         assert_eq!(
             g.get_node_attribute(0.into(), &Arc::new("drop".into())),
@@ -1090,15 +1067,14 @@ mod tests {
 
         // Now null it out, as an UPDATE_NODE would.
         let mut buf = new_buffer();
-        crate::effects::v3::Record::Update {
-            entity: EntityType::Node,
+        crate::effects::v3::Record::UpdateNode {
             ids: IdList::from([0, 1]),
             labels: vec![0],
-            relation_id: None,
             attr_ids: vec![1],
             rows: vec![Value::Null, Value::Null],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("update must apply");
 
         assert_eq!(
@@ -1124,35 +1100,36 @@ mod tests {
         let mut g = graph();
 
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 0,
             name: "A".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateNode {
             ids: IdList::from([0, 1, 2]),
             labels: vec![0],
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("first buffer must apply");
 
         // A second buffer introducing a label and immediately applying it.
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 1,
             name: "B".to_owned(),
         }
-        .encode(&mut buf);
-        Record::Labels {
-            add: true,
+        .encode(&mut buf)
+        .unwrap();
+        Record::SetLabels {
             ids: IdList::from([0, 1, 2]),
             labels: vec![1],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("labelling with a fresh label must apply");
 
         assert_eq!(g.get_labels().len(), 2);
@@ -1178,7 +1155,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("create must apply");
 
         let mut buf = new_buffer();
@@ -1194,7 +1172,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("a recycled id must apply");
 
         // Fresh: the next id never handed out. Id 3 rather than an arbitrary
@@ -1209,7 +1188,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("a fresh id must apply");
 
         // And a delete of something already binned is still refused.
@@ -1244,7 +1224,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let err = apply_effects(&mut g, &buf).expect_err("must refuse");
         assert!(
             matches!(
@@ -1262,19 +1243,20 @@ mod tests {
 
     /// A buffer that creates two nodes and one edge between them, as setup.
     fn edge_setup(buf: &mut Vec<u8>) {
-        Record::AddSchema {
-            schema_type: EntityType::Relationship,
+        Record::AddRelType {
             id: 0,
             name: "R".to_owned(),
         }
-        .encode(buf);
+        .encode(buf)
+        .unwrap();
         Record::CreateNode {
             ids: IdList::from([0, 1]),
             labels: vec![],
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(buf);
+        .encode(buf)
+        .unwrap();
     }
 
     fn write_create_edge(
@@ -1289,7 +1271,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(buf);
+        .encode(buf)
+        .unwrap();
     }
 
     #[test]
@@ -1359,7 +1342,8 @@ mod tests {
             src: IdList::from([0]),
             dst: IdList::from([1]),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let err = apply_effects(&mut g, &buf).expect_err("edge 7 was never allocated");
         assert!(
             matches!(
@@ -1392,7 +1376,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         write_delete(&mut buf, &IdList::from([0]), &[]);
         Record::CreateNode {
             ids: IdList::from([0]),
@@ -1400,7 +1385,8 @@ mod tests {
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("the recreate is legitimate");
         assert_eq!(g.node_count(), 1);
     }
@@ -1409,17 +1395,18 @@ mod tests {
     fn a_buffer_applies_end_to_end() {
         let mut g = graph();
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 0,
             name: "Person".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::AddAttribute {
             id: 0,
             name: "name".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateNode {
             ids: IdList::from([0, 1, 2]),
             labels: vec![0],
@@ -1430,7 +1417,8 @@ mod tests {
                 Value::String(Arc::new("c".into())),
             ],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         apply_effects(&mut g, &buf).expect("buffer must apply");
         assert_eq!(g.get_labels().len(), 1);
@@ -1446,12 +1434,12 @@ mod tests {
         g.get_label_id_mut("Existing");
 
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 0,
             name: "Person".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         let err = apply_effects(&mut g, &buf).expect_err("must refuse");
         assert!(
@@ -1480,7 +1468,8 @@ mod tests {
             id: 0,
             name: "name".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         let err = apply_effects(&mut g, &buf).expect_err("must refuse");
         assert!(
@@ -1503,8 +1492,7 @@ mod tests {
         g.add_node_attribute_name("a");
 
         let mut buf = new_buffer();
-        Record::Index {
-            create: true,
+        Record::CreateIndex {
             schema_type: EntityType::Node,
             label_id: 0,
             label: "Expected".to_owned(),
@@ -1513,9 +1501,10 @@ mod tests {
                 id: 0,
                 name: "a".to_owned(),
             }],
-            options: Some(WireIndexOptions::none_given(None)),
+            options: IndexFieldOptions::none_given(None),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         let err = apply_effects(&mut g, &buf).expect_err("must refuse");
         let ApplyError::NameMismatch { name, local, .. } = &err else {
             panic!("expected a name mismatch, got {err:?}");
@@ -1528,25 +1517,26 @@ mod tests {
     fn labels_apply_to_every_node_in_the_record() {
         let mut g = graph();
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 0,
             name: "L".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateNode {
             ids: IdList::from([0, 1, 2, 3]),
             labels: vec![],
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
-        Record::Labels {
-            add: true,
+        .encode(&mut buf)
+        .unwrap();
+        Record::SetLabels {
             ids: IdList::from([0, 1, 2, 3]),
             labels: vec![0],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         apply_effects(&mut g, &buf).expect("must apply");
         assert_eq!(g.label_node_count(&Arc::new("L".to_string())), 4);
@@ -1566,11 +1556,10 @@ mod tests {
             ConstraintStatus::Operational,
         ] {
             let mut buf = new_buffer();
-            Record::Constraint {
-                create: true,
+            Record::CreateConstraint {
                 constraint_type: ConstraintType::Unique,
                 entity_type: EntityType::Node,
-                status: Some(status),
+                status,
                 label_id: 0,
                 label: "Person".to_owned(),
                 props: vec![AttrRef {
@@ -1578,7 +1567,8 @@ mod tests {
                     name: "email".to_owned(),
                 }],
             }
-            .encode(&mut buf);
+            .encode(&mut buf)
+            .unwrap();
             apply_effects(&mut g, &buf).expect("announcement must apply");
         }
 
@@ -1598,22 +1588,22 @@ mod tests {
         // legitimately reach a different status.
         let mut g = graph();
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 0,
             name: "Person".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::AddAttribute {
             id: 0,
             name: "email".to_owned(),
         }
-        .encode(&mut buf);
-        Record::Constraint {
-            create: true,
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateConstraint {
             constraint_type: ConstraintType::Unique,
             entity_type: EntityType::Node,
-            status: Some(ConstraintStatus::Operational),
+            status: ConstraintStatus::Operational,
             label_id: 0,
             label: "Person".to_owned(),
             props: vec![AttrRef {
@@ -1621,7 +1611,8 @@ mod tests {
                 name: "email".to_owned(),
             }],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         apply_effects(&mut g, &buf).expect("must apply");
         assert_eq!(g.constraints().len(), 1);
@@ -1631,19 +1622,20 @@ mod tests {
     fn a_malformed_buffer_is_refused_not_applied() {
         let mut g = graph();
         let mut buf = new_buffer();
-        Record::AddSchema {
-            schema_type: EntityType::Node,
+        Record::AddLabel {
             id: 0,
             name: "L".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         Record::CreateNode {
             ids: IdList::from([0, 1]),
             labels: vec![0],
             attr_ids: vec![],
             rows: vec![],
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
 
         for cut in 2..buf.len() {
             let mut fresh = graph();
@@ -1681,7 +1673,7 @@ mod tests {
         }
 
         let mut buf = crate::effects::v3::new_buffer();
-        crate::effects::v3::emit::for_each_record(&p, &master, |r| r.encode(&mut buf));
+        crate::effects::v3::emit::for_each_record(&p, &master, |r| r.encode(&mut buf).unwrap());
         assert_eq!(
             crate::effects::v3::test_aux::read_buffer(&buf)
                 .unwrap()
@@ -1729,19 +1721,19 @@ mod tests {
                 attr_ids: vec![],
                 rows: vec![],
             }
-            .encode(&mut buf);
+            .encode(&mut buf)
+            .unwrap();
             apply_effects(&mut g, &buf).expect("setup");
 
             let mut buf = new_buffer();
-            Record::Update {
-                entity: EntityType::Node,
+            Record::UpdateNode {
                 ids: IdList::from([0]),
                 labels: vec![],
-                relation_id: None,
                 attr_ids: bad.to_vec(),
                 rows: vec![Value::Int(1), Value::Int(2)],
             }
-            .encode(&mut buf);
+            .encode(&mut buf)
+            .unwrap();
             assert_eq!(
                 apply_effects(&mut g, &buf),
                 Err(ApplyError::AttrIdsNotAscending {
@@ -1773,7 +1765,8 @@ mod tests {
             id: 2,
             name: "q".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         assert!(
             matches!(
                 apply_effects(&mut g, &buf),
@@ -1789,7 +1782,8 @@ mod tests {
             id: 1,
             name: "q".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("the real id of 'q' is 1");
 
         // A genuinely new name still lands on the next id.
@@ -1798,7 +1792,8 @@ mod tests {
             id: 3,
             name: "s".to_owned(),
         }
-        .encode(&mut buf);
+        .encode(&mut buf)
+        .unwrap();
         apply_effects(&mut g, &buf).expect("'s' is the next id");
     }
 
@@ -1823,73 +1818,46 @@ mod tests {
     /// diverged a replica that was otherwise in step.
     #[test]
     fn an_absent_index_option_stays_absent_through_apply() {
-        let opts = index_options(
-            &IndexType::Fulltext,
-            Some(&WireIndexOptions::none_given(None)),
-        )
-        .expect("nothing stated is not an error")
-        .expect("a fulltext index carries a text block");
+        let opts = index_options(&IndexType::Fulltext, &IndexFieldOptions::none_given(None))
+            .expect("a fulltext index carries a text block");
         let IndexOptions::Text(t) = opts else {
             panic!("expected the text half of a fulltext index");
         };
-        assert_eq!(
-            (&t.weight, &t.nostem, &t.phonetic, &t.language, &t.stopwords),
-            (&None, &None, &None, &None, &None),
+        assert!(
+            t.weight.is_none()
+                && t.nostem.is_none()
+                && t.phonetic.is_none()
+                && t.language.is_none()
+                && t.stopwords.is_none(),
             "no option may be materialised on the way in"
         );
     }
 
-    /// The wire holds `dimension` as a `u64`; both engines hold 32 bits.
+    /// A vector statement's block reaches the engine as the engine's own type.
+    ///
+    /// What this used to assert is gone with the conversion it was guarding.
+    /// `dimension` was checked here because the wire held a `u64` and this
+    /// engine a `u32`; both are `u64` now, so there is no narrowing left to
+    /// refuse. An unrecognised similarity function was refused here too, and
+    /// that guard moved *down* into the codec, where an unknown discriminant is
+    /// a `DecodeError::BadSimilarityFunction` on the payload rather than an
+    /// apply error on a graph — which is where it belongs and is strictly
+    /// earlier.
     #[test]
-    fn a_vector_dimension_too_large_for_this_engine_is_refused() {
-        // Not `as u32`, which would make this 0 and index against it.
-        let over = u64::from(u32::MAX) + 1;
-        let Err(err) = index_options(
-            &IndexType::Vector,
-            Some(&WireIndexOptions::none_given(Some(
-                WireVectorOptions::of_dimension(over),
-            ))),
-        ) else {
-            panic!("a dimension this engine cannot hold must be refused");
+    fn a_vector_statement_carries_its_block_through_apply() {
+        let v = VectorIndexOptions {
+            dimension: 4,
+            similarity_function: Some("cosine".to_owned()),
+            m: None,
+            ef_construction: None,
+            ef_runtime: None,
         };
-        assert!(
-            matches!(err, ApplyError::UnsupportedIndexOption(ref m) if m.contains("4294967296")),
-            "{err}"
-        );
-    }
-
-    /// An unknown metric is refused, not read as L2.
-    #[test]
-    fn an_unrecognised_similarity_function_is_refused() {
-        // Choosing a metric on the replica's behalf would build an index that
-        // answers different queries from the primary's and never say so.
-        let mut v = WireVectorOptions::of_dimension(4);
-        v.sim_func = Some(7);
-        let Err(err) = index_options(
-            &IndexType::Vector,
-            Some(&WireIndexOptions::none_given(Some(v))),
-        ) else {
-            panic!("an unknown VecSimMetric must be refused");
+        let opts = index_options(&IndexType::Vector, &IndexFieldOptions::none_given(Some(v)))
+            .expect("a vector index carries a vector block");
+        let IndexOptions::Vector(got) = opts else {
+            panic!("expected the vector half");
         };
-        assert!(
-            matches!(err, ApplyError::UnsupportedIndexOption(ref m) if m.contains('7')),
-            "{err}"
-        );
-
-        // And the three this engine does implement still map.
-        for (code, name) in [(0, "euclidean"), (1, "ip"), (2, "cosine")] {
-            let mut v = WireVectorOptions::of_dimension(4);
-            v.sim_func = Some(code);
-            let opts = index_options(
-                &IndexType::Vector,
-                Some(&WireIndexOptions::none_given(Some(v))),
-            )
-            .unwrap()
-            .unwrap();
-            let IndexOptions::Vector(got) = opts else {
-                panic!("expected the vector half");
-            };
-            assert_eq!(got.similarity_function.as_deref(), Some(name));
-        }
+        assert_eq!(got.dimension, 4);
+        assert_eq!(got.similarity_function.as_deref(), Some("cosine"));
     }
 }

@@ -159,11 +159,16 @@ pub(crate) trait EffectsFormat<const VERSION: u8> {
     /// there.
     ///
     /// Returns how many records were written.
+    /// # Errors
+    ///
+    /// If a record cannot be encoded. That means the emitter built one wrong,
+    /// which fails the write rather than shipping a payload the replica would
+    /// read differently.
     fn build<W: EffectWrite + ?Sized>(
         pending: &Pending,
         graph: &AtomicRefCell<Graph>,
         buf: &mut W,
-    ) -> u64;
+    ) -> Result<u64, String>;
 
     /// Append one index DDL statement.
     ///
@@ -472,11 +477,15 @@ impl EffectsBuffer {
     /// Digest a committed write into this payload.
     ///
     /// Returns how many records it added.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the format reports — see [`EffectsFormat::build`].
     pub fn build(
         &mut self,
         pending: &Pending,
         graph: &AtomicRefCell<Graph>,
-    ) -> u64 {
+    ) -> Result<u64, String> {
         <EffectsPayload as EffectsFormat<WIRE_VERSION>>::build(pending, graph, self)
     }
 

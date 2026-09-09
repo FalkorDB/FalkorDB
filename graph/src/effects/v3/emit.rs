@@ -17,7 +17,7 @@
 //! should not know what a replication frame looks like, so `Pending`'s fields
 //! are `pub(crate)` and the wire knowledge lives here.
 
-use super::records::{IndexOptions, VectorOptions};
+use super::records::IndexFieldOptions;
 use crate::index::indexer::IndexOptions as EngineIndexOptions;
 use crate::runtime::runtime::map_to_index_options;
 use atomic_refcell::AtomicRefCell;
@@ -60,15 +60,13 @@ pub fn emit_schema_additions(
     out: &mut impl FnMut(Record),
 ) {
     for (offset, label) in g.get_labels().iter().enumerate().skip(baseline.labels) {
-        out(Record::AddSchema {
-            schema_type: EntityType::Node,
+        out(Record::AddLabel {
             id: schema_id(offset),
             name: label.to_string(),
         });
     }
     for (offset, rel_type) in g.get_types().iter().enumerate().skip(baseline.types) {
-        out(Record::AddSchema {
-            schema_type: EntityType::Relationship,
+        out(Record::AddRelType {
             id: schema_id(offset),
             name: rel_type.to_string(),
         });
@@ -142,22 +140,60 @@ pub fn build_constraint_buffer<W: EffectWrite + ?Sized>(
         })
         .collect::<Result<_, _>>()?;
 
-    emit_schema_additions(g, baseline, &mut |record| record.encode(buf));
     // Through `Record`, like everything else. This was the one production path
     // that reached past the pivot into a record writer, which is also why it
     // was the one that needed a `ConstraintSpec` to keep its argument list
     // legible.
-    Record::Constraint {
-        create,
-        constraint_type: ct,
-        entity_type,
-        status,
-        label_id,
-        label: label.to_owned(),
-        props,
-    }
-    .encode(buf);
-    Ok(())
+    //
+    // Built before anything is written. `encode` is fallible now, and a record
+    // refused halfway leaves a prefix behind for the next one to be appended
+    // after — so every reason to refuse is settled here, while the buffer is
+    // still untouched. A create carries the primary's status and a drop has no
+    // field for one, which is the one thing this can get wrong.
+    let record = if create {
+        Record::CreateConstraint {
+            constraint_type: ct,
+            entity_type,
+            status: status.ok_or_else(|| {
+                format!("constraint create on '{label}' carries no status to replicate")
+            })?,
+            label_id,
+            label: label.to_owned(),
+            props,
+        }
+    } else {
+        Record::DropConstraint {
+            constraint_type: ct,
+            entity_type,
+            label_id,
+            label: label.to_owned(),
+            props,
+        }
+    };
+
+    encode_all(buf, g, baseline)?;
+    record.encode(buf).map_err(|e| e.to_string())
+}
+
+/// Encode the schema announcements, stopping at the first refusal.
+///
+/// A helper rather than a closure at each call site because `encode` is
+/// fallible and `emit_schema_additions` hands records to a `FnMut(Record)`
+/// that cannot return one.
+fn encode_all<W: EffectWrite + ?Sized>(
+    buf: &mut W,
+    g: &Graph,
+    baseline: &SchemaBaseline,
+) -> Result<(), String> {
+    let mut failed = None;
+    emit_schema_additions(g, baseline, &mut |record| {
+        if failed.is_none()
+            && let Err(e) = record.encode(buf)
+        {
+            failed = Some(e);
+        }
+    });
+    failed.map_or(Ok(()), |e| Err(e.to_string()))
 }
 
 /// `IndexFieldType` is a bit flag set rather than a discriminant, so this is a
@@ -223,22 +259,31 @@ pub fn build_index_buffer<W: EffectWrite + ?Sized>(
         })
         .collect::<Result<_, _>>()?;
 
-    emit_schema_additions(g, baseline, &mut |record| record.encode(buf));
-    Record::Index {
-        create,
-        schema_type: ix.entity_type,
-        label_id,
-        label: ix.label.to_owned(),
-        field_type: index_field_flags(ix.index_type),
-        fields,
-        // A drop carries no options at all. A create always carries a block,
-        // with the RDB's defaults where the statement said nothing — the wire
-        // has no way to say "absent" and does not need one, because the
-        // persisted format has none either.
-        options: create.then(|| wire_index_options(ix)),
-    }
-    .encode(buf);
-    Ok(())
+    // Built before anything is written, so a refusal leaves the buffer
+    // untouched rather than torn. A drop has no options field at all; a create
+    // always states its block, with a presence byte per option, so "nothing
+    // said" survives the wire as nothing said.
+    let record = if create {
+        Record::CreateIndex {
+            schema_type: ix.entity_type,
+            label_id,
+            label: ix.label.to_owned(),
+            field_type: index_field_flags(ix.index_type),
+            fields,
+            options: wire_index_options(ix),
+        }
+    } else {
+        Record::DropIndex {
+            schema_type: ix.entity_type,
+            label_id,
+            label: ix.label.to_owned(),
+            field_type: index_field_flags(ix.index_type),
+            fields,
+        }
+    };
+
+    encode_all(buf, g, baseline)?;
+    record.encode(buf).map_err(|e| e.to_string())
 }
 
 /// A record's partition key: its label set and its attribute ids.
@@ -648,13 +693,25 @@ fn digest_updates(
                 .count(),
             "an UPDATE row was padded, and a pad is indistinguishable from a removal",
         );
-        out(Record::Update {
-            entity,
-            ids,
-            labels,
-            relation_id,
-            attr_ids,
-            rows,
+        // The two forms fill the same slot with different things — a node's
+        // label set, an edge's one relationship type — so they are separate
+        // variants and neither can be built carrying the other's key. Which one
+        // is settled by `entity`, and `relation_id` is `Some` exactly when that
+        // says relationship.
+        out(match entity {
+            EntityType::Node => Record::UpdateNode {
+                ids,
+                labels,
+                attr_ids,
+                rows,
+            },
+            EntityType::Relationship => Record::UpdateEdge {
+                ids,
+                relation_id: relation_id
+                    .expect("the relationship arm above sets a type id for every edge"),
+                attr_ids,
+                rows,
+            },
         });
     }
 }
@@ -767,7 +824,14 @@ fn digest_labels(
         // Ascending, which keeps the run encodings eligible.
         ids.sort_unstable();
         let ids: IdList = ids.into_iter().collect();
-        out(Record::Labels { add, ids, labels });
+        // `SetLabels`, not `AddLabels` — the opcode's own name, and one letter
+        // from `AddLabel`, which registers a label in the schema dictionary
+        // rather than putting one on a node.
+        out(if add {
+            Record::SetLabels { ids, labels }
+        } else {
+            Record::RemoveLabels { ids, labels }
+        });
     }
 }
 
@@ -877,10 +941,9 @@ mod tests {
 
         let records = read_buffer(&buf).unwrap();
         // schema first: the ids on the index record are only meaningful after it
-        assert!(matches!(records[0], Record::AddSchema { id: 0, .. }));
+        assert!(matches!(records[0], Record::AddLabel { id: 0, .. }));
         assert!(matches!(records[1], Record::AddAttribute { id: 0, .. }));
-        let Record::Index {
-            create,
+        let Record::CreateIndex {
             label_id,
             ref label,
             field_type,
@@ -889,28 +952,29 @@ mod tests {
             ..
         } = records[2]
         else {
-            panic!("expected an index record, got {:?}", records[2]);
+            panic!("expected a create-index record, got {:?}", records[2]);
         };
-        assert!(create);
         assert_eq!((label_id, label.as_str()), (0, "D"));
         assert_eq!(field_type, v3::INDEX_FLD_FULLTEXT);
         assert_eq!(fields.len(), 1);
         assert_eq!((fields[0].id, fields[0].name.as_str()), (0, "body"));
-        // The options travel typed, so this asserts the values rather than the
-        // container.
-        let o = options.as_ref().expect("a create carries options");
+        // The options travel typed — and as the engine's own type now, so this
+        // asserts the values rather than the container.
+        let o = options;
         // The statement said `language: 'german'`, so that is what travels —
         // this is the assertion the old `matches!(Some(Value::Map(_)))` could
         // not make: it proved a map was present, not that its contents
         // survived.
-        assert_eq!(o.language.as_deref(), Some("german"));
+        assert_eq!(o.text.language.as_ref().map(|l| l.as_str()), Some("german"));
         // And the keys the statement omitted travel as omitted. Filling them
         // with the RDB's defaults here is what diverged a replica: applying
         // `language` a second time is refused once one is set for the label,
         // so an option nobody asked for must not arrive as one somebody did.
-        assert_eq!(
-            (&o.weight, &o.nostem, &o.phonetic, &o.stopwords),
-            (&None, &None, &None, &None),
+        assert!(
+            o.text.weight.is_none()
+                && o.text.nostem.is_none()
+                && o.text.phonetic.is_none()
+                && o.text.stopwords.is_none(),
             "an omitted option travels omitted, not defaulted"
         );
         assert!(
@@ -1056,16 +1120,11 @@ mod tests {
         let mut seen: Vec<(Vec<u32>, Vec<u64>)> = records
             .iter()
             .map(|r| {
-                let Record::Update {
-                    entity,
-                    ids,
-                    labels,
-                    ..
-                } = r
-                else {
+                // `UpdateNode` by construction now: an edge update is a
+                // different variant and cannot carry a label set at all.
+                let Record::UpdateNode { ids, labels, .. } = r else {
                     panic!("wrong record: {r:?}");
                 };
-                assert_eq!(*entity, EntityType::Node);
                 (labels.clone(), ids.iter().collect::<Vec<_>>())
             })
             .collect();
@@ -1139,20 +1198,16 @@ mod tests {
 
         let records = build(&p, &g);
         assert_eq!(records.len(), 1, "{records:#?}");
-        let Record::Update {
-            entity,
-            ids,
-            labels,
-            relation_id,
-            ..
+        let Record::UpdateEdge {
+            ids, relation_id, ..
         } = &records[0]
         else {
             panic!("wrong record: {:?}", records[0]);
         };
-        assert_eq!(*entity, EntityType::Relationship);
         assert_eq!(ids, &[5]);
-        assert!(labels.is_empty(), "an edge update carries no label set");
-        assert_eq!(*relation_id, Some(0), "it carries its type instead");
+        // "carries no label set" is now a fact about the type rather than an
+        // assertion: `UpdateEdge` has no labels field to be empty.
+        assert_eq!(*relation_id, 0, "it carries its type instead");
     }
 
     #[test]
@@ -1169,15 +1224,15 @@ mod tests {
         p.stage_updated_edge(6, &[(0, Value::Int(2))]);
 
         let records = build(&p, &g);
-        let mut types: Vec<Option<u32>> = records
+        let mut types: Vec<u32> = records
             .iter()
             .map(|r| match r {
-                Record::Update { relation_id, .. } => *relation_id,
+                Record::UpdateEdge { relation_id, .. } => *relation_id,
                 other => panic!("wrong record: {other:?}"),
             })
             .collect();
         types.sort_unstable();
-        assert_eq!(types, vec![Some(0), Some(1)], "{records:#?}");
+        assert_eq!(types, vec![0, 1], "{records:#?}");
     }
 
     #[test]
@@ -1202,7 +1257,9 @@ mod tests {
 
         let records = build(&p, &g);
         assert!(
-            records.iter().all(|r| !matches!(r, Record::Update { .. })),
+            records
+                .iter()
+                .all(|r| !matches!(r, Record::UpdateNode { .. } | Record::UpdateEdge { .. })),
             "an update for an edge the transaction deletes must not be emitted: \
              {records:#?}"
         );
@@ -1256,10 +1313,12 @@ mod tests {
         let records = build(&p, &g);
         assert_eq!(records.len(), 2);
         assert!(matches!(records[0], Record::CreateNode { .. }));
-        let Record::Labels { add, ids, labels } = &records[1] else {
+        // `SetLabels` by construction: a removal is a different variant now,
+        // so "it was an add" is a fact about the type rather than a flag to
+        // assert.
+        let Record::SetLabels { ids, labels } = &records[1] else {
             panic!("expected SET_LABELS for the pre-existing node");
         };
-        assert!(add);
         assert_eq!(ids, &[99], "the created node is not repeated here");
         assert_eq!(labels, &[3]);
     }
@@ -1280,16 +1339,9 @@ mod tests {
         let mut seen: Vec<(Vec<u16>, Vec<u64>)> = records
             .iter()
             .map(|r| {
-                let Record::Update {
-                    entity,
-                    ids,
-                    attr_ids,
-                    ..
-                } = r
-                else {
+                let Record::UpdateNode { ids, attr_ids, .. } = r else {
                     panic!("wrong record: {r:?}");
                 };
-                assert_eq!(*entity, EntityType::Node);
                 (attr_ids.clone(), ids.iter().collect())
             })
             .collect();
@@ -1316,8 +1368,7 @@ mod tests {
         assert_eq!(records.len(), 3);
         assert_eq!(
             records[0],
-            Record::AddSchema {
-                schema_type: EntityType::Node,
+            Record::AddLabel {
                 id: 0,
                 name: "L".into()
             }
@@ -1773,46 +1824,22 @@ mod cascade {
 /// query layer and always will. What changed is that it stops there: this
 /// converts it to the typed block the wire carries, materialising the RDB's
 /// defaults for anything the statement did not say.
-fn wire_index_options(ix: &AnnouncedIndex<'_>) -> IndexOptions {
+fn wire_index_options(ix: &AnnouncedIndex<'_>) -> IndexFieldOptions {
     let parsed = ix.options.and_then(|v| match v {
         Value::Map(m) => map_to_index_options(ix.index_type, m).ok().flatten(),
         _ => None,
     });
+    // The record holds the engine's own option types, so there is nothing to
+    // convert into — only which half of the pair a statement filled in. That is
+    // what `21f37287d` bought: the field-by-field copy this used to be could
+    // narrow a value on the way past, and did, twice.
     match parsed {
-        // Nothing said. Not "everything at its default" — see
-        // `IndexOptions::none_given`.
-        None => IndexOptions::none_given(None),
-        Some(EngineIndexOptions::Vector(v)) => IndexOptions::none_given(Some(VectorOptions {
-            dimension: u64::from(v.dimension),
-            m: v.m.map(|x| x as u64),
-            ef_construction: v.ef_construction.map(|x| x as u64),
-            ef_runtime: v.ef_runtime.map(|x| x as u64),
-            // The same VecSimMetric numbering the RDB writes.
-            sim_func: v.similarity_function.as_deref().map(|s| {
-                if s.eq_ignore_ascii_case("ip") {
-                    1
-                } else if s.eq_ignore_ascii_case("cosine") {
-                    2
-                } else {
-                    0
-                }
-            }),
-        })),
-        Some(EngineIndexOptions::Text(txt)) => IndexOptions {
-            language: txt.language.as_ref().map(|l| l.as_str().to_owned()),
-            stopwords: txt
-                .stopwords
-                .as_ref()
-                .map(|sw| sw.iter().map(|s| s.as_str().to_owned()).collect()),
-            weight: txt.weight,
-            nostem: txt.nostem,
-            // C carries the algorithm code; this engine narrows to a bool and
-            // supports only Double Metaphone English, so `true` is "dm:en" and
-            // `false` is the empty code.
-            phonetic: txt
-                .phonetic
-                .map(|p| if p { "dm:en".to_owned() } else { String::new() }),
-            vector: None,
-        },
+        // Nothing said. Not "everything at its default" — an effect adds a
+        // field to an index that may already exist, so "no language given" and
+        // "language english" are different instructions, and the second is
+        // refused once a language is set for the label.
+        None => IndexFieldOptions::none_given(None),
+        Some(EngineIndexOptions::Text(text)) => IndexFieldOptions { text, vector: None },
+        Some(EngineIndexOptions::Vector(v)) => IndexFieldOptions::none_given(Some(v)),
     }
 }

@@ -116,16 +116,29 @@ impl EffectsFormat<EFFECTS_VERSION> for EffectsPayload {
         pending: &Pending,
         graph: &AtomicRefCell<Graph>,
         buf: &mut W,
-    ) -> u64 {
+    ) -> Result<u64, String> {
         // The loop itself, not a call to a function that is only this loop.
         // `emit` decides *which* records a commit implies; turning one into
         // bytes is this module's job, and there was nothing in between.
+        //
+        // `encode` is fallible, and `for_each_record` hands records to a
+        // closure that cannot return one, so the first refusal is carried out
+        // here. Stopping at the first is deliberate: an `EncodeError` means the
+        // emitter built a record wrong, and every later record is written
+        // against a buffer that is already not what the replica will be told it
+        // is. The write fails rather than shipping a payload with a hole in it.
         let mut n = 0;
+        let mut failed = None;
         for_each_record(pending, graph, |record| {
-            record.encode(buf);
-            n += 1;
+            if failed.is_some() {
+                return;
+            }
+            match record.encode(buf) {
+                Ok(()) => n += 1,
+                Err(e) => failed = Some(e),
+            }
         });
-        n
+        failed.map_or(Ok(n), |e| Err(e.to_string()))
     }
 
     fn build_index<W: EffectWrite + ?Sized>(
@@ -174,7 +187,8 @@ mod tests {
                 name: "name".to_string(),
             },
             &mut buf,
-        );
+        )
+        .unwrap();
         <Record as EffectEncode<EFFECTS_VERSION>>::encode(
             &Record::DeleteNode {
                 ids: {
@@ -186,7 +200,8 @@ mod tests {
                 labels: vec![1],
             },
             &mut buf,
-        );
+        )
+        .unwrap();
         buf
     }
 
@@ -267,7 +282,8 @@ mod tests {
                     name: "name".to_string(),
                 },
                 &mut buf,
-            );
+            )
+            .unwrap();
         }
         assert!(crate::effects::v3::maybe_compress(&mut buf, 1));
         let lines = EffectsPayload::describe(&buf);

@@ -552,7 +552,7 @@ mod tests {
         create(&mut g, &mut space, &ids(&[0, 1])).expect("create");
         space.verify(g.node_id_bound()).expect("whole");
 
-        let mut space = IdSpace::at(g.node_id_bound());
+        let space = IdSpace::at(g.node_id_bound());
         delete(&mut g, &space, &ids(&[0])).expect("a live id from before the batch");
         assert_eq!(g.node_count(), 1);
         space
