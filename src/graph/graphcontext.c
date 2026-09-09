@@ -868,7 +868,26 @@ Schema *GraphContext_GetSchemaByID
 		_GetNodeSchemas (gc) :
 		_GetRelationSchemas (gc) ;
 
-	ASSERT (id < arr_len (schemas)) ;
+	// RANGE CHECKED, not asserted. This id can arrive from a replication
+	// payload - GRAPH.EFFECT resolves label and relationship ids through here
+	// - and ASSERT compiles to nothing when RG_DEBUG is off, so an
+	// out-of-range id indexed straight into the array and returned whatever
+	// was in memory past the end.
+	//
+	// That is usually NULL, which reads as "does not resolve locally" and
+	// behaves correctly, and occasionally is not. Measured at ~1.7%: a
+	// DELETE_NODE naming label 99 against a graph with one schema was ACCEPTED
+	// instead of refused, and the node was deleted - silent divergence with
+	// data loss on a replica, with an OK reply and no resync. An intermittent
+	// at a rate set by whatever happens to be adjacent in memory, which is why
+	// it showed no correlation with timing or load.
+	//
+	// Negative ids are checked too: LabelID is a signed int and the wire
+	// carries it as an i32, so a negative one would index backwards.
+	if (id < 0 || (uint64_t)id >= arr_len (schemas)) {
+		return NULL ;
+	}
+
 	return schemas [id] ;
 }
 
