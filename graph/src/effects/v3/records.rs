@@ -1497,35 +1497,26 @@ mod tests {
     }
 
     #[test]
-    fn the_motivating_query_end_to_end() {
-        // UNWIND range(0,9999) AS i CREATE (:L {v:i})
-        // v2 emitted one record per node, 34 bytes each: 340,001 bytes.
-        const V2: f64 = 340_001.0;
-        println!("\n  10,000 nodes            shapes     v3 bytes    vs v2");
+    fn grouping_makes_one_record_per_shape() {
+        // `UNWIND range(0,9999) AS i CREATE (:L {v:i})` and its neighbours.
+        // What this asserts is the *grouping*: how many records 10,000 nodes
+        // become. The byte counts it used to print are a measurement and live
+        // in the benches, where a number can be compared against a baseline
+        // instead of scrolling past in test output.
         for shapes in [1_usize, 20, 500, 2_000, 10_000] {
             let buf = create_10k_in_shapes(shapes);
-            let n = read_buffer(&buf).unwrap().len();
-            assert_eq!(n, shapes, "one record per shape");
-            println!(
-                "  {:<22} {shapes:6} {:12} {:+7.1}%",
-                if shapes == 1 {
-                    "all share one shape"
-                } else if shapes == 10_000 {
-                    "every node its own"
-                } else {
-                    "split"
-                },
-                buf.len(),
-                100.0 * buf.len() as f64 / V2 - 100.0
+            assert_eq!(
+                read_buffer(&buf).unwrap().len(),
+                shapes,
+                "one record per shape, at {shapes} shapes"
             );
         }
 
-        // The floor moved deliberately, and this records by how much. A segment
-        // list states both its segment count and every segment's length, so
-        // that it is well-formed on its own rather than only inside the record
-        // carrying it. That is five bytes per single-id record — four for the
-        // count, one for the length — which is the whole difference between
-        // this bound and the 340,001 that preceded the segment format.
+        // The singleton floor, as a bound rather than a reading. A segment list
+        // states both its segment count and every segment's length, so that it
+        // is well-formed on its own rather than only inside the record carrying
+        // it — five bytes per single-id record, four for the count and one for
+        // the length. This catches that floor regressing; it does not report it.
         let worst = create_10k_in_shapes(10_000);
         assert!(
             worst.len() <= 380_001,
@@ -1533,8 +1524,9 @@ mod tests {
             worst.len()
         );
 
-        // Two shapes, ids interleaved — the alternating-label query. Stride 2
-        // breaks the single run, so each IdSet falls back to a bitset container.
+        // Two shapes with interleaved ids — the alternating-label query. Stride
+        // 2 breaks the single run, so each id list falls back to a bitmap, and
+        // the point is still that it is two records and not 10,000.
         let even: IdList = (0..5_000).map(|i| i * 2).collect();
         let odd: IdList = (0..5_000).map(|i| i * 2 + 1).collect();
         let half: Vec<Value> = (0..5_000).map(|i| Value::Int(i as i64)).collect();
@@ -1550,27 +1542,23 @@ mod tests {
             ids: odd,
             labels: vec![8],
             attr_ids: vec![0],
-            rows: half.to_vec(),
+            rows: half,
         }
         .encode(&mut alt);
-        println!("\n  alternating labels, 2 records: {} B", alt.len());
         assert_eq!(read_buffer(&alt).unwrap().len(), 2);
 
-        // 10,000 edges out of one supernode.
-        let eids: IdList = (0..10_000).collect();
-        let src: IdList = std::iter::repeat_n(4_000_000_000_u64, 10_000).collect();
-        let dst: IdList = (0..10_000).collect();
+        // 10,000 edges out of one supernode: one record, because the source
+        // column is a single `Repeat`.
         let mut edges = new_buffer();
         Record::CreateEdge {
-            ids: eids,
+            ids: (0..10_000).collect(),
             relation_id: 1,
-            src: src.clone(),
-            dst: dst.clone(),
+            src: std::iter::repeat_n(4_000_000_000_u64, 10_000).collect(),
+            dst: (0..10_000).collect(),
             attr_ids: vec![],
             rows: vec![],
         }
         .encode(&mut edges);
-        println!("  10,000 supernode edges:        {} B", edges.len());
         assert_eq!(read_buffer(&edges).unwrap().len(), 1);
     }
 
