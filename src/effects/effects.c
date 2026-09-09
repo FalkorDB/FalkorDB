@@ -33,7 +33,6 @@ struct _EffectsBuffer {
 	// the index and constraint DDL of records 11-14, which still write v2
 	// bytes. Such a buffer must not be sent: it would describe a subset of the
 	// query's effects and the replica would silently miss the rest
-	bool v3_incomplete;
 };
 
 // forward declarations
@@ -110,38 +109,32 @@ void EffectsBuffer_WriteBytes
 	// a replica that never learns of the mutation, which is worse than a
 	// refused payload because nothing reports it.
 	//
-	// Logged rather than asserted: ASSERT compiles to nothing without RG_DEBUG,
-	// and this is exactly the case that must not pass quietly in a release
-	// build.
+	// Both a log AND an assert, because they cover different builds: ASSERT
+	// compiles to nothing without RG_DEBUG, so it stops a debug and CI build
+	// at the offending writer while the log is what a release build leaves
+	// behind.
 	if(unlikely(eb->v3 != NULL)) {
-		// An effect the v3 encoder cannot represent. Records 11-14 - the index
-		// and constraint DDL - still write v2 bytes into a stream that
-		// EffectsBuffer_Buffer ignores in v3 mode, so this record would simply
-		// vanish: master indexed, replica not, no error and no resync.
+		// AN EFFECT WITH NO v3 PATH IS A BUG, NOT A CONDITION TO SURVIVE.
 		//
-		// Marking the buffer incomplete is what stops that. The caller then
-		// replicates the query verbatim instead, which is how the DDL reaches
-		// the replica until the encoder implements those records. Dropping the
-		// write here is harmless once the buffer will not be sent.
+		// All 14 records have a producing path (EFFECTS_V3_ENCODE_READY), so
+		// nothing reaches here. If a fifteenth effect is ever added without
+		// routing it, this is where that shows up - and it has to be loud,
+		// because the two quiet answers are both wrong. Dropping the write
+		// loses the effect silently. Marking the buffer incomplete so the
+		// caller replays the query text instead - which is what this used to
+		// do - is exact between two C engines and silently wrong against
+		// Rust, whose db.idx.fulltext.createNodeIndex takes a single map where
+		// C's is variadic: the rescue that saves a C replica leaves a Rust one
+		// without the index and without an error.
 		//
-		// WHAT VERBATIM ASSUMES: that the replica can execute the same query
-		// text. Between two C engines that is exact, and a replica whose replay
-		// fails escalates through DivergenceGuard_OnFailure (cmd_query.c), so a
-		// failure is loud. Across engines it is only as good as their query
-		// surfaces matching - measured: a Rust replica rejects
-		// db.idx.fulltext.createNodeIndex on arity, logs, and continues without
-		// escalating, leaving it quietly without the index.
-		//
-		// So this fallback is correct for C-to-C and is an interim for
-		// C-to-Rust. Records 11-14 in the encoder are what remove the
-		// assumption; until then a mixed-engine deployment should not run DDL
-		// on a v3-emitting C master.
-		if(!eb->v3_incomplete) {
-			RedisModule_Log(NULL, "notice",
-				"GRAPH.EFFECT v3 cannot encode this effect; replicating the "
-				"query verbatim instead");
-			((EffectsBuffer *)eb)->v3_incomplete = true;
-		}
+		// So: assert, which stops a debug and CI build at the writer that
+		// forgot its v3 path, and log at warning in release. The fix is always
+		// to route the effect, never to re-add a fallback.
+		RedisModule_Log(NULL, "warning",
+			"GRAPH.EFFECT an effect (%zu bytes) reached a v3 buffer with no v3 "
+			"encoding path and WILL NOT BE REPLICATED; its writer needs to "
+			"call into EffectsV3Grouping", n);
+		ASSERT(false && "effect has no v3 encoding path");
 		return;
 	}
 
@@ -409,7 +402,6 @@ EffectsBuffer *EffectsBuffer_New
 	eb->version      = (uint8_t)emit;
 	eb->owns_records = true;
 	eb->v3           = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
-	eb->v3_incomplete = false;
 
 	// note: no header is written here. v2 stamped its version byte at
 	// construction; it is now written by EffectsBuffer_Buffer, so that the
@@ -443,23 +435,6 @@ void EffectsBuffer_Reset
 	buff->n       = 0;
 	buff->version = (uint8_t)emit;
 	buff->v3      = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
-	buff->v3_incomplete = false;
-}
-
-// whether every effect in this buffer can be encoded
-//
-// False once an effect arrives that the v3 encoder cannot represent. A buffer
-// that is not complete MUST NOT be sent: it would describe some of the query's
-// effects and silently omit the rest, which leaves a replica differing from its
-// master with nothing reporting it. The caller replicates the query verbatim
-// instead - the same fallback v2 uses for statements it cannot express.
-bool EffectsBuffer_Complete
-(
-	const EffectsBuffer *buff  // effects-buffer
-) {
-	ASSERT(buff != NULL);
-
-	return !buff->v3_incomplete;
 }
 
 // returns number of effects in buffer
@@ -1270,7 +1245,6 @@ EffectsBuffer *EffectsBuffer_Wrap
 	eb->version      = EFFECTS_VERSION_EMIT;
 	eb->owns_records = false;
 	eb->v3           = NULL;
-	eb->v3_incomplete = false;
 
 	return eb;
 }
