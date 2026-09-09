@@ -2,7 +2,7 @@
   "case": "rec_create_index",
   "version": 3,
   "flags": 0,
-  "bytes": 96,
+  "bytes": 69,
   "records": [
     {
       "opcode": 11,
@@ -12,7 +12,7 @@
       "label": "Person",
       "field_type": "0x000a",
       "fields": ["12=name", "13=age"],
-      "options": "map[1]:dim=int:4"
+      "options": {}
     }
   ]
 }

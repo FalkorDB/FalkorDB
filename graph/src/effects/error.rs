@@ -79,6 +79,9 @@ pub enum DecodeError {
     #[error("record with opcode {opcode} covers no entities")]
     EmptyRecord { opcode: u32 },
 
+    #[error("a boolean field holds {value}, which is neither 0 nor 1")]
+    BadBool { value: u64 },
+
     #[error("unknown schema type {0}")]
     BadSchemaType(u32),
 

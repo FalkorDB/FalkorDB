@@ -31,6 +31,239 @@ fn write_header<W: EffectWrite + ?Sized>(
     }
 }
 
+/// `CREATE_INDEX`'s options, in the layout the RDB already uses.
+///
+/// Not a map. Every layer but the wire already holds these as typed fields —
+/// C's `IndexField` has two nested option structs, C's v19 RDB writes them at
+/// fixed positions, and this engine parses them into `IndexOptions` the moment
+/// they arrive. The wire carried a `T_MAP` of stringly-typed keys only because
+/// C's `create_index_effect.c` had an `SIValue` in hand at the call site and
+/// passed the parser's representation straight through.
+///
+/// The layout here mirrors `_RdbLoadIndex`/`_RdbLoadIndexField`, which is a
+/// format both engines already implement and cross-check: RDBs have been
+/// mutually loadable since #2459, so this is a tested shape rather than a new
+/// one. Reusing it means the far side can reuse its own RDB field logic, and
+/// there is no new agreement to reach about mask bits or defaults.
+///
+/// **Each option carries a presence byte**, which is the one place this layout
+/// departs from the RDB's. The RDB writes defaults for what the statement
+/// omitted and can afford to: it saves a whole index at once, so "weight 1.0"
+/// and "no weight given" produce the same index either way. An effect is an
+/// instruction against an index that may already exist, and there the two are
+/// different — `create_index` refuses an explicit language when one is already
+/// set for the label. Materialising defaults here made `test_CRUD_replication`
+/// diverge a replica with "Language is already set for label \'L\'", so absence
+/// is information and travels as itself.
+///
+/// A byte per option rather than one mask for all of them, written and read
+/// through [`put_opt`]/[`take_opt`] so a value cannot be written without its
+/// flag or read without it. The text half is written whatever the field type,
+/// with five zero bytes saying "nothing said"; only the vector half is gated,
+/// because its `dimension` has no absent form.
+///
+/// `phonetic` is the algorithm code as a string, not a bool: C stores
+/// `char *phonetic` and accepts `dm:fr`/`dm:pt`/`dm:es`, which this engine
+/// currently rejects. A bool here would have baked one engine's narrowing into
+/// the format.
+///
+/// The vector block is gated on `field_type & INDEX_FLD_VECTOR` rather than a
+/// flag of its own — `field_type` is already on the wire ahead of this, and the
+/// RDB gates on exactly the same bit.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct IndexOptions {
+    pub language: Option<String>,
+    pub stopwords: Option<Vec<String>>,
+    pub weight: Option<f64>,
+    pub nostem: Option<bool>,
+    /// The algorithm code, e.g. `"dm:en"`. `None` when the statement said
+    /// nothing; C stores `char *phonetic` and accepts codes this engine
+    /// rejects, so a bool here would bake one engine's narrowing into the wire.
+    pub phonetic: Option<String>,
+    /// Present iff the statement's `field_type` carries `INDEX_FLD_VECTOR`.
+    pub vector: Option<VectorOptions>,
+}
+
+/// The HNSW half, written only for a vector field.
+///
+/// `u64` throughout, matching C's `size_t` and its RDB writer. An absent field
+/// is one the statement did not state, and the receiver supplies its own
+/// default — the same ones the RDB writes: `M` 16, `ef_construction` 200,
+/// `ef_runtime` 10, `sim_func` 0 (L2).
+///
+/// `sim_func` is the `VecSimMetric` discriminant — 0 = L2/euclidean, 1 = IP,
+/// 2 = cosine. An enum rather than a name because the RDB already persists it
+/// this way on both engines, which makes it shared format vocabulary like
+/// `IndexFieldType` and `SIType` rather than an internal representation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct VectorOptions {
+    /// Not optional: a vector index cannot exist without one.
+    pub dimension: u64,
+    pub m: Option<u64>,
+    pub ef_construction: Option<u64>,
+    pub ef_runtime: Option<u64>,
+    pub sim_func: Option<u64>,
+}
+
+impl IndexOptions {
+    /// The block a statement with no `OPTIONS` clause carries: nothing said.
+    ///
+    /// Every field absent, which is **not** every field at its default. An
+    /// effect adds a field to an index that may already exist, so "no language
+    /// given" and "language english" are different instructions — the second is
+    /// refused when a language is already set for the label. The RDB can
+    /// materialise defaults because it writes a whole index at once; this wire
+    /// cannot, and a flow test proved it: an explicit "english" diverged a
+    /// replica with "Language is already set for label 'L'".
+    #[must_use]
+    pub fn none_given(vector: Option<VectorOptions>) -> Self {
+        Self {
+            vector,
+            ..Self::default()
+        }
+    }
+}
+
+impl VectorOptions {
+    /// A vector field of the given dimension, with nothing else stated.
+    #[must_use]
+    pub const fn of_dimension(dimension: u64) -> Self {
+        Self {
+            dimension,
+            m: None,
+            ef_construction: None,
+            ef_runtime: None,
+            sim_func: None,
+        }
+    }
+}
+
+/// One optional field: a presence byte, then the value if present.
+///
+/// A byte per field rather than one mask for all of them. A mask is smaller but
+/// has to be kept in step with the field list by hand — set the bit, write the
+/// value, in two places, in the same order, forever. These helpers make the
+/// presence byte and the value one operation, so a field cannot be written
+/// without its flag or read without it.
+fn put_opt<T, W: EffectWrite + ?Sized>(
+    buf: &mut W,
+    v: Option<&T>,
+    write: impl FnOnce(&mut W, &T),
+) {
+    match v {
+        None => buf.u8(0),
+        Some(x) => {
+            buf.u8(1);
+            write(buf, x);
+        }
+    }
+}
+
+fn take_opt<T>(
+    r: &mut Reader<'_>,
+    read: impl FnOnce(&mut Reader<'_>) -> Result<T, DecodeError>,
+) -> Result<Option<T>, DecodeError> {
+    match r.u8()? {
+        0 => Ok(None),
+        1 => Ok(Some(read(r)?)),
+        other => Err(DecodeError::BadBool {
+            value: u64::from(other),
+        }),
+    }
+}
+
+impl IndexOptions {
+    /// Write the block, gated on the statement's `field_type`.
+    ///
+    /// `field_type` and not `self.vector.is_some()`, because that is what the
+    /// reader has: the vector half's presence is a property of the statement,
+    /// stated once on the wire ahead of this. Gating the two directions on
+    /// different things desynchronises the stream — the writer emits `u64`s the
+    /// reader never consumes and the next record is parsed from the middle of
+    /// them.
+    fn encode_with<W: EffectWrite + ?Sized>(
+        &self,
+        buf: &mut W,
+        field_type: u32,
+    ) {
+        debug_assert_eq!(
+            self.vector.is_some(),
+            field_type & index_field_type::INDEX_FLD_VECTOR != 0,
+            "vector options must be present exactly when the field type says so"
+        );
+        put_opt(buf, self.language.as_ref(), |b, s| b.string(s));
+        put_opt(buf, self.stopwords.as_ref(), |b, sw| {
+            b.u64(sw.len() as u64);
+            for s in sw {
+                b.string(s);
+            }
+        });
+        put_opt(buf, self.weight.as_ref(), |b, w| b.f64(*w));
+        put_opt(buf, self.nostem.as_ref(), |b, n| b.u8(u8::from(*n)));
+        put_opt(buf, self.phonetic.as_ref(), |b, s| b.string(s));
+        if field_type & index_field_type::INDEX_FLD_VECTOR != 0 {
+            let v = self
+                .vector
+                .unwrap_or_else(|| VectorOptions::of_dimension(0));
+            buf.u64(v.dimension);
+            put_opt(buf, v.m.as_ref(), |b, x| b.u64(*x));
+            put_opt(buf, v.ef_construction.as_ref(), |b, x| b.u64(*x));
+            put_opt(buf, v.ef_runtime.as_ref(), |b, x| b.u64(*x));
+            put_opt(buf, v.sim_func.as_ref(), |b, x| b.u64(*x));
+        }
+    }
+}
+
+impl EffectDecodeSized<3> for IndexOptions {
+    /// The statement's `field_type`, which says whether a vector block follows.
+    type Size = u32;
+
+    fn decode_sized(
+        r: &mut Reader<'_>,
+        field_type: Self::Size,
+    ) -> Result<Self, DecodeError> {
+        let language = take_opt(r, |r| r.string())?;
+        let stopwords = take_opt(r, |r| {
+            let n = r.u64()?;
+            // A stopword is at least an 8-byte length plus its NUL.
+            let n = r.guard_count(n, 9)?;
+            let mut out = Vec::with_capacity(n);
+            for _ in 0..n {
+                out.push(r.string()?);
+            }
+            Ok(out)
+        })?;
+        let weight = take_opt(r, |r| r.f64())?;
+        let nostem = take_opt(r, |r| match r.u8()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            other => Err(DecodeError::BadBool {
+                value: u64::from(other),
+            }),
+        })?;
+        let phonetic = take_opt(r, |r| r.string())?;
+        let vector = if field_type & index_field_type::INDEX_FLD_VECTOR == 0 {
+            None
+        } else {
+            Some(VectorOptions {
+                dimension: r.u64()?,
+                m: take_opt(r, |r| r.u64())?,
+                ef_construction: take_opt(r, |r| r.u64())?,
+                ef_runtime: take_opt(r, |r| r.u64())?,
+                sim_func: take_opt(r, |r| r.u64())?,
+            })
+        };
+        Ok(Self {
+            language,
+            stopwords,
+            weight,
+            nostem,
+            phonetic,
+            vector,
+        })
+    }
+}
+
 /// The smallest an `AttrRef` can encode to: a 2-byte attribute id, then the
 /// 8-byte length of a name whose bytes may all still be ahead.
 const MIN_ATTR_REF_BYTES: usize = 10;
@@ -187,7 +420,7 @@ pub enum Record {
         /// Every field of the statement. See [`write_index_fields`].
         fields: Vec<AttrRef<String>>,
         /// `None` on a drop, which carries no options.
-        options: Option<Value>,
+        options: Option<IndexOptions>,
     },
     Constraint {
         create: bool,
@@ -334,7 +567,7 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             let field_type = r.u32()?;
             let fields = IndexFields::decode(r)?.0;
             let options = if create {
-                Some(Value::decode(r)?)
+                Some(IndexOptions::decode_sized(r, field_type)?)
             } else {
                 None
             };
@@ -581,7 +814,12 @@ impl EffectEncode<3> for Record {
                 buf.u32(*field_type);
                 IndexFields(fields.as_slice()).encode(buf);
                 if *create {
-                    options.as_ref().unwrap_or(&Value::Null).encode(buf);
+                    // A create always carries options; absent ones travel as
+                    // the RDB's defaults rather than as a presence mask.
+                    options
+                        .as_ref()
+                        .expect("a CREATE_INDEX record carries options")
+                        .encode_with(buf, *field_type);
                 }
             }
 
@@ -1177,7 +1415,7 @@ mod tests {
                 id: 0,
                 name: "since".to_owned(),
             }],
-            options: Some(Value::Null.clone()),
+            options: Some(IndexOptions::none_given(None)),
         }
         .encode(&mut buf);
         Record::Index {
@@ -1414,7 +1652,7 @@ mod tests {
                 id: 9,
                 name: "name".to_owned(),
             }],
-            options: Some(Value::Null.clone()),
+            options: Some(IndexOptions::none_given(None)),
         }
         .encode(&mut buf);
         let records = read_buffer(&buf).unwrap();
@@ -1428,9 +1666,9 @@ mod tests {
                 field_type: INDEX_FLD_RANGE,
                 fields: vec![AttrRef {
                     id: 9,
-                    name: "name".to_owned().into(),
+                    name: "name".to_owned(),
                 }],
-                options: Some(Value::Null),
+                options: Some(IndexOptions::none_given(None)),
             }
         );
     }
@@ -1458,7 +1696,7 @@ mod tests {
             label: "L".to_owned(),
             field_type: INDEX_FLD_RANGE,
             fields,
-            options: Some(Value::Null),
+            options: Some(IndexOptions::none_given(None)),
         }
         .encode(&mut buf);
 
@@ -1474,6 +1712,71 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(0, "a"), (1, "b"), (2, "c")]
         );
+    }
+
+    /// The presence bytes are positional, and a round trip cannot see their
+    /// order.
+    ///
+    /// `put_opt` and `take_opt` walk the same field list in the same order, so
+    /// swapping two fields in both leaves every round-trip test green — the
+    /// assertion is symmetric in the bug. The corpus pins the all-absent shape
+    /// (`rec_create_index`) and the all-stated one (`rec_create_index_vector`);
+    /// neither shows a flag that has drifted one field along, because in both
+    /// every flag holds the same value. A partial block is where that shows,
+    /// and the C engine needs these positions fixed.
+    #[test]
+    fn a_partly_stated_options_block_pins_where_each_flag_sits() {
+        let mut opts = IndexOptions::none_given(None);
+        opts.weight = Some(2.0);
+
+        let mut buf = Vec::new();
+        opts.encode_with(&mut buf, INDEX_FLD_FULLTEXT);
+        assert_eq!(
+            format!("{buf:02x?}"),
+            concat!(
+                "[00, ",                                // language: nothing said
+                "00, ",                                 // stopwords
+                "01, 00, 00, 00, 00, 00, 00, 00, 40, ", // weight: 2.0, f64 LE
+                "00, ",                                 // nostem
+                "00]"                                   // phonetic
+            ),
+            "one byte per option, in this order, and only the stated one \
+             carries a value"
+        );
+
+        let mut r = Reader::new(&buf);
+        let back = IndexOptions::decode_sized(&mut r, INDEX_FLD_FULLTEXT).unwrap();
+        assert!(r.is_empty(), "the block is exactly as long as it says");
+        assert_eq!(back, opts, "what was stated comes back stated, and only it");
+    }
+
+    /// The vector half: `dimension` bare, the rest flagged.
+    #[test]
+    fn a_vector_dimension_carries_no_flag_because_it_cannot_be_absent() {
+        let mut v = VectorOptions::of_dimension(4);
+        v.sim_func = Some(2);
+        let opts = IndexOptions::none_given(Some(v));
+
+        let mut buf = Vec::new();
+        opts.encode_with(&mut buf, INDEX_FLD_VECTOR);
+        assert_eq!(
+            format!("{buf:02x?}"),
+            concat!(
+                "[00, 00, 00, 00, 00, ",               // the text half, all absent
+                "04, 00, 00, 00, 00, 00, 00, 00, ",    // dimension 4, u64 LE, no flag
+                "00, ",                                // M
+                "00, ",                                // efConstruction
+                "00, ",                                // efRuntime
+                "01, 02, 00, 00, 00, 00, 00, 00, 00]"  // simFunc: cosine
+            ),
+            "the text half is written whatever the field type, so there is one \
+             gate rather than two"
+        );
+
+        let mut r = Reader::new(&buf);
+        let back = IndexOptions::decode_sized(&mut r, INDEX_FLD_VECTOR).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(back, opts);
     }
 
     #[test]
@@ -1612,11 +1915,11 @@ mod tests {
                 props: vec![
                     AttrRef {
                         id: 0,
-                        name: "first".to_owned().into()
+                        name: "first".to_owned()
                     },
                     AttrRef {
                         id: 1,
-                        name: "last".to_owned().into()
+                        name: "last".to_owned()
                     }
                 ],
             }
@@ -1942,7 +2245,6 @@ mod tests {
         ));
     }
 
-    #[test]
     /// A record covering no entities says nothing about any of them.
     ///
     /// Refused at the header, before any block is read, because `count` sizes

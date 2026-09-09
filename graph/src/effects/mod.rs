@@ -36,11 +36,6 @@ use std::fmt::Write as _;
 
 use atomic_refcell::AtomicRefCell;
 
-
-
-
-
-
 /// How much of a diverged payload the log reproduces in hex.
 ///
 /// A cap rather than the whole buffer because this runs on the path where a
@@ -56,8 +51,6 @@ const DESCRIBE_BYTE_LIMIT: usize = 2048;
 /// line, which leaves room for the offset and the host's own prefix inside one
 /// log message.
 const DESCRIBE_BYTES_PER_LINE: usize = 32;
-
-
 
 /// Types that can write themselves into an effects payload of a given version.
 ///
@@ -111,16 +104,6 @@ pub trait EffectDecodeSized<const VERSION: u8>: Sized {
         size: Self::Size,
     ) -> Result<Self, DecodeError>;
 }
-
-
-
-
-
-
-
-
-
-
 
 /// The one thing left that names a version, and it is configuration rather
 /// than format: the compression threshold is read by `seal` itself, so the

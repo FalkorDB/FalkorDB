@@ -33,7 +33,7 @@
 
 use std::{fmt::Write as _, fs, path::PathBuf, sync::Arc};
 
-use crate::runtime::{ordermap::OrderMap, string_pool, value::Value};
+use crate::runtime::{string_pool, value::Value};
 
 use super::*;
 
@@ -403,8 +403,7 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
             // A bit set, not an enum: range and fulltext at once is one
             // statement, and a decoder that switches on the word rather than
             // testing bits cannot represent it.
-            field_type: (index_field_type::INDEX_FLD_STR | index_field_type::INDEX_FLD_NUMERIC)
-                as u32,
+            field_type: index_field_type::INDEX_FLD_STR | index_field_type::INDEX_FLD_NUMERIC,
             fields: vec![
                 AttrRef {
                     id: 12,
@@ -415,12 +414,41 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
                     name: "age".to_owned(),
                 },
             ],
-            options: Some(Value::Map(Arc::new(OrderMap::from_vec(vec![(
-                Arc::new("dim".to_owned()),
-                Value::Int(4),
-            )])))),
+            // What the OPTIONS map used to say, now typed: a vector field of
+            // dimension 4, with the RDB's HNSW defaults.
+            // A range statement, so no vector half — the invariant is that the
+            // options match the field type.
+            options: Some(IndexOptions::none_given(None)),
+        }],
+    )); // The vector half of the options block, which the range case above cannot
+    // reach: `field_type` carries INDEX_FLD_VECTOR, so five more u64s follow
+    // the phonetic string. Without this the HNSW parameters are unexercised.
+    out.push((
+        "rec_create_index_vector",
+        vec![Record::Index {
+            create: true,
+            schema_type: EntityType::Node,
+            label_id: 0,
+            label: "P".to_owned(),
+            field_type: index_field_type::INDEX_FLD_VECTOR,
+            fields: vec![AttrRef {
+                id: 0,
+                name: "embedding".to_owned(),
+            }],
+            // Every vector option stated, so the presence bytes are all 1 and
+            // the values are non-default — a fixture where every field absent
+            // would leave the payload indistinguishable from `none_given`.
+            options: Some(IndexOptions::none_given(Some(VectorOptions {
+                dimension: 128,
+                m: Some(32),
+                ef_construction: Some(400),
+                ef_runtime: Some(20),
+                // cosine, not the L2 default, so the field is not zero
+                sim_func: Some(2),
+            }))),
         }],
     ));
+
     out.push((
         "rec_drop_index",
         vec![Record::Index {
@@ -428,7 +456,7 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
             schema_type: EntityType::Relationship,
             label_id: 1,
             label: "KNOWS".to_owned(),
-            field_type: index_field_type::INDEX_FLD_VECTOR as u32,
+            field_type: index_field_type::INDEX_FLD_VECTOR,
             fields: vec![AttrRef {
                 id: 14,
                 name: "vec".to_owned(),
@@ -790,7 +818,37 @@ fn describe(rec: &Record) -> Vec<(String, String)> {
                 "options",
                 options.as_ref().map_or_else(
                     || "null".to_owned(),
-                    |v| format!("\"{}\"", describe_value(v)),
+                    |o| {
+                        let mut parts = Vec::new();
+                        let opt =
+                            |name: &str, v: Option<String>| v.map(|s| format!("\"{name}\": {s}"));
+                        parts.extend(opt(
+                            "language",
+                            o.language.as_ref().map(|l| format!("\"{l}\"")),
+                        ));
+                        parts.extend(opt(
+                            "stopwords",
+                            o.stopwords.as_ref().map(|sw| arr(sw.iter())),
+                        ));
+                        parts.extend(opt("weight", o.weight.map(|w| w.to_string())));
+                        parts.extend(opt("nostem", o.nostem.map(|n| n.to_string())));
+                        parts.extend(opt(
+                            "phonetic",
+                            o.phonetic.as_ref().map(|p| format!("\"{p}\"")),
+                        ));
+                        if let Some(v) = &o.vector {
+                            let mut vp = vec![format!("\"dimension\": {}", v.dimension)];
+                            vp.extend(opt("M", v.m.map(|x| x.to_string())));
+                            vp.extend(opt(
+                                "efConstruction",
+                                v.ef_construction.map(|x| x.to_string()),
+                            ));
+                            vp.extend(opt("efRuntime", v.ef_runtime.map(|x| x.to_string())));
+                            vp.extend(opt("simFunc", v.sim_func.map(|x| x.to_string())));
+                            parts.push(format!("\"vector\": {{{}}}", vp.join(", ")));
+                        }
+                        format!("{{{}}}", parts.join(", "))
+                    },
                 ),
             );
         }

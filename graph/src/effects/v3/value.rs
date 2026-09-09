@@ -4,10 +4,7 @@ use std::sync::Arc;
 
 use thin_vec::ThinVec;
 
-use crate::runtime::{
-    ordermap::OrderMap,
-    value::{Point, Value},
-};
+use crate::runtime::value::{Point, Value};
 
 use crate::graph::graphblas::serialization::si_type;
 
@@ -18,9 +15,6 @@ use super::{DecodeError, EffectDecode, EffectEncode, EffectWrite, Reader};
 /// The lower bound `Reader::guard_count` needs for a run of values — it caps the
 /// loop without predicting what the values themselves cost.
 pub(super) const MIN_VALUE_BYTES: usize = 4;
-
-/// The smallest a map entry can encode to: an 8-byte key length, then a value.
-pub(super) const MIN_MAP_PAIR_BYTES: usize = 8 + MIN_VALUE_BYTES;
 
 // ── SIValue ──
 
@@ -80,33 +74,6 @@ impl EffectEncode<3> for Value {
                     item.encode(buf);
                 }
             }
-            Value::Map(m) => {
-                buf.u32(si_type::T_MAP);
-                buf.u32(m.len() as u32);
-                // Floor: an 8-byte key length plus the value's type tag.
-                buf.reserve(m.len() * 12);
-                for (k, v) in m.iter() {
-                    // The key is a plain string, not a tagged value.
-                    //
-                    // A map key is a string in both engines' type systems — this
-                    // one's is `OrderMap<Arc<String>, Value>`, where the key is
-                    // not a `Value` at all, and C's `map.c` asserts
-                    // `SI_TYPE(key) & T_STRING` on every access. So `T_STRING`
-                    // is a fact about how an engine *represents* a string
-                    // internally, and putting it on the wire would publish one
-                    // engine's type-enum discriminant as wire semantics.
-                    //
-                    // C's shipped v2 does tag it: `EffectsBuffer_WriteSIMap`
-                    // writes the key through `WriteSIValue`, and
-                    // `Map_FromBinary` reads it back with `SIValue_FromBinary`,
-                    // then narrows it to a string again on first use. A v3
-                    // reader therefore needs its own path — the shape C already
-                    // uses for `ApplyLabels` / `ApplyLabels_V2`, dispatched on
-                    // the version byte.
-                    buf.string(k);
-                    v.encode(buf);
-                }
-            }
             Value::Point(p) => {
                 buf.u32(si_type::T_POINT);
                 // 2 x f32. Rust's own format used f64 here, which silently doubles
@@ -152,15 +119,7 @@ impl EffectEncode<3> for Value {
 /// key is read as soon as the previous entry closes, so the loop below always
 /// has exactly one value to produce next.
 enum Frame {
-    List {
-        items: ThinVec<Value>,
-        left: usize,
-    },
-    Map {
-        map: OrderMap<Arc<String>, Value>,
-        left: usize,
-        key: Arc<String>,
-    },
+    List { items: ThinVec<Value>, left: usize },
 }
 
 impl EffectDecode<3> for Value {
@@ -214,20 +173,6 @@ impl EffectDecode<3> for Value {
                         };
                         value = Value::List(Arc::new(items));
                     }
-                    Some(Frame::Map { map, left, key }) => {
-                        map.insert(Arc::clone(key), value);
-                        *left -= 1;
-                        if *left > 0 {
-                            // The next entry's key, read now so the next turn
-                            // produces its value.
-                            *key = Arc::new(r.string()?);
-                            break;
-                        }
-                        let Some(Frame::Map { map, .. }) = stack.pop() else {
-                            unreachable!("just matched a map frame")
-                        };
-                        value = Value::Map(Arc::new(map));
-                    }
                 }
             }
         }
@@ -271,20 +216,12 @@ fn read_one(
             });
             return Ok(None);
         }
-        si_type::T_MAP => {
-            let n = r.u32()?;
-            let n = r.guard_count(u64::from(n), MIN_MAP_PAIR_BYTES)?;
-            if n == 0 {
-                return Ok(Some(Value::Map(Arc::new(OrderMap::default()))));
-            }
-            let key = Arc::new(r.string()?);
-            stack.push(Frame::Map {
-                map: OrderMap::default(),
-                left: n,
-                key,
-            });
-            return Ok(None);
-        }
+        // v3 carries no map. `CREATE_INDEX`'s options were the only map that
+        // ever reached this wire, and they travel as a typed block now — see
+        // `records::IndexOptions`. Refused rather than silently ignored: a
+        // payload claiming one was written by something this build does not
+        // understand.
+        si_type::T_MAP => return Err(DecodeError::BadValueType(si_type::T_MAP)),
         si_type::T_POINT => {
             let latitude = r.f32()?;
             let longitude = r.f32()?;
@@ -400,10 +337,10 @@ mod tests {
         let levels = 5_000_usize;
         let mut buf = Vec::new();
         for _ in 0..levels {
-            buf.bytes(&(si_type::T_ARRAY as u32).to_le_bytes());
+            buf.bytes(&si_type::T_ARRAY.to_le_bytes());
             buf.bytes(&1_u32.to_le_bytes());
         }
-        buf.bytes(&(si_type::T_NULL as u32).to_le_bytes());
+        buf.bytes(&si_type::T_NULL.to_le_bytes());
 
         let mut r = Reader::new(&buf);
         let v = Value::decode(&mut r).expect("depth is not the decoder's business");
@@ -427,7 +364,7 @@ mod tests {
         // the read rather than producing a partial value.
         let mut buf = Vec::new();
         for _ in 0..1_000 {
-            buf.bytes(&(si_type::T_ARRAY as u32).to_le_bytes());
+            buf.bytes(&si_type::T_ARRAY.to_le_bytes());
             buf.bytes(&1_u32.to_le_bytes());
         }
         // ...and nothing at the bottom.
@@ -444,24 +381,28 @@ mod tests {
     }
 
     #[test]
-    fn a_map_nested_in_a_list_round_trips() {
-        // The iterative decoder has to interleave two frame kinds, and a map
-        // reads its key before its value — the case a recursive decoder got for
-        // free.
-        let mut m = OrderMap::default();
-        m.insert(Arc::new("a".to_string()), Value::Int(1));
-        m.insert(
-            Arc::new("b".to_string()),
-            Value::List(Arc::new(thin_vec::thin_vec![
-                Value::Null,
-                Value::Map(Arc::new(OrderMap::default())),
-            ])),
-        );
+    fn a_map_is_refused_rather_than_decoded() {
+        // v3 carries no map. `CREATE_INDEX`'s options were the only one that
+        // ever reached this wire and they travel as a typed block now, so a
+        // payload claiming `T_MAP` came from something this build does not
+        // understand — refused, not skipped.
+        let mut buf = Vec::new();
+        buf.u32(si_type::T_MAP);
+        buf.u32(1);
+        assert!(matches!(
+            Value::decode(&mut Reader::new(&buf)),
+            Err(DecodeError::BadValueType(t)) if t == si_type::T_MAP
+        ));
+    }
+
+    #[test]
+    fn a_list_nested_in_a_list_round_trips() {
+        // The iterative decoder still has to nest one frame kind inside itself,
+        // which is what the map case used to cover alongside lists.
         let case = Value::List(Arc::new(thin_vec::thin_vec![
-            Value::Map(Arc::new(m)),
+            Value::List(Arc::new(thin_vec::thin_vec![Value::Null, Value::Int(1),])),
             Value::List(Arc::new(ThinVec::new())),
         ]));
-
         let mut buf = Vec::new();
         case.encode(&mut buf);
         let mut r = Reader::new(&buf);

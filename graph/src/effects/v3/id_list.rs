@@ -1314,7 +1314,6 @@ mod tests {
         }
     }
 
-    #[test]
     /// The width helpers state their own byte order.
     ///
     /// A round trip cannot see a byte swap: swap `write_narrow` and

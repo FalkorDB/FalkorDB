@@ -179,9 +179,9 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::effects::EffectEncode;
     use crate::effects::v3::{IdList, read_ids};
     use crate::effects::writer::EffectWrite;
-    use crate::effects::{EffectDecodeSized, EffectEncode};
 
     // ── malformed input ──
 

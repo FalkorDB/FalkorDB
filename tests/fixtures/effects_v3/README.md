@@ -95,7 +95,8 @@ rather than to a format.
 | `rec_add_schema_node` | 1 | 29 |
 | `rec_add_schema_edge` | 1 | 28 |
 | `rec_add_attribute` | 1 | 21 |
-| `rec_create_index` | 1 | 96 |
+| `rec_create_index` | 1 | 69 |
+| `rec_create_index_vector` | 1 | 99 |
 | `rec_drop_index` | 1 | 48 |
 | `rec_create_constraint` | 1 | 53 |
 | `rec_drop_constraint` | 1 | 62 |
