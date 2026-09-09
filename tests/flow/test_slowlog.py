@@ -256,10 +256,10 @@ class testSlowLog():
         # issue 2 slower queries
         # expecting to have them replace existing entries
 
-        q0 = "UNWIND range(0, 450000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q0 = "UNWIND range(0, 1000000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
+        q1 = "UNWIND range(0, 1500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
         self.graph.query(q1)
 
         entries = self.graph.slowlog()
