@@ -850,33 +850,6 @@ class testCountExceedingGraphRefused(_RefusedCase):
             "count far exceeding the local node count")
 
 
-class testDDLDecodesButDoesNotApplyYet(_RefusedCase):
-    """A WELL-FORMED CREATE_INDEX is refused at APPLY, not at decode.
-
-    This previously sent a payload built to v2's per-field layout, so it was
-    refused as malformed and said nothing about DDL support at all - it passed
-    both before and after decode landed, for different reasons. That is the
-    shape of a test that survives the thing it is meant to detect.
-
-    The payload here is the real v3 layout: IndexFieldType ahead of a counted
-    field list, and a TYPED options block. Decode accepts
-    it; apply has no handler for records 11-14 yet, so the buffer is refused
-    there. When apply lands, this test flips to asserting the index exists.
-    """
-
-    def test_refused(self):
-        rec = rec_create_index(
-            schema_type = SCHEMA_NODE,
-            label_id    = 0,
-            label       = "L",
-            field_type  = 0x0E,            # NUMERIC|GEO|STR - a bit SET
-            fields      = [(0, "v")],
-            options     = index_options())
-
-        self._refuse(payload(rec),
-                     "well-formed CREATE_INDEX, apply not implemented",
-                     expect_log="cannot apply record type 11")
-
 class testFutureVersionRefused(_RefusedCase):
     """A version above this build's read ceiling must be refused.
 
@@ -1058,4 +1031,136 @@ class testRedundantLabellingIsIdempotent():
         stat, scan = self._counts()
         self.env.assertEquals(stat, 5)
         self.env.assertEquals(scan, 5)
+
+class testDDLApply():
+    """Records 11-14 applied end to end.
+
+    Two of these exist because a simpler fixture cannot tell two designs apart:
+
+      * STOPWORDS specifically, because Index_SetLanguage fails only if the
+        language DIFFERS while Index_SetStopwords fails if stopwords are set AT
+        ALL. An implementation passing the same options to every field works
+        for language and breaks on field 2 with stopwords - and a language-only
+        test is green either way.
+      * A TWO-FIELD index, because per-field options (weight, nostem,
+        phonetic) must reach EVERY field while index-level options (language,
+        stopwords) must be applied once. A single-field statement cannot
+        separate those.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        # label :P = 0, attributes title = 0 and body = 1
+        self.graph.query("CREATE (:P {title: 'a', body: 'b'})")
+
+    def _send(self, buf):
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, buf)
+
+    def _indexes(self):
+        res = self.graph.query("CALL db.indexes() YIELD label, properties "
+                               "RETURN label, properties")
+        return res.result_set
+
+    def test01_two_field_fulltext_with_stopwords(self):
+        # ONE statement, TWO fields, index-level stopwords. A per-field
+        # reapplication of stopwords is refused by Index_SetStopwords on the
+        # second field, so this fails outright if the options are not applied
+        # once.
+        self._send(payload(rec_create_index(
+            schema_type = SCHEMA_NODE,
+            label_id    = 0,
+            label       = "P",
+            field_type  = 0x01,                     # INDEX_FLD_FULLTEXT
+            fields      = [(0, "title"), (1, "body")],
+            options     = index_options(language="english",
+                                        stopwords=["the", "and"]))))
+
+        idx = self._indexes()
+        self.env.assertEquals(len(idx), 1)
+        self.env.assertEquals(idx[0][0], "P")
+        # both fields landed, from one record
+        self.env.assertEquals(sorted(idx[0][1]), ["body", "title"])
+
+    def test02_the_index_actually_works(self):
+        # existence in db.indexes() is not the same as a usable index
+        res = self.graph.query(
+            "CALL db.idx.fulltext.queryNodes('P', 'a') YIELD node "
+            "RETURN count(node)")
+        self.env.assertEquals(res.result_set[0][0], 1)
+
+    def test03_drop_index(self):
+        self._send(payload(rec_drop_index(
+            schema_type = SCHEMA_NODE,
+            label_id    = 0,
+            label       = "P",
+            field_type  = 0x01,
+            fields      = [(0, "title"), (1, "body")])))
+
+        self.env.assertEquals(len(self._indexes()), 0)
+
+    def test04_create_and_drop_constraint(self):
+        # a UNIQUE constraint requires a supporting exact-match index, and a
+        # master creates it and emits BOTH effects - so the replica sees
+        # CREATE_INDEX then CREATE_CONSTRAINT. Sending only the constraint is
+        # refused with "missing supporting exact-match index", which is correct
+        # behaviour and was this test being unfaithful rather than a bug.
+        self._send(payload(rec_create_index(
+            schema_type = SCHEMA_NODE, label_id = 0, label = "P",
+            field_type  = 0x0E,                     # INDEX_FLD_RANGE
+            fields      = [(0, "title")],
+            options     = index_options())))
+
+        self._send(payload(rec_create_constraint(
+            ct = 0,            # unique
+            et = 1,            # GraphEntityType is 1-BASED: node is 1
+            status = 0,
+            label_id = 0, label = "P", props = [(0, "title")])))
+
+        res = self.graph.query("CALL db.constraints() YIELD label, properties "
+                               "RETURN label, properties")
+        self.env.assertEquals(len(res.result_set), 1)
+
+        self._send(payload(rec_drop_constraint(
+            ct = 0, et = 1, label_id = 0, label = "P",
+            props = [(0, "title")])))
+
+        res = self.graph.query("CALL db.constraints() YIELD label RETURN label")
+        self.env.assertEquals(len(res.result_set), 0)
+
+
+class testVectorSimFuncIPRefused(_RefusedCase):
+    def test_refused(self):
+        # simFunc code 1 is inner product. The option is being withdrawn
+        # upstream, but an older peer or a pre-withdrawal RDB can still carry
+        # it, and a replica must refuse and resync rather than substitute a
+        # different metric - the same index would otherwise compute differently
+        # depending on how the replica synced.
+        self._refuse(
+            payload(rec_create_index(
+                schema_type = SCHEMA_NODE, label_id = 0, label = "L",
+                field_type  = 0x10,                 # INDEX_FLD_VECTOR
+                fields      = [(0, "v")],
+                options     = index_options(
+                    vector={"dimension": 4, "simFunc": 1}))),
+            "vector index asking for inner product",
+            expect_log="similarity function 1")
+
+
+class testVectorZeroDimensionRefused(_RefusedCase):
+    def test_refused(self):
+        # a dimensionless vector field: _parseOptions requires a dimension, so
+        # there is no honest value to reconstruct. Refusing names the gap.
+        self._refuse(
+            payload(rec_create_index(
+                schema_type = SCHEMA_NODE, label_id = 0, label = "L",
+                field_type  = 0x10,
+                fields      = [(0, "v")],
+                options     = index_options(vector={"dimension": 0}))),
+            "vector index with dimension 0",
+            expect_log="dimension 0")
 
