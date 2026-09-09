@@ -314,3 +314,91 @@ class testAggregations():
             self.graph.query("MATCH (n:M) RETURN sum(n.v)").result_set, [[4]])
         self.env.assertEqual(
             self.graph.query("MATCH ()-[r:R]->() RETURN sum(r.w)").result_set, [[2]])
+
+    def test_group_by_computed_key(self):
+        # A grouping key that is not a bare variable or `n.prop` used to send
+        # the *whole* operator down the per-row path — rebuilding an owned row
+        # and re-walking every key and input tree once per row. It is now
+        # materialised as a column by the same evaluator the aggregate inputs
+        # use, so these shapes have to keep answering exactly what the per-row
+        # path answered.
+        self.graph.query(
+            "UNWIND range(0, 9) AS i CREATE (:GK {id: i, name: 'p' + toString(i)})")
+
+        # Arithmetic on a property: the shape that motivated the change.
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (p:GK) RETURN p.id % 3 AS k, count(*) AS c ORDER BY k").result_set,
+            [[0, 4], [1, 3], [2, 3]])
+
+        # A function call, and a key that mixes several properties.
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (p:GK) RETURN toUpper(p.name) AS k, count(*) ORDER BY k LIMIT 2").result_set,
+            [['P0', 1], ['P1', 1]])
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (p:GK) RETURN p.id + size(p.name) AS k, count(*) ORDER BY k LIMIT 2").result_set,
+            [[2, 1], [3, 1]])
+
+        # Several keys at once, one bare property and one computed.
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (p:GK) RETURN p.id % 2 AS a, p.id % 5 AS b, count(*) AS c "
+                "ORDER BY a, b LIMIT 3").result_set,
+            [[0, 0, 1], [0, 1, 1], [0, 2, 1]])
+
+        # A relationship property as the key: the old bulk path only knew how
+        # to read a node column, so this fell back for every batch.
+        self.graph.query(
+            "UNWIND range(0, 5) AS i MATCH (a:GK {id: i}), (b:GK {id: i + 1}) "
+            "CREATE (a)-[:GE {w: i % 2}]->(b)")
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH ()-[r:GE]->() RETURN r.w AS k, count(*) AS c ORDER BY k").result_set,
+            [[0, 3], [1, 3]])
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH ()-[r:GE]->() RETURN r.w * 10 AS k, count(*) AS c ORDER BY k").result_set,
+            [[0, 3], [10, 3]])
+
+        # A key over a map, which is neither a node nor a relationship column.
+        self.env.assertEqual(
+            self.graph.query(
+                "UNWIND [{t:'a'}, {t:'b'}, {t:'a'}] AS row "
+                "RETURN row.t AS k, count(*) AS c ORDER BY k").result_set,
+            [['a', 2], ['b', 1]])
+
+        # Grouping keys must be the *stored* value: two ints a float cannot
+        # tell apart have to stay two groups, whether the key is read directly
+        # or computed, and whether or not a float shares the column.
+        self.graph.query(
+            "CREATE (:GW {v: 9007199254740993}), (:GW {v: 9007199254740992}), (:GW {v: 1.5})")
+        self.env.assertEqual(
+            self.graph.query("MATCH (n:GW) RETURN count(*) AS c, n.v AS k ORDER BY k").result_set,
+            [[1, 1.5], [1, 9007199254740992], [1, 9007199254740993]])
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (n:GW) WHERE n.v > 2 RETURN n.v + 0 AS k, count(*) ORDER BY k").result_set,
+            [[9007199254740992, 1], [9007199254740993, 1]])
+
+        # An error raised while evaluating a key still fails the query.
+        try:
+            self.graph.query("MATCH (p:GK) RETURN p.id / 0 AS k, count(*)")
+            self.env.assertTrue(False)
+        except Exception as e:
+            self.env.assertContains("Division by zero", str(e))
+
+        # A key holding an aggregate keeps falling back — it needs the per-row
+        # path's group-aware evaluation.
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (p:GK) WITH p.id % 2 AS a, count(*) AS c "
+                "RETURN c + 1 AS k, count(*) ORDER BY k").result_set,
+            [[6, 2]])
+
+        # Null keys group together rather than dropping out.
+        self.env.assertEqual(
+            self.graph.query(
+                "MATCH (p:GK) RETURN p.missing AS k, count(*) AS c").result_set,
+            [[None, 10]])
