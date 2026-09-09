@@ -81,16 +81,6 @@ void EffectsBuffer_Reset
 	EffectsBuffer *buff  // effects-buffer
 );
 
-// whether every effect in this buffer can be encoded
-//
-// a buffer that is not complete must not be sent: it would describe some of a
-// query's effects and silently omit the rest. Replicate the query verbatim
-// instead
-bool EffectsBuffer_Complete
-(
-	const EffectsBuffer *buff  // effects-buffer
-);
-
 // returns number of effects in buffer
 uint64_t EffectsBuffer_Length
 (
@@ -207,7 +197,8 @@ void EffectsBuffer_AddCreateIndexEffect
 	AttributeID attr_id,   // attribute id
 	const char *attr,      // attribute name
 	IndexFieldType t,      // index field type (range/fulltext/vector)
-	SIValue options        // index options
+	SIValue options,       // index options - THE V2 WIRE, byte-frozen
+	SIValue stated         // the subset the statement named - v3 only
 );
 
 // add an index field deletion effect to buffer
