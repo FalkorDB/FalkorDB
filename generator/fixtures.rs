@@ -50,6 +50,8 @@
 
 use std::{fmt::Write as _, fs, path::PathBuf, sync::Arc};
 
+use crate::index::text_index_options::TextIndexOptions;
+use crate::index::vector_index_options::VectorIndexOptions;
 use crate::runtime::{string_pool, value::Value};
 
 use super::*;
@@ -433,7 +435,7 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
             // A bit set, not an enum: range and fulltext at once is one
             // statement, and a decoder that switches on the word rather than
             // testing bits cannot represent it.
-            field_type: index_field_type::INDEX_FLD_STR | index_field_type::INDEX_FLD_NUMERIC,
+            field_type: INDEX_FLD_STR | INDEX_FLD_NUMERIC,
             fields: vec![
                 AttrRef {
                     id: 12,
@@ -448,7 +450,7 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
             // dimension 4, with the RDB's HNSW defaults.
             // A range statement, so no vector half — the invariant is that the
             // options match the field type.
-            options: Some(IndexOptions::none_given(None)),
+            options: Some(IndexFieldOptions::none_given(None)),
         }],
     )); // The vector half of the options block, which the range case above cannot
     // reach: `field_type` carries INDEX_FLD_VECTOR, so five more u64s follow
@@ -460,7 +462,7 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
             schema_type: EntityType::Node,
             label_id: 0,
             label: "P".to_owned(),
-            field_type: index_field_type::INDEX_FLD_VECTOR,
+            field_type: INDEX_FLD_VECTOR,
             fields: vec![AttrRef {
                 id: 0,
                 name: "embedding".to_owned(),
@@ -468,14 +470,84 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
             // Every vector option stated, so the presence bytes are all 1 and
             // the values are non-default — a fixture where every field absent
             // would leave the payload indistinguishable from `none_given`.
-            options: Some(IndexOptions::none_given(Some(VectorOptions {
+            options: Some(IndexFieldOptions::none_given(Some(VectorIndexOptions {
                 dimension: 128,
                 m: Some(32),
                 ef_construction: Some(400),
                 ef_runtime: Some(20),
                 // cosine, not the L2 default, so the field is not zero
-                sim_func: Some(2),
+                similarity_function: Some("cosine".to_owned()),
             }))),
+        }],
+    ));
+
+    // ── the two cases that pin the options layout ──
+    //
+    // Two fixtures at the extremes — nothing stated, everything stated — do not
+    // determine the layout. The C writer team derived records 11-14 from the
+    // spec and these files alone, deliberately without consulting their own
+    // decoder, and found four presence markers for five vector values with at
+    // least three readings that all total 49 bytes: a five-byte prefix then
+    // (value, presence) pairs with the last omitted; nine slots at one or nine
+    // bytes each; or a presence byte before each value with four bytes
+    // unexplained. They stopped rather than guess, which was right.
+    //
+    // A partial case separates them in one file. Under a fixed-size block three
+    // flags read clear; under the shrinking readings the block is shorter by
+    // three values, and by different amounts. Nothing else is needed.
+
+    // Vector: `dimension` and `simFunc` stated, `M`/`efConstruction`/
+    // `efRuntime` absent. `dimension` carries no flag — a vector field must
+    // have one — so this is the case that shows a flag clear next to a value
+    // present.
+    out.push((
+        "rec_create_index_vector_partial",
+        vec![Record::Index {
+            create: true,
+            schema_type: EntityType::Node,
+            label_id: 0,
+            label: "P".to_owned(),
+            field_type: INDEX_FLD_VECTOR,
+            fields: vec![AttrRef {
+                id: 0,
+                name: "embedding".to_owned(),
+            }],
+            options: Some(IndexFieldOptions::none_given(Some(VectorIndexOptions {
+                dimension: 8,
+                similarity_function: Some("ip".to_owned()),
+                m: None,
+                ef_construction: None,
+                ef_runtime: None,
+            }))),
+        }],
+    ));
+
+    // Range: `language` and `weight` stated, `stopwords`/`nostem`/`phonetic`
+    // absent. Pins the always-written half — a range statement has no vector
+    // block at all, so the five text slots here are unconditional where the
+    // vector slots are gated on `field_type`.
+    out.push((
+        "rec_create_index_text_partial",
+        vec![Record::Index {
+            create: true,
+            schema_type: EntityType::Node,
+            label_id: 1,
+            label: "T".to_owned(),
+            field_type: INDEX_FLD_STR,
+            fields: vec![AttrRef {
+                id: 2,
+                name: "body".to_owned(),
+            }],
+            options: Some(IndexFieldOptions {
+                text: TextIndexOptions {
+                    language: Some(std::sync::Arc::new("german".to_owned())),
+                    weight: Some(2.5),
+                    stopwords: None,
+                    nostem: None,
+                    phonetic: None,
+                },
+                vector: None,
+            }),
         }],
     ));
 
@@ -486,7 +558,7 @@ fn cases() -> Vec<(&'static str, Vec<Record>)> {
             schema_type: EntityType::Relationship,
             label_id: 1,
             label: "KNOWS".to_owned(),
-            field_type: index_field_type::INDEX_FLD_VECTOR,
+            field_type: INDEX_FLD_VECTOR,
             fields: vec![AttrRef {
                 id: 14,
                 name: "vec".to_owned(),
@@ -910,19 +982,21 @@ fn describe(rec: &Record) -> Vec<(String, String)> {
                             |name: &str, v: Option<String>| v.map(|s| format!("\"{name}\": {s}"));
                         parts.extend(opt(
                             "language",
-                            o.language
+                            o.text
+                                .language
                                 .as_ref()
                                 .map(|l| format!("\"{}\"", json_escape(l))),
                         ));
                         parts.extend(opt(
                             "stopwords",
-                            o.stopwords.as_ref().map(|sw| arr(sw.iter())),
+                            o.text.stopwords.as_ref().map(|sw| arr(sw.iter())),
                         ));
-                        parts.extend(opt("weight", o.weight.map(|w| w.to_string())));
-                        parts.extend(opt("nostem", o.nostem.map(|n| n.to_string())));
+                        parts.extend(opt("weight", o.text.weight.map(|w| w.to_string())));
+                        parts.extend(opt("nostem", o.text.nostem.map(|n| n.to_string())));
                         parts.extend(opt(
                             "phonetic",
-                            o.phonetic
+                            o.text
+                                .phonetic
                                 .as_ref()
                                 .map(|p| format!("\"{}\"", json_escape(p))),
                         ));
@@ -934,7 +1008,22 @@ fn describe(rec: &Record) -> Vec<(String, String)> {
                                 v.ef_construction.map(|x| x.to_string()),
                             ));
                             vp.extend(opt("efRuntime", v.ef_runtime.map(|x| x.to_string())));
-                            vp.extend(opt("simFunc", v.sim_func.map(|x| x.to_string())));
+                            // The discriminant, not the name: the JSON describes the bytes,
+                            // and the bytes carry the VecSimMetric number. The
+                            // engine holds the name; the wire does not.
+                            vp.extend(opt(
+                                "simFunc",
+                                v.similarity_function.as_deref().map(|s| {
+                                    if s.eq_ignore_ascii_case("ip") {
+                                        "1"
+                                    } else if s.eq_ignore_ascii_case("cosine") {
+                                        "2"
+                                    } else {
+                                        "0"
+                                    }
+                                    .to_owned()
+                                }),
+                            ));
                             parts.push(format!("\"vector\": {{{}}}", vp.join(", ")));
                         }
                         format!("{{{}}}", parts.join(", "))
@@ -1083,6 +1172,32 @@ fn readme(cases: &[(&'static str, Vec<Record>)]) -> String {
            is a hint about the primary's string pool. `values_all_kinds` carries one of\n\
            each, so a decoder that switches on the whole tag word instead of masking\n\
            fails on exactly one of them.\n\
+         \n\
+         ## The options block, and how to read it from these files\n\
+         \n\
+         Four cases pin it, and two of them exist because two did not:\n\
+         \n\
+         - `rec_create_index` — a range statement, nothing stated. Five zero\n\
+           bytes, one per text option.\n\
+         - `rec_create_index_vector` — every vector value stated. 49 bytes.\n\
+         - `rec_create_index_vector_partial` — `dimension` and `simFunc` stated,\n\
+           `M`/`efConstruction`/`efRuntime` absent. **25 bytes**, and this is the\n\
+           case that settles the layout: a fixed block with three flags clear\n\
+           and a shrinking block predict different totals here.\n\
+         - `rec_create_index_text_partial` — `language` and `weight` stated, the\n\
+           other three absent. Shows the text half is written whatever the field\n\
+           type, where the vector half is gated on `INDEX_FLD_VECTOR`.\n\
+         \n\
+         `dimension` carries **no** presence byte: a vector field cannot exist\n\
+         without one. Every other option is a presence byte then, if set, its\n\
+         value.\n\
+         \n\
+         **`DROP_INDEX` carries no options at all — zero bytes, not an empty\n\
+         block.** The spec\u{2019}s \"mirrors 11 without the options\" reads both ways;\n\
+         `rec_drop_index` is the file that settles it.\n\
+         \n\
+         `simFunc` is the `VecSimMetric` discriminant on the wire — 0 L2, 1 IP,\n\
+         2 cosine — not the name. The `.json` prints the number for that reason.\n\
          \n\
          Payloads are uncompressed. Compression is an encoder choice — a level, and a\n\
          zstd version — and pinning one here would bind the far side to a compressor\n\
