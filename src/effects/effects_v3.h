@@ -232,6 +232,19 @@ typedef struct {
 //
 // The text half is written whatever the field type - five zero bytes when
 // nothing is stated - so there is ONE gate, the vector half, not two.
+// the wire's simFunc codes ARE the VecSimMetric enum values - L2 0, IP 1,
+// cosine 2 (vec_sim_common.h). They are not renumbered anywhere, and must not
+// be: both engines persist the metric as that number in their RDB, so moving
+// one would make every existing file read a different metric than it was
+// written with.
+//
+// Here rather than beside either user: the encoder maps C's option STRING onto
+// these and the apply path maps them back, so a copy in each is two places for
+// one wire fact to drift.
+#define V3_SIMFUNC_L2     0
+#define V3_SIMFUNC_IP     1
+#define V3_SIMFUNC_COSINE 2
+
 typedef struct {
 	bool      has_language;
 	char     *language;            // owned
@@ -472,7 +485,15 @@ void EffectsV3_RecordsFree
 // EffectsV3_Decode and EffectsV3_RecordsFree are defined
 #define EFFECTS_V3_DECODE_READY 1
 
-// EffectsV3_ENCODE_READY is defined by the writer when EffectsV3_Encode lands
+// EffectsV3_EncodeRecord and EffectsV3Grouping_Encode are defined, and every
+// one of the 14 records has a producing path wired to it
+//
+// Not "the encoder compiles". A record with an encoder that nothing calls
+// produces a well-formed EMPTY payload rather than a refusal, which is the one
+// failure shape that survives every consistency check - so this flag means the
+// accumulator is reachable from the effect writers for all 14, not that the
+// functions exist.
+#define EFFECTS_V3_ENCODE_READY 1
 
 // a record declaring count == 0 is refused at the header
 //
