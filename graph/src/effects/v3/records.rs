@@ -320,7 +320,11 @@ impl<T: AsRef<str>> EffectEncode<3> for IndexFields<&[AttrRef<T>]> {
         // Floor: 2 bytes of id and an 8-byte length per field, the same minimum
         // the decode below guards the count against.
         buf.reserve(2 + fields.len() * MIN_ATTR_REF_BYTES);
-        buf.u16(fields.len() as u16);
+        let n = u16::try_from(fields.len()).map_err(|_| EncodeError::BlockCountTooLarge {
+            block: "IndexFields",
+            len: fields.len(),
+        })?;
+        buf.u16(n);
         for field in fields {
             buf.u16(field.id);
             buf.string(field.name.as_ref());

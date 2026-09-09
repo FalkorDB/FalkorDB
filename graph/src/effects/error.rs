@@ -53,6 +53,17 @@ pub enum EncodeError {
     #[error("opcode {opcode} was given the wrong kind of header")]
     HeaderShapeMismatch { opcode: u32 },
 
+    /// A block whose item count does not fit the fixed-width field that
+    /// carries it.
+    ///
+    /// `LabelSet` and `AttrIds` state their length in a `u16`. `as u16` would
+    /// truncate — 65,536 labels would write a count of 0 and the reader would
+    /// take the whole block as the next field. Neither is reachable from any
+    /// statement this engine accepts, which is why it must be loud: if it ever
+    /// fires, something upstream stopped bounding what it builds.
+    #[error("{block} has {len} entries, more than its u16 count can carry")]
+    BlockCountTooLarge { block: &'static str, len: usize },
+
     /// A roaring bitmap that did not serialize to the length it predicted.
     ///
     /// The length prefix is written from `serialized_size` before the bitmap

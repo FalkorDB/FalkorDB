@@ -67,7 +67,12 @@ impl EffectEncode<3> for Value {
             Value::List(items) => {
                 buf.u32(si_type::T_ARRAY as u32);
                 // u32, not u64: C reads the count as `uint32`.
-                buf.u32(items.len() as u32);
+                buf.u32(u32::try_from(items.len()).map_err(|_| {
+                    EncodeError::BlockCountTooLarge {
+                        block: "T_ARRAY",
+                        len: items.len(),
+                    }
+                })?);
                 // Floor: every element is at least its own type tag.
                 buf.reserve(items.len() * 4);
                 for item in items.iter() {
@@ -85,7 +90,12 @@ impl EffectEncode<3> for Value {
                 buf.u32(si_type::T_VECTOR_F32 as u32);
                 // Exact: count then a fixed 4 bytes per element.
                 buf.reserve(4 + v.len() * 4);
-                buf.u32(v.len() as u32);
+                buf.u32(
+                    u32::try_from(v.len()).map_err(|_| EncodeError::BlockCountTooLarge {
+                        block: "T_VECTOR_F32",
+                        len: v.len(),
+                    })?,
+                );
                 for f in v.iter() {
                     buf.bytes(&f.to_le_bytes());
                 }

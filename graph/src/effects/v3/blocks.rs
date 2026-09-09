@@ -60,8 +60,12 @@ impl<S: AsRef<[u32]>> EffectEncode<3> for LabelSet<S> {
         // Count and payload together, before either is written: the exact size
         // is known here, so the block costs at most one growth however long it
         // is.
+        let n = u16::try_from(labels.len()).map_err(|_| EncodeError::BlockCountTooLarge {
+            block: "LabelSet",
+            len: labels.len(),
+        })?;
         buf.reserve(2 + labels.len() * 4);
-        buf.u16(labels.len() as u16);
+        buf.u16(n);
         for &l in labels {
             buf.u32(l);
         }
@@ -99,8 +103,12 @@ impl<S: AsRef<[u16]>> EffectEncode<3> for AttrIds<S> {
         buf: &mut W,
     ) -> Result<(), EncodeError> {
         let attr_ids = self.0.as_ref();
+        let n = u16::try_from(attr_ids.len()).map_err(|_| EncodeError::BlockCountTooLarge {
+            block: "AttrIds",
+            len: attr_ids.len(),
+        })?;
         buf.reserve(2 + attr_ids.len() * 2);
-        buf.u16(attr_ids.len() as u16);
+        buf.u16(n);
         for &id in attr_ids {
             buf.u16(id);
         }

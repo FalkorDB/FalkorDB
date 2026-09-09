@@ -156,7 +156,21 @@ pub fn register(funcs: &mut Functions) {
                                 {
                                     attr_opts.insert(
                                         Arc::new(String::from("dimension")),
-                                        Value::Int(vopts.dimension as i64),
+                                        // `try_from`, not `as`. This was
+                                        // `i64::from` on a `u32` until
+                                        // `dimension` widened to the wire's
+                                        // `u64`, and a cast reintroduced the
+                                        // silent narrowing this work removes
+                                        // elsewhere. A dimension always fits:
+                                        // the parser takes it from a
+                                        // non-negative `Value::Int`. One that
+                                        // does not came from a corrupt source,
+                                        // and saturating reports it as
+                                        // implausible rather than negative.
+                                        Value::Int(
+                                            i64::try_from(vopts.dimension)
+                                                .unwrap_or(i64::MAX),
+                                        ),
                                     );
                                     attr_opts.insert(
                                         Arc::new(String::from("similarityFunction")),
