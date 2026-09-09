@@ -44,14 +44,18 @@ void EffectsV3_EncodeSegment
 
 	switch(s->kind) {
 		case EFFECTS_V3_SEG_RANGE: {
-			uint8_t vw = s->value_width;
-			uint8_t cw = s->count_width;
+			// value_width and count_width ARE THE HEADER CODES, 0..3 - not a
+			// byte count. They go into the header as they stand and the field
+			// widths come from them, which is what makes a decoded segment
+			// re-encode to the bytes it was read from: the peer's width choice
+			// is retained rather than recomputed, and recomputing would only
+			// "usually" agree.
+			const uint8_t vw = EFFECTS_V3_WIDTH_BYTES(s->value_width);
+			const uint8_t cw = EFFECTS_V3_WIDTH_BYTES(s->count_width);
 
 			header |= EFFECTS_V3_SEG_RANGE;
-			header |= (uint8_t)(EffectsV3_WidthCode(vw)
-					<< EFFECTS_V3_SEG_VWIDTH_SHIFT);
-			header |= (uint8_t)(EffectsV3_WidthCode(cw)
-					<< EFFECTS_V3_SEG_CWIDTH_SHIFT);
+			header |= (uint8_t)(s->value_width << EFFECTS_V3_SEG_VWIDTH_SHIFT);
+			header |= (uint8_t)(s->count_width << EFFECTS_V3_SEG_CWIDTH_SHIFT);
 
 			EffectsBytes_Write(out, &header, 1);
 
@@ -65,14 +69,12 @@ void EffectsV3_EncodeSegment
 		}
 
 		case EFFECTS_V3_SEG_REPEAT: {
-			uint8_t vw = s->value_width;
-			uint8_t cw = s->count_width;
+			const uint8_t vw = EFFECTS_V3_WIDTH_BYTES(s->value_width);
+			const uint8_t cw = EFFECTS_V3_WIDTH_BYTES(s->count_width);
 
 			header |= EFFECTS_V3_SEG_REPEAT;
-			header |= (uint8_t)(EffectsV3_WidthCode(vw)
-					<< EFFECTS_V3_SEG_VWIDTH_SHIFT);
-			header |= (uint8_t)(EffectsV3_WidthCode(cw)
-					<< EFFECTS_V3_SEG_CWIDTH_SHIFT);
+			header |= (uint8_t)(s->value_width << EFFECTS_V3_SEG_VWIDTH_SHIFT);
+			header |= (uint8_t)(s->count_width << EFFECTS_V3_SEG_CWIDTH_SHIFT);
 
 			EffectsBytes_Write(out, &header, 1);
 			EffectsV3_WriteUint(out, s->repeat.id, vw);
@@ -454,3 +456,4 @@ static void _encode_ddl_record
 	_write_name(r->name, out);
 	_write_attr_refs(r, 1, out);
 }
+
