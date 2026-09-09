@@ -41,7 +41,7 @@ use crate::runtime::{
     vector_expr::VectorEval,
 };
 use ahash::RandomState;
-use orx_tree::{Dyn, DynNode, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Dfs, Dyn, DynNode, DynTree, NodeIdx, NodeRef};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -173,7 +173,7 @@ pub struct AggregateOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Option<Box<BatchOp<'a>>>,
     keys: &'a [(Variable, QueryExpr<Variable>)],
-    agg: &'a [(Variable, QueryExpr<Variable>)],
+    agg: Vec<(Variable, QueryExpr<Variable>)>,
     copy_from_parent: &'a [(Variable, Variable)],
     default_acc: Option<Row>,
     errors: std::vec::IntoIter<String>,
@@ -192,8 +192,41 @@ impl<'a> AggregateOp<'a> {
         copy_from_parent: &'a [(Variable, Variable)],
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
+        // Row indexes by id alone. Input-scope accumulators and expression
+        // locals can reuse output-key ids, so give these private temporaries
+        // slots above every binding this operator reads or writes.
+        let mut next_slot = 0;
+        for (name, tree) in keys.iter().chain(agg) {
+            next_slot = next_slot.max(name.id + 1);
+            for idx in tree.root().indices::<Dfs>() {
+                let id = match tree.node(idx).data() {
+                    ExprIR::Variable(var)
+                    | ExprIR::ListComprehension(var)
+                    | ExprIR::Quantifier { var, .. } => var.id,
+                    ExprIR::Reduce(vars) => vars.accumulator.id.max(vars.iterator.id),
+                    _ => 0,
+                };
+                next_slot = next_slot.max(id + 1);
+            }
+        }
+        for (a, b) in copy_from_parent {
+            next_slot = next_slot.max(a.id.max(b.id) + 1);
+        }
+        let agg: Vec<_> = agg
+            .iter()
+            .map(|(name, tree)| {
+                (
+                    name.clone(),
+                    Arc::new(isolate_aggregate_slots(
+                        &tree.root(),
+                        &mut next_slot,
+                        &mut Vec::new(),
+                    )),
+                )
+            })
+            .collect();
         let mut default_acc = Row::new();
-        for (_var, t) in agg {
+        for (_var, t) in &agg {
             Self::set_agg_expr_zero(&t.root(), &mut default_acc);
         }
 
@@ -243,7 +276,7 @@ impl<'a> AggregateOp<'a> {
         }
 
         let mut agg_kinds = Vec::with_capacity(self.agg.len());
-        for (_target, tree) in self.agg {
+        for (_target, tree) in &self.agg {
             {
                 let agg = Self::analyze_agg_tree(tree)?;
                 agg_kinds.push(agg);
@@ -405,7 +438,7 @@ impl<'a> AggregateOp<'a> {
                 Self::consume_batch_per_row(
                     self.runtime,
                     self.keys,
-                    self.agg,
+                    &self.agg,
                     self.copy_from_parent,
                     &batch,
                     &default_acc,
@@ -700,7 +733,7 @@ impl<'a> AggregateOp<'a> {
             Self::consume_batch_per_row(
                 self.runtime,
                 self.keys,
-                self.agg,
+                &self.agg,
                 self.copy_from_parent,
                 &batch,
                 &default_acc,
@@ -951,20 +984,14 @@ impl<'a> Iterator for AggregateOp<'a> {
                 break;
             };
             match (|| {
-                // Build a combined env with key values at both post-projection
-                // (name) and pre-projection (original_var) IDs, plus all
-                // accumulator values.  Acc values take precedence on collision.
+                // The binder resolves key reads to post-projection aliases.
+                // Original input ids must not be copied here: they can alias
+                // another projected key when the projection reorders inputs.
+                // Private accumulator slots are disjoint from all key slots.
                 let mut combined = key.clone();
-                for (name, tree) in self.keys {
-                    if let ExprIR::Variable(original_var) = tree.root().data()
-                        && let Some(value) = key.get(name)
-                    {
-                        combined.insert(original_var, value.clone());
-                    }
-                }
                 combined.merge(&acc);
                 let mut agg_outputs: Vec<(&Variable, Value)> = Vec::with_capacity(self.agg.len());
-                for (name, tree) in self.agg {
+                for (name, tree) in &self.agg {
                     let val = {
                         let this = &self.runtime;
                         let idx = tree.root().idx();
@@ -976,8 +1003,6 @@ impl<'a> Iterator for AggregateOp<'a> {
                             None,
                         )
                     }?;
-                    acc.insert(name, val.clone());
-                    combined.insert(name, val.clone());
                     agg_outputs.push((name, val));
                 }
                 // Insert pre-projection key variable values into acc so
@@ -999,15 +1024,13 @@ impl<'a> Iterator for AggregateOp<'a> {
                 // Unbind internal accumulator variables so they don't leak
                 // to downstream operators and collide with variables in
                 // subsequent scopes that reuse the same slot IDs.
-                for (_, tree) in self.agg {
+                for (_, tree) in &self.agg {
                     unbind_agg_accumulators(&tree.root(), &mut acc);
                 }
-                // Re-bind aggregate output names last: an accumulator slot id
-                // can coincide with another aggregate's output name (the binder
-                // may reuse slot IDs), and the unbind above would otherwise
-                // clear that output. Output bindings must win. This also matters
-                // for keyless empty-input groups where the output value is Null,
-                // since an unbound Null slot is dropped during columnar finish.
+                // Bind finalized outputs after assembling keys/copies and
+                // removing private accumulators. Keep explicit Null bindings
+                // for keyless empty-input groups: columnar finish drops an
+                // unbound Null slot.
                 for (name, val) in agg_outputs {
                     acc.insert(name, val);
                 }
@@ -1029,6 +1052,80 @@ impl<'a> Iterator for AggregateOp<'a> {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Reassigns only temporaries used while evaluating an aggregate output.
+/// Aggregate arguments and grouping expressions still read the input row.
+fn isolate_aggregate_slots(
+    node: &DynNode<ExprIR<Variable>>,
+    next_slot: &mut u32,
+    locals: &mut Vec<(Variable, Variable)>,
+) -> DynTree<ExprIR<Variable>> {
+    if matches!(node.data(), ExprIR::PatternComprehension(_)) {
+        return node.clone_as_tree();
+    }
+    let allocate = |var: &Variable, next: &mut u32| {
+        let mut isolated = var.clone();
+        isolated.id = *next;
+        *next += 1;
+        isolated
+    };
+    if let ExprIR::FuncInvocation(function) = node.data()
+        && function.is_aggregate()
+    {
+        let mut result = DynTree::new(node.data().clone());
+        for (index, child) in node.children().enumerate() {
+            let subtree = if index + 1 == node.num_children()
+                && let ExprIR::Variable(accumulator) = child.data()
+            {
+                DynTree::new(ExprIR::Variable(allocate(accumulator, next_slot)))
+            } else {
+                child.clone_as_tree()
+            };
+            result.root_mut().push_child_tree(subtree);
+        }
+        return result;
+    }
+    if let ExprIR::Variable(var) = node.data()
+        && let Some((_, isolated)) = locals
+            .iter()
+            .rev()
+            .find(|(local, _)| local.id == var.id && local.scope_id == var.scope_id)
+    {
+        return DynTree::new(ExprIR::Variable(isolated.clone()));
+    }
+
+    let mut data = node.data().clone();
+    let mut introduced = Vec::new();
+    let body_start = match &mut data {
+        ExprIR::ListComprehension(var) | ExprIR::Quantifier { var, .. } => {
+            let isolated = allocate(var, next_slot);
+            introduced.push((var.clone(), isolated.clone()));
+            *var = isolated;
+            1
+        }
+        ExprIR::Reduce(vars) => {
+            let accumulator = allocate(&vars.accumulator, next_slot);
+            introduced.push((vars.accumulator.clone(), accumulator.clone()));
+            vars.accumulator = accumulator;
+            let iterator = allocate(&vars.iterator, next_slot);
+            introduced.push((vars.iterator.clone(), iterator.clone()));
+            vars.iterator = iterator;
+            2
+        }
+        _ => usize::MAX,
+    };
+    let mut result = DynTree::new(data);
+    for (index, child) in node.children().enumerate() {
+        let outer_len = locals.len();
+        if index >= body_start {
+            locals.extend(introduced.iter().cloned());
+        }
+        let subtree = isolate_aggregate_slots(&child, next_slot, locals);
+        locals.truncate(outer_len);
+        result.root_mut().push_child_tree(subtree);
+    }
+    result
+}
 
 /// Recursively walks an expression tree and unbinds each aggregate function's
 /// accumulator variable from the environment. This mirrors the recursion in

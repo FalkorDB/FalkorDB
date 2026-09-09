@@ -121,6 +121,108 @@ def assert_float_equal(f1, f2):
     assert abs(f1 - f2) < 1e-10, f"Expected {f1} to be close to {f2}"
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        pytest.param("MATCH (p) RETURN p.value + count(p)", id="property"),
+        pytest.param("MATCH (p) WITH p.value + count(p) AS total RETURN total", id="with"),
+        pytest.param("MATCH (p) RETURN p.value, p.other + count(p)", id="different-property"),
+        pytest.param("WITH 0 AS position RETURN collect(1)[position]", id="input-index"),
+        pytest.param("MATCH (_p) RETURN _p.value + count(_p)", id="underscore-property"),
+        pytest.param("UNWIND [2, 3] AS _v RETURN _v + count(*)", id="underscore-variable"),
+        pytest.param("WITH {inner: {value: 7}} AS m RETURN m.inner.value, m.inner.value + count(*)", id="nested-key"),
+        pytest.param("MATCH (p) RETURN p.value + 1, p.value + 1 + count(*)", id="computed-key"),
+        pytest.param("UNWIND [2, 3] AS n RETURN count(*) + size([v IN [1] | v + n])", id="list-capture"),
+        pytest.param("WITH [2, 3] AS v RETURN count(*) + size([v IN v | v])", id="list-shadow-input"),
+        pytest.param("UNWIND [2, 3] AS n RETURN count(*) + reduce(s = n, v IN [1] | s + v)", id="reduce-initial"),
+        pytest.param("UNWIND [2, 3] AS n RETURN count(*) + reduce(s = 0, v IN [1] | s + n)", id="reduce-capture"),
+        pytest.param("UNWIND [2, 3] AS n RETURN count(*) > 0 AND any(v IN [1] WHERE v < n)", id="quantifier-capture"),
+        pytest.param("MATCH (p) RETURN {value: p.value, total: count(*)}", id="map-value-capture"),
+        pytest.param("MATCH (p) RETURN CASE WHEN count(*) > 0 THEN p.value ELSE 0 END", id="case-capture"),
+        pytest.param("WITH {value: 7} AS m RETURN m.value, m['value'] + count(*)", id="dynamic-access-not-static-key"),
+    ],
+)
+def test_aggregate_projection_rejects_implicit_keys(statement):
+    common.g.query("CREATE (:Group {value: 4, other: 1}), (:Group {value: 4, other: 3})")
+    for execute in (common.g.query, common.g.ro_query):
+        with pytest.raises(ResponseError, match="Invalid aggregation"):
+            execute(statement)
+
+
+@pytest.mark.parametrize(
+    "statement, expected",
+    [
+        pytest.param("MATCH (p) RETURN count(p) + 3", [[5]], id="constant"),
+        pytest.param("MATCH (p) RETURN count(p) + $offset", [[5]], id="parameter"),
+        pytest.param("MATCH (p) RETURN max(p.value) - min(p.other)", [[3]], id="aggregate-operands"),
+        pytest.param("MATCH (p) RETURN p.value AS value, p.value + count(p)", [[4, 6]], id="property-alias"),
+        pytest.param("MATCH (p) RETURN p.value + count(p), p.value AS value", [[6, 4]], id="key-after-aggregate"),
+        pytest.param("MATCH (p) RETURN (p.value) AS value, (p).value + count(p)", [[4, 6]], id="parenthesized-key"),
+        pytest.param("MATCH (p) RETURN p.value, {value: p.value, total: count(*)}", [[4, {"value": 4, "total": 2}]], id="map-value-key"),
+        pytest.param("MATCH (p) RETURN p.value, CASE WHEN count(*) > 0 THEN p.value + count(*) ELSE 0 END", [[4, 6]], id="case-key"),
+        pytest.param("MATCH (p) WITH p.value AS value, count(p) AS total RETURN value + total", [[6]], id="separate-scope"),
+        pytest.param("MATCH (_p) RETURN _p.value AS value, _p.value + count(*)", [[4, 6]], id="underscore-key"),
+        pytest.param("WITH {inner: {value: 7}} AS m RETURN m, m.inner.value + count(*)", [[{"inner": {"value": 7}}, 8]], id="map-base"),
+        pytest.param("WITH {inner: {value: 7}} AS m RETURN m.inner, m.inner.value + count(*)", [[{"value": 7}, 8]], id="map-prefix"),
+        pytest.param("WITH {value: 7} AS m RETURN m, m['value'] + count(*)", [[{"value": 7}, 8]], id="dynamic-access-grouped-map"),
+        pytest.param("UNWIND [2, 3] AS n RETURN count(*) + size([v IN collect(n) | v * 2])", [[4]], id="list-aggregate-input"),
+        pytest.param("WITH [2, 3] AS v RETURN v, count(*) + size([v IN v | v])", [[[2, 3], 3]], id="list-shadow-key"),
+        pytest.param("UNWIND [2, 3] AS n RETURN count(*) + reduce(s = 0, v IN [2, 3] | s + v)", [[7]], id="reduce-locals"),
+        pytest.param("MATCH (p) RETURN p.value AS k, count(*) + reduce(s = 0, v IN [1] | s + p.value)", [[4, 6]], id="reduce-captured-key"),
+        pytest.param("MATCH (p) RETURN p.value AS k, count(*) + [v IN [1] | v + p.value][0]", [[4, 7]], id="list-captured-key"),
+        pytest.param("UNWIND [2, 3] AS n RETURN count(*) > 0 AND any(v IN [2, 3] WHERE v > 2)", [[True]], id="quantifier-local"),
+        pytest.param("WITH 0 AS position RETURN position, collect(9)[position]", [[0, 9]], id="grouped-index"),
+        pytest.param("MATCH (p) RETURN count(p) + p.value, sum(p.other) + p.value, p.value AS key", [[6, 8, 4]], id="multiple-aggregates-key-last"),
+        pytest.param("MATCH (p) WITH p.value AS k, 9 AS pad, count(p) AS c, sum(p.other) AS s RETURN k, pad, c, s", [[4, 9, 2, 4]], id="multiple-aggregates-with"),
+        pytest.param("UNWIND [[2, 7], [2, 7]] AS pair WITH pair[0] AS left, pair[1] AS right RETURN right, left, count(*) + left - right", [[7, 2, -3]], id="reordered-variable-keys"),
+        pytest.param("MATCH (p) RETURN 0 AS pad1, 1 AS pad2, p.value AS key, count(*) + [v IN [1] | v + p.value][0]", [[0, 1, 4, 7]], id="local-slot-isolation"),
+        pytest.param("MATCH (p) RETURN 0 AS pad1, 1 AS pad2, p.value AS key, count(*) + reduce(s = 0, v IN [1] | s + v + p.value)", [[0, 1, 4, 7]], id="reduce-slot-isolation"),
+        pytest.param("MATCH (p) WITH count(p) AS amount, p.value AS k WHERE p.value = 4 RETURN k, amount", [[4, 2]], id="with-parent-copy"),
+        pytest.param("MATCH (p) RETURN count(p) AS amount, p.value AS k ORDER BY p.value", [[2, 4]], id="orderby-parent-copy"),
+        pytest.param("MATCH (p:Absent) RETURN count(p) + 3, max(p.value)", [[3, None]], id="empty-multiple-aggregates"),
+        pytest.param("MATCH (p) RETURN count(distinct p.value) + p.value, collect(distinct p.value), p.value", [[5, [4], 4]], id="distinct-slots"),
+        pytest.param("UNWIND [1, 2] AS n CALL { WITH n MATCH (p:Group) RETURN p.value AS k, n AS copied, count(p) + p.value + n AS total } RETURN n, k, total ORDER BY n", [[1, 4, 7], [2, 4, 8]], id="correlated-aggregate"),
+    ],
+)
+def test_aggregate_projection_valid_composition(statement, expected):
+    common.g.query("CREATE (:Group {value: 4, other: 1}), (:Group {value: 4, other: 3})")
+    assert query(statement, params={"offset": 3}).result_set == expected
+
+
+@pytest.mark.parametrize("projection", ["p", "*"], ids=["explicit", "wildcard"])
+def test_aggregate_projection_grouped_entity(projection):
+    common.g.query("CREATE (:Group {value: 4}), (:Group {value: 7})")
+    statement = f"MATCH (p) RETURN {projection}, p.value + count(p)"
+    snapshots = []
+    for execute in (common.g.query, common.g.ro_query):
+        result = execute(statement).result_set
+        assert len(result) == 2
+        nodes = {}
+        for row in result:
+            assert len(row) == 2
+            node, value = row
+            assert isinstance(node, Node)
+            nodes[node.id] = (sorted(node.labels), node.properties, value)
+        assert len(nodes) == 2
+        assert sorted(nodes.values(), key=lambda row: row[1]["value"]) == [
+            (["Group"], {"value": 4}, 5),
+            (["Group"], {"value": 7}, 8),
+        ]
+        snapshots.append(nodes)
+    # No ORDER BY is requested, so compare both APIs by node identity rather
+    # than assuming their hash-aggregation output has the same row order.
+    assert snapshots[0] == snapshots[1]
+
+
+def test_aggregate_projection_rejects_before_execution():
+    common.g.query("RETURN 1")
+    statement = "MATCH (p) RETURN p.value + count(p)"
+    with pytest.raises(ResponseError, match="Invalid aggregation"):
+        common.g.query(statement)
+    with pytest.raises(ResponseError, match="Invalid aggregation"):
+        common.g.execute_command("GRAPH.EXPLAIN", common.g.name, statement)
+
+
 def test_return_values():
     res = query("RETURN null")
     assert res.result_set == [[None]]
@@ -1873,4 +1975,3 @@ def test_optional_match_null_merge():
         [10, [1]],
         [None, [2]],
     ]
-
