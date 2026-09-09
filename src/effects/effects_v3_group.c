@@ -50,13 +50,24 @@ typedef struct {
 	uint32_t    cap_attrs;
 } PendingUpdate;
 
-// a schema or attribute announcement, kept in arrival order
+// a singular record, kept in arrival order
+//
+// schema and attribute announcements and the constraint DDL share this: all are
+// one statement to one record with no grouping and no count, so they need a
+// list rather than a group table.
 typedef struct {
-	EffectType  opcode;  // ADD_SCHEMA or ADD_ATTRIBUTE
+	EffectType  opcode;  // ADD_SCHEMA, ADD_ATTRIBUTE, or the constraint DDL
 	SchemaType  schema_type;
 	int         schema_id;
 	AttributeID attr_id;
 	char       *name;    // owned
+
+	// constraint DDL only
+	uint32_t          constraint_type;
+	uint32_t          entity_type;
+	uint32_t          status;
+	EffectsV3AttrRef *attrs_ref;    // owned, and each name owned
+	uint16_t          n_attrs_ref;
 } Announcement;
 
 struct EffectsV3Grouping {
@@ -538,6 +549,38 @@ static void _flush_updates(EffectsV3Grouping *g) {
 	g->n_updates = 0;
 }
 
+void EffectsV3Grouping_AddConstraint
+(
+	EffectsV3Grouping *g,         // accumulator
+	EffectType opcode,            // CREATE_CONSTRAINT or DROP_CONSTRAINT
+	uint32_t constraint_type,     // unique or mandatory
+	uint32_t entity_type,         // 1-based
+	uint32_t status,              // ConstraintStatus; CREATE only
+	int label_id,                 // schema id
+	const char *label,            // schema name
+	const AttributeID *attr_ids,  // constrained attribute ids
+	const char **attr_names,      // their names
+	uint8_t n                     // how many
+) {
+	Announcement *a = _new_announcement(g);
+
+	a->opcode          = opcode;
+	a->constraint_type = constraint_type;
+	a->entity_type     = entity_type;
+	a->status          = status;
+	a->schema_id       = label_id;
+	a->name            = rm_strdup(label);
+	a->n_attrs_ref     = n;
+
+	if(n > 0) {
+		a->attrs_ref = rm_calloc(n, sizeof(EffectsV3AttrRef));
+		for(uint8_t i = 0; i < n; i++) {
+			a->attrs_ref[i].id   = attr_ids[i];
+			a->attrs_ref[i].name = rm_strdup(attr_names[i]);
+		}
+	}
+}
+
 uint32_t EffectsV3Grouping_RecordCount
 (
 	EffectsV3Grouping *g  // accumulator
@@ -572,11 +615,17 @@ void EffectsV3Grouping_Encode
 	for(uint32_t i = 0; i < g->n_announcements; i++) {
 		const Announcement *a = g->announcements + i;
 		EffectsV3Record r = {
-			.opcode      = a->opcode,
-			.schema_type = a->schema_type,
-			.schema_id   = a->schema_id,
-			.attr_id     = a->attr_id,
-			.name        = a->name,
+			.opcode          = a->opcode,
+			.schema_type     = a->schema_type,
+			.schema_id       = a->schema_id,
+			.attr_id         = a->attr_id,
+			.name            = a->name,
+			.constraint_type = a->constraint_type,
+			.entity_type     = a->entity_type,
+			.status          = a->status,
+			.has_status      = (a->opcode == EFFECT_CREATE_CONSTRAINT),
+			.attrs_ref       = a->attrs_ref,
+			.n_attrs_ref     = a->n_attrs_ref,
 		};
 		EffectsV3_EncodeRecord(&r, out);
 	}
@@ -644,7 +693,12 @@ void EffectsV3Grouping_Free
 	}
 
 	for(uint32_t i = 0; i < g->n_announcements; i++) {
-		rm_free(g->announcements[i].name);
+		Announcement *a = g->announcements + i;
+		rm_free(a->name);
+		for(uint16_t k = 0; k < a->n_attrs_ref; k++) {
+			rm_free(a->attrs_ref[k].name);
+		}
+		rm_free(a->attrs_ref);
 	}
 
 	for(uint32_t i = 0; i < g->n_updates; i++) {
