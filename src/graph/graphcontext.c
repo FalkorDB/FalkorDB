@@ -874,16 +874,47 @@ Schema *GraphContext_GetSchemaByID
 	// out-of-range id indexed straight into the array and returned whatever
 	// was in memory past the end.
 	//
-	// That is usually NULL, which reads as "does not resolve locally" and
-	// behaves correctly, and occasionally is not. Measured at ~1.7%: a
-	// DELETE_NODE naming label 99 against a graph with one schema was ACCEPTED
-	// instead of refused, and the node was deleted - silent divergence with
-	// data loss on a replica, with an OK reply and no resync. An intermittent
-	// at a rate set by whatever happens to be adjacent in memory, which is why
-	// it showed no correlation with timing or load.
+	// Whether that is NULL decides the outcome, and it is not a coin flip.
+	// Ids just past the end land on live memory and resolve to a garbage
+	// Schema; far-out ones usually land on NULL, which reads as "does not
+	// resolve locally" and refuses correctly.
 	//
-	// Negative ids are checked too: LabelID is a signed int and the wire
-	// carries it as an i32, so a negative one would index backwards.
+	// Measured pre-fix against a graph with one schema, 20 fresh servers per
+	// id, a DELETE_NODE naming the id. Two independent sweeps:
+	//
+	//     id       2, 3, 10   20/20   20/20    <- just past the end
+	//     id             -2   20/20   20/20
+	//     id           -100   19/20   19/20
+	//     id         -1,000   10/20   10/20
+	//     id            500    0/20    4/20    <- MOVED
+	//     id          5,000    5/20    3/20    <- MOVED
+	//     id             50    0/20    1/20    <- MOVED
+	//     id     1, -1, 99+     0/20    0/20
+	//
+	// EVERY acceptance deleted the node. Silent divergence with data loss on
+	// a replica, an OK reply and no resync.
+	//
+	// Two things in that table, and the second is the one that matters.
+	//
+	// First, it inverts the obvious reading of severity: ids 2 and 3 are
+	// exactly what a peer one label ahead of this replica sends, and those
+	// fail every single time. The near-miss case - the likely one - is the
+	// reliable one. An early estimate of "~1.7%, too rare to chase" came from
+	// sampling id 99 alone, about the safest value in the space.
+	//
+	// Second, THE MAP MOVES BETWEEN RUNS. Ids 50, 500 and 5,000 were clean in
+	// one sweep and accepted in the next, because what sits past the end
+	// depends on heap layout. So there is no id you can test once and declare
+	// safe, and no rate anyone could have measured their way to. That is why
+	// this is a bounds check by construction rather than a filter on the
+	// values observed to be dangerous.
+	//
+	// Negative ids are rejected by the explicit `id < 0` clause and not by
+	// integer promotion. LabelID is a signed int and the wire carries it as
+	// an i32. Comparing it against an unsigned arr_len would also reject
+	// negatives - by promoting -1000 to 4294966296 - but that is an accident
+	// of the types either side, and it silently stops working if the other
+	// operand ever becomes signed. Keep both halves of this condition.
 	if (id < 0 || (uint64_t)id >= arr_len (schemas)) {
 		return NULL ;
 	}
