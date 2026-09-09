@@ -492,7 +492,15 @@ void EffectsV3_RecordsFree
 // EffectsV3_Decode and EffectsV3_RecordsFree are defined
 #define EFFECTS_V3_DECODE_READY 1
 
-// EffectsV3_ENCODE_READY is defined by the writer when EffectsV3_Encode lands
+// EffectsV3_EncodeRecord and EffectsV3Grouping_Encode are defined, and every
+// one of the 14 records has a producing path wired to it
+//
+// Not "the encoder compiles". A record with an encoder that nothing calls
+// produces a well-formed EMPTY payload rather than a refusal, which is the one
+// failure shape that survives every consistency check - so this flag means the
+// accumulator is reachable from the effect writers for all 14, not that the
+// functions exist.
+#define EFFECTS_V3_ENCODE_READY 1
 
 // a record declaring count == 0 is refused at the header
 //
