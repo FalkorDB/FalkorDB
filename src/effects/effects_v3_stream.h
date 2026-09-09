@@ -41,6 +41,14 @@ typedef struct {
 	FILE            *stream;  // over the caller's buffer, owned
 	size_t           n;       // payload length
 	EffectsV3Status  status;  // why the walk stopped
+
+	// the inflated payload, owned, NULL when the payload was not compressed
+	//
+	// A compressed payload cannot be read in place, so the reader holds the
+	// plaintext for as long as the walk does and frees it on close. It lives
+	// here rather than in the caller because the stream points into it.
+	char            *plain;
+	size_t           plain_len;
 } EffectsV3Reader;
 
 // open a payload for reading, validating the header
