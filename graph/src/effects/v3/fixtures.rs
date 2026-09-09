@@ -7,11 +7,28 @@
 //! produced the `AttributeSet_Update` segfault when C was fed a Rust buffer.
 //! What settles it is a corpus one engine produced and the other has to read.
 //!
-//! So the files under `tests/fixtures/effects_v3/` are checked in, and this
-//! module regenerates them and asserts equality. A change to the encoder that
-//! moves a single byte fails here with the case that moved — before it reaches
-//! a replica, and before the C side is left chasing a format that shifted under
-//! it.
+//! This module generates that corpus, and compares what it generates against
+//! the committed bytes. A change to the encoder that moves a single byte fails
+//! here with the case that moved — before it reaches a replica, and before the
+//! C side is left chasing a format that shifted under it.
+//!
+//! ## Where the bytes live
+//!
+//! Not in this branch. They are artifacts, not source, and both engines need
+//! to reach them without depending on which pull request happens to be open,
+//! so they sit on their own branch — `effects-v3-corpus`, containing nothing
+//! else:
+//!
+//! ```sh
+//! git worktree add tests/fixtures/effects_v3 origin/effects-v3-corpus
+//! ```
+//!
+//! `EFFECTS_V3_CORPUS=<dir>` points somewhere else. Without either, the two
+//! tests that read the files **skip and say so** rather than fail: a checkout
+//! of the engine has no reason to carry the corpus. What still runs is
+//! [`tests::every_case_round_trips_in_memory`], which catches a codec that
+//! disagrees with itself; only the committed bytes catch a codec that has
+//! quietly moved.
 //!
 //! ## What the far side does with them
 //!
@@ -60,9 +77,15 @@ const DESCENDING: u8 = 0b0100_0000;
 const VALUE_WIDTH_SHIFT: u8 = 2;
 const COUNT_WIDTH_SHIFT: u8 = 4;
 
-/// Where the committed corpus lives, from this crate's manifest.
+/// Where the corpus is expected: `EFFECTS_V3_CORPUS`, else beside this crate.
+///
+/// The default is the path the `git worktree add` in this module's header
+/// creates, so the documented setup needs no environment variable.
 fn corpus_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/effects_v3")
+    std::env::var_os("EFFECTS_V3_CORPUS").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/effects_v3"),
+        PathBuf::from,
+    )
 }
 
 // ── building the cases ──
@@ -1020,6 +1043,47 @@ fn readme(cases: &[(&'static str, Vec<Record>)]) -> String {
 mod tests {
     use super::*;
 
+    /// The corpus directory, or `None` when it is not checked out.
+    ///
+    /// A skip rather than a failure, because the bytes live on their own
+    /// branch and an engine checkout has no reason to carry them. What must
+    /// not happen is a *silent* skip, so this prints the one command that
+    /// fixes it — a test that quietly does nothing is worse than one that is
+    /// absent, since it reports success either way.
+    fn corpus_or_skip(what: &str) -> Option<PathBuf> {
+        let dir = corpus_dir();
+        if dir.is_dir() {
+            return Some(dir);
+        }
+        println!(
+            "SKIPPING {what}: no corpus at {}.\n  \
+             git worktree add tests/fixtures/effects_v3 origin/effects-v3-corpus\n  \
+             (or set EFFECTS_V3_CORPUS to where it is)",
+            dir.display()
+        );
+        None
+    }
+
+    /// Every case survives its own encoder, without the committed files.
+    ///
+    /// This is the weaker of the two round trips and the only one that always
+    /// runs: it proves the codec agrees with itself, which is exactly what the
+    /// corpus exists because it does *not* prove. Worth having anyway — it is
+    /// what stands between a checkout with no corpus and no coverage at all,
+    /// and it catches an encoder and decoder that disagree even when nobody
+    /// has the shared bytes to hand.
+    #[test]
+    fn every_case_round_trips_in_memory() {
+        for (name, records) in cases() {
+            let bytes = payload(&records);
+            let back = open_payload(&bytes)
+                .and_then(|p| p.records().collect::<Result<Vec<_>, _>>())
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(back, records, "{name}: decoded records differ");
+            assert_eq!(payload(&back), bytes, "{name}: re-encoded bytes differ");
+        }
+    }
+
     /// Regenerate the corpus and compare, or rewrite it under
     /// `UPDATE_EFFECTS_FIXTURES=1`.
     ///
@@ -1029,14 +1093,22 @@ mod tests {
     /// the other side, never to regenerate and move on.
     #[test]
     fn corpus_matches_the_committed_files() {
-        let dir = corpus_dir();
         let cases = cases();
         let update = std::env::var_os("UPDATE_EFFECTS_FIXTURES").is_some();
 
-        if update {
+        // Regenerating bootstraps the directory; comparing against one that is
+        // not there has nothing to say.
+        let dir = if update {
+            let dir = corpus_dir();
             fs::create_dir_all(&dir).expect("create fixture dir");
             fs::write(dir.join("README.md"), readme(&cases)).expect("write README");
-        }
+            dir
+        } else {
+            let Some(dir) = corpus_or_skip("corpus_matches_the_committed_files") else {
+                return;
+            };
+            dir
+        };
 
         let mut drifted = Vec::new();
         for (name, records) in &cases {
@@ -1081,8 +1153,11 @@ mod tests {
     /// it as a conformance vector would send the other side chasing our bug.
     #[test]
     fn the_committed_payloads_round_trip() {
+        let Some(dir) = corpus_or_skip("the_committed_payloads_round_trip") else {
+            return;
+        };
         for (name, records) in cases() {
-            let path = corpus_dir().join(format!("{name}.hex"));
+            let path = dir.join(format!("{name}.hex"));
             let text =
                 fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
             let digits: String = text
