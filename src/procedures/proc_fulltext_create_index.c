@@ -340,40 +340,59 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	}
 
 	for(uint i = 0; i < fields_count; i++) {
-		// construct options map
+		// THE BUILD MAP, unchanged: all three options for every field whether
+		// the statement named them or not, added in this order. This is what
+		// constructs the index field AND what the v2 encoder writes, and v2's
+		// bytes are frozen - so nothing here may move, including key order.
+		Map_Add(&options, SI_ConstStringVal("weight"),
+				SI_DoubleVal(weights[i]));
+		Map_Add(&options, SI_ConstStringVal("phonetic"),
+				SI_ConstStringVal(phonetics[i]));
+		Map_Add(&options, SI_ConstStringVal("nostem"),
+				SI_BoolVal(nostems[i]));
+
+		// THE STATED MAP, which is a different question: not "what will this
+		// field end up with" but "what did the statement actually say". Only
+		// v3 reads it, because only v3 has a presence flag per option, and a
+		// flag that means "the statement said this" cannot be answered from a
+		// map that was pre-filled with defaults.
 		//
-		// ONLY WHAT THE STATEMENT STATED. The map is reused across fields, so
-		// an option this field did not state has to be REMOVED rather than
-		// merely not added - otherwise the previous field's value is still in
-		// the map and this field silently inherits it.
+		// It matters most for phonetic: C's default is the literal string "no"
+		// (index_field.h:15) while Rust reads any non-empty phonetic as
+		// ENABLED, so an unstated phonetic announced as its default turns
+		// itself on when it crosses engines.
 		//
-		// Index_FulltextCreate seeds all three from INDEX_FIELD_DEFAULT_* and
-		// overrides only on a hit, so leaving a key out builds exactly the
-		// same field it built before. What changes is the EFFECT: an option
-		// the user never mentioned no longer travels as though they had.
+		// Rebuilt per field rather than edited, so a value one field stated
+		// cannot survive into the next.
+		SIValue stated = SI_Map(5);
+		if(language != NULL) {
+			Map_Add(&stated, SI_ConstStringVal("language"),
+					SI_ConstStringVal(language));
+		}
+		if(stopwords != NULL) {
+			SIValue sw = SIArray_New(arr_len(stopwords));
+			for(uint j = 0; j < arr_len(stopwords); j++) {
+				SIArray_Append(&sw, SI_ConstStringVal(stopwords[j]));
+			}
+			Map_Add(&stated, SI_ConstStringVal("stopwords"), sw);
+			SIArray_Free(sw);
+		}
 		if(weight_stated[i]) {
-			Map_Add(&options, SI_ConstStringVal("weight"),
+			Map_Add(&stated, SI_ConstStringVal("weight"),
 					SI_DoubleVal(weights[i]));
-		} else {
-			Map_Remove(options, SI_ConstStringVal("weight"));
 		}
-
 		if(phonetic_stated[i]) {
-			Map_Add(&options, SI_ConstStringVal("phonetic"),
+			Map_Add(&stated, SI_ConstStringVal("phonetic"),
 					SI_ConstStringVal(phonetics[i]));
-		} else {
-			Map_Remove(options, SI_ConstStringVal("phonetic"));
 		}
-
 		if(nostem_stated[i]) {
-			Map_Add(&options, SI_ConstStringVal("nostem"),
+			Map_Add(&stated, SI_ConstStringVal("nostem"),
 					SI_BoolVal(nostems[i]));
-		} else {
-			Map_Remove(options, SI_ConstStringVal("nostem"));
 		}
 
 		idx = GraphHub_AddIndex(gc, label, _fields[i], GETYPE_NODE,
-				INDEX_FLD_FULLTEXT, options, true);
+				INDEX_FLD_FULLTEXT, options, stated, true);
+		Map_Free(stated);
 		if(idx != NULL) {
 			ResultSet_IndexCreated(result_set, INDEX_OK);
 		} else {
