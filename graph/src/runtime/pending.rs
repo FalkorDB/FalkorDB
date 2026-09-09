@@ -859,6 +859,43 @@ impl Pending {
         }
     }
 
+    /// Resolve `(from, to)` for a relationship that is pending deletion.
+    ///
+    /// `deleted_relationships` mixes two populations: edges that live in the
+    /// committed graph, and edges created earlier in this *same* query and
+    /// then deleted by it. The latter were never committed, so `g` has no
+    /// record of them — they are resolved from `created_rels_by_type`
+    /// instead. Pending is consulted first because relationship ids are
+    /// recycled and a reserved id can still read as present/deleted in the
+    /// committed graph for the lifetime of the pending create.
+    ///
+    /// `None` when neither source knows the edge.
+    fn deleted_relationship_endpoints(
+        &self,
+        id: RelationshipId,
+        g: &Graph,
+    ) -> Option<(NodeId, NodeId)> {
+        self.get_created_relationship_endpoints(id)
+            .or_else(|| g.relationship_endpoints(id))
+    }
+
+    /// Whether a relationship pending deletion has one of `types`, resolving
+    /// the type name from `created_rel_types` for edges created in this same
+    /// query and from the committed graph otherwise.
+    fn deleted_relationship_has_type(
+        &self,
+        id: RelationshipId,
+        types: &[Arc<String>],
+        g: &Graph,
+    ) -> bool {
+        self.get_relationship_type(id)
+            .or_else(|| {
+                g.relationship_type_id_for_edge(id)
+                    .and_then(|t| g.get_type(t))
+            })
+            .is_some_and(|t| types.contains(&t))
+    }
+
     /// Count pending-deleted relationships whose destination is `node_id` and
     /// whose type name matches one of `types` (or all if `types` is empty).
     /// Requires access to the graph to resolve relationship type IDs.
@@ -872,11 +909,10 @@ impl Pending {
         self.deleted_relationships
             .iter()
             .filter(|rel_id| {
-                let (_from, to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
-                to == node_id
-                    && (types.is_empty()
-                        || g.get_type(g.get_relationship_type_id(RelationshipId::from(*rel_id)))
-                            .is_some_and(|t| types.contains(&t)))
+                let id = RelationshipId::from(*rel_id);
+                self.deleted_relationship_endpoints(id, g)
+                    .is_some_and(|(_from, to)| to == node_id)
+                    && (types.is_empty() || self.deleted_relationship_has_type(id, types, g))
             })
             .count()
     }
@@ -894,11 +930,10 @@ impl Pending {
         self.deleted_relationships
             .iter()
             .filter(|rel_id| {
-                let (from, _to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
-                from == node_id
-                    && (types.is_empty()
-                        || g.get_type(g.get_relationship_type_id(RelationshipId::from(*rel_id)))
-                            .is_some_and(|t| types.contains(&t)))
+                let id = RelationshipId::from(*rel_id);
+                self.deleted_relationship_endpoints(id, g)
+                    .is_some_and(|(from, _to)| from == node_id)
+                    && (types.is_empty() || self.deleted_relationship_has_type(id, types, g))
             })
             .count()
     }

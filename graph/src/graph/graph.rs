@@ -2688,16 +2688,27 @@ impl Graph {
             .map(|(src, dest)| (NodeId(src), NodeId(dest)))
     }
 
+    /// The type id of an edge, or `None` when the edge has no entry in the
+    /// relationship type matrix — the fallible counterpart of
+    /// [`Self::get_relationship_type_id`], which panics.
     #[must_use]
-    pub fn get_relationship_type_id(
+    pub fn relationship_type_id_for_edge(
         &self,
         id: RelationshipId,
-    ) -> TypeId {
+    ) -> Option<TypeId> {
         #[allow(clippy::cast_possible_truncation)]
         self.relationship_type_matrix
             .iter(id.0, id.0)
             .map(|(_, l)| TypeId(l as usize))
             .next()
+    }
+
+    #[must_use]
+    pub fn get_relationship_type_id(
+        &self,
+        id: RelationshipId,
+    ) -> TypeId {
+        self.relationship_type_id_for_edge(id)
             .expect("relationship must have a type in type_matrix")
     }
 
@@ -2721,14 +2732,26 @@ impl Graph {
         Arc::make_mut(&mut self.edge_endpoints).clear(edge_id);
     }
 
+    /// Returns (src, dst) for an edge via the maintained reverse index, or
+    /// `None` when the edge does not exist — the fallible counterpart of
+    /// [`Self::get_relationship_endpoints`], which panics.
+    #[must_use]
+    pub fn relationship_endpoints(
+        &self,
+        id: RelationshipId,
+    ) -> Option<(NodeId, NodeId)> {
+        self.endpoints_for_edge(id.0)
+            .map(|(src, dst)| (NodeId(src), NodeId(dst)))
+    }
+
     /// Returns (src, dst) for an edge via the maintained reverse index.
     #[must_use]
     pub fn get_relationship_endpoints(
         &self,
         id: RelationshipId,
     ) -> (NodeId, NodeId) {
-        if let Some((src, dst)) = self.endpoints_for_edge(id.0) {
-            return (NodeId(src), NodeId(dst));
+        if let Some(endpoints) = self.relationship_endpoints(id) {
+            return endpoints;
         }
 
         panic!("relationship {} not found", id.0);

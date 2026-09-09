@@ -850,6 +850,47 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
+    def test38_degree_of_edge_created_and_deleted_in_same_query(self):
+        # An edge created and deleted by the same query is never committed, so
+        # the committed graph cannot resolve its endpoints. The pending-deleted
+        # degree helpers used to look it up with a panicking accessor, which
+        # aborted the whole server process (issue #2769).
+        self.graph.delete()
+
+        res = self.graph.query(
+            "CREATE (a:A)-[r:R]->(b:B) DELETE r SET a.d = outdegree(a) RETURN a.d")
+        self.env.assertEqual(res.result_set, [[0]])
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        self.graph.delete()
+        res = self.graph.query(
+            "CREATE (a:A)-[r:R]->(b:B) DELETE r SET b.d = indegree(b) RETURN b.d")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        # typed degrees resolve the type from the pending create, not the graph
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(:B) DELETE r
+                                  RETURN outdegree(a), outdegree(a, 'R'), outdegree(a, 'Q')""")
+        self.env.assertEqual(res.result_set, [[0, 0, 0]])
+
+        # only the deleted edge is subtracted, the surviving one still counts
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A)-[r1:R]->(:B), (a)-[r2:Q]->(:C) DELETE r1
+                                  RETURN outdegree(a), outdegree(a, 'R'), outdegree(a, 'Q')""")
+        self.env.assertEqual(res.result_set, [[1, 0, 1]])
+
+        # committed edges and a pending created-then-deleted edge in one count
+        self.graph.delete()
+        self.graph.query("CREATE (:A {n: 1})-[:R]->(:B)")
+        res = self.graph.query("""MATCH (a:A) CREATE (a)-[r:R]->(:C) DELETE r
+                                  RETURN outdegree(a), outdegree(a, 'R')""")
+        self.env.assertEqual(res.result_set, [[1, 1]])
+
+        # the server is still alive
+        res = self.graph.query("MATCH (a:A) RETURN outdegree(a)")
+        self.env.assertEqual(res.result_set, [[1]])
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
