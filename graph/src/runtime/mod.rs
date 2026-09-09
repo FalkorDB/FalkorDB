@@ -46,9 +46,14 @@
 //!
 //! - [`ordermap::OrderMap`]: Insertion-ordered map for consistent iteration
 //! - [`orderset::OrderSet`]: Insertion-ordered set for label/type collections
+//!
+//! ## Output
+//!
+//! - [`double_format`]: `%.*g` double rendering matching the C implementation
 
 pub mod batch;
 pub mod bitset;
+pub mod double_format;
 pub mod eval;
 pub mod functions;
 pub mod ops;
