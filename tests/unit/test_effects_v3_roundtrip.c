@@ -159,6 +159,70 @@ void test_effectsV3_decodesEveryFixture(void) {
 // AttributeSet_Update when it was handed a Rust buffer.
 #ifdef EFFECTS_V3_CODEC_READY
 
+//------------------------------------------------------------------------------
+// cases C decodes correctly and cannot re-encode
+//------------------------------------------------------------------------------
+
+// A SECOND LIST, on a different axis from the one that just retired. That list
+// meant "the decoder does not know this record". This one means "the decoder
+// knows it perfectly and the encoder cannot reproduce it". Collapsing them into
+// one would make "why is this still here" unanswerable, because they shrink for
+// different reasons: the first as C implements records, this one as C's core
+// types gain capability.
+//
+// The case: value_string_interior_nul carries "a\0b", four bytes on the wire.
+// C decodes it correctly, then re-encodes through EffectsBuffer_WriteString,
+// which takes its length from strlen -- so it emits two bytes and stops at the
+// NUL. Not a bug in the effects code:
+//
+//   * SIValue holds a bare char * with no length (value.h), so giving the
+//     encoder a length to use is a core-type change, not an effects one
+//   * C cannot produce an interior NUL in the first place -- it does not
+//     implement \uXXXX -- so no C-originated write reaches this shape
+//   * EffectsBuffer_WriteString is shared with v2 across seven call sites, so
+//     editing it moves shipped v2 bytes, and versioning it means a second
+//     SIValue codec, which is how the Rust side acquired a string-pool bug
+//
+// The live consequence, measured on a running C module rather than reasoned
+// about: the payload is ACCEPTED, `n.a = 'a'` returns TRUE for a value that was
+// "a\0b", and size(n.a) is 1. No refusal, no divergence guard, silent. That is
+// with Dvir as a core-type question. This assertion documents it; it does not
+// fix it.
+//
+// ASSERTED RATHER THAN SKIPPED, which is the point. A skip records that C does
+// not round-trip this. Asserting the expected short re-encode records WHAT C
+// DOES INSTEAD, and fails the day that changes -- so if SIValue ever carries a
+// length, this test says to delete the entry rather than silently passing.
+typedef struct {
+	const char *name;      // case name
+	size_t      encodes_to;// bytes C's encoder actually produces
+	const char *why;       // why it cannot match, for the failure message
+} EffectsV3EncodeDivergentCase;
+
+static const EffectsV3EncodeDivergentCase EFFECTS_V3_ENCODE_DIVERGENT_CASES[] = {
+	{ "value_string_interior_nul", 2,
+	  "EffectsBuffer_WriteString takes its length from strlen and SIValue has "
+	  "no length to take instead, so the string stops at the interior NUL" },
+};
+
+#define EFFECTS_V3_ENCODE_DIVERGENT_COUNT              \
+	(sizeof(EFFECTS_V3_ENCODE_DIVERGENT_CASES) /       \
+	 sizeof(EFFECTS_V3_ENCODE_DIVERGENT_CASES[0]))
+
+// returns the expected short length, or 0 if the case must round-trip exactly
+static size_t _expected_short_encode
+(
+	const char *name  // case name
+) {
+	for(size_t i = 0; i < EFFECTS_V3_ENCODE_DIVERGENT_COUNT; i++) {
+		if(strcmp(EFFECTS_V3_ENCODE_DIVERGENT_CASES[i].name, name) == 0) {
+			return EFFECTS_V3_ENCODE_DIVERGENT_CASES[i].encodes_to;
+		}
+	}
+
+	return 0;
+}
+
 static void _round_trip(const EffectsV3CorpusEntry *e) {
 	EffectsV3Fixture f = EffectsV3Corpus_Load(e->name);
 	TEST_ASSERT_(f.buf != NULL, "%s: %s", e->name, f.err);
@@ -184,6 +248,29 @@ static void _round_trip(const EffectsV3CorpusEntry *e) {
 			size_t n = 0;
 			unsigned char *out = EffectsBuffer_Buffer(eb, &n);
 
+			size_t expect_short = _expected_short_encode(e->name);
+
+			if(expect_short != 0) {
+				// a known divergence: assert exactly what C does, so the day
+				// it stops doing it this fails and says to remove the entry
+				TEST_ASSERT_(n == expect_short,
+						"%s: re-encoded to %zu bytes; this case is listed as "
+						"diverging at %zu. If C now reproduces the corpus's "
+						"%zu bytes, delete it from "
+						"EFFECTS_V3_ENCODE_DIVERGENT_CASES so it is held to "
+						"the round trip like every other case. %s",
+						e->name, n, expect_short, f.len,
+						EFFECTS_V3_ENCODE_DIVERGENT_CASES[0].why);
+
+				rm_free(out);
+				EffectsBuffer_Free(eb);
+				EffectsV3_RecordsFree(records);
+				EffectsV3Corpus_Free(&f);
+				return;
+			}
+
+			// length before bytes, so a truncating encoder cannot pass on a
+			// prefix match
 			TEST_ASSERT_(n == f.len, "%s: re-encoded to %zu bytes, corpus has %zu",
 					e->name, n, f.len);
 
