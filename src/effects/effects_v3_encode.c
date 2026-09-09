@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "effects_v3_encode.h"
+#include "effects_v3.h"
 #include "effects_internal.h"
 #include "../util/rmalloc.h"
 
@@ -457,3 +458,47 @@ static void _encode_ddl_record
 	_write_attr_refs(r, 1, out);
 }
 
+// encode records back into a payload
+//
+// The seam the conformance round trip is built on: decode a fixture the OTHER
+// engine produced, re-encode it here, and compare bytes. That is the only test
+// that puts C's encoder and Rust's bytes against each other deterministically -
+// a live pair shows the two engines agreeing about a graph, not about a
+// payload, and a fixture comparison alone never runs C's encoder at all.
+//
+// It is deliberately thin, and deliberately NOT the accumulator. The
+// accumulator answers "what should this query emit", which is where the
+// grouping and ordering rules live; this answers "write exactly these records,
+// in exactly this order". A round trip has to reproduce what it was handed,
+// including a record order the accumulator would have chosen differently, so
+// routing it through the accumulator would make the test agree with itself.
+//
+// Returns false only on an internal failure - records that decoded cleanly
+// always re-encode.
+bool EffectsV3_Encode
+(
+	const EffectsV3Records *records,  // records to encode
+	EffectsBuffer *eb                 // buffer to write into
+) {
+	ASSERT(records != NULL);
+	ASSERT(eb      != NULL);
+
+	if(records == NULL || eb == NULL) {
+		return false;
+	}
+
+	// the header comes from the PAYLOAD, not from this build's configuration,
+	// which is the whole point of a round trip
+	EffectsBytes *body = EffectsBuffer_TakeBody(eb, records->version,
+			records->flags);
+	if(body == NULL) {
+		// the buffer was already accumulating effects of its own
+		return false;
+	}
+
+	for(uint32_t i = 0; i < records->n; i++) {
+		EffectsV3_EncodeRecord(records->records + i, body);
+	}
+
+	return true;
+}

@@ -485,15 +485,30 @@ void EffectsV3_RecordsFree
 // EffectsV3_Decode and EffectsV3_RecordsFree are defined
 #define EFFECTS_V3_DECODE_READY 1
 
-// EffectsV3_EncodeRecord and EffectsV3Grouping_Encode are defined, and every
-// one of the 14 records has a producing path wired to it
+// EffectsV3_Encode is DEFINED
 //
-// Not "the encoder compiles". A record with an encoder that nothing calls
-// produces a well-formed EMPTY payload rather than a refusal, which is the one
-// failure shape that survives every consistency check - so this flag means the
-// accumulator is reachable from the effect writers for all 14, not that the
-// functions exist.
+// Exactly that, and nothing more. The flag's only consumer links a round trip
+// against it, so its meaning is a contract with that consumer - I briefly
+// redefined it to mean "every record has a producing path", which is a true
+// and useful statement about a different thing, and would have set the flag
+// while EffectsV3_Encode was still undefined. That is precisely the failure
+// four lines of comment above say this flag exists to prevent.
+//
+// A readiness flag answers "will this link", never "is this good".
 #define EFFECTS_V3_ENCODE_READY 1
+
+// every one of the 14 records has a producing path into the accumulator
+//
+// A separate question from linkability, and worth its own flag rather than a
+// looser reading of the one above. A record whose encoder nothing CALLS emits
+// a well-formed EMPTY payload rather than a refusal - the master stays correct
+// and the replica silently does not - which is the failure shape that survives
+// every consistency check. So this says the accumulator is reachable from the
+// effect writers for all 14, which is what makes an empty payload impossible.
+//
+// tests/flow/test_effects_v3_emit.py is what holds it: an unrouted effect logs
+// and refuses to replicate, and that test fails on the log.
+#define EFFECTS_V3_ALL_RECORDS_WIRED 1
 
 // a record declaring count == 0 is refused at the header
 //

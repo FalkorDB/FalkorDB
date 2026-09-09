@@ -29,10 +29,10 @@ struct _EffectsBuffer {
 	// when this buffer emits v2
 	EffectsV3Grouping *v3;
 
-	// set when an effect arrived that the v3 encoder cannot represent - today
-	// the index and constraint DDL of records 11-14, which still write v2
-	// bytes. Such a buffer must not be sent: it would describe a subset of the
-	// query's effects and the replica would silently miss the rest
+	// v3's flags byte. Zero for everything this build emits - C does not
+	// compress - and settable only so EffectsV3_Encode can reproduce the
+	// header of a payload it was handed rather than assert one
+	uint8_t flags;
 };
 
 // forward declarations
@@ -84,9 +84,10 @@ static unsigned char *_EffectsBuffer_WriteHeader
 	*dst++ = eb->version;
 
 	if(eb->version >= 3) {
-		// flags; bit 0 = compressed. C does not compress yet, so this is 0,
-		// but the byte is part of the format regardless
-		*dst++ = 0;
+		// flags; bit 0 = compressed. C does not compress, so every buffer it
+		// builds carries 0 here - but a re-encode has to reproduce the header
+		// of the payload it decoded, so the value is read rather than assumed
+		*dst++ = eb->flags;
 	}
 
 	return dst;
@@ -402,6 +403,7 @@ EffectsBuffer *EffectsBuffer_New
 	eb->version      = (uint8_t)emit;
 	eb->owns_records = true;
 	eb->v3           = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
+	eb->flags        = 0;
 
 	// note: no header is written here. v2 stamped its version byte at
 	// construction; it is now written by EffectsBuffer_Buffer, so that the
@@ -435,6 +437,7 @@ void EffectsBuffer_Reset
 	buff->n       = 0;
 	buff->version = (uint8_t)emit;
 	buff->v3      = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
+	buff->flags   = 0;
 }
 
 // returns number of effects in buffer
@@ -452,6 +455,39 @@ uint64_t EffectsBuffer_Length
 	ASSERT(buff != NULL);
 
 	return buff->n;
+}
+
+// take over a buffer's body so pre-built records can be written into it
+//
+// EffectsBuffer_Buffer has TWO possible bodies: the accumulator's output when
+// one is attached, and eb->records otherwise. EffectsV3_Encode writes records
+// it was handed, so the accumulator has to be out of the way first - otherwise
+// everything written here is serialised over and silently discarded.
+//
+// Refuses a buffer that has already staged effects rather than throwing them
+// away. 'version' and 'flags' come from the payload being reproduced, because
+// re-encoding what was decoded must reproduce its header too, not the header
+// this build would have chosen.
+EffectsBytes *EffectsBuffer_TakeBody
+(
+	EffectsBuffer *eb,  // effects-buffer
+	uint8_t version,    // version byte to emit
+	uint8_t flags       // flags byte to emit
+) {
+	ASSERT(eb != NULL);
+
+	if(eb->v3 != NULL) {
+		if(EffectsV3Grouping_RecordCount(eb->v3) > 0) {
+			return NULL;
+		}
+		EffectsV3Grouping_Free(eb->v3);
+		eb->v3 = NULL;
+	}
+
+	eb->version = version;
+	eb->flags   = flags;
+
+	return eb->records;
 }
 
 // get a copy of effects-buffer internal buffer
@@ -1245,6 +1281,7 @@ EffectsBuffer *EffectsBuffer_Wrap
 	eb->version      = EFFECTS_VERSION_EMIT;
 	eb->owns_records = false;
 	eb->v3           = NULL;
+	eb->flags        = 0;
 
 	return eb;
 }
