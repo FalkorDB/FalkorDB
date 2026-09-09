@@ -7,6 +7,8 @@
 #include "effects_v3.h"
 #include "effects_internal.h"
 #include "../graph/graph_hub.h"
+#include "../datatypes/map.h"
+#include "../index/indexer.h"
 #include "../util/arr.h"
 #include "../util/rmalloc.h"
 #include "../util/roaring_include.h"
@@ -1119,6 +1121,377 @@ static bool _ApplyLabels
 }
 
 //------------------------------------------------------------------------------
+// records 11-14 - index and constraint DDL
+//------------------------------------------------------------------------------
+
+// the wire's simFunc codes ARE the VecSimMetric enum values - L2 0, IP 1,
+// cosine 2 (vec_sim_common.h). They are not renumbered anywhere, and must not
+// be: both engines persist the metric as that number in their RDB, so moving
+// one would make every existing file read a different metric than it was
+// written with.
+#define V3_SIMFUNC_L2     0
+#define V3_SIMFUNC_IP     1
+#define V3_SIMFUNC_COSINE 2
+
+// rebuild the options map the index constructors take
+//
+// v3 carries options as a typed block; Index_FulltextCreate and
+// Index_VectorCreate take an SIValue map. Reconstructing keeps ONE code path
+// for index construction shared with v2, so the two cannot diverge in how an
+// index is built - which is worth more than the seam being tidy. A lower-level
+// API taking the typed struct is the better end state and belongs in its own
+// change.
+//
+// A KEY IS OMITTED WHEN ITS PRESENCE BYTE IS CLEAR, never defaulted. The
+// constructors seed their own defaults and override only on a hit, so omission
+// reproduces "the statement did not say" exactly - and for per-field options
+// that is right anyway, because the field is being created and has no prior
+// value. Language and stopwords are NOT put in the map: they are index-level,
+// applied separately through their guarded setters, and that is where absence
+// genuinely has to mean "do not call".
+//
+// Returns false, with a named reason logged, when the record asks for
+// something this build cannot express. Refusing names the gap; a
+// reconstruction would have to invent a value.
+static bool _OptionsToMap
+(
+	const EffectsV3Record *rec,
+	SIValue *out
+) {
+	const EffectsV3IndexOptions *o = &rec->options ;
+
+	*out = Map_New (8) ;
+
+	// per-field fulltext options
+	if (o->has_weight) {
+		Map_Add (out, SI_ConstStringVal ("weight"), SI_DoubleVal (o->weight)) ;
+	}
+	if (o->has_nostem) {
+		Map_Add (out, SI_ConstStringVal ("nostem"),
+				SI_BoolVal (o->nostem)) ;
+	}
+	if (o->has_phonetic) {
+		Map_Add (out, SI_ConstStringVal ("phonetic"),
+				SI_ConstStringVal (o->phonetic)) ;
+	}
+
+	if (!o->is_vector) {
+		return true ;
+	}
+
+	//--------------------------------------------------------------------------
+	// the vector half
+	//--------------------------------------------------------------------------
+
+	// _parseOptions REQUIRES a dimension and rejects a zero one, so a record
+	// asking for a dimensionless vector field describes something C cannot
+	// build. Refused rather than substituted.
+	if (o->dimension == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_INDEX vector field on '%s' declares "
+				"dimension 0, which this build cannot create", rec->name) ;
+		Map_Free (*out) ;
+		*out = SI_NullVal () ;
+		return false ;
+	}
+
+	Map_Add (out, SI_ConstStringVal ("dimension"),
+			SI_LongVal ((int64_t)o->dimension)) ;
+
+	// similarityFunction is required by _parseOptions and is a STRING there,
+	// while the wire carries a code. Absence means euclidean, which is what
+	// the emitter's own builder defaults to.
+	const char *sim = "euclidean" ;
+	if (o->has_sim_func) {
+		switch (o->sim_func) {
+			case V3_SIMFUNC_L2:     sim = "euclidean" ; break ;
+			case V3_SIMFUNC_COSINE: sim = "cosine"    ; break ;
+
+			case V3_SIMFUNC_IP:
+				// kept as an explicit refusal rather than folded into the
+				// default arm. The option is being withdrawn upstream, but an
+				// older peer or a pre-withdrawal RDB can still carry the code,
+				// and a replica must refuse and resync rather than quietly
+				// substitute a different metric - the same index would then
+				// compute differently depending on how the replica synced.
+			default:
+				RedisModule_Log (NULL, "warning",
+						"GRAPH.EFFECT CREATE_INDEX vector field on '%s' asks "
+						"for similarity function %" PRIu64
+						", which this build cannot create", rec->name,
+						o->sim_func) ;
+				Map_Free (*out) ;
+				*out = SI_NullVal () ;
+				return false ;
+		}
+	}
+	Map_Add (out, SI_ConstStringVal ("similarityFunction"),
+			SI_ConstStringVal (sim)) ;
+
+	if (o->has_m) {
+		Map_Add (out, SI_ConstStringVal ("M"),
+				SI_LongVal ((int64_t)o->m)) ;
+	}
+	if (o->has_ef_construction) {
+		Map_Add (out, SI_ConstStringVal ("efConstruction"),
+				SI_LongVal ((int64_t)o->ef_construction)) ;
+	}
+	if (o->has_ef_runtime) {
+		Map_Add (out, SI_ConstStringVal ("efRuntime"),
+				SI_LongVal ((int64_t)o->ef_runtime)) ;
+	}
+
+	return true ;
+}
+
+// resolve the schema and every attribute a DDL record names
+//
+// VerifySchema and VerifyAttribute are the shared helpers the v2 DDL appliers
+// already use: the id drives the operation and the name is the cross-check
+// that surfaces divergence instead of trusting a stale id.
+static Schema *_VerifyDDLRefs
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec,
+	const char *op
+) {
+	Schema *s = VerifySchema (gc, rec->schema_type, rec->schema_id, rec->name) ;
+	if (s == NULL) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT %s references schema '%s' (%d) which does not "
+				"resolve locally", op, rec->name, rec->schema_id) ;
+		return NULL ;
+	}
+
+	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
+		if (!VerifyAttribute (gc, rec->attrs_ref[i].id,
+					rec->attrs_ref[i].name)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT %s references attribute '%s' (%u) which does "
+					"not resolve locally", op, rec->attrs_ref[i].name,
+					rec->attrs_ref[i].id) ;
+			return NULL ;
+		}
+	}
+
+	return s ;
+}
+
+// CREATE_INDEX - ONE RECORD PER STATEMENT
+//
+// v2 sent one record per field and reconstructed the statement by accident;
+// v3 states it once. So the fields are added in a loop against one set of
+// statement-level options, and the index-level configuration is applied ONCE.
+//
+// The asymmetry between the two index-level setters is why that matters:
+// Index_SetLanguage fails only if the language DIFFERS, but Index_SetStopwords
+// fails if stopwords are set AT ALL. Passing the same options to every field
+// would therefore work for language and fail on the second field of any
+// statement carrying stopwords - and pass every test that does not use them.
+static bool _ApplyCreateIndex
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	Schema *s = _VerifyDDLRefs (gc, rec, "CREATE_INDEX") ;
+	if (s == NULL) {
+		return false ;
+	}
+
+	if (rec->n_attrs_ref == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_INDEX on '%s' names no fields",
+				rec->name) ;
+		return false ;
+	}
+
+	SIValue options ;
+	if (!_OptionsToMap (rec, &options)) {
+		return false ;
+	}
+
+	const GraphEntityType et =
+		(rec->schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
+
+	bool ok = true ;
+	Index idx = NULL ;
+
+	for (uint16_t i = 0 ; i < rec->n_attrs_ref && ok ; i++) {
+		idx = GraphHub_AddIndex (gc, rec->name, rec->attrs_ref[i].name, et,
+				(IndexFieldType)rec->field_type, options, false) ;
+
+		if (idx == NULL) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_INDEX failed to create field '%s' "
+					"on '%s'", rec->attrs_ref[i].name, rec->name) ;
+			ok = false ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// index-level configuration, once per statement
+	//--------------------------------------------------------------------------
+
+	if (ok && rec->options.has_language) {
+		Index_SetLanguage (idx, rec->options.language) ;
+	}
+
+	if (ok && rec->options.has_stopwords) {
+		// Index_SetStopwords takes ownership of the array, so it is built here
+		// rather than borrowed from the record
+		char **sw = arr_new (char*, rec->options.n_stopwords) ;
+		for (uint64_t i = 0 ; i < rec->options.n_stopwords ; i++) {
+			arr_append (sw, rm_strdup (rec->options.stopwords[i])) ;
+		}
+
+		if (!Index_ContainsStopwords (idx)) {
+			Index_SetStopwords (idx, &sw) ;
+		} else {
+			arr_free_cb (sw, rm_free) ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// populate, once, synchronously
+	//--------------------------------------------------------------------------
+	//
+	// a replica must not spawn population threads and must not reorder its work
+	// against the effect stream, so this is the same in-line population v2's
+	// apply uses rather than the async variant a query would take.
+	if (ok) {
+		Index_Disable (idx) ;
+		Indexer_PopulateIndex (gc, s, idx) ;
+	}
+
+	SIValue_Free (options) ;
+	return ok ;
+}
+
+// DROP_INDEX - mirrors create without the options, and sends n = 0 fields
+static bool _ApplyDropIndex
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	Schema *s = _VerifyDDLRefs (gc, rec, "DROP_INDEX") ;
+	if (s == NULL) {
+		return false ;
+	}
+
+	const GraphEntityType et =
+		(rec->schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
+
+	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
+		if (GraphHub_DropIndex (gc, rec->schema_type, rec->name,
+					rec->attrs_ref[i].name, (IndexFieldType)rec->field_type,
+					false) != INDEX_OK) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT DROP_INDEX failed to drop field '%s' on "
+					"'%s'", rec->attrs_ref[i].name, rec->name) ;
+			return false ;
+		}
+	}
+
+	return true ;
+}
+
+// CREATE_CONSTRAINT
+//
+// A REPLICA INSTALLS THE MASTER'S OUTCOME AND DOES NOT RE-VALIDATE. Scanning
+// independently would run at a different time against different write
+// interleavings and could legitimately reach a different status, so the
+// announcement is what the replica takes.
+//
+// The record carries a ConstraintStatus that C never sends - the one place v3
+// deliberately carries more than C - and it is what lets the second
+// announcement, the one after validation completes, converge on the first
+// rather than duplicate it.
+static bool _ApplyCreateConstraint
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	const GraphEntityType et = (GraphEntityType)rec->entity_type ;
+
+	// GraphEntityType is 1-BASED: GETYPE_UNKNOWN takes 0, so a node is 1
+	if (et != GETYPE_NODE && et != GETYPE_EDGE) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_CONSTRAINT unknown entity type %u",
+				rec->entity_type) ;
+		return false ;
+	}
+
+	if (_VerifyDDLRefs (gc, rec, "CREATE_CONSTRAINT") == NULL) {
+		return false ;
+	}
+
+	const char *props[rec->n_attrs_ref > 0 ? rec->n_attrs_ref : 1] ;
+	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
+		props[i] = rec->attrs_ref[i].name ;
+	}
+
+	ConstraintCreateStatus status ;
+	const char *err_msg = NULL ;
+	Constraint c = GraphHub_AddConstraint (gc, (ConstraintType)rec->constraint_type,
+			et, rec->name, props, (uint8_t)rec->n_attrs_ref, false, &status,
+			&err_msg) ;
+
+	switch (status) {
+		case CONSTRAINT_ALREADY_EXISTS:
+			// the convergent case the status field exists for
+			return true ;
+
+		case CONSTRAINT_CREATED:
+			ASSERT (c != NULL) ;
+			Constraint_Enforce (c, (struct GraphContext *)gc) ;
+			return true ;
+
+		case CONSTRAINT_ERROR:
+		default:
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' failed: %s",
+					rec->name, err_msg != NULL ? err_msg : "unknown error") ;
+			return false ;
+	}
+}
+
+// DROP_CONSTRAINT - mirrors create without the status, which apply never reads
+static bool _ApplyDropConstraint
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	const GraphEntityType et = (GraphEntityType)rec->entity_type ;
+
+	if (et != GETYPE_NODE && et != GETYPE_EDGE) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT DROP_CONSTRAINT unknown entity type %u",
+				rec->entity_type) ;
+		return false ;
+	}
+
+	if (_VerifyDDLRefs (gc, rec, "DROP_CONSTRAINT") == NULL) {
+		return false ;
+	}
+
+	const char *props[rec->n_attrs_ref > 0 ? rec->n_attrs_ref : 1] ;
+	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
+		props[i] = rec->attrs_ref[i].name ;
+	}
+
+	const char *err_msg = NULL ;
+	if (!GraphHub_DropConstraint (gc, (ConstraintType)rec->constraint_type, et,
+				rec->name, props, (uint8_t)rec->n_attrs_ref, false, &err_msg)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT DROP_CONSTRAINT on '%s' failed: %s", rec->name,
+				err_msg != NULL ? err_msg : "unknown error") ;
+		return false ;
+	}
+
+	return true ;
+}
+
+//------------------------------------------------------------------------------
 // the entry point
 //------------------------------------------------------------------------------
 
@@ -1182,9 +1555,23 @@ bool EffectsV3_Apply
 				ok = _ApplyLabels (gc, rec, false) ;
 				break ;
 
+			case EFFECT_CREATE_INDEX:
+				ok = _ApplyCreateIndex (gc, rec) ;
+				break ;
+
+			case EFFECT_DROP_INDEX:
+				ok = _ApplyDropIndex (gc, rec) ;
+				break ;
+
+			case EFFECT_CREATE_CONSTRAINT:
+				ok = _ApplyCreateConstraint (gc, rec) ;
+				break ;
+
+			case EFFECT_DROP_CONSTRAINT:
+				ok = _ApplyDropConstraint (gc, rec) ;
+				break ;
+
 			default:
-				// records 11-14 are refused at decode, so reaching here means
-				// a record this build decoded and cannot apply
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT cannot apply record type %d",
 						(int)rec->opcode) ;
