@@ -1243,3 +1243,29 @@ class testConstraintStatusIsAdoptedNotRecomputed():
         # Adopting the primary's answer means FAILED.
         self.env.assertEquals(self._status(), ["FAILED"])
 
+    def test02_mandatory_adopts_too(self):
+        # MANDATORY was ALSO re-validating before the fix - measured at 67x at
+        # 100,000 nodes on the shape that had been used as the control. It was
+        # assumed cheap because it "only checks presence", but cheaper THAN
+        # RESYNCING is a different claim from cheap, and a two-way comparison
+        # could not tell those apart.
+        #
+        # Pinned separately from UNIQUE because the two take different paths
+        # into GraphHub_AddConstraint - a later change that adopts for one and
+        # not the other would regress this silently, and the shared adopt is
+        # the only thing making them behave the same today.
+        #
+        # No supporting index: unlike UNIQUE, a MANDATORY constraint does not
+        # need one.
+        self._send(payload(rec_create_constraint(
+            ct = 1,                       # mandatory
+            et = 1, status = self.CT_FAILED,
+            label_id = 0, label = "P", props = [(0, "title")])))
+
+        # both constraints now exist; the mandatory one must have adopted
+        # FAILED rather than scanning two nodes that both have a title
+        res = self.graph.query(
+            "CALL db.constraints() YIELD type, status RETURN type, status")
+        rows = {tuple(r) for r in res.result_set}
+        self.env.assertContains(("MANDATORY", "FAILED"), rows)
+
