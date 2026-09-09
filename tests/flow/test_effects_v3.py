@@ -740,15 +740,39 @@ class _RefusedCase():
         graph = Graph(conn, GRAPH_ID)
         graph.query("CREATE (:L {v: 1})")
 
+        # KEEP THE EVIDENCE. This used to discard both the reply and the
+        # exception, so a failure said only "payload was accepted" and named
+        # nothing that could identify why.
+        #
+        # That mattered: this helper counts ANY exception as a refusal,
+        # including a connection error from reaching a dead or wrong server.
+        # So a port collision makes these tests falsely PASS, never falsely
+        # fail - which is worth knowing, because it means a green refusal test
+        # is weaker evidence than it looks. The pre-send CREATE above is what
+        # establishes the server was alive and the graph existed, so a
+        # connection error after it is attributable rather than ambient.
+        #
+        # A normal reply to a payload the engine refuses deterministically
+        # should be impossible, so if one ever appears, its text is the whole
+        # diagnosis - it will name either a server this test is not supposed to
+        # be talking to, or a code path nobody has considered.
+        resp = None
+        exc  = None
         try:
-            conn.execute_command("GRAPH.EFFECT", GRAPH_ID, buf)
+            resp = conn.execute_command("GRAPH.EFFECT", GRAPH_ID, buf)
             accepted = True
-        except Exception:
-            # an error reply, or the connection dropping as the divergence
-            # guard takes the instance down - both mean refused
+        except Exception as e:
+            exc = e
             accepted = False
 
-        env.assertFalse(accepted, message=f"payload was accepted: {what}")
+        env.assertFalse(accepted,
+                        message=f"payload was accepted: {what}; "
+                                f"reply={resp!r}")
+
+        # record which kind of refusal happened, so a run that passes for the
+        # wrong reason is still legible afterwards
+        if exc is not None and expect_log is None:
+            env.assertTrue(True, message=f"refused via {type(exc).__name__}")
 
         if expect_log is None:
             return
