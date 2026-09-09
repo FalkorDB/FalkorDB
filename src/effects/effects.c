@@ -156,7 +156,9 @@ void EffectsBuffer_WriteBytes
 // Rust produces them: openCypher's \uXXXX escape can encode one, so
 // size('a<NUL>b') is 3 there where strlen would report 1.
 //
-// THIS STILL WRITES strlen + 1, deliberately, for three independent reasons:
+// THIS STILL WRITES strlen + 1, deliberately, for three independent reasons.
+// They are listed separately because they EXPIRE SEPARATELY - collapsing them
+// into one "we cannot do this" would read as permanent, and none of them is:
 //
 //   * C cannot express such a value. It does not implement \uXXXX at all -
 //     measured, C reports size 6 for the escape Rust reports 1 for, and 8 where
@@ -171,6 +173,15 @@ void EffectsBuffer_WriteBytes
 //     alters shipped v2 bytes, so conforming would need a v3-only string
 //     writer - a second SIValue codec, which is the one thing this file must
 //     not grow.
+//
+// WHICH ONE EXPIRES WHEN:
+//
+//   the escape gap      ends the day C implements the unicode escape
+//   the missing length  ends if anyone adds one to SIValue
+//   the shared writer   ends only when v2 does
+//
+// So a reader arriving later should check which of the three still holds
+// rather than assuming the conclusion survived.
 //
 // So C conforms by construction rather than by intent. The day C gains \uXXXX
 // support this becomes a silent truncation on the wire, and the fix then is a
