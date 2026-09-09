@@ -86,8 +86,23 @@ impl EffectEncode<3> for Value {
                 // Floor: an 8-byte key length plus the value's type tag.
                 buf.reserve(m.len() * 12);
                 for (k, v) in m.iter() {
-                    // Keys are strings on both sides; C writes the key as a bare
-                    // string, not as a nested SIValue.
+                    // The key is a plain string, not a tagged value.
+                    //
+                    // A map key is a string in both engines' type systems — this
+                    // one's is `OrderMap<Arc<String>, Value>`, where the key is
+                    // not a `Value` at all, and C's `map.c` asserts
+                    // `SI_TYPE(key) & T_STRING` on every access. So `T_STRING`
+                    // is a fact about how an engine *represents* a string
+                    // internally, and putting it on the wire would publish one
+                    // engine's type-enum discriminant as wire semantics.
+                    //
+                    // C's shipped v2 does tag it: `EffectsBuffer_WriteSIMap`
+                    // writes the key through `WriteSIValue`, and
+                    // `Map_FromBinary` reads it back with `SIValue_FromBinary`,
+                    // then narrows it to a string again on first use. A v3
+                    // reader therefore needs its own path — the shape C already
+                    // uses for `ApplyLabels` / `ApplyLabels_V2`, dispatched on
+                    // the version byte.
                     buf.string(k);
                     v.encode(buf);
                 }
