@@ -43,7 +43,8 @@ class testDivergenceReport(FlowTestsBase):
                 return
             sleep(0.5)
             timeout -= 0.5
-        raise RuntimeError("replica never reached master_link_status:up")
+        self.env.assertTrue(
+            False, message="replica never reached master_link_status:up")
 
     def _replica_log(self):
         name = self.env.envRunner._getFileName("slave", ".log")
@@ -87,39 +88,38 @@ class testDivergenceReport(FlowTestsBase):
         graph.query("CREATE (:Diverges {marker: 'find me', n: 42})")
 
         log = self._wait_for_log("Diverged payload")
-        if "Diverged payload" not in log:
-            raise AssertionError(
-                "the replica refused the effect but logged nothing about the "
-                f"payload; log tail:\n{log[-4000:]}")
+        env.assertContains("Diverged payload", log)
 
         reported = [l for l in log.splitlines() if "Diverged payload" in l]
+        env.assertTrue(
+            len(reported) > 0,
+            message=f"refused the effect but reported no payload; tail:\n{log[-2000:]}")
 
         # What it says. The record rendering is the half a reader compares
         # against the query that ran on the master, so the values that write
         # actually carried have to survive into it.
-        if not any("CreateNode" in l for l in reported):
-            raise AssertionError("no record was named:\n" + "\n".join(reported))
-        if not any("find me" in l and "42" in l for l in reported):
-            raise AssertionError(
-                "the record was named but its values were not, so the log "
-                "cannot be matched to a write:\n" + "\n".join(reported))
+        env.assertTrue(
+            any("CreateNode" in l for l in reported),
+            message="no record was named:\n" + "\n".join(reported))
+        env.assertTrue(
+            any("find me" in l and "42" in l for l in reported),
+            message="the record was named but its values were not, so the log "
+                    "cannot be matched to a write:\n" + "\n".join(reported))
 
         # What arrived. The bytes are the half that still works when the
         # decoding is the thing that is wrong, and the half to diff against the
         # master's own record of what it sent.
-        if not any("bytes[0x0000] " in l for l in reported):
-            raise AssertionError("no raw bytes:\n" + "\n".join(reported))
+        env.assertTrue(
+            any("bytes[0x0000] " in l for l in reported),
+            message="no raw bytes:\n" + "\n".join(reported))
 
         # Redis truncates a log message at LOG_MAX_LEN, silently. A line that
         # reaches it is a line being cut off with nothing to say so.
         too_long = [l for l in reported if len(l) > 1024]
-        if too_long:
-            raise AssertionError(
-                f"{len(too_long)} log lines hit the redis truncation limit: "
-                f"{too_long[0][:200]}…")
+        env.assertEqual(
+            too_long, [],
+            message=f"{len(too_long)} log lines hit the redis truncation limit")
 
         # And the guard still did its job: the report is an addition to the
         # resync, not a replacement for it.
-        if "Forced full resync" not in log:
-            raise AssertionError(
-                "payload was reported but no resync was scheduled")
+        env.assertContains("Forced full resync", log)
