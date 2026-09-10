@@ -1069,6 +1069,38 @@ class testGraphDeletionFlow(FlowTestsBase):
                                   RETURN a.d, a.e, a.f, a.g, a.h""")
         self.env.assertEqual(res.result_set, [[2, 1, 1, 0, 1]])
 
+    def test42_retracting_the_last_edge_of_a_type_drops_the_type(self):
+        # Retracting a pending relationship left an empty bucket behind in
+        # `created_rels_by_type`, so the query still claimed to be creating
+        # edges of a type it no longer creates any edge of.
+        #
+        # With the type's last edge gone, `commit()` skips relationship
+        # creation entirely and never registers the type in the schema, so
+        # `build_effects_buffer` could not resolve its id and aborted the
+        # server process — reachable from a plain query, with no degree
+        # function involved, on any server with replication or AOF enabled.
+        self.graph.delete()
+
+        res = self.graph.query("CREATE (a:A)-[r:R]->(b:B) DELETE b RETURN 1")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(res.relationships_created, 0)
+        self.env.assertEqual(res.nodes_created, 1)
+
+        # The empty bucket is observable without replication too: with another
+        # type still live, `commit()` registered the retracted type against an
+        # empty batch, publishing a type for a relationship that never existed.
+        self.graph.delete()
+        res = self.graph.query(
+            "CREATE (a:A)-[r:R]->(b:B), (a)-[q:Q]->(c:C) DELETE b RETURN 1")
+        self.env.assertEqual(res.relationships_created, 1)
+
+        types = self.graph.query("CALL db.relationshipTypes()").result_set
+        self.env.assertEqual(types, [['Q']])
+
+        # and the surviving edge is intact
+        res = self.graph.query("MATCH ()-[r]->() RETURN type(r)")
+        self.env.assertEqual(res.result_set, [['Q']])
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()

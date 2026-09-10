@@ -695,6 +695,15 @@ impl Pending {
             self.created_rel_types.remove(&rel_id);
             if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
                 entries.retain(|rid| *rid != rel_id);
+                // Drop the type once its last created edge is retracted.
+                // `created_rels_by_type` is read as "types this query is
+                // creating edges for", so an empty bucket left behind claims a
+                // type that is never registered in the schema, and `commit()`
+                // registers a type for zero edges or `build_effects_buffer`
+                // fails to resolve its id.
+                if entries.is_empty() {
+                    self.created_rels_by_type.remove(&type_name);
+                }
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(rel_id.into());
@@ -1775,6 +1784,9 @@ impl Pending {
         if !self.created_rels_by_type.is_empty() {
             let graph = g.borrow();
             for (type_name, entries) in &self.created_rels_by_type {
+                if entries.is_empty() {
+                    continue;
+                }
                 let type_id = graph
                     .get_type_id(type_name)
                     .expect("created relationship type must be registered")
