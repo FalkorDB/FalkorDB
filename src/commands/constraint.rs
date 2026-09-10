@@ -561,15 +561,34 @@ pub fn graph_constraint(
                 // otherwise whatever `create_constraint` decided inline — read
                 // back rather than assumed, and present because the graph write
                 // lock has been held since it was created.
+                // Not `expect`. The status is an invariant — the graph write
+                // lock has been held since `create_constraint` stored the
+                // constraint, so it is there — but the write has already
+                // committed by this point, and a panic would take the server
+                // down over a bookkeeping surprise rather than lose an
+                // announcement. That is the same trade the `Err` arm below
+                // makes, so this makes it the same way: say so, and skip the
+                // announcement rather than the process.
                 let status = if !is_create {
-                    None
+                    Some(None)
                 } else if needs_background_validation {
-                    Some(ConstraintStatus::UnderConstruction)
+                    Some(Some(ConstraintStatus::UnderConstruction))
                 } else {
-                    Some(
-                        find_status(&mutated.borrow(), ct, entity_type, &label, &properties)
-                            .expect("a create leaves its constraint in place"),
-                    )
+                    find_status(&mutated.borrow(), ct, entity_type, &label, &properties).map(Some)
+                };
+                let Some(status) = status else {
+                    redis_module::logging::log_warning(format!(
+                        "constraint CREATE on {entity_type:?} '{label}' was applied but its \
+                         status could not be read back, so it was not announced; it will not \
+                         reach replicas or the AOF. Recover with GRAPH.CONSTRAINT DROP on \
+                         graph '{}' followed by CREATE.",
+                        String::from_utf8_lossy(key_str.as_slice()),
+                    ));
+                    return if is_create {
+                        Ok(RedisValue::SimpleStringStatic("PENDING"))
+                    } else {
+                        Ok(RedisValue::SimpleStringStatic("OK"))
+                    };
                 };
                 let mut buf = EffectsBuffer::new();
                 match buf.build_constraint(
