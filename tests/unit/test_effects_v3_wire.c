@@ -80,11 +80,24 @@ static void setup(void) {
 // the harness does not exist. EFFECTS_V3_REQUIRE_CORPUS did not catch it
 // either, because the fixture opens.
 //
-// __has_include answers the same question the glob answers, at the moment the
-// glob answers it, which is the only way to detect a target that was never
-// generated from inside a target that was.
-#if defined(__has_include)
+// EFFECTS_V3_HARNESS_PRESENT is set by tests/unit/CMakeLists.txt when the
+// harness's header is in this directory at CONFIGURE time -- the same moment,
+// and the same question, as the glob that decides whether its targets exist.
+//
+// It is not __has_include, and the reason is a trap this file hit while being
+// verified. __has_include is evaluated when THIS file is compiled and baked
+// into its object, and neither the appearance nor the disappearance of the
+// header invalidates that object -- so an incremental build after mounting
+// reported "harness absent" while the harness ran, and after unmounting would
+// report "harness present" while it did not. The second is a false green under
+// EFFECTS_V3_REQUIRE_CORPUS, which is the failure this file exists to prevent.
+//
+// As a compile definition the build system tracks it, so the reconfigure a
+// mount already requires rebuilds this file whenever the answer changes.
+#if defined(__has_include) && !defined(EFFECTS_V3_HARNESS_PRESENT)
 #  if __has_include("tests/unit/effects_v3_corpus.h")
+     // fallback for a build that does not go through the CMakeLists above;
+     // subject to the staleness described, hence second choice
 #    define EFFECTS_V3_HARNESS_PRESENT 1
 #  endif
 #endif
