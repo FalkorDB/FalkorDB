@@ -91,7 +91,7 @@ jobs:
       (needs.pre_activation.outputs.activated == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure')) &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.repository.id == github.repository_id &&
       (!(github.event.workflow_run.repository.fork)))
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       actions: read
       contents: read
@@ -404,7 +404,7 @@ jobs:
   agent:
     needs: activation
     if: needs.activation.outputs.daily_ai_credits_exceeded != 'true'
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       actions: read
       contents: read
@@ -1133,7 +1133,7 @@ jobs:
     if: >
       always() && (needs.agent.result != 'skipped' || needs.activation.outputs.lockdown_check_failed == 'true' ||
       needs.activation.outputs.stale_lock_file_failed == 'true' || needs.activation.outputs.daily_ai_credits_exceeded == 'true')
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       issues: write
@@ -1380,7 +1380,7 @@ jobs:
       - activation
       - agent
     if: always() && needs.agent.result != 'skipped'
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       contents: read
     env:
@@ -1623,7 +1623,7 @@ jobs:
 
   pre_activation:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'failure'
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     env:
       GH_AW_RUNTIME_FEATURES: ${{ vars.GH_AW_RUNTIME_FEATURES }}
     outputs:
@@ -1664,7 +1664,7 @@ jobs:
       - agent
       - detection
     if: (!cancelled()) && needs.agent.result != 'skipped' && needs.detection.result == 'success'
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       issues: write

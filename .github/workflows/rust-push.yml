@@ -35,7 +35,7 @@ env:
 
 jobs:
   check-files:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     outputs:
       file_changed: ${{ steps.check.outputs.changed }}
     steps:
@@ -64,7 +64,7 @@ jobs:
   find-pr:
     needs: check-files
     if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       pull-requests: read
@@ -109,7 +109,7 @@ jobs:
   docker:
     needs: [check-files, find-pr]
     if: ${{ needs.check-files.outputs.file_changed == 'true' && needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       packages: write
@@ -144,7 +144,7 @@ jobs:
   promote-edge:
     needs: find-pr
     if: ${{ needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       packages: write
@@ -194,7 +194,7 @@ jobs:
             "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
@@ -212,7 +212,7 @@ jobs:
         run: |
           CXX=clang++-22 cargo clippy --all-targets
   test:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
@@ -245,7 +245,7 @@ jobs:
           . /data/venv/bin/activate
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
   build-release:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
@@ -266,7 +266,7 @@ jobs:
           name: release-binary
           path: target/release/libfalkordb.so
   flow-test-matrix:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     outputs:
       test_files: ${{ steps.set-matrix.outputs.test_files }}
     steps:
@@ -276,7 +276,7 @@ jobs:
         run: |
           echo "test_files=$(jq -Rc '[., inputs] | map(select(length > 0))' flow_tests_done.txt)" >> $GITHUB_OUTPUT
   test-flow:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
@@ -311,7 +311,7 @@ jobs:
             tests/flow/logs/
           if-no-files-found: ignore
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:latest
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
@@ -365,7 +365,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   build-coverage:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - check-files
@@ -387,7 +387,7 @@ jobs:
           name: coverage-binary
           path: target/debug/libfalkordb.so
   coverage-flow:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:latest
     needs:
       - docker
@@ -428,7 +428,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   fuzz:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:latest
     needs: docker
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}

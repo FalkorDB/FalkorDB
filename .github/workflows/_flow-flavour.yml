@@ -69,7 +69,7 @@ jobs:
   # building it via _build-flavour.yml in rust-pr.yml.
   services:
     name: ${{ inputs.flavour }}-flow-svc ${{ matrix.test_file }} (${{ matrix.arch }})
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: incredibuild-runner
     container:
       image: ${{ inputs.build_image }}
       options: --volume /var/run/docker.sock:/var/run/docker.sock
@@ -185,7 +185,7 @@ jobs:
   spawn:
     if: ${{ inputs.include_spawn }}
     name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ matrix.arch }})
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: incredibuild-runner
     container:
       image: ${{ inputs.build_image }}
       options: --volume /var/run/docker.sock:/var/run/docker.sock

@@ -60,8 +60,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { arch: x64,     platform: linux/amd64, runner: ubuntu-latest }
-          - { arch: arm64v8, platform: linux/arm64, runner: ubuntu-24.04-arm }
+          - { arch: x64,     platform: linux/amd64, runner: incredibuild-runner }
+          - { arch: arm64v8, platform: linux/arm64, runner: incredibuild-runner }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -95,7 +95,7 @@ jobs:
   manifest:
     needs: build
     if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       packages: write

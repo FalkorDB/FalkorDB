@@ -107,7 +107,7 @@ jobs:
       github.event.label.name == 'benchmark-cov' &&
       contains(fromJSON('["main","main-rs"]'), github.event.pull_request.base.ref) &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     timeout-minutes: 20
     outputs:
       bench_image: ${{ steps.bake.outputs.bench_image }}
@@ -275,7 +275,7 @@ jobs:
   # Full 317-query set, one runner per side, all three at once.
   measure:
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -354,7 +354,7 @@ jobs:
   # critical path. 2 sides x 6 shards = 12 jobs.
   callgrind:
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -429,7 +429,7 @@ jobs:
   # so it costs no extra wall-clock.
   coverage:
     needs: preflight
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -489,7 +489,7 @@ jobs:
   report:
     needs: [preflight, measure, callgrind, coverage]
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

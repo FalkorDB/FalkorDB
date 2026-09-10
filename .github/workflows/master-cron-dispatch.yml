@@ -49,7 +49,7 @@ jobs:
     # Only meaningful in the repo that actually has a `master` branch. Guards
     # against this file being merged into a repo where master does not exist.
     if: ${{ github.repository == 'FalkorDB/FalkorDB' }}
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     steps:
       - name: Dispatch master's scheduled workflows
         env:

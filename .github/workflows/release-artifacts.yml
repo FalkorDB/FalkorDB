@@ -54,7 +54,7 @@ concurrency:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     outputs:
       cells: ${{ steps.derive.outputs.cells }}
       commit_sha: ${{ steps.derive.outputs.commit_sha }}
@@ -98,10 +98,10 @@ jobs:
             echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"; exit 1
           fi
           ALL='[
-            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
-            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
-            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++"},
-            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19"}
+            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
+            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"incredibuild-runner","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
+            {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++"},
+            {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19"}
           ]'
           CELLS=$(printf '%s' "$ALL" | jq -c .)
           SUFFIXES=$(printf '%s' "$ALL" | jq -c '[ .[].suffix ]')
@@ -129,7 +129,7 @@ jobs:
 
   publish:
     needs: [prepare, build]
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       contents: write
     steps:

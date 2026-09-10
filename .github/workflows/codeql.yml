@@ -39,7 +39,7 @@ permissions:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       actions: read
       contents: read

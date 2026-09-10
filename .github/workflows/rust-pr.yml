@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   check-files:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     outputs:
       file_changed: ${{ steps.check.outputs.changed }}
     steps:
@@ -115,7 +115,7 @@ jobs:
       flavour: release
       tag: rc-pr-${{ github.event.pull_request.number }}
       commit_sha: ${{ github.event.pull_request.head.sha }}
-      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"incredibuild-runner","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"}]'
       browser_tag: edge
       build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
       # push_to_dockerhub left at default false — PR RC builds stay on GHCR.
@@ -136,7 +136,7 @@ jobs:
       # — historical from when the asan image bundled the browser stage.
       tag: rc-pr-${{ github.event.pull_request.number }}-asan
       commit_sha: ${{ github.event.pull_request.head.sha }}
-      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb"}]'
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"server","repo":"falkordb"}]'
       dockerfile: build/runtime/Dockerfile.asan
       build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
       create_manifest: false
@@ -153,13 +153,13 @@ jobs:
       flavour: coverage
       tag: rc-pr-${{ github.event.pull_request.number }}-coverage
       commit_sha: ${{ github.event.pull_request.head.sha }}
-      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"}]'
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"}]'
       dockerfile: build/runtime/Dockerfile.coverage
       build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
       create_manifest: false
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
@@ -177,7 +177,7 @@ jobs:
         run: |
           CXX=clang++-22 cargo clippy --all-targets
   test:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container:
       image: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
       # Mount the runner's docker socket so the "Capture service container
@@ -258,7 +258,7 @@ jobs:
           path: tests/flow/logs/
           if-no-files-found: ignore
   flow-test-matrix:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     outputs:
       services_files: ${{ steps.set-matrix.outputs.services_files }}
       spawn_files: ${{ steps.set-matrix.outputs.spawn_files }}
@@ -340,7 +340,7 @@ jobs:
     secrets: inherit
 
   coverage:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
@@ -398,7 +398,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
   fuzz:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     container: ghcr.io/falkordb/falkordb-build:${{ needs.check-files.outputs.file_changed == 'true' && format('pr-{0}', github.event.pull_request.number) || 'latest' }}
     needs:
       - check-files
