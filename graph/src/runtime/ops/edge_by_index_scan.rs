@@ -82,6 +82,8 @@ impl<'a> EdgeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
+        // Kept in the signature, unused for now: see the emitter below.
+        _record_cap: Option<usize>,
     ) -> Self {
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
@@ -91,12 +93,18 @@ impl<'a> EdgeByIndexScanOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(EdgeEndpoints {
-                from: relationship_pattern.from.alias.id,
-                to,
-                edge: relationship_pattern.alias.id,
-                transposed,
-            }),
+            // `None`, for the same reason as `node_by_index_scan`: capping an
+            // index scan hangs `tests/flow/test_constraint.py`, and this line
+            // does it on its own. See the comment there.
+            emitter: BatchedResultEmitter::with_binding(
+                EdgeEndpoints {
+                    from: relationship_pattern.from.alias.id,
+                    to,
+                    edge: relationship_pattern.alias.id,
+                    transposed,
+                },
+                None,
+            ),
             relationship_pattern,
             query,
             transposed,

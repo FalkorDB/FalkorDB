@@ -717,11 +717,13 @@ impl<'a> Runtime<'a> {
                     IR::AllNodeScan(n) => n,
                     _ => unreachable!(),
                 };
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
                     self,
                     Box::new(child),
                     node_pattern,
                     idx,
+                    record_cap,
                 )))
             }
             IR::IncludePending { node } => {
@@ -917,6 +919,7 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeByIndexScan { node, index, query } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByIndexScan(NodeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -924,6 +927,7 @@ impl<'a> Runtime<'a> {
                     index,
                     query,
                     idx,
+                    record_cap,
                 )))
             }
             IR::EdgeByIndexScan {
@@ -932,6 +936,7 @@ impl<'a> Runtime<'a> {
                 transposed,
             } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::EdgeByIndexScan(EdgeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -939,6 +944,7 @@ impl<'a> Runtime<'a> {
                     query,
                     *transposed,
                     idx,
+                    record_cap,
                 )))
             }
             IR::CartesianProduct => {
@@ -1180,12 +1186,14 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeByLabelAndIdScan { node, filter } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByLabelAndIdScan(NodeByLabelAndIdScanOp::new(
                     self,
                     Box::new(child),
                     node,
                     filter,
                     idx,
+                    record_cap,
                 )))
             }
             IR::CondVarLenTraverse {
@@ -1196,6 +1204,7 @@ impl<'a> Runtime<'a> {
                 ..
             } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
                     self,
                     Box::new(child),
@@ -1204,6 +1213,7 @@ impl<'a> Runtime<'a> {
                     *emit_path,
                     path_var.as_ref().map(|v| v.id),
                     idx,
+                    record_cap,
                 )))
             }
             IR::AllShortestPaths(relationship_pattern) => {
