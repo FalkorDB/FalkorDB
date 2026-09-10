@@ -2436,10 +2436,8 @@ impl Graph {
         // Pairs where both endpoints are deleted — known non-adjacent, no
         // check needed. `Tensor::remove_all` yields each pair at most once, so
         // a duplicate here means two relationship types connected the same
-        // pair; `dead_pair_types` counts the contributors so the dedup below
-        // can be skipped when there cannot be any.
+        // pair; the bulk `build` below collapses those, so they are left in.
         let mut dead_adj_pairs: Vec<(u64, u64)> = Vec::new();
-        let mut dead_pair_types = 0usize;
 
         for type_idx in 0..self.relationship_matrices.len() {
             let mut rels: Vec<(u64, u64, u64)> = Vec::new();
@@ -2518,7 +2516,6 @@ impl Graph {
 
             // Batch-remove from tensor — remove_all uses bulk mask operations
             let emptied = self.relationship_matrices[type_idx].remove_all(&rels);
-            let dead_before = dead_adj_pairs.len();
             for (src, dst) in emptied {
                 // Both endpoints are being deleted, so no edge between them
                 // can survive the commit: every edge incident to a deleted
@@ -2536,28 +2533,25 @@ impl Graph {
                     check_adj_pairs.insert((src, dst));
                 }
             }
-            dead_pair_types += usize::from(dead_adj_pairs.len() > dead_before);
         }
 
         self.relationship_count -= all_implicit.len() as u64;
 
-        // A pair repeats only when two types contributed it, so one
-        // contributor means the vector is already unique and is left alone —
-        // no cost at all in the common case. Otherwise sort-and-dedup in
-        // place: no allocation (unlike the `HashSet` above, which would hash
-        // every pair even when none repeat), and it trades comparisons for
-        // `Matrix::set` calls, each an FFI `setElement` appending a pending
-        // tuple that GraphBLAS has to sort and dedup anyway when the mask is
-        // built.
-        if dead_pair_types > 1 {
-            dead_adj_pairs.sort_unstable();
-            dead_adj_pairs.dedup();
-        }
-
-        // Clear adjacency for every pair that lost its last edge.
-        let mut adj_mask = Matrix::<bool>::new(self.node_cap, self.node_cap);
+        // Clear adjacency for every pair that lost its last edge, in one bulk
+        // `build` rather than a `setElement` per pair — matching what
+        // `delete_relationships` does. Both halves feed the same coordinate
+        // lists so a mass `DETACH DELETE` crosses the FFI boundary once, and
+        // `GxB_Matrix_build_Scalar` yields an iso mask (one shared value, not
+        // a byte per entry) that repeated `set` calls would not. It also
+        // collapses duplicate coordinates itself, so the cross-type repeats in
+        // `dead_adj_pairs` need no separate dedup pass — sorting them here
+        // would only re-do work the build has to do anyway.
+        let mut adj_rows: Vec<u64> =
+            Vec::with_capacity(dead_adj_pairs.len() + check_adj_pairs.len());
+        let mut adj_cols: Vec<u64> = Vec::with_capacity(adj_rows.capacity());
         for (src, dst) in dead_adj_pairs {
-            adj_mask.set(src, dst, true);
+            adj_rows.push(src);
+            adj_cols.push(dst);
         }
         for (src, dst) in check_adj_pairs {
             let has_edges = self
@@ -2565,10 +2559,13 @@ impl Graph {
                 .iter()
                 .any(|tensor| tensor.get(src, dst).next().is_some());
             if !has_edges {
-                adj_mask.set(src, dst, true);
+                adj_rows.push(src);
+                adj_cols.push(dst);
             }
         }
-        if adj_mask.nvals() > 0 {
+        if !adj_rows.is_empty() {
+            let mut adj_mask = Matrix::<bool>::new(self.node_cap, self.node_cap);
+            adj_mask.build(&adj_rows, &adj_cols);
             self.adjacancy_matrix.remove_mask(&adj_mask);
         }
 
