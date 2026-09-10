@@ -978,7 +978,7 @@ class testGraphDeletionFlow(FlowTestsBase):
 
         # guard against a near-zero denominator making the ratio meaningless
         if without_degree > 1:
-            self.env.assertTrue(with_degree / without_degree < 3.0)
+            self.env.assertLess(with_degree / without_degree, 3.0)
 
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
