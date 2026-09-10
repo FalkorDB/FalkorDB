@@ -149,11 +149,44 @@ pub fn register_graph(
     // mutates the placeholder Arc in place rather than rebinding the name.
     // If this assert fires, a caller is leaking the previously-registered
     // Arc and likely racing index/teardown shutdown.
+    //
+    // The RDB loader is exempt and calls `register_decoded_graph` instead —
+    // see the rationale there.
     let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
     debug_assert!(
         displaced.is_none(),
         "register_graph: name already registered; missing graph_free or placeholder swap"
     );
+    drop_displaced_graph(displaced);
+}
+
+/// `register_graph` for the RDB load path, where displacing a live
+/// registration is expected rather than a bug.
+///
+/// `RESTORE <key> <ttl> <payload> REPLACE` deserializes the payload *before* it
+/// deletes the value currently bound to `key` — deliberately, so a corrupt
+/// payload leaves the existing key intact. The graph decoded from that payload
+/// is therefore registered while the graph being replaced is still registered
+/// under the same name, which is exactly what `register_graph`'s invariant
+/// forbids: under a build with debug assertions (the coverage and ASAN images)
+/// the assert aborted the whole server, turning a plain `RESTORE` into a
+/// crash.
+///
+/// Displacing here is safe. Redis frees the replaced value moments later and
+/// `graph_free` unregisters by `data_ptr`, so it removes only entries pointing
+/// at the graph it is freeing — never the one installed here. Any query still
+/// holding the replaced graph sees `graph_is_registered` go false and aborts
+/// its write, which is the intended outcome for a key that was replaced
+/// underneath it.
+pub fn register_decoded_graph(
+    name: String,
+    arc: Arc<RwLock<ThreadedGraph>>,
+) {
+    let displaced = GRAPH_REGISTRY.lock().insert(name, arc);
+    drop_displaced_graph(displaced);
+}
+
+fn drop_displaced_graph(displaced: Option<Arc<RwLock<ThreadedGraph>>>) {
     // Drop any displaced graph off the main Redis thread. Index::drop ->
     // RediSearch_DropIndex queues a destroyCallback to RediSearch's GC
     // thread pool when its timer can't be stopped synchronously; that
