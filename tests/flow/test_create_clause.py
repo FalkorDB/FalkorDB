@@ -96,3 +96,25 @@ class testCreateClause():
         self.env.assertEqual(v, 2)
         self.env.assertEqual(d, "B")
 
+    def test_04_named_path_in_create(self):
+        # a named path declared in CREATE must be materialized, not left NULL
+        # see issue #1279: `CREATE p=(n) RETURN p` bound `p` as a path but
+        # never built its value, so the projection came back holding NULL
+
+        # single node, no relationships
+        res = self.g.query("CREATE p=(n) RETURN p").result_set
+        self.env.assertEqual(len(res), 1)
+
+        p = res[0][0]
+        self.env.assertFalse(p is None)
+        self.env.assertEqual(p.node_count(), 1)
+        self.env.assertEqual(p.edge_count(), 0)
+
+        # a path spanning a created relationship
+        res = self.g.query("CREATE p=(a:A)-[:R]->(b:B) RETURN p").result_set
+        self.env.assertEqual(len(res), 1)
+
+        p = res[0][0]
+        self.env.assertFalse(p is None)
+        self.env.assertEqual(p.node_count(), 2)
+        self.env.assertEqual(p.edge_count(), 1)
