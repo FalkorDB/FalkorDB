@@ -912,14 +912,17 @@ class testGraphDeletionFlow(FlowTestsBase):
         # only the deleted edge is subtracted, the surviving one still counts
         self.graph.delete()
         res = self.graph.query("""CREATE (a:A)-[r1:R]->(:B), (a)-[r2:Q]->(:C) DELETE r1
-                                  RETURN outdegree(a), outdegree(a, 'R'), outdegree(a, 'Q')""")
+                                  SET a.d = outdegree(a), a.e = outdegree(a, 'R'),
+                                      a.f = outdegree(a, 'Q')
+                                  RETURN a.d, a.e, a.f""")
         self.env.assertEqual(res.result_set, [[1, 0, 1]])
 
         # committed edges and a pending created-then-deleted edge in one count
         self.graph.delete()
         self.graph.query("CREATE (:A {n: 1})-[:R]->(:B)")
         res = self.graph.query("""MATCH (a:A) CREATE (a)-[r:R]->(:C) DELETE r
-                                  RETURN outdegree(a), outdegree(a, 'R')""")
+                                  SET a.d = outdegree(a), a.e = outdegree(a, 'R')
+                                  RETURN a.d, a.e""")
         self.env.assertEqual(res.result_set, [[1, 1]])
 
         # the server is still alive
