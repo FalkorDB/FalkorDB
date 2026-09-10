@@ -133,9 +133,37 @@ void test_effectsV3Corpus_preamble(void) {
 		if(f.len >= 2) {
 			TEST_ASSERT_(f.buf[0] == 3, "%s: version byte is %u, expected 3",
 					e->name, f.buf[0]);
-			TEST_ASSERT_(f.buf[1] == 0, "%s: flags byte is 0x%02x, expected 0 "
-					"(the corpus is uncompressed by design)",
-					e->name, f.buf[1]);
+			// BIT 0 IS THE LOAD-BEARING HALF, so it is asserted on its own.
+			// A byte-identical round trip holds for UNCOMPRESSED payloads
+			// only: the decoder inflates a compressed payload and hands the
+			// re-encoder plaintext, so _WriteHeader masks the compressed bit
+			// out and only the compressor sets it. Re-encoding a compressed
+			// payload therefore yields its uncompressed equivalent -- correct,
+			// and not byte-identical to the input.
+			//
+			// That limitation is harmless precisely because no fixture here is
+			// compressed, which makes this assertion the thing that keeps it
+			// harmless rather than a convention someone could quietly break by
+			// adding one. If a compressed fixture is ever wanted, the round
+			// trip's assertion for it is "re-encode equals the payload's
+			// PLAINTEXT form", never "equals the input" -- and the harness must
+			// not re-compress to close the gap, because zstd output varies by
+			// version and level while staying decodable, which would turn this
+			// corpus into a zstd-version detector.
+			TEST_ASSERT_((f.buf[1] & 0x01) == 0,
+					"%s: flags bit 0 is set, so this payload is compressed. "
+					"The round trip cannot be byte-identical for it, and the "
+					"corpus-is-uncompressed property everything else here "
+					"assumes no longer holds", e->name);
+
+			// and the rest of the byte, which is convention rather than
+			// load-bearing: no other flag is defined yet, so a set bit means
+			// either a new flag nobody told this test about or a corrupt
+			// preamble
+			TEST_ASSERT_(f.buf[1] == 0, "%s: flags byte is 0x%02x, expected 0. "
+					"Bit 0 is clear so this is not a compression problem -- a "
+					"flag has been added, and this corpus needs to be told "
+					"about it", e->name, f.buf[1]);
 		}
 
 		EffectsV3Corpus_Free(&f);
