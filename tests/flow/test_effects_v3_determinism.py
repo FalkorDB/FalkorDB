@@ -139,11 +139,29 @@ class testEffectsV3Determinism():
         while time.time() < deadline and not matched():
             time.sleep(0.1)
 
-        settle = time.time() + 2
-        n = -1
-        while time.time() < settle and n != len(self.monitor):
-            n = len(self.monitor)
-            time.sleep(0.2)
+        # Then settle for stragglers -- a query can produce several payloads and
+        # only the first may have landed.
+        #
+        # Two deliberate choices here. It watches the MATCHED count rather than
+        # len(self.monitor), because global traffic from another key would keep
+        # the loop alive without telling us anything about this window; and it
+        # requires several consecutive quiet samples rather than one, because a
+        # single quiet sample is the same race as before on a smaller scale.
+        #
+        # RESIDUAL, considered rather than missed: this can still close early if
+        # a payload is delayed past the whole quiet period. What it cannot do any
+        # more is close early SILENTLY -- an under-captured window shows up as
+        # len(first) != len(second), which every test below asserts on. That is
+        # the difference between a flaky failure and a partial comparison that
+        # passes, and only the second kind is dangerous.
+        QUIET_SAMPLES = 4
+        quiet = 0
+        n = len(matched())
+        while time.time() < deadline and quiet < QUIET_SAMPLES:
+            time.sleep(0.25)
+            m = len(matched())
+            quiet = quiet + 1 if m == n else 0
+            n = m
 
         return matched()
 
