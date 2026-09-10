@@ -446,16 +446,25 @@ impl<'a> CondVarLenTraverseOp<'a> {
         emit_path: bool,
         path_var: Option<u32>,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
-        let emitter = BatchedResultEmitter::with_binding(VarLenEndpoints {
-            from: relationship_pattern.from.alias.id,
-            to: relationship_pattern.to.alias.id,
-            // A shared endpoint alias (`(a)-[*]->(a)`) binds one column; keep the
-            // `to` value (last-insert-wins) to match the row builder.
-            distinct: relationship_pattern.from.alias.id != relationship_pattern.to.alias.id,
-            path: emit_path.then_some(relationship_pattern.alias.id),
-            path_copy: path_var,
-        });
+        let emitter = BatchedResultEmitter::with_binding(
+            VarLenEndpoints {
+                from: relationship_pattern.from.alias.id,
+                to: relationship_pattern.to.alias.id,
+                // A shared endpoint alias (`(a)-[*]->(a)`) binds one column; keep the
+                // `to` value (last-insert-wins) to match the row builder.
+                distinct: relationship_pattern.from.alias.id != relationship_pattern.to.alias.id,
+                path: emit_path.then_some(relationship_pattern.alias.id),
+                path_copy: path_var,
+            },
+            // A variable-length traverse packs a whole `BATCH_SIZE` of expansions
+            // before the `Limit` downstream can stop it, and each one walks the
+            // pattern: `LIMIT 1024` measured 7,857,077 instructions and `LIMIT 1025`
+            // 14,600,574 — a second full batch for one extra row. `LIMIT 10` cost
+            // 7,034,073, all but 11% of the full batch.
+            record_cap,
+        );
         // Locate the `@prev(<id>)` marker variable (previous-edge reference
         // rewritten by the binder) inside the absorbed edge filter, if any.
         let prev_var = edge_filter.and_then(|filter| {

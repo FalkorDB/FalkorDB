@@ -60,8 +60,7 @@ impl<'a> NodeByLabelScanOp<'a> {
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
     ) -> Self {
-        let mut emitter = BatchedResultEmitter::new(node_pattern.alias.id);
-        emitter.apply_record_cap(record_cap);
+        let emitter = BatchedResultEmitter::new(node_pattern.alias.id, record_cap);
         Self {
             runtime,
             child,

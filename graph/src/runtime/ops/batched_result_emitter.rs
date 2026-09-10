@@ -506,7 +506,7 @@ pub struct BatchedResultEmitter<'a, I: GatherItem> {
     cursor: usize,
     /// Upper bound on results packed into one output batch. Defaults to
     /// [`BATCH_SIZE`]; an operator fed by a downstream `Skip`/`Limit` lowers it
-    /// via [`set_pack_ceiling`](Self::set_pack_ceiling) so a capped query
+    /// via the `record_cap` its constructor takes, so a capped query
     /// produces a small first batch instead of eagerly packing a whole
     /// `BATCH_SIZE` worth of work.
     ///
@@ -542,45 +542,28 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// unwound values, ...). Id-column operators use the [`new`](Self::new) /
     /// [`new_without_alias`](Self::new_without_alias) convenience constructors
     /// instead.
-    pub(crate) const fn with_binding(binding: I::Binding) -> Self {
+    ///
+    /// `record_cap` is the downstream `Skip`+`Limit` row budget when one
+    /// applies, and `None` otherwise. It is taken here rather than applied
+    /// afterwards so an operator cannot construct an emitter and forget to pass
+    /// it on — the ceiling is part of what the emitter *is*, and the two-step
+    /// form left every new operator opted out by default. See
+    /// [`pack_ceiling`](Self::pack_ceiling) for what a cap does and why it
+    /// grows.
+    pub(crate) fn with_binding(
+        binding: I::Binding,
+        record_cap: Option<usize>,
+    ) -> Self {
+        let pack_ceiling = match record_cap {
+            Some(cap) if cap < BATCH_SIZE => cap.max(1),
+            _ => BATCH_SIZE,
+        };
         Self {
             binding,
             batch: None,
             pending: None,
             cursor: 0,
-            pack_ceiling: BATCH_SIZE,
-        }
-    }
-
-    /// Lower the per-batch packing ceiling below [`BATCH_SIZE`]. Used by `UNWIND`
-    /// when a downstream `Skip`/`Limit` bounds how many rows are needed, so the
-    /// first [`emit_lazy`](Self::emit_lazy) returns just enough rows rather than
-    /// eagerly packing a whole batch.
-    pub(crate) fn set_pack_ceiling(
-        &mut self,
-        cap: usize,
-    ) {
-        debug_assert!(
-            (1..=BATCH_SIZE).contains(&cap),
-            "pack ceiling must be within [1, BATCH_SIZE]"
-        );
-        self.pack_ceiling = cap;
-    }
-
-    /// Translate a downstream `Skip`/`Limit` row budget (`record_cap`) into a
-    /// packing ceiling. `None` (no usable limit) and caps at/over a full batch
-    /// keep the default [`BATCH_SIZE`] ceiling; a tighter cap lowers it so the
-    /// first [`emit_lazy`](Self::emit_lazy) returns just enough rows, clamped
-    /// to at least 1 (`LIMIT 0` still runs the op; final truncation is done by
-    /// the downstream slicing ops).
-    pub(crate) fn apply_record_cap(
-        &mut self,
-        record_cap: Option<usize>,
-    ) {
-        if let Some(cap) = record_cap
-            && cap < BATCH_SIZE
-        {
-            self.set_pack_ceiling(cap.max(1));
+            pack_ceiling,
         }
     }
 
@@ -780,15 +763,18 @@ where
     I: GatherItem<Binding = Option<u32>>,
 {
     /// Emitter that binds the packed ids to `alias`.
-    pub(crate) const fn new(alias: u32) -> Self {
-        Self::with_binding(Some(alias))
+    pub(crate) fn new(
+        alias: u32,
+        record_cap: Option<usize>,
+    ) -> Self {
+        Self::with_binding(Some(alias), record_cap)
     }
 
     /// Emitter that binds no column: the pushed ids only drive how many rows
     /// each input row yields, and the matched input rows are gathered forward
     /// unchanged.
-    pub(crate) const fn new_without_alias() -> Self {
-        Self::with_binding(None)
+    pub(crate) fn new_without_alias(record_cap: Option<usize>) -> Self {
+        Self::with_binding(None, record_cap)
     }
 }
 
@@ -806,8 +792,7 @@ mod tests {
     /// one-hop cost 8.43G instructions against 91.5M with it — 92x.
     #[test]
     fn pack_ceiling_grows_back_to_batch_size() {
-        let mut e = BatchedResultEmitter::<NodeId>::new(0);
-        e.apply_record_cap(Some(10));
+        let mut e = BatchedResultEmitter::<NodeId>::new(0, Some(10));
         assert_eq!(e.pack_ceiling, 10, "first batch is sized to the hint");
 
         // Each emit_lazy doubles the ceiling. Drive it directly: with no batch
@@ -829,8 +814,7 @@ mod tests {
     #[test]
     fn cap_at_or_above_batch_size_is_ignored() {
         for cap in [BATCH_SIZE, BATCH_SIZE + 1, usize::MAX] {
-            let mut e = BatchedResultEmitter::<NodeId>::new(0);
-            e.apply_record_cap(Some(cap));
+            let e = BatchedResultEmitter::<NodeId>::new(0, Some(cap));
             assert_eq!(e.pack_ceiling, BATCH_SIZE);
         }
     }
@@ -838,8 +822,7 @@ mod tests {
     /// `None` (no usable `Limit` ancestor) leaves the default ceiling.
     #[test]
     fn absent_cap_leaves_default_ceiling() {
-        let mut e = BatchedResultEmitter::<NodeId>::new(0);
-        e.apply_record_cap(None);
+        let e = BatchedResultEmitter::<NodeId>::new(0, None);
         assert_eq!(e.pack_ceiling, BATCH_SIZE);
     }
 
@@ -848,8 +831,7 @@ mod tests {
     /// would make `emit_lazy` spin without ever packing a row.
     #[test]
     fn zero_cap_clamps_to_one() {
-        let mut e = BatchedResultEmitter::<NodeId>::new(0);
-        e.apply_record_cap(Some(0));
+        let e = BatchedResultEmitter::<NodeId>::new(0, Some(0));
         assert_eq!(e.pack_ceiling, 1);
     }
 
@@ -858,8 +840,7 @@ mod tests {
     /// growth being unconditional.
     #[test]
     fn an_uncapped_emitter_stays_at_batch_size() {
-        let mut e = BatchedResultEmitter::<NodeId>::new(0);
-        e.apply_record_cap(None);
+        let mut e = BatchedResultEmitter::<NodeId>::new(0, None);
         for _ in 0..4 {
             let _ = e.emit_lazy(|_b, _row| Ok(None)).expect("no batch seeded");
             assert_eq!(e.pack_ceiling, BATCH_SIZE);

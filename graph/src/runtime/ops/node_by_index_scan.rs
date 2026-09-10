@@ -60,6 +60,7 @@ impl<'a> NodeByIndexScanOp<'a> {
         index: &'a Arc<String>,
         query: &'a IndexQuery<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
         let extra_labels = if node_pattern.labels.len() > 1 {
             Some(node_pattern.labels.iter().skip(1).cloned().collect())
@@ -73,7 +74,11 @@ impl<'a> NodeByIndexScanOp<'a> {
             index,
             query,
             extra_labels,
-            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
+            // An index scan packs a whole `BATCH_SIZE` before the `Limit`
+            // downstream can stop it: `LIMIT 1024` measured 2,067,856
+            // instructions and `LIMIT 1025` 3,002,922 — a second full batch for
+            // one extra row.
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id, record_cap),
             idx,
         }
     }

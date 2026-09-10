@@ -82,6 +82,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
@@ -91,12 +92,19 @@ impl<'a> EdgeByIndexScanOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(EdgeEndpoints {
-                from: relationship_pattern.from.alias.id,
-                to,
-                edge: relationship_pattern.alias.id,
-                transposed,
-            }),
+            // Capped for the same reason as `node_by_index_scan`, which
+            // measured a second full batch for one extra row past the boundary
+            // (2,067,856 -> 3,002,922). Not measured directly: the benchmark
+            // graph has no relationship index to reach this with.
+            emitter: BatchedResultEmitter::with_binding(
+                EdgeEndpoints {
+                    from: relationship_pattern.from.alias.id,
+                    to,
+                    edge: relationship_pattern.alias.id,
+                    transposed,
+                },
+                record_cap,
+            ),
             relationship_pattern,
             query,
             transposed,
