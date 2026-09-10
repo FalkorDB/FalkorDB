@@ -43,7 +43,8 @@ typedef enum {
 	// appended rather than inserted: the values are explicit, so slotting one
 	// in beside EFFECTS_THRESHOLD would renumber everything after it
 	Config_EFFECTS_VERSION           = 21,  // effects payload version to EMIT
-	Config_END_MARKER                = 22
+	Config_EFFECTS_COMPRESSION       = 22,  // compress effects payloads over this size
+	Config_END_MARKER                = 23
 } Config_Option_Field;
 
 // callback function, invoked once configuration changes as a result of
@@ -65,6 +66,7 @@ static const Config_Option_Field RUNTIME_CONFIGS[] = {
 	Config_CMD_INFO_MAX_QUERY_COUNT,
 	Config_EFFECTS_THRESHOLD,
 	Config_EFFECTS_VERSION,
+	Config_EFFECTS_COMPRESSION,
 	Config_DELAY_INDEXING,
 	Config_JS_HEAP_SIZE,
 	Config_JS_STACK_SIZE

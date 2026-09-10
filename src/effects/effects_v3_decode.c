@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "effects_v3.h"
+#include "effects_compress.h"
 #include "effects_wire.h"
 #include "../index/index_field.h"
 #include "../util/rmalloc.h"
@@ -45,6 +46,15 @@
 // bit 0 = compressed; everything else is reserved and rejected
 #define FLAG_COMPRESSED 0x01
 #define FLAGS_KNOWN     0x01
+
+// these describe the same wire bits as the codec's own constants, and two
+// definitions of a wire constant is how two engines drift apart. Asserted
+// rather than unified, to keep this change to the hook - a future edit to
+// either one is a compile error instead of a silent disagreement.
+_Static_assert (FLAG_COMPRESSED == EFFECTS_V3_FLAG_COMPRESSED,
+		"decoder and codec disagree on the compressed flag bit") ;
+_Static_assert (FLAGS_KNOWN == EFFECTS_V3_KNOWN_FLAGS,
+		"decoder and codec disagree on the known-flags mask") ;
 
 // defined with the DDL readers below; declared here because the record's free
 // path precedes them
@@ -1204,6 +1214,11 @@ EffectsV3Status EffectsV3_Decode
 
 	EffectsV3Status status = EFFECTS_V3_OK ;
 
+	// declared up here rather than at its use, because every 'goto done' below
+	// jumps over that point and the cleanup frees it
+	char   *plain     = NULL ;
+	size_t  plain_len = 0 ;
+
 	// the header is never compressed, so a reader always knows what it holds
 	// before committing to decode anything
 	uint8_t version ;
@@ -1232,32 +1247,50 @@ EffectsV3Status EffectsV3_Decode
 		goto done ;
 	}
 
-	// compression is understood as a flag but not yet implemented - zstd is a
-	// separate PR. Refusing is correct until then: the alternative is reading
-	// a zstd frame as records.
+	// a compressed payload is a zstd frame where records would be, so it has
+	// to be inflated whole before any of it can be read. This is the one place
+	// the payload cannot be streamed.
 	//
-	// Refused HERE, before any length field is read, which is why the
-	// compressed header's layout does not reach this decoder. For whoever
-	// implements it, that header is (e456ec802 on feat/effects-v3):
+	// The twelve byte prefix and the order of its checks live in
+	// EffectsV3_OpenCompressed: read exactly 'comp_len', refuse trailing
+	// bytes, treat 'plain_len' as the allocation CEILING by passing it as
+	// zstd's destination capacity, then verify the expanded length, then the
+	// CRC-32 over the plaintext.
 	//
-	//   u8 version . u8 flags . u32 plain_len . u32 comp_len . u32 checksum
-	//     . <zstd frame>
-	//
-	// twelve bytes of prefix, not eight. All little-endian. Three things the
-	// reader has to get right, and each exists because of a specific failure:
-	//
-	//   * read exactly 'comp_len' bytes as the frame, not to the end of the
-	//     buffer, and refuse a comp_len that outruns what remains BEFORE zstd
-	//     sees it
-	//   * bytes after the frame are an error, not padding - ignoring them
-	//     silently accepts a truncated-then-appended buffer
-	//   * 'plain_len' is the decompress allocation CEILING, not just a
-	//     cross-check. A ~100 byte frame of zeros expands to gigabytes, so
-	//     bound the output first, then verify the expanded length equals
-	//     plain_len, then check the CRC-32 over the plaintext. That order.
+	// On success the stream is re-pointed at the plaintext, which is a record
+	// stream with NO header of its own - the header was never compressed. So
+	// everything below reads inflated records without knowing it, and the
+	// uncompressed path is untouched.
 	if (flags & FLAG_COMPRESSED) {
-		status = EFFECTS_V3_UNSUPPORTED_FLAGS ;
-		goto done ;
+		// the fault is deliberately DISCARDED here, and it is a known
+		// observability gap rather than an oversight. EffectsV3_OpenCompressed
+		// distinguishes "bytes follow the frame" from "checksum disagrees"
+		// from "could not allocate the declared length", which send an
+		// operator to completely different places - but this file cannot log
+		// it. It has no RedisModule_Log calls by design, and it must not
+		// acquire one: RedisModule_Log is a function pointer that is unset
+		// until module init, so calling it from a function the unit tests
+		// reach directly would crash them. The shared EffectsV3Status has no
+		// compression-specific value either, so the reason collapses to
+		// MALFORMED at the boundary. Surfacing it needs the seam's signature
+		// widened, which is the organizer's call.
+		status = EffectsV3_OpenCompressed (buff + EFFECTS_V3_HEADER_LEN,
+				n - EFFECTS_V3_HEADER_LEN, &plain, &plain_len, NULL) ;
+
+		if (status != EFFECTS_V3_OK) {
+			goto done ;
+		}
+
+		fclose (stream) ;
+		stream = fmemopen (plain, plain_len, "r") ;
+		if (stream == NULL) {
+			status = EFFECTS_V3_MALFORMED ;
+			goto done ;
+		}
+
+		// the record loop below bounds itself with 'n', which from here on
+		// means the length of the plaintext rather than of the payload
+		n = plain_len ;
 	}
 
 	EffectsV3Records *out = rm_calloc (1, sizeof (EffectsV3Records)) ;
@@ -1286,6 +1319,18 @@ EffectsV3Status EffectsV3_Decode
 	*records = out ;
 
 done:
-	fclose (stream) ;
+	if (stream != NULL) {
+		fclose (stream) ;
+	}
+
+	// safe to free even on success: every record owns its data. Strings come
+	// back from ReadWireString as copies and bitmaps are deserialized into
+	// owned structures, so nothing points into the plaintext - which has to
+	// hold anyway, since the uncompressed path decodes from a buffer the
+	// caller may free the moment this returns
+	if (plain != NULL) {
+		rm_free (plain) ;
+	}
+
 	return status ;
 }
