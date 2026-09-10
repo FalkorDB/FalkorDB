@@ -390,43 +390,34 @@ fn digest_cancelled_nodes(
     if p.cancelled_nodes.is_empty() {
         return;
     }
-    // Grouped by shape like any other create, so one cancelled shape is one
-    // record however many nodes share it.
-    let mut groups: FxHashMap<Shape, Vec<&crate::runtime::pending::CancelledNode>> =
-        FxHashMap::default();
-    for n in &p.cancelled_nodes {
-        let mut labels: Vec<u32> = n.labels.iter().map(|&l| schema_id(l as usize)).collect();
-        labels.sort_unstable();
-        labels.dedup();
-        let attr_ids: Vec<u16> = n.attrs.iter().map(|(aid, _)| *aid).collect();
-        groups.entry((labels, attr_ids)).or_default().push(n);
-    }
-
-    for ((labels, attr_ids), mut nodes) in groups {
-        nodes.sort_unstable_by_key(|n| n.id);
-        let ids: IdList = nodes.iter().map(|n| n.id).collect();
-        // The shape's values, row-major, from each node's own attribute list.
-        // Every member has exactly this shape by construction, so no row is
-        // padded — a pad is indistinguishable from a removal.
-        let mut rows = Vec::with_capacity(nodes.len() * attr_ids.len());
-        for n in &nodes {
-            for &attr_id in &attr_ids {
-                let v = n
-                    .attrs
-                    .iter()
-                    .find(|(aid, _)| *aid == attr_id)
-                    .map_or(Value::Null, |(_, v)| v.clone());
-                rows.push(v);
-            }
-        }
-        out(Record::CreateNode {
-            ids: ids.clone(),
-            labels: labels.clone(),
-            attr_ids,
-            rows,
-        });
-        out(Record::DeleteNode { ids, labels });
-    }
+    // Ids and nothing else.
+    //
+    // The pair is here to move the replica's allocator over an id the master
+    // handed out and then took back — not to reproduce a node that did not
+    // survive its own transaction. Carrying its labels and attributes would
+    // have the replica build a node and then immediately unbuild it: the
+    // create adds index documents, the delete a record later removes them, and
+    // the net effect on the graph is the id space and nothing besides.
+    //
+    // `DeleteNode` ignores its label list on the way in regardless — `apply`
+    // binds it as `labels: _` — so on that half they were never read.
+    //
+    // No grouping by shape either. A shape only earns its grouping when the
+    // content travels with it; with no content, every cancelled node in the
+    // buffer is one record pair however many labels they had between them.
+    let mut ids: Vec<u64> = p.cancelled_nodes.iter().map(|n| n.id).collect();
+    ids.sort_unstable();
+    let ids: IdList = ids.into_iter().collect();
+    out(Record::CreateNode {
+        ids: ids.clone(),
+        labels: Vec::new(),
+        attr_ids: Vec::new(),
+        rows: Vec::new(),
+    });
+    out(Record::DeleteNode {
+        ids,
+        labels: Vec::new(),
+    });
 }
 
 fn digest_created_nodes(
@@ -1682,7 +1673,7 @@ mod cancelled {
 
         let create = records
             .iter()
-            .position(|r| matches!(r, Record::CreateNode { labels, .. } if labels == &[0]))
+            .position(|r| matches!(r, Record::CreateNode { labels, .. } if labels.is_empty()))
             .expect("the cancelled node's create");
         let delete = records
             .iter()
@@ -1700,15 +1691,18 @@ mod cancelled {
             unreachable!()
         };
         assert_eq!(ids.iter().collect::<Vec<_>>(), vec![0]);
-        assert_eq!(labels, &[0], "the shape the master would have given it");
-        assert_eq!(attr_ids, &[0]);
-        assert_eq!(rows, &[Value::Int(1)]);
+        // Ids only. The node is deleted a record later, so its content would be
+        // applied and then undone — and `apply` never reads a `DeleteNode`'s
+        // labels in the first place.
+        assert!(labels.is_empty(), "a cancelled node carries no labels");
+        assert!(attr_ids.is_empty(), "nor attributes");
+        assert!(rows.is_empty(), "nor their values");
 
         let Record::DeleteNode { ids, labels } = &records[delete] else {
             unreachable!()
         };
         assert_eq!(ids.iter().collect::<Vec<_>>(), vec![0]);
-        assert_eq!(labels, &[0], "so the replica clears the same indexes");
+        assert!(labels.is_empty());
     }
 
     #[test]
