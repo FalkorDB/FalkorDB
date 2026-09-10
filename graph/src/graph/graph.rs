@@ -3768,7 +3768,9 @@ impl Graph {
                         self.get_node_attribute(NodeId(node_id), prop)
                     });
                     if key.is_empty() {
-                        continue; // NULL in key → vacuously satisfied, skip
+                        // a constrained property is NULL or absent, so this node
+                        // does not participate in the constraint
+                        continue;
                     }
                     if !seen.insert(key) {
                         return false;
@@ -3786,6 +3788,8 @@ impl Graph {
                         self.get_relationship_attribute(RelationshipId(edge_id), prop)
                     });
                     if key.is_empty() {
+                        // a constrained property is NULL or absent, so this edge
+                        // does not participate in the constraint
                         continue;
                     }
                     if !seen.insert(key) {
