@@ -6,6 +6,7 @@
 
 #include "indexer.h"
 #include "../redismodule.h"
+#include "../serializers/graphcontext_type.h"
 #include "../util/rmalloc.h"
 #include <assert.h>
 #include <pthread.h>
@@ -78,7 +79,7 @@ typedef struct {
 
 // forward declarations
 static void _indexer_PopTask(IndexerTask *task);
-void _indexer_AddTask(IndexerOp op, void *pdata);
+static void Indexer_AddTask(IndexerOp op, void *pdata);
 
 static Indexer *indexer = NULL;
 
@@ -213,7 +214,7 @@ static void _indexer_enforce_constraint
 		// postpone the enforcement
 		if(!Index_Enabled(idx) && Constraint_PendingChanges(c) == 1) {
 			if (indexer->stop) goto cleanup;
-			_indexer_AddTask(INDEXER_CONSTRAINT_ENFORCE, ctx);
+			Indexer_AddTask(INDEXER_CONSTRAINT_ENFORCE, ctx);
 			return;
 		}
 	}
@@ -244,6 +245,7 @@ static void _indexer_enforce_constraint
 		RedisModuleKey *key = RedisModule_OpenKey(rm_ctx, key_name, REDISMODULE_READ);
 		GraphContext_AcquireReadLock(gc);
 		if (RedisModule_KeyType(key) == REDISMODULE_KEYTYPE_MODULE &&
+			RedisModule_ModuleTypeGetType(key) == GraphContextRedisModuleType_Get() &&
 			RedisModule_ModuleTypeGetValue(key) == gc &&
 			Constraint_PendingChanges(c) == 1 &&
 			Constraint_GetStatus(c) == CT_ACTIVE) {
@@ -337,7 +339,7 @@ static void *_indexer_run
 }
 
 // add a new task to indexer queue
-void _indexer_AddTask
+static void Indexer_AddTask
 (
 	IndexerOp op,
 	void *pdata
@@ -499,7 +501,7 @@ void Indexer_PopulateIndex
 	GraphContext_IncreaseRefCount (gc) ;
 
 	// place task into queue
-	_indexer_AddTask (INDEXER_IDX_POPULATE, ctx) ;
+	Indexer_AddTask (INDEXER_IDX_POPULATE, ctx) ;
 }
 
 // drops index asynchronously
@@ -532,7 +534,7 @@ void Indexer_DropIndex
 	GraphContext_IncreaseRefCount(gc);
 
 	// place task into queue
-	_indexer_AddTask(INDEXER_IDX_DROP, ctx);
+	Indexer_AddTask(INDEXER_IDX_DROP, ctx);
 }
 
 // enforces constraint
@@ -565,7 +567,7 @@ void Indexer_EnforceConstraint
 	// enforcement tasks and it is being asked to be deleted
 	GraphContext_IncreaseRefCount(gc);
 
-	_indexer_AddTask(INDEXER_CONSTRAINT_ENFORCE, ctx);
+	Indexer_AddTask(INDEXER_CONSTRAINT_ENFORCE, ctx);
 }
 
 // drops constraint asynchronously
@@ -597,7 +599,7 @@ void Indexer_DropConstraint
 	GraphContext_IncreaseRefCount(gc);
 
 	// place task into queue
-	_indexer_AddTask(INDEXER_CONSTRAINT_DROP, ctx);
+	Indexer_AddTask(INDEXER_CONSTRAINT_DROP, ctx);
 }
 
 // stop and free indexer
@@ -609,7 +611,7 @@ void Indexer_Stop(void) {
 	_Indexer_ClearTasks () ;
 
 	// add fake task to cause indexer thread to exit
-	_indexer_AddTask (INDEXER_EXIT, NULL) ;
+	Indexer_AddTask (INDEXER_EXIT, NULL) ;
 	
 	// wait for indexer thread to exit
 	pthread_join (indexer->t, NULL) ;
