@@ -152,6 +152,23 @@ class testEffectsV3Aof():
                         f"would be query replay and this test would prove "
                         f"nothing")
 
+        # AND NO QUERY REPLAY ALONGSIDE THEM. Asserting only that effects are
+        # present closes the door on "effects absent, queries present" and
+        # leaves it open on "effects present, queries ALSO present" -- in which
+        # case query replay is what rebuilds the graph, the effects are
+        # redundant, and this test stays green while the thing it exists to
+        # prove has quietly stopped being true.
+        #
+        # Zero is the right expectation today because the verbatim fallback was
+        # removed. If some path later needs a query in the AOF legitimately,
+        # this fails loudly and someone has to decide whether the effect path is
+        # still the carrier -- which is the point.
+        self.env.assertEqual(n_query, 0,
+                message=f"{n_query} GRAPH.QUERY in the AOF alongside "
+                        f"{n_effect} GRAPH.EFFECT: something replayed verbatim, "
+                        f"so the rebuild below does not establish that effects "
+                        f"can carry a graph on their own")
+
         before = self._probe_all()
         self.env.assertTrue(before[0][0][0] > 0,
                 message="the workload produced an empty graph")
@@ -170,6 +187,10 @@ class testEffectsV3Aof():
                             f"      before: {a}\n"
                             f"      after:  {b}")
 
-        # and the effects really were the carrier: the base snapshot was taken
-        # when the dataset was empty, so it cannot be what rebuilt this
-        self.env.assertTrue(n_effect > 0)
+        # Nothing further to assert here. What makes the effects the carrier is
+        # established above -- effects present, no queries alongside them, and
+        # a base snapshot taken while the dataset was empty, which
+        # _enable_aof_on_an_empty_dataset is what guarantees. An earlier version
+        # repeated the effect-count assertion at this point under a comment
+        # about the base snapshot, which is a claim that assertion does not
+        # make.
