@@ -410,15 +410,34 @@ impl Pending {
         }
     }
 
+    /// Stage label adds for `id`, cancelling any removal of those same labels
+    /// staged earlier in this query. Mirrors [`Self::remove_node_labels`], which
+    /// cancels earlier adds; together they keep `set_labels` and `remove_labels`
+    /// disjoint per node, so the last clause to touch a label wins in either
+    /// direction (`REMOVE n:L SET n:L` keeps `L`, `SET n:L REMOVE n:L` drops it).
+    fn stage_node_labels(
+        &mut self,
+        raw_id: u64,
+        labels: &OrderSet<LabelId>,
+    ) {
+        let entry = self.set_labels.entry(raw_id).or_default();
+        for label in labels.iter() {
+            entry.push(usize::from(*label) as u64);
+        }
+        if let Some(removed) = self.remove_labels.get_mut(&raw_id) {
+            removed.retain(|&l| !labels.contains(&LabelId(l as usize)));
+            if removed.is_empty() {
+                self.remove_labels.remove(&raw_id);
+            }
+        }
+    }
+
     pub fn set_node_labels(
         &mut self,
         id: NodeId,
         labels: &OrderSet<LabelId>,
     ) {
-        let entry = self.set_labels.entry(id.into()).or_default();
-        for label in labels.iter() {
-            entry.push(usize::from(*label) as u64);
-        }
+        self.stage_node_labels(id.into(), labels);
     }
 
     pub fn set_nodes_labels(
@@ -427,13 +446,13 @@ impl Pending {
         labels: &OrderSet<LabelId>,
     ) {
         for id in ids {
-            let entry = self.set_labels.entry((*id).into()).or_default();
-            for label in labels.iter() {
-                entry.push(usize::from(*label) as u64);
-            }
+            self.stage_node_labels((*id).into(), labels);
         }
     }
 
+    /// Stage label removals for `id`, cancelling any add of those same labels
+    /// staged earlier in this query — the mirror image of
+    /// [`Self::stage_node_labels`], keeping the two sets disjoint per node.
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
@@ -445,6 +464,9 @@ impl Pending {
             // Remove from pending set labels
             if let Some(set) = self.set_labels.get_mut(&raw_id) {
                 set.retain(|&l| l != label_id);
+                if set.is_empty() {
+                    self.set_labels.remove(&raw_id);
+                }
             }
             self.remove_labels.entry(raw_id).or_default().push(label_id);
         }
@@ -454,9 +476,9 @@ impl Pending {
     /// added, `Some(false)` if it was removed, `None` if this query says nothing
     /// about it and the committed label matrix is the answer.
     ///
-    /// The precedence is [`Self::update_node_labels`]'s, which applies the adds
-    /// and then the removals, so a removal wins — the two must agree, since they
-    /// answer the same question for the same node.
+    /// `set_labels` and `remove_labels` are disjoint per node (see
+    /// [`Self::stage_node_labels`]), so at most one of the two branches below can
+    /// match and the order they are consulted in carries no meaning.
     pub fn node_has_label(
         &self,
         id: NodeId,
@@ -481,6 +503,11 @@ impl Pending {
         None
     }
 
+    /// Overlay this query's staged label changes onto `labels`.
+    ///
+    /// Adds are applied before removals, but the two sets are disjoint per node
+    /// (see [`Self::stage_node_labels`]), so no label is touched by both passes
+    /// and the order is immaterial.
     pub fn update_node_labels(
         &self,
         id: NodeId,
@@ -1132,8 +1159,9 @@ impl Pending {
     /// would force a pending-tuple materialization of its delta on every
     /// commit (`O(|delta|)` per write query, quadratic between folds) —
     /// measured as the dominant cost of small repeated creates. Mirrors
-    /// [`Self::update_node_labels`] semantics: a removed label wins over a
-    /// pending set.
+    /// [`Self::update_node_labels`] semantics; `set_labels` and `remove_labels`
+    /// are disjoint per node (see [`Self::stage_node_labels`]), so the two
+    /// branches below cannot both match.
     fn constraint_node_has_label(
         &self,
         g: &Graph,
@@ -1966,5 +1994,181 @@ pub fn read_value(
             Ok(Value::Duration(dur))
         }
         _ => Err(format!("unknown value tag in effects buffer: {tag}")),
+    }
+}
+
+#[cfg(test)]
+mod label_effect_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// The one node every scenario below stages labels on.
+    const NODE: u64 = 0;
+
+    /// A graph whose only labels are `names`, and a `Pending` that has already
+    /// taken its schema baseline — so `build_effects_buffer` emits no
+    /// `EFFECT_ADD_SCHEMA`, and the label records are the entire buffer.
+    fn fixture(names: &[&str]) -> (AtomicRefCell<Graph>, Vec<LabelId>, Pending) {
+        ensure_init();
+        let g = AtomicRefCell::new(Graph::new(16, 16, 1, 0, "label_effects"));
+        let labels: Vec<LabelId> = {
+            let mut graph = g.borrow_mut();
+            names.iter().map(|n| graph.get_label_id_mut(n)).collect()
+        };
+        let mut pending = Pending::new();
+        pending.set_schema_baseline(&g);
+        (g, labels, pending)
+    }
+
+    /// One label record, exactly as `build_effects_buffer` writes it: the
+    /// opcode, the node id as u64 LE, the label count as u16 LE, then the ids.
+    fn record(
+        opcode: u8,
+        labels: &[LabelId],
+    ) -> Vec<u8> {
+        let mut rec = vec![opcode];
+        rec.extend_from_slice(&NODE.to_le_bytes());
+        rec.extend_from_slice(&(labels.len() as u16).to_le_bytes());
+        for label in labels {
+            rec.extend_from_slice(&(usize::from(*label) as u16).to_le_bytes());
+        }
+        rec
+    }
+
+    /// A whole expected buffer: the version header, then the records.
+    ///
+    /// Every assertion here compares the *entire* buffer against one of these
+    /// rather than scanning for an opcode byte. Scanning would not be sound —
+    /// a node id, a label count or a label id can itself be 7 or 8, so a scan
+    /// could invent a record that is not there and miss one that is. Whole
+    /// buffer equality has neither failure mode, and it pins the absence of a
+    /// record as tightly as it pins the presence of one.
+    fn buffer(records: &[Vec<u8>]) -> Vec<u8> {
+        let mut buf = vec![EFFECTS_VERSION];
+        for rec in records {
+            buf.extend_from_slice(rec);
+        }
+        buf
+    }
+
+    fn build(
+        pending: &Pending,
+        g: &AtomicRefCell<Graph>,
+    ) -> (Vec<u8>, u64) {
+        let mut buf = Vec::new();
+        let n_effects = pending.build_effects_buffer(g, &mut buf);
+        (buf, n_effects)
+    }
+
+    /// Positive control for [`cancelled_add_leaves_no_set_labels_record`]: an
+    /// uncancelled `SET n:L` does write an `EFFECT_SET_LABELS`. Without this,
+    /// a `build_effects_buffer` that had stopped emitting label records
+    /// altogether would satisfy the cancellation tests vacuously.
+    #[test]
+    fn plain_set_writes_a_set_labels_record() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
+
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+
+        let (buf, n_effects) = build(&pending, &g);
+        assert_eq!(buf, buffer(&[record(EFFECT_SET_LABELS, &[l])]));
+        assert_eq!(n_effects, 1);
+    }
+
+    /// Positive control for
+    /// [`cancelled_removal_leaves_no_remove_labels_record`]: an uncancelled
+    /// `REMOVE n:L` does write an `EFFECT_REMOVE_LABELS`.
+    #[test]
+    fn plain_remove_writes_a_remove_labels_record() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
+
+        pending.remove_node_labels(NODE.into(), &[l]);
+
+        let (buf, n_effects) = build(&pending, &g);
+        assert_eq!(buf, buffer(&[record(EFFECT_REMOVE_LABELS, &[l])]));
+        assert_eq!(n_effects, 1);
+    }
+
+    /// `SET n:L REMOVE n:L`: the removal cancels the staged add, and the
+    /// emptied `set_labels` entry has to go with it. Leaving the entry behind
+    /// serializes an `EFFECT_SET_LABELS` carrying zero labels, which a replica
+    /// applies as a no-op — so master and replica agree either way and only the
+    /// buffer can tell that the wasted record was sent.
+    #[test]
+    fn cancelled_add_leaves_no_set_labels_record() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
+
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.remove_node_labels(NODE.into(), &[l]);
+
+        let (buf, n_effects) = build(&pending, &g);
+        assert_eq!(
+            buf,
+            buffer(&[record(EFFECT_REMOVE_LABELS, &[l])]),
+            "the cancelled add must leave no EFFECT_SET_LABELS behind"
+        );
+        assert_eq!(n_effects, 1);
+
+        assert!(
+            !pending.set_labels.contains_key(&NODE),
+            "the emptied set_labels entry must be dropped, not left empty"
+        );
+        assert_eq!(pending.node_has_label(NODE.into(), l), Some(false));
+    }
+
+    /// `REMOVE n:L SET n:L`, the mirror direction and the #2777 report: the add
+    /// cancels the staged removal, the label survives, and the emptied
+    /// `remove_labels` entry must not be serialized either.
+    #[test]
+    fn cancelled_removal_leaves_no_remove_labels_record() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
+
+        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+
+        let (buf, n_effects) = build(&pending, &g);
+        assert_eq!(
+            buf,
+            buffer(&[record(EFFECT_SET_LABELS, &[l])]),
+            "the cancelled removal must leave no EFFECT_REMOVE_LABELS behind"
+        );
+        assert_eq!(n_effects, 1);
+
+        assert!(
+            !pending.remove_labels.contains_key(&NODE),
+            "the emptied remove_labels entry must be dropped, not left empty"
+        );
+        assert_eq!(
+            pending.node_has_label(NODE.into(), l),
+            Some(true),
+            "the re-added label must survive the cancelled removal"
+        );
+    }
+
+    /// Cancellation is per label, not per node: `SET n:L:M REMOVE n:L` drops
+    /// only `L` from the add, and both records still go out.
+    #[test]
+    fn cancelling_one_label_of_several_keeps_the_rest() {
+        let (g, labels, mut pending) = fixture(&["L", "M"]);
+        let (l, m) = (labels[0], labels[1]);
+
+        pending.set_node_labels(NODE.into(), &[l, m].into_iter().collect());
+        pending.remove_node_labels(NODE.into(), &[l]);
+
+        assert_eq!(pending.node_has_label(NODE.into(), m), Some(true));
+
+        let (buf, n_effects) = build(&pending, &g);
+        assert_eq!(
+            buf,
+            buffer(&[
+                record(EFFECT_SET_LABELS, &[m]),
+                record(EFFECT_REMOVE_LABELS, &[l]),
+            ])
+        );
+        assert_eq!(n_effects, 2);
     }
 }

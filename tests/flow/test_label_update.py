@@ -91,6 +91,50 @@ class testLabelUpdate():
 
         self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
 
+    def test_remove_then_set_same_label(self):
+        # Regression for #2777: a label removed and re-added in the same query
+        # must survive. What this pins is the replicated end state — master and
+        # replica agreeing that the node still carries L, which a stale
+        # EFFECT_REMOVE_LABELS would break on the replica alone.
+        #
+        # It does not pin the record set on the wire: a zero-label
+        # EFFECT_SET_LABELS applies as a no-op, so both sides agree whether or
+        # not one was sent. That is pinned on the buffer itself, by
+        # graph::runtime::pending::label_effect_tests.
+        self.query_master_and_wait("CREATE (:A {v: 1})")
+        self.query_master_and_wait("MATCH (n:A) SET n:L")
+
+        # --- REMOVE then SET: the label is kept ---
+        # no WITH between the clauses: both land in the same segment, so the
+        # add has to cancel the staged removal rather than commit after it
+        res = self.query_master_and_wait("MATCH (n:A:L) REMOVE n:L SET n:L RETURN n")
+        self.env.assertEqual(res.labels_removed, 0)
+
+        res = self.query_master_and_wait("MATCH (n:A:L) RETURN count(n) AS c")
+        self.env.assertEqual(res.result_set[0][0], 1)
+
+        # the replica must still see the label, both in labels() and via a
+        # label scan — a stale EFFECT_REMOVE_LABELS would strip it there only
+        res = Graph(self.replica, GRAPH_ID).ro_query("MATCH (n:A:L) RETURN labels(n)")
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertContains("L", res.result_set[0][0])
+
+        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+
+        # --- SET then REMOVE: the label is dropped ---
+        res = self.query_master_and_wait("MATCH (n:A:L) SET n:L REMOVE n:L RETURN n")
+        self.env.assertEqual(res.labels_removed, 1)
+
+        res = self.query_master_and_wait("MATCH (n:A:L) RETURN count(n) AS c")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
+        # the node itself survives on the replica, it only lost the label
+        res = Graph(self.replica, GRAPH_ID).ro_query("MATCH (n:A) RETURN labels(n)")
+        self.env.assertEqual(len(res.result_set), 1)
+        self.env.assertNotContains("L", res.result_set[0][0])
+
+        self.env.assertTrue(graph_eq(self.master_graph, self.replica_graph))
+
     def test_redundant_label_set_remove(self):
         # A single query that touches the same label in multiple SET / REMOVE
         self.query_master_and_wait("CREATE (:A {v: 1})")
