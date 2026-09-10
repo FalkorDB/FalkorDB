@@ -127,6 +127,14 @@ class testNullHandlingFlow(FlowTestsBase):
         # rather than TRUE. The ValueHashJoin must agree with the equivalent
         # Filter plan instead of matching on plain structural equality (#2775).
         graph = self.db.select_graph(GRAPH_ID + "_nested_null_join")
+        # Clear first: an assertion failure below skips the delete at the end,
+        # and a rerun against the same server would otherwise append a second
+        # copy of the fixture and fail for the wrong reason. GRAPH.DELETE
+        # errors on an absent key, so the first run has to tolerate that.
+        try:
+            graph.delete()
+        except redis.ResponseError:
+            pass
         graph.query("""CREATE (:A {i: 1, s: 'x', w: 1}), (:A {i: 2, s: 'y'}),
                               (:B {i: 1, s: 'x', w: 1}), (:B {i: 2, s: 'y'}),
                               (:B {i: 3, s: 'z'})""")

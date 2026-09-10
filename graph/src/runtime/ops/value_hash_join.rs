@@ -27,7 +27,8 @@
 //! else. Top-level NULL keys are skipped on both sides, and a key that merely
 //! *carries* a NULL (`[1, null]`) is rejected by [`keys_match`], because
 //! Cypher `=` is three-valued: a NULL operand makes the predicate UNKNOWN
-//! rather than TRUE.
+//! rather than TRUE. Build additionally drops any key that cannot match
+//! itself, since nothing can ever match it (see [`insert_value`]).
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -159,16 +160,66 @@ fn key_as_i64(key: &Value) -> Option<i64> {
     }
 }
 
+/// Cheap conservative pre-filter for the self-match test in [`insert_value`]:
+/// `false` only for keys that are *certain* to match themselves.
+///
+/// This is a performance hint, not the decision — correctness rests entirely on
+/// the exact `keys_match` check it gates. Being wrong in either direction is
+/// safe: a false positive just pays for that exact check, and a false negative
+/// only re-admits an unmatchable key to the table, where probe still rejects
+/// it. So unlisted variants answer `true` and get checked properly, which is
+/// also what keeps a newly added `Value` variant from silently slipping past.
+///
+/// It exists because the exact check is not free on the shapes that need it
+/// least: `compare_map` allocates and sorts both key lists on every call, so
+/// self-comparing every build key measured ~20% slower on map-valued keys,
+/// while this walk is a discriminant test per element.
+fn may_fail_self_match(value: &Value) -> bool {
+    match value {
+        // Self-comparison of these is `(Equal, None)` by construction.
+        Value::Bool(_)
+        | Value::Int(_)
+        | Value::String(_)
+        | Value::Node(_)
+        | Value::Relationship(_)
+        | Value::Datetime(_)
+        | Value::Date(_)
+        | Value::Time(_)
+        | Value::Duration(_) => false,
+        // NaN never compares equal, not even to itself.
+        Value::Float(f) => f.is_nan(),
+        // A container is unmatchable exactly when one of its members is.
+        Value::List(items) | Value::Path(items) => items.iter().any(may_fail_self_match),
+        Value::Map(entries) => entries.values().any(may_fail_self_match),
+        // Null (`ComparedNull`), Point (NaN coordinates), VecF32 (no typed arm
+        // in `compare_value`, so `Disjoint`) — and any future variant.
+        _ => true,
+    }
+}
+
 /// Insert one build row into the general (`Value`) table, grouping rows that
 /// share a key under a single bucket entry (re-using it on a hash collision or
 /// a repeated key). Grouping uses the same [`keys_match`] test as the probe
 /// side, so two keys share an entry exactly when a probe key matching one must
 /// also match the other.
+///
+/// A key that cannot match *itself* is dropped rather than stored. `keys_match`
+/// would reject it on every probe, so it can never join — and since grouping
+/// uses that same test, a repeated one (say N rows all keyed `[1, null]`, which
+/// all hash alike) would append a fresh entry per row and rescan the whole
+/// bucket to do it, making the build O(N²) and every colliding probe O(N).
+/// Self-comparison is the exact test, because an inconclusive comparison comes
+/// from the key's own contents: a NULL bubbles `ComparedNull` out through
+/// `compare_list`/`compare_map`, and nothing it is compared against can clear
+/// that.
 fn insert_value(
     table: &mut ValueTable,
     key: Value,
     slot: RightRowRef,
 ) {
+    if may_fail_self_match(&key) && !keys_match(&key, &key) {
+        return;
+    }
     let bucket = table.entry(hash_value(&key)).or_default();
     match bucket.iter_mut().find(|(k, _)| keys_match(k, &key)) {
         Some((_, refs)) => refs.push(slot),
@@ -465,7 +516,8 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use super::{key_as_i64, keys_match};
+    use super::{RightRowRef, may_fail_self_match};
+    use super::{ValueTable, insert_value, key_as_i64, keys_match};
     use crate::runtime::{ordermap::OrderMap, value::Value};
 
     fn list(items: Vec<Value>) -> Value {
@@ -542,5 +594,71 @@ mod tests {
         assert_eq!(key_as_i64(&Value::Null), None);
         assert_eq!(key_as_i64(&list(vec![Value::Int(1), Value::Null])), None);
         assert_eq!(key_as_i64(&map(vec![("a", Value::Null)])), None);
+    }
+
+    /// A key that cannot match itself never enters the table. Otherwise the
+    /// build degrades to O(N²): all N such keys hash alike, none groups with
+    /// any other under `keys_match`, so each row would append an entry and
+    /// rescan the bucket to discover it must.
+    #[test]
+    fn unmatchable_build_keys_never_enter_the_table() {
+        let mut table = ValueTable::default();
+        for row in 0..64 {
+            let slot = RightRowRef { batch: 0, row };
+            insert_value(&mut table, list(vec![Value::Int(1), Value::Null]), slot);
+            insert_value(&mut table, map(vec![("k", Value::Null)]), slot);
+            insert_value(&mut table, Value::Null, slot);
+        }
+        assert!(table.is_empty());
+
+        // A matchable key still groups its repeats under one entry.
+        for row in 0..64 {
+            insert_value(
+                &mut table,
+                list(vec![Value::Int(1), Value::Int(2)]),
+                RightRowRef { batch: 0, row },
+            );
+        }
+        let entries: usize = table.values().map(Vec::len).sum();
+        assert_eq!(entries, 1);
+        assert_eq!(table.values().next().unwrap()[0].1.len(), 64);
+    }
+
+    /// The pre-filter is only allowed to be wrong in the direction that costs
+    /// time: whenever it says `false`, the exact check it skips must have
+    /// agreed that the key matches itself. A `true` needs no justification.
+    #[test]
+    fn the_self_match_pre_filter_only_skips_keys_that_really_self_match() {
+        let corpus = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(0),
+            Value::Float(1.5),
+            Value::Float(f64::NAN),
+            Value::Float(f64::INFINITY),
+            string("x"),
+            list(vec![]),
+            list(vec![Value::Int(1), Value::Int(2)]),
+            list(vec![Value::Int(1), Value::Null]),
+            list(vec![Value::Float(f64::NAN)]),
+            list(vec![list(vec![Value::Null])]),
+            list(vec![map(vec![("a", Value::Null)])]),
+            map(vec![]),
+            map(vec![("a", Value::Int(1))]),
+            map(vec![("a", Value::Null)]),
+            map(vec![("a", Value::Float(f64::NAN))]),
+            Value::Datetime(0),
+            Value::Date(0),
+            Value::Time(0),
+            Value::Duration(0),
+        ];
+        for v in corpus {
+            if !may_fail_self_match(&v) {
+                assert!(
+                    keys_match(&v, &v),
+                    "pre-filter waved through a key that cannot match itself: {v:?}"
+                );
+            }
+        }
     }
 }
