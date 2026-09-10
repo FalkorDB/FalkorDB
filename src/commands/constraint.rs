@@ -36,6 +36,49 @@ fn is_valid_identifier(name: &str) -> bool {
 /// carries no status field at all. So a `None` on the announce path means the
 /// constraint is gone and there is nothing to announce, rather than a value to
 /// substitute a default for.
+/// Intern the constraint's label and property names.
+///
+/// Deliberately here and not in `Graph::create_constraint`, which is a state
+/// mutation and stores names rather than ids. Three consumers need the ids to
+/// exist, and none of them can create one: the RDB encoder takes `&self`,
+/// `build_constraint_buffer` runs after the commit, and C's `Constraint_New`
+/// takes `AttributeID *fields` outright. So it has to happen on the write path,
+/// and this is the only caller of `create_constraint`.
+///
+/// **After** the create succeeds, not before: `create_constraint` refuses a
+/// duplicate and a UNIQUE without its supporting index, and neither should leave
+/// a name interned. Rollback would discard it either way — everything here runs
+/// on the private version `MvccGraph::write` handed out, and `rollback` never
+/// publishes it — but not interning on a refused create keeps that independent
+/// of the MVCC model rather than reliant on it.
+///
+/// **Before** the announcement, and after the baseline: the effect diffs against
+/// the baseline to decide what to announce.
+///
+/// Without this, a constraint on a not-yet-seen property is persisted with
+/// attribute id 0 — `encode_constraint_block` resolves each property with
+/// `position(..).unwrap_or(0)` — and reads back as a different property across
+/// any RDB save or replica sync. Measured on `main`: `MANDATORY Q [z]` becomes
+/// `MANDATORY Q [a]` after `DEBUG RELOAD`. That is #2749.
+fn register_constraint_schema(
+    g: &mut graph::graph::graph::Graph,
+    entity_type: EntityType,
+    label: &Arc<String>,
+    properties: &[Arc<String>],
+) {
+    match entity_type {
+        EntityType::Node => {
+            g.get_label_id_mut(label);
+        }
+        EntityType::Relationship => {
+            g.get_type_id_mut(label);
+        }
+    }
+    for property in properties {
+        g.add_node_attribute_name(property);
+    }
+}
+
 fn find_status(
     g: &graph::graph::graph::Graph,
     ct: ConstraintType,
@@ -488,15 +531,23 @@ pub fn graph_constraint(
     // exist to load one without erroring.
     let is_replayed = ctx.get_flags().contains(ContextFlags::REPLICATED);
 
-    // Before the mutation: `create_constraint` registers the label and the
-    // property names, and those registrations have to be announced ahead of the
-    // record whose ids depend on them.
+    // Captured before the registration below, because the announcement is a
+    // diff against it: an entry interned after this point is new, and travels
+    // as `ADD_SCHEMA`/`ADD_ATTRIBUTE` ahead of the record whose ids depend on
+    // it. Taking the baseline *after* registering would hide exactly the
+    // entries that need announcing.
     let baseline = SchemaBaseline::of(&g_arc.borrow());
 
     let result: Result<bool, String> = {
         let mut g = g_arc.borrow_mut();
         if is_create {
-            g.create_constraint(ct, entity_type, &label, &properties)
+            match g.create_constraint(ct, entity_type, &label, &properties) {
+                Ok(needs_background_validation) => {
+                    register_constraint_schema(&mut g, entity_type, &label, &properties);
+                    Ok(needs_background_validation)
+                }
+                Err(e) => Err(e),
+            }
         } else {
             g.drop_constraint(&ct, &entity_type, &label, &properties)
                 .map(|()| false)

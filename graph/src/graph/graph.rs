@@ -4031,6 +4031,9 @@ impl Graph {
     /// inline and the constraint is already in its final status, `true` if the
     /// data is large enough that the constraint was parked UNDER CONSTRUCTION
     /// and the caller must settle it on a background thread.
+    /// Does **not** intern the label or the property names. That is the
+    /// command layer's, in `register_constraint_schema` — see the note there
+    /// for why the two are separated and why the order is load-bearing.
     pub fn create_constraint(
         &mut self,
         ct: ConstraintType,
@@ -4056,25 +4059,6 @@ impl Graph {
             } else {
                 return Err("Constraint already exists".into());
             }
-        }
-
-        // Register the label and the property names before the constraint is
-        // stored. Without this a constraint on a not-yet-seen property is
-        // persisted with attribute id 0 — `encode_constraint_block` resolves
-        // each property with `position(..).unwrap_or(0)` — and reads back as a
-        // different property entirely across any RDB save or replica sync.
-        // Replication needs the ids for the same reason. C does this in
-        // `GraphHub_AddConstraint`.
-        match entity_type {
-            EntityType::Node => {
-                self.get_label_id_mut(label);
-            }
-            EntityType::Relationship => {
-                self.get_type_id_mut(label);
-            }
-        }
-        for property in properties {
-            self.add_node_attribute_name(property);
         }
 
         // Cloned here, where the values are actually stored, rather than by

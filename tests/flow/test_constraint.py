@@ -1150,3 +1150,66 @@ class testConstraintReplication():
         self.env.assertEqual(master_c.status, 'OPERATIONAL')
         self.env.assertIsNotNone(c)
         self.env.assertEqual(c.status, 'OPERATIONAL')
+
+
+class testConstraintSchemaRegistration():
+    """A constraint's label and properties have to be interned before it is stored.
+
+       The constraint itself holds names, so nothing at runtime needs the ids — but the
+       RDB stores it by attribute id (`encode_constraint_block` resolves each property
+       with `position(..).unwrap_or(0)`), so a property no entity has ever used is
+       persisted as id 0 and read back as whatever attribute 0 happens to be. That is
+       #2749, and it is silent: the constraint keeps enforcing, on the wrong property.
+
+       Not reachable through UNIQUE, which needs a supporting range index first and so
+       interns the property on the way. MANDATORY on an empty label is the case."""
+
+    def __init__(self):
+        # enableDebugCommand: this reloads via DEBUG RELOAD, which redis refuses
+        # by default.
+        self.env, self.db = Env(env='oss', enableDebugCommand=True)
+        self.con = self.env.getConnection()
+
+    def test01_a_constraint_on_an_unused_property_survives_a_reload(self):
+        g = self.db.select_graph("constraint_schema_registration")
+
+        # `a` is interned first, so it is attribute id 0 — the id an unresolved
+        # property falls back to. `Q` ends up an empty label, so MANDATORY on it
+        # validates trivially and reaches OPERATIONAL, which is what gets encoded.
+        g.query("CREATE (:P {a: 1})")
+        g.query("CREATE (:Q {b: 1})")
+        g.query("MATCH (n:Q) DELETE n")
+
+        create_mandatory_node_constraint(g, "Q", "z", sync=True)
+
+        # Interned by the create, not by any entity: no node has ever had `z`.
+        keys = [r[0] for r in g.query("CALL db.propertyKeys()").result_set]
+        self.env.assertContains("z", keys)
+
+        before = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(before, [["Q", ["z"]]])
+
+        self.con.execute_command("DEBUG", "RELOAD")
+
+        # Without the registration this comes back as ["a"] — attribute id 0.
+        after = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(after, before)
+
+    def test02_a_refused_create_interns_nothing(self):
+        g = self.db.select_graph("constraint_schema_refused")
+        g.query("CREATE (:R {c: 1})")
+
+        before = sorted(r[0] for r in g.query("CALL db.propertyKeys()").result_set)
+
+        # UNIQUE without a supporting range index is refused. The registration
+        # runs only after the create succeeds, so the name must not leak in.
+        try:
+            self.con.execute_command(
+                "GRAPH.CONSTRAINT", "CREATE", "constraint_schema_refused",
+                "UNIQUE", "NODE", "R", "PROPERTIES", "1", "neverseen")
+            self.env.assertTrue(False, message="UNIQUE without an index must be refused")
+        except ResponseError as e:
+            self.env.assertContains("missing supporting exact-match index", str(e))
+
+        after = sorted(r[0] for r in g.query("CALL db.propertyKeys()").result_set)
+        self.env.assertEqual(after, before)
