@@ -23,14 +23,11 @@
 //!
 //! The table has two representations (see [`JoinHashTable`]): an `i64`-keyed
 //! fast path when every build key is integer-valued, and a general `Value`
-//! table (hash-to-bucket, then exact `Value` equality) for everything else.
-//!
-//! Keys carrying a NULL cannot join, because Cypher `=` is three-valued and a
-//! NULL operand makes the predicate UNKNOWN rather than TRUE. A key like
-//! `[1, null]` is not itself NULL, yet `[1, null] = [1, null]` is still NULL,
-//! so [`keys_match`] rejects any comparison the `Value` layer flagged as
-//! inconclusive, and the build side additionally drops such keys outright via
-//! [`contains_null`] so they never reach the table.
+//! table (hash-to-bucket, then [`keys_match`] on the bucket) for everything
+//! else. Top-level NULL keys are skipped on both sides, and a key that merely
+//! *carries* a NULL (`[1, null]`) is rejected by [`keys_match`], because
+//! Cypher `=` is three-valued: a NULL operand makes the predicate UNKNOWN
+//! rather than TRUE.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -120,46 +117,21 @@ fn hash_value(value: &Value) -> u64 {
     JOIN_HASH_SEED.hash_one(value)
 }
 
-/// True when `value` is NULL or hides a NULL anywhere inside a list, path or
-/// map.
-///
-/// Such a key can never join. Cypher `=` is three-valued, and
-/// `Value::compare_value` propagates that faithfully: comparing `[1, null]`
-/// with `[1, null]` yields `(Ordering::Equal, DisjointOrNull::ComparedNull)` —
-/// "equal as far as the non-NULL elements go, but the answer is UNKNOWN". A
-/// NULL nested at any depth bubbles the flag all the way out through
-/// `compare_list`/`compare_map`, so the result is never a genuine match.
-///
-/// This runs on the *build* side only, once per key as it is materialised:
-/// such a key would otherwise occupy a bucket that nothing can ever hit, and
-/// every probe landing on that bucket would pay to compare against it. The
-/// probe side deliberately does not repeat the deep scan — [`keys_match`]
-/// already rejects these keys for free, so scanning there would only tax the
-/// far more common null-free container key. The integer fast path skips the
-/// test entirely, since an `i64` cannot hide a NULL.
-fn contains_null(value: &Value) -> bool {
-    match value {
-        Value::Null => true,
-        Value::List(items) | Value::Path(items) => items.iter().any(contains_null),
-        Value::Map(entries) => entries.values().any(contains_null),
-        _ => false,
-    }
-}
-
 /// Cypher `=` between two join keys: a match only when they compare equal *and*
 /// the comparison was conclusive.
 ///
 /// `Value`'s `PartialEq` is `compare_value(..).0 == Ordering::Equal`, which
 /// throws the [`DisjointOrNull`] flag away and so collapses UNKNOWN into TRUE:
-/// `[1, null] == [1, null]` reports `true` even though Cypher says the
-/// predicate is NULL. Keeping the flag is what makes the join agree with the
-/// `Filter` it replaces. `DisjointOrNull::Disjoint` is rejected for the same
-/// reason — `compare_map` reports `(Equal, Disjoint)` for maps whose values
-/// have incomparable types, which is FALSE, not TRUE.
+/// `[1, null] == [1, null]` reports `true` even though `compare_list` flagged
+/// it `ComparedNull` — "equal as far as the non-NULL elements go, but the
+/// answer is UNKNOWN". Keeping the flag is what makes the join agree with the
+/// `Filter` it replaces. `Disjoint` is rejected for the same reason:
+/// `compare_map` reports `(Equal, Disjoint)` for maps whose values have
+/// incomparable types, which is FALSE, not TRUE.
 ///
-/// This costs nothing over `PartialEq`: the flag is already computed and
-/// returned by the same `compare_value` call, so the inner bucket scan just
-/// stops discarding it.
+/// This costs nothing over `PartialEq` — the flag is already computed and
+/// returned by the same `compare_value` call, so the bucket scan simply stops
+/// discarding it.
 fn keys_match(
     a: &Value,
     b: &Value,
@@ -174,8 +146,8 @@ fn keys_match(
 /// directly; a float maps only if it round-trips through `i64` exactly (a whole
 /// number, in range — matching the `Value` `Hash`/`compare_value` rules);
 /// anything else (string, non-whole float, NaN, …) can't equal an integer key,
-/// so it returns `None`. Only scalar numerics are accepted, so a key that
-/// [`contains_null`] rejects can never reach the integer table.
+/// so it returns `None`. Only scalar numerics are accepted, so a null-bearing
+/// key can never reach the integer table.
 fn key_as_i64(key: &Value) -> Option<i64> {
     match key {
         Value::Int(n) => Some(*n),
@@ -189,9 +161,9 @@ fn key_as_i64(key: &Value) -> Option<i64> {
 
 /// Insert one build row into the general (`Value`) table, grouping rows that
 /// share a key under a single bucket entry (re-using it on a hash collision or
-/// a repeated key). Grouping uses the same [`keys_match`] test as probe, so two
-/// keys share an entry exactly when a probe key matching one must also match
-/// the other.
+/// a repeated key). Grouping uses the same [`keys_match`] test as the probe
+/// side, so two keys share an entry exactly when a probe key matching one must
+/// also match the other.
 fn insert_value(
     table: &mut ValueTable,
     key: Value,
@@ -304,16 +276,9 @@ impl<'a> ValueHashJoinOp<'a> {
                 };
                 match &mut value_table {
                     // General path already active: re-materialize the key value.
-                    Some(table) => {
-                        let key = column.get(i);
-                        if contains_null(&key) {
-                            continue;
-                        }
-                        insert_value(table, key, slot);
-                    }
+                    Some(table) => insert_value(table, column.get(i), slot),
                     // All-integer column: key directly on the `i64` — the
-                    // build side's hot path (no `Value` box / hash / drop, and
-                    // no null scan, since an `i64` cannot hide a NULL).
+                    // build side's hot path (no `Value` box / hash / drop).
                     None => {
                         if let Column::Ints(ints) = &column {
                             int_table.entry(ints[i]).or_default().push(slot);
@@ -322,13 +287,6 @@ impl<'a> ValueHashJoinOp<'a> {
                             // (`30.0 == 30`) via `key_as_i64`, otherwise promote the
                             // accumulated integer entries to the general table.
                             let key = column.get(i);
-                            // A NULL nested inside a container key (`[1, null]`)
-                            // is not caught by `nulls` above, and can never
-                            // compare equal under three-valued logic — drop it
-                            // here rather than seed a bucket nothing can hit.
-                            if contains_null(&key) {
-                                continue;
-                            }
                             if let Some(n) = key_as_i64(&key) {
                                 int_table.entry(n).or_default().push(slot);
                             } else {
@@ -451,12 +409,8 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
                         Err(e) => return Some(Err(e)),
                     }
                 };
-                // Cheap top-level early-out. A key with a NULL *nested* inside
-                // a container is not caught here on purpose: `keys_match`
-                // already rejects it, and paying for a deep scan on every
-                // probe row would tax the far more common null-free container
-                // key. The build side does scan deeply — once per build row —
-                // so no such key is ever in the table to be matched against.
+                // Cheap top-level early-out; a NULL nested inside a container
+                // key is left to `keys_match`, which rejects it for free.
                 if matches!(key, Value::Null) {
                     self.left_pos += 1;
                     continue;
@@ -511,9 +465,7 @@ impl<'a> Iterator for ValueHashJoinOp<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use thin_vec::thin_vec;
-
-    use super::{contains_null, key_as_i64, keys_match};
+    use super::{key_as_i64, keys_match};
     use crate::runtime::{ordermap::OrderMap, value::Value};
 
     fn list(items: Vec<Value>) -> Value {
@@ -531,30 +483,6 @@ mod tests {
 
     fn string(s: &str) -> Value {
         Value::String(Arc::new(s.to_string()))
-    }
-
-    #[test]
-    fn contains_null_sees_through_containers() {
-        // Scalars: only NULL itself.
-        assert!(contains_null(&Value::Null));
-        assert!(!contains_null(&Value::Int(1)));
-        assert!(!contains_null(&Value::Float(1.5)));
-        assert!(!contains_null(&Value::Bool(true)));
-        assert!(!contains_null(&string("x")));
-
-        // Lists, at any depth.
-        assert!(contains_null(&list(vec![Value::Int(1), Value::Null])));
-        assert!(contains_null(&list(vec![list(vec![Value::Null])])));
-        assert!(!contains_null(&list(vec![Value::Int(1), Value::Int(2)])));
-        assert!(!contains_null(&list(vec![])));
-
-        // Maps, including nested inside a list.
-        assert!(contains_null(&map(vec![("a", Value::Null)])));
-        assert!(contains_null(&list(vec![map(vec![("a", Value::Null)])])));
-        assert!(!contains_null(&map(vec![("a", Value::Int(1))])));
-
-        // Paths share the list representation.
-        assert!(!contains_null(&Value::Path(Arc::new(thin_vec![]))));
     }
 
     #[test]
@@ -606,8 +534,9 @@ mod tests {
 
     #[test]
     fn integer_fast_path_never_sees_a_null_bearing_key() {
-        // The `Int` table can only ever be keyed by a scalar numeric, so a
-        // key that `contains_null` cannot reach it via `key_as_i64`.
+        // The `Int` table is matched on the `i64` alone, with no `keys_match`
+        // check, so a null-bearing key must never map into it. `key_as_i64`
+        // accepts only scalar numerics, which is what guarantees that.
         assert_eq!(key_as_i64(&Value::Int(7)), Some(7));
         assert_eq!(key_as_i64(&Value::Float(7.0)), Some(7));
         assert_eq!(key_as_i64(&Value::Null), None);
