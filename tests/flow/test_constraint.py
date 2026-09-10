@@ -584,6 +584,68 @@ class testConstraintNodes():
         drop_node_range_index(self.g, "Author", "nickname")
         drop_node_range_index(self.g, "Author", "birthdate")
 
+    def test09_constraint_enforced_on_removed_and_readded_label(self):
+        # A label that is removed and re-added in the same query is still
+        # carried by the node at commit time, so constraints on it must be
+        # enforced. Before the fix for #2777 the pending add and the pending
+        # remove both sat in the transaction's bookkeeping and the remove won,
+        # so the node looked unlabelled to the constraint check and violations
+        # were silently let through.
+
+        #-----------------------------------------------------------------------
+        # unique constraint
+        #-----------------------------------------------------------------------
+        create_unique_node_constraint(self.g, "Rejoin", "v", sync=True)
+        self.g.query("CREATE (:Rejoin {v: 1})")
+
+        # duplicate created in the SAME query that removes and re-adds the
+        # constrained label must still be rejected
+        try:
+            self.g.query("MATCH (n:Rejoin {v: 1}) REMOVE n:Rejoin SET n:Rejoin CREATE (:Rejoin {v: 1})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Rejoin", str(e))
+
+        # the rejected query must not have left anything behind
+        self.env.assertEqual(self.g.query("MATCH (n:Rejoin) RETURN count(n)").result_set[0][0], 1)
+
+        # a node that re-acquires the label must also collide with an existing
+        # value it is updated into
+        self.g.query("CREATE (:Rejoin {v: 2})")
+        try:
+            self.g.query("MATCH (n:Rejoin {v: 2}) REMOVE n:Rejoin SET n:Rejoin SET n.v = 1")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Rejoin", str(e))
+        self.env.assertEqual(self.g.query("MATCH (n:Rejoin {v: 2}) RETURN count(n)").result_set[0][0], 1)
+
+        # genuinely dropping the label frees the value — the constraint must
+        # not be over-enforced
+        result = self.g.query("MATCH (n:Rejoin {v: 1}) REMOVE n:Rejoin CREATE (:Rejoin {v: 1})")
+        self.env.assertEqual(result.labels_removed, 1)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(self.g.query("MATCH (n:Rejoin) RETURN count(n)").result_set[0][0], 2)
+
+        #-----------------------------------------------------------------------
+        # mandatory constraint
+        #-----------------------------------------------------------------------
+        create_mandatory_node_constraint(self.g, "Mandate", "p", sync=True)
+        self.g.query("CREATE (:Mandate {p: 1})")
+
+        # dropping the mandatory property while the label is removed and
+        # re-added must be rejected — the node still ends up labelled
+        try:
+            self.g.query("MATCH (n:Mandate) REMOVE n:Mandate SET n:Mandate SET n.p = NULL")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("mandatory constraint violation", str(e))
+        self.env.assertEqual(self.g.query("MATCH (n:Mandate) RETURN n.p").result_set[0][0], 1)
+
+        # dropping the label for real releases the node from the constraint
+        result = self.g.query("MATCH (n:Mandate) REMOVE n:Mandate SET n.p = NULL")
+        self.env.assertEqual(result.labels_removed, 1)
+        self.env.assertEqual(self.g.query("MATCH (n:Mandate) RETURN count(n)").result_set[0][0], 0)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
