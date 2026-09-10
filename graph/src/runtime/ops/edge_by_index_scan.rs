@@ -75,6 +75,11 @@ pub struct EdgeByIndexScanOp<'a> {
 }
 
 impl<'a> EdgeByIndexScanOp<'a> {
+    /// `record_cap` is the downstream `Skip`+`Limit` row budget, when one
+    /// reaches this scan. It sizes the first batch only: as a leaf, the budget
+    /// is a hint rather than a bound on this operator's own output, so the
+    /// ceiling grows back to `BATCH_SIZE` if that first small batch does not
+    /// satisfy the query. See `BatchedResultEmitter::apply_hinted_record_cap`.
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -82,21 +87,24 @@ impl<'a> EdgeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
         // second insert can't overwrite the first.
         let to = (relationship_pattern.to.alias != relationship_pattern.from.alias)
             .then_some(relationship_pattern.to.alias.id);
+        let mut emitter = BatchedResultEmitter::with_binding(EdgeEndpoints {
+            from: relationship_pattern.from.alias.id,
+            to,
+            edge: relationship_pattern.alias.id,
+            transposed,
+        });
+        emitter.apply_hinted_record_cap(record_cap);
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(EdgeEndpoints {
-                from: relationship_pattern.from.alias.id,
-                to,
-                edge: relationship_pattern.alias.id,
-                transposed,
-            }),
+            emitter,
             relationship_pattern,
             query,
             transposed,

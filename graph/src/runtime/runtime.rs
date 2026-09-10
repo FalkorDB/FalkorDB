@@ -919,6 +919,7 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeByIndexScan { node, index, query } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByIndexScan(NodeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -926,6 +927,7 @@ impl<'a> Runtime<'a> {
                     index,
                     query,
                     idx,
+                    record_cap,
                 )))
             }
             IR::EdgeByIndexScan {
@@ -934,6 +936,7 @@ impl<'a> Runtime<'a> {
                 transposed,
             } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::EdgeByIndexScan(EdgeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -941,6 +944,7 @@ impl<'a> Runtime<'a> {
                     query,
                     *transposed,
                     idx,
+                    record_cap,
                 )))
             }
             IR::CartesianProduct => {
@@ -1182,12 +1186,14 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeByLabelAndIdScan { node, filter } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByLabelAndIdScan(NodeByLabelAndIdScanOp::new(
                     self,
                     Box::new(child),
                     node,
                     filter,
                     idx,
+                    record_cap,
                 )))
             }
             IR::CondVarLenTraverse {
