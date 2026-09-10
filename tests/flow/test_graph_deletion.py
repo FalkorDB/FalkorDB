@@ -850,6 +850,108 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
+    def test38_no_phantom_edge_after_endpoint_ids_are_reused(self):
+        # #2771. Deleting an edge together with both of its endpoints used to
+        # leave the pair's bit set in the adjacency matrix, on the theory that a
+        # pair of deleted nodes is unreachable. Node ids are recycled, so the
+        # next two nodes created inherit the bit and an anonymous traversal --
+        # which reads the adjacency matrix directly, with no tensor lookup to
+        # disagree with -- reports an edge that was never created. Binding the
+        # relationship forces that lookup, so the two forms disagreed.
+        def create(query, ids, msg):
+            # The stale bit sits on the ids of the *deleted* nodes, so the bug
+            # is only reachable while allocation keeps recycling them. Pinning
+            # the ids at both ends -- on the original nodes and again on their
+            # replacements -- makes a change in that behaviour fail here,
+            # rather than quietly turning the traversal checks below into
+            # assertions about a graph that never had the stale bit.
+            res = self.graph.query(query)
+            self.env.assertEqual(res.result_set, [ids], depth=1, message=msg)
+
+        def assert_no_edges(msg):
+            anon = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n").result_set
+            bound = self.graph.query("MATCH (x)-[r]->(y) RETURN x.n, y.n").result_set
+            self.env.assertEqual(anon, [], depth=1, message=msg)
+            self.env.assertEqual(bound, [], depth=1, message=msg)
+
+        # both endpoints deleted, ids 0 and 1 then reused
+        msg = "both endpoints deleted"
+        self.graph.delete()
+        create("CREATE (a:A {n: 'a'})-[:R]->(b:B {n: 'b'}) RETURN ID(a), ID(b)",
+               [0, 1], msg)
+        res = self.graph.query("MATCH (a:A)-[r:R]->(b:B) DELETE a, b")
+        self.env.assertEqual(res.nodes_deleted, 2)
+        self.env.assertEqual(res.relationships_deleted, 1)
+        create("CREATE (c:C {n: 'c'}), (d:D {n: 'd'}) RETURN ID(c), ID(d)",
+               [0, 1], msg)
+        assert_no_edges(msg)
+
+        # self-loop: src and dst are the same recycled id
+        msg = "self-loop"
+        self.graph.delete()
+        create("CREATE (a:A {n: 'a'})-[:R]->(a) RETURN ID(a)", [0], msg)
+        self.graph.query("MATCH (a:A) DELETE a")
+        create("CREATE (c:C {n: 'c'}) RETURN ID(c)", [0], msg)
+        assert_no_edges(msg)
+
+        # parallel edges of several types, deleted across two transactions
+        msg = "parallel edges"
+        self.graph.delete()
+        create("""CREATE (a:A {n: 'a'}), (b:B {n: 'b'}),
+                         (a)-[:R]->(b), (a)-[:R]->(b), (a)-[:S]->(b)
+                  RETURN ID(a), ID(b)""", [0, 1], msg)
+        self.graph.query("MATCH (a:A) DETACH DELETE a")
+        self.graph.query("MATCH (b:B) DELETE b")
+        create("CREATE (c:C {n: 'c'}), (d:D {n: 'd'}) RETURN ID(c), ID(d)",
+               [0, 1], msg)
+        assert_no_edges(msg)
+
+        # the edge deleted explicitly alongside its endpoints
+        msg = "explicit edge and both endpoints"
+        self.graph.delete()
+        create("CREATE (a:A {n: 'a'})-[:R]->(b:B {n: 'b'}) RETURN ID(a), ID(b)",
+               [0, 1], msg)
+        self.graph.query("MATCH (a:A)-[r:R]->(b:B) DELETE r, a, b")
+        create("CREATE (c:C {n: 'c'}), (d:D {n: 'd'}) RETURN ID(c), ID(d)",
+               [0, 1], msg)
+        assert_no_edges(msg)
+
+    def test39_surviving_edges_outlive_a_neighbour_deletion(self):
+        # The converse of test38: clearing the adjacency entry must not
+        # overreach. An edge between two surviving nodes stays visible to both
+        # traversal forms after a neighbour is deleted and its id is reused,
+        # and an edge deleted on its own leaves its endpoints intact.
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A {n: 'a'})-[:R]->(b:B {n: 'b'}),
+                                         (b)-[:R]->(c:C {n: 'c'}), (b)-[:S]->(c)
+                                  RETURN ID(a)""")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        self.graph.query("MATCH (a:A) DETACH DELETE a")
+        # d has to take a's id for this to test anything: a stale a->b bit
+        # would surface below as d->b.
+        res = self.graph.query("CREATE (d:D {n: 'd'}) RETURN ID(d)")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        # The anonymous form emits one row per adjacent pair, the bound form
+        # one per relationship.
+        res = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n")
+        self.env.assertEqual(res.result_set, [['b', 'c']])
+        res = self.graph.query(
+            "MATCH (x)-[r]->(y) RETURN x.n, y.n, type(r) ORDER BY type(r)")
+        self.env.assertEqual(res.result_set, [['b', 'c', 'R'], ['b', 'c', 'S']])
+
+        # dropping one of the two types leaves the pair adjacent
+        self.graph.query("MATCH (:B)-[r:S]->(:C) DELETE r")
+        res = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n")
+        self.env.assertEqual(res.result_set, [['b', 'c']])
+
+        # dropping the last one clears it
+        self.graph.query("MATCH (:B)-[r:R]->(:C) DELETE r")
+        res = self.graph.query("MATCH (x)-->(y) RETURN x.n, y.n")
+        self.env.assertEqual(res.result_set, [])
+
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()

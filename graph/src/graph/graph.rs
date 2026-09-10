@@ -2412,9 +2412,10 @@ impl Graph {
     /// the edges. Edges already in `explicit_rels` are skipped (they're handled
     /// by `delete_relationships`).
     ///
-    /// The adjacency matrix is NOT updated for node pairs where both endpoints
-    /// are deleted — those entries are unreachable since the nodes themselves
-    /// are gone.
+    /// Every pair that loses its last edge is cleared from the adjacency
+    /// matrix, including pairs whose endpoints are both deleted: node ids are
+    /// recycled from `deleted_nodes`, so a bit left behind is not unreachable,
+    /// it describes an edge between whichever nodes take the ids next (#2771).
     /// Returns the list of implicitly deleted edges as `(edge_id, src, dst)`
     /// so the caller can record them for effects/replication.
     pub fn delete_implicit_edges(
@@ -2428,9 +2429,15 @@ impl Graph {
         }
 
         let mut all_implicit: Vec<(RelationshipId, NodeId, NodeId)> = Vec::new();
-        // Pairs where only one endpoint is deleted — need adjacency check
+        // Pairs where an endpoint survives — the survivor may still hold an
+        // edge of another type, so these need a per-tensor check.
         let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> =
             std::collections::HashSet::default();
+        // Pairs where both endpoints are deleted — known non-adjacent, no
+        // check needed. `Tensor::remove_all` yields each pair at most once, so
+        // a duplicate here means two relationship types connected the same
+        // pair; the bulk `build` below collapses those, so they are left in.
+        let mut dead_adj_pairs: Vec<(u64, u64)> = Vec::new();
 
         for type_idx in 0..self.relationship_matrices.len() {
             let mut rels: Vec<(u64, u64, u64)> = Vec::new();
@@ -2510,8 +2517,19 @@ impl Graph {
             // Batch-remove from tensor — remove_all uses bulk mask operations
             let emptied = self.relationship_matrices[type_idx].remove_all(&rels);
             for (src, dst) in emptied {
-                // Only check adjacency if the other endpoint is NOT deleted
-                if !deleted_nodes.contains(src) || !deleted_nodes.contains(dst) {
+                // Both endpoints are being deleted, so no edge between them
+                // can survive the commit: every edge incident to a deleted
+                // node is either collected above or sits in `explicit_rels`,
+                // which `delete_relationships` removes later in this same
+                // commit. Clearing the pair is therefore unconditionally
+                // right, and skipping the tensor probe below is not merely an
+                // optimisation — running ahead of `delete_relationships`, that
+                // probe would still find an explicitly-deleted edge of another
+                // type between this pair and conclude it is adjacent, leaving
+                // the clear to be redone by that later pass.
+                if deleted_nodes.contains(src) && deleted_nodes.contains(dst) {
+                    dead_adj_pairs.push((src, dst));
+                } else {
                     check_adj_pairs.insert((src, dst));
                 }
             }
@@ -2519,18 +2537,35 @@ impl Graph {
 
         self.relationship_count -= all_implicit.len() as u64;
 
-        // Update adjacency_matrix only for pairs where one endpoint survives
-        let mut adj_mask = Matrix::<bool>::new(self.node_cap, self.node_cap);
+        // Clear adjacency for every pair that lost its last edge, in one bulk
+        // `build` rather than a `setElement` per pair — matching what
+        // `delete_relationships` does. Both halves feed the same coordinate
+        // lists so a mass `DETACH DELETE` crosses the FFI boundary once, and
+        // `GxB_Matrix_build_Scalar` yields an iso mask (one shared value, not
+        // a byte per entry) that repeated `set` calls would not. It also
+        // collapses duplicate coordinates itself, so the cross-type repeats in
+        // `dead_adj_pairs` need no separate dedup pass — sorting them here
+        // would only re-do work the build has to do anyway.
+        let mut adj_rows: Vec<u64> =
+            Vec::with_capacity(dead_adj_pairs.len() + check_adj_pairs.len());
+        let mut adj_cols: Vec<u64> = Vec::with_capacity(adj_rows.capacity());
+        for (src, dst) in dead_adj_pairs {
+            adj_rows.push(src);
+            adj_cols.push(dst);
+        }
         for (src, dst) in check_adj_pairs {
             let has_edges = self
                 .relationship_matrices
                 .iter()
                 .any(|tensor| tensor.get(src, dst).next().is_some());
             if !has_edges {
-                adj_mask.set(src, dst, true);
+                adj_rows.push(src);
+                adj_cols.push(dst);
             }
         }
-        if adj_mask.nvals() > 0 {
+        if !adj_rows.is_empty() {
+            let mut adj_mask = Matrix::<bool>::new(self.node_cap, self.node_cap);
+            adj_mask.build(&adj_rows, &adj_cols);
             self.adjacancy_matrix.remove_mask(&adj_mask);
         }
 
@@ -4480,5 +4515,149 @@ mod composite_key_tests {
         assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
         assert!(key(&["a"], &[]).is_empty());
         assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod adjacency_cascade_tests {
+    use super::super::graphblas::test_init::ensure_init;
+    use super::*;
+
+    fn build(
+        name: &str,
+        node_count: usize,
+        edges: &[(u64, u64, &str)],
+    ) -> Graph {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, name);
+        let ids: RoaringTreemap = g
+            .reserve_nodes(node_count)
+            .unwrap()
+            .iter()
+            .map(|n| n.0)
+            .collect();
+        g.create_nodes(&ids);
+        for &(src, dst, type_name) in edges {
+            let rel_id = g.reserve_relationships(1).unwrap()[0].0;
+            g.create_relationships_bulk(
+                &Arc::new(type_name.to_string()),
+                &[src],
+                &[dst],
+                &[rel_id],
+            );
+        }
+        g
+    }
+
+    /// The commit-time cascade for `DELETE n`: node removal, then implicit
+    /// removal of every edge incident to a deleted node. Mirrors the order in
+    /// `Pending::commit`.
+    fn delete_nodes_cascade(
+        g: &mut Graph,
+        nodes: &[u64],
+    ) {
+        let deleted: RoaringTreemap = nodes.iter().copied().collect();
+        let mut node_docs = FxHashMap::default();
+        let mut edge_docs = FxHashMap::default();
+        g.delete_nodes(&deleted, &mut node_docs).unwrap();
+        g.delete_implicit_edges(&deleted, &RoaringTreemap::new(), &mut edge_docs)
+            .unwrap();
+    }
+
+    /// What a traversal without a bound relationship reads: `CondTraverse`
+    /// takes the adjacency matrix and emits pairs from it directly, with no
+    /// tensor lookup to disagree with.
+    fn adjacency_entries(g: &Graph) -> Vec<(u64, u64)> {
+        g.build_adjacency_matrix(&[]).iter(0, g.node_cap).collect()
+    }
+
+    /// Deleting an edge together with both of its endpoints has to clear the
+    /// adjacency entry.
+    ///
+    /// This is #2771. The entry used to be left behind on the theory that a
+    /// pair of deleted nodes is unreachable — but node ids are recycled out of
+    /// `deleted_nodes`, so the next two nodes created inherit the bit and
+    /// `MATCH (x)-->(y)` invents an edge between them. `MATCH (x)-[r]->(y)` was
+    /// unaffected: binding `r` forces a tensor lookup, which finds nothing, so
+    /// two plans over the same data disagreed.
+    #[test]
+    fn deleting_both_endpoints_clears_adjacency() {
+        for (name, node_count, edges, delete) in [
+            (
+                "adj_cascade_simple",
+                2,
+                &[(0u64, 1u64, "R")][..],
+                &[0u64, 1][..],
+            ),
+            ("adj_cascade_self_loop", 1, &[(0, 0, "R")][..], &[0][..]),
+            (
+                "adj_cascade_parallel",
+                2,
+                &[(0, 1, "R"), (0, 1, "R"), (0, 1, "S")][..],
+                &[0, 1][..],
+            ),
+            (
+                "adj_cascade_both_directions",
+                2,
+                &[(0, 1, "R"), (1, 0, "S")][..],
+                &[0, 1][..],
+            ),
+        ] {
+            let mut g = build(name, node_count, edges);
+            assert!(
+                g.adjacency_matrix().nvals() > 0,
+                "{name}: nothing to delete"
+            );
+
+            delete_nodes_cascade(&mut g, delete);
+
+            assert_eq!(
+                g.adjacency_matrix().nvals(),
+                0,
+                "{name}: adjacency entry survived the deletion of both endpoints"
+            );
+            assert!(
+                adjacency_entries(&g).is_empty(),
+                "{name}: a traversal would still see a phantom edge"
+            );
+        }
+    }
+
+    /// The converse: clearing must not overreach. An edge between surviving
+    /// nodes keeps its adjacency entry when a neighbour is deleted.
+    #[test]
+    fn surviving_edges_keep_their_adjacency() {
+        // 0 -> 1 -> 2, and a second type between the survivors.
+        let mut g = build(
+            "adj_cascade_survivor",
+            3,
+            &[(0, 1, "R"), (1, 2, "R"), (1, 2, "S")],
+        );
+
+        delete_nodes_cascade(&mut g, &[0]);
+
+        assert_eq!(adjacency_entries(&g), vec![(1, 2)]);
+    }
+
+    /// Deleting one type between a pair that also has an edge of another type
+    /// leaves the pair adjacent — the per-tensor check, not the both-endpoints
+    /// shortcut, decides this.
+    #[test]
+    fn pair_stays_adjacent_while_another_type_remains() {
+        let mut g = build("adj_cascade_multi_type", 3, &[(0, 1, "R"), (0, 1, "S")]);
+        let mut edge_docs = FxHashMap::default();
+
+        // Drop just the R edge (id 0) explicitly; S (id 1) stays.
+        g.delete_relationships(&RoaringTreemap::from_iter([0u64]), &mut edge_docs)
+            .unwrap();
+        assert_eq!(adjacency_entries(&g), vec![(0, 1)]);
+
+        // Now delete node 2, which is unrelated: the 0->1 pair is untouched.
+        delete_nodes_cascade(&mut g, &[2]);
+        assert_eq!(adjacency_entries(&g), vec![(0, 1)]);
+
+        // And deleting both endpoints clears it, S edge included.
+        delete_nodes_cascade(&mut g, &[0, 1]);
+        assert!(adjacency_entries(&g).is_empty());
     }
 }
