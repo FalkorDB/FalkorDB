@@ -196,6 +196,68 @@ typedef struct {
 	uint32_t          n;         // segment count, as the u32 on the wire
 } EffectsV3IdList;
 
+// one (attribute id, attribute name) pair, as the DDL records carry them
+//
+// the id drives the operation and the name is a cross-check that surfaces
+// divergence instead of silently trusting a stale id - the same pairing
+// VerifySchema and VerifyAttribute already use
+typedef struct {
+	AttributeID  id;
+	char        *name;  // owned, NUL terminated
+} EffectsV3AttrRef;
+
+// CREATE_INDEX's options, a TYPED BLOCK - not a map
+//
+// `Value::Map` has no encoding on this wire; a payload claiming T_MAP is
+// refused. Options travel in the RDB's field order, each behind a presence
+// byte:
+//
+//     u8 · string language
+//     u8 · u64 n_stopwords · string × n
+//     u8 · f64 weight
+//     u8 · u8  nostem            (1 or 0; anything else is refused)
+//     u8 · string phonetic       (algorithm code, e.g. "dm:en")
+//     if IndexFieldType & INDEX_FLD_VECTOR:
+//         u64 dimension          (NO presence byte - a vector field must have one)
+//         u8 · u64 M
+//         u8 · u64 efConstruction
+//         u8 · u64 efRuntime
+//         u8 · u64 simFunc       (0 L2, 1 IP, 2 cosine)
+//
+// THE PRESENCE BYTE IS LOAD-BEARING, and this is the part that is easy to get
+// wrong: absence means "THE STATEMENT DID NOT SAY", not "the default". An
+// effect MUTATES an index that may already exist, where the RDB writes a whole
+// one - so substituting the RDB's defaults for an absent option diverged a live
+// replica with "Can not override index configuration: Language is already set".
+//
+// The text half is written whatever the field type - five zero bytes when
+// nothing is stated - so there is ONE gate, the vector half, not two.
+typedef struct {
+	bool      has_language;
+	char     *language;            // owned
+
+	bool      has_stopwords;
+	char    **stopwords;           // owned, and each entry owned
+	uint64_t  n_stopwords;
+
+	bool      has_weight;
+	double    weight;
+
+	bool      has_nostem;
+	bool      nostem;
+
+	bool      has_phonetic;
+	char     *phonetic;            // owned
+
+	// vector half, present only when the field type has INDEX_FLD_VECTOR
+	bool      is_vector;
+	uint64_t  dimension;           // no presence byte of its own
+	bool      has_m;               uint64_t m;
+	bool      has_ef_construction; uint64_t ef_construction;
+	bool      has_ef_runtime;      uint64_t ef_runtime;
+	bool      has_sim_func;        uint64_t sim_func;
+} EffectsV3IndexOptions;
+
 // a single decoded record
 //
 // 'opcode' selects which of the remaining fields carry meaning - see the table
@@ -226,11 +288,53 @@ typedef struct {
 	SIValue *values;    // owned; each freed with SIValue_Free
 	uint64_t n_values;  // count * n_attrs
 
-	// records 9 and 10 only
-	SchemaType  schema_type;  // ADD_SCHEMA
-	int         schema_id;    // ADD_SCHEMA - LabelID or RelationID
+	// records 9 and 10, and reused by 11-14 for the schema they name
+	//
+	// 'schema_type', 'schema_id' and 'name' carry the same things for the DDL
+	// records that they carry for ADD_SCHEMA - a schema's type, its id and its
+	// name - so they are shared rather than duplicated under an index-specific
+	// spelling. The id is authoritative and the name is the cross-check, which
+	// is what VerifySchema already expects.
+	SchemaType  schema_type;  // ADD_SCHEMA, and 11-14
+	int         schema_id;    // LabelID or RelationID
 	AttributeID attr_id;      // ADD_ATTRIBUTE
 	char       *name;         // owned, NUL terminated
+
+	//--------------------------------------------------------------------------
+	// records 11-14 only - index and constraint DDL
+	//--------------------------------------------------------------------------
+
+	// IndexFieldType, and it is a BIT FLAG SET rather than a discriminant: a
+	// range index is NUMERIC|GEO|STR == 0x0E, so it must be tested with & and
+	// never compared for equality
+	uint32_t field_type;
+
+	// ConstraintType, and GraphEntityType which is 1-BASED because
+	// GETYPE_UNKNOWN takes 0 - a node is 1, not 0
+	uint32_t constraint_type;
+	uint32_t entity_type;
+
+	// ConstraintStatus, CREATE_CONSTRAINT only
+	//
+	// the one place v3 deliberately carries MORE than C. C sends no status, so
+	// a C replica cannot tell an enforcing constraint from one still building;
+	// a replica never validates, so the announcement is the only signal, and it
+	// is what makes the second announcement converge on the first rather than
+	// duplicate it. DROP_CONSTRAINT omits it and apply never reads it.
+	uint32_t status;
+	bool     has_status;
+
+	// the counted (attribute id, name) list both DDL families carry
+	//
+	// index fields and constraint properties are the same shape, so one array
+	// serves both. THE COUNT WIDTHS DIFFER on the wire though: an index field
+	// count is a u16 and a constraint property count is a u8.
+	EffectsV3AttrRef *attrs_ref;    // owned
+	uint16_t          n_attrs_ref;
+
+	// CREATE_INDEX only
+	EffectsV3IndexOptions options;
+	bool                  has_options;
 } EffectsV3Record;
 
 // a decoded payload: the header, then the records in apply order
@@ -288,8 +392,22 @@ const char *EffectsV3Status_ToString
 
 // decode a v3 payload into records
 //
-// takes NO GraphContext: this is a pure byte-to-value transformation, and that
-// is what makes it testable against a fixture corpus and cheap to fuzz
+// takes NO GraphContext, which is what makes it testable against a fixture
+// corpus without a graph in scope. That is the whole of what the split buys,
+// and it is worth having.
+//
+// IT IS NOT PURE. Decode is free of any GRAPH; it is not free of module-global
+// state. An interned string on the wire goes SIValue_FromBinary ->
+// SI_InternStringVal -> STRINGPOOL_RENT -> StringPool_rent ->
+// Globals_Get_StringPool -> `_globals.string_pool`, which only Globals_Init
+// creates. `StringPool_rent` guards it with ASSERT, so an uninitialised pool is
+// a null dereference in a release build rather than a diagnostic.
+//
+// So the minimum to decode a byte buffer is ThreadPool_Init,
+// ThreadPool_CreatePool and Globals_Init - a thread pool, to parse bytes.
+// Stated plainly because a harness that skips it does not get an error, it
+// gets a segfault inside the decoder, which reads as a decoder bug. That has
+// already happened once and cost a false alarm.
 //
 // on EFFECTS_V3_OK the caller owns '*records' and must free it with
 // EffectsV3_RecordsFree; on anything else '*records' is set to NULL and
@@ -351,7 +469,17 @@ void EffectsV3_RecordsFree
 // A truncation corpus needs decode alone, so it can run a PR earlier than a
 // round trip.
 
+// EffectsV3_Decode and EffectsV3_RecordsFree are defined
+#define EFFECTS_V3_DECODE_READY 1
+
 // EffectsV3_ENCODE_READY is defined by the writer when EffectsV3_Encode lands
+
+// a record declaring count == 0 is refused at the header
+//
+// gates the referee's conformance case for it. Separate from DECODE_READY
+// because it names a format RULING this build implements, not an entry point
+// it defines - a decoder can be complete and still predate the ruling.
+#define EFFECTS_V3_ZERO_COUNT_REJECTED 1
 
 #if defined(EFFECTS_V3_DECODE_READY) && defined(EFFECTS_V3_ENCODE_READY)
 // both directions are linkable, so a round trip can be built

@@ -1102,16 +1102,61 @@ XXH64_hash_t SIValue_HashCode
 }
 
 // reads SIValue off of binary stream
-SIValue SIValue_FromBinary
+// reads a length-prefixed, NUL-terminated string off 'stream'
+//
+// the length is read off the wire, so it is validated against the bytes
+// actually remaining before it reaches rm_malloc - otherwise a corrupt uint64
+// is an allocation request
+//
+// returns NULL on a malformed string; on success the result is owned by the
+// caller and is guaranteed NUL-terminated
+static char *_SIValue_ReadString
 (
-    FILE *stream  // stream to read value from
+	FILE *stream  // stream to read from
 ) {
-	ASSERT(stream != NULL);
+	size_t len;
+	if (!fread_checked (&len, sizeof (len), stream)) {
+		return NULL;
+	}
+
+	// a string is written as strlen + 1 bytes, so an empty string is 1 byte
+	// (the NUL) and a zero length is malformed
+	if (len == 0) {
+		return NULL;
+	}
+
+	// reject a length that outruns the payload before allocating for it
+	long remaining = fstream_remaining (stream);
+	if (remaining < 0 || len > (size_t)remaining) {
+		return NULL;
+	}
+
+	char *s = rm_malloc (sizeof (char) * len);
+	if (!fread_checked (s, sizeof (char) * len, stream)) {
+		rm_free (s);
+		return NULL;
+	}
+
+	// the writer terminates; a payload that doesn't is malformed, and trusting
+	// it would hand an unterminated buffer to every strlen downstream
+	if (s[len - 1] != '\0') {
+		rm_free (s);
+		return NULL;
+	}
+
+	return s;
+}
+
+bool SIValue_FromBinary
+(
+	FILE *stream,  // stream to read value from
+	SIValue *out   // [output] value read
+) {
+	ASSERT (stream != NULL);
+	ASSERT (out    != NULL);
 
 	// read value type
 	SIType t;
-	SIValue v;
-	size_t len;  // string length
 
 	bool     b;
 	int64_t  i;
@@ -1119,95 +1164,115 @@ SIValue SIValue_FromBinary
 	Point    p;
 	char    *s;
 	time_t  ts;
-	struct SIValue *array;
 
-	fread_assert(&t, sizeof(SIType), stream);
+	// leave the caller with a value that is always safe to free, whatever
+	// happens below
+	*out = SI_NullVal();
+
+	if (!fread_checked (&t, sizeof (SIType), stream)) {
+		return false;
+	}
+
 	switch(t) {
 		case T_POINT:
 			// read point from stream
-			fread_assert(&p, sizeof(v.point), stream);
-			v = SI_Point(p.latitude, p.longitude);
+			if (!fread_checked (&p, sizeof (p), stream)) {
+				return false;
+			}
+			*out = SI_Point(p.latitude, p.longitude);
 			break;
 
 		case T_ARRAY:
 			// read array from stream
-			v = SIArray_FromBinary(stream);
-			break;
+			return SIArray_FromBinary (stream, out);
 
 		case T_STRING:
-			// read string length from stream
-			fread_assert(&len, sizeof(len), stream);
-			s = rm_malloc(sizeof(char) * len);
-			// read string from stream
-			fread_assert(s, sizeof(char) * len, stream);
-			v = SI_TransferStringVal(s);
+			s = _SIValue_ReadString (stream);
+			if (s == NULL) {
+				return false;
+			}
+			*out = SI_TransferStringVal(s);
 			break;
 
 		case T_INTERN_STRING:
-			// read string length from stream
-			fread_assert(&len, sizeof(len), stream);
-			s = rm_malloc(sizeof(char) * len);
-			// read string from stream
-			fread_assert(s, sizeof(char) * len, stream);
-			v = SI_InternStringVal(s);
+			s = _SIValue_ReadString (stream);
+			if (s == NULL) {
+				return false;
+			}
+			*out = SI_InternStringVal(s);
 			rm_free(s);
 			break;
 
 		case T_BOOL:
 			// read bool from stream
-			fread_assert(&b, sizeof(b), stream);
-			v = SI_BoolVal(b);
+			if (!fread_checked (&b, sizeof (b), stream)) {
+				return false;
+			}
+			*out = SI_BoolVal(b);
 			break;
 
 		case T_INT64:
 			// read int from stream
-			fread_assert(&i, sizeof(i), stream);
-			v = SI_LongVal(i);
+			if (!fread_checked (&i, sizeof (i), stream)) {
+				return false;
+			}
+			*out = SI_LongVal(i);
 			break;
 
 		case T_DOUBLE:
 			// read double from stream
-			fread_assert(&d, sizeof(d), stream);
-			v = SI_DoubleVal(d);
+			if (!fread_checked (&d, sizeof (d), stream)) {
+				return false;
+			}
+			*out = SI_DoubleVal(d);
 			break;
 
 		case T_VECTOR_F32:
-			v = SIVector_FromBinary(stream, t);
-			break;
+			return SIVector_FromBinary (stream, t, out);
 
 		case T_MAP:
-			v = Map_FromBinary (stream) ;
-			break;
+			return Map_FromBinary (stream, out);
 
 		case T_NULL:
-			v = SI_NullVal();
+			*out = SI_NullVal();
 			break;
 
 		case T_TIME:
-			fread_assert(&ts, sizeof(ts), stream);
-			v = SI_Time(ts);
+			if (!fread_checked (&ts, sizeof (ts), stream)) {
+				return false;
+			}
+			*out = SI_Time(ts);
 			break;
 
 		case T_DATE:
-			fread_assert(&ts, sizeof(ts), stream);
-			v = SI_Date(ts);
+			if (!fread_checked (&ts, sizeof (ts), stream)) {
+				return false;
+			}
+			*out = SI_Date(ts);
 			break;
 
 		case T_DATETIME:
-			fread_assert(&ts, sizeof(ts), stream);
-			v = SI_DateTime(ts);
+			if (!fread_checked (&ts, sizeof (ts), stream)) {
+				return false;
+			}
+			*out = SI_DateTime(ts);
 			break;
 
 		case T_DURATION:
-			fread_assert(&ts, sizeof(ts), stream);
-			v = SI_Duration(ts);
+			if (!fread_checked (&ts, sizeof (ts), stream)) {
+				return false;
+			}
+			*out = SI_Duration(ts);
 			break;
 
 		default:
-			assert(false && "unknown SIValue type");
+			// an unknown tag is a malformed payload, not an invariant
+			// violation - the old assert() compiled out under NDEBUG and
+			// returned an uninitialized SIValue
+			return false;
 	}
 
-	return v;
+	return true;
 }
 
 // compute SIValue memory usage

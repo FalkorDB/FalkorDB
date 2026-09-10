@@ -57,11 +57,21 @@ static bool _parseOptions
 		return false;
 	}
 
-	// at the moment only euclidean distance is supported
+	// the storage layer holds all three metrics: the code is stored unvalidated
+	// (decode_graph_schema.c) and handed straight to VecSim (index.c), so an
+	// inner-product index computes inner product correctly. Only the naming
+	// surface lagged - this parser had no string for it, and
+	// proc_list_indexes.c still collapses every non-L2 metric to "cosine" when
+	// reporting, which is a separate display bug in the same family.
+	//
+	// "ip" matches the spelling the v3 wire's simFunc code 1 denotes, so a
+	// replica applying a CREATE_INDEX can name what the engine already does.
 	if(strcasecmp(val.stringval, "euclidean") == 0) {
 		*simFunc = VecSimMetric_L2;
 	} else if (strcasecmp(val.stringval, "cosine") == 0) {
 		*simFunc = VecSimMetric_Cosine;
+	} else if (strcasecmp(val.stringval, "ip") == 0) {
+		*simFunc = VecSimMetric_IP;
 	} else {
 		return false;
 	}
