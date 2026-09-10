@@ -49,6 +49,7 @@
 // Every other suite in tests/unit does the same; mine did not.
 #include "src/util/rmalloc.h"
 #include "src/globals.h"
+#include "src/configuration/config.h"
 #include "src/util/thpool/pool.h"
 
 static void setup(void) {
@@ -70,6 +71,31 @@ static void setup(void) {
 		ThreadPool_Init();
 		ThreadPool_CreatePool(1, 64);
 		Globals_Init();
+
+		// Pin compression OFF, because EffectsBuffer_Buffer compresses the
+		// finished payload when EFFECTS_COMPRESSION is nonzero -- and that is
+		// the call this round trip gets its bytes from. With it on, the
+		// comparison is a zstd frame against plaintext fixture bytes.
+		//
+		// Measured, not feared: at a threshold of 64, collapse_below
+		// re-encodes to 76 bytes where the corpus has 87, and it reports
+		// "re-encoded to 76 bytes, corpus has 87" -- indistinguishable from
+		// an encoder bug by anyone who did not set the config.
+		//
+		// Zero is already what a unit test sees: the config struct is static
+		// and Config_Init sets this field to 0. Setting it anyway is the
+		// point -- the precondition becomes stated rather than inherited from
+		// a zeroed struct nothing here controls. _compression_is_off() below
+		// is what enforces it; this call alone would fail silently.
+		//
+		// The right layer to pin it at, not a convenience: the corpus
+		// describes the RECORD STREAM FORMAT, and compression is a transport
+		// wrapper underneath it whose output moves with the zstd version and
+		// level. Comparing against compressed bytes would make a conformance
+		// corpus into a zstd-version detector -- the same reason effects.c
+		// masks the compressed bit out on re-encode.
+		char *cfg_err = NULL;
+		Config_Option_set(Config_EFFECTS_COMPRESSION, "0", &cfg_err);
 		globals_ready = true;
 	}
 }
@@ -234,7 +260,34 @@ static size_t _expected_short_encode
 	return 0;
 }
 
+// the threshold setup() pins, read back from the live config
+//
+// Separate from setup() because setup() cannot report: a failed
+// Config_Option_set there is silent, and the symptom downstream is a byte
+// mismatch that names no cause. Read here, where TEST_ASSERT_ can say which
+// of the two actually happened.
+//
+// Called by BOTH tests that re-encode, because they do not share a path:
+// truncation runs its own EffectsV3_Encode over accepted prefixes rather than
+// going through _round_trip, so guarding one leaves the other exposed. Found
+// by setting the threshold to 64 and watching truncation fail alongside
+// roundTrip.
+static void _require_compression_off(void) {
+	uint64_t min_bytes = 0;
+	Config_Option_get(Config_EFFECTS_COMPRESSION, &min_bytes);
+
+	TEST_ASSERT_(min_bytes == 0,
+			"EFFECTS_COMPRESSION is %llu, not 0. EffectsBuffer_Buffer would "
+			"compress any payload whose record stream reaches that, and this "
+			"test would compare a zstd frame against plaintext fixture bytes "
+			"-- reporting a length mismatch that looks like an encoder bug. "
+			"setup() pins it to 0; either that call failed or something set "
+			"it afterwards.", (unsigned long long)min_bytes);
+}
+
 static void _round_trip(const EffectsV3CorpusEntry *e) {
+	_require_compression_off();
+
 	EffectsV3Fixture f = EffectsV3Corpus_Load(e->name);
 	TEST_ASSERT_(f.buf != NULL, "%s: %s", e->name, f.err);
 	if(f.buf == NULL) return;
@@ -358,6 +411,8 @@ void test_effectsV3_roundTrip(void) {
 // missing string-pool init masqueraded as a single crashing prefix in this very
 // test. A sweep has to report all of its failures to be a sweep.
 void test_effectsV3_truncation(void) {
+	_require_compression_off();
+
 	size_t prefixes = 0;
 	size_t accepted = 0;
 
