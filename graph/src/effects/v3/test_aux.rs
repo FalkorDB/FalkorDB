@@ -75,9 +75,6 @@ pub(crate) fn live_node(
 ) {
     let mut graph = g.borrow_mut();
     let ids: RoaringTreemap = std::iter::once(id).collect();
-    // `create_nodes` consumes a reservation, exactly as the apply path does
-    // before it — without this the counter underflows.
-    graph.inc_reserved_node_count();
     graph.create_allocated_nodes(&ids);
     let mut rows = Vec::new();
     let mut cols = Vec::new();

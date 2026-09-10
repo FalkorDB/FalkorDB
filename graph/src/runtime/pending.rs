@@ -135,10 +135,28 @@ pub(crate) struct CancelledRelationship {
 pub struct Pending {
     /// Nodes created in this transaction
     pub(crate) created_nodes: RoaringTreemap,
+    /// Every node id the allocator has handed this query, whether or not it
+    /// survived — so `created_nodes` plus the cancelled ones.
+    ///
+    /// This, not `created_nodes`, is what the allocator must not hand out
+    /// again. A cancelled id goes back to the graph's recycle bin immediately
+    /// (`return_node_id`), so the bin would offer it to the very next reserve
+    /// in the same query — and then the id is *both* created and cancelled in
+    /// one commit. The effects buffer emits a cancelled id as its own
+    /// create/delete pair, so the replica would be told to create that id
+    /// twice in one buffer and refuse the whole thing as already live.
+    ///
+    /// Only grows; `clear()` at commit is what makes the id reusable, and by
+    /// then it is a different buffer, where recreating a recycled id is
+    /// ordinary.
+    pub(crate) taken_node_ids: RoaringTreemap,
     /// Relationships created, grouped by type: type_name → [(rel_id, from, to)]
     pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
     pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
+    /// Every relationship id the allocator has handed this query, whether or
+    /// not it survived. See [`Self::taken_node_ids`].
+    pub(crate) taken_relationship_ids: RoaringTreemap,
     /// Nodes to be deleted
     pub(crate) deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted
@@ -352,8 +370,10 @@ impl Pending {
     pub fn new() -> Self {
         Self {
             created_nodes: RoaringTreemap::new(),
+            taken_node_ids: RoaringTreemap::new(),
             created_rels_by_type: FxHashMap::default(),
             created_rel_types: FxHashMap::default(),
+            taken_relationship_ids: RoaringTreemap::new(),
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
             deleted_endpoints: Vec::new(),
@@ -389,12 +409,32 @@ impl Pending {
         self.schema_rel_attr_count = graph.get_relationship_attribute_names().len();
     }
 
+    /// The node ids this query has been handed and must not be handed again.
+    ///
+    /// What [`Graph::reserve_nodes`] needs in order to place the next batch
+    /// clear of this one. The graph used to keep a *count* of this instead,
+    /// which could not tell a reserved id that came from the recycle bin from
+    /// one allocated fresh — and it used the count as a rank into the bin, so
+    /// after a cancellation it walked past ids nothing held and placed the next
+    /// fresh id on top of a live one.
+    #[must_use]
+    pub const fn outstanding_nodes(&self) -> &RoaringTreemap {
+        &self.taken_node_ids
+    }
+
+    /// The same for relationships.
+    #[must_use]
+    pub const fn outstanding_relationships(&self) -> &RoaringTreemap {
+        &self.taken_relationship_ids
+    }
+
     pub fn created_nodes(
         &mut self,
         ids: &[NodeId],
     ) {
         for id in ids {
             self.created_nodes.insert((*id).into());
+            self.taken_node_ids.insert((*id).into());
         }
     }
 
@@ -711,6 +751,7 @@ impl Pending {
             .or_default()
             .push((id, from, to));
         self.created_rel_types.insert(id, type_name);
+        self.taken_relationship_ids.insert(id.into());
     }
 
     /// Set all attributes for a relationship. `attrs` must be
@@ -1558,7 +1599,9 @@ impl Pending {
             self.created_rels_by_type.clear();
         }
         self.created_nodes.clear();
+        self.taken_node_ids.clear();
         self.created_rel_types.clear();
+        self.taken_relationship_ids.clear();
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
         self.deleted_endpoints.clear();

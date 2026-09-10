@@ -16,7 +16,13 @@ myenv
 codecov.txt*
 temp-*
 /coverage
-dump.rdb
+# Redis writes its dump under whatever `dbfilename` the server was started
+# with, in the server's working directory. RLTest and any hand-started
+# `redis-server --dbfilename db<port>.rdb` therefore drop dumps at the repo
+# root — and a replica writes one during a full resync even when the server is
+# shut down with `nosave`. `dump.rdb` alone did not match those, and five of
+# them reached a PR.
+*.rdb
 .antlr
 cov.profdata
 *.profraw
