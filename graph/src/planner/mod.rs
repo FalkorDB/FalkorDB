@@ -2974,10 +2974,11 @@ impl Planner {
             // CREATE: only create entities not already bound.
             QueryIR::Create(pattern) => {
                 let filtered = pattern.filter_visited(&self.visited);
-                // Capture the named paths before `visited` is updated below:
-                // `filter_visited` drops any path whose var is already visited,
-                // and the loop that follows would mark this clause's own paths.
-                let paths = pattern.paths().to_vec();
+                // Take the paths from `filtered`, not `pattern`: a path variable
+                // already bound by an earlier clause is dropped by
+                // `filter_visited`, and rebuilding it here would overwrite that
+                // binding. What is left is exactly what this clause declares.
+                let paths = filtered.paths().to_vec();
                 // Add created variables to visited so subsequent clauses
                 // (e.g. FOREACH body) know they're already bound.
                 for v in pattern.variables() {
