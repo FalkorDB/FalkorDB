@@ -2433,8 +2433,13 @@ impl Graph {
         // edge of another type, so these need a per-tensor check.
         let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> =
             std::collections::HashSet::default();
-        // Pairs where both endpoints are deleted — known empty, no check needed.
+        // Pairs where both endpoints are deleted — known non-adjacent, no
+        // check needed. `Tensor::remove_all` yields each pair at most once, so
+        // a duplicate here means two relationship types connected the same
+        // pair; `dead_pair_types` counts the contributors so the dedup below
+        // can be skipped when there cannot be any.
         let mut dead_adj_pairs: Vec<(u64, u64)> = Vec::new();
+        let mut dead_pair_types = 0usize;
 
         for type_idx in 0..self.relationship_matrices.len() {
             let mut rels: Vec<(u64, u64, u64)> = Vec::new();
@@ -2513,21 +2518,41 @@ impl Graph {
 
             // Batch-remove from tensor — remove_all uses bulk mask operations
             let emptied = self.relationship_matrices[type_idx].remove_all(&rels);
+            let dead_before = dead_adj_pairs.len();
             for (src, dst) in emptied {
-                // With both endpoints deleted, every edge between them goes in
-                // this same commit — the implicit ones here, the explicit ones
-                // in `delete_relationships` — so the pair is empty by
-                // construction and the tensor probe below can be skipped. It
-                // still has to be cleared from the adjacency matrix.
+                // Both endpoints are being deleted, so no edge between them
+                // can survive the commit: every edge incident to a deleted
+                // node is either collected above or sits in `explicit_rels`,
+                // which `delete_relationships` removes later in this same
+                // commit. Clearing the pair is therefore unconditionally
+                // right, and skipping the tensor probe below is not merely an
+                // optimisation — running ahead of `delete_relationships`, that
+                // probe would still find an explicitly-deleted edge of another
+                // type between this pair and conclude it is adjacent, leaving
+                // the clear to be redone by that later pass.
                 if deleted_nodes.contains(src) && deleted_nodes.contains(dst) {
                     dead_adj_pairs.push((src, dst));
                 } else {
                     check_adj_pairs.insert((src, dst));
                 }
             }
+            dead_pair_types += usize::from(dead_adj_pairs.len() > dead_before);
         }
 
         self.relationship_count -= all_implicit.len() as u64;
+
+        // A pair repeats only when two types contributed it, so one
+        // contributor means the vector is already unique and is left alone —
+        // no cost at all in the common case. Otherwise sort-and-dedup in
+        // place: no allocation (unlike the `HashSet` above, which would hash
+        // every pair even when none repeat), and it trades comparisons for
+        // `Matrix::set` calls, each an FFI `setElement` appending a pending
+        // tuple that GraphBLAS has to sort and dedup anyway when the mask is
+        // built.
+        if dead_pair_types > 1 {
+            dead_adj_pairs.sort_unstable();
+            dead_adj_pairs.dedup();
+        }
 
         // Clear adjacency for every pair that lost its last edge.
         let mut adj_mask = Matrix::<bool>::new(self.node_cap, self.node_cap);
