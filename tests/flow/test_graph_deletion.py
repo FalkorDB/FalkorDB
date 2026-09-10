@@ -868,11 +868,46 @@ class testGraphDeletionFlow(FlowTestsBase):
             "CREATE (a:A)-[r:R]->(b:B) DELETE r SET b.d = indegree(b) RETURN b.d")
         self.env.assertEqual(res.result_set, [[0]])
 
-        # typed degrees resolve the type from the pending create, not the graph
+        # Typed degrees, evaluated by SET so they run mid-pipeline while the
+        # pending mutations are still uncommitted. A degree in RETURN is
+        # evaluated after the commit and never reaches the pending path, so it
+        # cannot cover the type-filtering branch.
         self.graph.delete()
-        res = self.graph.query("""CREATE (a:A)-[r:R]->(:B) DELETE r
-                                  RETURN outdegree(a), outdegree(a, 'R'), outdegree(a, 'Q')""")
-        self.env.assertEqual(res.result_set, [[0, 0, 0]])
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(b:B) DELETE r
+                                  SET a.d = outdegree(a, 'R'), a.e = outdegree(a, 'Q'),
+                                      b.f = indegree(b, 'R'),  b.g = indegree(b, 'Q')
+                                  RETURN a.d, a.e, b.f, b.g""")
+        self.env.assertEqual(res.result_set, [[0, 0, 0, 0]])
+
+        # A committed edge of one type plus a pending created-then-deleted edge
+        # of another. The two types must come out differently, so the type of
+        # the pending-deleted edge has to be resolved from the pending create.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {n: 1})-[:R]->(:B {n: 2})")
+        res = self.graph.query("""MATCH (a:A)-[:R]->(b:B) CREATE (a)-[r:Q]->(b) DELETE r
+                                  SET a.d = outdegree(a, 'Q'), a.e = outdegree(a, 'R'),
+                                      b.f = indegree(b, 'Q'),  b.g = indegree(b, 'R')
+                                  RETURN a.d, a.e, b.f, b.g""")
+        self.env.assertEqual(res.result_set, [[0, 1, 0, 1]])
+
+        # The same type committed and pending: the pending create and the
+        # pending delete cancel, leaving only the committed edge.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {n: 1})-[:Q]->(:B {n: 2})")
+        res = self.graph.query("""MATCH (a:A)-[:Q]->(b:B) CREATE (a)-[r:Q]->(b) DELETE r
+                                  SET a.d = outdegree(a, 'Q'), b.e = indegree(b, 'Q')
+                                  RETURN a.d, b.e""")
+        self.env.assertEqual(res.result_set, [[1, 1]])
+
+        # Deleting a *committed* edge by type exercises the other branch of the
+        # type lookup, where the name comes from the graph rather than pending.
+        self.graph.delete()
+        self.graph.query("CREATE (a:A {n: 1})-[:R]->(b:B {n: 2}), (a)-[:Q]->(b)")
+        res = self.graph.query("""MATCH (a:A)-[r:Q]->(b:B) DELETE r
+                                  SET a.d = outdegree(a, 'Q'), a.e = outdegree(a, 'R'),
+                                      b.f = indegree(b, 'Q'),  b.g = indegree(b, 'R')
+                                  RETURN a.d, a.e, b.f, b.g""")
+        self.env.assertEqual(res.result_set, [[0, 1, 0, 1]])
 
         # only the deleted edge is subtracted, the surviving one still counts
         self.graph.delete()
