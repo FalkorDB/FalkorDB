@@ -164,11 +164,13 @@ void Constraint_Replicate
 );
 
 // tries to enforce constraint on all relevant entities
-// sets constraint status to pending
+// Caller holds the graph lock until the task owns its references.
+// The task captures its own publication context in the same Redis database.
 void Constraint_Enforce
 (
-	Constraint c,     // constraint to enforce
-	GraphContext *gc  // graph context
+	Constraint c,          // constraint to enforce
+	GraphContext *gc,       // graph context
+	RedisModuleCtx *redis_ctx  // context whose database owns the graph
 );
 
 // enforce constraint on all relevant nodes

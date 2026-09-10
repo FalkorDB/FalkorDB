@@ -62,7 +62,8 @@ void EffectsBuffer_AddCreateConstraintEffect
 bool ApplyCreateConstraint
 (
 	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	GraphContext *gc, // graph to operate on
+	RedisModuleCtx *redis_ctx  // context whose database owns the graph
 ) {
 	//--------------------------------------------------------------------------
 	// effect format:
@@ -121,7 +122,7 @@ bool ApplyCreateConstraint
 
 			case CONSTRAINT_CREATED:
 				ASSERT (c != NULL) ;
-				Constraint_Enforce (c, (struct GraphContext *)gc) ;
+				Constraint_Enforce (c, (struct GraphContext *)gc, redis_ctx) ;
 				result = true ;
 				break ;
 

@@ -705,7 +705,8 @@ bool Effects_Apply
 (
 	GraphContext *gc,          // graph to operate on
 	const char *effects_buff,  // encoded effects
-	size_t l                   // size of buffer
+	size_t l,                  // size of buffer
+	RedisModuleCtx *redis_ctx  // context whose database owns the graph
 ) {
 	// validations
 	ASSERT (l > 0) ;  // buffer can't be empty
@@ -786,7 +787,7 @@ bool Effects_Apply
 				break ;
 
 			case EFFECT_CREATE_CONSTRAINT:
-				ok = ApplyCreateConstraint (stream, gc) ;
+				ok = ApplyCreateConstraint (stream, gc, redis_ctx) ;
 				break ;
 
 			case EFFECT_DROP_CONSTRAINT:
