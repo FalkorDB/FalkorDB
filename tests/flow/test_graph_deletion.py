@@ -850,6 +850,257 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
         self.env.assertEqual(res.result_set[0][0], 0)
 
+    def test38_degree_of_edge_created_and_deleted_in_same_query(self):
+        # An edge created and deleted by the same query is never committed, so
+        # the committed graph cannot resolve its endpoints. The pending-deleted
+        # degree helpers used to look it up with a panicking accessor, which
+        # aborted the whole server process (issue #2769).
+        self.graph.delete()
+
+        res = self.graph.query(
+            "CREATE (a:A)-[r:R]->(b:B) DELETE r SET a.d = outdegree(a) RETURN a.d")
+        self.env.assertEqual(res.result_set, [[0]])
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+
+        self.graph.delete()
+        res = self.graph.query(
+            "CREATE (a:A)-[r:R]->(b:B) DELETE r SET b.d = indegree(b) RETURN b.d")
+        self.env.assertEqual(res.result_set, [[0]])
+
+        # Typed degrees, evaluated by SET so they run mid-pipeline while the
+        # pending mutations are still uncommitted. A degree in RETURN is
+        # evaluated after the commit and never reaches the pending path, so it
+        # cannot cover the type-filtering branch.
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(b:B) DELETE r
+                                  SET a.d = outdegree(a, 'R'), a.e = outdegree(a, 'Q'),
+                                      b.f = indegree(b, 'R'),  b.g = indegree(b, 'Q')
+                                  RETURN a.d, a.e, b.f, b.g""")
+        self.env.assertEqual(res.result_set, [[0, 0, 0, 0]])
+
+        # A committed edge of one type plus a pending created-then-deleted edge
+        # of another. The two types must come out differently, so the type of
+        # the pending-deleted edge has to be resolved from the pending create.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {n: 1})-[:R]->(:B {n: 2})")
+        res = self.graph.query("""MATCH (a:A)-[:R]->(b:B) CREATE (a)-[r:Q]->(b) DELETE r
+                                  SET a.d = outdegree(a, 'Q'), a.e = outdegree(a, 'R'),
+                                      b.f = indegree(b, 'Q'),  b.g = indegree(b, 'R')
+                                  RETURN a.d, a.e, b.f, b.g""")
+        self.env.assertEqual(res.result_set, [[0, 1, 0, 1]])
+
+        # The same type committed and pending: the pending create and the
+        # pending delete cancel, leaving only the committed edge.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {n: 1})-[:Q]->(:B {n: 2})")
+        res = self.graph.query("""MATCH (a:A)-[:Q]->(b:B) CREATE (a)-[r:Q]->(b) DELETE r
+                                  SET a.d = outdegree(a, 'Q'), b.e = indegree(b, 'Q')
+                                  RETURN a.d, b.e""")
+        self.env.assertEqual(res.result_set, [[1, 1]])
+
+        # Deleting a *committed* edge by type exercises the other branch of the
+        # type lookup, where the name comes from the graph rather than pending.
+        self.graph.delete()
+        self.graph.query("CREATE (a:A {n: 1})-[:R]->(b:B {n: 2}), (a)-[:Q]->(b)")
+        res = self.graph.query("""MATCH (a:A)-[r:Q]->(b:B) DELETE r
+                                  SET a.d = outdegree(a, 'Q'), a.e = outdegree(a, 'R'),
+                                      b.f = indegree(b, 'Q'),  b.g = indegree(b, 'R')
+                                  RETURN a.d, a.e, b.f, b.g""")
+        self.env.assertEqual(res.result_set, [[0, 1, 0, 1]])
+
+        # only the deleted edge is subtracted, the surviving one still counts
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A)-[r1:R]->(:B), (a)-[r2:Q]->(:C) DELETE r1
+                                  SET a.d = outdegree(a), a.e = outdegree(a, 'R'),
+                                      a.f = outdegree(a, 'Q')
+                                  RETURN a.d, a.e, a.f""")
+        self.env.assertEqual(res.result_set, [[1, 0, 1]])
+
+        # committed edges and a pending created-then-deleted edge in one count
+        self.graph.delete()
+        self.graph.query("CREATE (:A {n: 1})-[:R]->(:B)")
+        res = self.graph.query("""MATCH (a:A) CREATE (a)-[r:R]->(:C) DELETE r
+                                  SET a.d = outdegree(a), a.e = outdegree(a, 'R')
+                                  RETURN a.d, a.e""")
+        self.env.assertEqual(res.result_set, [[1, 1]])
+
+        # the server is still alive
+        res = self.graph.query("MATCH (a:A) RETURN outdegree(a)")
+        self.env.assertEqual(res.result_set, [[1]])
+
+    def test39_bulk_create_and_delete_degree_is_not_quadratic(self):
+        # Degree functions are evaluated once per row, so answering one by
+        # scanning the pending create/delete records costs O(pending) per row
+        # and O(n^2) over the query. The pending degree counters are
+        # maintained incrementally instead, making a lookup O(1).
+        #
+        # Asserted against the same query with the degree call replaced by a
+        # constant rather than as a growth ratio or a wall-clock ceiling. The
+        # baseline absorbs whatever the bulk CREATE/DELETE itself costs on this
+        # machine, so what is left is the degree lookup alone. A ceiling would
+        # have to be loose enough to pass on a slow runner, and a whole-query
+        # growth ratio is dominated by CREATE/DELETE, which grows on its own.
+        #
+        # Measured while writing this at n=4000: 7.8 ms with the degree call
+        # against 7.2 ms without it, a ratio of ~1.1. The quadratic form took
+        # 4894 ms, a ratio of ~680, so the bound below has a wide margin in
+        # both directions.
+        self.graph.delete()
+        # keep the key alive so each round can reset with a query instead of a
+        # delete, which errors once the graph is empty
+        self.graph.query("CREATE (:Seed)")
+
+        n = 4000
+
+        def timed_bulk(set_expr, expect_zero):
+            best = None
+            for _ in range(2):
+                self.graph.query("MATCH (x) DETACH DELETE x")
+                self.graph.query("CREATE (:Hub {n: 1})")
+                res = self.graph.query(f"""MATCH (a:Hub)
+                                           UNWIND range(1, {n}) AS i
+                                           CREATE (a)-[r:R]->(:Leaf)
+                                           DELETE r
+                                           SET a.d = {set_expr}""")
+                self.env.assertEqual(res.relationships_created, n)
+                self.env.assertEqual(res.relationships_deleted, n)
+
+                # every created edge was also deleted, so the hub ends with none
+                check = self.graph.query("MATCH (a:Hub) RETURN a.d, outdegree(a)")
+                if expect_zero:
+                    self.env.assertEqual(check.result_set, [[0, 0]])
+                check = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+                self.env.assertEqual(check.result_set[0][0], 0)
+
+                best = res.run_time_ms if best is None else min(best, res.run_time_ms)
+            return best
+
+        with_degree = timed_bulk("outdegree(a)", True)
+        without_degree = timed_bulk("i", False)
+
+        # guard against a near-zero denominator making the ratio meaningless
+        if without_degree > 1:
+            self.env.assertLess(with_degree / without_degree, 3.0)
+
+    def test40_bulk_delete_of_pending_edges_is_not_quadratic(self):
+        # Deleting an edge created earlier in the same query snapshots its
+        # endpoints, which resolves the id against Pending. Answering that by
+        # scanning the type's created list is O(pending) per delete and
+        # O(n^2) over the query, so the endpoints are stored by id instead.
+        #
+        # This needs no degree function: the lookup is on the plain
+        # CREATE-then-DELETE path. Baselined against the same query without
+        # the DELETE, for the reasons given in test39.
+        #
+        # Measured while writing this at n=16000: 13.2 ms with the DELETE
+        # against 12.0 ms without. The scanning form took 53.2 ms, and its
+        # cost accelerated with n (195.5 ms at n=32000 against 29.7 ms).
+        self.graph.delete()
+        self.graph.query("CREATE (:Seed)")
+
+        n = 16000
+
+        def timed(delete_clause, expect_deleted):
+            best = None
+            for _ in range(2):
+                self.graph.query("MATCH (x) DETACH DELETE x")
+                res = self.graph.query(f"""UNWIND range(1, {n}) AS i
+                                           CREATE (a:A)-[r:R]->(b:B)
+                                           {delete_clause}""")
+                self.env.assertEqual(res.relationships_created, n)
+                self.env.assertEqual(res.relationships_deleted,
+                                     n if expect_deleted else 0)
+                best = res.run_time_ms if best is None else min(best, res.run_time_ms)
+            return best
+
+        with_delete = timed("DELETE r", True)
+        without_delete = timed("", False)
+
+        if without_delete > 1:
+            self.env.assertLess(with_delete / without_delete, 3.0)
+
+    def test41_degree_after_deleting_a_pending_node(self):
+        # Deleting a node that the same query created retracts its pending
+        # relationships instead of deleting them, so the create/delete counters
+        # cannot be adjusted and the degree index has to be dropped.
+        #
+        # Every case evaluates a degree *before* the node delete as well as
+        # after it. That first lookup is what builds the index, so a stale
+        # index would still be holding the retracted edge and the second
+        # lookup would read the pre-delete count.
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(b:B)
+                                  SET a.d = outdegree(a)
+                                  DELETE b
+                                  SET a.e = outdegree(a)
+                                  RETURN a.d, a.e""")
+        self.env.assertEqual(res.result_set, [[1, 0]])
+
+        # the same on the incoming side
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(b:B)
+                                  SET b.d = indegree(b)
+                                  DELETE a
+                                  SET b.e = indegree(b)
+                                  RETURN b.d, b.e""")
+        self.env.assertEqual(res.result_set, [[1, 0]])
+
+        # the per-type buckets have to be dropped too, not just the totals
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(b:B)
+                                  SET a.d = outdegree(a, 'R')
+                                  DETACH DELETE b
+                                  SET a.e = outdegree(a, 'R'), a.f = outdegree(a)
+                                  RETURN a.d, a.e, a.f""")
+        self.env.assertEqual(res.result_set, [[1, 0, 0]])
+
+        # A committed :R edge alongside a pending :Q edge to a pending node.
+        # Retracting the node must remove only the :Q edge, so the rebuilt
+        # counters have to keep the committed edge and both types apart.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {n: 1})-[:R]->(:B {n: 2})")
+        res = self.graph.query("""MATCH (a:A) CREATE (a)-[r:Q]->(c:C)
+                                  SET a.d = outdegree(a), a.e = outdegree(a, 'Q')
+                                  DELETE c
+                                  SET a.f = outdegree(a), a.g = outdegree(a, 'Q'),
+                                      a.h = outdegree(a, 'R')
+                                  RETURN a.d, a.e, a.f, a.g, a.h""")
+        self.env.assertEqual(res.result_set, [[2, 1, 1, 0, 1]])
+
+    def test42_retracting_the_last_edge_of_a_type_drops_the_type(self):
+        # Retracting a pending relationship left an empty bucket behind in
+        # `created_rels_by_type`, so the query still claimed to be creating
+        # edges of a type it no longer creates any edge of.
+        #
+        # With the type's last edge gone, `commit()` skips relationship
+        # creation entirely and never registers the type in the schema, so
+        # `build_effects_buffer` could not resolve its id and aborted the
+        # server process — reachable from a plain query, with no degree
+        # function involved, on any server with replication or AOF enabled.
+        self.graph.delete()
+
+        res = self.graph.query("CREATE (a:A)-[r:R]->(b:B) DELETE b RETURN 1")
+        self.env.assertEqual(res.result_set, [[1]])
+        self.env.assertEqual(res.relationships_created, 0)
+        self.env.assertEqual(res.nodes_created, 1)
+
+        # The empty bucket is observable without replication too: with another
+        # type still live, `commit()` registered the retracted type against an
+        # empty batch, publishing a type for a relationship that never existed.
+        self.graph.delete()
+        res = self.graph.query(
+            "CREATE (a:A)-[r:R]->(b:B), (a)-[q:Q]->(c:C) DELETE b RETURN 1")
+        self.env.assertEqual(res.relationships_created, 1)
+
+        types = self.graph.query("CALL db.relationshipTypes()").result_set
+        self.env.assertEqual(types, [['Q']])
+
+        # and the surviving edge is intact
+        res = self.graph.query("MATCH ()-[r]->() RETURN type(r)")
+        self.env.assertEqual(res.result_set, [['Q']])
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()

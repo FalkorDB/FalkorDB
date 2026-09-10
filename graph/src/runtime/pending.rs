@@ -11,8 +11,7 @@
 //!
 //! - `created_nodes`: Nodes created in this query
 //! - `deleted_nodes`: Nodes marked for deletion
-//! - `created_rels_by_type`: Edges created in this query, grouped by type
-//! - `deleted_relationships`: Edges marked for deletion
+//! - `created_rels_by_type`: Edges created in this query, grouped by type//! - `deleted_relationships`: Edges marked for deletion
 //! - `set_*_attrs`: Property updates by entity ID
 //! - `set/remove_node_labels`: Label changes
 //!
@@ -105,6 +104,127 @@ fn lookup_sorted(
         .map(|pos| &attrs[pos].1)
 }
 
+/// Pending degree deltas for one `(node, type)` bucket, or for one node
+/// across all types when the key's type slot is `None`.
+/// Number of per-entity entries above which freeing a collection is handed to
+/// a background thread instead of being paid for on the serialized write path.
+const OFFLOAD_THRESHOLD: usize = 4096;
+
+/// Per-relationship metadata for edges created in this query.
+///
+/// This is the single home for a created edge's type and endpoints. Keeping
+/// endpoints here rather than repeating them in `created_rels_by_type` makes
+/// the by-id lookup `O(1)` at no extra memory: the bytes moved out of that
+/// map's `Vec`s pay for the wider value here.
+struct CreatedRel {
+    type_name: Arc<String>,
+    from: NodeId,
+    to: NodeId,
+}
+
+#[derive(Default, Clone, Copy)]
+struct DegreeCounts {
+    created_out: u32,
+    created_in: u32,
+    deleted_out: u32,
+    deleted_in: u32,
+}
+
+/// Incrementally maintained pending degree counters.
+///
+/// `indegree`/`outdegree` are evaluated once per row, so answering them by
+/// scanning the pending collections costs `O(pending)` per row and `O(n^2)`
+/// over an `n`-row mutation. This index turns a lookup into one hash probe
+/// per requested type by maintaining the counts as relationships are created
+/// and deleted instead.
+///
+/// It is built on the first degree lookup of a query rather than eagerly:
+/// almost no query calls a degree function, and those that don't must not pay
+/// for the bookkeeping. Until then, the mutation path only tests an `Option`.
+#[derive(Default)]
+struct DegreeIndex {
+    /// `(node, Some(type))` holds that type's deltas; `(node, None)` holds the
+    /// node's total across types, so an untyped lookup is a single probe
+    /// rather than a sum over buckets.
+    counts: FxHashMap<(NodeId, Option<Arc<String>>), DegreeCounts>,
+    /// Deletions of relationships that live in the committed graph. Resolving
+    /// them needs the graph, which the deletion path does not have, so they
+    /// are parked here and drained by the next lookup. Each is resolved once.
+    unresolved_deletes: Vec<RelationshipId>,
+}
+
+impl DegreeIndex {
+    /// Apply `f` to the node's per-type bucket and to its across-types total.
+    fn update(
+        &mut self,
+        node: NodeId,
+        type_name: &Arc<String>,
+        f: impl Fn(&mut DegreeCounts),
+    ) {
+        f(self.counts.entry((node, None)).or_default());
+        f(self
+            .counts
+            .entry((node, Some(type_name.clone())))
+            .or_default());
+    }
+
+    fn record_create(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        type_name: &Arc<String>,
+    ) {
+        self.update(from, type_name, |c| c.created_out += 1);
+        self.update(to, type_name, |c| c.created_in += 1);
+    }
+
+    fn record_delete_of_created(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        type_name: &Arc<String>,
+    ) {
+        self.update(from, type_name, |c| c.deleted_out += 1);
+        self.update(to, type_name, |c| c.deleted_in += 1);
+    }
+
+    /// Resolve deletions of committed relationships against the graph. Called
+    /// from lookups, which is the only place the graph is available.
+    fn drain_unresolved(
+        &mut self,
+        g: &Graph,
+    ) {
+        for id in std::mem::take(&mut self.unresolved_deletes) {
+            let Some((from, to)) = g.relationship_endpoints(id) else {
+                continue;
+            };
+            let Some(type_name) = g
+                .relationship_type_id_for_edge(id)
+                .and_then(|t| g.get_type(t))
+            else {
+                continue;
+            };
+            self.record_delete_of_created(from, to, &type_name);
+        }
+    }
+
+    fn get(
+        &self,
+        node: NodeId,
+        type_name: Option<&Arc<String>>,
+    ) -> DegreeCounts {
+        self.counts
+            .get(&(node, type_name.cloned()))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// Entry count, for deciding whether freeing this is worth offloading.
+    fn len(&self) -> usize {
+        self.counts.len() + self.unresolved_deletes.len()
+    }
+}
+
 /// Accumulated write operations for deferred application.
 ///
 /// All mutations during query execution are collected here and applied
@@ -112,16 +232,22 @@ fn lookup_sorted(
 pub struct Pending {
     /// Nodes created in this transaction
     created_nodes: RoaringTreemap,
-    /// Relationships created, grouped by type: type_name → [(rel_id, from, to)]
-    created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
-    /// Reverse index: rel_id → type_name for O(1) existence/type lookups
-    created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
+    /// Relationships created, grouped by type: type_name → [rel_id].
+    /// Endpoints are not repeated here — `created_rel_types` holds them.
+    created_rels_by_type: FxHashMap<Arc<String>, Vec<RelationshipId>>,
+    /// Reverse index: rel_id → type and endpoints, for O(1) existence, type
+    /// and endpoint lookups.
+    created_rel_types: FxHashMap<RelationshipId, CreatedRel>,
     /// Nodes to be deleted
     deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted
     deleted_relationships: RoaringTreemap,
     /// Endpoints for deleted relationships — populated by commit(), used by build_effects_buffer().
     deleted_endpoints: Vec<(RelationshipId, NodeId, NodeId)>,
+    /// Degree counters, present only once a degree function has been called.
+    /// Behind a `RefCell` because lookups take `&self` — callers hold a shared
+    /// borrow of `Pending` while evaluating expressions.
+    degree_index: RefCell<Option<Box<DegreeIndex>>>,
     /// Property updates for newly created nodes (fast path: skip fjall).
     /// Values are attribute-id-resolved, sorted by id, unique.
     new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
@@ -258,6 +384,7 @@ impl Pending {
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
             deleted_endpoints: Vec::new(),
+            degree_index: RefCell::new(None),
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
             new_relationships_attrs: FxHashMap::default(),
@@ -557,11 +684,9 @@ impl Pending {
         Option<Vec<(u16, Value)>>,
     )> {
         let mut rels = Vec::new();
-        for (type_name, entries) in &self.created_rels_by_type {
-            for &(rel_id, from, to) in entries {
-                if from == id || to == id {
-                    rels.push((rel_id, from, to, type_name.clone()));
-                }
+        for (&rel_id, rel) in &self.created_rel_types {
+            if rel.from == id || rel.to == id {
+                rels.push((rel_id, rel.from, rel.to, rel.type_name.clone()));
             }
         }
 
@@ -569,11 +694,26 @@ impl Pending {
         for (rel_id, from, to, type_name) in rels {
             self.created_rel_types.remove(&rel_id);
             if let Some(entries) = self.created_rels_by_type.get_mut(&type_name) {
-                entries.retain(|(rid, _, _)| *rid != rel_id);
+                entries.retain(|rid| *rid != rel_id);
+                // Drop the type once its last created edge is retracted.
+                // `created_rels_by_type` is read as "types this query is
+                // creating edges for", so an empty bucket left behind claims a
+                // type that is never registered in the schema, and `commit()`
+                // registers a type for zero edges or `build_effects_buffer`
+                // fails to resolve its id.
+                if entries.is_empty() {
+                    self.created_rels_by_type.remove(&type_name);
+                }
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(rel_id.into());
             result.push((rel_id, from, to, type_name, attrs));
+        }
+        // Pending creates are being retracted, not deleted, so the counters
+        // cannot be adjusted by the create/delete path. This scan is already
+        // O(pending), so dropping the index costs nothing asymptotically.
+        if !result.is_empty() {
+            self.release_degree_index();
         }
 
         result
@@ -589,8 +729,18 @@ impl Pending {
         self.created_rels_by_type
             .entry(type_name.clone())
             .or_default()
-            .push((id, from, to));
-        self.created_rel_types.insert(id, type_name);
+            .push(id);
+        if let Some(ix) = self.degree_index.get_mut().as_mut() {
+            ix.record_create(from, to, &type_name);
+        }
+        self.created_rel_types.insert(
+            id,
+            CreatedRel {
+                type_name,
+                from,
+                to,
+            },
+        );
     }
 
     /// Set all attributes for a relationship. `attrs` must be
@@ -684,7 +834,9 @@ impl Pending {
         &mut self,
         id: RelationshipId,
     ) {
-        self.deleted_relationships.insert(id.into());
+        if self.deleted_relationships.insert(id.into()) {
+            self.index_relationship_deletion(id);
+        }
     }
 
     pub fn deleted_relationships_bulk(
@@ -692,7 +844,32 @@ impl Pending {
         rels: &[RelationshipId],
     ) {
         for &id in rels {
-            self.deleted_relationships.insert(id.into());
+            if self.deleted_relationships.insert(id.into()) {
+                self.index_relationship_deletion(id);
+            }
+        }
+    }
+
+    /// Route a deletion to the degree index, if one is active.
+    ///
+    /// The pending-created population is separated from the committed one
+    /// here rather than at lookup time. That preserves the precedence the
+    /// scanning form relied on — relationship ids are recycled, so a reserved
+    /// id can read as present in the committed graph while its pending create
+    /// is live, and resolving such an id against the graph would count the
+    /// wrong edge. An id `created_rel_types` knows is always resolved from
+    /// pending; only the rest ever reach the graph.
+    fn index_relationship_deletion(
+        &mut self,
+        id: RelationshipId,
+    ) {
+        let Some(ix) = self.degree_index.get_mut().as_mut() else {
+            return;
+        };
+        if let Some(rel) = self.created_rel_types.get(&id) {
+            ix.record_delete_of_created(rel.from, rel.to, &rel.type_name);
+        } else {
+            ix.unresolved_deletes.push(id);
         }
     }
 
@@ -701,7 +878,7 @@ impl Pending {
         &self,
         id: RelationshipId,
     ) -> Option<Arc<String>> {
-        self.created_rel_types.get(&id).cloned()
+        self.created_rel_types.get(&id).map(|r| r.type_name.clone())
     }
 
     #[must_use]
@@ -766,12 +943,7 @@ impl Pending {
         &self,
         id: RelationshipId,
     ) -> Option<(NodeId, NodeId)> {
-        let type_name = self.created_rel_types.get(&id)?;
-        self.created_rels_by_type
-            .get(type_name)?
-            .iter()
-            .find(|(rid, _, _)| *rid == id)
-            .map(|&(_, from, to)| (from, to))
+        self.created_rel_types.get(&id).map(|r| (r.from, r.to))
     }
 
     #[must_use]
@@ -811,96 +983,107 @@ impl Pending {
         self.deleted_relationships.contains(id.into())
     }
 
-    /// Count pending-created relationships whose destination is `node_id` and
-    /// whose type name matches one of `types` (or all if `types` is empty).
-    #[must_use]
-    pub fn pending_indegree(
-        &self,
-        node_id: NodeId,
-        types: &[Arc<String>],
-    ) -> usize {
-        if types.is_empty() {
-            self.created_rels_by_type
-                .values()
-                .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
-                .count()
-        } else {
-            types
-                .iter()
-                .filter_map(|t| self.created_rels_by_type.get(t))
-                .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
-                .count()
-        }
-    }
-
-    /// Count pending-created relationships whose source is `node_id` and
-    /// whose type name matches one of `types` (or all if `types` is empty).
-    #[must_use]
-    pub fn pending_outdegree(
-        &self,
-        node_id: NodeId,
-        types: &[Arc<String>],
-    ) -> usize {
-        if types.is_empty() {
-            self.created_rels_by_type
-                .values()
-                .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
-                .count()
-        } else {
-            types
-                .iter()
-                .filter_map(|t| self.created_rels_by_type.get(t))
-                .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
-                .count()
-        }
-    }
-
-    /// Count pending-deleted relationships whose destination is `node_id` and
-    /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
-    #[must_use]
-    pub fn pending_deleted_indegree(
+    /// Build the degree index from the current pending state, or refresh an
+    /// existing one, and read `node_id`'s deltas out of it.
+    ///
+    /// Returns `(added, removed)`: relationships pending creation and pending
+    /// deletion respectively, in the direction selected by `outgoing` and
+    /// restricted to `types` when it is non-empty.
+    ///
+    /// The index is what keeps this `O(1)` per call. Answering from the
+    /// pending collections directly costs `O(pending)`, and degree functions
+    /// are evaluated once per row, so an `n`-row `CREATE`/`DELETE` that also
+    /// reads a degree used to cost `O(n^2)`.
+    fn pending_degree_delta(
         &self,
         node_id: NodeId,
         types: &[Arc<String>],
         g: &Graph,
-    ) -> usize {
-        self.deleted_relationships
-            .iter()
-            .filter(|rel_id| {
-                let (_from, to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
-                to == node_id
-                    && (types.is_empty()
-                        || g.get_type(g.get_relationship_type_id(RelationshipId::from(*rel_id)))
-                            .is_some_and(|t| types.contains(&t)))
-            })
-            .count()
+        outgoing: bool,
+    ) -> (usize, usize) {
+        let mut slot = self.degree_index.borrow_mut();
+        let ix = match slot.as_mut() {
+            // Deletions of committed relationships are resolved here rather
+            // than at deletion time, which has no graph to resolve them with.
+            Some(ix) => {
+                ix.drain_unresolved(g);
+                ix
+            }
+            None => slot.insert(Box::new(self.build_degree_index(g))),
+        };
+
+        let mut added = 0usize;
+        let mut removed = 0usize;
+        // `types` is deduplicated by the degree functions' argument parsing,
+        // so summing per type cannot double-count.
+        let mut accumulate = |c: DegreeCounts| {
+            let (a, r) = if outgoing {
+                (c.created_out, c.deleted_out)
+            } else {
+                (c.created_in, c.deleted_in)
+            };
+            added += a as usize;
+            removed += r as usize;
+        };
+        if types.is_empty() {
+            accumulate(ix.get(node_id, None));
+        } else {
+            for t in types {
+                accumulate(ix.get(node_id, Some(t)));
+            }
+        }
+        (added, removed)
     }
 
-    /// Count pending-deleted relationships whose source is `node_id` and
-    /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Populate a fresh index from the pending collections.
+    ///
+    /// Runs once per query that uses a degree function, on the first call.
+    /// Every later mutation maintains the index incrementally instead.
+    fn build_degree_index(
+        &self,
+        g: &Graph,
+    ) -> DegreeIndex {
+        let mut ix = DegreeIndex::default();
+        for rel in self.created_rel_types.values() {
+            ix.record_create(rel.from, rel.to, &rel.type_name);
+        }
+        for rel_id in &self.deleted_relationships {
+            let id = RelationshipId::from(rel_id);
+            // Pending-created edges are resolved from pending, never from the
+            // graph: ids are recycled, so a reserved id can read as present in
+            // the committed graph while its pending create is still live.
+            if let Some(rel) = self.created_rel_types.get(&id) {
+                ix.record_delete_of_created(rel.from, rel.to, &rel.type_name);
+            } else {
+                ix.unresolved_deletes.push(id);
+            }
+        }
+        ix.drain_unresolved(g);
+        ix
+    }
+
+    /// Pending-created and pending-deleted indegree deltas for `node_id`,
+    /// restricted to `types` when it is non-empty.
     #[must_use]
-    pub fn pending_deleted_outdegree(
+    pub fn pending_indegree_delta(
         &self,
         node_id: NodeId,
         types: &[Arc<String>],
         g: &Graph,
-    ) -> usize {
-        self.deleted_relationships
-            .iter()
-            .filter(|rel_id| {
-                let (from, _to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
-                from == node_id
-                    && (types.is_empty()
-                        || g.get_type(g.get_relationship_type_id(RelationshipId::from(*rel_id)))
-                            .is_some_and(|t| types.contains(&t)))
-            })
-            .count()
+    ) -> (usize, usize) {
+        self.pending_degree_delta(node_id, types, g, false)
+    }
+
+    /// Pending-created and pending-deleted outdegree deltas for `node_id`,
+    /// restricted to `types` when it is non-empty.
+    #[must_use]
+    pub fn pending_outdegree_delta(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+        g: &Graph,
+    ) -> (usize, usize) {
+        self.pending_degree_delta(node_id, types, g, true)
     }
 
     pub fn commit(
@@ -908,6 +1091,11 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
+        // Commit rewrites the pending collections (notably `deleted_relationships`,
+        // which is drained and then refilled with what was actually removed), so
+        // the counters no longer describe them. Drop the index and let the next
+        // lookup rebuild from whatever state commit leaves behind.
+        self.release_degree_index();
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut().create_nodes(&self.created_nodes);
@@ -919,9 +1107,12 @@ impl Pending {
                 let mut srcs = Vec::with_capacity(rel_ids.len());
                 let mut dsts = Vec::with_capacity(rel_ids.len());
                 let mut ids = Vec::with_capacity(rel_ids.len());
-                for &(rel_id, from, to) in rel_ids {
-                    srcs.push(from.into());
-                    dsts.push(to.into());
+                for &rel_id in rel_ids {
+                    let Some(rel) = self.created_rel_types.get(&rel_id) else {
+                        continue;
+                    };
+                    srcs.push(rel.from.into());
+                    dsts.push(rel.to.into());
                     ids.push(rel_id.into());
                 }
                 g.create_relationships_bulk(type_name, &srcs, &dsts, &ids);
@@ -1089,7 +1280,7 @@ impl Pending {
         // Collect affected edge IDs
         let mut affected_edge_ids = RoaringTreemap::new();
         for rels in self.created_rels_by_type.values() {
-            for &(rel_id, _, _) in rels {
+            for &rel_id in rels {
                 affected_edge_ids.insert(rel_id.into());
             }
         }
@@ -1243,7 +1434,7 @@ impl Pending {
             // An edge's type never changes, so created under a different
             // type means not a member.
             let has_type = match self.created_rel_types.get(&edge_id.into()) {
-                Some(created_type) => created_type.as_str() == type_name.as_str(),
+                Some(created) => created.type_name.as_str() == type_name.as_str(),
                 None => g.edge_has_type(edge_id.into(), type_name),
             };
             if !has_type {
@@ -1402,7 +1593,7 @@ impl Pending {
         // Dropping millions of per-entity Vec allocations is O(n) frees and
         // stalls the serialized write thread; move large maps to a background
         // thread and let it pay the deallocation cost.
-        const OFFLOAD_THRESHOLD: usize = 4096;
+        let degree_index = self.degree_index.get_mut().take();
         let big_entries = self.new_nodes_attrs.len()
             + self.existing_nodes_attrs.len()
             + self.new_relationships_attrs.len()
@@ -1413,7 +1604,8 @@ impl Pending {
                 .created_rels_by_type
                 .values()
                 .map(Vec::len)
-                .sum::<usize>();
+                .sum::<usize>()
+            + degree_index.as_ref().map_or(0, |ix| ix.len());
         if big_entries >= OFFLOAD_THRESHOLD {
             let maps = (
                 std::mem::take(&mut self.new_nodes_attrs),
@@ -1423,6 +1615,8 @@ impl Pending {
                 std::mem::take(&mut self.set_labels),
                 std::mem::take(&mut self.remove_labels),
                 std::mem::take(&mut self.created_rels_by_type),
+                std::mem::take(&mut self.created_rel_types),
+                degree_index,
             );
             std::thread::spawn(move || drop(maps));
         } else {
@@ -1433,9 +1627,10 @@ impl Pending {
             self.set_labels.clear();
             self.remove_labels.clear();
             self.created_rels_by_type.clear();
+            self.created_rel_types.clear();
+            drop(degree_index);
         }
         self.created_nodes.clear();
-        self.created_rel_types.clear();
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
         self.deleted_endpoints.clear();
@@ -1443,6 +1638,20 @@ impl Pending {
         self.index_remove_docs.clear();
         self.index_add_edge_docs.clear();
         self.index_remove_edge_docs.clear();
+    }
+
+    /// Discard the degree index, handing a large one to a background thread.
+    ///
+    /// The index is `O(pending)`, so a bulk degree query builds a big map;
+    /// freeing it inline would stall the serialized write path exactly as the
+    /// per-entity maps in `clear()` would.
+    fn release_degree_index(&mut self) {
+        let Some(ix) = self.degree_index.get_mut().take() else {
+            return;
+        };
+        if ix.len() >= OFFLOAD_THRESHOLD {
+            std::thread::spawn(move || drop(ix));
+        }
     }
 
     /// Returns the number of effects (operations) tracked in this Pending.
@@ -1575,15 +1784,21 @@ impl Pending {
         if !self.created_rels_by_type.is_empty() {
             let graph = g.borrow();
             for (type_name, entries) in &self.created_rels_by_type {
+                if entries.is_empty() {
+                    continue;
+                }
                 let type_id = graph
                     .get_type_id(type_name)
                     .expect("created relationship type must be registered")
                     .0 as u16;
-                for &(rel_id, from, to) in entries {
+                for &rel_id in entries {
+                    let Some(rel) = self.created_rel_types.get(&rel_id) else {
+                        continue;
+                    };
                     buf.push(EFFECT_CREATE_EDGE);
                     buf.extend_from_slice(&u64::from(rel_id).to_le_bytes());
-                    buf.extend_from_slice(&u64::from(from).to_le_bytes());
-                    buf.extend_from_slice(&u64::from(to).to_le_bytes());
+                    buf.extend_from_slice(&u64::from(rel.from).to_le_bytes());
+                    buf.extend_from_slice(&u64::from(rel.to).to_le_bytes());
                     write_u16(buf, type_id);
 
                     if let Some(attrs) = self.new_relationships_attrs.get(&u64::from(rel_id)) {
