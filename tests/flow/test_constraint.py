@@ -1439,3 +1439,66 @@ class testConstraintAOF():
             self.env.assertTrue(False)
         except ResponseError as e:
             self.env.assertContains("mandatory constraint violation: edge with relationship-type Painted missing property year", str(e))
+
+    def test03_replay_does_not_publish_deleted_constraints(self):
+        # Activation is asynchronous: replay must not append it after a later
+        # DELETE, or the next restart resurrects the graph (or crashes).
+        removed = GRAPH_ID + '_removed'
+        reused = GRAPH_ID + '_reused'
+        for name in (removed, reused):
+            graph = self.db.select_graph(name)
+            graph.query('CREATE (:Old {id: 1})')
+            create_unique_node_constraint(graph, 'Old', 'id', sync=True)
+            create_mandatory_node_constraint(graph, 'Old', 'id', sync=True)
+            graph.delete()
+        graph = self.db.select_graph(reused)
+        graph.query('CREATE (:New {id: 2})')
+        create_unique_node_constraint(graph, 'New', 'id', sync=True)
+        create_mandatory_node_constraint(graph, 'New', 'id', sync=True)
+
+        for _ in range(2):
+            self.env.stop()
+            self.env.start()
+            self.con = self.env.getConnection()
+            self.env.assertEqual(self.con.exists(removed), 0)
+            graph = self.db.select_graph(reused)
+            wait_on_constraint(graph, 'UNIQUE', 'NODE', 'New', 'id')
+            wait_on_constraint(graph, 'MANDATORY', 'NODE', 'New', 'id')
+            self.env.assertEqual(graph.query('MATCH (n) RETURN n.id').result_set, [[2]])
+            constraints = list_constraints(graph)
+            self.env.assertEqual(len(constraints), 2)
+            for constraint in constraints:
+                self.env.assertEqual(constraint.label, 'New')
+                self.env.assertEqual(constraint.status, 'OPERATIONAL')
+            for query, error in [('CREATE (:New)', 'mandatory'),
+                                 ('CREATE (:New {id: 2})', 'unique')]:
+                try:
+                    graph.query(query)
+                    self.env.assertTrue(False)
+                except ResponseError as e:
+                    self.env.assertContains(error + ' constraint violation', str(e))
+
+    def test04_legacy_constraint_announcements_are_idempotent(self):
+        graph = self.db.select_graph(GRAPH_ID + '_legacy')
+        graph.query('CREATE (:Person {height: 1})')
+        create_mandatory_node_constraint(graph, 'Person', 'height', sync=True)
+        config = self.con.config_get('dir', 'appenddirname', 'appendfilename')
+        directory = os.path.join(config['dir'], config['appenddirname'])
+        with open(os.path.join(directory, config['appendfilename'] + '.manifest')) as manifest:
+            for line in manifest:
+                fields = dict(zip(line.split()[::2], line.split()[1::2]))
+                if fields.get('type') == 'i':
+                    incremental = os.path.join(directory, fields['file'])
+        self.env.stop()
+        # 4.18 AOFs announce successful constraints twice, as commands rather
+        # than effects. Keep the fixture synthetic and exercise the real loader.
+        args = ['GRAPH.CONSTRAINT', 'CREATE', graph.name, 'MANDATORY',
+                'NODE', 'Person', 'PROPERTIES', '1', 'height']
+        command = '*9\r\n' + ''.join(f'${len(arg)}\r\n{arg}\r\n' for arg in args)
+        with open(incremental, 'ab') as aof:
+            aof.write(command.encode() * 2)
+        self.env.start()
+        self.con = self.env.getConnection()
+        self.env.assertEqual(self.con.info('stats')['total_error_replies'], 0)
+        self.env.assertEqual(get_constraint(graph, 'MANDATORY', 'NODE',
+                                           'Person', 'height').status, 'OPERATIONAL')

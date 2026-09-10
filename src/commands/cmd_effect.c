@@ -74,7 +74,7 @@ int Graph_Effect
 	const char *effects_buff = RedisModule_StringPtrLen (argv[2], &l) ;
 
 	// apply effects
-	bool ok = Effects_Apply (gc, effects_buff, l) ;
+	bool ok = Effects_Apply (gc, effects_buff, l, ctx) ;
 
 	// restore graph sync policy
 	Graph_SetMatrixPolicy (g, policy) ;
