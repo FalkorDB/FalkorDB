@@ -115,7 +115,7 @@ jobs:
       flavour: release
       tag: rc-pr-${{ github.event.pull_request.number }}
       commit_sha: ${{ github.event.pull_request.head.sha }}
-      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"incredibuild-runner","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"}]'
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
       browser_tag: edge
       build_image: ${{ needs.check-files.outputs.file_changed == 'true' && format('ghcr.io/falkordb/falkordb-build:pr-{0}', github.event.pull_request.number) || 'ghcr.io/falkordb/falkordb-build:latest' }}
       # push_to_dockerhub left at default false — PR RC builds stay on GHCR.

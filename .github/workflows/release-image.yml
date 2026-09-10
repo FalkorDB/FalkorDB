@@ -281,7 +281,7 @@ jobs:
       flavour: release
       tag: ${{ needs.prepare.outputs.tag }}
       commit_sha: ${{ needs.prepare.outputs.commit_sha }}
-      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"incredibuild-runner","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"}]'
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"incredibuild-runner","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
       browser_tag: ${{ needs.prepare.outputs.browser_tag }}
       push_to_dockerhub: ${{ fromJSON(needs.prepare.outputs.push_to_dockerhub) }}
       is_latest: ${{ fromJSON(needs.prepare.outputs.is_latest) }}
