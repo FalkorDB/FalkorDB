@@ -12,11 +12,10 @@
 use crate::effects::EffectsBuffer;
 use crate::runtime::runtime::Runtime;
 
-/// Decide whether to use effects replication and get the pre-built buffer.
-/// The buffer was built in `CommitOp` before pending was cleared.
-/// Returns Some(buffer) if effects should be sent, None for verbatim replication.
 /// The payload a finished write should replicate, or `None` when it produced
 /// nothing.
+///
+/// The buffer itself was built in `CommitOp`, before `Pending` was cleared.
 ///
 /// There is no query-replay alternative any more: a write either ships as
 /// effects or is not replicated at all. That removes the size heuristic this

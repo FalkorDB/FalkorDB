@@ -12,7 +12,11 @@
 //! ```
 
 use crate::divergence_guard;
-use crate::{config::CONFIGURATION_CACHE_SIZE, graph_core::ThreadedGraph, redis_type::GRAPH_TYPE};
+use crate::{
+    config::CONFIGURATION_CACHE_SIZE,
+    graph_core::{ThreadedGraph, c_graph_key, c_graph_name, register_graph},
+    redis_type::GRAPH_TYPE,
+};
 use graph::effects::EffectsPayload;
 use parking_lot::RwLock;
 use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
@@ -31,17 +35,27 @@ pub fn graph_effect(
         return Ok(RedisValue::SimpleStringStatic("OK"));
     }
 
-    // Open existing graph or create a new one
+    // Open existing graph or create a new one. Looked up by the full key bytes
+    // and created under the truncated name, which is C's own asymmetry — see
+    // `c_graph_key`.
     let key = ctx.open_key_writable(&key_str);
     let graph = if let Some(g) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
         g.clone()
     } else {
+        let name = c_graph_name(&key_str);
         let g = Arc::new(RwLock::new(ThreadedGraph::new(
             *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
+            &name,
         )));
-        key.set_value(&GRAPH_TYPE, g.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), g.clone());
+        // The same pair `GRAPH.QUERY`, `GRAPH.CONSTRAINT`, `GRAPH.PROFILE` and
+        // `GRAPH.BULK` create through. Using the raw key here instead put a
+        // graph whose key holds a NUL at a different key, under a different
+        // name, from the one every other command would have made — and this is
+        // the replication path, so the divergence would be between a replica
+        // and the master it is meant to be copying.
+        let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+        create_key.set_value(&GRAPH_TYPE, g.clone())?;
+        register_graph(name, g.clone());
         g
     };
 
