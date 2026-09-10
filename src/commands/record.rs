@@ -19,6 +19,7 @@
 //! blocked; the main thread only resolves (or creates) the graph key.
 
 use crate::dispatch::must_run_inline;
+use crate::graph_core::{abandon_write, finish_write};
 use crate::query_session::QuerySession;
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
@@ -81,7 +82,6 @@ fn record_mut(
     } else {
         session.with_graph(|tg| tg.graph.read())
     };
-    let g_arc = Arc::clone(&g);
     let runtime = Runtime::new(
         g,
         parameters,
@@ -98,59 +98,12 @@ fn record_mut(
     );
     let outcome = runtime.query();
     if is_write {
+        // Deliberately the same two paths `GRAPH.QUERY` takes: RECORD adds an
+        // operator trace to a real write, it does not change how one is published
+        // or how a failed one is undone.
         match &outcome {
-            Err(_) => {
-                // Same undo a failed write does: bring the index back in line with
-                // committed state, then release the MVCC write slot.
-                let committed = session.with_graph(|tg| tg.graph.read());
-                runtime.resync_published_indexes(&committed);
-                session.with_graph(|tg| tg.graph.rollback());
-            }
-            Ok(result) => {
-                let stats = &result.stats;
-                let modified = stats.nodes_created > 0
-                    || stats.nodes_deleted > 0
-                    || stats.relationships_created > 0
-                    || stats.relationships_deleted > 0
-                    || stats.properties_set > 0
-                    || stats.properties_removed > 0
-                    || stats.labels_added > 0
-                    || stats.labels_removed > 0
-                    || stats.indexes_created > 0
-                    || stats.indexes_dropped > 0
-                    || runtime.effects_count.get() > 0;
-                // Effects encoding mirrors `execute_query_write`: index DDL carrying
-                // OPTIONS cannot round-trip, so those fall back to verbatim
-                // replication of the query.
-                let has_unencodable_index = runtime.plan.iter().any(
-                    |node| matches!(node, IR::CreateIndex { options, .. } if options.is_some()),
-                );
-                let effects_buffer = if has_unencodable_index {
-                    None
-                } else {
-                    let buf = crate::graph_core::should_use_effects(
-                        false,
-                        &runtime,
-                        stats.execution_time,
-                    );
-                    crate::graph_core::build_index_effects(&runtime, buf)
-                };
-                let wq = crate::graph_core::WriteQueryOk {
-                    graph: g_arc,
-                    effects_buffer,
-                    modified,
-                };
-                if session
-                    .with_graph_mut(|tg| {
-                        crate::graph_core::commit_and_replicate(tg, ctx, key_name, query, wq)
-                    })
-                    .is_none()
-                {
-                    // The plan's `Commit` never ran (`LIMIT 0` above it, say), so
-                    // nothing was mutated — release the slot without publishing.
-                    session.with_graph(|tg| tg.graph.rollback());
-                }
-            }
+            Err(_) => abandon_write(&session, &runtime),
+            Ok(result) => finish_write(&session, ctx, key_name, &runtime, &result.stats),
         }
     }
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();

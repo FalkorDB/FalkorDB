@@ -21,6 +21,7 @@
 //!
 //! Only allowed in write queries; returns an error for `GRAPH.RO_QUERY`.
 
+use crate::effects::EffectsBuffer;
 use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp},
@@ -107,8 +108,15 @@ impl<'a> Iterator for CommitOp<'a> {
                 if estimated > 0 {
                     if self.runtime.build_effects.get() {
                         let mut buf_ref = self.runtime.effects_buffer.borrow_mut();
-                        let buf = buf_ref.get_or_insert_with(Vec::new);
-                        let n_effects = pending.build_effects_buffer(&self.runtime.g, buf);
+                        let buf = buf_ref.get_or_insert_with(EffectsBuffer::new);
+                        // A refusal here means the emitter built a record this
+                        // buffer cannot carry. Failing the write is the point:
+                        // the alternative is a commit that succeeded locally
+                        // and shipped a payload the replica reads differently.
+                        let n_effects = match buf.build(&pending, &self.runtime.g) {
+                            Ok(n) => n,
+                            Err(e) => return Some(Err(e)),
+                        };
                         self.runtime
                             .effects_count
                             .set(self.runtime.effects_count.get() + n_effects);

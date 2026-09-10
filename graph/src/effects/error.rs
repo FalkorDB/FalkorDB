@@ -187,3 +187,206 @@ pub enum DecodeError {
     #[error("id range starting at {base} cannot hold {count} ids")]
     BadRange { base: u64, count: u64 },
 }
+
+// ── apply errors ──
+
+/// Why an effects buffer could not be applied.
+///
+/// Divergence is the interesting half. `Decode` means the bytes were malformed;
+/// everything below it means the bytes were *well formed* and described a graph
+/// this replica does not have — which is the failure this format exists to make loud.
+#[derive(Clone, Debug, PartialEq, Eq, Error)]
+pub enum ApplyError {
+    #[error(transparent)]
+    Decode(#[from] DecodeError),
+
+    /// The replica would have assigned a different id to a new schema entry or
+    /// attribute. C's reader cannot see this case: its `ADD_SCHEMA` and
+    /// `ADD_ATTRIBUTE` records carry no id at all — only a name — and
+    /// `ApplyAddSchema`/`ApplyAddAttribute` refuse just the name that already
+    /// exists locally (`src/effects/effects_apply.c`). That misses a replica
+    /// whose dictionary is a different length, where appending the same new name
+    /// yields a different id. That is the case that silently put a property
+    /// value on the wrong attribute.
+    #[error(
+        "effects buffer assigns {kind} '{name}' id {expected}, but this replica would \
+         assign {assigned}{local}. The two engines have diverged; the buffer was not applied."
+    )]
+    IdMismatch {
+        kind: &'static str,
+        name: String,
+        expected: i64,
+        assigned: i64,
+        /// What the wire's id names locally, when it names anything.
+        local: LocalName,
+    },
+
+    /// An id resolved, but to a different name. Mirrors C's `VerifySchema` /
+    /// `VerifyAttribute`: the id is authoritative, the name is the cross-check.
+    #[error("effects buffer references {kind} '{name}' (id {id}), which is '{local}' here")]
+    NameMismatch {
+        kind: &'static str,
+        name: String,
+        id: i64,
+        local: String,
+    },
+
+    #[error("effects buffer references {kind} '{name}' (id {id}), which does not exist here")]
+    Unresolved {
+        kind: &'static str,
+        name: String,
+        id: i64,
+    },
+
+    /// A create names an id that is neither in this replica's recycle bin nor
+    /// past the first id it has never allocated — so it is already live here.
+    /// `kind` says which entity: nodes and relationships are checked the same
+    /// way, against the same [`crate::graph::id_space::IdSpace`].
+    ///
+    /// Ids are not carried by any record that could report a disagreement about
+    /// them: the next fresh id is derived from the entity's count and its bin,
+    /// and the create removes ids from the bin whether or not they were in it.
+    /// Left unchecked, a drift stays invisible until the replica is promoted and
+    /// hands out an id that is already in use.
+    #[error(
+        "effects buffer creates {kind} {id}, which is already live on this replica (the \
+         boundary it was judged against is {first_unallocated}). The two engines have \
+         diverged; the buffer was not applied."
+    )]
+    AlreadyLive {
+        kind: &'static str,
+        id: u64,
+        first_unallocated: u64,
+    },
+
+    /// A delete names an id this replica does not hold live — either it is
+    /// already in the recycle bin, or it was never allocated. `kind` says which
+    /// entity: nodes and relationships are checked the same way, against the same
+    /// [`crate::graph::id_space::IdSpace`].
+    #[error(
+        "effects buffer deletes {kind} {id}, which is not live on this replica ({reason}). \
+         The two engines have diverged; the buffer was not applied."
+    )]
+    NotLive {
+        kind: &'static str,
+        id: u64,
+        reason: &'static str,
+    },
+
+    /// A record names an id with nothing past it.
+    ///
+    /// `u64::MAX` cannot be created: there is no boundary above it, and a master
+    /// that had genuinely handed out 2^64 ids would have exhausted memory long
+    /// before reaching the top.
+    #[error(
+        "effects buffer creates {kind} {id}, which is past the end of the id space. \
+         The two engines have diverged; the buffer was not applied."
+    )]
+    IdPastEndOfSpace { kind: &'static str, id: u64 },
+
+    /// The batch left ids allocated between the boundary it started from and the
+    /// highest id it created, without creating them.
+    ///
+    /// An allocator hands out the lowest free id, so it cannot reach an id
+    /// without having handed out everything below it. A buffer that leaves a
+    /// hole was not produced by one — the likeliest cause is a replica that has
+    /// missed a buffer, and accepting it would leave an id space the master does
+    /// not have.
+    #[error(
+        "effects buffer allocated {kind} ids {entry_bound}..={highest} but created only \
+         {created} of them. The two engines have diverged; the buffer was not applied."
+    )]
+    IdsHaveAHole {
+        kind: &'static str,
+        entry_bound: u64,
+        highest: u64,
+        created: u64,
+    },
+
+    /// The graph's own id boundary for `kind` is not where the ids it was given
+    /// put it.
+    ///
+    /// The entity's count is an independent counter, so the same id applied twice
+    /// moves it twice while the set of ids does not change. This is the only
+    /// place anything checks that counter against a value not derived from it.
+    #[error(
+        "effects buffer left this replica's {kind} id boundary at {graph_bound}, but the \
+         ids it carried put it at {expected}. The two engines have diverged; the buffer \
+         was not applied."
+    )]
+    CountMiscounted {
+        kind: &'static str,
+        graph_bound: u64,
+        expected: u64,
+    },
+
+    /// A schema id the local dictionary does not hold.
+    ///
+    /// The field is unsigned on the wire, so C's sentinels cannot arrive as
+    /// themselves — `GRAPH_NO_LABEL` (-1) reads as 4294967295 and lands here.
+    /// That is the right outcome and the number is the honest one: those values
+    /// are not schema ids, and a payload naming one has diverged whichever way
+    /// it is spelled.
+    #[error("{kind} id {id} out of range")]
+    IdOutOfRange { kind: &'static str, id: i64 },
+
+    /// `ADD_ATTRIBUTE` for a name this graph has no room to intern.
+    ///
+    /// `AttrNameMap::insert` returns without inserting once the dictionary holds
+    /// `MAX_ATTRIBUTES` names, because `ATTRIBUTE_ID_NONE` is reserved and the
+    /// ids are `u16`. The registration is therefore silent, and reading the id
+    /// back gives `None` — which used to reach an `expect` and take the replica
+    /// down over a buffer its master applied fine.
+    ///
+    /// A divergence rather than a local failure: the master interned the name,
+    /// so the two dictionaries no longer agree and every later record carrying a
+    /// bare attribute id means something different on each side.
+    #[error(
+        "effects buffer registers attribute '{name}', but this replica already holds \
+         {limit} attributes and cannot intern another. The two engines have diverged; \
+         the buffer was not applied."
+    )]
+    AttributeLimitReached { name: String, limit: usize },
+
+    #[error("unknown {kind}: {value}")]
+    UnknownDiscriminant { kind: &'static str, value: u32 },
+
+    #[error("record declares {entities} entities x {width} attributes but carries {values} values")]
+    ShapeMismatch {
+        entities: usize,
+        width: usize,
+        values: usize,
+    },
+
+    /// An `AttrSet` that is not strictly ascending.
+    ///
+    /// The attribute stores take the record's ids as a *span* and merge it into
+    /// a sorted one, so wire order is load-bearing rather than cosmetic.
+    #[error("attribute ids must be strictly ascending, got {first} before {second}")]
+    AttrIdsNotAscending { first: u16, second: u16 },
+
+    #[error("index option is not supported by this engine: {0}")]
+    UnsupportedIndexOption(String),
+
+    /// The graph rejected the mutation. Still a `String` because that is what
+    /// every `Graph` method returns; wrapping it keeps the apply path's own
+    /// failures distinguishable from the graph's.
+    #[error("{0}")]
+    Graph(String),
+}
+
+/// What an id names locally, rendered for the `IdMismatch` message.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalName(pub Option<String>);
+
+impl std::fmt::Display for LocalName {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
+        match &self.0 {
+            Some(n) => write!(f, " (that id is '{n}' here)"),
+            None => Ok(()),
+        }
+    }
+}
