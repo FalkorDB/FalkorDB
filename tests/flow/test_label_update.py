@@ -93,10 +93,14 @@ class testLabelUpdate():
 
     def test_remove_then_set_same_label(self):
         # Regression for #2777: a label removed and re-added in the same query
-        # must survive, and the cancelled removal must not be serialized as a
-        # stale EFFECT_REMOVE_LABELS. The mirror direction must not serialize a
-        # zero-label EFFECT_SET_LABELS either. Both are checked on the replica,
-        # which sees only the effects stream.
+        # must survive. What this pins is the replicated end state — master and
+        # replica agreeing that the node still carries L, which a stale
+        # EFFECT_REMOVE_LABELS would break on the replica alone.
+        #
+        # It does not pin the record set on the wire: a zero-label
+        # EFFECT_SET_LABELS applies as a no-op, so both sides agree whether or
+        # not one was sent. That is pinned on the buffer itself, by
+        # graph::runtime::pending::label_effect_tests.
         self.query_master_and_wait("CREATE (:A {v: 1})")
         self.query_master_and_wait("MATCH (n:A) SET n:L")
 
