@@ -107,17 +107,18 @@ fn lookup_sorted(
         .map(|pos| &attrs[pos].1)
 }
 
-/// A node created and then deleted before the transaction committed.
+/// A relationship whose id was handed out and then taken back, because the node
+/// it hung off was cancelled in the same commit.
 ///
-/// Its labels and attributes are kept because the effects buffer describes it
-/// as a create followed by a delete, and the create has to carry the shape the
-/// master would have given it — that is what makes the payload the same records
-/// C emits for the same query.
-#[derive(Clone, Debug)]
-pub(crate) struct CancelledNode {
+/// The endpoints and the type are kept even though the edge never survives:
+/// `CreateEdge` has no form without them, and the record pair is what tells the
+/// replica the id was used. See [`Pending::cancelled_relationships`].
+#[derive(Debug, Clone)]
+pub(crate) struct CancelledRelationship {
     pub(crate) id: u64,
-    pub(crate) labels: Vec<u64>,
-    pub(crate) attrs: Vec<(u16, Value)>,
+    pub(crate) type_name: Arc<String>,
+    pub(crate) src: u64,
+    pub(crate) dst: u64,
 }
 
 /// Accumulated write operations for deferred application.
@@ -167,7 +168,20 @@ pub struct Pending {
     /// Kept here so the effects emitter can say what happened — a create and a
     /// delete, which is what C's payload carries for the same query — without
     /// the master having to do the work it deliberately skips.
-    pub(crate) cancelled_nodes: Vec<CancelledNode>,
+    /// Ids of nodes created and then cancelled in this commit.
+    ///
+    /// Ids alone: the record pair they become carries no labels or attributes,
+    /// because the node is deleted a record later and its content would be
+    /// applied and immediately undone. [`Self::cancelled_relationships`] keeps
+    /// more only because `CreateEdge` has no form without a type and endpoints.
+    pub(crate) cancelled_nodes: Vec<u64>,
+    /// Relationships cascaded away by a cancelled node, in the same commit.
+    ///
+    /// Their ids were reserved and returned exactly as a cancelled node's is —
+    /// `return_relationship_id` puts them in the recycle bin — so a buffer that
+    /// says nothing about them leaves the replica's relationship id space with a
+    /// hole, and `IdSpace::verify` refuses the whole payload.
+    pub(crate) cancelled_relationships: Vec<CancelledRelationship>,
     /// Property updates for newly created nodes (fast path: skip fjall).
     /// Values are attribute-id-resolved, sorted by id, unique.
     pub(crate) new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
@@ -345,6 +359,7 @@ impl Pending {
             deleted_endpoints: Vec::new(),
             deleted_node_labels: Vec::new(),
             cancelled_nodes: Vec::new(),
+            cancelled_relationships: Vec::new(),
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
             new_relationships_attrs: FxHashMap::default(),
@@ -626,11 +641,7 @@ impl Pending {
 
         // The one durable record that this id was ever handed out. Everything
         // above has just erased it from the structures the graph commits.
-        self.cancelled_nodes.push(CancelledNode {
-            id: id.into(),
-            labels: label_ids.iter().map(|l| l.0 as u64).collect(),
-            attrs: attrs.clone(),
-        });
+        self.cancelled_nodes.push(id.into());
 
         (label_ids, attrs, rels)
     }
@@ -674,6 +685,14 @@ impl Pending {
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(rel_id.into());
+            // The one durable record that this id was ever handed out, the same
+            // role `cancelled_nodes` plays for the node above.
+            self.cancelled_relationships.push(CancelledRelationship {
+                id: rel_id.into(),
+                type_name: type_name.clone(),
+                src: from.into(),
+                dst: to.into(),
+            });
             result.push((rel_id, from, to, type_name, attrs));
         }
 
@@ -1545,6 +1564,7 @@ impl Pending {
         self.deleted_endpoints.clear();
         self.deleted_node_labels.clear();
         self.cancelled_nodes.clear();
+        self.cancelled_relationships.clear();
         self.index_docs.node_adds.clear();
         self.index_docs.node_removes.clear();
         self.index_docs.edge_adds.clear();

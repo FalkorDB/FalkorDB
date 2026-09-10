@@ -23,6 +23,7 @@ use crate::runtime::runtime::map_to_index_options;
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 
 use crate::{
     effects::EffectWrite,
@@ -30,7 +31,10 @@ use crate::{
     entity_type::EntityType,
     graph::graph::{DeletedEdge, Graph, NodeId, RelationshipId},
     index::IndexType,
-    runtime::{pending::Pending, value::Value},
+    runtime::{
+        pending::{CancelledRelationship, Pending},
+        value::Value,
+    },
 };
 
 use crate::effects::announce::{AnnouncedConstraint, AnnouncedIndex, SchemaBaseline};
@@ -362,7 +366,7 @@ pub fn for_each_record(
     // Edges before nodes, so the replica unhooks first.
     digest_deleted_edges(p, out);
     digest_deleted_nodes(p, out);
-    digest_cancelled_nodes(p, out);
+    digest_cancelled(p, g, out);
 }
 
 /// A node created and deleted inside one segment, as the create and the delete
@@ -383,41 +387,108 @@ pub fn for_each_record(
 /// Last, and as a pair. A later commit in the same query may reclaim this id
 /// from the bin, and its `CREATE_NODE` is appended after these — so the delete
 /// has to be in the buffer before that create, not merely somewhere in it.
-fn digest_cancelled_nodes(
+fn digest_cancelled(
     p: &Pending,
+    g: &AtomicRefCell<Graph>,
     out: &mut impl FnMut(Record),
 ) {
-    if p.cancelled_nodes.is_empty() {
+    if p.cancelled_nodes.is_empty() && p.cancelled_relationships.is_empty() {
         return;
     }
-    // Ids and nothing else.
+
+    // Ids and nothing else, for both halves.
     //
-    // The pair is here to move the replica's allocator over an id the master
-    // handed out and then took back — not to reproduce a node that did not
-    // survive its own transaction. Carrying its labels and attributes would
-    // have the replica build a node and then immediately unbuild it: the
-    // create adds index documents, the delete a record later removes them, and
-    // the net effect on the graph is the id space and nothing besides.
+    // These pairs are here to move the replica's allocator over ids the master
+    // handed out and then took back — not to reproduce entities that did not
+    // survive their own transaction. Carrying labels and attributes would have
+    // the replica build them and then immediately unbuild them: the create adds
+    // index documents, the delete a record later removes them, and the net
+    // effect on the graph is the id space and nothing besides.
     //
     // `DeleteNode` ignores its label list on the way in regardless — `apply`
     // binds it as `labels: _` — so on that half they were never read.
     //
-    // No grouping by shape either. A shape only earns its grouping when the
-    // content travels with it; with no content, every cancelled node in the
-    // buffer is one record pair however many labels they had between them.
-    let mut ids: Vec<u64> = p.cancelled_nodes.iter().map(|n| n.id).collect();
-    ids.sort_unstable();
-    let ids: IdList = ids.into_iter().collect();
-    out(Record::CreateNode {
-        ids: ids.clone(),
-        labels: Vec::new(),
-        attr_ids: Vec::new(),
-        rows: Vec::new(),
-    });
-    out(Record::DeleteNode {
-        ids,
-        labels: Vec::new(),
-    });
+    // Both kinds are cancelled by the same event: `delete_pending_node` unwinds
+    // a node created in this commit, and every relationship hanging off it goes
+    // with it. Their ids are reserved and returned the same way
+    // (`return_node_id` / `return_relationship_id` both push into a recycle
+    // bin), and `IdSpace::verify` checks both spaces for holes — so a buffer
+    // that covers one and not the other is refused outright, naming the ids it
+    // allocated and did not create.
+    //
+    // Order is load-bearing: an edge's endpoints may themselves be cancelled
+    // nodes, so the nodes are created before the edges and deleted after them,
+    // exactly as `digest_deleted_edges` runs before `digest_deleted_nodes`.
+    let node_ids: IdList = {
+        let mut ids: Vec<u64> = p.cancelled_nodes.clone();
+        ids.sort_unstable();
+        ids.into_iter().collect()
+    };
+    if !p.cancelled_nodes.is_empty() {
+        out(Record::CreateNode {
+            ids: node_ids.clone(),
+            labels: Vec::new(),
+            attr_ids: Vec::new(),
+            rows: Vec::new(),
+        });
+    }
+
+    // Grouped by type, because `CreateEdge` states one relationship id for the
+    // whole record.
+    let graph = g.borrow();
+    let mut by_type: FxHashMap<Arc<String>, Vec<&CancelledRelationship>> = FxHashMap::default();
+    for r in &p.cancelled_relationships {
+        by_type.entry(Arc::clone(&r.type_name)).or_default().push(r);
+    }
+    let mut pairs: Vec<(u32, IdList, IdList, IdList)> = Vec::with_capacity(by_type.len());
+    for (type_name, mut rels) in by_type {
+        // A type whose every edge was cancelled was never registered on this
+        // graph — nothing of it reached `create_relationships_bulk` — so there
+        // is no id to state and no `ADD_SCHEMA` announcing one. Skipped rather
+        // than invented: a made-up id would index the pair under some other
+        // type. The reservation those ids came from is still the master's, so
+        // this case leaves the two relationship bounds apart. It cannot be
+        // closed with the records this format has.
+        let Some(relation_id) = graph.get_type_id(&type_name).map(|t| schema_id(t.0)) else {
+            continue;
+        };
+        rels.sort_unstable_by_key(|r| r.id);
+        pairs.push((
+            relation_id,
+            rels.iter().map(|r| r.id).collect(),
+            rels.iter().map(|r| r.src).collect(),
+            rels.iter().map(|r| r.dst).collect(),
+        ));
+    }
+    // Deterministic across runs: a hash map's order is not, and two engines
+    // reading the same buffer have to see the same records.
+    pairs.sort_unstable_by_key(|(relation_id, ..)| *relation_id);
+
+    for (relation_id, ids, src, dst) in &pairs {
+        out(Record::CreateEdge {
+            ids: ids.clone(),
+            relation_id: *relation_id,
+            src: src.clone(),
+            dst: dst.clone(),
+            attr_ids: Vec::new(),
+            rows: Vec::new(),
+        });
+    }
+    for (relation_id, ids, src, dst) in pairs {
+        out(Record::DeleteEdge {
+            ids,
+            relation_id,
+            src,
+            dst,
+        });
+    }
+
+    if !p.cancelled_nodes.is_empty() {
+        out(Record::DeleteNode {
+            ids: node_ids,
+            labels: Vec::new(),
+        });
+    }
 }
 
 fn digest_created_nodes(
@@ -1725,6 +1796,122 @@ mod cancelled {
             unreachable!()
         };
         assert_eq!(ids.iter().collect::<Vec<_>>(), vec![1]);
+    }
+
+    /// Two edges, the node owning one of them cancelled.
+    fn cancelled_with_edges(g: &AtomicRefCell<Graph>) -> Pending {
+        let mut p = Pending::default();
+        p.set_schema_baseline(g);
+        for id in 0..4u64 {
+            p.stage_created_node(id, &[0], &[]);
+        }
+        let t = Arc::new(String::from("R"));
+        p.created_rels_by_type
+            .entry(Arc::clone(&t))
+            .or_default()
+            .push((
+                crate::graph::graph::RelationshipId::from(0_u64),
+                NodeId::from(0_u64),
+                NodeId::from(1_u64),
+            ));
+        p.created_rels_by_type.entry(t).or_default().push((
+            crate::graph::graph::RelationshipId::from(1_u64),
+            NodeId::from(2_u64),
+            NodeId::from(3_u64),
+        ));
+        // Cancels node 0, and with it the edge hanging off it.
+        p.delete_pending_node(NodeId::from(0_u64));
+        p
+    }
+
+    /// A cancelled edge leaves the same hole a cancelled node does.
+    ///
+    /// Its id is reserved and returned exactly as a node's is, and
+    /// `IdSpace::verify` checks the relationship space too — so without the
+    /// pair the replica refuses the whole buffer with "allocated relationship
+    /// ids 0..=1 but created only 1 of them", and force-resyncs.
+    #[test]
+    fn a_cancelled_edge_is_a_create_and_a_delete() {
+        let g = graph_cell();
+        {
+            let mut graph = g.borrow_mut();
+            graph.get_label_id_mut("A");
+            graph.get_type_id_mut("R");
+        }
+        let records = digest(&cancelled_with_edges(&g), &g);
+
+        // The surviving edge's create carries no attributes either, so the
+        // cancelled one is identified by the delete that pairs with it.
+        let delete = records
+            .iter()
+            .position(|r| matches!(r, Record::DeleteEdge { .. }))
+            .expect("the cancelled edge's delete");
+        let Record::DeleteEdge { ids: gone, .. } = &records[delete] else {
+            unreachable!()
+        };
+        let create = records
+            .iter()
+            .position(|r| matches!(r, Record::CreateEdge { ids, .. } if ids == gone))
+            .expect("the cancelled edge's create");
+        assert!(create < delete, "the create has to precede the delete");
+
+        let Record::CreateEdge { ids, src, dst, .. } = &records[create] else {
+            unreachable!()
+        };
+        assert_eq!(ids.iter().collect::<Vec<_>>(), vec![0]);
+        assert_eq!(src.iter().collect::<Vec<_>>(), vec![0]);
+        assert_eq!(dst.iter().collect::<Vec<_>>(), vec![1]);
+    }
+
+    /// The endpoints may themselves be cancelled, so the nodes bracket the edges.
+    #[test]
+    fn the_cancelled_nodes_bracket_the_cancelled_edges() {
+        let g = graph_cell();
+        {
+            let mut graph = g.borrow_mut();
+            graph.get_label_id_mut("A");
+            graph.get_type_id_mut("R");
+        }
+        let records = digest(&cancelled_with_edges(&g), &g);
+        let pos = |f: &dyn Fn(&Record) -> bool| records.iter().position(|r| f(r)).unwrap();
+
+        let node_create =
+            pos(&|r| matches!(r, Record::CreateNode { labels, .. } if labels.is_empty()));
+        let edge_delete = pos(&|r| matches!(r, Record::DeleteEdge { .. }));
+        let Record::DeleteEdge { ids: gone, .. } = &records[edge_delete] else {
+            unreachable!()
+        };
+        // Again the cancelled edge, not the survivor that shares its shape.
+        let edge_create = pos(&|r| matches!(r, Record::CreateEdge { ids, .. } if ids == gone));
+        let node_delete = pos(&|r| matches!(r, Record::DeleteNode { .. }));
+
+        assert!(
+            node_create < edge_create && edge_create < edge_delete && edge_delete < node_delete,
+            "an edge cannot be created before its endpoint or deleted after it: {records:#?}"
+        );
+    }
+
+    /// End to end: a replica applies the buffer instead of refusing it.
+    #[test]
+    fn a_replica_applies_a_buffer_that_cancels_an_edge() {
+        let g = graph_cell();
+        {
+            let mut graph = g.borrow_mut();
+            graph.get_label_id_mut("A");
+            graph.get_type_id_mut("R");
+        }
+        let mut buf = crate::effects::v3::new_buffer();
+        crate::effects::v3::test_aux::encode_all(&cancelled_with_edges(&g), &g, &mut buf);
+
+        let replica = graph_cell();
+        {
+            let mut rg = replica.borrow_mut();
+            rg.get_label_id_mut("A");
+            rg.get_type_id_mut("R");
+        }
+        let mut rg = replica.borrow_mut();
+        crate::effects::v3::apply::apply_effects(&mut rg, &buf)
+            .expect("the replica must apply a buffer that cancels an edge");
     }
 
     #[test]
