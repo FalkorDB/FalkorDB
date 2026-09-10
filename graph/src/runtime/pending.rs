@@ -1329,7 +1329,9 @@ impl Pending {
                         g.get_node_attribute(node_id.into(), prop)
                     });
                     if key.is_empty() {
-                        continue; // All NULL → no violation
+                        // a constrained property is NULL or absent, so this node
+                        // does not participate in the constraint
+                        continue;
                     }
 
                     // Build a set of all existing keys for this label in one pass
@@ -1341,6 +1343,7 @@ impl Pending {
                                     g.get_node_attribute(other_id.into(), prop)
                                 });
                             if other_key.is_empty() {
+                                // likewise, this node does not participate
                                 continue;
                             }
                             if let Some(&existing_id) = seen.get(&other_key)
@@ -1399,6 +1402,8 @@ impl Pending {
                         g.get_relationship_attribute(edge_id.into(), prop)
                     });
                     if key.is_empty() {
+                        // a constrained property is NULL or absent, so this edge
+                        // does not participate in the constraint
                         continue;
                     }
 
@@ -1411,6 +1416,7 @@ impl Pending {
                                     g.get_relationship_attribute(other_eid.into(), prop)
                                 });
                             if other_key.is_empty() {
+                                // likewise, this edge does not participate
                                 continue;
                             }
                             if let Some(&existing_id) = seen.get(&other_key)

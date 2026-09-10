@@ -4264,7 +4264,9 @@ impl Graph {
                         self.get_node_attribute(NodeId(node_id), prop)
                     });
                     if key.is_empty() {
-                        continue; // All NULL → skip
+                        // a constrained property is NULL or absent, so this node
+                        // does not participate in the constraint
+                        continue;
                     }
                     if !seen.insert(key) {
                         return false;
@@ -4282,6 +4284,8 @@ impl Graph {
                         self.get_relationship_attribute(RelationshipId(edge_id), prop)
                     });
                     if key.is_empty() {
+                        // a constrained property is NULL or absent, so this edge
+                        // does not participate in the constraint
                         continue;
                     }
                     if !seen.insert(key) {
@@ -4293,26 +4297,29 @@ impl Graph {
         }
     }
 
+    /// Build the composite unique-constraint key for `properties`.
+    ///
+    /// Returns an empty key as soon as *any* constrained property is NULL or
+    /// absent: such a key is unknown, and an unknown key cannot be proven to
+    /// collide with another, so the entity satisfies the constraint vacuously.
+    /// Callers treat an empty key as "this entity does not participate in the
+    /// constraint" and skip it.
     #[must_use]
     pub fn build_composite_key(
         properties: &[Arc<String>],
         mut get: impl FnMut(&Arc<String>) -> Option<Value>,
     ) -> Vec<u8> {
-        let mut all_null = true;
         let mut key = Vec::new();
         for prop in properties {
             match get(prop) {
                 Some(v) if !matches!(v, Value::Null) => {
-                    all_null = false;
                     key.extend_from_slice(format!("{v:?}").as_bytes());
                 }
-                _ => {
-                    key.push(0); // NULL marker
-                }
+                _ => return Vec::new(),
             }
             key.push(b'|');
         }
-        if all_null { Vec::new() } else { key }
+        key
     }
 
     /// Drop a constraint by type, entity type, label and properties.
@@ -4910,5 +4917,64 @@ mod reclaim_ids_tests {
         let pool = RoaringTreemap::new();
         assert!(reclaim(&pool, 0, 10).is_empty());
         assert!(reclaim(&pool, 7, 10).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod composite_key_tests {
+    use super::*;
+
+    fn key(
+        props: &[&str],
+        present: &[(&str, Value)],
+    ) -> Vec<u8> {
+        let props: Vec<Arc<String>> = props.iter().map(|p| Arc::new((*p).to_string())).collect();
+        Graph::build_composite_key(&props, |p| {
+            present
+                .iter()
+                .find(|(name, _)| name == &p.as_str())
+                .map(|(_, v)| v.clone())
+        })
+    }
+
+    /// Every constrained property present → a real key that discriminates.
+    #[test]
+    fn complete_key_is_built_and_discriminates() {
+        let a = key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))]);
+        assert!(!a.is_empty());
+        assert_eq!(
+            a,
+            key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))])
+        );
+        assert_ne!(
+            a,
+            key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(3))])
+        );
+    }
+
+    /// A missing or NULL component makes the whole key unknown, so the entity
+    /// is vacuously unique — regardless of which component it is.
+    #[test]
+    fn any_null_component_yields_empty_key() {
+        assert!(key(&["a", "b"], &[("a", Value::Int(1))]).is_empty());
+        assert!(key(&["a", "b"], &[("b", Value::Int(2))]).is_empty());
+        assert!(key(&["a", "b"], &[]).is_empty());
+        assert!(key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Null)]).is_empty());
+        assert!(key(&["a", "b"], &[("a", Value::Null), ("b", Value::Int(2))]).is_empty());
+        assert!(
+            key(
+                &["a", "b", "c"],
+                &[("a", Value::Int(1)), ("c", Value::Int(3))]
+            )
+            .is_empty()
+        );
+    }
+
+    /// For a single property ALL and ANY coincide, so behaviour is unchanged.
+    #[test]
+    fn single_property_is_unaffected() {
+        assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
+        assert!(key(&["a"], &[]).is_empty());
+        assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
     }
 }
