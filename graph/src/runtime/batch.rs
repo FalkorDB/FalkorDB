@@ -73,6 +73,7 @@ use super::ops::set::SetOp;
 use super::ops::skip::SkipOp;
 use super::ops::sort::SortOp;
 use super::ops::union::UnionOp;
+use super::ops::unit_subquery::UnitSubqueryOp;
 use super::ops::unwind::UnwindOp;
 use super::ops::value_hash_join::ValueHashJoinOp;
 
@@ -1511,6 +1512,8 @@ pub enum BatchOp<'a> {
     Apply(ApplyOp<'a>),
     /// Existence-based filtering via sub-plan.
     SemiApply(SemiApplyOp<'a>),
+    /// Runs a `CALL {}` body that returns nothing, once per input row.
+    UnitSubquery(UnitSubqueryOp<'a>),
     /// Optional match with NULL fallback.
     Optional(OptionalOp<'a>),
     /// Create nodes/relationships.
@@ -1612,6 +1615,7 @@ impl<'a> BatchOp<'a> {
             }
             Self::Apply(op) => op.child.set_argument_batch(batch),
             Self::SemiApply(op) => op.child.set_argument_batch(batch),
+            Self::UnitSubquery(op) => op.child.set_argument_batch(batch),
             Self::Optional(op) => op.child.set_argument_batch(batch),
             Self::Create(op) => op.child.set_argument_batch(batch),
             Self::Delete(op) => op.child.set_argument_batch(batch),
@@ -1711,6 +1715,7 @@ impl<'a> BatchOp<'a> {
             Self::CartesianProduct(op) => Some((op.runtime, op.idx)),
             Self::Apply(op) => Some((op.runtime, op.idx)),
             Self::SemiApply(op) => Some((op.runtime, op.idx)),
+            Self::UnitSubquery(op) => Some((op.runtime, op.idx)),
             Self::Optional(op) => Some((op.runtime, op.idx)),
             Self::Create(op) => Some((op.runtime, op.idx)),
             Self::Delete(op) => Some((op.runtime, op.idx)),
@@ -1781,6 +1786,7 @@ impl<'a> Iterator for BatchOp<'a> {
             Self::CartesianProduct(op) => op.next(),
             Self::Apply(op) => op.next(),
             Self::SemiApply(op) => op.next(),
+            Self::UnitSubquery(op) => op.next(),
             Self::Optional(op) => op.next(),
             Self::Create(op) => op.next(),
             Self::Delete(op) => op.next(),

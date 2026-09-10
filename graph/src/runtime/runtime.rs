@@ -52,7 +52,7 @@ use crate::{
             IncludePendingOp, LimitOp, LoadCsvOp, MergeOp, NodeByFulltextScanOp, NodeByIdSeekOp,
             NodeByIndexScanOp, NodeByLabelAndIdScanOp, NodeByLabelScanOp, NodeByVectorScanOp,
             OptionalOp, OrApplyMultiplexerOp, PathBuilderOp, ProcedureCallOp, ProjectOp, RemoveOp,
-            SemiApplyOp, SetOp, SkipOp, SortOp, UnionOp, UnwindOp, ValueHashJoinOp,
+            SemiApplyOp, SetOp, SkipOp, SortOp, UnionOp, UnitSubqueryOp, UnwindOp, ValueHashJoinOp,
         },
         ordermap::OrderMap,
         orderset::OrderSet,
@@ -245,6 +245,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::Apply
                 | IR::SemiApply
                 | IR::AntiSemiApply
+                | IR::UnitSubquery
                 | IR::OrApplyMultiplexer(_)
                 | IR::Sort(_)
                 | IR::Skip(_)
@@ -968,6 +969,14 @@ impl<'a> Runtime<'a> {
             IR::Apply => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::Apply(ApplyOp::new(self, Box::new(child), idx)))
+            }
+            IR::UnitSubquery => {
+                let child = pop_or_once(&mut children);
+                Ok(BatchOp::UnitSubquery(UnitSubqueryOp::new(
+                    self,
+                    Box::new(child),
+                    idx,
+                )))
             }
             IR::SemiApply | IR::AntiSemiApply => {
                 let is_anti = matches!(self.plan.node(idx).data(), IR::AntiSemiApply);
