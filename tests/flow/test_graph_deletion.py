@@ -980,6 +980,43 @@ class testGraphDeletionFlow(FlowTestsBase):
         if without_degree > 1:
             self.env.assertLess(with_degree / without_degree, 3.0)
 
+    def test40_bulk_delete_of_pending_edges_is_not_quadratic(self):
+        # Deleting an edge created earlier in the same query snapshots its
+        # endpoints, which resolves the id against Pending. Answering that by
+        # scanning the type's created list is O(pending) per delete and
+        # O(n^2) over the query, so the endpoints are stored by id instead.
+        #
+        # This needs no degree function: the lookup is on the plain
+        # CREATE-then-DELETE path. Baselined against the same query without
+        # the DELETE, for the reasons given in test39.
+        #
+        # Measured while writing this at n=16000: 13.2 ms with the DELETE
+        # against 12.0 ms without. The scanning form took 53.2 ms, and its
+        # cost accelerated with n (195.5 ms at n=32000 against 29.7 ms).
+        self.graph.delete()
+        self.graph.query("CREATE (:Seed)")
+
+        n = 16000
+
+        def timed(delete_clause, expect_deleted):
+            best = None
+            for _ in range(2):
+                self.graph.query("MATCH (x) DETACH DELETE x")
+                res = self.graph.query(f"""UNWIND range(1, {n}) AS i
+                                           CREATE (a:A)-[r:R]->(b:B)
+                                           {delete_clause}""")
+                self.env.assertEqual(res.relationships_created, n)
+                self.env.assertEqual(res.relationships_deleted,
+                                     n if expect_deleted else 0)
+                best = res.run_time_ms if best is None else min(best, res.run_time_ms)
+            return best
+
+        with_delete = timed("DELETE r", True)
+        without_delete = timed("", False)
+
+        if without_delete > 1:
+            self.env.assertLess(with_delete / without_delete, 3.0)
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
