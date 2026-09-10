@@ -61,7 +61,7 @@ impl<'a> NodeByLabelScanOp<'a> {
         record_cap: Option<usize>,
     ) -> Self {
         let mut emitter = BatchedResultEmitter::new(node_pattern.alias.id);
-        emitter.apply_hinted_record_cap(record_cap);
+        emitter.apply_record_cap(record_cap);
         Self {
             runtime,
             child,
