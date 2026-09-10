@@ -1020,6 +1020,55 @@ class testGraphDeletionFlow(FlowTestsBase):
         if without_delete > 1:
             self.env.assertLess(with_delete / without_delete, 3.0)
 
+    def test41_degree_after_deleting_a_pending_node(self):
+        # Deleting a node that the same query created retracts its pending
+        # relationships instead of deleting them, so the create/delete counters
+        # cannot be adjusted and the degree index has to be dropped.
+        #
+        # Every case evaluates a degree *before* the node delete as well as
+        # after it. That first lookup is what builds the index, so a stale
+        # index would still be holding the retracted edge and the second
+        # lookup would read the pre-delete count.
+        self.graph.delete()
+
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(b:B)
+                                  SET a.d = outdegree(a)
+                                  DELETE b
+                                  SET a.e = outdegree(a)
+                                  RETURN a.d, a.e""")
+        self.env.assertEqual(res.result_set, [[1, 0]])
+
+        # the same on the incoming side
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(b:B)
+                                  SET b.d = indegree(b)
+                                  DELETE a
+                                  SET b.e = indegree(b)
+                                  RETURN b.d, b.e""")
+        self.env.assertEqual(res.result_set, [[1, 0]])
+
+        # the per-type buckets have to be dropped too, not just the totals
+        self.graph.delete()
+        res = self.graph.query("""CREATE (a:A)-[r:R]->(b:B)
+                                  SET a.d = outdegree(a, 'R')
+                                  DETACH DELETE b
+                                  SET a.e = outdegree(a, 'R'), a.f = outdegree(a)
+                                  RETURN a.d, a.e, a.f""")
+        self.env.assertEqual(res.result_set, [[1, 0, 0]])
+
+        # A committed :R edge alongside a pending :Q edge to a pending node.
+        # Retracting the node must remove only the :Q edge, so the rebuilt
+        # counters have to keep the committed edge and both types apart.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {n: 1})-[:R]->(:B {n: 2})")
+        res = self.graph.query("""MATCH (a:A) CREATE (a)-[r:Q]->(c:C)
+                                  SET a.d = outdegree(a), a.e = outdegree(a, 'Q')
+                                  DELETE c
+                                  SET a.f = outdegree(a), a.g = outdegree(a, 'Q'),
+                                      a.h = outdegree(a, 'R')
+                                  RETURN a.d, a.e, a.f, a.g, a.h""")
+        self.env.assertEqual(res.result_set, [[2, 1, 1, 0, 1]])
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()
