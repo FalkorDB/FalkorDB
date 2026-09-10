@@ -1914,6 +1914,68 @@ mod cancelled {
             .expect("the replica must apply a buffer that cancels an edge");
     }
 
+    /// A cancelled edge can hang off a *committed* node this buffer deletes.
+    ///
+    /// `remove_pending_relationships_for_node` is reached from three places, and
+    /// only one of them cancels the node too: the other two delete a node that
+    /// was already committed and cascade its *pending* edges away. The endpoint
+    /// is then deleted by `digest_deleted_nodes`, which runs before this block —
+    /// so the `CreateEdge` names a node the replica has just removed.
+    ///
+    /// That is safe, and this pins why rather than leaving it to luck: the pair
+    /// nets out, so the only lasting effect is the id landing in the replica's
+    /// recycle bin, which is the whole reason it is sent. If
+    /// `create_relationships_bulk` ever stops tolerating a deleted endpoint,
+    /// this is what says so.
+    #[test]
+    fn a_cancelled_edge_whose_endpoint_is_already_deleted_still_applies() {
+        let g = graph_cell();
+        {
+            let mut graph = g.borrow_mut();
+            graph.get_label_id_mut("A");
+            graph.get_type_id_mut("R");
+        }
+        let mut p = Pending::default();
+        p.set_schema_baseline(&g);
+        p.stage_created_node(1, &[0], &[]);
+        let t = Arc::new(String::from("R"));
+        p.created_rels_by_type.entry(t).or_default().push((
+            crate::graph::graph::RelationshipId::from(0_u64),
+            NodeId::from(0_u64),
+            NodeId::from(1_u64),
+        ));
+        // Node 0 is committed, so this cascades the pending edge without
+        // cancelling the node — the shape `delete.rs` reaches twice.
+        p.remove_pending_relationships_for_node(NodeId::from(0_u64));
+        p.stage_deleted_node(0, &[0]);
+
+        let mut buf = crate::effects::v3::new_buffer();
+        crate::effects::v3::test_aux::encode_all(&p, &g, &mut buf);
+
+        let replica = graph_cell();
+        {
+            let mut rg = replica.borrow_mut();
+            rg.get_label_id_mut("A");
+            rg.get_type_id_mut("R");
+            let mut space = crate::graph::id_space::IdSpace::at(rg.node_id_bound());
+            let mut ids = RoaringTreemap::new();
+            ids.insert(0);
+            rg.create_nodes(&ids, &mut space).unwrap();
+        }
+        let mut rg = replica.borrow_mut();
+        crate::effects::v3::apply::apply_effects(&mut rg, &buf)
+            .expect("a cancelled edge onto a deleted endpoint must still apply");
+
+        assert_eq!(rg.relationship_count(), 0, "the edge does not survive");
+        assert_eq!(
+            rg.deleted_relationships_count(),
+            1,
+            "but its id reaches the recycle bin, which is why the pair is sent"
+        );
+        assert!(rg.is_node_deleted(0.into()), "the endpoint stays deleted");
+        assert!(!rg.is_node_deleted(1.into()));
+    }
+
     #[test]
     fn the_pair_comes_last_so_a_reuse_orders_after_it() {
         // A later commit in the same query can reclaim the id from the bin, and
