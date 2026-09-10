@@ -112,7 +112,13 @@ unsafe extern "C" fn graph_rdb_load(
                     // that would displace the placeholder and leak any
                     // WriteMessages already routed through it.
                     let arc = if let Some(ph) = decode_state.placeholders.remove(&key_name) {
-                        ph.write().graph = mvcc;
+                        let mut guard = ph.write();
+                        guard.graph = mvcc;
+                        // No longer bookkeeping: this Arc now holds the real
+                        // graph, so the pre-save sweep must stop treating it
+                        // as a stale placeholder and deleting it.
+                        guard.clear_placeholder();
+                        drop(guard);
                         ph
                     } else {
                         let tg = ThreadedGraph::from_mvcc(mvcc);
@@ -127,7 +133,7 @@ unsafe extern "C" fn graph_rdb_load(
 
             // Graph not yet finalized - more keys still need to load.
             // Return a placeholder that will be replaced later.
-            let tg = ThreadedGraph::new(DEFAULT_CACHE_SIZE, "__placeholder__");
+            let tg = ThreadedGraph::new_placeholder(DEFAULT_CACHE_SIZE);
             let arc = Arc::new(RwLock::new(tg));
 
             // Store an Arc clone keyed by graph name for later finalization.
@@ -439,7 +445,7 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
                     raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
                 // Must pass a non-null value; Redis skips keys with null values during RDB save.
                 // Create a placeholder ThreadedGraph so graph_free can handle it.
-                let tg_placeholder = ThreadedGraph::new(DEFAULT_CACHE_SIZE, "__vkey_placeholder__");
+                let tg_placeholder = ThreadedGraph::new_placeholder(DEFAULT_CACHE_SIZE);
                 let boxed: Box<Arc<RwLock<ThreadedGraph>>> =
                     Box::new(Arc::new(RwLock::new(tg_placeholder)));
                 let value = Box::into_raw(boxed).cast();
@@ -585,17 +591,18 @@ unsafe fn scan_and_clean_graphdata_keys(
                     // SAFETY: In the BGSAVE fork child, threads that held the
                     // parking_lot RwLock at fork time are gone. Lock acquisition
                     // would deadlock. We bypass the lock via data_ptr() since the
-                    // fork child is single-threaded. The graph name is immutable
-                    // so reading it without locking is safe even on the main thread.
+                    // fork child is single-threaded. `is_placeholder()` is an
+                    // atomic load, so reading it without the lock is also safe on
+                    // the main thread during a synchronous SAVE.
                     let tg: &ThreadedGraph = &*graph_arc_ref.data_ptr();
-                    let g = tg.graph.read();
-                    let name = g.borrow().name().to_string();
-                    if name.starts_with("__placeholder") || name.starts_with("__vkey_placeholder") {
+                    // Test the structural flag, never the graph name: a client
+                    // is free to name a graph `__placeholder_x`, and matching on
+                    // that prefix silently destroyed such graphs on SAVE (#2773).
+                    if tg.is_placeholder() {
                         // Stale virtual key — mark for deletion.
                         stale_keys.push(key_name);
                     } else {
                         // Real graph — collect it.
-                        drop(g);
                         result.push((key_name, graph_arc_ref.clone()));
                     }
                 }
@@ -813,6 +820,9 @@ fn install_graph(
         // write loop — otherwise blocked clients in `waiting` state would
         // never be replied to.
         placeholder_tg.graph = mvcc;
+        // No longer bookkeeping: the real graph is installed, so the pre-save
+        // sweep must stop treating this Arc as a stale placeholder.
+        placeholder_tg.clear_placeholder();
     } else {
         eprintln!(
             "FalkorDB: WARNING - no placeholder pointer for graph '{graph_name}', graph data will be lost"

@@ -432,3 +432,68 @@ class test_encode_decode(FlowTestsBase):
             "MATCH (n:Str) RETURN n.id, size(n.val) ORDER BY n.id"
         )
         self.env.assertEqual(expected.result_set, actual.result_set)
+
+    def test_18_user_graph_named_like_internal_placeholder(self):
+        # A user graph is free to be named `__placeholder...` /
+        # `__vkey_placeholder...`. The pre-save sweep used to classify a graph
+        # as module bookkeeping by matching those prefixes on its *name*, so a
+        # single synchronous SAVE silently deleted such a graph together with
+        # all of its data (issue #2773). Placeholder-ness is now a structural
+        # flag set only where the module itself builds a placeholder, so these
+        # names must be treated as ordinary graphs.
+        names = ["__placeholder_mydata", "__vkey_placeholder_mydata",
+                 "__placeholder", "__vkey_placeholder"]
+
+        # VKEY_MAX_ENTITY_COUNT is 10 for this suite, so 200 nodes spans many
+        # virtual keys — this exercises the multi-key save/load path too.
+        for name in names:
+            g = self.db.select_graph(name)
+            g.query("UNWIND range(1, 200) AS i CREATE (:Keep {v:i})")
+
+        expected = [[200, 20100]]
+        query = "MATCH (n:Keep) RETURN count(n), sum(n.v)"
+
+        for name in names:
+            self.env.assertEqual(
+                self.db.select_graph(name).query(query).result_set, expected)
+
+        # a save must leave the keyspace exactly as it found it: the graphs
+        # still there, and every virtual key it created cleaned up again.
+        # `telemetry{...}` keys are excluded — the module's telemetry flusher
+        # writes them on its own schedule, so they would race this snapshot.
+        def keyspace():
+            return sorted(k for k in self.redis_con.keys("*")
+                          if not k.startswith("telemetry"))
+
+        before = keyspace()
+
+        # a synchronous SAVE must not destroy them
+        self.redis_con.execute_command("SAVE")
+
+        for name in names:
+            self.env.assertTrue(self.redis_con.exists(name))
+            g = self.db.select_graph(name)
+            self.env.assertEqual(g.query(query).result_set, expected)
+        self.env.assertEqual(keyspace(), before)
+
+        # and they must survive a full RDB round-trip
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+
+        for name in names:
+            self.env.assertTrue(self.redis_con.exists(name))
+            g = self.db.select_graph(name)
+            self.env.assertEqual(g.query(query).result_set, expected)
+        self.env.assertEqual(keyspace(), before)
+
+        # saving again exercises the graphs that were just rebuilt from the
+        # RDB through the placeholder path — they must be recognised as real
+        self.redis_con.execute_command("SAVE")
+
+        for name in names:
+            self.env.assertTrue(self.redis_con.exists(name))
+            g = self.db.select_graph(name)
+            self.env.assertEqual(g.query(query).result_set, expected)
+        self.env.assertEqual(keyspace(), before)
+
+        for name in names:
+            self.db.select_graph(name).delete()
