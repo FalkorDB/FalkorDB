@@ -513,9 +513,9 @@ pub struct ThreadedGraph {
     /// would deadlock). An atomic load is well defined there; a plain `bool`
     /// read racing a store would not be.
     ///
-    /// Only ever transitions `true -> false`, when a load placeholder is
-    /// promoted in place to the real graph it was standing in for
-    /// ([`Self::clear_placeholder`]).
+    /// Set once at construction, and thereafter only ever transitions
+    /// `true -> false`, when a load placeholder is promoted in place to the
+    /// real graph it was standing in for ([`Self::clear_placeholder`]).
     placeholder: AtomicBool,
 }
 
@@ -523,9 +523,15 @@ unsafe impl Send for ThreadedGraph {}
 unsafe impl Sync for ThreadedGraph {}
 
 impl ThreadedGraph {
-    pub fn new(
+    /// Shared constructor. `placeholder` is baked in here rather than patched
+    /// afterwards so the `true -> false`-only invariant on
+    /// [`Self::placeholder`] holds from the moment the value exists — that
+    /// invariant is what makes the sweep's unsynchronized `data_ptr()` read
+    /// sound, so it must not be momentarily violated during construction.
+    fn build(
         cache_size: usize,
         name: &str,
+        placeholder: bool,
     ) -> Self {
         let (sender, receiver) = bounded_blocking(1024);
         Self {
@@ -534,8 +540,15 @@ impl ThreadedGraph {
             receiver,
             write_loop: AtomicBool::new(false),
             slow_log: SlowLog::new(),
-            placeholder: AtomicBool::new(false),
+            placeholder: AtomicBool::new(placeholder),
         }
+    }
+
+    pub fn new(
+        cache_size: usize,
+        name: &str,
+    ) -> Self {
+        Self::build(cache_size, name, false)
     }
 
     /// Create a `ThreadedGraph` flagged as module-internal bookkeeping.
@@ -544,9 +557,7 @@ impl ThreadedGraph {
     /// caller-supplied string can turn a user graph into one, and no
     /// placeholder construction site can forget to set the flag.
     pub fn new_placeholder(cache_size: usize) -> Self {
-        let mut tg = Self::new(cache_size, PLACEHOLDER_GRAPH_NAME);
-        tg.placeholder = AtomicBool::new(true);
-        tg
+        Self::build(cache_size, PLACEHOLDER_GRAPH_NAME, true)
     }
 
     /// Create a `ThreadedGraph` from an existing `MvccGraph`.
