@@ -926,6 +926,49 @@ class testGraphDeletionFlow(FlowTestsBase):
         res = self.graph.query("MATCH (a:A) RETURN outdegree(a)")
         self.env.assertEqual(res.result_set, [[1]])
 
+    def test39_bulk_create_and_delete_degree_is_not_quadratic(self):
+        # Resolving each pending-deleted id against the pending-created records
+        # individually means scanning that type's whole vector per id, which is
+        # quadratic once a query creates and deletes edges in bulk. The degree
+        # helpers walk the pending records once instead.
+        #
+        # Asserted as a growth ratio rather than a wall-clock ceiling so the
+        # check calibrates itself to the machine: doubling the edge count
+        # roughly doubles the work for the linear form but quadruples it for
+        # the quadratic one. Measured here while writing this, the quadratic
+        # form grew 5.8x per doubling and the current one 3.0x, so 4.5 sits
+        # well clear of both.
+        self.graph.delete()
+        # keep the key alive so each round can reset with a query instead of a
+        # delete, which errors once the graph is empty
+        self.graph.query("CREATE (:Seed)")
+
+        def timed_bulk(n):
+            self.graph.query("MATCH (x) DETACH DELETE x")
+            self.graph.query("CREATE (:Hub {n: 1})")
+            res = self.graph.query(f"""MATCH (a:Hub)
+                                       UNWIND range(1, {n}) AS i
+                                       CREATE (a)-[r:R]->(:Leaf)
+                                       DELETE r
+                                       SET a.d = outdegree(a)""")
+            self.env.assertEqual(res.relationships_created, n)
+            self.env.assertEqual(res.relationships_deleted, n)
+
+            # every created edge was also deleted, so the hub ends with none
+            check = self.graph.query("MATCH (a:Hub) RETURN a.d, outdegree(a)")
+            self.env.assertEqual(check.result_set, [[0, 0]])
+            check = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+            self.env.assertEqual(check.result_set[0][0], 0)
+
+            return res.run_time_ms
+
+        base = timed_bulk(2000)
+        doubled = timed_bulk(4000)
+
+        # guard against a near-zero denominator making the ratio meaningless
+        if base > 1:
+            self.env.assertTrue(doubled / base < 4.5)
+
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
         self.env, self.db = Env()

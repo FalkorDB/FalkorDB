@@ -859,41 +859,97 @@ impl Pending {
         }
     }
 
-    /// Resolve `(from, to)` for a relationship that is pending deletion.
-    ///
-    /// `deleted_relationships` mixes two populations: edges that live in the
-    /// committed graph, and edges created earlier in this *same* query and
-    /// then deleted by it. The latter were never committed, so `g` has no
-    /// record of them — they are resolved from `created_rels_by_type`
-    /// instead. Pending is consulted first because relationship ids are
-    /// recycled and a reserved id can still read as present/deleted in the
-    /// committed graph for the lifetime of the pending create.
-    ///
-    /// `None` when neither source knows the edge.
-    fn deleted_relationship_endpoints(
-        &self,
-        id: RelationshipId,
-        g: &Graph,
-    ) -> Option<(NodeId, NodeId)> {
-        self.get_created_relationship_endpoints(id)
-            .or_else(|| g.relationship_endpoints(id))
-    }
-
-    /// Whether a relationship pending deletion has one of `types`, resolving
-    /// the type name from `created_rel_types` for edges created in this same
-    /// query and from the committed graph otherwise.
-    fn deleted_relationship_has_type(
-        &self,
+    /// Whether a relationship pending deletion that is *not* pending-created
+    /// has one of `types`, resolving the type name from the committed graph.
+    fn committed_relationship_has_type(
         id: RelationshipId,
         types: &[Arc<String>],
         g: &Graph,
     ) -> bool {
-        self.get_relationship_type(id)
-            .or_else(|| {
-                g.relationship_type_id_for_edge(id)
-                    .and_then(|t| g.get_type(t))
-            })
+        g.relationship_type_id_for_edge(id)
+            .and_then(|t| g.get_type(t))
             .is_some_and(|t| types.contains(&t))
+    }
+
+    /// Count pending-deleted relationships incident on `node_id` in the
+    /// direction selected by `outgoing`, whose type name matches one of
+    /// `types` (or all if `types` is empty).
+    ///
+    /// `deleted_relationships` mixes two populations: edges that live in the
+    /// committed graph, and edges created earlier in this *same* query and
+    /// then deleted by it. The latter were never committed, so `g` has no
+    /// record of them and only `created_rels_by_type` can resolve them.
+    ///
+    /// The two populations are counted in separate passes rather than by
+    /// resolving each deleted id against pending and then the graph. Looking
+    /// an id up in `created_rels_by_type` means scanning its type's whole
+    /// `Vec`, so doing that per deleted id is `O(deleted * pending)` — a
+    /// user-reachable quadratic blowup for a bulk create-and-delete. Walking
+    /// the pending records once instead makes this `O(pending) + O(deleted)`,
+    /// with only `O(1)` membership checks in each pass and no extra
+    /// allocation or per-call map building.
+    ///
+    /// Pending still takes precedence over the committed graph, which is
+    /// load-bearing: relationship ids are recycled, so a reserved id can read
+    /// as present/deleted in the committed graph for the whole lifetime of the
+    /// pending create. The second pass preserves that by skipping every id
+    /// `created_rel_types` knows — exactly the ids the first pass owns — so no
+    /// id is counted twice and none is resolved against the wrong source.
+    fn pending_deleted_degree(
+        &self,
+        node_id: NodeId,
+        types: &[Arc<String>],
+        g: &Graph,
+        outgoing: bool,
+    ) -> usize {
+        // Nothing deleted: both passes would find nothing, but pass 1 would
+        // still walk every pending-created record to discover that. The old
+        // per-id form iterated an empty set here, so without this guard a
+        // create-only query pays a walk it never used to.
+        if self.deleted_relationships.is_empty() {
+            return 0;
+        }
+
+        let endpoint = |&(_, from, to): &(RelationshipId, NodeId, NodeId)| {
+            if outgoing { from } else { to }
+        };
+
+        // Pass 1 — pending-created-then-deleted edges, visiting each pending
+        // record once. `types` is deduplicated by the degree function's
+        // argument parsing, so no bucket is visited twice.
+        let mut count = if types.is_empty() {
+            self.created_rels_by_type
+                .values()
+                .flat_map(|v| v.iter())
+                .filter(|rel| {
+                    endpoint(rel) == node_id && self.deleted_relationships.contains(rel.0.into())
+                })
+                .count()
+        } else {
+            types
+                .iter()
+                .filter_map(|t| self.created_rels_by_type.get(t))
+                .flat_map(|v| v.iter())
+                .filter(|rel| {
+                    endpoint(rel) == node_id && self.deleted_relationships.contains(rel.0.into())
+                })
+                .count()
+        };
+
+        // Pass 2 — deletions of edges that exist in the committed graph.
+        count += self
+            .deleted_relationships
+            .iter()
+            .filter(|rel_id| {
+                let id = RelationshipId::from(*rel_id);
+                !self.created_rel_types.contains_key(&id)
+                    && g.relationship_endpoints(id)
+                        .is_some_and(|(from, to)| (if outgoing { from } else { to }) == node_id)
+                    && (types.is_empty() || Self::committed_relationship_has_type(id, types, g))
+            })
+            .count();
+
+        count
     }
 
     /// Count pending-deleted relationships whose destination is `node_id` and
@@ -906,15 +962,7 @@ impl Pending {
         types: &[Arc<String>],
         g: &Graph,
     ) -> usize {
-        self.deleted_relationships
-            .iter()
-            .filter(|rel_id| {
-                let id = RelationshipId::from(*rel_id);
-                self.deleted_relationship_endpoints(id, g)
-                    .is_some_and(|(_from, to)| to == node_id)
-                    && (types.is_empty() || self.deleted_relationship_has_type(id, types, g))
-            })
-            .count()
+        self.pending_deleted_degree(node_id, types, g, false)
     }
 
     /// Count pending-deleted relationships whose source is `node_id` and
@@ -927,15 +975,7 @@ impl Pending {
         types: &[Arc<String>],
         g: &Graph,
     ) -> usize {
-        self.deleted_relationships
-            .iter()
-            .filter(|rel_id| {
-                let id = RelationshipId::from(*rel_id);
-                self.deleted_relationship_endpoints(id, g)
-                    .is_some_and(|(from, _to)| from == node_id)
-                    && (types.is_empty() || self.deleted_relationship_has_type(id, types, g))
-            })
-            .count()
+        self.pending_deleted_degree(node_id, types, g, true)
     }
 
     pub fn commit(
