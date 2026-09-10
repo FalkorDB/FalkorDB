@@ -39,6 +39,15 @@
 //!
 //! This stack-based approach avoids deep call-stack recursion for
 //! heavily nested or chained binary expressions (e.g., `a+b+c+...`).
+//!
+//! ## Tree height
+//!
+//! Every stack frame carries the height of the tree it has built so far, and
+//! both macros keep it up to date: wrapping an operand adds a level, folding
+//! a sub-expression into its parent lifts the parent to at least one above
+//! it. `Parser::check_depth` then rejects a tree that outgrows
+//! `Parser::MAX_TREE_DEPTH` at the moment it does, rather than after the
+//! whole (unboundedly deep) tree has been built.
 
 macro_rules! match_token {
     ($lexer:expr, $token:ident) => {
@@ -103,64 +112,57 @@ macro_rules! optional_match_token {
 
 #[macro_export]
 macro_rules! parse_expr_return {
-    ($stack:ident, $res:ident) => {
+    ($self:ident, $stack:ident, $res:ident, $height:expr) => {
         match &mut $stack.last_mut() {
-            Some((_, Some(expr))) => {
+            Some((_, Some(expr), h)) => {
                 expr.root_mut().push_child_tree($res);
+                *h = (*h).max($height + 1);
+                $self.check_depth(*h)?;
             }
-            Some((_, expr)) => {
+            Some((_, expr, h)) => {
                 *expr = Some($res);
+                *h = $height;
             }
-            _ => return Ok($res),
+            _ => {
+                $self.expr_height = $height;
+                return Ok($res);
+            }
         }
     };
 }
 
 #[macro_export]
 macro_rules! parse_operators {
-    ($self:ident, $stack:ident, $res:ident, $current:ident, $token:pat => $expr:ident) => {
+    ($self:ident, $stack:ident, $res:ident, $height:expr, $current:ident, $token:pat => $expr:ident) => {
         if let $token = $self.lexer.current()? {
             $self.lexer.next();
-            let res = if matches!($res.root().data(), ExprIR::$expr) {
-                $res
+            let (res, height) = if matches!($res.root().data(), ExprIR::$expr) {
+                ($res, $height)
             } else {
-                tree!(ExprIR::$expr, $res)
+                (tree!(ExprIR::$expr, $res), $height + 1)
             };
-            $stack.push(($current, Some(res)));
-            $stack.push(($current + 1, None));
+            $self.check_depth(height)?;
+            $stack.push(($current, Some(res), height));
+            $stack.push(($current + 1, None, 0));
         } else {
-            match &mut $stack.last_mut() {
-                Some((_, Some(expr))) => {
-                    expr.root_mut().push_child_tree($res);
-                }
-                Some((_, expr)) => {
-                    *expr = Some($res);
-                }
-                _ => return Ok($res),
-            }
+            parse_expr_return!($self, $stack, $res, $height);
         }
     };
-    ($self:ident, $stack:ident, $res:ident, $current:ident, $($token:pat => $expr:ident),*) => {
+    ($self:ident, $stack:ident, $res:ident, $height:expr, $current:ident, $($token:pat => $expr:ident),*) => {
         let mut res = $res;
+        let mut height = $height;
         $(if let $token = $self.lexer.current()? {
             $self.lexer.next();
-            if matches!(res.root().data(), ExprIR::$expr) {
-            } else {
+            if !matches!(res.root().data(), ExprIR::$expr) {
                 res = tree!(ExprIR::$expr, res);
-            };
-            $stack.push(($current, Some(res)));
-            $stack.push(($current + 1, None));
+                height += 1;
+                $self.check_depth(height)?;
+            }
+            $stack.push(($current, Some(res), height));
+            $stack.push(($current + 1, None, 0));
             continue;
         })*
 
-        match &mut $stack.last_mut() {
-            Some((_, Some(expr))) => {
-                expr.root_mut().push_child_tree(res);
-            }
-            Some((_, expr)) => {
-                *expr = Some(res);
-            }
-            _ => return Ok(res),
-        }
+        parse_expr_return!($self, $stack, res, height);
     };
 }
