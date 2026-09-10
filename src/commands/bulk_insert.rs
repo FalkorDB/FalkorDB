@@ -518,8 +518,11 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count)?;
-    let rel_ids = g.reserve_relationships(edge_count)?;
+    // Nothing outstanding: a bulk command reserves once, before it creates
+    // anything, and holds no `Pending`.
+    let none = RoaringTreemap::new();
+    let node_ids = g.reserve_nodes(node_count, &none)?;
+    let rel_ids = g.reserve_relationships(edge_count, &none)?;
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
@@ -548,8 +551,11 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count)?;
-    let rel_ids = g.reserve_relationships(edge_count)?;
+    // Nothing outstanding: a bulk command reserves once, before it creates
+    // anything, and holds no `Pending`.
+    let none = RoaringTreemap::new();
+    let node_ids = g.reserve_nodes(node_count, &none)?;
+    let rel_ids = g.reserve_relationships(edge_count, &none)?;
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 

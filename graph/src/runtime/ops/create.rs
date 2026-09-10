@@ -150,7 +150,12 @@ impl Runtime<'_> {
             let active_len = batch.active_len();
 
             // Reserve all node IDs at once
-            let node_ids = self.g.borrow_mut().reserve_nodes(active_len)?;
+            let node_ids = {
+                let pending = self.pending.borrow();
+                self.g
+                    .borrow_mut()
+                    .reserve_nodes(active_len, pending.outstanding_nodes())?
+            };
 
             // Record creations and set labels in batch
             {
@@ -264,7 +269,12 @@ impl Runtime<'_> {
             }
 
             // Reserve all relationship IDs at once
-            let ids = self.g.borrow_mut().reserve_relationships(endpoints.len())?;
+            let ids = {
+                let pending = self.pending.borrow();
+                self.g
+                    .borrow_mut()
+                    .reserve_relationships(endpoints.len(), pending.outstanding_relationships())?
+            };
 
             // Record all created relationships directly into pending (no intermediate Vec)
             let type_name = rel.types.first().unwrap().clone();

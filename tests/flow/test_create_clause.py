@@ -96,3 +96,84 @@ class testCreateClause():
         self.env.assertEqual(v, 2)
         self.env.assertEqual(d, "B")
 
+
+    def _fresh(self):
+        # The class graph, emptied first. The tests below assert on absolute
+        # ids, so they only mean anything starting from an empty id space —
+        # relying on tearDown for that made one of them pass against a build it
+        # was written to catch, because the ids started somewhere else.
+        try:
+            self.g.delete()
+        except Exception:
+            pass
+        return self.g
+
+    def test16_create_after_deleting_a_pending_node(self):
+        # Deleting a node this same query created — before it commits — hands
+        # its id back to the recycle bin. A later CREATE in the same query must
+        # not be pushed on top of a node an earlier clause already made.
+        #
+        # It used to be: the allocator tracked how many ids were outstanding
+        # rather than which, and used that count as a position in the recycle
+        # bin. After the delete the count described neither, so the next id
+        # landed on the previous clause's last node. This query asked for four
+        # nodes and left three, with no error raised.
+        g = self._fresh()
+        g.query("CREATE (a), (b), (c) DELETE b CREATE (d), (e)")
+
+        # a, c, d, e — b was created and deleted inside the one query.
+        res = g.query("MATCH (n) RETURN count(n)").result_set
+        self.env.assertEqual(res[0][0], 4)
+
+        # b's id is *not* reused inside the same query, so the live ids skip it
+        # and the two later nodes are allocated fresh. Reusing it would put that
+        # id in two records of one effects buffer — the cancelled node's own
+        # create/delete pair, and the create that reused it — and a replica
+        # refuses the whole buffer as "already live".
+        res = g.query("MATCH (n) RETURN id(n) ORDER BY id(n)").result_set
+        ids = [row[0] for row in res]
+        self.env.assertEqual(ids, [0, 2, 3, 4])
+
+    def test17_create_after_deleting_a_pending_node_with_an_edge(self):
+        # The same, with an unrelated edge in the pattern, so the relationship
+        # allocator runs alongside the node one.
+        g = self._fresh()
+        g.query("CREATE (a), (b), (c)-[:R]->(z) DELETE b CREATE (d), (e)")
+
+        res = g.query("MATCH (n) RETURN count(n)").result_set
+        self.env.assertEqual(res[0][0], 5)
+
+        res = g.query("MATCH (n) RETURN id(n) ORDER BY id(n)").result_set
+        self.env.assertEqual([row[0] for row in res], [0, 2, 3, 4, 5])
+
+        res = g.query("MATCH ()-[r]->() RETURN id(r) ORDER BY id(r)").result_set
+        self.env.assertEqual([row[0] for row in res], [0])
+
+    def test18_create_after_deleting_a_pending_node_with_a_pending_edge(self):
+        # Deleting a pending node cascades to the edges it holds, so this hands
+        # back a node id and a relationship id in one query and then asks for
+        # both again. Deleting the edge on its own would not: only the cascade
+        # out of a node cancels a relationship reservation.
+        #
+        # The relationship allocator carried the same bug as the node one and
+        # showed it more plainly — the two surviving edges came back under one
+        # id, so the query returned the same relationship twice.
+        g = self._fresh()
+        g.query("CREATE (a)-[:R]->(b), (c)-[:R]->(d) DELETE a CREATE (x)-[:R]->(y)")
+
+        # b, c, d, x, y — a was created and deleted inside the one query, and
+        # its id is left in the bin rather than reused.
+        res = g.query("MATCH (n) RETURN id(n) ORDER BY id(n)").result_set
+        self.env.assertEqual([row[0] for row in res], [1, 2, 3, 4, 5])
+
+        # Two edges survive: (c)->(d) and (x)->(y), on two distinct ids. Before
+        # the fix both came back as id 1.
+        res = g.query("MATCH ()-[r]->() RETURN id(r) ORDER BY id(r)").result_set
+        self.env.assertEqual([row[0] for row in res], [1, 2])
+
+        # And they really are two edges, between the endpoints asked for.
+        res = g.query(
+                "MATCH (s)-[r]->(t) RETURN id(s), id(r), id(t) ORDER BY id(r)"
+        ).result_set
+        self.env.assertEqual(len(res), 2)
+        self.env.assertEqual(len(set(row[1] for row in res)), 2)
