@@ -1404,12 +1404,17 @@ impl Value {
         let mut first_not_equal = Ordering::Equal;
         let mut null_counter: usize = 0;
         let mut not_equal_counter: usize = 0;
+        // members whose comparison was inconclusive for a reason other than
+        // NULL: incomparable types (`Disjoint`) or NaN
+        let mut inconclusive_counter: usize = 0;
 
         for (a_value, b_value) in a.iter().zip(b) {
             let (compare_result, disjoint_or_null) = a_value.compare_value(b_value);
             if disjoint_or_null != DisjointOrNull::None {
                 if disjoint_or_null == DisjointOrNull::ComparedNull {
                     null_counter += 1;
+                } else {
+                    inconclusive_counter += 1;
                 }
                 not_equal_counter += 1;
                 if first_not_equal == Ordering::Equal {
@@ -1423,14 +1428,31 @@ impl Value {
             }
         }
 
-        // if all the elements in the shared range yielded false comparisons
-        if not_equal_counter == min_len && null_counter < not_equal_counter {
+        // if all the elements in the shared range yielded false comparisons.
+        // `first_not_equal` still being `Equal` means no member actually
+        // decided the order — every comparison was inconclusive — so there is
+        // no conclusive verdict to report, and saying `None` here would claim
+        // the lists are equal.
+        if not_equal_counter == min_len
+            && null_counter < not_equal_counter
+            && first_not_equal != Ordering::Equal
+        {
             return (first_not_equal, DisjointOrNull::None);
         }
 
         // if there was a null comparison on non-disjoint arrays
         if null_counter > 0 && len_a == len_b {
             return (first_not_equal, DisjointOrNull::ComparedNull);
+        }
+
+        // a member compared inconclusively and no other member decided the
+        // order, so the list comparison is inconclusive too. Reachable only
+        // when a member pair shares a variant that `compare_value` has no arm
+        // for — `VecF32` today — since every other inconclusive comparison
+        // reports an ordering. Lists of unequal length keep their old answer:
+        // length alone still decides them.
+        if inconclusive_counter > 0 && first_not_equal == Ordering::Equal && len_a == len_b {
+            return (Ordering::Equal, DisjointOrNull::Disjoint);
         }
 
         // if there was a difference in some member, without any null compare
@@ -1994,6 +2016,12 @@ mod is_never_equal_tests {
         )))
     }
 
+    /// `compare_value` has no arm for a `VecF32` pair, so two of them compare
+    /// `Disjoint` however equal their contents look.
+    fn vector(items: Vec<f32>) -> Value {
+        Value::VecF32(Arc::new(items.into_iter().collect()))
+    }
+
     /// Every value whose `=` can never be TRUE, at any nesting depth.
     #[test]
     fn values_carrying_an_unknown_are_never_equal() {
@@ -2004,6 +2032,61 @@ mod is_never_equal_tests {
         assert!(map(vec![("a", Value::Null)]).is_never_equal());
         assert!(list(vec![map(vec![("a", Value::Null)])]).is_never_equal());
         assert!(map(vec![("a", Value::Float(f64::NAN))]).is_never_equal());
+
+        // A member `compare_value` cannot compare at all makes the container
+        // inconclusive too -- including the mixed case, where the list also
+        // carries a NULL, which used to slip through `compare_list`.
+        assert!(vector(vec![1.0, 2.0]).is_never_equal());
+        assert!(list(vec![vector(vec![1.0, 2.0])]).is_never_equal());
+        assert!(list(vec![vector(vec![1.0]), Value::Null]).is_never_equal());
+        assert!(list(vec![list(vec![vector(vec![1.0])])]).is_never_equal());
+        assert!(map(vec![("a", vector(vec![1.0]))]).is_never_equal());
+    }
+
+    /// `compare_list` must not report a conclusive verdict when no member
+    /// actually decided the order. Its "all members compared false" branch used
+    /// to return `(Equal, None)` in that case, which reads as *"these lists are
+    /// equal, definitively"* -- so `[vec, null]` matched itself, and two
+    /// different vectors in lists matched each other.
+    #[test]
+    fn compare_list_keeps_an_inconclusive_verdict() {
+        let vec_list = list(vec![vector(vec![1.0, 2.0])]);
+        assert_eq!(
+            vec_list.compare_value(&vec_list),
+            (Ordering::Equal, DisjointOrNull::Disjoint)
+        );
+        // Different vectors, same verdict: neither is comparable to the other.
+        assert_eq!(
+            vec_list.compare_value(&list(vec![vector(vec![9.0, 9.0])])),
+            (Ordering::Equal, DisjointOrNull::Disjoint)
+        );
+        // Mixed: one member incomparable, one member NULL.
+        let mixed = list(vec![vector(vec![1.0]), Value::Null]);
+        assert_eq!(
+            mixed.compare_value(&mixed),
+            (Ordering::Equal, DisjointOrNull::ComparedNull)
+        );
+
+        // Everything that already had a decisive ordering keeps it. A real
+        // inequality still outranks an unknown, NaN still reports an ordering,
+        // and length alone still decides lists of different length.
+        assert_eq!(
+            list(vec![Value::Int(1), Value::Null])
+                .compare_value(&list(vec![Value::Int(2), Value::Null])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            list(vec![Value::Float(f64::NAN)]).compare_value(&list(vec![Value::Float(f64::NAN)])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            vec_list.compare_value(&list(vec![vector(vec![1.0]), Value::Int(1)])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            list(vec![Value::Int(1)]).compare_value(&list(vec![Value::Int(1)])),
+            (Ordering::Equal, DisjointOrNull::None)
+        );
     }
 
     /// Values that compare equal to themselves, so `=` can hold for them.
@@ -2048,6 +2131,11 @@ mod is_never_equal_tests {
             map(vec![("a", Value::Int(1))]),
             map(vec![("a", Value::Null)]),
             map(vec![("a", Value::Float(f64::NAN))]),
+            vector(vec![1.0, 2.0]),
+            list(vec![vector(vec![1.0, 2.0])]),
+            list(vec![vector(vec![1.0]), Value::Null]),
+            list(vec![list(vec![vector(vec![1.0])])]),
+            map(vec![("a", vector(vec![1.0]))]),
         ];
         for v in corpus {
             let self_matches =

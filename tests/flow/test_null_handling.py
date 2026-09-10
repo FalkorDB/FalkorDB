@@ -144,7 +144,10 @@ class testNullHandlingFlow(FlowTestsBase):
         null_keys = ["[a.i, a.missing] = [b.i, b.missing]",
                      "[[a.i, a.missing]] = [[b.i, b.missing]]",
                      "{k: a.missing} = {k: b.missing}",
-                     "[{k: a.missing}] = [{k: b.missing}]"]
+                     "[{k: a.missing}] = [{k: b.missing}]",
+                     # a vector has no comparison of its own, so it used to
+                     # mask the null beside it in the same list
+                     "[vecf32([1.0]), a.missing] = [vecf32([1.0]), b.missing]"]
 
         for predicate in null_keys:
             join = f"MATCH (a:A), (b:B) WHERE {predicate} RETURN a.i, b.i"
@@ -173,5 +176,19 @@ class testNullHandlingFlow(FlowTestsBase):
             query = f"MATCH (a:A), (b:B) WHERE {predicate} RETURN a.i, b.i ORDER BY a.i, b.i"
             self.env.assertContains("Value Hash Join", str(graph.explain(query)))
             self.env.assertEqual(graph.query(query).result_set, expected_result)
+
+        # A value Cypher cannot compare at all must not report equality just
+        # because it sits inside a list. Two vectors are never equal to each
+        # other, whatever their contents, and a null beside one still wins.
+        incomparable = [("vecf32([1.0,2.0]) = vecf32([1.0,2.0])", False),
+                        ("[vecf32([1.0,2.0])] = [vecf32([1.0,2.0])]", False),
+                        ("[vecf32([1.0,2.0])] = [vecf32([9.0,9.0])]", False),
+                        ("[vecf32([1.0]), null] = [vecf32([1.0]), null]", None),
+                        # length still decides lists of unequal length
+                        ("[vecf32([1.0])] = [vecf32([1.0]), 1]", False)]
+
+        for expression, expected in incomparable:
+            actual = graph.query(f"RETURN {expression}").result_set[0][0]
+            self.env.assertEqual(actual, expected)
 
         graph.delete()
