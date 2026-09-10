@@ -6,6 +6,9 @@
 #include "src/util/rmalloc.h"
 #include "src/util/crc32.h"
 #include "src/effects/effects_compress.h"
+#include "src/effects/effects.h"
+#include "src/effects/effects_v3.h"
+#include "src/configuration/config.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -534,6 +537,55 @@ void test_truncation_and_corruption_sweep() {
 	rm_free(p);
 }
 
+//------------------------------------------------------------------------------
+// who owns the compressed bit
+//------------------------------------------------------------------------------
+
+// re-encoding a payload that ARRIVED compressed must not claim compressed
+//
+// The decoder carries the payload's flags byte onto the records it produces,
+// and EffectsBuffer_TakeBody writes those flags back out on a re-encode, so a
+// round trip reproduces the header it decoded. That is right for every bit
+// except this one: the compressed bit describes THE BODY AS WRITTEN, and the
+// body a re-encode writes is the plaintext the decoder inflated. Inheriting
+// the bit emits a header claiming compressed over plaintext, and
+// EffectsV3_MaybeCompress then correctly declines to re-compress because the
+// bit is already set - which is what turns it from wasteful into corrupt. A
+// reader would try to inflate plaintext and refuse the payload.
+//
+// THIS STATE IS UNREACHABLE TODAY - EffectsV3_Encode has no callers - so it is
+// constructed by hand here rather than reached through a decode. Without that,
+// the guard would be unfalsifiable until the conformance round trip becomes
+// its first caller, and then it would be someone else's confusing failure.
+//
+// Compression is left OFF for this test so nothing can set the bit
+// legitimately: the only way it can appear is by being inherited.
+void test_reencode_does_not_inherit_the_compressed_flag() {
+	Config_Option_set(Config_EFFECTS_VERSION, "3", NULL);
+	Config_Option_set(Config_EFFECTS_COMPRESSION, "0", NULL);
+
+	// exactly what a decode of a compressed payload leaves behind
+	EffectsV3Records recs;
+	recs.version = 3;
+	recs.flags   = EFFECTS_V3_FLAG_COMPRESSED;
+	recs.records = NULL;
+	recs.n       = 0;
+
+	EffectsBuffer *eb = EffectsBuffer_New();
+	TEST_ASSERT(EffectsV3_Encode(&recs, eb) == true);
+
+	size_t          len = 0;
+	unsigned char  *out = EffectsBuffer_Buffer(eb, &len);
+
+	TEST_ASSERT(out != NULL);
+	TEST_ASSERT(len >= EFFECTS_V3_HEADER_LEN);
+	TEST_ASSERT(out[0] == 3);                                        // version kept
+	TEST_ASSERT((out[1] & EFFECTS_V3_FLAG_COMPRESSED) == 0);         // bit NOT inherited
+
+	rm_free(out);
+	EffectsBuffer_Free(eb);
+}
+
 TEST_LIST = {
 	{ "crc32_known_answers",                   test_crc32_known_answers},
 	{ "worth_it_boundary",                     test_worth_it_boundary},
@@ -547,5 +599,6 @@ TEST_LIST = {
 	{ "header_fields_are_little_endian",       test_header_fields_are_little_endian},
 	{ "pre_v3_payload_is_never_compressed",    test_pre_v3_payload_is_never_compressed},
 	{ "truncation_and_corruption_sweep",       test_truncation_and_corruption_sweep},
+	{ "reencode_does_not_inherit_the_compressed_flag", test_reencode_does_not_inherit_the_compressed_flag},
 	{ NULL, NULL }
 };
