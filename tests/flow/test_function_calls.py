@@ -1885,8 +1885,10 @@ class testFunctionCallsFlow(FlowTestsBase):
             "RETURN CASE WHEN NULL THEN 1+0 WHEN true THEN 2-0 END": [[2]],
             "RETURN CASE WHEN NULL THEN 1+0 WHEN NULL THEN 2-0 ELSE 3*1 END": [[3]],
             "RETURN CASE WHEN NULL THEN 1+0 WHEN NULL THEN 2-0 END": [[None]],
-            "RETURN CASE NULL WHEN NULL THEN NULL ELSE 'else' END AS result": [[None]],
-            "RETURN CASE NULL WHEN 'value' THEN 'value' WHEN NULL THEN NULL ELSE 'else' END AS result": [[None]],
+            # a simple CASE compares with `=`, and `null = null` is null, so a
+            # null WHEN never selects its branch and ELSE is taken instead
+            "RETURN CASE NULL WHEN NULL THEN NULL ELSE 'else' END AS result": [['else']],
+            "RETURN CASE NULL WHEN 'value' THEN 'value' WHEN NULL THEN NULL ELSE 'else' END AS result": [['else']],
             "RETURN CASE NULL WHEN 'when' THEN 'then' ELSE NULL END AS result": [[None]],
             "RETURN CASE 'value' WHEN NULL THEN NULL ELSE true END AS result": [[True]],
             "RETURN CASE 'value' WHEN NULL THEN NULL WHEN 'value' THEN true ELSE false END AS result": [[True]]

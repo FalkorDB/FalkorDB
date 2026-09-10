@@ -121,3 +121,41 @@ class testNullHandlingFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         expected_result = [['v1', 'v1']]
         self.env.assertEqual(actual_result.result_set, expected_result)
+
+    # A simple CASE compares its subject with `=`, so a null on either side
+    # selects no branch. Every pair below is checked against `=` itself, since
+    # the two must not disagree.
+    def test09_null_simple_case(self):
+        # `eq` is what `=` answers for the pair; None means null, which must
+        # stay distinct from False
+        for subject, when, eq in [("null",       "null",       None),
+                                  ("null",       "1",          None),
+                                  ("1",          "null",       None),
+                                  ("1",          "1",          True),
+                                  ("1.0",        "1",          True),
+                                  ("'a'",        "'a'",        True),
+                                  ("'a'",        "'b'",        False),
+                                  ("[1,2]",      "[1,2]",      True),
+                                  # a null anywhere inside makes `=` null
+                                  ("[1,null]",   "[1,null]",   None),
+                                  ("{a:null}",   "{a:null}",   None)]:
+            q = f"RETURN CASE {subject} WHEN {when} THEN 'm' ELSE 'no' END AS v, {subject} = {when} AS eq"
+            branch, actual_eq = self.graph.query(q).result_set[0]
+
+            self.env.assertEqual(actual_eq, eq)
+            # the branch is taken exactly when `=` is true, never when it is null
+            self.env.assertEqual(branch, 'm' if eq is True else 'no')
+
+        # with no ELSE, an unmatched subject yields null rather than a branch
+        res = self.graph.query("RETURN CASE null WHEN null THEN 'm' END AS v")
+        self.env.assertEqual(res.result_set, [[None]])
+
+        # the searched form is unaffected: it tests truthiness, not equality
+        res = self.graph.query("RETURN CASE WHEN null THEN 'm' ELSE 'no' END AS v")
+        self.env.assertEqual(res.result_set, [['no']])
+
+        # a null subject falls through to a later arm that does match
+        res = self.graph.query(
+            "UNWIND [1, null, 2] AS x "
+            "RETURN CASE x WHEN null THEN 'isnull' WHEN 1 THEN 'one' ELSE 'other' END AS v")
+        self.env.assertEqual(res.result_set, [['one'], ['other'], ['other']])
