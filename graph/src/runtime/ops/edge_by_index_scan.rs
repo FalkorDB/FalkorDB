@@ -82,7 +82,8 @@ impl<'a> EdgeByIndexScanOp<'a> {
         query: &'a IndexQuery<QueryExpr<Variable>>,
         transposed: bool,
         idx: NodeIdx<Dyn<IR>>,
-        record_cap: Option<usize>,
+        // Kept in the signature, unused for now: see the emitter below.
+        _record_cap: Option<usize>,
     ) -> Self {
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
         // endpoints; bind it once (via `from`) and skip the `to` column so the
@@ -92,10 +93,9 @@ impl<'a> EdgeByIndexScanOp<'a> {
         Self {
             runtime,
             child,
-            // Capped for the same reason as `node_by_index_scan`, which
-            // measured a second full batch for one extra row past the boundary
-            // (2,067,856 -> 3,002,922). Not measured directly: the benchmark
-            // graph has no relationship index to reach this with.
+            // `None`, for the same reason as `node_by_index_scan`: capping an
+            // index scan hangs `tests/flow/test_constraint.py`, and this line
+            // does it on its own. See the comment there.
             emitter: BatchedResultEmitter::with_binding(
                 EdgeEndpoints {
                     from: relationship_pattern.from.alias.id,
@@ -103,7 +103,7 @@ impl<'a> EdgeByIndexScanOp<'a> {
                     edge: relationship_pattern.alias.id,
                     transposed,
                 },
-                record_cap,
+                None,
             ),
             relationship_pattern,
             query,

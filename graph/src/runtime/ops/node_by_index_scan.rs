@@ -60,7 +60,8 @@ impl<'a> NodeByIndexScanOp<'a> {
         index: &'a Arc<String>,
         query: &'a IndexQuery<QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
-        record_cap: Option<usize>,
+        // Kept in the signature, unused for now: see the emitter below.
+        _record_cap: Option<usize>,
     ) -> Self {
         let extra_labels = if node_pattern.labels.len() > 1 {
             Some(node_pattern.labels.iter().skip(1).cloned().collect())
@@ -74,11 +75,22 @@ impl<'a> NodeByIndexScanOp<'a> {
             index,
             query,
             extra_labels,
-            // An index scan packs a whole `BATCH_SIZE` before the `Limit`
-            // downstream can stop it: `LIMIT 1024` measured 2,067,856
-            // instructions and `LIMIT 1025` 3,002,922 — a second full batch for
-            // one extra row.
-            emitter: BatchedResultEmitter::new(node_pattern.alias.id, record_cap),
+            // `None`, and not for want of a win: capping this measured
+            // `LIMIT 10` at 240,138 instructions against 1,079,312, a 4.5x
+            // saving on a full batch packed and discarded.
+            //
+            // It is off because it hangs `tests/flow/test_constraint.py`.
+            // Bisected to this line and to the same line in
+            // `edge_by_index_scan`, each of which hangs the file on its own,
+            // while the caps on `cond_var_len_traverse` and
+            // `node_by_label_and_id_scan` leave all 23 tests passing. Constraint
+            // validation drives index scans and its tests poll for a constraint
+            // to become operational, so a scan that does not finish hangs
+            // rather than fails. The mechanism is not yet understood — the
+            // `next()` loop here looks correct for a partial batch — so this
+            // stays off until it is, rather than shipping a 4.5x win that
+            // deadlocks constraint creation. Tracked in #2790.
+            emitter: BatchedResultEmitter::new(node_pattern.alias.id, None),
             idx,
         }
     }
