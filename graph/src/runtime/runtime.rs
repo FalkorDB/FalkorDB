@@ -1801,8 +1801,7 @@ impl<'a> Runtime<'a> {
         let g = self.g.borrow();
         let base = g.get_node_indegree(id);
         let pending = self.pending.borrow();
-        let added = pending.pending_indegree(id, &[]);
-        let removed = pending.pending_deleted_indegree(id, &[], &g);
+        let (added, removed) = pending.pending_indegree_delta(id, &[], &g);
         base + added - removed
     }
 
@@ -1819,8 +1818,7 @@ impl<'a> Runtime<'a> {
         let g = self.g.borrow();
         let base = g.get_node_indegree_by_type(id, types);
         let pending = self.pending.borrow();
-        let added = pending.pending_indegree(id, types);
-        let removed = pending.pending_deleted_indegree(id, types, &g);
+        let (added, removed) = pending.pending_indegree_delta(id, types, &g);
         base + added - removed
     }
 
@@ -1836,8 +1834,7 @@ impl<'a> Runtime<'a> {
         let g = self.g.borrow();
         let base = g.get_node_outdegree(id);
         let pending = self.pending.borrow();
-        let added = pending.pending_outdegree(id, &[]);
-        let removed = pending.pending_deleted_outdegree(id, &[], &g);
+        let (added, removed) = pending.pending_outdegree_delta(id, &[], &g);
         base + added - removed
     }
 
@@ -1854,8 +1851,7 @@ impl<'a> Runtime<'a> {
         let g = self.g.borrow();
         let base = g.get_node_outdegree_by_type(id, types);
         let pending = self.pending.borrow();
-        let added = pending.pending_outdegree(id, types);
-        let removed = pending.pending_deleted_outdegree(id, types, &g);
+        let (added, removed) = pending.pending_outdegree_delta(id, types, &g);
         base + added - removed
     }
 }

@@ -105,6 +105,112 @@ fn lookup_sorted(
         .map(|pos| &attrs[pos].1)
 }
 
+/// Pending degree deltas for one `(node, type)` bucket, or for one node
+/// across all types when the key's type slot is `None`.
+#[derive(Default, Clone, Copy)]
+struct DegreeCounts {
+    created_out: u32,
+    created_in: u32,
+    deleted_out: u32,
+    deleted_in: u32,
+}
+
+/// Incrementally maintained pending degree counters.
+///
+/// `indegree`/`outdegree` are evaluated once per row, so answering them by
+/// scanning the pending collections costs `O(pending)` per row and `O(n^2)`
+/// over an `n`-row mutation. This index turns a lookup into one hash probe
+/// per requested type by maintaining the counts as relationships are created
+/// and deleted instead.
+///
+/// It is built on the first degree lookup of a query rather than eagerly:
+/// almost no query calls a degree function, and those that don't must not pay
+/// for the bookkeeping. Until then, the mutation path only tests an `Option`.
+#[derive(Default)]
+struct DegreeIndex {
+    /// `(node, Some(type))` holds that type's deltas; `(node, None)` holds the
+    /// node's total across types, so an untyped lookup is a single probe
+    /// rather than a sum over buckets.
+    counts: FxHashMap<(NodeId, Option<Arc<String>>), DegreeCounts>,
+    /// Endpoints of pending-created relationships. Deleting one has to know
+    /// its endpoints, and `created_rels_by_type` can only answer that by
+    /// scanning the type's whole `Vec`.
+    created_endpoints: FxHashMap<RelationshipId, (NodeId, NodeId)>,
+    /// Deletions of relationships that live in the committed graph. Resolving
+    /// them needs the graph, which the deletion path does not have, so they
+    /// are parked here and drained by the next lookup. Each is resolved once.
+    unresolved_deletes: Vec<RelationshipId>,
+}
+
+impl DegreeIndex {
+    /// Apply `f` to the node's per-type bucket and to its across-types total.
+    fn update(
+        &mut self,
+        node: NodeId,
+        type_name: &Arc<String>,
+        f: impl Fn(&mut DegreeCounts),
+    ) {
+        f(self.counts.entry((node, None)).or_default());
+        f(self
+            .counts
+            .entry((node, Some(type_name.clone())))
+            .or_default());
+    }
+
+    fn record_create(
+        &mut self,
+        id: RelationshipId,
+        from: NodeId,
+        to: NodeId,
+        type_name: &Arc<String>,
+    ) {
+        self.created_endpoints.insert(id, (from, to));
+        self.update(from, type_name, |c| c.created_out += 1);
+        self.update(to, type_name, |c| c.created_in += 1);
+    }
+
+    fn record_delete_of_created(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        type_name: &Arc<String>,
+    ) {
+        self.update(from, type_name, |c| c.deleted_out += 1);
+        self.update(to, type_name, |c| c.deleted_in += 1);
+    }
+
+    /// Resolve deletions of committed relationships against the graph. Called
+    /// from lookups, which is the only place the graph is available.
+    fn drain_unresolved(
+        &mut self,
+        g: &Graph,
+    ) {
+        for id in std::mem::take(&mut self.unresolved_deletes) {
+            let Some((from, to)) = g.relationship_endpoints(id) else {
+                continue;
+            };
+            let Some(type_name) = g
+                .relationship_type_id_for_edge(id)
+                .and_then(|t| g.get_type(t))
+            else {
+                continue;
+            };
+            self.record_delete_of_created(from, to, &type_name);
+        }
+    }
+
+    fn get(
+        &self,
+        node: NodeId,
+        type_name: Option<&Arc<String>>,
+    ) -> DegreeCounts {
+        self.counts
+            .get(&(node, type_name.cloned()))
+            .copied()
+            .unwrap_or_default()
+    }
+}
+
 /// Accumulated write operations for deferred application.
 ///
 /// All mutations during query execution are collected here and applied
@@ -122,6 +228,10 @@ pub struct Pending {
     deleted_relationships: RoaringTreemap,
     /// Endpoints for deleted relationships — populated by commit(), used by build_effects_buffer().
     deleted_endpoints: Vec<(RelationshipId, NodeId, NodeId)>,
+    /// Degree counters, present only once a degree function has been called.
+    /// Behind a `RefCell` because lookups take `&self` — callers hold a shared
+    /// borrow of `Pending` while evaluating expressions.
+    degree_index: RefCell<Option<Box<DegreeIndex>>>,
     /// Property updates for newly created nodes (fast path: skip fjall).
     /// Values are attribute-id-resolved, sorted by id, unique.
     new_nodes_attrs: FxHashMap<u64, Vec<(u16, Value)>>,
@@ -258,6 +368,7 @@ impl Pending {
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
             deleted_endpoints: Vec::new(),
+            degree_index: RefCell::new(None),
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
             new_relationships_attrs: FxHashMap::default(),
@@ -575,6 +686,12 @@ impl Pending {
             self.deleted_relationships.remove(rel_id.into());
             result.push((rel_id, from, to, type_name, attrs));
         }
+        // Pending creates are being retracted, not deleted, so the counters
+        // cannot be adjusted by the create/delete path. This scan is already
+        // O(pending), so dropping the index costs nothing asymptotically.
+        if !result.is_empty() {
+            *self.degree_index.get_mut() = None;
+        }
 
         result
     }
@@ -590,6 +707,9 @@ impl Pending {
             .entry(type_name.clone())
             .or_default()
             .push((id, from, to));
+        if let Some(ix) = self.degree_index.get_mut().as_mut() {
+            ix.record_create(id, from, to, &type_name);
+        }
         self.created_rel_types.insert(id, type_name);
     }
 
@@ -684,7 +804,9 @@ impl Pending {
         &mut self,
         id: RelationshipId,
     ) {
-        self.deleted_relationships.insert(id.into());
+        if self.deleted_relationships.insert(id.into()) {
+            self.index_relationship_deletion(id);
+        }
     }
 
     pub fn deleted_relationships_bulk(
@@ -692,7 +814,34 @@ impl Pending {
         rels: &[RelationshipId],
     ) {
         for &id in rels {
-            self.deleted_relationships.insert(id.into());
+            if self.deleted_relationships.insert(id.into()) {
+                self.index_relationship_deletion(id);
+            }
+        }
+    }
+
+    /// Route a deletion to the degree index, if one is active.
+    ///
+    /// The pending-created population is separated from the committed one
+    /// here rather than at lookup time. That preserves the precedence the
+    /// scanning form relied on — relationship ids are recycled, so a reserved
+    /// id can read as present in the committed graph while its pending create
+    /// is live, and resolving such an id against the graph would count the
+    /// wrong edge. An id `created_rel_types` knows is always resolved from
+    /// pending; only the rest ever reach the graph.
+    fn index_relationship_deletion(
+        &mut self,
+        id: RelationshipId,
+    ) {
+        let Some(ix) = self.degree_index.get_mut().as_mut() else {
+            return;
+        };
+        if let Some(type_name) = self.created_rel_types.get(&id) {
+            if let Some(&(from, to)) = ix.created_endpoints.get(&id) {
+                ix.record_delete_of_created(from, to, type_name);
+            }
+        } else {
+            ix.unresolved_deletes.push(id);
         }
     }
 
@@ -811,171 +960,111 @@ impl Pending {
         self.deleted_relationships.contains(id.into())
     }
 
-    /// Count pending-created relationships whose destination is `node_id` and
-    /// whose type name matches one of `types` (or all if `types` is empty).
-    #[must_use]
-    pub fn pending_indegree(
-        &self,
-        node_id: NodeId,
-        types: &[Arc<String>],
-    ) -> usize {
-        if types.is_empty() {
-            self.created_rels_by_type
-                .values()
-                .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
-                .count()
-        } else {
-            types
-                .iter()
-                .filter_map(|t| self.created_rels_by_type.get(t))
-                .flat_map(|v| v.iter())
-                .filter(|(_, _, to)| *to == node_id)
-                .count()
-        }
-    }
-
-    /// Count pending-created relationships whose source is `node_id` and
-    /// whose type name matches one of `types` (or all if `types` is empty).
-    #[must_use]
-    pub fn pending_outdegree(
-        &self,
-        node_id: NodeId,
-        types: &[Arc<String>],
-    ) -> usize {
-        if types.is_empty() {
-            self.created_rels_by_type
-                .values()
-                .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
-                .count()
-        } else {
-            types
-                .iter()
-                .filter_map(|t| self.created_rels_by_type.get(t))
-                .flat_map(|v| v.iter())
-                .filter(|(_, from, _)| *from == node_id)
-                .count()
-        }
-    }
-
-    /// Whether a relationship pending deletion that is *not* pending-created
-    /// has one of `types`, resolving the type name from the committed graph.
-    fn committed_relationship_has_type(
-        id: RelationshipId,
-        types: &[Arc<String>],
-        g: &Graph,
-    ) -> bool {
-        g.relationship_type_id_for_edge(id)
-            .and_then(|t| g.get_type(t))
-            .is_some_and(|t| types.contains(&t))
-    }
-
-    /// Count pending-deleted relationships incident on `node_id` in the
-    /// direction selected by `outgoing`, whose type name matches one of
-    /// `types` (or all if `types` is empty).
+    /// Build the degree index from the current pending state, or refresh an
+    /// existing one, and read `node_id`'s deltas out of it.
     ///
-    /// `deleted_relationships` mixes two populations: edges that live in the
-    /// committed graph, and edges created earlier in this *same* query and
-    /// then deleted by it. The latter were never committed, so `g` has no
-    /// record of them and only `created_rels_by_type` can resolve them.
+    /// Returns `(added, removed)`: relationships pending creation and pending
+    /// deletion respectively, in the direction selected by `outgoing` and
+    /// restricted to `types` when it is non-empty.
     ///
-    /// The two populations are counted in separate passes rather than by
-    /// resolving each deleted id against pending and then the graph. Looking
-    /// an id up in `created_rels_by_type` means scanning its type's whole
-    /// `Vec`, so doing that per deleted id is `O(deleted * pending)` — a
-    /// user-reachable quadratic blowup for a bulk create-and-delete. Walking
-    /// the pending records once instead makes this `O(pending) + O(deleted)`,
-    /// with only `O(1)` membership checks in each pass and no extra
-    /// allocation or per-call map building.
-    ///
-    /// Pending still takes precedence over the committed graph, which is
-    /// load-bearing: relationship ids are recycled, so a reserved id can read
-    /// as present/deleted in the committed graph for the whole lifetime of the
-    /// pending create. The second pass preserves that by skipping every id
-    /// `created_rel_types` knows — exactly the ids the first pass owns — so no
-    /// id is counted twice and none is resolved against the wrong source.
-    fn pending_deleted_degree(
+    /// The index is what keeps this `O(1)` per call. Answering from the
+    /// pending collections directly costs `O(pending)`, and degree functions
+    /// are evaluated once per row, so an `n`-row `CREATE`/`DELETE` that also
+    /// reads a degree used to cost `O(n^2)`.
+    fn pending_degree_delta(
         &self,
         node_id: NodeId,
         types: &[Arc<String>],
         g: &Graph,
         outgoing: bool,
-    ) -> usize {
-        // Nothing deleted: both passes would find nothing, but pass 1 would
-        // still walk every pending-created record to discover that. The old
-        // per-id form iterated an empty set here, so without this guard a
-        // create-only query pays a walk it never used to.
-        if self.deleted_relationships.is_empty() {
-            return 0;
-        }
-
-        let endpoint = |&(_, from, to): &(RelationshipId, NodeId, NodeId)| {
-            if outgoing { from } else { to }
+    ) -> (usize, usize) {
+        let mut slot = self.degree_index.borrow_mut();
+        let ix = match slot.as_mut() {
+            // Deletions of committed relationships are resolved here rather
+            // than at deletion time, which has no graph to resolve them with.
+            Some(ix) => {
+                ix.drain_unresolved(g);
+                ix
+            }
+            None => slot.insert(Box::new(self.build_degree_index(g))),
         };
 
-        // Pass 1 — pending-created-then-deleted edges, visiting each pending
-        // record once. `types` is deduplicated by the degree function's
-        // argument parsing, so no bucket is visited twice.
-        let mut count = if types.is_empty() {
-            self.created_rels_by_type
-                .values()
-                .flat_map(|v| v.iter())
-                .filter(|rel| {
-                    endpoint(rel) == node_id && self.deleted_relationships.contains(rel.0.into())
-                })
-                .count()
+        let mut added = 0usize;
+        let mut removed = 0usize;
+        // `types` is deduplicated by the degree functions' argument parsing,
+        // so summing per type cannot double-count.
+        let mut accumulate = |c: DegreeCounts| {
+            let (a, r) = if outgoing {
+                (c.created_out, c.deleted_out)
+            } else {
+                (c.created_in, c.deleted_in)
+            };
+            added += a as usize;
+            removed += r as usize;
+        };
+        if types.is_empty() {
+            accumulate(ix.get(node_id, None));
         } else {
-            types
-                .iter()
-                .filter_map(|t| self.created_rels_by_type.get(t))
-                .flat_map(|v| v.iter())
-                .filter(|rel| {
-                    endpoint(rel) == node_id && self.deleted_relationships.contains(rel.0.into())
-                })
-                .count()
-        };
-
-        // Pass 2 — deletions of edges that exist in the committed graph.
-        count += self
-            .deleted_relationships
-            .iter()
-            .filter(|rel_id| {
-                let id = RelationshipId::from(*rel_id);
-                !self.created_rel_types.contains_key(&id)
-                    && g.relationship_endpoints(id)
-                        .is_some_and(|(from, to)| (if outgoing { from } else { to }) == node_id)
-                    && (types.is_empty() || Self::committed_relationship_has_type(id, types, g))
-            })
-            .count();
-
-        count
+            for t in types {
+                accumulate(ix.get(node_id, Some(t)));
+            }
+        }
+        (added, removed)
     }
 
-    /// Count pending-deleted relationships whose destination is `node_id` and
-    /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Populate a fresh index from the pending collections.
+    ///
+    /// Runs once per query that uses a degree function, on the first call.
+    /// Every later mutation maintains the index incrementally instead.
+    fn build_degree_index(
+        &self,
+        g: &Graph,
+    ) -> DegreeIndex {
+        let mut ix = DegreeIndex::default();
+        for (type_name, entries) in &self.created_rels_by_type {
+            for &(id, from, to) in entries {
+                ix.record_create(id, from, to, type_name);
+            }
+        }
+        for rel_id in &self.deleted_relationships {
+            let id = RelationshipId::from(rel_id);
+            // Pending-created edges are resolved from pending, never from the
+            // graph: ids are recycled, so a reserved id can read as present in
+            // the committed graph while its pending create is still live.
+            if let Some(type_name) = self.created_rel_types.get(&id) {
+                if let Some(&(from, to)) = ix.created_endpoints.get(&id) {
+                    ix.record_delete_of_created(from, to, type_name);
+                }
+            } else {
+                ix.unresolved_deletes.push(id);
+            }
+        }
+        ix.drain_unresolved(g);
+        ix
+    }
+
+    /// Pending-created and pending-deleted indegree deltas for `node_id`,
+    /// restricted to `types` when it is non-empty.
     #[must_use]
-    pub fn pending_deleted_indegree(
+    pub fn pending_indegree_delta(
         &self,
         node_id: NodeId,
         types: &[Arc<String>],
         g: &Graph,
-    ) -> usize {
-        self.pending_deleted_degree(node_id, types, g, false)
+    ) -> (usize, usize) {
+        self.pending_degree_delta(node_id, types, g, false)
     }
 
-    /// Count pending-deleted relationships whose source is `node_id` and
-    /// whose type name matches one of `types` (or all if `types` is empty).
-    /// Requires access to the graph to resolve relationship type IDs.
+    /// Pending-created and pending-deleted outdegree deltas for `node_id`,
+    /// restricted to `types` when it is non-empty.
     #[must_use]
-    pub fn pending_deleted_outdegree(
+    pub fn pending_outdegree_delta(
         &self,
         node_id: NodeId,
         types: &[Arc<String>],
         g: &Graph,
-    ) -> usize {
-        self.pending_deleted_degree(node_id, types, g, true)
+    ) -> (usize, usize) {
+        self.pending_degree_delta(node_id, types, g, true)
     }
 
     pub fn commit(
@@ -983,6 +1072,11 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
+        // Commit rewrites the pending collections (notably `deleted_relationships`,
+        // which is drained and then refilled with what was actually removed), so
+        // the counters no longer describe them. Drop the index and let the next
+        // lookup rebuild from whatever state commit leaves behind.
+        *self.degree_index.get_mut() = None;
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut().create_nodes(&self.created_nodes);
@@ -1514,6 +1608,7 @@ impl Pending {
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
         self.deleted_endpoints.clear();
+        *self.degree_index.get_mut() = None;
         self.index_add_docs.clear();
         self.index_remove_docs.clear();
         self.index_add_edge_docs.clear();

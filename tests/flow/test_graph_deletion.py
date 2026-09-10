@@ -927,47 +927,58 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set, [[1]])
 
     def test39_bulk_create_and_delete_degree_is_not_quadratic(self):
-        # Resolving each pending-deleted id against the pending-created records
-        # individually means scanning that type's whole vector per id, which is
-        # quadratic once a query creates and deletes edges in bulk. The degree
-        # helpers walk the pending records once instead.
+        # Degree functions are evaluated once per row, so answering one by
+        # scanning the pending create/delete records costs O(pending) per row
+        # and O(n^2) over the query. The pending degree counters are
+        # maintained incrementally instead, making a lookup O(1).
         #
-        # Asserted as a growth ratio rather than a wall-clock ceiling so the
-        # check calibrates itself to the machine: doubling the edge count
-        # roughly doubles the work for the linear form but quadruples it for
-        # the quadratic one. Measured here while writing this, the quadratic
-        # form grew 5.8x per doubling and the current one 3.0x, so 4.5 sits
-        # well clear of both.
+        # Asserted against the same query with the degree call replaced by a
+        # constant rather than as a growth ratio or a wall-clock ceiling. The
+        # baseline absorbs whatever the bulk CREATE/DELETE itself costs on this
+        # machine, so what is left is the degree lookup alone. A ceiling would
+        # have to be loose enough to pass on a slow runner, and a whole-query
+        # growth ratio is dominated by CREATE/DELETE, which grows on its own.
+        #
+        # Measured while writing this at n=4000: 7.8 ms with the degree call
+        # against 7.2 ms without it, a ratio of ~1.1. The quadratic form took
+        # 4894 ms, a ratio of ~680, so the bound below has a wide margin in
+        # both directions.
         self.graph.delete()
         # keep the key alive so each round can reset with a query instead of a
         # delete, which errors once the graph is empty
         self.graph.query("CREATE (:Seed)")
 
-        def timed_bulk(n):
-            self.graph.query("MATCH (x) DETACH DELETE x")
-            self.graph.query("CREATE (:Hub {n: 1})")
-            res = self.graph.query(f"""MATCH (a:Hub)
-                                       UNWIND range(1, {n}) AS i
-                                       CREATE (a)-[r:R]->(:Leaf)
-                                       DELETE r
-                                       SET a.d = outdegree(a)""")
-            self.env.assertEqual(res.relationships_created, n)
-            self.env.assertEqual(res.relationships_deleted, n)
+        n = 4000
 
-            # every created edge was also deleted, so the hub ends with none
-            check = self.graph.query("MATCH (a:Hub) RETURN a.d, outdegree(a)")
-            self.env.assertEqual(check.result_set, [[0, 0]])
-            check = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
-            self.env.assertEqual(check.result_set[0][0], 0)
+        def timed_bulk(set_expr, expect_zero):
+            best = None
+            for _ in range(2):
+                self.graph.query("MATCH (x) DETACH DELETE x")
+                self.graph.query("CREATE (:Hub {n: 1})")
+                res = self.graph.query(f"""MATCH (a:Hub)
+                                           UNWIND range(1, {n}) AS i
+                                           CREATE (a)-[r:R]->(:Leaf)
+                                           DELETE r
+                                           SET a.d = {set_expr}""")
+                self.env.assertEqual(res.relationships_created, n)
+                self.env.assertEqual(res.relationships_deleted, n)
 
-            return res.run_time_ms
+                # every created edge was also deleted, so the hub ends with none
+                check = self.graph.query("MATCH (a:Hub) RETURN a.d, outdegree(a)")
+                if expect_zero:
+                    self.env.assertEqual(check.result_set, [[0, 0]])
+                check = self.graph.query("MATCH ()-[r]->() RETURN count(r)")
+                self.env.assertEqual(check.result_set[0][0], 0)
 
-        base = timed_bulk(2000)
-        doubled = timed_bulk(4000)
+                best = res.run_time_ms if best is None else min(best, res.run_time_ms)
+            return best
+
+        with_degree = timed_bulk("outdegree(a)", True)
+        without_degree = timed_bulk("i", False)
 
         # guard against a near-zero denominator making the ratio meaningless
-        if base > 1:
-            self.env.assertTrue(doubled / base < 4.5)
+        if without_degree > 1:
+            self.env.assertTrue(with_degree / without_degree < 3.0)
 
 class testGraphBulkDeletion(FlowTestsBase):
     def __init__(self):
