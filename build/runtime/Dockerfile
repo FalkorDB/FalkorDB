@@ -151,6 +151,11 @@ RUN set -eux; \
     # so downstream consumers' bind-mount permissions and `USER redis`
     # directives remain compatible after the base switch.
     groupadd -r -g 999 redis && useradd -r -g redis -u 999 redis; \
+    # The `full` stage below runs the bundled browser as nextjs:nodejs (1001),
+    # the uid/gid baked into the falkordb-browser image. useradd/groupadd only
+    # exist until `passwd` is purged a few lines down, so the account has to be
+    # created here even though the browser-less `server` image never uses it.
+    groupadd -g 1001 nodejs && useradd -r -u 1001 -g nodejs nextjs; \
     (apt-get purge -y python3.13 python3.13-minimal libpython3.13-minimal libpython3.13-stdlib || true); \
     (dpkg --force-remove-essential --purge ncurses-base ncurses-bin || true); \
     (dpkg --force-remove-essential --purge perl-base || true); \
@@ -203,7 +208,29 @@ FROM node:26-bookworm-slim AS node
 FROM server AS full
 ENV FALKORDB_BROWSER_PATH=/var/lib/falkordb/browser \
     BROWSER=1
+
+# The falkordb-browser image is Alpine-based; only its /app tree and entrypoint
+# are copied here, so this stage must provide the userland they expect:
+#   * node(1) from node:26 links against libatomic.so.1 and libstdc++.so.6,
+#     neither of which is in debian:trixie-slim.
+#   * docker-entrypoint.sh drops privileges with su-exec(1), an Alpine tool.
+#     Debian's equivalent is gosu, symlinked under the expected name.
+# Without these the browser never starts (see issue #2750).
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gosu libatomic1 libstdc++6; \
+    ln -sf "$(command -v gosu)" /usr/local/bin/su-exec; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
+
 COPY --from=node /usr/local/bin/node /usr/local/bin/
-COPY --from=browser /app ${FALKORDB_BROWSER_PATH}
+COPY --from=browser --chown=nextjs:nodejs /app ${FALKORDB_BROWSER_PATH}
 COPY --from=browser /usr/local/bin/docker-entrypoint.sh ${FALKORDB_BROWSER_PATH}/
+
+# docker-entrypoint.sh stores the browser's credentials under a hardcoded
+# /app/.data, which is outside the copied browser tree — pre-create it owned by
+# nextjs so the entrypoint's writability check passes.
+RUN mkdir -p /app/.data && chown -R nextjs:nodejs /app/.data && \
+    su-exec nextjs:nodejs node --version
+
 EXPOSE 3000/tcp

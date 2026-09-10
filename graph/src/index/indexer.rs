@@ -124,7 +124,7 @@ impl IndexOptions {
                     Some(TextIndexOptions {
                         weight: opts.weight,
                         nostem: opts.nostem,
-                        phonetic: opts.phonetic,
+                        phonetic: opts.phonetic.clone(),
                         ..Default::default()
                     })
                 } else {
@@ -586,7 +586,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
         attr: &Arc<String>,
-    ) -> Option<u32> {
+    ) -> Option<u64> {
         let guard = self.index.load();
         let index = guard.get(label)?;
         let fields = index.get_fields(attr)?;
