@@ -16,6 +16,7 @@ void EffectsBuffer_AddCreateConstraintEffect
 	EffectsBuffer *buff,          // effect buffer
 	ConstraintType ct,            // constraint type (unique/mandatory)
 	GraphEntityType et,           // entity type (node/edge)
+	uint32_t status,              // ConstraintStatus; v3 only
 	int label_id,                 // label/relationship-type id
 	const char *label,            // label/relationship-type name
 	const AttributeID *attr_ids,  // constrained attribute ids
@@ -34,6 +35,18 @@ void EffectsBuffer_AddCreateConstraintEffect
 	//--------------------------------------------------------------------------
 
 	EffectType eff_t = EFFECT_CREATE_CONSTRAINT ;
+
+	if (EffectsBuffer_V3 (buff) != NULL) {
+		// v3 states the STATUS as well, which v2 has no field for - a replica
+		// never validates, so the announcement is the only thing that can tell
+		// it an enforcing constraint from one still building
+		EffectsV3Grouping_AddConstraint (EffectsBuffer_V3 (buff),
+				EFFECT_CREATE_CONSTRAINT, (uint32_t) ct, (uint32_t) et,
+				status, label_id, label, attr_ids, attrs, n) ;
+		EffectsBuffer_IncEffectCount (buff) ;
+		return ;
+	}
+
 	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
 
 	EffectsBuffer_WriteBytes (&ct, sizeof (ct), buff) ;

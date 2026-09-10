@@ -8,6 +8,8 @@
 #include "config.h"
 #include "util/rmalloc.h"
 #include "util/redis_version.h"
+// for EFFECTS_VERSION, the highest payload version this build can READ
+#include "../effects/effects.h"
 #include "../deps/GraphBLAS/Include/GraphBLAS.h"
 
 #include <unistd.h>
@@ -67,6 +69,14 @@
 
 // effects replication threshold
 #define EFFECTS_THRESHOLD "EFFECTS_THRESHOLD"
+// which payload version GRAPH.EFFECT emits; reads always dispatch on the
+// version byte that arrived, so a node reads both regardless of this
+// EMIT-ONLY. This selects what GRAPH.EFFECT writes; it does NOT restrict what
+// this instance accepts. Reads always dispatch on the version byte that
+// arrived, up to the EFFECTS_VERSION ceiling compiled into effects.h, so
+// setting this to 2 does not make an instance refuse a v3 payload - and an
+// operator reading the name will expect that it does.
+#define EFFECTS_VERSION_CONFIG "EFFECTS_VERSION"
 
 // delay indexing
 #define DELAY_INDEXING "DELAY_INDEXING"
@@ -116,6 +126,7 @@ typedef struct
 	uint64_t node_creation_buffer;	   // number of extra node creations to buffer as margin in matrices
 	bool cmd_info_on;				   // if true, the GRAPH.INFO is enabled
 	uint64_t effects_threshold;		   // replicate via effects when runtime exceeds threshold
+	uint64_t effects_version;		   // payload version GRAPH.EFFECT emits
 	uint64_t max_info_queries_count;   // maximum number of query info elements
 	bool delay_indexing;			   // delay index construction when decoding
 	char *import_folder;			   // path to import folder, used for CSV loading
@@ -473,6 +484,26 @@ static uint64_t Config_effects_threshold_get(void)
 	return config.effects_threshold;
 }
 
+// the payload version a new effects-buffer stamps and encodes
+//
+// Separate from EFFECTS_VERSION in effects.h, which is the highest version this
+// build can READ. The two answer different questions and the ordering
+// constraint is always: teach every reader first, then flip writers. This is
+// the writer half, and it is the only thing that moves.
+//
+// Defaults to 2, so building the v3 emitter changes no behaviour until an
+// operator asks for it.
+static void Config_effects_version_set(
+	uint64_t version)
+{
+	config.effects_version = version;
+}
+
+static uint64_t Config_effects_version_get(void)
+{
+	return config.effects_version;
+}
+
 //------------------------------------------------------------------------------
 // delay indexing
 //------------------------------------------------------------------------------
@@ -641,6 +672,10 @@ bool Config_Contains_field(
 	{
 		f = Config_CMD_INFO_MAX_QUERY_COUNT;
 	}
+	else if (!(strcasecmp(field_str, EFFECTS_VERSION_CONFIG)))
+	{
+		f = Config_EFFECTS_VERSION;
+	}
 	else if (!(strcasecmp(field_str, EFFECTS_THRESHOLD)))
 	{
 		f = Config_EFFECTS_THRESHOLD;
@@ -728,6 +763,9 @@ SIType Config_Field_type(
 		return T_INT64;
 
 	case Config_EFFECTS_THRESHOLD:
+		return T_INT64;
+
+	case Config_EFFECTS_VERSION:
 		return T_INT64;
 
 	case Config_DELAY_INDEXING:
@@ -827,6 +865,10 @@ const char *Config_Field_name(
 		name = EFFECTS_THRESHOLD;
 		break;
 
+	case Config_EFFECTS_VERSION:
+		name = EFFECTS_VERSION_CONFIG;
+		break;
+
 	case Config_DELAY_INDEXING:
 		name = DELAY_INDEXING;
 		break;
@@ -918,6 +960,14 @@ static void _Config_SetToDefaults(void)
 	// replicate effects if avg change time μs > effects_threshold μs
 	// 0 means always replicate via GRAPH.EFFECT
 	config.effects_threshold = 0;
+
+	// emit v2 payloads
+	//
+	// The default cannot move until every reader in a deployment accepts v3: a
+	// master emitting a version its peer cannot read is silent data loss rather
+	// than a degraded mode. So generation lands switched off, and flipping this
+	// is a separate, deliberate change.
+	config.effects_version = 2;
 
 	// index entities as they're being decoded
 	config.delay_indexing = DELAY_INDEXING_DEFAULT;
@@ -1258,6 +1308,21 @@ bool Config_Option_get(
 
 		ASSERT(effects_threshold != NULL);
 		(*effects_threshold) = Config_effects_threshold_get();
+	}
+	break;
+
+		//----------------------------------------------------------------------
+		// effects version
+		//----------------------------------------------------------------------
+
+	case Config_EFFECTS_VERSION:
+	{
+		va_start(ap, field);
+		uint64_t *effects_version = va_arg(ap, uint64_t *);
+		va_end(ap);
+
+		ASSERT(effects_version != NULL);
+		(*effects_version) = Config_effects_version_get();
 	}
 	break;
 
@@ -1674,6 +1739,44 @@ bool Config_Option_set
 			}
 			if (Config_effects_threshold_get () != threshold) {
 				Config_effects_threshold_set (threshold) ;
+				updated = true ;
+			}
+		}
+		break ;
+
+		//----------------------------------------------------------------------
+		// effects version
+		//----------------------------------------------------------------------
+
+		case Config_EFFECTS_VERSION:
+		{
+			long long version ;
+			if (!_Config_ParseNonNegativeInteger (val, &version)) {
+				return false ;
+			}
+
+			// range-checked HERE rather than at the wire, so the failure lands
+			// on the operator who typed it instead of on a replica that cannot
+			// read what arrived
+			if (version != 2 && version != 3) {
+				return false ;
+			}
+
+			// and refused if this build cannot READ what it would emit
+			//
+			// The safe range is not static: it depends on the read ceiling
+			// compiled in. A build that emits a version it cannot itself read
+			// can be a master to a peer of its own vintage that refuses the
+			// payload and resyncs forever - which is the failure the
+			// read/emit split exists to prevent, and it only works if the
+			// ordering is enforced rather than assumed. Teach every reader
+			// first, then flip writers.
+			if (version > EFFECTS_VERSION) {
+				return false ;
+			}
+
+			if (Config_effects_version_get () != (uint64_t)version) {
+				Config_effects_version_set ((uint64_t)version) ;
 				updated = true ;
 			}
 		}

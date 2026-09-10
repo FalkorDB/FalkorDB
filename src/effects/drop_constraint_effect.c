@@ -34,6 +34,16 @@ void EffectsBuffer_AddDropConstraintEffect
 	//--------------------------------------------------------------------------
 
 	EffectType eff_t = EFFECT_DROP_CONSTRAINT ;
+
+	if (EffectsBuffer_V3 (buff) != NULL) {
+		// a drop carries no status - there is nothing to converge on
+		EffectsV3Grouping_AddConstraint (EffectsBuffer_V3 (buff),
+				EFFECT_DROP_CONSTRAINT, (uint32_t) ct, (uint32_t) et,
+				0, label_id, label, attr_ids, attrs, n) ;
+		EffectsBuffer_IncEffectCount (buff) ;
+		return ;
+	}
+
 	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
 
 	EffectsBuffer_WriteBytes (&ct, sizeof (ct), buff) ;

@@ -34,6 +34,16 @@ void EffectsBuffer_AddDropIndexEffect
 
 	EffectType eff_t = EFFECT_DROP_INDEX ;
 
+	if (EffectsBuffer_V3 (buff) != NULL) {
+		// one record per statement here too, and a drop carries no options at
+		// all - not an empty block
+		EffectsV3Grouping_AddIndexField (EffectsBuffer_V3 (buff),
+				EFFECT_DROP_INDEX, st, label_id, label, (uint32_t) t,
+				attr_id, attr, SI_NullVal ()) ;
+		EffectsBuffer_IncEffectCount (buff) ;
+		return ;
+	}
+
 	EffectsBuffer_WriteBytes  (&eff_t, sizeof (eff_t), buff) ;
 	EffectsBuffer_WriteBytes  (&st, sizeof (st), buff) ;
 	EffectsBuffer_WriteBytes  (&label_id, sizeof (label_id), buff) ;

@@ -290,6 +290,21 @@ static void _ExecuteQuery
 		if (replicate) {
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
+			//
+			// Verbatim replication below is the ORIGINAL choice for a
+			// deterministic query cheap enough not to warrant effects. It is
+			// no longer a fallback for an effect the encoder could not
+			// express: there is no such effect. All 14 records have a
+			// producing path, so "the buffer is incomplete" is not a state to
+			// survive - an effect writer with no v3 path is a bug, and
+			// EffectsBuffer_WriteBytes fails loudly where it happens rather
+			// than letting this layer paper over it.
+			//
+			// Papering over it was worse than it looked. Replaying the query
+			// text is exact between two C engines and silently wrong against
+			// Rust, whose db.idx.fulltext.createNodeIndex takes a single map
+			// where C's is variadic - so the rescue that saved a C replica
+			// left a Rust one quietly without the index.
 			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 &&
 			    (!exec_ctx->deterministic || _should_replicate_effects ())) {
 				// compute effects buffer

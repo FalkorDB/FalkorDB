@@ -44,6 +44,7 @@
 //------------------------------------------------------------------------------
 
 #include "RG.h"
+#include "../effects/effects.h"
 #include "util/strutil.h"
 #include "../query_ctx.h"
 #include "../errors/errors.h"

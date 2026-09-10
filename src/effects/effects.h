@@ -72,7 +72,7 @@ bool Effects_Apply
 	size_t l                   // size of buffer
 );
 
-// create a new effects-buffer
+// create a new effects-buffer, emitting the configured payload version
 EffectsBuffer *EffectsBuffer_New(void);
 
 // reset effects-buffer
@@ -197,7 +197,8 @@ void EffectsBuffer_AddCreateIndexEffect
 	AttributeID attr_id,   // attribute id
 	const char *attr,      // attribute name
 	IndexFieldType t,      // index field type (range/fulltext/vector)
-	SIValue options        // index options
+	SIValue options,       // index options - THE V2 WIRE, byte-frozen
+	SIValue stated         // the subset the statement named - v3 only
 );
 
 // add an index field deletion effect to buffer
@@ -218,6 +219,8 @@ void EffectsBuffer_AddCreateConstraintEffect
 	EffectsBuffer *buff,          // effect buffer
 	ConstraintType ct,            // constraint type (unique/mandatory)
 	GraphEntityType et,           // entity type (node/edge)
+	uint32_t status,              // ConstraintStatus - v3 only; v2 has no field
+	                              // for it and ignores this
 	int label_id,                 // label/relationship-type id
 	const char *label,            // label/relationship-type name
 	const AttributeID *attr_ids,  // constrained attribute ids

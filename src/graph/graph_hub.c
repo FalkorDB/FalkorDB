@@ -493,7 +493,8 @@ Index GraphHub_AddIndex
 	const char *attr,    // attribute to index
 	GraphEntityType et,  // entity type (node/edge)
 	IndexFieldType t,    // type of index (range/fulltext/vector)
-	SIValue options,     // index options
+	SIValue options,     // index options, as the index is BUILT from them
+	SIValue stated,      // the subset the STATEMENT actually named - v3 only
 	bool log
 ) {
 	ASSERT (gc    != NULL) ;
@@ -562,7 +563,7 @@ Index GraphHub_AddIndex
 	if (idx != NULL && log == true) {
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
 		EffectsBuffer_AddCreateIndexEffect (eb, st, Schema_GetID(s), label,
-				attr_id, attr, t, options) ;
+				attr_id, attr, t, options, stated) ;
 	}
 
 	return idx ;
@@ -743,7 +744,8 @@ Constraint GraphHub_AddConstraint
 		uint8_t out_n = Constraint_GetAttributes (c, &out_ids, &out_names) ;
 
 		EffectsBuffer *eb = QueryCtx_GetEffectsBuffer () ;
-		EffectsBuffer_AddCreateConstraintEffect (eb, ct, et, s_id, label,
+		EffectsBuffer_AddCreateConstraintEffect (eb, ct, et,
+				(uint32_t) Constraint_GetStatus (c), s_id, label,
 				out_ids, out_names, out_n) ;
 	}
 
