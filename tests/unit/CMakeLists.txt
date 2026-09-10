@@ -11,6 +11,20 @@ foreach(test_src ${TEST_SOURCES})
 	# test; the environment variable of the same name overrides it at runtime.
 	target_compile_definitions(${test} PRIVATE
 		EFFECTS_V3_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/effects_v3")
+
+	# whether the conformance harness's sources are mounted into this directory.
+	#
+	# This is decided HERE rather than with __has_include in the test, because
+	# the build system has to know: a compile-time answer baked into an object
+	# file is not invalidated when the header appears or disappears, so an
+	# incremental build after a mount keeps reporting the old answer. As a
+	# compile definition it is tracked, so the reconfigure that a mount already
+	# requires rebuilds whatever depends on it -- in both directions, which
+	# matters because the stale answer is a false GREEN when the harness has
+	# been removed.
+	if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/effects_v3_corpus.h)
+		target_compile_definitions(${test} PRIVATE EFFECTS_V3_HARNESS_PRESENT=1)
+	endif()
 	if (NOT APPLE)
 		target_link_libraries(${test} PRIVATE falkordb ${FALKORDB_LIBS} ${CMAKE_LD_LIBS})
 	else()
