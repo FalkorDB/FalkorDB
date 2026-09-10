@@ -25,6 +25,7 @@ use crate::{
     },
     entity_type::EntityType,
     graph::{
+        attribute_store::MAX_ATTRIBUTES,
         graph::{Graph, NodeOpError, TypeId},
         id_space::{IdSpace, IdSpaceError},
     },
@@ -198,9 +199,18 @@ fn apply_record(
             // returns; this now does the same.
             let key = Arc::new(name.clone());
             g.add_node_attribute_name(&name);
-            let assigned = g
-                .get_node_attribute_id(&key)
-                .expect("the name was just registered");
+            // Not `expect`. `add_node_attribute_name` is silent when it does not
+            // register: `AttrNameMap::insert` returns without inserting once the
+            // dictionary is full, because `ATTRIBUTE_ID_NONE` is reserved out of
+            // a `u16`. Reading the id back then gives `None`, and an `expect`
+            // here would take the replica down over a buffer its master applied
+            // without trouble — the one thing this path must never do.
+            let assigned =
+                g.get_node_attribute_id(&key)
+                    .ok_or_else(|| ApplyError::AttributeLimitReached {
+                        name: name.clone(),
+                        limit: MAX_ATTRIBUTES,
+                    })?;
             verify_id(
                 "attribute",
                 &name,
@@ -240,8 +250,14 @@ fn apply_record(
             if !label_ids.is_empty() {
                 g.set_node_labels_product(&ids, &label_ids, &mut ops.docs.node_adds, true);
             }
+            // Checked before the emptiness gate, not inside it. With no
+            // attributes the check is what says `rows` must also be empty —
+            // `rows.len() != ids.len() * 0` — so gating it lets a record
+            // carrying values under an empty `AttrSet` apply silently and drop
+            // them. `UpdateNode` has always checked unconditionally; this is the
+            // same record shape reaching the two paths differently.
+            check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
-                check_attr_shape(g, &ids, &attr_ids, &rows)?;
                 g.set_nodes_attributes_rows_of_labels(
                     &ids,
                     &label_ids,
@@ -271,6 +287,10 @@ fn apply_record(
             g.create_relationships_bulk(&type_name, &src, &dst, &ids, Some(&mut ops.edges))
                 .map_err(|e| node_op("relationship", e))?;
 
+            // As in `CreateNode` above: `attr_map` shape-checks internally, so
+            // gating the whole call lets an empty `AttrSet` carrying values
+            // through unchecked.
+            check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
                 g.set_relationships_attributes(&map, &mut ops.docs.edge_adds)?;
@@ -601,9 +621,11 @@ fn resolve_type(
 /// (`src/effects/update_edge_effect.c`). A replica that has not
 /// seen the `ADD_SCHEMA` yet must fail here rather than index the rows under a
 /// type it invented.
+///
 /// Takes a bare `u32`: `UpdateEdge` carries a relationship type and `UpdateNode`
 /// has no field for one, so "an edge update with no type" is no longer a state
-/// this can be handed. `ApplyError::MissingRelType` went with it.
+/// this can be handed. The `MissingRelType` error that reported it has been
+/// deleted rather than left unconstructible.
 fn checked_type_id(
     g: &Graph,
     relation_id: u32,
@@ -935,6 +957,43 @@ mod tests {
             g.node_count(),
             2,
             "refused at the record, so the second one applied nothing"
+        );
+    }
+
+    /// A full attribute dictionary refuses the buffer instead of panicking.
+    ///
+    /// `AttrNameMap::insert` is silent when it declines, so reading the id back
+    /// gives `None`. That used to reach an `expect`, which would take a replica
+    /// down over a buffer its master applied without trouble — a panic is the
+    /// one outcome this path must never produce.
+    #[test]
+    fn an_attribute_that_will_not_fit_the_dictionary_is_refused_not_panicked_on() {
+        let mut g = graph();
+        // Fill it. `MAX_ATTRIBUTES` is one short of the `u16` space because
+        // `ATTRIBUTE_ID_NONE` is reserved.
+        for i in 0..MAX_ATTRIBUTES {
+            g.add_node_attribute_name(&format!("a{i}"));
+        }
+        assert_eq!(g.get_node_attribute_names().len(), MAX_ATTRIBUTES);
+
+        let mut buf = new_buffer();
+        Record::AddAttribute {
+            id: 0,
+            name: "one_too_many".to_owned(),
+        }
+        .encode(&mut buf)
+        .unwrap();
+
+        let Err(err) = apply_effects(&mut g, &buf) else {
+            panic!("a name the dictionary cannot hold must refuse the buffer");
+        };
+        assert!(
+            matches!(
+                err,
+                ApplyError::AttributeLimitReached { ref name, limit }
+                    if name == "one_too_many" && limit == MAX_ATTRIBUTES
+            ),
+            "{err}"
         );
     }
 

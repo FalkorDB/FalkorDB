@@ -128,9 +128,16 @@ const BACKOFF: Duration = Duration::from_millis(100);
 pub fn settle_constraint(
     graph: &Arc<RwLock<ThreadedGraph>>,
     announce: &[Settling],
-    key: &str,
+    key: &[u8],
     was_replicated: bool,
 ) {
+    // Bytes, because this is what the announcement is addressed to. A Redis key
+    // is binary and need not be UTF-8 — `test_binary_key_name_scan_skip` keeps a
+    // graph under `\xc3\x28` — so rendering it through a `String` first and
+    // replicating `as_bytes()` of that would announce the settled constraint
+    // under a key holding U+FFFD instead, which is a key nothing else addresses.
+    // Rendered lossily below for the log lines, where it is only being read.
+    let key_display = String::from_utf8_lossy(key);
     // A detached thread-safe context, made once for this thread and freed at the
     // end — the same shape as `telemetry`'s flusher, which is the other
     // background thread in the process that has to reach the dataset with no
@@ -160,14 +167,16 @@ pub fn settle_constraint(
             // Transient: the window closes on its own. Nothing is held here —
             // `attempt_settle` has dropped its session, and with it the GIL and
             // the write lock — so sleeping is safe.
-            Err(WriteAbort::ReplicaTrafficPaused) => {
+            // Both are transient windows that close on their own: a pause or
+            // failover ends, and the writer holding the MVCC slot commits.
+            Err(reason @ (WriteAbort::ReplicaTrafficPaused | WriteAbort::WriteSlotBusy)) => {
                 if Instant::now() >= deadline {
                     for c in announce {
                         redis_module::logging::log_warning(format!(
                             "constraint on {:?} {} ({}) is stuck UNDER CONSTRUCTION: writes were \
                              refused for {}s across {attempts} attempts, so validation could not \
                              publish its result. It is not being enforced. Recover with \
-                             GRAPH.CONSTRAINT DROP on graph '{key}' followed by CREATE.",
+                             GRAPH.CONSTRAINT DROP on graph '{key_display}' followed by CREATE.",
                             c.entity_type,
                             c.label,
                             c.properties
@@ -188,8 +197,8 @@ pub fn settle_constraint(
                 // than pass because the window was never hit.
                 if attempts == 1 {
                     redis_module::logging::log_notice(format!(
-                        "constraint announcement on graph '{key}' is waiting for replica \
-                         traffic to resume; retrying for up to {}s",
+                        "constraint announcement on graph '{key_display}' is deferred ({reason}); \
+                         retrying for up to {}s",
                         RETRY_BUDGET.as_secs(),
                     ));
                 }
@@ -221,9 +230,10 @@ fn attempt_settle(
     graph: &Arc<RwLock<ThreadedGraph>>,
     ctx: &Context,
     announce: &[Settling],
-    key: &str,
+    key: &[u8],
     was_replicated: bool,
 ) -> Result<(), WriteAbort> {
+    let key_display = String::from_utf8_lossy(key);
     // `replicates: !was_replicated` — this thread re-announces the settled
     // constraint, so escalation has to run the pause check that makes
     // propagating safe. `originated_here: false` — it also runs on a replica
@@ -250,10 +260,16 @@ fn attempt_settle(
     // commit Arc-swap under it, so it cannot race a BGSAVE fork (#452) — the same
     // shape as bulk_insert's Phase 2.
     session.upgrade_to_write()?;
-    session
+    // The closure reports whether it settled. `upgrade_to_write` takes the
+    // per-graph lock but not `MvccGraph`'s write slot, so another writer can
+    // still hold it here — and returning silently made `attempt_settle` answer
+    // `Ok(())`, which breaks the retry loop as if the constraint had settled and
+    // leaves it UNDER CONSTRUCTION with nothing logged and nothing to re-drive
+    // it. It is transient, so it belongs in the retry arm.
+    let settled = session
         .with_graph_mut(|tg| {
             let Some(g_arc) = tg.graph.write() else {
-                return;
+                return false;
             };
             g_arc
                 .borrow_mut()
@@ -262,7 +278,7 @@ fn attempt_settle(
             tg.graph.commit(g_arc);
 
             if was_replicated {
-                return;
+                return true;
             }
             let g = settled.borrow();
             for c in announce {
@@ -294,7 +310,7 @@ fn attempt_settle(
                     },
                     &SchemaBaseline::of(&g),
                 ) {
-                    Ok(()) => buf.replicate(&CtxSink(ctx), key.as_bytes()),
+                    Ok(()) => buf.replicate(&CtxSink(ctx), key),
                     // Swallowing this left the replica's constraint UNDER
                     // CONSTRUCTION permanently: the master has settled it, the
                     // announcement that would carry that never went out, and
@@ -305,7 +321,7 @@ fn attempt_settle(
                         "constraint on {:?} {} ({}) settled locally but could not be \
                          announced ({e}); replicas will keep reporting it UNDER \
                          CONSTRUCTION. Recover with GRAPH.CONSTRAINT DROP on graph \
-                         '{key}' followed by CREATE.",
+                         '{key_display}' followed by CREATE.",
                         c.entity_type,
                         c.label,
                         c.properties
@@ -316,9 +332,14 @@ fn attempt_settle(
                     )),
                 }
             }
+            true
         })
         .expect("writer mode after upgrade_to_write");
-    Ok(())
+    if settled {
+        Ok(())
+    } else {
+        Err(WriteAbort::WriteSlotBusy)
+    }
 }
 
 pub fn graph_constraint(
@@ -505,7 +526,8 @@ pub fn graph_constraint(
                     let graph = graph.clone();
                     let label = Arc::clone(&label);
                     let properties = properties.clone();
-                    let key = key_str.to_string();
+                    // The command's own key bytes, not a lossy render of them.
+                    let key = key_str.as_slice().to_vec();
                     let was_replicated = is_replayed;
                     move || {
                         settle_constraint(

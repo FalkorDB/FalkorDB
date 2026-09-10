@@ -330,16 +330,23 @@ pub enum ApplyError {
     #[error("{kind} id {id} out of range")]
     IdOutOfRange { kind: &'static str, id: i64 },
 
-    /// An `UPDATE_EDGE` that carried no relationship type.
+    /// `ADD_ATTRIBUTE` for a name this graph has no room to intern.
     ///
-    /// Its own variant rather than an `IdOutOfRange` with a made-up id: nothing
-    /// was out of range, the field was absent, and reporting it as "id -1 out
-    /// of range" invented exactly the sentinel this format does not use.
+    /// `AttrNameMap::insert` returns without inserting once the dictionary holds
+    /// `MAX_ATTRIBUTES` names, because `ATTRIBUTE_ID_NONE` is reserved and the
+    /// ids are `u16`. The registration is therefore silent, and reading the id
+    /// back gives `None` — which used to reach an `expect` and take the replica
+    /// down over a buffer its master applied fine.
+    ///
+    /// A divergence rather than a local failure: the master interned the name,
+    /// so the two dictionaries no longer agree and every later record carrying a
+    /// bare attribute id means something different on each side.
     #[error(
-        "effects buffer updates an edge without naming its relationship type. \
-         The two engines have diverged; the buffer was not applied."
+        "effects buffer registers attribute '{name}', but this replica already holds \
+         {limit} attributes and cannot intern another. The two engines have diverged; \
+         the buffer was not applied."
     )]
-    MissingRelType,
+    AttributeLimitReached { name: String, limit: usize },
 
     #[error("unknown {kind}: {value}")]
     UnknownDiscriminant { kind: &'static str, value: u32 },
@@ -357,14 +364,6 @@ pub enum ApplyError {
     /// a sorted one, so wire order is load-bearing rather than cosmetic.
     #[error("attribute ids must be strictly ascending, got {first} before {second}")]
     AttrIdsNotAscending { first: u16, second: u16 },
-
-    /// A create-constraint record with no status field.
-    ///
-    /// Unreachable through the decoder, which derives the presence from the
-    /// opcode — an error rather than a panic because the apply path must never
-    /// take a replica down over a malformed buffer.
-    #[error("create-constraint record carries no status")]
-    MissingConstraintStatus,
 
     #[error("index option is not supported by this engine: {0}")]
     UnsupportedIndexOption(String),

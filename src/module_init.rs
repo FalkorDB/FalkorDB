@@ -594,7 +594,14 @@ fn enforce_pending_constraints_after_promotion() {
             //
             // `was_replicated: false` — this node is the master now, so the
             // settled status is its to announce.
-            settle_constraint(&tg, &pending, &key, false);
+            // `GRAPH_REGISTRY` is keyed by the Redis key rendered through
+            // `String::from_utf8_lossy`, so these bytes are exact for every key
+            // that is valid UTF-8 -- which includes a key holding a NUL, since
+            // NUL round-trips. A genuinely non-UTF-8 key is the one case the
+            // registry cannot give back verbatim, and that limitation is the
+            // registry's rather than this path's: telemetry, the RDB save and
+            // the virtual-key builder all read the same lossy index.
+            settle_constraint(&tg, &pending, key.as_bytes(), false);
         }
     });
 }
