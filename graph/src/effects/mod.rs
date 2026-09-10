@@ -469,6 +469,25 @@ impl EffectsBuffer {
     ///
     /// Asks the version being *written*, not one read off the bytes: the
     /// header here is one this build just put there.
+    /// The bytes, for a bench or a test that has to read what was written.
+    ///
+    /// Behind `test-util` because production must not have it: `replicate` is
+    /// the only way a payload leaves, and an accessor that let a caller take
+    /// the bytes and send them itself would reopen the seam this type exists
+    /// to close — the host would be back to holding a half-finished buffer and
+    /// deciding what finishing meant.
+    ///
+    /// A bench is a separate crate, so it cannot reach the crate-private
+    /// emitter and cannot measure a payload's size or decode throughput
+    /// without this. The feature is declared in `graph/Cargo.toml` and enabled
+    /// only by the dev-dependency the benches link against, so a release build
+    /// does not compile it at all.
+    #[cfg(feature = "test-util")]
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         <EffectsPayload as EffectsFormat<WIRE_VERSION>>::is_empty(&self.0)
