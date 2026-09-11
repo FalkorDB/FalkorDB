@@ -159,26 +159,27 @@ static bool _RangeIter
 	GrB_Index *col,      // [optional] col
 	uint64_t *x,         // [optional] value
 	bool *tensor         // [optional out] tensor
+	
 ) {
-	ASSERT(it != NULL);
+	ASSERT (it != NULL);
 
 	GrB_Info info;
 	GxB_Iterator v_it;
 
 	// resuming scan over vector
-	if(it->vec) {
+	if (it->vec) {
 vector_consume:
 		// consume vector entry
 		v_it = &it->v_it;
 
-		if(x)      *x      = GxB_Vector_Iterator_getIndex(v_it);
-		if(row)    *row    = it->row;
-		if(col)    *col    = it->col;
-		if(tensor) *tensor = true;
+		if (x)      *x      = GxB_Vector_Iterator_getIndex (v_it);
+		if (row)    *row    = it->row;
+		if (col)    *col    = it->col;
+		if (tensor) *tensor = true;
 
 		// preparing next call
-		info = GxB_Vector_Iterator_next(v_it);
-		if(info == GxB_EXHAUSTED) {
+		info = GxB_Vector_Iterator_next (v_it);
+		if (info == GxB_EXHAUSTED) {
 			// vector depleted, detach vector iterator
 			it->vec = false;
 		}
@@ -188,13 +189,13 @@ vector_consume:
 
 	// trying to advance to the next vector
 	info = Delta_MatrixTupleIter_next_UINT64(&it->a_it, &it->row, &it->col, &it->x);
-	if(info == GrB_SUCCESS) {
-		if(SCALAR_ENTRY(it->x)) {
+	if (info == GrB_SUCCESS) {
+		if (SCALAR_ENTRY(it->x)) {
 			// set outputs
-			if(x)      *x      = it->x;
-			if(row)    *row    = it->row;
-			if(col)    *col    = it->col;
-			if(tensor) *tensor = false;
+			if (x)      *x      = it->x;
+			if (row)    *row    = it->row;
+			if (col)    *col    = it->col;
+			if (tensor) *tensor = false;
 
 			return true;
 		}
@@ -205,11 +206,9 @@ vector_consume:
 		GrB_Vector V = AS_VECTOR(it->x);
 		v_it = &it->v_it;
 
-		info = GxB_Vector_Iterator_attach(v_it, V, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Vector_Iterator_attach(v_it, V, NULL));
 
-		info = GxB_Vector_Iterator_seek(v_it, 0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Vector_Iterator_seek(v_it, 0));
 
 		goto vector_consume;
 	}
@@ -229,25 +228,25 @@ static bool _RangeIterSorted
 	uint64_t *x,         // [optional] value
 	bool *tensor         // [optional out] tensor
 ) {
-	ASSERT(it != NULL);
+	ASSERT (it != NULL);
 
 	GrB_Info info;
 	GxB_Iterator v_it;
 
 	// resuming scan over vector
-	if(it->vec) {
+	if (it->vec) {
 vector_consume:
 		// consume vector entry
 		v_it = &it->v_it;
 
-		if(x)      *x      = GxB_Vector_Iterator_getIndex(v_it);
-		if(row)    *row    = it->row;
-		if(col)    *col    = it->col;
-		if(tensor) *tensor = true;
+		if (x)      *x      = GxB_Vector_Iterator_getIndex (v_it);
+		if (row)    *row    = it->row;
+		if (col)    *col    = it->col;
+		if (tensor) *tensor = true;
 
 		// preparing next call
-		info = GxB_Vector_Iterator_next(v_it);
-		if(info == GxB_EXHAUSTED) {
+		info = GxB_Vector_Iterator_next (v_it);
+		if (info == GxB_EXHAUSTED) {
 			// vector depleted, detach vector iterator
 			it->vec = false;
 		}
@@ -256,14 +255,15 @@ vector_consume:
 	}
 
 	// trying to advance to the next vector
-	info = Delta_MatrixTupleIter_next_UINT64_sorted(&it->a_it, &it->row, &it->col, &it->x);
-	if(info == GrB_SUCCESS) {
-		if(SCALAR_ENTRY(it->x)) {
+	info = Delta_MatrixTupleIter_next_UINT64_sorted (
+				&it->a_it, &it->row, &it->col, &it->x);
+	if (info == GrB_SUCCESS) {
+		if (SCALAR_ENTRY(it->x)) {
 			// set outputs
-			if(x)      *x      = it->x;
-			if(row)    *row    = it->row;
-			if(col)    *col    = it->col;
-			if(tensor) *tensor = false;
+			if (x)      *x      = it->x;
+			if (row)    *row    = it->row;
+			if (col)    *col    = it->col;
+			if (tensor) *tensor = false;
 
 			return true;
 		}
@@ -274,11 +274,9 @@ vector_consume:
 		GrB_Vector V = AS_VECTOR(it->x);
 		v_it = &it->v_it;
 
-		info = GxB_Vector_Iterator_attach(v_it, V, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Vector_Iterator_attach(v_it, V, NULL));
 
-		info = GxB_Vector_Iterator_seek(v_it, 0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Vector_Iterator_seek(v_it, 0));
 
 		goto vector_consume;
 	}

@@ -366,7 +366,7 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL_sorted
 	bool have_m  = !iter->m_depleted ;
 	bool have_dp = !iter->dp_depleted ;
 
-	if(!have_m && !have_dp) {
+	if (!have_m && !have_dp) {
 		return GxB_EXHAUSTED ;
 	}
 
@@ -374,16 +374,22 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL_sorted
 	GxB_Iterator dp_it = &iter->dp_it ;
 
 	GrB_Index m_row = 0, m_col = 0, dp_row = 0, dp_col = 0 ;
-	if(have_m)  { m_row  = GxB_rowIterator_getRowIndex (m_it) ;
-	              m_col  = GxB_rowIterator_getColIndex (m_it) ; }
-	if(have_dp) { dp_row = GxB_rowIterator_getRowIndex (dp_it) ;
-	              dp_col = GxB_rowIterator_getColIndex (dp_it) ; }
+
+	if (have_m)  {
+		m_row  = GxB_rowIterator_getRowIndex (m_it) ;
+		m_col  = GxB_rowIterator_getColIndex (m_it) ;
+	}
+
+	if(have_dp) {
+		dp_row = GxB_rowIterator_getRowIndex (dp_it) ;
+		dp_col = GxB_rowIterator_getColIndex (dp_it) ; 
+	}
 
 	// take from DP only if it strictly precedes M's current entry
 	bool take_dp = have_dp &&
 		(!have_m || dp_row < m_row || (dp_row == m_row && dp_col < m_col)) ;
 
-	if(take_dp) {
+	if (take_dp) {
 		if(row) *row = dp_row ;
 		if(col) *col = dp_col ;
 		if(val) *val = GxB_Iterator_get_BOOL (dp_it) ;
@@ -423,10 +429,14 @@ GrB_Info Delta_MatrixTupleIter_next_UINT64_sorted
 	GxB_Iterator dp_it = &iter->dp_it ;
 
 	GrB_Index m_row = 0, m_col = 0, dp_row = 0, dp_col = 0 ;
-	if(have_m)  { m_row  = GxB_rowIterator_getRowIndex (m_it) ;
-	              m_col  = GxB_rowIterator_getColIndex (m_it) ; }
-	if(have_dp) { dp_row = GxB_rowIterator_getRowIndex (dp_it) ;
-	              dp_col = GxB_rowIterator_getColIndex (dp_it) ; }
+	if (have_m)  {
+		m_row  = GxB_rowIterator_getRowIndex (m_it) ;
+		m_col  = GxB_rowIterator_getColIndex (m_it) ;
+	}
+	if (have_dp) {
+		dp_row = GxB_rowIterator_getRowIndex (dp_it) ;
+		dp_col = GxB_rowIterator_getColIndex (dp_it) ;
+	}
 
 	// take from DP only if it strictly precedes M's current entry
 	bool take_dp = have_dp &&
