@@ -72,7 +72,7 @@ static void _Index_PopulateNodeIndex
 
 		EntityID id;
 		while(indexed < batch_size &&
-			  Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL) == GrB_SUCCESS)
+			  Delta_MatrixTupleIter_next_BOOL_sorted(&it, &id, NULL, NULL) == GrB_SUCCESS)
 		{
 			Node n;
 			Graph_GetNode(g, id, &n);
@@ -94,8 +94,9 @@ static void _Index_PopulateNodeIndex
 			// finished current batch
 			Delta_MatrixTupleIter_detach(&it);
 
-			// continue next batch from row id+1
-			// this is true because we're iterating over a diagonal matrix
+			// continue next batch from row id+1 - safe because the sorted
+			// iterator above visits every row in true ascending order, so
+			// nothing at or before id remains unvisited in M or delta-plus
 			rowIdx = id + 1;
 		}
 	}
@@ -157,7 +158,11 @@ static void _Index_PopulateEdgeIndex
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		TensorIterator_ScanRange(&it, R, src_id, UINT64_MAX, false);
+		// use the strictly-ascending merge (main matrix + delta-plus in
+		// true row-major order) so that resuming at [src_id, MAX) below
+		// can't silently exclude delta-plus rows below src_id - see
+		// TensorIterator_ScanRange_Sorted
+		TensorIterator_ScanRange_Sorted(&it, R, src_id, UINT64_MAX);
 
 		// skip previously indexed edges
 		while((info =
@@ -188,7 +193,7 @@ static void _Index_PopulateEdgeIndex
 			}
 			prev_src_id  = src_id;
 			prev_dest_id = dest_id;
-		} while((indexed < batch_size || (prev_src_id == src_id && prev_dest_id == dest_id)) &&
+		} while(indexed < batch_size &&
 			  TensorIterator_next(&it, &src_id, &dest_id, &edge_id, NULL));
 
 		//----------------------------------------------------------------------

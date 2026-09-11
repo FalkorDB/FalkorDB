@@ -88,6 +88,30 @@ GrB_Info Delta_MatrixTupleIter_next_UINT64
 	uint64_t *val                 // optional value at A[row, col]
 );
 
+// advance iterator in true ascending (row, col) order across the whole
+// attached range, merging M (pending deletions masked out) and delta-plus
+// instead of draining M fully before ever yielding from delta-plus. Use
+// this instead of Delta_MatrixTupleIter_next_BOOL when a caller resumes a
+// range scan across multiple attach/detach cycles (e.g. batched index
+// population) and needs the guarantee that nothing at or before the last
+// row visited remains unvisited.
+GrB_Info Delta_MatrixTupleIter_next_BOOL_sorted
+(
+	Delta_MatrixTupleIter *iter,  // iterator to consume
+	GrB_Index *row,               // optional output row index
+	GrB_Index *col,               // optional output column index
+	bool *val                     // optional value at A[row, col]
+);
+
+// UINT64 counterpart of Delta_MatrixTupleIter_next_BOOL_sorted
+GrB_Info Delta_MatrixTupleIter_next_UINT64_sorted
+(
+	Delta_MatrixTupleIter *iter,  // iterator to consume
+	GrB_Index *row,               // optional output row index
+	GrB_Index *col,               // optional output column index
+	uint64_t *val                 // optional value at A[row, col]
+);
+
 // reset iterator
 GrB_Info Delta_MatrixTupleIter_reset
 (
