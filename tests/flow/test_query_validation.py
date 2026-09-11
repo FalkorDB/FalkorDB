@@ -502,6 +502,42 @@ class testQueryValidationFlow(FlowTestsBase):
         expected_result = [[34]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
+        # A self-reference nested inside a comprehension is the same error, but
+        # it used to reach evaluation and crash the server in GraphEntity_Keys.
+        # The query must be *rejected*: returning an empty key/property list
+        # for an entity that does not exist yet would silently accept an
+        # invalid query.
+        # See https://github.com/FalkorDB/FalkorDB/issues/415
+        node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
+
+        queries = [
+                # the original report: 'child1' is referenced from within an
+                # any() predicate, and the inner comprehension variable 'root'
+                # shadows the node created by the same clause
+                ("""CREATE (root:Root {name: 'x'}),
+                           (child1:TextNode {var: floor(any(v4 IN [2] WHERE child1 = [root IN keys(root)]))}),
+                           (child2:IntNode {v0: 0})""", "'child1' not defined"),
+                # minimal forms of the same thing
+                ("""CREATE (a:L {v: keys(a)})""", "'a' not defined"),
+                ("""CREATE (a:L {v: properties(a)})""", "'a' not defined"),
+                ("""CREATE (a:L {v: [x IN keys(a) | x]})""", "'a' not defined"),
+                ("""CREATE (a:L {v: any(x IN [1] WHERE a.q = 1)})""", "'a' not defined"),
+                # the same holds for a relationship reading itself
+                ("""CREATE (a:L)-[r:R {v: keys(r)}]->(b:L)""", "'r' not defined"),
+                ("""CREATE (a:L)-[r:R {v: properties(r)}]->(b:L)""", "'r' not defined")]
+
+        for query, expected in queries:
+            try:
+                self.graph.query(query)
+                assert(False)
+            except redis.ResponseError as e:
+                self.env.assertContains(expected, str(e))
+
+        # the rejected CREATEs must not have partially applied
+        self.env.assertEqual(
+                self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0],
+                node_count)
+
     # Test a query that allocates a large buffer.
     def test35_large_query(self):
         retval = "abcdef" * 1_000
