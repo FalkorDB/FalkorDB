@@ -12,17 +12,26 @@
 #define DELTA_ITER_MIN_ROW 0
 #define DELTA_ITER_MAX_ROW ULLONG_MAX
 
+// M's row iterator combined with the pending deletions (DM) that mask it:
+// advancing/seeking this always transparently skips any M entry that's been
+// logically deleted, so its current position - whenever `depleted` is false -
+// is guaranteed a live entry. Callers never need to consult DM themselves.
+typedef struct
+{
+	struct GB_Iterator_opaque it;     // M's row iterator
+	struct GB_Iterator_opaque dm_it;  // DM's row iterator (the mask)
+	bool depleted;                    // is it depleted
+	bool dm_depleted;                 // is dm_it depleted
+} Delta_MaskedMIter ;
+
 // TuplesIter maintains information required
 // to iterate over a Delta_Matrix
 typedef struct
 {
 	Delta_Matrix A;                   // matrix iterated
-	struct GB_Iterator_opaque m_it;   // internal m iterator
+	Delta_MaskedMIter m;              // main matrix, masked by pending deletions
 	struct GB_Iterator_opaque dp_it;  // internal delta plus iterator
-	struct GB_Iterator_opaque dm_it;  // internal delta minus iterator
-	bool m_depleted;                  // is m iterator depleted
 	bool dp_depleted;                 // is dp iterator depleted
-	bool dm_depleted;                 // is dp iterator depleted
 	GrB_Index min_row;                // minimum row for iteration
 	GrB_Index max_row;                // maximum row for iteration
 } Delta_MatrixTupleIter ;

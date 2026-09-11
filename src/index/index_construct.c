@@ -125,7 +125,7 @@ static void _Index_PopulateEdgeIndex
 
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	bool  info;
+	bool  info = true;
 	EntityID  src_id       = 0;                      // current processed row idx
 	EntityID  dest_id      = 0;                      // current processed column idx
 	EntityID  edge_id      = 0;                      // current processed edge id
@@ -136,7 +136,7 @@ static void _Index_PopulateEdgeIndex
 	int       batch_size   = 1000;                   // max number of entities to index in one go
 	TensorIterator it      = {0};                    // relation matrix iterator
 
-	while(true) {
+	while (info) {
 		// lock graph for reading
 		GraphContext_AcquireReadLock (gc) ;
 
@@ -145,6 +145,7 @@ static void _Index_PopulateEdgeIndex
 		// 1. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.since)
 		// 2. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.title)
 		if(Index_PendingChanges(idx) > 1) {
+			GraphContext_ReleaseLock (gc) ;
 			break;
 		}
 
@@ -170,16 +171,17 @@ static void _Index_PopulateEdgeIndex
 				src_id == prev_src_id &&
 				dest_id < prev_dest_id);
 
-		// process only if iterator is on an active entry
-		if(!info) {
-			break;
-		}
-
 		//----------------------------------------------------------------------
 		// batch index edges
 		//----------------------------------------------------------------------
+		// true if the next (unprocessed) edge is in the same multi-edge entry
+		// as the last.
+		// don't use TensorIterator_next's tensor output, because that doesn't
+		// account for the next entry also being a multi edge
+		bool multi = false;
 
-		do {
+		// process only if iterator is on an active entry
+		for (indexed = 0; info && (indexed < batch_size || multi); indexed ++) {
 			Edge e;
 			e.src_id     = src_id;
 			e.dest_id    = dest_id;
@@ -188,30 +190,18 @@ static void _Index_PopulateEdgeIndex
 			Graph_GetEdge(g, edge_id, &e);
 			Index_IndexEdge(idx, &e);
 
-			if(prev_src_id != src_id || prev_dest_id != dest_id) {
-				indexed++;
-			}
-			prev_src_id  = src_id;
+			prev_src_id = src_id;
 			prev_dest_id = dest_id;
-		} while(indexed < batch_size &&
-			  TensorIterator_next(&it, &src_id, &dest_id, &edge_id, NULL));
 
-		//----------------------------------------------------------------------
-		// done with current batch
-		//----------------------------------------------------------------------
-
-		if(indexed != batch_size) {
-			// iterator depleted, no more edges to index
-			break;
-		} else {
-			// finished current batch
-			// release read lock
-			GraphContext_ReleaseLock (gc) ;
+			info = TensorIterator_next (&it, &src_id, &dest_id, &edge_id, NULL) ;
+			multi = src_id == prev_src_id && dest_id == prev_dest_id;
 		}
-	}
 
-	// release read lock
-	GraphContext_ReleaseLock (gc) ;
+		//----------------------------------------------------------------------
+		// done with current batch, release read lock
+		//----------------------------------------------------------------------
+		GraphContext_ReleaseLock (gc) ;
+	}
 }
 
 // constructs index
