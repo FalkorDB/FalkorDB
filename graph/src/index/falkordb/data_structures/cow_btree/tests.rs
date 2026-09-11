@@ -201,13 +201,16 @@ fn snapshot_is_isolated_from_a_concurrent_writer() {
     let reader = thread::spawn(move || {
         // Re-read the whole snapshot for as long as the writer is mutating; it must never change.
         let mut reads = 0u64;
-        while !done_reader.load(Ordering::Relaxed) {
+        loop {
             assert_eq!(
                 snapshot.range(0, u64::MAX).collect::<Vec<_>>(),
                 expected,
                 "snapshot observed a concurrent writer's mutation"
             );
             reads += 1;
+            if done_reader.load(Ordering::Relaxed) {
+                break;
+            }
         }
         assert_eq!(snapshot.range(0, u64::MAX).collect::<Vec<_>>(), expected);
         reads
