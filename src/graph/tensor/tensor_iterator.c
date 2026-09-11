@@ -159,26 +159,27 @@ static bool _RangeIter
 	GrB_Index *col,      // [optional] col
 	uint64_t *x,         // [optional] value
 	bool *tensor         // [optional out] tensor
+	
 ) {
-	ASSERT(it != NULL);
+	ASSERT (it != NULL);
 
 	GrB_Info info;
 	GxB_Iterator v_it;
 
 	// resuming scan over vector
-	if(it->vec) {
+	if (it->vec) {
 vector_consume:
 		// consume vector entry
 		v_it = &it->v_it;
 
-		if(x)      *x      = GxB_Vector_Iterator_getIndex(v_it);
-		if(row)    *row    = it->row;
-		if(col)    *col    = it->col;
-		if(tensor) *tensor = true;
+		if (x)      *x      = GxB_Vector_Iterator_getIndex (v_it);
+		if (row)    *row    = it->row;
+		if (col)    *col    = it->col;
+		if (tensor) *tensor = true;
 
 		// preparing next call
-		info = GxB_Vector_Iterator_next(v_it);
-		if(info == GxB_EXHAUSTED) {
+		info = GxB_Vector_Iterator_next (v_it);
+		if (info == GxB_EXHAUSTED) {
 			// vector depleted, detach vector iterator
 			it->vec = false;
 		}
@@ -188,13 +189,13 @@ vector_consume:
 
 	// trying to advance to the next vector
 	info = Delta_MatrixTupleIter_next_UINT64(&it->a_it, &it->row, &it->col, &it->x);
-	if(info == GrB_SUCCESS) {
-		if(SCALAR_ENTRY(it->x)) {
+	if (info == GrB_SUCCESS) {
+		if (SCALAR_ENTRY(it->x)) {
 			// set outputs
-			if(x)      *x      = it->x;
-			if(row)    *row    = it->row;
-			if(col)    *col    = it->col;
-			if(tensor) *tensor = false;
+			if (x)      *x      = it->x;
+			if (row)    *row    = it->row;
+			if (col)    *col    = it->col;
+			if (tensor) *tensor = false;
 
 			return true;
 		}
@@ -205,11 +206,77 @@ vector_consume:
 		GrB_Vector V = AS_VECTOR(it->x);
 		v_it = &it->v_it;
 
-		info = GxB_Vector_Iterator_attach(v_it, V, NULL);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Vector_Iterator_attach(v_it, V, NULL));
 
-		info = GxB_Vector_Iterator_seek(v_it, 0);
-		ASSERT(info == GrB_SUCCESS);
+		GrB_OK (GxB_Vector_Iterator_seek(v_it, 0));
+
+		goto vector_consume;
+	}
+
+	// no more entries, iterator depeleted
+	it->iter_func = _DepletedIter;
+	return false;
+}
+
+// iterate over a tensor scanning a range of vectors entry by entry, in true
+// ascending (row, col) order - see TensorIterator_ScanRange_Sorted
+static bool _RangeIterSorted
+(
+	TensorIterator *it,  // iterator
+	GrB_Index *row,      // [optional] row
+	GrB_Index *col,      // [optional] col
+	uint64_t *x,         // [optional] value
+	bool *tensor         // [optional out] tensor
+) {
+	ASSERT (it != NULL);
+
+	GrB_Info info;
+	GxB_Iterator v_it;
+
+	// resuming scan over vector
+	if (it->vec) {
+vector_consume:
+		// consume vector entry
+		v_it = &it->v_it;
+
+		if (x)      *x      = GxB_Vector_Iterator_getIndex (v_it);
+		if (row)    *row    = it->row;
+		if (col)    *col    = it->col;
+		if (tensor) *tensor = true;
+
+		// preparing next call
+		info = GxB_Vector_Iterator_next (v_it);
+		if (info == GxB_EXHAUSTED) {
+			// vector depleted, detach vector iterator
+			it->vec = false;
+		}
+
+		return true;
+	}
+
+	// trying to advance to the next vector
+	info = Delta_MatrixTupleIter_next_UINT64_sorted (
+				&it->a_it, &it->row, &it->col, &it->x);
+	if (info == GrB_SUCCESS) {
+		if (SCALAR_ENTRY(it->x)) {
+			// set outputs
+			if (x)      *x      = it->x;
+			if (row)    *row    = it->row;
+			if (col)    *col    = it->col;
+			if (tensor) *tensor = false;
+
+			return true;
+		}
+
+		// vector entry, attach iterator and get the first element
+		it->vec = true;
+
+		GrB_Vector V = AS_VECTOR(it->x);
+		v_it = &it->v_it;
+
+		GrB_OK (GxB_Vector_Iterator_attach(v_it, V, NULL));
+
+		GrB_OK (GxB_Vector_Iterator_seek(v_it, 0));
 
 		goto vector_consume;
 	}
@@ -290,6 +357,28 @@ void TensorIterator_ScanRange
 		Delta_MatrixTupleIter_AttachRange (&it->a_it, it->T, min_row, max_row) ;
 		it->iter_func = _RangeIter ;
 	}
+}
+
+// iterate over a range of vectors in true ascending (row, col) order
+// see TensorIterator_ScanRange_Sorted's declaration for rationale
+void TensorIterator_ScanRange_Sorted
+(
+	TensorIterator *it,  // iterator
+	Delta_Matrix T,      // tensor
+	GrB_Index min_row,   // minimum row
+	GrB_Index max_row    // maximum row
+) {
+	ASSERT(T  != NULL);
+	ASSERT(it != NULL);
+
+	// reset iterator
+	memset (it, 0, sizeof (TensorIterator)) ;
+
+	it->T = T;
+	it->transpose = false ;
+
+	Delta_MatrixTupleIter_AttachRange (&it->a_it, it->T, min_row, max_row) ;
+	it->iter_func = _RangeIterSorted ;
 }
 
 // attach iterator to a tensor (or its transpose) without restricting it to a

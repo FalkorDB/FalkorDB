@@ -72,7 +72,7 @@ static void _Index_PopulateNodeIndex
 
 		EntityID id;
 		while(indexed < batch_size &&
-			  Delta_MatrixTupleIter_next_BOOL(&it, &id, NULL, NULL) == GrB_SUCCESS)
+			  Delta_MatrixTupleIter_next_BOOL_sorted(&it, &id, NULL, NULL) == GrB_SUCCESS)
 		{
 			Node n;
 			Graph_GetNode(g, id, &n);
@@ -94,8 +94,9 @@ static void _Index_PopulateNodeIndex
 			// finished current batch
 			Delta_MatrixTupleIter_detach(&it);
 
-			// continue next batch from row id+1
-			// this is true because we're iterating over a diagonal matrix
+			// continue next batch from row id+1 - safe because the sorted
+			// iterator above visits every row in true ascending order, so
+			// nothing at or before id remains unvisited in M or delta-plus
 			rowIdx = id + 1;
 		}
 	}
@@ -124,7 +125,7 @@ static void _Index_PopulateEdgeIndex
 
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	bool  info;
+	bool  info = true;
 	EntityID  src_id       = 0;                      // current processed row idx
 	EntityID  dest_id      = 0;                      // current processed column idx
 	EntityID  edge_id      = 0;                      // current processed edge id
@@ -135,7 +136,7 @@ static void _Index_PopulateEdgeIndex
 	int       batch_size   = 1000;                   // max number of entities to index in one go
 	TensorIterator it      = {0};                    // relation matrix iterator
 
-	while(true) {
+	while (info) {
 		// lock graph for reading
 		GraphContext_AcquireReadLock (gc) ;
 
@@ -144,6 +145,7 @@ static void _Index_PopulateEdgeIndex
 		// 1. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.since)
 		// 2. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.title)
 		if(Index_PendingChanges(idx) > 1) {
+			GraphContext_ReleaseLock (gc) ;
 			break;
 		}
 
@@ -157,7 +159,11 @@ static void _Index_PopulateEdgeIndex
 		// resume scanning from previous row/col indices
 		//----------------------------------------------------------------------
 
-		TensorIterator_ScanRange(&it, R, src_id, UINT64_MAX, false);
+		// use the strictly-ascending merge (main matrix + delta-plus in
+		// true row-major order) so that resuming at [src_id, MAX) below
+		// can't silently exclude delta-plus rows below src_id - see
+		// TensorIterator_ScanRange_Sorted
+		TensorIterator_ScanRange_Sorted(&it, R, src_id, UINT64_MAX);
 
 		// skip previously indexed edges
 		while((info =
@@ -165,16 +171,17 @@ static void _Index_PopulateEdgeIndex
 				src_id == prev_src_id &&
 				dest_id < prev_dest_id);
 
-		// process only if iterator is on an active entry
-		if(!info) {
-			break;
-		}
-
 		//----------------------------------------------------------------------
 		// batch index edges
 		//----------------------------------------------------------------------
+		// true if the next (unprocessed) edge is in the same multi-edge entry
+		// as the last.
+		// don't use TensorIterator_next's tensor output, because that doesn't
+		// account for the next entry also being a multi edge
+		bool multi = false;
 
-		do {
+		// process only if iterator is on an active entry
+		for (indexed = 0; info && (indexed < batch_size || multi); indexed ++) {
 			Edge e;
 			e.src_id     = src_id;
 			e.dest_id    = dest_id;
@@ -183,30 +190,18 @@ static void _Index_PopulateEdgeIndex
 			Graph_GetEdge(g, edge_id, &e);
 			Index_IndexEdge(idx, &e);
 
-			if(prev_src_id != src_id || prev_dest_id != dest_id) {
-				indexed++;
-			}
-			prev_src_id  = src_id;
+			prev_src_id = src_id;
 			prev_dest_id = dest_id;
-		} while((indexed < batch_size || (prev_src_id == src_id && prev_dest_id == dest_id)) &&
-			  TensorIterator_next(&it, &src_id, &dest_id, &edge_id, NULL));
 
-		//----------------------------------------------------------------------
-		// done with current batch
-		//----------------------------------------------------------------------
-
-		if(indexed != batch_size) {
-			// iterator depleted, no more edges to index
-			break;
-		} else {
-			// finished current batch
-			// release read lock
-			GraphContext_ReleaseLock (gc) ;
+			info = TensorIterator_next (&it, &src_id, &dest_id, &edge_id, NULL) ;
+			multi = src_id == prev_src_id && dest_id == prev_dest_id;
 		}
-	}
 
-	// release read lock
-	GraphContext_ReleaseLock (gc) ;
+		//----------------------------------------------------------------------
+		// done with current batch, release read lock
+		//----------------------------------------------------------------------
+		GraphContext_ReleaseLock (gc) ;
+	}
 }
 
 // constructs index
