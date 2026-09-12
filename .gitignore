@@ -76,3 +76,4 @@ redis.conf
 
 # ctags
 tags
+*.rdb
