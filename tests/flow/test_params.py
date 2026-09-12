@@ -254,7 +254,7 @@ class testParams(FlowTestsBase):
                 "CYPHER param=1*'a' RETURN $param",                        # 1*'a' isn't defined
                 "CYPHER param=abs(1)+f(1) RETURN $param",                  # 'f' doesn't exists
                 "CYPHER param= RETURN 1",                                  # undefined parameter
-                "CYPHER param=count(1) RETURN $param"                      # aggregation function can't be used as a parameter
+                "CYPHER param=count(1) RETURN $param",                     # aggregation function can't be used as a parameter
                 "CYPHER param=2+count(1) RETURN $param",                   # aggregation function can't be used as a parameter
                 "CYPHER param=[1, count(1)] UNWIND $param AS x RETURN x",  # aggregation function can't be used as a parameter
                 "CYPHER param={'key':count(1)} RETURN $param",             # aggregation function can't be used as a parameter
