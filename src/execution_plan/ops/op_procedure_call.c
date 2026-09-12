@@ -9,6 +9,9 @@
 #include "../../util/arr.h"
 #include "../../util/rmalloc.h"
 #include "../../query_ctx.h"
+#include "../../graph/entities/node.h"
+#include "../../graph/entities/edge.h"
+#include "../../graph/graphcontext.h"
 
 // forward declarations
 static Record ProcCallConsume(OpBase *opBase);
@@ -26,6 +29,28 @@ static Record _yield(OpProcCall *op) {
 		uint proc_out_idx = op->yield_map[i].proc_out_idx;
 		SIValue val = outputs[proc_out_idx];
 		Record_Add(clone, idx, val);
+
+		// if this is an edge, also populate its endpoint nodes
+		if((SI_TYPE(val) & T_EDGE) && op->yield_map[i].src_node_idx != -1) {
+			Edge *e = (Edge *)val.ptrval;
+			GraphContext *gc = QueryCtx_GetGraphCtx();
+
+			// create and populate source node
+			Node *src = rm_malloc(sizeof(Node));
+			*src = GE_NEW_NODE();
+			Graph_GetNode(gc->g, Edge_GetSrcNodeID(e), src);
+			SIValue si_src = SI_Node(src);
+			SIValue_SetAllocationType(&si_src, M_SELF);
+			Record_Add(clone, op->yield_map[i].src_node_idx, si_src);
+
+			// create and populate destination node
+			Node *dest = rm_malloc(sizeof(Node));
+			*dest = GE_NEW_NODE();
+			Graph_GetNode(gc->g, Edge_GetDestNodeID(e), dest);
+			SIValue si_dest = SI_Node(dest);
+			SIValue_SetAllocationType(&si_dest, M_SELF);
+			Record_Add(clone, op->yield_map[i].dest_node_idx, si_dest);
+		}
 	}
 
 	return clone;
@@ -92,6 +117,36 @@ OpBase *NewProcCallOp
 		int rec_idx = OpBase_Modifies((OpBase *)op, alias);
 		op->yield_map[i].rec_idx = rec_idx;
 		op->yield_map[i].proc_out_idx = i;
+		op->yield_map[i].src_node_idx = -1;
+		op->yield_map[i].dest_node_idx = -1;
+
+		// check if this output is an edge
+		// if so, also register the edge's endpoints as modifiers
+		uint output_idx = 0;
+		for(uint j = 0; j < Procedure_OutputCount(op->procedure); j++) {
+			if(strcmp(Procedure_GetOutput(op->procedure, j), yield) == 0) {
+				output_idx = j;
+				break;
+			}
+		}
+
+		// get the output type
+		SIType output_type = op->procedure->output[output_idx].type;
+		if(output_type & T_EDGE) {
+			// create anonymous node aliases for the edge endpoints
+			char *src_alias;
+			char *dest_alias;
+			int rc __attribute__((unused));
+			rc = asprintf(&src_alias, "@anon_proc_%s_src_%u", alias, i);
+			rc = asprintf(&dest_alias, "@anon_proc_%s_dest_%u", alias, i);
+
+			// register the endpoints as modifiers
+			op->yield_map[i].src_node_idx = OpBase_Modifies((OpBase *)op, src_alias);
+			op->yield_map[i].dest_node_idx = OpBase_Modifies((OpBase *)op, dest_alias);
+
+			free(src_alias);
+			free(dest_alias);
+		}
 	}
 
 	return (OpBase *)op;
