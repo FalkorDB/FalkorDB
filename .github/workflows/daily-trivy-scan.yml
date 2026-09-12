@@ -1,0 +1,48 @@
+name: Daily Trivy Scan
+
+on:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 6:00 AM UTC
+  workflow_dispatch: # Allow manual triggers
+
+permissions:
+  contents: read
+
+jobs:
+  trivy-scan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: falkordb/falkordb
+            tag: latest
+          - name: falkordb/falkordb
+            tag: edge
+    steps:
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@0.34.1
+        with:
+          image-ref: ${{ matrix.image.name }}:${{ matrix.image.tag }}
+          output: trivy-report.json
+          format: json
+          exit-code: '0'
+          version: 'v0.69.2'
+
+      - name: Upload Vulnerability Scan Results
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report-${{ matrix.image.tag }}
+          path: trivy-report.json
+          retention-days: 30
+
+      - name: Fail on high/critical severity vulnerabilities
+        uses: aquasecurity/trivy-action@0.34.1
+        with:
+          image-ref: ${{ matrix.image.name }}:${{ matrix.image.tag }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '1'
+          ignore-unfixed: true
+          skip-setup-trivy: true
+          version: 'v0.69.2'
