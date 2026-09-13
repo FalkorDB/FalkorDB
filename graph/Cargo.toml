@@ -37,7 +37,7 @@ phf = { version = "0.14", features = ["macros"] }
 orx-tree = "2.2.0"
 rand = "0.10.2"
 regex = "1.13.0"
-rquickjs = { version = "0.12", features = ["bindgen", "classes", "parallel"] }
+rquickjs = { version = "0.13", features = ["bindgen", "classes", "parallel"] }
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 # Pinned exactly, not caret-matched. Two engines have to serialize the same
 # ids to the same bytes (#2698), and roaring's output is not stable across
