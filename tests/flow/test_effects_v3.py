@@ -1339,6 +1339,58 @@ class testVectorZeroDimensionRefused(_RefusedCase):
             "vector index with dimension 0",
             expect_log="dimension 0")
 
+class testEdgeConstraintResolvesAgainstEdgeSchema():
+    """A constraint on a RELATIONSHIP must resolve against the edge schemas.
+
+    This is a regression test for a bug that survived because nothing here
+    ever put a constraint on an edge. The flat record model had one shared
+    'schema_type' field, and _ReadConstraintRecord never set it - so it was 0,
+    which is SCHEMA_NODE, and _VerifyDDLRefs looked the schema id up among the
+    NODE schemas no matter what the constraint was on.
+
+    It was invisible for two reasons. Every node-constraint test passed,
+    because SCHEMA_NODE happened to be right for them. And an edge constraint
+    does not silently target the wrong schema - VerifySchema takes the id AND
+    the name, so it failed the name check and the record was REFUSED. A
+    refusal looks like a divergence, the replica resyncs, and the data ends up
+    correct, so a state-only comparison calls it green.
+
+    Constraints carry entity_type on this wire, not schema_type, and it is
+    1-based. The fix derives one from the other at both constraint sites.
+
+    MANDATORY rather than UNIQUE deliberately: a unique constraint needs a
+    supporting exact-match index first, and that extra record would give the
+    test a second way to fail.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        # label :P = 0, relationship :R = 0, attribute w = 0
+        self.graph.query("CREATE (:P)-[:R {w: 1}]->(:P)")
+
+    def test01_edge_constraint_applies(self):
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, payload(
+            rec_create_constraint(
+                ct = 1,                 # mandatory - needs no supporting index
+                et = 2,                 # GraphEntityType: 1 is node, 2 is edge
+                status = 0,             # CT_ACTIVE
+                label_id = 0,           # :R in the EDGE schemas, :P in the node
+                                        # ones - which is what makes this bite
+                label = "R",
+                props = [(0, "w")])))
+
+        res = self.graph.query(
+            "CALL db.constraints() YIELD type, label, entitytype "
+            "RETURN type, label, entitytype")
+        rows = {tuple(r) for r in res.result_set}
+        self.env.assertContains(("MANDATORY", "R", "RELATIONSHIP"), rows)
+
+
 class testConstraintStatusIsAdoptedNotRecomputed():
     """The replica replays the primary's constraint status; it does not scan.
 
