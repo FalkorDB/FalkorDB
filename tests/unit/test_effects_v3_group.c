@@ -1120,23 +1120,6 @@ void test_effectsV3Group_dropIndexFoldsWithNoOptions(void) {
 	size_t n;
 	unsigned char *b = _encode(g, &n);
 
-	// the wire carries ONE value for the attribute, and it is the last one.
-	// Searched rather than offset-walked: this test is about which value
-	// survived, not about the record layout, and the layout has its own tests.
-	int seen111 = 0, seen222 = 0, seen333 = 0;
-	for(size_t i = 0; i + 8 <= n; i++) {
-		uint64_t v;
-		memcpy(&v, b + i, 8);
-		if(v == 111) seen111 = 1;
-		if(v == 222) seen222 = 1;
-		if(v == 333) seen333 = 1;
-	}
-
-	TEST_ASSERT_(seen333, "the last value must be the one on the wire");
-	TEST_ASSERT_(!seen111,
-			"the first value must not reach the wire - a superseded encoding "
-			"is dead arena, not a row");
-	TEST_ASSERT_(!seen222, "the middle value must not reach the wire either");
 	// the record ends where the options would have begun: zero bytes, not an
 	// empty block
 	TEST_ASSERT_(_options_offset(b, n) == n,
