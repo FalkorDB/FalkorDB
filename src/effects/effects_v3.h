@@ -61,6 +61,19 @@
 // need them. They were private to the decoder, which meant the encoder either
 // duplicated them or reached for the enum - the same shape as the simFunc
 // codes, which were private to apply until an encoder needed them too.
+// the wire's simFunc codes ARE the VecSimMetric enum values - L2 0, IP 1,
+// cosine 2 (vec_sim_common.h). They are not renumbered anywhere, and must not
+// be: both engines persist the metric as that number in their RDB, so moving
+// one would make every existing file read a different metric than it was
+// written with.
+//
+// Here rather than beside either user: the encoder maps C's option STRING onto
+// these and the apply path maps them back, so a copy in each is two places for
+// one wire fact to drift.
+#define V3_SIMFUNC_L2     0
+#define V3_SIMFUNC_IP     1
+#define V3_SIMFUNC_COSINE 2
+
 #define EFFECTS_V3_WIRE_SEG_RANGE   0
 #define EFFECTS_V3_WIRE_SEG_SET     1
 #define EFFECTS_V3_WIRE_SEG_REPEAT  2
