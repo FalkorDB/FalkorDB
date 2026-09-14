@@ -83,14 +83,108 @@ impl Constraint {
         label: &str,
         properties: &[Arc<String>],
     ) -> bool {
-        self.ct == *ct
-            && self.entity_type == *entity_type
-            && self.label.as_str() == label
-            && self.properties.len() == properties.len()
-            && self
-                .properties
-                .iter()
-                .zip(properties.iter())
-                .all(|(a, b)| a == b)
+        if self.ct != *ct
+            || self.entity_type != *entity_type
+            || self.label.as_str() != label
+            || self.properties.len() != properties.len()
+        {
+            return false;
+        }
+
+        let mut p1: Vec<&str> = self.properties.iter().map(|s| s.as_str()).collect();
+        let mut p2: Vec<&str> = properties.iter().map(|s| s.as_str()).collect();
+        p1.sort_unstable();
+        p2.sort_unstable();
+        p1 == p2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_constraint_matches_order_insensitive() {
+        let label = Arc::new("P".to_string());
+        let p_a = Arc::new("a".to_string());
+        let p_b = Arc::new("b".to_string());
+        let p_c = Arc::new("c".to_string());
+
+        let c = Constraint::new(
+            ConstraintType::Mandatory,
+            EntityType::Node,
+            label.clone(),
+            vec![p_a.clone(), p_b.clone()],
+        );
+
+        // Same order matches
+        assert!(c.matches(
+            &ConstraintType::Mandatory,
+            &EntityType::Node,
+            "P",
+            &[p_a.clone(), p_b.clone()]
+        ));
+
+        // Reversed order matches
+        assert!(c.matches(
+            &ConstraintType::Mandatory,
+            &EntityType::Node,
+            "P",
+            &[p_b.clone(), p_a.clone()]
+        ));
+
+        // Different properties do not match
+        assert!(!c.matches(
+            &ConstraintType::Mandatory,
+            &EntityType::Node,
+            "P",
+            &[p_a.clone(), p_c.clone()]
+        ));
+
+        // Different length does not match
+        assert!(!c.matches(
+            &ConstraintType::Mandatory,
+            &EntityType::Node,
+            "P",
+            &[p_a.clone()]
+        ));
+
+        // Different label does not match
+        assert!(!c.matches(
+            &ConstraintType::Mandatory,
+            &EntityType::Node,
+            "Q",
+            &[p_a.clone(), p_b.clone()]
+        ));
+
+        // Different constraint type does not match
+        assert!(!c.matches(
+            &ConstraintType::Unique,
+            &EntityType::Node,
+            "P",
+            &[p_a.clone(), p_b.clone()]
+        ));
+
+        // Different entity type does not match
+        assert!(!c.matches(
+            &ConstraintType::Mandatory,
+            &EntityType::Relationship,
+            "P",
+            &[p_a.clone(), p_b.clone()]
+        ));
+
+        // 3-element permutation matches
+        let c3 = Constraint::new(
+            ConstraintType::Unique,
+            EntityType::Relationship,
+            label.clone(),
+            vec![p_a.clone(), p_b.clone(), p_c.clone()],
+        );
+        assert!(c3.matches(
+            &ConstraintType::Unique,
+            &EntityType::Relationship,
+            "P",
+            &[p_c.clone(), p_a.clone(), p_b.clone()]
+        ));
     }
 }

@@ -1406,3 +1406,94 @@ class testConstraintSchemaRegistration():
 
         after = sorted(r[0] for r in g.query("CALL db.propertyKeys()").result_set)
         self.env.assertEqual(after, before)
+
+
+class testOrderInsensitiveConstraintMatching():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+
+    def test01_order_insensitive_constraint_matching_and_duplicate_properties(self):
+        graph_id = "order_insensitive_constraint"
+        self.con.delete(graph_id)
+        g = self.db.select_graph(graph_id)
+
+        g.query("CREATE (:P {a: 1, b: 2})")
+
+        # 1. Reject duplicate property names in node constraint create
+        try:
+            self.con.execute_command(
+                "GRAPH.CONSTRAINT", "CREATE", graph_id,
+                "MANDATORY", "NODE", "P", "PROPERTIES", "2", "a", "a"
+            )
+            self.env.assertTrue(False, message="Duplicate properties must be rejected")
+        except ResponseError as e:
+            self.env.assertContains("Properties cannot contain duplicates", str(e))
+
+        # 2. Successfully create constraint over properties (a, b)
+        self.con.execute_command(
+            "GRAPH.CONSTRAINT", "CREATE", graph_id,
+            "MANDATORY", "NODE", "P", "PROPERTIES", "2", "a", "b"
+        )
+
+        constraints = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(len(constraints), 1)
+        self.env.assertEqual(constraints[0], ["P", ["a", "b"]])
+
+        # 3. Attempting to create constraint over same properties in reverse order (b, a) must fail with "Constraint already exists"
+        try:
+            self.con.execute_command(
+                "GRAPH.CONSTRAINT", "CREATE", graph_id,
+                "MANDATORY", "NODE", "P", "PROPERTIES", "2", "b", "a"
+            )
+            self.env.assertTrue(False, message="Duplicate constraint with reversed order must be rejected")
+        except ResponseError as e:
+            self.env.assertContains("Constraint already exists", str(e))
+
+        # 4. Constraint count must still be exactly 1
+        constraints = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(len(constraints), 1)
+
+        # 5. Dropping the constraint using the reversed property order (b, a) must succeed
+        self.con.execute_command(
+            "GRAPH.CONSTRAINT", "DROP", graph_id,
+            "MANDATORY", "NODE", "P", "PROPERTIES", "2", "b", "a"
+        )
+
+        # 6. Verify constraint is now removed
+        constraints = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(len(constraints), 0)
+
+        # 7. Test relationship constraint duplicate properties and order-insensitive matching
+        g.query("MATCH (p:P) CREATE (p)-[:R {x: 1, y: 2}]->(p)")
+
+        try:
+            self.con.execute_command(
+                "GRAPH.CONSTRAINT", "CREATE", graph_id,
+                "MANDATORY", "RELATIONSHIP", "R", "PROPERTIES", "2", "x", "x"
+            )
+            self.env.assertTrue(False, message="Duplicate edge properties must be rejected")
+        except ResponseError as e:
+            self.env.assertContains("Properties cannot contain duplicates", str(e))
+
+        self.con.execute_command(
+            "GRAPH.CONSTRAINT", "CREATE", graph_id,
+            "MANDATORY", "RELATIONSHIP", "R", "PROPERTIES", "2", "x", "y"
+        )
+
+        try:
+            self.con.execute_command(
+                "GRAPH.CONSTRAINT", "CREATE", graph_id,
+                "MANDATORY", "RELATIONSHIP", "R", "PROPERTIES", "2", "y", "x"
+            )
+            self.env.assertTrue(False, message="Duplicate edge constraint with reversed order must be rejected")
+        except ResponseError as e:
+            self.env.assertContains("Constraint already exists", str(e))
+
+        self.con.execute_command(
+            "GRAPH.CONSTRAINT", "DROP", graph_id,
+            "MANDATORY", "RELATIONSHIP", "R", "PROPERTIES", "2", "y", "x"
+        )
+
+        constraints = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(len(constraints), 0)
