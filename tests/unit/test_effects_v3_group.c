@@ -629,7 +629,110 @@ void test_effectsV3Group_stagedUpdates(void) {
 	}
 }
 
+// SETTING THE SAME ATTRIBUTE TWICE KEEPS THE LAST VALUE
+//
+// The overwrite arm of the staging path, which nothing here covered. It matters
+// more since values moved into an arena: the superseded encoding is left behind
+// as dead bytes rather than freed, so "the last value wins" now depends on the
+// staged attribute's offset being repointed rather than on a buffer being
+// replaced. Getting that wrong emits the FIRST value and still produces a
+// well-formed payload of exactly the right length.
+void test_effectsV3Group_lastValueWins(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	LabelID labels[] = { 1 };
+
+	// same entity, same attribute, three times - and a distinctive final value
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+			7, SI_LongVal(111));
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+			7, SI_LongVal(222));
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+			7, SI_LongVal(333));
+
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+			"one entity setting one attribute three times is one record, got %u",
+			EffectsV3Grouping_RecordCount(g));
+
+	size_t n;
+	unsigned char *b = _encode(g, &n);
+
+	// the wire carries ONE value for the attribute, and it is the last one.
+	// Searched rather than offset-walked: this test is about which value
+	// survived, not about the record layout, and the layout has its own tests.
+	int seen111 = 0, seen222 = 0, seen333 = 0;
+	for(size_t i = 0; i + 8 <= n; i++) {
+		uint64_t v;
+		memcpy(&v, b + i, 8);
+		if(v == 111) seen111 = 1;
+		if(v == 222) seen222 = 1;
+		if(v == 333) seen333 = 1;
+	}
+
+	TEST_ASSERT_(seen333, "the last value must be the one on the wire");
+	TEST_ASSERT_(!seen111,
+			"the first value must not reach the wire - a superseded encoding "
+			"is dead arena, not a row");
+	TEST_ASSERT_(!seen222, "the middle value must not reach the wire either");
+
+	free(b);
+	EffectsV3Grouping_Free(g);
+}
+
+// A FLUSHED GROUP MUST NOT DEPEND ON THE ARENA
+//
+// This is what makes reusing the arena safe. _flush_updates copies each staged
+// value into the group's own byte sequence and only then resets arena_len, so
+// the next statement writes over bytes nobody references. Had the group kept an
+// offset instead of a copy, the second statement would silently rewrite the
+// first statement's values - same record shape, same length, wrong contents.
+//
+// My first version of this test asserted the opposite and failed: it expected
+// the first statement's value to be absent from the second payload. It is not,
+// and should not be - an accumulator is cumulative, groups are never cleared by
+// an encode, so both records are in the second payload by design. The test was
+// wrong, not the code.
+void test_effectsV3Group_flushedGroupOutlivesTheArena(void) {
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	LabelID labels[] = { 1 };
+
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
+			7, SI_LongVal(4242));
+
+	// forces the flush: the value is copied into its group and arena_len goes
+	// back to zero
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+			"one staged entity is one record");
+
+	// a second statement now writes over the very bytes the first one used
+	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 11, labels, 1, 0,
+			7, SI_LongVal(9999));
+
+	size_t n;
+	unsigned char *b = _encode(g, &n);
+
+	int saw4242 = 0, saw9999 = 0;
+	for(size_t i = 0; i + 8 <= n; i++) {
+		uint64_t v;
+		memcpy(&v, b + i, 8);
+		if(v == 4242) saw4242 = 1;
+		if(v == 9999) saw9999 = 1;
+	}
+
+	TEST_ASSERT_(saw4242,
+			"the FLUSHED value must survive the arena being overwritten - if "
+			"the group kept an offset rather than a copy, this is the second "
+			"statement's bytes instead");
+	TEST_ASSERT_(saw9999, "the second statement's value must be there too");
+
+	free(b);
+	EffectsV3Grouping_Free(g);
+}
+
 TEST_LIST = {
+	{ "EffectsV3Group:lastValueWins",
+		test_effectsV3Group_lastValueWins },
+	{ "EffectsV3Group:flushedGroupOutlivesTheArena",
+		test_effectsV3Group_flushedGroupOutlivesTheArena },
 	{ "EffectsV3Group:sameShapeIsOneRecord",
 		test_effectsV3Group_sameShapeIsOneRecord },
 	{ "EffectsV3Group:eachShapeComponentSplits",

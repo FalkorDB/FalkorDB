@@ -35,7 +35,11 @@ typedef struct {
 // one attribute of a staged update, with its value already encoded
 typedef struct {
 	AttributeID id;
-	unsigned char *bytes;  // owned, the encoded SIValue
+	// WHERE the encoded SIValue is, not a buffer of its own
+	//
+	// An offset rather than a pointer because the arena is realloc'd as it
+	// grows, and every staged attribute would have to be rewritten otherwise.
+	size_t off;
 	size_t n;
 } StagedAttr;
 
@@ -72,6 +76,35 @@ struct EffectsV3Grouping {
 	PendingUpdate *updates;
 	uint32_t n_updates;
 	uint32_t cap_updates;
+
+	// every staged value, back to back
+	//
+	// Was a separate rm_malloc per attribute, on top of a throwaway
+	// EffectsBytes and a throwaway EffectsBuffer to encode into - four
+	// allocations and four frees for every attribute of every entity, and the
+	// same again whenever a query set one twice.
+	//
+	// Contiguous and grown by realloc, so a staged attribute holds an offset
+	// and a length. Reset rather than freed at flush, so a second statement in
+	// the same query reuses the allocation.
+	//
+	// NOT reclaimed on overwrite: setting an attribute twice leaves the first
+	// encoding behind as dead bytes. Bounded by the number of stage calls
+	// rather than by anything unbounded, and the alternative - a free list, or
+	// rewriting later offsets - costs more than the bytes are worth.
+	unsigned char *arena;
+	size_t arena_len;
+	size_t arena_cap;
+
+	// encoded HERE first, then copied into the arena
+	//
+	// The SIValue codec writes into an EffectsBytes, which is block-chained
+	// and so cannot hand out a stable offset - that is why the arena is not
+	// simply the sink. Both of these live for the whole accumulator instead of
+	// being built and torn down per attribute, which is where the four
+	// allocations went.
+	EffectsBytes  *scratch;
+	EffectsBuffer *scratch_w;
 
 	// (opcode, entity id) -> index into 'updates', plus one
 	//
@@ -190,6 +223,12 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	g->updates           = rm_calloc(g->cap_updates, sizeof(PendingUpdate));
 	g->n_updates         = 0;
 	g->update_index      = raxNew();
+
+	g->arena_cap = 4096;
+	g->arena_len = 0;
+	g->arena     = rm_malloc(g->arena_cap);
+	g->scratch   = EffectsBytes_New(256);
+	g->scratch_w = EffectsBuffer_Wrap(g->scratch);
 
 	return g;
 }
@@ -399,6 +438,43 @@ static int _cmp_staged_attr(const void *a, const void *b) {
 	return (x < y) ? -1 : (x > y) ? 1 : 0;
 }
 
+// encode one value into the arena, returning where it landed
+//
+// The SIValue belongs to the caller and will not outlive the call, so it has
+// to be encoded now rather than retained - that constraint is unchanged. What
+// changed is that the scratch sink and its wrapper are reused instead of being
+// built and torn down for every attribute.
+static size_t _arena_put
+(
+	EffectsV3Grouping *g,  // accumulator
+	SIValue value,         // value to encode
+	size_t *n              // [output] how many bytes it took
+) {
+	// keeps the first block, drops the rest, resets the write offset - so a
+	// value larger than one block costs a block here and the next value does
+	// not pay for it
+	EffectsBytes_Clear(g->scratch);
+
+	EffectsBuffer_WriteSIValue(&value, g->scratch_w);
+
+	const size_t len = EffectsBytes_Len(g->scratch);
+
+	if(g->arena_len + len > g->arena_cap) {
+		do {
+			g->arena_cap *= 2;
+		} while(g->arena_len + len > g->arena_cap);
+		g->arena = rm_realloc(g->arena, g->arena_cap);
+	}
+
+	EffectsBytes_CopyInto(g->scratch, g->arena + g->arena_len);
+
+	const size_t off = g->arena_len;
+	g->arena_len += len;
+
+	*n = len;
+	return off;
+}
+
 // the index key: opcode then entity id
 //
 // _update_for matches on both, so both are in the key. The byte order is
@@ -503,19 +579,9 @@ void EffectsV3Grouping_StageUpdate
 	// query's own order decides, and the wire carries one value per attribute
 	for(uint32_t i = 0; i < u->n_attrs; i++) {
 		if(u->attrs[i].id == attr_id) {
-			rm_free(u->attrs[i].bytes);
-			u->attrs[i].bytes = NULL;
-			u->attrs[i].n     = 0;
-
-			EffectsBytes *tmp = EffectsBytes_New(64);
-			EffectsBuffer *w  = EffectsBuffer_Wrap(tmp);
-			EffectsBuffer_WriteSIValue(&value, w);
-			EffectsBuffer_Free(w);
-
-			u->attrs[i].n     = EffectsBytes_Len(tmp);
-			u->attrs[i].bytes = rm_malloc(u->attrs[i].n);
-			EffectsBytes_CopyInto(tmp, u->attrs[i].bytes);
-			EffectsBytes_Free(tmp);
+			// the superseded encoding stays in the arena as dead bytes; see
+			// the arena's own comment for why reclaiming it is not worth it
+			u->attrs[i].off = _arena_put(g, value, &u->attrs[i].n);
 			return;
 		}
 	}
@@ -529,15 +595,7 @@ void EffectsV3Grouping_StageUpdate
 	a->id = attr_id;
 
 	// encoded NOW: the SIValue belongs to the caller and will not outlive this
-	EffectsBytes *tmp = EffectsBytes_New(64);
-	EffectsBuffer *w  = EffectsBuffer_Wrap(tmp);
-	EffectsBuffer_WriteSIValue(&value, w);
-	EffectsBuffer_Free(w);
-
-	a->n     = EffectsBytes_Len(tmp);
-	a->bytes = rm_malloc(a->n);
-	EffectsBytes_CopyInto(tmp, a->bytes);
-	EffectsBytes_Free(tmp);
+	a->off = _arena_put(g, value, &a->n);
 }
 
 // release everything a staged update owns
@@ -550,9 +608,8 @@ void EffectsV3Grouping_StageUpdate
 //
 // Idempotent, so freeing an accumulator that was never flushed is still correct.
 static void _update_release(PendingUpdate *u) {
-	for(uint32_t k = 0; k < u->n_attrs; k++) {
-		rm_free(u->attrs[k].bytes);
-	}
+	// the encoded values are not freed here - they live in the accumulator's
+	// arena, which outlives every individual update and is released once
 	rm_free(u->attrs);
 	rm_free(u->labels);
 
@@ -593,7 +650,8 @@ static void _flush_updates(EffectsV3Grouping *g) {
 
 		EffectsV3IdListBuilder_Push(grp->ids, u->id);
 		for(uint32_t k = 0; k < u->n_attrs; k++) {
-			EffectsBytes_Write(grp->values, u->attrs[k].bytes, u->attrs[k].n);
+			EffectsBytes_Write(grp->values, g->arena + u->attrs[k].off,
+					u->attrs[k].n);
 		}
 		grp->count++;
 
@@ -606,6 +664,11 @@ static void _flush_updates(EffectsV3Grouping *g) {
 	}
 
 	g->n_updates = 0;
+
+	// every offset into the arena belonged to an update that has just been
+	// released, so the bytes are unreachable - reset rather than free, so a
+	// second statement in the same query reuses the allocation
+	g->arena_len = 0;
 
 	// the indices it holds now point past the end of a zero-length array
 	raxFree(g->update_index);
@@ -726,6 +789,9 @@ void EffectsV3Grouping_Free
 		_update_release(g->updates + i);
 	}
 	raxFree(g->update_index);
+	rm_free(g->arena);
+	EffectsBuffer_Free(g->scratch_w);
+	EffectsBytes_Free(g->scratch);
 	rm_free(g->updates);
 
 	rm_free(g->groups);
