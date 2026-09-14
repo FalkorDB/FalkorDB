@@ -751,11 +751,14 @@ fn grow_cap(
 /// step over.
 ///
 /// Measured against the walk on the shape that matters — a 1M-id pool drained
-/// in batches of 1024, which is what a large `CREATE` does — at 15.8ms against
-/// 14.5ms. The difference is built per batch and the walk was not, which is
-/// the whole of that 1.3ms; it is under a tenth of a percent of the create it
-/// belongs to, and on the ordinary path where the pool is empty the difference
-/// is the faster of the two.
+/// in batches of 1024, which is what a large `CREATE` does — at 13.8ms against
+/// 11.4ms, best of five alternating runs in one binary. Single runs on this
+/// machine vary by a third, so the alternation is what makes the 2.4ms real
+/// rather than noise. The difference is rebuilt per batch where the walk sought
+/// into the pool in place, and that is the whole of the gap; against the create
+/// it belongs to it is a quarter of one percent. On the ordinary path, where
+/// nothing has been deleted and the pool is empty, the difference is the faster
+/// of the two — 7.8us against 9.5us over 977 calls.
 fn reclaim_ids<T: From<u64>>(
     pool: &RoaringTreemap,
     held: &RoaringTreemap,
@@ -763,15 +766,9 @@ fn reclaim_ids<T: From<u64>>(
     out: &mut Vec<T>,
 ) -> u64 {
     let free = pool - held;
-    let mut taken = 0;
-    for id in &free {
-        if taken == count {
-            break;
-        }
-        out.push(T::from(id));
-        taken += 1;
-    }
-    taken
+    let before = out.len();
+    out.extend(free.iter().take(count as usize).map(T::from));
+    (out.len() - before) as u64
 }
 
 impl Graph {
