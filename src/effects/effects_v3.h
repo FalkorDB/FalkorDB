@@ -295,6 +295,8 @@ typedef struct {
 typedef struct {
 	SchemaType schema_type;
 	int        schema_id;
+	char      *name;              // owned - the schema's name, stated as well
+	                              // as its id so a diverged id is caught
 	uint32_t   field_type;
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
@@ -306,6 +308,7 @@ typedef struct {
 typedef struct {
 	SchemaType schema_type;
 	int        schema_id;
+	char      *name;              // owned
 	uint32_t   field_type;
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
@@ -321,6 +324,7 @@ typedef struct {
 	uint32_t constraint_type;
 	uint32_t entity_type;
 	int      schema_id;
+	char    *name;                // owned
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
 	bool     has_status;
@@ -332,6 +336,7 @@ typedef struct {
 	uint32_t constraint_type;
 	uint32_t entity_type;
 	int      schema_id;
+	char    *name;                // owned
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
 } EffectsV3DropConstraint;
