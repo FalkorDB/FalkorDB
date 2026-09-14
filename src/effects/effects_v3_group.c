@@ -717,13 +717,18 @@ void EffectsV3Grouping_Encode
 	// to have seen the name before anything references it
 	for(uint32_t i = 0; i < g->n_announcements; i++) {
 		const Announcement *a = g->announcements + i;
-		EffectsV3Record r = {
-			.opcode      = a->opcode,
-			.schema_type = a->schema_type,
-			.schema_id   = a->schema_id,
-			.attr_id     = a->attr_id,
-			.name        = a->name,
-		};
+		// each opcode fills its own arm now; an announcement is one or the
+		// other, never both, and the record no longer has a shared slot that
+		// would let the wrong one be read
+		EffectsV3Record r = { .opcode = a->opcode };
+		if(a->opcode == EFFECT_ADD_SCHEMA) {
+			r.add_schema.schema_type = a->schema_type;
+			r.add_schema.schema_id   = a->schema_id;
+			r.add_schema.name        = a->name;
+		} else {
+			r.add_attribute.attr_id = a->attr_id;
+			r.add_attribute.name    = a->name;
+		}
 		EffectsV3_EncodeRecord(&r, out);
 	}
 
@@ -746,18 +751,80 @@ void EffectsV3Grouping_Encode
 			dst = EffectsV3IdListBuilder_ToIdList(grp->dst);
 		}
 
-		EffectsV3Record r = {
-			.opcode      = grp->opcode,
-			.count       = grp->count,
-			.labels      = grp->labels,
-			.n_labels    = grp->n_labels,
-			.relation_id = grp->relation_id,
-			.attr_ids    = grp->attr_ids,
-			.n_attrs     = grp->n_attrs,
-			.ids         = ids,
-			.src         = src,
-			.dst         = dst,
-		};
+		// FILLED PER OPCODE, because each now owns its arm. A group knows its
+		// shape - which halves it carries - but the arm it fills is selected by
+		// the opcode, and writing the wrong one is valid C that encodes zeroes.
+		EffectsV3Record r = { .opcode = grp->opcode };
+		switch(grp->opcode) {
+			case EFFECT_UPDATE_NODE:
+				r.update_node.count    = grp->count;
+				r.update_node.labels   = grp->labels;
+				r.update_node.n_labels = grp->n_labels;
+				r.update_node.attr_ids = grp->attr_ids;
+				r.update_node.n_attrs  = grp->n_attrs;
+				r.update_node.ids      = ids;
+				break;
+
+			case EFFECT_UPDATE_EDGE:
+				r.update_edge.count       = grp->count;
+				r.update_edge.relation_id = grp->relation_id;
+				r.update_edge.attr_ids    = grp->attr_ids;
+				r.update_edge.n_attrs     = grp->n_attrs;
+				r.update_edge.ids         = ids;
+				break;
+
+			case EFFECT_CREATE_NODE:
+				r.create_node.count    = grp->count;
+				r.create_node.labels   = grp->labels;
+				r.create_node.n_labels = grp->n_labels;
+				r.create_node.attr_ids = grp->attr_ids;
+				r.create_node.n_attrs  = grp->n_attrs;
+				r.create_node.ids      = ids;
+				break;
+
+			case EFFECT_CREATE_EDGE:
+				r.create_edge.count       = grp->count;
+				r.create_edge.relation_id = grp->relation_id;
+				r.create_edge.attr_ids    = grp->attr_ids;
+				r.create_edge.n_attrs     = grp->n_attrs;
+				r.create_edge.ids         = ids;
+				r.create_edge.src         = src;
+				r.create_edge.dst         = dst;
+				break;
+
+			case EFFECT_DELETE_NODE:
+				r.delete_node.count    = grp->count;
+				r.delete_node.labels   = grp->labels;
+				r.delete_node.n_labels = grp->n_labels;
+				r.delete_node.ids      = ids;
+				break;
+
+			case EFFECT_DELETE_EDGE:
+				r.delete_edge.count       = grp->count;
+				r.delete_edge.relation_id = grp->relation_id;
+				r.delete_edge.ids         = ids;
+				r.delete_edge.src         = src;
+				r.delete_edge.dst         = dst;
+				break;
+
+			case EFFECT_SET_LABELS:
+				r.set_labels.count    = grp->count;
+				r.set_labels.labels   = grp->labels;
+				r.set_labels.n_labels = grp->n_labels;
+				r.set_labels.ids      = ids;
+				break;
+
+			case EFFECT_REMOVE_LABELS:
+				r.remove_labels.count    = grp->count;
+				r.remove_labels.labels   = grp->labels;
+				r.remove_labels.n_labels = grp->n_labels;
+				r.remove_labels.ids      = ids;
+				break;
+
+			default:
+				ASSERT(false && "not a batchable record");
+				break;
+		}
 
 		// the values were encoded as they arrived, so they are appended as
 		// bytes rather than re-encoded from SIValues the group no longer holds

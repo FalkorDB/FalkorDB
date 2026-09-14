@@ -29,69 +29,87 @@ void EffectsV3_WriteUint
 
 void EffectsV3_EncodeSegment
 (
-	const EffectsV3Segment *s,  // segment to write
-	EffectsBytes *out           // sink
+	const EffectsV3IdListSegment *s,  // segment to write
+	EffectsBytes *out                 // sink
 ) {
+	// ONE ARM PER KIND AND NO `default:`.
+	//
+	// This was three arms with a `default:` catching the last, and direction
+	// came from a separate flag OR-ed in above the switch. Under a closed set
+	// that folds direction into the kind, that shape would have swallowed both
+	// Set variants in the default arm while the flag it read disappeared - so
+	// a descending set would have emitted an ASCENDING header over descending
+	// payload. Well-formed, every length check passing, ids replayed the wrong
+	// way round by the reader.
+	//
+	// A `default:` over a closed enum turns "I handled every case" into "I
+	// handled the ones I thought of". Without one, a sixth kind is a compile
+	// error here.
 	uint8_t header = 0;
 
-	if(s->descending) {
-		// never on a Repeat: one id however many times reads the same both
-		// ways, so the bit would name a distinction that does not exist, and a
-		// decoder refuses it there rather than ignoring it
-		ASSERT(s->kind != EFFECTS_V3_SEG_REPEAT);
-		header |= EFFECTS_V3_SEG_DESCENDING;
-	}
-
 	switch(s->kind) {
-		case EFFECTS_V3_SEG_RANGE: {
-			// value_width and count_width ARE THE HEADER CODES, 0..3 - not a
-			// byte count. They go into the header as they stand and the field
-			// widths come from them, which is what makes a decoded segment
-			// re-encode to the bytes it was read from: the peer's width choice
-			// is retained rather than recomputed, and recomputing would only
-			// "usually" agree.
-			const uint8_t vw = EFFECTS_V3_WIDTH_BYTES(s->value_width);
-			const uint8_t cw = EFFECTS_V3_WIDTH_BYTES(s->count_width);
+		case EFFECTS_V3_SEG_RANGE_ASCENDING:
+		case EFFECTS_V3_SEG_RANGE_DESCENDING: {
+			const bool desc = (s->kind == EFFECTS_V3_SEG_RANGE_DESCENDING);
+			const uint8_t vwc = desc ? s->range_descending.value_width
+			                         : s->range_ascending.value_width;
+			const uint8_t cwc = desc ? s->range_descending.count_width
+			                         : s->range_ascending.count_width;
+			const uint64_t base = desc ? s->range_descending.base
+			                           : s->range_ascending.base;
+			const uint64_t len  = desc ? s->range_descending.len
+			                           : s->range_ascending.len;
 
-			header |= EFFECTS_V3_SEG_RANGE;
-			header |= (uint8_t)(s->value_width << EFFECTS_V3_SEG_VWIDTH_SHIFT);
-			header |= (uint8_t)(s->count_width << EFFECTS_V3_SEG_CWIDTH_SHIFT);
+			header |= EFFECTS_V3_WIRE_SEG_RANGE;
+			if(desc) header |= EFFECTS_V3_SEG_DESCENDING;
+			header |= (uint8_t)(vwc << EFFECTS_V3_SEG_VWIDTH_SHIFT);
+			header |= (uint8_t)(cwc << EFFECTS_V3_SEG_CWIDTH_SHIFT);
 
 			EffectsBytes_Write(out, &header, 1);
 
 			// base is the FIRST id: the lowest ascending, the highest
 			// descending. Written as it stands rather than as the set's
-			// minimum, so a descending range can need a wider value field than
-			// the ascending form over the same ids
-			EffectsV3_WriteUint(out, s->range.base, vw);
-			EffectsV3_WriteUint(out, s->range.len, cw);
+			// minimum, so a descending range can need a wider value field
+			// than the ascending form over the same ids
+			EffectsV3_WriteUint(out, base, EFFECTS_V3_WIDTH_BYTES(vwc));
+			EffectsV3_WriteUint(out, len,  EFFECTS_V3_WIDTH_BYTES(cwc));
 			break;
 		}
 
 		case EFFECTS_V3_SEG_REPEAT: {
-			const uint8_t vw = EFFECTS_V3_WIDTH_BYTES(s->value_width);
-			const uint8_t cw = EFFECTS_V3_WIDTH_BYTES(s->count_width);
-
-			header |= EFFECTS_V3_SEG_REPEAT;
-			header |= (uint8_t)(s->value_width << EFFECTS_V3_SEG_VWIDTH_SHIFT);
-			header |= (uint8_t)(s->count_width << EFFECTS_V3_SEG_CWIDTH_SHIFT);
+			// no direction: one id held 'count' times reads the same either
+			// way, so the kind cannot carry one and bit 6 stays clear
+			header |= EFFECTS_V3_WIRE_SEG_REPEAT;
+			header |= (uint8_t)(s->repeat.value_width
+					<< EFFECTS_V3_SEG_VWIDTH_SHIFT);
+			header |= (uint8_t)(s->repeat.count_width
+					<< EFFECTS_V3_SEG_CWIDTH_SHIFT);
 
 			EffectsBytes_Write(out, &header, 1);
-			EffectsV3_WriteUint(out, s->repeat.id, vw);
-			EffectsV3_WriteUint(out, s->repeat.count, cw);
+			EffectsV3_WriteUint(out, s->repeat.id,
+					EFFECTS_V3_WIDTH_BYTES(s->repeat.value_width));
+			EffectsV3_WriteUint(out, s->repeat.count,
+					EFFECTS_V3_WIDTH_BYTES(s->repeat.count_width));
 			break;
 		}
 
-		default: {
-			// a bitmap carries its own length and needs no width codes, so both
-			// fields stay zero
-			header |= EFFECTS_V3_SEG_ASCENDING;
+		case EFFECTS_V3_SEG_SET_ASCENDING:
+		case EFFECTS_V3_SEG_SET_DESCENDING: {
+			const bool desc = (s->kind == EFFECTS_V3_SEG_SET_DESCENDING);
+			const unsigned char *blob = desc ? s->set_descending.blob
+			                                 : s->set_ascending.blob;
+			const uint32_t n = desc ? s->set_descending.n : s->set_ascending.n;
+
+			// a Set carries its own length and needs no width codes, so those
+			// header bits stay clear
+			header |= EFFECTS_V3_WIRE_SEG_SET;
+			if(desc) header |= EFFECTS_V3_SEG_DESCENDING;
 			EffectsBytes_Write(out, &header, 1);
 
-			// the blob was serialized when the list was converted, or read
-			// off the wire; either way it is written back verbatim
-			EffectsV3_WriteUint(out, s->ascending.n, 4);
-			EffectsBytes_Write(out, s->ascending.blob, s->ascending.n);
+			// serialized when the list was converted, or read off the wire;
+			// either way written back verbatim
+			EffectsV3_WriteUint(out, n, 4);
+			EffectsBytes_Write(out, blob, n);
 			break;
 		}
 	}
@@ -115,13 +133,14 @@ void EffectsV3_EncodeIdList
 // hoisted once for every entity in the record
 static void _write_label_set
 (
-	const EffectsV3Record *r,  // record whose labels to write
-	EffectsBytes *out          // sink
+	const LabelID *labels,  // the set, ascending
+	uint16_t n,             // how many
+	EffectsBytes *out       // sink
 ) {
-	EffectsV3_WriteUint(out, r->n_labels, sizeof(uint16_t));
+	EffectsV3_WriteUint(out, n, sizeof(uint16_t));
 
-	for(uint16_t i = 0; i < r->n_labels; i++) {
-		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->labels[i],
+	for(uint16_t i = 0; i < n; i++) {
+		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)labels[i],
 				sizeof(LabelID));
 	}
 }
@@ -133,13 +152,14 @@ static void _write_label_set
 // would use the wrong width
 static void _write_attr_ids
 (
-	const EffectsV3Record *r,  // record whose attribute ids to write
-	EffectsBytes *out          // sink
+	const AttributeID *ids,  // the set, ascending
+	uint16_t n,              // how many
+	EffectsBytes *out        // sink
 ) {
-	EffectsV3_WriteUint(out, r->n_attrs, sizeof(uint16_t));
+	EffectsV3_WriteUint(out, n, sizeof(uint16_t));
 
-	for(uint16_t i = 0; i < r->n_attrs; i++) {
-		EffectsV3_WriteUint(out, r->attr_ids[i], sizeof(AttributeID));
+	for(uint16_t i = 0; i < n; i++) {
+		EffectsV3_WriteUint(out, ids[i], sizeof(AttributeID));
 	}
 }
 
@@ -151,17 +171,18 @@ static void _write_attr_ids
 // out would turn every property removal into a no-op.
 static void _write_attr_values
 (
-	const EffectsV3Record *r,  // record whose values to write
-	EffectsBytes *out          // sink
+	const SIValue *values,  // count * n_attrs, row-major
+	uint64_t n,             // how many
+	EffectsBytes *out       // sink
 ) {
-	if(r->n_values == 0) {
+	if(n == 0) {
 		return;
 	}
 
 	EffectsBuffer *wrapper = EffectsBuffer_Wrap(out);
 
-	for(uint64_t i = 0; i < r->n_values; i++) {
-		EffectsBuffer_WriteSIValue(r->values + i, wrapper);
+	for(uint64_t i = 0; i < n; i++) {
+		EffectsBuffer_WriteSIValue(values + i, wrapper);
 	}
 
 	// frees the wrapper, not the sink
@@ -177,6 +198,107 @@ static void _write_name
 	EffectsBuffer *wrapper = EffectsBuffer_Wrap(out);
 	EffectsBuffer_WriteString(name, wrapper);
 	EffectsBuffer_Free(wrapper);
+}
+
+// what a batched record carries, selected once from its arm
+//
+// Records 1-8 share one wire shape - count, the shape half, the IdList, then
+// the values - which is why one generic writer serves all eight. Under the
+// split model each opcode owns its own arm, so that writer can no longer reach
+// the fields directly without knowing the opcode, and the obvious fix is eight
+// near-copies of it.
+//
+// This keeps the writer generic instead: the arm is selected once here, and a
+// NULL pointer or a zero count means "this opcode does not carry that part".
+// The switch has no `default:`, so a new opcode is a compile error rather than
+// a record that silently encodes as though it carried nothing.
+typedef struct {
+	uint32_t              count;
+	const LabelID        *labels;
+	uint16_t              n_labels;
+	bool                  has_relation;
+	RelationID            relation_id;
+	const AttributeID    *attr_ids;
+	uint16_t              n_attrs;
+	const EffectsV3IdList *ids;
+	const EffectsV3IdList *src;   // NULL unless the opcode carries endpoints
+	const EffectsV3IdList *dst;
+	const SIValue        *values;
+	uint64_t              n_values;
+} RecordView;
+
+static RecordView _view(const EffectsV3Record *r) {
+	RecordView v = { 0 };
+
+	switch(r->opcode) {
+		case EFFECT_UPDATE_NODE:
+			v.count = r->update_node.count;
+			v.labels = r->update_node.labels; v.n_labels = r->update_node.n_labels;
+			v.attr_ids = r->update_node.attr_ids; v.n_attrs = r->update_node.n_attrs;
+			v.ids = &r->update_node.ids;
+			v.values = r->update_node.values; v.n_values = r->update_node.n_values;
+			break;
+
+		case EFFECT_UPDATE_EDGE:
+			v.count = r->update_edge.count;
+			v.has_relation = true; v.relation_id = r->update_edge.relation_id;
+			v.attr_ids = r->update_edge.attr_ids; v.n_attrs = r->update_edge.n_attrs;
+			v.ids = &r->update_edge.ids;
+			v.values = r->update_edge.values; v.n_values = r->update_edge.n_values;
+			break;
+
+		case EFFECT_CREATE_NODE:
+			v.count = r->create_node.count;
+			v.labels = r->create_node.labels; v.n_labels = r->create_node.n_labels;
+			v.attr_ids = r->create_node.attr_ids; v.n_attrs = r->create_node.n_attrs;
+			v.ids = &r->create_node.ids;
+			v.values = r->create_node.values; v.n_values = r->create_node.n_values;
+			break;
+
+		case EFFECT_CREATE_EDGE:
+			v.count = r->create_edge.count;
+			v.has_relation = true; v.relation_id = r->create_edge.relation_id;
+			v.attr_ids = r->create_edge.attr_ids; v.n_attrs = r->create_edge.n_attrs;
+			v.ids = &r->create_edge.ids;
+			v.src = &r->create_edge.src; v.dst = &r->create_edge.dst;
+			v.values = r->create_edge.values; v.n_values = r->create_edge.n_values;
+			break;
+
+		case EFFECT_DELETE_NODE:
+			v.count = r->delete_node.count;
+			v.labels = r->delete_node.labels; v.n_labels = r->delete_node.n_labels;
+			v.ids = &r->delete_node.ids;
+			break;
+
+		case EFFECT_DELETE_EDGE:
+			v.count = r->delete_edge.count;
+			v.has_relation = true; v.relation_id = r->delete_edge.relation_id;
+			v.ids = &r->delete_edge.ids;
+			v.src = &r->delete_edge.src; v.dst = &r->delete_edge.dst;
+			break;
+
+		case EFFECT_SET_LABELS:
+			v.count = r->set_labels.count;
+			v.labels = r->set_labels.labels; v.n_labels = r->set_labels.n_labels;
+			v.ids = &r->set_labels.ids;
+			break;
+
+		case EFFECT_REMOVE_LABELS:
+			v.count = r->remove_labels.count;
+			v.labels = r->remove_labels.labels; v.n_labels = r->remove_labels.n_labels;
+			v.ids = &r->remove_labels.ids;
+			break;
+
+		case EFFECT_ADD_SCHEMA:
+		case EFFECT_ADD_ATTRIBUTE:
+		case EFFECT_CREATE_INDEX:
+		case EFFECT_DROP_INDEX:
+		case EFFECT_CREATE_CONSTRAINT:
+		case EFFECT_DROP_CONSTRAINT:
+			break;  // singular: handled before the generic path
+	}
+
+	return v;
 }
 
 static void _encode_record
@@ -201,21 +323,25 @@ static void _encode_record
 	// carry no count, which is the one exception to every batchable record
 	// being `opcode . count . blocks`
 	if(r->opcode == EFFECT_ADD_SCHEMA) {
-		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->schema_type,
+		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->add_schema.schema_type,
 				sizeof(SchemaType));
-		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->schema_id, sizeof(int));
-		_write_name(r->name, out);
+		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->add_schema.schema_id,
+				sizeof(int));
+		_write_name(r->add_schema.name, out);
 		return;
 	}
 
 	if(r->opcode == EFFECT_ADD_ATTRIBUTE) {
 		// two bytes, where a schema id beside it is four
-		EffectsV3_WriteUint(out, r->attr_id, sizeof(AttributeID));
-		_write_name(r->name, out);
+		EffectsV3_WriteUint(out, r->add_attribute.attr_id, sizeof(AttributeID));
+		_write_name(r->add_attribute.name, out);
 		return;
 	}
 
-	EffectsV3_WriteUint(out, r->count, sizeof(uint32_t));
+	// every field the shared shape needs, selected from this opcode's arm once
+	const RecordView v = _view(r);
+
+	EffectsV3_WriteUint(out, v.count, sizeof(uint32_t));
 
 	//--------------------------------------------------------------------------
 	// the shape, once, BEFORE the ids
@@ -231,13 +357,13 @@ static void _encode_record
 		case EFFECT_DELETE_NODE:
 		case EFFECT_SET_LABELS:
 		case EFFECT_REMOVE_LABELS:
-			_write_label_set(r, out);
+			_write_label_set(v.labels, v.n_labels, out);
 			break;
 
 		case EFFECT_UPDATE_EDGE:
 		case EFFECT_CREATE_EDGE:
 		case EFFECT_DELETE_EDGE:
-			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->relation_id,
+			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)v.relation_id,
 					sizeof(RelationID));
 			break;
 
@@ -253,7 +379,7 @@ static void _encode_record
 		case EFFECT_UPDATE_EDGE:
 		case EFFECT_CREATE_NODE:
 		case EFFECT_CREATE_EDGE:
-			_write_attr_ids(r, out);
+			_write_attr_ids(v.attr_ids, v.n_attrs, out);
 			break;
 		default:
 			break;
@@ -263,14 +389,14 @@ static void _encode_record
 	// the rows
 	//--------------------------------------------------------------------------
 
-	EffectsV3_EncodeIdList(&r->ids, out);
+	EffectsV3_EncodeIdList(v.ids, out);
 
 	// endpoints are per edge rather than per record, so they are their own
 	// lists. Only create and delete carry them: an update's endpoints are
 	// recoverable from the graph, which is why UPDATE_EDGE has none
 	if(r->opcode == EFFECT_CREATE_EDGE || r->opcode == EFFECT_DELETE_EDGE) {
-		EffectsV3_EncodeIdList(&r->src, out);
-		EffectsV3_EncodeIdList(&r->dst, out);
+		EffectsV3_EncodeIdList(v.src, out);
+		EffectsV3_EncodeIdList(v.dst, out);
 	}
 
 	if(raw != NULL) {
@@ -282,7 +408,7 @@ static void _encode_record
 			rm_free(buf);
 		}
 	} else {
-		_write_attr_values(r, out);
+		_write_attr_values(v.values, v.n_values, out);
 	}
 }
 
@@ -315,15 +441,16 @@ void EffectsV3_EncodeRecordWithRawValues
 // of them wrong.
 static void _write_attr_refs
 (
-	const EffectsV3Record *r,  // record whose refs to write
-	size_t count_width,        // 2 for an index, 1 for a constraint
-	EffectsBytes *out          // sink
+	const EffectsV3AttrRef *attrs,  // the (id, name) pairs
+	uint16_t n,                     // how many
+	size_t count_width,             // 2 for an index, 1 for a constraint
+	EffectsBytes *out               // sink
 ) {
-	EffectsV3_WriteUint(out, r->n_attrs_ref, count_width);
+	EffectsV3_WriteUint(out, n, count_width);
 
-	for(uint16_t i = 0; i < r->n_attrs_ref; i++) {
-		EffectsV3_WriteUint(out, r->attrs_ref[i].id, sizeof(AttributeID));
-		_write_name(r->attrs_ref[i].name, out);
+	for(uint16_t i = 0; i < n; i++) {
+		EffectsV3_WriteUint(out, attrs[i].id, sizeof(AttributeID));
+		_write_name(attrs[i].name, out);
 	}
 }
 
@@ -357,11 +484,9 @@ static void _write_opt_u64
 // That is why a vector block carries five values behind four markers.
 static void _write_index_options
 (
-	const EffectsV3Record *r,  // record whose options to write
-	EffectsBytes *out          // sink
+	const EffectsV3IndexOptions *o,  // options to write
+	EffectsBytes *out                // sink
 ) {
-	const EffectsV3IndexOptions *o = &r->options;
-
 	// language
 	EffectsV3_WriteUint(out, o->has_language ? 1 : 0, 1);
 	if(o->has_language) {
@@ -427,33 +552,65 @@ static void _encode_ddl_record
 	const EffectsV3Record *r,  // record to write
 	EffectsBytes *out          // sink
 ) {
-	if(r->opcode == EFFECT_CREATE_INDEX || r->opcode == EFFECT_DROP_INDEX) {
-		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->schema_type,
-				sizeof(SchemaType));
-		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->schema_id, sizeof(int));
-		_write_name(r->name, out);
-		EffectsV3_WriteUint(out, r->field_type, 4);
-		_write_attr_refs(r, 2, out);
+	// ONE ARM PER OPCODE, where this was two branches serving four.
+	//
+	// That shape only ever worked because the flat record let four opcodes
+	// alias one set of fields; the split model removes the aliasing, and there
+	// is no field name correct for both halves of either old branch. Reading
+	// r->create_index.name when the opcode is DROP_INDEX is valid C and wrong,
+	// so the branches follow the opcodes rather than the wire layout they
+	// happen to share.
+	switch(r->opcode) {
+		case EFFECT_CREATE_INDEX:
+			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->create_index.schema_type,
+					sizeof(SchemaType));
+			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->create_index.schema_id,
+					sizeof(int));
+			_write_name(r->create_index.name, out);
+			EffectsV3_WriteUint(out, r->create_index.field_type, 4);
+			_write_attr_refs(r->create_index.attrs, r->create_index.n_attrs, 2, out);
+			_write_index_options(&r->create_index.options, out);
+			break;
 
-		// a drop carries none, and that is not the same as carrying empty ones
-		if(r->opcode == EFFECT_CREATE_INDEX) {
-			_write_index_options(r, out);
-		}
-		return;
+		case EFFECT_DROP_INDEX:
+			// no options block at all - not an empty one. The type has no
+			// field for it, which is what the opcode check here used to assert
+			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->drop_index.schema_type,
+					sizeof(SchemaType));
+			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->drop_index.schema_id,
+					sizeof(int));
+			_write_name(r->drop_index.name, out);
+			EffectsV3_WriteUint(out, r->drop_index.field_type, 4);
+			_write_attr_refs(r->drop_index.attrs, r->drop_index.n_attrs, 2, out);
+			break;
+
+		case EFFECT_CREATE_CONSTRAINT:
+			EffectsV3_WriteUint(out, r->create_constraint.constraint_type, 4);
+			EffectsV3_WriteUint(out, r->create_constraint.entity_type, 4);
+			// the one place v3 carries more than C: a replica never validates,
+			// so the announcement is the only thing that can tell it an
+			// enforcing constraint from one still building
+			EffectsV3_WriteUint(out, r->create_constraint.status, 4);
+			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->create_constraint.schema_id,
+					sizeof(int));
+			_write_name(r->create_constraint.name, out);
+			_write_attr_refs(r->create_constraint.attrs,
+					r->create_constraint.n_attrs, 1, out);
+			break;
+
+		case EFFECT_DROP_CONSTRAINT:
+			EffectsV3_WriteUint(out, r->drop_constraint.constraint_type, 4);
+			EffectsV3_WriteUint(out, r->drop_constraint.entity_type, 4);
+			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->drop_constraint.schema_id,
+					sizeof(int));
+			_write_name(r->drop_constraint.name, out);
+			_write_attr_refs(r->drop_constraint.attrs,
+					r->drop_constraint.n_attrs, 1, out);
+			break;
+
+		default:
+			ASSERT(false && "not a DDL record");
+			break;
 	}
-
-	EffectsV3_WriteUint(out, r->constraint_type, 4);
-	EffectsV3_WriteUint(out, r->entity_type, 4);
-
-	// the one place v3 carries more than C: a replica never validates, so the
-	// announcement is the only thing that can tell it an enforcing constraint
-	// from one still building. A drop has no such need and omits it
-	if(r->opcode == EFFECT_CREATE_CONSTRAINT) {
-		EffectsV3_WriteUint(out, r->status, 4);
-	}
-
-	EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->schema_id, sizeof(int));
-	_write_name(r->name, out);
-	_write_attr_refs(r, 1, out);
 }
 
