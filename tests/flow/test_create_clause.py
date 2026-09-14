@@ -96,3 +96,43 @@ class testCreateClause():
         self.env.assertEqual(v, 2)
         self.env.assertEqual(d, "B")
 
+    def test04_named_path_in_create(self):
+        """
+        Verify named path materialization in CREATE clauses (Issue #1279).
+
+        Asserts that:
+        1. Single-node paths `CREATE p=(n) RETURN p` return a valid 1-node path.
+        2. Relationship paths `CREATE p=(a)-[r]->(b) RETURN p` return a valid path with nodes and edges.
+        3. Built-in path functions (length, nodes) work as expected on the created path.
+        """
+        # Test 1: Single-node named path
+        q = "CREATE p=(n:Person {name: 'Alice'}) RETURN p"
+        res = self.g.query(q).result_set
+        self.env.assertEqual(len(res), 1)
+        path = res[0][0]
+        self.env.assertEqual(len(path.nodes()), 1)
+        self.env.assertEqual(len(path.relationships()), 0)
+        self.env.assertEqual(path.first_node().properties["name"], "Alice")
+
+        # Test 2: Multi-node relationship named path
+        q = "CREATE p=(a:Person {name: 'Bob'})-[r:KNOWS {since: 2026}]->(b:Person {name: 'Charlie'}) RETURN p"
+        res = self.g.query(q).result_set
+        self.env.assertEqual(len(res), 1)
+        path = res[0][0]
+        self.env.assertEqual(len(path.nodes()), 2)
+        self.env.assertEqual(len(path.relationships()), 1)
+        self.env.assertEqual(path.nodes()[0].properties["name"], "Bob")
+        self.env.assertEqual(path.nodes()[1].properties["name"], "Charlie")
+        self.env.assertEqual(path.relationships()[0].relation, "KNOWS")
+        self.env.assertEqual(path.relationships()[0].properties["since"], 2026)
+
+        # Test 3: Path functions length() and nodes() on created path
+        q = "CREATE p=(x:Item {id: 1})-[r:LINK]->(y:Item {id: 2}) RETURN length(p), nodes(p)"
+        res = self.g.query(q).result_set
+        self.env.assertEqual(len(res), 1)
+        path_len = res[0][0]
+        path_nodes = res[0][1]
+        self.env.assertEqual(path_len, 1)
+        self.env.assertEqual(len(path_nodes), 2)
+
+
