@@ -153,17 +153,35 @@ void Graph_CreateNode
 	uint label_count  // number of labels
 );
 
-// create a node at the id the caller states, rather than allocating one
+// create multiple nodes at the ids the caller states, rather than allocating
 //
-// used by effects apply: the replica accepts the primary's id instead of
-// inferring one and checking its guess. Returns false if the id is already
-// live, which is divergence.
-bool Graph_CreateNodeAtId
+// used by effects apply: the replica accepts the primary's ids instead of
+// inferring them and checking the guess. A batch rather than one at a time
+// because the ids are claimed off the free list in one pass.
+//
+// Claiming is SEPARATE from creation so the free list is walked once per
+// record rather than once per chunk.
+//
+// Returns false if any stated id is already live, or the batch names one
+// twice - either is divergence.
+bool Graph_ClaimNodeIds
 (
-	Graph *g,         // graph
-	Node *n,          // node to create; n->id is the id to create it AT
-	LabelID *labels,  // node's labels
-	uint label_count  // number of labels
+	Graph *g,
+	const uint64_t *ids,  // ids the primary stated
+	uint32_t n,           // how many
+	void **items          // out: 'n' storage slots, caller allocated
+);
+
+// create nodes into slots already claimed by Graph_ClaimNodeIds
+void Graph_CreateNodesAtIds
+(
+	Graph *g,            // graph
+	Node **nodes,        // array of nodes to create; each carries its id
+	void **items,        // storage slots from Graph_ClaimNodeIds
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,     // number of nodes
+	LabelID *labels,     // labels, same set applied to all nodes
+	uint label_count     // number of labels
 );
 
 
@@ -234,6 +252,32 @@ void Graph_CreateEdges
 	Edge **edges,       // edges to create
 	AttributeSet *sets  // [optional] attribute sets
 );
+
+// claim storage for edge ids stated by a primary
+//
+// see Graph_ClaimNodeIds - separate from creation so the free list is walked
+// once per record rather than once per chunk.
+//
+// Returns false if any stated id is already live, or the batch names one
+// twice - either is divergence.
+bool Graph_ClaimEdgeIds
+(
+	Graph *g,
+	const uint64_t *ids,  // ids the primary stated
+	uint32_t n,           // how many
+	void **items          // out: 'n' storage slots, caller allocated
+);
+
+// create edges into slots already claimed by Graph_ClaimEdgeIds
+void Graph_CreateEdgesAtIds
+(
+	Graph *g,           // graph on which to operate
+	RelationID r,       // relationship type
+	Edge **edges,       // edges to create; each edge's id is the id to use
+	void **items,       // storage slots from Graph_ClaimEdgeIds
+	AttributeSet *sets  // [optional] attribute sets
+);
+
 
 // deletes nodes from the graph
 void Graph_DeleteNodes

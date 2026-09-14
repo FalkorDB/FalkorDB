@@ -1422,6 +1422,141 @@ class testReplicaAcceptsPrimaryNodeId():
         self.env.assertEquals(sorted(ids.keys()), [2, 10, 20, 30])
 
 
+class testMixedFreeAndFreshIdsInOneRecord():
+    """One record claiming free-list ids AND ids past the high-water mark.
+
+    A realistic create mixes the two: the primary reuses what it has and then
+    allocates fresh. The two cases take different branches - one removes
+    entries from the free list, the other extends and must push every id it
+    STEPS OVER onto the free list - and interleaving them in a single record is
+    what exercises the boundary between them.
+
+    A skipped id that is not pushed is leaked. Nothing observable happens at
+    the time: the replica holds the right data, every count agrees, and the
+    leak only becomes visible when this node has to allocate for itself, which
+    is after promotion. So this asserts on the EXACT id set of later local
+    creates rather than on counts.
+
+    Setup: ids 0..4 exist, 1 and 3 are freed, high water is 5. The record
+    claims 1 and 3 off the list and 10 from beyond the mark, which must push
+    5, 6, 7, 8 and 9.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        # label :P = 0, attribute v = 0; ids 0..4
+        self.graph.query("UNWIND range(0, 4) AS i CREATE (:P {v: i})")
+
+    def _ids(self):
+        res = self.graph.query("MATCH (n:P) RETURN n.v, id(n) ORDER BY n.v")
+        return {row[0]: row[1] for row in res.result_set}
+
+    def test01_mixed_record_applies(self):
+        self.graph.query("MATCH (n:P {v: 1}) DELETE n")
+        self.graph.query("MATCH (n:P {v: 3}) DELETE n")
+
+        # 1 and 3 are on the free list; 10 is past the high-water mark of 5
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, payload(
+            rec_create_node(
+                count  = 3,
+                labels = [0],
+                attrs  = [0],
+                ids    = id_list(seg_range(1, 1), seg_range(3, 1),
+                                 seg_range(10, 1)),
+                values = [v_int(101), v_int(103), v_int(110)])))
+
+        ids = self._ids()
+        self.env.assertEquals(ids.get(101), 1)
+        self.env.assertEquals(ids.get(103), 3)
+        self.env.assertEquals(ids.get(110), 10)
+
+    def test02_the_skipped_ids_were_freed_not_leaked(self):
+        # 5, 6, 7, 8 and 9 were stepped over reaching 10 and must now be free.
+        # Six local creates therefore take those five and then one fresh id.
+        #
+        # If they had been leaked the free list would be empty and the six
+        # would run 11..16 - a different set, same count, which is why this
+        # asserts the set.
+        for i in range(6):
+            self.graph.query("CREATE (:P {v: %d})" % (200 + i))
+
+        ids = self._ids()
+        fresh = sorted(ids[200 + i] for i in range(6))
+        self.env.assertEquals(fresh, [5, 6, 7, 8, 9, 11],
+                              message=f"skipped ids were not freed: {fresh}")
+
+        # and nothing collided
+        self.env.assertEquals(len(set(ids.values())), len(ids))
+
+
+class testReplicaAcceptsPrimaryEdgeId():
+    """The edge half of testReplicaAcceptsPrimaryNodeId.
+
+    Edge ids come from the same kind of free list as node ids and the two
+    engines take from opposite ends of it, so this site fails identically the
+    first time an edge id is reused. It was never exercised by the workloads
+    that exposed the node case, which is the only reason it was not found at
+    the same time.
+
+    The second test is again the one that matters: it takes TWO local creates
+    to reach a free-list entry that was claimed but not removed.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        # :P = 0, :R = 0, attribute w = 0; edges take ids 0, 1, 2
+        self.graph.query(
+            "CREATE (a:P)-[:R {w: 0}]->(b:P), (a)-[:R {w: 1}]->(b), "
+            "(a)-[:R {w: 2}]->(b)")
+
+    def _edges(self):
+        res = self.graph.query(
+            "MATCH ()-[e:R]->() RETURN e.w, id(e) ORDER BY e.w")
+        return {row[0]: row[1] for row in res.result_set}
+
+    def test01_accepts_an_edge_id_c_would_not_have_chosen(self):
+        # free 0 then 1, so C pops 1 next while a Rust primary picks 0
+        self.graph.query("MATCH ()-[e:R {w: 0}]->() DELETE e")
+        self.graph.query("MATCH ()-[e:R {w: 1}]->() DELETE e")
+
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, payload(
+            rec_create_edge(
+                count  = 1,
+                r      = 0,
+                attrs  = [0],
+                ids    = id_list(seg_range(0, 1)),   # the primary says id 0
+                src    = id_list(seg_range(0, 1)),
+                dst    = id_list(seg_range(1, 1)),
+                values = [v_int(10)])))
+
+        self.env.assertEquals(self._edges().get(10), 0)
+
+    def test02_the_claimed_edge_id_left_the_free_list(self):
+        # two creates: the first takes 1 whether or not the list is correct,
+        # the second reaches 0 and overwrites the edge the effect created
+        self.graph.query("MATCH (a:P) WITH a LIMIT 1 "
+                         "MATCH (b:P) WHERE id(b) <> id(a) WITH a, b LIMIT 1 "
+                         "CREATE (a)-[:R {w: 20}]->(b)")
+        self.graph.query("MATCH (a:P) WITH a LIMIT 1 "
+                         "MATCH (b:P) WHERE id(b) <> id(a) WITH a, b LIMIT 1 "
+                         "CREATE (a)-[:R {w: 30}]->(b)")
+
+        edges = self._edges()
+        self.env.assertEquals(len(set(edges.values())), len(edges),
+                              message=f"edge ids collided: {edges}")
+        self.env.assertEquals(sorted(edges.keys()), [2, 10, 20, 30])
+
+
 class testEdgeConstraintResolvesAgainstEdgeSchema():
     """A constraint on a RELATIONSHIP must resolve against the edge schemas.
 
