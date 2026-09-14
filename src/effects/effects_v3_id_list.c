@@ -66,11 +66,18 @@ uint32_t EffectsV3Seg_Len
 (
 	const EffectsV3Seg *s  // segment
 ) {
+	// no `default:` here, and the reason is not style. When this was three
+	// kinds a default caught the bitmap case; adding RANGE_DESCENDING made it
+	// catch that too, so a descending range returned bitmap.len read out of a
+	// range union - and the garbage reached CRoaring as a bitmap pointer.
 	switch(s->kind) {
-		case EFFECTS_V3_SEG_RANGE_ASCENDING:  return s->range.len;
-		case EFFECTS_V3_SEG_REPEAT: return s->repeat.count;
-		default:                    return s->bitmap.len;
+		case EFFECTS_V3_SEG_RANGE_ASCENDING:
+		case EFFECTS_V3_SEG_RANGE_DESCENDING: return s->range.len;
+		case EFFECTS_V3_SEG_REPEAT:           return s->repeat.count;
+		case EFFECTS_V3_SEG_SET_ASCENDING:
+		case EFFECTS_V3_SEG_SET_DESCENDING:   return s->bitmap.len;
 	}
+	return 0;  // unreachable: the switch is exhaustive
 }
 
 uint64_t EffectsV3Seg_Min
@@ -79,15 +86,17 @@ uint64_t EffectsV3Seg_Min
 ) {
 	switch(s->kind) {
 		case EFFECTS_V3_SEG_RANGE_ASCENDING:
-			// a descending range's base is its highest id
-			return s->descending
-				? s->range.base - (uint64_t)(s->range.len - 1)
-				: s->range.base;
+			return s->range.base;
+		case EFFECTS_V3_SEG_RANGE_DESCENDING:
+			// a descending range's base is its HIGHEST id
+			return s->range.base - (uint64_t)(s->range.len - 1);
 		case EFFECTS_V3_SEG_REPEAT:
 			return s->repeat.id;
-		default:
+		case EFFECTS_V3_SEG_SET_ASCENDING:
+		case EFFECTS_V3_SEG_SET_DESCENDING:
 			return s->bitmap.min;
 	}
+	return 0;  // unreachable: the switch is exhaustive
 }
 
 uint64_t EffectsV3Seg_Max
@@ -96,22 +105,29 @@ uint64_t EffectsV3Seg_Max
 ) {
 	switch(s->kind) {
 		case EFFECTS_V3_SEG_RANGE_ASCENDING:
-			return s->descending
-				? s->range.base
-				: s->range.base + (uint64_t)(s->range.len - 1);
+			return s->range.base + (uint64_t)(s->range.len - 1);
+		case EFFECTS_V3_SEG_RANGE_DESCENDING:
+			return s->range.base;
 		case EFFECTS_V3_SEG_REPEAT:
 			return s->repeat.id;
-		default:
+		case EFFECTS_V3_SEG_SET_ASCENDING:
+		case EFFECTS_V3_SEG_SET_DESCENDING:
 			return s->bitmap.max;
 	}
+	return 0;  // unreachable: the switch is exhaustive
 }
 
 size_t EffectsV3Seg_EncodedLen
 (
 	const EffectsV3Seg *s  // segment
 ) {
+	// exhaustive, no `default:`. This is the cost model the collapse rule
+	// compares against, and a default catching RANGE_DESCENDING priced a
+	// descending range as a bitmap - reading a roaring pointer out of a range
+	// union and handing it to CRoaring.
 	switch(s->kind) {
 		case EFFECTS_V3_SEG_RANGE_ASCENDING:
+		case EFFECTS_V3_SEG_RANGE_DESCENDING:
 			return 1
 				+ EffectsV3_WidthFor(s->range.base)
 				+ EffectsV3_WidthFor(s->range.len);
@@ -119,11 +135,13 @@ size_t EffectsV3Seg_EncodedLen
 			return 1
 				+ EffectsV3_WidthFor(s->repeat.id)
 				+ EffectsV3_WidthFor(s->repeat.count);
-		default:
+		case EFFECTS_V3_SEG_SET_ASCENDING:
+		case EFFECTS_V3_SEG_SET_DESCENDING:
 			// header byte, u32 length prefix, then the blob itself
 			return 1 + 4
 				+ roaring64_bitmap_portable_size_in_bytes(s->bitmap.bitmap);
 	}
+	return 0;  // unreachable: the switch is exhaustive
 }
 
 //------------------------------------------------------------------------------
@@ -199,9 +217,10 @@ static void _push_singleton
 	uint64_t id                 // the id
 ) {
 	EffectsV3Seg s = {
-		.kind       = EFFECTS_V3_SEG_RANGE_ASCENDING,
-		.descending = false,
-		.range      = { .base = id, .len = 1 },
+		// a lone id has no direction yet; ASCENDING is the convention and the
+		// id after it rewrites the kind if it steps down
+		.kind  = EFFECTS_V3_SEG_RANGE_ASCENDING,
+		.range = { .base = id, .len = 1 },
 	};
 
 	_append(b, s);
@@ -249,9 +268,10 @@ static void _maybe_collapse_run
 	roaring64_bitmap_run_optimize(bitmap);
 
 	EffectsV3Seg collapsed = {
-		.kind       = EFFECTS_V3_SEG_SET_ASCENDING,
-		.descending = (b->run_dir == RUN_DESCENDING),
-		.bitmap     = {
+		.kind = (b->run_dir == RUN_DESCENDING)
+			? EFFECTS_V3_SEG_SET_DESCENDING
+			: EFFECTS_V3_SEG_SET_ASCENDING,
+		.bitmap = {
 			.bitmap = bitmap,
 			.len    = len,
 			.min    = min,
@@ -288,7 +308,8 @@ void EffectsV3IdListBuilder_Push
 	//--------------------------------------------------------------------------
 
 	if(last != NULL) {
-		if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING) {
+		if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING ||
+		   last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING) {
 			// "is this the id one past the end?" - a question with no answer at
 			// the top of the id space, where base + len leaves it. The wrap is
 			// defined in C rather than a trap, which makes it worse here than
@@ -296,7 +317,7 @@ void EffectsV3IdListBuilder_Push
 			// after the highest id extends the range instead of starting a new
 			// segment, and the result claims an id that does not exist and
 			// reports max below min. So the sum is only asked for when it exists
-			if(!last->descending &&
+			if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING &&
 			   last->range.base <= UINT64_MAX - (uint64_t)last->range.len &&
 			   id == last->range.base + (uint64_t)last->range.len) {
 				// one more consecutive id: every bulk create, every
@@ -305,7 +326,7 @@ void EffectsV3IdListBuilder_Push
 				return;
 			}
 
-			if(last->descending &&
+			if(last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING &&
 			   last->range.base >= (uint64_t)last->range.len &&
 			   id == last->range.base - (uint64_t)last->range.len) {
 				// the mirror, one more step down
@@ -322,14 +343,16 @@ void EffectsV3IdListBuilder_Push
 		} else {
 			// the run already collapsed and this id continues it: straight into
 			// the bitmap, no new segment and nothing left to weigh
-			if(!last->descending && id > last->bitmap.max) {
+			if(last->kind == EFFECTS_V3_SEG_SET_ASCENDING &&
+			   id > last->bitmap.max) {
 				roaring64_bitmap_add(last->bitmap.bitmap, id);
 				last->bitmap.len++;
 				last->bitmap.max = id;
 				return;
 			}
 
-			if(last->descending && id < last->bitmap.min) {
+			if(last->kind == EFFECTS_V3_SEG_SET_DESCENDING &&
+			   id < last->bitmap.min) {
 				roaring64_bitmap_add(last->bitmap.bitmap, id);
 				last->bitmap.len++;
 				last->bitmap.min = id;
@@ -345,7 +368,7 @@ void EffectsV3IdListBuilder_Push
 	//--------------------------------------------------------------------------
 
 	if(last != NULL && last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING &&
-	   !last->descending && last->range.len == 1) {
+	   last->range.len == 1) {
 		uint64_t base = last->range.base;
 
 		// the mirror question - "is this the id one BELOW base?" - and it has no
@@ -354,8 +377,10 @@ void EffectsV3IdListBuilder_Push
 		// descending from base 0, which then steps below the id space
 		if(base > 0 && id == base - 1) {
 			// it steps down: the same payload, read the other way
-			last->descending = true;
-			last->range.len  = 2;
+			// the kind changes rather than a flag flipping: the same payload,
+			// read the other way
+			last->kind      = EFFECTS_V3_SEG_RANGE_DESCENDING;
+			last->range.len = 2;
 			if(b->run_dir == RUN_UNDECIDED) {
 				b->run_dir = RUN_DESCENDING;
 			}
@@ -366,8 +391,9 @@ void EffectsV3IdListBuilder_Push
 			// a repeat of the immediately preceding id folds into a Repeat -
 			// the supernode case, where a whole endpoint list is one value.
 			// It ends any run: a bitmap holds a value once
+			// a Repeat has no direction to clear - the kind carries it and
+			// REPEAT has none
 			last->kind         = EFFECTS_V3_SEG_REPEAT;
-			last->descending   = false;
 			last->repeat.id    = base;
 			last->repeat.count = 2;
 
@@ -462,49 +488,35 @@ EffectsV3IdList EffectsV3IdListBuilder_ToIdList
 		const EffectsV3Seg *s = b->segments + i;
 		EffectsV3IdListSegment  *o = l.segments + i;
 
-		// THE CONVERSION IS WHERE DIRECTION JOINS THE KIND.
-		//
-		// The builder still carries direction as a flag beside a kind; the
-		// contract's segment folds the two into one closed set, so a
-		// descending Repeat cannot be spelled. Mapping here rather than
-		// changing the builder keeps every decision in this file - the
-		// extension arms, the collapse rule, the lone-id rewrite - untouched
-		// by the type change, so a byte difference cannot come from it.
+		// The builder's kind and the contract's kind are now the same closed
+		// set, so this copies rather than translating. It used to be where
+		// direction joined the kind; the builder carries it now.
+		o->kind = s->kind;
+
 		switch(s->kind) {
-			case EFFECTS_V3_SEG_RANGE_ASCENDING: {
-				o->kind = s->descending
-					? EFFECTS_V3_SEG_RANGE_DESCENDING
-					: EFFECTS_V3_SEG_RANGE_ASCENDING;
-
-				uint8_t  *vw = s->descending
-					? &o->range_descending.value_width
-					: &o->range_ascending.value_width;
-				uint8_t  *cw = s->descending
-					? &o->range_descending.count_width
-					: &o->range_ascending.count_width;
-				uint64_t *bs = s->descending
-					? &o->range_descending.base
-					: &o->range_ascending.base;
-				uint64_t *ln = s->descending
-					? &o->range_descending.len
-					: &o->range_ascending.len;
-
-				*bs = s->range.base;
-				*ln = s->range.len;
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+				o->range_ascending.base = s->range.base;
+				o->range_ascending.len  = s->range.len;
 				// a freshly built value takes the narrowest width that holds
-				// it; a decoded one keeps the width its peer chose.
-				//
-				// Stored as the HEADER CODE, 0..3, which is what the shared
-				// EffectsV3IdListSegment declares the field to be - the decoder
-				// fills it from the header bits, so a byte count here would
-				// mean the two directions disagreed about the same struct
-				*vw = EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.base));
-				*cw = EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.len));
+				// it; a decoded one keeps the width its peer chose. Stored as
+				// the HEADER CODE, 0..3, which is what the contract declares
+				// the field to be
+				o->range_ascending.value_width =
+					EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.base));
+				o->range_ascending.count_width =
+					EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.len));
 				break;
-			}
+
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+				o->range_descending.base = s->range.base;
+				o->range_descending.len  = s->range.len;
+				o->range_descending.value_width =
+					EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.base));
+				o->range_descending.count_width =
+					EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.len));
+				break;
 
 			case EFFECTS_V3_SEG_REPEAT:
-				o->kind         = EFFECTS_V3_SEG_REPEAT;
 				o->repeat.id    = s->repeat.id;
 				o->repeat.count = s->repeat.count;
 				o->repeat.value_width =
@@ -513,19 +525,16 @@ EffectsV3IdList EffectsV3IdListBuilder_ToIdList
 					EffectsV3_WidthCode(EffectsV3_WidthFor(s->repeat.count));
 				break;
 
-			default: {
-				size_t n =
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+			case EFFECTS_V3_SEG_SET_DESCENDING: {
+				const size_t n =
 					roaring64_bitmap_portable_size_in_bytes(s->bitmap.bitmap);
+				const bool desc = (s->kind == EFFECTS_V3_SEG_SET_DESCENDING);
 
-				o->kind = s->descending
-					? EFFECTS_V3_SEG_SET_DESCENDING
-					: EFFECTS_V3_SEG_SET_ASCENDING;
-
-				unsigned char **blob = s->descending
+				unsigned char **blob = desc
 					? &o->set_descending.blob : &o->set_ascending.blob;
-				uint32_t *bn = s->descending
-					? &o->set_descending.n : &o->set_ascending.n;
-				uint64_t *card = s->descending
+				uint32_t *bn = desc ? &o->set_descending.n : &o->set_ascending.n;
+				uint64_t *card = desc
 					? &o->set_descending.cardinality
 					: &o->set_ascending.cardinality;
 
