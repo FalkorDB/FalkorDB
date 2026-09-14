@@ -59,9 +59,10 @@ static uint64_t *_expand(const EffectsV3IdListBuilder *b, uint64_t *out_n) {
 			for(uint32_t j = 0; j < len && k < total; j++) {
 				out[k++] = s->repeat.id;
 			}
-		} else if(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING) {
+		} else if(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING ||
+		          s->kind == EFFECTS_V3_SEG_RANGE_DESCENDING) {
 			for(uint32_t j = 0; j < len && k < total; j++) {
-				out[k++] = s->descending
+				out[k++] = (s->kind == EFFECTS_V3_SEG_RANGE_DESCENDING)
 					? s->range.base - j
 					: s->range.base + j;
 			}
@@ -71,7 +72,8 @@ static uint64_t *_expand(const EffectsV3IdListBuilder *b, uint64_t *out_n) {
 			uint64_t *buf = malloc(sizeof(uint64_t) * (card > 0 ? card : 1));
 			roaring64_bitmap_to_uint64_array(s->bitmap.bitmap, buf);
 			for(uint64_t j = 0; j < card && k < total; j++) {
-				out[k++] = s->descending ? buf[card - 1 - j] : buf[j];
+				out[k++] = (s->kind == EFFECTS_V3_SEG_SET_DESCENDING)
+					? buf[card - 1 - j] : buf[j];
 			}
 			free(buf);
 		}
@@ -111,7 +113,7 @@ void test_effectsV3IdList_ascendingRunIsOneSegment(void) {
 
 	const EffectsV3Seg *s = EffectsV3IdListBuilder_Segment(b, 0);
 	TEST_ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING);
-	TEST_ASSERT(!s->descending);
+	TEST_ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING);
 	TEST_ASSERT_(s->range.base == 5 && s->range.len == 6,
 			"expected Range{base:5,len:6}, got Range{base:%llu,len:%u}",
 			(unsigned long long)s->range.base, s->range.len);
@@ -132,8 +134,8 @@ void test_effectsV3IdList_descendingRunIsOneSegment(void) {
 			EffectsV3IdListBuilder_SegmentCount(b));
 
 	const EffectsV3Seg *s = EffectsV3IdListBuilder_Segment(b, 0);
-	TEST_ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING);
-	TEST_ASSERT_(s->descending, "a downward run must set the descending flag");
+	TEST_ASSERT_(s->kind == EFFECTS_V3_SEG_RANGE_DESCENDING,
+			"a downward run must be a DESCENDING range - direction is the kind");
 	TEST_ASSERT_(s->range.base == 10 && s->range.len == 6,
 			"a descending range's base is its FIRST and HIGHEST id: expected "
 			"base 10 len 6, got base %llu len %u",
@@ -163,10 +165,12 @@ void test_effectsV3IdList_repeatIsOneSegment(void) {
 			EffectsV3IdListBuilder_SegmentCount(b));
 
 	const EffectsV3Seg *s = EffectsV3IdListBuilder_Segment(b, 0);
-	TEST_ASSERT(s->kind == EFFECTS_V3_SEG_REPEAT);
-	TEST_ASSERT_(!s->descending,
-			"a Repeat has no direction and must never set the flag - a decoder "
-			"rejects it there rather than ignoring it");
+	// a Repeat carrying a direction used to be representable and guarded
+	// against; the closed kind cannot spell one, so this asserts the kind and
+	// the old flag check is retired rather than translated
+	TEST_ASSERT_(s->kind == EFFECTS_V3_SEG_REPEAT,
+			"5 copies of one id must be a Repeat, which has no direction to "
+			"carry - the kind cannot express one");
 	TEST_ASSERT_(s->repeat.id == 7 && s->repeat.count == 5,
 			"expected Repeat{id:7,count:5}, got Repeat{id:%llu,count:%u}",
 			(unsigned long long)s->repeat.id, s->repeat.count);
@@ -180,7 +184,7 @@ void test_effectsV3IdList_loneIdTakesItsDirectionFromTheNext(void) {
 		BUILD(b, 5, 6);
 		const EffectsV3Seg *s = EffectsV3IdListBuilder_Segment(b, 0);
 		TEST_ASSERT_(EffectsV3IdListBuilder_SegmentCount(b) == 1 &&
-				!s->descending && s->range.len == 2,
+				s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING && s->range.len == 2,
 				"5 then 6 should be one ascending Range of 2");
 		EffectsV3IdListBuilder_Free(b);
 	}
@@ -188,7 +192,7 @@ void test_effectsV3IdList_loneIdTakesItsDirectionFromTheNext(void) {
 		BUILD(b, 5, 4);
 		const EffectsV3Seg *s = EffectsV3IdListBuilder_Segment(b, 0);
 		TEST_ASSERT_(EffectsV3IdListBuilder_SegmentCount(b) == 1 &&
-				s->descending && s->range.base == 5 && s->range.len == 2,
+				s->kind == EFFECTS_V3_SEG_RANGE_DESCENDING && s->range.base == 5 && s->range.len == 2,
 				"5 then 4 should REWRITE the lone range descending, not open a "
 				"second segment");
 		EffectsV3IdListBuilder_Free(b);
