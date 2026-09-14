@@ -8,6 +8,7 @@
 #include "effects_v3_encode.h"
 #include "effects_internal.h"
 #include "../util/rmalloc.h"
+#include "../../deps/rax/rax.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -71,6 +72,17 @@ struct EffectsV3Grouping {
 	PendingUpdate *updates;
 	uint32_t n_updates;
 	uint32_t cap_updates;
+
+	// (opcode, entity id) -> index into 'updates', plus one
+	//
+	// The array stays: flush walks it in arrival order, and that order is what
+	// the emitted record's rows follow. This is only the index that finds an
+	// entity again, which was a linear scan over every entity staged so far.
+	//
+	// It stores an INDEX rather than a pointer because 'updates' is realloc'd,
+	// and index+1 so that the first entry is distinguishable from a miss
+	// without leaning on what raxFind returns for a NULL value.
+	rax *update_index;
 };
 
 //------------------------------------------------------------------------------
@@ -177,6 +189,7 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	g->cap_updates       = 4;
 	g->updates           = rm_calloc(g->cap_updates, sizeof(PendingUpdate));
 	g->n_updates         = 0;
+	g->update_index      = raxNew();
 
 	return g;
 }
@@ -386,7 +399,34 @@ static int _cmp_staged_attr(const void *a, const void *b) {
 	return (x < y) ? -1 : (x > y) ? 1 : 0;
 }
 
+// the index key: opcode then entity id
+//
+// _update_for matches on both, so both are in the key. The byte order is
+// whatever the host uses - this key never leaves the process and is only ever
+// compared for equality, so it needs no canonical form.
+static inline size_t _update_key
+(
+	unsigned char *buf,  // at least 12 bytes
+	EffectType opcode,   // UPDATE_NODE or UPDATE_EDGE
+	uint64_t id          // entity id
+) {
+	uint32_t op = (uint32_t)opcode;
+	memcpy(buf, &op, sizeof(op));
+	memcpy(buf + sizeof(op), &id, sizeof(id));
+	return sizeof(op) + sizeof(id);
+}
+
 // find the staged update for this entity, or open one
+//
+// WAS A LINEAR SCAN, and it made a single-attribute update O(n^2) over the
+// entities in the statement. `MATCH (n:P) SET n.age = n.age + 1` touches each
+// entity once, so the scan never hit: it walked everything staged so far,
+// found nothing, and appended. Measured at 462,415 instructions per entity at
+// n=100,000 against v2's flat 6,588, with 1,456 of 1,471 profile samples on
+// the scan line.
+//
+// The deduplication it performs is real but only multi-attribute writes need
+// it, and they were making every single-attribute write pay for it.
 static PendingUpdate *_update_for
 (
 	EffectsV3Grouping *g,   // accumulator
@@ -396,11 +436,12 @@ static PendingUpdate *_update_for
 	uint16_t n_labels,      // how many
 	RelationID relation_id  // relationship type
 ) {
-	for(uint32_t i = 0; i < g->n_updates; i++) {
-		PendingUpdate *u = g->updates + i;
-		if(u->opcode == opcode && u->id == id) {
-			return u;
-		}
+	unsigned char key[12];
+	size_t klen = _update_key(key, opcode, id);
+
+	void *found = raxFind(g->update_index, key, klen);
+	if(found != raxNotFound) {
+		return g->updates + ((uintptr_t)found - 1);
 	}
 
 	if(g->n_updates == g->cap_updates) {
@@ -409,8 +450,11 @@ static PendingUpdate *_update_for
 				g->cap_updates * sizeof(PendingUpdate));
 	}
 
-	PendingUpdate *u = g->updates + g->n_updates++;
+	const uint32_t idx = g->n_updates++;
+	PendingUpdate *u = g->updates + idx;
 	memset(u, 0, sizeof(*u));
+
+	raxInsert(g->update_index, key, klen, (void *)(uintptr_t)(idx + 1), NULL);
 
 	u->opcode      = opcode;
 	u->id          = id;
@@ -562,6 +606,10 @@ static void _flush_updates(EffectsV3Grouping *g) {
 	}
 
 	g->n_updates = 0;
+
+	// the indices it holds now point past the end of a zero-length array
+	raxFree(g->update_index);
+	g->update_index = raxNew();
 }
 
 uint32_t EffectsV3Grouping_RecordCount
@@ -677,6 +725,7 @@ void EffectsV3Grouping_Free
 	for(uint32_t i = 0; i < g->n_updates; i++) {
 		_update_release(g->updates + i);
 	}
+	raxFree(g->update_index);
 	rm_free(g->updates);
 
 	rm_free(g->groups);
