@@ -513,21 +513,28 @@ static EffectsV3Status _ReadRelType
 
 // POINTERS INTO WHICHEVER ARM THE OPCODE SELECTS
 //
-// Records 1-8 are read by one routine because they are one wire shape - opcode,
-// count, shape, attr ids, IdList(s), values - and only the subset of fields
-// each opcode carries differs. The typed model puts those fields in eight
-// different structs, so the reader gathers pointers to them once and fills
-// through the pointers.
+// Records 1-8 are one wire shape - opcode, count, shape, attr ids, IdList(s),
+// values - and differ only in which of those fields they carry. The typed model
+// puts them in eight structs, so this binds pointers once and the reader fills
+// through them.
 //
-// The alternative is eight readers differing by a few lines each. This file
-// already fixed two bugs that existed because a rule was written out more than
-// once (the per-entry emptiness check, the segment blob free), and the record
-// parser is the last place worth duplicating.
+// WHAT IT BUYS, and it is one thing rather than three: this table is the ONLY
+// statement of which opcode carries what, and it has two consumers - the reader
+// below and _RecordFree. Written as eight direct switch arms, adding a field
+// means editing two switches, and forgetting the free half is a leak no test
+// need catch. It is also what lets the shape be derived (`f.labels != NULL`)
+// instead of restated, which is why the four _IsNodeShaped-style predicates
+// are gone.
 //
-// A NULL member means THIS OPCODE DOES NOT CARRY THAT FIELD, and the reader
-// tests for NULL rather than consulting a second list of which opcode has what.
-// That is what makes "DELETE_EDGE has endpoints but no values" a property of
-// this table instead of a rule repeated at every use site.
+// WHAT IT COSTS, measured rather than waved away: binding a member to the wrong
+// arm COMPILES CLEAN. Pointing UPDATE_EDGE's attr_ids at update_node's field
+// produces no error and no warning - the types are identical - where a direct
+// write inside `case EFFECT_UPDATE_EDGE:` would be self-evidently right. The
+// flow suite does catch it (four failures), so it is detectable, but by test
+// rather than by construction, and by-construction is what the typed contract
+// was introduced for. That makes this a close call, not a free win.
+//
+// A NULL member means THIS OPCODE DOES NOT CARRY THAT FIELD.
 typedef struct {
 	uint32_t        *count;
 	LabelID        **labels;
