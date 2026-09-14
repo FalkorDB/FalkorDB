@@ -10,6 +10,7 @@
 #include "effects_internal.h"
 #include "effects_v3.h"
 #include "effects_v3_stream.h"
+#include "../util/wire_string.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
@@ -406,13 +407,13 @@ static bool ApplyAddSchema
 	fread_assert(&t, sizeof(t), stream);
 
 	// read schema name
-	// read string length
-	size_t l;
-	fread_assert(&l, sizeof(l), stream);
-
-	// read string
-	char schema_name[l];
-	fread_assert(schema_name, l, stream);
+	//
+	// BOUNDED - see ReadWireString. This was a stack array sized by a length
+	// off the wire, read with a macro whose ASSERT compiles out in release.
+	char *schema_name = ReadWireString (stream) ;
+	if (schema_name == NULL) {
+		return false ;
+	}
 
 	// create schema
 	bool created = false ;
@@ -421,9 +422,11 @@ static bool ApplyAddSchema
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_SCHEMA targets schema '%s' which already "
 				"exists locally", schema_name) ;
+		rm_free (schema_name) ;
 		return false ;
 	}
 
+	rm_free (schema_name) ;
 	return true ;
 }
 
@@ -440,25 +443,27 @@ static bool ApplyAddAttribute
 	// attribute name
 	//--------------------------------------------------------------------------
 
-	// read attribute name length
-	size_t l ;
-	fread_assert (&l, sizeof (l), stream) ;
-
 	// read attribute name
-	char attr[l] ;
-	fread_assert (attr, l, stream) ;
+	//
+	// BOUNDED - see ReadWireString
+	char *attr = ReadWireString (stream) ;
+	if (attr == NULL) {
+		return false ;
+	}
 
 	// attr should not exist
 	if (GraphContext_GetAttributeID (gc, attr) != ATTRIBUTE_ID_NONE) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_ATTRIBUTE targets attribute '%s' which "
 				"already exists locally", attr) ;
+		rm_free (attr) ;
 		return false ;
 	}
 
 	// add attribute
 	GraphHub_FindOrAddAttribute (gc, attr, false) ;
 
+	rm_free (attr) ;
 	return true ;
 }
 
