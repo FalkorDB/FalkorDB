@@ -32,18 +32,22 @@
 //
 //------------------------------------------------------------------------------
 
-// the smallest a segment can be: a header byte plus a 1-byte value and a 1-byte
-// count (Range/Repeat at width code 0). Ascending is larger - header plus a u32
-// blob length - so this is the floor for any kind, and it is what lets a
-// segment count be rejected before it sizes an allocation
 // THE WIRE'S kind FIELD, bits 0-1 of the segment header. Distinct from
 // EffectsV3IdListSegmentKind, which folds direction in and so has five values
 // to the wire's three - these are the numbers on the bytes, and they do not
 // move.
+//
+// TODO: delete these once base carries EFFECTS_V3_WIRE_SEG_*. The mask that
+// extracts this field is already in effects_v3.h; the values it takes are not,
+// so the encoder duplicated them too. Being fixed at the root.
 #define WIRE_SEG_RANGE  0
 #define WIRE_SEG_SET    1
 #define WIRE_SEG_REPEAT 2
 
+// the smallest a segment can be: a header byte plus a 1-byte value and a 1-byte
+// count (Range/Repeat at width code 0). A Set is larger - header plus a u32
+// blob length - so this is the floor for any kind, and it is what lets a
+// segment count be rejected before it sizes an allocation
 #define SEGMENT_MIN_BYTES 3
 
 // the smallest an SIValue can be: the u32 SIType on its own, which is exactly
@@ -385,7 +389,7 @@ static EffectsV3Status _ReadIdList
 
 		// a segment that overruns what the record owes binds rows to the wrong
 		// entities rather than failing, so it fails here. This is also the
-		// Ascending cardinality check the format calls for: a bitmap one id
+		// Set cardinality check the format calls for: a bitmap one id
 		// short would land every later row on the wrong entity.
 		if (card > owed - total) {
 			_IdListFree (list) ;
