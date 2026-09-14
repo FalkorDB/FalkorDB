@@ -501,22 +501,35 @@ class testEffectsV3_06b_ConstraintSettlingRaces(_EffectsV3Base):
         # The 2 is the x=1 node from `_build` plus the one just created.
         #
         # This assertion has a recorded oddity, deliberately left in place. It
-        # has been observed failing as `[[1]] == [[2]]`, and every observation
-        # is on a build with `IdSpace::refuse_recycled` stubbed out: 2 sightings
-        # across 4 stubbed runs, against 0 across 8 serial runs on a clean
-        # build. It also never fires when this class runs alone, only after the
-        # earlier classes have.
+        # is observed failing as `[[1]] == [[2]]`, master short and replica
+        # right: the master's probe returns 1 while the replica returns 2, so
+        # the node the master just wrote is one the master itself cannot find.
         #
-        # What that means is NOT established -- nobody has reproduced it on
-        # demand, and no mechanism linking this count to that guard has been
-        # shown. Recorded as an observation on purpose, because guessing at the
-        # mechanism here and writing the guess down as a reason would send the
-        # next person after the wrong thing.
+        # An earlier note here said every sighting was on a build with
+        # `IdSpace::refuse_recycled` stubbed out. That correlation is dead --
+        # it has now fired twice in CI on CLEAN builds, with that guard fully
+        # intact (`id_space.rs:138`):
         #
-        # So: if this fails, check what build you are on before you touch the
-        # test. And do not "fix" the fact that it depends on the classes before
-        # it -- that dependency is the only condition under which it has ever
-        # been seen to fail, so it is evidence, not a defect.
+        #   636173893  flow-release  / release-flow-svc  amd64
+        #   af2120d80  flow-coverage / coverage-flow-svc amd64
+        #
+        # It is not deterministic either: re-running the second one passed
+        # without a code change. Roughly 2 sightings in 20 CI runs of this
+        # file, 0 in 3 serial local release runs. Both CI sightings are
+        # services mode at parallelism 4; it has still never been seen with
+        # this class running alone.
+        #
+        # What it MEANS is still not established -- nobody has reproduced it on
+        # demand, and no mechanism has been shown. Recorded as an observation
+        # on purpose, because guessing at the mechanism here and writing the
+        # guess down as a reason would send the next person after the wrong
+        # thing.
+        #
+        # So: if this fails, you are looking at a known flake and not at your
+        # own change -- check the two runs above first. And do not "fix" the
+        # fact that it depends on the classes before it: that dependency is
+        # still the only condition under which it has been seen, so it is
+        # evidence, not a defect.
         self.assert_agree("MATCH (n:Huge {a: 1, b: 1}) RETURN count(n)", [[2]])
 
 
