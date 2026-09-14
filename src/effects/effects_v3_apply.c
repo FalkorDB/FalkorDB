@@ -65,14 +65,14 @@
 // a cursor over an IdList that yields one id at a time
 //
 // holds no array proportional to the list's cardinality: a Range and a Repeat
-// are arithmetic, and an Ascending segment is walked with roaring's own
+// are arithmetic, and a Set segment is walked with roaring's own
 // iterator rather than converted to an array
 typedef struct {
 	const EffectsV3IdList *list;
 	uint32_t               seg;       // segment being walked
 	uint64_t               produced;  // ids yielded from that segment
-	roaring64_bitmap_t    *bitmap;    // Ascending only, owned
-	roaring64_iterator_t  *bit_it;    // Ascending only, owned
+	roaring64_bitmap_t    *bitmap;    // Set kinds only, owned
+	roaring64_iterator_t  *bit_it;    // Set kinds only, owned
 	bool                   broken;    // a bitmap failed to deserialize
 } IdIter;
 
@@ -89,7 +89,7 @@ static void _IdIter_Init
 	it->broken   = false ;
 }
 
-// release whatever the current Ascending segment allocated
+// release whatever the current Set segment allocated
 static void _IdIter_CloseSegment
 (
 	IdIter *it
