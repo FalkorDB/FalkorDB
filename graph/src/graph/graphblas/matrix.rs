@@ -83,11 +83,12 @@ use super::{
     GrB_DESC_RST1, GrB_DESC_RT0, GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC,
     GrB_DESC_SCT0, GrB_DESC_SCT0T1, GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1,
     GrB_DESC_T0, GrB_DESC_T0T1, GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32,
-    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64,
-    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
+    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_assign_BOOL, GrB_Matrix_build_BOOL,
+    GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp,
+    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
     GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
     GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
@@ -1335,6 +1336,42 @@ impl Matrix<bool> {
     ) {
         unsafe {
             let info = GrB_Matrix_setElement_BOOL(*self.m, value, i, j);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Set every pair in `rows` x `cols` to `true`, in one GraphBLAS call.
+    ///
+    /// `GrB_Matrix_assign_BOOL` takes the two index lists and forms the
+    /// cartesian product itself, so the product is never enumerated on this
+    /// side — which is the whole reason for the method. Setting a million
+    /// nodes' single label went from a million `setElement` calls to one.
+    ///
+    /// No mask, no accumulator and no descriptor: assign writes `x` at every
+    /// `(i, j)` in `I x J` and leaves everything outside that block alone,
+    /// which is the union this wants. Duplicates in either list are harmless —
+    /// assigning `true` twice is assigning `true`.
+    pub fn assign_product_true(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+    ) {
+        if rows.is_empty() || cols.is_empty() {
+            return;
+        }
+        unsafe {
+            let info = GrB_Matrix_assign_BOOL(
+                *self.m,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                true,
+                rows.as_ptr(),
+                rows.len() as u64,
+                cols.as_ptr(),
+                cols.len() as u64,
+                std::ptr::null_mut(),
+            );
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         self.has_pending.store(true, Ordering::Relaxed);

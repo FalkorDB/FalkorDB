@@ -2804,3 +2804,74 @@ class testFunctionCallsFlow(FlowTestsBase):
     #
     #     res = self.graph.query("UNWIND range(1, 5) AS x RETURN prev(tostring(x) + tostring(x))")
     #     self.env.assertEqual(res.result_set, [[None], ['11'], ['22'], ['33'], ['44']])
+
+    def test95_constant_argument_functions_evaluate_once_per_batch(self):
+        # A scalar function whose every argument is one value shared by the
+        # whole batch is called once and broadcast, instead of once per row.
+        # The saving composes down a chain — in
+        # `split(replace(trim(...), ...), ...)` each call hands the next a
+        # shared value — so these check the answers are unchanged, per row and
+        # in aggregate, for the shapes that fold.
+        q = "UNWIND range(0, 4) AS i RETURN i, split(replace(trim('  a,b,c  '), ',', ';'), ';') AS v"
+        res = self.graph.query(q)
+        self.env.assertEqual([r[0] for r in res.result_set], [0, 1, 2, 3, 4])
+        for r in res.result_set:
+            self.env.assertEqual(r[1], ['a', 'b', 'c'])
+
+        # Folded into an aggregate, and mixed with a per-row value so the
+        # broadcast has to line up with real columns rather than replace them.
+        res = self.graph.query(
+            "UNWIND range(0, 99) AS i RETURN count(split('a;b;c', ';')), sum(i)")
+        self.env.assertEqual(res.result_set, [[100, 4950]])
+        res = self.graph.query(
+            "UNWIND range(0, 3) AS i RETURN i + size(split('a;b;c', ';')) AS n ORDER BY n")
+        self.env.assertEqual([r[0] for r in res.result_set], [3, 4, 5, 6])
+
+        # Nested one level under a function that does vary per row.
+        res = self.graph.query(
+            "UNWIND ['x', 'y'] AS s RETURN s + toUpper(trim(' q ')) AS v ORDER BY v")
+        self.env.assertEqual([r[0] for r in res.result_set], ['xQ', 'yQ'])
+
+    def test96_non_deterministic_functions_are_not_folded(self):
+        # The behaviour that makes test95 safe: a volatile function still
+        # varies per row. What stops these being folded is that they take no
+        # arguments, so there is nothing constant to fold from — not the
+        # `non_deterministic` flag, which is a second guard for volatile
+        # functions that might later take one. These pin the observable
+        # property; removing either guard alone does not move them, and that
+        # is worth knowing rather than assuming.
+        res = self.graph.query("UNWIND range(1, 200) AS i RETURN count(DISTINCT rand()) AS n")
+        self.env.assertGreater(res.result_set[0][0], 150)
+
+        res = self.graph.query("UNWIND range(1, 200) AS i RETURN count(DISTINCT randomUUID()) AS n")
+        self.env.assertEqual(res.result_set[0][0], 200)
+
+        # Two independent draws in one row must not collapse into each other.
+        res = self.graph.query(
+            "UNWIND range(1, 50) AS i WITH i WHERE rand() = rand() RETURN count(*) AS n")
+        self.env.assertEqual(res.result_set[0][0], 0)
+
+        # `toString` of a random value is a deterministic function over a
+        # non-deterministic argument: the argument column is not scalar, so the
+        # outer call cannot fold either.
+        res = self.graph.query(
+            "UNWIND range(1, 200) AS i RETURN count(DISTINCT toString(randomUUID())) AS n")
+        self.env.assertEqual(res.result_set[0][0], 200)
+
+    def test97_folded_calls_keep_their_errors_and_empty_batches(self):
+        # Evaluating once must not move when an error is raised. A bad constant
+        # argument still fails the query...
+        try:
+            self.graph.query("UNWIND range(0, 9) AS i RETURN split(1, 2)")
+            self.env.assertTrue(False, depth=1)
+        except Exception as e:
+            self.env.assertContains("Type mismatch", str(e))
+
+        # ...and a batch with no rows still raises nothing. Operators drop
+        # empty batches before any expression is evaluated, so this holds with
+        # or without the row-count guard inside the fold; it is pinned because
+        # it is the behaviour callers depend on, whichever layer provides it.
+        res = self.graph.query("UNWIND [] AS i RETURN split(1, 2)")
+        self.env.assertEqual(res.result_set, [])
+        res = self.graph.query("MATCH (n:NoSuchLabel) RETURN split(1, 2)")
+        self.env.assertEqual(res.result_set, [])

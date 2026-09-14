@@ -369,19 +369,16 @@ fn encode_schema_index_block(
         let opts = f.options();
         w.write_double(opts.and_then(|o| o.weight).unwrap_or(1.0));
         w.write_unsigned(u64::from(opts.and_then(|o| o.nostem).unwrap_or(false)));
-        let phonetic = opts.and_then(|o| o.phonetic).map_or(String::new(), |p| {
-            if p {
-                "dm:en".to_string()
-            } else {
-                String::new()
-            }
-        });
+        // The field is the code, so this is no longer a conversion. It used to
+        // map a `bool` to "dm:en", which meant a C-written `dm:fr` came back
+        // out of a Rust round trip as `dm:en`.
+        let phonetic = opts.and_then(|o| o.phonetic.clone()).unwrap_or_default();
         w.write_buffer(&null_terminated(&phonetic));
 
         if field_type & index_field_type::INDEX_FLD_VECTOR != 0
             && let Some(vopts) = f.vector_options()
         {
-            w.write_unsigned(u64::from(vopts.dimension));
+            w.write_unsigned(vopts.dimension);
             w.write_unsigned(vopts.m.unwrap_or(16) as u64);
             w.write_unsigned(vopts.ef_construction.unwrap_or(200) as u64);
             w.write_unsigned(vopts.ef_runtime.unwrap_or(10) as u64);
@@ -622,7 +619,7 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
     };
 
     let vector_options = if is_vector {
-        let dimension = r.read_unsigned()? as u32;
+        let dimension = r.read_unsigned()?;
         let m = r.read_unsigned()? as usize;
         let ef_construction = r.read_unsigned()? as usize;
         let ef_runtime = r.read_unsigned()? as usize;
@@ -649,7 +646,7 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
         Some(TextIndexOptions {
             weight: Some(weight),
             nostem: Some(nostem),
-            phonetic: Some(!phonetic.is_empty()),
+            phonetic: Some(phonetic),
             language: None,
             stopwords: None,
         })

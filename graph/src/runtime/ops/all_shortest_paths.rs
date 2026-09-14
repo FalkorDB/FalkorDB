@@ -56,7 +56,7 @@ pub struct AllShortestPathsOp<'a> {
 }
 
 impl<'a> AllShortestPathsOp<'a> {
-    pub const fn new(
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
@@ -65,7 +65,10 @@ impl<'a> AllShortestPathsOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(relationship_pattern.alias.id),
+            // No cap: not measured — the shapes reachable here need both
+            // endpoints already resolved, and the operator's output is bounded
+            // by the pattern rather than by how much it packs.
+            emitter: BatchedResultEmitter::with_binding(relationship_pattern.alias.id, None),
             relationship_pattern,
             idx,
         }

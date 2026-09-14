@@ -147,6 +147,24 @@ class TestQuerySet:
         assert "edge create at 200k" not in sized
         assert "bulk edges 200k" not in sized
 
+    def test_scan_limit_rows_have_no_barrier_before_the_limit(self):
+        """The scan-limit rows only measure anything if the budget reaches the scan.
+
+        `Runtime::effective_limit` walks up from the scan and stops at any
+        row-reducing or eager operator, `ORDER BY` and aggregation included. Every
+        other limited row in the suite has one, which is why none of them moved
+        when leaf scans became limit-aware. If these two grow an `ORDER BY`, a
+        `WITH ... count(*)` or a `WHERE`, they keep passing while silently
+        measuring an unrelated plan.
+        """
+        rows = {q.name: q.cypher for q in qs.QUERIES if q.name.startswith("scan limit ")}
+        assert set(rows) == {"scan limit 10", "scan limit 2k"}, rows
+        for name, cypher in rows.items():
+            upper = cypher.upper()
+            for barrier in ("ORDER BY", "WHERE", "COUNT(", "COLLECT(", "DISTINCT", "SKIP"):
+                assert barrier not in upper, f"{name} gained a barrier: {barrier}"
+            assert "LIMIT" in upper, name
+
     def test_reps_are_positive_when_set(self):
         for q in qs.QUERIES:
             assert q.reps is None or q.reps > 0, q.name
