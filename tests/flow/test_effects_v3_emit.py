@@ -276,6 +276,33 @@ class testEffectsV3Emit(FlowTestsBase):
                 message=f"replica refused {failed} effect(s) - an "
                         f"inner-product index must apply, not resync")
 
+    def test06c_values_follow_their_attributes(self):
+        # THE SEMANTIC READ-BACK. The emitter sorts attr_ids ascending, and the
+        # values must be permuted with them.
+        #
+        # Sorting the ids while leaving the values in the order the query wrote
+        # them produces a payload that is well formed, passes every length
+        # check, and passes a receiver's ascending check - with every value
+        # attached to the wrong attribute. No byte comparison sees it, because
+        # the bytes are exactly what a correct payload of that shape looks
+        # like. Only reading a value back and asking which attribute it landed
+        # on catches it.
+        #
+        # Properties are written in DESCENDING id order so that sorting has to
+        # move something. They are created in one statement, so a single
+        # CREATE_NODE record carries both.
+        self.src.query("CREATE (:Perm {zz:'Z', aa:'A'})")
+        self._sync()
+
+        got = self.replica.ro_query(
+            "MATCH (n:Perm) RETURN n.aa, n.zz").result_set
+        self.env.assertEqual(got, [['A', 'Z']],
+                message=f"values landed on the wrong attributes: {got} - the "
+                        f"ids were sorted and the values were not")
+
+        # and the two sides agree, which is the weaker half
+        self._assert_same("MATCH (n:Perm) RETURN properties(n)", "permuted props")
+
     def test07_drop_index(self):
         # dropped one field of a two-field index, so the record is a real drop
         # rather than the whole index going away
