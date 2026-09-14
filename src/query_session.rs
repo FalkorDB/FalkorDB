@@ -57,6 +57,14 @@ pub enum WriteAbort {
     /// The graph key was deleted or replaced while no per-graph lock was held.
     #[error("graph was deleted or replaced while the query was running, aborting")]
     GraphUnregistered,
+    /// Another writer holds `MvccGraph`'s write slot.
+    ///
+    /// Distinct from the per-graph lock, which `upgrade_to_write` does take:
+    /// holding that one does not reserve the MVCC slot, so a second writer can
+    /// still be mid-commit. Transient by construction — it ends when that writer
+    /// commits — so callers that can retry should.
+    #[error("Write query aborted: another write is in progress")]
+    WriteSlotBusy,
 }
 
 /// The locks held by one query, on one thread. Not `Send`, because the GIL must be
