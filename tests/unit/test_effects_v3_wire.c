@@ -47,7 +47,21 @@ static void setup(void) {
 	// nothing here runs concurrently.
 	static bool ready = false;
 	if(!ready) {
-		ThreadPool_Init();
+		// ThreadPool_CreatePool ALONE, not ThreadPool_Init as well.
+		// ThreadPool_Init calls CreatePool itself (pool.c:36), so calling
+		// both creates the pool twice - which trips
+		// ASSERT(_thpool == NULL) at pool.c:54 and aborts under a debug or
+		// sanitizer build, while in release the assert compiles away and
+		// the first pool is simply leaked and overwritten. That is why this
+		// passed for weeks and then crashed the moment it was first run
+		// under ASAN.
+		//
+		// CreatePool rather than Init because Init takes its thread count
+		// from Config_THREAD_POOL_SIZE, and a unit test's config struct is
+		// static and zeroed - so Init would ask for a 0-thread pool. The
+		// explicit (1, 64) is deterministic. Init also sets MAIN_THREAD_ID,
+		// which nothing on the decode path reads: its users are
+		// cmd_constraint.c and graphcontext*.c.
 		ThreadPool_CreatePool(1, 64);
 		Globals_Init();
 		ready = true;
