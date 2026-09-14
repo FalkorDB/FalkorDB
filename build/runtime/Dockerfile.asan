@@ -95,10 +95,10 @@ RUN set -eux; \
 # and GLIBCXX_3.4.32 — bookworm-slim's glibc 2.36 can't satisfy these and
 # the binary fails to load with "version not found" errors. trixie-slim
 # ships glibc 2.41 / GLIBCXX_3.4.33 which is compatible with everything
-# the toolchain (redis:8.6.x base, also trixie-derived) produces.
+# the toolchain (redis:8.10.x base, also trixie-derived) produces.
 #
 # We replace redis-server with our ASAN-instrumented one so the stock
-# binary that would come from the redis:8.6.x base is irrelevant. Going
+# binary that would come from the redis:8.10.x base is irrelevant. Going
 # directly to debian:trixie-slim keeps the image lean.
 FROM debian:trixie-slim AS server
 ARG TARGETPLATFORM
