@@ -25,6 +25,21 @@ void GraphHub_CreateNode
 	bool log           // log operation in undo-log
 );
 
+// create a node at the id the caller states, and index it
+//
+// used by effects apply: the replica accepts the primary's id. Never logs -
+// a replica does not re-emit what it applies. Returns false if the id is
+// already live, in which case the caller still owns 'set'.
+bool GraphHub_CreateNodeAtId
+(
+	GraphContext *gc,
+	Node *n,          // n->id is the id to create at
+	LabelID *labels,
+	uint label_count,
+	AttributeSet set
+);
+
+
 // batch create nodes
 // all nodes share the same set of labels
 // set the nodes labels and attributes
