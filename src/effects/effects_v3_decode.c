@@ -511,164 +511,67 @@ static EffectsV3Status _ReadRelType
 // records
 //------------------------------------------------------------------------------
 
-// POINTERS INTO WHICHEVER ARM THE OPCODE SELECTS
-//
-// Records 1-8 are one wire shape - opcode, count, shape, attr ids, IdList(s),
-// values - and differ only in which of those fields they carry. The typed model
-// puts them in eight structs, so this binds pointers once and the reader fills
-// through them.
-//
-// WHAT IT BUYS, and it is one thing rather than three: this table is the ONLY
-// statement of which opcode carries what, and it has two consumers - the reader
-// below and _RecordFree. Written as eight direct switch arms, adding a field
-// means editing two switches, and forgetting the free half is a leak no test
-// need catch. It is also what lets the shape be derived (`f.labels != NULL`)
-// instead of restated, which is why the four _IsNodeShaped-style predicates
-// are gone.
-//
-// WHAT IT COSTS, measured rather than waved away: binding a member to the wrong
-// arm COMPILES CLEAN. Pointing UPDATE_EDGE's attr_ids at update_node's field
-// produces no error and no warning - the types are identical - where a direct
-// write inside `case EFFECT_UPDATE_EDGE:` would be self-evidently right. The
-// flow suite does catch it (four failures), so it is detectable, but by test
-// rather than by construction, and by-construction is what the typed contract
-// was introduced for. That makes this a close call, not a free win.
-//
-// A NULL member means THIS OPCODE DOES NOT CARRY THAT FIELD.
-typedef struct {
-	uint32_t        *count;
-	LabelID        **labels;
-	uint16_t        *n_labels;
-	RelationID      *relation_id;
-	AttributeID    **attr_ids;
-	uint16_t        *n_attrs;
-	EffectsV3IdList *ids;
-	EffectsV3IdList *src;
-	EffectsV3IdList *dst;
-	SIValue        **values;
-	uint64_t        *n_values;
-} BatchFields;
+// the owned pieces an arm may hold, freed through typed helpers so each arm
+// below stays one line per piece and the compiler still checks every pointer
 
-// fill 'f' for a batchable record, or return false for records 9-14
-static bool _BatchFields
+static void _FreeLabels
 (
-	EffectsV3Record *rec,
-	BatchFields *f
+	LabelID **labels
 ) {
-	memset (f, 0, sizeof (*f)) ;
-
-	switch (rec->opcode) {
-		case EFFECT_UPDATE_NODE:
-			f->count    = &rec->update_node.count ;
-			f->labels   = &rec->update_node.labels ;
-			f->n_labels = &rec->update_node.n_labels ;
-			f->attr_ids = &rec->update_node.attr_ids ;
-			f->n_attrs  = &rec->update_node.n_attrs ;
-			f->ids      = &rec->update_node.ids ;
-			f->values   = &rec->update_node.values ;
-			f->n_values = &rec->update_node.n_values ;
-			return true ;
-
-		case EFFECT_UPDATE_EDGE:
-			f->count       = &rec->update_edge.count ;
-			f->relation_id = &rec->update_edge.relation_id ;
-			f->attr_ids    = &rec->update_edge.attr_ids ;
-			f->n_attrs     = &rec->update_edge.n_attrs ;
-			f->ids         = &rec->update_edge.ids ;
-			f->values      = &rec->update_edge.values ;
-			f->n_values    = &rec->update_edge.n_values ;
-			return true ;
-
-		case EFFECT_CREATE_NODE:
-			f->count    = &rec->create_node.count ;
-			f->labels   = &rec->create_node.labels ;
-			f->n_labels = &rec->create_node.n_labels ;
-			f->attr_ids = &rec->create_node.attr_ids ;
-			f->n_attrs  = &rec->create_node.n_attrs ;
-			f->ids      = &rec->create_node.ids ;
-			f->values   = &rec->create_node.values ;
-			f->n_values = &rec->create_node.n_values ;
-			return true ;
-
-		case EFFECT_CREATE_EDGE:
-			f->count       = &rec->create_edge.count ;
-			f->relation_id = &rec->create_edge.relation_id ;
-			f->attr_ids    = &rec->create_edge.attr_ids ;
-			f->n_attrs     = &rec->create_edge.n_attrs ;
-			f->ids         = &rec->create_edge.ids ;
-			f->src         = &rec->create_edge.src ;
-			f->dst         = &rec->create_edge.dst ;
-			f->values      = &rec->create_edge.values ;
-			f->n_values    = &rec->create_edge.n_values ;
-			return true ;
-
-		case EFFECT_DELETE_NODE:
-			f->count    = &rec->delete_node.count ;
-			f->labels   = &rec->delete_node.labels ;
-			f->n_labels = &rec->delete_node.n_labels ;
-			f->ids      = &rec->delete_node.ids ;
-			return true ;
-
-		case EFFECT_DELETE_EDGE:
-			f->count       = &rec->delete_edge.count ;
-			f->relation_id = &rec->delete_edge.relation_id ;
-			f->ids         = &rec->delete_edge.ids ;
-			f->src         = &rec->delete_edge.src ;
-			f->dst         = &rec->delete_edge.dst ;
-			return true ;
-
-		case EFFECT_SET_LABELS:
-			f->count    = &rec->set_labels.count ;
-			f->labels   = &rec->set_labels.labels ;
-			f->n_labels = &rec->set_labels.n_labels ;
-			f->ids      = &rec->set_labels.ids ;
-			return true ;
-
-		case EFFECT_REMOVE_LABELS:
-			f->count    = &rec->remove_labels.count ;
-			f->labels   = &rec->remove_labels.labels ;
-			f->n_labels = &rec->remove_labels.n_labels ;
-			f->ids      = &rec->remove_labels.ids ;
-			return true ;
-
-		default:
-			return false ;
+	if (*labels != NULL) {
+		rm_free (*labels) ;
+		*labels = NULL ;
 	}
 }
 
-// the (attrs, n_attrs, name) triple the four DDL records share, by arm
-static void _DDLRefs
+static void _FreeAttrIds
 (
-	EffectsV3Record *rec,
-	EffectsV3AttrRef ***attrs,
-	uint16_t **n_attrs,
-	char ***name
+	AttributeID **attr_ids
 ) {
-	switch (rec->opcode) {
-		case EFFECT_CREATE_INDEX:
-			*attrs = &rec->create_index.attrs ;
-			*n_attrs = &rec->create_index.n_attrs ;
-			*name = &rec->create_index.name ;
-			return ;
-		case EFFECT_DROP_INDEX:
-			*attrs = &rec->drop_index.attrs ;
-			*n_attrs = &rec->drop_index.n_attrs ;
-			*name = &rec->drop_index.name ;
-			return ;
-		case EFFECT_CREATE_CONSTRAINT:
-			*attrs = &rec->create_constraint.attrs ;
-			*n_attrs = &rec->create_constraint.n_attrs ;
-			*name = &rec->create_constraint.name ;
-			return ;
-		case EFFECT_DROP_CONSTRAINT:
-			*attrs = &rec->drop_constraint.attrs ;
-			*n_attrs = &rec->drop_constraint.n_attrs ;
-			*name = &rec->drop_constraint.name ;
-			return ;
-		default:
-			*attrs = NULL ; *n_attrs = NULL ; *name = NULL ;
-			return ;
+	if (*attr_ids != NULL) {
+		rm_free (*attr_ids) ;
+		*attr_ids = NULL ;
 	}
+}
+
+static void _FreeValues
+(
+	SIValue **values,
+	uint64_t *n
+) {
+	if (*values != NULL) {
+		for (uint64_t i = 0 ; i < *n ; i++) {
+			SIValue_Free ((*values)[i]) ;
+		}
+		rm_free (*values) ;
+		*values = NULL ;
+	}
+	*n = 0 ;
+}
+
+static void _FreeName
+(
+	char **name
+) {
+	if (*name != NULL) {
+		rm_free (*name) ;
+		*name = NULL ;
+	}
+}
+
+static void _FreeAttrRefs
+(
+	EffectsV3AttrRef **attrs,
+	uint16_t *n
+) {
+	if (*attrs != NULL) {
+		for (uint16_t i = 0 ; i < *n ; i++) {
+			rm_free ((*attrs)[i].name) ;
+		}
+		rm_free (*attrs) ;
+		*attrs = NULL ;
+	}
+	*n = 0 ;
 }
 
 // free whatever the record's arm owns
@@ -681,77 +584,95 @@ static void _RecordFree
 (
 	EffectsV3Record *rec
 ) {
-	BatchFields f ;
-	if (_BatchFields (rec, &f)) {
-		if (f.ids != NULL) _IdListFree (f.ids) ;
-		if (f.src != NULL) _IdListFree (f.src) ;
-		if (f.dst != NULL) _IdListFree (f.dst) ;
+	switch (rec->opcode) {
+		case EFFECT_UPDATE_NODE:
+			_IdListFree  (&rec->update_node.ids) ;
+			_FreeLabels  (&rec->update_node.labels) ;
+			_FreeAttrIds (&rec->update_node.attr_ids) ;
+			_FreeValues  (&rec->update_node.values, &rec->update_node.n_values) ;
+			break ;
 
-		if (f.labels != NULL && *f.labels != NULL) {
-			rm_free (*f.labels) ;
-			*f.labels = NULL ;
-		}
+		case EFFECT_UPDATE_EDGE:
+			_IdListFree  (&rec->update_edge.ids) ;
+			_FreeAttrIds (&rec->update_edge.attr_ids) ;
+			_FreeValues  (&rec->update_edge.values, &rec->update_edge.n_values) ;
+			break ;
 
-		if (f.attr_ids != NULL && *f.attr_ids != NULL) {
-			rm_free (*f.attr_ids) ;
-			*f.attr_ids = NULL ;
-		}
+		case EFFECT_CREATE_NODE:
+			_IdListFree  (&rec->create_node.ids) ;
+			_FreeLabels  (&rec->create_node.labels) ;
+			_FreeAttrIds (&rec->create_node.attr_ids) ;
+			_FreeValues  (&rec->create_node.values, &rec->create_node.n_values) ;
+			break ;
 
-		if (f.values != NULL && *f.values != NULL) {
-			for (uint64_t i = 0 ; i < *f.n_values ; i++) {
-				SIValue_Free ((*f.values)[i]) ;
+		case EFFECT_CREATE_EDGE:
+			_IdListFree  (&rec->create_edge.ids) ;
+			_IdListFree  (&rec->create_edge.src) ;
+			_IdListFree  (&rec->create_edge.dst) ;
+			_FreeAttrIds (&rec->create_edge.attr_ids) ;
+			_FreeValues  (&rec->create_edge.values, &rec->create_edge.n_values) ;
+			break ;
+
+		case EFFECT_DELETE_NODE:
+			_IdListFree (&rec->delete_node.ids) ;
+			_FreeLabels (&rec->delete_node.labels) ;
+			break ;
+
+		case EFFECT_DELETE_EDGE:
+			_IdListFree (&rec->delete_edge.ids) ;
+			_IdListFree (&rec->delete_edge.src) ;
+			_IdListFree (&rec->delete_edge.dst) ;
+			break ;
+
+		case EFFECT_SET_LABELS:
+			_IdListFree (&rec->set_labels.ids) ;
+			_FreeLabels (&rec->set_labels.labels) ;
+			break ;
+
+		case EFFECT_REMOVE_LABELS:
+			_IdListFree (&rec->remove_labels.ids) ;
+			_FreeLabels (&rec->remove_labels.labels) ;
+			break ;
+
+		case EFFECT_ADD_SCHEMA:
+			_FreeName (&rec->add_schema.name) ;
+			break ;
+
+		case EFFECT_ADD_ATTRIBUTE:
+			_FreeName (&rec->add_attribute.name) ;
+			break ;
+
+		case EFFECT_CREATE_INDEX:
+			_FreeName     (&rec->create_index.name) ;
+			_FreeAttrRefs (&rec->create_index.attrs, &rec->create_index.n_attrs) ;
+
+			// only CREATE_INDEX has options at all
+			if (rec->create_index.has_options) {
+				_IndexOptionsFree (&rec->create_index.options) ;
+				rec->create_index.has_options = false ;
 			}
-			rm_free (*f.values) ;
-			*f.values   = NULL ;
-			*f.n_values = 0 ;
-		}
-		return ;
-	}
+			break ;
 
-	if (rec->opcode == EFFECT_ADD_SCHEMA) {
-		if (rec->add_schema.name != NULL) {
-			rm_free (rec->add_schema.name) ;
-			rec->add_schema.name = NULL ;
-		}
-		return ;
-	}
+		case EFFECT_DROP_INDEX:
+			_FreeName     (&rec->drop_index.name) ;
+			_FreeAttrRefs (&rec->drop_index.attrs, &rec->drop_index.n_attrs) ;
+			break ;
 
-	if (rec->opcode == EFFECT_ADD_ATTRIBUTE) {
-		if (rec->add_attribute.name != NULL) {
-			rm_free (rec->add_attribute.name) ;
-			rec->add_attribute.name = NULL ;
-		}
-		return ;
-	}
+		case EFFECT_CREATE_CONSTRAINT:
+			_FreeName     (&rec->create_constraint.name) ;
+			_FreeAttrRefs (&rec->create_constraint.attrs,
+					&rec->create_constraint.n_attrs) ;
+			break ;
 
-	// records 11-14
-	EffectsV3AttrRef **attrs ;
-	uint16_t *n_attrs ;
-	char **name ;
-	_DDLRefs (rec, &attrs, &n_attrs, &name) ;
-	if (attrs == NULL) {
-		return ;
-	}
+		case EFFECT_DROP_CONSTRAINT:
+			_FreeName     (&rec->drop_constraint.name) ;
+			_FreeAttrRefs (&rec->drop_constraint.attrs,
+					&rec->drop_constraint.n_attrs) ;
+			break ;
 
-	if (*name != NULL) {
-		rm_free (*name) ;
-		*name = NULL ;
-	}
-
-	if (*attrs != NULL) {
-		for (uint16_t i = 0 ; i < *n_attrs ; i++) {
-			rm_free ((*attrs)[i].name) ;
-		}
-		rm_free (*attrs) ;
-		*attrs   = NULL ;
-		*n_attrs = 0 ;
-	}
-
-	// only CREATE_INDEX has options at all - DROP_INDEX carries none, so there
-	// is no has_options to test on it
-	if (rec->opcode == EFFECT_CREATE_INDEX && rec->create_index.has_options) {
-		_IndexOptionsFree (&rec->create_index.options) ;
-		rec->create_index.has_options = false ;
+		default:
+			// a zeroed record (opcode 0) reaches here and owns nothing
+			break ;
 	}
 }
 
@@ -832,10 +753,16 @@ static EffectsV3Status _ReadAddAttribute
 static EffectsV3Status _ReadValues
 (
 	FILE *stream,
-	const BatchFields *f
+	uint32_t count,       // entities in the record
+	uint16_t n_attrs,     // attributes per entity
+	SIValue **out,        // [output] owned, count * n_attrs entries
+	uint64_t *out_n       // [output] how many
 ) {
+	*out   = NULL ;
+	*out_n = 0 ;
+
 	// count is u32 and n_attrs is u16, so the product cannot overflow u64
-	const uint64_t n_values = (uint64_t)(*f->count) * (uint64_t)(*f->n_attrs) ;
+	const uint64_t n_values = (uint64_t)count * (uint64_t)n_attrs ;
 
 	// AN EMPTY ATTRIBUTE SET IS A LEGITIMATE SHAPE, not a malformed record.
 	// `CREATE (:Person)` and `CREATE (a)-[:R]->(b)` create entities with no
@@ -861,14 +788,14 @@ static EffectsV3Status _ReadValues
 		return EFFECTS_V3_MALFORMED ;
 	}
 
-	*f->values   = rm_calloc (n_values, sizeof (SIValue)) ;
-	*f->n_values = n_values ;
+	*out   = rm_calloc (n_values, sizeof (SIValue)) ;
+	*out_n = n_values ;
 
 	for (uint64_t i = 0 ; i < n_values ; i++) {
-		if (!SIValue_FromBinary (stream, *f->values + i)) {
-			// on failure 'out' is still set to something safe to free, so this
-			// slot is included in what the record's free path releases
-			*f->n_values = i + 1 ;
+		if (!SIValue_FromBinary (stream, *out + i)) {
+			// on failure the slot is still set to something safe to free, so it
+			// is included in what the record's free path releases
+			*out_n = i + 1 ;
 
 			// SIValue_FromBinary does not distinguish the two, so the stream
 			// does: out of bytes is truncation, anything else is malformed
@@ -1342,32 +1269,14 @@ static EffectsV3Status _ReadRecord
 			break ;
 	}
 
-	// WHICH FIELDS THIS OPCODE CARRIES COMES FROM ONE TABLE.
-	//
-	// This used to ask four predicates - _IsNodeShaped, _IsEdgeShaped,
-	// _HasValues, _HasEndpoints - each listing opcodes again. That was a second
-	// statement of what the arms already say, and the two could disagree
-	// silently: a predicate naming an opcode whose arm has no such field
-	// compiles and writes nowhere useful. Now a NULL member means the opcode
-	// does not carry the field, and the table is the only place that is said.
-	BatchFields f ;
-	if (!_BatchFields (rec, &f)) {
-		// every non-batchable opcode is dispatched above, so reaching here
-		// means the opcode passed the range check and matched no arm
-		return EFFECTS_V3_MALFORMED ;
-	}
-
-	if (!_ReadU32 (stream, f.count)) {
+	// the count is read before the switch because it governs the length of
+	// every block that follows, so one zero-check covers every record shape
+	uint32_t count ;
+	if (!_ReadU32 (stream, &count)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
 	// A RECORD DESCRIBING NO ENTITIES IS ILLEGAL, not merely useless.
-	//
-	// Checked here, at the header, before any block is parsed - 'count' governs
-	// the length of every block that follows, so one check covers every record
-	// shape. Put it inside the id-list read instead and it would need repeating
-	// in three or four places, because that read is per-list and the count
-	// belongs to the record.
 	//
 	// Refused rather than tolerated, and the reason is NOT "it means nothing" -
 	// that invites a later reader to relax it as harmless. It is refused
@@ -1376,74 +1285,151 @@ static EffectsV3Status _ReadRecord
 	// the divergence guard exists for exactly this class of fault, and a no-op
 	// record would slip straight past it.
 	//
-	// Two supporting reasons. No emitter can produce one - a group only comes
-	// into existence by pushing an id into it, so every group holds at least
-	// one. And the format already refuses the same idea one level down, where a
-	// zero-length segment is malformed; accepting a zero-entity record while
-	// refusing a zero-length segment would be incoherent.
+	// No emitter can produce one - a group only comes into existence by pushing
+	// an id into it - and the format already refuses the same idea one level
+	// down, where a zero-length segment is malformed.
 	//
 	// Records 9 and 10 are inherently singular and carry no count at all, so
-	// they are already dispatched above and unaffected.
+	// they are dispatched above and unaffected.
 	//
 	// This SHOULD carry its own status rather than MALFORMED - "the segments do
 	// not total the count" and "the count is not a legal count" are different
 	// faults, and the log line is all an operator sees. The status enum lives in
-	// the shared contract, so adding a variant is the organizer's to make; asked
-	// for, and this reverts to it when it exists.
-	if (*f.count == 0) {
+	// the shared contract, so adding a variant is the organizer's to make.
+	if (count == 0) {
 		return EFFECTS_V3_MALFORMED ;
 	}
 
 	EffectsV3Status status ;
 
-	// the shape, hoisted once per record, and stated ahead of the rows. A
-	// record is node-shaped or edge-shaped, never both - the arms enforce it,
-	// because no arm has 'labels' and 'relation_id' together.
-	if (f.labels != NULL) {
-		status = _ReadLabelSet (stream, f.labels, f.n_labels) ;
-		if (status != EFFECTS_V3_OK) {
-			goto fail ;
+	// one arm per opcode, each reading exactly the blocks that opcode carries.
+	// The shape is stated ahead of the rows: a LabelSet for node-shaped records,
+	// a RelType for edge-shaped ones, never both.
+	switch (rec->opcode) {
+		case EFFECT_UPDATE_NODE: {
+			EffectsV3UpdateNode *r = &rec->update_node ;
+			r->count = count ;
+
+			status = _ReadLabelSet (stream, &r->labels, &r->n_labels) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadAttrIds (stream, &r->attr_ids, &r->n_attrs) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->ids) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadValues (stream, count, r->n_attrs, &r->values,
+					&r->n_values) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
 		}
-	} else if (f.relation_id != NULL) {
-		status = _ReadRelType (stream, f.relation_id) ;
-		if (status != EFFECTS_V3_OK) {
-			goto fail ;
+
+		case EFFECT_UPDATE_EDGE: {
+			EffectsV3UpdateEdge *r = &rec->update_edge ;
+			r->count = count ;
+
+			status = _ReadRelType (stream, &r->relation_id) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadAttrIds (stream, &r->attr_ids, &r->n_attrs) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->ids) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadValues (stream, count, r->n_attrs, &r->values,
+					&r->n_values) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
 		}
+
+		case EFFECT_CREATE_NODE: {
+			EffectsV3CreateNode *r = &rec->create_node ;
+			r->count = count ;
+
+			status = _ReadLabelSet (stream, &r->labels, &r->n_labels) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadAttrIds (stream, &r->attr_ids, &r->n_attrs) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->ids) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadValues (stream, count, r->n_attrs, &r->values,
+					&r->n_values) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
+		}
+
+		case EFFECT_CREATE_EDGE: {
+			EffectsV3CreateEdge *r = &rec->create_edge ;
+			r->count = count ;
+
+			status = _ReadRelType (stream, &r->relation_id) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadAttrIds (stream, &r->attr_ids, &r->n_attrs) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->ids) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->src) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->dst) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadValues (stream, count, r->n_attrs, &r->values,
+					&r->n_values) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
+		}
+
+		case EFFECT_DELETE_NODE: {
+			EffectsV3DeleteNode *r = &rec->delete_node ;
+			r->count = count ;
+
+			// a delete states the labels the nodes CARRIED - a replica needs
+			// them to maintain the label matrices and label-scoped indexes
+			status = _ReadLabelSet (stream, &r->labels, &r->n_labels) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->ids) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
+		}
+
+		case EFFECT_DELETE_EDGE: {
+			EffectsV3DeleteEdge *r = &rec->delete_edge ;
+			r->count = count ;
+
+			// endpoints are stated because the edge is gone by apply time
+			status = _ReadRelType (stream, &r->relation_id) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->ids) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->src) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->dst) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
+		}
+
+		case EFFECT_SET_LABELS: {
+			EffectsV3SetLabels *r = &rec->set_labels ;
+			r->count = count ;
+
+			status = _ReadLabelSet (stream, &r->labels, &r->n_labels) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->ids) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
+		}
+
+		case EFFECT_REMOVE_LABELS: {
+			EffectsV3RemoveLabels *r = &rec->remove_labels ;
+			r->count = count ;
+
+			status = _ReadLabelSet (stream, &r->labels, &r->n_labels) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			status = _ReadIdList (stream, count, &r->ids) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
+		}
+
+		default:
+			// every other opcode is dispatched above, so reaching here means
+			// the opcode passed the range check and matched no arm
+			return EFFECTS_V3_MALFORMED ;
 	}
-
-	if (f.attr_ids != NULL) {
-		status = _ReadAttrIds (stream, f.attr_ids, f.n_attrs) ;
-		if (status != EFFECTS_V3_OK) {
-			goto fail ;
-		}
-	}
-
-	// the ids, positionally bound to the rows below
-	status = _ReadIdList (stream, *f.count, f.ids) ;
-	if (status != EFFECTS_V3_OK) {
-		goto fail ;
-	}
-
-	if (f.src != NULL) {
-		status = _ReadIdList (stream, *f.count, f.src) ;
-		if (status != EFFECTS_V3_OK) {
-			goto fail ;
-		}
-
-		status = _ReadIdList (stream, *f.count, f.dst) ;
-		if (status != EFFECTS_V3_OK) {
-			goto fail ;
-		}
-	}
-
-	if (f.values != NULL) {
-		status = _ReadValues (stream, &f) ;
-		if (status != EFFECTS_V3_OK) {
-			goto fail ;
-		}
-	}
-
-	return EFFECTS_V3_OK ;
 
 fail:
 	_RecordFree (rec) ;
