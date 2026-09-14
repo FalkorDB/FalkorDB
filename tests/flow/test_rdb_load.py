@@ -1,5 +1,11 @@
-from common import *
 import time
+
+from common import *
+from index_utils import (
+    create_edge_range_index,
+    create_node_range_index,
+    wait_for_indices_to_sync,
+)
 
 
 class testRdbLoad():
@@ -89,3 +95,85 @@ class testRdbLoad():
 
         # Verify save works after load
         self.conn.save()
+
+    # RESTORE ... REPLACE of a graph's own DUMP, over a live key which already
+    # holds an index, decodes the index into a schema that already contains it.
+    # The C engine dereferenced NULL in that case and took the whole server
+    # down, see https://github.com/FalkorDB/FalkorDB/issues/2506
+    def test_restore_replace_indexed_graph(self):
+        self.conn.flushall()
+
+        graph = self.db.select_graph("indexed")
+        graph.query("CREATE (:N {v: 1})-[:R {w: 2}]->(:N {v: 2})")
+
+        create_node_range_index(graph, "N", "v", sync=True)
+        create_edge_range_index(graph, "R", "w", sync=True)
+
+        # warm the key, both indexes are resolved before the graph is dumped
+        self.env.assertEqual(
+            graph.ro_query("MATCH (n:N) WHERE n.v = 1 RETURN n.v").result_set,
+            [[1]])
+        self.env.assertEqual(
+            graph.ro_query("MATCH ()-[e:R]->() WHERE e.w = 2 RETURN e.w").result_set,
+            [[2]])
+
+        blob = self.conn.dump("indexed")
+        self.env.assertIsNotNone(blob)
+
+        # replace the live key with its own dump, repeatedly:
+        # each restore decodes into the graph left behind by the previous one
+        for _ in range(3):
+            self.conn.restore("indexed", 0, blob, replace=True)
+            # the server must still be alive
+            self.env.assertTrue(self.conn.ping())
+
+        # both indexes survived the replace and are usable
+        wait_for_indices_to_sync(graph)
+        indexes = graph.ro_query("""CALL db.indexes()
+                                 YIELD label, status
+                                 RETURN label, status ORDER BY label""").result_set
+        self.env.assertEqual(indexes, [['N', 'OPERATIONAL'], ['R', 'OPERATIONAL']])
+
+        self.env.assertContains('Node By Index Scan',
+                                str(graph.explain("MATCH (n:N) WHERE n.v = 1 RETURN n")))
+        self.env.assertContains('Edge By Index Scan',
+                                str(graph.explain("MATCH ()-[e:R]->() WHERE e.w = 2 RETURN e")))
+
+        # data survived the replace
+        self.env.assertEqual(
+            graph.ro_query("MATCH (n:N) RETURN n.v ORDER BY n.v").result_set,
+            [[1], [2]])
+        self.env.assertEqual(
+            graph.ro_query("MATCH ()-[e:R]->() WHERE e.w = 2 RETURN e.w").result_set,
+            [[2]])
+
+        self.conn.flushall()
+
+    # same as above for a fulltext index: the crash was a NULL dereference
+    # while restoring the index language, which only fulltext indexes set
+    def test_restore_replace_fulltext_indexed_graph(self):
+        self.conn.flushall()
+
+        graph = self.db.select_graph("fulltext")
+        graph.query("CREATE (:P {name: 'alice in wonderland'})")
+        graph.query("""CREATE FULLTEXT INDEX FOR (n:P) ON (n.name)
+                    OPTIONS {language: 'english', stopwords: ['in']}""")
+        wait_for_indices_to_sync(graph)
+
+        # warm the key
+        q = "CALL db.idx.fulltext.queryNodes('P', 'alice') YIELD node RETURN node.name"
+        self.env.assertEqual(graph.ro_query(q).result_set, [['alice in wonderland']])
+
+        blob = self.conn.dump("fulltext")
+        self.conn.restore("fulltext", 0, blob, replace=True)
+        self.env.assertTrue(self.conn.ping())
+
+        # index survived the replace, language and stopwords included
+        wait_for_indices_to_sync(graph)
+        index = graph.ro_query("""CALL db.indexes()
+                               YIELD label, language, stopwords, status
+                               RETURN label, language, stopwords, status""").result_set
+        self.env.assertEqual(index, [['P', 'english', ['in'], 'OPERATIONAL']])
+        self.env.assertEqual(graph.ro_query(q).result_set, [['alice in wonderland']])
+
+        self.conn.flushall()
