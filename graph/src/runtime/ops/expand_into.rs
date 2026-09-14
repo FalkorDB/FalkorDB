@@ -88,9 +88,14 @@ impl<'a> ExpandIntoOp<'a> {
             && relationship_pattern.from.labels.is_empty()
             && !relationship_pattern.to.labels.is_empty();
         let emitter: BatchedResultEmitter<'a, RelationshipId> = if synthetic_label {
-            BatchedResultEmitter::new_without_alias()
+            // `None`, measured: capping made no difference (346,839 against
+            // 355,075 instructions on `LIMIT 10`). `ExpandInto` never packs a
+            // wasted batch because its input is already capped upstream — the
+            // scan and the traverse feeding it both lower their own ceilings —
+            // so there is nothing here for a cap to save.
+            BatchedResultEmitter::new_without_alias(None)
         } else {
-            BatchedResultEmitter::new(relationship_pattern.alias.id)
+            BatchedResultEmitter::new(relationship_pattern.alias.id, None)
         };
         Self {
             runtime,

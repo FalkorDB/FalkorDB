@@ -322,16 +322,15 @@ impl<'a> CondTraverseOp<'a> {
         // untransposed.
         let to = (relationship_pattern.to.alias != relationship_pattern.from.alias)
             .then_some(relationship_pattern.to.alias.id);
-        let mut emitter = BatchedResultEmitter::with_binding(EdgeEndpoints {
-            from: relationship_pattern.from.alias.id,
-            to,
-            edge: relationship_pattern.alias.id,
-            transposed: false,
-        });
-        // A downstream Skip/Limit lowers how many rows are needed; shrink the
-        // pack ceiling so the first emit returns a small batch instead of a full
-        // BATCH_SIZE worth of work.
-        emitter.apply_record_cap(record_cap);
+        let emitter = BatchedResultEmitter::with_binding(
+            EdgeEndpoints {
+                from: relationship_pattern.from.alias.id,
+                to,
+                edge: relationship_pattern.alias.id,
+                transposed: false,
+            },
+            record_cap,
+        );
 
         Self {
             runtime,
