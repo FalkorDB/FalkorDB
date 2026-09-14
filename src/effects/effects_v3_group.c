@@ -271,21 +271,68 @@ static Group *_group_for
 }
 
 // append a row's values through the shared SIValue codec
-static void _append_values
+// one (attribute id, value) pair
+//
+// Exists so that sorting the ids CARRIES THE VALUES WITH THEM. A record's rows
+// are row-major - entity k, attribute j is values[k * n + j], paired with
+// attr_ids[j] - so sorting the id array alone lands every value on the wrong
+// attribute, in a payload that is well-formed, passes every length check and
+// passes a receiver's ascending check too. Neither engine would complain and
+// nothing would surface until someone read the data.
+//
+// Pairing makes that unspellable rather than a thing to remember.
+typedef struct {
+	AttributeID id;
+	SIValue     v;
+} AttrPair;
+
+static int _cmp_attr_pair(const void *a, const void *b) {
+	AttributeID x = ((const AttrPair *)a)->id;
+	AttributeID y = ((const AttrPair *)b)->id;
+	return (x < y) ? -1 : (x > y) ? 1 : 0;
+}
+
+// sort an entity's attributes into ascending id order, values following
+//
+// WHY THE EMITTER SORTS, rather than leaving it to a receiver: attr_ids is half
+// the partition key of a batched record. Without a canonical order {a,b} and
+// {b,a} are different shapes, so the same logical write produces a different
+// record count and different bytes on two engines - and the conformance corpus
+// stops being able to arbitrate anything. Sorting at the receiver cannot fix
+// that, because the grouping has already happened by then.
+//
+// It is a same-engine defect too: _group_for compares the id array as given, so
+// those two orders land in different groups on C alone today.
+static void _sort_attrs
 (
-	Group *grp,             // group to append to
-	const SIValue *values,  // one value per attribute id
-	uint16_t n_attrs        // how many
+	AttrPair *out,               // n pairs
+	const AttributeID *attr_ids, // ids, any order
+	const SIValue *values,       // one value per id, positionally
+	uint16_t n                   // how many
 ) {
-	if(n_attrs == 0) {
-		return;
+	for(uint16_t i = 0; i < n; i++) {
+		out[i].id = attr_ids[i];
+		out[i].v  = values[i];
+	}
+	qsort(out, n, sizeof(AttrPair), _cmp_attr_pair);
+}
+
+// drop repeats from an already-sorted label set, returning what remains
+//
+// The set is a key, and a repeated label makes one set look like two. Sorting
+// alone does not make [7,7] and [7] the same shape.
+static uint16_t _dedup_labels(LabelID *labels, uint16_t n) {
+	if(n < 2) {
+		return n;
 	}
 
-	EffectsBuffer *wrapper = EffectsBuffer_Wrap(grp->values);
-	for(uint16_t i = 0; i < n_attrs; i++) {
-		EffectsBuffer_WriteSIValue(values + i, wrapper);
+	uint16_t w = 1;
+	for(uint16_t i = 1; i < n; i++) {
+		if(labels[i] != labels[w - 1]) {
+			labels[w++] = labels[i];
+		}
 	}
-	EffectsBuffer_Free(wrapper);
+	return w;
 }
 
 void EffectsV3Grouping_AddNode
@@ -309,13 +356,42 @@ void EffectsV3Grouping_AddNode
 	if(n_labels > 0) {
 		memcpy(norm, labels, sizeof(LabelID) * n_labels);
 		qsort(norm, n_labels, sizeof(LabelID), _cmp_label);
+		n_labels = _dedup_labels(norm, n_labels);
 	}
 
-	Group *grp = _group_for(g, opcode, norm, n_labels, 0, attr_ids, n_attrs);
+	// ids ascending, values carried along with them
+	AttrPair pairs[64];
+	AttrPair *ap = (n_attrs <= 64) ? pairs
+		: rm_malloc(sizeof(AttrPair) * n_attrs);
+	AttributeID ids[64];
+	AttributeID *sorted_ids = (n_attrs <= 64) ? ids
+		: rm_malloc(sizeof(AttributeID) * n_attrs);
+
+	if(n_attrs > 0) {
+		_sort_attrs(ap, attr_ids, values, n_attrs);
+		for(uint16_t i = 0; i < n_attrs; i++) {
+			sorted_ids[i] = ap[i].id;
+		}
+	}
+
+	Group *grp = _group_for(g, opcode, norm, n_labels, 0, sorted_ids, n_attrs);
 
 	EffectsV3IdListBuilder_Push(grp->ids, id);
-	_append_values(grp, values, n_attrs);
+	if(n_attrs > 0) {
+		EffectsBuffer *w = EffectsBuffer_Wrap(grp->values);
+		for(uint16_t i = 0; i < n_attrs; i++) {
+			EffectsBuffer_WriteSIValue(&ap[i].v, w);
+		}
+		EffectsBuffer_Free(w);
+	}
 	grp->count++;
+
+	if(ap != pairs) {
+		rm_free(ap);
+	}
+	if(sorted_ids != ids) {
+		rm_free(sorted_ids);
+	}
 
 	if(norm != sorted) {
 		rm_free(norm);
@@ -334,7 +410,23 @@ void EffectsV3Grouping_AddEdge
 	const SIValue *values,       // values
 	uint16_t n_attrs             // how many
 ) {
-	Group *grp = _group_for(g, opcode, NULL, 0, relation_id, attr_ids, n_attrs);
+	// ids ascending, values carried along - same reason as the node path
+	AttrPair pairs[64];
+	AttrPair *ap = (n_attrs <= 64) ? pairs
+		: rm_malloc(sizeof(AttrPair) * n_attrs);
+	AttributeID ids[64];
+	AttributeID *sorted_ids = (n_attrs <= 64) ? ids
+		: rm_malloc(sizeof(AttributeID) * n_attrs);
+
+	if(n_attrs > 0) {
+		_sort_attrs(ap, attr_ids, values, n_attrs);
+		for(uint16_t i = 0; i < n_attrs; i++) {
+			sorted_ids[i] = ap[i].id;
+		}
+	}
+
+	Group *grp = _group_for(g, opcode, NULL, 0, relation_id, sorted_ids,
+			n_attrs);
 
 	EffectsV3IdListBuilder_Push(grp->ids, id);
 
@@ -344,8 +436,21 @@ void EffectsV3Grouping_AddEdge
 		EffectsV3IdListBuilder_Push(grp->dst, dst);
 	}
 
-	_append_values(grp, values, n_attrs);
+	if(n_attrs > 0) {
+		EffectsBuffer *w = EffectsBuffer_Wrap(grp->values);
+		for(uint16_t i = 0; i < n_attrs; i++) {
+			EffectsBuffer_WriteSIValue(&ap[i].v, w);
+		}
+		EffectsBuffer_Free(w);
+	}
 	grp->count++;
+
+	if(ap != pairs) {
+		rm_free(ap);
+	}
+	if(sorted_ids != ids) {
+		rm_free(sorted_ids);
+	}
 }
 
 static Announcement *_new_announcement(EffectsV3Grouping *g) {
