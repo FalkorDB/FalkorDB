@@ -8,7 +8,6 @@
 #include "effects_v3_encode.h"
 #include "effects_internal.h"
 #include "../util/rmalloc.h"
-#include "../../deps/rax/rax.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -71,6 +70,24 @@ typedef struct {
 	char       *name;    // owned
 } Announcement;
 
+// one slot of the per-entity index; idx1 == 0 means empty
+typedef struct {
+	uint64_t   id;
+	uint32_t   op;
+	uint32_t   idx1;   // index into 'updates', plus one
+} UpdateSlot;
+
+// mix an (opcode, id) pair into a slot
+//
+// splitmix64's finaliser: entity ids are dense and sequential, and the low bits
+// alone would put a bulk create into one probe chain
+static inline uint64_t _slot_hash(uint32_t op, uint64_t id) {
+	uint64_t x = id + 0x9E3779B97F4A7C15ULL * (uint64_t)(op + 1);
+	x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+	x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+	return x ^ (x >> 31);
+}
+
 struct EffectsV3Grouping {
 	Group *groups;
 	uint32_t n_groups;
@@ -86,14 +103,19 @@ struct EffectsV3Grouping {
 
 	// (opcode, entity id) -> index into 'updates', plus one
 	//
-	// The array stays: flush walks it in arrival order, and that order is what
-	// the emitted record's rows follow. This is only the index that finds an
-	// entity again, which was a linear scan over every entity staged so far.
+	// OPEN ADDRESSED, and chosen for its TEARDOWN. This was a rax, which fixed
+	// the quadratic scan and then became the emitter's single largest cost:
+	// 29.6% at 200,000 entities, of which freeing the tree was 14.2% and
+	// building it 11.5%, against 3.9% for the lookups it exists for. On a
+	// single-attribute update every lookup misses and nothing is ever merged -
+	// a radix tree built and destroyed to discover there was no merging to do.
 	//
-	// It stores an INDEX rather than a pointer because 'updates' is realloc'd,
-	// and index+1 so that the first entry is distinguishable from a miss
-	// without leaning on what raxFind returns for a NULL value.
-	rax *update_index;
+	// A flat table frees in one call and resets with a memset, which is the
+	// half a radix tree does worst. It stores an INDEX rather than a pointer
+	// because 'updates' is realloc'd, and index+1 so zero means empty.
+	UpdateSlot *index;
+	uint32_t    index_cap;   // always a power of two
+	uint32_t    index_n;     // occupied slots
 };
 
 //------------------------------------------------------------------------------
@@ -200,7 +222,9 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	g->cap_updates       = 4;
 	g->updates           = rm_calloc(g->cap_updates, sizeof(PendingUpdate));
 	g->n_updates         = 0;
-	g->update_index      = raxNew();
+	g->index_cap = 256;   // power of two
+	g->index_n   = 0;
+	g->index     = rm_calloc(g->index_cap, sizeof(UpdateSlot));
 
 
 	return g;
@@ -516,21 +540,43 @@ static int _cmp_staged_attr(const void *a, const void *b) {
 	return (x < y) ? -1 : (x > y) ? 1 : 0;
 }
 
-// the index key: opcode then entity id
-//
-// _update_for matches on both, so both are in the key. The byte order is
-// whatever the host uses - this key never leaves the process and is only ever
-// compared for equality, so it needs no canonical form.
-static inline size_t _update_key
+// find the slot for (op, id): the entry if present, else where it would go
+static inline UpdateSlot *_index_probe
 (
-	unsigned char *buf,  // at least 12 bytes
-	EffectType opcode,   // UPDATE_NODE or UPDATE_EDGE
-	uint64_t id          // entity id
+	UpdateSlot *tbl,   // table
+	uint32_t cap,      // capacity, a power of two
+	uint32_t op,       // opcode
+	uint64_t id        // entity id
 ) {
-	uint32_t op = (uint32_t)opcode;
-	memcpy(buf, &op, sizeof(op));
-	memcpy(buf + sizeof(op), &id, sizeof(id));
-	return sizeof(op) + sizeof(id);
+	uint32_t m = cap - 1;
+	uint32_t i = (uint32_t)_slot_hash(op, id) & m;
+
+	// linear probing: the table never fills past 70%, so this terminates
+	while(tbl[i].idx1 != 0) {
+		if(tbl[i].id == id && tbl[i].op == op) {
+			return tbl + i;
+		}
+		i = (i + 1) & m;
+	}
+	return tbl + i;
+}
+
+// double the table and reinsert
+static void _index_grow(EffectsV3Grouping *g) {
+	const uint32_t cap = g->index_cap * 2;
+	UpdateSlot *tbl = rm_calloc(cap, sizeof(UpdateSlot));
+
+	for(uint32_t i = 0; i < g->index_cap; i++) {
+		if(g->index[i].idx1 == 0) {
+			continue;
+		}
+		UpdateSlot *d = _index_probe(tbl, cap, g->index[i].op, g->index[i].id);
+		*d = g->index[i];
+	}
+
+	rm_free(g->index);
+	g->index     = tbl;
+	g->index_cap = cap;
 }
 
 // find the staged update for this entity, or open one
@@ -553,12 +599,9 @@ static PendingUpdate *_update_for
 	uint16_t n_labels,      // how many
 	RelationID relation_id  // relationship type
 ) {
-	unsigned char key[12];
-	size_t klen = _update_key(key, opcode, id);
-
-	void *found = raxFind(g->update_index, key, klen);
-	if(found != raxNotFound) {
-		return g->updates + ((uintptr_t)found - 1);
+	UpdateSlot *slot = _index_probe(g->index, g->index_cap, (uint32_t)opcode, id);
+	if(slot->idx1 != 0) {
+		return g->updates + (slot->idx1 - 1);
 	}
 
 	if(g->n_updates == g->cap_updates) {
@@ -571,7 +614,16 @@ static PendingUpdate *_update_for
 	PendingUpdate *u = g->updates + idx;
 	memset(u, 0, sizeof(*u));
 
-	raxInsert(g->update_index, key, klen, (void *)(uintptr_t)(idx + 1), NULL);
+	// grown BEFORE the insert would push past 70%, and the slot re-probed
+	// because growing rehashes everything
+	if((g->index_n + 1) * 10 >= g->index_cap * 7) {
+		_index_grow(g);
+		slot = _index_probe(g->index, g->index_cap, (uint32_t)opcode, id);
+	}
+	slot->id   = id;
+	slot->op   = (uint32_t)opcode;
+	slot->idx1 = idx + 1;
+	g->index_n++;
 
 	u->opcode      = opcode;
 	u->id          = id;
@@ -718,9 +770,11 @@ static void _flush_updates(EffectsV3Grouping *g) {
 	g->n_updates = 0;
 
 
-	// the indices it holds now point past the end of a zero-length array
-	raxFree(g->update_index);
-	g->update_index = raxNew();
+	// the indices it holds now point past the end of a zero-length array.
+	// Cleared with a memset and the allocation kept - this is the teardown
+	// that cost 14.2% as a radix tree
+	memset(g->index, 0, g->index_cap * sizeof(UpdateSlot));
+	g->index_n = 0;
 }
 
 uint32_t EffectsV3Grouping_RecordCount
@@ -903,7 +957,7 @@ void EffectsV3Grouping_Free
 	for(uint32_t i = 0; i < g->n_updates; i++) {
 		_update_release(g->updates + i);
 	}
-	raxFree(g->update_index);
+	rm_free(g->index);
 	rm_free(g->updates);
 
 	rm_free(g->groups);
