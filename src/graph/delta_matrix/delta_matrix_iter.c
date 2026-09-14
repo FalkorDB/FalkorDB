@@ -5,15 +5,13 @@
 
 #include "RG.h"
 #include "./delta_matrix_iter.h"
+#include "./delta_matrix_iter_internal.h"
 #include "../../util/rmalloc.h"
 #include "./delta_utils.h"
 
-// returns true if iterator is detached from a matrix
-#define IS_DETACHED(iter) ((iter) == NULL || (iter)->A == NULL)
-
 // seek iterator within the given range of rows
 // sets depleted to true if no values exist in the given range
-static inline void _set_iter_range
+static inline void _Iter_seek
 (
 	GxB_Iterator it,
 	GrB_Index min_row,
@@ -53,7 +51,7 @@ static inline void _set_iter_range
 }
 
 // allocate, attach, and seek iterator
-static inline void _init_iter
+static inline void _Iter_attach
 (
 	GxB_Iterator it,    // iterator
 	GrB_Matrix m,       // matrix to attach to
@@ -69,11 +67,11 @@ static inline void _init_iter
 	*depleted = true ; // default
 
 	GrB_OK (GxB_rowIterator_attach (it, m, NULL)) ;
-	_set_iter_range (it, min_row, max_row, depleted) ;
+	_Iter_seek (it, min_row, max_row, depleted) ;
 }
 
 // advance internal iterator
-static void _iter_next
+void _Iter_next
 (
 	GxB_Iterator it,
 	GrB_Index max_row,
@@ -112,16 +110,20 @@ static void _MaskedMIter_skip_masked
 		GrB_Index m_row = GxB_rowIterator_getRowIndex (&mi->it) ;
 		GrB_Index d_row = GxB_rowIterator_getRowIndex (&mi->dm_it) ;
 
+		if (m_row != d_row) {
+			return ;
+		}
+
 		GrB_Index m_col = GxB_rowIterator_getColIndex (&mi->it) ;
 		GrB_Index d_col = GxB_rowIterator_getColIndex (&mi->dm_it) ;
 
-		if (m_row != d_row || m_col != d_col) {
+		if (m_col != d_col) {
 			return ;
 		}
 
 		// current M entry is masked out by a pending deletion, skip both
-		_iter_next (&mi->it,    max_row, &mi->depleted) ;
-		_iter_next (&mi->dm_it, max_row, &mi->dm_depleted) ;
+		_Iter_next (&mi->it,    max_row, &mi->depleted) ;
+		_Iter_next (&mi->dm_it, max_row, &mi->dm_depleted) ;
 	}
 }
 
@@ -134,8 +136,8 @@ static void _MaskedMIter_attach
 	GrB_Index min_row,
 	GrB_Index max_row
 ) {
-	_init_iter (&mi->it,    M,  min_row, max_row, &mi->depleted) ;
-	_init_iter (&mi->dm_it, DM, min_row, max_row, &mi->dm_depleted) ;
+	_Iter_attach (&mi->it,    M,  min_row, max_row, &mi->depleted) ;
+	_Iter_attach (&mi->dm_it, DM, min_row, max_row, &mi->dm_depleted) ;
 	_MaskedMIter_skip_masked (mi, max_row) ;
 }
 
@@ -147,18 +149,18 @@ static void _MaskedMIter_seek
 	GrB_Index min_row,
 	GrB_Index max_row
 ) {
-	_set_iter_range (&mi->it,    min_row, max_row, &mi->depleted) ;
-	_set_iter_range (&mi->dm_it, min_row, max_row, &mi->dm_depleted) ;
+	_Iter_seek (&mi->it,    min_row, max_row, &mi->depleted) ;
+	_Iter_seek (&mi->dm_it, min_row, max_row, &mi->dm_depleted) ;
 	_MaskedMIter_skip_masked (mi, max_row) ;
 }
 
 // advance mi to its next live entry (or depleted)
-static void _MaskedMIter_next
+void _MaskedMIter_next
 (
 	Delta_MaskedMIter *mi,
 	GrB_Index max_row
 ) {
-	_iter_next (&mi->it, max_row, &mi->depleted) ;
+	_Iter_next (&mi->it, max_row, &mi->depleted) ;
 	_MaskedMIter_skip_masked (mi, max_row) ;
 }
 
@@ -176,7 +178,7 @@ GrB_Info Delta_MatrixTupleIter_iterate_row
 	iter->max_row = rowIdx ;
 
 	_MaskedMIter_seek (&iter->m, iter->min_row, iter->max_row) ;
-	_set_iter_range (&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_Iter_seek (&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
 
 	return GrB_SUCCESS ;
 }
@@ -195,7 +197,7 @@ GrB_Info Delta_MatrixTupleIter_iterate_range
 	iter->max_row = endRowIdx ;
 
 	_MaskedMIter_seek (&iter->m, iter->min_row, iter->max_row) ;
-	_set_iter_range (&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_Iter_seek (&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
 
 	return GrB_SUCCESS ;
 }
@@ -249,7 +251,7 @@ GrB_Info Delta_MatrixTupleIter_next_BOOL
 	if(val) *val = GxB_Iterator_get_BOOL (dp_it) ;
 
 	// prep value for next iteration
-	_iter_next(dp_it, iter->max_row, &iter->dp_depleted);
+	_Iter_next(dp_it, iter->max_row, &iter->dp_depleted);
 
 	return GrB_SUCCESS ;
 }
@@ -303,74 +305,10 @@ GrB_Info Delta_MatrixTupleIter_next_UINT64
 	if(val) *val = GxB_Iterator_get_UINT64 (dp_it) ;
 
 	// prep value for next iteration
-	_iter_next(dp_it, iter->max_row, &iter->dp_depleted);
+	_Iter_next(dp_it, iter->max_row, &iter->dp_depleted);
 
 	return GrB_SUCCESS ;
 }
-
-// advance iterator in true ascending (row, col) order across the whole
-// attached range.
-//
-// Delta_MatrixTupleIter_next_BOOL/_UINT64 drain the entire main matrix (M)
-// before ever yielding a delta-plus (DP) entry, so within one attached
-// range the stream is "all of M ascending, then all of DP ascending" - not
-// one merged ascending stream. A caller that resumes a range scan (e.g.
-// batch-based index population, re-attaching at [last_row + 1, MAX) between
-// batches) can silently skip DP rows below the resume point forever, since
-// they're outside every subsequent range.
-#define DELTA_MATRIX_TUPLE_ITER_NEXT_SORTED(SUFFIX, TYPE)                      \
-GrB_Info Delta_MatrixTupleIter_next_##SUFFIX##_sorted                          \
-(                                                                              \
-	Delta_MatrixTupleIter *iter,  /* iterator to consume */                    \
-	GrB_Index *row,               /* optional output row index */              \
-	GrB_Index *col,               /* optional output column index */           \
-	TYPE *val                     /* optional value at A[row, col] */          \
-) {                                                                            \
-	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;                            \
-                                                                               \
-	bool have_m  = !iter->m.depleted ;                                         \
-	bool have_dp = !iter->dp_depleted ;                                        \
-                                                                               \
-	if(!have_m && !have_dp) {                                                  \
-		return GxB_EXHAUSTED ;                                                 \
-	}                                                                          \
-                                                                               \
-	GxB_Iterator m_it  = &iter->m.it ;                                         \
-	GxB_Iterator dp_it = &iter->dp_it ;                                        \
-                                                                               \
-	GrB_Index m_row = 0, m_col = 0, dp_row = 0, dp_col = 0 ;                   \
-	if(have_m)  {                                                              \
-		m_row  = GxB_rowIterator_getRowIndex (m_it) ;                          \
-		m_col  = GxB_rowIterator_getColIndex (m_it) ;                          \
-	}                                                                          \
-	if(have_dp)  {                                                             \
-		dp_row  = GxB_rowIterator_getRowIndex (dp_it) ;                        \
-		dp_col  = GxB_rowIterator_getColIndex (dp_it) ;                        \
-	}                                                                          \
-                                                                               \
-	/* take from DP only if it strictly precedes M's current entry */          \
-	bool take_dp = have_dp &&                                                  \
-		(!have_m || dp_row < m_row || (dp_row == m_row && dp_col < m_col)) ;   \
-                                                                               \
-	if(take_dp) {                                                              \
-		if(row) *row = dp_row ;                                                \
-		if(col) *col = dp_col ;                                                \
-		if(val) *val = GxB_Iterator_get_##SUFFIX (dp_it) ;                     \
-		_iter_next (dp_it, iter->max_row, &iter->dp_depleted) ;                \
-	} else {                                                                   \
-		if(row) *row = m_row ;                                                 \
-		if(col) *col = m_col ;                                                 \
-		if(val) *val = GxB_Iterator_get_##SUFFIX (m_it) ;                      \
-		_MaskedMIter_next (&iter->m, iter->max_row) ;                          \
-	}                                                                          \
-                                                                               \
-	return GrB_SUCCESS ;                                                       \
-}
-
-DELTA_MATRIX_TUPLE_ITER_NEXT_SORTED(BOOL, bool)
-DELTA_MATRIX_TUPLE_ITER_NEXT_SORTED(UINT64, uint64_t)
-
-#undef DELTA_MATRIX_TUPLE_ITER_NEXT_SORTED
 
 // reset iterator, assumes the iterator is valid
 GrB_Info Delta_MatrixTupleIter_reset
@@ -380,7 +318,7 @@ GrB_Info Delta_MatrixTupleIter_reset
 	if(IS_DETACHED(iter)) return GrB_NULL_POINTER ;
 
 	_MaskedMIter_seek (&iter->m, iter->min_row, iter->max_row) ;
-	_set_iter_range (&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_Iter_seek (&iter->dp_it, iter->min_row, iter->max_row, &iter->dp_depleted) ;
 
 	return GrB_SUCCESS ;
 }
@@ -433,7 +371,7 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 	iter->max_row = max_row ;
 
 	_MaskedMIter_attach (&iter->m, M, DM, iter->min_row, iter->max_row) ;
-	_init_iter (&iter->dp_it, DP, iter->min_row, iter->max_row, &iter->dp_depleted) ;
+	_Iter_attach (&iter->dp_it, DP, iter->min_row, iter->max_row, &iter->dp_depleted) ;
 
 	return GrB_SUCCESS ;
 }
@@ -442,6 +380,18 @@ GrB_Info Delta_MatrixTupleIter_AttachRange
 // p is read before next() advances the iterator, giving the position of
 // the entry about to be returned; unique and stable across re-scans of
 // the same matrix
+//
+// safe with respect to pending deletions: iter->m (a Delta_MaskedMIter)
+// guarantees that whenever iter->m.depleted is false, its current position
+// is already a live (non-deleted) entry - see _MaskedMIter_skip_masked,
+// which every attach/seek/next on iter->m runs before returning - so this
+// never reports the position of an entry masked out by DM.
+//
+// NOTE: the value returned is not necessarily increasing, nor are all values
+// in a range returned (some p values between 0 and pmax may be skipped) the
+// only guarantee is that p is unique to the current entry in the matrix, and
+// that the same p value will be returned if a second iterator queries getp at
+// the same position AND the current matrix has not changed
 GrB_Index Delta_Matrix_Iterator_getp
 (
 	Delta_MatrixTupleIter *iter  // iterator to query
@@ -462,9 +412,9 @@ GrB_Info Delta_MatrixTupleIter_detach
 ) {
 	ASSERT(iter != NULL) ;
 
-	iter->A            = NULL ;
-	iter->m.depleted   = true ;
-	iter->dp_depleted  = true ;
+	iter->A             = NULL ;
+	iter->m.depleted    = true ;
+	iter->dp_depleted   = true ;
 	iter->m.dm_depleted = true ;
 
 	return GrB_SUCCESS ;

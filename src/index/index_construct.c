@@ -125,7 +125,7 @@ static void _Index_PopulateEdgeIndex
 
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	bool  info = true;
+	bool      active       = true;                   // is the current tuple valid
 	EntityID  src_id       = 0;                      // current processed row idx
 	EntityID  dest_id      = 0;                      // current processed column idx
 	EntityID  edge_id      = 0;                      // current processed edge id
@@ -136,7 +136,7 @@ static void _Index_PopulateEdgeIndex
 	int       batch_size   = 1000;                   // max number of entities to index in one go
 	TensorIterator it      = {0};                    // relation matrix iterator
 
-	while (info) {
+	while (active) {
 		// lock graph for reading
 		GraphContext_AcquireReadLock (gc) ;
 
@@ -146,14 +146,14 @@ static void _Index_PopulateEdgeIndex
 		// 2. CREATE INDEX FOR (:Person)-[e:WORKS]-(:Company) ON (e.title)
 		if(Index_PendingChanges(idx) > 1) {
 			GraphContext_ReleaseLock (gc) ;
-			break;
+			return ;
 		}
 
 		// reset number of indexed edges in batch
 		indexed = 0;
 
 		// fetch relation matrix
-		Tensor R = Graph_GetRelationMatrix(g, Index_GetLabelID(idx), false);
+		Tensor R = Graph_GetRelationMatrix(g, schema_id, false);
 
 		//----------------------------------------------------------------------
 		// resume scanning from previous row/col indices
@@ -166,7 +166,7 @@ static void _Index_PopulateEdgeIndex
 		TensorIterator_ScanRange_Sorted(&it, R, src_id, UINT64_MAX);
 
 		// skip previously indexed edges
-		while((info =
+		while((active =
 				TensorIterator_next(&it, &src_id, &dest_id, &edge_id, NULL)) &&
 				src_id == prev_src_id &&
 				dest_id < prev_dest_id);
@@ -181,11 +181,11 @@ static void _Index_PopulateEdgeIndex
 		bool multi = false;
 
 		// process only if iterator is on an active entry
-		for (indexed = 0; info && (indexed < batch_size || multi); indexed ++) {
+		for (indexed = 0; active && (indexed < batch_size || multi); indexed ++) {
 			Edge e;
 			e.src_id     = src_id;
 			e.dest_id    = dest_id;
-			e.relationID = Index_GetLabelID(idx);
+			e.relationID = schema_id;
 
 			Graph_GetEdge(g, edge_id, &e);
 			Index_IndexEdge(idx, &e);
@@ -193,7 +193,7 @@ static void _Index_PopulateEdgeIndex
 			prev_src_id = src_id;
 			prev_dest_id = dest_id;
 
-			info = TensorIterator_next (&it, &src_id, &dest_id, &edge_id, NULL) ;
+			active = TensorIterator_next (&it, &src_id, &dest_id, &edge_id, NULL) ;
 			multi = src_id == prev_src_id && dest_id == prev_dest_id;
 		}
 
