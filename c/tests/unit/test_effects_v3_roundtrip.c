@@ -121,6 +121,33 @@ void test_effectsV3_decodesEveryFixture(void) { V3_SKIP("decoding every fixture"
 
 #else
 
+// what a status is called, spelled out here rather than borrowed
+//
+// The codec used to export EffectsV3Status_ToString. It left src/ when the
+// record model was retyped into one struct per opcode, and
+// src/effects/effects_apply.c now carries its own local switch rather than
+// re-exporting one -- deliberately, since a header declaration re-conflicts on
+// every base move. A harness that only wants to name a status in a failure
+// message should not be coupled to whether the stack exports one.
+//
+// The six values are unchanged across that move, so this is a decoupling and
+// not a port. No default arm, so -Wswitch reports a status added upstream
+// rather than printing it as something else; the return past the switch is for
+// a value no enumerator covers, which means a cast or memory corruption rather
+// than a new status.
+static const char *_status_name(EffectsV3Status st) {
+	switch(st) {
+		case EFFECTS_V3_OK:                  return "OK";
+		case EFFECTS_V3_TRUNCATED:           return "TRUNCATED";
+		case EFFECTS_V3_MALFORMED:           return "MALFORMED";
+		case EFFECTS_V3_UNSUPPORTED_VERSION: return "UNSUPPORTED_VERSION";
+		case EFFECTS_V3_UNSUPPORTED_FLAGS:   return "UNSUPPORTED_FLAGS";
+		case EFFECTS_V3_UNIMPLEMENTED:       return "UNIMPLEMENTED";
+	}
+
+	return "not a status this build knows";
+}
+
 //------------------------------------------------------------------------------
 // every fixture decodes
 //------------------------------------------------------------------------------
@@ -155,7 +182,7 @@ void test_effectsV3_decodesEveryFixture(void) {
 				"%s: a corpus fixture failed to decode: %s. Every case here is "
 				"a payload a conforming encoder produced, so a refusal is this "
 				"decoder's defect and not the corpus's",
-				e->name, EffectsV3Status_ToString(st));
+				e->name, _status_name(st));
 
 		if(st == EFFECTS_V3_OK) {
 			TEST_CHECK_(records != NULL, "%s: decoded OK with no records",
@@ -164,7 +191,7 @@ void test_effectsV3_decodesEveryFixture(void) {
 		} else {
 			TEST_CHECK_(records == NULL,
 					"%s: refused as %s but left records allocated",
-					e->name, EffectsV3Status_ToString(st));
+					e->name, _status_name(st));
 		}
 
 		EffectsV3Corpus_Free(&f);
@@ -297,7 +324,7 @@ static void _round_trip(const EffectsV3CorpusEntry *e) {
 			&records);
 
 	TEST_ASSERT_(st == EFFECTS_V3_OK, "%s: decode refused a corpus fixture: %s",
-			e->name, EffectsV3Status_ToString(st));
+			e->name, _status_name(st));
 
 	if(st == EFFECTS_V3_OK) {
 		TEST_ASSERT_(records != NULL,
@@ -461,7 +488,7 @@ void test_effectsV3_truncation(void) {
 			} else {
 				TEST_CHECK_(records == NULL,
 						"%s[..%zu]: rejected as %s but left records allocated",
-						e->name, len, EffectsV3Status_ToString(st));
+						e->name, len, _status_name(st));
 
 				// UNIMPLEMENTED is legitimate here: a prefix long enough to
 				// carry a complete records 11-14 opcode is refused for that
@@ -472,7 +499,7 @@ void test_effectsV3_truncation(void) {
 						"%s[..%zu]: rejected as %s; a prefix of a valid v3 "
 						"payload is truncated, malformed, or a record this "
 						"build does not implement",
-						e->name, len, EffectsV3Status_ToString(st));
+						e->name, len, _status_name(st));
 			}
 		}
 
@@ -584,8 +611,8 @@ void test_effectsV3_rejections(void) {
 
 		TEST_ASSERT_(st == cases[i].expect,
 				"%s: got %s, expected %s", cases[i].what,
-				EffectsV3Status_ToString(st),
-				EffectsV3Status_ToString(cases[i].expect));
+				_status_name(st),
+				_status_name(cases[i].expect));
 
 		TEST_ASSERT_(records == NULL, "%s: rejected but left records allocated",
 				cases[i].what);
