@@ -496,6 +496,27 @@ void EffectsV3Grouping_StageUpdate
 	EffectsBytes_Free(tmp);
 }
 
+// release everything a staged update owns
+//
+// Both the flush and the free path go through this, and the flush is the one
+// that matters: it sets n_updates to 0, and EffectsV3Grouping_Free frees per
+// update by iterating n_updates - so anything still owned at that point is
+// unreachable. Every entity in a `SET` leaked its encoded value, its attribute
+// array and its label array, once per query.
+//
+// Idempotent, so freeing an accumulator that was never flushed is still correct.
+static void _update_release(PendingUpdate *u) {
+	for(uint32_t k = 0; k < u->n_attrs; k++) {
+		rm_free(u->attrs[k].bytes);
+	}
+	rm_free(u->attrs);
+	rm_free(u->labels);
+
+	u->attrs   = NULL;
+	u->labels  = NULL;
+	u->n_attrs = 0;
+}
+
 // fold every staged update into its group
 //
 // deferred to here because an entity's SHAPE is not known until the query stops
@@ -505,6 +526,8 @@ static void _flush_updates(EffectsV3Grouping *g) {
 		PendingUpdate *u = g->updates + i;
 
 		if(u->n_attrs == 0) {
+			// still owns the array _update_for allocated for it
+			_update_release(u);
 			continue;
 		}
 
@@ -533,6 +556,9 @@ static void _flush_updates(EffectsV3Grouping *g) {
 		if(attr_ids != ids) {
 			rm_free(attr_ids);
 		}
+
+		// the bytes have been copied into the group, so the staging copy goes
+		_update_release(u);
 	}
 
 	g->n_updates = 0;
@@ -647,13 +673,9 @@ void EffectsV3Grouping_Free
 		rm_free(g->announcements[i].name);
 	}
 
+	// anything still staged - an accumulator freed without being encoded
 	for(uint32_t i = 0; i < g->n_updates; i++) {
-		PendingUpdate *u = g->updates + i;
-		for(uint32_t k = 0; k < u->n_attrs; k++) {
-			rm_free(u->attrs[k].bytes);
-		}
-		rm_free(u->attrs);
-		rm_free(u->labels);
+		_update_release(g->updates + i);
 	}
 	rm_free(g->updates);
 
