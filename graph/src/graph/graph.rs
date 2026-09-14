@@ -4047,6 +4047,13 @@ impl Graph {
             return Err("missing supporting exact-match index".into());
         }
 
+        // Properties cannot contain duplicates: e.g. (n.a, n.a)
+        let mut sorted_props: Vec<&str> = properties.iter().map(|p| p.as_str()).collect();
+        sorted_props.sort_unstable();
+        if sorted_props.windows(2).any(|w| w[0] == w[1]) {
+            return Err("Properties cannot contain duplicates".into());
+        }
+
         // Check for duplicates
         let existing_idx = self
             .constraints
@@ -4976,5 +4983,61 @@ mod composite_key_tests {
         assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
         assert!(key(&["a"], &[]).is_empty());
         assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod constraint_tests {
+    use super::*;
+
+    #[test]
+    fn create_constraint_rejects_duplicate_properties() {
+        let mut g = Graph::new();
+        let label = Arc::new("P".to_string());
+        let p_a = Arc::new("a".to_string());
+
+        let res = g.create_constraint(
+            ConstraintType::Mandatory,
+            EntityType::Node,
+            &label,
+            &[p_a.clone(), p_a.clone()],
+        );
+        assert_eq!(res, Err("Properties cannot contain duplicates".into()));
+    }
+
+    #[test]
+    fn create_constraint_order_insensitive_duplicate_check() {
+        let mut g = Graph::new();
+        let label = Arc::new("P".to_string());
+        let p_a = Arc::new("a".to_string());
+        let p_b = Arc::new("b".to_string());
+
+        // First create with [a, b] succeeds
+        let res1 = g.create_constraint(
+            ConstraintType::Mandatory,
+            EntityType::Node,
+            &label,
+            &[p_a.clone(), p_b.clone()],
+        );
+        assert!(res1.is_ok());
+
+        // Second create with [b, a] fails as duplicate constraint
+        let res2 = g.create_constraint(
+            ConstraintType::Mandatory,
+            EntityType::Node,
+            &label,
+            &[p_b.clone(), p_a.clone()],
+        );
+        assert_eq!(res2, Err("Constraint already exists".into()));
+
+        // Drop with reversed order [b, a] succeeds
+        let drop_res = g.drop_constraint(
+            &ConstraintType::Mandatory,
+            &EntityType::Node,
+            "P",
+            &[p_b.clone(), p_a.clone()],
+        );
+        assert!(drop_res.is_ok());
+        assert_eq!(g.constraints.len(), 0);
     }
 }
