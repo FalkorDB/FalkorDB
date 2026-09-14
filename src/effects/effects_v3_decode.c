@@ -1458,6 +1458,71 @@ void EffectsV3_RecordsFree
 	rm_free (records) ;
 }
 
+// read and validate the payload header: version byte, then flags
+//
+// SHARED BY BOTH ENTRY POINTS. All of the parsing lives here and in
+// _ReadRecord, so the streaming and collecting forms cannot disagree about what
+// a payload means - the only thing that differs between them is what they do
+// with each record once it is read.
+//
+// The header is never compressed, so a reader always knows what it holds before
+// committing to decode anything.
+static EffectsV3Status _ReadHeader
+(
+	FILE *stream
+) {
+	uint8_t version ;
+	if (!_ReadU8 (stream, &version)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	if (version != 3) {
+		return EFFECTS_V3_UNSUPPORTED_VERSION ;
+	}
+
+	uint8_t flags ;
+	if (!_ReadU8 (stream, &flags)) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	// a flag bit outside the mask we understand rejects the buffer rather than
+	// being masked off: an old node meeting a future payload must fail loudly,
+	// because decoding the records anyway applies a prefix of something whose
+	// shape it does not know
+	if (flags & ~FLAGS_KNOWN) {
+		return EFFECTS_V3_UNSUPPORTED_FLAGS ;
+	}
+
+	// compression is understood as a flag but not yet implemented - zstd is a
+	// separate PR. Refusing is correct until then: the alternative is reading a
+	// zstd frame as records.
+	//
+	// Refused HERE, before any length field is read, which is why the
+	// compressed header's layout does not reach this decoder. For whoever
+	// implements it, that header is (e456ec802 on feat/effects-v3):
+	//
+	//   u8 version . u8 flags . u32 plain_len . u32 comp_len . u32 checksum
+	//     . <zstd frame>
+	//
+	// twelve bytes of prefix, not eight. All little-endian. Three things the
+	// reader has to get right, and each exists because of a specific failure:
+	//
+	//   * read exactly 'comp_len' bytes as the frame, not to the end of the
+	//     buffer, and refuse a comp_len that outruns what remains BEFORE zstd
+	//     sees it
+	//   * bytes after the frame are an error, not padding - ignoring them
+	//     silently accepts a truncated-then-appended buffer
+	//   * 'plain_len' is the decompress allocation CEILING, not just a
+	//     cross-check. A ~100 byte frame of zeros expands to gigabytes, so
+	//     bound the output first, then verify the expanded length equals
+	//     plain_len, then check the CRC-32 over the plaintext. That order.
+	if (flags & FLAG_COMPRESSED) {
+		return EFFECTS_V3_UNSUPPORTED_FLAGS ;
+	}
+
+	return EFFECTS_V3_OK ;
+}
+
 // decode a payload, handing each record to 'fn' as it is read
 //
 // the header is parsed here and the record loop runs here; the two public
@@ -1481,63 +1546,11 @@ EffectsV3Status EffectsV3_DecodeEach
 		return EFFECTS_V3_MALFORMED ;
 	}
 
-	EffectsV3Status status = EFFECTS_V3_OK ;
-
-	// the header is never compressed, so a reader always knows what it holds
-	// before committing to decode anything
-	uint8_t version ;
-	if (!_ReadU8 (stream, &version)) {
-		status = EFFECTS_V3_TRUNCATED ;
+	EffectsV3Status status = _ReadHeader (stream) ;
+	if (status != EFFECTS_V3_OK) {
 		goto done ;
 	}
 
-	if (version != 3) {
-		status = EFFECTS_V3_UNSUPPORTED_VERSION ;
-		goto done ;
-	}
-
-	uint8_t flags ;
-	if (!_ReadU8 (stream, &flags)) {
-		status = EFFECTS_V3_TRUNCATED ;
-		goto done ;
-	}
-
-	// a flag bit outside the mask we understand rejects the buffer rather than
-	// being masked off: an old node meeting a future payload must fail loudly,
-	// because decoding the records anyway applies a prefix of something whose
-	// shape it does not know
-	if (flags & ~FLAGS_KNOWN) {
-		status = EFFECTS_V3_UNSUPPORTED_FLAGS ;
-		goto done ;
-	}
-
-	// compression is understood as a flag but not yet implemented - zstd is a
-	// separate PR. Refusing is correct until then: the alternative is reading
-	// a zstd frame as records.
-	//
-	// Refused HERE, before any length field is read, which is why the
-	// compressed header's layout does not reach this decoder. For whoever
-	// implements it, that header is (e456ec802 on feat/effects-v3):
-	//
-	//   u8 version . u8 flags . u32 plain_len . u32 comp_len . u32 checksum
-	//     . <zstd frame>
-	//
-	// twelve bytes of prefix, not eight. All little-endian. Three things the
-	// reader has to get right, and each exists because of a specific failure:
-	//
-	//   * read exactly 'comp_len' bytes as the frame, not to the end of the
-	//     buffer, and refuse a comp_len that outruns what remains BEFORE zstd
-	//     sees it
-	//   * bytes after the frame are an error, not padding - ignoring them
-	//     silently accepts a truncated-then-appended buffer
-	//   * 'plain_len' is the decompress allocation CEILING, not just a
-	//     cross-check. A ~100 byte frame of zeros expands to gigabytes, so
-	//     bound the output first, then verify the expanded length equals
-	//     plain_len, then check the CRC-32 over the plaintext. That order.
-	if (flags & FLAG_COMPRESSED) {
-		status = EFFECTS_V3_UNSUPPORTED_FLAGS ;
-		goto done ;
-	}
 
 	// ONE RECORD AT A TIME. The record lives on this stack frame and is freed
 	// before the next is read, so peak memory is one record rather than the
@@ -1576,45 +1589,21 @@ done:
 // the collecting form
 //------------------------------------------------------------------------------
 
-// accumulator for EffectsV3_Decode
-typedef struct {
-	EffectsV3Records *out;
-	uint32_t          cap;
-	bool              oom;
-} _Collector;
-
-// take ownership of each record by copying the struct and zeroing the original
-static bool _Collect
-(
-	EffectsV3Record *rec,
-	void *ctx
-) {
-	_Collector *c = (_Collector*)ctx ;
-
-	if (c->out->n == c->cap) {
-		c->cap = (c->cap == 0) ? 4 : c->cap * 2 ;
-		c->out->records = rm_realloc (c->out->records,
-				c->cap * sizeof (EffectsV3Record)) ;
-	}
-
-	c->out->records[c->out->n] = *rec ;
-	c->out->n++ ;
-
-	// OWNERSHIP MOVED. The driver frees the record as soon as this returns, so
-	// the original is zeroed - otherwise every owned pointer in it would be
-	// freed out from under the copy.
-	memset (rec, 0, sizeof (*rec)) ;
-
-	return true ;
-}
-
 // decode a payload whole
 //
 // KEPT FOR THE ROUND TRIP. EffectsV3_Encode takes a materialised record set and
-// the conformance harness is its only caller, so this wrapper exists to serve
-// that and nothing else - the production path streams. A test's needs do not
-// get to set the production path's memory profile, and breaking the round trip
-// to avoid carrying this would be the wrong trade in the other direction.
+// the conformance harness is its only caller; the production path streams.
+//
+// Its own loop rather than a callback into EffectsV3_DecodeEach. The parsing is
+// still shared - _ReadHeader and _ReadRecord are the same in both - so the two
+// forms cannot disagree about what a payload MEANS, which is the property the
+// corpus depends on. All that differs is what each does with a record once it
+// is read, and for this one that is "keep it".
+//
+// Going through the callback meant the driver freed each record immediately
+// after handing it over, so the collector had to take ownership by copying the
+// struct and ZEROING the original. That dance existed only to satisfy the
+// callback contract; a loop that simply does not free needs none of it.
 EffectsV3Status EffectsV3_Decode
 (
 	const char *buff,
@@ -1634,33 +1623,56 @@ EffectsV3Status EffectsV3_Decode
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
-	_Collector c = { 0 } ;
-	c.out = rm_calloc (1, sizeof (EffectsV3Records)) ;
+	FILE *stream = fmemopen ((void*)buff, n, "r") ;
+	if (stream == NULL) {
+		return EFFECTS_V3_MALFORMED ;
+	}
 
-	const EffectsV3Status status = EffectsV3_DecodeEach (buff, n, _Collect, &c) ;
+	EffectsV3Records *out = rm_calloc (1, sizeof (EffectsV3Records)) ;
+	uint32_t cap = 0 ;
 
+	EffectsV3Status status = _ReadHeader (stream) ;
 	if (status != EFFECTS_V3_OK) {
-		EffectsV3_RecordsFree (c.out) ;
-		return status ;
+		goto done ;
+	}
+
+	while ((size_t)ftell (stream) < n) {
+		if (out->n == cap) {
+			cap = (cap == 0) ? 4 : cap * 2 ;
+			out->records = rm_realloc (out->records,
+					cap * sizeof (EffectsV3Record)) ;
+		}
+
+		status = _ReadRecord (stream, out->records + out->n) ;
+		if (status != EFFECTS_V3_OK) {
+			// _ReadRecord frees what it partially built
+			goto done ;
+		}
+
+		out->n++ ;
 	}
 
 	// the header bytes the caller still expects to see on the record set
 	//
-	// READ FROM THE PAYLOAD, and read AFTER the driver has returned OK, which
+	// READ FROM THE PAYLOAD, and read AFTER the records decoded cleanly, which
 	// is what makes them trustworthy rather than assumed. An earlier version
 	// wrote a literal 3 here before decoding; that was correct, because
-	// EffectsV3_DecodeEach refuses any other version, but it read as an
-	// assumption and it would have become a real defect the moment this
-	// function returned a record set on a non-3 payload - the round trip
-	// re-encodes from records->version, so it would have produced bytes
-	// claiming a version the payload never had.
+	// _ReadHeader refuses any other version, but it read as an assumption and
+	// would have become a real defect the moment this function returned a
+	// record set on a non-3 payload - the round trip re-encodes from
+	// records->version, so it would have produced bytes claiming a version the
+	// payload never had.
 	//
-	// Taking them off the payload after a clean decode makes the value a
-	// consequence of the refusal rather than a restatement of it. n >= 2 here:
-	// a payload too short for both header bytes cannot decode OK.
-	c.out->version = (uint8_t)buff[0] ;
-	c.out->flags   = (uint8_t)buff[1] ;
+	// n >= 2 here: a payload too short for both header bytes cannot decode OK.
+	out->version = (uint8_t)buff[0] ;
+	out->flags   = (uint8_t)buff[1] ;
 
-	*records = c.out ;
-	return EFFECTS_V3_OK ;
+	*records = out ;
+
+done:
+	fclose (stream) ;
+	if (*records == NULL) {
+		EffectsV3_RecordsFree (out) ;
+	}
+	return status ;
 }
