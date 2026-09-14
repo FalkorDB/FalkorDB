@@ -1237,12 +1237,30 @@ static EffectsV3Status _ReadRecord
 	}
 	rec->opcode = (EffectType)opcode ;
 
-	// the two inherently singular records: no count, no ids
+	EffectsV3Status status ;
+
+	// EVERY reader below reaches the cleanup, not just the batchable ones.
+	//
+	// These used to `return` their status straight out. That leaked: a DDL
+	// reader writes a name and an attr-ref array into the record and can then
+	// hit a truncation several fields later, and returning past this label
+	// dropped both on the floor. _RecordFree is safe to call on any partially
+	// built record - the opcode is set above and the memset at the top of this
+	// function left every other field of the arm zeroed - so there is no reason
+	// for any path to skip it.
+	//
+	// Found by the conformance truncation sweep under LeakSanitizer, which
+	// reaches these functions because its fixtures include DDL records. A sweep
+	// over CREATE_NODE payloads alone cannot call either one.
 	if (rec->opcode == EFFECT_ADD_SCHEMA) {
-		return _ReadAddSchema (stream, rec) ;
+		status = _ReadAddSchema (stream, rec) ;
+		if (status != EFFECTS_V3_OK) goto fail ;
+		return EFFECTS_V3_OK ;
 	}
 	if (rec->opcode == EFFECT_ADD_ATTRIBUTE) {
-		return _ReadAddAttribute (stream, rec) ;
+		status = _ReadAddAttribute (stream, rec) ;
+		if (status != EFFECTS_V3_OK) goto fail ;
+		return EFFECTS_V3_OK ;
 	}
 
 	// records 11-14 (index and constraint DDL) are a separate PR
@@ -1258,13 +1276,21 @@ static EffectsV3Status _ReadRecord
 	// flip a writer to v3, or a peer emitting DDL gets refused.
 	switch (rec->opcode) {
 		case EFFECT_CREATE_INDEX:
-			return _ReadIndexRecord (stream, rec, true) ;
+			status = _ReadIndexRecord (stream, rec, true) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
 		case EFFECT_DROP_INDEX:
-			return _ReadIndexRecord (stream, rec, false) ;
+			status = _ReadIndexRecord (stream, rec, false) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
 		case EFFECT_CREATE_CONSTRAINT:
-			return _ReadConstraintRecord (stream, rec, true) ;
+			status = _ReadConstraintRecord (stream, rec, true) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
 		case EFFECT_DROP_CONSTRAINT:
-			return _ReadConstraintRecord (stream, rec, false) ;
+			status = _ReadConstraintRecord (stream, rec, false) ;
+			if (status != EFFECTS_V3_OK) goto fail ;
+			return EFFECTS_V3_OK ;
 		default:
 			break ;
 	}
@@ -1299,8 +1325,6 @@ static EffectsV3Status _ReadRecord
 	if (count == 0) {
 		return EFFECTS_V3_MALFORMED ;
 	}
-
-	EffectsV3Status status ;
 
 	// one arm per opcode, each reading exactly the blocks that opcode carries.
 	// The shape is stated ahead of the rows: a LabelSet for node-shaped records,
