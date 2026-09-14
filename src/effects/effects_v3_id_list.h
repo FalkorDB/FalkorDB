@@ -45,6 +45,29 @@
 // segment kind that differs between the encoder and the decoder is precisely
 // the disagreement the corpus exists to catch.
 
+// THE BUILDER'S SEGMENT AND THE CONTRACT'S ARE TWO OBJECTS, DELIBERATELY.
+//
+// EffectsV3IdListSegment (effects_v3.h) is a DECODED record; this is a MUTABLE
+// ACCUMULATOR. They describe the same wire shape and are not the same thing,
+// and the duplication is worth stating because the obvious reaction is to
+// collapse them.
+//
+// Collapsing forces one of two regressions, not a trade:
+//
+//   * the decoded form would carry a live roaring bitmap, which means
+//     DESERIALISING EVERY SEGMENT AT DECODE - and the contract's own invariant
+//     is that an IdList is never expanded there, one valid segment being four
+//     billion ids in seven bytes;
+//
+//   * or this form would serialise on every push, which is exactly the trial
+//     build the closed-form cost model exists to avoid.
+//
+// The sharpest difference is below: this caches min and max EXACTLY, because
+// the builder routes the next push on them. Deriving one from the other and
+// the length assumes the ids are gapless, which is precisely what a bitmap
+// segment is not. A decoded segment has no such need and carries no such
+// fields.
+
 // one segment under construction
 //
 // BOTH EXTREMES ARE CACHED on a bitmap segment rather than one being derived
