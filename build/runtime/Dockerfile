@@ -3,7 +3,7 @@ ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 # Redis base image version. Override via `--build-arg REDIS_VERSION=X.Y.Z`
 # to ship against a different redis release without editing the Dockerfile.
-ARG REDIS_VERSION=8.6.3
+ARG REDIS_VERSION=8.10.1
 
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
@@ -65,8 +65,13 @@ COPY --from=builder /out/falkordb.so /falkordb.so
 #   2. The upstream image also ships the bundled stack modules
 #      (redisearch, rejson, redistimeseries, redisbloom — ~25 MB combined).
 #      run.sh only `--loadmodule`s falkordb.so so those modules are dead
-#      weight. Building with BUILD_WITH_MODULES=no skips them entirely
-#      and eliminates the rust toolchain requirement that pulls them in.
+#      weight. A plain clone of the redis tag carries no module sources —
+#      since 8.10 the bundled modules are cloned on demand by
+#      `make modules-update`, so the default build is redis-only and the
+#      rust toolchain those modules pull in is never needed.
+#      (BUILD_WITH_MODULES=no below is the pre-8.10 spelling of the same
+#      intent; harmless now, and kept so the recipe still builds
+#      redis-only if REDIS_VERSION is pinned back to an 8.6.x tag.)
 #
 # Trade-off: we are now the SBOM/CVE publisher for the redis binaries,
 # losing the upstream image's attestation chain. Acceptable for a DB
