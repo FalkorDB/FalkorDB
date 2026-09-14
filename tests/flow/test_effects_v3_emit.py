@@ -217,6 +217,65 @@ class testEffectsV3Emit(FlowTestsBase):
         self._sync()
         self._assert_same("MATCH (n:Vec) RETURN count(n)", "vector node")
 
+    def test06b_vector_index_inner_product(self):
+        # A VECTOR INDEX WITH similarityFunction 'ip'.
+        #
+        # Never exercised end to end before, and not for want of trying: the
+        # apply path used to REFUSE simFunc code 1 outright, so a C master
+        # emitting an inner-product index always drove the replica into a
+        # resync. The encoder has always written the code faithfully, because
+        # C's own parser accepts "ip" and maps it to VecSimMetric_IP - so the
+        # two halves disagreed and the pair was untestable rather than passing.
+        #
+        # A resync converges, which is why no state comparison ever caught it:
+        # the replica ends up correct by re-reading the whole graph. The tell
+        # was in the log, not in the data.
+        self.src.query(
+            "CREATE VECTOR INDEX FOR (n:IP) ON (n.v) "
+            "OPTIONS {dimension:4, similarityFunction:'ip'}")
+        self._sync()
+
+        self._assert_same(
+            "CALL db.indexes() YIELD label, properties, types "
+            "RETURN label, properties, types ORDER BY label, properties",
+            "inner-product vector index")
+
+        # and it accepts a vector of the declared dimension on both sides
+        self.src.query("CREATE (:IP {v: vecf32([1.0,2.0,3.0,4.0])})")
+        self._sync()
+        self._assert_same("MATCH (n:IP) RETURN count(n)", "ip vector node")
+
+        # THE MECHANISM, NOT THE OUTCOME. A refused effect drives a resync, and
+        # a resync leaves the replica correct - so every comparison above would
+        # pass on exactly the behaviour this test exists to rule out. The
+        # replica's own failed_calls is what separates applied from
+        # refused-then-repaired.
+        # redis-py PARSES INFO into a dict, so this reads the key rather than
+        # scanning lines - an earlier version split on newlines, found nothing,
+        # and the "nothing was applied" guard fired. That guard was right to
+        # fire: it could not tell a parsing mistake from a replica that never
+        # applied anything, which is exactly what it is there to refuse.
+        stats = self.replica_con.execute_command("INFO", "commandstats")
+
+        failed = None
+        if isinstance(stats, dict):
+            entry = stats.get("cmdstat_graph.EFFECT")
+            if isinstance(entry, dict):
+                failed = entry.get("failed_calls")
+            elif isinstance(entry, str) and "failed_calls=" in entry:
+                failed = int(entry.split("failed_calls=")[1].split(",")[0])
+        else:
+            for line in str(stats).splitlines():
+                if line.startswith("cmdstat_graph.EFFECT:") and "failed_calls=" in line:
+                    failed = int(line.split("failed_calls=")[1].split(",")[0])
+
+        self.env.assertTrue(failed is not None,
+                message="replica has no graph.EFFECT stats - nothing was "
+                        "applied, so the comparisons above proved nothing")
+        self.env.assertEqual(failed, 0,
+                message=f"replica refused {failed} effect(s) - an "
+                        f"inner-product index must apply, not resync")
+
     def test07_drop_index(self):
         # dropped one field of a two-field index, so the record is a real drop
         # rather than the whole index going away
