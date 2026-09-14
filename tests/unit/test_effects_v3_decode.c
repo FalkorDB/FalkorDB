@@ -231,6 +231,65 @@ void test_stream_stops_when_the_callback_refuses() {
 	TEST_ASSERT(status == EFFECTS_V3_OK);
 }
 
+
+//------------------------------------------------------------------------------
+// truncation sweep
+//------------------------------------------------------------------------------
+//
+// Decode EVERY prefix of a payload. This is a unit-level version of the
+// conformance truncation sweep - narrower in coverage, aimed squarely at the
+// cleanup paths rather than at the format.
+//
+// It exists because EffectsV3_Decode writes _ReadRecord output straight into
+// rm_realloc'd - therefore UNINITIALIZED - memory, and on failure does not
+// increment out->n, so the partially written slot is never seen by
+// EffectsV3_RecordsFree. That is only safe because of two things:
+//
+//   * every arm of _ReadRecord exits through `goto fail`, and fail: calls
+//     _RecordFree(rec), so a partial record frees itself
+//   * memset(rec, 0, sizeof(*rec)) is the FIRST statement of _ReadRecord, so
+//     _RecordFree on the fail path never operates on realloc garbage
+//
+// Both are load-bearing and neither is obvious. A normal run cannot tell a
+// clean rejection from a leaking one, which is why this is worth running under
+// a leak checker - build with SAN=address and LeakSanitizer reports at exit.
+
+static void _sweep
+(
+	const unsigned char *buf,
+	size_t len
+) {
+	// every prefix, including the empty one and the whole payload
+	for (size_t k = 0; k <= len; k++) {
+		EffectsV3Records *records = NULL;
+		EffectsV3Status status = EffectsV3_Decode((const char*)buf, k, &records);
+
+		if (status == EFFECTS_V3_OK) {
+			// A PREFIX ENDING ON A RECORD BOUNDARY DECODES CLEANLY, and that is
+			// a property of the format rather than a hole in the decoder: the
+			// header carries no record count, so a payload cut at a boundary is
+			// byte-for-byte a shorter valid payload. Sweeping 76 bytes of two
+			// records accepts exactly k = 2, 39 and 76.
+			//
+			// So the assertion here is NOT "only the whole payload decodes".
+			// That was this test's first version and it failed immediately -
+			// correctly, against an expectation that was wrong.
+			TEST_ASSERT(records != NULL);
+			EffectsV3_RecordsFree(records);
+		} else {
+			// AND NOTHING IS HANDED BACK on a refusal - a caller that got a
+			// record set here would be holding a payload prefix that looks
+			// complete
+			TEST_ASSERT(records == NULL);
+		}
+	}
+}
+
+void test_every_prefix_decodes_or_refuses_cleanly() {
+	_sweep(TWO_RECORDS,   sizeof(TWO_RECORDS));
+	_sweep(THREE_RECORDS, sizeof(THREE_RECORDS));
+}
+
 TEST_LIST = {
 	{"decode_collects_every_record",      test_decode_collects_every_record},
 	{"decode_refuses_a_truncated_payload", test_decode_refuses_a_truncated_payload},
@@ -241,5 +300,7 @@ TEST_LIST = {
 			test_stream_delivers_k_records_before_a_truncation},
 	{"stream_stops_when_the_callback_refuses",
 			test_stream_stops_when_the_callback_refuses},
+	{"every_prefix_decodes_or_refuses_cleanly",
+			test_every_prefix_decodes_or_refuses_cleanly},
 	{NULL, NULL}
 };
