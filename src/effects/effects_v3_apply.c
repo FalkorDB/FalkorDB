@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "effects_v3.h"
+#include "effects_v3_stream.h"
 #include "effects_internal.h"
 #include "../graph/graph_hub.h"
 #include "../datatypes/map.h"
@@ -1725,23 +1726,24 @@ static bool _ApplyDropConstraint
 // the entry point
 //------------------------------------------------------------------------------
 
-bool EffectsV3_Apply
+// apply one record
+//
+// split out of EffectsV3_Apply so the streaming path can call it per record as
+// each is decoded. The whole-payload form below is now a loop over this, so
+// there is one switch rather than two that could drift.
+bool EffectsV3_ApplyRecord
 (
 	GraphContext *gc,
-	const EffectsV3Records *records
+	const EffectsV3Record *rec
 ) {
-	ASSERT (gc      != NULL) ;
-	ASSERT (records != NULL) ;
+	ASSERT (gc  != NULL) ;
+	ASSERT (rec != NULL) ;
 
-	if (gc == NULL || records == NULL) {
+	if (gc == NULL || rec == NULL) {
 		return false ;
 	}
 
-	// records arrive in apply order and are applied in it. Records 9 and 10
-	// are normatively ahead of anything referencing the ids they introduce, so
-	// nothing here reorders.
-	for (uint32_t i = 0; i < records->n; i++) {
-		const EffectsV3Record *rec = records->records + i ;
+	{
 		bool ok ;
 
 		switch (rec->opcode) {
@@ -1812,6 +1814,36 @@ bool EffectsV3_Apply
 		if (!ok) {
 			// stop at the first failure: the caller treats a false return as
 			// divergence and must not propagate the effects any further
+			return false ;
+		}
+	}
+
+	return true ;
+}
+
+// apply a whole decoded payload
+//
+// KEPT FOR THE ROUND TRIP, alongside EffectsV3_Decode. The production path
+// streams - decode one record, apply it, free it - and this is a loop over the
+// same per-record entry point, so the two cannot disagree about what a record
+// means.
+bool EffectsV3_Apply
+(
+	GraphContext *gc,
+	const EffectsV3Records *records
+) {
+	ASSERT (gc      != NULL) ;
+	ASSERT (records != NULL) ;
+
+	if (gc == NULL || records == NULL) {
+		return false ;
+	}
+
+	// records arrive in apply order and are applied in it. Records 9 and 10
+	// are normatively ahead of anything referencing the ids they introduce, so
+	// nothing here reorders.
+	for (uint32_t i = 0; i < records->n; i++) {
+		if (!EffectsV3_ApplyRecord (gc, records->records + i)) {
 			return false ;
 		}
 	}
