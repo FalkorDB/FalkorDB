@@ -675,6 +675,15 @@ static void _flush_updates(EffectsV3Grouping *g) {
 	g->update_index = raxNew();
 }
 
+size_t EffectsV3Grouping_StagedBytes
+(
+	const EffectsV3Grouping *g  // accumulator
+) {
+	ASSERT(g != NULL);
+
+	return g->arena_len;
+}
+
 uint32_t EffectsV3Grouping_RecordCount
 (
 	EffectsV3Grouping *g  // accumulator
