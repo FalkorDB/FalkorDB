@@ -44,7 +44,7 @@ void EffectsV3_WriteUint
 // and its width fields are unused and written zero
 void EffectsV3_EncodeSegment
 (
-	const EffectsV3Segment *s,  // segment to write
+	const EffectsV3IdListSegment *s,  // segment to write
 	EffectsBytes *out           // sink
 );
 

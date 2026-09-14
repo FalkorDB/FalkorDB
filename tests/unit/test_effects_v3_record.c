@@ -138,16 +138,16 @@ void test_effectsV3Record_deleteNode(void) {
 
 	EffectsV3Record r = {
 		.opcode   = EFFECT_DELETE_NODE,
-		.count    = 3,
-		.labels   = labels,
-		.n_labels = 3,
-		.ids      = _ids(ids, 3, &keep),
+		.delete_node.count = 3,
+		.delete_node.labels = labels,
+		.delete_node.n_labels = 3,
+		.delete_node.ids = _ids(ids, 3, &keep),
 	};
 
 	_check(&r, "03000500000003000000030000000000010000000200000001000000000103",
 			"rec_delete_node");
 
-	EffectsV3IdListBuilder_FreeIdList(&r.ids);
+	EffectsV3IdListBuilder_FreeIdList(&r.delete_node.ids);
 	EffectsV3IdListBuilder_Free(keep);
 }
 
@@ -161,13 +161,13 @@ void test_effectsV3Record_labels(void) {
 		uint64_t ids[] = { 1, 2, 3 };
 		LabelID labels[] = { 4, 6 };
 		EffectsV3Record r = {
-			.opcode = EFFECT_SET_LABELS, .count = 3,
-			.labels = labels, .n_labels = 2,
-			.ids = _ids(ids, 3, &keep),
+			.opcode = EFFECT_SET_LABELS, .set_labels.count = 3,
+			.set_labels.labels = labels, .set_labels.n_labels = 2,
+			.set_labels.ids = _ids(ids, 3, &keep),
 		};
 		_check(&r, "030007000000030000000200040000000600000001000000000103",
 				"rec_set_labels");
-		EffectsV3IdListBuilder_FreeIdList(&r.ids);
+		EffectsV3IdListBuilder_FreeIdList(&r.set_labels.ids);
 		EffectsV3IdListBuilder_Free(keep);
 	}
 	{
@@ -175,13 +175,13 @@ void test_effectsV3Record_labels(void) {
 		uint64_t ids[] = { 1, 2, 3 };
 		LabelID labels[] = { 4 };
 		EffectsV3Record r = {
-			.opcode = EFFECT_REMOVE_LABELS, .count = 3,
-			.labels = labels, .n_labels = 1,
-			.ids = _ids(ids, 3, &keep),
+			.opcode = EFFECT_REMOVE_LABELS, .remove_labels.count = 3,
+			.remove_labels.labels = labels, .remove_labels.n_labels = 1,
+			.remove_labels.ids = _ids(ids, 3, &keep),
 		};
 		_check(&r, "0300080000000300000001000400000001000000000103",
 				"rec_remove_labels");
-		EffectsV3IdListBuilder_FreeIdList(&r.ids);
+		EffectsV3IdListBuilder_FreeIdList(&r.set_labels.ids);
 		EffectsV3IdListBuilder_Free(keep);
 	}
 }
@@ -196,19 +196,19 @@ void test_effectsV3Record_deleteEdge(void) {
 
 	EffectsV3Record r = {
 		.opcode      = EFFECT_DELETE_EDGE,
-		.count       = 3,
-		.relation_id = 5,
-		.ids         = _ids(ids, 3, &ki),
-		.src         = _ids(src, 3, &ks),
-		.dst         = _ids(dst, 3, &kd),
+		.delete_edge.count = 3,
+		.delete_edge.relation_id = 5,
+		.delete_edge.ids = _ids(ids, 3, &ki),
+		.delete_edge.src = _ids(src, 3, &ks),
+		.delete_edge.dst = _ids(dst, 3, &kd),
 	};
 
 	_check(&r, "0300060000000300000005000000010000000001030100000000"
 	           "0a0301000000024d03", "rec_delete_edge");
 
-	EffectsV3IdListBuilder_FreeIdList(&r.ids);
-	EffectsV3IdListBuilder_FreeIdList(&r.src);
-	EffectsV3IdListBuilder_FreeIdList(&r.dst);
+	EffectsV3IdListBuilder_FreeIdList(&r.delete_edge.ids);
+	EffectsV3IdListBuilder_FreeIdList(&r.delete_edge.src);
+	EffectsV3IdListBuilder_FreeIdList(&r.delete_edge.dst);
 	EffectsV3IdListBuilder_Free(ki);
 	EffectsV3IdListBuilder_Free(ks);
 	EffectsV3IdListBuilder_Free(kd);
@@ -232,11 +232,11 @@ void test_effectsV3Record_nodeWithValues(void) {
 		SIValue *rows = _rows();
 
 		EffectsV3Record r = {
-			.opcode = EFFECT_CREATE_NODE, .count = 3,
-			.labels = labels, .n_labels = 2,
-			.attr_ids = attrs, .n_attrs = 2,
-			.ids = _ids(ids, 3, &keep),
-			.values = rows, .n_values = 6,
+			.opcode = EFFECT_CREATE_NODE, .create_node.count = 3,
+			.create_node.labels = labels, .create_node.n_labels = 2,
+			.create_node.attr_ids = attrs, .create_node.n_attrs = 2,
+			.create_node.ids = _ids(ids, 3, &keep),
+			.create_node.values = rows, .create_node.n_values = 6,
 		};
 
 		_check(&r, "0300030000000300000002000000000003000000020007000900010000"
@@ -244,7 +244,7 @@ void test_effectsV3Record_nodeWithValues(void) {
 		           "0080000000100000010040000000000000 0000d03f00200000f7ffffffff"
 		           "ffffff", "rec_create_node");
 
-		EffectsV3IdListBuilder_FreeIdList(&r.ids);
+		EffectsV3IdListBuilder_FreeIdList(&r.create_node.ids);
 		EffectsV3IdListBuilder_Free(keep);
 		free(rows);
 	}
@@ -256,11 +256,11 @@ void test_effectsV3Record_nodeWithValues(void) {
 		SIValue *rows = _rows();
 
 		EffectsV3Record r = {
-			.opcode = EFFECT_UPDATE_NODE, .count = 3,
-			.labels = labels, .n_labels = 1,
-			.attr_ids = attrs, .n_attrs = 2,
-			.ids = _ids(ids, 3, &keep),
-			.values = rows, .n_values = 6,
+			.opcode = EFFECT_UPDATE_NODE, .update_node.count = 3,
+			.update_node.labels = labels, .update_node.n_labels = 1,
+			.update_node.attr_ids = attrs, .update_node.n_attrs = 2,
+			.update_node.ids = _ids(ids, 3, &keep),
+			.update_node.values = rows, .update_node.n_values = 6,
 		};
 
 		_check(&r, "0300010000000300000001000100000002000700090001000000000103"
@@ -268,7 +268,7 @@ void test_effectsV3Record_nodeWithValues(void) {
 		           "00010000001004000000000000000 00d03f00200000f7ffffffffffffff",
 				"rec_update_node");
 
-		EffectsV3IdListBuilder_FreeIdList(&r.ids);
+		EffectsV3IdListBuilder_FreeIdList(&r.create_node.ids);
 		EffectsV3IdListBuilder_Free(keep);
 		free(rows);
 	}
@@ -286,10 +286,10 @@ void test_effectsV3Record_updateEdge(void) {
 	SIValue *rows = _rows();
 
 	EffectsV3Record r = {
-		.opcode = EFFECT_UPDATE_EDGE, .count = 3, .relation_id = 2,
-		.attr_ids = attrs, .n_attrs = 2,
-		.ids = _ids(ids, 3, &keep),
-		.values = rows, .n_values = 6,
+		.opcode = EFFECT_UPDATE_EDGE, .update_edge.count = 3, .update_edge.relation_id = 2,
+		.update_edge.attr_ids = attrs, .update_edge.n_attrs = 2,
+		.update_edge.ids = _ids(ids, 3, &keep),
+		.update_edge.values = rows, .update_edge.n_values = 6,
 	};
 
 	_check(&r, "030002000000030000000200000002000700090001000000000103002000"
@@ -297,7 +297,7 @@ void test_effectsV3Record_updateEdge(void) {
 	           "0001004000000000000 00000d03f00200000f7ffffffffffffff",
 			"rec_update_edge");
 
-	EffectsV3IdListBuilder_FreeIdList(&r.ids);
+	EffectsV3IdListBuilder_FreeIdList(&r.update_edge.ids);
 	EffectsV3IdListBuilder_Free(keep);
 	free(rows);
 }
@@ -314,19 +314,19 @@ void test_effectsV3Record_updateEdge(void) {
 void test_effectsV3Record_singularRecords(void) {
 	{
 		EffectsV3Record r = { .opcode = EFFECT_ADD_SCHEMA,
-			.schema_type = SCHEMA_NODE, .schema_id = 3, .name = "Person" };
+			.add_schema.schema_type = SCHEMA_NODE, .add_schema.schema_id = 3, .add_schema.name = "Person" };
 		_check(&r, "03000900000000000000030000000700000000000000506572736f6e00",
 				"rec_add_schema_node");
 	}
 	{
 		EffectsV3Record r = { .opcode = EFFECT_ADD_SCHEMA,
-			.schema_type = SCHEMA_EDGE, .schema_id = 1, .name = "KNOWS" };
+			.add_schema.schema_type = SCHEMA_EDGE, .add_schema.schema_id = 1, .add_schema.name = "KNOWS" };
 		_check(&r, "030009000000010000000100000006000000000000004b4e4f575300",
 				"rec_add_schema_edge");
 	}
 	{
 		EffectsV3Record r = { .opcode = EFFECT_ADD_ATTRIBUTE,
-			.attr_id = 12, .name = "name" };
+			.add_attribute.attr_id = 12, .add_attribute.name = "name" };
 		_check(&r, "03000a0000000c0005000000000000006e616d6500",
 				"rec_add_attribute");
 	}
@@ -350,12 +350,12 @@ void test_effectsV3Record_indexDDL(void) {
 		EffectsV3AttrRef refs[] = { { 12, "name" }, { 13, "age" } };
 		EffectsV3Record r = {
 			.opcode      = EFFECT_CREATE_INDEX,
-			.schema_type = SCHEMA_NODE,
-			.schema_id   = 3,
-			.name        = "Person",
-			.field_type  = 0x000a,
-			.attrs_ref   = refs,
-			.n_attrs_ref = 2,
+			.create_index.schema_type = SCHEMA_NODE,
+			.create_index.schema_id = 3,
+			.create_index.name = "Person",
+			.create_index.field_type = 0x000a,
+			.create_index.attrs = refs,
+			.create_index.n_attrs = 2,
 		};
 		_check(&r, "03000b00000000000000030000000700000000000000506572736f6e00"
 		           "0a00000002000c0005000000000000006e616d65000d00040000000000"
@@ -366,12 +366,12 @@ void test_effectsV3Record_indexDDL(void) {
 		EffectsV3AttrRef refs[] = { { 14, "vec" } };
 		EffectsV3Record r = {
 			.opcode      = EFFECT_DROP_INDEX,
-			.schema_type = SCHEMA_EDGE,
-			.schema_id   = 1,
-			.name        = "KNOWS",
-			.field_type  = 0x0010,
-			.attrs_ref   = refs,
-			.n_attrs_ref = 1,
+			.drop_index.schema_type = SCHEMA_EDGE,
+			.drop_index.schema_id = 1,
+			.drop_index.name = "KNOWS",
+			.drop_index.field_type = 0x0010,
+			.drop_index.attrs = refs,
+			.drop_index.n_attrs = 1,
 		};
 		_check(&r, "03000c000000010000000100000006000000000000004b4e4f57530010"
 		           "00000001000e00040000000000000076656300", "rec_drop_index");
@@ -393,19 +393,19 @@ void test_effectsV3Record_indexVectorOptions(void) {
 	EffectsV3AttrRef refs[] = { { 0, "embedding" } };
 	EffectsV3Record r = {
 		.opcode      = EFFECT_CREATE_INDEX,
-		.schema_type = SCHEMA_NODE,
-		.schema_id   = 0,
-		.name        = "P",
-		.field_type  = 0x0010,
-		.attrs_ref   = refs,
-		.n_attrs_ref = 1,
-		.options     = {
-			.is_vector           = true,
-			.dimension           = 128,
-			.has_m               = true, .m               = 32,
+		.create_index.schema_type = SCHEMA_NODE,
+		.create_index.schema_id = 0,
+		.create_index.name = "P",
+		.create_index.field_type = 0x0010,
+		.create_index.attrs = refs,
+		.create_index.n_attrs = 1,
+		.create_index.options = {
+			.is_vector = true,
+			.dimension = 128,
+			.has_m = true, .m               = 32,
 			.has_ef_construction = true, .ef_construction = 400,
-			.has_ef_runtime      = true, .ef_runtime      = 20,
-			.has_sim_func        = true, .sim_func        = 2,
+			.has_ef_runtime = true, .ef_runtime      = 20,
+			.has_sim_func = true, .sim_func        = 2,
 		},
 	};
 
@@ -431,14 +431,14 @@ void test_effectsV3Record_constraintDDL(void) {
 		EffectsV3AttrRef props[] = { { 12, "name" } };
 		EffectsV3Record r = {
 			.opcode          = EFFECT_CREATE_CONSTRAINT,
-			.constraint_type = 0,   // unique
-			.entity_type     = 1,   // node, 1-based
-			.status          = 0,   // operational
-			.has_status      = true,
-			.schema_id       = 3,
-			.name            = "Person",
-			.attrs_ref       = props,
-			.n_attrs_ref     = 1,
+			.create_constraint.constraint_type = 0,   // unique
+			.create_constraint.entity_type     = 1,   // node, 1-based
+			.create_constraint.status          = 0,   // operational
+			.create_constraint.has_status      = true,
+			.create_constraint.schema_id       = 3,
+			.create_constraint.name            = "Person",
+			.create_constraint.attrs       = props,
+			.create_constraint.n_attrs     = 1,
 		};
 		_check(&r, "03000d0000000000000001000000000000000300000007000000000000"
 		           "00506572736f6e00010c0005000000000000006e616d6500",
@@ -448,12 +448,12 @@ void test_effectsV3Record_constraintDDL(void) {
 		EffectsV3AttrRef props[] = { { 12, "name" }, { 13, "age" } };
 		EffectsV3Record r = {
 			.opcode          = EFFECT_DROP_CONSTRAINT,
-			.constraint_type = 1,   // mandatory
-			.entity_type     = 2,   // edge
-			.schema_id       = 1,
-			.name            = "KNOWS",
-			.attrs_ref       = props,
-			.n_attrs_ref     = 2,
+			.drop_constraint.constraint_type = 1,   // mandatory
+			.drop_constraint.entity_type     = 2,   // edge
+			.drop_constraint.schema_id       = 1,
+			.drop_constraint.name            = "KNOWS",
+			.drop_constraint.attrs       = props,
+			.drop_constraint.n_attrs     = 2,
 		};
 		_check(&r, "03000e00000001000000020000000100000006000000000000004b4e4f"
 		           "575300020c0005000000000000006e616d65000d000400000000000000"

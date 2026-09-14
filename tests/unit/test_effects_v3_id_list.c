@@ -59,7 +59,7 @@ static uint64_t *_expand(const EffectsV3IdListBuilder *b, uint64_t *out_n) {
 			for(uint32_t j = 0; j < len && k < total; j++) {
 				out[k++] = s->repeat.id;
 			}
-		} else if(s->kind == EFFECTS_V3_SEG_RANGE) {
+		} else if(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING) {
 			for(uint32_t j = 0; j < len && k < total; j++) {
 				out[k++] = s->descending
 					? s->range.base - j
@@ -110,7 +110,7 @@ void test_effectsV3IdList_ascendingRunIsOneSegment(void) {
 			EffectsV3IdListBuilder_SegmentCount(b));
 
 	const EffectsV3Seg *s = EffectsV3IdListBuilder_Segment(b, 0);
-	TEST_ASSERT(s->kind == EFFECTS_V3_SEG_RANGE);
+	TEST_ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING);
 	TEST_ASSERT(!s->descending);
 	TEST_ASSERT_(s->range.base == 5 && s->range.len == 6,
 			"expected Range{base:5,len:6}, got Range{base:%llu,len:%u}",
@@ -132,7 +132,7 @@ void test_effectsV3IdList_descendingRunIsOneSegment(void) {
 			EffectsV3IdListBuilder_SegmentCount(b));
 
 	const EffectsV3Seg *s = EffectsV3IdListBuilder_Segment(b, 0);
-	TEST_ASSERT(s->kind == EFFECTS_V3_SEG_RANGE);
+	TEST_ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING);
 	TEST_ASSERT_(s->descending, "a downward run must set the descending flag");
 	TEST_ASSERT_(s->range.base == 10 && s->range.len == 6,
 			"a descending range's base is its FIRST and HIGHEST id: expected "
@@ -255,7 +255,7 @@ void test_effectsV3IdList_gappedRunCollapses(void) {
 	uint32_t n = EffectsV3IdListBuilder_SegmentCount(b);
 	for(uint32_t i = 0; i < n; i++) {
 		if(EffectsV3IdListBuilder_Segment(b, i)->kind ==
-				EFFECTS_V3_SEG_ASCENDING) {
+				EFFECTS_V3_SEG_SET_ASCENDING) {
 			saw_bitmap = true;
 		}
 	}
