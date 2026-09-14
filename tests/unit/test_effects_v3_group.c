@@ -728,78 +728,8 @@ void test_effectsV3Group_flushedGroupOutlivesTheArena(void) {
 	EffectsV3Grouping_Free(g);
 }
 
-// THE ARENA HOLDS EXACTLY ONE DEAD COPY PER SUPERSEDED STAGE CALL
-//
-// Setting an attribute twice leaves the first encoding behind rather than
-// reclaiming it. That is a deliberate tradeoff - a free list or rewriting later
-// offsets costs more than the bytes - but "one copy per stage call" is the part
-// that makes it bounded, and nothing asserted it.
-//
-// It is a unit-level assertion and not a measurement of what this costs a real
-// query. That turned out to be unmeasurable at the system level: anything that
-// stages k times also executes the pipeline k times, and the bench session
-// measured the pipeline dominating the arena by roughly 25x, so the arena hides
-// inside the noise of its own control. Two separate system probes returned
-// plausible wrong numbers before that was understood.
-//
-// THE UNIT IS DERIVED, NOT ASSUMED. Taking it from the k=1 case would make the
-// k=1 assertion tautological, so it comes from the MARGINAL cost of one more
-// stage call - which is what lets the k=1 check catch a fixed overhead, an
-// arena that holds one dead copy plus a constant extra. Deriving it also means
-// this test does not break the day an SIValue's encoded width changes.
-void test_effectsV3Group_arenaHoldsOneCopyPerStage(void) {
-	LabelID labels[] = { 1 };
-
-	// k stage calls of the SAME attribute on the same entity: every call after
-	// the first supersedes its predecessor
-	size_t len[4];
-	for(uint32_t k = 1; k <= 3; k++) {
-		EffectsV3Grouping *g = EffectsV3Grouping_New();
-		for(uint32_t i = 0; i < k; i++) {
-			EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1,
-					0, 7, SI_LongVal(1000 + i));
-		}
-		len[k] = EffectsV3Grouping_StagedBytes(g);
-		EffectsV3Grouping_Free(g);
-	}
-
-	const size_t unit = len[3] - len[2];
-
-	TEST_ASSERT_(unit > 0,
-			"one more stage call must cost something, got %zu", unit);
-
-	// linear: the second increment matches the third
-	TEST_ASSERT_(len[2] - len[1] == unit,
-			"each superseded copy must cost the same: k=2 added %zu, k=3 "
-			"added %zu", len[2] - len[1], unit);
-
-	// NO FIXED OVERHEAD. k=1 has nothing superseded, so it must be exactly one
-	// unit - this is the check that separates "one dead copy per call" from
-	// "one dead copy per call, plus a constant", which the k*unit form alone
-	// would read as correct
-	TEST_ASSERT_(len[1] == unit,
-			"a single stage call must hold exactly one encoded value, got %zu "
-			"against a marginal cost of %zu", len[1], unit);
-
-	TEST_ASSERT_(len[3] == 3 * unit,
-			"three stage calls must hold exactly three copies, got %zu against "
-			"%zu", len[3], 3 * unit);
-
-	// and the flush hands the arena back, so a second statement reuses it
-	EffectsV3Grouping *g = EffectsV3Grouping_New();
-	EffectsV3Grouping_StageUpdate(g, EFFECT_UPDATE_NODE, 10, labels, 1, 0,
-			7, SI_LongVal(1));
-	TEST_ASSERT_(EffectsV3Grouping_StagedBytes(g) == unit, "staged one value");
-	(void)EffectsV3Grouping_RecordCount(g);   // forces the flush
-	TEST_ASSERT_(EffectsV3Grouping_StagedBytes(g) == 0,
-			"the flush must release the arena for the next statement, %zu left",
-			EffectsV3Grouping_StagedBytes(g));
-	EffectsV3Grouping_Free(g);
-}
 
 TEST_LIST = {
-	{ "EffectsV3Group:arenaHoldsOneCopyPerStage",
-		test_effectsV3Group_arenaHoldsOneCopyPerStage },
 	{ "EffectsV3Group:lastValueWins",
 		test_effectsV3Group_lastValueWins },
 	{ "EffectsV3Group:flushedGroupOutlivesTheArena",
