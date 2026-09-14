@@ -35,6 +35,14 @@
 // count (Range/Repeat at width code 0). Ascending is larger - header plus a u32
 // blob length - so this is the floor for any kind, and it is what lets a
 // segment count be rejected before it sizes an allocation
+// THE WIRE'S kind FIELD, bits 0-1 of the segment header. Distinct from
+// EffectsV3IdListSegmentKind, which folds direction in and so has five values
+// to the wire's three - these are the numbers on the bytes, and they do not
+// move.
+#define WIRE_SEG_RANGE  0
+#define WIRE_SEG_SET    1
+#define WIRE_SEG_REPEAT 2
+
 #define SEGMENT_MIN_BYTES 3
 
 // the smallest an SIValue can be: the u32 SIType on its own, which is exactly
@@ -127,7 +135,7 @@ static bool _ReadWidth
 static EffectsV3Status _ReadSegment
 (
 	FILE *stream,
-	EffectsV3Segment *seg
+	EffectsV3IdListSegment *seg
 ) {
 	uint8_t header ;
 	if (!_ReadU8 (stream, &header)) {
@@ -143,17 +151,21 @@ static EffectsV3Status _ReadSegment
 		return EFFECTS_V3_MALFORMED ;
 	}
 
-	const uint8_t kind = header & EFFECTS_V3_SEG_KIND_MASK ;
-
-	seg->value_width = (header >> EFFECTS_V3_SEG_VWIDTH_SHIFT) & 0x03 ;
-	seg->count_width = (header >> EFFECTS_V3_SEG_CWIDTH_SHIFT) & 0x03 ;
-	seg->descending  = (header & EFFECTS_V3_SEG_DESCENDING) != 0 ;
+	// THE WIRE KIND AND BIT 6 TOGETHER SELECT THE ARM. On the wire, direction
+	// is a bit beside a three-value kind; in the decoded form it is folded into
+	// the kind, so the pairing that has no meaning - a descending Repeat -
+	// cannot be represented. The mapping is the only place the two models meet.
+	const uint8_t kind       = header & EFFECTS_V3_SEG_KIND_MASK ;
+	const uint8_t vw         = (header >> EFFECTS_V3_SEG_VWIDTH_SHIFT) & 0x03 ;
+	const uint8_t cw         = (header >> EFFECTS_V3_SEG_CWIDTH_SHIFT) & 0x03 ;
+	const bool    descending = (header & EFFECTS_V3_SEG_DESCENDING) != 0 ;
 
 	switch (kind) {
-		case EFFECTS_V3_SEG_RANGE:
-			seg->kind = EFFECTS_V3_SEG_RANGE ;
-			if (!_ReadWidth (stream, seg->value_width, &seg->range.base) ||
-				!_ReadWidth (stream, seg->count_width, &seg->range.len)) {
+		case WIRE_SEG_RANGE: {
+			uint64_t base ;
+			uint64_t len ;
+			if (!_ReadWidth (stream, vw, &base) ||
+				!_ReadWidth (stream, cw, &len)) {
 				return EFFECTS_V3_TRUNCATED ;
 			}
 
@@ -161,40 +173,59 @@ static EffectsV3Status _ReadSegment
 			// must not run past UINT64_MAX; descending counts DOWN from base,
 			// which is its highest id, so it must not run below zero. Both are
 			// derived from the segment's own two numbers, not from a ceiling.
-			if (seg->range.len > 0) {
-				const uint64_t span = seg->range.len - 1 ;
-				if (seg->descending) {
-					if (span > seg->range.base) {
+			if (len > 0) {
+				const uint64_t span = len - 1 ;
+				if (descending) {
+					if (span > base) {
 						return EFFECTS_V3_MALFORMED ;
 					}
 				} else {
-					if (span > UINT64_MAX - seg->range.base) {
+					if (span > UINT64_MAX - base) {
 						return EFFECTS_V3_MALFORMED ;
 					}
 				}
 			}
+
+			// the width codes are retained rather than discarded: re-encoding
+			// reproduces the peer's bytes instead of our own narrowest-fit
+			// arithmetic, which is what makes a round trip a test of the wire
+			// rather than of ourselves
+			if (descending) {
+				seg->kind = EFFECTS_V3_SEG_RANGE_DESCENDING ;
+				seg->range_descending.value_width = vw ;
+				seg->range_descending.count_width = cw ;
+				seg->range_descending.base        = base ;
+				seg->range_descending.len         = len ;
+			} else {
+				seg->kind = EFFECTS_V3_SEG_RANGE_ASCENDING ;
+				seg->range_ascending.value_width = vw ;
+				seg->range_ascending.count_width = cw ;
+				seg->range_ascending.base        = base ;
+				seg->range_ascending.len         = len ;
+			}
 			return EFFECTS_V3_OK ;
+		}
 
-		case EFFECTS_V3_SEG_REPEAT:
-			seg->kind = EFFECTS_V3_SEG_REPEAT ;
-
+		case WIRE_SEG_REPEAT: {
 			// a Repeat holds one id 'count' times, so it reads the same in
 			// either direction and the bit cannot mean anything. A peer that
 			// set it meant something this build does not know, so refuse the
 			// buffer rather than ignore the bit.
-			if (seg->descending) {
+			if (descending) {
 				return EFFECTS_V3_MALFORMED ;
 			}
 
-			if (!_ReadWidth (stream, seg->value_width, &seg->repeat.id) ||
-				!_ReadWidth (stream, seg->count_width, &seg->repeat.count)) {
+			seg->kind = EFFECTS_V3_SEG_REPEAT ;
+			seg->repeat.value_width = vw ;
+			seg->repeat.count_width = cw ;
+			if (!_ReadWidth (stream, vw, &seg->repeat.id) ||
+				!_ReadWidth (stream, cw, &seg->repeat.count)) {
 				return EFFECTS_V3_TRUNCATED ;
 			}
 			return EFFECTS_V3_OK ;
+		}
 
-		case EFFECTS_V3_SEG_ASCENDING: {
-			seg->kind = EFFECTS_V3_SEG_ASCENDING ;
-
+		case WIRE_SEG_SET: {
 			uint32_t blob_len ;
 			if (!_ReadU32 (stream, &blob_len)) {
 				return EFFECTS_V3_TRUNCATED ;
@@ -209,8 +240,8 @@ static EffectsV3Status _ReadSegment
 			}
 
 			if (blob_len == 0) {
-				// an Ascending segment describes at least one id, so it cannot
-				// carry an empty bitmap
+				// a Set segment describes at least one id, so it cannot carry
+				// an empty bitmap
 				return EFFECTS_V3_MALFORMED ;
 			}
 
@@ -231,24 +262,33 @@ static EffectsV3Status _ReadSegment
 				return EFFECTS_V3_MALFORMED ;
 			}
 
-			seg->ascending.blob        = blob ;
-			seg->ascending.n           = blob_len ;
-			seg->ascending.cardinality =
+			const uint64_t cardinality =
 				roaring64_bitmap_get_cardinality (bitmap) ;
-
 			roaring64_bitmap_free (bitmap) ;
 
-			if (seg->ascending.cardinality == 0) {
+			if (cardinality == 0) {
 				rm_free (blob) ;
-				seg->ascending.blob = NULL ;
 				return EFFECTS_V3_MALFORMED ;
 			}
 
+			// the two directions over one id set differ in bit 6 and nowhere
+			// else, so the blob is identical and only the arm changes
+			if (descending) {
+				seg->kind = EFFECTS_V3_SEG_SET_DESCENDING ;
+				seg->set_descending.blob        = blob ;
+				seg->set_descending.n           = blob_len ;
+				seg->set_descending.cardinality = cardinality ;
+			} else {
+				seg->kind = EFFECTS_V3_SEG_SET_ASCENDING ;
+				seg->set_ascending.blob        = blob ;
+				seg->set_ascending.n           = blob_len ;
+				seg->set_ascending.cardinality = cardinality ;
+			}
 			return EFFECTS_V3_OK ;
 		}
 
 		default:
-			// kind 3 is not assigned
+			// wire kind 3 is not assigned
 			return EFFECTS_V3_MALFORMED ;
 	}
 }
@@ -256,13 +296,15 @@ static EffectsV3Status _ReadSegment
 // how many ids a segment describes, without expanding it
 static uint64_t _SegmentCardinality
 (
-	const EffectsV3Segment *seg
+	const EffectsV3IdListSegment *seg
 ) {
 	switch (seg->kind) {
-		case EFFECTS_V3_SEG_RANGE:     return seg->range.len ;
-		case EFFECTS_V3_SEG_REPEAT:    return seg->repeat.count ;
-		case EFFECTS_V3_SEG_ASCENDING: return seg->ascending.cardinality ;
-		default:                       return 0 ;
+		case EFFECTS_V3_SEG_RANGE_ASCENDING:  return seg->range_ascending.len ;
+		case EFFECTS_V3_SEG_RANGE_DESCENDING: return seg->range_descending.len ;
+		case EFFECTS_V3_SEG_SET_ASCENDING:    return seg->set_ascending.cardinality ;
+		case EFFECTS_V3_SEG_SET_DESCENDING:   return seg->set_descending.cardinality ;
+		case EFFECTS_V3_SEG_REPEAT:           return seg->repeat.count ;
+		default:                              return 0 ;
 	}
 }
 
@@ -274,9 +316,18 @@ static void _IdListFree
 		return ;
 	}
 
+	// BOTH Set arms own a blob. They are one wire kind read two ways, so a
+	// free that names only the ascending arm leaks every descending segment.
 	for (uint32_t i = 0 ; i < list->n ; i++) {
-		if (list->segments[i].kind == EFFECTS_V3_SEG_ASCENDING) {
-			rm_free (list->segments[i].ascending.blob) ;
+		switch (list->segments[i].kind) {
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+				rm_free (list->segments[i].set_ascending.blob) ;
+				break ;
+			case EFFECTS_V3_SEG_SET_DESCENDING:
+				rm_free (list->segments[i].set_descending.blob) ;
+				break ;
+			default:
+				break ;
 		}
 	}
 
@@ -318,7 +369,7 @@ static EffectsV3Status _ReadIdList
 		return EFFECTS_V3_MALFORMED ;
 	}
 
-	list->segments = rm_calloc (n, sizeof (EffectsV3Segment)) ;
+	list->segments = rm_calloc (n, sizeof (EffectsV3IdListSegment)) ;
 	list->n        = n ;
 
 	uint64_t total = 0 ;
@@ -455,83 +506,240 @@ static EffectsV3Status _ReadRelType
 // records
 //------------------------------------------------------------------------------
 
-// which records carry what - see the table in effects_v3.h
-static bool _IsNodeShaped
+// POINTERS INTO WHICHEVER ARM THE OPCODE SELECTS
+//
+// Records 1-8 are read by one routine because they are one wire shape - opcode,
+// count, shape, attr ids, IdList(s), values - and only the subset of fields
+// each opcode carries differs. The typed model puts those fields in eight
+// different structs, so the reader gathers pointers to them once and fills
+// through the pointers.
+//
+// The alternative is eight readers differing by a few lines each. This file
+// already fixed two bugs that existed because a rule was written out more than
+// once (the per-entry emptiness check, the segment blob free), and the record
+// parser is the last place worth duplicating.
+//
+// A NULL member means THIS OPCODE DOES NOT CARRY THAT FIELD, and the reader
+// tests for NULL rather than consulting a second list of which opcode has what.
+// That is what makes "DELETE_EDGE has endpoints but no values" a property of
+// this table instead of a rule repeated at every use site.
+typedef struct {
+	uint32_t        *count;
+	LabelID        **labels;
+	uint16_t        *n_labels;
+	RelationID      *relation_id;
+	AttributeID    **attr_ids;
+	uint16_t        *n_attrs;
+	EffectsV3IdList *ids;
+	EffectsV3IdList *src;
+	EffectsV3IdList *dst;
+	SIValue        **values;
+	uint64_t        *n_values;
+} BatchFields;
+
+// fill 'f' for a batchable record, or return false for records 9-14
+static bool _BatchFields
 (
-	EffectType t
+	EffectsV3Record *rec,
+	BatchFields *f
 ) {
-	return t == EFFECT_UPDATE_NODE   || t == EFFECT_CREATE_NODE ||
-		   t == EFFECT_DELETE_NODE   || t == EFFECT_SET_LABELS  ||
-		   t == EFFECT_REMOVE_LABELS ;
+	memset (f, 0, sizeof (*f)) ;
+
+	switch (rec->opcode) {
+		case EFFECT_UPDATE_NODE:
+			f->count    = &rec->update_node.count ;
+			f->labels   = &rec->update_node.labels ;
+			f->n_labels = &rec->update_node.n_labels ;
+			f->attr_ids = &rec->update_node.attr_ids ;
+			f->n_attrs  = &rec->update_node.n_attrs ;
+			f->ids      = &rec->update_node.ids ;
+			f->values   = &rec->update_node.values ;
+			f->n_values = &rec->update_node.n_values ;
+			return true ;
+
+		case EFFECT_UPDATE_EDGE:
+			f->count       = &rec->update_edge.count ;
+			f->relation_id = &rec->update_edge.relation_id ;
+			f->attr_ids    = &rec->update_edge.attr_ids ;
+			f->n_attrs     = &rec->update_edge.n_attrs ;
+			f->ids         = &rec->update_edge.ids ;
+			f->values      = &rec->update_edge.values ;
+			f->n_values    = &rec->update_edge.n_values ;
+			return true ;
+
+		case EFFECT_CREATE_NODE:
+			f->count    = &rec->create_node.count ;
+			f->labels   = &rec->create_node.labels ;
+			f->n_labels = &rec->create_node.n_labels ;
+			f->attr_ids = &rec->create_node.attr_ids ;
+			f->n_attrs  = &rec->create_node.n_attrs ;
+			f->ids      = &rec->create_node.ids ;
+			f->values   = &rec->create_node.values ;
+			f->n_values = &rec->create_node.n_values ;
+			return true ;
+
+		case EFFECT_CREATE_EDGE:
+			f->count       = &rec->create_edge.count ;
+			f->relation_id = &rec->create_edge.relation_id ;
+			f->attr_ids    = &rec->create_edge.attr_ids ;
+			f->n_attrs     = &rec->create_edge.n_attrs ;
+			f->ids         = &rec->create_edge.ids ;
+			f->src         = &rec->create_edge.src ;
+			f->dst         = &rec->create_edge.dst ;
+			f->values      = &rec->create_edge.values ;
+			f->n_values    = &rec->create_edge.n_values ;
+			return true ;
+
+		case EFFECT_DELETE_NODE:
+			f->count    = &rec->delete_node.count ;
+			f->labels   = &rec->delete_node.labels ;
+			f->n_labels = &rec->delete_node.n_labels ;
+			f->ids      = &rec->delete_node.ids ;
+			return true ;
+
+		case EFFECT_DELETE_EDGE:
+			f->count       = &rec->delete_edge.count ;
+			f->relation_id = &rec->delete_edge.relation_id ;
+			f->ids         = &rec->delete_edge.ids ;
+			f->src         = &rec->delete_edge.src ;
+			f->dst         = &rec->delete_edge.dst ;
+			return true ;
+
+		case EFFECT_SET_LABELS:
+			f->count    = &rec->set_labels.count ;
+			f->labels   = &rec->set_labels.labels ;
+			f->n_labels = &rec->set_labels.n_labels ;
+			f->ids      = &rec->set_labels.ids ;
+			return true ;
+
+		case EFFECT_REMOVE_LABELS:
+			f->count    = &rec->remove_labels.count ;
+			f->labels   = &rec->remove_labels.labels ;
+			f->n_labels = &rec->remove_labels.n_labels ;
+			f->ids      = &rec->remove_labels.ids ;
+			return true ;
+
+		default:
+			return false ;
+	}
 }
 
-static bool _IsEdgeShaped
+// the (attrs, n_attrs, name) triple the four DDL records share, by arm
+static void _DDLRefs
 (
-	EffectType t
+	EffectsV3Record *rec,
+	EffectsV3AttrRef ***attrs,
+	uint16_t **n_attrs,
+	char ***name
 ) {
-	return t == EFFECT_UPDATE_EDGE || t == EFFECT_CREATE_EDGE ||
-		   t == EFFECT_DELETE_EDGE ;
+	switch (rec->opcode) {
+		case EFFECT_CREATE_INDEX:
+			*attrs = &rec->create_index.attrs ;
+			*n_attrs = &rec->create_index.n_attrs ;
+			*name = &rec->create_index.name ;
+			return ;
+		case EFFECT_DROP_INDEX:
+			*attrs = &rec->drop_index.attrs ;
+			*n_attrs = &rec->drop_index.n_attrs ;
+			*name = &rec->drop_index.name ;
+			return ;
+		case EFFECT_CREATE_CONSTRAINT:
+			*attrs = &rec->create_constraint.attrs ;
+			*n_attrs = &rec->create_constraint.n_attrs ;
+			*name = &rec->create_constraint.name ;
+			return ;
+		case EFFECT_DROP_CONSTRAINT:
+			*attrs = &rec->drop_constraint.attrs ;
+			*n_attrs = &rec->drop_constraint.n_attrs ;
+			*name = &rec->drop_constraint.name ;
+			return ;
+		default:
+			*attrs = NULL ; *n_attrs = NULL ; *name = NULL ;
+			return ;
+	}
 }
 
-static bool _HasValues
-(
-	EffectType t
-) {
-	return t == EFFECT_UPDATE_NODE || t == EFFECT_UPDATE_EDGE ||
-		   t == EFFECT_CREATE_NODE || t == EFFECT_CREATE_EDGE ;
-}
-
-static bool _HasEndpoints
-(
-	EffectType t
-) {
-	return t == EFFECT_CREATE_EDGE || t == EFFECT_DELETE_EDGE ;
-}
-
+// free whatever the record's arm owns
+//
+// FREED BY ARM, and a record that failed part-way through decode is freed by
+// the same path - _ReadRecord memsets the record before reading, so an arm the
+// reader never reached is all-zero and every branch below is a no-op on it.
+// That is what lets the fail path call this unconditionally.
 static void _RecordFree
 (
 	EffectsV3Record *rec
 ) {
-	_IdListFree (&rec->ids) ;
-	_IdListFree (&rec->src) ;
-	_IdListFree (&rec->dst) ;
+	BatchFields f ;
+	if (_BatchFields (rec, &f)) {
+		if (f.ids != NULL) _IdListFree (f.ids) ;
+		if (f.src != NULL) _IdListFree (f.src) ;
+		if (f.dst != NULL) _IdListFree (f.dst) ;
 
-	if (rec->labels != NULL) {
-		rm_free (rec->labels) ;
-		rec->labels = NULL ;
-	}
-
-	if (rec->attr_ids != NULL) {
-		rm_free (rec->attr_ids) ;
-		rec->attr_ids = NULL ;
-	}
-
-	if (rec->values != NULL) {
-		for (uint64_t i = 0 ; i < rec->n_values ; i++) {
-			SIValue_Free (rec->values[i]) ;
+		if (f.labels != NULL && *f.labels != NULL) {
+			rm_free (*f.labels) ;
+			*f.labels = NULL ;
 		}
-		rm_free (rec->values) ;
-		rec->values   = NULL ;
-		rec->n_values = 0 ;
-	}
 
-	if (rec->name != NULL) {
-		rm_free (rec->name) ;
-		rec->name = NULL ;
-	}
-
-	if (rec->attrs_ref != NULL) {
-		for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
-			rm_free (rec->attrs_ref[i].name) ;
+		if (f.attr_ids != NULL && *f.attr_ids != NULL) {
+			rm_free (*f.attr_ids) ;
+			*f.attr_ids = NULL ;
 		}
-		rm_free (rec->attrs_ref) ;
-		rec->attrs_ref   = NULL ;
-		rec->n_attrs_ref = 0 ;
+
+		if (f.values != NULL && *f.values != NULL) {
+			for (uint64_t i = 0 ; i < *f.n_values ; i++) {
+				SIValue_Free ((*f.values)[i]) ;
+			}
+			rm_free (*f.values) ;
+			*f.values   = NULL ;
+			*f.n_values = 0 ;
+		}
+		return ;
 	}
 
-	if (rec->has_options) {
-		_IndexOptionsFree (&rec->options) ;
-		rec->has_options = false ;
+	if (rec->opcode == EFFECT_ADD_SCHEMA) {
+		if (rec->add_schema.name != NULL) {
+			rm_free (rec->add_schema.name) ;
+			rec->add_schema.name = NULL ;
+		}
+		return ;
+	}
+
+	if (rec->opcode == EFFECT_ADD_ATTRIBUTE) {
+		if (rec->add_attribute.name != NULL) {
+			rm_free (rec->add_attribute.name) ;
+			rec->add_attribute.name = NULL ;
+		}
+		return ;
+	}
+
+	// records 11-14
+	EffectsV3AttrRef **attrs ;
+	uint16_t *n_attrs ;
+	char **name ;
+	_DDLRefs (rec, &attrs, &n_attrs, &name) ;
+	if (attrs == NULL) {
+		return ;
+	}
+
+	if (*name != NULL) {
+		rm_free (*name) ;
+		*name = NULL ;
+	}
+
+	if (*attrs != NULL) {
+		for (uint16_t i = 0 ; i < *n_attrs ; i++) {
+			rm_free ((*attrs)[i].name) ;
+		}
+		rm_free (*attrs) ;
+		*attrs   = NULL ;
+		*n_attrs = 0 ;
+	}
+
+	// only CREATE_INDEX has options at all - DROP_INDEX carries none, so there
+	// is no has_options to test on it
+	if (rec->opcode == EFFECT_CREATE_INDEX && rec->create_index.has_options) {
+		_IndexOptionsFree (&rec->create_index.options) ;
+		rec->create_index.has_options = false ;
 	}
 }
 
@@ -555,16 +763,16 @@ static EffectsV3Status _ReadAddSchema
 	if (t != SCHEMA_NODE && t != SCHEMA_EDGE) {
 		return EFFECTS_V3_MALFORMED ;
 	}
-	rec->schema_type = (SchemaType)t ;
+	rec->add_schema.schema_type = (SchemaType)t ;
 
 	int32_t id ;
 	if (!_ReadI32 (stream, &id)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
-	rec->schema_id = id ;
+	rec->add_schema.schema_id = id ;
 
-	rec->name = ReadWireString (stream) ;
-	if (rec->name == NULL) {
+	rec->add_schema.name = ReadWireString (stream) ;
+	if (rec->add_schema.name == NULL) {
 		return EFFECTS_V3_MALFORMED ;
 	}
 
@@ -580,12 +788,12 @@ static EffectsV3Status _ReadAddAttribute
 	FILE *stream,
 	EffectsV3Record *rec
 ) {
-	if (!_ReadU16 (stream, &rec->attr_id)) {
+	if (!_ReadU16 (stream, &rec->add_attribute.attr_id)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
-	rec->name = ReadWireString (stream) ;
-	if (rec->name == NULL) {
+	rec->add_attribute.name = ReadWireString (stream) ;
+	if (rec->add_attribute.name == NULL) {
 		return EFFECTS_V3_MALFORMED ;
 	}
 
@@ -612,10 +820,10 @@ static EffectsV3Status _ReadAddAttribute
 static EffectsV3Status _ReadValues
 (
 	FILE *stream,
-	EffectsV3Record *rec
+	const BatchFields *f
 ) {
 	// count is u32 and n_attrs is u16, so the product cannot overflow u64
-	const uint64_t n_values = (uint64_t)rec->count * (uint64_t)rec->n_attrs ;
+	const uint64_t n_values = (uint64_t)(*f->count) * (uint64_t)(*f->n_attrs) ;
 
 	// AN EMPTY ATTRIBUTE SET IS A LEGITIMATE SHAPE, not a malformed record.
 	// `CREATE (:Person)` and `CREATE (a)-[:R]->(b)` create entities with no
@@ -641,14 +849,14 @@ static EffectsV3Status _ReadValues
 		return EFFECTS_V3_MALFORMED ;
 	}
 
-	rec->values   = rm_calloc (n_values, sizeof (SIValue)) ;
-	rec->n_values = n_values ;
+	*f->values   = rm_calloc (n_values, sizeof (SIValue)) ;
+	*f->n_values = n_values ;
 
 	for (uint64_t i = 0 ; i < n_values ; i++) {
-		if (!SIValue_FromBinary (stream, rec->values + i)) {
+		if (!SIValue_FromBinary (stream, *f->values + i)) {
 			// on failure 'out' is still set to something safe to free, so this
 			// slot is included in what the record's free path releases
-			rec->n_values = i + 1 ;
+			*f->n_values = i + 1 ;
 
 			// SIValue_FromBinary does not distinguish the two, so the stream
 			// does: out of bytes is truncation, anything else is malformed
@@ -921,6 +1129,33 @@ static EffectsV3Status _ReadIndexRecord
 	EffectsV3Record *rec,
 	bool create
 ) {
+	// CREATE_INDEX and DROP_INDEX read an identical prefix into two different
+	// arms. The fields are bound once here so the read below is written once -
+	// the arms diverge only at 'options', which a drop does not have AT ALL
+	// rather than having-and-leaving-unset.
+	SchemaType  *schema_type ;
+	int         *schema_id ;
+	char       **name ;
+	uint32_t    *field_type ;
+	EffectsV3AttrRef **attrs ;
+	uint16_t    *n_attrs ;
+
+	if (create) {
+		schema_type = &rec->create_index.schema_type ;
+		schema_id   = &rec->create_index.schema_id ;
+		name        = &rec->create_index.name ;
+		field_type  = &rec->create_index.field_type ;
+		attrs       = &rec->create_index.attrs ;
+		n_attrs     = &rec->create_index.n_attrs ;
+	} else {
+		schema_type = &rec->drop_index.schema_type ;
+		schema_id   = &rec->drop_index.schema_id ;
+		name        = &rec->drop_index.name ;
+		field_type  = &rec->drop_index.field_type ;
+		attrs       = &rec->drop_index.attrs ;
+		n_attrs     = &rec->drop_index.n_attrs ;
+	}
+
 	uint32_t t ;
 	if (!_ReadU32 (stream, &t)) {
 		return EFFECTS_V3_TRUNCATED ;
@@ -928,23 +1163,23 @@ static EffectsV3Status _ReadIndexRecord
 	if (t != SCHEMA_NODE && t != SCHEMA_EDGE) {
 		return EFFECTS_V3_MALFORMED ;
 	}
-	rec->schema_type = (SchemaType)t ;
+	*schema_type = (SchemaType)t ;
 
 	int32_t label_id ;
 	if (!_ReadI32 (stream, &label_id)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
-	rec->schema_id = label_id ;
+	*schema_id = label_id ;
 
-	rec->name = ReadWireString (stream) ;
-	if (rec->name == NULL) {
+	*name = ReadWireString (stream) ;
+	if (*name == NULL) {
 		return EFFECTS_V3_MALFORMED ;
 	}
 
 	// IndexFieldType is a BIT FLAG SET, not a discriminant - a range index is
 	// NUMERIC|GEO|STR == 0x0E. Not range-checked here for that reason: the
 	// meaningful test is against the local index API, at apply.
-	if (!_ReadU32 (stream, &rec->field_type)) {
+	if (!_ReadU32 (stream, field_type)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
@@ -954,15 +1189,15 @@ static EffectsV3Status _ReadIndexRecord
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
-	EffectsV3Status status = _ReadAttrRefs (stream, n_fields,
-			&rec->attrs_ref, &rec->n_attrs_ref) ;
+	EffectsV3Status status = _ReadAttrRefs (stream, n_fields, attrs, n_attrs) ;
 	if (status != EFFECTS_V3_OK) {
 		return status ;
 	}
 
 	if (create) {
-		status = _ReadIndexOptions (stream, rec->field_type, &rec->options) ;
-		rec->has_options = (status == EFFECTS_V3_OK) ;
+		status = _ReadIndexOptions (stream, rec->create_index.field_type,
+				&rec->create_index.options) ;
+		rec->create_index.has_options = (status == EFFECTS_V3_OK) ;
 		return status ;
 	}
 
@@ -980,30 +1215,57 @@ static EffectsV3Status _ReadConstraintRecord
 	EffectsV3Record *rec,
 	bool create
 ) {
-	if (!_ReadU32 (stream, &rec->constraint_type)) {
+	// bound once, for the same reason as the index pair: the two records read
+	// an identical prefix and differ only in that a create carries a status.
+	// DROP_CONSTRAINT has no 'status' field at all, so there is nothing to
+	// leave unset and nothing for a later reader to wonder about.
+	uint32_t *constraint_type ;
+	uint32_t *entity_type ;
+	int      *schema_id ;
+	char    **name ;
+	EffectsV3AttrRef **attrs ;
+	uint16_t *n_attrs ;
+
+	if (create) {
+		constraint_type = &rec->create_constraint.constraint_type ;
+		entity_type     = &rec->create_constraint.entity_type ;
+		schema_id       = &rec->create_constraint.schema_id ;
+		name            = &rec->create_constraint.name ;
+		attrs           = &rec->create_constraint.attrs ;
+		n_attrs         = &rec->create_constraint.n_attrs ;
+	} else {
+		constraint_type = &rec->drop_constraint.constraint_type ;
+		entity_type     = &rec->drop_constraint.entity_type ;
+		schema_id       = &rec->drop_constraint.schema_id ;
+		name            = &rec->drop_constraint.name ;
+		attrs           = &rec->drop_constraint.attrs ;
+		n_attrs         = &rec->drop_constraint.n_attrs ;
+	}
+
+	if (!_ReadU32 (stream, constraint_type)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
 	// GraphEntityType is 1-BASED: GETYPE_UNKNOWN takes 0, so a node is 1
-	if (!_ReadU32 (stream, &rec->entity_type)) {
+	if (!_ReadU32 (stream, entity_type)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
 	if (create) {
-		if (!_ReadU32 (stream, &rec->status)) {
+		if (!_ReadU32 (stream, &rec->create_constraint.status)) {
 			return EFFECTS_V3_TRUNCATED ;
 		}
-		rec->has_status = true ;
+		rec->create_constraint.has_status = true ;
 	}
 
 	int32_t label_id ;
 	if (!_ReadI32 (stream, &label_id)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
-	rec->schema_id = label_id ;
+	*schema_id = label_id ;
 
-	rec->name = ReadWireString (stream) ;
-	if (rec->name == NULL) {
+	*name = ReadWireString (stream) ;
+	if (*name == NULL) {
 		return EFFECTS_V3_MALFORMED ;
 	}
 
@@ -1015,8 +1277,7 @@ static EffectsV3Status _ReadConstraintRecord
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
-	return _ReadAttrRefs (stream, n_props, &rec->attrs_ref,
-			&rec->n_attrs_ref) ;
+	return _ReadAttrRefs (stream, n_props, attrs, n_attrs) ;
 }
 
 // read one record: opcode, then whatever that opcode carries
@@ -1069,7 +1330,22 @@ static EffectsV3Status _ReadRecord
 			break ;
 	}
 
-	if (!_ReadU32 (stream, &rec->count)) {
+	// WHICH FIELDS THIS OPCODE CARRIES COMES FROM ONE TABLE.
+	//
+	// This used to ask four predicates - _IsNodeShaped, _IsEdgeShaped,
+	// _HasValues, _HasEndpoints - each listing opcodes again. That was a second
+	// statement of what the arms already say, and the two could disagree
+	// silently: a predicate naming an opcode whose arm has no such field
+	// compiles and writes nowhere useful. Now a NULL member means the opcode
+	// does not carry the field, and the table is the only place that is said.
+	BatchFields f ;
+	if (!_BatchFields (rec, &f)) {
+		// every non-batchable opcode is dispatched above, so reaching here
+		// means the opcode passed the range check and matched no arm
+		return EFFECTS_V3_MALFORMED ;
+	}
+
+	if (!_ReadU32 (stream, f.count)) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
@@ -1102,52 +1378,54 @@ static EffectsV3Status _ReadRecord
 	// faults, and the log line is all an operator sees. The status enum lives in
 	// the shared contract, so adding a variant is the organizer's to make; asked
 	// for, and this reverts to it when it exists.
-	if (rec->count == 0) {
+	if (*f.count == 0) {
 		return EFFECTS_V3_MALFORMED ;
 	}
 
 	EffectsV3Status status ;
 
-	// the shape, hoisted once per record, and stated ahead of the rows
-	if (_IsNodeShaped (rec->opcode)) {
-		status = _ReadLabelSet (stream, &rec->labels, &rec->n_labels) ;
+	// the shape, hoisted once per record, and stated ahead of the rows. A
+	// record is node-shaped or edge-shaped, never both - the arms enforce it,
+	// because no arm has 'labels' and 'relation_id' together.
+	if (f.labels != NULL) {
+		status = _ReadLabelSet (stream, f.labels, f.n_labels) ;
 		if (status != EFFECTS_V3_OK) {
 			goto fail ;
 		}
-	} else if (_IsEdgeShaped (rec->opcode)) {
-		status = _ReadRelType (stream, &rec->relation_id) ;
+	} else if (f.relation_id != NULL) {
+		status = _ReadRelType (stream, f.relation_id) ;
 		if (status != EFFECTS_V3_OK) {
 			goto fail ;
 		}
 	}
 
-	if (_HasValues (rec->opcode)) {
-		status = _ReadAttrIds (stream, &rec->attr_ids, &rec->n_attrs) ;
+	if (f.attr_ids != NULL) {
+		status = _ReadAttrIds (stream, f.attr_ids, f.n_attrs) ;
 		if (status != EFFECTS_V3_OK) {
 			goto fail ;
 		}
 	}
 
 	// the ids, positionally bound to the rows below
-	status = _ReadIdList (stream, rec->count, &rec->ids) ;
+	status = _ReadIdList (stream, *f.count, f.ids) ;
 	if (status != EFFECTS_V3_OK) {
 		goto fail ;
 	}
 
-	if (_HasEndpoints (rec->opcode)) {
-		status = _ReadIdList (stream, rec->count, &rec->src) ;
+	if (f.src != NULL) {
+		status = _ReadIdList (stream, *f.count, f.src) ;
 		if (status != EFFECTS_V3_OK) {
 			goto fail ;
 		}
 
-		status = _ReadIdList (stream, rec->count, &rec->dst) ;
+		status = _ReadIdList (stream, *f.count, f.dst) ;
 		if (status != EFFECTS_V3_OK) {
 			goto fail ;
 		}
 	}
 
-	if (_HasValues (rec->opcode)) {
-		status = _ReadValues (stream, rec) ;
+	if (f.values != NULL) {
+		status = _ReadValues (stream, &f) ;
 		if (status != EFFECTS_V3_OK) {
 			goto fail ;
 		}
