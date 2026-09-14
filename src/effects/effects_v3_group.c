@@ -116,6 +116,18 @@ struct EffectsV3Grouping {
 	UpdateSlot *index;
 	uint32_t    index_cap;   // always a power of two
 	uint32_t    index_n;     // occupied slots
+
+	// the group the last lookup found, as an INDEX
+	//
+	// _group_for is a linear scan with a memcmp comparator, run once per
+	// flushed entity, and consecutive entities overwhelmingly share a shape -
+	// a bulk create has exactly one. One slot in front of the scan turns the
+	// common case into a single comparison.
+	//
+	// An index rather than a pointer, because the array is realloc'd when it
+	// grows: a cached pointer would dangle into freed memory and usually still
+	// work, which is the worst kind. UINT32_MAX means nothing memoed.
+	uint32_t    last_group;
 };
 
 //------------------------------------------------------------------------------
@@ -225,6 +237,7 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	g->index_cap = 256;   // power of two
 	g->index_n   = 0;
 	g->index     = rm_calloc(g->index_cap, sizeof(UpdateSlot));
+	g->last_group = UINT32_MAX;
 
 
 	return g;
@@ -255,8 +268,17 @@ static Group *_group_for
 		.n_attrs     = n_attrs,
 	};
 
+	// the shape the previous entity used, checked before the scan. Revalidated
+	// with the same comparator rather than trusted, so it is a shortcut and
+	// never a second source of truth
+	if(g->last_group < g->n_groups &&
+	   _cmp_group(&probe, g->groups + g->last_group) == 0) {
+		return g->groups + g->last_group;
+	}
+
 	for(uint32_t i = 0; i < g->n_groups; i++) {
 		if(_cmp_group(&probe, g->groups + i) == 0) {
+			g->last_group = i;
 			return g->groups + i;
 		}
 	}
@@ -266,6 +288,7 @@ static Group *_group_for
 		g->groups = rm_realloc(g->groups, g->cap_groups * sizeof(Group));
 	}
 
+	g->last_group = g->n_groups;
 	Group *grp = g->groups + g->n_groups++;
 	memset(grp, 0, sizeof(*grp));
 
