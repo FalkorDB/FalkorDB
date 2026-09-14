@@ -38,11 +38,13 @@ def _settle_replication(src_con, timeout=30):
 def _replica_stream(src_con, replica_con, write, settle=1.0):
     """the commands the replica received from its master while 'write' ran
 
-    MONITOR, not INFO commandstats: a replica does NOT count master-link
-    commands in commandstats. Measured - a plain SET on the primary lands on
-    the replica (GET returns it) while cmdstat_set stays absent - so the
-    counters report 0 for "replicated" and 0 for "never sent" alike. MONITOR
-    is fed from call() and does show the replicated stream.
+    MONITOR rather than INFO commandstats, which would work equally well - a
+    replica does count master-link commands, core and module alike (measured:
+    once replication is settled, a replicated SET, GRAPH.QUERY and
+    GRAPH.EFFECT each move their counter by one). MONITOR is preferred only
+    because a failure should name the command that actually arrived:
+    "replica received ['SELECT 0', 'GRAPH.QUERY v3_always CREATE (:Tiny
+    {x:1})']" says what went wrong, where a counter delta of 0 does not.
     """
     kw = replica_con.connection_pool.connection_kwargs
     mon_con = redis.Redis(
