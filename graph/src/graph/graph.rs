@@ -4313,11 +4313,14 @@ impl Graph {
         for prop in properties {
             match get(prop) {
                 Some(v) if !matches!(v, Value::Null) => {
-                    key.extend_from_slice(format!("{v:?}").as_bytes());
+                    let start = key.len();
+                    key.extend_from_slice(&[0u8; 4]);
+                    v.encode_constraint_key(&mut key);
+                    let len = (key.len() - start - 4) as u32;
+                    key[start..start + 4].copy_from_slice(&len.to_be_bytes());
                 }
                 _ => return Vec::new(),
             }
-            key.push(b'|');
         }
         key
     }
@@ -4976,5 +4979,59 @@ mod composite_key_tests {
         assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
         assert!(key(&["a"], &[]).is_empty());
         assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
+    }
+
+    /// Int and Float with numerically identical values must produce identical keys (#2774).
+    #[test]
+    fn numeric_equivalence_produces_identical_key() {
+        assert_eq!(
+            key(&["id"], &[("id", Value::Int(1))]),
+            key(&["id"], &[("id", Value::Float(1.0))])
+        );
+        assert_eq!(
+            key(&["id"], &[("id", Value::Int(0))]),
+            key(&["id"], &[("id", Value::Float(0.0))])
+        );
+        assert_eq!(
+            key(&["id"], &[("id", Value::Int(0))]),
+            key(&["id"], &[("id", Value::Float(-0.0))])
+        );
+        assert_ne!(
+            key(&["id"], &[("id", Value::Int(1))]),
+            key(&["id"], &[("id", Value::Float(1.5))])
+        );
+    }
+
+    /// Value types must not collide (e.g. String("1") vs Int(1)).
+    #[test]
+    fn distinct_types_do_not_collide() {
+        assert_ne!(
+            key(&["id"], &[("id", Value::Int(1))]),
+            key(&["id"], &[("id", Value::String(Arc::new("1".to_string())))])
+        );
+        assert_ne!(
+            key(&["id"], &[("id", Value::Int(1))]),
+            key(&["id"], &[("id", Value::Bool(true))])
+        );
+    }
+
+    /// Multiple properties are framed to prevent delimiter collisions.
+    #[test]
+    fn composite_key_framing_prevents_delimiter_collisions() {
+        let a = key(
+            &["first", "second"],
+            &[
+                ("first", Value::String(Arc::new("x|y".to_string()))),
+                ("second", Value::String(Arc::new("z".to_string()))),
+            ],
+        );
+        let b = key(
+            &["first", "second"],
+            &[
+                ("first", Value::String(Arc::new("x".to_string()))),
+                ("second", Value::String(Arc::new("y|z".to_string()))),
+            ],
+        );
+        assert_ne!(a, b);
     }
 }
