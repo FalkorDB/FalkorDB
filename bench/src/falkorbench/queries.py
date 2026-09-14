@@ -180,6 +180,21 @@ QUERIES = [
     Q("RETURN DISTINCT",     False, "MATCH (p:Person) RETURN DISTINCT p.age", cg=True),
     Q("ORDER BY + LIMIT",    False, "MATCH (p:Person) RETURN p.name ORDER BY p.score DESC LIMIT 10", cg=True),
     Q("SKIP + LIMIT",        False, "MATCH (p:Person) RETURN p.id ORDER BY p.id SKIP 5000 LIMIT 100", cg=True),
+    # A LIMIT the scan can actually see. Every other limited row above puts an
+    # ORDER BY or an aggregate between the scan and the LIMIT, and
+    # `Runtime::effective_limit` treats both as barriers — so the row budget
+    # never reaches a leaf and none of them moved at all when leaf scans learned
+    # to size their first batch to it (#2790). These two are barrier-free.
+    #
+    # The pair is the point: the invariant is that a small limit costs
+    # proportionally less, not that either row has a particular cost. Before
+    # #2790 a scan packed a full BATCH_SIZE (1024) whatever the limit, so
+    # `limit 10` cost 511,221 instructions against 198,795 after — while
+    # `limit 2k`, being over a full batch, was 3,030,897 against 3,033,647 and
+    # is here to catch a regression that slows scans generally rather than
+    # breaking the limit path.
+    Q("scan limit 10",       False, "MATCH (p:Person) RETURN p.name LIMIT 10"),
+    Q("scan limit 2k",       False, "MATCH (p:Person) RETURN p.name LIMIT 2048"),
     Q("traversal + count",   False, "MATCH (a:Person)-[:KNOWS]->(b) RETURN count(b)", cg=True),
     Q("two-hop",             False, "MATCH (a:Person)-[:KNOWS]->()-[:KNOWS]->(c) RETURN count(c)", cg=True),
     Q("edge + type()",       False, "MATCH (a:Person)-[r:KNOWS]->(b) RETURN count(type(r))", cg=True),
