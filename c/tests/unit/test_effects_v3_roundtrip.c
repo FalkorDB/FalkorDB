@@ -68,7 +68,21 @@ static void setup(void) {
 	// any GRAPH, but not of module-global state.
 	static bool globals_ready = false;
 	if(!globals_ready) {
-		ThreadPool_Init();
+		// ThreadPool_CreatePool ALONE, not ThreadPool_Init as well.
+		// ThreadPool_Init calls CreatePool itself (pool.c:36), so calling
+		// both creates the pool twice - which trips
+		// ASSERT(_thpool == NULL) at pool.c:54 and aborts under a debug or
+		// sanitizer build, while in release the assert compiles away and
+		// the first pool is simply leaked and overwritten. That is why this
+		// passed for weeks and then crashed the moment it was first run
+		// under ASAN.
+		//
+		// CreatePool rather than Init because Init takes its thread count
+		// from Config_THREAD_POOL_SIZE, and a unit test's config struct is
+		// static and zeroed - so Init would ask for a 0-thread pool. The
+		// explicit (1, 64) is deterministic. Init also sets MAIN_THREAD_ID,
+		// which nothing on the decode path reads: its users are
+		// cmd_constraint.c and graphcontext*.c.
 		ThreadPool_CreatePool(1, 64);
 		Globals_Init();
 
@@ -370,10 +384,21 @@ static void _round_trip(const EffectsV3CorpusEntry *e) {
 				// the offset is what identifies the field that was read wrong
 				size_t at = 0;
 				while(at < n && out[at] == f.buf[at]) at++;
-				TEST_ASSERT_(at == n,
-						"%s: re-encoded bytes differ at offset %zu "
-						"(got 0x%02x, corpus has 0x%02x)",
-						e->name, at, out[at], f.buf[at]);
+
+				// Indexed INSIDE the mismatch branch, not in the arguments of
+				// a passing assertion. acutest evaluates a check's message
+				// arguments whether or not the check fails - they are varargs
+				// to acutest_check_ - so `TEST_ASSERT_(at == n, ..., out[at])`
+				// reads out[n] on the SUCCESS path, one byte past the buffer.
+				// A heap-buffer-overflow on every fixture that matches, which
+				// is every fixture that passes. Invisible without a sanitizer:
+				// the read lands in heap slack and returns a plausible byte.
+				if(at != n) {
+					TEST_ASSERT_(false,
+							"%s: re-encoded bytes differ at offset %zu "
+							"(got 0x%02x, corpus has 0x%02x)",
+							e->name, at, out[at], f.buf[at]);
+				}
 			}
 
 			rm_free(out);
