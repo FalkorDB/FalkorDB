@@ -1144,6 +1144,30 @@ impl Binder {
             })
             .collect();
 
+        // Aggregate outputs run against the grouped row, whose slots belong
+        // to projection aliases rather than the input expressions. Resolve
+        // reads of recognized grouping keys to those slots, and reject input
+        // variables that would otherwise silently evaluate to null.
+        let has_aggregation = projected.iter().any(|(_, expr)| expr.is_aggregation());
+        if has_aggregation {
+            let grouped_slots: HashMap<AggregationKey, Variable> = projected
+                .iter()
+                .filter(|(_, expr)| !expr.is_aggregation())
+                .filter_map(|(alias, expr)| {
+                    AggregationKey::from_node(&expr.root()).map(|key| (key, alias.clone()))
+                })
+                .collect();
+            for (_, expr) in &mut projected {
+                if expr.is_aggregation() {
+                    *expr = Arc::new(resolve_aggregate_output(
+                        &expr.root(),
+                        &grouped_slots,
+                        &mut Vec::new(),
+                    )?);
+                }
+            }
+        }
+
         // When an ORDER BY expression (or a sub-expression within it) is an
         // aggregation that matches a projected aggregation, rewrite it to
         // reference the projected alias before binding.
@@ -1180,7 +1204,6 @@ impl Binder {
         // e.g. WITH count(X) AS cnt ORDER BY X  — X is not projected
         // But ORDER BY t.v is fine when RETURN t.v, count(t.v) — t is
         // used in the group-by key expression t.v.
-        let has_aggregation = projected.iter().any(|(_, e)| e.is_aggregation());
         if has_aggregation {
             let has_disallowed = self
                 .copy_from_parent
@@ -2518,6 +2541,87 @@ fn rewrite_compiled_regex(
         }),
         children,
     )
+}
+
+#[derive(Eq, Hash, PartialEq)]
+enum AggregationKey {
+    Variable(u32, u32),
+    Property(u32, u32, Arc<String>),
+}
+
+impl AggregationKey {
+    /// CIP2021-07-07 recognizes variables and direct property/static map
+    /// access on variables. A computed key or a whole property chain is not
+    /// itself recognized, although it may be derived from a recognized key.
+    fn from_node(node: &DynNode<ExprIR<Variable>>) -> Option<Self> {
+        match node.data() {
+            ExprIR::Variable(var) => Some(Self::Variable(var.scope_id, var.id)),
+            ExprIR::Paren if node.num_children() == 1 => Self::from_node(&node.child(0)),
+            ExprIR::Property(property) if node.num_children() == 1 => {
+                match Self::from_node(&node.child(0)) {
+                    Some(Self::Variable(scope_id, id)) => {
+                        Some(Self::Property(scope_id, id, property.clone()))
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+fn resolve_aggregate_output(
+    node: &DynNode<ExprIR<Variable>>,
+    grouped_slots: &HashMap<AggregationKey, Variable>,
+    locals: &mut Vec<(u32, u32)>,
+) -> Result<DynTree<ExprIR<Variable>>, String> {
+    match node.data() {
+        // Aggregate arguments and their result placeholders use input-row
+        // bindings. Rewriting those would change what gets aggregated.
+        ExprIR::FuncInvocation(function) if function.is_aggregate() => {
+            return Ok(node.clone_as_tree());
+        }
+        // The planner extracts these into Apply subplans before aggregation;
+        // they do not evaluate against the grouped output row.
+        ExprIR::PatternComprehension(_) => return Ok(node.clone_as_tree()),
+        _ => {}
+    }
+
+    if let Some(key) = AggregationKey::from_node(node)
+        && let Some(alias) = grouped_slots.get(&key)
+    {
+        return Ok(tree!(ExprIR::Variable(alias.clone())));
+    }
+
+    if let ExprIR::Variable(var) = node.data()
+        && !locals.contains(&(var.scope_id, var.id))
+    {
+        return Err(format!(
+            "Invalid aggregation: variable `{var}` must be a grouping key or used inside an aggregate function"
+        ));
+    }
+
+    // Recursive composition matters: grouping `n` permits `n.prop`, and
+    // grouping `m.inner` permits `m.inner.value`. A failed whole-expression
+    // key lookup must not reject these derivations before visiting children.
+    let mut resolved = DynTree::new(node.data().clone());
+    for (index, child) in node.children().enumerate() {
+        let outer_len = locals.len();
+        match node.data() {
+            ExprIR::ListComprehension(var) | ExprIR::Quantifier { var, .. } if index > 0 => {
+                locals.push((var.scope_id, var.id));
+            }
+            ExprIR::Reduce(vars) if index == 2 => {
+                locals.push((vars.accumulator.scope_id, vars.accumulator.id));
+                locals.push((vars.iterator.scope_id, vars.iterator.id));
+            }
+            _ => {}
+        }
+        let subtree = resolve_aggregate_output(&child, grouped_slots, locals)?;
+        locals.truncate(outer_len);
+        resolved.root_mut().push_child_tree(subtree);
+    }
+    Ok(resolved)
 }
 
 /// Recursively walk an ORDER BY expression tree and replace any aggregation
