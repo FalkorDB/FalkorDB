@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "effects_v3.h"
+#include "effects_v3_stream.h"
 #include "effects_wire.h"
 #include "../index/index_field.h"
 #include "../util/rmalloc.h"
@@ -1460,18 +1461,21 @@ void EffectsV3_RecordsFree
 	rm_free (records) ;
 }
 
-EffectsV3Status EffectsV3_Decode
+// decode a payload, handing each record to 'fn' as it is read
+//
+// the header is parsed here and the record loop runs here; the two public
+// entry points differ only in what their callback does with each record
+EffectsV3Status EffectsV3_DecodeEach
 (
 	const char *buff,
 	size_t n,
-	EffectsV3Records **records
+	EffectsV3RecordFn fn,
+	void *ctx
 ) {
-	ASSERT (buff    != NULL) ;
-	ASSERT (records != NULL) ;
+	ASSERT (buff != NULL) ;
+	ASSERT (fn   != NULL) ;
 
-	*records = NULL ;
-
-	if (buff == NULL || records == NULL || n == 0) {
+	if (buff == NULL || fn == NULL || n == 0) {
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
@@ -1538,32 +1542,118 @@ EffectsV3Status EffectsV3_Decode
 		goto done ;
 	}
 
-	EffectsV3Records *out = rm_calloc (1, sizeof (EffectsV3Records)) ;
-	out->version = version ;
-	out->flags   = flags ;
-
-	uint32_t cap = 0 ;
-
-	// as long as there is data left in the stream
+	// ONE RECORD AT A TIME. The record lives on this stack frame and is freed
+	// before the next is read, so peak memory is one record rather than the
+	// whole payload.
 	while ((size_t)ftell (stream) < n) {
-		if (out->n == cap) {
-			cap = (cap == 0) ? 4 : cap * 2 ;
-			out->records = rm_realloc (out->records,
-					cap * sizeof (EffectsV3Record)) ;
-		}
+		EffectsV3Record rec ;
 
-		status = _ReadRecord (stream, out->records + out->n) ;
+		status = _ReadRecord (stream, &rec) ;
 		if (status != EFFECTS_V3_OK) {
-			EffectsV3_RecordsFree (out) ;
+			// _ReadRecord frees what it partially built
 			goto done ;
 		}
 
-		out->n++ ;
-	}
+		const bool keep_going = fn (&rec, ctx) ;
 
-	*records = out ;
+		// freed whether or not the callback refused. A callback that kept the
+		// record zeroed it, and freeing a zeroed record is a no-op.
+		_RecordFree (&rec) ;
+
+		if (!keep_going) {
+			// THE CALLBACK REFUSED, and that is not a decode status. The bytes
+			// were well formed; what the caller did with them is the caller's
+			// to report, and it carries that verdict in 'ctx'. Returning a
+			// failure status here would report a refused payload as corrupt
+			// and send an operator hunting a wire problem that does not exist.
+			break ;
+		}
+	}
 
 done:
 	fclose (stream) ;
 	return status ;
+}
+
+//------------------------------------------------------------------------------
+// the collecting form
+//------------------------------------------------------------------------------
+
+// accumulator for EffectsV3_Decode
+typedef struct {
+	EffectsV3Records *out;
+	uint32_t          cap;
+	bool              oom;
+} _Collector;
+
+// take ownership of each record by copying the struct and zeroing the original
+static bool _Collect
+(
+	EffectsV3Record *rec,
+	void *ctx
+) {
+	_Collector *c = (_Collector*)ctx ;
+
+	if (c->out->n == c->cap) {
+		c->cap = (c->cap == 0) ? 4 : c->cap * 2 ;
+		c->out->records = rm_realloc (c->out->records,
+				c->cap * sizeof (EffectsV3Record)) ;
+	}
+
+	c->out->records[c->out->n] = *rec ;
+	c->out->n++ ;
+
+	// OWNERSHIP MOVED. The driver frees the record as soon as this returns, so
+	// the original is zeroed - otherwise every owned pointer in it would be
+	// freed out from under the copy.
+	memset (rec, 0, sizeof (*rec)) ;
+
+	return true ;
+}
+
+// decode a payload whole
+//
+// KEPT FOR THE ROUND TRIP. EffectsV3_Encode takes a materialised record set and
+// the conformance harness is its only caller, so this wrapper exists to serve
+// that and nothing else - the production path streams. A test's needs do not
+// get to set the production path's memory profile, and breaking the round trip
+// to avoid carrying this would be the wrong trade in the other direction.
+EffectsV3Status EffectsV3_Decode
+(
+	const char *buff,
+	size_t n,
+	EffectsV3Records **records
+) {
+	ASSERT (buff    != NULL) ;
+	ASSERT (records != NULL) ;
+
+	if (records == NULL) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	*records = NULL ;
+
+	if (buff == NULL || n == 0) {
+		return EFFECTS_V3_TRUNCATED ;
+	}
+
+	_Collector c = { 0 } ;
+	c.out = rm_calloc (1, sizeof (EffectsV3Records)) ;
+
+	// the header bytes the caller still expects to see on the record set. They
+	// are re-read here rather than threaded out of the driver: the driver has
+	// already refused anything they could disagree with, so a second read of
+	// two bytes is cheaper than an out-parameter nobody else wants.
+	c.out->version = 3 ;
+	c.out->flags   = (n > 1) ? (uint8_t)buff[1] : 0 ;
+
+	const EffectsV3Status status = EffectsV3_DecodeEach (buff, n, _Collect, &c) ;
+
+	if (status != EFFECTS_V3_OK) {
+		EffectsV3_RecordsFree (c.out) ;
+		return status ;
+	}
+
+	*records = c.out ;
+	return EFFECTS_V3_OK ;
 }

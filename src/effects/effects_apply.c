@@ -9,6 +9,7 @@
 #include "../util/arr.h"
 #include "effects_internal.h"
 #include "effects_v3.h"
+#include "effects_v3_stream.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
@@ -681,6 +682,40 @@ static bool ApplyDeleteEdge
 }
 
 // returns false in case of effect encode/decode version mismatch
+// carries the apply verdict out of the decode loop
+//
+// The callback's refusal is NOT a decode status - see EffectsV3_DecodeEach -
+// so it rides here instead.
+//
+// 'applied' counts records that applied cleanly BEFORE the refusal, and it is
+// in the log line deliberately. Streaming decode introduces exactly one case
+// that could not happen before: a refusal raised after records 1..k are already
+// in the graph. Without k in the log, a test for that case cannot tell it apart
+// from a payload refused before anything applied - both raise sync_full and
+// both converge - so the test would silently degenerate into a slower copy of
+// one we already have.
+typedef struct {
+	GraphContext *gc;
+	bool          ok;
+	uint32_t      applied;
+} _V3ApplyCtx;
+
+static bool _V3ApplyOne
+(
+	EffectsV3Record *rec,
+	void *ctx
+) {
+	_V3ApplyCtx *c = (_V3ApplyCtx*)ctx ;
+
+	if (!EffectsV3_ApplyRecord (c->gc, rec)) {
+		c->ok = false ;
+		return false ;   // stop; the remaining bytes are not read
+	}
+
+	c->applied++ ;
+	return true ;
+}
+
 // why a v3 buffer was refused, for the log line
 //
 // LOCAL ON PURPOSE. The shared contract declares the status enum but no longer
@@ -752,30 +787,52 @@ bool Effects_Apply
 	}
 
 	//--------------------------------------------------------------------------
-	// v3 is decoded whole, not streamed
+	// v3 is decoded ONE RECORD AT A TIME
 	//--------------------------------------------------------------------------
 	//
 	// v1 and v2 walk the buffer straight into the graph. v3 splits decode from
 	// apply (see effects_v3.h): the payload carries a flags byte the older
-	// versions have no room for, and decode returns a record model as a plain
+	// versions have no room for, and decode produces a record model as a plain
 	// value so it can be round-tripped and fuzzed without a graph. So the v3
 	// branch takes the whole buffer rather than the stream.
+	//
+	// It used to decode the whole payload and then walk it, which cost peak
+	// memory proportional to the payload. Now each record is decoded, applied
+	// and freed in turn - see effects_v3_stream.h for why the all-or-nothing
+	// property that gave up is worth less than it sounds, and for the return
+	// path a mid-stream refusal takes to the divergence guard.
 	if (version == 3) {
 		fclose (stream) ;
 
-		EffectsV3Records *records = NULL ;
-		EffectsV3Status status = EffectsV3_Decode (effects_buff, l, &records) ;
+		_V3ApplyCtx actx = { .gc = gc, .ok = true, .applied = 0 } ;
 
+		const EffectsV3Status status =
+			EffectsV3_DecodeEach (effects_buff, l, _V3ApplyOne, &actx) ;
+
+		// THE BYTES AND THE VERDICT ARE REPORTED SEPARATELY. A decode status
+		// describes the payload; 'actx.ok' describes what the graph made of it.
+		// Both end at the same 'return false' - and therefore at the same
+		// DivergenceGuard_OnFailure - but calling a refused-but-well-formed
+		// payload corrupt would send an operator hunting a wire problem that
+		// does not exist.
 		if (status != EFFECTS_V3_OK) {
 			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT v3 payload refused: %s",
-					_V3StatusStr (status)) ;
+					"GRAPH.EFFECT v3 payload refused: %s, after applying %u "
+					"record(s)", _V3StatusStr (status), actx.applied) ;
 			return false ;
 		}
 
-		bool applied = EffectsV3_Apply (gc, records) ;
-		EffectsV3_RecordsFree (records) ;
-		return applied ;
+		if (!actx.ok) {
+			// the failing record is the one AFTER the last that applied, so
+			// its zero-based index is the count - printed once, as a count,
+			// rather than twice as two numbers that are always equal
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT v3 payload refused: a record could not be "
+					"applied, after applying %u record(s)", actx.applied) ;
+			return false ;
+		}
+
+		return true ;
 	}
 
 	bool ok = true ;
