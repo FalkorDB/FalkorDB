@@ -1640,19 +1640,29 @@ EffectsV3Status EffectsV3_Decode
 	_Collector c = { 0 } ;
 	c.out = rm_calloc (1, sizeof (EffectsV3Records)) ;
 
-	// the header bytes the caller still expects to see on the record set. They
-	// are re-read here rather than threaded out of the driver: the driver has
-	// already refused anything they could disagree with, so a second read of
-	// two bytes is cheaper than an out-parameter nobody else wants.
-	c.out->version = 3 ;
-	c.out->flags   = (n > 1) ? (uint8_t)buff[1] : 0 ;
-
 	const EffectsV3Status status = EffectsV3_DecodeEach (buff, n, _Collect, &c) ;
 
 	if (status != EFFECTS_V3_OK) {
 		EffectsV3_RecordsFree (c.out) ;
 		return status ;
 	}
+
+	// the header bytes the caller still expects to see on the record set
+	//
+	// READ FROM THE PAYLOAD, and read AFTER the driver has returned OK, which
+	// is what makes them trustworthy rather than assumed. An earlier version
+	// wrote a literal 3 here before decoding; that was correct, because
+	// EffectsV3_DecodeEach refuses any other version, but it read as an
+	// assumption and it would have become a real defect the moment this
+	// function returned a record set on a non-3 payload - the round trip
+	// re-encodes from records->version, so it would have produced bytes
+	// claiming a version the payload never had.
+	//
+	// Taking them off the payload after a clean decode makes the value a
+	// consequence of the refusal rather than a restatement of it. n >= 2 here:
+	// a payload too short for both header bytes cannot decode OK.
+	c.out->version = (uint8_t)buff[0] ;
+	c.out->flags   = (uint8_t)buff[1] ;
 
 	*records = c.out ;
 	return EFFECTS_V3_OK ;
