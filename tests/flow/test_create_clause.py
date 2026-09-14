@@ -1,3 +1,4 @@
+import random
 from common import *
 from index_utils import *
 
@@ -177,3 +178,69 @@ class testCreateClause():
         ).result_set
         self.env.assertEqual(len(res), 2)
         self.env.assertEqual(len(set(row[1] for row in res)), 2)
+
+    def test19_id_pool_never_reissues_a_live_id(self):
+        # The property behind the three cases above, over sequences nobody
+        # wrote by hand: after any run of creates and deletes, no two live
+        # entities share an id.
+        #
+        # Seeded, so a failure is reproducible and CI cannot go green or red
+        # for reasons nobody can reproduce. It earns its place — the hand-
+        # written cases above are all node-shaped, and this is what surfaced
+        # that the collisions are mostly on *edges*: against the allocator
+        # before the fix it found one in roughly half of these trials within a
+        # dozen steps, most of them shapes I would not have thought to write.
+        random.seed(1234)
+
+        ops = [
+            "CREATE (a), (b)",
+            "CREATE (a), (b), (c)",
+            "CREATE (a)-[:R]->(b)",
+            "CREATE (a)-[:R]->(a)",
+            "CREATE (a), (b), (c) DELETE b",
+            "CREATE (a), (b), (c) DELETE b CREATE (x), (y)",
+            "CREATE (a)-[:R]->(b), (c)-[:R]->(d) DELETE a",
+            "CREATE (a)-[:R]->(b), (c)-[:R]->(d) DELETE a CREATE (x)-[:R]->(y)",
+            "CREATE (a)-[:R]->(a), (b)-[:R]->(c) DELETE a CREATE (x)-[:R]->(y)",
+        ]
+
+        for trial in range(25):
+            g = self._fresh()
+            history = []
+            for _ in range(8):
+                q = random.choice(ops)
+                history.append(q)
+                g.query(q)
+
+                # Delete a live node outright every so often, so committed
+                # deletes and pending cancellations interleave.
+                if random.random() < 0.25:
+                    live = [r[0] for r in
+                            g.query("MATCH (n) RETURN id(n)").result_set]
+                    if live:
+                        victim = random.choice(live)
+                        q = f"MATCH (n) WHERE id(n) = {victim} DELETE n"
+                        history.append(q)
+                        g.query(q)
+
+                trace = "\n  ".join(history)
+                nodes = [r[0] for r in
+                         g.query("MATCH (n) RETURN id(n)").result_set]
+                self.env.assertEqual(
+                        len(nodes), len(set(nodes)),
+                        message=f"trial {trial}: two live nodes share an id\n"
+                                f"  ids: {sorted(nodes)}\n  {trace}")
+
+                edges = [r[0] for r in
+                         g.query("MATCH ()-[e]->() RETURN id(e)").result_set]
+                self.env.assertEqual(
+                        len(edges), len(set(edges)),
+                        message=f"trial {trial}: two live edges share an id\n"
+                                f"  ids: {sorted(edges)}\n  {trace}")
+
+                # A fused id leaves the graph wrong for every later step, which
+                # would report the same collision once per step. Stop this trial
+                # at the first one so the output names the sequence that caused
+                # it and nothing else.
+                if len(nodes) != len(set(nodes)) or len(edges) != len(set(edges)):
+                    break
