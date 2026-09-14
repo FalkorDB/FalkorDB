@@ -729,7 +729,89 @@ void test_effectsV3Group_flushedGroupOutlivesTheArena(void) {
 }
 
 
+// PROPERTY ORDER IN THE QUERY MUST NOT CHANGE THE BYTES
+//
+// attr_ids is half the partition key of a batched record, so without a
+// canonical order `{a,b}` and `{b,a}` are different shapes - the same logical
+// write lands in two groups, produces a different record count, and emits
+// different bytes on two engines that agree about everything else. That is
+// also a same-engine defect: _group_for compares the id array as given.
+void test_effectsV3Group_attributeOrderDoesNotSplit(void) {
+	LabelID labels[] = { 1 };
+	AttributeID fwd[] = { 7, 9 };
+	AttributeID rev[] = { 9, 7 };
+	SIValue vf[] = { SI_LongVal(70), SI_LongVal(90) };
+	SIValue vr[] = { SI_LongVal(90), SI_LongVal(70) };
+
+	// one accumulator, two entities, the same set written both ways round
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, labels, 1, 10, fwd, vf, 2);
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, labels, 1, 11, rev, vr, 2);
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(g) == 1,
+			"the same attribute SET written in two orders is one shape, got %u "
+			"records", EffectsV3Grouping_RecordCount(g));
+	EffectsV3Grouping_Free(g);
+
+	// and byte-for-byte: two payloads, each written one way round
+	size_t na, nb;
+	EffectsV3Grouping *a = EffectsV3Grouping_New();
+	EffectsV3Grouping_AddNode(a, EFFECT_CREATE_NODE, labels, 1, 10, fwd, vf, 2);
+	unsigned char *ba = _encode(a, &na);
+
+	EffectsV3Grouping *b = EffectsV3Grouping_New();
+	EffectsV3Grouping_AddNode(b, EFFECT_CREATE_NODE, labels, 1, 10, rev, vr, 2);
+	unsigned char *bb = _encode(b, &nb);
+
+	TEST_ASSERT_(na == nb && memcmp(ba, bb, na) == 0,
+			"the same logical write must emit the same bytes whichever order "
+			"the query listed its properties in");
+
+	free(ba); free(bb);
+	EffectsV3Grouping_Free(a);
+	EffectsV3Grouping_Free(b);
+}
+
+// AND THE VALUES MOVE WITH THE IDS
+//
+// The failure this guards is silent: sorting ids while leaving values in query
+// order emits a payload that is well-formed, passes every length check and
+// passes a receiver's ascending check - with every value on the wrong
+// attribute. Only reading the values back catches it.
+void test_effectsV3Group_valuesFollowTheirAttributes(void) {
+	LabelID labels[] = { 1 };
+	// descending ids, so sorting must actually move something
+	AttributeID rev[] = { 9, 7 };
+	SIValue vr[] = { SI_LongVal(0xBBBB), SI_LongVal(0xAAAA) };
+
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, labels, 1, 10, rev, vr, 2);
+
+	size_t n;
+	unsigned char *b = _encode(g, &n);
+
+	// attribute 7 is written first, so its value must be the one paired with
+	// 7 in the call - 0xAAAA - and not the first value as written
+	long long first = -1;
+	for(size_t i = 0; i + 8 <= n; i++) {
+		uint64_t v;
+		memcpy(&v, b + i, 8);
+		if(v == 0xAAAA || v == 0xBBBB) { first = (long long)v; break; }
+	}
+
+	TEST_ASSERT_(first == 0xAAAA,
+			"attribute 7 sorts first, so 0xAAAA must precede 0xBBBB on the "
+			"wire; got 0x%llX first - the ids were sorted and the values were "
+			"not", (unsigned long long)first);
+
+	free(b);
+	EffectsV3Grouping_Free(g);
+}
+
 TEST_LIST = {
+	{ "EffectsV3Group:attributeOrderDoesNotSplit",
+		test_effectsV3Group_attributeOrderDoesNotSplit },
+	{ "EffectsV3Group:valuesFollowTheirAttributes",
+		test_effectsV3Group_valuesFollowTheirAttributes },
 	{ "EffectsV3Group:lastValueWins",
 		test_effectsV3Group_lastValueWins },
 	{ "EffectsV3Group:flushedGroupOutlivesTheArena",
