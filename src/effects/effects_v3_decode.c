@@ -36,13 +36,12 @@
 // EffectsV3IdListSegmentKind, which folds direction in and so has five values
 // to the wire's three - these are the numbers on the bytes, and they do not
 // move.
-//
-// TODO: delete these once base carries EFFECTS_V3_WIRE_SEG_*. The mask that
-// extracts this field is already in effects_v3.h; the values it takes are not,
-// so the encoder duplicated them too. Being fixed at the root.
-#define WIRE_SEG_RANGE  0
-#define WIRE_SEG_SET    1
-#define WIRE_SEG_REPEAT 2
+// the wire kind values now live in effects_v3.h beside the other macros that
+// describe the header byte - the encoder needs them too, which is the TODO the
+// decoder carried here resolved rather than duplicated
+#define WIRE_SEG_RANGE  EFFECTS_V3_WIRE_SEG_RANGE
+#define WIRE_SEG_SET    EFFECTS_V3_WIRE_SEG_SET
+#define WIRE_SEG_REPEAT EFFECTS_V3_WIRE_SEG_REPEAT
 
 // the smallest a segment can be: a header byte plus a 1-byte value and a 1-byte
 // count (Range/Repeat at width code 0). A Set is larger - header plus a u32
