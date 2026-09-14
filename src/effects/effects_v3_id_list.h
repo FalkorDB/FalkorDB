@@ -54,8 +54,15 @@
 // push and, if it ever reaches a range insertion, fabricates ids the set does
 // not hold
 typedef struct {
+	// DIRECTION IS IN THE KIND, not a flag beside it.
+	//
+	// It was a bool, which let a descending Repeat be written down even though
+	// the combination has no meaning - one id held 'count' times reads the same
+	// either way - and the code carried an assert to forbid what the type
+	// allowed. The contract's closed set made that unrepresentable; carrying a
+	// flag as well would have been two fields encoding one fact, which is what
+	// the split removed one layer up.
 	EffectsV3IdListSegmentKind kind;
-	bool descending;  // header bit 6; always false for a Repeat
 	union {
 		struct {
 			uint64_t base;  // first id: the lowest ascending, the highest descending
