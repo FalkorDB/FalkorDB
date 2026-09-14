@@ -58,10 +58,16 @@ impl<'a> NodeByVectorScanOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(ScoredColumn {
-                id: node.id,
-                score: score.as_ref().map(|v| v.id),
-            }),
+            // No cap: a vector scan's `k` already bounds it, and it shows no
+            // boundary step — `LIMIT 1024` measured 1,524,520 instructions
+            // against 1,430,314 for `LIMIT 1025`.
+            emitter: BatchedResultEmitter::with_binding(
+                ScoredColumn {
+                    id: node.id,
+                    score: score.as_ref().map(|v| v.id),
+                },
+                None,
+            ),
             label,
             attr,
             k,
