@@ -1158,7 +1158,7 @@ class testConstraintReplication():
             with self.replica.monitor() as m:
                 MONITOR_ATTACHED = True
                 for cmd in m.listen():
-                    if 'GRAPH.CONSTRAINT' in cmd['command']:
+                    if 'GRAPH.EFFECT' in cmd['command']:
                         self.monitor.append(cmd)
         except:
             pass
@@ -1182,24 +1182,71 @@ class testConstraintReplication():
         # create unique edge constraint over Knows since
         create_unique_edge_constraint(self.g, 'Knows', 'since', sync=True)
 
-        # validate constrains
+        # Six constraints, not six anything-else. The number that used to be
+        # here was 12: v2 replicated each `GRAPH.CONSTRAINT` *twice* — once on
+        # creation and once more as the signal that validation had finished,
+        # because the command had no way to carry a status. v3 carries the
+        # status in the announcement, so the repeat is not a signal any more.
+        #
+        # Each of these is announced once because this graph is empty, so
+        # validation runs inline on the main thread and the status is settled
+        # before the command returns. Above the async threshold there are two
+        # announcements — UNDER CONSTRUCTION, then the settled status — and
+        # that is `testEffectsV3_03_ConstraintConvergence`, which asserts both
+        # of them are CREATE_CONSTRAINT records rather than merely two effects.
         constraints = list_constraints(self.g)
         self.env.assertEqual(len(constraints), 6)
         for c in constraints:
             self.env.assertEqual(c.status, 'OPERATIONAL')
 
-        # each constraint should be replicated twice from source to replica:
-        # 1. upon creation
-        # 2. upon constraint becoming activate
+        # What is worth asserting here is *which command* carries a constraint to
+        # a replica, and that the replica converges — not how many payloads went
+        # past.
+        #
+        # Counting them was wrong twice over. A GRAPH.EFFECT payload is binary,
+        # so MONITOR cannot tell a constraint's effect from a node-create's, and
+        # the count is not six anyway: each `create_unique_*` helper builds a
+        # supporting index first, which is another effect. Measured, these six
+        # creates put eleven effects on the wire, so `>= 6` was passing with five
+        # to spare and functioning as a sleep.
+        #
+        # `test_effects_v3.py` pins the per-shape announcement counts, where the
+        # payloads are constructed rather than observed through MONITOR.
         self.source.execute_command("WAIT", 1, 0)
 
-        # wait for all 12 GRAPH.CONSTRAINT commands to be replicated
-        elapsed = 10
-        while len(self.monitor) < 12 and elapsed > 0:
-            time.sleep(0.2)
-            elapsed -= 0.2
+        replica_g = Graph(self.replica, GRAPH_ID)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            self.source.execute_command("WAIT", 1, 0)
+            cs = list_constraints(replica_g)
+            if len(cs) == 6 and all(c.status == 'OPERATIONAL' for c in cs):
+                break
+            time.sleep(0.25)
 
-        self.env.assertEqual(len(self.monitor), 12)
+        replica_constraints = list_constraints(replica_g)
+        self.env.assertEqual(len(replica_constraints), 6)
+        for c in replica_constraints:
+            self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        # And the mechanism: effects carried them.
+        self.env.assertGreater(len(self.monitor), 0)
+
+        # That no verbatim GRAPH.CONSTRAINT was replayed is asked of the
+        # replica's own command counters rather than of MONITOR, so it does not
+        # depend on what the filter above happens to collect — a filter that
+        # only keeps GRAPH.EFFECT would make a MONITOR-based check of this
+        # vacuously true, which reads like coverage and is not.
+        stats = self.replica.execute_command("INFO", "commandstats")
+        if not isinstance(stats, dict):
+            stats = {
+                k: v
+                for k, v in (
+                    line.split(':', 1) for line in str(stats).splitlines() if ':' in line
+                )
+            }
+        replayed = [k for k in stats if 'constraint' in k.lower()]
+        self.env.assertEqual(replayed, [],
+            message=f"the replica executed a verbatim constraint command: {replayed}")
 
     def test_02_async_validation_reaches_operational_on_replica(self):
         # Regression guard for the pause/role re-check added in #2371.
@@ -1234,3 +1281,66 @@ class testConstraintReplication():
         self.env.assertEqual(master_c.status, 'OPERATIONAL')
         self.env.assertIsNotNone(c)
         self.env.assertEqual(c.status, 'OPERATIONAL')
+
+
+class testConstraintSchemaRegistration():
+    """A constraint's label and properties have to be interned before it is stored.
+
+       The constraint itself holds names, so nothing at runtime needs the ids — but the
+       RDB stores it by attribute id (`encode_constraint_block` resolves each property
+       with `position(..).unwrap_or(0)`), so a property no entity has ever used is
+       persisted as id 0 and read back as whatever attribute 0 happens to be. That is
+       #2749, and it is silent: the constraint keeps enforcing, on the wrong property.
+
+       Not reachable through UNIQUE, which needs a supporting range index first and so
+       interns the property on the way. MANDATORY on an empty label is the case."""
+
+    def __init__(self):
+        # enableDebugCommand: this reloads via DEBUG RELOAD, which redis refuses
+        # by default.
+        self.env, self.db = Env(env='oss', enableDebugCommand=True)
+        self.con = self.env.getConnection()
+
+    def test01_a_constraint_on_an_unused_property_survives_a_reload(self):
+        g = self.db.select_graph("constraint_schema_registration")
+
+        # `a` is interned first, so it is attribute id 0 — the id an unresolved
+        # property falls back to. `Q` ends up an empty label, so MANDATORY on it
+        # validates trivially and reaches OPERATIONAL, which is what gets encoded.
+        g.query("CREATE (:P {a: 1})")
+        g.query("CREATE (:Q {b: 1})")
+        g.query("MATCH (n:Q) DELETE n")
+
+        create_mandatory_node_constraint(g, "Q", "z", sync=True)
+
+        # Interned by the create, not by any entity: no node has ever had `z`.
+        keys = [r[0] for r in g.query("CALL db.propertyKeys()").result_set]
+        self.env.assertContains("z", keys)
+
+        before = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(before, [["Q", ["z"]]])
+
+        self.con.execute_command("DEBUG", "RELOAD")
+
+        # Without the registration this comes back as ["a"] — attribute id 0.
+        after = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(after, before)
+
+    def test02_a_refused_create_interns_nothing(self):
+        g = self.db.select_graph("constraint_schema_refused")
+        g.query("CREATE (:R {c: 1})")
+
+        before = sorted(r[0] for r in g.query("CALL db.propertyKeys()").result_set)
+
+        # UNIQUE without a supporting range index is refused. The registration
+        # runs only after the create succeeds, so the name must not leak in.
+        try:
+            self.con.execute_command(
+                "GRAPH.CONSTRAINT", "CREATE", "constraint_schema_refused",
+                "UNIQUE", "NODE", "R", "PROPERTIES", "1", "neverseen")
+            self.env.assertTrue(False, message="UNIQUE without an index must be refused")
+        except ResponseError as e:
+            self.env.assertContains("missing supporting exact-match index", str(e))
+
+        after = sorted(r[0] for r in g.query("CALL db.propertyKeys()").result_set)
+        self.env.assertEqual(after, before)
