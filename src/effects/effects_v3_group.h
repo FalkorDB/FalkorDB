@@ -135,6 +135,22 @@ void EffectsV3Grouping_StageUpdate
 	SIValue value           // its new value, or a null to remove it
 );
 
+// bytes currently held in the staging arena
+//
+// EXPOSED FOR TESTS. The arena is an implementation detail and nothing in the
+// engine needs this; it exists so the one documented tradeoff in it can be
+// asserted rather than only described - a superseded encoding is left behind
+// rather than reclaimed, so setting an attribute twice holds two copies.
+//
+// Measuring that cost on a live query turned out to be impossible rather than
+// merely awkward: anything that stages k times also executes the pipeline k
+// times, and the pipeline dominates the arena by roughly 25x, so no Cypher
+// control isolates it. A unit-level assertion is what is available.
+size_t EffectsV3Grouping_StagedBytes
+(
+	const EffectsV3Grouping *g  // accumulator
+);
+
 // how many records the accumulator would emit
 //
 // NOT const: staged updates are folded into their groups here if they have not
