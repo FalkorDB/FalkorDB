@@ -6,7 +6,7 @@
 #include "RG.h"
 #include "effects_v3.h"
 #include "effects_v3_stream.h"
-#include "effects_wire.h"
+#include "../util/wire_string.h"
 #include "../index/index_field.h"
 #include "../util/rmalloc.h"
 #include "../util/roaring_include.h"
