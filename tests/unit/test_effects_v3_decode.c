@@ -125,9 +125,121 @@ void test_decode_refuses_a_future_version() {
 	TEST_ASSERT(records == NULL);
 }
 
+
+//------------------------------------------------------------------------------
+// streaming: the behaviour that did not exist before
+//------------------------------------------------------------------------------
+//
+// THIS IS THE HALF NOTHING ELSE PINS. Streaming decode introduced exactly one
+// new behaviour - a refusal raised AFTER k records have already been handed
+// over, with k >= 1. The consequence of that refusal (it still reaches
+// DivergenceGuard_OnFailure, sync_full still rises, the replica still
+// converges) belongs to a flow test and already has machinery behind it. The
+// cause does not: no server is involved, and if the driver ever started
+// refusing before delivering anything, every flow test would still pass.
+//
+// A unit test cannot reach the guard - there is no RedisModuleCtx here - so it
+// deliberately does not try. It pins that the callback ran, how many times, and
+// that decoding stopped when it said to.
+
+// three CREATE_NODE records, one node each, ids 1 2 3 and values 11 12 13
+static const unsigned char THREE_RECORDS[] = {
+	0x03, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	0x00, 0x01, 0x01, 0x00, 0x20, 0x00, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+	0x00, 0x00, 0x02, 0x01, 0x00, 0x20, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+	0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00,
+	0x00, 0x00, 0x00, 0x03, 0x01, 0x00, 0x20, 0x00, 0x00, 0x0d, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+typedef struct {
+	uint32_t calls;       // how many records were handed over
+	uint64_t ids[8];      // the first id of each, in delivery order
+	uint32_t refuse_at;   // return false on this call number, 0 to never
+} _CountCtx;
+
+static bool _CountingCb
+(
+	EffectsV3Record *rec,
+	void *ctx
+) {
+	_CountCtx *c = (_CountCtx*)ctx;
+
+	if (c->calls < 8) {
+		c->ids[c->calls] = rec->create_node.ids.segments[0].range_ascending.base;
+	}
+	c->calls++;
+
+	return !(c->refuse_at != 0 && c->calls == c->refuse_at);
+}
+
+void test_stream_hands_over_every_record_in_order() {
+	_CountCtx c = { 0 };
+
+	EffectsV3Status status = EffectsV3_DecodeEach((const char*)THREE_RECORDS,
+			sizeof(THREE_RECORDS), _CountingCb, &c);
+
+	TEST_ASSERT(status   == EFFECTS_V3_OK);
+	TEST_ASSERT(c.calls  == 3);
+
+	// in WIRE ORDER - records 9 and 10 are normatively ahead of anything
+	// referencing the ids they introduce, so a driver that reordered would
+	// break apply in a way no count could see
+	TEST_ASSERT(c.ids[0] == 1);
+	TEST_ASSERT(c.ids[1] == 2);
+	TEST_ASSERT(c.ids[2] == 3);
+}
+
+void test_stream_delivers_k_records_before_a_truncation() {
+	_CountCtx c = { 0 };
+
+	// cut into the third record's value: two records decode whole, the third
+	// runs out of bytes
+	EffectsV3Status status = EffectsV3_DecodeEach((const char*)THREE_RECORDS,
+			sizeof(THREE_RECORDS) - 3, _CountingCb, &c);
+
+	TEST_ASSERT(status == EFFECTS_V3_TRUNCATED);
+
+	// K >= 1 IS THE WHOLE POINT. Before streaming, a truncated payload was
+	// refused with nothing handed over; the count is what distinguishes the new
+	// behaviour from the old, and it is why the refusal log line carries it.
+	TEST_ASSERT(c.calls == 2);
+	TEST_ASSERT(c.ids[0] == 1);
+	TEST_ASSERT(c.ids[1] == 2);
+}
+
+void test_stream_stops_when_the_callback_refuses() {
+	_CountCtx c = { 0 };
+	c.refuse_at = 2;   // refuse the second record
+
+	EffectsV3Status status = EffectsV3_DecodeEach((const char*)THREE_RECORDS,
+			sizeof(THREE_RECORDS), _CountingCb, &c);
+
+	// THE THIRD RECORD IS NEVER READ. A driver that kept going would apply a
+	// record after the caller had already refused the payload.
+	TEST_ASSERT(c.calls == 2);
+
+	// AND THE STATUS IS STILL OK, which is deliberate rather than an oversight.
+	// Decode statuses describe the BYTES; these bytes were well formed. What
+	// the caller made of them is the caller's to carry, and reporting a
+	// refused-but-well-formed payload as corrupt sends an operator hunting a
+	// wire problem that does not exist.
+	TEST_ASSERT(status == EFFECTS_V3_OK);
+}
+
 TEST_LIST = {
 	{"decode_collects_every_record",      test_decode_collects_every_record},
 	{"decode_refuses_a_truncated_payload", test_decode_refuses_a_truncated_payload},
 	{"decode_refuses_a_future_version",   test_decode_refuses_a_future_version},
+	{"stream_hands_over_every_record_in_order",
+			test_stream_hands_over_every_record_in_order},
+	{"stream_delivers_k_records_before_a_truncation",
+			test_stream_delivers_k_records_before_a_truncation},
+	{"stream_stops_when_the_callback_refuses",
+			test_stream_stops_when_the_callback_refuses},
 	{NULL, NULL}
 };
