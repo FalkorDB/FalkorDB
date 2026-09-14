@@ -249,6 +249,64 @@ def rec_drop_constraint(ct, et, label_id, label, props):
     return _u32(EFFECT_DROP_CONSTRAINT) + body
 
 
+class testDescendingEndpointColumn():
+    """A descending column bound positionally to rows - the only place
+    direction is OBSERVABLE, and the shape the Rust emitter actually produces.
+
+    Rust sorts a CreateEdge's rows by edge id, then collects the id, src and
+    dst columns in that order without sorting them again (emit.rs:615-618). So
+    the id column ascends while an endpoint column can run the other way, and
+    that is where bit 6 comes from in practice - node id columns are
+    roaring-backed and only ever ascend. Measured on their encoder as
+    ids=Range{0,5}, src=Repeat{0,5}, dst=RangeDescending{base:5,len:5}; this is
+    that record.
+
+    EVERY OTHER DESCENDING TEST IN THIS FILE IS A DELETE_NODE, where direction
+    cannot be observed: a delete only cares about the SET of ids, so walking a
+    descending list forwards yields the same deletions. Even the corpus's
+    dir_descending_bitmap passes against a decoder that ignores bit 6 entirely,
+    for that reason. Positional binding is what makes order matter.
+
+    Its own Env rather than a slot in testEffectsV3Apply: that class is ordered
+    and each test's ids depend on the last, so adding nodes to it would shift
+    every id after this point.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+
+        # nodes 0..5, label :L = 0, attribute v = 0
+        self.graph.query("UNWIND range(0, 5) AS i CREATE (:L {v: i})")
+
+    def test01_descending_dst_binds_rows_in_wire_order(self):
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID,
+                payload(rec_add_schema(SCHEMA_EDGE, 0, "LINKS")))
+
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, payload(
+            rec_create_edge(
+                count  = 5,
+                r      = 0,
+                attrs  = [0],                                        # v
+                ids    = id_list(seg_range(0, 5)),                   # edges 0..4
+                src    = id_list(seg_repeat(0, 5)),                  # all from node 0
+                dst    = id_list(seg_range(5, 5, descending=True)),  # 5,4,3,2,1
+                values = [v_int(10), v_int(11), v_int(12), v_int(13), v_int(14)])))
+
+        # row k is bound to the k-th id AS WRITTEN, so v=10 is the edge to node
+        # 5 and v=14 the edge to node 1. A reader that walked dst forwards
+        # would build the same five edges with their destinations reversed -
+        # identical edge count, identical destination set, wrong pairing.
+        res = self.graph.query(
+            "MATCH (a)-[e:LINKS]->(b) RETURN id(b), e.v ORDER BY e.v")
+        self.env.assertEquals(res.result_set,
+                              [[5, 10], [4, 11], [3, 12], [2, 13], [1, 14]])
+
+
 class testEffectsV3Apply():
     """Valid v3 payloads, applied to a live graph, sharing one Env.
 
