@@ -3,7 +3,7 @@ ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 # Redis base image version. Override via `--build-arg REDIS_VERSION=X.Y.Z`
 # to ship against a different redis release without editing the Dockerfile.
-ARG REDIS_VERSION=8.6.3
+ARG REDIS_VERSION=8.10.1
 
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
