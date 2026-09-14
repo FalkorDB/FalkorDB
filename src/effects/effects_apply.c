@@ -681,6 +681,29 @@ static bool ApplyDeleteEdge
 }
 
 // returns false in case of effect encode/decode version mismatch
+// why a v3 buffer was refused, for the log line
+//
+// LOCAL ON PURPOSE. The shared contract declares the status enum but no longer
+// declares a stringifier, and this is its only caller - putting a prototype
+// back in effects_v3.h would re-conflict on every move of the base branch for
+// the sake of one log line. A missing case is a compile warning here rather
+// than a silent "unknown", which is the point of switching rather than
+// indexing a table.
+static const char *_V3StatusStr
+(
+	EffectsV3Status s
+) {
+	switch (s) {
+		case EFFECTS_V3_OK:                  return "ok" ;
+		case EFFECTS_V3_TRUNCATED:           return "truncated" ;
+		case EFFECTS_V3_MALFORMED:           return "malformed" ;
+		case EFFECTS_V3_UNSUPPORTED_VERSION: return "unsupported version" ;
+		case EFFECTS_V3_UNSUPPORTED_FLAGS:   return "unsupported flags" ;
+		case EFFECTS_V3_UNIMPLEMENTED:       return "unimplemented record" ;
+	}
+	return "unknown status" ;
+}
+
 static bool ValidateVersion
 (
 	FILE *stream,  // effects stream
@@ -746,7 +769,7 @@ bool Effects_Apply
 		if (status != EFFECTS_V3_OK) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT v3 payload refused: %s",
-					EffectsV3Status_ToString (status)) ;
+					_V3StatusStr (status)) ;
 			return false ;
 		}
 
