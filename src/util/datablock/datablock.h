@@ -100,10 +100,12 @@ void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
 // Claim a BATCH of specific indices for live allocation, maintaining the free
 // list.
 //
-// Unlike DataBlock_AllocateItemOutOfOrder (oo_datablock.h) this is safe on a
-// live graph: it removes the claimed ids from the free list, and pushes any id
-// it skips past the high-water mark ONTO the free list. Used by effects apply,
-// where the ids are stated by the primary rather than chosen locally.
+// DataBlock_AllocateItemOutOfOrder (oo_datablock.h) requires that the id is NOT
+// on the free list - it never touches it. That holds for its RDB callers, where
+// live and deleted ids arrive as two disjoint lists. It does not hold for
+// effects apply, where a create naming a free id is the ordinary case, so this
+// maintains the list instead: claimed ids are removed from it, and any id
+// skipped past the high-water mark is pushed onto it.
 //
 // A batch rather than one at a time because the free list is a flat array:
 // claiming one id means scanning it, so n claims cost O(n*k). This walks it

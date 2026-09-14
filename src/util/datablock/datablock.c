@@ -305,12 +305,21 @@ static int _DataBlock_IdCmp
 
 // claim a BATCH of specific indices for live allocation
 //
-// This exists because DataBlock_AllocateItemOutOfOrder below CANNOT be used on
-// a live graph. That one marks the header and bumps itemCount and never
-// touches 'deletedIdx' - correct for an RDB load, where the free list is
-// rebuilt from the headers afterwards, and WRONG here: the id stays on the free
-// list and the next ordinary allocation hands it out a second time, so two
-// entities end up sharing one id.
+// This exists because DataBlock_AllocateItemOutOfOrder below carries a
+// precondition the effects path cannot meet.
+//
+// That one marks the header and bumps itemCount and never touches 'deletedIdx',
+// so it REQUIRES that 'idx' is not on the free list. Its callers are the RDB
+// decoders, where that holds by construction: the file stores live entities and
+// deleted ids as two separate lists, the deleted list is restored through
+// DataBlock_MarkAsDeletedOutOfOrder (which does append), and the live list
+// through AllocateItemOutOfOrder. The two id sets are disjoint, so there is
+// never anything to remove. It is correct there and stays in use.
+//
+// Effects apply violates that precondition head-on: the ordinary case for a
+// replica is a create naming an id that IS on the free list, because that is
+// what reuse means. Used there, the id would stay on the list and the next
+// allocation would hand it out a second time, putting two entities on one id.
 //
 // Used by effects apply, where the id is not this node's to choose. C's
 // allocator reuses the most recently freed id and Rust's reuses the smallest,
