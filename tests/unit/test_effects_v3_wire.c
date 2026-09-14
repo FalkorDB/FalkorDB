@@ -270,6 +270,33 @@ void test_effectsV3Wire_handBuilt(void) {
 
 #else
 
+// what a status is called, spelled out here rather than borrowed
+//
+// The codec used to export EffectsV3Status_ToString. It left src/ when the
+// record model was retyped, and src/effects/effects_apply.c now carries its own
+// local switch rather than re-exporting one -- deliberately, because a header
+// declaration re-conflicts on every base move. A test that only wants to name a
+// status in a failure message has no business being coupled to whether the
+// stack happens to export one, so it spells them itself.
+//
+// No default arm, so -Wswitch reports a status added upstream instead of
+// quietly printing it as something else -- a default here would be the same
+// silent-fallthrough shape that put an ascending header over a descending
+// payload. The return past the switch is for a value no enumerator covers,
+// which is a cast or memory corruption rather than a new status.
+static const char *_status_name(EffectsV3Status st) {
+	switch(st) {
+		case EFFECTS_V3_OK:                  return "OK";
+		case EFFECTS_V3_TRUNCATED:           return "TRUNCATED";
+		case EFFECTS_V3_MALFORMED:           return "MALFORMED";
+		case EFFECTS_V3_UNSUPPORTED_VERSION: return "UNSUPPORTED_VERSION";
+		case EFFECTS_V3_UNSUPPORTED_FLAGS:   return "UNSUPPORTED_FLAGS";
+		case EFFECTS_V3_UNIMPLEMENTED:       return "UNIMPLEMENTED";
+	}
+
+	return "not a status this build knows";
+}
+
 void test_effectsV3Wire_handBuilt(void) {
 	//--------------------------------------------------------------------------
 	// the legal empty forms must keep decoding
@@ -316,7 +343,7 @@ void test_effectsV3Wire_handBuilt(void) {
 				"emit it; if an empty-block check was just added, it belongs "
 				"at the call site keyed on the opcode, not inside "
 				"_ReadAttrIds, which every create also goes through",
-				EffectsV3Status_ToString(st));
+				_status_name(st));
 
 		if(st == EFFECTS_V3_OK) EffectsV3_RecordsFree(r);
 	}
@@ -352,7 +379,7 @@ void test_effectsV3Wire_handBuilt(void) {
 				"decoded as %s. The check belongs at the _ReadLabelSet CALL "
 				"SITE keyed on the opcode, not inside the helper -- "
 				"CREATE_NODE, UPDATE_NODE and DELETE_NODE share it and are "
-				"legally empty", EffectsV3Status_ToString(st));
+				"legally empty", _status_name(st));
 		TEST_ASSERT_(r == NULL, "refused but left records allocated");
 	}
 
@@ -379,7 +406,7 @@ void test_effectsV3Wire_handBuilt(void) {
 				"decoded as %s. The empty-attrs fix made n_values == 0 legal "
 				"for every record with values, so this must be refused again "
 				"for UPDATE only, keyed on the opcode",
-				EffectsV3Status_ToString(st));
+				_status_name(st));
 		TEST_ASSERT_(r == NULL, "refused but left records allocated");
 	}
 #endif
@@ -415,7 +442,7 @@ void test_effectsV3Wire_handBuilt(void) {
 		TEST_ASSERT_(st == EFFECTS_V3_MALFORMED,
 				"a zero-count record decoded as %s; it is well-sized and "
 				"invalid, which is what MALFORMED means",
-				EffectsV3Status_ToString(st));
+				_status_name(st));
 		TEST_ASSERT_(r == NULL, "refused but left records allocated");
 	}
 
@@ -439,7 +466,7 @@ void test_effectsV3Wire_handBuilt(void) {
 		TEST_ASSERT_(st == EFFECTS_V3_OK,
 				"a one-id record decoded as %s; the zero-count check must "
 				"reject the count, not the shape",
-				EffectsV3Status_ToString(st));
+				_status_name(st));
 
 		if(st == EFFECTS_V3_OK) EffectsV3_RecordsFree(r);
 	}
