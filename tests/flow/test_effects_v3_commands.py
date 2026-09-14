@@ -11,7 +11,7 @@ from constraint_utils import (create_unique_node_constraint)
 from graph_utils import graph_eq
 from index_utils import (create_node_range_index, list_indicies, wait_for_indices_to_sync)
 
-from effects_v3_common import MONITOR_MARK_KEY, _EffectsV3Base
+from effects_v3_common import _EffectsV3Base
 
 
 class testEffectsV3_04d_RecordCommand(_EffectsV3Base):
@@ -298,8 +298,3 @@ class testEffectsV3_04e_VerbatimCommands(_EffectsV3Base):
                              self.udf_names(self.master))
         self.env.assertTrue("EffectsV3Udf" not in self.replica_udf_names())
         self._nothing_was_refused(full_before, diverged_before, failures_before)
-
-
-#-----------------------------------------------------------------------------
-# 5. indexes and constraints together
-#-----------------------------------------------------------------------------

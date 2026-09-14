@@ -10,7 +10,7 @@ from common import *
 from constraint_utils import (create_mandatory_node_constraint, create_unique_node_constraint, drop_unique_node_constraint, list_constraints)
 from index_utils import (create_node_range_index, drop_node_range_index, list_indicies, wait_for_indices_to_sync)
 
-from effects_v3_common import MONITOR_MARK_KEY, _EffectsV3Base
+from effects_v3_common import _EffectsV3Base
 
 
 class testEffectsV3_02_ConstraintAsEffect(_EffectsV3Base):
@@ -210,7 +210,7 @@ class testEffectsV3_03_ConstraintConvergence(_EffectsV3Base):
 
 
 #-----------------------------------------------------------------------------
-# 4. bulk shapes round-trip
+# 5. an index, a constraint that depends on it, and the drops
 #-----------------------------------------------------------------------------
 
 
@@ -328,7 +328,7 @@ class testEffectsV3_05_IndexAndConstraint(_EffectsV3Base):
 
 
 #-----------------------------------------------------------------------------
-# 6. compression must be transparent
+# 5b. *how* index DDL reaches the replica, not just whether it did
 #-----------------------------------------------------------------------------
 
 

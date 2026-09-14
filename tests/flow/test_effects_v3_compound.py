@@ -46,7 +46,7 @@ from index_utils import (create_node_range_index, list_indicies,
                          wait_for_indices_to_sync)
 from constraint_utils import create_unique_node_constraint, list_constraints
 
-from effects_v3_common import MONITOR_MARK_KEY, _EffectsV3Base
+from effects_v3_common import _EffectsV3Base
 
 
 class testEffectsV3_04g_CompoundSequences(_EffectsV3Base):

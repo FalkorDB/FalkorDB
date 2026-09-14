@@ -78,23 +78,16 @@ class _EffectsV3Base():
     # setup
     #-------------------------------------------------------------------------
 
-    def _setup(self, compression=0, enable_debug=False):
+    def _setup(self, compression=0):
         # replication under sanitizer is unreliable, as test_replication.py notes
         if SANITIZER:
             Environment.skip(None)
 
-        # `enable_debug` is only for `testEffectsV3_06e_AofReplay`, which needs
-        # DEBUG LOADAOF.
-        #
-        # It does NOT win that class a server of its own. This comment used to
-        # say it did, via "it changes the Env(...) parameters", and that is
-        # wrong under CI's services mode: `common.py:564` documents
-        # `enableDebugCommand=True` as a no-op there, because the service
-        # container is launched with `--enable-debug-command yes` regardless.
-        # So in that mode the class gets the SHARED container, which is why it
-        # carries its own `FALKORDB_USE_SERVICE` skip.
-        self.env, self.db = Env(env='oss', useSlaves=True,
-                                enableDebugCommand=enable_debug)
+        # No `enableDebugCommand`: every class here runs against the shared
+        # services container under CI (`test_matrix_split.py` puts all seven
+        # files in `services_files`), and `common.py:564` documents the flag as
+        # a no-op in that mode anyway. Nothing here needs DEBUG.
+        self.env, self.db = Env(env='oss', useSlaves=True)
         self.master  = self.env.getConnection()
         self.replica = self.env.getSlaveConnection()
 

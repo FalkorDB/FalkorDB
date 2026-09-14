@@ -9,7 +9,7 @@ from common import *
 from graph_utils import graph_eq
 from index_utils import (create_edge_range_index, create_node_fulltext_index, create_node_range_index, wait_for_indices_to_sync)
 
-from effects_v3_common import MONITOR_MARK_KEY, _EffectsV3Base
+from effects_v3_common import _EffectsV3Base
 
 
 class testEffectsV3_04_Shapes(_EffectsV3Base):
@@ -236,7 +236,7 @@ class testEffectsV3_04_Shapes(_EffectsV3Base):
 
 
 #-----------------------------------------------------------------------------
-# 4b. every value tag, over a live wire
+# 4c. shapes the writer's partitioning has to survive
 #-----------------------------------------------------------------------------
 
 
@@ -652,8 +652,3 @@ class testEffectsV3_04f_IndexesTheQueryNeverNamed(_EffectsV3Base):
         self.assert_agree(probe, [[1]], params={'t': 'beta'})
         self.assert_agree("MATCH (n:DFB) RETURN count(n)", [[1]])
         self.assert_graph_eq()
-
-
-#-----------------------------------------------------------------------------
-# 4d. GRAPH.RECORD is a real write
-#-----------------------------------------------------------------------------

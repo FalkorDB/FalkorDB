@@ -11,7 +11,7 @@ from constraint_utils import (create_mandatory_node_constraint, create_unique_no
 from graph_utils import graph_eq
 from index_utils import (create_node_range_index, wait_for_indices_to_sync)
 
-from effects_v3_common import MONITOR_MARK_KEY, _EffectsV3Base, zstd_compress
+from effects_v3_common import _EffectsV3Base, zstd_compress
 
 
 class testEffectsV3_00_UnreadableBuffer(_EffectsV3Base):
@@ -260,7 +260,7 @@ class testEffectsV3_00_UnreadableBuffer(_EffectsV3Base):
 
 
 #-----------------------------------------------------------------------------
-# 1. a null property value means REMOVE
+# 6. compression must be transparent
 #-----------------------------------------------------------------------------
 
 
@@ -402,7 +402,7 @@ class testEffectsV3_06_Compression(_EffectsV3Base):
 
 
 #-----------------------------------------------------------------------------
-# 7. a promoted replica finishes what it inherited
+# 8. the same write produces the same bytes
 #-----------------------------------------------------------------------------
 
 
