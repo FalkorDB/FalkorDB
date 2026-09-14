@@ -95,11 +95,11 @@ class testLabelUpdate():
         # Regression for #2777: a label removed and re-added in the same query
         # must survive. What this pins is the replicated end state — master and
         # replica agreeing that the node still carries L, which a stale
-        # EFFECT_REMOVE_LABELS would break on the replica alone.
+        # RemoveLabels record would break on the replica alone.
         #
-        # It does not pin the record set on the wire: a zero-label
-        # EFFECT_SET_LABELS applies as a no-op, so both sides agree whether or
-        # not one was sent. That is pinned on the buffer itself, by
+        # It does not pin the record set on the wire: a zero-label SetLabels
+        # applies as a no-op, so both sides agree whether or not one was sent.
+        # That is pinned on the emitter and the staging maps, by
         # graph::runtime::pending::label_effect_tests.
         self.query_master_and_wait("CREATE (:A {v: 1})")
         self.query_master_and_wait("MATCH (n:A) SET n:L")
@@ -114,7 +114,7 @@ class testLabelUpdate():
         self.env.assertEqual(res.result_set[0][0], 1)
 
         # the replica must still see the label, both in labels() and via a
-        # label scan — a stale EFFECT_REMOVE_LABELS would strip it there only
+        # label scan — a stale RemoveLabels record would strip it there only
         res = Graph(self.replica, GRAPH_ID).ro_query("MATCH (n:A:L) RETURN labels(n)")
         self.env.assertEqual(len(res.result_set), 1)
         self.env.assertContains("L", res.result_set[0][0])

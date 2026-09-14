@@ -1632,14 +1632,16 @@ impl Pending {
 #[cfg(test)]
 mod label_effect_tests {
     use super::*;
+    use crate::effects::v3::emit::for_each_record;
+    use crate::effects::v3::{IdList, Record};
     use crate::graph::graphblas::test_init::ensure_init;
 
     /// The one node every scenario below stages labels on.
     const NODE: u64 = 0;
 
     /// A graph whose only labels are `names`, and a `Pending` that has already
-    /// taken its schema baseline — so `build_effects_buffer` emits no
-    /// `EFFECT_ADD_SCHEMA`, and the label records are the entire buffer.
+    /// taken its schema baseline — so the emitter announces no schema, and the
+    /// label records are the whole of what it produces.
     fn fixture(names: &[&str]) -> (AtomicRefCell<Graph>, Vec<LabelId>, Pending) {
         ensure_init();
         let g = AtomicRefCell::new(Graph::new(16, 16, 1, 0, "label_effects"));
@@ -1652,127 +1654,112 @@ mod label_effect_tests {
         (g, labels, pending)
     }
 
-    /// One label record, exactly as `build_effects_buffer` writes it: the
-    /// opcode, the node id as u64 LE, the label count as u16 LE, then the ids.
-    fn record(
-        opcode: u8,
-        labels: &[LabelId],
-    ) -> Vec<u8> {
-        let mut rec = vec![opcode];
-        rec.extend_from_slice(&NODE.to_le_bytes());
-        rec.extend_from_slice(&(labels.len() as u16).to_le_bytes());
-        for label in labels {
-            rec.extend_from_slice(&(usize::from(*label) as u16).to_le_bytes());
-        }
-        rec
-    }
-
-    /// A whole expected buffer: the version header, then the records.
+    /// Every record the emitter produces, in emission order.
     ///
-    /// Every assertion here compares the *entire* buffer against one of these
-    /// rather than scanning for an opcode byte. Scanning would not be sound —
-    /// a node id, a label count or a label id can itself be 7 or 8, so a scan
-    /// could invent a record that is not there and miss one that is. Whole
-    /// buffer equality has neither failure mode, and it pins the absence of a
-    /// record as tightly as it pins the presence of one.
-    fn buffer(records: &[Vec<u8>]) -> Vec<u8> {
-        let mut buf = vec![EFFECTS_VERSION];
-        for rec in records {
-            buf.extend_from_slice(rec);
-        }
-        buf
-    }
-
-    fn build(
+    /// The assertions below compare this whole vec against an expected one
+    /// rather than searching it for a record, because a search can only show
+    /// that something is present. Whole-vec equality pins an absence just as
+    /// tightly, which is the half that matters here.
+    fn records(
         pending: &Pending,
         g: &AtomicRefCell<Graph>,
-    ) -> (Vec<u8>, u64) {
-        let mut buf = Vec::new();
-        let n_effects = pending.build_effects_buffer(g, &mut buf);
-        (buf, n_effects)
+    ) -> Vec<Record> {
+        let mut out = Vec::new();
+        for_each_record(pending, g, |r| out.push(r));
+        out
     }
 
-    /// Positive control for [`cancelled_add_leaves_no_set_labels_record`]: an
-    /// uncancelled `SET n:L` does write an `EFFECT_SET_LABELS`. Without this,
-    /// a `build_effects_buffer` that had stopped emitting label records
-    /// altogether would satisfy the cancellation tests vacuously.
+    /// A label record naming [`NODE`] alone, shaped as `digest_labels` builds
+    /// it: the label ids sorted and deduped.
+    fn labelled(
+        add: bool,
+        labels: &[LabelId],
+    ) -> Record {
+        let ids: IdList = [NODE].into_iter().collect();
+        let mut shape: Vec<u32> = labels.iter().map(|l| usize::from(*l) as u32).collect();
+        shape.sort_unstable();
+        shape.dedup();
+        if add {
+            Record::SetLabels { ids, labels: shape }
+        } else {
+            Record::RemoveLabels { ids, labels: shape }
+        }
+    }
+
+    /// Positive control for [`cancelled_add_emits_no_set_labels`]: an
+    /// uncancelled `SET n:L` does produce a `SetLabels`. Without this, an
+    /// emitter that had stopped producing label records altogether would
+    /// satisfy the cancellation tests vacuously.
     #[test]
-    fn plain_set_writes_a_set_labels_record() {
+    fn plain_set_emits_set_labels() {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
         pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
 
-        let (buf, n_effects) = build(&pending, &g);
-        assert_eq!(buf, buffer(&[record(EFFECT_SET_LABELS, &[l])]));
-        assert_eq!(n_effects, 1);
+        assert_eq!(records(&pending, &g), vec![labelled(true, &[l])]);
     }
 
-    /// Positive control for
-    /// [`cancelled_removal_leaves_no_remove_labels_record`]: an uncancelled
-    /// `REMOVE n:L` does write an `EFFECT_REMOVE_LABELS`.
+    /// Positive control for [`cancelled_removal_emits_no_remove_labels`]: an
+    /// uncancelled `REMOVE n:L` does produce a `RemoveLabels`.
     #[test]
-    fn plain_remove_writes_a_remove_labels_record() {
+    fn plain_remove_emits_remove_labels() {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
         pending.remove_node_labels(NODE.into(), &[l]);
 
-        let (buf, n_effects) = build(&pending, &g);
-        assert_eq!(buf, buffer(&[record(EFFECT_REMOVE_LABELS, &[l])]));
-        assert_eq!(n_effects, 1);
+        assert_eq!(records(&pending, &g), vec![labelled(false, &[l])]);
     }
 
     /// `SET n:L REMOVE n:L`: the removal cancels the staged add, and the
-    /// emptied `set_labels` entry has to go with it. Leaving the entry behind
-    /// serializes an `EFFECT_SET_LABELS` carrying zero labels, which a replica
-    /// applies as a no-op — so master and replica agree either way and only the
-    /// buffer can tell that the wasted record was sent.
+    /// emptied `set_labels` entry goes with it.
+    ///
+    /// Two layers keep the cancelled add off the wire, and this checks both.
+    /// The map assertion is the one this fix owns: dropping the emptied entry
+    /// is what stops a zero-label record existing to be emitted. The record
+    /// assertion is the outcome, which `digest_labels` also defends by
+    /// suppressing an empty label set — so it holds even if the cleanup here
+    /// regresses, and only the map assertion would catch that.
     #[test]
-    fn cancelled_add_leaves_no_set_labels_record() {
+    fn cancelled_add_emits_no_set_labels() {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
         pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
         pending.remove_node_labels(NODE.into(), &[l]);
-
-        let (buf, n_effects) = build(&pending, &g);
-        assert_eq!(
-            buf,
-            buffer(&[record(EFFECT_REMOVE_LABELS, &[l])]),
-            "the cancelled add must leave no EFFECT_SET_LABELS behind"
-        );
-        assert_eq!(n_effects, 1);
 
         assert!(
             !pending.set_labels.contains_key(&NODE),
             "the emptied set_labels entry must be dropped, not left empty"
+        );
+        assert_eq!(
+            records(&pending, &g),
+            vec![labelled(false, &[l])],
+            "the cancelled add must leave no SetLabels behind"
         );
         assert_eq!(pending.node_has_label(NODE.into(), l), Some(false));
     }
 
     /// `REMOVE n:L SET n:L`, the mirror direction and the #2777 report: the add
     /// cancels the staged removal, the label survives, and the emptied
-    /// `remove_labels` entry must not be serialized either.
+    /// `remove_labels` entry is not left behind either.
     #[test]
-    fn cancelled_removal_leaves_no_remove_labels_record() {
+    fn cancelled_removal_emits_no_remove_labels() {
         let (g, labels, mut pending) = fixture(&["L"]);
         let l = labels[0];
 
         pending.remove_node_labels(NODE.into(), &[l]);
         pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
 
-        let (buf, n_effects) = build(&pending, &g);
-        assert_eq!(
-            buf,
-            buffer(&[record(EFFECT_SET_LABELS, &[l])]),
-            "the cancelled removal must leave no EFFECT_REMOVE_LABELS behind"
-        );
-        assert_eq!(n_effects, 1);
-
         assert!(
             !pending.remove_labels.contains_key(&NODE),
             "the emptied remove_labels entry must be dropped, not left empty"
+        );
+        assert_eq!(
+            records(&pending, &g),
+            vec![labelled(true, &[l])],
+            "the cancelled removal must leave no RemoveLabels behind"
         );
         assert_eq!(
             pending.node_has_label(NODE.into(), l),
@@ -1792,15 +1779,9 @@ mod label_effect_tests {
         pending.remove_node_labels(NODE.into(), &[l]);
 
         assert_eq!(pending.node_has_label(NODE.into(), m), Some(true));
-
-        let (buf, n_effects) = build(&pending, &g);
         assert_eq!(
-            buf,
-            buffer(&[
-                record(EFFECT_SET_LABELS, &[m]),
-                record(EFFECT_REMOVE_LABELS, &[l]),
-            ])
+            records(&pending, &g),
+            vec![labelled(true, &[m]), labelled(false, &[l])]
         );
-        assert_eq!(n_effects, 2);
     }
 }
