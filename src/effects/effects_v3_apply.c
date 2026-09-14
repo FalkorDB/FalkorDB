@@ -452,110 +452,118 @@ static bool _ApplyCreateNode
 		return false ;
 	}
 
+	Graph *g = GraphContext_GetGraph (gc) ;
+	const uint32_t count = rec->create_node.count ;
+
+	//--------------------------------------------------------------------------
+	// collect the ids the primary stated
+	//--------------------------------------------------------------------------
+	//
+	// ACCEPT THE PRIMARY'S IDS. This used to allocate each node locally and
+	// then compare, which is INFERENCE dressed as validation: it asked "what id
+	// would I have chosen", and C chooses differently from Rust by design - C
+	// reuses the most recently freed id, Rust the smallest. Both are correct,
+	// they disagree after any delete-then-create cycle, and the comparison then
+	// failed and forced a full resync. Once per cycle, indefinitely, with every
+	// state-only monitor reporting agreement throughout because a resync
+	// converges. The node was also created BEFORE the comparison, so a mismatch
+	// left a wrong-id node behind - harmless only because the resync overwrote
+	// it.
+	//
+	// What remains is validation, which asks only about THIS graph: an id
+	// already live here cannot be created again.
+	uint64_t *ids = rm_malloc (sizeof (uint64_t) * count) ;
+
 	IdIter it ;
 	_IdIter_Init (&it, &rec->create_node.ids) ;
 
-	bool ok = true ;
+	uint32_t got = 0 ;
 	uint64_t id ;
-	uint64_t k = 0 ;
-
-	while (ok && _IdIter_Next (&it, &id)) {
-		AttributeSet set = _RowAttributes (rec->create_node.attr_ids,
-				rec->create_node.n_attrs, rec->create_node.values, k) ;
-
-		// ACCEPT THE PRIMARY'S ID. This used to allocate locally and then
-		// compare, which is INFERENCE dressed as validation: it asked "what id
-		// would I have chosen", and C chooses differently from Rust by design -
-		// C reuses the most recently freed id, Rust the smallest. Both are
-		// correct, they disagree after any delete-then-create cycle, and the
-		// comparison then failed and forced a full resync. Once per cycle,
-		// indefinitely, with every state-only monitor reporting agreement
-		// throughout because a resync converges.
-		//
-		// What remains is validation, which asks only about THIS graph: an id
-		// that is already live here cannot be created again. That is refused,
-		// and it is real divergence rather than a difference of policy.
-		//
-		// The old code also created the node BEFORE comparing, so a mismatch
-		// left a wrong-id node behind - harmless only because the resync it
-		// triggered overwrote it.
-		Node n = GE_NEW_NODE () ;
-		n.id = id ;
-
-		if (!GraphHub_CreateNodeAtId (gc, &n, rec->create_node.labels,
-					rec->create_node.n_labels, set)) {
-			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT CREATE_NODE names node %" PRIu64
-					" which is already live on this replica"
-					" - node id space has diverged", id) ;
-			AttributeSet_Free (&set) ;
-			ok = false ;
-		}
-
-		k++ ;
+	while (got < count && _IdIter_Next (&it, &id)) {
+		ids[got++] = id ;
 	}
 
-	if (ok && it.broken) {
-		ok = false ;
-	}
-
+	const bool broken = it.broken ;
 	_IdIter_Free (&it) ;
-	return ok ;
-}
 
-// flush a batch of pending edge creations through the BULK entry point
-//
-// ONE CALL PER BATCH, NOT ONE PER EDGE, and this is load-bearing rather than
-// tidy. v2 accumulated into a 4096-edge batch for a measured reason: applying
-// a node's edges one at a time made a replica ~40x slower than the master that
-// produced the writes. v3 does not get to drop that machinery for free - a
-// record already IS the batch, so it goes straight to the bulk call instead of
-// reconstructing one.
-//
-// The first version of this function called the singular GraphHub_CreateEdge
-// inside the loop, which dropped v2's batching without adding the bulk call
-// meant to replace it. Measured on a C replica, 1000 edges: 178.6M instructions
-// against v2's 11.2M - a 16x regression on a payload 3.5x SMALLER on the wire
-// (12,087 bytes against 42,037). Edge creation touches the relationship tensor
-// and the adjacency matrix, and the bulk path amortises a matrix operation
-// across the batch, which is why the per-call cost does not shrink with the
-// bytes.
-//
-// 'wire_ids' holds what the master allocated, positionally aligned with the
-// batch. The check happens after the flush because the bulk call is what fills
-// each Edge's id.
-static bool _FlushEdges
-(
-	GraphContext *gc,
-	RelationID r,
-	Edge **batch,             // arr of Edge*, cleared on return
-	AttributeSet *sets,       // arr of AttributeSet, cleared on return
-	const uint64_t *wire_ids  // ids the master allocated, batch-aligned
-) {
-	const uint32_t n = arr_len (batch) ;
-	if (n == 0) {
-		return true ;
+	if (broken || got != count) {
+		// decode has already checked the segments total the record's count, so
+		// a short list here is a decoder bug rather than a wire problem
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_NODE id list is shorter than its count") ;
+		rm_free (ids) ;
+		return false ;
 	}
 
-	// the sets are handed over here - they end up owned by the edges
-	GraphHub_CreateEdges (gc, batch, r, sets, false) ;
+	//--------------------------------------------------------------------------
+	// claim them, ONCE for the whole record
+	//--------------------------------------------------------------------------
+	//
+	// Claiming walks the free list, so doing it per chunk would walk the list
+	// once per chunk - the same quadratic in a smaller coat. A 128,000-node
+	// record over 4,096-node chunks walked a 128,000-entry list 31 times, which
+	// measured as 32 ms of the record's 57 ms. Claiming up front costs one
+	// walk, and two arrays of 8 bytes per node that are freed before returning.
+	//
+	// Claiming first also means the graph is not touched until every id is
+	// known to be free, so a divergent record is refused with nothing to
+	// unwind.
+	void **items = rm_malloc (sizeof (void *) * count) ;
 
-	bool ok = true ;
-	for (uint32_t i = 0 ; i < n ; i++) {
-		if (batch[i]->id != wire_ids[i]) {
-			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT CREATE_EDGE allocated edge %" PRIu64
-					" locally but the master allocated %" PRIu64
-					" - edge id allocation has diverged",
-					batch[i]->id, wire_ids[i]) ;
-			ok = false ;
-			break ;
+	if (!Graph_ClaimNodeIds (g, ids, count, items)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_NODE names a node id that is already live "
+				"on this replica, or names one twice"
+				" - node id space has diverged") ;
+		rm_free (ids) ;
+		rm_free (items) ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// write them, in bounded chunks
+	//--------------------------------------------------------------------------
+	//
+	// Chunked at APPLY_BATCH so a record describing a very large batch costs a
+	// bounded amount of stack, and so the label matrices are written in bulk.
+	// Every id is claimed by now, so nothing below can fail.
+	Node          storage[APPLY_BATCH] ;
+	Node        **batch = arr_new (Node *, APPLY_BATCH) ;
+	AttributeSet *sets  = arr_new (AttributeSet, APPLY_BATCH) ;
+
+	uint32_t n = 0 ;              // nodes in the current chunk
+	uint32_t chunk_start = 0 ;    // index of the chunk's first node
+
+	for (uint32_t k = 0 ; k < count ; k++) {
+		storage[n]    = GE_NEW_NODE () ;
+		storage[n].id = ids[k] ;
+
+		arr_append (batch, storage + n) ;
+		arr_append (sets, _RowAttributes (rec->create_node.attr_ids,
+					rec->create_node.n_attrs, rec->create_node.values, k)) ;
+		n++ ;
+
+		if (n == APPLY_BATCH) {
+			GraphHub_CreateNodesAtIds (gc, batch, items + chunk_start, sets, n,
+					rec->create_node.labels, rec->create_node.n_labels) ;
+			arr_clear (batch) ;
+			arr_clear (sets) ;
+			chunk_start = k + 1 ;
+			n = 0 ;
 		}
 	}
 
-	arr_clear (batch) ;
-	arr_clear (sets) ;
-	return ok ;
+	if (n > 0) {
+		GraphHub_CreateNodesAtIds (gc, batch, items + chunk_start, sets, n,
+				rec->create_node.labels, rec->create_node.n_labels) ;
+	}
+
+	arr_free (batch) ;
+	arr_free (sets) ;
+	rm_free (ids) ;
+	rm_free (items) ;
+
+	return true ;
 }
 
 static bool _ApplyCreateEdge
@@ -570,38 +578,38 @@ static bool _ApplyCreateEdge
 	}
 
 	Graph *g = GraphContext_GetGraph (gc) ;
-
-	// resolved once for the whole record: the grouping has already established
-	// that every edge in it shares this type, and the name is what the index
-	// is keyed under
 	Schema *schema = GraphContext_GetSchemaByID (gc, rec->create_edge.relation_id,
 			SCHEMA_EDGE) ;
 	const char *rel_name = Schema_GetName (schema) ;
+	const uint32_t count = rec->create_edge.count ;
 
-	IdIter ids, srcs, dsts ;
-	_IdIter_Init (&ids,  &rec->create_edge.ids) ;
-	_IdIter_Init (&srcs, &rec->create_edge.src) ;
-	_IdIter_Init (&dsts, &rec->create_edge.dst) ;
+	//--------------------------------------------------------------------------
+	// collect and validate, before anything is claimed
+	//--------------------------------------------------------------------------
+	//
+	// The endpoint check has to happen BEFORE the ids are claimed. Claiming
+	// marks slots live and bumps the item count, so bailing out afterwards
+	// would leave claimed slots holding no edge - a leak that only shows up
+	// later as a wrong id. Nothing is touched until the whole record is known
+	// to be applicable.
+	uint64_t *ids  = rm_malloc (sizeof (uint64_t) * count) ;
+	uint64_t *srcs = rm_malloc (sizeof (uint64_t) * count) ;
+	uint64_t *dsts = rm_malloc (sizeof (uint64_t) * count) ;
 
-	// storage for the batch, plus the two arr views the bulk call takes.
-	// Chunked at APPLY_BATCH rather than sized by the record, so a record
-	// describing a very large batch costs a bounded amount of memory - the
-	// point is one bulk call per chunk, not one per edge.
-	Edge         storage[APPLY_BATCH] ;
-	uint64_t     wire_ids[APPLY_BATCH] ;
-	Edge        **batch = arr_new (Edge *, APPLY_BATCH) ;
-	AttributeSet *sets  = arr_new (AttributeSet, APPLY_BATCH) ;
+	IdIter it_ids, it_srcs, it_dsts ;
+	_IdIter_Init (&it_ids,  &rec->create_edge.ids) ;
+	_IdIter_Init (&it_srcs, &rec->create_edge.src) ;
+	_IdIter_Init (&it_dsts, &rec->create_edge.dst) ;
 
 	bool ok = true ;
+	uint32_t got = 0 ;
 	uint64_t id, src, dst ;
-	uint64_t k = 0 ;
-	uint32_t n = 0 ;
 
-	while (ok && _IdIter_Next (&ids, &id)) {
+	while (ok && got < count && _IdIter_Next (&it_ids, &id)) {
 		// the three lists are positionally aligned by construction, and decode
-		// has already checked all three total the record's count - so a
-		// short one here is a decoder bug, not a wire problem
-		if (!_IdIter_Next (&srcs, &src) || !_IdIter_Next (&dsts, &dst)) {
+		// has already checked all three total the record's count - so a short
+		// one here is a decoder bug, not a wire problem
+		if (!_IdIter_Next (&it_srcs, &src) || !_IdIter_Next (&it_dsts, &dst)) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT CREATE_EDGE endpoint lists are shorter than "
 					"its id list") ;
@@ -620,47 +628,96 @@ static bool _ApplyCreateEdge
 			break ;
 		}
 
+		ids[got]  = id ;
+		srcs[got] = src ;
+		dsts[got] = dst ;
+		got++ ;
+	}
+
+	if (ok && (it_ids.broken || it_srcs.broken || it_dsts.broken)) {
+		ok = false ;
+	}
+
+	_IdIter_Free (&it_ids) ;
+	_IdIter_Free (&it_srcs) ;
+	_IdIter_Free (&it_dsts) ;
+
+	if (ok && got != count) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_EDGE id list is shorter than its count") ;
+		ok = false ;
+	}
+
+	if (!ok) {
+		rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// claim the ids, ONCE for the whole record
+	//--------------------------------------------------------------------------
+	//
+	// see _ApplyCreateNode: per chunk would walk the free list once per chunk,
+	// which is the quadratic this shape exists to avoid
+	void **items = rm_malloc (sizeof (void *) * count) ;
+
+	if (!Graph_ClaimEdgeIds (g, ids, count, items)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_EDGE names an edge id that is already live "
+				"on this replica, or names one twice"
+				" - edge id space has diverged") ;
+		rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ; rm_free (items) ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// write them, in bounded chunks
+	//--------------------------------------------------------------------------
+	//
+	// KEEPS THE BATCH SHAPE. The singular Graph_CreateEdge reads the relation
+	// matrix, which forces a GB_wait against the pending tuples of every edge
+	// already written in this record - measured at 91x on 8k edges. The whole
+	// chunk still goes over in one call.
+	Edge          storage[APPLY_BATCH] ;
+	Edge        **batch = arr_new (Edge *, APPLY_BATCH) ;
+	AttributeSet *sets  = arr_new (AttributeSet, APPLY_BATCH) ;
+
+	uint32_t n = 0 ;
+	uint32_t chunk_start = 0 ;
+
+	for (uint32_t k = 0 ; k < count ; k++) {
 		// the bulk call reads the endpoints off the Edge rather than taking
 		// them as arguments, so they are set here
 		storage[n] = GE_NEW_LABELED_EDGE (rel_name, rec->create_edge.relation_id) ;
-		Edge_SetSrcNodeID  (storage + n, src) ;
-		Edge_SetDestNodeID (storage + n, dst) ;
+		storage[n].id = ids[k] ;
+		Edge_SetSrcNodeID  (storage + n, srcs[k]) ;
+		Edge_SetDestNodeID (storage + n, dsts[k]) ;
 
-		wire_ids[n] = id ;
 		arr_append (batch, storage + n) ;
 		arr_append (sets, _RowAttributes (rec->create_edge.attr_ids,
 					rec->create_edge.n_attrs, rec->create_edge.values, k)) ;
-
 		n++ ;
-		k++ ;
 
 		if (n == APPLY_BATCH) {
-			ok = _FlushEdges (gc, rec->create_edge.relation_id, batch, sets, wire_ids) ;
+			GraphHub_CreateEdgesAtIds (gc, batch, items + chunk_start,
+					rec->create_edge.relation_id, sets) ;
+			arr_clear (batch) ;
+			arr_clear (sets) ;
+			chunk_start = k + 1 ;
 			n = 0 ;
 		}
 	}
 
-	if (ok && (ids.broken || srcs.broken || dsts.broken)) {
-		ok = false ;
-	}
-
-	if (ok) {
-		ok = _FlushEdges (gc, rec->create_edge.relation_id, batch, sets, wire_ids) ;
-	} else {
-		// bailing out with a partial batch: those attribute sets were built
-		// here and never handed over, so this owns them
-		for (uint32_t i = 0 ; i < arr_len (sets) ; i++) {
-			AttributeSet_Free (sets + i) ;
-		}
+	if (n > 0) {
+		GraphHub_CreateEdgesAtIds (gc, batch, items + chunk_start,
+				rec->create_edge.relation_id, sets) ;
 	}
 
 	arr_free (batch) ;
 	arr_free (sets) ;
+	rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ; rm_free (items) ;
 
-	_IdIter_Free (&ids) ;
-	_IdIter_Free (&srcs) ;
-	_IdIter_Free (&dsts) ;
-	return ok ;
+	return true ;
 }
 
 //------------------------------------------------------------------------------

@@ -97,15 +97,27 @@ uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n);
 // return a pointer to the newly allocated item.
 void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
 
-// Claim a SPECIFIC index for a live allocation, maintaining the free list.
+// Claim a BATCH of specific indices for live allocation, maintaining the free
+// list.
 //
 // Unlike DataBlock_AllocateItemOutOfOrder (oo_datablock.h) this is safe on a
-// live graph: it removes a claimed id from the free list, and pushes any id it
-// skips past the high-water mark ONTO the free list. Used by effects apply,
-// where the id is stated by the primary rather than chosen locally.
+// live graph: it removes the claimed ids from the free list, and pushes any id
+// it skips past the high-water mark ONTO the free list. Used by effects apply,
+// where the ids are stated by the primary rather than chosen locally.
 //
-// Returns NULL if 'idx' is already live, which is divergence.
-void *DataBlock_AllocateItemAtIdx(DataBlock *dataBlock, uint64_t idx);
+// A batch rather than one at a time because the free list is a flat array:
+// claiming one id means scanning it, so n claims cost O(n*k). This walks it
+// once. See the definition for the measurement.
+//
+// Nothing is claimed when it returns false. Returns false if any id is already
+// live, or if the batch names one id twice.
+bool DataBlock_AllocateItemsAtIdx
+(
+	DataBlock *dataBlock,
+	const uint64_t *ids,  // ids to claim
+	uint32_t n,           // how many
+	void **items          // out: 'n' item pointers, caller allocated
+);
 
 // Removes item at position idx.
 void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx);
