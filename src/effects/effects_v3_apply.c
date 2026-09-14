@@ -463,15 +463,32 @@ static bool _ApplyCreateNode
 		AttributeSet set = _RowAttributes (rec->create_node.attr_ids,
 				rec->create_node.n_attrs, rec->create_node.values, k) ;
 
+		// ACCEPT THE PRIMARY'S ID. This used to allocate locally and then
+		// compare, which is INFERENCE dressed as validation: it asked "what id
+		// would I have chosen", and C chooses differently from Rust by design -
+		// C reuses the most recently freed id, Rust the smallest. Both are
+		// correct, they disagree after any delete-then-create cycle, and the
+		// comparison then failed and forced a full resync. Once per cycle,
+		// indefinitely, with every state-only monitor reporting agreement
+		// throughout because a resync converges.
+		//
+		// What remains is validation, which asks only about THIS graph: an id
+		// that is already live here cannot be created again. That is refused,
+		// and it is real divergence rather than a difference of policy.
+		//
+		// The old code also created the node BEFORE comparing, so a mismatch
+		// left a wrong-id node behind - harmless only because the resync it
+		// triggered overwrote it.
 		Node n = GE_NEW_NODE () ;
-		GraphHub_CreateNode (gc, &n, rec->create_node.labels, rec->create_node.n_labels, set, false) ;
+		n.id = id ;
 
-		// v3's whole premise: the replica does not infer the id, it checks it
-		if (n.id != id) {
+		if (!GraphHub_CreateNodeAtId (gc, &n, rec->create_node.labels,
+					rec->create_node.n_labels, set)) {
 			RedisModule_Log (NULL, "warning",
-					"GRAPH.EFFECT CREATE_NODE allocated node %" PRIu64
-					" locally but the master allocated %" PRIu64
-					" - node id allocation has diverged", n.id, id) ;
+					"GRAPH.EFFECT CREATE_NODE names node %" PRIu64
+					" which is already live on this replica"
+					" - node id space has diverged", id) ;
+			AttributeSet_Free (&set) ;
 			ok = false ;
 		}
 

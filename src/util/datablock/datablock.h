@@ -97,6 +97,16 @@ uint64_t DataBlock_GetReservedIdx(const DataBlock *dataBlock, uint64_t n);
 // return a pointer to the newly allocated item.
 void *DataBlock_AllocateItem(DataBlock *dataBlock, uint64_t *idx);
 
+// Claim a SPECIFIC index for a live allocation, maintaining the free list.
+//
+// Unlike DataBlock_AllocateItemOutOfOrder (oo_datablock.h) this is safe on a
+// live graph: it removes a claimed id from the free list, and pushes any id it
+// skips past the high-water mark ONTO the free list. Used by effects apply,
+// where the id is stated by the primary rather than chosen locally.
+//
+// Returns NULL if 'idx' is already live, which is divergence.
+void *DataBlock_AllocateItemAtIdx(DataBlock *dataBlock, uint64_t idx);
+
 // Removes item at position idx.
 void DataBlock_DeleteItem(DataBlock *dataBlock, uint64_t idx);
 

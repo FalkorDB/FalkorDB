@@ -1339,6 +1339,89 @@ class testVectorZeroDimensionRefused(_RefusedCase):
             "vector index with dimension 0",
             expect_log="dimension 0")
 
+class testReplicaAcceptsPrimaryNodeId():
+    """The replica takes the id the primary states, and keeps its free list.
+
+    C reuses the MOST RECENTLY FREED id (datablock.c, arr_pop) and Rust reuses
+    the SMALLEST. Both are correct. After a delete-then-create cycle they
+    disagree about which id a new node gets, and apply used to create the node
+    locally and then compare its own choice against the wire - which is
+    inference, not validation. The comparison failed, the payload was refused,
+    and the pair took a full resync. Once per cycle, indefinitely, while every
+    state-only check reported agreement because a resync converges.
+
+    THE SECOND HALF OF THIS TEST IS THE IMPORTANT HALF. Placing the node at the
+    stated id is easy to do wrongly: DataBlock_AllocateItemOutOfOrder, the
+    obvious existing tool, marks the header and bumps the count and never
+    touches the free list. The id it claims STAYS on the free list, and the
+    next ordinary allocation hands it out a second time - two entities sharing
+    one id. So this test creates a node locally afterwards and checks it gets a
+    DIFFERENT id. That step passes with the free list left corrupt only if the
+    corruption happens not to be observed, so it is asserted on ids rather than
+    on counts.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        # label :P = 0, attribute v = 0; nodes take ids 0, 1, 2
+        self.graph.query("CREATE (:P {v: 0}), (:P {v: 1}), (:P {v: 2})")
+
+    def _ids(self):
+        res = self.graph.query("MATCH (n:P) RETURN n.v, id(n) ORDER BY n.v")
+        return {row[0]: row[1] for row in res.result_set}
+
+    def test01_accepts_an_id_c_would_not_have_chosen(self):
+        # free 0 then 1, so C's free list pops 1 next and Rust would pick 0
+        self.graph.query("MATCH (n:P {v: 0}) DELETE n")
+        self.graph.query("MATCH (n:P {v: 1}) DELETE n")
+
+        # the primary states id 0 - the smallest, which is what a Rust primary
+        # allocates and what C's own allocator would NOT have returned
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, payload(
+            rec_create_node(
+                count  = 1,
+                labels = [0],
+                attrs  = [0],
+                ids    = id_list(seg_range(0, 1)),
+                values = [v_int(10)])))
+
+        ids = self._ids()
+        self.env.assertEquals(ids.get(10), 0)
+
+    def test02_the_claimed_id_left_the_free_list(self):
+        # TWO local creates, and the second is the one that bites.
+        #
+        # The free list is popped from the BACK. After freeing 0 then 1 it
+        # holds [0, 1], and the effect above claimed 0. If the claim did not
+        # remove 0, the list is still [0, 1] instead of [1]:
+        #
+        #   correct   [1]      -> create takes 1, then grows to 3
+        #   corrupt   [0, 1]   -> create takes 1, then takes 0 AGAIN - which
+        #                         is live, holding the node the effect made
+        #
+        # So ONE create cannot tell the two apart: both hand out 1. This test
+        # was written with one create, passed against a deliberately broken
+        # free list, and proved nothing. The second create is what makes it a
+        # test.
+        self.graph.query("CREATE (:P {v: 20})")
+        self.graph.query("CREATE (:P {v: 30})")
+
+        ids = self._ids()
+
+        # every node still has its own id
+        self.env.assertEquals(len(set(ids.values())), len(ids),
+                              message=f"ids collided: {ids}")
+
+        # and nothing was overwritten - a reused id silently replaces the node
+        # that held it, so the count is the other half of the same assertion
+        self.env.assertEquals(sorted(ids.keys()), [2, 10, 20, 30])
+
+
 class testEdgeConstraintResolvesAgainstEdgeSchema():
     """A constraint on a RELATIONSHIP must resolve against the edge schemas.
 
