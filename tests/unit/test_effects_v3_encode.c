@@ -434,12 +434,11 @@ void test_effectsV3Encode_headerFields(void) {
 // bytes" and dropped every value field.
 void test_effectsV3Encode_observedWidthsArePreserved(void) {
 	// base 5 and len 3 both fit in one byte; code 2 says four bytes anyway
-	EffectsV3Segment s = {
-		.kind        = EFFECTS_V3_SEG_RANGE,
-		.descending  = false,
-		.value_width = 2,
-		.count_width = 2,
-		.range       = { .base = 5, .len = 3 },
+	EffectsV3IdListSegment s = {
+		.kind = EFFECTS_V3_SEG_RANGE_ASCENDING,
+		.range_ascending = {
+			.value_width = 2, .count_width = 2, .base = 5, .len = 3,
+		},
 	};
 	EffectsV3IdList l = { .segments = &s, .n = 1 };
 
@@ -547,12 +546,12 @@ void test_effectsV3Encode_builderStoresWidthCodes(void) {
 	EffectsV3IdList l = EffectsV3IdListBuilder_ToIdList(b);
 	TEST_ASSERT_(l.n == 1, "expected one segment, got %u", l.n);
 
-	TEST_ASSERT_(l.segments[0].value_width <= 3,
+	TEST_ASSERT_(l.segments[0].range_ascending.value_width <= 3,
 			"value_width must be a header CODE in 0..3, got %u - a byte count "
 			"here is the units bug that only a re-encode can see",
-			l.segments[0].value_width);
-	TEST_ASSERT_(l.segments[0].value_width == 2,
-			"four bytes is code 2, got %u", l.segments[0].value_width);
+			l.segments[0].range_ascending.value_width);
+	TEST_ASSERT_(l.segments[0].range_ascending.value_width == 2,
+			"four bytes is code 2, got %u", l.segments[0].range_ascending.value_width);
 
 	// and the header the encoder writes has to agree with it
 	EffectsBytes *out = EffectsBytes_New(64);
@@ -563,9 +562,9 @@ void test_effectsV3Encode_builderStoresWidthCodes(void) {
 	EffectsBytes_CopyInto(out, got);
 
 	const uint8_t vcode = (got[0] >> EFFECTS_V3_SEG_VWIDTH_SHIFT) & 0x03;
-	TEST_ASSERT_(vcode == l.segments[0].value_width,
+	TEST_ASSERT_(vcode == l.segments[0].range_ascending.value_width,
 			"the header says code %u where the segment says %u",
-			vcode, l.segments[0].value_width);
+			vcode, l.segments[0].range_ascending.value_width);
 
 	free(got);
 	EffectsBytes_Free(out);

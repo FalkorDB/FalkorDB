@@ -67,7 +67,7 @@ uint32_t EffectsV3Seg_Len
 	const EffectsV3Seg *s  // segment
 ) {
 	switch(s->kind) {
-		case EFFECTS_V3_SEG_RANGE:  return s->range.len;
+		case EFFECTS_V3_SEG_RANGE_ASCENDING:  return s->range.len;
 		case EFFECTS_V3_SEG_REPEAT: return s->repeat.count;
 		default:                    return s->bitmap.len;
 	}
@@ -78,7 +78,7 @@ uint64_t EffectsV3Seg_Min
 	const EffectsV3Seg *s  // segment
 ) {
 	switch(s->kind) {
-		case EFFECTS_V3_SEG_RANGE:
+		case EFFECTS_V3_SEG_RANGE_ASCENDING:
 			// a descending range's base is its highest id
 			return s->descending
 				? s->range.base - (uint64_t)(s->range.len - 1)
@@ -95,7 +95,7 @@ uint64_t EffectsV3Seg_Max
 	const EffectsV3Seg *s  // segment
 ) {
 	switch(s->kind) {
-		case EFFECTS_V3_SEG_RANGE:
+		case EFFECTS_V3_SEG_RANGE_ASCENDING:
 			return s->descending
 				? s->range.base
 				: s->range.base + (uint64_t)(s->range.len - 1);
@@ -111,7 +111,7 @@ size_t EffectsV3Seg_EncodedLen
 	const EffectsV3Seg *s  // segment
 ) {
 	switch(s->kind) {
-		case EFFECTS_V3_SEG_RANGE:
+		case EFFECTS_V3_SEG_RANGE_ASCENDING:
 			return 1
 				+ EffectsV3_WidthFor(s->range.base)
 				+ EffectsV3_WidthFor(s->range.len);
@@ -199,7 +199,7 @@ static void _push_singleton
 	uint64_t id                 // the id
 ) {
 	EffectsV3Seg s = {
-		.kind       = EFFECTS_V3_SEG_RANGE,
+		.kind       = EFFECTS_V3_SEG_RANGE_ASCENDING,
 		.descending = false,
 		.range      = { .base = id, .len = 1 },
 	};
@@ -229,7 +229,7 @@ static void _maybe_collapse_run
 
 		// a run under consideration holds only ranges: a Repeat starts its own
 		// run, and a collapsed bitmap is left behind by _restart_run
-		ASSERT(s->kind == EFFECTS_V3_SEG_RANGE);
+		ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING);
 
 		uint64_t lo = EffectsV3Seg_Min(s);
 		uint64_t hi = EffectsV3Seg_Max(s);
@@ -249,7 +249,7 @@ static void _maybe_collapse_run
 	roaring64_bitmap_run_optimize(bitmap);
 
 	EffectsV3Seg collapsed = {
-		.kind       = EFFECTS_V3_SEG_ASCENDING,
+		.kind       = EFFECTS_V3_SEG_SET_ASCENDING,
 		.descending = (b->run_dir == RUN_DESCENDING),
 		.bitmap     = {
 			.bitmap = bitmap,
@@ -288,7 +288,7 @@ void EffectsV3IdListBuilder_Push
 	//--------------------------------------------------------------------------
 
 	if(last != NULL) {
-		if(last->kind == EFFECTS_V3_SEG_RANGE) {
+		if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING) {
 			// "is this the id one past the end?" - a question with no answer at
 			// the top of the id space, where base + len leaves it. The wrap is
 			// defined in C rather than a trap, which makes it worse here than
@@ -344,7 +344,7 @@ void EffectsV3IdListBuilder_Push
 	// both of these rewrite that segment rather than opening another
 	//--------------------------------------------------------------------------
 
-	if(last != NULL && last->kind == EFFECTS_V3_SEG_RANGE &&
+	if(last != NULL && last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING &&
 	   !last->descending && last->range.len == 1) {
 		uint64_t base = last->range.base;
 
@@ -412,7 +412,7 @@ void EffectsV3IdListBuilder_Push
 		// moment its contribution is known - and the only moment it may be
 		// charged, since charging an open segment would make the collapse
 		// decision depend on when the encoder looked
-		if(last->kind == EFFECTS_V3_SEG_RANGE) {
+		if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING) {
 			EffectsV3Run_AddRangeBytes(&b->run, EffectsV3Seg_EncodedLen(last));
 			EffectsV3Run_AddRange(&b->run, EffectsV3Seg_Min(last),
 					EffectsV3Seg_Len(last));
@@ -437,7 +437,7 @@ void EffectsV3IdListBuilder_Free
 	}
 
 	for(uint32_t i = 0; i < b->n_segments; i++) {
-		if(b->segments[i].kind == EFFECTS_V3_SEG_ASCENDING) {
+		if(b->segments[i].kind == EFFECTS_V3_SEG_SET_ASCENDING) {
 			roaring64_bitmap_free(b->segments[i].bitmap.bitmap);
 		}
 	}
@@ -456,39 +456,60 @@ EffectsV3IdList EffectsV3IdListBuilder_ToIdList
 		return l;
 	}
 
-	l.segments = rm_calloc(b->n_segments, sizeof(EffectsV3Segment));
+	l.segments = rm_calloc(b->n_segments, sizeof(EffectsV3IdListSegment));
 
 	for(uint32_t i = 0; i < b->n_segments; i++) {
 		const EffectsV3Seg *s = b->segments + i;
-		EffectsV3Segment  *o = l.segments + i;
+		EffectsV3IdListSegment  *o = l.segments + i;
 
-		o->descending = s->descending;
-
+		// THE CONVERSION IS WHERE DIRECTION JOINS THE KIND.
+		//
+		// The builder still carries direction as a flag beside a kind; the
+		// contract's segment folds the two into one closed set, so a
+		// descending Repeat cannot be spelled. Mapping here rather than
+		// changing the builder keeps every decision in this file - the
+		// extension arms, the collapse rule, the lone-id rewrite - untouched
+		// by the type change, so a byte difference cannot come from it.
 		switch(s->kind) {
-			case EFFECTS_V3_SEG_RANGE:
-				o->kind        = EFFECTS_V3_SEG_RANGE;
-				o->range.base  = s->range.base;
-				o->range.len   = s->range.len;
+			case EFFECTS_V3_SEG_RANGE_ASCENDING: {
+				o->kind = s->descending
+					? EFFECTS_V3_SEG_RANGE_DESCENDING
+					: EFFECTS_V3_SEG_RANGE_ASCENDING;
+
+				uint8_t  *vw = s->descending
+					? &o->range_descending.value_width
+					: &o->range_ascending.value_width;
+				uint8_t  *cw = s->descending
+					? &o->range_descending.count_width
+					: &o->range_ascending.count_width;
+				uint64_t *bs = s->descending
+					? &o->range_descending.base
+					: &o->range_ascending.base;
+				uint64_t *ln = s->descending
+					? &o->range_descending.len
+					: &o->range_ascending.len;
+
+				*bs = s->range.base;
+				*ln = s->range.len;
 				// a freshly built value takes the narrowest width that holds
 				// it; a decoded one keeps the width its peer chose.
 				//
 				// Stored as the HEADER CODE, 0..3, which is what the shared
-				// EffectsV3Segment declares the field to be - the decoder
+				// EffectsV3IdListSegment declares the field to be - the decoder
 				// fills it from the header bits, so a byte count here would
 				// mean the two directions disagreed about the same struct
-				o->value_width =
-					EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.base));
-				o->count_width =
-					EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.len));
+				*vw = EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.base));
+				*cw = EffectsV3_WidthCode(EffectsV3_WidthFor(s->range.len));
 				break;
+			}
 
 			case EFFECTS_V3_SEG_REPEAT:
 				o->kind         = EFFECTS_V3_SEG_REPEAT;
 				o->repeat.id    = s->repeat.id;
 				o->repeat.count = s->repeat.count;
-				o->value_width  =
+				o->repeat.value_width =
 					EffectsV3_WidthCode(EffectsV3_WidthFor(s->repeat.id));
-				o->count_width  =
+				o->repeat.count_width =
 					EffectsV3_WidthCode(EffectsV3_WidthFor(s->repeat.count));
 				break;
 
@@ -496,18 +517,27 @@ EffectsV3IdList EffectsV3IdListBuilder_ToIdList
 				size_t n =
 					roaring64_bitmap_portable_size_in_bytes(s->bitmap.bitmap);
 
-				o->kind = EFFECTS_V3_SEG_ASCENDING;
-				o->ascending.blob = rm_malloc(n);
-				o->ascending.n    = (uint32_t)n;
-				o->ascending.cardinality = s->bitmap.len;
+				o->kind = s->descending
+					? EFFECTS_V3_SEG_SET_DESCENDING
+					: EFFECTS_V3_SEG_SET_ASCENDING;
+
+				unsigned char **blob = s->descending
+					? &o->set_descending.blob : &o->set_ascending.blob;
+				uint32_t *bn = s->descending
+					? &o->set_descending.n : &o->set_ascending.n;
+				uint64_t *card = s->descending
+					? &o->set_descending.cardinality
+					: &o->set_ascending.cardinality;
+
+				*blob = rm_malloc(n);
+				*bn   = (uint32_t)n;
+				*card = s->bitmap.len;
 
 				roaring64_bitmap_portable_serialize(s->bitmap.bitmap,
-						(char *)o->ascending.blob);
+						(char *)*blob);
 
-				// a bitmap carries its own length; the width fields are
-				// unused and the header bits stay clear, so the code is 0
-				o->value_width = 0;
-				o->count_width = 0;
+				// a Set carries its own length and has no width fields at all
+				// in the contract's arms - nothing to set
 				break;
 			}
 		}
@@ -524,9 +554,27 @@ void EffectsV3IdListBuilder_FreeIdList
 		return;
 	}
 
+	// BOTH Set arms own a blob. This tested one kind when there was one Set
+	// kind; splitting direction into the kind made the descending half leak,
+	// and no test would have shown it - the decoder's mirror of this function
+	// had the identical defect for the identical reason.
+	//
+	// Switched rather than if-ed, with no default, so a sixth kind is a
+	// compile error here rather than a silent leak.
 	for(uint32_t i = 0; i < l->n; i++) {
-		if(l->segments[i].kind == EFFECTS_V3_SEG_ASCENDING) {
-			rm_free(l->segments[i].ascending.blob);
+		switch(l->segments[i].kind) {
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+				rm_free(l->segments[i].set_ascending.blob);
+				break;
+
+			case EFFECTS_V3_SEG_SET_DESCENDING:
+				rm_free(l->segments[i].set_descending.blob);
+				break;
+
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+			case EFFECTS_V3_SEG_REPEAT:
+				break;  // own nothing
 		}
 	}
 
