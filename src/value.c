@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "value.h"
 #include "util/rmalloc.h"
+#include "util/wire_string.h"
 #include "graph/entities/node.h"
 #include "graph/entities/edge.h"
 #include "datatypes/datatypes.h"
@@ -1102,51 +1103,6 @@ XXH64_hash_t SIValue_HashCode
 }
 
 // reads SIValue off of binary stream
-// reads a length-prefixed, NUL-terminated string off 'stream'
-//
-// the length is read off the wire, so it is validated against the bytes
-// actually remaining before it reaches rm_malloc - otherwise a corrupt uint64
-// is an allocation request
-//
-// returns NULL on a malformed string; on success the result is owned by the
-// caller and is guaranteed NUL-terminated
-static char *_SIValue_ReadString
-(
-	FILE *stream  // stream to read from
-) {
-	size_t len;
-	if (!fread_checked (&len, sizeof (len), stream)) {
-		return NULL;
-	}
-
-	// a string is written as strlen + 1 bytes, so an empty string is 1 byte
-	// (the NUL) and a zero length is malformed
-	if (len == 0) {
-		return NULL;
-	}
-
-	// reject a length that outruns the payload before allocating for it
-	long remaining = fstream_remaining (stream);
-	if (remaining < 0 || len > (size_t)remaining) {
-		return NULL;
-	}
-
-	char *s = rm_malloc (sizeof (char) * len);
-	if (!fread_checked (s, sizeof (char) * len, stream)) {
-		rm_free (s);
-		return NULL;
-	}
-
-	// the writer terminates; a payload that doesn't is malformed, and trusting
-	// it would hand an unterminated buffer to every strlen downstream
-	if (s[len - 1] != '\0') {
-		rm_free (s);
-		return NULL;
-	}
-
-	return s;
-}
-
 bool SIValue_FromBinary
 (
 	FILE *stream,  // stream to read value from
@@ -1187,7 +1143,7 @@ bool SIValue_FromBinary
 			return SIArray_FromBinary (stream, out);
 
 		case T_STRING:
-			s = _SIValue_ReadString (stream);
+			s = ReadWireString (stream);
 			if (s == NULL) {
 				return false;
 			}
@@ -1195,7 +1151,7 @@ bool SIValue_FromBinary
 			break;
 
 		case T_INTERN_STRING:
-			s = _SIValue_ReadString (stream);
+			s = ReadWireString (stream);
 			if (s == NULL) {
 				return false;
 			}

@@ -4,12 +4,12 @@
  */
 
 #include "RG.h"
-#include "effects_wire.h"
-#include "../util/rmalloc.h"
+#include "wire_string.h"
+#include "rmalloc.h"
 
 char *ReadWireString
 (
-	FILE *stream  // effects stream
+	FILE *stream  // stream to read from
 ) {
 	ASSERT (stream != NULL) ;
 
