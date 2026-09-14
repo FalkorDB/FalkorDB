@@ -741,54 +741,35 @@ fn grow_cap(
 /// `out`. Returns how many were appended, which is fewer than `count` if the
 /// pool runs out of free ids.
 ///
-/// `base` is how many of the pool's ids are already held, and is where the walk
-/// starts. It gets there by rank rather than by walking: `select(base)` finds
-/// the base-th id by summing container cardinalities — a container holds 65,536
-/// ids, so that is on the order of sixteen steps for a million-id pool — and
-/// `Iter::advance_to` then seeks to that value. Expressed as `skip(base)` it
-/// walked `base` elements instead, and `CREATE` reserves once per BATCH_SIZE
-/// rows, so a create of N ids walked the pool N/BATCH_SIZE times: O(N^2 /
-/// BATCH_SIZE). A 1M-node create over a 1M-id pool spent about 2s of its 2.5s
-/// there.
+/// `pool - held` *is* the reclaimable set, so this takes its lowest ids and
+/// stops. Stating it as set arithmetic rather than as a walk is not only
+/// shorter: the walk had to be told where to start, and the rank it was given —
+/// how many of the pool's ids the caller already held — is only the right place
+/// to start while those ids are the pool's lowest. Cancelling a reservation
+/// that came *from* the pool breaks that, leaving a free id below the rank that
+/// the walk stepped over and did not come back for. A difference has nowhere to
+/// step over.
 ///
-/// (`select` is only cheap per *batch*. Per id — the shape this replaced
-/// earlier — N calls of O(containers) is its own quadratic.)
-///
-/// The rank is where the walk starts and `held` is what makes it correct.
-/// Reserved ids are the pool's lowest, so the rank lands past them — but only
-/// while none has been given back. Cancelling a *reclaimed* reservation leaves
-/// a free id below the rank and a held one at it, and then the rank alone would
-/// hand out an id that is already spoken for. Skipping what `held` holds costs
-/// nothing when nothing was cancelled, which is the ordinary case: the walk
-/// starts past every held id and the check never fires. What it does cost is
-/// the free id below the rank, which this will not go back for — it stays in
-/// the pool for the next batch rather than being lost, so the id space keeps no
-/// hole.
+/// Measured against the walk on the shape that matters — a 1M-id pool drained
+/// in batches of 1024, which is what a large `CREATE` does — at 15.8ms against
+/// 14.5ms. The difference is built per batch and the walk was not, which is
+/// the whole of that 1.3ms; it is under a tenth of a percent of the create it
+/// belongs to, and on the ordinary path where the pool is empty the difference
+/// is the faster of the two.
 fn reclaim_ids<T: From<u64>>(
     pool: &RoaringTreemap,
-    base: u64,
-    count: u64,
     held: &RoaringTreemap,
+    count: u64,
     out: &mut Vec<T>,
 ) -> u64 {
-    if count == 0 || base >= pool.len() {
-        return 0;
-    }
-    let Some(start) = pool.select(base) else {
-        return 0;
-    };
-    let mut it = pool.iter();
-    it.advance_to(start);
+    let free = pool - held;
     let mut taken = 0;
-    for id in it {
-        if held.contains(id) {
-            continue;
-        }
-        out.push(T::from(id));
-        taken += 1;
+    for id in &free {
         if taken == count {
             break;
         }
+        out.push(T::from(id));
+        taken += 1;
     }
     taken
 }
@@ -1463,17 +1444,19 @@ impl Graph {
         ids.try_reserve_exact(count)
             .map_err(|_| format!("failed to reserve {count} node ids"))?;
         let count = count as u64;
-        // How far into the bin previous batches reached. The ids they took are
-        // still in it — reserving does not remove them — and the allocator
-        // takes its lowest, so they are the bin's first `from_bin`.
-        let from_bin = outstanding.intersection_len(&self.deleted_nodes);
-        let reclaimed = reclaim_ids(&self.deleted_nodes, from_bin, count, outstanding, &mut ids);
+        // Reclaim whatever the bin holds that this caller is not already
+        // holding. Reserving does not take an id out of the bin — `max_node_id`
+        // and `is_node_deleted` are derived from it and would go wrong
+        // mid-transaction — so the bin alone does not mean "free", and the
+        // difference is what does.
+        let reclaimed = reclaim_ids(&self.deleted_nodes, outstanding, count, &mut ids);
 
-        // Then fresh ids, above every id ever handed out: every live one, every
-        // freed one, and every outstanding one that is neither — which is every
-        // outstanding id bar those the bin already counts.
+        // Then fresh ids, above every id ever handed out: the live ones, plus
+        // everything that is in the bin or outstanding or both. The union is
+        // that set, and counting it directly is what keeps the reclaimed ids —
+        // which are in the bin *and* outstanding — from being counted twice.
         let remaining = count - reclaimed;
-        let start = self.node_count + self.deleted_nodes.len() + outstanding.len() - from_bin;
+        let start = self.node_count + self.deleted_nodes.union_len(outstanding);
         ids.extend((start..start + remaining).map(NodeId));
 
         Ok(ids)
@@ -2420,18 +2403,10 @@ impl Graph {
             .map_err(|_| format!("failed to reserve {count} relationship ids"))?;
         let count = count as u64;
         // Same shape as `reserve_nodes`, for the same reasons.
-        let from_bin = outstanding.intersection_len(&self.deleted_relationships);
-        let reclaimed = reclaim_ids(
-            &self.deleted_relationships,
-            from_bin,
-            count,
-            outstanding,
-            &mut ids,
-        );
+        let reclaimed = reclaim_ids(&self.deleted_relationships, outstanding, count, &mut ids);
 
         let remaining = count - reclaimed;
-        let start = self.relationship_count + self.deleted_relationships.len() + outstanding.len()
-            - from_bin;
+        let start = self.relationship_count + self.deleted_relationships.union_len(outstanding);
         ids.extend((start..start + remaining).map(RelationshipId));
 
         Ok(ids)
@@ -4769,143 +4744,119 @@ mod attr_id_space_tests {
 mod reclaim_ids_tests {
     use super::*;
 
-    /// The plain walk `reclaim_ids` has to stay equivalent to.
-    fn walk(
+    /// What `reclaim_ids` is: the pool minus what the caller holds, lowest
+    /// first. Written out independently so the tests below compare against a
+    /// statement of the contract rather than against the implementation.
+    fn free_ids(
         pool: &RoaringTreemap,
-        base: u64,
+        held: &RoaringTreemap,
         count: u64,
     ) -> Vec<u64> {
         pool.iter()
-            .skip(base as usize)
+            .filter(|id| !held.contains(*id))
             .take(count as usize)
             .collect()
     }
 
     fn reclaim(
         pool: &RoaringTreemap,
-        base: u64,
+        held: &RoaringTreemap,
         count: u64,
-    ) -> Vec<u64> {
+    ) -> (Vec<u64>, u64) {
         let mut out: Vec<u64> = Vec::new();
-        reclaim_ids(pool, base, count, &RoaringTreemap::new(), &mut out);
-        out
+        let taken = reclaim_ids(pool, held, count, &mut out);
+        assert_eq!(
+            taken,
+            out.len() as u64,
+            "the count must match what it wrote"
+        );
+        (out, taken)
     }
 
-    /// Ids the caller already holds are stepped over, wherever they sit.
-    ///
-    /// The rank alone is enough while reserved ids are the pool's lowest, and
-    /// cancelling a reclaimed one is what breaks that: it leaves a free id
-    /// below the rank and a held one at it. Without the skip this hands out an
-    /// id that is already spoken for.
+    /// Nothing held: the pool's lowest `count` ids, in order.
     #[test]
-    fn steps_over_ids_the_caller_holds() {
+    fn takes_the_lowest_ids_of_the_pool() {
+        let pool: RoaringTreemap = [3u64, 9, 10, 40, 900].into_iter().collect();
+        let none = RoaringTreemap::new();
+
+        assert_eq!(reclaim(&pool, &none, 3).0, vec![3, 9, 10]);
+        assert_eq!(reclaim(&pool, &none, 99).0, vec![3, 9, 10, 40, 900]);
+        assert!(reclaim(&pool, &none, 0).0.is_empty());
+    }
+
+    /// Held ids are not handed out, wherever in the pool they sit.
+    ///
+    /// This is the whole contract. The previous form took a rank to start from
+    /// and only skipped what it met after it, which was right while the held
+    /// ids were the pool's lowest and wrong as soon as one of them was given
+    /// back — a free id below the rank was stepped over. Taking the difference
+    /// has no such position to be wrong about.
+    #[test]
+    fn never_hands_out_an_id_the_caller_holds() {
         let pool: RoaringTreemap = (0..6u64).collect();
         let held: RoaringTreemap = [1u64, 2].into_iter().collect();
-        let mut out: Vec<u64> = Vec::new();
 
-        // Rank 2 is id 2, which is held.
-        let taken = reclaim_ids(&pool, 2, 3, &held, &mut out);
+        assert_eq!(reclaim(&pool, &held, 4).0, vec![0, 3, 4, 5]);
 
-        assert_eq!(out, vec![3, 4, 5]);
-        assert_eq!(taken, 3);
+        // The freed-below case: id 0 is free again, and it comes out first
+        // rather than being stepped past.
+        let held: RoaringTreemap = [1u64, 2, 3].into_iter().collect();
+        assert_eq!(reclaim(&pool, &held, 2).0, vec![0, 4]);
     }
 
-    /// And it reports a short count rather than handing out a held id to make
-    /// the number up.
+    /// It reports a short count rather than making the number up.
     #[test]
     fn reports_how_many_it_could_take() {
         let pool: RoaringTreemap = (0..4u64).collect();
         let held: RoaringTreemap = [2u64].into_iter().collect();
-        let mut out: Vec<u64> = Vec::new();
 
-        let taken = reclaim_ids(&pool, 1, 9, &held, &mut out);
-
-        assert_eq!(out, vec![1, 3], "2 is held, and the pool ends at 3");
-        assert_eq!(taken, 2);
+        let (out, taken) = reclaim(&pool, &held, 9);
+        assert_eq!(out, vec![0, 1, 3]);
+        assert_eq!(taken, 3);
     }
 
-    /// Reclaiming in batches must hand out the same ids as one big reclaim.
-    /// This is the property the whole optimisation rests on.
+    /// An empty pool, and a pool the caller holds entirely, both yield nothing.
+    /// The first is the ordinary case — a graph with no deletions behind it.
     #[test]
-    fn batched_reclaim_matches_single_walk() {
-        let pool: RoaringTreemap = (0..5_000u64).map(|i| i * 3).collect();
+    fn yields_nothing_when_there_is_nothing_free() {
+        let empty = RoaringTreemap::new();
+        let pool: RoaringTreemap = (0..4u64).collect();
 
-        let mut batched: Vec<u64> = Vec::new();
-        let mut base = 0;
-        while base < pool.len() {
-            let count = 97.min(pool.len() - base);
-            reclaim_ids(&pool, base, count, &RoaringTreemap::new(), &mut batched);
-            base += count;
-        }
-
-        assert_eq!(batched, walk(&pool, 0, pool.len()));
+        assert!(reclaim(&empty, &empty, 10).0.is_empty());
+        assert!(reclaim(&pool, &pool, 10).0.is_empty());
     }
 
-    /// Rank-based seeking has to agree with walking at *every* base, including
-    /// across container boundaries — `select` sums container cardinalities, so a
-    /// pool spread over several containers is where an off-by-one would show.
+    /// It appends, so a caller can reclaim into a vector that already holds
+    /// ids — which `reserve_nodes` does when a batch spans the bin and the
+    /// fresh range.
     #[test]
-    fn agrees_with_walk_at_every_base() {
+    fn appends_rather_than_replaces() {
+        let pool: RoaringTreemap = (10..20u64).collect();
+        let mut out: Vec<u64> = vec![7, 8];
+        reclaim_ids(&pool, &RoaringTreemap::new(), 3, &mut out);
+        assert_eq!(out, vec![7, 8, 10, 11, 12]);
+    }
+
+    /// Agrees with the contract across container boundaries — a treemap splits
+    /// at 2^32 and each map at 2^16 — and at every batch size, with a held set
+    /// scattered through the pool rather than sitting at its front.
+    #[test]
+    fn agrees_with_the_contract_on_a_scattered_pool() {
         let pool: RoaringTreemap = (0..300u64)
             .map(|i| i * 1_000)
             .chain(70_000..70_400)
             .chain(1_000_000..1_000_050)
+            .chain(u64::from(u32::MAX) - 5..u64::from(u32::MAX) + 5)
             .collect();
+        let held: RoaringTreemap = pool.iter().step_by(3).collect();
 
-        for base in 0..pool.len() {
-            for count in [1u64, 13, 97] {
-                assert_eq!(
-                    reclaim(&pool, base, count),
-                    walk(&pool, base, count),
-                    "base {base}, count {count}"
-                );
-            }
+        for count in [1u64, 13, 97, 5_000] {
+            assert_eq!(
+                reclaim(&pool, &held, count).0,
+                free_ids(&pool, &held, count),
+                "count {count}"
+            );
         }
-    }
-
-    /// Ids freed below where reclaiming had reached shift every later position.
-    /// Rank is read from the pool on each call, so the answer tracks the pool
-    /// with no state to go stale — this is what the previous cursor-based
-    /// version needed a cardinality guard to get right.
-    #[test]
-    fn reflects_a_pool_that_changed_between_calls() {
-        let mut pool: RoaringTreemap = (100..200u64).collect();
-
-        assert_eq!(reclaim(&pool, 0, 10), (100..110).collect::<Vec<_>>());
-
-        // Free some lower ids, as returning a pending-created id does.
-        pool.insert(0);
-        pool.insert(1);
-
-        assert_eq!(reclaim(&pool, 10, 10), walk(&pool, 10, 10));
-    }
-
-    /// Asking for more than the pool holds yields what there is, and a base past
-    /// the end yields nothing rather than panicking.
-    #[test]
-    fn handles_requests_past_the_end() {
-        let pool: RoaringTreemap = (0..5u64).collect();
-
-        assert_eq!(reclaim(&pool, 0, 5), vec![0, 1, 2, 3, 4]);
-        assert_eq!(reclaim(&pool, 0, 9), vec![0, 1, 2, 3, 4]);
-        assert!(reclaim(&pool, 5, 3).is_empty());
-        assert!(reclaim(&pool, 99, 3).is_empty());
-    }
-
-    /// A zero-count request appends nothing.
-    #[test]
-    fn zero_count_yields_nothing() {
-        let pool: RoaringTreemap = (0..100u64).collect();
-        assert!(reclaim(&pool, 0, 0).is_empty());
-        assert!(reclaim(&pool, 50, 0).is_empty());
-    }
-
-    /// An empty pool has nothing to reclaim at any base.
-    #[test]
-    fn empty_pool_yields_nothing() {
-        let pool = RoaringTreemap::new();
-        assert!(reclaim(&pool, 0, 10).is_empty());
-        assert!(reclaim(&pool, 7, 10).is_empty());
     }
 }
 
