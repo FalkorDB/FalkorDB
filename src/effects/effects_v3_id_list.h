@@ -54,7 +54,7 @@
 // push and, if it ever reaches a range insertion, fabricates ids the set does
 // not hold
 typedef struct {
-	EffectsV3SegmentKind kind;
+	EffectsV3IdListSegmentKind kind;
 	bool descending;  // header bit 6; always false for a Repeat
 	union {
 		struct {
