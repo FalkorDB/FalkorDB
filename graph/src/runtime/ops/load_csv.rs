@@ -330,7 +330,10 @@ impl<'a> LoadCsvOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(var.id),
+            // No cap: not measured, because the benchmark's CSV holds 100
+            // rows and can never fill a batch. Worth revisiting against a file
+            // large enough to show a boundary step.
+            emitter: BatchedResultEmitter::with_binding(var.id, None),
             file_path,
             headers,
             delimiter,
