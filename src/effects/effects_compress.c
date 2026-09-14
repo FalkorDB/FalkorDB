@@ -180,9 +180,14 @@ const char *EffectsV3CompressFault_ToString
 			return "plaintext checksum disagrees with the header" ;
 		case EFFECTS_V3_COMPRESS_NO_MEMORY:
 			return "could not allocate the declared uncompressed length" ;
-		default:
-			return "unknown" ;
 	}
+
+	// NO 'default:' above, deliberately. A default arm over a closed enum
+	// turns "every case is handled" into "every case I thought of", and it
+	// silences -Wswitch for the next variant somebody adds. Falling out to a
+	// return here keeps the compiler's exhaustiveness check AND still answers
+	// safely for a value that is not a valid enumerator.
+	return "unknown" ;
 }
 
 EffectsV3Status EffectsV3_OpenCompressed
