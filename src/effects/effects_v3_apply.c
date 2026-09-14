@@ -1206,14 +1206,31 @@ static bool _OptionsToMap
 		switch (o->sim_func) {
 			case V3_SIMFUNC_L2:     sim = "euclidean" ; break ;
 			case V3_SIMFUNC_COSINE: sim = "cosine"    ; break ;
+			case V3_SIMFUNC_IP:     sim = "ip"        ; break ;
 
-			case V3_SIMFUNC_IP:
-				// kept as an explicit refusal rather than folded into the
-				// default arm. The option is being withdrawn upstream, but an
-				// older peer or a pre-withdrawal RDB can still carry the code,
-				// and a replica must refuse and resync rather than quietly
-				// substitute a different metric - the same index would then
-				// compute differently depending on how the replica synced.
+			// EVERY KNOWN CODE IS ACCEPTED; the default arm refuses only codes
+			// this build has no name for. The distinction matters, because
+			// this arm used to refuse IP as well and that made C refuse its
+			// OWN index: C creates, stores and computes inner product fine
+			// (index_vector_create.c:73 parses "ip"; index.c:157 hands the
+			// metric to VecSim as a number), and the emitter therefore sends
+			// code 1. Same engine both ends, and the reader rejected the
+			// writer - measured as C(v3) -> C forcing a full resync on 'ip'
+			// while euclidean and cosine replicated cleanly.
+			//
+			// The reasoning behind the old refusal was sound and is why the
+			// default arm still exists: a replica must refuse and resync
+			// rather than quietly substitute a different metric, or the same
+			// index computes differently depending on how the replica synced.
+			// It just never applied to code 1 - accepting it substitutes
+			// nothing. C stores 'ip' and computes 'ip', which is what the
+			// master did.
+			//
+			// The belief that C could not do IP came from
+			// `grep -rn 'VecSimMetric_IP' src/` returning nothing. C never
+			// NAMES the constant - it passes the number through - so a
+			// name-shaped search found a name-shaped gap and it was read as a
+			// missing capability. Do not re-derive this from a grep.
 			default:
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT CREATE_INDEX vector field on '%s' asks "

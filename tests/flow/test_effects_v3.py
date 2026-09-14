@@ -1242,22 +1242,88 @@ class testDDLApply():
         self.env.assertEquals(len(res.result_set), 0)
 
 
-class testVectorSimFuncIPRefused(_RefusedCase):
+class testVectorSimFuncIPApplied():
+    """simFunc code 1 (inner product) must APPLY, not be refused.
+
+    This test used to assert the opposite. The refusal was added as version-
+    skew defence on the belief that C could not build an IP index, and that
+    belief came from `grep -rn 'VecSimMetric_IP' src/` returning nothing - C
+    never names the constant, it passes the number through. So C's emitter
+    sent code 1 and C's applier refused it: the same engine at both ends,
+    reader rejecting writer, measured as C(v3) -> C forcing a full resync on
+    'ip' while euclidean and cosine replicated cleanly.
+
+    ASSERTED ON RANKING, NOT ON THE REPORTED METRIC. proc_list_indexes.c:318
+    collapses every non-L2 metric to "cosine", so `db.indexes()` calls an IP
+    index cosine and an assertion on that string passes whichever metric was
+    really built. What the index computes is the only thing that separates
+    them.
+
+    The vectors are chosen so the three metrics disagree about the winner.
+    Against query [1,0,0,0], with VecSim returning a DISTANCE:
+
+        near [0.2,0,0,0]   ip 1-0.2 = 0.8     cosine 0.0     l2 0.64
+        big  [5,5,0,0]     ip 1-5   = -4.0    cosine 0.293   l2 41.0
+
+    So 'big' ranks first under inner product and 'near' ranks first under
+    both cosine and euclidean. A wrong metric changes the order, which is
+    what this asserts.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+        # label :P = 0, attribute v = 0
+        self.graph.query("CREATE (:P {v: vecf32([0.0,0.0,0.0,0.0])})")
+
+    def test01_ip_index_applies_and_computes_ip(self):
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, payload(
+            rec_create_index(
+                schema_type = SCHEMA_NODE, label_id = 0, label = "P",
+                field_type  = 0x10,                 # INDEX_FLD_VECTOR
+                fields      = [(0, "v")],
+                options     = index_options(
+                    vector={"dimension": 4, "simFunc": 1}))))
+
+        # the effect was applied rather than refused - a refusal takes the
+        # instance down, so reaching here at all is half the assertion
+        res = self.graph.query("CALL db.indexes() YIELD label RETURN label")
+        self.env.assertEquals(len(res.result_set), 1)
+
+        self.graph.query("CREATE (:P {name: 'near', v: vecf32([0.2,0.0,0.0,0.0])})")
+        self.graph.query("CREATE (:P {name: 'big',  v: vecf32([5.0,5.0,0.0,0.0])})")
+
+        res = self.graph.query(
+            "CALL db.idx.vector.queryNodes('P', 'v', 2, "
+            "vecf32([1.0,0.0,0.0,0.0])) YIELD node "
+            "RETURN node.name")
+        order = [r[0] for r in res.result_set]
+
+        # under cosine or euclidean this reads ['near', 'big']
+        self.env.assertEquals(order[0], 'big',
+                              message=f"ranking was {order}, which is not "
+                                      f"inner product")
+
+
+class testVectorSimFuncUnknownRefused(_RefusedCase):
     def test_refused(self):
-        # simFunc code 1 is inner product. The option is being withdrawn
-        # upstream, but an older peer or a pre-withdrawal RDB can still carry
-        # it, and a replica must refuse and resync rather than substitute a
-        # different metric - the same index would otherwise compute differently
-        # depending on how the replica synced.
+        # the default arm still has to refuse a code this build has no name
+        # for - that is what version-skew defence actually needs, and it is
+        # the coverage the IP refusal was accidentally providing. Without
+        # this, accepting IP would have left the default arm untested.
         self._refuse(
             payload(rec_create_index(
                 schema_type = SCHEMA_NODE, label_id = 0, label = "L",
                 field_type  = 0x10,                 # INDEX_FLD_VECTOR
                 fields      = [(0, "v")],
                 options     = index_options(
-                    vector={"dimension": 4, "simFunc": 1}))),
-            "vector index asking for inner product",
-            expect_log="similarity function 1")
+                    vector={"dimension": 4, "simFunc": 7}))),
+            "vector index asking for an unknown similarity function",
+            expect_log="similarity function 7")
 
 
 class testVectorZeroDimensionRefused(_RefusedCase):
