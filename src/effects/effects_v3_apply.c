@@ -120,15 +120,26 @@ static bool _IdIter_Next
 	uint64_t *id
 ) {
 	while (it->seg < it->list->n) {
-		const EffectsV3Segment *s = it->list->segments + it->seg ;
+		const EffectsV3IdListSegment *s = it->list->segments + it->seg ;
 
+		// DIRECTION IS IN THE KIND. It used to be a separate `descending` flag
+		// tested inside each arm; the typed model folds it in, so a range and a
+		// set each split into two arms that share their reading but not their
+		// step. The pairing that had no meaning - a descending repeat - is no
+		// longer representable, so there is no longer a case to guard.
 		switch (s->kind) {
-			case EFFECTS_V3_SEG_RANGE:
-				if (it->produced < s->range.len) {
-					// a descending range's base is its FIRST and HIGHEST id
-					*id = s->descending
-						? s->range.base - it->produced
-						: s->range.base + it->produced ;
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+				if (it->produced < s->range_ascending.len) {
+					*id = s->range_ascending.base + it->produced ;
+					it->produced++ ;
+					return true ;
+				}
+				break ;
+
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+				// a descending range's base is its FIRST and HIGHEST id
+				if (it->produced < s->range_descending.len) {
+					*id = s->range_descending.base - it->produced ;
 					it->produced++ ;
 					return true ;
 				}
@@ -142,10 +153,21 @@ static bool _IdIter_Next
 				}
 				break ;
 
-			case EFFECTS_V3_SEG_ASCENDING:
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+			case EFFECTS_V3_SEG_SET_DESCENDING: {
+				const bool descending =
+					(s->kind == EFFECTS_V3_SEG_SET_DESCENDING) ;
+
+				// one wire kind read two ways: the blob is identical and only
+				// the traversal differs, so the two arms share this body
+				const unsigned char *blob = descending
+					? s->set_descending.blob : s->set_ascending.blob ;
+				const uint32_t blob_n = descending
+					? s->set_descending.n : s->set_ascending.n ;
+
 				if (it->bitmap == NULL) {
 					it->bitmap = roaring64_bitmap_portable_deserialize_safe (
-							(const char*)s->ascending.blob, s->ascending.n) ;
+							(const char*)blob, blob_n) ;
 					if (it->bitmap == NULL) {
 						// decode already deserialized this blob to take its
 						// cardinality, so failing here means memory pressure
@@ -153,7 +175,7 @@ static bool _IdIter_Next
 						it->broken = true ;
 						return false ;
 					}
-					it->bit_it = s->descending
+					it->bit_it = descending
 						? roaring64_iterator_create_last (it->bitmap)
 						: roaring64_iterator_create (it->bitmap) ;
 					if (it->bit_it == NULL) {
@@ -165,7 +187,7 @@ static bool _IdIter_Next
 
 				if (roaring64_iterator_has_value (it->bit_it)) {
 					*id = roaring64_iterator_value (it->bit_it) ;
-					if (s->descending) {
+					if (descending) {
 						roaring64_iterator_previous (it->bit_it) ;
 					} else {
 						roaring64_iterator_advance (it->bit_it) ;
@@ -174,6 +196,7 @@ static bool _IdIter_Next
 					return true ;
 				}
 				break ;
+			}
 
 			default:
 				it->broken = true ;
@@ -204,15 +227,16 @@ static bool _IdIter_Next
 static bool _VerifyLabels
 (
 	GraphContext *gc,
-	const EffectsV3Record *rec,
+	const LabelID *labels,
+	uint16_t n_labels,
 	const char *op
 ) {
-	for (uint16_t i = 0; i < rec->n_labels; i++) {
-		if (GraphContext_GetSchemaByID (gc, rec->labels[i],
+	for (uint16_t i = 0; i < n_labels; i++) {
+		if (GraphContext_GetSchemaByID (gc, labels[i],
 					SCHEMA_NODE) == NULL) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT %s references unknown label schema %d",
-					op, rec->labels[i]) ;
+					op, labels[i]) ;
 			return false ;
 		}
 	}
@@ -223,14 +247,13 @@ static bool _VerifyLabels
 static bool _VerifyRelation
 (
 	GraphContext *gc,
-	const EffectsV3Record *rec,
+	RelationID relation_id,
 	const char *op
 ) {
-	if (GraphContext_GetSchemaByID (gc, rec->relation_id,
-				SCHEMA_EDGE) == NULL) {
+	if (GraphContext_GetSchemaByID (gc, relation_id, SCHEMA_EDGE) == NULL) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT %s references relationship type %d "
-				"which doesn't exist locally", op, rec->relation_id) ;
+				"which doesn't exist locally", op, relation_id) ;
 		return false ;
 	}
 	return true ;
@@ -243,11 +266,12 @@ static bool _VerifyRelation
 static bool _VerifyAttrIds
 (
 	GraphContext *gc,
-	const EffectsV3Record *rec,
+	const AttributeID *attr_ids,
+	uint16_t n_attrs,
 	const char *op
 ) {
-	for (uint16_t i = 0; i < rec->n_attrs; i++) {
-		const AttributeID a = rec->attr_ids[i] ;
+	for (uint16_t i = 0; i < n_attrs; i++) {
+		const AttributeID a = attr_ids[i] ;
 
 		if (a == ATTRIBUTE_ID_NONE) {
 			RedisModule_Log (NULL, "warning",
@@ -271,11 +295,12 @@ static bool _VerifyAttrIds
 // reader that rejected or filtered nulls would turn every removal into a no-op.
 static bool _VerifyValues
 (
-	const EffectsV3Record *rec,
+	const SIValue *values,
+	uint64_t n_values,
 	const char *op
 ) {
-	for (uint64_t i = 0; i < rec->n_values; i++) {
-		if (!(SI_TYPE (rec->values[i]) & (SI_VALID_PROPERTY_VALUE | T_NULL))) {
+	for (uint64_t i = 0; i < n_values; i++) {
+		if (!(SI_TYPE (values[i]) & (SI_VALID_PROPERTY_VALUE | T_NULL))) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT %s carries a value that cannot be stored",
 					op) ;
@@ -322,29 +347,29 @@ static bool _ApplyAddSchema
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	if (rec->name == NULL) {
+	if (rec->add_schema.name == NULL) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_SCHEMA carries no name") ;
 		return false ;
 	}
 
 	bool created = false ;
-	Schema *s = GraphContext_FindOrAddSchema (gc, rec->name, rec->schema_type,
+	Schema *s = GraphContext_FindOrAddSchema (gc, rec->add_schema.name, rec->add_schema.schema_type,
 			&created) ;
 
 	if (s == NULL || created == false) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_SCHEMA targets schema '%s' which already "
-				"exists locally", rec->name) ;
+				"exists locally", rec->add_schema.name) ;
 		return false ;
 	}
 
 	const int assigned = Schema_GetID (s) ;
-	if (assigned != rec->schema_id) {
+	if (assigned != rec->add_schema.schema_id) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_SCHEMA '%s' was assigned id %d locally but "
 				"the master assigned %d - schema numbering has diverged",
-				rec->name, assigned, rec->schema_id) ;
+				rec->add_schema.name, assigned, rec->add_schema.schema_id) ;
 		return false ;
 	}
 
@@ -360,27 +385,27 @@ static bool _ApplyAddAttribute
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	if (rec->name == NULL) {
+	if (rec->add_attribute.name == NULL) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_ATTRIBUTE carries no name") ;
 		return false ;
 	}
 
-	if (GraphContext_GetAttributeID (gc, rec->name) != ATTRIBUTE_ID_NONE) {
+	if (GraphContext_GetAttributeID (gc, rec->add_attribute.name) != ATTRIBUTE_ID_NONE) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_ATTRIBUTE targets attribute '%s' which "
-				"already exists locally", rec->name) ;
+				"already exists locally", rec->add_attribute.name) ;
 		return false ;
 	}
 
 	const AttributeID assigned =
-		GraphHub_FindOrAddAttribute (gc, rec->name, false) ;
+		GraphHub_FindOrAddAttribute (gc, rec->add_attribute.name, false) ;
 
-	if (assigned != rec->attr_id) {
+	if (assigned != rec->add_attribute.attr_id) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_ATTRIBUTE '%s' was assigned id %d locally "
 				"but the master assigned %d - attribute numbering has diverged",
-				rec->name, assigned, rec->attr_id) ;
+				rec->add_attribute.name, assigned, rec->add_attribute.attr_id) ;
 		return false ;
 	}
 
@@ -397,20 +422,22 @@ static bool _ApplyAddAttribute
 // attribute set takes ownership of what it is given
 static AttributeSet _RowAttributes
 (
-	const EffectsV3Record *rec,
+	const AttributeID *attr_ids,
+	uint16_t n_attrs,
+	const SIValue *values,
 	uint64_t k
 ) {
 	AttributeSet set = NULL ;
-	if (rec->n_attrs == 0) {
+	if (n_attrs == 0) {
 		return set ;
 	}
 
-	SIValue vals[rec->n_attrs] ;
-	for (uint16_t a = 0; a < rec->n_attrs; a++) {
-		vals[a] = SI_CloneValue (rec->values[k * rec->n_attrs + a]) ;
+	SIValue vals[n_attrs] ;
+	for (uint16_t a = 0; a < n_attrs; a++) {
+		vals[a] = SI_CloneValue (values[k * n_attrs + a]) ;
 	}
 
-	AttributeSet_Add (&set, rec->attr_ids, vals, rec->n_attrs, false) ;
+	AttributeSet_Add (&set, attr_ids, vals, n_attrs, false) ;
 	return set ;
 }
 
@@ -419,24 +446,25 @@ static bool _ApplyCreateNode
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	if (!_VerifyLabels (gc, rec, "CREATE_NODE")   ||
-		!_VerifyAttrIds (gc, rec, "CREATE_NODE")  ||
-		!_VerifyValues (rec, "CREATE_NODE")) {
+	if (!_VerifyLabels (gc, rec->create_node.labels, rec->create_node.n_labels, "CREATE_NODE")   ||
+		!_VerifyAttrIds (gc, rec->create_node.attr_ids, rec->create_node.n_attrs, "CREATE_NODE")  ||
+		!_VerifyValues (rec->create_node.values, rec->create_node.n_values, "CREATE_NODE")) {
 		return false ;
 	}
 
 	IdIter it ;
-	_IdIter_Init (&it, &rec->ids) ;
+	_IdIter_Init (&it, &rec->create_node.ids) ;
 
 	bool ok = true ;
 	uint64_t id ;
 	uint64_t k = 0 ;
 
 	while (ok && _IdIter_Next (&it, &id)) {
-		AttributeSet set = _RowAttributes (rec, k) ;
+		AttributeSet set = _RowAttributes (rec->create_node.attr_ids,
+				rec->create_node.n_attrs, rec->create_node.values, k) ;
 
 		Node n = GE_NEW_NODE () ;
-		GraphHub_CreateNode (gc, &n, rec->labels, rec->n_labels, set, false) ;
+		GraphHub_CreateNode (gc, &n, rec->create_node.labels, rec->create_node.n_labels, set, false) ;
 
 		// v3's whole premise: the replica does not infer the id, it checks it
 		if (n.id != id) {
@@ -518,9 +546,9 @@ static bool _ApplyCreateEdge
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	if (!_VerifyRelation (gc, rec, "CREATE_EDGE") ||
-		!_VerifyAttrIds (gc, rec, "CREATE_EDGE")  ||
-		!_VerifyValues (rec, "CREATE_EDGE")) {
+	if (!_VerifyRelation (gc, rec->create_edge.relation_id, "CREATE_EDGE") ||
+		!_VerifyAttrIds (gc, rec->create_edge.attr_ids, rec->create_edge.n_attrs, "CREATE_EDGE")  ||
+		!_VerifyValues (rec->create_edge.values, rec->create_edge.n_values, "CREATE_EDGE")) {
 		return false ;
 	}
 
@@ -529,14 +557,14 @@ static bool _ApplyCreateEdge
 	// resolved once for the whole record: the grouping has already established
 	// that every edge in it shares this type, and the name is what the index
 	// is keyed under
-	Schema *schema = GraphContext_GetSchemaByID (gc, rec->relation_id,
+	Schema *schema = GraphContext_GetSchemaByID (gc, rec->create_edge.relation_id,
 			SCHEMA_EDGE) ;
 	const char *rel_name = Schema_GetName (schema) ;
 
 	IdIter ids, srcs, dsts ;
-	_IdIter_Init (&ids,  &rec->ids) ;
-	_IdIter_Init (&srcs, &rec->src) ;
-	_IdIter_Init (&dsts, &rec->dst) ;
+	_IdIter_Init (&ids,  &rec->create_edge.ids) ;
+	_IdIter_Init (&srcs, &rec->create_edge.src) ;
+	_IdIter_Init (&dsts, &rec->create_edge.dst) ;
 
 	// storage for the batch, plus the two arr views the bulk call takes.
 	// Chunked at APPLY_BATCH rather than sized by the record, so a record
@@ -577,19 +605,20 @@ static bool _ApplyCreateEdge
 
 		// the bulk call reads the endpoints off the Edge rather than taking
 		// them as arguments, so they are set here
-		storage[n] = GE_NEW_LABELED_EDGE (rel_name, rec->relation_id) ;
+		storage[n] = GE_NEW_LABELED_EDGE (rel_name, rec->create_edge.relation_id) ;
 		Edge_SetSrcNodeID  (storage + n, src) ;
 		Edge_SetDestNodeID (storage + n, dst) ;
 
 		wire_ids[n] = id ;
 		arr_append (batch, storage + n) ;
-		arr_append (sets, _RowAttributes (rec, k)) ;
+		arr_append (sets, _RowAttributes (rec->create_edge.attr_ids,
+					rec->create_edge.n_attrs, rec->create_edge.values, k)) ;
 
 		n++ ;
 		k++ ;
 
 		if (n == APPLY_BATCH) {
-			ok = _FlushEdges (gc, rec->relation_id, batch, sets, wire_ids) ;
+			ok = _FlushEdges (gc, rec->create_edge.relation_id, batch, sets, wire_ids) ;
 			n = 0 ;
 		}
 	}
@@ -599,7 +628,7 @@ static bool _ApplyCreateEdge
 	}
 
 	if (ok) {
-		ok = _FlushEdges (gc, rec->relation_id, batch, sets, wire_ids) ;
+		ok = _FlushEdges (gc, rec->create_edge.relation_id, batch, sets, wire_ids) ;
 	} else {
 		// bailing out with a partial batch: those attribute sets were built
 		// here and never handed over, so this owns them
@@ -628,16 +657,16 @@ static bool _ApplyUpdateNode
 ) {
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	if (!_VerifyCountAgainstGraph (rec->count, Graph_NodeCount (g),
+	if (!_VerifyCountAgainstGraph (rec->update_node.count, Graph_NodeCount (g),
 				"UPDATE_NODE", "nodes")                ||
-		!_VerifyLabels (gc, rec, "UPDATE_NODE")        ||
-		!_VerifyAttrIds (gc, rec, "UPDATE_NODE")       ||
-		!_VerifyValues (rec, "UPDATE_NODE")) {
+		!_VerifyLabels (gc, rec->update_node.labels, rec->update_node.n_labels, "UPDATE_NODE")        ||
+		!_VerifyAttrIds (gc, rec->update_node.attr_ids, rec->update_node.n_attrs, "UPDATE_NODE")       ||
+		!_VerifyValues (rec->update_node.values, rec->update_node.n_values, "UPDATE_NODE")) {
 		return false ;
 	}
 
 	IdIter it ;
-	_IdIter_Init (&it, &rec->ids) ;
+	_IdIter_Init (&it, &rec->update_node.ids) ;
 
 	bool ok = true ;
 	uint64_t id ;
@@ -652,21 +681,21 @@ static bool _ApplyUpdateNode
 			break ;
 		}
 
-		for (uint16_t a = 0; a < rec->n_attrs; a++) {
-			const SIValue v = rec->values[k * rec->n_attrs + a] ;
+		for (uint16_t a = 0; a < rec->update_node.n_attrs; a++) {
+			const SIValue v = rec->update_node.values[k * rec->update_node.n_attrs + a] ;
 
 			// ATTRIBUTE_ID_ALL means "remove everything" and is only legal
 			// alongside a null, mirroring v2's check
-			if (rec->attr_ids[a] == ATTRIBUTE_ID_ALL && !SIValue_IsNull (v)) {
+			if (rec->update_node.attr_ids[a] == ATTRIBUTE_ID_ALL && !SIValue_IsNull (v)) {
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT UPDATE_NODE illegal attribute id %d",
-						rec->attr_ids[a]) ;
+						rec->update_node.attr_ids[a]) ;
 				ok = false ;
 				break ;
 			}
 
 			// the hub takes ownership of the value it is handed
-			GraphHub_UpdateNodeProperty (gc, id, rec->attr_ids[a],
+			GraphHub_UpdateNodeProperty (gc, id, rec->update_node.attr_ids[a],
 					SI_CloneValue (v)) ;
 		}
 
@@ -735,20 +764,20 @@ static bool _ApplyUpdateEdge
 	// below safe to size: being told to update more edges of a type than exist
 	// is divergence, and refusing first means a wire-declared count never
 	// reaches an allocator
-	if (!_VerifyRelation (gc, rec, "UPDATE_EDGE")) {
+	if (!_VerifyRelation (gc, rec->update_edge.relation_id, "UPDATE_EDGE")) {
 		return false ;
 	}
 
 	const uint64_t local =
-		Graph_RelationEdgeCount (g, rec->relation_id) ;
+		Graph_RelationEdgeCount (g, rec->update_edge.relation_id) ;
 
-	if (!_VerifyCountAgainstGraph (rec->count, local, "UPDATE_EDGE", "edges") ||
-		!_VerifyAttrIds (gc, rec, "UPDATE_EDGE")                              ||
-		!_VerifyValues (rec, "UPDATE_EDGE")) {
+	if (!_VerifyCountAgainstGraph (rec->update_edge.count, local, "UPDATE_EDGE", "edges") ||
+		!_VerifyAttrIds (gc, rec->update_edge.attr_ids, rec->update_edge.n_attrs, "UPDATE_EDGE")                              ||
+		!_VerifyValues (rec->update_edge.values, rec->update_edge.n_values, "UPDATE_EDGE")) {
 		return false ;
 	}
 
-	if (rec->count == 0) {
+	if (rec->update_edge.count == 0) {
 		return true ;
 	}
 
@@ -756,14 +785,14 @@ static bool _ApplyUpdateEdge
 	// materialize (edge id -> row) so a single tensor scan can find each row
 	//--------------------------------------------------------------------------
 
-	IdRow *table = rm_malloc (rec->count * sizeof (IdRow)) ;
+	IdRow *table = rm_malloc (rec->update_edge.count * sizeof (IdRow)) ;
 
 	IdIter it ;
-	_IdIter_Init (&it, &rec->ids) ;
+	_IdIter_Init (&it, &rec->update_edge.ids) ;
 
 	uint64_t id ;
 	uint64_t k = 0 ;
-	while (k < rec->count && _IdIter_Next (&it, &id)) {
+	while (k < rec->update_edge.count && _IdIter_Next (&it, &id)) {
 		table[k].id  = id ;
 		table[k].row = k ;
 		k++ ;
@@ -771,10 +800,10 @@ static bool _ApplyUpdateEdge
 	const bool broken = it.broken ;
 	_IdIter_Free (&it) ;
 
-	if (broken || k != rec->count) {
+	if (broken || k != rec->update_edge.count) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT UPDATE_EDGE id list yielded %" PRIu64
-				" of %u ids", k, rec->count) ;
+				" of %u ids", k, rec->update_edge.count) ;
 		rm_free (table) ;
 		return false ;
 	}
@@ -784,9 +813,9 @@ static bool _ApplyUpdateEdge
 	//--------------------------------------------------------------------------
 
 	// sorted once per record so the scan below can binary search it
-	qsort (table, rec->count, sizeof (IdRow), _IdRowCmp) ;
+	qsort (table, rec->update_edge.count, sizeof (IdRow), _IdRowCmp) ;
 
-	Tensor R = Graph_GetRelationMatrix (g, rec->relation_id, false) ;
+	Tensor R = Graph_GetRelationMatrix (g, rec->update_edge.relation_id, false) ;
 
 	TensorIterator ti ;
 	TensorIterator_ScanRange (&ti, R, 0, UINT64_MAX, false) ;
@@ -795,7 +824,7 @@ static bool _ApplyUpdateEdge
 	GrB_Index row, col ;
 	uint64_t  edge_id ;
 
-	while (applied < rec->count &&
+	while (applied < rec->update_edge.count &&
 			TensorIterator_next (&ti, &row, &col, &edge_id, NULL)) {
 		// binary search, not a scan of the table
 		//
@@ -811,7 +840,7 @@ static bool _ApplyUpdateEdge
 		// walk stops once every named edge is applied, so a bigger record scans
 		// more edges AND compares each against a longer table. Both factors
 		// grow together.
-		const IdRow *hit = bsearch (&edge_id, table, rec->count,
+		const IdRow *hit = bsearch (&edge_id, table, rec->update_edge.count,
 				sizeof (IdRow), _IdRowFind) ;
 
 		if (hit != NULL) {
@@ -822,21 +851,21 @@ static bool _ApplyUpdateEdge
 				hit-- ;
 			}
 
-			for (uint16_t a = 0; a < rec->n_attrs; a++) {
+			for (uint16_t a = 0; a < rec->update_edge.n_attrs; a++) {
 				const SIValue v =
-					rec->values[hit->row * rec->n_attrs + a] ;
+					rec->update_edge.values[hit->row * rec->update_edge.n_attrs + a] ;
 
-				if (rec->attr_ids[a] == ATTRIBUTE_ID_ALL &&
+				if (rec->update_edge.attr_ids[a] == ATTRIBUTE_ID_ALL &&
 						!SIValue_IsNull (v)) {
 					RedisModule_Log (NULL, "warning",
 							"GRAPH.EFFECT UPDATE_EDGE illegal attribute id %d",
-							rec->attr_ids[a]) ;
+							rec->update_edge.attr_ids[a]) ;
 					rm_free (table) ;
 					return false ;
 				}
 
-				GraphHub_UpdateEdgeProperty (gc, edge_id, rec->relation_id,
-						row, col, rec->attr_ids[a], SI_CloneValue (v)) ;
+				GraphHub_UpdateEdgeProperty (gc, edge_id, rec->update_edge.relation_id,
+						row, col, rec->update_edge.attr_ids[a], SI_CloneValue (v)) ;
 			}
 
 			applied++ ;
@@ -845,11 +874,11 @@ static bool _ApplyUpdateEdge
 
 	rm_free (table) ;
 
-	if (applied != rec->count) {
+	if (applied != rec->update_edge.count) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT UPDATE_EDGE matched %" PRIu64 " of %u edges of "
-				"relationship type %d locally", applied, rec->count,
-				rec->relation_id) ;
+				"relationship type %d locally", applied, rec->update_edge.count,
+				rec->update_edge.relation_id) ;
 		return false ;
 	}
 
@@ -874,14 +903,14 @@ static bool _ApplyDeleteNode
 ) {
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	if (!_VerifyCountAgainstGraph (rec->count, Graph_NodeCount (g),
+	if (!_VerifyCountAgainstGraph (rec->delete_node.count, Graph_NodeCount (g),
 				"DELETE_NODE", "nodes")                ||
-		!_VerifyLabels (gc, rec, "DELETE_NODE")) {
+		!_VerifyLabels (gc, rec->delete_node.labels, rec->delete_node.n_labels, "DELETE_NODE")) {
 		return false ;
 	}
 
 	IdIter it ;
-	_IdIter_Init (&it, &rec->ids) ;
+	_IdIter_Init (&it, &rec->delete_node.ids) ;
 
 	Node batch[APPLY_BATCH] ;
 	uint32_t n = 0 ;
@@ -924,24 +953,24 @@ static bool _ApplyDeleteEdge
 ) {
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	if (!_VerifyRelation (gc, rec, "DELETE_EDGE")) {
+	if (!_VerifyRelation (gc, rec->delete_edge.relation_id, "DELETE_EDGE")) {
 		return false ;
 	}
 
-	if (!_VerifyCountAgainstGraph (rec->count,
-				Graph_RelationEdgeCount (g, rec->relation_id),
+	if (!_VerifyCountAgainstGraph (rec->delete_edge.count,
+				Graph_RelationEdgeCount (g, rec->delete_edge.relation_id),
 				"DELETE_EDGE", "edges")) {
 		return false ;
 	}
 
-	Schema *schema = GraphContext_GetSchemaByID (gc, rec->relation_id,
+	Schema *schema = GraphContext_GetSchemaByID (gc, rec->delete_edge.relation_id,
 			SCHEMA_EDGE) ;
 	const char *rel_name = Schema_GetName (schema) ;
 
 	IdIter ids, srcs, dsts ;
-	_IdIter_Init (&ids,  &rec->ids) ;
-	_IdIter_Init (&srcs, &rec->src) ;
-	_IdIter_Init (&dsts, &rec->dst) ;
+	_IdIter_Init (&ids,  &rec->delete_edge.ids) ;
+	_IdIter_Init (&srcs, &rec->delete_edge.src) ;
+	_IdIter_Init (&dsts, &rec->delete_edge.dst) ;
 
 	Edge batch[APPLY_BATCH] ;
 	uint32_t n = 0 ;
@@ -961,7 +990,7 @@ static bool _ApplyDeleteEdge
 		// edge's endpoints cannot be recovered afterwards, so they are used
 		// rather than re-derived
 		Edge *e = batch + n ;
-		*e = GE_NEW_LABELED_EDGE (rel_name, rec->relation_id) ;
+		*e = GE_NEW_LABELED_EDGE (rel_name, rec->delete_edge.relation_id) ;
 		e->id      = id ;
 		e->src_id  = src ;
 		e->dest_id = dst ;
@@ -978,7 +1007,7 @@ static bool _ApplyDeleteEdge
 		// type from the wire are restored over whatever it left
 		e->src_id     = src ;
 		e->dest_id    = dst ;
-		e->relationID = rec->relation_id ;
+		e->relationID = rec->delete_edge.relation_id ;
 
 		n++ ;
 
@@ -1025,7 +1054,19 @@ static bool _ApplyLabels
 	const char *op = add ? "SET_LABELS" : "REMOVE_LABELS" ;
 	Graph *g = GraphContext_GetGraph (gc) ;
 
-	if (!_VerifyCountAgainstGraph (rec->count, Graph_NodeCount (g),
+	// SET_LABELS and REMOVE_LABELS are the same shape in two arms - same
+	// fields, opposite direction - so the arm is bound once here and the body
+	// below reads it without asking which opcode it is again.
+	const uint32_t         count    = add ? rec->set_labels.count
+	                                      : rec->remove_labels.count ;
+	const LabelID *const   labels   = add ? rec->set_labels.labels
+	                                      : rec->remove_labels.labels ;
+	const uint16_t         n_labels = add ? rec->set_labels.n_labels
+	                                      : rec->remove_labels.n_labels ;
+	const EffectsV3IdList *ids      = add ? &rec->set_labels.ids
+	                                      : &rec->remove_labels.ids ;
+
+	if (!_VerifyCountAgainstGraph (count, Graph_NodeCount (g),
 				op, "nodes")) {
 		return false ;
 	}
@@ -1058,26 +1099,26 @@ static bool _ApplyLabels
 	// empty - it always pushes - but the two paths differing is accidental on
 	// their side, and one guard covering both is safer than a rule that depends
 	// on that accident holding.
-	if (rec->n_labels == 0) {
+	if (n_labels == 0) {
 		return true ;
 	}
 
-	if (!_VerifyLabels (gc, rec, op)) {
+	if (!_VerifyLabels (gc, labels, n_labels, op)) {
 		return false ;
 	}
 
-	GrB_Vector *lbls = rm_calloc (rec->n_labels, sizeof (GrB_Vector)) ;
+	GrB_Vector *lbls = rm_calloc (n_labels, sizeof (GrB_Vector)) ;
 	const uint64_t cap = Graph_NodeCap (g) ;
 
-	for (uint16_t i = 0; i < rec->n_labels; i++) {
-		Schema *s = GraphContext_GetSchemaByID (gc, rec->labels[i],
+	for (uint16_t i = 0; i < n_labels; i++) {
+		Schema *s = GraphContext_GetSchemaByID (gc, labels[i],
 				SCHEMA_NODE) ;
 		GrB_OK (GrB_Vector_new (lbls + i, GrB_BOOL, cap)) ;
 		GrB_OK (GrB_set (lbls[i], (char*) Schema_GetName (s), GrB_NAME)) ;
 	}
 
 	IdIter it ;
-	_IdIter_Init (&it, &rec->ids) ;
+	_IdIter_Init (&it, ids) ;
 
 	bool ok = true ;
 	uint64_t id ;
@@ -1091,7 +1132,7 @@ static bool _ApplyLabels
 			break ;
 		}
 
-		for (uint16_t i = 0; i < rec->n_labels; i++) {
+		for (uint16_t i = 0; i < n_labels; i++) {
 			GrB_OK (GrB_Vector_setElement (lbls[i], true, id)) ;
 		}
 	}
@@ -1104,15 +1145,15 @@ static bool _ApplyLabels
 
 	if (ok) {
 		if (add) {
-			GraphHub_UpdateNodeLabels (gc, lbls, rec->n_labels, NULL, 0,
+			GraphHub_UpdateNodeLabels (gc, lbls, n_labels, NULL, 0,
 					false) ;
 		} else {
-			GraphHub_UpdateNodeLabels (gc, NULL, 0, lbls, rec->n_labels,
+			GraphHub_UpdateNodeLabels (gc, NULL, 0, lbls, n_labels,
 					false) ;
 		}
 	}
 
-	for (uint16_t i = 0; i < rec->n_labels; i++) {
+	for (uint16_t i = 0; i < n_labels; i++) {
 		GrB_OK (GrB_free (lbls + i)) ;
 	}
 	rm_free (lbls) ;
@@ -1158,7 +1199,7 @@ static bool _OptionsToMap
 	const EffectsV3Record *rec,
 	SIValue *out
 ) {
-	const EffectsV3IndexOptions *o = &rec->options ;
+	const EffectsV3IndexOptions *o = &rec->create_index.options ;
 
 	*out = Map_New (8) ;
 
@@ -1189,7 +1230,7 @@ static bool _OptionsToMap
 	if (o->dimension == 0) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_INDEX vector field on '%s' declares "
-				"dimension 0, which this build cannot create", rec->name) ;
+				"dimension 0, which this build cannot create", rec->create_index.name) ;
 		Map_Free (*out) ;
 		*out = SI_NullVal () ;
 		return false ;
@@ -1235,7 +1276,7 @@ static bool _OptionsToMap
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT CREATE_INDEX vector field on '%s' asks "
 						"for similarity function %" PRIu64
-						", which this build cannot create", rec->name,
+						", which this build cannot create", rec->create_index.name,
 						o->sim_func) ;
 				Map_Free (*out) ;
 				*out = SI_NullVal () ;
@@ -1269,24 +1310,29 @@ static bool _OptionsToMap
 static Schema *_VerifyDDLRefs
 (
 	GraphContext *gc,
-	const EffectsV3Record *rec,
+	SchemaType schema_type,
+	int schema_id,
+	const char *name,
+	const EffectsV3AttrRef *attrs,
+	uint16_t n_attrs,
 	const char *op
 ) {
-	Schema *s = VerifySchema (gc, rec->schema_type, rec->schema_id, rec->name) ;
+	// THE NAME IS THE CROSS-CHECK, not decoration. VerifySchema takes the id
+	// and the name together so a stale or diverged id is refused instead of
+	// resolving to the wrong schema locally.
+	Schema *s = VerifySchema (gc, schema_type, schema_id, name) ;
 	if (s == NULL) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT %s references schema '%s' (%d) which does not "
-				"resolve locally", op, rec->name, rec->schema_id) ;
+				"resolve locally", op, name, schema_id) ;
 		return NULL ;
 	}
 
-	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
-		if (!VerifyAttribute (gc, rec->attrs_ref[i].id,
-					rec->attrs_ref[i].name)) {
+	for (uint16_t i = 0 ; i < n_attrs ; i++) {
+		if (!VerifyAttribute (gc, attrs[i].id, attrs[i].name)) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT %s references attribute '%s' (%u) which does "
-					"not resolve locally", op, rec->attrs_ref[i].name,
-					rec->attrs_ref[i].id) ;
+					"not resolve locally", op, attrs[i].name, attrs[i].id) ;
 			return NULL ;
 		}
 	}
@@ -1310,15 +1356,17 @@ static bool _ApplyCreateIndex
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	Schema *s = _VerifyDDLRefs (gc, rec, "CREATE_INDEX") ;
+	Schema *s = _VerifyDDLRefs (gc, rec->create_index.schema_type, rec->create_index.schema_id,
+			rec->create_index.name, rec->create_index.attrs,
+			rec->create_index.n_attrs, "CREATE_INDEX") ;
 	if (s == NULL) {
 		return false ;
 	}
 
-	if (rec->n_attrs_ref == 0) {
+	if (rec->create_index.n_attrs == 0) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_INDEX on '%s' names no fields",
-				rec->name) ;
+				rec->create_index.name) ;
 		return false ;
 	}
 
@@ -1328,19 +1376,19 @@ static bool _ApplyCreateIndex
 	}
 
 	const GraphEntityType et =
-		(rec->schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
+		(rec->create_index.schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
 
 	bool ok = true ;
 	Index idx = NULL ;
 
-	for (uint16_t i = 0 ; i < rec->n_attrs_ref && ok ; i++) {
-		idx = GraphHub_AddIndex (gc, rec->name, rec->attrs_ref[i].name, et,
-				(IndexFieldType)rec->field_type, options, false) ;
+	for (uint16_t i = 0 ; i < rec->create_index.n_attrs && ok ; i++) {
+		idx = GraphHub_AddIndex (gc, rec->create_index.name, rec->create_index.attrs[i].name, et,
+				(IndexFieldType)rec->create_index.field_type, options, false) ;
 
 		if (idx == NULL) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT CREATE_INDEX failed to create field '%s' "
-					"on '%s'", rec->attrs_ref[i].name, rec->name) ;
+					"on '%s'", rec->create_index.attrs[i].name, rec->create_index.name) ;
 			ok = false ;
 		}
 	}
@@ -1349,16 +1397,16 @@ static bool _ApplyCreateIndex
 	// index-level configuration, once per statement
 	//--------------------------------------------------------------------------
 
-	if (ok && rec->options.has_language) {
-		Index_SetLanguage (idx, rec->options.language) ;
+	if (ok && rec->create_index.options.has_language) {
+		Index_SetLanguage (idx, rec->create_index.options.language) ;
 	}
 
-	if (ok && rec->options.has_stopwords) {
+	if (ok && rec->create_index.options.has_stopwords) {
 		// Index_SetStopwords takes ownership of the array, so it is built here
 		// rather than borrowed from the record
-		char **sw = arr_new (char*, rec->options.n_stopwords) ;
-		for (uint64_t i = 0 ; i < rec->options.n_stopwords ; i++) {
-			arr_append (sw, rm_strdup (rec->options.stopwords[i])) ;
+		char **sw = arr_new (char*, rec->create_index.options.n_stopwords) ;
+		for (uint64_t i = 0 ; i < rec->create_index.options.n_stopwords ; i++) {
+			arr_append (sw, rm_strdup (rec->create_index.options.stopwords[i])) ;
 		}
 
 		if (!Index_ContainsStopwords (idx)) {
@@ -1390,21 +1438,23 @@ static bool _ApplyDropIndex
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	Schema *s = _VerifyDDLRefs (gc, rec, "DROP_INDEX") ;
+	Schema *s = _VerifyDDLRefs (gc, rec->drop_index.schema_type, rec->drop_index.schema_id,
+			rec->drop_index.name, rec->drop_index.attrs,
+			rec->drop_index.n_attrs, "DROP_INDEX") ;
 	if (s == NULL) {
 		return false ;
 	}
 
 	const GraphEntityType et =
-		(rec->schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
+		(rec->drop_index.schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
 
-	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
-		if (GraphHub_DropIndex (gc, rec->schema_type, rec->name,
-					rec->attrs_ref[i].name, (IndexFieldType)rec->field_type,
+	for (uint16_t i = 0 ; i < rec->drop_index.n_attrs ; i++) {
+		if (GraphHub_DropIndex (gc, rec->drop_index.schema_type, rec->drop_index.name,
+					rec->drop_index.attrs[i].name, (IndexFieldType)rec->drop_index.field_type,
 					false) != INDEX_OK) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT DROP_INDEX failed to drop field '%s' on "
-					"'%s'", rec->attrs_ref[i].name, rec->name) ;
+					"'%s'", rec->drop_index.attrs[i].name, rec->drop_index.name) ;
 			return false ;
 		}
 	}
@@ -1428,20 +1478,20 @@ static void _AdoptConstraintStatus
 	Schema *s,
 	const EffectsV3Record *rec
 ) {
-	if (rec->status == CT_PENDING) {
+	if (rec->create_constraint.status == CT_PENDING) {
 		return ;
 	}
 
-	AttributeID attrs[rec->n_attrs_ref > 0 ? rec->n_attrs_ref : 1] ;
-	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
-		attrs[i] = rec->attrs_ref[i].id ;
+	AttributeID attrs[rec->create_constraint.n_attrs > 0 ? rec->create_constraint.n_attrs : 1] ;
+	for (uint16_t i = 0 ; i < rec->create_constraint.n_attrs ; i++) {
+		attrs[i] = rec->create_constraint.attrs[i].id ;
 	}
 
-	Constraint c = Schema_GetConstraint (s, (ConstraintType)rec->constraint_type,
-			attrs, rec->n_attrs_ref) ;
+	Constraint c = Schema_GetConstraint (s, (ConstraintType)rec->create_constraint.constraint_type,
+			attrs, rec->create_constraint.n_attrs) ;
 
 	if (c != NULL && Constraint_GetStatus (c) == CT_PENDING) {
-		Constraint_SetStatus (c, (ConstraintStatus)rec->status) ;
+		Constraint_SetStatus (c, (ConstraintStatus)rec->create_constraint.status) ;
 	}
 }
 
@@ -1461,38 +1511,50 @@ static bool _ApplyCreateConstraint
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	const GraphEntityType et = (GraphEntityType)rec->entity_type ;
+	const GraphEntityType et = (GraphEntityType)rec->create_constraint.entity_type ;
 
 	// GraphEntityType is 1-BASED: GETYPE_UNKNOWN takes 0, so a node is 1
 	if (et != GETYPE_NODE && et != GETYPE_EDGE) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_CONSTRAINT unknown entity type %u",
-				rec->entity_type) ;
+				rec->create_constraint.entity_type) ;
 		return false ;
 	}
 
-	Schema *s = _VerifyDDLRefs (gc, rec, "CREATE_CONSTRAINT") ;
+
+	// THE SCHEMA TYPE COMES FROM entity_type, and this was a latent bug the
+	// typed model exposed. The flat record had one shared 'schema_type' field
+	// that _ReadConstraintRecord never set, so it was 0 - SCHEMA_NODE - and an
+	// EDGE constraint verified its schema id against the NODE schemas. It
+	// resolved to whatever node schema happened to hold that id, or to nothing.
+	// Constraints carry entity_type rather than schema_type on this wire, and
+	// it is 1-based, so the mapping is explicit here.
+	const SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
+
+	Schema *s = _VerifyDDLRefs (gc, st, rec->create_constraint.schema_id,
+			rec->create_constraint.name, rec->create_constraint.attrs,
+			rec->create_constraint.n_attrs, "CREATE_CONSTRAINT") ;
 	if (s == NULL) {
 		return false ;
 	}
 
-	const char *props[rec->n_attrs_ref > 0 ? rec->n_attrs_ref : 1] ;
-	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
-		props[i] = rec->attrs_ref[i].name ;
+	const char *props[rec->create_constraint.n_attrs > 0 ? rec->create_constraint.n_attrs : 1] ;
+	for (uint16_t i = 0 ; i < rec->create_constraint.n_attrs ; i++) {
+		props[i] = rec->create_constraint.attrs[i].name ;
 	}
 
 	// the wire status is the PRIMARY's outcome, and it is validated before use
-	if (rec->has_status && rec->status > CT_FAILED) {
+	if (rec->create_constraint.has_status && rec->create_constraint.status > CT_FAILED) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' carries unknown status "
-				"%u", rec->name, rec->status) ;
+				"%u", rec->create_constraint.name, rec->create_constraint.status) ;
 		return false ;
 	}
 
 	ConstraintCreateStatus status ;
 	const char *err_msg = NULL ;
-	Constraint c = GraphHub_AddConstraint (gc, (ConstraintType)rec->constraint_type,
-			et, rec->name, props, (uint8_t)rec->n_attrs_ref, false, &status,
+	Constraint c = GraphHub_AddConstraint (gc, (ConstraintType)rec->create_constraint.constraint_type,
+			et, rec->create_constraint.name, props, (uint8_t)rec->create_constraint.n_attrs, false, &status,
 			&err_msg) ;
 
 	switch (status) {
@@ -1506,7 +1568,7 @@ static bool _ApplyCreateConstraint
 			//
 			// GraphHub_AddConstraint returns NULL on this path, so the
 			// constraint has to be looked up to be updated.
-			if (rec->has_status) {
+			if (rec->create_constraint.has_status) {
 				_AdoptConstraintStatus (s, rec) ;
 			}
 			return true ;
@@ -1514,7 +1576,7 @@ static bool _ApplyCreateConstraint
 		case CONSTRAINT_CREATED:
 			ASSERT (c != NULL) ;
 
-			if (rec->has_status) {
+			if (rec->create_constraint.has_status) {
 				// THE REPLICA REPLAYS THE PRIMARY'S DECISION, IT DOES NOT
 				// RE-DERIVE IT.
 				//
@@ -1538,7 +1600,7 @@ static bool _ApplyCreateConstraint
 		default:
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' failed: %s",
-					rec->name, err_msg != NULL ? err_msg : "unknown error") ;
+					rec->create_constraint.name, err_msg != NULL ? err_msg : "unknown error") ;
 			return false ;
 	}
 }
@@ -1549,29 +1611,35 @@ static bool _ApplyDropConstraint
 	GraphContext *gc,
 	const EffectsV3Record *rec
 ) {
-	const GraphEntityType et = (GraphEntityType)rec->entity_type ;
+	const GraphEntityType et = (GraphEntityType)rec->drop_constraint.entity_type ;
 
 	if (et != GETYPE_NODE && et != GETYPE_EDGE) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT DROP_CONSTRAINT unknown entity type %u",
-				rec->entity_type) ;
+				rec->drop_constraint.entity_type) ;
 		return false ;
 	}
 
-	if (_VerifyDDLRefs (gc, rec, "DROP_CONSTRAINT") == NULL) {
+	// see _ApplyCreateConstraint: the schema type is derived from entity_type,
+	// not from a field this record does not have
+	const SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
+
+	if (_VerifyDDLRefs (gc, st, rec->drop_constraint.schema_id,
+			rec->drop_constraint.name, rec->drop_constraint.attrs,
+			rec->drop_constraint.n_attrs, "DROP_CONSTRAINT") == NULL) {
 		return false ;
 	}
 
-	const char *props[rec->n_attrs_ref > 0 ? rec->n_attrs_ref : 1] ;
-	for (uint16_t i = 0 ; i < rec->n_attrs_ref ; i++) {
-		props[i] = rec->attrs_ref[i].name ;
+	const char *props[rec->drop_constraint.n_attrs > 0 ? rec->drop_constraint.n_attrs : 1] ;
+	for (uint16_t i = 0 ; i < rec->drop_constraint.n_attrs ; i++) {
+		props[i] = rec->drop_constraint.attrs[i].name ;
 	}
 
 	const char *err_msg = NULL ;
-	if (!GraphHub_DropConstraint (gc, (ConstraintType)rec->constraint_type, et,
-				rec->name, props, (uint8_t)rec->n_attrs_ref, false, &err_msg)) {
+	if (!GraphHub_DropConstraint (gc, (ConstraintType)rec->drop_constraint.constraint_type, et,
+				rec->drop_constraint.name, props, (uint8_t)rec->drop_constraint.n_attrs, false, &err_msg)) {
 		RedisModule_Log (NULL, "warning",
-				"GRAPH.EFFECT DROP_CONSTRAINT on '%s' failed: %s", rec->name,
+				"GRAPH.EFFECT DROP_CONSTRAINT on '%s' failed: %s", rec->drop_constraint.name,
 				err_msg != NULL ? err_msg : "unknown error") ;
 		return false ;
 	}
