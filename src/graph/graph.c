@@ -652,6 +652,50 @@ void Graph_CreateNode
 	}
 }
 
+// create a node AT THE ID THE CALLER STATES
+//
+// Graph_CreateNode above ALLOCATES an id; this one is told which id to use.
+//
+// The distinction is the whole of v3's replica contract: the replica does not
+// infer an id and then check its guess, it accepts the primary's. Those look
+// alike and are not. C's allocator reuses the most recently freed id
+// (datablock.c, arr_pop) and Rust's reuses the smallest, so after any
+// delete-then-create cycle a check of "the id I would have picked" fails on two
+// engines that are both behaving correctly, and the pair falls back to a full
+// resync once per cycle, indefinitely.
+//
+// What is still checked is LIVENESS, which is a property of this graph rather
+// than a guess about the other one: an id that is already live here cannot be
+// created again, and that is real divergence.
+//
+// returns false if 'n->id' is already live
+bool Graph_CreateNodeAtId
+(
+	Graph *g,         // graph
+	Node *n,          // node to create; n->id is the id to create it AT
+	LabelID *labels,  // node's labels
+	uint label_count  // number of labels
+) {
+	ASSERT (g != NULL) ;
+	ASSERT (n != NULL) ;
+	ASSERT (n->id != INVALID_ENTITY_ID) ;
+	ASSERT (label_count == 0 || (label_count > 0 && labels != NULL)) ;
+
+	AttributeSet *set = DataBlock_AllocateItemAtIdx (g->nodes, n->id) ;
+	if (set == NULL) {
+		return false ;
+	}
+
+	n->attributes  = set ;
+	*n->attributes = NULL ;
+
+	if (label_count > 0) {
+		Graph_LabelNode (g, ENTITY_GET_ID (n), labels, label_count) ;
+	}
+
+	return true ;
+}
+
 // create multiple nodes
 // all nodes share the same set of labels
 void Graph_CreateNodes

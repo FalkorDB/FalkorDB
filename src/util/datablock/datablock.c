@@ -291,6 +291,92 @@ const uint64_t *DataBlock_DeletedItems
 // Out of order functionality
 //------------------------------------------------------------------------------
 
+// claim a SPECIFIC index for a live allocation
+//
+// This exists because DataBlock_AllocateItemOutOfOrder below CANNOT be used on
+// a live graph. That one marks the header and bumps itemCount and never
+// touches 'deletedIdx' - correct for an RDB load, where the free list is
+// rebuilt afterwards from the headers, and WRONG here: the id stays on the free
+// list and the next ordinary allocation hands it out a second time, so two
+// entities end up sharing one id.
+//
+// Used by effects apply, where the id is not this node's to choose. C's
+// allocator pops the most recently freed id and Rust's takes the smallest, so
+// after any delete-then-create cycle the two disagree about which id a new
+// entity gets. The replica must take the id the primary states.
+//
+// Three cases, and the caller only ever needs to distinguish the last:
+//
+//   idx is on the free list      claim it, and remove it from the list
+//   idx is past the high water   extend, and every id SKIPPED OVER becomes
+//                                free rather than lost - a leaked id would
+//                                make this replica's own allocation diverge
+//                                the moment it has to allocate anything
+//                                itself, which is invisible until promotion
+//   idx is live                  genuine divergence; returns NULL
+//
+// returns NULL when idx is already live
+void *DataBlock_AllocateItemAtIdx
+(
+	DataBlock *dataBlock,
+	uint64_t idx
+) {
+	ASSERT (dataBlock != NULL) ;
+
+	// every id below this is either live or on the free list; every id at or
+	// above it has never been handed out
+	const uint64_t high_water =
+		dataBlock->itemCount + (uint64_t)arr_len (dataBlock->deletedIdx) ;
+
+	DataBlock_Ensure (dataBlock, idx) ;
+	DataBlockItemHeader *header = DataBlock_GetItemHeader (dataBlock, idx) ;
+
+	if (idx < high_water) {
+		// the id is in use by this replica: the primary created an entity at
+		// an id we still hold. Not recoverable here - the caller refuses.
+		if (!IS_ITEM_DELETED (header)) {
+			return NULL ;
+		}
+
+		// take it off the free list
+		//
+		// The list is a SET that happens to be stored in an array and popped
+		// from the back, so its order carries no meaning - swapping the claimed
+		// entry with the last and popping preserves the set. A replica never
+		// allocates while it is a replica, so the order only becomes
+		// observable after promotion, and then only as which free id is reused
+		// first.
+		//
+		// The scan is why this is O(free list) per claim. Measured before being
+		// left this way; see the note in effects_v3_apply.c.
+		const uint32_t n = arr_len (dataBlock->deletedIdx) ;
+		for (uint32_t i = 0 ; i < n ; i++) {
+			if (dataBlock->deletedIdx[i] == idx) {
+				dataBlock->deletedIdx[i] = dataBlock->deletedIdx[n - 1] ;
+				arr_pop (dataBlock->deletedIdx) ;
+				break ;
+			}
+		}
+
+		MARK_HEADER_AS_NOT_DELETED (header) ;
+		dataBlock->itemCount++ ;
+		return ITEM_DATA (header) ;
+	}
+
+	// past the high-water mark: every id we step over has to land on the free
+	// list. In practice this loop runs zero times, because a primary's ids are
+	// dense - it is here for the case where they are not.
+	for (uint64_t j = high_water ; j < idx ; j++) {
+		DataBlockItemHeader *skipped = DataBlock_GetItemHeader (dataBlock, j) ;
+		MARK_HEADER_AS_DELETED (skipped) ;
+		arr_append (dataBlock->deletedIdx, j) ;
+	}
+
+	MARK_HEADER_AS_NOT_DELETED (header) ;
+	dataBlock->itemCount++ ;
+	return ITEM_DATA (header) ;
+}
+
 void *DataBlock_AllocateItemOutOfOrder
 (
 	DataBlock *dataBlock,

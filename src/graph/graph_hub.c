@@ -46,6 +46,46 @@ void GraphHub_CreateNode
 	}
 }
 
+// create a node at the id the caller states, and index it
+//
+// GraphHub_CreateNode above allocates the id; this one is told it. Used by
+// effects apply, where the id belongs to the primary.
+//
+// NEVER LOGS. A replica applying an effect does not re-emit it and has no undo
+// log for it, so the 'log' parameter the sibling takes would only ever be
+// false here and is not offered.
+//
+// On failure the caller still owns 'set' - nothing has been attached to a node.
+//
+// returns false if the id is already live, which is divergence
+bool GraphHub_CreateNodeAtId
+(
+	GraphContext *gc,
+	Node *n,          // n->id is the id to create at
+	LabelID *labels,
+	uint label_count,
+	AttributeSet set
+) {
+	ASSERT (n  != NULL) ;
+	ASSERT (gc != NULL) ;
+
+	if (!Graph_CreateNodeAtId (GraphContext_GetGraph (gc), n, labels,
+				label_count)) {
+		return false ;
+	}
+
+	*n->attributes = set ;
+
+	// add node to the indexes of every label it carries
+	for (uint i = 0; i < label_count; i++) {
+		Schema *s = GraphContext_GetSchemaByID (gc, labels[i], SCHEMA_NODE) ;
+		ASSERT (s) ;
+		Schema_AddNodeToIndex (s, n) ;
+	}
+
+	return true ;
+}
+
 // batch create nodes
 // all nodes share the same set of labels
 // set the nodes labels and attributes

@@ -153,6 +153,20 @@ void Graph_CreateNode
 	uint label_count  // number of labels
 );
 
+// create a node at the id the caller states, rather than allocating one
+//
+// used by effects apply: the replica accepts the primary's id instead of
+// inferring one and checking its guess. Returns false if the id is already
+// live, which is divergence.
+bool Graph_CreateNodeAtId
+(
+	Graph *g,         // graph
+	Node *n,          // node to create; n->id is the id to create it AT
+	LabelID *labels,  // node's labels
+	uint label_count  // number of labels
+);
+
+
 // create multiple nodes
 // all nodes share the same set of labels
 void Graph_CreateNodes
