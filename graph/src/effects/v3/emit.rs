@@ -860,9 +860,14 @@ fn digest_labels(
         }
         // A label record's whole payload is its label set, so with no labels it
         // states nothing about the nodes it names — it is an instruction to do
-        // nothing. `MATCH (n) SET n:Foo REMOVE n:Foo` reaches here with an empty
-        // vec, because `remove_node_labels` retains over the staged set and
-        // leaves the key behind when it empties.
+        // nothing. `MATCH (n) SET n:Foo REMOVE n:Foo` is the query that reaches
+        // for one: the removal cancels the staged add and empties that node's
+        // label vec.
+        //
+        // `Pending` no longer hands one over — its label mutators drop an entry
+        // that a cancellation has emptied, so the two staging maps stay disjoint
+        // per node — and this stays as the emitter's own guard rather than an
+        // assumption about its caller.
         //
         // Suppressed rather than tolerated, for the same reason
         // `set_node_attributes` refuses to stage an empty attribute map: the
