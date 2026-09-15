@@ -3,7 +3,7 @@ ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 # Redis base image version. Override via `--build-arg REDIS_VERSION=X.Y.Z`
 # to ship against a different redis release without editing the Dockerfile.
-ARG REDIS_VERSION=8.6.3
+ARG REDIS_VERSION=8.10.1
 
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
@@ -65,8 +65,13 @@ COPY --from=builder /out/falkordb.so /falkordb.so
 #   2. The upstream image also ships the bundled stack modules
 #      (redisearch, rejson, redistimeseries, redisbloom — ~25 MB combined).
 #      run.sh only `--loadmodule`s falkordb.so so those modules are dead
-#      weight. Building with BUILD_WITH_MODULES=no skips them entirely
-#      and eliminates the rust toolchain requirement that pulls them in.
+#      weight. A plain clone of the redis tag carries no module sources —
+#      since 8.10 the bundled modules are cloned on demand by
+#      `make modules-update`, so the default build is redis-only and the
+#      rust toolchain those modules pull in is never needed.
+#      (BUILD_WITH_MODULES=no below is the pre-8.10 spelling of the same
+#      intent; harmless now, and kept so the recipe still builds
+#      redis-only if REDIS_VERSION is pinned back to an 8.6.x tag.)
 #
 # Trade-off: we are now the SBOM/CVE publisher for the redis binaries,
 # losing the upstream image's attestation chain. Acceptable for a DB
@@ -169,6 +174,15 @@ RUN set -eux; \
 COPY --from=redis-builder /redis-install/bin/redis-server /usr/local/bin/redis-server
 COPY --from=redis-builder /redis-install/bin/redis-cli    /usr/local/bin/redis-cli
 
+# `make install` also creates redis-sentinel / redis-check-rdb / redis-check-aof
+# as symlinks to redis-server — the binary picks its mode from argv[0]. They are
+# recreated here rather than COPY'd (COPY dereferences symlinks, which would
+# triple the binary's size) so the image keeps the entry points the upstream
+# redis image — and every previous FalkorDB image — provides, at zero size cost.
+RUN ln -s redis-server /usr/local/bin/redis-sentinel && \
+    ln -s redis-server /usr/local/bin/redis-check-rdb && \
+    ln -s redis-server /usr/local/bin/redis-check-aof
+
 RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_BIN_PATH} ${FALKORDB_IMPORT_PATH} ${FALKORDB_TLS_PATH} && \
     ln -s ${FALKORDB_DATA_PATH} /data
 
@@ -181,14 +195,19 @@ COPY --from=builder /out/falkordb.so ${FALKORDB_BIN_PATH}/falkordb.so
 
 # Runtime-stage sanity (cheap belt-and-braces; the load-bearing checks are in
 # the builder stage where binutils is available). Verify falkordb.so deps and
-# that the redis binaries we copied are runnable in this base.
+# that every redis entry point this image is expected to ship is present and
+# runnable in this base — the sentinel/check-* symlinks are covered here so a
+# future COPY-only refactor cannot silently drop them again (issue #2827).
 RUN deps="$(ldd ${FALKORDB_BIN_PATH}/falkordb.so | awk '{print $1}' | sort -u)" && \
     echo "$deps" && \
     if echo "$deps" | grep -E '^(libomp|libgomp|libgraphblas|liblagraph|liblagraphx|libredisearch|libVectorSimilarity)'; then \
         echo "FAIL: forbidden dyn dep in final image"; exit 1; \
     fi && \
     redis-server --version && \
-    redis-cli --version
+    redis-cli --version && \
+    redis-sentinel --version && \
+    redis-check-rdb --version && \
+    redis-check-aof --version
 
 ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \
