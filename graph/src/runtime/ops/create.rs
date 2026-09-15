@@ -27,7 +27,7 @@
 use std::cell::OnceCell;
 use std::sync::Arc;
 
-use crate::graph::graph::LabelId;
+use crate::graph::graph::{LabelId, NodeId, RelationshipId};
 use crate::parser::ast::{ExprIR, QueryGraph, QueryNode, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::eval::{ExprEval, ExprNode};
@@ -150,11 +150,17 @@ impl Runtime<'_> {
             let active_len = batch.active_len();
 
             // Reserve all node IDs at once
-            let node_ids = {
+            // The graph lends its recycle bin and is not otherwise touched:
+            // allocation is the id space's, so this needs no write borrow.
+            let node_ids: Vec<NodeId> = {
                 let mut pending = self.pending.borrow_mut();
-                self.g
-                    .borrow_mut()
-                    .reserve_nodes(active_len, pending.node_space())?
+                let g = self.g.borrow();
+                pending
+                    .node_space()
+                    .reserve(active_len, g.deleted_nodes())?
+                    .into_iter()
+                    .map(NodeId::from)
+                    .collect()
             };
 
             // Record creations and set labels in batch
@@ -269,11 +275,15 @@ impl Runtime<'_> {
             }
 
             // Reserve all relationship IDs at once
-            let ids = {
+            let ids: Vec<RelationshipId> = {
                 let mut pending = self.pending.borrow_mut();
-                self.g
-                    .borrow_mut()
-                    .reserve_relationships(endpoints.len(), pending.rel_space())?
+                let g = self.g.borrow();
+                pending
+                    .rel_space()
+                    .reserve(endpoints.len(), g.deleted_relationships())?
+                    .into_iter()
+                    .map(RelationshipId::from)
+                    .collect()
             };
 
             // Record all created relationships directly into pending (no intermediate Vec)
