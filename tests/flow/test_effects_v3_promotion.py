@@ -1,4 +1,5 @@
 import time
+import struct
 from common import *
 
 GRAPH_ID = "effects_v3_promotion"
@@ -208,3 +209,117 @@ class testEffectsV3Promotion():
         # minted range shows no gap. Written down because the step is in the
         # test and a later reader would reasonably assume it does something.
         self.env.assertTrue(True)
+
+
+#-------------------------------------------------------------------------------
+# a constraint inherited UNDER CONSTRUCTION is settled on promotion
+#-------------------------------------------------------------------------------
+
+# Hand-built v3 records, kept to the minimum this class needs.
+#
+# Building wire bytes in Python is the pattern that was removed from
+# test_effects_v3.py, and for a good reason: a Python encoder written from the
+# spec can agree with a C decoder that reads the spec the same wrong way, and
+# both pass. That objection does not apply HERE, because these bytes are not the
+# thing under test - they are how the class reaches a state, and the very next
+# assertion checks the state was reached. A malformed payload is refused, the
+# constraint never appears, and the class fails at _inherit_under_construction
+# rather than reporting a false result about promotion.
+_EFFECTS_VERSION          = 3
+_EFFECT_CREATE_CONSTRAINT = 13
+
+def _u8(v):  return struct.pack('<B', v)
+def _u16(v): return struct.pack('<H', v)
+def _u32(v): return struct.pack('<I', v)
+def _i32(v): return struct.pack('<i', v)
+def _u64(v): return struct.pack('<Q', v)
+
+def _string(s):
+    # length is a BYTE COUNT and includes the terminator
+    raw = s.encode() + b'\x00'
+    return _u64(len(raw)) + raw
+
+def _payload(*records, flags=0):
+    return _u8(_EFFECTS_VERSION) + _u8(flags) + b''.join(records)
+
+def _rec_create_constraint(ct, et, status, label_id, label, props):
+    # the property count is a u8 here, not the u16 the index field list uses
+    body = _u32(ct) + _u32(et) + _u32(status) + _i32(label_id) \
+        + _string(label) + _u8(len(props))
+    for aid, name in props:
+        body += _u16(aid) + _string(name)
+    return _u32(_EFFECT_CREATE_CONSTRAINT) + body
+
+
+class testPromotionSettlesInheritedConstraint():
+    """A constraint inherited UNDER CONSTRUCTION is settled on promotion.
+
+    A v3 replica installs the constraint status off the wire and never
+    validates. That is correct while it is a replica and wrong the instant it is
+    promoted: the old primary was still building this constraint and now nobody
+    is. Nothing else settles it either -- the primary re-announces only on
+    CT_ACTIVE (indexer.c:230, which is already on origin/master, so the stuck
+    window predates v3), and the constraint enforces while it sits there,
+    rejecting writes against a rule it never checked.
+
+    THE PAIRING IS THE TEST. Both cases promote identically and differ only in
+    whether a row violates the constraint: a violating row must settle FAILED,
+    clean data must settle OPERATIONAL. A handler that stamped a status rather
+    than validating -- everything FAILED, or everything ACTIVE -- passes exactly
+    one of them. Neither case alone distinguishes validating from stamping, so
+    deleting either one silently guts the class.
+    """
+
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID + "_constraint")
+
+    def _status(self):
+        res = self.graph.query(
+            "CALL db.constraints() YIELD status RETURN status")
+        return [row[0] for row in res.result_set]
+
+    def _inherit_under_construction(self, data):
+        # the state the primary's FIRST announcement leaves behind: status
+        # PENDING (1), which the replica adopts without validating
+        self.graph.query(data)
+        self.conn.execute_command("GRAPH.EFFECT", self.graph.name, _payload(
+            _rec_create_constraint(ct=1, et=1, status=1,
+                label_id=0, label="Q", props=[(0, "title")])))
+
+        # this assertion is also what makes the hand-built bytes safe: if the
+        # payload were malformed it is refused here, not mistaken for a result
+        self.env.assertEquals(self._status(), ["UNDER CONSTRUCTION"])
+
+    def _promote(self):
+        # a role change to master needs only this instance: REPLICAOF at a port
+        # nothing is listening on makes it a replica with no link, and NO ONE
+        # promotes it straight back, firing NOW_MASTER
+        port = self.env.envRunner.port
+        self.conn.execute_command("REPLICAOF", "127.0.0.1", str(port + 1))
+        self.conn.execute_command("REPLICAOF", "NO", "ONE")
+
+        # settling is queued to the indexer pool rather than done on the event
+        # thread, so the status changes after the command returns
+        for _ in range(100):
+            s = self._status()
+            if s and s[0] != "UNDER CONSTRUCTION":
+                break
+            time.sleep(0.1)
+
+    def test01_violating_row_settles_failed(self):
+        self._inherit_under_construction(
+            "CREATE (:Q {title: 'x'}), (:Q {other: 1})")
+        self._promote()
+        self.env.assertEquals(self._status(), ["FAILED"])
+
+    def test02_clean_data_settles_operational(self):
+        self.graph.delete()
+        self._inherit_under_construction(
+            "CREATE (:Q {title: 'x'}), (:Q {title: 'y'})")
+        self._promote()
+        self.env.assertEquals(self._status(), ["OPERATIONAL"])
