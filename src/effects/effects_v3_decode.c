@@ -1194,7 +1194,6 @@ static EffectsV3Status _ReadConstraintRecord
 		if (!_ReadU32 (stream, &rec->create_constraint.status)) {
 			return EFFECTS_V3_TRUNCATED ;
 		}
-		rec->create_constraint.has_status = true ;
 	}
 
 	int32_t label_id ;
