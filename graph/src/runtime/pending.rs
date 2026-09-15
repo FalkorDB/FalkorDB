@@ -198,16 +198,24 @@ impl DegreeIndex {
         g: &Graph,
     ) {
         for id in std::mem::take(&mut self.unresolved_deletes) {
-            let Some((from, to)) = g.relationship_endpoints(id) else {
+            // Establish that the edge is really in the committed graph before
+            // asking anything else about it. `endpoints_for_edge` is the
+            // existence test: the slot is cleared on delete, so `None` means
+            // there is no such edge and there is no degree to adjust. Only
+            // once it answers does `get_relationship_type_id` get called —
+            // this is the id that used to reach it unchecked and abort the
+            // process, because a created-and-deleted edge never commits.
+            let Some((from, to)) = g.endpoints_for_edge(id.into()) else {
                 continue;
             };
-            let Some(type_name) = g
-                .relationship_type_id_for_edge(id)
-                .and_then(|t| g.get_type(t))
-            else {
+            // An edge that exists has a type; that is the invariant
+            // `get_relationship_type_id` states, and every other caller relies
+            // on it. `get_type` is fallible only because the id is looked up
+            // in the schema, which the same commit populated.
+            let Some(type_name) = g.get_type(g.get_relationship_type_id(id)) else {
                 continue;
             };
-            self.record_delete_of_created(from, to, &type_name);
+            self.record_delete_of_created(NodeId::from(from), NodeId::from(to), &type_name);
         }
     }
 
