@@ -155,6 +155,24 @@ void TensorIterator_ScanRange
 	bool transpose       // scan transposed of T
 );
 
+// iterate over a range of vectors in true ascending (row, col) order
+//
+// TensorIterator_ScanRange drains the tensor's entire main matrix before
+// ever yielding a pending (delta-plus) entry, so a caller resuming a scan
+// across multiple attach cycles (e.g. batched index population,
+// re-attaching at [last_row, MAX) between batches) can have delta-plus
+// rows below the resume point permanently excluded. This variant merges
+// main and delta-plus content in genuine row-major order instead, so
+// resuming at [last_row, MAX) is guaranteed not to skip anything at or
+// before last_row. Only supports the non-transposed direction.
+void TensorIterator_ScanRange_Sorted
+(
+	TensorIterator *it,  // iterator
+	Tensor T,            // tensor
+	GrB_Index min_row,   // minimum row
+	GrB_Index max_row    // maximum row
+);
+
 // attach iterator to a tensor (or its transpose) without restricting it to a
 // row range, for callers that will repeatedly reseek the same iterator via
 // TensorIterator_IterateRow rather than re-attach on every query. avoids the
