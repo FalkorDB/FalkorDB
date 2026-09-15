@@ -16,16 +16,36 @@ use super::Schema;
 use super::buffered_io::BufferedReader;
 use super::{DECODE_STATE, PendingGraph};
 
+/// What one RDB key turned out to hold.
+pub enum LoadedKey {
+    /// The whole graph: the key stood alone (`key_count == 1`).
+    Graph(Box<Graph>),
+    /// A slice of a multi-key graph, accumulated into `DECODE_STATE`.
+    Partial {
+        /// True when this key is one of the graph's virtual keys rather than
+        /// the key the graph itself lives at. Such a key is bookkeeping: it
+        /// must not be registered as a graph, and it leaves the keyspace once
+        /// the load ends.
+        is_virtual: bool,
+    },
+}
+
 /// Decode a graph key from the RDB stream (v19 format).
 ///
-/// Returns `Ok(Some(graph))` for single-key graphs (key_count == 1),
-/// or `Ok(None)` when the key data has been accumulated into
+/// `key_name` is the Redis key this payload arrived under. A multi-key graph
+/// spans several keys but names itself only once, in every payload's header,
+/// so the key whose name matches is the graph's own and the rest are its
+/// virtual keys — see [`DecodeState::meta_keys`](super::DecodeState::meta_keys).
+///
+/// Returns [`LoadedKey::Graph`] for single-key graphs (key_count == 1), or
+/// [`LoadedKey::Partial`] when the key data has been accumulated into
 /// `DECODE_STATE` for multi-key graphs (key_count > 1).
 #[allow(clippy::too_many_lines)]
 pub fn rdb_load_graph(
     rdb: *mut RedisModuleIO,
+    key_name: &str,
     cache_size: usize,
-) -> Result<Option<Graph>, String> {
+) -> Result<LoadedKey, String> {
     let mut r = BufferedReader::new(rdb);
 
     // --- Header ---
@@ -48,6 +68,16 @@ pub fn rdb_load_graph(
     // For multi-key graphs, check if we already have a pending graph in DECODE_STATE.
     if hdr.key_count > 1 {
         let mut decode_state = DECODE_STATE.lock();
+
+        // C's `decode_graph.c`: "the virtual key name is not equal the graph
+        // name". Everything this key contributes lands in the state keyed by
+        // `hdr.graph_name`, and the finished graph is installed under that
+        // name, so any other key holding a slice of it is a virtual key and
+        // has to be deleted once the load ends.
+        if key_name != hdr.graph_name {
+            decode_state.meta_keys.push(key_name.to_string());
+        }
+
         let is_first_key = !decode_state.pending.contains_key(&hdr.graph_name);
 
         if is_first_key {
@@ -138,7 +168,9 @@ pub fn rdb_load_graph(
             decode_state.finalized.insert(graph_name, graph);
         }
 
-        return Ok(None);
+        return Ok(LoadedKey::Partial {
+            is_virtual: key_name != hdr.graph_name,
+        });
     }
 
     // Single-key path (key_count == 1): decode everything in one go.
@@ -221,7 +253,7 @@ pub fn rdb_load_graph(
     }
     graph.populate_indexes_sync();
 
-    Ok(Some(graph))
+    Ok(LoadedKey::Graph(Box::new(graph)))
 }
 
 /// Decode payload data from the RDB stream into a pending multi-key graph.
