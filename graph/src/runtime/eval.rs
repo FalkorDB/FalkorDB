@@ -406,6 +406,21 @@ impl<'a> ExprEval<'a> {
             ExprIR::Case { has_subject } => {
                 return self.eval_case(*has_subject, node, env, agg_group_key);
             }
+            // Boolean connectives are the backbone of `WHERE` clauses, and the
+            // per-row `Filter` fallback re-evaluates them for every row that
+            // the vectorized kernels can't serve (any `OR`/`NOT`, or a
+            // conjunction whose operands aren't all `var.attr <op> constant`).
+            //
+            // They short-circuit, so like `CASE` they were never able to use
+            // the eager stack machine in `eval_compound`: each arm there
+            // already recursed into `eval_node` directly and pushed exactly one
+            // value, leaving the two `SmallVec` scratch buffers, the node clone
+            // and the push/pop work loop as pure setup cost on the way in.
+            // Dispatching them here skips that entry overhead entirely.
+            ExprIR::And => return self.eval_and(node, env, agg_group_key),
+            ExprIR::Or => return self.eval_or(node, env, agg_group_key),
+            ExprIR::Not => return self.eval_not(node, env, agg_group_key),
+            ExprIR::Xor => return self.eval_xor(node, env, agg_group_key),
             // Fixed-arity operators, dispatched directly.
             //
             // `eval_compound` below is built to accumulate an arbitrary number
@@ -509,6 +524,93 @@ impl<'a> ExprEval<'a> {
         // ELSE is always the last child; the parser substitutes a null
         // constant when the query omits it.
         self.eval_node(&node.child(node.num_children() - 1), env, agg_group_key)
+    }
+
+    /// Evaluates `OR` over the children, short-circuiting on the first `true`.
+    ///
+    /// Cypher's three-valued logic: `true` wins outright, otherwise a `null`
+    /// operand makes the result `null`, and only an all-`false` list is `false`.
+    fn eval_or<R: RowView + ?Sized>(
+        &self,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        let mut is_null = false;
+        for child in node.children() {
+            match self.eval_node(&child, env, agg_group_key)? {
+                Value::Bool(true) => return Ok(Value::Bool(true)),
+                Value::Bool(false) => {}
+                Value::Null => is_null = true,
+                ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+            }
+        }
+        Ok(if is_null {
+            Value::Null
+        } else {
+            Value::Bool(false)
+        })
+    }
+
+    /// Evaluates `AND` over the children, short-circuiting on the first `false`.
+    ///
+    /// Cypher's three-valued logic: `false` wins outright, otherwise a `null`
+    /// operand makes the result `null`, and only an all-`true` list is `true`.
+    fn eval_and<R: RowView + ?Sized>(
+        &self,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        let mut is_null = false;
+        for child in node.children() {
+            match self.eval_node(&child, env, agg_group_key)? {
+                Value::Bool(false) => return Ok(Value::Bool(false)),
+                Value::Bool(true) => {}
+                Value::Null => is_null = true,
+                ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+            }
+        }
+        Ok(if is_null {
+            Value::Null
+        } else {
+            Value::Bool(true)
+        })
+    }
+
+    /// Evaluates `XOR` by folding the children, short-circuiting on `null`.
+    fn eval_xor<R: RowView + ?Sized>(
+        &self,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        let mut last = None;
+        for child in node.children() {
+            match self.eval_node(&child, env, agg_group_key)? {
+                Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
+                Value::Null => return Ok(Value::Null),
+                ir => return Err(format!("Type mismatch: expected Bool but was {ir:?}")),
+            }
+        }
+        Ok(Value::Bool(last.unwrap_or(false)))
+    }
+
+    /// Evaluates `NOT`, propagating `null`.
+    fn eval_not<R: RowView + ?Sized>(
+        &self,
+        node: &ExprNode<'_>,
+        env: Option<&R>,
+        agg_group_key: Option<u64>,
+    ) -> Result<Value, String> {
+        match self.eval_node(&node.child(0), env, agg_group_key)? {
+            Value::Bool(b) => Ok(Value::Bool(!b)),
+            Value::Null => Ok(Value::Null),
+            v => Err(format!(
+                "Type mismatch: expected Boolean or Null but was {}",
+                v.name()
+            )),
+        }
     }
 
     /// Out-of-line continuation of [`eval_node`](Self::eval_node) for
@@ -619,86 +721,10 @@ impl<'a> ExprEval<'a> {
                         _ => res.push(Value::Bool(false)),
                     }
                 }
-                ExprIR::Or => {
-                    let mut is_null = false;
-                    let mut found = false;
-                    for child in node.children() {
-                        match self.eval_node(&child, env, agg_group_key)? {
-                            Value::Bool(true) => {
-                                found = true;
-                                res.push(Value::Bool(true));
-                                break;
-                            }
-                            Value::Bool(false) => {}
-                            Value::Null => is_null = true,
-                            ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
-                            }
-                        }
-                    }
-                    if !found {
-                        if is_null {
-                            res.push(Value::Null);
-                        } else {
-                            res.push(Value::Bool(false));
-                        }
-                    }
-                }
-                ExprIR::Xor => {
-                    let mut last = None;
-                    let mut found = false;
-                    for child in node.children() {
-                        match self.eval_node(&child, env, agg_group_key)? {
-                            Value::Bool(b) => last = Some(last.map_or(b, |l| logical_xor(l, b))),
-                            Value::Null => {
-                                found = true;
-                                res.push(Value::Null);
-                                break;
-                            }
-                            ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
-                            }
-                        }
-                    }
-                    if !found {
-                        res.push(Value::Bool(last.unwrap_or(false)));
-                    }
-                }
-                ExprIR::And => {
-                    let mut is_null = false;
-                    let mut found = false;
-                    for child in node.children() {
-                        match self.eval_node(&child, env, agg_group_key)? {
-                            Value::Bool(false) => {
-                                found = true;
-                                res.push(Value::Bool(false));
-                                break;
-                            }
-                            Value::Bool(true) => {}
-                            Value::Null => is_null = true,
-                            ir => {
-                                return Err(format!("Type mismatch: expected Bool but was {ir:?}"));
-                            }
-                        }
-                    }
-                    if !found {
-                        if is_null {
-                            res.push(Value::Null);
-                        } else {
-                            res.push(Value::Bool(true));
-                        }
-                    }
-                }
-                ExprIR::Not => match self.eval_node(&node.child(0), env, agg_group_key)? {
-                    Value::Bool(b) => res.push(Value::Bool(!b)),
-                    Value::Null => res.push(Value::Null),
-                    v => {
-                        return Err(format!(
-                            "Type mismatch: expected Boolean or Null but was {}",
-                            v.name()
-                        ));
-                    }
-                },
+                ExprIR::Or => res.push(self.eval_or(&node, env, agg_group_key)?),
+                ExprIR::Xor => res.push(self.eval_xor(&node, env, agg_group_key)?),
+                ExprIR::And => res.push(self.eval_and(&node, env, agg_group_key)?),
+                ExprIR::Not => res.push(self.eval_not(&node, env, agg_group_key)?),
                 ExprIR::Negate => match self.eval_node(&node.child(0), env, agg_group_key)? {
                     Value::Int(i) => res.push(Value::Int(i.checked_neg().ok_or_else(|| {
                         String::from("ArgumentError: integer overflow in unary minus")
