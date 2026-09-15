@@ -701,6 +701,11 @@ jobs:
           ignore-unfixed: true
           skip-setup-trivy: true
           version: 'v0.69.2'
+          # Waivers for findings owned by the bundled falkordb-browser image,
+          # which FalkorDB cannot fix from this repository. Each entry is
+          # path-scoped and expires - see the file for the rules. The report
+          # uploaded above is produced without it, so nothing is hidden there.
+          trivyignores: .trivyignore.yaml
 
       - name: Add comment to PR
         if: github.event_name == 'pull_request' && steps.trivy_gate.outcome == 'failure'

@@ -1,0 +1,54 @@
+# Trivy ignore file for the image gate in .github/workflows/build.yml
+# ("Fail build on high/critical severity vulnerabilities").
+#
+# Only findings that FalkorDB cannot fix from this repository belong here: the
+# images bundle falkordb/falkordb-browser, which is built, tested and gated in
+# FalkorDB/falkordb-browser (its own release pipeline runs the same Trivy
+# HIGH/CRITICAL gate, plus a daily scan). Advisories published after the last
+# Browser release therefore land in our image with no version of the Browser
+# available to pick up, and block every platform of `security-scan` until that
+# repository cuts a new release.
+#
+# Rules for entries:
+#   * scope each entry with `paths` so it can never hide the same advisory in a
+#     component FalkorDB does build,
+#   * always set `expired_at` so the waiver lapses and the gate re-reports the
+#     finding if the upstream fix has not shipped by then,
+#   * drop the entry once the Browser release carrying the fix is out.
+#
+# The unfiltered Trivy report (the `trivy-report-<platform>` artifact) is
+# produced by a separate step that does NOT use this file, so waived findings
+# stay visible there.
+
+vulnerabilities:
+  # next 16.3.2, shipped by falkordb-browser v2.5.2 (2026-09-06).
+  # Fixed in next 16.3.3; needs a falkordb-browser release built on it.
+  - id: CVE-2026-75604
+    paths:
+      - "var/lib/falkordb/browser/node_modules/next/package.json"
+    statement: |
+      Next.js unauthenticated RCE on Windows-hosted servers. The bundled
+      Browser only ever runs on the Linux images built here, so the affected
+      code path cannot be reached. Awaiting a falkordb-browser release with
+      next >= 16.3.3.
+    expired_at: 2026-10-15
+
+  - id: GHSA-2xp9-vwfh-vxw4
+    paths:
+      - "var/lib/falkordb/browser/node_modules/next/package.json"
+    statement: |
+      Next.js RCE in the Image Optimization API when processing AVIF files.
+      Fixed in next 16.3.3, which is already on falkordb-browser's staging
+      branch; waived only until that release is published.
+    expired_at: 2026-10-15
+
+  # sharp 0.35.3, shipped by falkordb-browser v2.5.2 (2026-09-06).
+  # Fixed in sharp 0.35.4; needs a falkordb-browser release built on it.
+  - id: GHSA-rgj7-g3m4-5g8c
+    paths:
+      - "var/lib/falkordb/browser/node_modules/sharp/package.json"
+    statement: |
+      libheif vulnerabilities reachable through sharp's HEIF decoding, used by
+      the Browser's Next.js image optimization. Fixed in sharp 0.35.4; waived
+      only until a falkordb-browser release picks it up.
+    expired_at: 2026-10-15
