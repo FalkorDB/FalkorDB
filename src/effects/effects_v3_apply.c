@@ -1269,15 +1269,6 @@ static bool _ApplyLabels
 // records 11-14 - index and constraint DDL
 //------------------------------------------------------------------------------
 
-// the wire's simFunc codes ARE the VecSimMetric enum values - L2 0, IP 1,
-// cosine 2 (vec_sim_common.h). They are not renumbered anywhere, and must not
-// be: both engines persist the metric as that number in their RDB, so moving
-// one would make every existing file read a different metric than it was
-// written with.
-#define V3_SIMFUNC_L2     0
-#define V3_SIMFUNC_IP     1
-#define V3_SIMFUNC_COSINE 2
-
 // rebuild the options map the index constructors take
 //
 // v3 carries options as a typed block; Index_FulltextCreate and
@@ -1349,23 +1340,12 @@ static bool _OptionsToMap
 	const char *sim = "euclidean" ;
 	if (o->has_sim_func) {
 		switch (o->sim_func) {
-			case V3_SIMFUNC_L2:     sim = "euclidean" ; break ;
-			case V3_SIMFUNC_COSINE: sim = "cosine"    ; break ;
-			case V3_SIMFUNC_IP:     sim = "ip"        ; break ;
+			case VecSimMetric_L2:     sim = "euclidean" ; break ;
+			case VecSimMetric_Cosine: sim = "cosine"    ; break ;
+			case VecSimMetric_IP:     sim = "ip"        ; break ;
 
-			// EVERY KNOWN CODE IS ACCEPTED; default refuses only codes this
-			// build has no name for. C creates, stores and computes inner
-			// product fine - index_vector_create.c:73 parses "ip" and
-			// index.c:157 hands the metric to VecSim as a number - so refusing
-			// code 1 would make C reject its own emitter's index.
-			//
-			// The default arm exists because a replica must refuse and resync
-			// rather than silently substitute a different metric, which would
-			// make one index compute differently depending on how the replica
-			// synced. Accepting a code it can build substitutes nothing.
-			//
-			// C never NAMES VecSimMetric_IP - it passes the number through - so
-			// do not conclude the capability is missing from a grep.
+			// refuse a code this build has no name for, rather than
+			// substitute a metric the writer did not ask for
 			default:
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT CREATE_INDEX vector field on '%s' asks "
