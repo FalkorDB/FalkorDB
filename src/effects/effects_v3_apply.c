@@ -123,11 +123,9 @@ static bool _IdIter_Next
 	while (it->seg < it->list->n) {
 		const EffectsV3IdListSegment *s = it->list->segments + it->seg ;
 
-		// DIRECTION IS IN THE KIND. It used to be a separate `descending` flag
-		// tested inside each arm; the typed model folds it in, so a range and a
-		// set each split into two arms that share their reading but not their
-		// step. The pairing that had no meaning - a descending repeat - is no
-		// longer representable, so there is no longer a case to guard.
+		// direction is folded into the kind, so a range and a set each split
+		// into two arms sharing their reading but not their step. A descending
+		// repeat is unrepresentable, so there is no such case to guard.
 		switch (s->kind) {
 			case EFFECTS_V3_SEG_RANGE_ASCENDING:
 				if (it->produced < s->range_ascending.len) {
@@ -373,27 +371,19 @@ static bool _ApplyAddSchema
 		return false ;
 	}
 
-	// VALIDATED BEFORE THE GRAPH IS TOUCHED, not after.
+	// VALIDATED BEFORE THE GRAPH IS TOUCHED, so a divergent payload leaves
+	// nothing behind.
 	//
-	// This used to create the schema and then compare the id it was handed
-	// against the wire's. That is knowable in advance: schema ids are the array
-	// index - Graph_AddLabel returns arr_len - 1, GetSchemaByID indexes
-	// schemas[id], and RemoveSchema only permits the tail - so they are dense
-	// and append-only, and the id the next schema will get IS the current
-	// count. Checking first means a divergent payload leaves nothing behind.
+	// Schema ids are the array index - Graph_AddLabel returns arr_len - 1,
+	// GetSchemaByID indexes schemas[id], RemoveSchema permits only the tail -
+	// so they are dense and append-only and the next id IS the current count.
+	// Unlike node ids they are never reused, so deriving the expected id is
+	// validation rather than inference.
 	//
-	// The count comes from GraphContext_SchemaCount, which reads through the
-	// pending-aware accessor: an ADD_SCHEMA earlier in this same payload lives
-	// in gc->_node_schemas and is not committed until the write lock is
-	// released, so reading the committed array would miss it and refuse the
+	// SchemaCount reads through the pending-aware accessor: a schema added
+	// earlier in this same payload lives in gc->_node_schemas until the write
+	// lock is released, so the committed array would miss it and refuse the
 	// second schema of any two.
-	//
-	// NOT THE SAME AS THE NODE-ID CASE, which went the other way. There,
-	// re-deriving the id was inference: C reuses the most recently freed id and
-	// Rust the smallest, and both are correct, so the replica has to accept
-	// what the primary states. Schema ids are never reused, so "the next id is
-	// the count" is the same function on both engines and checking it is
-	// genuine validation.
 	if (GraphContext_GetSchema (gc, rec->add_schema.name,
 				rec->add_schema.schema_type) != NULL) {
 		RedisModule_Log (NULL, "warning",
@@ -521,19 +511,12 @@ static bool _ApplyCreateNode
 	// collect the ids the primary stated
 	//--------------------------------------------------------------------------
 	//
-	// ACCEPT THE PRIMARY'S IDS. This used to allocate each node locally and
-	// then compare, which is INFERENCE dressed as validation: it asked "what id
-	// would I have chosen", and C chooses differently from Rust by design - C
-	// reuses the most recently freed id, Rust the smallest. Both are correct,
-	// they disagree after any delete-then-create cycle, and the comparison then
-	// failed and forced a full resync. Once per cycle, indefinitely, with every
-	// state-only monitor reporting agreement throughout because a resync
-	// converges. The node was also created BEFORE the comparison, so a mismatch
-	// left a wrong-id node behind - harmless only because the resync overwrote
-	// it.
-	//
-	// What remains is validation, which asks only about THIS graph: an id
-	// already live here cannot be created again.
+	// ACCEPT THE PRIMARY'S IDS, do not re-derive them. C reuses the most
+	// recently freed id and Rust the smallest; both are correct, so comparing
+	// against the id this replica would have chosen refuses a valid payload
+	// after every delete-then-create cycle. What is checked is liveness, which
+	// is a property of THIS graph: an id already live here cannot be created
+	// again.
 	uint64_t *ids = rm_malloc (sizeof (uint64_t) * count) ;
 
 	IdIter it ;
@@ -561,15 +544,12 @@ static bool _ApplyCreateNode
 	// claim them, ONCE for the whole record
 	//--------------------------------------------------------------------------
 	//
-	// Claiming walks the free list, so doing it per chunk would walk the list
-	// once per chunk - the same quadratic in a smaller coat. A 128,000-node
-	// record over 4,096-node chunks walked a 128,000-entry list 31 times, which
-	// measured as 32 ms of the record's 57 ms. Claiming up front costs one
-	// walk, and two arrays of 8 bytes per node that are freed before returning.
+	// Claiming walks the free list, so claiming per chunk walks it once per
+	// chunk - quadratic again, just divided by the chunk size. One walk per
+	// record costs two arrays of 8 bytes per node, freed before returning.
 	//
-	// Claiming first also means the graph is not touched until every id is
-	// known to be free, so a divergent record is refused with nothing to
-	// unwind.
+	// It also means the graph is untouched until every id is known to be free,
+	// so a divergent record is refused with nothing to unwind.
 	void **items = rm_malloc (sizeof (void *) * count) ;
 
 	if (!Graph_ClaimNodeIds (g, ids, count, items)) {
@@ -962,27 +942,15 @@ static bool _ApplyUpdateEdge
 
 	while (applied < rec->update_edge.count &&
 			TensorIterator_next (&ti, &row, &col, &edge_id, NULL)) {
-		// binary search, not a scan of the table
-		//
-		// This was a linear scan, with a comment saying a sort plus binary
-		// search was worth doing "once that shape is measured". It has been:
-		// holding the graph at 4,000 edges and varying only how many of them
-		// one payload touches, cost per entity went 4,007 -> 5,518 -> 14,314
-		// across 250/1000/4000, a 3.57x climb where v2 is flat. v3 started 2.2x
-		// BETTER than v2 and ended 1.83x worse, so it crosses over - any single
-		// batch size would have read as a win.
-		//
-		// The scan was quadratic in the RECORD, not in the graph: the tensor
-		// walk stops once every named edge is applied, so a bigger record scans
-		// more edges AND compares each against a longer table. Both factors
-		// grow together.
+		// binary search: a linear scan here is quadratic in the RECORD. The
+		// tensor walk stops once every named edge is applied, so a bigger
+		// record scans more edges AND compares each against a longer table.
 		const IdRow *hit = bsearch (&edge_id, table, rec->update_edge.count,
 				sizeof (IdRow), _IdRowFind) ;
 
 		if (hit != NULL) {
-			// duplicates are adjacent and row-ascending after the sort, so
-			// walking back to the first keeps the lowest row - the same entry
-			// the linear scan would have found
+			// the sort's secondary key puts duplicate ids adjacent with rows
+			// ascending, so walking back to the first takes the lowest row
 			while (hit > table && (hit - 1)->id == edge_id) {
 				hit-- ;
 			}
@@ -1385,29 +1353,19 @@ static bool _OptionsToMap
 			case V3_SIMFUNC_COSINE: sim = "cosine"    ; break ;
 			case V3_SIMFUNC_IP:     sim = "ip"        ; break ;
 
-			// EVERY KNOWN CODE IS ACCEPTED; the default arm refuses only codes
-			// this build has no name for. The distinction matters, because
-			// this arm used to refuse IP as well and that made C refuse its
-			// OWN index: C creates, stores and computes inner product fine
-			// (index_vector_create.c:73 parses "ip"; index.c:157 hands the
-			// metric to VecSim as a number), and the emitter therefore sends
-			// code 1. Same engine both ends, and the reader rejected the
-			// writer - measured as C(v3) -> C forcing a full resync on 'ip'
-			// while euclidean and cosine replicated cleanly.
+			// EVERY KNOWN CODE IS ACCEPTED; default refuses only codes this
+			// build has no name for. C creates, stores and computes inner
+			// product fine - index_vector_create.c:73 parses "ip" and
+			// index.c:157 hands the metric to VecSim as a number - so refusing
+			// code 1 would make C reject its own emitter's index.
 			//
-			// The reasoning behind the old refusal was sound and is why the
-			// default arm still exists: a replica must refuse and resync
-			// rather than quietly substitute a different metric, or the same
-			// index computes differently depending on how the replica synced.
-			// It just never applied to code 1 - accepting it substitutes
-			// nothing. C stores 'ip' and computes 'ip', which is what the
-			// master did.
+			// The default arm exists because a replica must refuse and resync
+			// rather than silently substitute a different metric, which would
+			// make one index compute differently depending on how the replica
+			// synced. Accepting a code it can build substitutes nothing.
 			//
-			// The belief that C could not do IP came from
-			// `grep -rn 'VecSimMetric_IP' src/` returning nothing. C never
-			// NAMES the constant - it passes the number through - so a
-			// name-shaped search found a name-shaped gap and it was read as a
-			// missing capability. Do not re-derive this from a grep.
+			// C never NAMES VecSimMetric_IP - it passes the number through - so
+			// do not conclude the capability is missing from a grep.
 			default:
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT CREATE_INDEX vector field on '%s' asks "
