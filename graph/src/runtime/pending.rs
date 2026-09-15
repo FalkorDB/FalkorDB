@@ -1102,9 +1102,9 @@ impl Pending {
     ) -> Result<(), String> {
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
-            // The allocator handed these out — see `create_allocated_nodes`
-            // for why the graph's own mark cannot judge them.
-            g.borrow_mut().create_allocated_nodes(&self.created_nodes);
+            // The allocator issued these, so there is nothing a batch could
+            // tell this caller that `reserve_nodes` did not already guarantee.
+            g.borrow_mut().mark_nodes_live(&self.created_nodes);
         }
         if !self.created_rel_types.is_empty() {
             stats.borrow_mut().relationships_created += self.created_rel_types.len();
@@ -1118,7 +1118,7 @@ impl Pending {
                     dsts.push(to.into());
                     ids.push(rel_id.into());
                 }
-                g.create_allocated_relationships(type_name, &srcs, &dsts, &ids);
+                let _ = g.create_relationships_bulk(type_name, &srcs, &dsts, &ids, None);
             }
         }
         if !self.set_labels.is_empty() {

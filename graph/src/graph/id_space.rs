@@ -417,7 +417,7 @@ mod tests {
             .verify(g.node_id_bound())
             .expect("the graph and the batch agree so far");
 
-        g.create_allocated_nodes(&ids(&[3]));
+        g.mark_nodes_live(&ids(&[3]));
 
         let err = space
             .verify(g.node_id_bound())
@@ -597,7 +597,7 @@ mod tests {
         // point entirely, which accepts a gap — that is what makes it a different
         // question rather than this one with the batch left out.
         let mut g = graph();
-        g.create_allocated_nodes(&ids(&[0, 5]));
+        g.mark_nodes_live(&ids(&[0, 5]));
         g.delete_nodes(&ids(&[0]), &mut FxHashMap::default(), None)
             .expect("delete");
         assert_eq!(g.node_count(), 1);

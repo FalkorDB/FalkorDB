@@ -75,7 +75,7 @@ pub(crate) fn live_node(
 ) {
     let mut graph = g.borrow_mut();
     let ids: RoaringTreemap = std::iter::once(id).collect();
-    graph.create_allocated_nodes(&ids);
+    graph.mark_nodes_live(&ids);
     let mut rows = Vec::new();
     let mut cols = Vec::new();
     for name in labels {

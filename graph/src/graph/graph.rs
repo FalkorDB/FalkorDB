@@ -1457,44 +1457,6 @@ impl Graph {
         Ok(ids)
     }
 
-    /// Create nodes this graph's own allocator issued.
-    ///
-    /// Unchecked, and it has to be. `return_node_id` puts a *cancelled
-    /// reservation* into the recycle bin while `node_count` has not moved, so
-    /// mid-transaction the boundary `node_count + deleted_nodes.len()` counts
-    /// an id that was never live and overstates itself. `CREATE (a)-[:R]->(b) DELETE b`
-    /// reaches exactly that: b's id goes to the bin, the boundary becomes 1,
-    /// and the checked form then rejects a's id 0 as already live — a
-    /// legitimate query refused.
-    ///
-    /// Tracking *which* ids are reserved rather than how many does not rescue
-    /// it, which is worth saying because it looks like it should. [`IdSpace`]'s
-    /// invariant is that every id from the entry boundary upward was created by
-    /// the batch, and a cancelled reservation is an id handed out and never
-    /// created. Both placements were measured: with the space opened at commit
-    /// the check refuses id 0 as `AlreadyLive` whether the boundary counts the
-    /// reservation or not, and with it opened before the reservation `verify`
-    /// refuses the result as `Miscounted { graph_bound: 2, expected: 1 }`,
-    /// again either way. The hole is real and `IdSpace` is right to reject it,
-    /// so the two paths ask genuinely different questions.
-    ///
-    /// The ids here came from [`Self::reserve_nodes`], so there is nothing a
-    /// check could tell this caller that the allocator did not already
-    /// guarantee. The effects path has no such guarantee, which is why it uses
-    /// the checked form.
-    ///
-    /// The counterpart is [`Self::create_nodes`], for ids that did *not* come
-    /// from this allocator. Two entry points rather than one with an optional
-    /// check, because the difference is which question is being asked, and a
-    /// caller that has to decide between them cannot express "checked, but
-    /// against nothing".
-    pub fn create_allocated_nodes(
-        &mut self,
-        nodes: &RoaringTreemap,
-    ) {
-        self.mark_nodes_live(nodes);
-    }
-
     /// Where the node id space ends: ids below were handed out, ids at or above
     /// never were. True as stated only between batches, where the space is dense
     /// — which is exactly when an [`IdSpace`] is opened against it.
@@ -1525,9 +1487,10 @@ impl Graph {
     /// its own is what stops a caller handing over a boundary that disagrees with
     /// the batch it is handing over with it.
     ///
-    /// A caller with no batch wants [`Self::create_allocated_nodes`], which is a
+    /// A caller with no batch wants [`Self::mark_nodes_live`], which is a
     /// different question rather than this one with a piece missing: its ids came
-    /// from the allocator, so there is nothing to check.
+    /// from [`Self::reserve_nodes`], so there is nothing a check could tell it
+    /// that the allocator did not already guarantee.
     ///
     /// # Errors
     ///
@@ -1563,7 +1526,7 @@ impl Graph {
     /// check", which is a value pretending to be a mode: it made the unchecked
     /// path return a `Result` that could not be anything but `Ok`, and left the
     /// reader to work out why.
-    fn mark_nodes_live(
+    pub fn mark_nodes_live(
         &mut self,
         nodes: &RoaringTreemap,
     ) {
@@ -2407,27 +2370,12 @@ impl Graph {
         Ok(ids)
     }
 
-    /// Create relationships this graph's own allocator issued.
-    ///
-    /// The counterpart of [`Self::create_allocated_nodes`], and unchecked for
-    /// the same reason. Ids arriving from an effects buffer were reserved on
-    /// the *master*, so they get [`Self::create_relationships_bulk`] with an
-    /// [`IdSpace`], and this wrapper is what the write path calls.
-    pub fn create_allocated_relationships(
-        &mut self,
-        type_name: &Arc<String>,
-        srcs: &[u64],
-        dsts: &[u64],
-        rel_ids: &[u64],
-    ) {
-        let _ = self.create_relationships_bulk(type_name, srcs, dsts, rel_ids, None);
-    }
-
     /// Create relationships of a single type using flat arrays.
     ///
     /// Avoids HashMap overhead while using individual GraphBLAS set calls. Takes
-    /// ids from wherever the caller got them and consumes no reservation — the
-    /// write path wants [`Self::create_allocated_relationships`].
+    /// ids from wherever the caller got them; the write path passes `None`,
+    /// because its ids came from [`Self::reserve_relationships`] and there is no
+    /// batch to judge them against.
     ///
     /// # Errors
     ///
@@ -5014,7 +4962,7 @@ mod reservation_tests {
             self,
             g: &mut Graph,
         ) {
-            g.create_allocated_nodes(&self.created);
+            g.mark_nodes_live(&self.created);
         }
     }
 
@@ -5177,7 +5125,7 @@ mod reservation_tests {
         let ids = g.reserve_relationships(3, &held).expect("reserved");
         let ids: Vec<u64> = ids.into_iter().map(u64::from).collect();
         assert_eq!(ids, vec![0, 1, 2]);
-        g.create_allocated_relationships(&type_name, &[0, 1, 2], &[1, 2, 3], &ids);
+        let _ = g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids, None);
 
         let mut docs = FxHashMap::default();
         let doomed: RoaringTreemap = std::iter::once(1).collect();
