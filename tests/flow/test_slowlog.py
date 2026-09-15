@@ -1,10 +1,32 @@
-import asyncio
 from common import *
-from falkordb.asyncio import FalkorDB
 from packaging.version import Version
-from redis.asyncio import BlockingConnectionPool
 
 GRAPH_ID = "slowlog_test"
+
+# Rows in each `populate_slowlog` query, and in the queries that have to
+# out-rank the entries it leaves behind.
+#
+# These are expressed as one constant and a multiple of it on purpose. They used
+# to be independent literals, and #2628 raised the populate size tenfold
+# (250,000 -> 2,500,000) without touching the queries that had to beat it, which
+# silently removed most of their headroom and left three comments describing the
+# old size. Tying them together makes that drift impossible rather than merely
+# unlikely.
+POPULATE_ROWS = 2_500_000
+DISPLACER_ROWS = POPULATE_ROWS * 10
+
+
+def slow_query(rows, divisor):
+    """A query whose cost is proportional to `rows`.
+
+    Every query in this file that must be slower than a `populate_slowlog`
+    entry is built from this one shape, so the ratio between them is fixed by
+    row count alone. A differently-shaped query (the old nested `UNWIND ...
+    RETURN SUM(i + j)`) leaves the margin at the mercy of whichever expression
+    path the engine optimizes next.
+    """
+    return (f"UNWIND range(0, {rows}) AS x "
+            f"WITH x WHERE x % {divisor} = 0 RETURN count(x)")
 
 class testSlowLog():
     def __init__(self):
@@ -13,33 +35,36 @@ class testSlowLog():
         self.graph = self.db.select_graph(GRAPH_ID)
 
     def populate_slowlog(self, n):
-        async def populate(self, n):
-            pool = BlockingConnectionPool(max_connections=n, timeout=None, host=self.env.host, port=self.env.port, decode_responses=True, socket_timeout=SOCKET_TIMEOUT)
-            db = FalkorDB(connection_pool=pool)
-            g = db.select_graph(GRAPH_ID)
+        """Fill the slowlog with `n - 1` distinct entries, run SERIALLY.
 
-            # Sized to run an order of magnitude past the slowlog's 10ms floor
-            # (SLOW_LOG_MIN_REQ_LATENCY), the same way test01's own slow query
-            # is. range(0, 250000) used to measure ~11ms, which stopped
-            # qualifying once `WHERE x % i = 0` moved onto the columnar
-            # expression path and the same query dropped to ~4.7ms — the
-            # entries silently stopped being logged and the assertions below
-            # started reading 2 instead of 10. range(0, 2500000) measures
-            # ~47ms.
-            tasks = []
-            for i in range(1, n):
-                q = f"""UNWIND range(0, 2500000) AS x
-                       WITH x
-                       WHERE x % {i} = 0
-                       RETURN count(x)"""
-                tasks.append(asyncio.create_task(g.query(q)))
+        These used to run concurrently through an async pool, and that is what
+        made the tests below flaky. A slowlog entry records the query's own
+        latency, so 19 queries competing for the same cores recorded times far
+        above their actual cost: measured under coverage instrumentation, each
+        query does ~105ms of work but the retained entries read 5,600-8,771ms —
+        a ~37x inflation. Every later query in this file has to out-rank those
+        entries while running *alone*, so it was racing an inflation factor
+        that depends on the runner's core count and on whether instrumentation
+        is enabled. No choice of query size is safe against that.
 
-            await asyncio.gather(*tasks)
+        Run serially, an entry's recorded latency is its own work (98.9-154.5ms
+        under the same instrumentation), which is a bar a query can be sized
+        against. It is also faster in wall-clock than the contended version,
+        because the concurrency was never buying throughput here.
 
-            # close the connection pool
-            await pool.aclose()
+        Nothing asserts on concurrent behaviour; the assertions are about
+        slowlog semantics (how many entries are kept, which ones, and that
+        repeated reads agree). Concurrency belongs in tests/test_concurrency.py.
 
-        asyncio.run(populate(self, n))
+        POPULATE_ROWS is sized to run an order of magnitude past the slowlog's
+        10ms floor (SLOW_LOG_MIN_REQ_LATENCY). range(0, 250000) used to measure
+        ~11ms, which stopped qualifying once `WHERE x % i = 0` moved onto the
+        columnar expression path and dropped to ~4.7ms — the entries silently
+        stopped being logged and the assertions started reading 2 instead of 10.
+        """
+        g = self.db.select_graph(GRAPH_ID)
+        for i in range(1, n):
+            g.query(slow_query(POPULATE_ROWS, i))
 
     def test01_slowlog(self):
         # Slowlog should fail when graph doesn't exists
@@ -76,12 +101,18 @@ class testSlowLog():
             # redis < 6.2.0 not support slowlog time measure
             return
 
-        # Issue a long running query, this should replace an existing entry in the slowlog.
-        # NOTE: the range must be large enough that this query is deterministically
-        # slower than the queries used by populate_slowlog above (UNWIND range(0, 250000))
-        # even under coverage instrumentation, where per-row work is amplified
-        # non-uniformly. See issue: flaky test under coverage-flow.
-        q = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
+        # Issue a long running query, this should replace an existing entry in
+        # the slowlog.
+        #
+        # Displacement evicts the *fastest* retained entry, so this only has to
+        # beat that one — but it has to beat it reliably. Built from the same
+        # shape as the populate queries at ten times the rows, the margin is
+        # fixed by row count and cannot be tipped by an optimization to one
+        # expression path. Measured under coverage instrumentation: the fastest
+        # retained entry is ~99ms and this query runs ~1,443ms, a ~14x margin.
+        # The previous nested-UNWIND query measured ~377ms against a contended
+        # bar of ~5,600ms, i.e. 0.07x — it could not displace anything.
+        q = slow_query(DISPLACER_ROWS, 1)
 
         self.graph.query(q)
         B = self.graph.slowlog()
@@ -141,8 +172,13 @@ class testSlowLog():
         # NOTE: the query body must be heavy enough to deterministically exceed
         # the slowlog MIN_LATENCY_MS (10ms) threshold even on a fast engine /
         # under coverage. A single UNWIND range(0, 200000) dropped below 10ms
-        # once the engine got faster, leaving the slowlog empty. Use the same
-        # double-UNWIND pattern as test01.
+        # once the engine got faster, leaving the slowlog empty.
+        #
+        # Unlike test01 and test06 this is measured against a *fixed* 10ms
+        # floor rather than against other entries, so it does not need to
+        # out-rank anything: at ~377ms under instrumentation it has ~37x
+        # headroom on a threshold that does not move. Kept as the nested-UNWIND
+        # body it has always had; test01 no longer uses that shape.
         long_string = 'a' * 4000
         query = f"WITH '{long_string}' AS str UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
         self.graph.query(query)
@@ -285,15 +321,15 @@ class testSlowLog():
 
         # issue 2 slower queries
         # expecting to have them replace existing entries
-        # NOTE: nested UNWINDs make these queries deterministically slower
-        # than the populate_slowlog baseline (UNWIND range(0, 250000)) even
-        # under coverage instrumentation, where per-row work is amplified
-        # non-uniformly (see the same fix in test01).
-
-        q0 = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i % 2 = 0 RETURN count(j)"
+        #
+        # Same reasoning as test01: built from the populate shape at ten times
+        # the rows, so they out-rank the entries by row count rather than by
+        # luck. The divisors differ only to make the two query texts distinct,
+        # since the slowlog keys on text.
+        q0 = slow_query(DISPLACER_ROWS, 2)
         self.graph.query(q0)
 
-        q1 = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE j % 2 = 0 RETURN count(i)"
+        q1 = slow_query(DISPLACER_ROWS, 3)
         self.graph.query(q1)
 
         entries = self.graph.slowlog()
