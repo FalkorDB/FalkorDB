@@ -382,6 +382,277 @@ void test_RGMatrixTupleIter_iterate_range() {
 	TEST_ASSERT(iter.A == NULL);
 }
 
+// the plain (non-sorted) iterator drains M entirely before ever yielding a
+// delta-plus (DP) entry, so it can return a *higher* row (M) before a
+// *lower* row that's still pending (DP). next_UINT64_sorted instead merges
+// M and DP in true ascending (row, col) order.
+void test_RGMatrixTupleIter_next_UINT64_sorted_merges_M_and_DP() {
+	Delta_Matrix  A      =  NULL;
+	GrB_Type      t      =  GrB_UINT64;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     row    =  0;
+	GrB_Index     col    =  0;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
+	uint64_t      val    =  0;
+	Delta_MatrixTupleIter iter;
+	memset(&iter, 0, sizeof(Delta_MatrixTupleIter));
+
+	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// high-row entry, flushed into M
+	info = Delta_Matrix_setElement_UINT64(A, 100, 50, 51);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	Delta_Matrix_wait(A, true);  // force sync -> M
+
+	// low-row entry, stays pending in delta-plus (well below the flush
+	// threshold configured in setup())
+	info = Delta_Matrix_setElement_UINT64(A, 200, 5, 6);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// plain iterator: M (row 50) before delta-plus (row 5) - out of order
+	//--------------------------------------------------------------------------
+
+	info = Delta_MatrixTupleIter_attach(&iter, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = Delta_MatrixTupleIter_next_UINT64(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 50 && col == 51 && val == 100);
+
+	info = Delta_MatrixTupleIter_next_UINT64(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 5 && col == 6 && val == 200);
+
+	info = Delta_MatrixTupleIter_next_UINT64(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GxB_EXHAUSTED);
+
+	//--------------------------------------------------------------------------
+	// sorted iterator: delta-plus (row 5) before M (row 50) - true order
+	//--------------------------------------------------------------------------
+
+	info = Delta_MatrixTupleIter_attach(&iter, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = Delta_MatrixTupleIter_next_UINT64_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 5 && col == 6 && val == 200);
+
+	info = Delta_MatrixTupleIter_next_UINT64_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 50 && col == 51 && val == 100);
+
+	info = Delta_MatrixTupleIter_next_UINT64_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GxB_EXHAUSTED);
+
+	Delta_Matrix_free(&A);
+	TEST_ASSERT(A == NULL);
+	Delta_MatrixTupleIter_detach(&iter);
+	TEST_ASSERT(iter.A == NULL);
+}
+
+// next_UINT64_sorted must merge M and DP while still masking out M entries
+// that have a pending deletion (DM) - exercises _MaskedIter_skip_masked
+// through the sorted path specifically.
+void test_RGMatrixTupleIter_next_UINT64_sorted_skips_deleted() {
+	Delta_Matrix  A      =  NULL;
+	GrB_Type      t      =  GrB_UINT64;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     row    =  0;
+	GrB_Index     col    =  0;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
+	uint64_t      val    =  0;
+	Delta_MatrixTupleIter iter;
+	memset(&iter, 0, sizeof(Delta_MatrixTupleIter));
+
+	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// two entries, flushed into M
+	info = Delta_Matrix_setElement_UINT64(A, 10, 20, 21);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_setElement_UINT64(A, 11, 60, 61);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	Delta_Matrix_wait(A, true);  // force sync -> M
+
+	// delete (20, 21) - pending in DM, not yet synced out of M
+	info = Delta_Matrix_removeElement(A, 20, 21);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	Delta_Matrix_wait(A, false);  // materialize DM without merging
+
+	// a delta-plus entry between the two M rows
+	info = Delta_Matrix_setElement_UINT64(A, 30, 40, 41);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = Delta_MatrixTupleIter_attach(&iter, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// row 20 is masked out - first entry is delta-plus row 40
+	info = Delta_MatrixTupleIter_next_UINT64_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 40 && col == 41 && val == 30);
+
+	info = Delta_MatrixTupleIter_next_UINT64_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 60 && col == 61 && val == 11);
+
+	info = Delta_MatrixTupleIter_next_UINT64_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GxB_EXHAUSTED);
+
+	Delta_Matrix_free(&A);
+	TEST_ASSERT(A == NULL);
+	Delta_MatrixTupleIter_detach(&iter);
+	TEST_ASSERT(iter.A == NULL);
+}
+
+// reproduces the batch-resume regression this iterator exists to fix:
+// resuming a range scan at [last_row + 1, MAX) with the plain iterator can
+// permanently skip a delta-plus row below the resume point, because the
+// plain iterator drains M before DP within each attached range. The sorted
+// iterator doesn't have this problem, since rows only ever increase.
+void test_RGMatrixTupleIter_resume_across_batches() {
+	Delta_Matrix  A      =  NULL;
+	GrB_Type      t      =  GrB_UINT64;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     row    =  0;
+	GrB_Index     col    =  0;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
+	uint64_t      val    =  0;
+	int           count  =  0;
+	Delta_MatrixTupleIter iter;
+	memset(&iter, 0, sizeof(Delta_MatrixTupleIter));
+
+	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// "already flushed" high rows, simulating a batch of prior additions
+	info = Delta_Matrix_setElement_UINT64(A, 100, 10, 10);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_setElement_UINT64(A, 101, 11, 11);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_setElement_UINT64(A, 102, 12, 12);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	Delta_Matrix_wait(A, true);  // force sync -> M
+
+	// "still pending" low row, simulating a recycled id whose addition
+	// hasn't been flushed yet
+	info = Delta_Matrix_setElement_UINT64(A, 200, 1, 1);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	//--------------------------------------------------------------------------
+	// plain iterator: batch 1 drains M's first row (10) before it would
+	// ever reach delta-plus's row 1; resuming at [10 + 1, MAX) - exactly
+	// what _Index_PopulateNodeIndex does between batches - permanently
+	// excludes row 1
+	//--------------------------------------------------------------------------
+
+	info = Delta_MatrixTupleIter_attach(&iter, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_MatrixTupleIter_iterate_range(&iter, 0, UINT64_MAX);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = Delta_MatrixTupleIter_next_UINT64(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 10);  // M drained first - row 1 (DP) not reached yet
+
+	info = Delta_MatrixTupleIter_iterate_range(&iter, row + 1, UINT64_MAX);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	count = 0;
+	while (Delta_MatrixTupleIter_next_UINT64(&iter, &row, &col, &val) == GrB_SUCCESS) {
+		count++;
+	}
+	// row 1 is gone for good - only rows 11 and 12 remain visible
+	TEST_ASSERT(count == 2);
+
+	//--------------------------------------------------------------------------
+	// sorted iterator: the lowest row (delta-plus row 1) is always visited
+	// first, so the resume boundary derived from it never excludes it
+	//--------------------------------------------------------------------------
+
+	info = Delta_MatrixTupleIter_attach(&iter, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_MatrixTupleIter_iterate_range(&iter, 0, UINT64_MAX);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = Delta_MatrixTupleIter_next_UINT64_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 1);  // delta-plus row visited first
+
+	info = Delta_MatrixTupleIter_iterate_range(&iter, row + 1, UINT64_MAX);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	count = 0;
+	while (Delta_MatrixTupleIter_next_UINT64_sorted(&iter, &row, &col, &val) == GrB_SUCCESS) {
+		count++;
+	}
+	// rows 10, 11, 12 all still visited - nothing was skipped
+	TEST_ASSERT(count == 3);
+
+	Delta_Matrix_free(&A);
+	TEST_ASSERT(A == NULL);
+	Delta_MatrixTupleIter_detach(&iter);
+	TEST_ASSERT(iter.A == NULL);
+}
+
+// BOOL counterpart (the shape used by node/label matrices): merges M and DP
+// in ascending order and masks out a pending deletion.
+void test_RGMatrixTupleIter_next_BOOL_sorted_merges_and_skips_deleted() {
+	Delta_Matrix  A      =  NULL;
+	GrB_Type      t      =  GrB_BOOL;
+	GrB_Info      info   =  GrB_SUCCESS;
+	GrB_Index     row    =  0;
+	GrB_Index     col    =  0;
+	GrB_Index     nrows  =  100;
+	GrB_Index     ncols  =  100;
+	bool          val    =  false;
+	Delta_MatrixTupleIter iter;
+	memset(&iter, 0, sizeof(Delta_MatrixTupleIter));
+
+	info = Delta_Matrix_new(&A, t, nrows, ncols, true);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// two diagonal entries, flushed into M
+	info = Delta_Matrix_setElement_BOOL(A, 10, 10);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	info = Delta_Matrix_setElement_BOOL(A, 50, 50);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	Delta_Matrix_wait(A, true);  // force sync -> M
+
+	// delete (10, 10) - pending in DM
+	info = Delta_Matrix_removeElement(A, 10, 10);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	Delta_Matrix_wait(A, false);  // materialize DM without merging
+
+	// a delta-plus entry below both M rows
+	info = Delta_Matrix_setElement_BOOL(A, 5, 5);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	info = Delta_MatrixTupleIter_attach(&iter, A);
+	TEST_ASSERT(info == GrB_SUCCESS);
+
+	// delta-plus row 5 first, then M row 50 - row 10 is masked out
+	info = Delta_MatrixTupleIter_next_BOOL_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 5 && col == 5 && val == true);
+
+	info = Delta_MatrixTupleIter_next_BOOL_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GrB_SUCCESS);
+	TEST_ASSERT(row == 50 && col == 50 && val == true);
+
+	info = Delta_MatrixTupleIter_next_BOOL_sorted(&iter, &row, &col, &val);
+	TEST_ASSERT(info == GxB_EXHAUSTED);
+
+	Delta_Matrix_free(&A);
+	TEST_ASSERT(A == NULL);
+	Delta_MatrixTupleIter_detach(&iter);
+	TEST_ASSERT(iter.A == NULL);
+}
+
 TEST_LIST = {
 	{"RGMatrixTupleIter_attach", test_RGMatrixTupleIter_attach},
 	{"RGMatrixTupleIter_next", test_RGMatrixTupleIter_next},
@@ -389,5 +660,9 @@ TEST_LIST = {
 	{"RGMatrixTupleIter_reuse", test_RGMatrixTupleIter_reuse},
 	{"RGMatrixTupleIter_iterate_row", test_RGMatrixTupleIter_iterate_row},
 	{"RGMatrixTupleIter_iterate_range", test_RGMatrixTupleIter_iterate_range},
+	{"RGMatrixTupleIter_next_UINT64_sorted_merges_M_and_DP", test_RGMatrixTupleIter_next_UINT64_sorted_merges_M_and_DP},
+	{"RGMatrixTupleIter_next_UINT64_sorted_skips_deleted", test_RGMatrixTupleIter_next_UINT64_sorted_skips_deleted},
+	{"RGMatrixTupleIter_resume_across_batches", test_RGMatrixTupleIter_resume_across_batches},
+	{"RGMatrixTupleIter_next_BOOL_sorted_merges_and_skips_deleted", test_RGMatrixTupleIter_next_BOOL_sorted_merges_and_skips_deleted},
 	{NULL, NULL}
 };
