@@ -165,6 +165,9 @@ static bool _IdIter_Next
 					? s->set_descending.blob : s->set_ascending.blob ;
 				const uint32_t blob_n = descending
 					? s->set_descending.n : s->set_ascending.n ;
+				const uint64_t card = descending
+					? s->set_descending.cardinality
+					: s->set_ascending.cardinality ;
 
 				if (it->bitmap == NULL) {
 					it->bitmap = roaring64_bitmap_portable_deserialize_safe (
@@ -195,6 +198,22 @@ static bool _IdIter_Next
 					}
 					it->produced++ ;
 					return true ;
+				}
+
+				// THE SET YIELDED WHAT DECODE COUNTED, checked rather than
+				// assumed. A Range and a Repeat bound 'produced' against a
+				// number on the segment, so running short is impossible for
+				// them; a Set stops when its iterator says so, and the count
+				// decode recorded came from deserializing this blob a first
+				// time. Same bytes and the same library, so the two agree - but
+				// that is an assumption about determinism, and if it ever broke
+				// the list would quietly run short. Four of the seven appliers
+				// do not compare their own tally against the record's count,
+				// because decode already guarantees it, so a silent short walk
+				// there would apply a prefix and report success.
+				if (it->produced != card) {
+					it->broken = true ;
+					return false ;
 				}
 				break ;
 			}
