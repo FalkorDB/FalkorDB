@@ -1,3 +1,4 @@
+import time
 import struct
 from common import *
 
@@ -1760,3 +1761,73 @@ class testConstraintStatusIsAdoptedNotRecomputed():
         rows = {tuple(r) for r in res.result_set}
         self.env.assertContains(("MANDATORY", "FAILED"), rows)
 
+
+
+class testPromotionSettlesInheritedConstraint():
+    """A constraint inherited UNDER CONSTRUCTION is settled on promotion.
+
+    A replica installs the status off the wire and never validates - see
+    testConstraintStatusAdoption. That is right while it is a replica and wrong
+    the moment it is promoted: the old primary was still building this
+    constraint and now nobody is.
+
+    Nothing else ever settles it. The primary re-announces only on CT_ACTIVE
+    (indexer.c), so a constraint that failed validation there is never
+    mentioned again; GraphHub_AddConstraint answers CONSTRAINT_ALREADY_EXISTS
+    for anything not already CT_FAILED, so GRAPH.CONSTRAINT CREATE cannot
+    re-drive it; and it enforces while it sits there, because C treats any
+    status other than CT_FAILED as enforcing - rejecting writes against a rule
+    it never checked, over rows that would have failed the check.
+
+    THE OUTCOME MUST FOLLOW THE DATA, which is what separates validating from
+    stamping. Both tests promote identically and differ only in whether a row
+    violates the constraint, so a handler that just marked everything FAILED -
+    or everything ACTIVE - fails one of them.
+    """
+
+    def __init__(self):
+        self.env, self.db = Env()
+        self.conn  = self.env.getConnection()
+        self.graph = Graph(self.conn, GRAPH_ID)
+
+    def _inherit_under_construction(self, data):
+        # the state the first announcement leaves behind: status PENDING (1),
+        # which _AdoptConstraintStatus deliberately does not act on
+        self.graph.query(data)
+        self.conn.execute_command("GRAPH.EFFECT", GRAPH_ID, payload(
+            rec_create_constraint(ct = 1, et = 1, status = 1,
+                label_id = 0, label = "Q", props = [(0, "title")])))
+        self.env.assertEquals(self._status(), ["UNDER CONSTRUCTION"])
+
+    def _promote(self):
+        # a role change to master is the trigger, and reaching it needs only
+        # this instance: REPLICAOF at a port nothing is listening on makes it a
+        # replica without a link, and NO ONE promotes it back.
+        port = self.env.envRunner.port
+        self.conn.execute_command("REPLICAOF", "127.0.0.1", str(port + 1))
+        self.conn.execute_command("REPLICAOF", "NO", "ONE")
+
+        # settling is queued to the indexer pool, not done on the event thread
+        for _ in range(100):
+            s = self._status()
+            if s and s[0] != "UNDER CONSTRUCTION":
+                break
+            time.sleep(0.1)
+
+    def _status(self):
+        res = self.graph.query(
+            "CALL db.constraints() YIELD status RETURN status")
+        return [row[0] for row in res.result_set]
+
+    def test01_violating_row_settles_failed(self):
+        self._inherit_under_construction(
+            "CREATE (:Q {title: 'x'}), (:Q {other: 1})")
+        self._promote()
+        self.env.assertEquals(self._status(), ["FAILED"])
+
+    def test02_clean_data_settles_operational(self):
+        self.graph.delete()
+        self._inherit_under_construction(
+            "CREATE (:Q {title: 'x'}), (:Q {title: 'y'})")
+        self._promote()
+        self.env.assertEquals(self._status(), ["OPERATIONAL"])
