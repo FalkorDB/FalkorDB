@@ -1464,7 +1464,6 @@ void EffectsV3Grouping_Encode
 				r.create_constraint.constraint_type = a->constraint_type;
 				r.create_constraint.entity_type     = a->entity_type;
 				r.create_constraint.status          = a->status;
-				r.create_constraint.has_status      = true;
 				r.create_constraint.schema_id       = a->schema_id;
 				r.create_constraint.name            = a->name;
 				r.create_constraint.attrs           = a->attrs_ref;
