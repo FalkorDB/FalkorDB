@@ -594,7 +594,14 @@ fn digest_created_edges(
         };
         // Already partitioned by type; split further by attribute shape.
         let mut groups: FxHashMap<Vec<u16>, Vec<(u64, u64, u64)>> = FxHashMap::default();
-        for &(rel_id, from, to) in entries {
+        for &rel_id in entries {
+            // Endpoints live in `created_rel_types`, keyed by id; the group
+            // here holds only the ids. The two are written and retracted
+            // together, so a miss is unreachable — skipped rather than
+            // unwrapped so the encoder stays total either way.
+            let Some(rel) = p.created_rel_types.get(&rel_id) else {
+                continue;
+            };
             let id = u64::from(rel_id);
             let attr_ids: Vec<u16> = p
                 .new_relationships_attrs
@@ -604,7 +611,7 @@ fn digest_created_edges(
             groups
                 .entry(attr_ids)
                 .or_default()
-                .push((id, u64::from(from), u64::from(to)));
+                .push((id, u64::from(rel.from), u64::from(rel.to)));
         }
         for (attr_ids, mut rows) in groups {
             // Sort the triples together so the edge ids come out ascending and
@@ -1811,19 +1818,18 @@ mod cancelled {
             p.stage_created_node(id, &[0], &[]);
         }
         let t = Arc::new(String::from("R"));
-        p.created_rels_by_type
-            .entry(Arc::clone(&t))
-            .or_default()
-            .push((
-                crate::graph::graph::RelationshipId::from(0_u64),
-                NodeId::from(0_u64),
-                NodeId::from(1_u64),
-            ));
-        p.created_rels_by_type.entry(t).or_default().push((
+        p.created_relationship(
+            crate::graph::graph::RelationshipId::from(0_u64),
+            NodeId::from(0_u64),
+            NodeId::from(1_u64),
+            Arc::clone(&t),
+        );
+        p.created_relationship(
             crate::graph::graph::RelationshipId::from(1_u64),
             NodeId::from(2_u64),
             NodeId::from(3_u64),
-        ));
+            t,
+        );
         // Cancels node 0, and with it the edge hanging off it.
         p.delete_pending_node(NodeId::from(0_u64));
         p
@@ -1944,11 +1950,12 @@ mod cancelled {
         p.set_schema_baseline(&g);
         p.stage_created_node(1, &[0], &[]);
         let t = Arc::new(String::from("R"));
-        p.created_rels_by_type.entry(t).or_default().push((
+        p.created_relationship(
             crate::graph::graph::RelationshipId::from(0_u64),
             NodeId::from(0_u64),
             NodeId::from(1_u64),
-        ));
+            t,
+        );
         // Node 0 is committed, so this cascades the pending edge without
         // cancelling the node — the shape `delete.rs` reaches twice.
         p.remove_pending_relationships_for_node(NodeId::from(0_u64));
