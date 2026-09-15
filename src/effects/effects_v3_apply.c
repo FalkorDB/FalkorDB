@@ -373,27 +373,53 @@ static bool _ApplyAddSchema
 		return false ;
 	}
 
-	bool created = false ;
-	Schema *s = GraphContext_FindOrAddSchema (gc, rec->add_schema.name, rec->add_schema.schema_type,
-			&created) ;
-
-	if (s == NULL || created == false) {
+	// VALIDATED BEFORE THE GRAPH IS TOUCHED, not after.
+	//
+	// This used to create the schema and then compare the id it was handed
+	// against the wire's. That is knowable in advance: schema ids are the array
+	// index - Graph_AddLabel returns arr_len - 1, GetSchemaByID indexes
+	// schemas[id], and RemoveSchema only permits the tail - so they are dense
+	// and append-only, and the id the next schema will get IS the current
+	// count. Checking first means a divergent payload leaves nothing behind.
+	//
+	// The count comes from GraphContext_SchemaCount, which reads through the
+	// pending-aware accessor: an ADD_SCHEMA earlier in this same payload lives
+	// in gc->_node_schemas and is not committed until the write lock is
+	// released, so reading the committed array would miss it and refuse the
+	// second schema of any two.
+	//
+	// NOT THE SAME AS THE NODE-ID CASE, which went the other way. There,
+	// re-deriving the id was inference: C reuses the most recently freed id and
+	// Rust the smallest, and both are correct, so the replica has to accept
+	// what the primary states. Schema ids are never reused, so "the next id is
+	// the count" is the same function on both engines and checking it is
+	// genuine validation.
+	if (GraphContext_GetSchema (gc, rec->add_schema.name,
+				rec->add_schema.schema_type) != NULL) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT ADD_SCHEMA targets schema '%s' which already "
 				"exists locally", rec->add_schema.name) ;
 		return false ;
 	}
 
-	const int assigned = Schema_GetID (s) ;
-	if (assigned != rec->add_schema.schema_id) {
+	const int expected =
+		(int)GraphContext_SchemaCount (gc, rec->add_schema.schema_type) ;
+
+	if (rec->add_schema.schema_id != expected) {
 		RedisModule_Log (NULL, "warning",
-				"GRAPH.EFFECT ADD_SCHEMA '%s' was assigned id %d locally but "
-				"the master assigned %d - schema numbering has diverged",
-				rec->add_schema.name, assigned, rec->add_schema.schema_id) ;
+				"GRAPH.EFFECT ADD_SCHEMA '%s' states id %d but this replica "
+				"would assign %d - schema numbering has diverged",
+				rec->add_schema.name, rec->add_schema.schema_id, expected) ;
 		return false ;
 	}
 
-	return true ;
+	// both preconditions hold, so this creates rather than finds, and the id it
+	// assigns is 'expected' by construction - there is nothing left to check
+	// afterwards
+	Schema *s = GraphContext_FindOrAddSchema (gc, rec->add_schema.name,
+			rec->add_schema.schema_type, NULL) ;
+
+	return (s != NULL) ;
 }
 
 // ADD_ATTRIBUTE: same shape, on the attribute dictionary
@@ -418,14 +444,30 @@ static bool _ApplyAddAttribute
 		return false ;
 	}
 
+	// the same pre-check as ADD_SCHEMA: attribute ids are the index into the
+	// attribute array, so the id the next one gets is the current count
+	const AttributeID expected = (AttributeID)GraphContext_AttributeCount (gc) ;
+
+	if (rec->add_attribute.attr_id != expected) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_ATTRIBUTE '%s' states id %d but this replica "
+				"would assign %d - attribute numbering has diverged",
+				rec->add_attribute.name, rec->add_attribute.attr_id, expected) ;
+		return false ;
+	}
+
 	const AttributeID assigned =
 		GraphHub_FindOrAddAttribute (gc, rec->add_attribute.name, false) ;
 
-	if (assigned != rec->add_attribute.attr_id) {
+	// THE ONE POST-CHECK THAT IS NOT REDUNDANT. The id is settled by the
+	// pre-check, but the dictionary can still refuse to grow: AttributeID is 16
+	// bits and its top two values are reserved sentinels, so a graph at the cap
+	// gets ATTRIBUTE_ID_NONE back rather than an id. That is a local limit
+	// rather than a divergence, and it cannot be known before the call.
+	if (assigned == ATTRIBUTE_ID_NONE) {
 		RedisModule_Log (NULL, "warning",
-				"GRAPH.EFFECT ADD_ATTRIBUTE '%s' was assigned id %d locally "
-				"but the master assigned %d - attribute numbering has diverged",
-				rec->add_attribute.name, assigned, rec->add_attribute.attr_id) ;
+				"GRAPH.EFFECT ADD_ATTRIBUTE '%s' could not be added - the "
+				"attribute limit is exhausted", rec->add_attribute.name) ;
 		return false ;
 	}
 

@@ -887,6 +887,18 @@ class testSchemaIdDivergenceRefused(_RefusedCase):
                      "schema id 7 where the replica would assign 1")
 
 
+class testAttributeIdDivergenceRefused(_RefusedCase):
+    def test_refused(self):
+        # the ADD_SCHEMA case's twin, and it had no test. Attribute ids are the
+        # index into the attribute dictionary, so with 'v' already holding 0 the
+        # next one must be 1; claiming 4 is a numbering disagreement.
+        #
+        # Checked BEFORE the attribute is added rather than after, so a
+        # divergent payload leaves the dictionary untouched.
+        self._refuse(payload(rec_add_attribute(4, "title")),
+                     "attribute id 4 where the replica would assign 1")
+
+
 class testReservedSegmentBitRefused(_RefusedCase):
     def test_refused(self):
         # header bit 7 is reserved and must be REJECTED, not masked off
