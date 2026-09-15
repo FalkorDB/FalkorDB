@@ -794,6 +794,71 @@ void test_effectsV3Group_valuesFollowTheirAttributes(void) {
 	EffectsV3Grouping_Free(g);
 }
 
+// AND A REPEATED ID NEVER REACHES THE WIRE
+//
+// The contract is STRICTLY ascending, so a repeat is as much a violation as a
+// descending pair - and it is the more dangerous of the two, because the two
+// readers disagree about it. Rust refuses `w[0] >= w[1]` and resyncs. A C
+// replica ACCEPTS it, takes both pairs, drops the second write to the id and
+// leaves the attribute that lost its column unset: no error, no log, no
+// resync, and a replica quietly holding different data from its primary. A
+// state-only check calls that green.
+//
+// Nothing upstream produces one today - C folds `SET n.v = 1, n.v = 2` into a
+// single effect, and ATTRIBUTE_ID_ALL is expanded to a diff rather than
+// emitted - so this pins a guarantee the encoder makes rather than a bug it
+// had. That is the point: the invariant is local now instead of borrowed.
+void test_effectsV3Group_repeatedAttributeIsCollapsed(void) {
+	LabelID labels[] = { 1 };
+	// attribute 7 written twice, and out of order, so the collapse has to
+	// survive the sort rather than depend on arrival order
+	AttributeID dup[] = { 9, 7, 7 };
+	SIValue vd[] = { SI_LongVal(0x9999), SI_LongVal(0xAAAA), SI_LongVal(0xBBBB) };
+
+	EffectsV3Grouping *g = EffectsV3Grouping_New();
+	EffectsV3Grouping_AddNode(g, EFFECT_CREATE_NODE, labels, 1, 10, dup, vd, 3);
+
+	size_t n;
+	unsigned char *b = _encode(g, &n);
+
+	// the superseded value must not appear anywhere on the wire, and the one
+	// that won must
+	bool saw_first = false, saw_last = false, saw_other = false;
+	for(size_t i = 0; i + 8 <= n; i++) {
+		uint64_t v;
+		memcpy(&v, b + i, 8);
+		if(v == 0xAAAA) saw_first = true;
+		if(v == 0xBBBB) saw_last  = true;
+		if(v == 0x9999) saw_other = true;
+	}
+
+	TEST_ASSERT_(!saw_first,
+			"the superseded value for attribute 7 reached the wire - the "
+			"repeat was not collapsed, and a C replica will silently drop a "
+			"column applying this");
+	TEST_ASSERT_(saw_last,
+			"last write must win for a repeated attribute id, but 0xBBBB is "
+			"not on the wire");
+	TEST_ASSERT_(saw_other,
+			"collapsing the repeat must not disturb the other attribute");
+
+	free(b);
+	EffectsV3Grouping_Free(g);
+
+	// and the shape itself shrank: {9,7,7} is the two-attribute set {7,9},
+	// so it must be the SAME record as a plain {7,9} rather than a third shape
+	AttributeID plain[] = { 7, 9 };
+	SIValue vp[] = { SI_LongVal(0xBBBB), SI_LongVal(0x9999) };
+
+	EffectsV3Grouping *m = EffectsV3Grouping_New();
+	EffectsV3Grouping_AddNode(m, EFFECT_CREATE_NODE, labels, 1, 10, dup, vd, 3);
+	EffectsV3Grouping_AddNode(m, EFFECT_CREATE_NODE, labels, 1, 11, plain, vp, 2);
+	TEST_ASSERT_(EffectsV3Grouping_RecordCount(m) == 1,
+			"a collapsed repeat is the same shape as the set it collapses to, "
+			"got %u records", EffectsV3Grouping_RecordCount(m));
+	EffectsV3Grouping_Free(m);
+}
+
 // walk a payload holding ONE CREATE_INDEX record to the start of its options
 //
 // The record is `opcode . schema_type . schema_id . name . field_type .
@@ -1222,6 +1287,8 @@ TEST_LIST = {
 		test_effectsV3Group_attributeOrderDoesNotSplit },
 	{ "EffectsV3Group:valuesFollowTheirAttributes",
 		test_effectsV3Group_valuesFollowTheirAttributes },
+	{ "EffectsV3Group:repeatedAttributeIsCollapsed",
+		test_effectsV3Group_repeatedAttributeIsCollapsed },
 	{ "EffectsV3Group:lastValueWins",
 		test_effectsV3Group_lastValueWins },
 	{ "EffectsV3Group:flushedGroupOutlivesTheArena",
