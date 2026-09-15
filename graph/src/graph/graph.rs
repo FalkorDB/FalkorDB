@@ -1414,29 +1414,26 @@ impl Graph {
     /// (#2426). `try_reserve_exact` turns that into an error the command can report.
     ///
     ///
-    /// `outstanding` is every id this caller has been handed in this
-    /// transaction, whether or not it survived — `Pending::outstanding_nodes`
-    /// on the query path. Cancelled ids stay in it, which is the point: a
-    /// cancellation returns the id to the bin, so without them the very next
-    /// batch would hand the same id out twice inside one commit. It is a
-    /// parameter rather than a field because the caller is the one that knows,
-    /// and it is the *set* rather than its size because the two questions asked
-    /// of it below need different halves of it.
+    /// `space` is this batch's view of the id space: it says which ids have
+    /// already been handed out, and it is told about the ones handed out here.
+    /// The same type the effects path opens, so both allocate against one
+    /// account of what the batch has done rather than two.
     ///
-    /// Reserved ids stay in the recycle bin until commit, since `max_node_id`,
-    /// `is_node_deleted` and the id boundary are all derived from it and would
-    /// go wrong mid-transaction if a reservation removed one. So something has
-    /// to say how far into the bin previous batches already reached, and that
-    /// is how many outstanding ids are *in* the bin — not how many there are.
-    /// A count conflates the two, and the difference is a collision rather than
-    /// a wasted id: after `CREATE (a),(b),(c) ... DELETE b`, three ids are
-    /// outstanding, one is back in the bin, and a count of the rest walks the
-    /// bin as though two of its ids were spoken for when none is. It then
-    /// places the next fresh id at `node_count + 2`, which is c's.
+    /// "Handed out" includes ids the batch has since given back, and that is
+    /// the point rather than an oversight: a cancellation returns the id to the
+    /// recycle bin immediately, so a space that forgot it would offer it to the
+    /// very next reserve and hand the same id out twice inside one commit. The
+    /// effects buffer emits a cancelled id as its own create/delete pair, so
+    /// the replica would be told to create that id twice and refuse the lot.
+    ///
+    /// Reserved ids stay in the recycle bin until commit — `max_node_id`,
+    /// `is_node_deleted` and the boundary are all derived from it and would go
+    /// wrong mid-batch if a reservation removed one — so the bin alone does not
+    /// mean "free", and the space is what says which of its ids still are.
     pub fn reserve_nodes(
         &mut self,
         count: usize,
-        outstanding: &RoaringTreemap,
+        space: &mut IdSpace,
     ) -> Result<Vec<NodeId>, String> {
         let mut ids = Vec::new();
         ids.try_reserve_exact(count)
@@ -1447,17 +1444,34 @@ impl Graph {
         // and `is_node_deleted` are derived from it and would go wrong
         // mid-transaction — so the bin alone does not mean "free", and the
         // difference is what does.
-        let reclaimed = reclaim_ids(&self.deleted_nodes, outstanding, count, &mut ids);
+        let reclaimed = reclaim_ids(&self.deleted_nodes, space.handed_out(), count, &mut ids);
 
         // Then fresh ids, above every id ever handed out: the live ones, plus
-        // everything that is in the bin or outstanding or both. The union is
-        // that set, and counting it directly is what keeps the reclaimed ids —
-        // which are in the bin *and* outstanding — from being counted twice.
+        // everything that is in the bin or already handed out or both. The
+        // union is that set, and counting it directly is what keeps a reclaimed
+        // id — which is in the bin *and* handed out — from counting twice.
         let remaining = count - reclaimed;
-        let start = self.node_count + self.deleted_nodes.union_len(outstanding);
+        let start = self.node_count + self.deleted_nodes.union_len(space.handed_out());
         ids.extend((start..start + remaining).map(NodeId));
 
+        space.record_reserved(ids.iter().map(|id| u64::from(*id)));
         Ok(ids)
+    }
+
+    /// Open an id space against this graph's node boundary.
+    ///
+    /// The one place the boundary is turned into a batch, so a caller does not
+    /// have to know which of `node_count`, `max_node_id` or the recycle bin it
+    /// is derived from — and so a caller in another crate can have one at all.
+    #[must_use]
+    pub fn open_node_id_space(&self) -> IdSpace {
+        IdSpace::at(self.node_id_bound())
+    }
+
+    /// The same for relationships.
+    #[must_use]
+    pub fn open_relationship_id_space(&self) -> IdSpace {
+        IdSpace::at(self.relationship_id_bound())
     }
 
     /// Where the node id space ends: ids below were handed out, ids at or above
@@ -2365,34 +2379,38 @@ impl Graph {
     /// Reserve `count` relationship ids. Fallible for the same reason as
     /// [`Self::reserve_nodes`]: `GRAPH.BULK` sizes this from a client-declared count.
     ///
-    /// `outstanding` means what it does there — every id this caller has been
-    /// handed, which on the query path is
-    /// `Pending::outstanding_relationships`.
+    /// `space` means what it does there.
     pub fn reserve_relationships(
         &mut self,
         count: usize,
-        outstanding: &RoaringTreemap,
+        space: &mut IdSpace,
     ) -> Result<Vec<RelationshipId>, String> {
         let mut ids = Vec::new();
         ids.try_reserve_exact(count)
             .map_err(|_| format!("failed to reserve {count} relationship ids"))?;
         let count = count as u64;
         // Same shape as `reserve_nodes`, for the same reasons.
-        let reclaimed = reclaim_ids(&self.deleted_relationships, outstanding, count, &mut ids);
+        let reclaimed = reclaim_ids(
+            &self.deleted_relationships,
+            space.handed_out(),
+            count,
+            &mut ids,
+        );
 
         let remaining = count - reclaimed;
-        let start = self.relationship_count + self.deleted_relationships.union_len(outstanding);
+        let start =
+            self.relationship_count + self.deleted_relationships.union_len(space.handed_out());
         ids.extend((start..start + remaining).map(RelationshipId));
 
+        space.record_reserved(ids.iter().map(|id| u64::from(*id)));
         Ok(ids)
     }
 
     /// Create relationships of a single type using flat arrays.
     ///
-    /// Avoids HashMap overhead while using individual GraphBLAS set calls. Takes
-    /// ids from wherever the caller got them; the write path passes `None`,
-    /// because its ids came from [`Self::reserve_relationships`] and there is no
-    /// batch to judge them against.
+    /// Avoids HashMap overhead while using individual GraphBLAS set calls. The
+    /// id space is required rather than optional: every caller has one now, and
+    /// "checked against nothing" was a value pretending to be a mode.
     ///
     /// # Errors
     ///
@@ -2404,12 +2422,10 @@ impl Graph {
         srcs: &[u64],
         dsts: &[u64],
         rel_ids: &[u64],
-        id_space: Option<&mut IdSpace>,
+        id_space: &mut IdSpace,
     ) -> Result<(), NodeOpError> {
-        if let Some(space) = id_space {
-            let ids: RoaringTreemap = rel_ids.iter().copied().collect();
-            space.record_created(&ids, &self.deleted_relationships)?;
-        }
+        let ids: RoaringTreemap = rel_ids.iter().copied().collect();
+        id_space.record_created(&ids, &self.deleted_relationships)?;
         let count = srcs.len() as u64;
         self.relationship_count += count;
 
@@ -4933,16 +4949,17 @@ mod reservation_tests {
     struct Query {
         /// What commit will create.
         created: RoaringTreemap,
-        /// Every id handed out, cancelled ones included — `Pending`'s
-        /// `taken_node_ids`, and what the allocator is told about.
-        taken: RoaringTreemap,
+        /// The batch's id space — `Pending`'s `node_space`. It remembers every
+        /// id handed out, cancelled ones included, which is what the allocator
+        /// is told about.
+        space: IdSpace,
     }
 
     impl Query {
-        fn new() -> Self {
+        fn new(g: &Graph) -> Self {
             Self {
                 created: RoaringTreemap::new(),
-                taken: RoaringTreemap::new(),
+                space: g.open_node_id_space(),
             }
         }
 
@@ -4951,11 +4968,12 @@ mod reservation_tests {
             g: &mut Graph,
             n: usize,
         ) -> Vec<u64> {
-            let ids = g.reserve_nodes(n, &self.taken).expect("reserved");
+            let before = self.space.handed_out().clone();
+            let ids = g.reserve_nodes(n, &mut self.space).expect("reserved");
             let ids: Vec<u64> = ids.into_iter().map(u64::from).collect();
             for &id in &ids {
                 assert!(
-                    self.taken.insert(id),
+                    !before.contains(id),
                     "{id} was handed out twice in one query"
                 );
                 self.created.insert(id);
@@ -4964,8 +4982,8 @@ mod reservation_tests {
         }
 
         /// Cancel a reservation, as `DELETE` of a pending-created node does.
-        /// The id leaves `created`, so commit will not make it — but it stays
-        /// in `taken`, so this query will not be handed it again.
+        /// The id leaves `created`, so commit will not make it — but the space
+        /// keeps it, so this query will not be handed it again.
         fn cancel(
             &mut self,
             g: &mut Graph,
@@ -4976,10 +4994,11 @@ mod reservation_tests {
         }
 
         fn commit(
-            self,
+            mut self,
             g: &mut Graph,
         ) {
-            g.mark_nodes_live(&self.created);
+            g.create_nodes(&self.created, &mut self.space)
+                .expect("the allocator's own ids must be creatable");
         }
     }
 
@@ -5030,7 +5049,7 @@ mod reservation_tests {
     #[test]
     fn successive_batches_do_not_overlap() {
         let mut g = graph();
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
 
         let mut all = Vec::new();
         for _ in 0..5 {
@@ -5046,12 +5065,12 @@ mod reservation_tests {
     #[test]
     fn reclaims_from_the_bin_before_allocating_fresh() {
         let mut g = graph();
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         q.reserve(&mut g, 10);
         q.commit(&mut g);
         delete(&mut g, &[2, 5, 7]);
 
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         assert_eq!(q.reserve(&mut g, 2), vec![2, 5]);
         assert_eq!(q.reserve(&mut g, 1), vec![7], "then the last freed id");
         assert_eq!(q.reserve(&mut g, 2), vec![10, 11], "then fresh");
@@ -5065,13 +5084,13 @@ mod reservation_tests {
     #[test]
     fn one_batch_spanning_the_bin_and_fresh_ids() {
         let mut g = graph();
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         q.reserve(&mut g, 10);
         q.commit(&mut g);
         delete(&mut g, &[3]);
 
         // 9 live (0..10 minus 3), one in the bin, so 10 ids handed out.
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         assert_eq!(
             q.reserve(&mut g, 3),
             vec![3, 10, 11],
@@ -5087,7 +5106,7 @@ mod reservation_tests {
     #[test]
     fn a_cancelled_reservation_returns_to_the_bin() {
         let mut g = graph();
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         let ids = q.reserve(&mut g, 2);
         assert_eq!(ids, vec![0, 1]);
         q.cancel(&mut g, 1);
@@ -5099,7 +5118,7 @@ mod reservation_tests {
 
         // A *later* query does hand it back out — by then it is a different
         // effects buffer, where recreating a recycled id is ordinary.
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         assert_eq!(q.reserve(&mut g, 1), vec![1]);
         q.commit(&mut g);
         assert_dense(&g, 2);
@@ -5110,7 +5129,7 @@ mod reservation_tests {
     #[test]
     fn reserving_after_a_cancellation_in_the_same_query() {
         let mut g = graph();
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         q.reserve(&mut g, 3);
         q.cancel(&mut g, 1);
 
@@ -5133,16 +5152,17 @@ mod reservation_tests {
     #[test]
     fn relationship_ids_reclaim_then_allocate_fresh() {
         let mut g = graph();
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         q.reserve(&mut g, 4);
         q.commit(&mut g);
 
         let type_name = Arc::new("R".to_owned());
-        let mut held = RoaringTreemap::new();
-        let ids = g.reserve_relationships(3, &held).expect("reserved");
+        let mut space = g.open_relationship_id_space();
+        let ids = g.reserve_relationships(3, &mut space).expect("reserved");
         let ids: Vec<u64> = ids.into_iter().map(u64::from).collect();
         assert_eq!(ids, vec![0, 1, 2]);
-        let _ = g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids, None);
+        g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids, &mut space)
+            .expect("the allocator's own ids must be creatable");
 
         let mut docs = FxHashMap::default();
         let doomed: RoaringTreemap = std::iter::once(1).collect();
@@ -5151,8 +5171,8 @@ mod reservation_tests {
 
         // One in the bin, two live, so three ids handed out.
         // A fresh query, so nothing is outstanding: the first batch committed.
-        held.clear();
-        let ids = g.reserve_relationships(2, &held).expect("reserved");
+        let mut space = g.open_relationship_id_space();
+        let ids = g.reserve_relationships(2, &mut space).expect("reserved");
         let ids: Vec<u64> = ids.into_iter().map(u64::from).collect();
         assert_eq!(ids, vec![1, 3], "the freed id, then above the boundary");
     }
@@ -5163,12 +5183,12 @@ mod reservation_tests {
     #[test]
     fn outstanding_covers_ids_reclaimed_by_an_earlier_batch() {
         let mut g = graph();
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         q.reserve(&mut g, 8);
         q.commit(&mut g);
         delete(&mut g, &[0, 1, 2, 3, 4, 5]);
 
-        let mut q = Query::new();
+        let mut q = Query::new(&g);
         assert_eq!(q.reserve(&mut g, 2), vec![0, 1]);
         assert_eq!(q.reserve(&mut g, 2), vec![2, 3], "not 0 and 1 again");
         assert_eq!(q.reserve(&mut g, 2), vec![4, 5]);

@@ -284,7 +284,7 @@ fn apply_record(
                 src.iter().collect(),
                 dst.iter().collect(),
             );
-            g.create_relationships_bulk(&type_name, &src, &dst, &ids, Some(&mut ops.edges))
+            g.create_relationships_bulk(&type_name, &src, &dst, &ids, &mut ops.edges)
                 .map_err(|e| node_op("relationship", e))?;
 
             // As in `CreateNode` above: `attr_map` shape-checks internally, so
