@@ -51,7 +51,7 @@ RUN apt-get update && \
     (dpkg --force-remove-essential --purge perl-base || true) && \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true) && \
     (dpkg --purge passwd || true) && \
-    apt-get autoremove -y --purge 2>/dev/null || true && \
+    (apt-get autoremove -y --purge 2>/dev/null || true) && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
