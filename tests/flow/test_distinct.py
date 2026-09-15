@@ -28,6 +28,20 @@ class testReturnDistinctFlow1(FlowTestsBase):
         execution_plan = str(self.graph1.explain("MATCH (n) RETURN DISTINCT n.name, max(n.age)"))
         self.env.assertNotContains("Distinct", execution_plan)
 
+    def test_distinct_subnormal_float_vs_int(self):
+        # 5e-324 has the bit pattern of the integer 1, and distinct dedups on
+        # the hash alone, so the two values used to collapse into one row.
+        result = self.graph1.query("UNWIND [1, 5e-324] AS x RETURN count(DISTINCT x)")
+        self.env.assertEqual(result.result_set, [[2]])
+
+        # reachable through arithmetic too, without a subnormal literal.
+        result = self.graph1.query("UNWIND [1, 1e-323 / 2] AS x RETURN count(DISTINCT x)")
+        self.env.assertEqual(result.result_set, [[2]])
+
+        # 1 and 1.0 are equal, so they must still collapse into one row.
+        result = self.graph1.query("UNWIND [1, 1.0] AS x RETURN count(DISTINCT x)")
+        self.env.assertEqual(result.result_set, [[1]])
+
     def test_issue_395_scenario(self):
         # all
         result = self.graph1.query("MATCH (p:PARENT)-[:HAS]->(:CHILD) RETURN p.name")
