@@ -1957,15 +1957,13 @@ impl Graph {
         &mut self,
         deleted_nodes: &RoaringTreemap,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
-        id_space: Option<&IdSpace>,
+        id_space: &IdSpace,
     ) -> Result<Vec<DeletedNodeLabel>, NodeOpError> {
         // Both halves of "is this node live", and both belong to the id space:
         // the bin's half needs only the bin, so it is asked whether or not there
         // is a batch, and the boundary's half needs one.
         IdSpace::refuse_recycled(deleted_nodes, &self.deleted_nodes)?;
-        if let Some(space) = id_space {
-            space.refuse_undeletable(deleted_nodes)?;
-        }
+        id_space.refuse_undeletable(deleted_nodes)?;
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
@@ -2516,7 +2514,7 @@ impl Graph {
         &mut self,
         rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-        id_space: Option<&IdSpace>,
+        id_space: &IdSpace,
     ) -> Result<Vec<DeletedEdge>, NodeOpError> {
         if rels.is_empty() {
             return Ok(Vec::new());
@@ -2524,9 +2522,7 @@ impl Graph {
         // Both halves of "is this relationship live", exactly as the node side
         // asks them: the bin needs no batch, the boundary needs one.
         IdSpace::refuse_recycled(rels, &self.deleted_relationships)?;
-        if let Some(space) = id_space {
-            space.refuse_undeletable(rels)?;
-        }
+        id_space.refuse_undeletable(rels)?;
         let num_types = self.relationship_matrices.len();
 
         // --- Phase 1: resolve (type, src, dst) per edge without mutating state ---
@@ -4698,17 +4694,20 @@ mod reservation_tests {
     struct Query {
         /// What commit will create.
         created: RoaringTreemap,
-        /// The batch's id space — `Pending`'s `node_space`. It remembers every
-        /// id handed out, cancelled ones included, which is what the allocator
-        /// is told about.
-        space: IdSpace,
+        /// What this batch gave back. With `created` it is exactly what the
+        /// allocator must not reissue — `Pending`'s two sets.
+        cancelled: RoaringTreemap,
+        /// Where the id space stood when the batch opened: the one thing
+        /// `Pending` keeps.
+        entry: u64,
     }
 
     impl Query {
         fn new(g: &Graph) -> Self {
             Self {
                 created: RoaringTreemap::new(),
-                space: g.open_node_id_space(),
+                cancelled: RoaringTreemap::new(),
+                entry: g.node_id_bound(),
             }
         }
 
@@ -4717,8 +4716,10 @@ mod reservation_tests {
             g: &mut Graph,
             n: usize,
         ) -> Vec<u64> {
-            let before = self.space.handed_out().clone();
-            let ids = self.space.reserve(n, g.deleted_nodes()).expect("reserved");
+            let before = &self.created | &self.cancelled;
+            let ids = IdSpace::at(self.entry)
+                .reserve(n, g.deleted_nodes(), &[&self.created, &self.cancelled])
+                .expect("reserved");
             for &id in &ids {
                 assert!(
                     !before.contains(id),
@@ -4738,14 +4739,15 @@ mod reservation_tests {
             id: u64,
         ) {
             assert!(self.created.remove(id), "cancelling an id never reserved");
+            self.cancelled.insert(id);
             g.return_node_id(NodeId(id));
         }
 
         fn commit(
-            mut self,
+            self,
             g: &mut Graph,
         ) {
-            g.create_nodes(&self.created, &mut self.space)
+            g.create_nodes(&self.created, &mut IdSpace::at(self.entry))
                 .expect("the allocator's own ids must be creatable");
         }
     }
@@ -4756,7 +4758,10 @@ mod reservation_tests {
     ) {
         let bm: RoaringTreemap = ids.iter().copied().collect();
         let mut docs = FxHashMap::default();
-        g.delete_nodes(&bm, &mut docs, None).expect("deleted");
+        // A batch that created nothing: every id here predates it, which is
+        // what makes them deletable.
+        let space = g.open_node_id_space();
+        g.delete_nodes(&bm, &mut docs, &space).expect("deleted");
     }
 
     /// Between queries the id space is dense: `handed_out` ids have been
@@ -4907,7 +4912,7 @@ mod reservation_tests {
         let type_name = Arc::new("R".to_owned());
         let mut space = g.open_relationship_id_space();
         let ids = space
-            .reserve(3, g.deleted_relationships())
+            .reserve(3, g.deleted_relationships(), &[])
             .expect("reserved");
         assert_eq!(ids, vec![0, 1, 2]);
         g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids, &mut space)
@@ -4915,14 +4920,15 @@ mod reservation_tests {
 
         let mut docs = FxHashMap::default();
         let doomed: RoaringTreemap = std::iter::once(1).collect();
-        g.delete_relationships(&doomed, &mut docs, None)
+        let del_space = g.open_relationship_id_space();
+        g.delete_relationships(&doomed, &mut docs, &del_space)
             .expect("deleted");
 
         // One in the bin, two live, so three ids handed out.
         // A fresh query, so nothing is outstanding: the first batch committed.
         let mut space = g.open_relationship_id_space();
         let ids = space
-            .reserve(2, g.deleted_relationships())
+            .reserve(2, g.deleted_relationships(), &[])
             .expect("reserved");
         assert_eq!(ids, vec![1, 3], "the freed id, then above the boundary");
     }
@@ -4966,14 +4972,16 @@ mod adjacency_cascade_tests {
         let mut g = Graph::new(16, 16, 1, 0, name);
         let mut space = g.open_node_id_space();
         let ids: RoaringTreemap = space
-            .reserve(node_count, g.deleted_nodes())
+            .reserve(node_count, g.deleted_nodes(), &[])
             .unwrap()
             .into_iter()
             .collect();
         g.create_nodes(&ids, &mut space).unwrap();
         let mut rel_space = g.open_relationship_id_space();
         for &(src, dst, type_name) in edges {
-            let rel_id = rel_space.reserve(1, g.deleted_relationships()).unwrap()[0];
+            let rel_id = rel_space
+                .reserve(1, g.deleted_relationships(), &[])
+                .unwrap()[0];
             g.create_relationships_bulk(
                 &Arc::new(type_name.to_string()),
                 &[src],
@@ -4996,7 +5004,8 @@ mod adjacency_cascade_tests {
         let deleted: RoaringTreemap = nodes.iter().copied().collect();
         let mut node_docs = FxHashMap::default();
         let mut edge_docs = FxHashMap::default();
-        g.delete_nodes(&deleted, &mut node_docs, None).unwrap();
+        let space = g.open_node_id_space();
+        g.delete_nodes(&deleted, &mut node_docs, &space).unwrap();
         g.delete_implicit_edges(&deleted, &RoaringTreemap::new(), &mut edge_docs)
             .unwrap();
     }
@@ -5085,8 +5094,13 @@ mod adjacency_cascade_tests {
         let mut edge_docs = FxHashMap::default();
 
         // Drop just the R edge (id 0) explicitly; S (id 1) stays.
-        g.delete_relationships(&RoaringTreemap::from_iter([0u64]), &mut edge_docs, None)
-            .unwrap();
+        let del_space = g.open_relationship_id_space();
+        g.delete_relationships(
+            &RoaringTreemap::from_iter([0u64]),
+            &mut edge_docs,
+            &del_space,
+        )
+        .unwrap();
         assert_eq!(adjacency_entries(&g), vec![(0, 1)]);
 
         // Now delete node 2, which is unrelated: the 0->1 pair is untouched.

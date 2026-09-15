@@ -141,7 +141,7 @@ impl<'a> Iterator for CommitOp<'a> {
             self.runtime
                 .pending
                 .borrow_mut()
-                .open_id_spaces(&self.runtime.g);
+                .open_id_boundaries(&self.runtime.g);
             // Reverse once so we can pop from the end in O(1) while preserving order.
             self.results.reverse();
         }
