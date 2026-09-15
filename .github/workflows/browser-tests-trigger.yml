@@ -42,7 +42,7 @@ permissions:
 
 jobs:
   browser-tests:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     steps:
       - name: Report the image under test
         env:
