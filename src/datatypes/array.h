@@ -120,9 +120,12 @@ XXH64_hash_t SIArray_HashCode
 // this is the reverse of SIArray_ToBinary
 // x = SIArray_FromBinary(SIArray_ToBinary(y));
 // x == y
-SIValue SIArray_FromBinary
+// returns false if the stream is truncated or malformed; 'out' is always set
+// to a value that is safe to free
+bool SIArray_FromBinary
 (
-	FILE *stream  // stream containing binary representation of an array
+	FILE *stream,  // stream containing binary representation of an array
+	SIValue *out   // [output] array read
 );
 
 // defrag array

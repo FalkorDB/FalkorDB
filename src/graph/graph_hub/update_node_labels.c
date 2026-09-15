@@ -59,6 +59,34 @@ static void _LabelNodes_Single
 
 	LabelID lbl_id = Schema_GetID (s) ;
 
+	//--------------------------------------------------------------------------
+	// labelling is a SET operation and has to be idempotent
+	//--------------------------------------------------------------------------
+	//
+	// Graph_LabelNode increments the label statistic once per node it is
+	// handed, unconditionally. Its two Delta_Matrix_setElement_BOOL calls ARE
+	// idempotent, so a node that already carries the label adds no matrix
+	// entry - but the counter still moves. Graph_LabeledNodeCount reads that
+	// counter rather than scanning the matrix, so the drift shows up as
+	// `count(n)` disagreeing with `id(n)`: three by count over two nodes.
+	//
+	// v3 is what makes it reachable. A master resolves to end state and emits
+	// `MATCH (n) SET n:L` naming every matched node, not only those that gained
+	// the label, and the spec's "label add and remove are idempotent set
+	// operations" is exactly what licenses it to do that. So the idempotency
+	// has to be real here rather than maintained by callers filtering first.
+	//
+	// CORRECTED IN BULK, and the per-node alternative is a trap worth naming:
+	// Delta_Matrix_isStoredElement looks like the right cheap membership test -
+	// pattern queries only, no extractElement - but it probes DELTA-PLUS FIRST,
+	// and delta-plus is where setElement writes. Calling it inside this loop
+	// would have node k query the k-1 pending writes before it, which is the
+	// GB_wait rebuild that made v3 edge creation quadratic. Two nvals per
+	// record is O(1) of those waits; a membership test per node is O(n).
+	Delta_Matrix lbl_matrix = Graph_GetLabelMatrix (g, lbl_id) ;
+	GrB_Index labelled_before = 0 ;
+	GrB_OK (Delta_Matrix_nvals (&labelled_before, lbl_matrix)) ;
+
 	// create an iterator
 	GxB_Iterator it ;
 	GxB_Iterator_new (&it) ;
@@ -102,6 +130,27 @@ static void _LabelNodes_Single
 		// move to the next entry in v
 		info = GxB_Vector_Iterator_next (it) ;
 	}
+
+	//--------------------------------------------------------------------------
+	// undo the over-count
+	//--------------------------------------------------------------------------
+	//
+	// the loop incremented once per node in the vector; only the genuinely new
+	// ones added a matrix entry. The difference is how many already carried the
+	// label, and it is subtracted once rather than avoided per node.
+	{
+		GrB_Index labelled_after = 0 ;
+		GrB_OK (Delta_Matrix_nvals (&labelled_after, lbl_matrix)) ;
+
+		GrB_Index n_nodes = 0 ;
+		GrB_OK (GrB_Vector_nvals (&n_nodes, _V)) ;
+
+		const GrB_Index newly = labelled_after - labelled_before ;
+		if (n_nodes > newly) {
+			GraphStatistics_DecNodeCount (&g->stats, lbl_id, n_nodes - newly) ;
+		}
+	}
+
 
 	if (log) {
 		EffectsBuffer_AddLabelsEffect (eb, _V) ;

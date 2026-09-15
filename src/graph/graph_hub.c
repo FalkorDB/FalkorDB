@@ -46,6 +46,62 @@ void GraphHub_CreateNode
 	}
 }
 
+// create nodes at the ids the caller states, and index them
+//
+// GraphHub_CreateNodes below allocates the ids; this one is told them. Used by
+// effects apply, where the ids belong to the primary.
+//
+// NEVER LOGS. A replica applying an effect does not re-emit it and has no undo
+// log for it, so the 'log' parameter the sibling takes would only ever be false
+// here and is not offered.
+//
+// A BATCH rather than one node at a time: the ids are claimed off the free
+// list in a single pass, which is what keeps this off the quadratic the
+// per-id form measured at 3.89x per doubling.
+//
+// On failure the caller still owns 'sets' - nothing has been attached.
+//
+// returns false if any id is already live, which is divergence
+void GraphHub_CreateNodesAtIds
+(
+	GraphContext *gc,
+	Node **nodes,        // nodes to create; each carries the id to use
+	void **items,        // storage slots from Graph_ClaimNodeIds
+	AttributeSet *sets,  // nodes attributes
+	uint node_count,
+	LabelID *labels,
+	uint label_count
+) {
+	ASSERT (gc    != NULL) ;
+	ASSERT (nodes != NULL) ;
+
+	if (node_count == 0) {
+		return ;
+	}
+
+	Graph_CreateNodesAtIds (GraphContext_GetGraph (gc), nodes, items, sets,
+			node_count, labels, label_count) ;
+
+	// collect the schemas that actually have indexes, once, rather than
+	// asking per node
+	int s_idx = 0 ;
+	Schema *schemas[label_count > 0 ? label_count : 1] ;
+
+	for (uint i = 0; i < label_count; i++) {
+		Schema *s = GraphContext_GetSchemaByID (gc, labels[i], SCHEMA_NODE) ;
+		ASSERT (s != NULL) ;
+		if (Schema_HasIndices (s)) {
+			schemas[s_idx++] = s ;
+		}
+	}
+
+	for (int j = 0 ; j < s_idx ; j++) {
+		for (uint i = 0; i < node_count; i++) {
+			Schema_AddNodeToIndex (schemas[j], nodes[i]) ;
+		}
+	}
+}
+
 // batch create nodes
 // all nodes share the same set of labels
 // set the nodes labels and attributes
@@ -186,6 +242,43 @@ void GraphHub_CreateEdges
 				UndoLog_CreateEdge (undo_log, e) ;
 				EffectsBuffer_AddCreateEdgeEffect (eb, e) ;
 			}
+		}
+	}
+}
+
+// create edges at the ids the caller states, and index them
+//
+// the edge counterpart of GraphHub_CreateNodeAtId. Never logs, for the same
+// reason: a replica does not re-emit what it applies.
+//
+// KEEPS THE BATCH SHAPE. The singular Graph_CreateEdge reads the relation
+// matrix, which forces a GB_wait against the pending tuples of every edge
+// already written in this record - that was measured at 91x on 8k edges and is
+// why this path is a batch call at all. Accepting the primary's ids does not
+// change that: the whole batch is still handed over in one call.
+//
+// returns false if any stated id is already live, which is divergence
+void GraphHub_CreateEdgesAtIds
+(
+	GraphContext *gc,
+	Edge **edges,        // each edge's id is the id to create it at
+	void **items,        // storage slots from Graph_ClaimEdgeIds
+	RelationID r,
+	AttributeSet *sets
+) {
+	ASSERT (gc    != NULL) ;
+	ASSERT (edges != NULL) ;
+
+	Graph_CreateEdgesAtIds (GraphContext_GetGraph (gc), r, edges, items,
+			sets) ;
+
+	Schema *s = GraphContext_GetSchemaByID (gc, r, SCHEMA_EDGE) ;
+	ASSERT (s != NULL) ;
+
+	if (Schema_HasIndices (s)) {
+		const uint count = arr_len (edges) ;
+		for (uint i = 0; i < count; i++) {
+			Schema_AddEdgeToIndex (s, edges[i]) ;
 		}
 	}
 }

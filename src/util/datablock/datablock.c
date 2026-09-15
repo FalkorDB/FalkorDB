@@ -291,6 +291,162 @@ const uint64_t *DataBlock_DeletedItems
 // Out of order functionality
 //------------------------------------------------------------------------------
 
+// compare two ids; COMPARES rather than subtracts, because the difference of
+// two uint64 does not fit an int
+static int _DataBlock_IdCmp
+(
+	const void *a,
+	const void *b
+) {
+	const uint64_t x = *(const uint64_t*)a ;
+	const uint64_t y = *(const uint64_t*)b ;
+	return (x > y) - (x < y) ;
+}
+
+// claim a BATCH of specific indices for live allocation
+//
+// This exists because DataBlock_AllocateItemOutOfOrder below carries a
+// precondition the effects path cannot meet.
+//
+// That one marks the header and bumps itemCount and never touches 'deletedIdx',
+// so it REQUIRES that 'idx' is not on the free list. Its callers are the RDB
+// decoders, where that holds by construction: the file stores live entities and
+// deleted ids as two separate lists, the deleted list is restored through
+// DataBlock_MarkAsDeletedOutOfOrder (which does append), and the live list
+// through AllocateItemOutOfOrder. The two id sets are disjoint, so there is
+// never anything to remove. It is correct there and stays in use.
+//
+// Effects apply violates that precondition head-on: the ordinary case for a
+// replica is a create naming an id that IS on the free list, because that is
+// what reuse means. Used there, the id would stay on the list and the next
+// allocation would hand it out a second time, putting two entities on one id.
+//
+// Used by effects apply, where the id is not this node's to choose. C's
+// allocator reuses the most recently freed id and Rust's reuses the smallest,
+// so after any delete-then-create cycle the two disagree about which id a new
+// entity gets, and the replica must take the id the primary states.
+//
+// A BATCH RATHER THAN ONE AT A TIME, and that is the whole point of the
+// signature. Claiming ids one by one means finding each on the free list,
+// which is a flat array, so it is a scan per id. Claiming ascending ids out of
+// an ascending list finds entry j at roughly position j, and the positions sum
+// rather than cancel: measured at 0.7 ms for 1,000 ids and 237.8 ms for
+// 64,000, growing 3.89x per doubling against the 2x of linear, with the scan
+// 93% of the record at the top end. This path had already produced two
+// quadratics - the per-edge GB_wait and the UPDATE_EDGE inner scan - and a
+// third was not worth shipping.
+//
+// So the free list is walked ONCE per call instead: sort the claimed ids, then
+// keep the entries that are not among them. O(k log n + n log n) for a free
+// list of k and a batch of n, against O(n*k).
+//
+// Three cases, and the caller only needs to distinguish the last:
+//
+//   the id is on the free list   claim it, and drop it from the list
+//   the id is past high water    extend, and every id SKIPPED OVER becomes
+//                                free rather than lost - a leaked id makes
+//                                this replica's own allocation diverge the
+//                                moment it allocates anything itself, which
+//                                is invisible until promotion
+//   the id is live               genuine divergence
+//
+// NOTHING IS CLAIMED when this returns false, so the caller is free to refuse
+// the payload without unwinding.
+//
+// returns false if any id is already live, or if the batch names one twice
+bool DataBlock_AllocateItemsAtIdx
+(
+	DataBlock *dataBlock,
+	const uint64_t *ids,  // ids to claim
+	uint32_t n,           // how many
+	void **items          // out: 'n' item pointers, caller allocated
+) {
+	ASSERT (dataBlock != NULL) ;
+	ASSERT (n == 0 || (ids != NULL && items != NULL)) ;
+
+	if (n == 0) {
+		return true ;
+	}
+
+	// every id below this is either live or on the free list; every id at or
+	// above it has never been handed out. Taken BEFORE anything is changed.
+	const uint64_t high_water =
+		dataBlock->itemCount + (uint64_t)arr_len (dataBlock->deletedIdx) ;
+
+	// make room, and reject a live id before touching anything
+	for (uint32_t i = 0 ; i < n ; i++) {
+		DataBlock_Ensure (dataBlock, ids[i]) ;
+
+		if (ids[i] < high_water) {
+			DataBlockItemHeader *h =
+				DataBlock_GetItemHeader (dataBlock, ids[i]) ;
+			if (!IS_ITEM_DELETED (h)) {
+				return false ;
+			}
+		}
+	}
+
+	uint64_t *sorted = rm_malloc (sizeof (uint64_t) * n) ;
+	memcpy (sorted, ids, sizeof (uint64_t) * n) ;
+	qsort (sorted, n, sizeof (uint64_t), _DataBlock_IdCmp) ;
+
+	// one batch naming an id twice would claim it twice and leave the second
+	// entity on top of the first
+	for (uint32_t i = 1 ; i < n ; i++) {
+		if (sorted[i] == sorted[i - 1]) {
+			rm_free (sorted) ;
+			return false ;
+		}
+	}
+
+	// ONE PASS over the free list, keeping what was not claimed
+	//
+	// The list is a SET stored in an array and popped from the back, so its
+	// order carries no meaning and compacting in place preserves it. A replica
+	// never allocates while it is a replica, so the order is only observable
+	// after promotion, and then only as which free id is reused first.
+	const uint32_t k = arr_len (dataBlock->deletedIdx) ;
+	uint32_t w = 0 ;
+	for (uint32_t i = 0 ; i < k ; i++) {
+		const uint64_t id = dataBlock->deletedIdx[i] ;
+		if (bsearch (&id, sorted, n, sizeof (uint64_t),
+					_DataBlock_IdCmp) == NULL) {
+			dataBlock->deletedIdx[w++] = id ;
+		}
+	}
+	for (uint32_t i = w ; i < k ; i++) {
+		arr_pop (dataBlock->deletedIdx) ;
+	}
+
+	// ids past the high-water mark, in ascending order so each gap is walked
+	// once. In practice this runs zero times, because a primary's ids are
+	// dense - it is here for when they are not.
+	uint64_t next = high_water ;
+	for (uint32_t i = 0 ; i < n ; i++) {
+		if (sorted[i] < high_water) {
+			continue ;
+		}
+		for (uint64_t j = next ; j < sorted[i] ; j++) {
+			DataBlockItemHeader *skipped =
+				DataBlock_GetItemHeader (dataBlock, j) ;
+			MARK_HEADER_AS_DELETED (skipped) ;
+			arr_append (dataBlock->deletedIdx, j) ;
+		}
+		next = sorted[i] + 1 ;
+	}
+
+	rm_free (sorted) ;
+
+	for (uint32_t i = 0 ; i < n ; i++) {
+		DataBlockItemHeader *h = DataBlock_GetItemHeader (dataBlock, ids[i]) ;
+		MARK_HEADER_AS_NOT_DELETED (h) ;
+		items[i] = ITEM_DATA (h) ;
+	}
+	dataBlock->itemCount += n ;
+
+	return true ;
+}
+
 void *DataBlock_AllocateItemOutOfOrder
 (
 	DataBlock *dataBlock,
