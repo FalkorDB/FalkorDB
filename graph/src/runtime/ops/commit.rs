@@ -136,6 +136,12 @@ impl<'a> Iterator for CommitOp<'a> {
                 .pending
                 .borrow_mut()
                 .set_schema_baseline(&self.runtime.g);
+            // The boundary moved when this commit landed, so the next one
+            // allocates against a fresh account of it.
+            self.runtime
+                .pending
+                .borrow_mut()
+                .open_id_spaces(&self.runtime.g);
             // Reverse once so we can pop from the end in O(1) while preserving order.
             self.results.reverse();
         }

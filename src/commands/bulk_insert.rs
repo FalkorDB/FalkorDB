@@ -8,6 +8,7 @@ use crate::{
 };
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
+    graph::id_space::IdSpace,
     identifier_limits::validate_identifier_len,
     runtime::value::Value,
     threadpool::spawn,
@@ -358,6 +359,7 @@ fn process_node_token(
     data: &[u8],
     node_ids: &[NodeId],
     node_id_cursor: &mut usize,
+    space: &mut IdSpace,
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
@@ -411,7 +413,8 @@ fn process_node_token(
         return Ok(());
     }
 
-    g.create_allocated_nodes(&nodes_bitmap);
+    g.create_nodes(&nodes_bitmap, space)
+        .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
     g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes, true);
@@ -438,6 +441,7 @@ fn process_edge_token(
     data: &[u8],
     rel_ids: &[RelationshipId],
     rel_id_cursor: &mut usize,
+    space: &mut IdSpace,
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
@@ -496,7 +500,8 @@ fn process_edge_token(
         return Ok(());
     }
 
-    g.create_allocated_relationships(&type_name, &srcs, &dsts, &edge_ids);
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids, space)
+        .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
     if !resolved_rel_attrs.is_empty() {
@@ -518,21 +523,38 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    // Nothing outstanding: a bulk command reserves once, before it creates
-    // anything, and holds no `Pending`.
-    let none = RoaringTreemap::new();
-    let node_ids = g.reserve_nodes(node_count, &none)?;
-    let rel_ids = g.reserve_relationships(edge_count, &none)?;
+    // A bulk command has no `Pending`, so it opens the id spaces itself. One
+    // per command, spanning the reserve below and every create the tokens make.
+    let mut node_space = g.open_node_id_space();
+    let mut rel_space = g.open_relationship_id_space();
+    let node_ids = g.reserve_nodes(node_count, &mut node_space)?;
+    let rel_ids = g.reserve_relationships(edge_count, &mut rel_space)?;
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
     let null_ctx = std::ptr::null_mut();
     for token in tokens.iter().take(node_token_count) {
-        process_node_token(g, token, &node_ids, &mut node_id_cursor, null_ctx, docs)?;
+        process_node_token(
+            g,
+            token,
+            &node_ids,
+            &mut node_id_cursor,
+            &mut node_space,
+            null_ctx,
+            docs,
+        )?;
     }
 
     for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx, docs)?;
+        process_edge_token(
+            g,
+            token,
+            &rel_ids,
+            &mut rel_id_cursor,
+            &mut rel_space,
+            null_ctx,
+            docs,
+        )?;
     }
 
     // Flush delta-plus into base to prevent large dp from slowing subsequent commands
@@ -551,22 +573,39 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    // Nothing outstanding: a bulk command reserves once, before it creates
-    // anything, and holds no `Pending`.
-    let none = RoaringTreemap::new();
-    let node_ids = g.reserve_nodes(node_count, &none)?;
-    let rel_ids = g.reserve_relationships(edge_count, &none)?;
+    // A bulk command has no `Pending`, so it opens the id spaces itself. One
+    // per command, spanning the reserve below and every create the tokens make.
+    let mut node_space = g.open_node_id_space();
+    let mut rel_space = g.open_relationship_id_space();
+    let node_ids = g.reserve_nodes(node_count, &mut node_space)?;
+    let rel_ids = g.reserve_relationships(edge_count, &mut rel_space)?;
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
     for token in tokens.iter().take(node_token_count) {
-        process_node_token(g, token, &node_ids, &mut node_id_cursor, raw_ctx, docs)?;
+        process_node_token(
+            g,
+            token,
+            &node_ids,
+            &mut node_id_cursor,
+            &mut node_space,
+            raw_ctx,
+            docs,
+        )?;
         // Yield to let Redis process PING from other clients
         unsafe { maybe_yield(raw_ctx) };
     }
 
     for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, raw_ctx, docs)?;
+        process_edge_token(
+            g,
+            token,
+            &rel_ids,
+            &mut rel_id_cursor,
+            &mut rel_space,
+            raw_ctx,
+            docs,
+        )?;
         unsafe { maybe_yield(raw_ctx) };
     }
 

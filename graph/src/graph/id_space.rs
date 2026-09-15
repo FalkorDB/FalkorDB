@@ -103,6 +103,17 @@ pub struct IdSpace {
     /// Every id at or above `entry_bound` this batch has created. Only grows —
     /// a later delete does not un-allocate an id, it frees one that was.
     created: RoaringTreemap,
+    /// Every id the allocator has handed this batch, whatever became of it:
+    /// created, given back unused, or still outstanding. Unlike `created` it
+    /// holds ids below `entry_bound` too, because a reclaimed id is one of
+    /// those and must not be handed out twice either.
+    ///
+    /// This is what makes one type serve both paths. The effects path reserves
+    /// nothing, so `handed_out` is exactly `created` there and every check
+    /// below reads as it did before. The write path reserves before it creates,
+    /// and the gap between the two sets is precisely the reservations it
+    /// cancelled — which is the thing a boundary alone could never represent.
+    handed_out: RoaringTreemap,
 }
 
 impl IdSpace {
@@ -118,11 +129,37 @@ impl IdSpace {
     /// none, which is indistinguishable from a graph whose highest id is 0 and
     /// reads as "id 0 has been handed out".
     #[must_use]
-    pub(crate) fn at(entry_bound: u64) -> Self {
+    pub fn at(entry_bound: u64) -> Self {
         Self {
             entry_bound,
             created: RoaringTreemap::new(),
+            handed_out: RoaringTreemap::new(),
         }
+    }
+
+    /// Every id this batch has been handed, for an allocator deciding what it
+    /// may hand out next.
+    ///
+    /// The allocator must not reissue any of them, and that is a wider set than
+    /// the live ones: an id reserved and then given back is free as far as the
+    /// graph is concerned — `return_node_id` puts it straight in the recycle
+    /// bin — and reissuing it inside the same batch would put it in two CREATE
+    /// records of one effects buffer, which a replica refuses.
+    #[must_use]
+    pub(crate) const fn handed_out(&self) -> &RoaringTreemap {
+        &self.handed_out
+    }
+
+    /// Record ids the allocator has just issued.
+    ///
+    /// Separate from [`Self::record_created`] because reserving is not
+    /// creating: the ids are spoken for, but nothing is live yet and the batch
+    /// may still give them back.
+    pub(crate) fn record_reserved<I: IntoIterator<Item = u64>>(
+        &mut self,
+        ids: I,
+    ) {
+        self.handed_out.extend(ids);
     }
 
     /// Refuse ids that are already free.
@@ -221,6 +258,11 @@ impl IdSpace {
             above.remove_range(..self.entry_bound);
             self.created |= above;
         }
+        // A path that creates without reserving — the effects path — has handed
+        // itself these ids by applying the record. Recording them here is what
+        // keeps `handed_out` a superset of `created` for *both* paths, which is
+        // the invariant [`Self::verify`] rests on.
+        self.handed_out |= nodes;
         Ok(())
     }
 
@@ -272,7 +314,20 @@ impl IdSpace {
         &self,
         graph_bound: u64,
     ) -> Result<(), IdSpaceError> {
-        let created = self.created.len();
+        // What the batch has *handed out* at or above the boundary, which is
+        // what the boundary has to account for. On the effects path that is the
+        // created ids and nothing else. On the write path it also holds the
+        // reservations the batch cancelled: those were allocated, they sit in
+        // the recycle bin, and the graph's own boundary counts them — so
+        // judging against `created` alone would read a legitimate cancellation
+        // as a hole and refuse it.
+        let below = if self.entry_bound == 0 {
+            0
+        } else {
+            self.handed_out.rank(self.entry_bound - 1)
+        };
+        let created = self.handed_out.len() - below;
+        let lowest_above = self.handed_out.select(below);
         // `created == [entry_bound, entry_bound + created.len())`, spelled as the
         // two things that make it true: the set starts at the boundary, and it has
         // no gap between there and its highest id.
@@ -294,9 +349,8 @@ impl IdSpace {
         // the highest. Swap them and a set sitting entirely below the boundary,
         // which is the case the first test exists to catch, underflows instead.
         if let Some((_, highest)) =
-            self.created
-                .min()
-                .zip(self.created.max())
+            lowest_above
+                .zip(self.handed_out.max())
                 .filter(|&(lowest, highest)| {
                     lowest != self.entry_bound || created - 1 != highest - self.entry_bound
                 })
@@ -417,7 +471,8 @@ mod tests {
             .verify(g.node_id_bound())
             .expect("the graph and the batch agree so far");
 
-        g.create_allocated_nodes(&ids(&[3]));
+        g.create_nodes(&ids(&[3]), &mut IdSpace::at(0))
+            .expect("unchecked");
 
         let err = space
             .verify(g.node_id_bound())
@@ -597,7 +652,8 @@ mod tests {
         // point entirely, which accepts a gap — that is what makes it a different
         // question rather than this one with the batch left out.
         let mut g = graph();
-        g.create_allocated_nodes(&ids(&[0, 5]));
+        g.create_nodes(&ids(&[0, 5]), &mut IdSpace::at(0))
+            .expect("unchecked");
         g.delete_nodes(&ids(&[0]), &mut FxHashMap::default(), None)
             .expect("delete");
         assert_eq!(g.node_count(), 1);
