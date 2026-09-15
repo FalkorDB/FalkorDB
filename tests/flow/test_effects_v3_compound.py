@@ -50,7 +50,15 @@ from effects_v3_common import _EffectsV3Base
 
 
 class testEffectsV3_04g_CompoundSequences(_EffectsV3Base):
-    """Several record kinds from one statement, applied in an order that works."""
+    """Several record kinds from one statement, applied in an order that works.
+
+    `test07`-`test09` used to live here and were removed: they were DDL and
+    data in *separate* statements, which is a sequence rather than a
+    compound, and each was a weaker form of a test in `..._ddl.py` --
+    `05.test02` does rows-then-index and also compares the execution plan
+    on both sides, `05.test01` covers the drops, and a violating write is
+    already refused three times over in that file.
+    """
 
     GRAPH_ID = "effects_v3_compound"
 
@@ -218,68 +226,124 @@ class testEffectsV3_04g_CompoundSequences(_EffectsV3Base):
                              list_indicies(self.master_graph).result_set)
         self.assert_graph_eq()
 
-    def test07_rows_created_then_indexed_are_in_the_replica_index(self):
-        # The other order, and the harder one: the rows exist first and the
-        # index has to be built over committed state on BOTH sides. A replica
-        # that creates an empty index and never backfills answers zero.
+    def test10_an_index_procedure_inside_a_write_query(self):
+        """DDL and data in ONE statement — and what actually happens today.
+
+        This is the shape the class is named for and the one it could not
+        reach: a single query that creates an index *and* mutates nodes. It is
+        written as a pin on current behaviour rather than on the intended
+        behaviour, because the procedure does not work, and the way it does not
+        work is worth catching.
+
+        `db.idx.fulltext.createNodeIndex` is registered as a `write procedure`
+        (`graph/src/runtime/functions/procedures.rs:328`) but its body is
+        `Ok(empty_procedure_batch())` — a stub. Two consequences, both pinned
+        below:
+
+        * it creates no index, so there is no index DDL in this buffer at all;
+        * it yields ZERO rows, so every clause after it runs zero times and the
+          trailing `CREATE` is silently dropped. Not an error — the query
+          succeeds and reports fewer nodes than it names.
+
+        When the stub is implemented this test goes red on both counts, which
+        is the point: whoever implements it has to come here and decide what
+        the replica should see.
+        """
         self.set_effects_config()
-        self.query_and_sync(
-            "UNWIND range(1, 20) AS i CREATE (:Backfill {k: i})")
-        self.query_and_sync("CREATE INDEX FOR (n:Backfill) ON (n.k)")
-        wait_for_indices_to_sync(self.master_graph)
-        wait_for_indices_to_sync(self.replica_graph)
+        self.monitor_mark()
 
-        self.assert_agree("MATCH (n:Backfill) WHERE n.k = 3 RETURN count(n)", [[1]])
-        self.assert_agree(
-            "MATCH (n:Backfill) WHERE n.k >= 10 RETURN count(n)", [[11]])
-        self.env.assertEqual(list_indicies(self.replica_graph).result_set,
-                             list_indicies(self.master_graph).result_set)
-        self.assert_graph_eq()
-
-    def test08_a_dropped_index_stops_answering_on_both_sides(self):
-        # DROP_INDEX carries no options and is the one DDL record with nothing
-        # in it but the target. Writes after the drop must still land, and
-        # neither side may keep answering from an index it no longer has.
-        self.set_effects_config()
-        self.query_and_sync("CREATE INDEX FOR (n:Dropped) ON (n.k)")
-        self.query_and_sync(
-            "UNWIND range(1, 10) AS i CREATE (:Dropped {k: i})")
-        wait_for_indices_to_sync(self.master_graph)
-        self.query_and_sync("DROP INDEX FOR (n:Dropped) ON (n.k)")
-        self.query_and_sync("CREATE (:Dropped {k: 99})")
-
-        self.env.assertEqual(list_indicies(self.replica_graph).result_set,
-                             list_indicies(self.master_graph).result_set)
-        self.assert_agree("MATCH (n:Dropped) WHERE n.k = 99 RETURN count(n)", [[1]])
-        self.assert_agree("MATCH (n:Dropped) RETURN count(n)", [[11]])
-        self.assert_graph_eq()
-
-    def test09_a_constraint_then_writes_it_governs(self):
-        # CREATE_CONSTRAINT, then writes the replica must evaluate against it:
-        # one that passes and one that the master refuses. The replica must end
-        # up holding the constraint AND exactly the rows that survived it.
-        self.set_effects_config()
-        self.query_and_sync("CREATE (:Gov {u: 1})")
-        create_unique_node_constraint(self.master_graph, 'Gov', 'u', sync=True)
-        self.wait_for_replica_offset()
-        self.wait_for_constraint_settled(self.master_graph, 'Gov')
-
-        self.query_and_sync("CREATE (:Gov {u: 2})")
-
-        rejected = None
+        # The arity, first. The C-style call takes label and field as separate
+        # arguments; this build takes exactly one map, so the C form is an
+        # error rather than a call that quietly does something else.
         try:
-            self.master_graph.query("CREATE (:Gov {u: 2})")
-        except Exception as e:
-            rejected = str(e).lower()
-        self.env.assertTrue(
-            rejected is not None and "unique constraint violation" in rejected,
-            message=f"the duplicate must be refused, got {rejected!r}")
-        self.wait_for_replica_offset()
+            self.master_graph.query(
+                "CALL db.idx.fulltext.createNodeIndex('Doc', 'body')")
+            self.env.assertTrue(False, 1)
+        except ResponseError as e:
+            self.env.assertContains("expected at most 1", str(e))
 
-        self.assert_agree("MATCH (n:Gov) RETURN count(n)", [[2]])
-        # `list_constraints` returns a list, not a result-set wrapper -- unlike
-        # `list_indicies` right above it, which is exactly the kind of asymmetry
-        # that bites once per test suite.
-        self.env.assertEqual(len(list_constraints(self.replica_graph)),
-                             len(list_constraints(self.master_graph)))
+        self.query_and_sync(
+            "CREATE (:Pre {id: 100})-[:REL {w: 1}]->(:Pre {id: 101}) "
+            "WITH 1 AS one "
+            "CALL db.idx.fulltext.createNodeIndex({label: 'Doc'}) "
+            "CREATE (:Post {id: 200}) "
+            "RETURN one")
+
+        # No index was created, on either side. Scoped to the label the call
+        # named, not a global count: this class shares one graph and the tests
+        # before it leave indexes behind.
+        self.assert_agree(
+            "CALL db.indexes() YIELD label WHERE label = 'Doc' "
+            "RETURN count(label)", [[0]])
+
+        # The two `:Pre` nodes and the relationship are there...
+        self.assert_agree("MATCH (n:Pre) RETURN count(n)", [[2]])
+        self.assert_agree("MATCH ()-[r:REL]->() RETURN count(r)", [[1]])
+
+        # ...and `:Post` is not, on either side. The write after the `CALL`
+        # never ran, because the stub ended the pipeline. The replica agreeing
+        # is the part that matters here: the master's buffer describes what the
+        # master actually did, so a write the master skipped is a write the
+        # replica must also not have.
+        self.assert_agree("MATCH (n:Post) RETURN count(n)", [[0]])
+
+        # And it all rode effects, with no verbatim GRAPH.QUERY fallback.
+        window = self.monitor_mark()
+        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
+        self.env.assertEqual(self.count_in(window, 'GRAPH.QUERY'), 0)
         self.assert_graph_eq()
+
+    def test11_a_non_deterministic_write_replicates_its_outcome(self):
+        """A write whose size and values the query text does not determine.
+
+        This is the one shape a replica cannot get right by re-running the
+        statement: `rand()` decides how many rows survive and what gets stored,
+        so re-execution reaches a different graph every time. It can only match
+        by applying what the primary actually did, which is the whole claim v3
+        makes. Nothing else in these files varies run to run — every other
+        write has an outcome fixed by its text.
+
+        So the assertions cannot hardcode a count. They compare the two sides.
+        """
+        self.set_effects_config()
+        self.monitor_mark()
+
+        self.query_and_sync(
+            "UNWIND range(0, 40) AS i "
+            "WITH i WHERE i = 0 OR rand() < 0.5 "
+            "CREATE (:Rnd {id: i, r: rand()}) "
+            "RETURN count(*)")
+
+        # The id SET, not just its size: two graphs can hold the same number of
+        # nodes and disagree about which ones, and a count alone cannot see it.
+        m, r = self.probe("MATCH (n:Rnd) RETURN n.id ORDER BY n.id")
+        self.env.assertEqual(r, m)
+
+        # `i = 0` is unconditional, so the write is never empty — without it a
+        # run where every `rand()` fell the wrong way would compare two empty
+        # graphs and pass without replicating anything.
+        self.env.assertTrue(len(m) >= 1)
+        self.env.assertTrue(len(m) <= 41)
+
+        # The stored `rand()` values too. These are the tightest pin in the
+        # file: they are not derivable from the query, not derivable from the
+        # ids, and a replica that re-executed would have its own.
+        m, r = self.probe("MATCH (n:Rnd) RETURN n.id, n.r ORDER BY n.id")
+        self.env.assertEqual(r, m)
+
+        # And the values have to be real randoms, or the comparison above is
+        # two columns of the same constant agreeing with each other. `rand()`
+        # returning a fixed value would leave every assertion here green while
+        # the test stopped meaning anything.
+        distinct = self.master_graph.ro_query(
+            "MATCH (n:Rnd) RETURN count(DISTINCT n.r), count(n)").result_set
+        self.env.assertEqual(distinct[0][0], distinct[0][1])
+        self.env.assertTrue(distinct[0][0] >= 1)
+
+        # One buffer, and no verbatim fallback -- a `rand()` write replicated
+        # verbatim is exactly the bug this test exists to catch.
+        window = self.monitor_mark()
+        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
+        self.env.assertEqual(self.count_in(window, 'GRAPH.QUERY'), 0)
+        self.assert_graph_eq()
+
