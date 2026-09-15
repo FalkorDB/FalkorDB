@@ -103,17 +103,6 @@ pub struct IdSpace {
     /// Every id at or above `entry_bound` this batch has created. Only grows —
     /// a later delete does not un-allocate an id, it frees one that was.
     created: RoaringTreemap,
-    /// Every id the allocator has handed this batch, whatever became of it:
-    /// created, given back unused, or still outstanding. Unlike `created` it
-    /// holds ids below `entry_bound` too, because a reclaimed id is one of
-    /// those and must not be handed out twice either.
-    ///
-    /// This is what makes one type serve both paths. The effects path reserves
-    /// nothing, so `handed_out` is exactly `created` there and every check
-    /// below reads as it did before. The write path reserves before it creates,
-    /// and the gap between the two sets is precisely the reservations it
-    /// cancelled — which is the thing a boundary alone could never represent.
-    handed_out: RoaringTreemap,
 }
 
 /// Append up to `count` ids from `pool` that `held` does not already hold, to
@@ -138,13 +127,25 @@ pub struct IdSpace {
 /// it belongs to it is a quarter of one percent. On the ordinary path, where
 /// nothing has been deleted and the pool is empty, the difference is the faster
 /// of the two — 7.8us against 9.5us over 977 calls.
+/// How many of `ids` sit at or above `bound`.
+///
+/// By rank rather than by trimming a copy: the answer is a count, and the set
+/// it would be counted from can hold a million ids.
+fn above(
+    ids: &RoaringTreemap,
+    bound: u64,
+) -> u64 {
+    let below = if bound == 0 { 0 } else { ids.rank(bound - 1) };
+    ids.len() - below
+}
+
 fn reclaim_ids(
     pool: &RoaringTreemap,
-    held: &RoaringTreemap,
+    held: &[&RoaringTreemap],
     count: u64,
     out: &mut Vec<u64>,
 ) -> u64 {
-    let free = pool - held;
+    let free = held.iter().fold(pool.clone(), |acc, s| acc - *s);
     let before = out.len();
     out.extend(free.iter().take(count as usize));
     (out.len() - before) as u64
@@ -167,56 +168,30 @@ impl IdSpace {
         Self {
             entry_bound,
             created: RoaringTreemap::new(),
-            handed_out: RoaringTreemap::new(),
-        }
-    }
-
-    /// Every id this batch has been handed, for an allocator deciding what it
-    /// may hand out next.
-    ///
-    /// The allocator must not reissue any of them, and that is a wider set than
-    /// the live ones: an id reserved and then given back is free as far as the
-    /// graph is concerned — `return_node_id` puts it straight in the recycle
-    /// bin — and reissuing it inside the same batch would put it in two CREATE
-    /// records of one effects buffer, which a replica refuses.
-    #[must_use]
-    pub(crate) const fn handed_out(&self) -> &RoaringTreemap {
-        &self.handed_out
-    }
-
-    /// How many ids this batch has been handed at or above the boundary.
-    ///
-    /// The ids below it were handed out before the batch and are already
-    /// counted in `entry_bound`, so this is exactly how far the batch has
-    /// pushed the id space out. Both [`Self::reserve`] and [`Self::verify`]
-    /// need it, which is the whole of what they have in common.
-    fn issued_above_entry(&self) -> u64 {
-        self.handed_out.len() - self.below_entry()
-    }
-
-    fn below_entry(&self) -> u64 {
-        if self.entry_bound == 0 {
-            0
-        } else {
-            self.handed_out.rank(self.entry_bound - 1)
         }
     }
 
     /// Reserve `count` ids, freed ones first and then fresh.
     ///
-    /// `recycled` is the graph's recycle bin, borrowed for the call — the only
-    /// thing here that the graph owns. Everything else the allocator needs is
-    /// this batch's own: which ids it has already issued, and where the id
-    /// space stood when it opened.
+    /// `recycled` is the graph's recycle bin and `issued` is every id this
+    /// batch has already been handed — both borrowed for the call, the way
+    /// [`Self::record_created`] and [`Self::refuse_recycled`] borrow the bin.
+    /// Nothing about them is stored: the caller already keeps those ids, and a
+    /// copy kept here would be a second answer to the same question, free to
+    /// drift from the first.
     ///
-    /// Nothing about the graph is mutated, and it no longer needs to be. The
-    /// boundary the fresh ids start from used to be read off `node_count` and
-    /// the bin, which meant the allocator had to live where those do; it is
-    /// `entry_bound` plus what this batch has issued above it, and both of
-    /// those are here. A reserved id is left *in* the bin — `max_node_id` and
-    /// `is_node_deleted` are derived from it and would go wrong mid-batch if it
-    /// were removed — so the bin alone does not mean "free", and
-    /// [`reclaim_ids`] takes the difference against what has been issued.
+    /// `issued` is a slice because a caller keeps them in whatever shape suits
+    /// it — the query path has a created set and a cancelled set, the bulk path
+    /// has none at all. **They must be disjoint from each other and from what
+    /// this space has already created**, or the boundary below counts an id
+    /// twice and leaves a hole in the id space. The query path satisfies that
+    /// trivially: it records creations at commit, so nothing is created while
+    /// it is still reserving.
+    ///
+    /// A reserved id is left *in* the bin: `max_node_id` and `is_node_deleted`
+    /// are derived from it and would go wrong mid-batch if it were removed. So
+    /// the bin alone does not mean "free", and taking the difference against
+    /// what has been issued is what makes it mean that.
     ///
     /// "Issued" keeps the ids this batch has since given back, and that is the
     /// rule the whole thing rests on rather than an oversight. Cancelling a
@@ -235,21 +210,35 @@ impl IdSpace {
     /// `Vec::with_capacity` panicked on the capacity overflow and the panic
     /// hook exits the process, which took the server down (#2426).
     pub fn reserve(
-        &mut self,
+        &self,
         count: usize,
         recycled: &RoaringTreemap,
+        issued: &[&RoaringTreemap],
     ) -> Result<Vec<u64>, String> {
         let mut ids = Vec::new();
         ids.try_reserve_exact(count)
             .map_err(|_| format!("failed to reserve {count} ids"))?;
         let count = count as u64;
 
-        let reclaimed = reclaim_ids(recycled, &self.handed_out, count, &mut ids);
+        // What this batch has already created is excluded without being asked
+        // for: the space recorded those itself, and a caller that creates as it
+        // goes — `GRAPH.BULK`, or anything reserving one id at a time — would
+        // otherwise have to hand its own creations back to the thing that
+        // recorded them.
+        let mut held: Vec<&RoaringTreemap> = Vec::with_capacity(issued.len() + 1);
+        held.push(&self.created);
+        held.extend_from_slice(issued);
 
-        let start = self.entry_bound + self.issued_above_entry();
+        let reclaimed = reclaim_ids(recycled, &held, count, &mut ids);
+
+        // Above every id ever handed out. `entry_bound` accounts for everything
+        // issued before this batch; the ids issued *by* it that sit at or above
+        // the boundary are the rest. Those below came out of the bin, which the
+        // boundary already counted.
+        let issued_above: u64 = held.iter().map(|s| above(s, self.entry_bound)).sum();
+        let start = self.entry_bound + issued_above;
         ids.extend(start..start + (count - reclaimed));
 
-        self.handed_out.extend(ids.iter().copied());
         Ok(ids)
     }
 
@@ -349,11 +338,6 @@ impl IdSpace {
             above.remove_range(..self.entry_bound);
             self.created |= above;
         }
-        // A path that creates without reserving — the effects path — has handed
-        // itself these ids by applying the record. Recording them here is what
-        // keeps `handed_out` a superset of `created` for *both* paths, which is
-        // the invariant [`Self::verify`] rests on.
-        self.handed_out |= nodes;
         Ok(())
     }
 
@@ -412,9 +396,8 @@ impl IdSpace {
         // the recycle bin, and the graph's own boundary counts them — so
         // judging against `created` alone would read a legitimate cancellation
         // as a hole and refuse it.
-        let below = self.below_entry();
-        let created = self.issued_above_entry();
-        let lowest_above = self.handed_out.select(below);
+        let created = self.created.len();
+        let lowest_above = self.created.min();
         // `created == [entry_bound, entry_bound + created.len())`, spelled as the
         // two things that make it true: the set starts at the boundary, and it has
         // no gap between there and its highest id.
@@ -437,7 +420,7 @@ impl IdSpace {
         // which is the case the first test exists to catch, underflows instead.
         if let Some((_, highest)) =
             lowest_above
-                .zip(self.handed_out.max())
+                .zip(self.created.max())
                 .filter(|&(lowest, highest)| {
                     lowest != self.entry_bound || created - 1 != highest - self.entry_bound
                 })
@@ -499,7 +482,7 @@ mod tests {
         space: &IdSpace,
         nodes: &RoaringTreemap,
     ) -> Result<(), NodeOpError> {
-        g.delete_nodes(nodes, &mut FxHashMap::default(), Some(space))
+        g.delete_nodes(nodes, &mut FxHashMap::default(), space)
             .map(|_| ())
     }
 
@@ -741,7 +724,8 @@ mod tests {
         let mut g = graph();
         g.create_nodes(&ids(&[0, 5]), &mut IdSpace::at(0))
             .expect("a space of its own, so the gap is this fixture's and not the batch's");
-        g.delete_nodes(&ids(&[0]), &mut FxHashMap::default(), None)
+        let space = g.open_node_id_space();
+        g.delete_nodes(&ids(&[0]), &mut FxHashMap::default(), &space)
             .expect("delete");
         assert_eq!(g.node_count(), 1);
     }
@@ -771,7 +755,7 @@ mod reclaim_ids_tests {
         count: u64,
     ) -> (Vec<u64>, u64) {
         let mut out: Vec<u64> = Vec::new();
-        let taken = reclaim_ids(pool, held, count, &mut out);
+        let taken = reclaim_ids(pool, &[held], count, &mut out);
         assert_eq!(
             taken,
             out.len() as u64,
@@ -840,7 +824,7 @@ mod reclaim_ids_tests {
     fn appends_rather_than_replaces() {
         let pool: RoaringTreemap = (10..20u64).collect();
         let mut out: Vec<u64> = vec![7, 8];
-        reclaim_ids(&pool, &RoaringTreemap::new(), 3, &mut out);
+        reclaim_ids(&pool, &[&RoaringTreemap::new()], 3, &mut out);
         assert_eq!(out, vec![7, 8, 10, 11, 12]);
     }
 

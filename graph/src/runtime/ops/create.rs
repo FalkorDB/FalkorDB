@@ -153,11 +153,11 @@ impl Runtime<'_> {
             // The graph lends its recycle bin and is not otherwise touched:
             // allocation is the id space's, so this needs no write borrow.
             let node_ids: Vec<NodeId> = {
-                let mut pending = self.pending.borrow_mut();
+                let pending = self.pending.borrow();
                 let g = self.g.borrow();
                 pending
-                    .node_space()
-                    .reserve(active_len, g.deleted_nodes())?
+                    .node_id_space()
+                    .reserve(active_len, g.deleted_nodes(), &pending.issued_nodes())?
                     .into_iter()
                     .map(NodeId::from)
                     .collect()
@@ -250,7 +250,7 @@ impl Runtime<'_> {
                 }
             } else {
                 let g = self.g.borrow();
-                let pending = self.pending.borrow();
+                let mut pending = self.pending.borrow_mut();
                 for row in batch.active_indices() {
                     let Some(Value::Node(from_id)) = batch.value_at(rel.from.alias.id, row) else {
                         return Err(String::from("Invalid node id"));
@@ -276,11 +276,15 @@ impl Runtime<'_> {
 
             // Reserve all relationship IDs at once
             let ids: Vec<RelationshipId> = {
-                let mut pending = self.pending.borrow_mut();
+                let pending = self.pending.borrow();
                 let g = self.g.borrow();
                 pending
-                    .rel_space()
-                    .reserve(endpoints.len(), g.deleted_relationships())?
+                    .rel_id_space()
+                    .reserve(
+                        endpoints.len(),
+                        g.deleted_relationships(),
+                        &pending.issued_relationships(),
+                    )?
                     .into_iter()
                     .map(RelationshipId::from)
                     .collect()
