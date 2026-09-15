@@ -150,69 +150,6 @@ fn reclaim_ids(
     (out.len() - before) as u64
 }
 
-/// An id space together with the recycle bin it allocates from.
-///
-/// The two have different lifetimes and that is the whole reason this type
-/// exists. The bin belongs to the graph and outlives any one batch; the space
-/// belongs to the batch and is reopened whenever the boundary moves. A space
-/// that stored a reference to the bin would have to keep the graph borrowed for
-/// the batch's whole life, and the batch ends by *mutating* the graph — so it
-/// does not compile, and where it would compile it would deadlock the
-/// `AtomicRefCell` instead.
-///
-/// Pairing them for the length of a call says the same thing and costs nothing:
-/// [`Self::reserve`] then needs only a count.
-pub struct Allocator<'a> {
-    space: &'a mut IdSpace,
-    recycled: &'a RoaringTreemap,
-}
-
-impl<'a> Allocator<'a> {
-    /// Pair a batch's id space with the bin it allocates from.
-    pub(crate) const fn new(
-        space: &'a mut IdSpace,
-        recycled: &'a RoaringTreemap,
-    ) -> Self {
-        Self { space, recycled }
-    }
-
-    /// Reserve `count` ids, freed ones first and then fresh.
-    ///
-    /// Nothing about the graph is mutated. The boundary the fresh ids start
-    /// from used to be read off `node_count` and the bin, which is why this
-    /// lived on `Graph` at all; it is `entry_bound` plus what the batch has
-    /// issued above it, and both of those are the space's own.
-    ///
-    /// A reserved id is left *in* the bin — `max_node_id` and `is_node_deleted`
-    /// are derived from it and would go wrong mid-batch if it were removed — so
-    /// the bin alone does not mean "free", and [`reclaim_ids`] takes the
-    /// difference against what the batch has issued.
-    ///
-    /// # Errors
-    ///
-    /// A `count` that cannot be allocated. `GRAPH.BULK` sizes this from a
-    /// client-declared count, so the size is attacker-influenced:
-    /// `Vec::with_capacity` panicked on the capacity overflow and the panic
-    /// hook exits the process, which took the server down (#2426).
-    pub fn reserve(
-        &mut self,
-        count: usize,
-    ) -> Result<Vec<u64>, String> {
-        let mut ids = Vec::new();
-        ids.try_reserve_exact(count)
-            .map_err(|_| format!("failed to reserve {count} ids"))?;
-        let count = count as u64;
-
-        let reclaimed = reclaim_ids(self.recycled, &self.space.handed_out, count, &mut ids);
-
-        let start = self.space.entry_bound + self.space.issued_above_entry();
-        ids.extend(start..start + (count - reclaimed));
-
-        self.space.handed_out.extend(ids.iter().copied());
-        Ok(ids)
-    }
-}
-
 impl IdSpace {
     /// The id space as it stands before a batch.
     ///
@@ -263,6 +200,57 @@ impl IdSpace {
         } else {
             self.handed_out.rank(self.entry_bound - 1)
         }
+    }
+
+    /// Reserve `count` ids, freed ones first and then fresh.
+    ///
+    /// `recycled` is the graph's recycle bin, borrowed for the call — the only
+    /// thing here that the graph owns. Everything else the allocator needs is
+    /// this batch's own: which ids it has already issued, and where the id
+    /// space stood when it opened.
+    ///
+    /// `recycled` is borrowed for the call, the way [`Self::record_created`]
+    /// and [`Self::refuse_recycled`] borrow it: the bin belongs to the graph
+    /// and outlives any one batch, so every method here that needs it is handed
+    /// it. Holding it instead was tried and does not compile — `Pending` stores
+    /// this across a whole query while the borrow that built it ends
+    /// immediately, and the batch's last act is to take a *write* borrow of the
+    /// graph to commit. Splitting allocation into a second type that could hold
+    /// the reference was also tried and is worse: it is one concept, and a type
+    /// whose only reason to exist is a borrow is not an abstraction.
+    ///
+    /// Nothing about the graph is mutated, and it no longer needs to be. The
+    /// boundary the fresh ids start from used to be read off `node_count` and
+    /// the bin, which meant the allocator had to live where those do; it is
+    /// `entry_bound` plus what this batch has issued above it, and both of
+    /// those are here. A reserved id is left *in* the bin — `max_node_id` and
+    /// `is_node_deleted` are derived from it and would go wrong mid-batch if it
+    /// were removed — so the bin alone does not mean "free", and
+    /// [`reclaim_ids`] takes the difference against what has been issued.
+    ///
+    /// # Errors
+    ///
+    /// A `count` that cannot be allocated. `GRAPH.BULK` sizes this from a
+    /// client-declared count, so the size is attacker-influenced:
+    /// `Vec::with_capacity` panicked on the capacity overflow and the panic
+    /// hook exits the process, which took the server down (#2426).
+    pub fn reserve(
+        &mut self,
+        count: usize,
+        recycled: &RoaringTreemap,
+    ) -> Result<Vec<u64>, String> {
+        let mut ids = Vec::new();
+        ids.try_reserve_exact(count)
+            .map_err(|_| format!("failed to reserve {count} ids"))?;
+        let count = count as u64;
+
+        let reclaimed = reclaim_ids(recycled, &self.handed_out, count, &mut ids);
+
+        let start = self.entry_bound + self.issued_above_entry();
+        ids.extend(start..start + (count - reclaimed));
+
+        self.handed_out.extend(ids.iter().copied());
+        Ok(ids)
     }
 
     /// Refuse ids that are already free.

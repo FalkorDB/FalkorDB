@@ -527,15 +527,13 @@ fn bulk_insert_sync(
     // per command, spanning the reserve below and every create the tokens make.
     let mut node_space = g.open_node_id_space();
     let mut rel_space = g.open_relationship_id_space();
-    let node_ids: Vec<NodeId> = g
-        .node_allocator(&mut node_space)
-        .reserve(node_count)?
+    let node_ids: Vec<NodeId> = node_space
+        .reserve(node_count, g.deleted_nodes())?
         .into_iter()
         .map(NodeId::from)
         .collect();
-    let rel_ids: Vec<RelationshipId> = g
-        .relationship_allocator(&mut rel_space)
-        .reserve(edge_count)?
+    let rel_ids: Vec<RelationshipId> = rel_space
+        .reserve(edge_count, g.deleted_relationships())?
         .into_iter()
         .map(RelationshipId::from)
         .collect();
@@ -587,15 +585,13 @@ fn bulk_insert_sync_yield(
     // per command, spanning the reserve below and every create the tokens make.
     let mut node_space = g.open_node_id_space();
     let mut rel_space = g.open_relationship_id_space();
-    let node_ids: Vec<NodeId> = g
-        .node_allocator(&mut node_space)
-        .reserve(node_count)?
+    let node_ids: Vec<NodeId> = node_space
+        .reserve(node_count, g.deleted_nodes())?
         .into_iter()
         .map(NodeId::from)
         .collect();
-    let rel_ids: Vec<RelationshipId> = g
-        .relationship_allocator(&mut rel_space)
-        .reserve(edge_count)?
+    let rel_ids: Vec<RelationshipId> = rel_space
+        .reserve(edge_count, g.deleted_relationships())?
         .into_iter()
         .map(RelationshipId::from)
         .collect();

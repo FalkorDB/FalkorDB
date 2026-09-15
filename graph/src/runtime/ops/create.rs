@@ -155,8 +155,9 @@ impl Runtime<'_> {
             let node_ids: Vec<NodeId> = {
                 let mut pending = self.pending.borrow_mut();
                 let g = self.g.borrow();
-                g.node_allocator(pending.node_space())
-                    .reserve(active_len)?
+                pending
+                    .node_space()
+                    .reserve(active_len, g.deleted_nodes())?
                     .into_iter()
                     .map(NodeId::from)
                     .collect()
@@ -277,8 +278,9 @@ impl Runtime<'_> {
             let ids: Vec<RelationshipId> = {
                 let mut pending = self.pending.borrow_mut();
                 let g = self.g.borrow();
-                g.relationship_allocator(pending.rel_space())
-                    .reserve(endpoints.len())?
+                pending
+                    .rel_space()
+                    .reserve(endpoints.len(), g.deleted_relationships())?
                     .into_iter()
                     .map(RelationshipId::from)
                     .collect()
