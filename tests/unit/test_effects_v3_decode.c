@@ -156,117 +156,100 @@ static const unsigned char THREE_RECORDS[] = {
 	0x00, 0x00, 0x00, 0x00, 0x00
 };
 
+// walk a payload with the reader, recording what came back
 typedef struct {
 	uint32_t calls;       // how many records were handed over
 	uint64_t ids[8];      // the first id of each, in delivery order
-	uint32_t refuse_at;   // return false on this call number, 0 to never
-} _CountCtx;
+	EffectsV3Status status;
+} _Walk;
 
-static bool _CountingCb
+// stop_at: refuse after this many records, 0 to read to the end
+static void _walk
 (
-	EffectsV3Record *rec,
-	void *ctx
+	const unsigned char *buf,
+	size_t len,
+	uint32_t stop_at,
+	_Walk *w
 ) {
-	_CountCtx *c = (_CountCtx*)ctx;
+	memset(w, 0, sizeof(*w));
 
-	if (c->calls < 8) {
-		c->ids[c->calls] = rec->create_node.ids.segments[0].range_ascending.base;
+	EffectsV3Reader r;
+	w->status = EffectsV3_ReaderOpen((const char*)buf, len, &r);
+
+	if (w->status == EFFECTS_V3_OK) {
+		EffectsV3Record rec;
+		while (EffectsV3_ReaderNext(&r, &rec)) {
+			if (w->calls < 8) {
+				w->ids[w->calls] =
+					rec.create_node.ids.segments[0].range_ascending.base;
+			}
+			w->calls++;
+
+			// the caller owns each record the reader hands over
+			EffectsV3_RecordFree(&rec);
+
+			if (stop_at != 0 && w->calls == stop_at) {
+				break;   // a consumer refusing mid-payload
+			}
+		}
+		w->status = EffectsV3_ReaderStatus(&r);
 	}
-	c->calls++;
 
-	// the callback OWNS the record, so it frees it - on the refusing path too.
-	// Read anything you need off it first.
-	EffectsV3_RecordFree(rec);
-
-	return !(c->refuse_at != 0 && c->calls == c->refuse_at);
+	EffectsV3_ReaderClose(&r);
 }
 
-void test_stream_hands_over_every_record_in_order() {
-	_CountCtx c = { 0 };
+void test_reader_hands_over_every_record_in_order() {
+	_Walk w;
+	_walk(THREE_RECORDS, sizeof(THREE_RECORDS), 0, &w);
 
-	EffectsV3Status status = EffectsV3_DecodeEach((const char*)THREE_RECORDS,
-			sizeof(THREE_RECORDS), _CountingCb, &c);
-
-	TEST_ASSERT(status   == EFFECTS_V3_OK);
-	TEST_ASSERT(c.calls  == 3);
+	TEST_ASSERT(w.status == EFFECTS_V3_OK);
+	TEST_ASSERT(w.calls  == 3);
 
 	// in WIRE ORDER - records 9 and 10 are normatively ahead of anything
-	// referencing the ids they introduce, so a driver that reordered would
+	// referencing the ids they introduce, so a reader that reordered would
 	// break apply in a way no count could see
-	TEST_ASSERT(c.ids[0] == 1);
-	TEST_ASSERT(c.ids[1] == 2);
-	TEST_ASSERT(c.ids[2] == 3);
+	TEST_ASSERT(w.ids[0] == 1);
+	TEST_ASSERT(w.ids[1] == 2);
+	TEST_ASSERT(w.ids[2] == 3);
 }
 
-void test_stream_delivers_k_records_before_a_truncation() {
-	_CountCtx c = { 0 };
+void test_reader_delivers_k_records_before_a_truncation() {
+	_Walk w;
+	// cut into the third record's value: two decode whole, the third runs out
+	_walk(THREE_RECORDS, sizeof(THREE_RECORDS) - 3, 0, &w);
 
-	// cut into the third record's value: two records decode whole, the third
-	// runs out of bytes
-	EffectsV3Status status = EffectsV3_DecodeEach((const char*)THREE_RECORDS,
-			sizeof(THREE_RECORDS) - 3, _CountingCb, &c);
-
-	TEST_ASSERT(status == EFFECTS_V3_TRUNCATED);
+	TEST_ASSERT(w.status == EFFECTS_V3_TRUNCATED);
 
 	// K >= 1 IS THE WHOLE POINT. Before streaming, a truncated payload was
 	// refused with nothing handed over; the count is what distinguishes the new
 	// behaviour from the old, and it is why the refusal log line carries it.
-	TEST_ASSERT(c.calls == 2);
-	TEST_ASSERT(c.ids[0] == 1);
-	TEST_ASSERT(c.ids[1] == 2);
+	TEST_ASSERT(w.calls  == 2);
+	TEST_ASSERT(w.ids[0] == 1);
+	TEST_ASSERT(w.ids[1] == 2);
 }
 
-void test_stream_stops_when_the_callback_refuses() {
-	_CountCtx c = { 0 };
-	c.refuse_at = 2;   // refuse the second record
+void test_reader_stops_where_the_consumer_stops() {
+	_Walk w;
+	_walk(THREE_RECORDS, sizeof(THREE_RECORDS), 2, &w);
 
-	EffectsV3Status status = EffectsV3_DecodeEach((const char*)THREE_RECORDS,
-			sizeof(THREE_RECORDS), _CountingCb, &c);
+	// THE THIRD RECORD IS NEVER READ. A consumer that refuses mid-payload stops
+	// pumping the cursor, and nothing reads past that point.
+	TEST_ASSERT(w.calls == 2);
 
-	// THE THIRD RECORD IS NEVER READ. A driver that kept going would apply a
-	// record after the caller had already refused the payload.
-	TEST_ASSERT(c.calls == 2);
-
-	// AND THE STATUS IS STILL OK, which is deliberate rather than an oversight.
-	// Decode statuses describe the BYTES; these bytes were well formed. What
-	// the caller made of them is the caller's to carry, and reporting a
-	// refused-but-well-formed payload as corrupt sends an operator hunting a
-	// wire problem that does not exist.
-	TEST_ASSERT(status == EFFECTS_V3_OK);
+	// AND THE STATUS IS STILL OK, which is deliberate. Decode statuses describe
+	// the BYTES; these bytes were well formed. What the consumer made of them is
+	// the consumer's to carry, and reporting a refused-but-well-formed payload
+	// as corrupt sends an operator hunting a wire problem that does not exist.
+	TEST_ASSERT(w.status == EFFECTS_V3_OK);
 }
-
-
-//------------------------------------------------------------------------------
-// truncation sweep
-//------------------------------------------------------------------------------
-//
-// Decode EVERY prefix of a payload. This is a unit-level version of the
-// conformance truncation sweep - narrower in coverage, aimed squarely at the
-// cleanup paths rather than at the format.
-//
-// It exists because EffectsV3_Decode writes _ReadRecord output straight into
-// rm_realloc'd - therefore UNINITIALIZED - memory, and on failure does not
-// increment out->n, so the partially written slot is never seen by
-// EffectsV3_RecordsFree. That is only safe because of two things:
-//
-//   * every arm of _ReadRecord exits through `goto fail`, and fail: calls
-//     _RecordFree(rec), so a partial record frees itself
-//   * memset(rec, 0, sizeof(*rec)) is the FIRST statement of _ReadRecord, so
-//     _RecordFree on the fail path never operates on realloc garbage
-//
-// Both are load-bearing and neither is obvious. A normal run cannot tell a
-// clean rejection from a leaking one, which is why this is worth running under
-// a leak checker - build with SAN=address and LeakSanitizer reports at exit.
-
 
 // a CREATE_INDEX: two fulltext fields with index-level language and stopwords.
 //
 // A DDL RECORD IS IN THE SWEEP DELIBERATELY. Records 1-8 are read by arms that
-// exit through `goto fail` into _RecordFree; records 11-14 are read by
-// _ReadIndexRecord and _ReadConstraintRecord, which are dispatched by a plain
-// `return` and therefore do NOT go through that cleanup. A sweep over
-// CREATE_NODE payloads alone cannot reach either function, so it cannot see
-// what they leak.
+// exit through `goto fail` into _RecordFree; records 11-14 go through
+// _ReadIndexRecord and _ReadConstraintRecord. Those used to return past that
+// cleanup and leaked 2,369 bytes over a sweep. A sweep over CREATE_NODE
+// payloads alone cannot call either function, so it cannot see what they leak.
 static const unsigned char CREATE_INDEX_REC[] = {
 	0x03, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x50, 0x00,
@@ -321,12 +304,12 @@ TEST_LIST = {
 	{"decode_collects_every_record",      test_decode_collects_every_record},
 	{"decode_refuses_a_truncated_payload", test_decode_refuses_a_truncated_payload},
 	{"decode_refuses_a_future_version",   test_decode_refuses_a_future_version},
-	{"stream_hands_over_every_record_in_order",
-			test_stream_hands_over_every_record_in_order},
-	{"stream_delivers_k_records_before_a_truncation",
-			test_stream_delivers_k_records_before_a_truncation},
-	{"stream_stops_when_the_callback_refuses",
-			test_stream_stops_when_the_callback_refuses},
+	{"reader_hands_over_every_record_in_order",
+			test_reader_hands_over_every_record_in_order},
+	{"reader_delivers_k_records_before_a_truncation",
+			test_reader_delivers_k_records_before_a_truncation},
+	{"reader_stops_where_the_consumer_stops",
+			test_reader_stops_where_the_consumer_stops},
 	{"every_prefix_decodes_or_refuses_cleanly",
 			test_every_prefix_decodes_or_refuses_cleanly},
 	{NULL, NULL}

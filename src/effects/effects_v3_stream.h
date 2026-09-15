@@ -11,10 +11,10 @@
 // streaming decode: one record at a time
 //------------------------------------------------------------------------------
 //
-// EffectsV3_Decode materialises the whole record set and EffectsV3_Apply walks
-// it; this decodes, applies and frees one record at a time, so peak memory is
-// one record rather than the payload. A record is still applied as ONE bulk
-// operation - only the set of records stops being materialised.
+// EffectsV3_Decode materialises the whole record set; this reads one record at
+// a time, so peak memory is one record rather than the payload. A record is
+// still applied as ONE bulk operation - only the set of records stops being
+// materialised.
 //
 // The cost is that a refusal can now land after records 1..k are already
 // applied. That is intended: a refusal makes Effects_Apply return false, which
@@ -25,37 +25,61 @@
 // returning false. That is its only route to the guard - Effects_Apply has one
 // caller and cmd_effect.c consumes its bool directly, with no status mapping in
 // between. Never return success from a payload that stopped early.
+//
+// A CURSOR RATHER THAN A CALLBACK. There are two consumers - apply, which
+// discards each record, and EffectsV3_Decode, which keeps them - and they differ
+// only in what they do with a record once it exists. A callback inverts control
+// for that, and forces an ownership contract on every caller; two copies of the
+// loop invite the two from drifting apart on refusal boundaries. A cursor has
+// neither problem: _ReadRecord is called in exactly one place, and each consumer
+// writes the three lines it actually needs.
 
-// called once per decoded record, in wire order
+// reads records out of a v3 payload, one at a time
 //
-// OWNERSHIP PASSES TO THE CALLBACK. The decoder does not free the record after
-// this returns - the callback either keeps it or calls EffectsV3_RecordFree,
-// including on the path where it returns false.
-//
-// return false to REFUSE the payload; decoding stops
-typedef bool (*EffectsV3RecordFn)
-(
-	EffectsV3Record *rec,  // the record just decoded
-	void *ctx              // caller's context
-);
+// Treat the fields as opaque; open it, pump it, close it.
+typedef struct {
+	FILE            *stream;  // over the caller's buffer, owned
+	size_t           n;       // payload length
+	EffectsV3Status  status;  // why the walk stopped
+} EffectsV3Reader;
 
-// decode a payload, handing each record to 'fn' as it is read
+// open a payload for reading, validating the header
 //
-// Returns EFFECTS_V3_OK when the BYTES decoded cleanly, whether or not 'fn'
-// refused - a callback's verdict belongs in 'ctx', not in a decode status.
-// Reporting a refused-but-well-formed payload as corrupt sends an operator
-// hunting a wire problem that does not exist.
-EffectsV3Status EffectsV3_DecodeEach
+// On anything but EFFECTS_V3_OK the reader is not usable, but calling
+// EffectsV3_ReaderClose on it is still safe and still required.
+EffectsV3Status EffectsV3_ReaderOpen
 (
 	const char *buff,       // encoded payload
 	size_t n,               // payload length
-	EffectsV3RecordFn fn,   // called per record
-	void *ctx               // passed through to 'fn'
+	EffectsV3Reader *r      // [output] reader
+);
+
+// read the next record
+//
+// Returns false at the end of the payload AND on a malformed one - call
+// EffectsV3_ReaderStatus to tell those apart. Stopping on both is deliberate:
+// a caller that ignores the status still stops reading rather than looping.
+//
+// OWNERSHIP: 'rec' belongs to the caller, which must EffectsV3_RecordFree it.
+bool EffectsV3_ReaderNext
+(
+	EffectsV3Reader *r,
+	EffectsV3Record *rec    // [output] the record just read
+);
+
+// why the walk stopped: OK at a clean end of payload, otherwise the refusal
+EffectsV3Status EffectsV3_ReaderStatus
+(
+	const EffectsV3Reader *r
+);
+
+// release the reader; safe on one that failed to open
+void EffectsV3_ReaderClose
+(
+	EffectsV3Reader *r
 );
 
 // free one decoded record
-//
-// the callback's half of the ownership handed over by EffectsV3_DecodeEach
 void EffectsV3_RecordFree
 (
 	EffectsV3Record *rec
