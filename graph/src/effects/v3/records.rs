@@ -1978,6 +1978,68 @@ mod tests {
         assert_eq!(back, opts, "what was stated comes back stated, and only it");
     }
 
+    /// Every `VecSimMetric` code the wire can carry, and one it cannot.
+    ///
+    /// **All three valid codes, not only the rejection.** The failure this
+    /// guards is the one that actually happened: a *valid* code being
+    /// *refused*. C's apply carried an arm refusing code 1 outright — "asks for
+    /// similarity function 1, which this build cannot create" — which made
+    /// C(v3) to C resync with the same binary on both sides, and a test that
+    /// asserted only the rejection path would have stayed green throughout it.
+    ///
+    /// It is also the case a round trip cannot reach. Until now the decoder's
+    /// metric handling was only ever driven by this engine's own encoder, and
+    /// the only code any test produced was 2. C's create path now accepts
+    /// `"ip"`, so code 1 arrives from a peer for the first time.
+    #[test]
+    fn every_similarity_code_decodes_and_an_unknown_one_is_refused() {
+        // Built by hand rather than by round-tripping our own encoder: a wire
+        // value from a peer is the thing under test, and `1` is one this
+        // engine's encoder happens to emit only for `"ip"`.
+        let block = |sim: u64| {
+            let mut buf = Vec::new();
+            for _ in 0..5 {
+                buf.u8(0); // the text half: nothing stated
+            }
+            buf.u64(4); // dimension, which carries no presence byte
+            buf.u8(0); // M
+            buf.u8(0); // efConstruction
+            buf.u8(0); // efRuntime
+            buf.u8(1); // simFunc present
+            buf.u64(sim);
+            buf
+        };
+
+        for (code, name) in [(0_u64, "euclidean"), (1, "ip"), (2, "cosine")] {
+            let buf = block(code);
+            let mut r = Reader::new(&buf);
+            let opts = IndexFieldOptions::decode_sized(&mut r, INDEX_FLD_VECTOR)
+                .unwrap_or_else(|e| panic!("code {code} must decode: {e}"));
+            assert!(r.is_empty(), "code {code}: bytes left over");
+            assert_eq!(
+                opts.vector.as_ref().unwrap().similarity_function.as_deref(),
+                Some(name),
+                "code {code} is {name}"
+            );
+
+            // And it survives the way back, so a replica re-emitting what it
+            // was given produces the same code rather than a default.
+            let mut out = Vec::new();
+            opts.encode_sized(&mut out, INDEX_FLD_VECTOR).unwrap();
+            assert_eq!(out, buf, "code {code} did not re-encode to itself");
+        }
+
+        // A fourth value is refused rather than read as L2. Choosing a metric
+        // on the sender's behalf builds an index that answers different
+        // queries and never says so.
+        let unknown = block(7);
+        let mut r = Reader::new(&unknown);
+        assert_eq!(
+            IndexFieldOptions::decode_sized(&mut r, INDEX_FLD_VECTOR),
+            Err(DecodeError::BadSimilarityFunction { value: 7 })
+        );
+    }
+
     /// The vector half: `dimension` bare, the rest flagged.
     #[test]
     fn a_vector_dimension_carries_no_flag_because_it_cannot_be_absent() {

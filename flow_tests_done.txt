@@ -21,6 +21,13 @@ tests/flow/test_distinct
 tests/flow/test_edge_index_scans.py
 tests/flow/test_edge_index_updates.py
 tests/flow/test_effects.py
+tests/flow/test_effects_v3_commands.py
+tests/flow/test_effects_v3_compound.py
+tests/flow/test_effects_v3_ddl.py
+tests/flow/test_effects_v3_shapes.py
+tests/flow/test_effects_v3_topology.py
+tests/flow/test_effects_v3_values.py
+tests/flow/test_effects_v3_wire.py
 tests/flow/test_empty_query
 tests/flow/test_encode_decode.py
 tests/flow/test_entity_update
