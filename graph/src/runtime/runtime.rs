@@ -411,7 +411,10 @@ impl<'a> Runtime<'a> {
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
         if write {
             pending.borrow_mut().set_schema_baseline(&g);
-            pending.borrow_mut().open_id_boundaries(&g);
+            // The batch the whole first segment allocates against. `Pending`
+            // holds no id state to open — the graph's id spaces are the
+            // allocator, and this query gets a private version of them.
+            g.borrow_mut().open_id_batches();
         }
         Self {
             parameters,

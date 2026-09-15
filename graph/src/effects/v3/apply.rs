@@ -27,7 +27,7 @@ use crate::{
     graph::{
         attribute_store::MAX_ATTRIBUTES,
         graph::{Graph, NodeOpError, TypeId},
-        id_space::{IdSpace, IdSpaceError},
+        id_space::IdSpaceError,
     },
     index::{IndexType, indexer::IndexOptions},
     runtime::{pending::IndexDocs, value::Value},
@@ -47,21 +47,8 @@ impl From<String> for ApplyError {
 
 /// What accumulates across a buffer and is settled once, at the end.
 struct BufferOps {
-    /// The same type the write path collects into, rather than a second set of
-    /// four maps that has to agree with it by inspection.
+    /// Index documents staged by the whole buffer and published once at the end.
     docs: IndexDocs,
-    /// The node id space this buffer is building.
-    ///
-    /// Held here rather than on the graph because its lifetime is the buffer's,
-    /// and a buffer is a thing only this file knows about. What the graph does
-    /// know is how to maintain one: `create_nodes` and `delete_nodes` take it and
-    /// feed it themselves, so nothing here can create a node and forget to
-    /// account for it — and nothing can be handed a graph without saying what to
-    /// do about validation, because the argument is not optional to supply.
-    nodes: IdSpace,
-    /// And the relationship one. Same type, same checks — the id spaces are two
-    /// counted ranges with recycle bins, and nothing about the invariant differs.
-    edges: IdSpace,
 }
 
 /// Apply a whole `GRAPH.EFFECT` payload.
@@ -83,10 +70,11 @@ pub fn apply_effects(
     // be read; `open_payload` owns that plaintext and the records borrow from it.
     let payload = open_payload(buf)?;
 
+    // One batch per id space, spanning the whole buffer. The graph owns them,
+    // so nothing here has to carry a space alongside the graph it describes.
+    g.open_id_batches();
     let mut ops = BufferOps {
         docs: IndexDocs::default(),
-        nodes: IdSpace::at(g.node_id_bound()),
-        edges: IdSpace::at(g.relationship_id_bound()),
     };
 
     for record in payload.records() {
@@ -97,11 +85,11 @@ pub fn apply_effects(
     // id space is legitimately fragmented partway through a buffer and only has
     // to be whole at the end. A buffer that fails earlier never reaches this,
     // which is right — it has not finished building the thing being checked.
-    ops.nodes
-        .verify(g.node_id_bound())
+    g.node_id_space()
+        .verify()
         .map_err(|e| id_space_error_map("node", e))?;
-    ops.edges
-        .verify(g.relationship_id_bound())
+    g.relationship_id_space()
+        .verify()
         .map_err(|e| id_space_error_map("relationship", e))?;
 
     g.commit_index(&mut ops.docs.node_adds, &mut ops.docs.node_removes);
@@ -233,8 +221,7 @@ fn apply_record(
             // this graph's allocator. The graph refuses rather than
             // double-counting, so there is no separate check here to keep in step
             // with it either.
-            g.create_nodes(&nodes, &mut ops.nodes)
-                .map_err(|e| node_op("node", e))?;
+            g.create_nodes(&nodes).map_err(|e| node_op("node", e))?;
 
             // The graph's bulk APIs take `&[u64]`, so the ids are materialized
             // once here rather than per call.
@@ -284,7 +271,7 @@ fn apply_record(
                 src.iter().collect(),
                 dst.iter().collect(),
             );
-            g.create_relationships_bulk(&type_name, &src, &dst, &ids, &mut ops.edges)
+            g.create_relationships_bulk(&type_name, &src, &dst, &ids)
                 .map_err(|e| node_op("relationship", e))?;
 
             // As in `CreateNode` above: `attr_map` shape-checks internally, so
@@ -383,14 +370,14 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut ops.docs.node_removes, &ops.nodes)
+            g.delete_nodes(&nodes, &mut ops.docs.node_removes)
                 .map_err(|e| node_op("node", e))?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut ops.docs.edge_removes, &ops.edges)
+            g.delete_relationships(&edges, &mut ops.docs.edge_removes)
                 .map_err(|e| node_op("relationship", e))?;
             Ok(())
         }

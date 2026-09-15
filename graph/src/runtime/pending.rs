@@ -32,7 +32,6 @@ use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
-use crate::graph::id_space::IdSpace;
 
 use crate::{
     entity_type::EntityType,
@@ -136,26 +135,9 @@ pub(crate) struct CancelledRelationship {
 pub struct Pending {
     /// Nodes created in this transaction
     pub(crate) created_nodes: RoaringTreemap,
-    /// Where the node id space ended when this batch opened.
-    ///
-    /// The one thing about the batch's id space that cannot be recovered later,
-    /// which is why it is the only thing kept. Everything else an allocator
-    /// needs is already here — `created_nodes` and `cancelled_nodes` between
-    /// them are exactly the ids this batch has been handed — and the space
-    /// itself is built where it is used, as `GRAPH.BULK` and the effects path
-    /// already do.
-    ///
-    /// Not recoverable because a cancelled *reclaimed* id does not move the
-    /// graph's boundary: it was already in the recycle bin, so returning it is
-    /// a no-op there. Measured — a batch that opened at boundary 13 and
-    /// cancelled one id still reports 13, so subtracting the cancellation lands
-    /// at 12 and judges every created id as already live.
-    pub(crate) node_entry: u64,
     pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
     pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
-    /// The same for relationships.
-    pub(crate) rel_entry: u64,
     /// Every relationship id this batch has been handed, cancelled included.
     ///
     /// The node side needs no such field: `created_nodes` is already a set and
@@ -185,7 +167,7 @@ pub struct Pending {
     /// sees.
     ///
     /// `delete_pending_node` unwinds such a node out of `created_nodes` and
-    /// `return_node_id` hands its id straight back to the recycle bin, so the
+    /// `cancel_node_id` hands its id straight back to the recycle bin, so the
     /// master's id space acquires a hole that no create and no delete
     /// describes. Replicating nothing for it left the replica's id space one
     /// short, and its next allocation after a promotion landed on a live node.
@@ -203,7 +185,7 @@ pub struct Pending {
     /// Relationships cascaded away by a cancelled node, in the same commit.
     ///
     /// Their ids were reserved and returned exactly as a cancelled node's is —
-    /// `return_relationship_id` puts them in the recycle bin — so a buffer that
+    /// `cancel_relationship_id` puts them in the recycle bin — so a buffer that
     /// says nothing about them leaves the replica's relationship id space with a
     /// hole, and `IdSpace::verify` refuses the whole payload.
     pub(crate) cancelled_relationships: Vec<CancelledRelationship>,
@@ -377,10 +359,8 @@ impl Pending {
     pub fn new() -> Self {
         Self {
             created_nodes: RoaringTreemap::new(),
-            node_entry: 0,
             created_rels_by_type: FxHashMap::default(),
             created_rel_types: FxHashMap::default(),
-            rel_entry: 0,
             taken_relationship_ids: RoaringTreemap::new(),
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
@@ -417,22 +397,6 @@ impl Pending {
         self.schema_rel_attr_count = graph.get_relationship_attribute_names().len();
     }
 
-    /// A fresh id space for this batch's node ids.
-    ///
-    /// Built on demand from the boundary at [`Self::node_entry`], the way every
-    /// other caller builds one. Nothing is kept between uses because nothing
-    /// needs to be.
-    #[must_use]
-    pub fn node_id_space(&self) -> IdSpace {
-        IdSpace::at(self.node_entry)
-    }
-
-    /// The same for relationships.
-    #[must_use]
-    pub fn rel_id_space(&self) -> IdSpace {
-        IdSpace::at(self.rel_entry)
-    }
-
     /// The node ids this batch has been handed, as the disjoint sets it already
     /// keeps them in. [`IdSpace::reserve`] must not reissue any of them.
     #[must_use]
@@ -444,19 +408,6 @@ impl Pending {
     #[must_use]
     pub const fn issued_relationships(&self) -> [&RoaringTreemap; 1] {
         [&self.taken_relationship_ids]
-    }
-
-    /// Record where the id space stands, for the batch that starts now.
-    ///
-    /// Paired with [`Self::clear`] at every commit and called once when the
-    /// query's `Pending` is built, because the boundary moves as commits land.
-    pub fn open_id_boundaries(
-        &mut self,
-        g: &AtomicRefCell<Graph>,
-    ) {
-        let graph = g.borrow();
-        self.node_entry = graph.node_id_bound();
-        self.rel_entry = graph.relationship_id_bound();
     }
 
     pub fn created_nodes(
@@ -1130,17 +1081,10 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
-        // One space per kind for the whole commit, opened from the boundary
-        // this batch started at. Creates record into it and the deletes below
-        // are judged against it — the write path used to pass `None` there and
-        // skip the check, which is the same gap on delete that this PR closed
-        // on create.
-        let mut node_space = self.node_id_space();
-        let mut rel_space = self.rel_id_space();
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
             g.borrow_mut()
-                .create_nodes(&self.created_nodes, &mut node_space)
+                .create_nodes(&self.created_nodes)
                 .map_err(|e| e.to_string())?;
         }
         if !self.created_rel_types.is_empty() {
@@ -1155,7 +1099,7 @@ impl Pending {
                     dsts.push(to.into());
                     ids.push(rel_id.into());
                 }
-                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids, &mut rel_space)
+                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids)
                     .map_err(|e| e.to_string())?;
             }
         }
@@ -1226,11 +1170,7 @@ impl Pending {
             stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
             self.deleted_node_labels = g
                 .borrow_mut()
-                .delete_nodes(
-                    &self.deleted_nodes,
-                    &mut self.index_docs.node_removes,
-                    &node_space,
-                )
+                .delete_nodes(&self.deleted_nodes, &mut self.index_docs.node_removes)
                 .map_err(|e| e.to_string())?;
         }
         // Take relationship deletions BEFORE implicit edge processing
@@ -1269,11 +1209,7 @@ impl Pending {
         if !explicit_rels.is_empty() {
             let endpoints = g
                 .borrow_mut()
-                .delete_relationships(
-                    &explicit_rels,
-                    &mut self.index_docs.edge_removes,
-                    &rel_space,
-                )
+                .delete_relationships(&explicit_rels, &mut self.index_docs.edge_removes)
                 .map_err(|e| e.to_string())?;
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.

@@ -136,12 +136,11 @@ impl<'a> Iterator for CommitOp<'a> {
                 .pending
                 .borrow_mut()
                 .set_schema_baseline(&self.runtime.g);
-            // The boundary moved when this commit landed, so the next one
-            // allocates against a fresh account of it.
-            self.runtime
-                .pending
-                .borrow_mut()
-                .open_id_boundaries(&self.runtime.g);
+            // The boundary moved when this commit landed, so the next segment
+            // opens a fresh batch against where it now stands. Rebuilt, not
+            // re-anchored: an id this segment created is an ordinary recycled
+            // id to the next one.
+            self.runtime.g.borrow_mut().open_id_batches();
             // Reverse once so we can pop from the end in O(1) while preserving order.
             self.results.reverse();
         }

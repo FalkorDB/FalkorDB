@@ -149,15 +149,14 @@ impl Runtime<'_> {
         for node in pattern.nodes() {
             let active_len = batch.active_len();
 
-            // Reserve all node IDs at once
-            // The graph lends its recycle bin and is not otherwise touched:
-            // allocation is the id space's, so this needs no write borrow.
+            // Reserve all node IDs at once. The id space decides; this query
+            // only lends it the ids it is already holding, so the graph needs no
+            // write borrow.
             let node_ids: Vec<NodeId> = {
                 let pending = self.pending.borrow();
                 let g = self.g.borrow();
-                pending
-                    .node_id_space()
-                    .reserve(active_len, g.deleted_nodes(), &pending.issued_nodes())?
+                g.node_id_space()
+                    .reserve(active_len, &pending.issued_nodes())?
                     .into_iter()
                     .map(NodeId::from)
                     .collect()
@@ -278,13 +277,8 @@ impl Runtime<'_> {
             let ids: Vec<RelationshipId> = {
                 let pending = self.pending.borrow();
                 let g = self.g.borrow();
-                pending
-                    .rel_id_space()
-                    .reserve(
-                        endpoints.len(),
-                        g.deleted_relationships(),
-                        &pending.issued_relationships(),
-                    )?
+                g.relationship_id_space()
+                    .reserve(endpoints.len(), &pending.issued_relationships())?
                     .into_iter()
                     .map(RelationshipId::from)
                     .collect()
