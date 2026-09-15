@@ -1549,9 +1549,8 @@ static EffectsV3Status _ReadHeader
 
 // free one decoded record
 //
-// public because EffectsV3_DecodeEach hands each record to its callback and the
-// callback owns it from that point - including the apply path, which lives in
-// another translation unit
+// public because every consumer of the reader owns the records it hands out,
+// including the apply path, which lives in another translation unit
 void EffectsV3_RecordFree
 (
 	EffectsV3Record *rec
@@ -1561,68 +1560,84 @@ void EffectsV3_RecordFree
 	}
 }
 
-// decode a payload, handing each record to 'fn' as it is read
-//
-// the header is parsed here and the record loop runs here; the two public
-// entry points differ only in what their callback does with each record
-EffectsV3Status EffectsV3_DecodeEach
+//------------------------------------------------------------------------------
+// the reader
+//------------------------------------------------------------------------------
+
+EffectsV3Status EffectsV3_ReaderOpen
 (
 	const char *buff,
 	size_t n,
-	EffectsV3RecordFn fn,
-	void *ctx
+	EffectsV3Reader *r
 ) {
-	ASSERT (buff != NULL) ;
-	ASSERT (fn   != NULL) ;
+	ASSERT (r != NULL) ;
 
-	if (buff == NULL || fn == NULL || n == 0) {
-		return EFFECTS_V3_TRUNCATED ;
+	r->stream = NULL ;
+	r->n      = n ;
+	r->status = EFFECTS_V3_OK ;
+
+	if (buff == NULL || n == 0) {
+		r->status = EFFECTS_V3_TRUNCATED ;
+		return r->status ;
 	}
 
-	FILE *stream = fmemopen ((void*)buff, n, "r") ;
-	if (stream == NULL) {
-		return EFFECTS_V3_MALFORMED ;
+	r->stream = fmemopen ((void*)buff, n, "r") ;
+	if (r->stream == NULL) {
+		r->status = EFFECTS_V3_MALFORMED ;
+		return r->status ;
 	}
 
-	EffectsV3Status status = _ReadHeader (stream) ;
-	if (status != EFFECTS_V3_OK) {
-		goto done ;
+	r->status = _ReadHeader (r->stream) ;
+	return r->status ;
+}
+
+bool EffectsV3_ReaderNext
+(
+	EffectsV3Reader *r,
+	EffectsV3Record *rec
+) {
+	ASSERT (r   != NULL) ;
+	ASSERT (rec != NULL) ;
+
+	// a reader that failed to open, or that already refused, yields nothing
+	if (r->stream == NULL || r->status != EFFECTS_V3_OK) {
+		return false ;
 	}
 
-
-	// ONE RECORD AT A TIME. The record lives on this stack frame and is freed
-	// before the next is read, so peak memory is one record rather than the
-	// whole payload.
-	while ((size_t)ftell (stream) < n) {
-		EffectsV3Record rec ;
-
-		status = _ReadRecord (stream, &rec) ;
-		if (status != EFFECTS_V3_OK) {
-			// _ReadRecord frees what it partially built
-			goto done ;
-		}
-
-		// OWNERSHIP PASSES TO THE CALLBACK, which is what lets there be one
-		// loop rather than two. The driver used to free the record here, so a
-		// callback that wanted to keep it had to copy the struct and zero the
-		// original - and that dance was the whole reason the collecting form
-		// grew its own loop. Handing ownership over instead makes keeping a
-		// record the trivial case and freeing it the explicit one.
-		const bool keep_going = fn (&rec, ctx) ;
-
-		if (!keep_going) {
-			// THE CALLBACK REFUSED, and that is not a decode status. The bytes
-			// were well formed; what the caller did with them is the caller's
-			// to report, and it carries that verdict in 'ctx'. Returning a
-			// failure status here would report a refused payload as corrupt
-			// and send an operator hunting a wire problem that does not exist.
-			break ;
-		}
+	// end of payload - a clean one, so the status stays OK
+	if ((size_t)ftell (r->stream) >= r->n) {
+		return false ;
 	}
 
-done:
-	fclose (stream) ;
-	return status ;
+	r->status = _ReadRecord (r->stream, rec) ;
+	if (r->status != EFFECTS_V3_OK) {
+		// _ReadRecord frees whatever it partially built
+		return false ;
+	}
+
+	return true ;
+}
+
+EffectsV3Status EffectsV3_ReaderStatus
+(
+	const EffectsV3Reader *r
+) {
+	ASSERT (r != NULL) ;
+	return r->status ;
+}
+
+void EffectsV3_ReaderClose
+(
+	EffectsV3Reader *r
+) {
+	if (r == NULL) {
+		return ;
+	}
+
+	if (r->stream != NULL) {
+		fclose (r->stream) ;
+		r->stream = NULL ;
+	}
 }
 
 //------------------------------------------------------------------------------
@@ -1632,54 +1647,14 @@ done:
 // decode a payload whole
 //
 // KEPT FOR THE ROUND TRIP. EffectsV3_Encode takes a materialised record set and
-// the conformance harness is its only caller; the production path streams.
+// the conformance harness is its only caller; the production path streams. It
+// is declared in the shared contract, so it stays.
 //
-// Its own loop rather than a callback into EffectsV3_DecodeEach. The parsing is
-// still shared - _ReadHeader and _ReadRecord are the same in both - so the two
-// forms cannot disagree about what a payload MEANS, which is the property the
-// corpus depends on. All that differs is what each does with a record once it
-// is read, and for this one that is "keep it".
-//
-// Going through the callback meant the driver freed each record immediately
-// after handing it over, so the collector had to take ownership by copying the
-// struct and ZEROING the original. That dance existed only to satisfy the
-// callback contract; a loop that simply does not free needs none of it.
-// accumulator for EffectsV3_Decode
-typedef struct {
-	EffectsV3Records *out;
-	uint32_t          cap;
-} _Collector;
-
-// keep each record; the callback owns it, so this is a move and nothing else
-static bool _Collect
-(
-	EffectsV3Record *rec,
-	void *ctx
-) {
-	_Collector *c = (_Collector*)ctx ;
-
-	if (c->out->n == c->cap) {
-		c->cap = (c->cap == 0) ? 4 : c->cap * 2 ;
-		c->out->records = rm_realloc (c->out->records,
-				c->cap * sizeof (EffectsV3Record)) ;
-	}
-
-	c->out->records[c->out->n] = *rec ;
-	c->out->n++ ;
-
-	return true ;
-}
-
-// decode a payload whole
-//
-// KEPT FOR THE ROUND TRIP. EffectsV3_Encode takes a materialised record set and
-// the conformance harness is its only caller; the production path streams.
-//
-// ONE RECORD LOOP IN THIS FILE, not two. This goes through
-// EffectsV3_DecodeEach, so both forms share the header parse, the record loop
-// AND the refusal boundaries - there is no second `while` that could drift from
-// production's, and no need to prove the two refuse the same payloads because
-// there is only one place that decides.
+// ONE PLACE READS RECORDS. This walks the same cursor production walks, so the
+// header parse, the record read and the refusal boundaries are all shared -
+// there is no second copy of the decode driver that could drift from
+// production's. What differs is three lines: this keeps each record, apply
+// frees it.
 EffectsV3Status EffectsV3_Decode
 (
 	const char *buff,
@@ -1695,17 +1670,35 @@ EffectsV3Status EffectsV3_Decode
 
 	*records = NULL ;
 
-	if (buff == NULL || n == 0) {
-		return EFFECTS_V3_TRUNCATED ;
-	}
-
-	_Collector c = { 0 } ;
-	c.out = rm_calloc (1, sizeof (EffectsV3Records)) ;
-
-	const EffectsV3Status status = EffectsV3_DecodeEach (buff, n, _Collect, &c) ;
+	EffectsV3Reader r ;
+	EffectsV3Status status = EffectsV3_ReaderOpen (buff, n, &r) ;
 
 	if (status != EFFECTS_V3_OK) {
-		EffectsV3_RecordsFree (c.out) ;
+		EffectsV3_ReaderClose (&r) ;
+		return status ;
+	}
+
+	EffectsV3Records *out = rm_calloc (1, sizeof (EffectsV3Records)) ;
+	uint32_t cap = 0 ;
+
+	EffectsV3Record rec ;
+	while (EffectsV3_ReaderNext (&r, &rec)) {
+		if (out->n == cap) {
+			cap = (cap == 0) ? 4 : cap * 2 ;
+			out->records = rm_realloc (out->records,
+					cap * sizeof (EffectsV3Record)) ;
+		}
+
+		// the reader hands over ownership, so this is a move
+		out->records[out->n] = rec ;
+		out->n++ ;
+	}
+
+	status = EffectsV3_ReaderStatus (&r) ;
+	EffectsV3_ReaderClose (&r) ;
+
+	if (status != EFFECTS_V3_OK) {
+		EffectsV3_RecordsFree (out) ;
 		return status ;
 	}
 
@@ -1719,9 +1712,9 @@ EffectsV3Status EffectsV3_Decode
 	// trip re-encodes from records->version.
 	//
 	// n >= 2 here: a payload too short for both header bytes cannot decode OK.
-	c.out->version = (uint8_t)buff[0] ;
-	c.out->flags   = (uint8_t)buff[1] ;
+	out->version = (uint8_t)buff[0] ;
+	out->flags   = (uint8_t)buff[1] ;
 
-	*records = c.out ;
+	*records = out ;
 	return EFFECTS_V3_OK ;
 }
