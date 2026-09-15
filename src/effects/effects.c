@@ -8,6 +8,9 @@
 #include "effects.h"
 #include "effects_bytes.h"
 #include "effects_internal.h"
+#include "effects_v3_group.h"
+#include "../configuration/config.h"
+#include "../util/identifier_limits.h"
 #include "../query_ctx.h"
 #include "../datatypes/map.h"
 #include "../datatypes/vector.h"
@@ -16,10 +19,20 @@
 #define EFFECTS_BUFFER_BLOCK_SIZE 62500
 
 struct _EffectsBuffer {
-	EffectsBytes *records;  // encoded records
+	EffectsBytes *records;  // encoded records; v2 only
 	uint64_t n;             // number of effects in buffer
 	uint8_t version;        // payload version this buffer emits
 	bool owns_records;      // whether freeing the buffer frees the sink
+
+	// v3 accumulates into groups instead of writing records on arrival,
+	// because a record states its count and shape ahead of its rows. NULL
+	// when this buffer emits v2
+	EffectsV3Grouping *v3;
+
+	// v3's flags byte. Zero for everything this build emits - C does not
+	// compress - and settable only so EffectsV3_Encode can reproduce the
+	// header of a payload it was handed rather than assert one
+	uint8_t flags;
 };
 
 // forward declarations
@@ -71,9 +84,10 @@ static unsigned char *_EffectsBuffer_WriteHeader
 	*dst++ = eb->version;
 
 	if(eb->version >= 3) {
-		// flags; bit 0 = compressed. C does not compress yet, so this is 0,
-		// but the byte is part of the format regardless
-		*dst++ = 0;
+		// flags; bit 0 = compressed. C does not compress, so every buffer it
+		// builds carries 0 here - but a re-encode has to reproduce the header
+		// of the payload it decoded, so the value is read rather than assumed
+		*dst++ = eb->flags;
 	}
 
 	return dst;
@@ -89,6 +103,41 @@ void EffectsBuffer_WriteBytes
 	ASSERT (n   > 0) ;
 	ASSERT (eb  != NULL) ;
 	ASSERT (ptr != NULL) ;
+
+	// A v2 record written while v3 is active means some Add*Effect was never
+	// routed into the accumulator. EffectsBuffer_Buffer serializes the groups
+	// and ignores this stream in v3, so the record would be SILENTLY DROPPED -
+	// a replica that never learns of the mutation, which is worse than a
+	// refused payload because nothing reports it.
+	//
+	// Both a log AND an assert, because they cover different builds: ASSERT
+	// compiles to nothing without RG_DEBUG, so it stops a debug and CI build
+	// at the offending writer while the log is what a release build leaves
+	// behind.
+	if(unlikely(eb->v3 != NULL)) {
+		// AN EFFECT WITH NO v3 PATH IS A BUG, NOT A CONDITION TO SURVIVE.
+		//
+		// All 14 records have a producing path (EFFECTS_V3_ENCODE_READY), so
+		// nothing reaches here. If a fifteenth effect is ever added without
+		// routing it, this is where that shows up - and it has to be loud,
+		// because the two quiet answers are both wrong. Dropping the write
+		// loses the effect silently. Marking the buffer incomplete so the
+		// caller replays the query text instead - which is what this used to
+		// do - is exact between two C engines and silently wrong against
+		// Rust, whose db.idx.fulltext.createNodeIndex takes a single map where
+		// C's is variadic: the rescue that saves a C replica leaves a Rust one
+		// without the index and without an error.
+		//
+		// So: assert, which stops a debug and CI build at the writer that
+		// forgot its v3 path, and log at warning in release. The fix is always
+		// to route the effect, never to re-add a fallback.
+		RedisModule_Log(NULL, "warning",
+			"GRAPH.EFFECT an effect (%zu bytes) reached a v3 buffer with no v3 "
+			"encoding path and WILL NOT BE REPLICATED; its writer needs to "
+			"call into EffectsV3Grouping", n);
+		ASSERT(false && "effect has no v3 encoding path");
+		return;
+	}
 
 	EffectsBytes_Write (eb->records, ptr, n) ;
 }
@@ -346,15 +395,29 @@ EffectsBuffer *EffectsBuffer_New
 ) {
 	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
 
+	uint64_t emit = EFFECTS_VERSION_EMIT;
+	Config_Option_get(Config_EFFECTS_VERSION, &emit);
+
 	eb->n            = 0;
 	eb->records      = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
-	eb->version      = EFFECTS_VERSION_EMIT;
+	eb->version      = (uint8_t)emit;
 	eb->owns_records = true;
+	eb->v3           = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
+	eb->flags        = 0;
 
 	// note: no header is written here. v2 stamped its version byte at
 	// construction; it is now written by EffectsBuffer_Buffer, so that the
 	// records a buffer holds are only records
 	return eb;
+}
+
+EffectsV3Grouping *EffectsBuffer_V3
+(
+	const EffectsBuffer *eb  // effects-buffer
+) {
+	ASSERT(eb != NULL);
+
+	return eb->v3;
 }
 
 // reset effects-buffer
@@ -366,8 +429,15 @@ void EffectsBuffer_Reset
 
 	EffectsBytes_Clear(buff->records);
 
+	EffectsV3Grouping_Free(buff->v3);
+
+	uint64_t emit = EFFECTS_VERSION_EMIT;
+	Config_Option_get(Config_EFFECTS_VERSION, &emit);
+
 	buff->n       = 0;
-	buff->version = EFFECTS_VERSION_EMIT;
+	buff->version = (uint8_t)emit;
+	buff->v3      = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
+	buff->flags   = 0;
 }
 
 // returns number of effects in buffer
@@ -387,6 +457,39 @@ uint64_t EffectsBuffer_Length
 	return buff->n;
 }
 
+// take over a buffer's body so pre-built records can be written into it
+//
+// EffectsBuffer_Buffer has TWO possible bodies: the accumulator's output when
+// one is attached, and eb->records otherwise. EffectsV3_Encode writes records
+// it was handed, so the accumulator has to be out of the way first - otherwise
+// everything written here is serialised over and silently discarded.
+//
+// Refuses a buffer that has already staged effects rather than throwing them
+// away. 'version' and 'flags' come from the payload being reproduced, because
+// re-encoding what was decoded must reproduce its header too, not the header
+// this build would have chosen.
+EffectsBytes *EffectsBuffer_TakeBody
+(
+	EffectsBuffer *eb,  // effects-buffer
+	uint8_t version,    // version byte to emit
+	uint8_t flags       // flags byte to emit
+) {
+	ASSERT(eb != NULL);
+
+	if(eb->v3 != NULL) {
+		if(EffectsV3Grouping_RecordCount(eb->v3) > 0) {
+			return NULL;
+		}
+		EffectsV3Grouping_Free(eb->v3);
+		eb->v3 = NULL;
+	}
+
+	eb->version = version;
+	eb->flags   = flags;
+
+	return eb->records;
+}
+
 // get a copy of effects-buffer internal buffer
 unsigned char *EffectsBuffer_Buffer
 (
@@ -399,8 +502,20 @@ unsigned char *EffectsBuffer_Buffer
 	// determine required buffer size
 	//--------------------------------------------------------------------------
 
+	// v3 serializes its grouped records here, which is the only point at which
+	// they can be: a record states its count and shape ahead of its rows, so
+	// nothing could be written while effects were still arriving
+	EffectsBytes *body = eb->records;
+	EffectsBytes *v3_body = NULL;
+
+	if(eb->v3 != NULL) {
+		v3_body = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
+		EffectsV3Grouping_Encode(eb->v3, v3_body);
+		body = v3_body;
+	}
+
 	size_t hdr = _EffectsBuffer_HeaderLen(eb->version);
-	size_t l   = hdr + EffectsBytes_Len(eb->records);
+	size_t l   = hdr + EffectsBytes_Len(body);
 
 	//--------------------------------------------------------------------------
 	// allocate buffer and populate
@@ -409,7 +524,9 @@ unsigned char *EffectsBuffer_Buffer
 	unsigned char *buffer = rm_malloc(sizeof(unsigned char) * l);
 	unsigned char *offset = _EffectsBuffer_WriteHeader(eb, buffer);
 
-	EffectsBytes_CopyInto(eb->records, offset);
+	EffectsBytes_CopyInto(body, offset);
+
+	EffectsBytes_Free(v3_body);
 
 	*n = l;
 	return buffer;
@@ -444,6 +561,23 @@ void EffectsBuffer_AddCreateNodeEffect
 	stats->nodes_created++ ;
 	stats->labels_added   += label_count ;
 	stats->properties_set += AttributeSet_Count (*n->attributes) ;
+
+	if(buff->v3 != NULL) {
+		AttributeSet attrs = *n->attributes;
+		uint16_t n_attrs = AttributeSet_Count(attrs);
+
+		AttributeID ids[256];
+		SIValue vals[256];
+		uint16_t k = (n_attrs <= 256) ? n_attrs : 256;
+		for(uint16_t i = 0; i < k; i++) {
+			AttributeSet_GetIdx(attrs, i, ids + i, vals + i);
+		}
+
+		EffectsV3Grouping_AddNode(buff->v3, EFFECT_CREATE_NODE, labels,
+				label_count, ENTITY_GET_ID(n), ids, vals, k);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
 
 	EffectType t = EFFECT_CREATE_NODE;
 	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
@@ -492,6 +626,25 @@ void EffectsBuffer_AddCreateEdgeEffect
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->relationships_created++ ;
 	stats->properties_set += AttributeSet_Count (*edge->attributes) ;
+
+	if(buff->v3 != NULL) {
+		AttributeSet attrs = *edge->attributes;
+		uint16_t n_attrs = AttributeSet_Count(attrs);
+
+		AttributeID ids[256];
+		SIValue vals[256];
+		uint16_t k = (n_attrs <= 256) ? n_attrs : 256;
+		for(uint16_t i = 0; i < k; i++) {
+			AttributeSet_GetIdx(attrs, i, ids + i, vals + i);
+		}
+
+		EffectsV3Grouping_AddEdge(buff->v3, EFFECT_CREATE_EDGE,
+				Edge_GetRelationID(edge), ENTITY_GET_ID(edge),
+				Edge_GetSrcNodeID(edge), Edge_GetDestNodeID(edge),
+				ids, vals, k);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
 
 	// encoded edge struct
 	#pragma pack(push, 1)
@@ -545,6 +698,21 @@ void EffectsBuffer_AddDeleteNodeEffect
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->nodes_deleted++ ;
 
+	if(buff->v3 != NULL) {
+		// the labels the node ACTUALLY held, read while it is still alive -
+		// GraphHub_DeleteNodes records the effect before Graph_DeleteNodes, so
+		// the label matrices are still intact here. A replica needs them to
+		// clear the right label-scoped index documents
+		Graph *g = QueryCtx_GetGraph();
+		uint lbl_count;
+		NODE_GET_LABELS(g, node, lbl_count);
+
+		EffectsV3Grouping_AddNode(buff->v3, EFFECT_DELETE_NODE, labels,
+				(uint16_t)lbl_count, ENTITY_GET_ID(node), NULL, NULL, 0);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
+
 	#pragma pack(push, 1)
 	struct {
 		EffectType t;
@@ -578,6 +746,18 @@ void EffectsBuffer_AddDeleteEdgeEffect
 
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->relationships_deleted++ ;
+
+	if(eb->v3 != NULL) {
+		// the type is captured HERE, while the edge still carries it. v3
+		// groups deleted edges by relationship type and the edge is gone by
+		// the time the payload is built
+		EffectsV3Grouping_AddEdge(eb->v3, EFFECT_DELETE_EDGE,
+				Edge_GetRelationID(edge), ENTITY_GET_ID(edge),
+				Edge_GetSrcNodeID(edge), Edge_GetDestNodeID(edge),
+				NULL, NULL, 0);
+		EffectsBuffer_IncEffectCount(eb);
+		return;
+	}
 
 	// encoded edge struct
 	#pragma pack(push, 1)
@@ -691,6 +871,79 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 	EffectsBuffer_IncEffectCount(buff);
 }
 
+
+// stage one attribute of an entity's update into the v3 accumulator
+//
+// All three per-attribute writers converge here: add, update and remove are one
+// record family in v2 and one shape in v3. A v3 record's shape is the entity's
+// WHOLE updated attribute set, so this stages rather than emits - the group is
+// not selectable until the query stops producing attributes for this entity.
+//
+// REMOVE-ALL IS STATED EXPLICITLY, not as a sentinel. v2 writes
+// ATTRIBUTE_ID_ALL as the attribute id and lets apply special-case it; v3
+// cannot, because the attribute ids ARE the record's shape, so a sentinel there
+// would name something that is not an attribute. `SET n = {} SET n.x = 1` would
+// then produce a shape mixing the two with nothing to say which applied first,
+// and a dedicated record has the same problem between records. Stating every
+// removed attribute explicitly needs no ordering, because it resolves to the
+// end state rather than replaying operations.
+static void _StageV3Update
+(
+	EffectsBuffer *buff,          // effect buffer
+	GraphEntity *entity,          // entity being updated
+	AttributeID attr_id,          // attribute, or ATTRIBUTE_ID_ALL
+	SIValue value,                // value; null for a removal
+	GraphEntityType entity_type,  // node or edge
+	const LabelID *lbls,          // node labels, or NULL for an edge
+	uint16_t n_labels             // how many
+) {
+	EffectType opcode = (entity_type == GETYPE_NODE)
+		? EFFECT_UPDATE_NODE
+		: EFFECT_UPDATE_EDGE;
+
+	RelationID rel = (entity_type == GETYPE_NODE)
+		? 0
+		: Edge_GetRelationID((Edge *)entity);
+
+	EntityID id = ENTITY_GET_ID(entity);
+
+	if(attr_id == ATTRIBUTE_ID_ALL) {
+		AttributeSet attrs = *entity->attributes;
+		uint16_t n = AttributeSet_Count(attrs);
+
+		for(uint16_t i = 0; i < n; i++) {
+			AttributeID a_id;
+			SIValue v;
+			AttributeSet_GetIdx(attrs, i, &a_id, &v);
+			EffectsV3Grouping_StageUpdate(buff->v3, opcode, id, lbls,
+					n_labels, rel, a_id, SI_NullVal());
+		}
+		return;
+	}
+
+	EffectsV3Grouping_StageUpdate(buff->v3, opcode, id, lbls, n_labels, rel,
+			attr_id, value);
+}
+
+// stage an update, reading a node's labels in the scope the macro needs
+//
+// NODE_GET_LABELS declares a variable-length array named `labels` in the
+// enclosing scope, so the staging has to happen where that array is still
+// alive rather than through a pointer that outlives it
+#define STAGE_V3_UPDATE(buff, entity, attr_id, value, entity_type)          \
+	do {                                                                    \
+		if((entity_type) == GETYPE_NODE) {                                  \
+			Graph *_g = QueryCtx_GetGraph();                                \
+			uint _n;                                                        \
+			NODE_GET_LABELS(_g, (Node *)(entity), _n);                      \
+			_StageV3Update((buff), (entity), (attr_id), (value),            \
+					(entity_type), labels, (uint16_t)_n);                   \
+		} else {                                                            \
+			_StageV3Update((buff), (entity), (attr_id), (value),            \
+					(entity_type), NULL, 0);                                \
+		}                                                                   \
+	} while(0)
+
 // add an entity attribute removal effect to buffer
 void EffectsBuffer_AddEntityRemoveAttributeEffect
 (
@@ -708,6 +961,13 @@ void EffectsBuffer_AddEntityRemoveAttributeEffect
 	stats->properties_removed += n ;
 
 	SIValue v = SI_NullVal();
+
+	if(buff->v3 != NULL) {
+		STAGE_V3_UPDATE(buff, entity, attr_id, v, entity_type);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
+
 	if(entity_type == GETYPE_NODE) {
 		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, v);
 	} else {
@@ -727,6 +987,12 @@ void EffectsBuffer_AddEntityAddAttributeEffect
 	// attribute was added
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->properties_set++ ;
+
+	if(buff->v3 != NULL) {
+		STAGE_V3_UPDATE(buff, entity, attr_id, value, entity_type);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
 
 	if(entity_type == GETYPE_NODE) {
 		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
@@ -748,6 +1014,12 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 	stats->properties_set++ ;     // attribute was set
 	stats->properties_removed++ ; // old attribute was deleted
 
+	if(buff->v3 != NULL) {
+		STAGE_V3_UPDATE(buff, entity, attr_id, value, entity_type);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
+
 	if(entity_type == GETYPE_NODE) {
 		EffectsBuffer_AddNodeUpdateEffect(buff, (Node*)entity, attr_id, value);
 	} else {
@@ -761,6 +1033,52 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 // effect format:
 //   [EffectType]         effect type tag
 //   [GxB serialized]     GxB_Vector_serialize blob of the node vector
+
+// file a label vector into the v3 accumulator
+//
+// v3 states the LABEL SET and the node ids rather than a serialized GraphBLAS
+// vector - which is the point of the record changing: v2's blob couples the
+// wire to whatever GraphBLAS each engine was built against.
+//
+// The vector is named with its label, and it has already had redundancies
+// stripped upstream (staged_updates.c), so every node in it genuinely gains or
+// loses the label.
+static void _StageV3Labels
+(
+	EffectsBuffer *buff,  // effect buffer
+	GrB_Vector nodes,     // nodes the label applies to
+	EffectType opcode     // SET_LABELS or REMOVE_LABELS
+) {
+	// a real buffer, not a pointer's address. GrB_get with GrB_NAME COPIES the
+	// name into what you hand it, so passing &lbl_name wrote the label's
+	// characters into the pointer variable itself and the next line
+	// dereferenced them as an address - strcmp on a pointer built out of the
+	// label's own letters. The (char *) cast I had here is what silenced the
+	// char** / char* mismatch that would otherwise have caught it
+	char lbl_name[MAX_IDENTIFIER_LEN + 1] = {0};
+	GrB_OK(GrB_get(nodes, lbl_name, GrB_NAME));
+
+	GraphContext *gc = QueryCtx_GetGraphCtx();
+	const Schema *sch = GraphContext_GetSchema(gc, lbl_name, SCHEMA_NODE);
+	ASSERT(sch != NULL);
+
+	LabelID lbl = Schema_GetID(sch);
+
+	GxB_Iterator it;
+	GxB_Iterator_new(&it);
+	GrB_OK(GxB_Vector_Iterator_attach(it, nodes, NULL));
+
+	GrB_Info info = GxB_Vector_Iterator_seek(it, 0);
+	while(info != GxB_EXHAUSTED) {
+		GrB_Index node_id = GxB_Vector_Iterator_getIndex(it);
+		EffectsV3Grouping_AddNode(buff->v3, opcode, &lbl, 1, node_id,
+				NULL, NULL, 0);
+		info = GxB_Vector_Iterator_next(it);
+	}
+
+	GrB_free(&it);
+}
+
 void EffectsBuffer_AddLabelsEffect
 (
 	EffectsBuffer *buff,  // effect buffer to write into
@@ -775,6 +1093,12 @@ void EffectsBuffer_AddLabelsEffect
 
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->labels_added += nvals ;
+
+	if(buff->v3 != NULL) {
+		_StageV3Labels(buff, nodes, EFFECT_SET_LABELS);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
 
 	EffectType t = EFFECT_SET_LABELS;
 	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
@@ -815,6 +1139,12 @@ void EffectsBuffer_AddRemoveLabelsEffect
 	ResultSetStatistics *stats = QueryCtx_GetResultSetStatistics () ;
 	stats->labels_removed += nvals ;
 
+	if(buff->v3 != NULL) {
+		_StageV3Labels(buff, nodes, EFFECT_REMOVE_LABELS);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
+
 	EffectType t = EFFECT_REMOVE_LABELS ;
 	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
 
@@ -844,6 +1174,20 @@ void EffectsBuffer_AddNewSchemaEffect
 	//    schema type
 	//    schema name
 	//--------------------------------------------------------------------------
+
+	if(buff->v3 != NULL) {
+		// v3 carries the id as well as the name, so the replica can assert the
+		// id it would assign matches - a numbering disagreement is otherwise
+		// introduced by a record that cannot report it
+		GraphContext *gc = QueryCtx_GetGraphCtx();
+		const Schema *sch = GraphContext_GetSchema(gc, schema_name, st);
+		ASSERT(sch != NULL);
+
+		EffectsV3Grouping_AddSchema(buff->v3, st, Schema_GetID(sch),
+				schema_name);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
 
 	EffectType t = EFFECT_ADD_SCHEMA;
 	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
@@ -875,6 +1219,16 @@ void EffectsBuffer_AddNewAttributeEffect
 	// attribute name
 	//--------------------------------------------------------------------------
 
+	if(buff->v3 != NULL) {
+		GraphContext *gc = QueryCtx_GetGraphCtx();
+		AttributeID id = GraphContext_GetAttributeID(gc, attr);
+		ASSERT(id != ATTRIBUTE_ID_NONE);
+
+		EffectsV3Grouping_AddAttribute(buff->v3, id, attr);
+		EffectsBuffer_IncEffectCount(buff);
+		return;
+	}
+
 	EffectType t = EFFECT_ADD_ATTRIBUTE;
 	EffectsBuffer_WriteBytes(&t, sizeof(t), buff);
 
@@ -896,6 +1250,8 @@ void EffectsBuffer_Free
 	if(eb->owns_records) {
 		EffectsBytes_Free(eb->records);
 	}
+
+	EffectsV3Grouping_Free(eb->v3);
 
 	rm_free(eb);
 }
@@ -924,6 +1280,8 @@ EffectsBuffer *EffectsBuffer_Wrap
 	eb->records      = sink;
 	eb->version      = EFFECTS_VERSION_EMIT;
 	eb->owns_records = false;
+	eb->v3           = NULL;
+	eb->flags        = 0;
 
 	return eb;
 }
