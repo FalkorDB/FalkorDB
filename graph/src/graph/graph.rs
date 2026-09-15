@@ -1497,9 +1497,10 @@ impl Graph {
     /// its own is what stops a caller handing over a boundary that disagrees with
     /// the batch it is handing over with it.
     ///
-    /// A caller with no batch wants [`Self::create_allocated_nodes`], which is a
-    /// different question rather than this one with a piece missing: its ids came
-    /// from the allocator, so there is nothing to check.
+    /// The write path reaches here too, with the space its allocator reserved
+    /// against. Its ids are checked against the same batch — the difference is
+    /// only that the batch already knows it handed them out, so the check
+    /// passes by construction rather than by luck.
     ///
     /// # Errors
     ///
