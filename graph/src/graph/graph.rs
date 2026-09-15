@@ -737,40 +737,6 @@ fn grow_cap(
     cap
 }
 
-/// Append up to `count` ids from `pool` that `held` does not already hold, to
-/// `out`. Returns how many were appended, which is fewer than `count` if the
-/// pool runs out of free ids.
-///
-/// `pool - held` *is* the reclaimable set, so this takes its lowest ids and
-/// stops. Stating it as set arithmetic rather than as a walk is not only
-/// shorter: the walk had to be told where to start, and the rank it was given —
-/// how many of the pool's ids the caller already held — is only the right place
-/// to start while those ids are the pool's lowest. Cancelling a reservation
-/// that came *from* the pool breaks that, leaving a free id below the rank that
-/// the walk stepped over and did not come back for. A difference has nowhere to
-/// step over.
-///
-/// Measured against the walk on the shape that matters — a 1M-id pool drained
-/// in batches of 1024, which is what a large `CREATE` does — at 13.8ms against
-/// 11.4ms, best of five alternating runs in one binary. Single runs on this
-/// machine vary by a third, so the alternation is what makes the 2.4ms real
-/// rather than noise. The difference is rebuilt per batch where the walk sought
-/// into the pool in place, and that is the whole of the gap; against the create
-/// it belongs to it is a quarter of one percent. On the ordinary path, where
-/// nothing has been deleted and the pool is empty, the difference is the faster
-/// of the two — 7.8us against 9.5us over 977 calls.
-fn reclaim_ids<T: From<u64>>(
-    pool: &RoaringTreemap,
-    held: &RoaringTreemap,
-    count: u64,
-    out: &mut Vec<T>,
-) -> u64 {
-    let free = pool - held;
-    let before = out.len();
-    out.extend(free.iter().take(count as usize).map(T::from));
-    (out.len() - before) as u64
-}
-
 impl Graph {
     #[must_use]
     pub fn new(
@@ -1403,59 +1369,6 @@ impl Graph {
         id: RelationshipId,
     ) {
         self.deleted_relationships.insert(id.into());
-    }
-
-    /// Reserve `count` node ids, failing instead of aborting when `count` cannot be
-    /// allocated.
-    ///
-    /// `GRAPH.BULK` reserves from a client-declared count, so the allocation size is
-    /// attacker-influenced: `Vec::with_capacity` panicked on the capacity overflow, and the
-    /// panic hook (`src/module_init.rs`) exits the process, so it took the server down
-    /// (#2426). `try_reserve_exact` turns that into an error the command can report.
-    ///
-    ///
-    /// `space` is this batch's view of the id space: it says which ids have
-    /// already been handed out, and it is told about the ones handed out here.
-    /// The same type the effects path opens, so both allocate against one
-    /// account of what the batch has done rather than two.
-    ///
-    /// "Handed out" includes ids the batch has since given back, and that is
-    /// the point rather than an oversight: a cancellation returns the id to the
-    /// recycle bin immediately, so a space that forgot it would offer it to the
-    /// very next reserve and hand the same id out twice inside one commit. The
-    /// effects buffer emits a cancelled id as its own create/delete pair, so
-    /// the replica would be told to create that id twice and refuse the lot.
-    ///
-    /// Reserved ids stay in the recycle bin until commit — `max_node_id`,
-    /// `is_node_deleted` and the boundary are all derived from it and would go
-    /// wrong mid-batch if a reservation removed one — so the bin alone does not
-    /// mean "free", and the space is what says which of its ids still are.
-    pub fn reserve_nodes(
-        &mut self,
-        count: usize,
-        space: &mut IdSpace,
-    ) -> Result<Vec<NodeId>, String> {
-        let mut ids = Vec::new();
-        ids.try_reserve_exact(count)
-            .map_err(|_| format!("failed to reserve {count} node ids"))?;
-        let count = count as u64;
-        // Reclaim whatever the bin holds that this caller is not already
-        // holding. Reserving does not take an id out of the bin — `max_node_id`
-        // and `is_node_deleted` are derived from it and would go wrong
-        // mid-transaction — so the bin alone does not mean "free", and the
-        // difference is what does.
-        let reclaimed = reclaim_ids(&self.deleted_nodes, space.handed_out(), count, &mut ids);
-
-        // Then fresh ids, above every id ever handed out: the live ones, plus
-        // everything that is in the bin or already handed out or both. The
-        // union is that set, and counting it directly is what keeps a reclaimed
-        // id — which is in the bin *and* handed out — from counting twice.
-        let remaining = count - reclaimed;
-        let start = self.node_count + self.deleted_nodes.union_len(space.handed_out());
-        ids.extend((start..start + remaining).map(NodeId));
-
-        space.record_reserved(ids.iter().map(|id| u64::from(*id)));
-        Ok(ids)
     }
 
     /// Open an id space against this graph's node boundary.
@@ -2374,36 +2287,6 @@ impl Graph {
         let keys: &[u64] = unsafe { std::slice::from_raw_parts(ids.as_ptr().cast(), ids.len()) };
         self.node_attrs
             .get_attrs_by_idx_batch_into(keys, attr_idx, default, out);
-    }
-
-    /// Reserve `count` relationship ids. Fallible for the same reason as
-    /// [`Self::reserve_nodes`]: `GRAPH.BULK` sizes this from a client-declared count.
-    ///
-    /// `space` means what it does there.
-    pub fn reserve_relationships(
-        &mut self,
-        count: usize,
-        space: &mut IdSpace,
-    ) -> Result<Vec<RelationshipId>, String> {
-        let mut ids = Vec::new();
-        ids.try_reserve_exact(count)
-            .map_err(|_| format!("failed to reserve {count} relationship ids"))?;
-        let count = count as u64;
-        // Same shape as `reserve_nodes`, for the same reasons.
-        let reclaimed = reclaim_ids(
-            &self.deleted_relationships,
-            space.handed_out(),
-            count,
-            &mut ids,
-        );
-
-        let remaining = count - reclaimed;
-        let start =
-            self.relationship_count + self.deleted_relationships.union_len(space.handed_out());
-        ids.extend((start..start + remaining).map(RelationshipId));
-
-        space.record_reserved(ids.iter().map(|id| u64::from(*id)));
-        Ok(ids)
     }
 
     /// Create relationships of a single type using flat arrays.
@@ -4752,126 +4635,6 @@ mod attr_id_space_tests {
 }
 
 #[cfg(test)]
-mod reclaim_ids_tests {
-    use super::*;
-
-    /// What `reclaim_ids` is: the pool minus what the caller holds, lowest
-    /// first. Written out independently so the tests below compare against a
-    /// statement of the contract rather than against the implementation.
-    fn free_ids(
-        pool: &RoaringTreemap,
-        held: &RoaringTreemap,
-        count: u64,
-    ) -> Vec<u64> {
-        pool.iter()
-            .filter(|id| !held.contains(*id))
-            .take(count as usize)
-            .collect()
-    }
-
-    fn reclaim(
-        pool: &RoaringTreemap,
-        held: &RoaringTreemap,
-        count: u64,
-    ) -> (Vec<u64>, u64) {
-        let mut out: Vec<u64> = Vec::new();
-        let taken = reclaim_ids(pool, held, count, &mut out);
-        assert_eq!(
-            taken,
-            out.len() as u64,
-            "the count must match what it wrote"
-        );
-        (out, taken)
-    }
-
-    /// Nothing held: the pool's lowest `count` ids, in order.
-    #[test]
-    fn takes_the_lowest_ids_of_the_pool() {
-        let pool: RoaringTreemap = [3u64, 9, 10, 40, 900].into_iter().collect();
-        let none = RoaringTreemap::new();
-
-        assert_eq!(reclaim(&pool, &none, 3).0, vec![3, 9, 10]);
-        assert_eq!(reclaim(&pool, &none, 99).0, vec![3, 9, 10, 40, 900]);
-        assert!(reclaim(&pool, &none, 0).0.is_empty());
-    }
-
-    /// Held ids are not handed out, wherever in the pool they sit.
-    ///
-    /// This is the whole contract. The previous form took a rank to start from
-    /// and only skipped what it met after it, which was right while the held
-    /// ids were the pool's lowest and wrong as soon as one of them was given
-    /// back — a free id below the rank was stepped over. Taking the difference
-    /// has no such position to be wrong about.
-    #[test]
-    fn never_hands_out_an_id_the_caller_holds() {
-        let pool: RoaringTreemap = (0..6u64).collect();
-        let held: RoaringTreemap = [1u64, 2].into_iter().collect();
-
-        assert_eq!(reclaim(&pool, &held, 4).0, vec![0, 3, 4, 5]);
-
-        // The freed-below case: id 0 is free again, and it comes out first
-        // rather than being stepped past.
-        let held: RoaringTreemap = [1u64, 2, 3].into_iter().collect();
-        assert_eq!(reclaim(&pool, &held, 2).0, vec![0, 4]);
-    }
-
-    /// It reports a short count rather than making the number up.
-    #[test]
-    fn reports_how_many_it_could_take() {
-        let pool: RoaringTreemap = (0..4u64).collect();
-        let held: RoaringTreemap = [2u64].into_iter().collect();
-
-        let (out, taken) = reclaim(&pool, &held, 9);
-        assert_eq!(out, vec![0, 1, 3]);
-        assert_eq!(taken, 3);
-    }
-
-    /// An empty pool, and a pool the caller holds entirely, both yield nothing.
-    /// The first is the ordinary case — a graph with no deletions behind it.
-    #[test]
-    fn yields_nothing_when_there_is_nothing_free() {
-        let empty = RoaringTreemap::new();
-        let pool: RoaringTreemap = (0..4u64).collect();
-
-        assert!(reclaim(&empty, &empty, 10).0.is_empty());
-        assert!(reclaim(&pool, &pool, 10).0.is_empty());
-    }
-
-    /// It appends, so a caller can reclaim into a vector that already holds
-    /// ids — which `reserve_nodes` does when a batch spans the bin and the
-    /// fresh range.
-    #[test]
-    fn appends_rather_than_replaces() {
-        let pool: RoaringTreemap = (10..20u64).collect();
-        let mut out: Vec<u64> = vec![7, 8];
-        reclaim_ids(&pool, &RoaringTreemap::new(), 3, &mut out);
-        assert_eq!(out, vec![7, 8, 10, 11, 12]);
-    }
-
-    /// Agrees with the contract across container boundaries — a treemap splits
-    /// at 2^32 and each map at 2^16 — and at every batch size, with a held set
-    /// scattered through the pool rather than sitting at its front.
-    #[test]
-    fn agrees_with_the_contract_on_a_scattered_pool() {
-        let pool: RoaringTreemap = (0..300u64)
-            .map(|i| i * 1_000)
-            .chain(70_000..70_400)
-            .chain(1_000_000..1_000_050)
-            .chain(u64::from(u32::MAX) - 5..u64::from(u32::MAX) + 5)
-            .collect();
-        let held: RoaringTreemap = pool.iter().step_by(3).collect();
-
-        for count in [1u64, 13, 97, 5_000] {
-            assert_eq!(
-                reclaim(&pool, &held, count).0,
-                free_ids(&pool, &held, count),
-                "count {count}"
-            );
-        }
-    }
-}
-
-#[cfg(test)]
 mod composite_key_tests {
     use super::*;
 
@@ -4969,8 +4732,7 @@ mod reservation_tests {
             n: usize,
         ) -> Vec<u64> {
             let before = self.space.handed_out().clone();
-            let ids = g.reserve_nodes(n, &mut self.space).expect("reserved");
-            let ids: Vec<u64> = ids.into_iter().map(u64::from).collect();
+            let ids = self.space.reserve(n, g.deleted_nodes()).expect("reserved");
             for &id in &ids {
                 assert!(
                     !before.contains(id),
@@ -5158,8 +4920,9 @@ mod reservation_tests {
 
         let type_name = Arc::new("R".to_owned());
         let mut space = g.open_relationship_id_space();
-        let ids = g.reserve_relationships(3, &mut space).expect("reserved");
-        let ids: Vec<u64> = ids.into_iter().map(u64::from).collect();
+        let ids = space
+            .reserve(3, g.deleted_relationships())
+            .expect("reserved");
         assert_eq!(ids, vec![0, 1, 2]);
         g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids, &mut space)
             .expect("the allocator's own ids must be creatable");
@@ -5172,8 +4935,9 @@ mod reservation_tests {
         // One in the bin, two live, so three ids handed out.
         // A fresh query, so nothing is outstanding: the first batch committed.
         let mut space = g.open_relationship_id_space();
-        let ids = g.reserve_relationships(2, &mut space).expect("reserved");
-        let ids: Vec<u64> = ids.into_iter().map(u64::from).collect();
+        let ids = space
+            .reserve(2, g.deleted_relationships())
+            .expect("reserved");
         assert_eq!(ids, vec![1, 3], "the freed id, then above the boundary");
     }
 
@@ -5214,18 +4978,15 @@ mod adjacency_cascade_tests {
     ) -> Graph {
         ensure_init();
         let mut g = Graph::new(16, 16, 1, 0, name);
-        let mut space = IdSpace::at(g.node_id_bound());
-        // Nothing outstanding: this fixture reserves once, before it creates.
-        let none = RoaringTreemap::new();
-        let ids: RoaringTreemap = g
-            .reserve_nodes(node_count, &none)
+        let mut space = g.open_node_id_space();
+        let ids: RoaringTreemap = space
+            .reserve(node_count, g.deleted_nodes())
             .unwrap()
-            .iter()
-            .map(|n| n.0)
+            .into_iter()
             .collect();
         g.create_nodes(&ids, &mut space).unwrap();
         for &(src, dst, type_name) in edges {
-            let rel_id = g.reserve_relationships(1, &none).unwrap()[0].0;
+            let rel_id = rel_space.reserve(1, g.deleted_relationships()).unwrap()[0];
             g.create_relationships_bulk(
                 &Arc::new(type_name.to_string()),
                 &[src],
