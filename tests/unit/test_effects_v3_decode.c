@@ -174,6 +174,10 @@ static bool _CountingCb
 	}
 	c->calls++;
 
+	// the callback OWNS the record, so it frees it - on the refusing path too.
+	// Read anything you need off it first.
+	EffectsV3_RecordFree(rec);
+
 	return !(c->refuse_at != 0 && c->calls == c->refuse_at);
 }
 

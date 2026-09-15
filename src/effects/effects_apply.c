@@ -712,7 +712,13 @@ static bool _V3ApplyOne
 ) {
 	_V3ApplyCtx *c = (_V3ApplyCtx*)ctx ;
 
-	if (!EffectsV3_ApplyRecord (c->gc, rec)) {
+	// the record is ours once it arrives here, so it is freed on BOTH paths -
+	// applied or refused. Peak memory stays one record, which is the point of
+	// streaming.
+	const bool applied = EffectsV3_ApplyRecord (c->gc, rec) ;
+	EffectsV3_RecordFree (rec) ;
+
+	if (!applied) {
 		c->ok = false ;
 		return false ;   // stop; the remaining bytes are not read
 	}

@@ -1547,6 +1547,20 @@ static EffectsV3Status _ReadHeader
 	return EFFECTS_V3_OK ;
 }
 
+// free one decoded record
+//
+// public because EffectsV3_DecodeEach hands each record to its callback and the
+// callback owns it from that point - including the apply path, which lives in
+// another translation unit
+void EffectsV3_RecordFree
+(
+	EffectsV3Record *rec
+) {
+	if (rec != NULL) {
+		_RecordFree (rec) ;
+	}
+}
+
 // decode a payload, handing each record to 'fn' as it is read
 //
 // the header is parsed here and the record loop runs here; the two public
@@ -1588,11 +1602,13 @@ EffectsV3Status EffectsV3_DecodeEach
 			goto done ;
 		}
 
+		// OWNERSHIP PASSES TO THE CALLBACK, which is what lets there be one
+		// loop rather than two. The driver used to free the record here, so a
+		// callback that wanted to keep it had to copy the struct and zero the
+		// original - and that dance was the whole reason the collecting form
+		// grew its own loop. Handing ownership over instead makes keeping a
+		// record the trivial case and freeing it the explicit one.
 		const bool keep_going = fn (&rec, ctx) ;
-
-		// freed whether or not the callback refused. A callback that kept the
-		// record zeroed it, and freeing a zeroed record is a no-op.
-		_RecordFree (&rec) ;
 
 		if (!keep_going) {
 			// THE CALLBACK REFUSED, and that is not a decode status. The bytes
@@ -1628,6 +1644,42 @@ done:
 // after handing it over, so the collector had to take ownership by copying the
 // struct and ZEROING the original. That dance existed only to satisfy the
 // callback contract; a loop that simply does not free needs none of it.
+// accumulator for EffectsV3_Decode
+typedef struct {
+	EffectsV3Records *out;
+	uint32_t          cap;
+} _Collector;
+
+// keep each record; the callback owns it, so this is a move and nothing else
+static bool _Collect
+(
+	EffectsV3Record *rec,
+	void *ctx
+) {
+	_Collector *c = (_Collector*)ctx ;
+
+	if (c->out->n == c->cap) {
+		c->cap = (c->cap == 0) ? 4 : c->cap * 2 ;
+		c->out->records = rm_realloc (c->out->records,
+				c->cap * sizeof (EffectsV3Record)) ;
+	}
+
+	c->out->records[c->out->n] = *rec ;
+	c->out->n++ ;
+
+	return true ;
+}
+
+// decode a payload whole
+//
+// KEPT FOR THE ROUND TRIP. EffectsV3_Encode takes a materialised record set and
+// the conformance harness is its only caller; the production path streams.
+//
+// ONE RECORD LOOP IN THIS FILE, not two. This goes through
+// EffectsV3_DecodeEach, so both forms share the header parse, the record loop
+// AND the refusal boundaries - there is no second `while` that could drift from
+// production's, and no need to prove the two refuse the same payloads because
+// there is only one place that decides.
 EffectsV3Status EffectsV3_Decode
 (
 	const char *buff,
@@ -1647,56 +1699,29 @@ EffectsV3Status EffectsV3_Decode
 		return EFFECTS_V3_TRUNCATED ;
 	}
 
-	FILE *stream = fmemopen ((void*)buff, n, "r") ;
-	if (stream == NULL) {
-		return EFFECTS_V3_MALFORMED ;
-	}
+	_Collector c = { 0 } ;
+	c.out = rm_calloc (1, sizeof (EffectsV3Records)) ;
 
-	EffectsV3Records *out = rm_calloc (1, sizeof (EffectsV3Records)) ;
-	uint32_t cap = 0 ;
+	const EffectsV3Status status = EffectsV3_DecodeEach (buff, n, _Collect, &c) ;
 
-	EffectsV3Status status = _ReadHeader (stream) ;
 	if (status != EFFECTS_V3_OK) {
-		goto done ;
+		EffectsV3_RecordsFree (c.out) ;
+		return status ;
 	}
 
-	while ((size_t)ftell (stream) < n) {
-		if (out->n == cap) {
-			cap = (cap == 0) ? 4 : cap * 2 ;
-			out->records = rm_realloc (out->records,
-					cap * sizeof (EffectsV3Record)) ;
-		}
-
-		status = _ReadRecord (stream, out->records + out->n) ;
-		if (status != EFFECTS_V3_OK) {
-			// _ReadRecord frees what it partially built
-			goto done ;
-		}
-
-		out->n++ ;
-	}
-
-	// the header bytes the caller still expects to see on the record set
+	// the header bytes the caller still expects on the record set
 	//
-	// READ FROM THE PAYLOAD, and read AFTER the records decoded cleanly, which
-	// is what makes them trustworthy rather than assumed. An earlier version
-	// wrote a literal 3 here before decoding; that was correct, because
-	// _ReadHeader refuses any other version, but it read as an assumption and
-	// would have become a real defect the moment this function returned a
-	// record set on a non-3 payload - the round trip re-encodes from
-	// records->version, so it would have produced bytes claiming a version the
-	// payload never had.
+	// READ FROM THE PAYLOAD, and read AFTER a clean decode, which is what makes
+	// them trustworthy rather than assumed. An earlier version wrote a literal
+	// 3 here before decoding; correct, because _ReadHeader refuses any other
+	// version, but it read as an assumption and would have become a real defect
+	// the moment this returned a record set for a non-3 payload - the round
+	// trip re-encodes from records->version.
 	//
 	// n >= 2 here: a payload too short for both header bytes cannot decode OK.
-	out->version = (uint8_t)buff[0] ;
-	out->flags   = (uint8_t)buff[1] ;
+	c.out->version = (uint8_t)buff[0] ;
+	c.out->flags   = (uint8_t)buff[1] ;
 
-	*records = out ;
-
-done:
-	fclose (stream) ;
-	if (*records == NULL) {
-		EffectsV3_RecordsFree (out) ;
-	}
-	return status ;
+	*records = c.out ;
+	return EFFECTS_V3_OK ;
 }
