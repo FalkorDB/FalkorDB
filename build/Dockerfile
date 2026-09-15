@@ -15,7 +15,7 @@
 #
 # Keep REDIS_VERSION in sync with build/runtime/Dockerfile so all images
 # carry the same redis revision.
-ARG REDIS_VERSION=8.6.3
+ARG REDIS_VERSION=8.10.1
 
 FROM debian:trixie-slim AS redis-builder
 ARG REDIS_VERSION

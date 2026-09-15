@@ -11,21 +11,30 @@ use super::{Header, Schema};
 pub fn rdb_save_graph(
     rdb: *mut RedisModuleIO,
     graph: &Graph,
+    graph_name: &str,
 ) {
     let payloads = build_payloads(graph);
-    rdb_save_graph_key(rdb, graph, &payloads, 1);
+    rdb_save_graph_key(rdb, graph, graph_name, &payloads, 1);
 }
 
 /// Encode a single key's portion of the graph (used for both primary and virtual keys).
 pub fn rdb_save_graph_key(
     rdb: *mut RedisModuleIO,
     graph: &Graph,
+    graph_name: &str,
     payloads: &[PayloadEntry],
     key_count: u64,
 ) {
     let mut w = BufferedWriter::new(rdb);
     let global_attrs = graph.build_global_attrs();
-    encode_graph(&mut w, graph, payloads, key_count, &global_attrs);
+    encode_graph(
+        &mut w,
+        graph,
+        graph_name,
+        payloads,
+        key_count,
+        &global_attrs,
+    );
     w.finish();
 }
 
@@ -39,7 +48,7 @@ pub fn pipe_save_graph(
     let payloads = build_payloads(graph);
     let mut w = super::buffered_io::PipeWriter::new(fd);
     let global_attrs = graph.build_global_attrs();
-    encode_graph(&mut w, graph, &payloads, 1, &global_attrs);
+    encode_graph(&mut w, graph, graph.name(), &payloads, 1, &global_attrs);
     w.finish();
 }
 
@@ -51,7 +60,7 @@ pub fn vec_save_graph(graph: &Graph) -> Vec<u8> {
     let payloads = build_payloads(graph);
     let mut w = super::buffered_io::VecWriter::new();
     let global_attrs = graph.build_global_attrs();
-    encode_graph(&mut w, graph, &payloads, 1, &global_attrs);
+    encode_graph(&mut w, graph, graph.name(), &payloads, 1, &global_attrs);
     w.into_vec()
 }
 
@@ -59,11 +68,12 @@ pub fn vec_save_graph(graph: &Graph) -> Vec<u8> {
 fn encode_graph(
     w: &mut dyn Writer,
     graph: &Graph,
+    graph_name: &str,
     payloads: &[PayloadEntry],
     key_count: u64,
     global_attrs: &[std::sync::Arc<String>],
 ) {
-    Header::from_graph(graph, key_count).encode(w);
+    Header::from_graph(graph, graph_name, key_count).encode(w);
     Schema::from_graph(graph, global_attrs.to_vec()).encode(w);
 
     w.write_unsigned(payloads.len() as u64);
