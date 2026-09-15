@@ -93,7 +93,7 @@ use crate::{
             tensor::Tensor,
             versioned_matrix::{self, VersionedMatrix},
         },
-        id_space::{IdSpace, IdSpaceError},
+        id_space::{Allocator, IdSpace, IdSpaceError},
     },
     index::{
         Field,
@@ -1385,6 +1385,25 @@ impl Graph {
     #[must_use]
     pub fn open_relationship_id_space(&self) -> IdSpace {
         IdSpace::at(self.relationship_id_bound())
+    }
+
+    /// Lend `space` the node recycle bin, so it can allocate.
+    ///
+    /// The bin stays the graph's — this borrows it for the length of the call
+    /// rather than handing it over. See [`Allocator`] for why it cannot be held.
+    pub fn node_allocator<'a>(
+        &'a self,
+        space: &'a mut IdSpace,
+    ) -> Allocator<'a> {
+        Allocator::new(space, &self.deleted_nodes)
+    }
+
+    /// The same for relationships.
+    pub fn relationship_allocator<'a>(
+        &'a self,
+        space: &'a mut IdSpace,
+    ) -> Allocator<'a> {
+        Allocator::new(space, &self.deleted_relationships)
     }
 
     /// Where the node id space ends: ids below were handed out, ids at or above
@@ -4718,7 +4737,10 @@ mod reservation_tests {
             n: usize,
         ) -> Vec<u64> {
             let before = self.space.handed_out().clone();
-            let ids = self.space.reserve(n, g.deleted_nodes()).expect("reserved");
+            let ids = g
+                .node_allocator(&mut self.space)
+                .reserve(n)
+                .expect("reserved");
             for &id in &ids {
                 assert!(
                     !before.contains(id),
@@ -4906,8 +4928,9 @@ mod reservation_tests {
 
         let type_name = Arc::new("R".to_owned());
         let mut space = g.open_relationship_id_space();
-        let ids = space
-            .reserve(3, g.deleted_relationships())
+        let ids = g
+            .relationship_allocator(&mut space)
+            .reserve(3)
             .expect("reserved");
         assert_eq!(ids, vec![0, 1, 2]);
         g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids, &mut space)
@@ -4921,8 +4944,9 @@ mod reservation_tests {
         // One in the bin, two live, so three ids handed out.
         // A fresh query, so nothing is outstanding: the first batch committed.
         let mut space = g.open_relationship_id_space();
-        let ids = space
-            .reserve(2, g.deleted_relationships())
+        let ids = g
+            .relationship_allocator(&mut space)
+            .reserve(2)
             .expect("reserved");
         assert_eq!(ids, vec![1, 3], "the freed id, then above the boundary");
     }
@@ -4965,15 +4989,16 @@ mod adjacency_cascade_tests {
         ensure_init();
         let mut g = Graph::new(16, 16, 1, 0, name);
         let mut space = g.open_node_id_space();
-        let ids: RoaringTreemap = space
-            .reserve(node_count, g.deleted_nodes())
+        let ids: RoaringTreemap = g
+            .node_allocator(&mut space)
+            .reserve(node_count)
             .unwrap()
             .into_iter()
             .collect();
         g.create_nodes(&ids, &mut space).unwrap();
         let mut rel_space = g.open_relationship_id_space();
         for &(src, dst, type_name) in edges {
-            let rel_id = rel_space.reserve(1, g.deleted_relationships()).unwrap()[0];
+            let rel_id = g.relationship_allocator(&mut rel_space).reserve(1).unwrap()[0];
             g.create_relationships_bulk(
                 &Arc::new(type_name.to_string()),
                 &[src],
