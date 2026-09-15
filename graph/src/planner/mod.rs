@@ -802,17 +802,21 @@ impl Planner {
         matches!(tree.node(idx).data(), IR::Apply) && tree.node(idx).num_children() > 1
     }
 
-    /// Walk past the Apply chain a `ForEach` or `Unwind` carries for pattern
+    /// Find the input of a clause, below named-path construction and the
+    /// Apply chain a `ForEach` or `Unwind` carries for pattern
     /// comprehensions in its list expression, so the preceding clause is
     /// stitched below the sub-plans rather than as an extra child.
     ///
     /// A freshly planned `ForEach` holds its body as the last child, so only a
     /// second child can be the chain; a freshly planned `Unwind` has no child
     /// at all, so any child it has is the chain.
-    fn descend_list_expr_applies(
+    fn descend_clause_input(
         tree: &DynTree<IR>,
         mut idx: NodeIdx<Dyn<IR>>,
     ) -> NodeIdx<Dyn<IR>> {
+        while matches!(tree.node(idx).data(), IR::PathBuilder(_)) {
+            idx = tree.node(idx).child(0).idx();
+        }
         let min_children = match tree.node(idx).data() {
             IR::ForEach { .. } => 2,
             IR::Unwind { .. } => 1,
@@ -960,7 +964,7 @@ impl Planner {
     /// variable holding its collected list — and an Apply chain to hang below
     /// the clause's operator.  The innermost Apply is deliberately left
     /// single-child: `plan_query` stitching inserts the preceding clause there
-    /// as child(0) (see `descend_list_expr_applies`).
+    /// as child(0) (see `descend_clause_input`).
     fn extract_list_expr_comprehensions(
         &mut self,
         expr: QueryExpr<Variable>,
@@ -2461,7 +2465,7 @@ impl Planner {
                 idx = res.node(idx).child(0).idx();
             }
         }
-        idx = Self::descend_list_expr_applies(&res, idx);
+        idx = Self::descend_clause_input(&res, idx);
         // Insert each remaining clause plan (in reverse order) at the
         // current insertion point, then walk down again to find the next
         // insertion point for the clause before it.
@@ -2540,7 +2544,7 @@ impl Planner {
                     idx = res.node(idx).child(0).idx();
                 }
             }
-            idx = Self::descend_list_expr_applies(&res, idx);
+            idx = Self::descend_clause_input(&res, idx);
         }
 
         // For write queries without an explicit WITH/RETURN commit, wrap
@@ -2850,7 +2854,15 @@ impl Planner {
                 for v in pattern.variables() {
                     self.visited.insert((v.id, v.scope_id));
                 }
-                tree!(IR::Create(Box::new(filtered)))
+                let create = tree!(IR::Create(Box::new(filtered)));
+                // Build from the full path: its components may include both
+                // newly created entities and entities bound by earlier clauses.
+                let paths = pattern.paths();
+                if paths.is_empty() {
+                    create
+                } else {
+                    tree!(IR::PathBuilder(paths.to_vec()), create)
+                }
             }
             QueryIR::Delete {
                 exprs,
@@ -3066,7 +3078,7 @@ impl Planner {
                 // Stitch body plans together (same as plan_query stitching)
                 let mut body_iter = body_plans.into_iter().rev();
                 let mut body_plan = body_iter.next().unwrap();
-                let mut idx = Self::descend_list_expr_applies(&body_plan, body_plan.root().idx());
+                let mut idx = Self::descend_clause_input(&body_plan, body_plan.root().idx());
                 for n in body_iter {
                     if body_plan.node(idx).num_children() > 0 {
                         idx = body_plan
@@ -3076,7 +3088,7 @@ impl Planner {
                     } else {
                         idx = body_plan.node_mut(idx).push_child_tree(n);
                     }
-                    idx = Self::descend_list_expr_applies(&body_plan, idx);
+                    idx = Self::descend_clause_input(&body_plan, idx);
                 }
                 // Do NOT wrap in Commit — mutations accumulate in pending
                 // across all iterations and are committed by the outer Commit
