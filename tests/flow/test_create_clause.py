@@ -105,8 +105,14 @@ class testCreateClause():
         # was written to catch, because the ids started somewhere else.
         try:
             self.g.delete()
-        except Exception:
-            pass
+        except ResponseError as e:
+            # The graph not existing yet is the ordinary case and the one being
+            # arranged for. Anything else — a delete that failed against a graph
+            # that IS there — would leave the id space non-empty and make the
+            # absolute ids below assert against the wrong starting point, so it
+            # has to surface rather than be swallowed.
+            if "empty key" not in str(e):
+                raise
         return self.g
 
     def test16_create_after_deleting_a_pending_node(self):

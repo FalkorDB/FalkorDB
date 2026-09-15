@@ -1385,8 +1385,6 @@ impl Graph {
         self.attrs_name.get_index_of(attr)
     }
 
-    /// Give back `n` of a reservation counter, without wrapping.
-    ///
     /// Hand a reserved id back, unused.
     ///
     /// The id goes to the recycle bin so the id space stays dense: it was
