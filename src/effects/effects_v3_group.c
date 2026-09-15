@@ -538,12 +538,22 @@ static Group *_group_for
 typedef struct {
 	AttributeID id;
 	SIValue     v;
+	uint16_t    seq;  // arrival position; the tie-break qsort does not give
 } AttrPair;
 
+// ascending by id, and by ARRIVAL for equal ids
+//
+// qsort is not stable, so without the second key two entries sharing an id
+// could come out either way round and the collapse below would keep a
+// different value on two runs of the same query. The wire would still be
+// well-formed and the two engines would hold different data.
 static int _cmp_attr_pair(const void *a, const void *b) {
-	AttributeID x = ((const AttrPair *)a)->id;
-	AttributeID y = ((const AttrPair *)b)->id;
-	return (x < y) ? -1 : (x > y) ? 1 : 0;
+	const AttrPair *x = (const AttrPair *)a;
+	const AttrPair *y = (const AttrPair *)b;
+	if(x->id != y->id) {
+		return (x->id < y->id) ? -1 : 1;
+	}
+	return (x->seq < y->seq) ? -1 : (x->seq > y->seq) ? 1 : 0;
 }
 
 // sort an entity's attributes into ascending id order, values following
@@ -557,7 +567,23 @@ static int _cmp_attr_pair(const void *a, const void *b) {
 //
 // It is a same-engine defect too: _group_for compares the id array as given, so
 // those two orders land in different groups on C alone today.
-static void _sort_attrs
+//
+// REPEATS ARE COLLAPSED, LAST WRITE WINNING, and the surviving count returned.
+// A repeated id is an upstream bug - C's own update path already folds
+// `SET n.v = 1, n.v = 2` into one effect, and ATTRIBUTE_ID_ALL is expanded to
+// a diff rather than emitted - but the encoder does not get to rely on that,
+// because the contract it is writing to is STRICTLY ascending: Rust refuses
+// `w[0] >= w[1]` outright (graph/src/effects/v3/apply.rs), so a repeat is a
+// resync there, and measured on a C replica it is worse - the reader takes
+// both pairs, the second write to the id is dropped, and the attribute that
+// lost its column is never set at all. No error, no log, no resync: the
+// replica quietly holds different data. Collapsing here is the encoder
+// refusing to put that on the wire.
+//
+// Deliberately NOT an assert. ASSERT aborts, and this is the replication
+// path: on data the encoder can now handle correctly, taking the process down
+// is the worse failure. It also makes the collapse untestable.
+static uint16_t _sort_attrs
 (
 	AttrPair *out,               // n pairs
 	const AttributeID *attr_ids, // ids, any order
@@ -565,10 +591,24 @@ static void _sort_attrs
 	uint16_t n                   // how many
 ) {
 	for(uint16_t i = 0; i < n; i++) {
-		out[i].id = attr_ids[i];
-		out[i].v  = values[i];
+		out[i].id  = attr_ids[i];
+		out[i].v   = values[i];
+		out[i].seq = i;
 	}
 	qsort(out, n, sizeof(AttrPair), _cmp_attr_pair);
+
+	// values are not owned here - they are written straight into the group's
+	// buffer by the caller - so a dropped pair needs no free
+	uint16_t w = 0;
+	for(uint16_t r = 0; r < n; r++) {
+		if(w > 0 && out[w - 1].id == out[r].id) {
+			out[w - 1] = out[r];  // later write wins
+			continue;
+		}
+		out[w++] = out[r];
+	}
+
+	return w;
 }
 
 // drop repeats from an already-sorted label set, returning what remains
@@ -622,7 +662,8 @@ void EffectsV3Grouping_AddNode
 		: rm_malloc(sizeof(AttributeID) * n_attrs);
 
 	if(n_attrs > 0) {
-		_sort_attrs(ap, attr_ids, values, n_attrs);
+		// the count can SHRINK here: a repeated id is collapsed
+		n_attrs = _sort_attrs(ap, attr_ids, values, n_attrs);
 		for(uint16_t i = 0; i < n_attrs; i++) {
 			sorted_ids[i] = ap[i].id;
 		}
@@ -673,7 +714,8 @@ void EffectsV3Grouping_AddEdge
 		: rm_malloc(sizeof(AttributeID) * n_attrs);
 
 	if(n_attrs > 0) {
-		_sort_attrs(ap, attr_ids, values, n_attrs);
+		// the count can SHRINK here: a repeated id is collapsed
+		n_attrs = _sort_attrs(ap, attr_ids, values, n_attrs);
 		for(uint16_t i = 0; i < n_attrs; i++) {
 			sorted_ids[i] = ap[i].id;
 		}
@@ -758,6 +800,9 @@ void EffectsV3Grouping_AddAttribute
 	a->name    = rm_strdup(name);
 }
 
+// ids are unique within one staged update - EffectsV3Grouping_StageUpdate
+// replaces in place rather than appending a second entry for an attribute - so
+// there are no equal keys for an unstable qsort to reorder
 static int _cmp_staged_attr(const void *a, const void *b) {
 	AttributeID x = ((const StagedAttr *)a)->id;
 	AttributeID y = ((const StagedAttr *)b)->id;
