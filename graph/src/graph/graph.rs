@@ -1414,11 +1414,14 @@ impl Graph {
     /// (#2426). `try_reserve_exact` turns that into an error the command can report.
     ///
     ///
-    /// `outstanding` is the set of ids this caller has already reserved in this
-    /// transaction and not yet created — `Pending::created_nodes` on the query
-    /// path. It is a parameter rather than a field because the caller is the
-    /// one that knows, and it is the *set* rather than its size because the two
-    /// questions asked of it below need different halves of it.
+    /// `outstanding` is every id this caller has been handed in this
+    /// transaction, whether or not it survived — `Pending::outstanding_nodes`
+    /// on the query path. Cancelled ids stay in it, which is the point: a
+    /// cancellation returns the id to the bin, so without them the very next
+    /// batch would hand the same id out twice inside one commit. It is a
+    /// parameter rather than a field because the caller is the one that knows,
+    /// and it is the *set* rather than its size because the two questions asked
+    /// of it below need different halves of it.
     ///
     /// Reserved ids stay in the recycle bin until commit, since `max_node_id`,
     /// `is_node_deleted` and the id boundary are all derived from it and would
@@ -1520,12 +1523,26 @@ impl Graph {
 
     /// Move `nodes` from reserved to live, and size the matrices to hold them.
     ///
+    /// Also the write path's entry point, where it is deliberately unchecked.
     /// What the two create paths have in common is this and only this — they
     /// differ in what they check *before* it, not in what they do. Factoring the
     /// check instead meant a boundary parameter with `0` standing for "do not
     /// check", which is a value pretending to be a mode: it made the unchecked
     /// path return a `Result` that could not be anything but `Ok`, and left the
     /// reader to work out why.
+    ///
+    /// Putting the ids through [`Self::create_nodes`] instead does not work, and
+    /// it is worth saying why because it looks like it should. [`IdSpace`]'s
+    /// invariant is that every id from the entry boundary upward was created by
+    /// the batch, and a *cancelled reservation* is an id handed out and never
+    /// created — so `CREATE (a)-[:R]->(b) DELETE b` breaks it by construction.
+    /// Both placements were measured: with the space opened at commit the check
+    /// refuses a's id 0 as `AlreadyLive`, and with it opened before the
+    /// reservation `verify` refuses the result as
+    /// `Miscounted { graph_bound: 2, expected: 1 }` — either way a legitimate
+    /// query. The hole is real and `IdSpace` is right to reject it; the two
+    /// paths ask genuinely different questions. Making one path of them means
+    /// giving `IdSpace` the reservations too, which is #2839.
     pub fn mark_nodes_live(
         &mut self,
         nodes: &RoaringTreemap,
@@ -2348,9 +2365,9 @@ impl Graph {
     /// Reserve `count` relationship ids. Fallible for the same reason as
     /// [`Self::reserve_nodes`]: `GRAPH.BULK` sizes this from a client-declared count.
     ///
-    /// `outstanding` means what it does there — the ids this caller has
-    /// reserved and not yet created, which on the query path is
-    /// `Pending::created_relationship_ids`.
+    /// `outstanding` means what it does there — every id this caller has been
+    /// handed, which on the query path is
+    /// `Pending::outstanding_relationships`.
     pub fn reserve_relationships(
         &mut self,
         count: usize,
