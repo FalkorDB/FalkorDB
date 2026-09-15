@@ -250,7 +250,7 @@ impl Runtime<'_> {
                 }
             } else {
                 let g = self.g.borrow();
-                let mut pending = self.pending.borrow_mut();
+                let pending = self.pending.borrow_mut();
                 for row in batch.active_indices() {
                     let Some(Value::Node(from_id)) = batch.value_at(rel.from.alias.id, row) else {
                         return Err(String::from("Invalid node id"));

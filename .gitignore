@@ -74,3 +74,7 @@ bin/
 #   git worktree add tests/fixtures/effects_v3 origin/effects-v3-corpus
 # so it must not read as untracked noise.
 tests/fixtures/effects_v3/
+
+# Scratch CSVs a bulk-insert flow test writes at the repo root.
+/node_*.csv
+/edge_*.csv

@@ -4940,7 +4940,7 @@ mod reservation_tests {
 
         // One in the bin, two live, so three ids handed out.
         // A fresh query, so nothing is outstanding: the first batch committed.
-        let mut space = g.open_relationship_id_space();
+        let space = g.open_relationship_id_space();
         let ids = space
             .reserve(2, g.deleted_relationships(), &[])
             .expect("reserved");
@@ -4991,6 +4991,7 @@ mod adjacency_cascade_tests {
             .into_iter()
             .collect();
         g.create_nodes(&ids, &mut space).unwrap();
+        let mut rel_space = g.open_relationship_id_space();
         for &(src, dst, type_name) in edges {
             let rel_id = rel_space
                 .reserve(1, g.deleted_relationships(), &[])
@@ -5000,7 +5001,7 @@ mod adjacency_cascade_tests {
                 &[src],
                 &[dst],
                 &[rel_id],
-                None,
+                &mut rel_space,
             )
             .unwrap();
         }
