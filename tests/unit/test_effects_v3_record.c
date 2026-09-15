@@ -434,7 +434,6 @@ void test_effectsV3Record_constraintDDL(void) {
 			.create_constraint.constraint_type = 0,   // unique
 			.create_constraint.entity_type     = 1,   // node, 1-based
 			.create_constraint.status          = 0,   // operational
-			.create_constraint.has_status      = true,
 			.create_constraint.schema_id       = 3,
 			.create_constraint.name            = "Person",
 			.create_constraint.attrs       = props,
