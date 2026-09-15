@@ -687,46 +687,6 @@ static bool ApplyDeleteEdge
 }
 
 // returns false in case of effect encode/decode version mismatch
-// carries the apply verdict out of the decode loop
-//
-// The callback's refusal is NOT a decode status - see EffectsV3_DecodeEach -
-// so it rides here instead.
-//
-// 'applied' counts records that applied cleanly BEFORE the refusal, and it is
-// in the log line deliberately. Streaming decode introduces exactly one case
-// that could not happen before: a refusal raised after records 1..k are already
-// in the graph. Without k in the log, a test for that case cannot tell it apart
-// from a payload refused before anything applied - both raise sync_full and
-// both converge - so the test would silently degenerate into a slower copy of
-// one we already have.
-typedef struct {
-	GraphContext *gc;
-	bool          ok;
-	uint32_t      applied;
-} _V3ApplyCtx;
-
-static bool _V3ApplyOne
-(
-	EffectsV3Record *rec,
-	void *ctx
-) {
-	_V3ApplyCtx *c = (_V3ApplyCtx*)ctx ;
-
-	// the record is ours once it arrives here, so it is freed on BOTH paths -
-	// applied or refused. Peak memory stays one record, which is the point of
-	// streaming.
-	const bool applied = EffectsV3_ApplyRecord (c->gc, rec) ;
-	EffectsV3_RecordFree (rec) ;
-
-	if (!applied) {
-		c->ok = false ;
-		return false ;   // stop; the remaining bytes are not read
-	}
-
-	c->applied++ ;
-	return true ;
-}
-
 // why a v3 buffer was refused, for the log line
 //
 // LOCAL ON PURPOSE. The shared contract declares the status enum but no longer
@@ -815,31 +775,56 @@ bool Effects_Apply
 	if (version == 3) {
 		fclose (stream) ;
 
-		_V3ApplyCtx actx = { .gc = gc, .ok = true, .applied = 0 } ;
+		EffectsV3Reader r ;
+		EffectsV3Status status = EffectsV3_ReaderOpen (effects_buff, l, &r) ;
 
-		const EffectsV3Status status =
-			EffectsV3_DecodeEach (effects_buff, l, _V3ApplyOne, &actx) ;
+		// 'applied' counts records that applied cleanly BEFORE any refusal, and
+		// it is in the log line deliberately. Streaming decode introduces
+		// exactly one case that could not happen before: a refusal raised after
+		// records 1..k are already in the graph. Without k in the log, a test
+		// for that case cannot tell it apart from a payload refused before
+		// anything applied - both raise sync_full and both converge.
+		uint32_t applied = 0 ;
+		bool     ok      = true ;
+
+		if (status == EFFECTS_V3_OK) {
+			EffectsV3Record rec ;
+			while (EffectsV3_ReaderNext (&r, &rec)) {
+				// the record is ours once the reader hands it over, so it is
+				// freed on BOTH paths - applied or refused. Peak memory stays
+				// one record, which is the point of streaming.
+				ok = EffectsV3_ApplyRecord (gc, &rec) ;
+				EffectsV3_RecordFree (&rec) ;
+
+				if (!ok) {
+					break ;  // the remaining bytes are not read
+				}
+
+				applied++ ;
+			}
+
+			status = EffectsV3_ReaderStatus (&r) ;
+		}
+
+		EffectsV3_ReaderClose (&r) ;
 
 		// THE BYTES AND THE VERDICT ARE REPORTED SEPARATELY. A decode status
-		// describes the payload; 'actx.ok' describes what the graph made of it.
-		// Both end at the same 'return false' - and therefore at the same
+		// describes the payload; 'ok' describes what the graph made of it. Both
+		// end at the same 'return false' - and therefore at the same
 		// DivergenceGuard_OnFailure - but calling a refused-but-well-formed
 		// payload corrupt would send an operator hunting a wire problem that
 		// does not exist.
 		if (status != EFFECTS_V3_OK) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT v3 payload refused: %s, after applying %u "
-					"record(s)", _V3StatusStr (status), actx.applied) ;
+					"record(s)", _V3StatusStr (status), applied) ;
 			return false ;
 		}
 
-		if (!actx.ok) {
-			// the failing record is the one AFTER the last that applied, so
-			// its zero-based index is the count - printed once, as a count,
-			// rather than twice as two numbers that are always equal
+		if (!ok) {
 			RedisModule_Log (NULL, "warning",
 					"GRAPH.EFFECT v3 payload refused: a record could not be "
-					"applied, after applying %u record(s)", actx.applied) ;
+					"applied, after applying %u record(s)", applied) ;
 			return false ;
 		}
 
