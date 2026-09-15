@@ -28,9 +28,9 @@
 
 // called once per decoded record, in wire order
 //
-// OWNERSHIP: the record is freed as soon as this returns. A callback that keeps
-// it takes ownership by copying the struct and zeroing the original - freeing a
-// zeroed record is a no-op.
+// OWNERSHIP PASSES TO THE CALLBACK. The decoder does not free the record after
+// this returns - the callback either keeps it or calls EffectsV3_RecordFree,
+// including on the path where it returns false.
 //
 // return false to REFUSE the payload; decoding stops
 typedef bool (*EffectsV3RecordFn)
@@ -51,6 +51,14 @@ EffectsV3Status EffectsV3_DecodeEach
 	size_t n,               // payload length
 	EffectsV3RecordFn fn,   // called per record
 	void *ctx               // passed through to 'fn'
+);
+
+// free one decoded record
+//
+// the callback's half of the ownership handed over by EffectsV3_DecodeEach
+void EffectsV3_RecordFree
+(
+	EffectsV3Record *rec
 );
 
 // apply a single decoded record
