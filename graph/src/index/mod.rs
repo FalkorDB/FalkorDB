@@ -92,7 +92,7 @@ use redisearch::{
 };
 
 /// Type of index for a property.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum IndexType {
     /// B-tree range index for numeric/string/geo comparisons
     Range,

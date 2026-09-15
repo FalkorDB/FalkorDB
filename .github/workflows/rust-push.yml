@@ -31,7 +31,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  CARGO_FUZZ_VERSION: 0.13.1
+  CARGO_FUZZ_VERSION: 0.13.2
 
 jobs:
   check-files:

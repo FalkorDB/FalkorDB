@@ -71,9 +71,19 @@ use crate::{
 /// but C must be raised to 3 as well before it can read what we write.
 pub const EFFECTS_VERSION: u8 = 3;
 
+pub mod apply;
 pub mod blocks;
+// Not `pub`: `EffectsBuffer` is the only door in. The emitter is handed a sink
+// — `&mut impl EffectWrite` — never a buffer, so there is nothing for a caller
+// outside to supply even if it could reach these.
+pub(crate) mod emit;
+pub mod format;
 mod id_list;
 pub mod records;
+#[cfg(test)]
+mod staging;
+#[cfg(test)]
+mod test_aux;
 pub mod value;
 
 use num_enum::TryFromPrimitive;
