@@ -454,7 +454,7 @@ void test_RGMatrixTupleIter_next_UINT64_sorted_merges_M_and_DP() {
 }
 
 // next_UINT64_sorted must merge M and DP while still masking out M entries
-// that have a pending deletion (DM) - exercises _MaskedMIter_skip_masked
+// that have a pending deletion (DM) - exercises _MaskedIter_skip_masked
 // through the sorted path specifically.
 void test_RGMatrixTupleIter_next_UINT64_sorted_skips_deleted() {
 	Delta_Matrix  A      =  NULL;

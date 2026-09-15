@@ -25,8 +25,8 @@ void _Iter_next
 // advance mi to its next live entry (or depleted) - skips any entry masked
 // out by a pending deletion, so mi->it's position is always live whenever
 // mi->depleted is false
-void _MaskedMIter_next
+void _MaskedIter_next
 (
-	Delta_MaskedMIter *mi,
+	Delta_MaskedIter *mi,
 	GrB_Index max_row
 ) ;

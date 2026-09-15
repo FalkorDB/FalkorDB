@@ -22,14 +22,14 @@ typedef struct
 	struct GB_Iterator_opaque dm_it;  // DM's row iterator (the mask)
 	bool depleted;                    // is it depleted
 	bool dm_depleted;                 // is dm_it depleted
-} Delta_MaskedMIter ;
+} Delta_MaskedIter ;
 
 // TuplesIter maintains information required
 // to iterate over a Delta_Matrix
 typedef struct
 {
 	Delta_Matrix A;                   // matrix iterated
-	Delta_MaskedMIter m;              // main matrix, masked by pending deletions
+	Delta_MaskedIter m_it;           // main matrix, masked by pending deletions
 	struct GB_Iterator_opaque dp_it;  // internal delta plus iterator
 	bool dp_depleted;                 // is dp iterator depleted
 	GrB_Index min_row;                // minimum row for iteration
