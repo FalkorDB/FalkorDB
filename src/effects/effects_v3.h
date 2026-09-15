@@ -327,7 +327,6 @@ typedef struct {
 	char    *name;                // owned
 	EffectsV3AttrRef *attrs;      // owned
 	uint16_t          n_attrs;
-	bool     has_status;
 	uint32_t status;
 } EffectsV3CreateConstraint;
 

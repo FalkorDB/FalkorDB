@@ -1618,7 +1618,7 @@ static bool _ApplyCreateConstraint
 	}
 
 	// the wire status is the PRIMARY's outcome, and it is validated before use
-	if (rec->create_constraint.has_status && rec->create_constraint.status > CT_FAILED) {
+	if (rec->create_constraint.status > CT_FAILED) {
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' carries unknown status "
 				"%u", rec->create_constraint.name, rec->create_constraint.status) ;
@@ -1642,32 +1642,19 @@ static bool _ApplyCreateConstraint
 			//
 			// GraphHub_AddConstraint returns NULL on this path, so the
 			// constraint has to be looked up to be updated.
-			if (rec->create_constraint.has_status) {
-				_AdoptConstraintStatus (s, rec) ;
-			}
+			_AdoptConstraintStatus (s, rec) ;
 			return true ;
 
 		case CONSTRAINT_CREATED:
 			ASSERT (c != NULL) ;
 
-			if (rec->create_constraint.has_status) {
-				// THE REPLICA REPLAYS THE PRIMARY'S DECISION, IT DOES NOT
-				// RE-DERIVE IT.
-				//
-				// Constraint_Enforce scans every entity the constraint
-				// governs. The primary already did that and put the answer on
-				// the wire, so scanning again is redoing work the record
-				// answered - and it is not merely wasteful: a replica
-				// validating independently does so at a different time against
-				// different write interleavings, and can legitimately reach a
-				// different status from its primary. Re-deriving is how two
-				// engines disagree.
-				_AdoptConstraintStatus (s, rec) ;
-			} else {
-				// no status on the wire - a v2 peer, or a v3 peer predating
-				// the field. Nothing to adopt, so validate locally as before.
-				Constraint_Enforce (c, (struct GraphContext *)gc) ;
-			}
+			// THE REPLICA REPLAYS THE PRIMARY'S DECISION, IT DOES NOT
+			// RE-DERIVE IT. Constraint_Enforce scans every entity the
+			// constraint governs; the primary already did that and put the
+			// answer on the wire. A replica validating independently does so
+			// at a different time against different write interleavings, and
+			// can legitimately reach a different status from its primary.
+			_AdoptConstraintStatus (s, rec) ;
 			return true ;
 
 		case CONSTRAINT_ERROR:
