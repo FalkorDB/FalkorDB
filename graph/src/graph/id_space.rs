@@ -218,6 +218,16 @@ impl IdSpace {
     /// were removed — so the bin alone does not mean "free", and
     /// [`reclaim_ids`] takes the difference against what has been issued.
     ///
+    /// "Issued" keeps the ids this batch has since given back, and that is the
+    /// rule the whole thing rests on rather than an oversight. Cancelling a
+    /// reservation returns the id to the bin at once, so a space that forgot it
+    /// would offer it to the very next reserve and hand one id out twice inside
+    /// a single commit. The effects buffer emits a cancelled id as its own
+    /// create/delete pair, so the replica would be told to create that id twice
+    /// in one buffer and refuse the whole of it as already live. Between
+    /// batches the id is genuinely free again, which is why the space is opened
+    /// afresh per commit segment rather than re-anchored.
+    ///
     /// # Errors
     ///
     /// A `count` that cannot be allocated. `GRAPH.BULK` sizes this from a
