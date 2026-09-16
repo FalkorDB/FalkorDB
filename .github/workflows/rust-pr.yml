@@ -204,9 +204,7 @@ jobs:
       test_files: ${{ needs.flow-test-matrix.outputs.test_files }}
       # The image vehicle only in the queue, and only from a branch that can
       # push. A fork pull request runs the artifact vehicle and nothing else.
-      use_image: >-
-        ${{ github.event_name == 'merge_group'
-            || github.event.pull_request.head.repo.full_name == github.repository }}
+      use_image: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
     secrets: inherit
 
   lint:
