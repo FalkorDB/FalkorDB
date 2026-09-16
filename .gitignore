@@ -63,3 +63,8 @@ twitter_thread.md
 local-build.so
 bench/tests/flow/.ci-tmp/
 bin/
+# The effects v3 conformance corpus is an artifact, not source: it lives on
+# its own branch. Checked out here with
+#   git worktree add tests/fixtures/effects_v3 origin/effects-v3-corpus
+# so it must not read as untracked noise.
+tests/fixtures/effects_v3/

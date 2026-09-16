@@ -39,8 +39,9 @@
 //! ```
 
 use crate::config::CONFIGURATION_VKEY_MAX_ENTITY_COUNT;
-use crate::graph_core::{ThreadedGraph, graph_free};
+use crate::graph_core::{GRAPH_REGISTRY, ThreadedGraph, graph_free, register_graph};
 use crate::serializers;
+use crate::serializers::decoder::LoadedKey;
 use crate::serializers::encoder::build_multi_key_payloads;
 use crate::serializers::{DECODE_STATE, VKEY_STATE};
 use graph::graph::mvcc_graph::MvccGraph;
@@ -66,36 +67,44 @@ const DEFAULT_CACHE_SIZE: usize = 25;
 // graphdata rdb_load / rdb_save
 // ---------------------------------------------------------------------------
 
+/// The Redis key name an RDB callback was invoked for.
+///
+/// Lossy, like every other producer of a key string in this module
+/// (`register_graph`, the virtual-key builder): a Redis key name is arbitrary
+/// bytes and the module indexes graphs by `String`.
+unsafe fn io_key_name(rdb: *mut RedisModuleIO) -> String {
+    unsafe {
+        let rm_key_name = raw::RedisModule_GetKeyNameFromIO.unwrap()(rdb);
+        if rm_key_name.is_null() {
+            return String::new();
+        }
+        let mut len: usize = 0;
+        let ptr = raw::RedisModule_StringPtrLen.unwrap()(rm_key_name, &raw mut len);
+        String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string()
+    }
+}
+
 #[unsafe(no_mangle)]
 unsafe extern "C" fn graph_rdb_load(
     rdb: *mut RedisModuleIO,
     _encver: i32,
 ) -> *mut c_void {
     // Get the key name for looking up finalized graphs.
-    let key_name = unsafe {
-        let rm_key_name = raw::RedisModule_GetKeyNameFromIO.unwrap()(rdb);
-        if rm_key_name.is_null() {
-            "<unknown>".to_string()
-        } else {
-            let mut len: usize = 0;
-            let ptr = raw::RedisModule_StringPtrLen.unwrap()(rm_key_name, &raw mut len);
-            String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string()
-        }
-    };
+    let key_name = unsafe { io_key_name(rdb) };
 
-    match serializers::decoder::rdb_load_graph(rdb, DEFAULT_CACHE_SIZE) {
-        Ok(Some(graph)) => {
+    match serializers::decoder::rdb_load_graph(rdb, &key_name, DEFAULT_CACHE_SIZE) {
+        Ok(LoadedKey::Graph(graph)) => {
             // Single-key load (key_count == 1) -- graph is fully loaded.
-            let mvcc = MvccGraph::from_graph(graph);
+            let mvcc = MvccGraph::from_graph(*graph);
             let graph_arc = mvcc.read();
             graph_arc.borrow().set_indexer_graph(graph_arc.clone());
             let tg = ThreadedGraph::from_mvcc(mvcc);
             let arc = Arc::new(RwLock::new(tg));
-            crate::graph_core::register_graph(key_name, arc.clone());
+            register_graph(key_name, arc.clone());
             let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
             Box::into_raw(boxed).cast()
         }
-        Ok(None) => {
+        Ok(LoadedKey::Partial { is_virtual }) => {
             // Multi-key load (key_count > 1) -- data stored in DECODE_STATE.
             // Check if all keys have already been loaded (inline finalization),
             // in which case we can return the real graph directly.
@@ -117,7 +126,7 @@ unsafe extern "C" fn graph_rdb_load(
                     } else {
                         let tg = ThreadedGraph::from_mvcc(mvcc);
                         let arc = Arc::new(RwLock::new(tg));
-                        crate::graph_core::register_graph(key_name.clone(), arc.clone());
+                        register_graph(key_name.clone(), arc.clone());
                         arc
                     };
                     let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
@@ -138,7 +147,15 @@ unsafe extern "C" fn graph_rdb_load(
                     .insert(key_name.clone(), arc.clone());
             }
 
-            crate::graph_core::register_graph(key_name, arc.clone());
+            // Only the graph's own key names a graph. A virtual key holds a
+            // slice of one, under a name the module invented, and is deleted
+            // as soon as the load ends -- registering it would put a second
+            // entry for the same graph in the index every other subsystem
+            // treats as the list of live graphs, and would make the pre-save
+            // sweep offer it up as a graph to encode.
+            if !is_virtual {
+                register_graph(key_name, arc.clone());
+            }
 
             // Hand ownership of a Box<Arc<...>> to Redis.
             let boxed: Box<Arc<RwLock<ThreadedGraph>>> = Box::new(arc);
@@ -162,14 +179,7 @@ unsafe extern "C" fn graph_rdb_save(
 ) {
     unsafe {
         // Get the key name to determine if this is a main key or virtual key.
-        let rm_key_name = raw::RedisModule_GetKeyNameFromIO.unwrap()(rdb);
-        let key_name = if rm_key_name.is_null() {
-            String::new()
-        } else {
-            let mut len: usize = 0;
-            let ptr = raw::RedisModule_StringPtrLen.unwrap()(rm_key_name, &raw mut len);
-            String::from_utf8_lossy(std::slice::from_raw_parts(ptr.cast(), len)).to_string()
-        };
+        let key_name = io_key_name(rdb);
 
         let vkey_state = VKEY_STATE.lock();
 
@@ -180,12 +190,14 @@ unsafe extern "C" fn graph_rdb_save(
                 .get(graph_name)
                 .map_or(0, std::vec::Vec::len) as u64;
             // Look up the real graph by name from GRAPH_REGISTRY.
-            let registry = crate::graph_core::GRAPH_REGISTRY.lock();
+            let registry = GRAPH_REGISTRY.lock();
             if let Some(real_graph_arc) = registry.get(graph_name) {
                 let tg: &ThreadedGraph = &*real_graph_arc.data_ptr();
                 let g = tg.graph.read();
                 let graph = g.borrow();
-                serializers::encoder::rdb_save_graph_key(rdb, &graph, payloads, key_count);
+                serializers::encoder::rdb_save_graph_key(
+                    rdb, &graph, graph_name, payloads, key_count,
+                );
                 return;
             }
         }
@@ -197,7 +209,7 @@ unsafe extern "C" fn graph_rdb_save(
         let tg: &ThreadedGraph = &*graph_arc.data_ptr();
         let g = tg.graph.read();
         let graph = g.borrow();
-        serializers::encoder::rdb_save_graph(rdb, &graph);
+        serializers::encoder::rdb_save_graph(rdb, &graph, &key_name);
     }
 }
 
@@ -326,7 +338,7 @@ pub unsafe extern "C" fn pre_fork_prepare() {
     if !graph::thread_id::is_main_thread() {
         return;
     }
-    let registry = crate::graph_core::GRAPH_REGISTRY.lock();
+    let registry = GRAPH_REGISTRY.lock();
     for graph_arc in registry.values() {
         let tg: &ThreadedGraph = unsafe { &*graph_arc.data_ptr() };
         let g = tg.graph.read();
@@ -371,13 +383,27 @@ pub unsafe extern "C" fn on_persistence(
 // Virtual key management helpers
 // ---------------------------------------------------------------------------
 
+/// Create this save's virtual keys, one set per graph that needs more than a
+/// single RDB key.
+///
+/// The graphs come from `GRAPH_REGISTRY`, the module's own index of what it
+/// holds -- C's `_CreateKeySpaceMetaKeys` walks `Globals_ScanGraphs` for the
+/// same reason. This used to `SCAN TYPE graphdata` instead and then had to
+/// decide, key by key, which of the results were real graphs and which were
+/// the module's own bookkeeping; it decided by the graph's *name*, and since
+/// the name is whatever key the client chose, `GRAPH.QUERY __placeholder_x`
+/// produced a graph the very next `SAVE` deleted (#2773). Asking the registry
+/// removes the question: bookkeeping keys are never registered as graphs.
 pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         // Delete stale graphmeta keys (from C FalkorDB RDB loads).
         delete_stale_graphmeta_keys(ctx);
 
-        // Single graphdata scan: collect real graphs and delete stale virtual keys.
-        let graphs = scan_and_clean_graphdata_keys(ctx);
+        let graphs: Vec<(String, Arc<RwLock<ThreadedGraph>>)> = GRAPH_REGISTRY
+            .lock()
+            .iter()
+            .map(|(name, arc)| (name.clone(), arc.clone()))
+            .collect();
 
         let mut vkey_state = VKEY_STATE.lock();
         vkey_state.clear();
@@ -386,6 +412,18 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
         let vkey_max = *CONFIGURATION_VKEY_MAX_ENTITY_COUNT.lock(&context);
 
         for (graph_name, graph_ref) in &graphs {
+            // The registry is keyed by a lossy `String` rendering of the key
+            // name, so an entry does not prove a key of that name holds this
+            // graph: a graph kept under a non-UTF-8 key (`GRAPH.QUERY "\xc3("`)
+            // is indexed under a name that addresses nothing. Splitting such a
+            // graph would scatter its payload across virtual keys named after
+            // a key it does not occupy, and the graph's own key -- which Redis
+            // does save -- would carry only a slice of it. Leave it whole
+            // instead; `graph_rdb_save` writes a single-key graph unaided.
+            if !key_holds_graph(ctx, graph_name, graph_ref) {
+                continue;
+            }
+
             // SAFETY: In the BGSAVE fork child, this process is single-threaded.
             // Threads that held the parking_lot RwLock at fork time are gone,
             // so lock acquisition would deadlock. We bypass the lock entirely
@@ -465,6 +503,11 @@ pub unsafe fn create_virtual_keys(ctx: *mut RedisModuleCtx) {
     }
 }
 
+/// Drop the virtual keys this save created, once the save has ended.
+///
+/// By name, from `VKEY_STATE` -- the same list `create_virtual_keys` built.
+/// This is C's `_ClearKeySpaceMetaKeys(ctx, /*decode=*/false)` over
+/// `GraphEncodeContext`'s meta keys.
 pub unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         let mut vkey_state = VKEY_STATE.lock();
@@ -472,16 +515,7 @@ pub unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
         for (graph_name, vkey_names) in &vkey_state.graph_vkeys {
             let count = vkey_names.len();
             for vkey_name in vkey_names {
-                let rm_str = raw::RedisModule_CreateString.unwrap()(
-                    ctx,
-                    vkey_name.as_ptr().cast(),
-                    vkey_name.len(),
-                );
-                let key =
-                    raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
-                raw::RedisModule_DeleteKey.unwrap()(key);
-                raw::RedisModule_CloseKey.unwrap()(key);
-                raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
+                delete_key(ctx, vkey_name);
             }
             log_notice(format!(
                 "Deleted {count} virtual keys for graph {graph_name}"
@@ -492,140 +526,45 @@ pub unsafe fn delete_virtual_keys(ctx: *mut RedisModuleCtx) {
     }
 }
 
-/// Single-pass scan of graphdata keys: collects real graphs and deletes stale
-/// virtual/placeholder keys in one traversal (instead of scanning twice).
-unsafe fn scan_and_clean_graphdata_keys(
-    ctx: *mut RedisModuleCtx
-) -> Vec<(String, Arc<RwLock<ThreadedGraph>>)> {
+/// Delete one Redis key by name.
+unsafe fn delete_key(
+    ctx: *mut RedisModuleCtx,
+    key_name: &str,
+) {
     unsafe {
-        let mut result = Vec::new();
-        let mut stale_keys = Vec::new();
+        let rm_str =
+            raw::RedisModule_CreateString.unwrap()(ctx, key_name.as_ptr().cast(), key_name.len());
+        let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
+        raw::RedisModule_DeleteKey.unwrap()(key);
+        raw::RedisModule_CloseKey.unwrap()(key);
+        raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
+    }
+}
 
-        let scan_cmd = CString::new("SCAN").unwrap();
-        let type_arg = CString::new("TYPE").unwrap();
-        let graphdata_arg = CString::new("graphdata").unwrap();
-        let fmt = CString::new("ccc").unwrap();
-
-        let mut cursor_val = CString::new("0").unwrap();
-
-        loop {
-            let reply = raw::RedisModule_Call.unwrap()(
-                ctx,
-                scan_cmd.as_ptr(),
-                fmt.as_ptr(),
-                cursor_val.as_ptr(),
-                type_arg.as_ptr(),
-                graphdata_arg.as_ptr(),
+/// Whether the Redis key `key_name` currently holds exactly `graph`.
+///
+/// Compares the stored value's inner allocation rather than any name, so a
+/// registry entry naming a key that no longer exists -- or that never
+/// addressed this graph, because the real key name is not valid UTF-8 -- is
+/// rejected.
+unsafe fn key_holds_graph(
+    ctx: *mut RedisModuleCtx,
+    key_name: &str,
+    graph: &Arc<RwLock<ThreadedGraph>>,
+) -> bool {
+    unsafe {
+        let rm_str =
+            raw::RedisModule_CreateString.unwrap()(ctx, key_name.as_ptr().cast(), key_name.len());
+        let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::READ.bits());
+        let value = raw::RedisModule_ModuleTypeGetValue.unwrap()(key);
+        let holds = !value.is_null()
+            && std::ptr::eq(
+                (*value.cast::<Arc<RwLock<ThreadedGraph>>>()).data_ptr(),
+                graph.data_ptr(),
             );
-            if reply.is_null() {
-                break;
-            }
-
-            let reply_type = raw::call_reply_type(reply);
-            if reply_type != raw::ReplyType::Array {
-                raw::free_call_reply(reply);
-                break;
-            }
-
-            let len = raw::call_reply_length(reply);
-            if len < 2 {
-                raw::free_call_reply(reply);
-                break;
-            }
-
-            // Get new cursor.
-            let cursor_reply = raw::call_reply_array_element(reply, 0);
-            let mut cursor_len: usize = 0;
-            let cursor_ptr =
-                raw::RedisModule_CallReplyStringPtr.unwrap()(cursor_reply, &raw mut cursor_len);
-            let new_cursor = std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                cursor_ptr.cast(),
-                cursor_len,
-            ));
-            let done = new_cursor == "0";
-
-            // Get keys array.
-            let arr_reply = raw::call_reply_array_element(reply, 1);
-            let arr_len = raw::call_reply_length(arr_reply);
-
-            for i in 0..arr_len {
-                let elem = raw::call_reply_array_element(arr_reply, i);
-                let mut key_len: usize = 0;
-                let kptr = raw::RedisModule_CallReplyStringPtr.unwrap()(elem, &raw mut key_len);
-                // Redis key names are binary-safe, so a graphdata-typed key may
-                // have a non-UTF-8 name (e.g. `GRAPH.QUERY "\xff" ...`). Building a
-                // `str` over non-UTF-8 bytes via `from_utf8_unchecked` is UB. Skip
-                // any non-UTF-8 key rather than decoding it lossily: this name is
-                // fed back into `RedisModule_CreateString` for the open/delete
-                // below, and a lossy name no longer round-trips to the same key
-                // (and could even alias a different one). A non-UTF-8 graph name
-                // is not round-trippable here and is already handled only lossily
-                // elsewhere (`graph_rdb_save`/`graph_rdb_load`), so skipping it
-                // does not regress any normally (UTF-8) named graph.
-                let key_bytes = std::slice::from_raw_parts(kptr.cast::<u8>(), key_len);
-                let Ok(key_name) = std::str::from_utf8(key_bytes) else {
-                    log_warning(format!(
-                        "Skipping graphdata key with non-UTF-8 name during scan (lossy display: {})",
-                        String::from_utf8_lossy(key_bytes)
-                    ));
-                    continue;
-                };
-                let key_name = key_name.to_string();
-
-                let rm_str = raw::RedisModule_CreateString.unwrap()(
-                    ctx,
-                    key_name.as_ptr().cast(),
-                    key_name.len(),
-                );
-                let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::READ.bits());
-                let value = raw::RedisModule_ModuleTypeGetValue.unwrap()(key);
-
-                if !value.is_null() {
-                    let graph_arc_ref = &*(value.cast::<Arc<RwLock<ThreadedGraph>>>());
-                    // SAFETY: In the BGSAVE fork child, threads that held the
-                    // parking_lot RwLock at fork time are gone. Lock acquisition
-                    // would deadlock. We bypass the lock via data_ptr() since the
-                    // fork child is single-threaded. The graph name is immutable
-                    // so reading it without locking is safe even on the main thread.
-                    let tg: &ThreadedGraph = &*graph_arc_ref.data_ptr();
-                    let g = tg.graph.read();
-                    let name = g.borrow().name().to_string();
-                    if name.starts_with("__placeholder") || name.starts_with("__vkey_placeholder") {
-                        // Stale virtual key — mark for deletion.
-                        stale_keys.push(key_name);
-                    } else {
-                        // Real graph — collect it.
-                        drop(g);
-                        result.push((key_name, graph_arc_ref.clone()));
-                    }
-                }
-
-                raw::RedisModule_CloseKey.unwrap()(key);
-                raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
-            }
-
-            cursor_val = CString::new(new_cursor).unwrap();
-            raw::free_call_reply(reply);
-
-            if done {
-                break;
-            }
-        }
-
-        // Delete stale virtual keys.
-        for key_name in &stale_keys {
-            let rm_str = raw::RedisModule_CreateString.unwrap()(
-                ctx,
-                key_name.as_ptr().cast(),
-                key_name.len(),
-            );
-            let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
-            raw::RedisModule_DeleteKey.unwrap()(key);
-            raw::RedisModule_CloseKey.unwrap()(key);
-            raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
-        }
-
-        result
+        raw::RedisModule_CloseKey.unwrap()(key);
+        raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
+        holds
     }
 }
 
@@ -648,28 +587,36 @@ unsafe fn delete_stale_graphmeta_keys(ctx: *mut RedisModuleCtx) {
         );
 
         for key_name in &keys_to_delete {
-            let rm_str = raw::RedisModule_CreateString.unwrap()(
-                ctx,
-                key_name.as_ptr().cast(),
-                key_name.len(),
-            );
-            let key = raw::RedisModule_OpenKey.unwrap()(ctx, rm_str, raw::KeyMode::WRITE.bits());
-            raw::RedisModule_DeleteKey.unwrap()(key);
-            raw::RedisModule_CloseKey.unwrap()(key);
-            raw::RedisModule_FreeString.unwrap()(ctx, rm_str);
+            delete_key(ctx, key_name);
         }
-
-        if !keys_to_delete.is_empty() {}
     }
 }
 
-/// Delete any stale virtual keys left in the keyspace from a previous RDB load.
-/// Public entry point used by the debug command.
+/// Drop the virtual keys an RDB load brought in, once the load has ended.
+///
+/// A multi-key graph arrives as several keys; the load folds them all into one
+/// graph, stored at the key the graph names, and the rest have nothing left to
+/// hold. `DECODE_STATE.meta_keys` is the list of exactly those keys, built as
+/// they were decoded -- C's `_ClearKeySpaceMetaKeys(ctx, /*decode=*/true)`
+/// working from `GraphDecodeContext`'s meta-key list. Nothing is inferred from
+/// a key's name or contents: the module deletes the keys it knows it made.
+///
+/// Graphmeta-typed keys are swept separately by type -- those come from a C
+/// FalkorDB RDB, which registers them under a type of their own.
 pub unsafe fn delete_stale_virtual_keys(ctx: *mut RedisModuleCtx) {
     unsafe {
         delete_stale_graphmeta_keys(ctx);
-        // scan_and_clean_graphdata_keys deletes stale graphdata keys as a side effect.
-        let _ = scan_and_clean_graphdata_keys(ctx);
+
+        let meta_keys = std::mem::take(&mut DECODE_STATE.lock().meta_keys);
+        for key_name in &meta_keys {
+            delete_key(ctx, key_name);
+        }
+        if !meta_keys.is_empty() {
+            log_notice(format!(
+                "Deleted {} virtual keys left by the RDB load",
+                meta_keys.len()
+            ));
+        }
     }
 }
 
@@ -893,7 +840,8 @@ unsafe extern "C" fn graphmeta_rdb_load(
     rdb: *mut RedisModuleIO,
     _encver: i32,
 ) -> *mut c_void {
-    match serializers::decoder::rdb_load_graph(rdb, DEFAULT_CACHE_SIZE) {
+    let key_name = unsafe { io_key_name(rdb) };
+    match serializers::decoder::rdb_load_graph(rdb, &key_name, DEFAULT_CACHE_SIZE) {
         Ok(_) => {
             // Return a non-null dummy value. Redis needs non-null for successful load.
             Box::into_raw(Box::new(0u8)).cast()

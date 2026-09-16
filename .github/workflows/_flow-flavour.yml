@@ -72,6 +72,9 @@ jobs:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     container:
       image: ${{ inputs.build_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
       options: --volume /var/run/docker.sock:/var/run/docker.sock
     permissions:
       contents: read
@@ -188,6 +191,9 @@ jobs:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     container:
       image: ${{ inputs.build_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
       options: --volume /var/run/docker.sock:/var/run/docker.sock
     permissions:
       contents: read
