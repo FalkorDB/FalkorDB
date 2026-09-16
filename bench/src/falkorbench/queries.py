@@ -180,6 +180,21 @@ QUERIES = [
     Q("RETURN DISTINCT",     False, "MATCH (p:Person) RETURN DISTINCT p.age", cg=True),
     Q("ORDER BY + LIMIT",    False, "MATCH (p:Person) RETURN p.name ORDER BY p.score DESC LIMIT 10", cg=True),
     Q("SKIP + LIMIT",        False, "MATCH (p:Person) RETURN p.id ORDER BY p.id SKIP 5000 LIMIT 100", cg=True),
+    # A LIMIT the scan can actually see. Every other limited row above puts an
+    # ORDER BY or an aggregate between the scan and the LIMIT, and
+    # `Runtime::effective_limit` treats both as barriers — so the row budget
+    # never reaches a leaf and none of them moved at all when leaf scans learned
+    # to size their first batch to it (#2790). These two are barrier-free.
+    #
+    # The pair is the point: the invariant is that a small limit costs
+    # proportionally less, not that either row has a particular cost. Before
+    # #2790 a scan packed a full BATCH_SIZE (1024) whatever the limit, so
+    # `limit 10` cost 511,221 instructions against 198,795 after — while
+    # `limit 2k`, being over a full batch, was 3,030,897 against 3,033,647 and
+    # is here to catch a regression that slows scans generally rather than
+    # breaking the limit path.
+    Q("scan limit 10",       False, "MATCH (p:Person) RETURN p.name LIMIT 10"),
+    Q("scan limit 2k",       False, "MATCH (p:Person) RETURN p.name LIMIT 2048"),
     Q("traversal + count",   False, "MATCH (a:Person)-[:KNOWS]->(b) RETURN count(b)", cg=True),
     Q("two-hop",             False, "MATCH (a:Person)-[:KNOWS]->()-[:KNOWS]->(c) RETURN count(c)", cg=True),
     Q("edge + type()",       False, "MATCH (a:Person)-[r:KNOWS]->(b) RETURN count(type(r))", cg=True),
@@ -600,6 +615,28 @@ QUERIES = [
     Q("delete 10k",          True,  "MATCH (t:Tmp) WITH t LIMIT 10000 DELETE t", 50),
     Q("write 100k",          True,  "UNWIND range(1, 100000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 10),
     Q("write 1m",            True,  "UNWIND range(1, 1000000) AS i CREATE (t:Tmp {x: i}) WITH t DELETE t", 2),
+
+    # ---- one write against a large EDGE population -------------------------
+    # Every sized row above creates and deletes *nodes*, so the edge count
+    # stays at SETUP's ~10k for the whole run and no row in the suite is
+    # sensitive to the cost of a write scaling with |E|. That hid #2687, where
+    # the edge-endpoint index was copied whole on the first edge mutation of
+    # every write transaction: 2,676,794 bytes allocated to create one edge
+    # against 200k of them, against 52,454 once paged. On this graph the same
+    # bug is worth 40 KB, so the suite read it as a 9% row.
+    #
+    # `edge create at 200k` measures the same create/delete round-trip as
+    # `urel create delete`, three orders of magnitude further up the edge count.
+    # It DEPENDS on `bulk edges 200k` having run first, which `needs=` declares
+    # so that selecting it by name pulls the builder in. Without that a named
+    # run measures it at 10k edges instead, quietly and without failing.
+    #
+    # Both go last so the 200k edges cannot shift any other row, and the
+    # measured row follows a large *create* rather than a large delete, so it
+    # is not reading recovery from `write 1m` the way `create 100` once did.
+    Q("bulk edges 200k",     True,  "UNWIND range(1, 200000) AS i CREATE (:Wide)-[:WIDE]->(:Wide)", 1),
+    Q("edge create at 200k", True,  "MATCH (a:Person {id: 1}), (b:Person {id: 2}) CREATE (a)-[r:WIDEX]->(b) WITH r DELETE r", 100,
+      needs=("bulk edges 200k",)),
 ]
 
 # Expected-error queries: run only in --once (coverage) mode, never timed.

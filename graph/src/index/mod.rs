@@ -92,7 +92,7 @@ use redisearch::{
 };
 
 /// Type of index for a property.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum IndexType {
     /// B-tree range index for numeric/string/geo comparisons
     Range,
@@ -1230,7 +1230,11 @@ impl Index {
                             if options.nostem.unwrap_or(false) {
                                 field_options_flag |= RSFLDOPT_TXTNOSTEM;
                             }
-                            if options.phonetic.unwrap_or(false) {
+                            // Any non-empty code turns phonetic matching on.
+                            // RediSearch takes a flag, not an algorithm, so
+                            // which code it is cannot reach it — see
+                            // `TextIndexOptions::phonetic`.
+                            if options.phonetic.as_deref().is_some_and(|p| !p.is_empty()) {
                                 field_options_flag |= RSFLDOPT_TXTPHONETIC;
                             }
                         }

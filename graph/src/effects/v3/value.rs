@@ -1,0 +1,437 @@
+//! The `SIValue` codec: a 4-byte type bitmask, then the payload.
+
+use std::sync::Arc;
+
+use thin_vec::ThinVec;
+
+use crate::runtime::value::{Point, Value};
+
+use crate::graph::graphblas::serialization::si_type;
+
+use super::{DecodeError, EffectDecode, EffectEncode, EffectWrite, EncodeError, Reader};
+
+/// The smallest a `SIValue` can encode to: the 4-byte type tag, payload empty.
+///
+/// The lower bound `Reader::guard_count` needs for a run of values — it caps the
+/// loop without predicting what the values themselves cost.
+pub(super) const MIN_VALUE_BYTES: usize = 4;
+
+// ── SIValue ──
+
+/// The effects encoding of a `SIValue`.
+///
+/// `Value` already carries `Encode<19>` for the RDB path; this is the same type
+/// on a different wire, and the two disagree in every way that matters. The RDB
+/// stream is self-describing: `write_unsigned` emits a `TYPE_UNSIGNED` byte and
+/// a fixed 8-byte LE value, so a tag costs 9 bytes there and 4 here, and every
+/// field behind it is framed differently too — bool as a tagged i64 vs one byte,
+/// point as two f64 vs two f32, list counts tagged vs a bare `u32`. RDB also
+/// cannot represent a map at all. Keeping them as separate trait impls is what
+/// stops one being mistaken for the other.
+///
+/// `T_NULL` has no payload at all — not a zero byte.
+impl EffectEncode<3> for Value {
+    fn encode<W: EffectWrite + ?Sized>(
+        &self,
+        buf: &mut W,
+    ) -> Result<(), EncodeError> {
+        match self {
+            Value::Null => buf.u32(si_type::T_NULL as u32),
+            Value::Bool(b) => {
+                buf.u32(si_type::T_BOOL as u32);
+                buf.u8(u8::from(*b));
+            }
+            Value::Int(i) => {
+                buf.u32(si_type::T_INT64 as u32);
+                buf.i64(*i);
+            }
+            Value::Float(f) => {
+                buf.u32(si_type::T_DOUBLE as u32);
+                buf.f64(*f);
+            }
+            Value::String(s) => {
+                // The intern bit rides along, as it does in the RDB encoding.
+                // Without it a replica rebuilds every string as a fresh `Arc`
+                // and its pool stays empty, so repeated strings cost it what
+                // interning exists to avoid — `test_intern_string`'s
+                // replication case measured an empty pool where the primary
+                // held one entry.
+                let tag = if crate::runtime::string_pool::global().is_interned(s) {
+                    si_type::T_INTERN | si_type::T_STRING
+                } else {
+                    si_type::T_STRING
+                };
+                buf.u32(tag as u32);
+                buf.string(s);
+            }
+            Value::List(items) => {
+                buf.u32(si_type::T_ARRAY as u32);
+                // u32, not u64: C reads the count as `uint32`.
+                buf.u32(u32::try_from(items.len()).map_err(|_| {
+                    EncodeError::BlockCountTooLarge {
+                        block: "T_ARRAY",
+                        len: items.len(),
+                    }
+                })?);
+                // Floor: every element is at least its own type tag.
+                buf.reserve(items.len() * 4);
+                for item in items.iter() {
+                    item.encode(buf)?;
+                }
+            }
+            Value::Point(p) => {
+                buf.u32(si_type::T_POINT as u32);
+                // 2 x f32. Rust's own format used f64 here, which silently doubles
+                // the payload and desyncs everything after it.
+                buf.bytes(&p.latitude.to_le_bytes());
+                buf.bytes(&p.longitude.to_le_bytes());
+            }
+            Value::VecF32(v) => {
+                buf.u32(si_type::T_VECTOR_F32 as u32);
+                // Exact: count then a fixed 4 bytes per element.
+                buf.reserve(4 + v.len() * 4);
+                buf.u32(
+                    u32::try_from(v.len()).map_err(|_| EncodeError::BlockCountTooLarge {
+                        block: "T_VECTOR_F32",
+                        len: v.len(),
+                    })?,
+                );
+                for f in v.iter() {
+                    buf.bytes(&f.to_le_bytes());
+                }
+            }
+            Value::Datetime(ts) => {
+                buf.u32(si_type::T_DATETIME as u32);
+                buf.i64(*ts);
+            }
+            Value::Date(ts) => {
+                buf.u32(si_type::T_DATE as u32);
+                buf.i64(*ts);
+            }
+            Value::Time(ts) => {
+                buf.u32(si_type::T_TIME as u32);
+                buf.i64(*ts);
+            }
+            Value::Duration(d) => {
+                buf.u32(si_type::T_DURATION as u32);
+                buf.i64(*d);
+            }
+            // Nodes, edges and paths are never property values, so they cannot reach
+            // an effect. Encoding one as NULL would corrupt the stream silently.
+            other => panic!("value cannot appear in an effect: {other:?}"),
+        }
+        Ok(())
+    }
+}
+
+/// One unfinished container, while its children are being read.
+///
+/// A map keeps the key it is waiting on: an entry is a key then a value, and the
+/// key is read as soon as the previous entry closes, so the loop below always
+/// has exactly one value to produce next.
+enum Frame {
+    List { items: ThinVec<Value>, left: usize },
+}
+
+impl EffectDecode<3> for Value {
+    /// Iterative, not recursive, and that is a requirement rather than a style.
+    ///
+    /// `Reader::guard_count` bounds how *wide* a container is, because every
+    /// element costs bytes. Depth does not work that way: one nesting level is a
+    /// 4-byte tag and a 4-byte count, so a few hundred KB of nested tags was
+    /// tens of thousands of stack frames and a SIGSEGV — exactly what `Reader`
+    /// exists to prevent. The previous answer was a depth ceiling, which cannot
+    /// be right for the same reason a ceiling was wrong for ids: it refuses
+    /// legitimate input to bound a hostile one.
+    ///
+    /// With an explicit stack, depth costs heap instead — one `Frame` per open
+    /// container — so the decoder itself has no depth limit and needs none.
+    ///
+    /// There is deliberately no cap. A depth ceiling here refused values the
+    /// primary had already built, stored and read back: at 256 a legitimate
+    /// `CREATE (:Deep {v: reduce(acc = [], x IN range(1, 300) | [acc])})`
+    /// reached the replica, failed to decode, and started a forced-resync loop
+    /// that failed again identically. The primary surviving construction *is*
+    /// the validation — a value it cannot hold never gets encoded, because it
+    /// takes the process down first.
+    ///
+    /// `Value` is still recursive and still overflows the stack when dropped
+    /// deep enough, on either side. That bound belongs where the value is built,
+    /// not where it is read; see the issue on unbounded nesting.
+    fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        let mut stack: Vec<Frame> = Vec::new();
+
+        loop {
+            // Produce one value. A container opens a frame and yields nothing
+            // yet, so the next turn reads its first child.
+            let Some(mut value) = read_one(r, &mut stack)? else {
+                continue;
+            };
+
+            // Hand it to whatever is waiting, closing frames as they fill. A
+            // closed container is itself a value, so this repeats.
+            loop {
+                match stack.last_mut() {
+                    None => return Ok(value),
+                    Some(Frame::List { items, left }) => {
+                        items.push(value);
+                        *left -= 1;
+                        if *left > 0 {
+                            break;
+                        }
+                        let Some(Frame::List { items, .. }) = stack.pop() else {
+                            unreachable!("just matched a list frame")
+                        };
+                        value = Value::List(Arc::new(items));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Read one tag and either return a finished value or open a container.
+///
+/// `Ok(None)` means a frame was pushed: the value is not known until its
+/// children are.
+fn read_one(
+    r: &mut Reader<'_>,
+    stack: &mut Vec<Frame>,
+) -> Result<Option<Value>, DecodeError> {
+    // Four bytes on the wire, widened so the arms below can be the shared
+    // `si_type` constants themselves rather than casts of them.
+    let t = u64::from(r.u32()?);
+    let v = match t {
+        si_type::T_NULL => Value::Null,
+        si_type::T_BOOL => Value::Bool(r.u8()? != 0),
+        si_type::T_INT64 => Value::Int(r.i64()?),
+        si_type::T_DOUBLE => Value::Float(r.f64()?),
+        // Both spellings, and the bit decides whether the string joins this
+        // node's pool. A pattern cannot name `T_INTERN | T_STRING`, so this is a
+        // guard — the same shape the RDB decoder uses.
+        t if t == si_type::T_STRING || t == (si_type::T_INTERN | si_type::T_STRING) => {
+            let s = r.string()?;
+            if t == (si_type::T_INTERN | si_type::T_STRING) {
+                Value::String(crate::runtime::string_pool::global().intern(Arc::new(s)))
+            } else {
+                Value::String(Arc::new(s))
+            }
+        }
+        si_type::T_ARRAY => {
+            let n = r.u32()?;
+            let n = r.guard_count(u64::from(n), MIN_VALUE_BYTES)?;
+            if n == 0 {
+                return Ok(Some(Value::List(Arc::new(ThinVec::new()))));
+            }
+            stack.push(Frame::List {
+                items: ThinVec::with_capacity(n),
+                left: n,
+            });
+            return Ok(None);
+        }
+        // v3 carries no map. `CREATE_INDEX`'s options were the only map that
+        // ever reached this wire, and they travel as a typed block now — see
+        // `records::IndexOptions`. Refused rather than silently ignored: a
+        // payload claiming one was written by something this build does not
+        // understand.
+        si_type::T_MAP => return Err(DecodeError::BadValueType(si_type::T_MAP as u32)),
+        si_type::T_POINT => {
+            let latitude = r.f32()?;
+            let longitude = r.f32()?;
+            Value::Point(Point {
+                latitude,
+                longitude,
+            })
+        }
+        si_type::T_VECTOR_F32 => {
+            let n = r.u32()?;
+            // Exact, not a lower bound: every element is one `f32`.
+            let n = r.guard_count(u64::from(n), size_of::<f32>())?;
+            let mut v = ThinVec::with_capacity(n);
+            for _ in 0..n {
+                v.push(r.f32()?);
+            }
+            Value::VecF32(Arc::new(v))
+        }
+        si_type::T_DATETIME => Value::Datetime(r.i64()?),
+        si_type::T_DATE => Value::Date(r.i64()?),
+        si_type::T_TIME => Value::Time(r.i64()?),
+        si_type::T_DURATION => Value::Duration(r.i64()?),
+        // Back to `u32` for the error: the tag is four bytes on the wire and
+        // `other` was widened from exactly those, so this cannot truncate.
+        other => return Err(DecodeError::BadValueType(other as u32)),
+    };
+    Ok(Some(v))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── SIValue ──
+
+    #[test]
+    fn value_tags_are_c_bitmasks_not_ordinals() {
+        // The single most dangerous divergence: Rust's own codec used sequential
+        // 0..12 tags, which collide with C's bitmask almost everywhere.
+        let mut buf = Vec::new();
+        Value::Int(1).encode(&mut buf).unwrap();
+        assert_eq!(&buf[..4], &[0x00, 0x20, 0x00, 0x00], "T_INT64 = 1 << 13");
+
+        buf.clear();
+        Value::Null.encode(&mut buf).unwrap();
+        assert_eq!(
+            format!("{buf:02x?}"),
+            "[00, 80, 00, 00]",
+            "T_NULL = 1 << 15, no payload"
+        );
+    }
+
+    #[test]
+    fn value_point_is_two_f32() {
+        let mut buf = Vec::new();
+        Value::Point(Point {
+            latitude: 1.0,
+            longitude: 2.0,
+        })
+        .encode(&mut buf)
+        .unwrap();
+        assert_eq!(buf.len(), 4 + 8, "type tag plus 2 x f32, not 2 x f64");
+    }
+
+    #[test]
+    fn value_string_carries_its_nul() {
+        let mut buf = Vec::new();
+        Value::String(Arc::new("ab".into()))
+            .encode(&mut buf)
+            .unwrap();
+        // type tag, then len = 3 (including NUL), then "ab\0"
+        assert_eq!(
+            format!("{buf:02x?}"),
+            "[00, 08, 00, 00, 03, 00, 00, 00, 00, 00, 00, 00, 61, 62, 00]"
+        );
+    }
+
+    #[test]
+    fn value_roundtrips_every_encodable_variant() {
+        let cases = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(-9_007_199_254_740_993),
+            Value::Float(0.1),
+            Value::String(Arc::new("hello".into())),
+            Value::List(Arc::new([Value::Int(1), Value::Null].into_iter().collect())),
+            Value::Point(Point {
+                latitude: 32.07,
+                longitude: 34.79,
+            }),
+            Value::VecF32(Arc::new([1.5_f32, -2.5].into_iter().collect())),
+            Value::Datetime(1_700_000_000),
+            Value::Date(19_000),
+            Value::Time(3_600),
+            Value::Duration(90),
+        ];
+        for case in cases {
+            let mut buf = Vec::new();
+            case.encode(&mut buf).unwrap();
+            let mut r = Reader::new(&buf);
+            assert_eq!(Value::decode(&mut r).unwrap(), case);
+            assert!(r.is_empty(), "{case:?} left {} bytes", r.remaining());
+        }
+    }
+
+    #[test]
+    fn deep_nesting_decodes_because_the_primary_already_survived_it() {
+        // No depth ceiling. One at 256 refused a value the primary builds,
+        // stores and reads back — `reduce(acc = [], x IN range(1, 300) | [acc])`
+        // — so the replica could not apply it and looped on forced resyncs.
+        //
+        // 5,000 levels here rather than 50,000: the decoder handles either, but
+        // *dropping* the result recurses once per level, and that is a property
+        // of `Value` on both sides rather than of this codec. The primary dies
+        // on its own somewhere past 10,000, which is what bounds this in
+        // practice.
+        let levels = 5_000_usize;
+        let mut buf = Vec::new();
+        for _ in 0..levels {
+            buf.bytes(&(si_type::T_ARRAY as u32).to_le_bytes());
+            buf.bytes(&1_u32.to_le_bytes());
+        }
+        buf.bytes(&(si_type::T_NULL as u32).to_le_bytes());
+
+        let mut r = Reader::new(&buf);
+        let v = Value::decode(&mut r).expect("depth is not the decoder's business");
+        assert!(r.is_empty());
+
+        let mut depth = 0_usize;
+        let mut cur = &v;
+        while let Value::List(items) = cur {
+            assert_eq!(items.len(), 1);
+            cur = &items[0];
+            depth += 1;
+        }
+        assert_eq!(depth, levels);
+        assert_eq!(*cur, Value::Null);
+    }
+
+    #[test]
+    fn a_nested_container_that_runs_out_of_bytes_is_an_error() {
+        // Depth is no longer bounded, so the guard that has to hold is the
+        // ordinary one: a payload promising children it does not carry fails on
+        // the read rather than producing a partial value.
+        let mut buf = Vec::new();
+        for _ in 0..1_000 {
+            buf.bytes(&(si_type::T_ARRAY as u32).to_le_bytes());
+            buf.bytes(&1_u32.to_le_bytes());
+        }
+        // ...and nothing at the bottom.
+        //
+        // `ImplausibleCount` rather than `UnexpectedEof`: the innermost level
+        // promises one child, and the width guard notices there are not four
+        // bytes left to hold even a tag before the read is attempted. Either way
+        // it is an error and not a partial value, which is the property here.
+        let mut r = Reader::new(&buf);
+        assert!(matches!(
+            Value::decode(&mut r),
+            Err(DecodeError::ImplausibleCount { .. } | DecodeError::UnexpectedEof { .. })
+        ));
+    }
+
+    #[test]
+    fn a_map_is_refused_rather_than_decoded() {
+        // v3 carries no map. `CREATE_INDEX`'s options were the only one that
+        // ever reached this wire and they travel as a typed block now, so a
+        // payload claiming `T_MAP` came from something this build does not
+        // understand — refused, not skipped.
+        let mut buf = Vec::new();
+        buf.u32(si_type::T_MAP as u32);
+        buf.u32(1);
+        assert!(matches!(
+            Value::decode(&mut Reader::new(&buf)),
+            Err(DecodeError::BadValueType(t)) if t == si_type::T_MAP as u32
+        ));
+    }
+
+    #[test]
+    fn a_list_nested_in_a_list_round_trips() {
+        // The iterative decoder still has to nest one frame kind inside itself,
+        // which is what the map case used to cover alongside lists.
+        let case = Value::List(Arc::new(thin_vec::thin_vec![
+            Value::List(Arc::new(thin_vec::thin_vec![Value::Null, Value::Int(1),])),
+            Value::List(Arc::new(ThinVec::new())),
+        ]));
+        let mut buf = Vec::new();
+        case.encode(&mut buf).unwrap();
+        let mut r = Reader::new(&buf);
+        assert_eq!(Value::decode(&mut r).unwrap(), case);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_value_tag_is_rejected() {
+        let buf = 0x0000_0002_u32.to_le_bytes();
+        let mut r = Reader::new(&buf);
+        assert_eq!(Value::decode(&mut r), Err(DecodeError::BadValueType(2)));
+    }
+}

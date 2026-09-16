@@ -94,7 +94,18 @@ pub mod index_field_type {
 }
 
 /// SIValue type tags for binary serialization (matching C FalkorDB format).
+///
+/// C's `SIType` is a **bitmask**, not an ordinal: each type is a distinct bit,
+/// which is why these are shifts rather than 0..12. Rust's own v2 effects codec
+/// used sequential tags, and they collide with these almost everywhere.
+///
+/// `u64`, because the RDB writes them through `write_unsigned`, which takes a
+/// `u64`. The effects wire carries a **four-byte** tag — the width C declares
+/// for `SIType` and what both v2 and v3 put on the wire — so that path narrows
+/// once, in `effects::v3::wire_tag`, where a test proves every constant here
+/// survives the narrowing.
 pub mod si_type {
+    pub const T_MAP: u64 = 1 << 0;
     pub const T_ARRAY: u64 = 1 << 3;
     pub const T_DATETIME: u64 = 1 << 5;
     pub const T_DATE: u64 = 1 << 7;
