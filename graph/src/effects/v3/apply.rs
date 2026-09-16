@@ -284,7 +284,7 @@ fn apply_record(
                 src.iter().collect(),
                 dst.iter().collect(),
             );
-            g.create_relationships_bulk(&type_name, &src, &dst, &ids, Some(&mut ops.edges))
+            g.create_relationships_bulk(&type_name, &src, &dst, &ids, &mut ops.edges)
                 .map_err(|e| node_op("relationship", e))?;
 
             // As in `CreateNode` above: `attr_map` shape-checks internally, so
@@ -383,14 +383,14 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut ops.docs.node_removes, Some(&ops.nodes))
+            g.delete_nodes(&nodes, &mut ops.docs.node_removes, &ops.nodes)
                 .map_err(|e| node_op("node", e))?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut ops.docs.edge_removes, Some(&ops.edges))
+            g.delete_relationships(&edges, &mut ops.docs.edge_removes, &ops.edges)
                 .map_err(|e| node_op("relationship", e))?;
             Ok(())
         }

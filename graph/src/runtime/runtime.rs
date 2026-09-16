@@ -411,6 +411,7 @@ impl<'a> Runtime<'a> {
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
         if write {
             pending.borrow_mut().set_schema_baseline(&g);
+            pending.borrow_mut().open_id_boundaries(&g);
         }
         Self {
             parameters,
