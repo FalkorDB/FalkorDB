@@ -117,12 +117,27 @@ typedef struct {
 } StagedAttr;
 
 // an entity's update, accumulating until the query stops producing attributes
+//
+// The same shape union as Group, for the same reason and with the same
+// discriminator - UPDATE_NODE and UPDATE_EDGE are one opcode on each side of
+// _shape_of's partition. It matters a little more here than there: a Group
+// exists once per distinct shape, this exists once per ENTITY, so the arm that
+// is not live is dead weight on every entity a query updates.
 typedef struct {
 	EffectType opcode;
 	uint64_t   id;
-	LabelID   *labels;      // owned, ascending
-	uint16_t   n_labels;
-	RelationID relation_id;
+
+	union {
+		struct {
+			LabelID *labels;   // owned, ascending
+			uint16_t n_labels;
+		} node;
+
+		struct {
+			RelationID relation_id;
+		} edge;
+	} shape;
+
 	StagedAttr *attrs;      // owned
 	uint32_t    n_attrs;
 	uint32_t    cap_attrs;
@@ -736,16 +751,20 @@ static PendingUpdate *_update_for
 	slot->idx1 = idx + 1;
 	g->index_n++;
 
-	u->opcode      = opcode;
-	u->id          = id;
-	u->relation_id = relation_id;
-	u->n_labels    = n_labels;
-	u->cap_attrs   = 4;
-	u->attrs       = rm_calloc(u->cap_attrs, sizeof(StagedAttr));
+	u->opcode    = opcode;
+	u->id        = id;
+	u->cap_attrs = 4;
+	u->attrs     = rm_calloc(u->cap_attrs, sizeof(StagedAttr));
 
-	if(n_labels > 0) {
-		u->labels = rm_malloc(sizeof(LabelID) * n_labels);
-		memcpy(u->labels, labels, sizeof(LabelID) * n_labels);
+	if(_shape_of(opcode) == SHAPE_EDGE) {
+		u->shape.edge.relation_id = relation_id;
+	} else {
+		u->shape.node.n_labels = n_labels;
+
+		if(n_labels > 0) {
+			u->shape.node.labels = rm_malloc(sizeof(LabelID) * n_labels);
+			memcpy(u->shape.node.labels, labels, sizeof(LabelID) * n_labels);
+		}
 	}
 
 	return u;
@@ -823,10 +842,15 @@ static void _update_release(PendingUpdate *u) {
 		SIValue_Free(u->attrs[k].v);
 	}
 	rm_free(u->attrs);
-	rm_free(u->labels);
+	u->attrs = NULL;
 
-	u->attrs   = NULL;
-	u->labels  = NULL;
+	// only the node arm holds a pointer; freeing unconditionally would hand
+	// rm_free a relationship id on every edge update
+	if(_shape_of(u->opcode) == SHAPE_NODE) {
+		rm_free(u->shape.node.labels);
+		u->shape.node.labels = NULL;
+	}
+
 	u->n_attrs = 0;
 }
 
@@ -857,8 +881,12 @@ static void _flush_updates(EffectsV3Grouping *g) {
 			attr_ids[k] = u->attrs[k].id;
 		}
 
-		Group *grp = _group_for(g, u->opcode, u->labels, u->n_labels,
-				u->relation_id, attr_ids, (uint16_t)u->n_attrs);
+		const bool is_edge = (_shape_of(u->opcode) == SHAPE_EDGE);
+		Group *grp = _group_for(g, u->opcode,
+				is_edge ? NULL : u->shape.node.labels,
+				is_edge ? 0    : u->shape.node.n_labels,
+				is_edge ? u->shape.edge.relation_id : 0,
+				attr_ids, (uint16_t)u->n_attrs);
 
 		EffectsV3IdListBuilder_Push(grp->ids, u->id);
 		// SERIALISED HERE, once, straight into the group's byte sequence -
