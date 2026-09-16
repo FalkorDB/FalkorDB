@@ -458,35 +458,38 @@ void EffectsV3IdListBuilder_Push
 				continues_run = (id > last_max || id < last_min);
 				break;
 		}
+
+		if(continues_run) {
+			// THE STEP GOES THE RIGHT WAY, and that is only half of it: THE
+			// SEGMENT BEING LEFT BEHIND MUST READ THE RUN'S WAY TOO.
+			//
+			// A collapse re-reads the WHOLE run as one set in one direction,
+			// so a segment whose own ids run the other way comes back
+			// transposed: every id present, the count right, the decoder's
+			// cardinality check passed, and two rows on each other's entity.
+			// run_dir describes how consecutive SEGMENTS step, so it does not
+			// say this by itself.
+			//
+			// A single id has no direction of its own and fits either way.
+			// Anything longer must agree with the run.
+			RunDirection dir = (b->run_dir != RUN_UNDECIDED)
+				? b->run_dir
+				: ((id < last_min) ? RUN_DESCENDING : RUN_ASCENDING);
+
+			continues_run = (dir == RUN_ASCENDING)
+				? (last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING)
+				: (last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING ||
+				   EffectsV3Seg_Len(last) == 1);
+
+			// committed only if the run really does continue, so the else
+			// branch below still sees an undecided run to restart
+			if(continues_run) {
+				b->run_dir = dir;
+			}
+		}
 	}
 
 	if(continues_run) {
-		if(b->run_dir == RUN_UNDECIDED) {
-			b->run_dir = (id < last_min) ? RUN_DESCENDING : RUN_ASCENDING;
-		}
-
-		// THE SEGMENT MUST READ IN THE RUN'S OWN DIRECTION, or the run ends
-		// here instead of taking it.
-		//
-		// A collapse re-reads the WHOLE run as one set in one direction, so a
-		// segment whose own ids run the other way comes back transposed: every
-		// id present, the count right, the decoder's cardinality check passed,
-		// and two rows on each other's entity. run_dir only describes how
-		// consecutive SEGMENTS step, so it does not say this by itself.
-		//
-		// A single id has no direction of its own and fits either way. Anything
-		// longer must agree with the run.
-		bool fits = (b->run_dir == RUN_ASCENDING)
-			? (last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING)
-			: (last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING ||
-			   EffectsV3Seg_Len(last) == 1);
-
-		if(!fits) {
-			_push_singleton(b, id);
-			_restart_run(b, b->n_segments - 1);
-			return;
-		}
-
 		// the segment being superseded has its final length now, so this is the
 		// moment its contribution is known - and the only moment it may be
 		// charged, since charging an open segment would make the collapse
