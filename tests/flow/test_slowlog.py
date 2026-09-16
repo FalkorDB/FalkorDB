@@ -76,12 +76,30 @@ class testSlowLog():
             # redis < 6.2.0 not support slowlog time measure
             return
 
-        # Issue a long running query, this should replace an existing entry in the slowlog.
-        # NOTE: the range must be large enough that this query is deterministically
-        # slower than the queries used by populate_slowlog above (UNWIND range(0, 250000))
-        # even under coverage instrumentation, where per-row work is amplified
-        # non-uniformly. See issue: flaky test under coverage-flow.
-        q = "UNWIND range(0, 2500) AS i UNWIND range(0, 2500) AS j WITH i, j WHERE i > 0 AND j < 500 RETURN SUM(i + j)"
+        # Issue a long running query, this should replace an existing entry in
+        # the slowlog.
+        #
+        # This query has to outrank all ten entries populate_slowlog just left,
+        # so it deliberately reuses *their exact shape* and only scales the row
+        # count up. Sizing alone is not enough: a query of a different shape has
+        # to stay slower across coverage instrumentation, which amplifies
+        # per-row work non-uniformly, and across engine optimizations that may
+        # land on one shape and not the other. Both of those cancel between two
+        # queries built the same way, leaving the row-count margin as the only
+        # thing that decides the ordering.
+        #
+        # The previous body here was a double `UNWIND ... RETURN SUM(i + j)`
+        # while populate_slowlog used a filtered single `UNWIND ... RETURN
+        # count(x)`. It measured ~3.7x the slowest populated entry on a release
+        # build and still dropped below it under coverage-flow, which is the
+        # mismatch this avoids.
+        #
+        # populate_slowlog's heaviest case is `x % 1 = 0`, where every one of
+        # its 2,500,000 rows survives the filter; 7,500,000 rows keeps a 3x
+        # margin over it. Kept on one line and well under redis's 128-byte
+        # slowlog argument limit, so the assertion below still matches the
+        # command in full rather than a truncated copy of it.
+        q = "UNWIND range(0, 7500000) AS x WITH x WHERE x % 1 = 0 RETURN count(x)"
 
         self.graph.query(q)
         B = self.graph.slowlog()

@@ -432,3 +432,106 @@ class test_encode_decode(FlowTestsBase):
             "MATCH (n:Str) RETURN n.id, size(n.val) ORDER BY n.id"
         )
         self.env.assertEqual(expected.result_set, actual.result_set)
+
+    def test_18_user_graph_named_like_internal_placeholder(self):
+        # Nothing about a graph's *name* makes it the module's own bookkeeping.
+        # The pre-save sweep used to scan the keyspace and decide which
+        # graphdata keys were its own virtual keys by matching a prefix on the
+        # graph's name, so `SAVE` deleted any user graph that had picked such a
+        # name -- silently, and with its data (issue #2773). The save now takes
+        # its list of graphs from the module's own registry, which virtual keys
+        # were never in, so these names are ordinary.
+        names = ["__placeholder_mydata", "__vkey_placeholder_mydata",
+                 "__placeholder", "__vkey_placeholder"]
+
+        # VKEY_MAX_ENTITY_COUNT is 10 for this suite, so 200 nodes spans many
+        # virtual keys -- this exercises the multi-key save/load path too.
+        for name in names:
+            self.db.select_graph(name).query(
+                "UNWIND range(1, 200) AS i CREATE (:Keep {v:i})")
+
+        query    = "MATCH (n:Keep) RETURN count(n), sum(n.v)"
+        expected = [[200, 20100]]
+
+        # `telemetry{...}` keys are excluded -- the module's telemetry flusher
+        # writes them on its own schedule, so they would race this snapshot.
+        def keyspace():
+            return sorted(k for k in self.redis_con.keys("*")
+                          if not k.startswith("telemetry"))
+
+        def assert_intact():
+            for name in names:
+                self.env.assertTrue(self.redis_con.exists(name))
+                self.env.assertEqual(
+                    self.db.select_graph(name).query(query).result_set, expected)
+
+        before = keyspace()
+        assert_intact()
+
+        # a synchronous SAVE must not destroy them, and must leave the keyspace
+        # exactly as it found it -- proving every virtual key it made is gone
+        self.redis_con.execute_command("SAVE")
+        assert_intact()
+        self.env.assertEqual(keyspace(), before)
+
+        # and they must survive a full RDB round-trip, including the second
+        # save, which encodes graphs that came back through the load's
+        # placeholder path
+        self.redis_con.execute_command("DEBUG", "RELOAD")
+        assert_intact()
+        self.env.assertEqual(keyspace(), before)
+
+        self.redis_con.execute_command("SAVE")
+        assert_intact()
+        self.env.assertEqual(keyspace(), before)
+
+        for name in names:
+            self.db.select_graph(name).delete()
+
+
+class test_encode_decode_rename(FlowTestsBase):
+    # Its own env: the test restarts the server to read its RDB back, and it
+    # has to be the only graph in that RDB -- with other graphs alongside it
+    # the bug below hides, since whether the renamed graph is recovered depends
+    # on where its keys land in the key stream.
+    def __init__(self):
+        self.env, self.db = Env(moduleArgs="VKEY_MAX_ENTITY_COUNT 10")
+        self.redis_con = self.env.getConnection()
+
+    def test_01_renamed_multi_key_graph_round_trips(self):
+        # A RENAME moves the graph to a new key but leaves the name inside the
+        # `Graph` itself untouched. The RDB header now carries the key rather
+        # than that name, because the header's name is what the decoder keys
+        # its per-graph state by and what tells the graph's own key apart from
+        # its virtual keys. With the stale name in there, every key of a
+        # renamed multi-key graph looked like a virtual key of a graph stored
+        # under a key nobody was loading: the graph came back empty and its key
+        # was gone.
+        src, dst = "rename_src", "rename_dst"
+
+        # VKEY_MAX_ENTITY_COUNT is 10 for this env, so 200 nodes spans many
+        # virtual keys.
+        self.db.select_graph(src).query(
+            "UNWIND range(1, 200) AS i CREATE (:Keep {v:i})")
+        self.redis_con.rename(src, dst)
+
+        query    = "MATCH (n:Keep) RETURN count(n), sum(n.v)"
+        expected = [[200, 20100]]
+
+        self.env.assertEqual(
+            self.db.select_graph(dst).query(query).result_set, expected)
+
+        # A fresh process reading the RDB, not `DEBUG RELOAD` and not
+        # `restartAndReload` (which rewrites the AOF and never touches an RDB).
+        # A reload leaves the module's own registry standing, which hid the
+        # loss: the graph the load threw away was still reachable through the
+        # entry the pre-rename query had put there.
+        self.redis_con.execute_command("SAVE")
+        self.env.stop()
+        self.env.start()
+        self.redis_con = self.env.getConnection()
+
+        self.env.assertTrue(self.redis_con.exists(dst))
+        self.env.assertFalse(self.redis_con.exists(src))
+        self.env.assertEqual(
+            self.db.select_graph(dst).query(query).result_set, expected)

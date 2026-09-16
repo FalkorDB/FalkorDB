@@ -32,6 +32,7 @@ use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
 
 use crate::graph::graph::{DeletedEdge, DeletedNodeLabel};
+use crate::graph::id_space::IdSpace;
 
 use crate::{
     entity_type::EntityType,
@@ -135,10 +136,34 @@ pub(crate) struct CancelledRelationship {
 pub struct Pending {
     /// Nodes created in this transaction
     pub(crate) created_nodes: RoaringTreemap,
-    /// Relationships created, grouped by type: type_name → [(rel_id, from, to)]
+    /// Where the node id space ended when this batch opened.
+    ///
+    /// The one thing about the batch's id space that cannot be recovered later,
+    /// which is why it is the only thing kept. Everything else an allocator
+    /// needs is already here — `created_nodes` and `cancelled_nodes` between
+    /// them are exactly the ids this batch has been handed — and the space
+    /// itself is built where it is used, as `GRAPH.BULK` and the effects path
+    /// already do.
+    ///
+    /// Not recoverable because a cancelled *reclaimed* id does not move the
+    /// graph's boundary: it was already in the recycle bin, so returning it is
+    /// a no-op there. Measured — a batch that opened at boundary 13 and
+    /// cancelled one id still reports 13, so subtracting the cancellation lands
+    /// at 12 and judges every created id as already live.
+    pub(crate) node_entry: u64,
     pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
     pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
+    /// The same for relationships.
+    pub(crate) rel_entry: u64,
+    /// Every relationship id this batch has been handed, cancelled included.
+    ///
+    /// The node side needs no such field: `created_nodes` is already a set and
+    /// `cancelled_nodes` is the rest of the answer. Relationships are kept in a
+    /// map keyed by id and a vector of cancellation records, and neither can be
+    /// differenced against the recycle bin without being walked, so one set is
+    /// the cheapest honest representation rather than a second copy.
+    pub(crate) taken_relationship_ids: RoaringTreemap,
     /// Nodes to be deleted
     pub(crate) deleted_nodes: RoaringTreemap,
     /// Relationships to be deleted
@@ -174,7 +199,7 @@ pub struct Pending {
     /// because the node is deleted a record later and its content would be
     /// applied and immediately undone. [`Self::cancelled_relationships`] keeps
     /// more only because `CreateEdge` has no form without a type and endpoints.
-    pub(crate) cancelled_nodes: Vec<u64>,
+    pub(crate) cancelled_nodes: RoaringTreemap,
     /// Relationships cascaded away by a cancelled node, in the same commit.
     ///
     /// Their ids were reserved and returned exactly as a cancelled node's is —
@@ -352,13 +377,16 @@ impl Pending {
     pub fn new() -> Self {
         Self {
             created_nodes: RoaringTreemap::new(),
+            node_entry: 0,
             created_rels_by_type: FxHashMap::default(),
             created_rel_types: FxHashMap::default(),
+            rel_entry: 0,
+            taken_relationship_ids: RoaringTreemap::new(),
             deleted_nodes: RoaringTreemap::new(),
             deleted_relationships: RoaringTreemap::new(),
             deleted_endpoints: Vec::new(),
             deleted_node_labels: Vec::new(),
-            cancelled_nodes: Vec::new(),
+            cancelled_nodes: RoaringTreemap::new(),
             cancelled_relationships: Vec::new(),
             new_nodes_attrs: FxHashMap::default(),
             existing_nodes_attrs: FxHashMap::default(),
@@ -387,6 +415,48 @@ impl Pending {
         self.schema_rel_type_count = graph.get_types().len();
         self.schema_node_attr_count = graph.get_node_attribute_names().len();
         self.schema_rel_attr_count = graph.get_relationship_attribute_names().len();
+    }
+
+    /// A fresh id space for this batch's node ids.
+    ///
+    /// Built on demand from the boundary at [`Self::node_entry`], the way every
+    /// other caller builds one. Nothing is kept between uses because nothing
+    /// needs to be.
+    #[must_use]
+    pub fn node_id_space(&self) -> IdSpace {
+        IdSpace::at(self.node_entry)
+    }
+
+    /// The same for relationships.
+    #[must_use]
+    pub fn rel_id_space(&self) -> IdSpace {
+        IdSpace::at(self.rel_entry)
+    }
+
+    /// The node ids this batch has been handed, as the disjoint sets it already
+    /// keeps them in. [`IdSpace::reserve`] must not reissue any of them.
+    #[must_use]
+    pub const fn issued_nodes(&self) -> [&RoaringTreemap; 2] {
+        [&self.created_nodes, &self.cancelled_nodes]
+    }
+
+    /// The same for relationships, which are kept as one set.
+    #[must_use]
+    pub const fn issued_relationships(&self) -> [&RoaringTreemap; 1] {
+        [&self.taken_relationship_ids]
+    }
+
+    /// Record where the id space stands, for the batch that starts now.
+    ///
+    /// Paired with [`Self::clear`] at every commit and called once when the
+    /// query's `Pending` is built, because the boundary moves as commits land.
+    pub fn open_id_boundaries(
+        &mut self,
+        g: &AtomicRefCell<Graph>,
+    ) {
+        let graph = g.borrow();
+        self.node_entry = graph.node_id_bound();
+        self.rel_entry = graph.relationship_id_bound();
     }
 
     pub fn created_nodes(
@@ -510,15 +580,34 @@ impl Pending {
         }
     }
 
+    /// Stage label adds for `id`, cancelling any removal of those same labels
+    /// staged earlier in this query. Mirrors [`Self::remove_node_labels`], which
+    /// cancels earlier adds; together they keep `set_labels` and `remove_labels`
+    /// disjoint per node, so the last clause to touch a label wins in either
+    /// direction (`REMOVE n:L SET n:L` keeps `L`, `SET n:L REMOVE n:L` drops it).
+    fn stage_node_labels(
+        &mut self,
+        raw_id: u64,
+        labels: &OrderSet<LabelId>,
+    ) {
+        let entry = self.set_labels.entry(raw_id).or_default();
+        for label in labels.iter() {
+            entry.push(usize::from(*label) as u64);
+        }
+        if let Some(removed) = self.remove_labels.get_mut(&raw_id) {
+            removed.retain(|&l| !labels.contains(&LabelId(l as usize)));
+            if removed.is_empty() {
+                self.remove_labels.remove(&raw_id);
+            }
+        }
+    }
+
     pub fn set_node_labels(
         &mut self,
         id: NodeId,
         labels: &OrderSet<LabelId>,
     ) {
-        let entry = self.set_labels.entry(id.into()).or_default();
-        for label in labels.iter() {
-            entry.push(usize::from(*label) as u64);
-        }
+        self.stage_node_labels(id.into(), labels);
     }
 
     pub fn set_nodes_labels(
@@ -527,13 +616,13 @@ impl Pending {
         labels: &OrderSet<LabelId>,
     ) {
         for id in ids {
-            let entry = self.set_labels.entry((*id).into()).or_default();
-            for label in labels.iter() {
-                entry.push(usize::from(*label) as u64);
-            }
+            self.stage_node_labels((*id).into(), labels);
         }
     }
 
+    /// Stage label removals for `id`, cancelling any add of those same labels
+    /// staged earlier in this query — the mirror image of
+    /// [`Self::stage_node_labels`], keeping the two sets disjoint per node.
     pub fn remove_node_labels(
         &mut self,
         id: NodeId,
@@ -545,6 +634,9 @@ impl Pending {
             // Remove from pending set labels
             if let Some(set) = self.set_labels.get_mut(&raw_id) {
                 set.retain(|&l| l != label_id);
+                if set.is_empty() {
+                    self.set_labels.remove(&raw_id);
+                }
             }
             self.remove_labels.entry(raw_id).or_default().push(label_id);
         }
@@ -554,9 +646,9 @@ impl Pending {
     /// added, `Some(false)` if it was removed, `None` if this query says nothing
     /// about it and the committed label matrix is the answer.
     ///
-    /// The precedence is [`Self::update_node_labels`]'s, which applies the adds
-    /// and then the removals, so a removal wins — the two must agree, since they
-    /// answer the same question for the same node.
+    /// `set_labels` and `remove_labels` are disjoint per node (see
+    /// [`Self::stage_node_labels`]), so at most one of the two branches below can
+    /// match and the order they are consulted in carries no meaning.
     pub fn node_has_label(
         &self,
         id: NodeId,
@@ -581,6 +673,11 @@ impl Pending {
         None
     }
 
+    /// Overlay this query's staged label changes onto `labels`.
+    ///
+    /// Adds are applied before removals, but the two sets are disjoint per node
+    /// (see [`Self::stage_node_labels`]), so no label is touched by both passes
+    /// and the order is immaterial.
     pub fn update_node_labels(
         &self,
         id: NodeId,
@@ -641,7 +738,7 @@ impl Pending {
 
         // The one durable record that this id was ever handed out. Everything
         // above has just erased it from the structures the graph commits.
-        self.cancelled_nodes.push(id.into());
+        self.cancelled_nodes.insert(id.into());
 
         (label_ids, attrs, rels)
     }
@@ -711,6 +808,7 @@ impl Pending {
             .or_default()
             .push((id, from, to));
         self.created_rel_types.insert(id, type_name);
+        self.taken_relationship_ids.insert(id.into());
     }
 
     /// Set all attributes for a relationship. `attrs` must be
@@ -1032,11 +1130,18 @@ impl Pending {
         g: &AtomicRefCell<Graph>,
         stats: &RefCell<QueryStatistics>,
     ) -> Result<(), String> {
+        // One space per kind for the whole commit, opened from the boundary
+        // this batch started at. Creates record into it and the deletes below
+        // are judged against it — the write path used to pass `None` there and
+        // skip the check, which is the same gap on delete that this PR closed
+        // on create.
+        let mut node_space = self.node_id_space();
+        let mut rel_space = self.rel_id_space();
         if !self.created_nodes.is_empty() {
             stats.borrow_mut().nodes_created += self.created_nodes.len();
-            // The allocator handed these out — see `create_allocated_nodes`
-            // for why the graph's own mark cannot judge them.
-            g.borrow_mut().create_allocated_nodes(&self.created_nodes);
+            g.borrow_mut()
+                .create_nodes(&self.created_nodes, &mut node_space)
+                .map_err(|e| e.to_string())?;
         }
         if !self.created_rel_types.is_empty() {
             stats.borrow_mut().relationships_created += self.created_rel_types.len();
@@ -1050,7 +1155,8 @@ impl Pending {
                     dsts.push(to.into());
                     ids.push(rel_id.into());
                 }
-                g.create_allocated_relationships(type_name, &srcs, &dsts, &ids);
+                g.create_relationships_bulk(type_name, &srcs, &dsts, &ids, &mut rel_space)
+                    .map_err(|e| e.to_string())?;
             }
         }
         if !self.set_labels.is_empty() {
@@ -1123,9 +1229,7 @@ impl Pending {
                 .delete_nodes(
                     &self.deleted_nodes,
                     &mut self.index_docs.node_removes,
-                    // The write path allocates its own ids, so the id space is
-                    // dense by construction and there is no batch to validate.
-                    None,
+                    &node_space,
                 )
                 .map_err(|e| e.to_string())?;
         }
@@ -1168,8 +1272,7 @@ impl Pending {
                 .delete_relationships(
                     &explicit_rels,
                     &mut self.index_docs.edge_removes,
-                    // No batch: the write path allocated these ids itself.
-                    None,
+                    &rel_space,
                 )
                 .map_err(|e| e.to_string())?;
             // Use the actually-removed relationships (delete_relationships skips
@@ -1266,8 +1369,9 @@ impl Pending {
     /// would force a pending-tuple materialization of its delta on every
     /// commit (`O(|delta|)` per write query, quadratic between folds) —
     /// measured as the dominant cost of small repeated creates. Mirrors
-    /// [`Self::update_node_labels`] semantics: a removed label wins over a
-    /// pending set.
+    /// [`Self::update_node_labels`] semantics; `set_labels` and `remove_labels`
+    /// are disjoint per node (see [`Self::stage_node_labels`]), so the two
+    /// branches below cannot both match.
     fn constraint_node_has_label(
         &self,
         g: &Graph,
@@ -1565,11 +1669,13 @@ impl Pending {
         }
         self.created_nodes.clear();
         self.created_rel_types.clear();
+
         self.deleted_nodes.clear();
         self.deleted_relationships.clear();
         self.deleted_endpoints.clear();
         self.deleted_node_labels.clear();
         self.cancelled_nodes.clear();
+        self.taken_relationship_ids.clear();
         self.cancelled_relationships.clear();
         self.index_docs.node_adds.clear();
         self.index_docs.node_removes.clear();
@@ -1598,5 +1704,162 @@ impl Pending {
                 .values()
                 .map(|v| v.len() as u64)
                 .sum::<u64>()
+    }
+}
+
+#[cfg(test)]
+mod label_effect_tests {
+    use super::*;
+    use crate::effects::v3::emit::for_each_record;
+    use crate::effects::v3::{IdList, Record};
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// The one node every scenario below stages labels on.
+    const NODE: u64 = 0;
+
+    /// A graph whose only labels are `names`, and a `Pending` that has already
+    /// taken its schema baseline — so the emitter announces no schema, and the
+    /// label records are the whole of what it produces.
+    fn fixture(names: &[&str]) -> (AtomicRefCell<Graph>, Vec<LabelId>, Pending) {
+        ensure_init();
+        let g = AtomicRefCell::new(Graph::new(16, 16, 1, 0, "label_effects"));
+        let labels: Vec<LabelId> = {
+            let mut graph = g.borrow_mut();
+            names.iter().map(|n| graph.get_label_id_mut(n)).collect()
+        };
+        let mut pending = Pending::new();
+        pending.set_schema_baseline(&g);
+        (g, labels, pending)
+    }
+
+    /// Every record the emitter produces, in emission order.
+    ///
+    /// The assertions below compare this whole vec against an expected one
+    /// rather than searching it for a record, because a search can only show
+    /// that something is present. Whole-vec equality pins an absence just as
+    /// tightly, which is the half that matters here.
+    fn records(
+        pending: &Pending,
+        g: &AtomicRefCell<Graph>,
+    ) -> Vec<Record> {
+        let mut out = Vec::new();
+        for_each_record(pending, g, |r| out.push(r));
+        out
+    }
+
+    /// A label record naming [`NODE`] alone, shaped as `digest_labels` builds
+    /// it: the label ids sorted and deduped.
+    fn labelled(
+        add: bool,
+        labels: &[LabelId],
+    ) -> Record {
+        let ids: IdList = [NODE].into_iter().collect();
+        let mut shape: Vec<u32> = labels.iter().map(|l| usize::from(*l) as u32).collect();
+        shape.sort_unstable();
+        shape.dedup();
+        if add {
+            Record::SetLabels { ids, labels: shape }
+        } else {
+            Record::RemoveLabels { ids, labels: shape }
+        }
+    }
+
+    /// Positive control for [`cancelled_add_emits_no_set_labels`]: an
+    /// uncancelled `SET n:L` does produce a `SetLabels`. Without this, an
+    /// emitter that had stopped producing label records altogether would
+    /// satisfy the cancellation tests vacuously.
+    #[test]
+    fn plain_set_emits_set_labels() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
+
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+
+        assert_eq!(records(&pending, &g), vec![labelled(true, &[l])]);
+    }
+
+    /// Positive control for [`cancelled_removal_emits_no_remove_labels`]: an
+    /// uncancelled `REMOVE n:L` does produce a `RemoveLabels`.
+    #[test]
+    fn plain_remove_emits_remove_labels() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
+
+        pending.remove_node_labels(NODE.into(), &[l]);
+
+        assert_eq!(records(&pending, &g), vec![labelled(false, &[l])]);
+    }
+
+    /// `SET n:L REMOVE n:L`: the removal cancels the staged add, and the
+    /// emptied `set_labels` entry goes with it.
+    ///
+    /// Two layers keep the cancelled add off the wire, and this checks both.
+    /// The map assertion is the one this fix owns: dropping the emptied entry
+    /// is what stops a zero-label record existing to be emitted. The record
+    /// assertion is the outcome, which `digest_labels` also defends by
+    /// suppressing an empty label set — so it holds even if the cleanup here
+    /// regresses, and only the map assertion would catch that.
+    #[test]
+    fn cancelled_add_emits_no_set_labels() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
+
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+        pending.remove_node_labels(NODE.into(), &[l]);
+
+        assert!(
+            !pending.set_labels.contains_key(&NODE),
+            "the emptied set_labels entry must be dropped, not left empty"
+        );
+        assert_eq!(
+            records(&pending, &g),
+            vec![labelled(false, &[l])],
+            "the cancelled add must leave no SetLabels behind"
+        );
+        assert_eq!(pending.node_has_label(NODE.into(), l), Some(false));
+    }
+
+    /// `REMOVE n:L SET n:L`, the mirror direction and the #2777 report: the add
+    /// cancels the staged removal, the label survives, and the emptied
+    /// `remove_labels` entry is not left behind either.
+    #[test]
+    fn cancelled_removal_emits_no_remove_labels() {
+        let (g, labels, mut pending) = fixture(&["L"]);
+        let l = labels[0];
+
+        pending.remove_node_labels(NODE.into(), &[l]);
+        pending.set_node_labels(NODE.into(), &[l].into_iter().collect());
+
+        assert!(
+            !pending.remove_labels.contains_key(&NODE),
+            "the emptied remove_labels entry must be dropped, not left empty"
+        );
+        assert_eq!(
+            records(&pending, &g),
+            vec![labelled(true, &[l])],
+            "the cancelled removal must leave no RemoveLabels behind"
+        );
+        assert_eq!(
+            pending.node_has_label(NODE.into(), l),
+            Some(true),
+            "the re-added label must survive the cancelled removal"
+        );
+    }
+
+    /// Cancellation is per label, not per node: `SET n:L:M REMOVE n:L` drops
+    /// only `L` from the add, and both records still go out.
+    #[test]
+    fn cancelling_one_label_of_several_keeps_the_rest() {
+        let (g, labels, mut pending) = fixture(&["L", "M"]);
+        let (l, m) = (labels[0], labels[1]);
+
+        pending.set_node_labels(NODE.into(), &[l, m].into_iter().collect());
+        pending.remove_node_labels(NODE.into(), &[l]);
+
+        assert_eq!(pending.node_has_label(NODE.into(), m), Some(true));
+        assert_eq!(
+            records(&pending, &g),
+            vec![labelled(true, &[m]), labelled(false, &[l])]
+        );
     }
 }
