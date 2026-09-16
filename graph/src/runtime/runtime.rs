@@ -1762,7 +1762,7 @@ impl<'a> Runtime<'a> {
         id: NodeId,
     ) -> usize {
         if self.deleted_nodes.borrow().contains_key(&id)
-            || self.pending.borrow().is_node_pending_delete(id)
+            || self.pending.borrow().is_node_deleted(id)
         {
             return 0;
         }
@@ -1780,7 +1780,7 @@ impl<'a> Runtime<'a> {
         types: &[Arc<String>],
     ) -> usize {
         if self.deleted_nodes.borrow().contains_key(&id)
-            || self.pending.borrow().is_node_pending_delete(id)
+            || self.pending.borrow().is_node_deleted(id)
         {
             return 0;
         }
@@ -1797,7 +1797,7 @@ impl<'a> Runtime<'a> {
         id: NodeId,
     ) -> usize {
         if self.deleted_nodes.borrow().contains_key(&id)
-            || self.pending.borrow().is_node_pending_delete(id)
+            || self.pending.borrow().is_node_deleted(id)
         {
             return 0;
         }
@@ -1815,7 +1815,7 @@ impl<'a> Runtime<'a> {
         types: &[Arc<String>],
     ) -> usize {
         if self.deleted_nodes.borrow().contains_key(&id)
-            || self.pending.borrow().is_node_pending_delete(id)
+            || self.pending.borrow().is_node_deleted(id)
         {
             return 0;
         }

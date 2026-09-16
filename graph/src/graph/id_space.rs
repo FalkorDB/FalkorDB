@@ -13,7 +13,7 @@
 //! hands ids out, [`IdSpace::cancel`] takes an unused one back,
 //! [`IdSpace::create`] makes them live, [`IdSpace::release`] frees them. `Graph`
 //! keeps no counter and no bitmap of its own; `node_count()` and
-//! `recycled_node_ids()` read through to these.
+//! `deleted_nodes()` read through to these.
 //!
 //! That is the point rather than a side effect. The boundary is
 //! `live + recycled.len()`, so every one of those operations has to move both
@@ -917,7 +917,7 @@ mod tests {
         delete(&mut g, &ids(&[0])).expect("delete");
         g.node_id_space().verify().expect("whole");
         assert_eq!(g.node_count(), 1);
-        assert_eq!(g.recycled_node_count(), 1);
+        assert_eq!(g.deleted_nodes_count(), 1);
     }
 
     #[test]

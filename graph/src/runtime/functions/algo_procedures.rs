@@ -738,7 +738,7 @@ fn register_pagerank(funcs: &mut Functions) {
                     let adj = g.build_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.recycled_node_count();
+                    let n = g.node_count() + g.deleted_nodes_count();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -784,7 +784,7 @@ fn register_pagerank(funcs: &mut Functions) {
                 GrB_Vector_free(&raw mut centrality);
                 delete_lagraph_graph_maybe_borrowed(&mut lag_g, borrowed);
 
-                let has_deleted = g.recycled_node_count() != 0;
+                let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
                 let mut scores = Vec::with_capacity(entries.len());
                 for (compact_idx, score) in entries {
@@ -844,7 +844,7 @@ fn register_wcc(funcs: &mut Functions) {
                     let adj = g.build_symmetric_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.recycled_node_count();
+                    let n = g.node_count() + g.deleted_nodes_count();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -882,7 +882,7 @@ fn register_wcc(funcs: &mut Functions) {
 
                 let entries = extract_vector_i64(component);
 
-                let has_deleted = g.recycled_node_count() != 0;
+                let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
                 let mut component_ids = Vec::with_capacity(entries.len());
                 for (compact_idx, comp_id) in entries {
@@ -964,7 +964,7 @@ fn register_betweenness(funcs: &mut Functions) {
                     let adj = g.build_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.recycled_node_count();
+                    let n = g.node_count() + g.deleted_nodes_count();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -985,7 +985,7 @@ fn register_betweenness(funcs: &mut Functions) {
 
                 // Select source nodes for sampling (all from compact matrix)
                 let n_nodes = compact_to_id.as_ref().map_or_else(
-                    || (g.node_count() + g.recycled_node_count()) as usize,
+                    || (g.node_count() + g.deleted_nodes_count()) as usize,
                     Vec::len,
                 );
                 let sources: Vec<u64> = if n_nodes == 0 {
@@ -1130,7 +1130,7 @@ fn register_bfs(funcs: &mut Functions) {
                     return Err(format!("LAGr_BreadthFirstSearch_Extended failed: {info}"));
                 }
 
-                let has_deleted = g.recycled_node_count() != 0;
+                let has_deleted = g.deleted_nodes_count() != 0;
                 let mut nodes: ThinVec<Value>;
                 let mut edges: ThinVec<Value> = ThinVec::new();
 
@@ -1252,7 +1252,7 @@ fn register_cdlp(funcs: &mut Functions) {
                     let adj = g.build_symmetric_adjacency_matrix(&rel_types);
                     let raw_adj: GrB_Matrix = adj.inner();
                     owned_adj = Some(adj);
-                    let n = g.node_count() + g.recycled_node_count();
+                    let n = g.node_count() + g.deleted_nodes_count();
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -1289,7 +1289,7 @@ fn register_cdlp(funcs: &mut Functions) {
 
                 let entries = extract_vector_i64(cdlp);
 
-                let has_deleted = g.recycled_node_count() != 0;
+                let has_deleted = g.deleted_nodes_count() != 0;
                 let mut node_ids = Vec::with_capacity(entries.len());
                 let mut community_ids = Vec::with_capacity(entries.len());
                 for (compact_idx, community_id) in entries {
@@ -2752,7 +2752,7 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
                         adj.inner(),
                         std::ptr::null_mut(),
                     );
-                    let n = g.node_count() + g.recycled_node_count();
+                    let n = g.node_count() + g.deleted_nodes_count();
                     crate::graph::graphblas::GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
@@ -3014,7 +3014,7 @@ fn register_maxflow(funcs: &mut Functions) {
 
             // Fast path: when node IDs are dense and there is no label filter,
             // avoid per-call sort/dedup/hash remapping and use original IDs.
-            let use_identity_compaction = label_filter.is_none() && g.recycled_node_count() == 0;
+            let use_identity_compaction = label_filter.is_none() && g.deleted_nodes_count() == 0;
 
             let (compact_edges, edge_meta, original_edge_count, min_cap, max_cap, src_id, sink_id, total_nodes) =
                 if use_identity_compaction {

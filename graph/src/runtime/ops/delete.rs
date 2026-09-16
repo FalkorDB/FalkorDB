@@ -196,7 +196,7 @@ impl Runtime<'_> {
         // First pass: partition into already-deleted, pending-created, and committed
         let mut committed = Vec::with_capacity(node_ids.len());
         for &id in node_ids {
-            if self.pending.borrow().is_node_pending_delete(id) {
+            if self.pending.borrow().is_node_deleted(id) {
                 continue;
             }
             if self.pending.borrow().is_node_created(id) {
@@ -317,7 +317,7 @@ impl Runtime<'_> {
                 if !seen.insert(rel_id) {
                     continue;
                 }
-                if pending.is_relationship_pending_delete(*rel_id) {
+                if pending.is_relationship_deleted(*rel_id) {
                     continue;
                 }
                 if pending.is_relationship_created(*rel_id) {
@@ -401,7 +401,7 @@ impl Runtime<'_> {
         match value {
             Value::Node(id) => {
                 let id = *id;
-                if self.pending.borrow().is_node_pending_delete(id) {
+                if self.pending.borrow().is_node_deleted(id) {
                     // Already pending deletion, nothing to do
                 } else if self.pending.borrow().is_node_created(id) {
                     // Node was created in this transaction but not yet committed.
@@ -440,7 +440,7 @@ impl Runtime<'_> {
                         // Skip edges whose other endpoint is already being
                         // deleted — they will be discovered from that node's
                         // perspective too. Only snapshot once.
-                        if src != id && self.pending.borrow().is_node_pending_delete(src) {
+                        if src != id && self.pending.borrow().is_node_deleted(src) {
                             continue;
                         }
                         let type_name = self.get_relationship_type(rel_id).unwrap();
@@ -479,7 +479,7 @@ impl Runtime<'_> {
                 }
             }
             Value::Relationship(rel) => {
-                if self.pending.borrow().is_relationship_pending_delete(*rel) {
+                if self.pending.borrow().is_relationship_deleted(*rel) {
                     // Already pending deletion, nothing to do
                 } else if self.pending.borrow().is_relationship_created(*rel)
                     || !self.g.borrow().is_relationship_deleted(*rel)

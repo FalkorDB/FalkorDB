@@ -259,9 +259,9 @@ impl Runtime<'_> {
                     };
 
                     if (g.is_node_deleted(from_id) && !pending.is_node_created(from_id))
-                        || pending.is_node_pending_delete(from_id)
+                        || pending.is_node_deleted(from_id)
                         || (g.is_node_deleted(to_id) && !pending.is_node_created(to_id))
-                        || pending.is_node_pending_delete(to_id)
+                        || pending.is_node_deleted(to_id)
                     {
                         return Err(String::from(
                             "Failed to create relationship; endpoint was not found.",

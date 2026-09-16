@@ -118,7 +118,7 @@ impl Runtime<'_> {
                 Value::Node(node) => {
                     if (self.g.borrow().is_node_deleted(node)
                         && !self.pending.borrow().is_node_created(node))
-                        || self.pending.borrow().is_node_pending_delete(node)
+                        || self.pending.borrow().is_node_deleted(node)
                     {
                         continue;
                     }

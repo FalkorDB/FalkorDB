@@ -206,7 +206,7 @@ impl<'a> ExpandIntoOp<'a> {
                 'outer: for &tidx in edge_type_indices.iter() {
                     for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                         let id = RelationshipId::from(raw_id);
-                        if !pending.is_relationship_pending_delete(id)
+                        if !pending.is_relationship_deleted(id)
                             && !super::edge_already_used(&env, id, rp.alias.id, sibling_edges)
                         {
                             found_id = Some(id);
@@ -223,7 +223,7 @@ impl<'a> ExpandIntoOp<'a> {
             for &tidx in edge_type_indices.iter() {
                 for raw_id in g.relationship_tensors()[tidx].get(mat_src, mat_dst) {
                     let id = RelationshipId::from(raw_id);
-                    if pending.is_relationship_pending_delete(id) {
+                    if pending.is_relationship_deleted(id) {
                         continue;
                     }
                     if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {

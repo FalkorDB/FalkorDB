@@ -98,8 +98,8 @@ pub fn build_multi_key_payloads(
 ) -> Vec<Vec<PayloadEntry>> {
     let nc = graph.node_count();
     let ec = graph.relationship_count();
-    let dnc = graph.recycled_node_count();
-    let dec = graph.recycled_relationship_count();
+    let dnc = graph.deleted_nodes_count();
+    let dec = graph.deleted_relationships_count();
 
     let total_entities = nc + ec + dnc + dec;
     let key_count = if total_entities == 0 || vkey_max == 0 {
@@ -200,7 +200,7 @@ fn build_payloads(graph: &Graph) -> Vec<PayloadEntry> {
             offset: 0,
         });
     }
-    let dnc = graph.recycled_node_count();
+    let dnc = graph.deleted_nodes_count();
     if dnc > 0 {
         payloads.push(PayloadEntry {
             state: EncodeState::DeletedNodes,
@@ -216,7 +216,7 @@ fn build_payloads(graph: &Graph) -> Vec<PayloadEntry> {
             offset: 0,
         });
     }
-    let dec = graph.recycled_relationship_count();
+    let dec = graph.deleted_relationships_count();
     if dec > 0 {
         payloads.push(PayloadEntry {
             state: EncodeState::DeletedEdges,
