@@ -37,7 +37,7 @@ use crate::{
     entity_type::EntityType,
     graph::{
         constraint::{ConstraintStatus, ConstraintType},
-        graph::{Graph, LabelId, NodeId, RelationshipId},
+        graph::{Graph, LabelId, NodeId, NodeOpError, RelationshipId},
     },
     runtime::{ordermap::OrderMap, orderset::OrderSet, runtime::QueryStatistics, value::Value},
 };
@@ -214,7 +214,7 @@ pub struct Pending {
     /// all of its `Commit`s, so a later failure can resync them against committed
     /// state (see [`Self::resync_published_indexes`]).
     ///
-    /// Deliberately **not** reset by [`Self::clear`], which runs after every
+    /// Deliberately **not** reset by [`Self::end_segment`], which runs after every
     /// `Commit`: the undo has to cover the whole query, not just the last `Commit`.
     /// Per-query state — `Pending` belongs to one `Runtime`.
     published: IndexDocs,
@@ -1575,12 +1575,45 @@ impl Pending {
         deferred.commit(g);
     }
 
-    /// Clear all pending mutation state.
+    /// End the segment: discard its accumulated mutations and roll the graph's
+    /// id batches over to where the commit just left the boundary.
+    ///
+    /// The two are one call because they are one event, and because splitting
+    /// them was silent. A batch left unopened does not fail and does not crash:
+    /// the boundary stays where the last segment left it and ids simply stop
+    /// being reclaimed across it, so `CREATE (n) DELETE n WITH 1 AS x CREATE (m)`
+    /// allocates id 1 where it should allocate 0 — measured, with the whole flow
+    /// suite passing. Against a C primary that is a divergence in id-reuse
+    /// order, which costs a full resync per delete-then-create cycle.
+    ///
+    /// Fusing them buys most of that back, and it is worth saying exactly how
+    /// much. Forgetting this now also forgets to discard the segment's
+    /// mutations, so the next commit re-creates ids that are already live and
+    /// the query dies with `node 0 is already live below the boundary 0`. That
+    /// covers every segment that created something which survived.
+    ///
+    /// It does **not** cover a segment whose only content was a cancellation:
+    /// there is nothing to re-create, so nothing collides, and
+    /// `CREATE (n) DELETE n WITH 1 AS x CREATE (m)` still quietly allocates id 1
+    /// where it should allocate 0. Both measured. Nothing in this module can
+    /// close that last case, and the reason is structural rather than an
+    /// oversight: a batch that never rolled over is indistinguishable from a
+    /// longer one, and both are valid id spaces — [`IdSpace::verify`] passes on
+    /// either. Catching it needs a notion of "a segment happened" that the id
+    /// space does not have and would have to be given.
     ///
     /// Runs after every `Commit`, so it must NOT touch `published` — a later failure
     /// has to undo the documents *all* of this query's `Commit`s published, not just
     /// the last one's.
-    pub fn clear(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::IdSpace`] if an id space already contradicts itself;
+    /// opening a batch over it would re-anchor on the bad value and hide it.
+    pub fn end_segment(
+        &mut self,
+        g: &AtomicRefCell<Graph>,
+    ) -> Result<(), NodeOpError> {
         // Dropping millions of per-entity Vec allocations is O(n) frees and
         // stalls the serialized write thread; move large maps to a background
         // thread and let it pay the deallocation cost.
@@ -1630,6 +1663,11 @@ impl Pending {
         self.index_docs.node_removes.clear();
         self.index_docs.edge_adds.clear();
         self.index_docs.edge_removes.clear();
+
+        // The boundary moved when this commit landed, so the next segment
+        // allocates against where it now stands. Rebuilt, not re-anchored: an id
+        // this segment created is an ordinary recycled id to the next one.
+        g.borrow_mut().open_id_batches()
     }
 
     /// Returns the number of effects (operations) tracked in this Pending.

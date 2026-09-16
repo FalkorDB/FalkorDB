@@ -129,20 +129,23 @@ impl<'a> Iterator for CommitOp<'a> {
                     }
                 }
             }
-            self.runtime.pending.borrow_mut().clear();
+            // Ends the segment in both senses: this `Pending`'s accumulated
+            // mutations and the graph's id batches, which move together or the
+            // next segment allocates against a stale boundary.
+            if let Err(e) = self
+                .runtime
+                .pending
+                .borrow_mut()
+                .end_segment(&self.runtime.g)
+            {
+                return Some(Err(e.to_string()));
+            }
             // Update schema baseline so the next commit in this query only
             // emits newly added schema entries.
             self.runtime
                 .pending
                 .borrow_mut()
                 .set_schema_baseline(&self.runtime.g);
-            // The boundary moved when this commit landed, so the next segment
-            // opens a fresh batch against where it now stands. Rebuilt, not
-            // re-anchored: an id this segment created is an ordinary recycled
-            // id to the next one.
-            if let Err(e) = self.runtime.g.borrow_mut().open_id_batches() {
-                return Some(Err(e.to_string()));
-            }
             // Reverse once so we can pop from the end in O(1) while preserving order.
             self.results.reverse();
         }

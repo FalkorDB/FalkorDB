@@ -1430,7 +1430,11 @@ impl Graph {
     /// [`IdSpaceError`], wrapped, if either space already contradicts itself —
     /// opening a batch over a corrupt one would re-anchor the boundary on the
     /// bad value and hide it.
-    pub fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
+    /// `pub(crate)` on purpose: outside this crate the only way to have a batch
+    /// is [`Self::in_batch`], which cannot be left unopened. Inside it, the two
+    /// callers are that scope and `Pending::end_segment`, which is the one place
+    /// a batch legitimately rolls over rather than closing.
+    pub(crate) fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
         self.node_ids.open_batch().map_err(NodeOpError::node)?;
         self.relationship_ids
             .open_batch()
