@@ -160,15 +160,15 @@ typedef struct {
 
 	// THE VALUE, not its encoding.
 	//
-	// It used to be an offset into a byte arena, because the SIValue belongs
-	// to the caller and does not outlive the call - but encoding it early was
-	// only one way to make it outlive, and the expensive one. SIValue_Persist
-	// clones a volatile value and leaves an owned one alone, which is what
-	// Rust's Pending does by holding Value rather than bytes.
+	// The SIValue belongs to the caller and does not outlive the call, so it has
+	// to be made to outlive it somehow. SIValue_Persist is the cheap way: it
+	// clones a volatile value and leaves an owned one alone. Encoding it here
+	// instead would need an arena to hold the bytes, a scratch sink to write
+	// them through, and a second copy per attribute - and would leave dead bytes
+	// behind whenever a later write superseded one.
 	//
-	// Serialising once at emit rather than at stage removes the arena, the
-	// scratch sink and its wrapper, both copies per attribute, and the dead
-	// bytes a superseded value left behind.
+	// So it is serialised once, at the flush, straight into its group's buffer.
+	// Rust's Pending holds Value for the same reason.
 	SIValue v;
 } StagedAttr;
 
@@ -247,16 +247,15 @@ typedef struct {
 	// capacity is a power of two for mask probing and it grows at 70% load
 	// rather than when full. An arr's len/cap mean the wrong things here.
 	//
-	// OPEN ADDRESSED, and chosen for its TEARDOWN. This was a rax, which fixed
-	// the quadratic scan and then became the emitter's single largest cost:
-	// 29.6% at 200,000 entities, of which freeing the tree was 14.2% and
-	// building it 11.5%, against 3.9% for the lookups it exists for. On a
-	// single-attribute update every lookup misses and nothing is ever merged -
-	// a radix tree built and destroyed to discover there was no merging to do.
+	// OPEN ADDRESSED, and chosen for its TEARDOWN rather than its lookups. This
+	// table is built and destroyed once per payload, and on a single-attribute
+	// update every lookup misses and nothing is ever merged - so the work that
+	// dominates is creating and freeing it, not probing it. A flat table frees
+	// in one call and resets with a memset; a node-per-entry structure pays for
+	// the same lifetime one allocation at a time.
 	//
-	// A flat table frees in one call and resets with a memset, which is the
-	// half a radix tree does worst. It stores an INDEX rather than a pointer
-	// because 'updates' is reallocated, and index+1 so zero means empty.
+	// It stores an INDEX rather than a pointer because 'updates' is reallocated,
+	// and index+1 so zero means empty.
 	UpdateSlot *index;
 	uint32_t    index_cap;   // always a power of two
 	uint32_t    index_n;     // occupied slots
