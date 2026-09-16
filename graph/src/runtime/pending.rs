@@ -1653,6 +1653,18 @@ impl Pending {
         self.index_docs.edge_adds.clear();
         self.index_docs.edge_removes.clear();
 
+        // The batch is closing, so this is where its shape is owed: `taken` must
+        // fill the range from the boundary upward. Asked here and not earlier
+        // because it is legitimately false partway through — a segment creates,
+        // cancels and deletes in whatever order the query says.
+        //
+        // This is the one check here that can fail a user's query rather than a
+        // replica's buffer. It fires only on an id space this engine has already
+        // corrupted, and failing is the cheaper outcome: the query holds a
+        // private MVCC version, so the damage is discarded rather than published
+        // and then replicated.
+        g.borrow().verify_id_batches()?;
+
         // The boundary moved when this commit landed, so the next segment
         // allocates against where it now stands. Rebuilt, not re-anchored: an id
         // this segment created is an ordinary recycled id to the next one.
