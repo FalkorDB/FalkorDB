@@ -1456,6 +1456,55 @@ mod tests {
         }
     }
 
+    /// A run restarted at a two-id head folds that head into its bitmap.
+    ///
+    /// The one case where order is not enough. `claim_direction` restarts the
+    /// run AT the segment that just acquired a direction, so that segment heads
+    /// the new run and is folded into its bitmap. Restarting one index later
+    /// strands the pair between two runs, where no collapse can reach it: the
+    /// ids still come back in the order they were pushed, so every assertion on
+    /// the sequence — including both tests above and the seeded sweep — passes
+    /// either way. Only the segmentation separates them.
+    ///
+    /// That matters because the two engines have to agree byte for byte. A
+    /// differential run against the C builder found this exact shape and nothing
+    /// else: both sides preserved the order and disagreed about the bytes. So
+    /// this asserts where the bitmap starts and how much it holds, which is the
+    /// property the order cannot see.
+    #[test]
+    fn a_restarted_run_head_is_folded_into_its_bitmap() {
+        // Descending singletons, then a step down to 370 and back up to 371 —
+        // the pair that heads the restarted run — then a long ascending tail to
+        // take that run past the collapse threshold.
+        let mut ids: Vec<u64> = (390..=400).rev().step_by(2).collect();
+        ids.push(370);
+        ids.push(371);
+        ids.extend((373..=459).step_by(2));
+
+        let mut list = IdList::new();
+        for &id in &ids {
+            list.push(id);
+        }
+        assert_eq!(
+            list.iter().collect::<Vec<u64>>(),
+            ids,
+            "order is the floor, not the test"
+        );
+
+        match list.segments.last() {
+            Some(Segment::Ascending { min, len, .. }) => {
+                assert_eq!(
+                    (*min, *len),
+                    (370, 46),
+                    "the 370/371 pair must head this bitmap, not sit orphaned before it"
+                );
+            }
+            other => panic!(
+                "expected the run to have collapsed into one ascending bitmap, got {other:?}"
+            ),
+        }
+    }
+
     /// The same property over shapes nobody enumerated.
     ///
     /// Fixed seed, so a failure is reproducible and CI cannot go green and red
