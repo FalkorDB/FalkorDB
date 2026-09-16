@@ -2887,8 +2887,9 @@ updating clause.")
 
 
     def test_54_body_variables_do_not_alias_the_imported_row(self):
-        """A subquery body without an explicit `WITH` import must still bind
-        its own variables to their own slots, not to the outer row's."""
+        """A subquery body without an explicit `WITH` import must still be
+        isolated from the outer row, not evaluate its own predicates against
+        it."""
 
         self.graph.query("MATCH (n) DETACH DELETE n")
         self.graph.query("CREATE (:A:B {id: 1}), (:A:B {id: 2}), (:A:B {id: 3})")
@@ -2913,6 +2914,23 @@ updating clause.")
                     RETURN count(id) AS c""",
                 [[1]])
 
+        # The body's entry projection binds nothing here, so it hands the body
+        # row count and correlation alone. Every result must still carry the
+        # origin of the input row it belongs to, or the whole cross product
+        # collapses onto the first `x`.
+        self.get_res_and_assertEquals(
+            """MATCH (x:A:B)
+               WITH x
+               CALL { MATCH (n:A:B) RETURN n.id AS id }
+               RETURN x.id AS xid, id ORDER BY xid, id""",
+            [[a, b] for a in (1, 2, 3) for b in (1, 2, 3)])
+        self.get_res_and_assertEquals(
+            """MATCH (x:A:B)
+               WITH x
+               CALL { RETURN 7 AS id }
+               RETURN x.id AS xid, id ORDER BY xid""",
+            [[1, 7], [2, 7], [3, 7]])
+
         # The same misresolution let a write in the body escape its filter.
         res = self.graph.query(
             """MATCH (x:A:B)
@@ -2924,8 +2942,8 @@ updating clause.")
             "MATCH (n) WHERE n.hit IS NOT NULL RETURN n.id ORDER BY n.id", [[1]])
 
     def test_55_body_scan_not_anchored_to_the_imported_row(self):
-        """An unbound scan in the body must scan, not expand out of whatever
-        the outer scope imported."""
+        """An unbound scan in the body must scan, not degrade into an expand
+        out of whatever the outer scope imported."""
 
         self.graph.query("MATCH (n) DETACH DELETE n")
         self.graph.query("CREATE (:Hub), (:Leaf), (:Iso)")
