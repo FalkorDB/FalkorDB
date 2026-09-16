@@ -411,10 +411,10 @@ impl<'a> Runtime<'a> {
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
         if write {
             pending.borrow_mut().set_schema_baseline(&g);
-            // The batch the whole first segment allocates against. `Pending`
-            // holds no id state to open — the graph's id spaces are the
-            // allocator, and this query gets a private version of them.
-            g.borrow_mut().open_id_batches();
+            // No batch is opened here: a write query runs against a private MVCC
+            // version, and `Graph::new_version` opens one as it clones. Opening
+            // a second would be a no-op that this constructor cannot report a
+            // failure from anyway.
         }
         Self {
             parameters,

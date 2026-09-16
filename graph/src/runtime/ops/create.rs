@@ -156,7 +156,7 @@ impl Runtime<'_> {
                 let pending = self.pending.borrow();
                 let g = self.g.borrow();
                 g.node_id_space()
-                    .reserve(active_len, &pending.issued_nodes())?
+                    .reserve(active_len, pending.issued_nodes())?
                     .into_iter()
                     .map(NodeId::from)
                     .collect()
@@ -278,7 +278,7 @@ impl Runtime<'_> {
                 let pending = self.pending.borrow();
                 let g = self.g.borrow();
                 g.relationship_id_space()
-                    .reserve(endpoints.len(), &pending.issued_relationships())?
+                    .reserve(endpoints.len(), pending.issued_relationships())?
                     .into_iter()
                     .map(RelationshipId::from)
                     .collect()

@@ -96,6 +96,28 @@ use thiserror::Error;
 /// Why a batch of ids does not describe a possible id space.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum IdSpaceError {
+    /// The boundary and the ledger disagree: an id changed state without both
+    /// halves of the change happening.
+    ///
+    /// Not a claim about the caller — every refusal above is. This one says the
+    /// id space contradicts itself, so a bug in this module reached production.
+    /// It is returned rather than asserted because a corrupt id space hands out
+    /// ids that are already live, and failing the query discards the private
+    /// MVCC version that holds the damage; a `debug_assert` would say nothing
+    /// in the build that matters.
+    #[error(
+        "the id space contradicts itself: {live} live + {recycled} free puts the boundary at \
+         {bound}, but a batch opened at {entry_bound} having taken {taken} puts it at {expected}"
+    )]
+    Inconsistent {
+        live: u64,
+        recycled: u64,
+        bound: u64,
+        entry_bound: u64,
+        taken: u64,
+        expected: u64,
+    },
+
     /// A delete named an id at or above the entry boundary that this batch never
     /// created, so it was never allocated here at all.
     #[error("{0} was never allocated here")]
@@ -197,11 +219,12 @@ fn above(
 
 fn reclaim_ids(
     pool: &RoaringTreemap,
-    held: &[&RoaringTreemap],
+    taken: &RoaringTreemap,
+    issued: &RoaringTreemap,
     count: u64,
     out: &mut Vec<u64>,
 ) -> u64 {
-    let free = held.iter().fold(pool.clone(), |acc, s| acc - *s);
+    let free = pool - taken - issued;
     let before = out.len();
     out.extend(free.iter().take(count as usize));
     (out.len() - before) as u64
@@ -348,10 +371,10 @@ impl IdSpace {
     /// Read left to right it says the boundary is where the ids handed out put
     /// it; read as two halves it says the count and the free set cannot move
     /// without the ledger moving with them. Every operation that touches any of
-    /// the four fields asserts it on the way out, so a future one that moves a
+    /// the four fields returns this on the way out, so an operation that moves a
     /// count without recording — the shape of #2797 and of the node-id-liveness
-    /// bug before it — fails in every debug test run rather than waiting for a
-    /// replica to notice.
+    /// bug before it — fails the query rather than waiting for a replica to
+    /// notice, in release as well as in debug.
     ///
     /// It is *not* the whole of what [`Self::verify`] asks. This is the count;
     /// verify also asks the shape — that `taken` fills the range from the
@@ -359,21 +382,24 @@ impl IdSpace {
     /// batch, because records arrive grouped by shape rather than ordered by id.
     /// So the count is an invariant and the shape is a postcondition, and they
     /// are checked in different places for that reason.
-    fn is_consistent(&self) -> bool {
-        self.entry_bound.checked_add(self.taken.len()) == Some(self.bound())
-    }
-
-    /// The four fields, for an assertion that has just failed.
-    fn inconsistency(&self) -> String {
-        format!(
-            "live {} + recycled {} = {}, but entry_bound {} + taken {} = {}",
-            self.live,
-            self.recycled.len(),
-            self.bound(),
-            self.entry_bound,
-            self.taken.len(),
-            self.entry_bound.wrapping_add(self.taken.len()),
-        )
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError::Inconsistent`], carrying both sides of the arithmetic.
+    fn checked(&self) -> Result<(), IdSpaceError> {
+        let taken = self.taken.len();
+        let bound = self.bound();
+        match self.entry_bound.checked_add(taken) {
+            Some(expected) if expected == bound => Ok(()),
+            expected => Err(IdSpaceError::Inconsistent {
+                live: self.live,
+                recycled: self.recycled.len(),
+                bound,
+                entry_bound: self.entry_bound,
+                taken,
+                expected: expected.unwrap_or(u64::MAX),
+            }),
+        }
     }
 
     /// Close whatever batch was open and begin one here.
@@ -401,27 +427,32 @@ impl IdSpace {
     /// nothing is outstanding by the time `clear` and the next open run. It is
     /// written down because nothing enforces it, and a caller that reserved
     /// lazily would find out a commit later.
-    pub fn open_batch(&mut self) {
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError::Inconsistent`] if the space this opens over already
+    /// contradicts itself. Checked here and not only on the way out because
+    /// this is the one operation that would *hide* it: re-anchoring the boundary
+    /// on the corrupt value and clearing the ledger makes the arithmetic agree
+    /// again, and the batch after it would look clean.
+    pub fn open_batch(&mut self) -> Result<(), IdSpaceError> {
+        self.checked()?;
         self.entry_bound = self.bound();
         self.taken.clear();
-        debug_assert!(self.is_consistent(), "open_batch: {}", self.inconsistency());
+        Ok(())
     }
 
     /// Reserve `count` ids, freed ones first and then fresh.
     ///
     /// `issued` is every id this batch has already been handed and not yet
-    /// created. It is borrowed for the call rather than kept, because the caller
-    /// already keeps those ids — `Pending`'s created and cancelled sets — and a
-    /// copy here would be a second answer to the same question, free to drift
-    /// from the first. The free set it is subtracted from is this space's own.
-    ///
-    /// `issued` is a slice because a caller keeps them in whatever shape suits
-    /// it — the query path has a created set and a cancelled set, the bulk path
-    /// has none at all. **They must be disjoint from each other and from what
-    /// this space has already created**, or the boundary below counts an id
-    /// twice and leaves a hole in the id space. The query path satisfies that
-    /// trivially: it records creations at commit, so nothing is created while
-    /// it is still reserving.
+    /// settled — reserved, still on its way to `create`. It is borrowed for the
+    /// call rather than kept, because the caller already keeps those ids
+    /// (`Pending::created_nodes`) and a copy here would be a second answer to
+    /// the same question, free to drift from the first. The free set it is
+    /// subtracted from is this space's own, and so is `taken`: a cancelled id is
+    /// recorded by [`Self::cancel`], so the caller must **not** pass it here as
+    /// well, or the boundary below counts it twice and leaves a gap the batch
+    /// never fills. A caller with nothing outstanding passes an empty set.
     ///
     /// A reserved id is left *in* `recycled`: [`Self::max_id`] and
     /// [`Self::is_free`] are derived from it and would go wrong mid-batch if a
@@ -448,30 +479,28 @@ impl IdSpace {
     pub fn reserve(
         &self,
         count: usize,
-        issued: &[&RoaringTreemap],
+        issued: &RoaringTreemap,
     ) -> Result<Vec<u64>, String> {
         let mut ids = Vec::new();
         ids.try_reserve_exact(count)
             .map_err(|_| format!("failed to reserve {count} ids"))?;
         let count = count as u64;
 
-        // What this batch has already created is excluded without being asked
-        // for: the space recorded those itself, and a caller that creates as it
-        // goes — `GRAPH.BULK`, or anything reserving one id at a time — would
+        // What this batch has already taken is excluded without being asked for:
+        // the space recorded those itself, and a caller that creates as it goes
+        // — `GRAPH.BULK`, or anything reserving one id at a time — would
         // otherwise have to hand its own creations back to the thing that
         // recorded them.
-        let mut held: Vec<&RoaringTreemap> = Vec::with_capacity(issued.len() + 1);
-        held.push(&self.taken);
-        held.extend_from_slice(issued);
-
-        let reclaimed = reclaim_ids(&self.recycled, &held, count, &mut ids);
+        let reclaimed = reclaim_ids(&self.recycled, &self.taken, issued, count, &mut ids);
 
         // Above every id ever handed out. `entry_bound` accounts for everything
         // issued before this batch; the ids issued *by* it that sit at or above
-        // the boundary are the rest. Those below came out of the bin, which the
-        // boundary already counted.
-        let issued_above: u64 = held.iter().map(|s| above(s, self.entry_bound)).sum();
-        let start = self.entry_bound + issued_above;
+        // the boundary are the rest. Those below came out of the free set, which
+        // the boundary already counted. The two sets are disjoint, which is what
+        // lets this add their counts rather than merge them.
+        let start = self.entry_bound
+            + above(&self.taken, self.entry_bound)
+            + above(issued, self.entry_bound);
         ids.extend(start..start + (count - reclaimed));
 
         Ok(ids)
@@ -497,15 +526,20 @@ impl IdSpace {
     /// same reason: [`Self::reserve`] leaves a reclaimed id in the free set, so
     /// giving it back finds it already there, and it sits below the boundary,
     /// which already counted it. So the invariant holds without a special case.
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError::Inconsistent`], if returning the id left the boundary and
+    /// the ledger disagreeing.
     pub fn cancel(
         &mut self,
         id: u64,
-    ) {
+    ) -> Result<(), IdSpaceError> {
         self.recycled.insert(id);
         if self.above_boundary(id) {
             self.taken.insert(id);
         }
-        debug_assert!(self.is_consistent(), "cancel: {}", self.inconsistency());
+        self.checked()
     }
 
     /// Refuse ids that are already free.
@@ -600,8 +634,7 @@ impl IdSpace {
         self.live += nodes.len();
 
         self.record_above(nodes);
-        debug_assert!(self.is_consistent(), "create: {}", self.inconsistency());
-        Ok(())
+        self.checked()
     }
 
     /// Record the ids at or above the boundary into `taken`, trimming the rest.
@@ -699,8 +732,7 @@ impl IdSpace {
         self.refuse_undeletable(requested)?;
         self.recycled |= freed;
         self.live -= freed.len();
-        debug_assert!(self.is_consistent(), "release: {}", self.inconsistency());
-        Ok(())
+        self.checked()
     }
 
     /// Check that the batch left a possible id space behind.
@@ -813,7 +845,7 @@ mod tests {
         // half arrives first, so mid-batch the graph reports its boundary as 100
         // while id 599 is allocated.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &range(500..600)).expect("the high half is legitimate");
         create(&mut g, &range(0..500)).expect("and so is the low half");
         g.node_id_space()
@@ -828,7 +860,7 @@ mod tests {
         // so it cannot reach 500 without having handed out 0..499 — whoever
         // produced this was not working from the same id space.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &range(500..600)).expect("nothing is wrong yet");
 
         let err = g
@@ -880,7 +912,7 @@ mod tests {
         // `highest - lowest` alone would pass it. Measured from the boundary it is
         // one short, and id 0 is the id nobody accounted for.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[1, 2, 3])).expect("the graph takes them");
 
         let err = g
@@ -906,7 +938,7 @@ mod tests {
         // the caller has removed the recycle bin first and a recreated id is in
         // it. See `creating_deleting_and_recreating_one_id_in_a_batch`.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &range(0..6)).expect("six fresh ids");
 
         let err = create(&mut g, &ids(&[5])).expect_err("5 is already this batch's");
@@ -925,7 +957,7 @@ mod tests {
         // Ids below the entry boundary were counted in the boundary the batch
         // started from, so recreating one leaves the range and the count alone.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("two fresh ids");
         delete(&mut g, &ids(&[0])).expect("deleting what this batch created");
         g.node_id_space().verify().expect("whole");
@@ -933,7 +965,7 @@ mod tests {
         // A fresh batch: id 0 sits in the recycle bin, so it is free to come
         // back and does not extend the range — which is only true if the bin is
         // part of the boundary this batch started from.
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0])).expect("id 0 is free");
         g.node_id_space().verify().expect("whole again");
     }
@@ -945,7 +977,7 @@ mod tests {
         // legitimate. The set does not shrink on the delete, so the recreate adds
         // nothing and the range stays whole.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0])).expect("create");
         delete(&mut g, &ids(&[0])).expect("delete");
         create(&mut g, &ids(&[0])).expect("the recreate is legitimate");
@@ -958,7 +990,7 @@ mod tests {
         // What a create-then-delete in one segment ships: both ids created, then
         // one deleted. The id space grew by two and one of them is free.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("create");
         delete(&mut g, &ids(&[0])).expect("delete");
         g.node_id_space().verify().expect("whole");
@@ -974,7 +1006,7 @@ mod tests {
         // other half, and the first delete put id 1 in the recycle bin, so the
         // second is refused there.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("create");
         delete(&mut g, &ids(&[1])).expect("the first delete is legitimate");
 
@@ -990,11 +1022,11 @@ mod tests {
         // or above. Whether it is live is the recycle bin's answer, and it is not
         // in the bin, so the delete stands.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("create");
         g.node_id_space().verify().expect("whole");
 
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         delete(&mut g, &ids(&[0])).expect("a live id from before the batch");
         assert_eq!(g.node_count(), 1);
         g.node_id_space().verify().expect("a delete leaves no hole");
@@ -1003,7 +1035,7 @@ mod tests {
     #[test]
     fn deleting_an_id_never_created_is_refused() {
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("create");
 
         let err = delete(&mut g, &ids(&[7])).expect_err("7 was never allocated");
@@ -1015,7 +1047,7 @@ mod tests {
         // `max_node_id()` returns 0 for an empty graph, so a boundary taken from
         // it reads as "id 0 has been handed out" and refuses this.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0])).expect("id 0 is fresh");
         g.node_id_space().verify().expect("whole");
     }
@@ -1023,7 +1055,7 @@ mod tests {
     #[test]
     fn the_last_id_is_refused_rather_than_wrapping_the_arithmetic() {
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         let err = create(&mut g, &ids(&[u64::MAX])).expect_err("not creatable");
         assert_eq!(
             err,
@@ -1042,7 +1074,7 @@ mod tests {
     #[test]
     fn a_reservation_that_outlives_its_batch_is_refused() {
         let mut space = IdSpace::new();
-        let reserved = space.reserve(3, &[]).expect("reserved");
+        let reserved = space.reserve(3, &RoaringTreemap::new()).expect("reserved");
         assert_eq!(reserved, vec![0, 1, 2]);
 
         // Settle two of the three. Out of order is legitimate mid-batch — that
@@ -1050,7 +1082,7 @@ mod tests {
         // yet, and the boundary moves to 2 while id 0 is still outstanding.
         space.create(&ids(&[1, 2])).expect("both are this batch's");
         assert_eq!(space.bound(), 2);
-        space.open_batch();
+        space.open_batch().expect("a consistent space");
 
         let err = space
             .create(&ids(&[0]))
@@ -1112,7 +1144,7 @@ mod tests {
         // That is the whole difference between the per-id refusals and the
         // end-of-batch check.
         let mut g = graph();
-        g.open_id_batches();
+        g.open_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 5])).expect("neither id is live");
         delete(&mut g, &ids(&[0])).expect("delete");
         assert_eq!(g.node_count(), 1);
@@ -1147,7 +1179,7 @@ mod reclaim_ids_tests {
         count: u64,
     ) -> (Vec<u64>, u64) {
         let mut out: Vec<u64> = Vec::new();
-        let taken = reclaim_ids(pool, &[held], count, &mut out);
+        let taken = reclaim_ids(pool, &RoaringTreemap::new(), held, count, &mut out);
         assert_eq!(
             taken,
             out.len() as u64,
@@ -1216,7 +1248,13 @@ mod reclaim_ids_tests {
     fn appends_rather_than_replaces() {
         let pool: RoaringTreemap = (10..20u64).collect();
         let mut out: Vec<u64> = vec![7, 8];
-        reclaim_ids(&pool, &[&RoaringTreemap::new()], 3, &mut out);
+        reclaim_ids(
+            &pool,
+            &RoaringTreemap::new(),
+            &RoaringTreemap::new(),
+            3,
+            &mut out,
+        );
         assert_eq!(out, vec![7, 8, 10, 11, 12]);
     }
 
@@ -1328,9 +1366,9 @@ mod differential {
         );
         assert_eq!(as_set(&space.taken), model.taken, "step {step} {op}: taken");
         assert!(
-            space.is_consistent(),
-            "step {step} {op}: {}",
-            space.inconsistency()
+            space.checked().is_ok(),
+            "step {step} {op}: {:?}",
+            space.checked()
         );
         assert_eq!(
             space.verify().is_ok(),
@@ -1362,7 +1400,7 @@ mod differential {
                 0..=3 => {
                     let n = ((r >> 8) % 4 + 1) as usize;
                     let held: RoaringTreemap = model.held.iter().copied().collect();
-                    let ids = space.reserve(n, &[&held]).expect("small counts fit");
+                    let ids = space.reserve(n, &held).expect("small counts fit");
                     assert_eq!(ids.len(), n, "step {step} reserve: short count");
                     for &id in &ids {
                         assert!(
@@ -1447,7 +1485,7 @@ mod differential {
                         }
                         agree(&space, &model, step, "settle");
                     }
-                    space.open_batch();
+                    space.open_batch().expect("a consistent space");
                     model.open_batch();
                     batches += 1;
                     agree(&space, &model, step, "open_batch");

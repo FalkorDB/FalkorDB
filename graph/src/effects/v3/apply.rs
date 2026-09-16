@@ -45,12 +45,6 @@ impl From<String> for ApplyError {
     }
 }
 
-/// What accumulates across a buffer and is settled once, at the end.
-struct BufferOps {
-    /// Index documents staged by the whole buffer and published once at the end.
-    docs: IndexDocs,
-}
-
 /// Apply a whole `GRAPH.EFFECT` payload.
 ///
 /// Every failure aborts the buffer rather than applying a prefix: effects are
@@ -71,14 +65,13 @@ pub fn apply_effects(
     let payload = open_payload(buf)?;
 
     // One batch per id space, spanning the whole buffer. The graph owns them,
-    // so nothing here has to carry a space alongside the graph it describes.
-    g.open_id_batches();
-    let mut ops = BufferOps {
-        docs: IndexDocs::default(),
-    };
+    // so nothing here has to carry a space alongside the graph it describes —
+    // which leaves index documents as the only thing this accumulates.
+    g.open_id_batches().map_err(|e| node_op("node", e))?;
+    let mut docs = IndexDocs::default();
 
     for record in payload.records() {
-        apply_record(g, record?, &mut ops)?;
+        apply_record(g, record?, &mut docs)?;
     }
 
     // Only now: records are grouped by shape rather than ordered by id, so the
@@ -92,8 +85,8 @@ pub fn apply_effects(
         .verify()
         .map_err(|e| id_space_error_map("relationship", e))?;
 
-    g.commit_index(&mut ops.docs.node_adds, &mut ops.docs.node_removes);
-    g.commit_edge_index(&mut ops.docs.edge_adds, &mut ops.docs.edge_removes);
+    g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
+    g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
     Ok(())
 }
 
@@ -157,13 +150,17 @@ fn id_space_error_map(
             expected,
         },
         IdSpaceError::IdOutOfRange(id) => ApplyError::IdPastEndOfSpace { kind, id },
+        // Not a divergence and not a claim about the buffer: the replica's own
+        // id space contradicts itself, so the buffer is refused because nothing
+        // can be trusted to apply onto it, not because it was wrong.
+        e @ IdSpaceError::Inconsistent { .. } => ApplyError::Graph(format!("{kind} {e}")),
     }
 }
 
 fn apply_record(
     g: &mut Graph,
     record: Record,
-    ops: &mut BufferOps,
+    docs: &mut IndexDocs,
 ) -> Result<(), ApplyError> {
     match record {
         // One opcode, two variants: the wire's `SchemaType` byte is now the
@@ -235,7 +232,7 @@ fn apply_record(
             // them.
             let label_ids = checked_label_ids(g, &labels)?;
             if !label_ids.is_empty() {
-                g.set_node_labels_product(&ids, &label_ids, &mut ops.docs.node_adds, true);
+                g.set_node_labels_product(&ids, &label_ids, &mut docs.node_adds, true);
             }
             // Checked before the emptiness gate, not inside it. With no
             // attributes the check is what says `rows` must also be empty —
@@ -250,7 +247,7 @@ fn apply_record(
                     &label_ids,
                     &attr_ids,
                     &rows,
-                    &mut ops.docs.node_adds,
+                    &mut docs.node_adds,
                 )?;
             }
             Ok(())
@@ -280,7 +277,7 @@ fn apply_record(
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                g.set_relationships_attributes(&map, &mut ops.docs.edge_adds)?;
+                g.set_relationships_attributes(&map, &mut docs.edge_adds)?;
             }
             Ok(())
         }
@@ -307,7 +304,7 @@ fn apply_record(
                 &label_ids,
                 &attr_ids,
                 &rows,
-                &mut ops.docs.node_adds,
+                &mut docs.node_adds,
             )?;
             Ok(())
         }
@@ -327,7 +324,7 @@ fn apply_record(
             // Edges still go through the map form; only the node store has the
             // row-major entry point so far.
             let map = attr_map(g, &ids, &attr_ids, &rows)?;
-            g.set_relationships_attributes_of_type(type_id, &map, &mut ops.docs.edge_adds)?;
+            g.set_relationships_attributes_of_type(type_id, &map, &mut docs.edge_adds)?;
             Ok(())
         }
 
@@ -336,7 +333,7 @@ fn apply_record(
             g.set_node_labels_product(
                 &ids.iter().collect::<Vec<_>>(),
                 &label_ids,
-                &mut ops.docs.node_adds,
+                &mut docs.node_adds,
                 false,
             );
             Ok(())
@@ -354,7 +351,7 @@ fn apply_record(
                     cols.push(lid);
                 }
             }
-            g.remove_nodes_labels(&rows, &cols, &mut ops.docs.node_removes);
+            g.remove_nodes_labels(&rows, &cols, &mut docs.node_removes);
             Ok(())
         }
 
@@ -370,14 +367,14 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut ops.docs.node_removes)
+            g.delete_nodes(&nodes, &mut docs.node_removes)
                 .map_err(|e| node_op("node", e))?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut ops.docs.edge_removes)
+            g.delete_relationships(&edges, &mut docs.edge_removes)
                 .map_err(|e| node_op("relationship", e))?;
             Ok(())
         }
@@ -406,7 +403,7 @@ fn apply_record(
             // has always done it under concurrent writes: `populate_index_batch`
             // populates from a snapshot in 10,000-row batches, and entities
             // written *after* the snapshot are indexed by the write path instead
-            // (`BufferOps::docs` into `commit_index`). A later record that drops
+            // (`docs` into `commit_index`). A later record that drops
             // or recreates the index does not race it either — the population
             // ticket carries a generation, and a worker whose generation is
             // stale releases its ticket and stops rather than committing

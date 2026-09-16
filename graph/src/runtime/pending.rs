@@ -408,15 +408,15 @@ impl Pending {
     /// them again would count one id twice when reserve places the next fresh
     /// one, leaving a gap the batch never fills and `verify` reports as a hole.
     #[must_use]
-    pub const fn issued_nodes(&self) -> [&RoaringTreemap; 1] {
-        [&self.created_nodes]
+    pub const fn issued_nodes(&self) -> &RoaringTreemap {
+        &self.created_nodes
     }
 
     /// The same for relationships. See [`Self::issued_nodes`] for why a
     /// cancelled id is not in either.
     #[must_use]
-    pub const fn issued_relationships(&self) -> [&RoaringTreemap; 1] {
-        [&self.taken_relationship_ids]
+    pub const fn issued_relationships(&self) -> &RoaringTreemap {
+        &self.taken_relationship_ids
     }
 
     pub fn created_nodes(
