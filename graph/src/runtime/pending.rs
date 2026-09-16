@@ -138,13 +138,15 @@ pub struct Pending {
     pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
     pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
-    /// Every relationship id this batch has been handed, cancelled included.
+    /// The relationship ids this batch has reserved and not yet cancelled — the
+    /// mirror of `created_nodes`, and what [`Self::issued_relationships`] lends
+    /// the allocator.
     ///
-    /// The node side needs no such field: `created_nodes` is already a set and
-    /// `cancelled_nodes` is the rest of the answer. Relationships are kept in a
-    /// map keyed by id and a vector of cancellation records, and neither can be
-    /// differenced against the recycle bin without being walked, so one set is
-    /// the cheapest honest representation rather than a second copy.
+    /// It exists at all because the created relationships are kept as a map
+    /// keyed by id and a vector of cancellation records, and neither can be
+    /// differenced against the free set without being walked. A cancelled id
+    /// leaves here as it leaves `created_rels_by_type`, because from that moment
+    /// the id space is the thing that remembers it.
     pub(crate) taken_relationship_ids: RoaringTreemap,
     /// Nodes to be deleted
     pub(crate) deleted_nodes: RoaringTreemap,
@@ -397,14 +399,21 @@ impl Pending {
         self.schema_rel_attr_count = graph.get_relationship_attribute_names().len();
     }
 
-    /// The node ids this batch has been handed, as the disjoint sets it already
-    /// keeps them in. [`IdSpace::reserve`] must not reissue any of them.
+    /// The node ids this batch holds that the id space does not know about yet:
+    /// reserved, still destined for `create_nodes` at commit, and so not yet
+    /// recorded anywhere the allocator can see.
+    ///
+    /// Cancelled ids are deliberately *not* here. `IdSpace::cancel` records them
+    /// itself, and `IdSpace::reserve` excludes what it has recorded — so passing
+    /// them again would count one id twice when reserve places the next fresh
+    /// one, leaving a gap the batch never fills and `verify` reports as a hole.
     #[must_use]
-    pub const fn issued_nodes(&self) -> [&RoaringTreemap; 2] {
-        [&self.created_nodes, &self.cancelled_nodes]
+    pub const fn issued_nodes(&self) -> [&RoaringTreemap; 1] {
+        [&self.created_nodes]
     }
 
-    /// The same for relationships, which are kept as one set.
+    /// The same for relationships. See [`Self::issued_nodes`] for why a
+    /// cancelled id is not in either.
     #[must_use]
     pub const fn issued_relationships(&self) -> [&RoaringTreemap; 1] {
         [&self.taken_relationship_ids]
@@ -733,6 +742,10 @@ impl Pending {
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
             self.deleted_relationships.remove(rel_id.into());
+            // Handed over to the id space, which records the cancellation as it
+            // returns the id to the free set. Leaving it here too would have the
+            // allocator count it twice.
+            self.taken_relationship_ids.remove(rel_id.into());
             // The one durable record that this id was ever handed out, the same
             // role `cancelled_nodes` plays for the node above.
             self.cancelled_relationships.push(CancelledRelationship {

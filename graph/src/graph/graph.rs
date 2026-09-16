@@ -4723,9 +4723,12 @@ mod reservation_tests {
             n: usize,
         ) -> Vec<u64> {
             let before = &self.created | &self.cancelled;
+            // Only the ids the space does not already know about, mirroring
+            // `Pending::issued_nodes`. The cancelled ones it recorded itself;
+            // handing them back would count one id twice and skip a free slot.
             let ids = g
                 .node_id_space()
-                .reserve(n, &[&self.created, &self.cancelled])
+                .reserve(n, &[&self.created])
                 .expect("reserved");
             for &id in &ids {
                 assert!(
@@ -4756,6 +4759,13 @@ mod reservation_tests {
         ) {
             g.create_nodes(&self.created)
                 .expect("the allocator's own ids must be creatable");
+            // The write path's own shapes must now satisfy what a replica is
+            // held to, cancelled reservations included. This is what recording
+            // a cancellation into the ledger bought, and the precondition for
+            // calling `verify` on the write path for real (#2839 step 4).
+            g.node_id_space()
+                .verify()
+                .expect("a committed query leaves a possible id space");
         }
     }
 

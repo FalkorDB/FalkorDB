@@ -29,45 +29,63 @@
 //! store that discards it. An id space living anywhere else would have to
 //! reproduce that, or lose it.
 //!
-//! ## The batch, and the invariant it is judged by
+//! ## The invariant
 //!
-//! `entry_bound` and `created` are the *batch*: the span judged as one unit — a
+//! One equation, true at every moment, asserted on the way out of every
+//! operation that touches any of the four fields:
+//!
+//! ```text
+//! live + recycled.len() == entry_bound + taken.len()
+//! ```
+//!
+//! `taken` is every id at or above `entry_bound` the open batch has taken —
+//! created, or reserved and then cancelled. Those are the same thing to the
+//! boundary: a create moves an id from free to live, a cancellation puts an
+//! allocated id in the free set, and both mean one more id has been handed out.
+//! Counting only creates made the equation false for every cancelled
+//! reservation, which is why the write path could not be held to it —
+//! `CREATE (a)-[:R]->(b) DELETE b` reported
+//! `Miscounted { graph_bound: 2, expected: 1 }` against a ledger told only about
+//! creates.
+//!
+//! What the equation buys is that the bug this module exists to prevent cannot
+//! survive a debug test run: a future operation that moves `live` or `recycled`
+//! without recording fails immediately, naming all four fields, instead of
+//! waiting for a replica to refuse a buffer. The one thing it cannot see is this
+//! file getting its own arithmetic right and its meaning wrong, which is what
+//! the differential test against a reference model is for.
+//!
+//! ## The batch, and the shape it is judged by
+//!
+//! `entry_bound` and `taken` are the *batch*: the span judged as one unit — a
 //! whole effects buffer, or one commit segment of a write query.
-//! [`IdSpace::open_batch`] begins one, and it is rebuilt rather than re-anchored,
-//! because an id the last batch created is an ordinary recycled id to the next.
+//! [`IdSpace::open_batch`] begins one, rebuilt rather than re-anchored, and it
+//! has a precondition worth reading before calling it.
 //!
 //! A batch exists because density holds between batches and not within one. The
 //! effects apply path ingests records grouped by shape rather than ordered by
 //! id, so a create of 500..600 may precede one of 0..500; between them the space
 //! holds 100 live ids whose highest is 599 and reports its boundary as 100.
-//! Judged against a boundary derived moment to moment, the second create is
+//! Judged against a boundary derived moment to moment the second create is
 //! refused; judged against the boundary as it stood before any of it, both are
-//! fine. So:
+//! fine.
+//!
+//! So the batch owes one more thing at the end, which [`IdSpace::verify`] asks
+//! and the invariant deliberately does not:
 //!
 //! ```text
-//! created == [ entry_bound, entry_bound + created.len() )
+//! taken == [ entry_bound, entry_bound + taken.len() )
 //! ```
 //!
-//! Two independent things can break that, so [`IdSpace::verify`] checks both.
-//!
-//! **The shape of what arrived.** Ids created at or above the boundary must
-//! fill the range from it upward with no hole. An allocator hands out the lowest
-//! free id, so it cannot reach an id without having handed out everything below
-//! — a batch that leaves a hole did not come from one. This is the check that
-//! catches a replica which has missed a buffer: told to create 500..600 when its
-//! own boundary is 0, it would otherwise accept an id space its master does not
-//! have and collide on its next allocation.
-//!
-//! **That the count agrees.** `live` is accumulated by arithmetic and `created`
-//! by set membership, so comparing `live + recycled.len()` against
-//! `entry_bound + created.len()` is two different accumulations of the same
-//! thing. It is a backstop rather than the front line, and a weaker one than
-//! when the count belonged to someone else: the two ways an id can be wrong —
-//! already live, or claimed twice by this batch — are both refused at the record
-//! by [`IdSpace::create`], which names the id, and no path now moves `live`
-//! except the ones that also move `created`. What is left for it to catch is a
-//! space built from numbers a decoder supplied, which `restore` does, and
-//! whatever is added tomorrow.
+//! Ids taken at or above the boundary must fill the range from it upward with no
+//! hole. An allocator hands out the lowest free id, so it cannot reach an id
+//! without having handed out everything below — a batch that leaves a hole did
+//! not come from one. This is the check that catches a replica which has missed
+//! a buffer: told to create 500..600 when its own boundary is 0, it would
+//! otherwise accept an id space its master does not have and collide on its next
+//! allocation. It is a *postcondition* rather than an invariant precisely
+//! because it is legitimately false partway through a batch, which is the whole
+//! reason a batch is a thing.
 //!
 //! Nothing here knows about replication, buffers or a peer engine. It is a
 //! statement about one graph and the ids handed to it.
@@ -131,10 +149,16 @@ pub struct IdSpace {
     /// The boundary as it stood when the open batch began: ids below it were
     /// handed out, ids at or above it never were.
     entry_bound: u64,
-    /// Every id at or above `entry_bound` the open batch has created. Only
-    /// grows within a batch — a later delete does not un-allocate an id, it
+    /// Every id at or above `entry_bound` the open batch has *taken* — created,
+    /// or reserved and then cancelled. Those are the same thing to the boundary:
+    /// both move it by one, a create by making an id live and a cancellation by
+    /// putting an allocated id in the free set. Counting only creates would make
+    /// the invariant below false for every cancelled reservation, which is what
+    /// used to keep [`Self::verify`] off the write path.
+    ///
+    /// Only grows within a batch — a later delete does not un-allocate an id, it
     /// frees one that was.
-    created: RoaringTreemap,
+    taken: RoaringTreemap,
 }
 
 /// Append up to `count` ids from `pool` that `held` does not already hold, to
@@ -197,7 +221,7 @@ impl IdSpace {
             live: 0,
             recycled: RoaringTreemap::new(),
             entry_bound: 0,
-            created: RoaringTreemap::new(),
+            taken: RoaringTreemap::new(),
         }
     }
 
@@ -216,7 +240,7 @@ impl IdSpace {
             live,
             recycled,
             entry_bound,
-            created: RoaringTreemap::new(),
+            taken: RoaringTreemap::new(),
         }
     }
 
@@ -291,25 +315,96 @@ impl IdSpace {
         live: u64,
         recycled: RoaringTreemap,
         entry_bound: u64,
-        created: RoaringTreemap,
+        taken: RoaringTreemap,
     ) -> Self {
         Self {
             live,
             recycled,
             entry_bound,
-            created,
+            taken,
         }
+    }
+
+    /// Whether an id is one the open batch is answerable for.
+    ///
+    /// Ids below the entry boundary were handed out before it began and counted
+    /// into the boundary already; the batch neither took them nor has to account
+    /// for them, whatever it does to them afterwards. [`Self::cancel`] and
+    /// [`Self::record_above`] turn on this and nothing else, so it is written
+    /// once.
+    const fn above_boundary(
+        &self,
+        id: u64,
+    ) -> bool {
+        id >= self.entry_bound
+    }
+
+    /// The invariant this type maintains at every moment, in one expression:
+    ///
+    /// ```text
+    /// live + recycled.len() == entry_bound + taken.len()
+    /// ```
+    ///
+    /// Read left to right it says the boundary is where the ids handed out put
+    /// it; read as two halves it says the count and the free set cannot move
+    /// without the ledger moving with them. Every operation that touches any of
+    /// the four fields asserts it on the way out, so a future one that moves a
+    /// count without recording — the shape of #2797 and of the node-id-liveness
+    /// bug before it — fails in every debug test run rather than waiting for a
+    /// replica to notice.
+    ///
+    /// It is *not* the whole of what [`Self::verify`] asks. This is the count;
+    /// verify also asks the shape — that `taken` fills the range from the
+    /// boundary upward — and that one is legitimately false partway through a
+    /// batch, because records arrive grouped by shape rather than ordered by id.
+    /// So the count is an invariant and the shape is a postcondition, and they
+    /// are checked in different places for that reason.
+    fn is_consistent(&self) -> bool {
+        self.entry_bound.checked_add(self.taken.len()) == Some(self.bound())
+    }
+
+    /// The four fields, for an assertion that has just failed.
+    fn inconsistency(&self) -> String {
+        format!(
+            "live {} + recycled {} = {}, but entry_bound {} + taken {} = {}",
+            self.live,
+            self.recycled.len(),
+            self.bound(),
+            self.entry_bound,
+            self.taken.len(),
+            self.entry_bound.wrapping_add(self.taken.len()),
+        )
     }
 
     /// Close whatever batch was open and begin one here.
     ///
     /// Rebuilt rather than re-anchored: a query that commits mid-flight opens a
-    /// second batch against a space the first one moved, and carrying `created`
-    /// across would measure two batches' creates against one boundary. An id the
-    /// last batch created is an ordinary recycled id to the next one.
+    /// second batch against a space the first one moved, and carrying `taken`
+    /// across would measure two batches against one boundary. An id the last
+    /// batch took is an ordinary recycled id to the next one.
+    ///
+    /// # Every reservation must be settled first
+    ///
+    /// Created or cancelled — not left outstanding. The boundary counts live ids
+    /// and free ids and deliberately not reserved ones: reservations would grow
+    /// the GraphBLAS matrix dimension `algo_procedures.rs` derives from it while
+    /// leaving its liveness gate off, so `CALL algo.*` inside a write query would
+    /// walk phantom nodes. An id still held when this runs therefore lands
+    /// *below* the boundary it opens, where it reads as live-before-the-batch,
+    /// and the next [`Self::create`] of it is refused as
+    /// [`IdSpaceError::AlreadyLive`] — the batch correctly reporting that it was
+    /// asked to create something the space believes is already there.
+    ///
+    /// `Pending::commit` satisfies this by construction: every reserved id is
+    /// recorded into `created_nodes` the moment it is handed out, commit creates
+    /// all of them, and a cancellation goes to [`Self::cancel`] instead — so
+    /// nothing is outstanding by the time `clear` and the next open run. It is
+    /// written down because nothing enforces it, and a caller that reserved
+    /// lazily would find out a commit later.
     pub fn open_batch(&mut self) {
         self.entry_bound = self.bound();
-        self.created.clear();
+        self.taken.clear();
+        debug_assert!(self.is_consistent(), "open_batch: {}", self.inconsistency());
     }
 
     /// Reserve `count` ids, freed ones first and then fresh.
@@ -366,7 +461,7 @@ impl IdSpace {
         // otherwise have to hand its own creations back to the thing that
         // recorded them.
         let mut held: Vec<&RoaringTreemap> = Vec::with_capacity(issued.len() + 1);
-        held.push(&self.created);
+        held.push(&self.taken);
         held.extend_from_slice(issued);
 
         let reclaimed = reclaim_ids(&self.recycled, &held, count, &mut ids);
@@ -384,28 +479,33 @@ impl IdSpace {
 
     /// Hand a reserved id back, unused.
     ///
-    /// The id goes to the recycle bin so the id space stays dense: it was
-    /// allocated, and if it simply vanished the next boundary would count an id
-    /// nothing holds.
+    /// The id joins the free set so the id space stays dense: it was allocated,
+    /// and if it simply vanished the next boundary would count an id nothing
+    /// holds. It joins `taken` for the same reason — the boundary moved, so the
+    /// ledger has to say so, or the invariant is false for every query that
+    /// cancels. That is what used to keep [`Self::verify`] off the write path:
+    /// `CREATE (a)-[:R]->(b) DELETE b` reported
+    /// `Miscounted { graph_bound: 2, expected: 1 }` against a ledger told only
+    /// about creates.
     ///
-    /// Associated rather than a method, for the same reason
-    /// [`Self::refuse_recycled`] is, and it is worth saying which: a
-    /// cancellation happens while the query runs, and the batch that will
-    /// account for it is not opened until commit. What keeps the id from being
-    /// handed out twice in the meantime is that the caller goes on holding it —
-    /// `Pending::cancelled_nodes`, which [`Self::reserve`] is given as `issued`.
-    /// So this writes the bin and claims nothing else.
+    /// Recording it here is also what stops [`Self::reserve`] offering the id
+    /// again inside this batch, since reserve excludes `taken`. The caller used
+    /// to carry that rule, holding its cancelled ids and passing them back as
+    /// `issued`; it no longer has to.
     ///
-    /// The write is a no-op for a *reclaimed* reservation, and that is right
-    /// rather than a missed case: [`Self::reserve`] leaves a reclaimed id in the
-    /// bin, so giving it back finds it already there. Which is also why this
-    /// cannot assert that the bin grew — whether it does depends on where the id
-    /// came from, and this deliberately does not know.
+    /// A *reclaimed* reservation moves neither half, and both decline for the
+    /// same reason: [`Self::reserve`] leaves a reclaimed id in the free set, so
+    /// giving it back finds it already there, and it sits below the boundary,
+    /// which already counted it. So the invariant holds without a special case.
     pub fn cancel(
         &mut self,
         id: u64,
     ) {
         self.recycled.insert(id);
+        if self.above_boundary(id) {
+            self.taken.insert(id);
+        }
+        debug_assert!(self.is_consistent(), "cancel: {}", self.inconsistency());
     }
 
     /// Refuse ids that are already free.
@@ -485,8 +585,8 @@ impl IdSpace {
         //
         // `is_disjoint` first, so the ordinary record answers from container
         // headers and only a genuine duplicate pays for the intersection.
-        if !self.created.is_disjoint(&claimed) {
-            let id = (&claimed & &self.created)
+        if !self.taken.is_disjoint(&claimed) {
+            let id = (&claimed & &self.taken)
                 .min()
                 .expect("the sets are not disjoint");
             return Err(IdSpaceError::AlreadyLive {
@@ -499,23 +599,33 @@ impl IdSpace {
         self.recycled -= nodes;
         self.live += nodes.len();
 
-        // Both arms are the same operation — union in the ids at or above the
-        // boundary — and differ only in whether anything has to be trimmed first.
-        // A recycled id sits below the boundary and was already counted in it, so
-        // it is not the id space growing.
-        //
-        // The allocator hands out recycled ids before fresh ones, so a single
-        // create can carry both and neither arm is unusual. Trimming a copy
-        // rather than filtering the iterator keeps the slow arm a container
-        // merge too, instead of an insert per id.
-        if nodes.min().is_some_and(|min| min >= self.entry_bound) {
-            self.created |= nodes;
-        } else {
-            let mut above = nodes.clone();
-            above.remove_range(..self.entry_bound);
-            self.created |= above;
-        }
+        self.record_above(nodes);
+        debug_assert!(self.is_consistent(), "create: {}", self.inconsistency());
         Ok(())
+    }
+
+    /// Record the ids at or above the boundary into `taken`, trimming the rest.
+    ///
+    /// Both arms are the same operation — union in the ids at or above the
+    /// boundary — and differ only in whether anything has to be trimmed first. A
+    /// recycled id sits below the boundary and was counted into it already, so it
+    /// is not the id space growing.
+    ///
+    /// The allocator hands out recycled ids before fresh ones, so a single create
+    /// can carry both and neither arm is unusual. Trimming a copy rather than
+    /// filtering the iterator keeps the slow arm a container merge too, instead
+    /// of an insert per id.
+    fn record_above(
+        &mut self,
+        ids: &RoaringTreemap,
+    ) {
+        if ids.min().is_some_and(|min| self.above_boundary(min)) {
+            self.taken |= ids;
+        } else {
+            let mut above = ids.clone();
+            above.remove_range(..self.entry_bound);
+            self.taken |= above;
+        }
     }
 
     /// Check that ids the batch is about to delete were allocated here.
@@ -545,7 +655,7 @@ impl IdSpace {
         // costs 1.1us when every id was created by this batch, and 224us against
         // 966ns on a mixed delete. It only wins on the shape the guard above has
         // already returned from.
-        match (nodes - &self.created)
+        match (nodes - &self.taken)
             .max()
             .filter(|&id| id >= self.entry_bound)
         {
@@ -589,6 +699,7 @@ impl IdSpace {
         self.refuse_undeletable(requested)?;
         self.recycled |= freed;
         self.live -= freed.len();
+        debug_assert!(self.is_consistent(), "release: {}", self.inconsistency());
         Ok(())
     }
 
@@ -609,8 +720,8 @@ impl IdSpace {
         // the recycle bin, and the graph's own boundary counts them — so
         // judging against `created` alone would read a legitimate cancellation
         // as a hole and refuse it.
-        let created = self.created.len();
-        let lowest_above = self.created.min();
+        let created = self.taken.len();
+        let lowest_above = self.taken.min();
         // `created == [entry_bound, entry_bound + created.len())`, spelled as the
         // two things that make it true: the set starts at the boundary, and it has
         // no gap between there and its highest id.
@@ -633,7 +744,7 @@ impl IdSpace {
         // which is the case the first test exists to catch, underflows instead.
         if let Some((_, highest)) =
             lowest_above
-                .zip(self.created.max())
+                .zip(self.taken.max())
                 .filter(|&(lowest, highest)| {
                     lowest != self.entry_bound || created - 1 != highest - self.entry_bound
                 })
@@ -920,6 +1031,39 @@ mod tests {
         );
     }
 
+    /// A reservation left outstanding across a batch boundary is refused, and
+    /// the refusal names the id. This is [`IdSpace::open_batch`]'s precondition
+    /// seen from the failing side: the boundary does not count reservations, so
+    /// closing a batch over one puts it below the next boundary, where creating
+    /// it reads as recreating something live.
+    ///
+    /// Found by the differential test rather than reasoned about — the model
+    /// carried held ids across a boundary because nothing said it could not.
+    #[test]
+    fn a_reservation_that_outlives_its_batch_is_refused() {
+        let mut space = IdSpace::new();
+        let reserved = space.reserve(3, &[]).expect("reserved");
+        assert_eq!(reserved, vec![0, 1, 2]);
+
+        // Settle two of the three. Out of order is legitimate mid-batch — that
+        // is what the entry boundary exists for — so this is refused by nothing
+        // yet, and the boundary moves to 2 while id 0 is still outstanding.
+        space.create(&ids(&[1, 2])).expect("both are this batch's");
+        assert_eq!(space.bound(), 2);
+        space.open_batch();
+
+        let err = space
+            .create(&ids(&[0]))
+            .expect_err("id 0 is below the new boundary and nothing freed it");
+        assert_eq!(
+            err,
+            IdSpaceError::AlreadyLive {
+                id: 0,
+                entry_bound: 2
+            }
+        );
+    }
+
     /// `release` frees what the caller resolved, not what it was handed. The
     /// two sets differ on the relationship side, where `delete_relationships`
     /// skips ids it cannot resolve to a type and both endpoints.
@@ -1096,5 +1240,228 @@ mod reclaim_ids_tests {
                 "count {count}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod differential {
+    use super::IdSpace;
+    use roaring::RoaringTreemap;
+    use std::collections::BTreeSet;
+
+    fn xorshift(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    /// The same id space as two plain sets and a boundary, maintained by
+    /// definition rather than by arithmetic.
+    ///
+    /// `IdSpace` keeps a count where this keeps a set, and roaring containers
+    /// where this keeps a `BTreeSet`. That is the whole point: the two agree
+    /// only if the arithmetic and the container merges are both right, and the
+    /// encapsulation that made the old cross-owner audit unnecessary does
+    /// nothing for a bug *inside* the file.
+    #[derive(Default)]
+    struct Model {
+        live: BTreeSet<u64>,
+        free: BTreeSet<u64>,
+        entry_bound: u64,
+        taken: BTreeSet<u64>,
+        /// Reserved and not yet created or cancelled — the caller's half, which
+        /// `Pending` holds and lends back as `issued`.
+        held: BTreeSet<u64>,
+    }
+
+    impl Model {
+        fn bound(&self) -> u64 {
+            self.live.len() as u64 + self.free.len() as u64
+        }
+
+        fn open_batch(&mut self) {
+            self.entry_bound = self.bound();
+            self.taken.clear();
+        }
+
+        /// What `verify` should say, from the model: `taken` must fill the range
+        /// from the boundary upward, and the boundary must be where it puts it.
+        fn verify_should_pass(&self) -> bool {
+            let contiguous = self.taken.is_empty()
+                || (*self.taken.iter().next().unwrap() == self.entry_bound
+                    && *self.taken.iter().next_back().unwrap()
+                        == self.entry_bound + self.taken.len() as u64 - 1);
+            contiguous && self.bound() == self.entry_bound + self.taken.len() as u64
+        }
+    }
+
+    fn as_set(m: &RoaringTreemap) -> BTreeSet<u64> {
+        m.iter().collect()
+    }
+
+    fn agree(
+        space: &IdSpace,
+        model: &Model,
+        step: usize,
+        op: &str,
+    ) {
+        assert_eq!(
+            space.live(),
+            model.live.len() as u64,
+            "step {step} {op}: live"
+        );
+        assert_eq!(
+            as_set(space.recycled()),
+            model.free,
+            "step {step} {op}: free set"
+        );
+        assert_eq!(space.bound(), model.bound(), "step {step} {op}: bound");
+        assert_eq!(
+            space.max_id(),
+            if model.live.is_empty() {
+                0
+            } else {
+                model.bound() - 1
+            },
+            "step {step} {op}: max_id"
+        );
+        assert_eq!(as_set(&space.taken), model.taken, "step {step} {op}: taken");
+        assert!(
+            space.is_consistent(),
+            "step {step} {op}: {}",
+            space.inconsistency()
+        );
+        assert_eq!(
+            space.verify().is_ok(),
+            model.verify_should_pass(),
+            "step {step} {op}: verify disagrees with the model ({:?})",
+            space.verify()
+        );
+    }
+
+    /// Drive every operation against a reference model, for long enough that
+    /// batches close over reclaimed ids and cancellations several times.
+    ///
+    /// This is what covers the residual risk after ownership: nothing outside
+    /// this file can desynchronise the count from the ledger any more, so what
+    /// is left is this file getting its own arithmetic wrong, and only a second
+    /// implementation of the same question can see that.
+    #[test]
+    fn random_operation_sequences_agree_with_a_reference_model() {
+        let mut state = 0x2545_F491_4F6C_DD1D_u64;
+        let mut space = IdSpace::new();
+        let mut model = Model::default();
+        let (mut reserves, mut creates, mut cancels, mut releases, mut batches) = (0, 0, 0, 0, 0);
+
+        for step in 0..20_000 {
+            let r = xorshift(&mut state);
+            match r % 10 {
+                // Reserve a few ids. The model checks the allocator's promise
+                // directly: never an id that is live, held, or already taken.
+                0..=3 => {
+                    let n = ((r >> 8) % 4 + 1) as usize;
+                    let held: RoaringTreemap = model.held.iter().copied().collect();
+                    let ids = space.reserve(n, &[&held]).expect("small counts fit");
+                    assert_eq!(ids.len(), n, "step {step} reserve: short count");
+                    for &id in &ids {
+                        assert!(
+                            !model.live.contains(&id),
+                            "step {step}: reissued a live id {id}"
+                        );
+                        assert!(
+                            !model.held.contains(&id),
+                            "step {step}: reissued a held id {id}"
+                        );
+                        assert!(
+                            !model.taken.contains(&id),
+                            "step {step}: reissued a taken id {id}"
+                        );
+                        assert!(model.held.insert(id), "step {step}: reserve repeated {id}");
+                    }
+                    reserves += 1;
+                    agree(&space, &model, step, "reserve");
+                }
+                // Create some of what is held.
+                4..=6 => {
+                    if model.held.is_empty() {
+                        continue;
+                    }
+                    let take = ((r >> 16) % model.held.len() as u64 + 1) as usize;
+                    let ids: Vec<u64> = model.held.iter().copied().take(take).collect();
+                    let set: RoaringTreemap = ids.iter().copied().collect();
+                    space.create(&set).expect("the allocator's own ids");
+                    for id in ids {
+                        model.held.remove(&id);
+                        model.free.remove(&id);
+                        model.live.insert(id);
+                        if id >= model.entry_bound {
+                            model.taken.insert(id);
+                        }
+                    }
+                    creates += 1;
+                    agree(&space, &model, step, "create");
+                }
+                // Cancel one held id.
+                7 => {
+                    let Some(&id) = model.held.iter().nth(((r >> 24) % 7) as usize) else {
+                        continue;
+                    };
+                    space.cancel(id);
+                    model.held.remove(&id);
+                    model.free.insert(id);
+                    if id >= model.entry_bound {
+                        model.taken.insert(id);
+                    }
+                    cancels += 1;
+                    agree(&space, &model, step, "cancel");
+                }
+                // Release one live id.
+                8 => {
+                    let Some(&id) = model.live.iter().nth(((r >> 32) % 11) as usize) else {
+                        continue;
+                    };
+                    let set: RoaringTreemap = std::iter::once(id).collect();
+                    space
+                        .release(&set, &set)
+                        .expect("a live id below the boundary");
+                    model.live.remove(&id);
+                    model.free.insert(id);
+                    releases += 1;
+                    agree(&space, &model, step, "release");
+                }
+                // Close the batch. Every outstanding reservation is settled
+                // first, which is `open_batch`'s stated precondition and what
+                // `Pending::commit` does — it creates everything it holds before
+                // `clear` and the next `open_id_batches`.
+                _ => {
+                    if !model.held.is_empty() {
+                        let set: RoaringTreemap = model.held.iter().copied().collect();
+                        space.create(&set).expect("settling what is held");
+                        for id in std::mem::take(&mut model.held) {
+                            model.free.remove(&id);
+                            model.live.insert(id);
+                            if id >= model.entry_bound {
+                                model.taken.insert(id);
+                            }
+                        }
+                        agree(&space, &model, step, "settle");
+                    }
+                    space.open_batch();
+                    model.open_batch();
+                    batches += 1;
+                    agree(&space, &model, step, "open_batch");
+                }
+            }
+        }
+
+        // The mix is what makes the run mean anything, so it is asserted rather
+        // than hoped for: a filter that silently stopped producing cancels would
+        // otherwise read as a pass.
+        assert!(reserves > 1_000, "too few reserves: {reserves}");
+        assert!(creates > 1_000, "too few creates: {creates}");
+        assert!(cancels > 200, "too few cancels: {cancels}");
+        assert!(releases > 200, "too few releases: {releases}");
+        assert!(batches > 500, "too few batch boundaries: {batches}");
     }
 }
