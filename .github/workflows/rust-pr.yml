@@ -33,6 +33,7 @@ permissions:
 jobs:
   check-files:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       file_changed: ${{ steps.check.outputs.changed }}
       # One key for every per-run tag: `pr-<N>` on a pull request (byte-identical
@@ -48,6 +49,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve the CI key
         id: key
@@ -72,7 +74,6 @@ jobs:
         # Pick the right diff target for "did the toolchain change":
         #   - merge_group → the queue commit's parent is the previous trunk tip,
         #     so HEAD~1..HEAD is exactly this entry's contribution.
-        #   - PRs targeting a trunk (main, or the interim main-rs in
         #     FalkorDB/FalkorDB) or a version branch (e.g. 6.0, 7.1, set by
         #     batch-backport.yml) → diff against that base's own merge-base.
         #   - Stacked branches that ultimately land on a trunk → diff against
@@ -80,32 +81,35 @@ jobs:
         #     stack rebuilds the tag for this PR.
         run: |
           set -euo pipefail
-          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|deps/RediSearch|\.gitmodules|\.github/workflows/build-toolchain\.yml)$"
+          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|deps/RediSearch|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
           if [ "$EVENT" = "merge_group" ]; then
             RANGE="HEAD~1 HEAD"
           else
-            # The trunk fallback is resolved against the remote rather than
-            # hardcoded: FalkorDB/FalkorDB has `main-rs` (+ C's `master`) and no
-            # `main`, so a bare `git fetch origin main` there would fail.
-            if [[ "$BASE_REF" =~ ^[0-9]+\.[0-9]+$ || "$BASE_REF" == "main" || "$BASE_REF" == "main-rs" ]]; then
+            # A PR onto main or onto a version branch diffs against its own
+            # base. Anything else is a stacked branch that will land on main, so
+            # diff against main's merge-base — that way a toolchain change
+            # anywhere in the stack still rebuilds the tag for this PR.
+            if [[ "$BASE_REF" =~ ^[0-9]+\.[0-9]+$ || "$BASE_REF" == "main" ]]; then
               DIFF_TARGET="$BASE_REF"
-            elif git ls-remote --exit-code --heads origin main >/dev/null 2>&1; then
-              DIFF_TARGET="main"
             else
-              DIFF_TARGET="main-rs"
+              DIFF_TARGET="main"
             fi
             git fetch --no-tags origin "$DIFF_TARGET"
             MERGE_BASE=$(git merge-base "origin/$DIFF_TARGET" "$HEAD_SHA")
             RANGE="$MERGE_BASE $HEAD_SHA"
           fi
+          # Materialise the diff first. Piping straight into `grep -q` under
+          # `set -o pipefail` is a trap: grep exits on the first match, git diff
+          # takes SIGPIPE, and the pipeline reports 141 — so a real toolchain
+          # change reads as changed=false, non-deterministically, depending on
+          # whether the diff filled the pipe buffer first.
           # shellcheck disable=SC2086
-          if git diff --name-only $RANGE | grep -qE "$PATTERN"; then
+          git diff --name-only $RANGE > /tmp/changed-files.txt
+          if grep -qE "$PATTERN" /tmp/changed-files.txt; then
             echo "changed=true" | tee -a "$GITHUB_OUTPUT"
           else
             echo "changed=false" | tee -a "$GITHUB_OUTPUT"
           fi
-          # shellcheck disable=SC2086
-          git diff --name-only $RANGE > /tmp/changed-files.txt
 
       # Infrastructure changes from a fork are refused rather than handled.
       # Rationale: of the fork PRs this repo has received that target a trunk,
@@ -166,33 +170,27 @@ jobs:
   # RC pipeline. One definition; both callers read the same buckets.
   flow-test-matrix:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       services_files: ${{ steps.set-matrix.outputs.services_files }}
       spawn_files: ${{ steps.set-matrix.outputs.spawn_files }}
       test_files: ${{ steps.set-matrix.outputs.test_files }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Generate test matrix
         id: set-matrix
         run: |
           python3 tests/flow/test_matrix_split.py >> $GITHUB_OUTPUT
 
-  # The half of CI that needs a published RC image.
-  #
-  # In the merge queue this is the authoritative gate: it builds the images and
-  # runs the image-based suites against them, on the exact commit that will land.
-  #
-  # On a pull request it runs with run_flow=false — the images are published so
-  # release-image.yml can retag one later, but the suites are not re-run, because
-  # the image-free tier above has already run them against the same tree. Skipped
-  # entirely for a fork, which cannot push to the registry.
-  rc-pipeline:
+  # The CI suites. One definition; the vehicle is what changes between events.
+  ci-pipeline:
     needs: [check-files, docker, flow-test-matrix]
     if: >-
       ${{ !cancelled()
           && (needs.docker.result == 'success' || needs.docker.result == 'skipped')
-          && (github.event_name == 'merge_group'
-              || github.event.pull_request.head.repo.full_name == github.repository) }}
+          && needs.flow-test-matrix.result == 'success' }}
     uses: ./.github/workflows/_ci-pipeline.yml
     permissions:
       contents: read
@@ -200,14 +198,20 @@ jobs:
     with:
       ci_key: ${{ needs.check-files.outputs.ci_key }}
       commit_sha: ${{ github.event.pull_request.head.sha || github.sha }}
-      run_flow: ${{ github.event_name == 'merge_group' }}
       build_image: ${{ needs.check-files.outputs.toolchain_tag }}
       services_files: ${{ needs.flow-test-matrix.outputs.services_files }}
       spawn_files: ${{ needs.flow-test-matrix.outputs.spawn_files }}
+      test_files: ${{ needs.flow-test-matrix.outputs.test_files }}
+      # The image vehicle only in the queue, and only from a branch that can
+      # push. A fork pull request runs the artifact vehicle and nothing else.
+      use_image: >-
+        ${{ github.event_name == 'merge_group'
+            || github.event.pull_request.head.repo.full_name == github.repository }}
     secrets: inherit
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs:
       - check-files
@@ -215,6 +219,8 @@ jobs:
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup default stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -226,6 +232,7 @@ jobs:
           CXX=clang++-22 cargo clippy --all-targets
   coverage:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs:
       - check-files
@@ -235,6 +242,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup default stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -285,6 +294,7 @@ jobs:
           flags: e2e-tck
   fuzz:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     container: ${{ needs.check-files.outputs.toolchain_tag }}
     needs:
       - check-files
@@ -292,6 +302,8 @@ jobs:
     if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup default nightly
       - run: rustup component add llvm-tools-preview
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
@@ -362,168 +374,17 @@ jobs:
   # is pushed to a registry, so these run on a read-only GITHUB_TOKEN — which
   # is what a pull_request from a fork gets. Shapes lifted from rust-push.yml.
 
-  build-release:
-    runs-on: ubuntu-latest
-    container: ${{ needs.check-files.outputs.toolchain_tag }}
-    needs: [check-files, docker]
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: "release"
-      - name: Build
-        run: cargo build --release
-      - name: Upload release binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: release-binary
-          path: target/release/libfalkordb.so
-
-  test:
-    runs-on: ubuntu-latest
-    container: ${{ needs.check-files.outputs.toolchain_tag }}
-    needs: [check-files, docker]
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: "release"
-      - name: Build
-        run: cargo build --release
-      - name: Run unit tests
-        run: |
-          # Doctests are linked separately by rustdoc (which ignores RUSTFLAGS /
-          # .cargo rustflags), so they need the duplicate-symbol allowance for
-          # libredisearch_rs.a's bundled std via RUSTDOCFLAGS. Also disable release
-          # LTO for the test build: the embedded C/Rust archives carry no LLVM
-          # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc".
-          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
-      - name: Run tests
-        run: |
-          . /data/venv/bin/activate
-          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
-      - name: Run TCK tests
-        run: |
-          . /data/venv/bin/activate
-          RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
-
-  flow:
-    runs-on: ubuntu-latest
-    container: ${{ needs.check-files.outputs.toolchain_tag }}
-    needs: [check-files, docker, flow-test-matrix, build-release]
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-release.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download release binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: release-binary
-          path: target/release
-      - run: chmod +x target/release/libfalkordb.so
-      - name: Run Flow test - ${{ matrix.test_file }}
-        env:
-          TEST_FILE: ${{ matrix.test_file }}
-        run: |
-          . /data/venv/bin/activate
-          RELEASE=1 TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
-      - name: Upload flow logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: flow-logs-${{ strategy.job-index }}
-          path: tests/flow/logs/
-          if-no-files-found: ignore
-
-  build-coverage:
-    runs-on: ubuntu-latest
-    container: ${{ needs.check-files.outputs.toolchain_tag }}
-    needs: [check-files, docker]
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup default stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: "coverage"
-          env-vars: "RUSTFLAGS"
-      - name: Build with coverage
-        run: |
-          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
-      - name: Upload coverage binary
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: coverage-binary
-          path: target/debug/libfalkordb.so
-
-  coverage-flow:
-    runs-on: ubuntu-latest
-    container: ${{ needs.check-files.outputs.toolchain_tag }}
-    needs: [check-files, docker, flow-test-matrix, build-coverage]
-    if: ${{ !cancelled() && (needs.docker.result == 'success' || needs.docker.result == 'skipped') && needs.flow-test-matrix.result == 'success' && needs.build-coverage.result == 'success' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        test_file: ${{ fromJson(needs.flow-test-matrix.outputs.test_files) }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Download coverage binary
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: coverage-binary
-          path: target/debug
-      - run: chmod +x target/debug/libfalkordb.so
-      - name: Run coverage - ${{ matrix.test_file }}
-        env:
-          TEST_FILE: ${{ matrix.test_file }}
-        run: |
-          . /data/venv/bin/activate
-          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
-          llvm-profdata-22 merge --sparse $(find . -name "*.profraw") -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so > codecov.txt.all
-          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
-      - name: Upload flow logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: coverage-flow-logs-${{ strategy.job-index }}
-          path: tests/flow/logs/
-          if-no-files-found: ignore
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          flags: flow-coverage
-
-  # The one check to require in branch protection and in the merge queue.
-  #
-  # A required check must be reported by BOTH the pull_request run and the
-  # merge_group run, or the merge fails on a status that never arrives. The two
-  # events deliberately run different jobs, so a single aggregate is the only
-  # name that can satisfy both.
-  #
-  # `skipped` counts as passing because the tier split legitimately skips jobs —
-  # which is safe only as long as every conditional skip is an explicit `if:` on
-  # the event or the head repo, and no job that must not be skipped sits behind
-  # an `if: !cancelled()` chain whose dependency failed.
   ci-gate:
     runs-on: ubuntu-latest
     if: ${{ !cancelled() }}
     needs:
       - check-files
+      - docker
+      - flow-test-matrix
+      - ci-pipeline
       - lint
-      - test
-      - flow
       - coverage
-      - coverage-flow
-      - rc-pipeline
+      - fuzz
     steps:
       - name: Assert no dependency failed
         env:
