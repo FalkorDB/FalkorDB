@@ -74,8 +74,8 @@ jobs:
       rc_pr_n:           ${{ steps.derive.outputs.rc_pr_n }}
       push_to_dockerhub: ${{ steps.derive.outputs.push_to_dockerhub }}
     steps:
-      # Refuse workflow_dispatch from anywhere except a trunk (main, or the
-      # interim main-rs in FalkorDB/FalkorDB) or a version branch (X.Y). Release
+      # Refuse workflow_dispatch from anywhere except main or a version branch
+      # (X.Y). Release
       # events and workflow_call (from release-tag.yml) are unaffected — those
       # are driven by a tag, which in practice only points at a trunk / version
       # branch anyway. This guards against a dispatch from a feature branch
@@ -85,8 +85,8 @@ jobs:
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "$REF_NAME" != "main" && "$REF_NAME" != "main-rs" && ! "$REF_NAME" =~ ^[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::workflow_dispatch must run from a trunk (main, main-rs) or a version branch (X.Y); got ref_name=$REF_NAME"
+          if [[ "$REF_NAME" != "main" && ! "$REF_NAME" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::workflow_dispatch must run from main or a version branch (X.Y); got ref_name=$REF_NAME"
             exit 1
           fi
 

@@ -8,14 +8,12 @@ on:
     # jobs. The version glob is `[0-9]*.[0-9]*` (glob, not regex; `*` is
     # multi-char).
     #
-    # TRUNK = `main` (this repo) or `main-rs` (the interim Rust branch in
     # FalkorDB/FalkorDB, which carries this tree while the C engine keeps
     # `master`). Both promote the same channels, so the migration doesn't
     # silently stop publishing the rolling image. Gates below spell this as
-    # contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref).
+    # github.ref == 'refs/heads/main'.
     branches:
       - "main"
-      - "main-rs"
       - "[0-9]*.[0-9]*"
 
 permissions:
@@ -63,7 +61,7 @@ jobs:
   # promote-* jobs gate on a non-empty pr_n and skip cleanly. See the step body.
   find-pr:
     needs: check-files
-    if: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -88,7 +86,6 @@ jobs:
             # No PR in THIS repo => no rc-pr-<N> image exists for this commit, so
             # promotion is impossible and failing would only add a red X. Commits
             # reach a trunk without a PR when:
-            #   - this tree is seeded into another repo (FalkorDB/FalkorDB main-rs):
             #     the commits' PRs live in the source repo, not the target;
             #   - someone pushes (or force-pushes) straight to a trunk.
             # Emit an empty pr_n; the promote-* jobs below skip on it. Downside
@@ -108,7 +105,7 @@ jobs:
   # build/Dockerfile actually changed in that PR.
   docker:
     needs: [check-files, find-pr]
-    if: ${{ needs.check-files.outputs.file_changed == 'true' && needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
+    if: ${{ needs.check-files.outputs.file_changed == 'true' && needs.find-pr.outputs.pr_n != '' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -143,7 +140,7 @@ jobs:
   # pointer only moves at 6.0 GA, via release-image.yml. See issue #2290.
   promote-edge:
     needs: find-pr
-    if: ${{ needs.find-pr.outputs.pr_n != '' && contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
+    if: ${{ needs.find-pr.outputs.pr_n != '' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

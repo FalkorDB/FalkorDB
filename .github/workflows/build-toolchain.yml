@@ -47,11 +47,10 @@ jobs:
     # CALLER's event (e.g. pull_request), never "workflow_call". So the original
     # event_name == 'workflow_call' clause was dead and silently skipped this job
     # on every PR. Guard only the direct workflow_dispatch case: allow dispatch
-    # from a trunk (main, or the interim main-rs in FalkorDB/FalkorDB — where we
     # want to refresh :latest), block from feature branches
     # (which would otherwise clobber :latest). All workflow_call invocations pass
     # — gating happens in the caller (rust-pr.yml's check-files).
-    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -93,11 +92,11 @@ jobs:
           # Read the shared cache always; write it only from a trunk. Any other
           # ref — a PR branch, a queue entry — would otherwise publish layers
           # into the ref main's own builds restore from.
-          cache-to: ${{ contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) && format('type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-{0},mode=max', matrix.arch) || '' }}
+          cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/falkordb/falkordb-build:buildcache-{0},mode=max', matrix.arch) || '' }}
 
   manifest:
     needs: build
-    if: ${{ github.event_name != 'workflow_dispatch' || contains(fromJSON('["refs/heads/main","refs/heads/main-rs"]'), github.ref) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
