@@ -835,6 +835,49 @@ impl IdList {
         }
     }
 
+    /// Settle the run's direction against a segment that is about to acquire
+    /// one, ending the run where the two disagree.
+    ///
+    /// A segment has no direction while it holds one id; the second id gives it
+    /// one. It may only take that direction inside a run that reads the same
+    /// way, because `maybe_collapse_run` folds a run's ranges into a single
+    /// bitmap and reads that bitmap back in *its* order, not in each segment's.
+    ///
+    /// Without this a descending pair inside an ascending run — or the mirror —
+    /// survives the collapse with every id present and `len` correct, so the
+    /// decoder's cardinality check passes and the buffer applies. An `IdList` is
+    /// positional: row *k* belongs to the *k*-th id as written. Two entities
+    /// then exchange values on the replica with no error, no log and no resync,
+    /// and a state comparison calls it green. #2842.
+    ///
+    /// Ending the run rather than rewriting the segment is what the
+    /// `continues_run == false` branch of `push` already does for a reversal it
+    /// can see; this is the same rule for the reversals that reach a segment
+    /// through an extension instead.
+    fn claim_direction(
+        &mut self,
+        desc: bool,
+    ) {
+        match self.run.desc {
+            None => self.run.desc = Some(desc),
+            Some(d) if d == desc => {}
+            // The run ends AT this segment, which becomes the first of the
+            // next one — it is a range, so it is a legal thing for a run to
+            // start with, unlike the `Repeat` case just below.
+            //
+            // The direction is set here and not left for the next push to
+            // decide. `restart` clears it to `None`, and a `None` run takes its
+            // direction from whichever way the *following* id falls — which can
+            // be the opposite of the one this segment already reads, putting an
+            // ascending pair at the head of a descending run and reversing it in
+            // the collapse. That is the same bug one segment further along.
+            Some(_) => {
+                self.run.restart(self.segments.len() - 1);
+                self.run.desc = Some(desc);
+            }
+        }
+    }
+
     /// Add an id, extending the current segment or opening a new one.
     ///
     /// The collapse decision is made here, in flight, and without speculation:
@@ -845,6 +888,24 @@ impl IdList {
         id: u64,
     ) {
         self.len += 1;
+
+        // Before the extensions below, not after: once a segment has grown,
+        // nothing in it says which push gave it its direction. A one-id segment
+        // about to become a two-id one is exactly where a run's direction is
+        // decided or contradicted. #2842.
+        match self.segments.last() {
+            Some(&Segment::Range { base, len: 1 }) if base.checked_add(1) == Some(id) => {
+                self.claim_direction(false);
+            }
+            Some(&Segment::RangeDescending { base, len: 1 }) if id.checked_add(1) == Some(base) => {
+                // The rewrite below always produces `len: 2`, so a descending
+                // range of one does not occur today. The arm is here so that
+                // this stays a property of the shape rather than of the order
+                // the shapes happen to be built in.
+                self.claim_direction(true);
+            }
+            _ => {}
+        }
 
         // The hot paths, in the order they are taken. All of them extend the
         // segment already there, and none touches the run tally, because a
@@ -903,9 +964,11 @@ impl IdList {
                 self.segments.pop();
                 self.segments
                     .push(Segment::RangeDescending { base, len: 2 });
-                if self.run.desc.is_none() {
-                    self.run.desc = Some(true);
-                }
+                // Not `if self.run.desc.is_none()`. That claimed the direction
+                // for an undecided run and said nothing about a run already
+                // going the other way, so a descending pair stayed inside an
+                // ascending run and the collapse reversed it. #2842.
+                self.claim_direction(true);
                 return;
             }
             if base == id {
@@ -1335,6 +1398,139 @@ mod tests {
         assert_eq!(decoded(&mut r, ids.len() as u32), ids, "round-trip");
         assert!(r.is_empty(), "{} bytes left over", r.remaining());
         buf
+    }
+
+    /// Push order is the wire order, through every reversal shape. #2842.
+    ///
+    /// The property is the PAIRING, not the population. An `IdList` is
+    /// positional — row *k* belongs to the *k*-th id as written — so a list that
+    /// holds the right ids in the wrong order is not a near miss: two entities
+    /// exchange values on the replica, `len` is right, the decoder's cardinality
+    /// check passes, and nothing is logged or resynced. Every assertion here is
+    /// therefore on the sequence; a test on the id set, the count or `len` is
+    /// blind to this bug by construction and several already in this file are.
+    ///
+    /// Both directions, because the two reach the reversal by different routes:
+    /// a descending pair inside an ascending run goes through the lone-`Range`
+    /// rewrite, and an ascending pair inside a descending run goes through the
+    /// ordinary `Range` extension in the hot path.
+    #[test]
+    fn a_reversal_inside_a_run_does_not_reorder_the_ids() {
+        // The two sequences from the issue.
+        for pushed in [
+            vec![1_u64, 2, 5, 4, 7, 9],
+            vec![154_u64, 152, 150, 151, 148],
+        ] {
+            assert_round_trips_in_order(&pushed);
+        }
+
+        // A reversal at every position of a run long enough to collapse into a
+        // bitmap — the collapse is what loses the order, so a short list passes
+        // whatever the builder does and proves nothing.
+        for flip in 1..38_usize {
+            let mut asc = Vec::new();
+            let mut v = 1_u64;
+            for i in 0..40 {
+                if i == flip {
+                    asc.push(v);
+                    asc.push(v - 1);
+                } else {
+                    asc.push(v);
+                }
+                v += 3;
+            }
+            assert_round_trips_in_order(&asc);
+
+            let mut desc = Vec::new();
+            let mut w = 500_u64;
+            for i in 0..40 {
+                if i == flip {
+                    desc.push(w);
+                    desc.push(w + 1);
+                } else {
+                    desc.push(w);
+                }
+                w -= 3;
+            }
+            assert_round_trips_in_order(&desc);
+        }
+    }
+
+    /// The same property over shapes nobody enumerated.
+    ///
+    /// Fixed seed, so a failure is reproducible and CI cannot go green and red
+    /// on the same commit.
+    ///
+    /// The distribution is deliberately lopsided rather than uniform, and that
+    /// is the whole design. A uniform walk over "repeat / step / gap, either
+    /// direction" does not find this bug: 20,000 such sequences were run
+    /// against the unfixed builder and every one passed, because a run needs to
+    /// grow past `prefers_bitmap`'s threshold BEFORE the reversal arrives, and a
+    /// balanced walk reverses so often that no run ever gets long enough to
+    /// collapse. The collapse is what loses the order, so a sequence that never
+    /// collapses proves nothing however strange it looks.
+    ///
+    /// So: mostly gaps in one direction to build a long run, with the occasional
+    /// single step the other way — which is also what a real endpoint column
+    /// looks like. This distribution does fail on the unfixed builder.
+    #[test]
+    fn push_order_survives_the_wire_for_arbitrary_sequences() {
+        let mut state = 0x2842_u64;
+        let mut next = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            state >> 33
+        };
+        for case in 0..600 {
+            // Half the cases build downward, so both routes to a reversal are
+            // exercised: the lone-`Range` rewrite and the hot-path extension.
+            let down = case % 2 == 0;
+            let n = 40 + (next() % 40) as usize;
+            let mut ids = Vec::with_capacity(n);
+            let mut cur = 1_000_000_u64;
+            for _ in 0..n {
+                let step = match next() % 20 {
+                    0..=13 => 2 + next() % 6, // a gap the run's way: a new segment
+                    14..=16 => 1,             // one step the run's way
+                    17..=18 => 0,             // a repeat
+                    _ => {
+                        // one step AGAINST the run: the reversal under test
+                        if down {
+                            cur += 1
+                        } else {
+                            cur -= 1
+                        }
+                        ids.push(cur);
+                        continue;
+                    }
+                };
+                if down {
+                    cur = cur.saturating_sub(step);
+                } else {
+                    cur += step;
+                }
+                ids.push(cur);
+            }
+            assert_round_trips_in_order(&ids);
+        }
+    }
+
+    /// Build, encode, decode, and require the ids back in the order pushed.
+    fn assert_round_trips_in_order(pushed: &[u64]) {
+        let mut list = IdList::new();
+        for &id in pushed {
+            list.push(id);
+        }
+        let built: Vec<u64> = list.iter().collect();
+        assert_eq!(built, pushed, "the builder reordered {pushed:?}");
+
+        let mut buf = Vec::new();
+        list.encode(&mut buf).unwrap();
+        let mut r = Reader::new(&buf);
+        let decoded = read_ids(&mut r, list.count()).expect("a list this file built must decode");
+        let round: Vec<u64> = decoded.iter().collect();
+        assert_eq!(round, pushed, "the wire reordered {pushed:?}");
     }
 
     #[test]
