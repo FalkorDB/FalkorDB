@@ -75,9 +75,12 @@ jobs:
     env:
       SANITIZER: ${{ inputs.sanitizer_env }}
       CODE_COVERAGE: ${{ inputs.collect_coverage && '1' || '' }}
-      # flow.sh reads RELEASE to pick target/release vs target/debug. The
-      # coverage build is a dev-profile build, so it must not be set there.
-      RELEASE: ${{ inputs.collect_coverage && '' || '1' }}
+      # Point flow.sh straight at where the artifact was unpacked, rather than
+      # setting RELEASE and letting it infer the directory. One source of truth,
+      # and it sidesteps a GitHub expression trap: `a && '' || '1'` does NOT
+      # yield '' when a is true — the empty string is falsy, so the `||` takes
+      # over and it always evaluates to '1'.
+      TARGET_DIR: ${{ inputs.artifact_path }}
     strategy:
       fail-fast: false
       matrix:
