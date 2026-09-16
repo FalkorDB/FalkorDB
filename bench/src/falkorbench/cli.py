@@ -41,7 +41,21 @@ def _select(names: tuple[str, ...], *, cg_only: bool = False):
     missing = wanted - {q.name for q in chosen}
     if missing:
         raise click.ClickException(f"unknown queries: {sorted(missing)}")
-    return chosen
+    # Pull in whatever the chosen rows depend on, transitively. A row that
+    # measures against a graph an earlier row builds is meaningless without it,
+    # and silently so -- it reports a plausible number for the wrong graph.
+    by_name = {q.name: q for q in pool}
+    while True:
+        need = {n for q in chosen for n in q.needs} - {q.name for q in chosen}
+        if not need:
+            break
+        unknown = need - by_name.keys()
+        if unknown:
+            raise click.ClickException(f"unknown prerequisite queries: {sorted(unknown)}")
+        chosen += [by_name[n] for n in need]
+    # Back into suite order: a prerequisite has to run before its dependent.
+    order = {q.name: i for i, q in enumerate(pool)}
+    return sorted(chosen, key=lambda q: order[q.name])
 
 
 def common_options(fn):
