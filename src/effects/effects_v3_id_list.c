@@ -307,57 +307,70 @@ void EffectsV3IdListBuilder_Push
 	// tally, because a segment's cost is only folded in once it stops growing
 	//--------------------------------------------------------------------------
 
+	// one arm per kind and NO default, like every other switch over this enum
+	// in this file: when the enum grew from three kinds to five, the arms that
+	// had a default silently took the new values down the wrong path. An arm
+	// that falls through to the slow path below is correct - it means this id
+	// does not extend the segment already there
 	if(last != NULL) {
-		if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING ||
-		   last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING) {
-			// "is this the id one past the end?" - a question with no answer at
-			// the top of the id space, where base + len leaves it. The wrap is
-			// defined in C rather than a trap, which makes it worse here than
-			// undefined: base = UINT64_MAX, len = 1 computes 0, so pushing id 0
-			// after the highest id extends the range instead of starting a new
-			// segment, and the result claims an id that does not exist and
-			// reports max below min. So the sum is only asked for when it exists
-			if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING &&
-			   last->range.base <= UINT64_MAX - (uint64_t)last->range.len &&
-			   id == last->range.base + (uint64_t)last->range.len) {
-				// one more consecutive id: every bulk create, every
-				// delete-by-label, from first push to last
-				last->range.len++;
-				return;
-			}
+		switch(last->kind) {
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+				// "is this the id one past the end?" - a question with no
+				// answer at the top of the id space, where base + len leaves
+				// it. The wrap is defined in C rather than a trap, which makes
+				// it worse here than undefined: base = UINT64_MAX, len = 1
+				// computes 0, so pushing id 0 after the highest id extends the
+				// range instead of starting a new segment, and the result
+				// claims an id that does not exist and reports max below min.
+				// So the sum is only asked for when it exists
+				if(last->range.base <= UINT64_MAX - (uint64_t)last->range.len &&
+				   id == last->range.base + (uint64_t)last->range.len) {
+					// one more consecutive id: every bulk create, every
+					// delete-by-label, from first push to last
+					last->range.len++;
+					return;
+				}
+				break;
 
-			if(last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING &&
-			   last->range.base >= (uint64_t)last->range.len &&
-			   id == last->range.base - (uint64_t)last->range.len) {
-				// the mirror, one more step down
-				last->range.len++;
-				return;
-			}
-		} else if(last->kind == EFFECTS_V3_SEG_REPEAT) {
-			if(id == last->repeat.id) {
-				// one more of the same id: a supernode's endpoint list is this
-				// on every push after the first
-				last->repeat.count++;
-				return;
-			}
-		} else {
-			// the run already collapsed and this id continues it: straight into
-			// the bitmap, no new segment and nothing left to weigh
-			if(last->kind == EFFECTS_V3_SEG_SET_ASCENDING &&
-			   id > last->bitmap.max) {
-				roaring64_bitmap_add(last->bitmap.bitmap, id);
-				last->bitmap.len++;
-				last->bitmap.max = id;
-				return;
-			}
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+				// the mirror, one more step down, and the mirror of the same
+				// wrap: base - len has no answer at the bottom of the space
+				if(last->range.base >= (uint64_t)last->range.len &&
+				   id == last->range.base - (uint64_t)last->range.len) {
+					last->range.len++;
+					return;
+				}
+				break;
 
-			if(last->kind == EFFECTS_V3_SEG_SET_DESCENDING &&
-			   id < last->bitmap.min) {
-				roaring64_bitmap_add(last->bitmap.bitmap, id);
-				last->bitmap.len++;
-				last->bitmap.min = id;
-				return;
-			}
+			case EFFECTS_V3_SEG_REPEAT:
+				if(id == last->repeat.id) {
+					// one more of the same id: a supernode's endpoint list is
+					// this on every push after the first
+					last->repeat.count++;
+					return;
+				}
+				break;
+
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+				// the run already collapsed and this id continues it: straight
+				// into the bitmap, no new segment and nothing left to weigh
+				if(id > last->bitmap.max) {
+					roaring64_bitmap_add(last->bitmap.bitmap, id);
+					last->bitmap.len++;
+					last->bitmap.max = id;
+					return;
+				}
+				break;
+
+			case EFFECTS_V3_SEG_SET_DESCENDING:
+				// the mirror: a collapsed descending run continues downward
+				if(id < last->bitmap.min) {
+					roaring64_bitmap_add(last->bitmap.bitmap, id);
+					last->bitmap.len++;
+					last->bitmap.min = id;
+					return;
+				}
+				break;
 		}
 	}
 
@@ -376,11 +389,11 @@ void EffectsV3IdListBuilder_Push
 		// pushing UINT64_MAX after id 0 computes 0 and rewrites the segment
 		// descending from base 0, which then steps below the id space
 		if(base > 0 && id == base - 1) {
-			// it steps down: the same payload, read the other way
-			// the kind changes rather than a flag flipping: the same payload,
-			// read the other way
+			// it steps down: the kind changes rather than a flag flipping,
+			// the same payload read the other way
 			last->kind      = EFFECTS_V3_SEG_RANGE_DESCENDING;
 			last->range.len = 2;
+
 			if(b->run_dir == RUN_UNDECIDED) {
 				b->run_dir = RUN_DESCENDING;
 			}
