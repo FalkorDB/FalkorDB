@@ -81,8 +81,8 @@ impl Runtime<'_> {
         // Pre-check: if no nodes/relationships have been deleted in this
         // transaction, we can skip the per-row deletion checks entirely.
         let has_deleted_nodes = !self.deleted_nodes.borrow().is_empty();
-        let has_pending_deleted_nodes = self.pending.borrow().has_deleted_nodes();
-        let has_pending_deleted_rels = self.pending.borrow().has_deleted_relationships();
+        let has_pending_deleted_nodes = self.pending.borrow().has_node_deletes();
+        let has_pending_deleted_rels = self.pending.borrow().has_relationship_deletes();
         let skip_delete_checks =
             !has_deleted_nodes && !has_pending_deleted_nodes && !has_pending_deleted_rels;
 
@@ -169,7 +169,7 @@ impl Runtime<'_> {
                             if !skip_delete_checks
                                 && ((self.g.borrow().is_node_deleted(id)
                                     && !self.pending.borrow().is_node_created(id))
-                                    || self.pending.borrow().is_node_deleted(id))
+                                    || self.pending.borrow().is_node_pending_delete(id))
                             {
                                 continue;
                             }
@@ -260,7 +260,10 @@ impl Runtime<'_> {
                             if !skip_delete_checks
                                 && ((self.g.borrow().is_relationship_deleted(target_rel)
                                     && !self.pending.borrow().is_relationship_created(target_rel))
-                                    || self.pending.borrow().is_relationship_deleted(target_rel))
+                                    || self
+                                        .pending
+                                        .borrow()
+                                        .is_relationship_pending_delete(target_rel))
                             {
                                 continue;
                             }
@@ -396,7 +399,7 @@ impl Runtime<'_> {
                             if !skip_delete_checks
                                 && ((self.g.borrow().is_node_deleted(id)
                                     && !self.pending.borrow().is_node_created(id))
-                                    || self.pending.borrow().is_node_deleted(id))
+                                    || self.pending.borrow().is_node_pending_delete(id))
                             {
                                 continue;
                             }

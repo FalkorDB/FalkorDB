@@ -10,9 +10,9 @@
 //! ## Batched Operations
 //!
 //! - `created_nodes`: Nodes created in this query
-//! - `deleted_nodes`: Nodes marked for deletion
+//! - `node_deletes`: Nodes marked for deletion
 //! - `created_rels_by_type`: Edges created in this query, grouped by type
-//! - `deleted_relationships`: Edges marked for deletion
+//! - `relationship_deletes`: Edges marked for deletion
 //! - `set_*_attrs`: Property updates by entity ID
 //! - `set/remove_node_labels`: Label changes
 //!
@@ -146,9 +146,9 @@ pub struct Pending {
     /// differenced against the free set without being walked.
     pub(crate) taken_relationship_ids: RoaringTreemap,
     /// Nodes to be deleted
-    pub(crate) deleted_nodes: RoaringTreemap,
+    pub(crate) node_deletes: RoaringTreemap,
     /// Relationships to be deleted
-    pub(crate) deleted_relationships: RoaringTreemap,
+    pub(crate) relationship_deletes: RoaringTreemap,
     /// Endpoints for deleted relationships — populated by commit(), read by the
     /// effects emitter, which takes a `Pending` and never the other way round.
     pub(crate) deleted_endpoints: Vec<DeletedEdge>,
@@ -361,8 +361,8 @@ impl Pending {
             created_rels_by_type: FxHashMap::default(),
             created_rel_types: FxHashMap::default(),
             taken_relationship_ids: RoaringTreemap::new(),
-            deleted_nodes: RoaringTreemap::new(),
-            deleted_relationships: RoaringTreemap::new(),
+            node_deletes: RoaringTreemap::new(),
+            relationship_deletes: RoaringTreemap::new(),
             deleted_endpoints: Vec::new(),
             deleted_node_labels: Vec::new(),
             cancelled_nodes: RoaringTreemap::new(),
@@ -656,7 +656,7 @@ impl Pending {
         &mut self,
         id: NodeId,
     ) {
-        self.deleted_nodes.insert(id.into());
+        self.node_deletes.insert(id.into());
     }
 
     /// Delete a pending-created node: mark it deleted, collect its labels and attrs,
@@ -701,7 +701,7 @@ impl Pending {
 
     /// Remove and return all pending-created relationships incident on the
     /// given node, along with their staged attributes. Also cleans up
-    /// `new_relationships_attrs` and `deleted_relationships` entries for
+    /// `new_relationships_attrs` and `relationship_deletes` entries for
     /// each removed relationship so that `commit()` has no stale state.
     pub fn remove_pending_relationships_for_node(
         &mut self,
@@ -737,7 +737,7 @@ impl Pending {
                 }
             }
             let attrs = self.new_relationships_attrs.remove(&rel_id.into());
-            self.deleted_relationships.remove(rel_id.into());
+            self.relationship_deletes.remove(rel_id.into());
             // Handed over to the id space, which records the cancellation as it
             // returns the id to the free set. Leaving it here too would have the
             // allocator count it twice.
@@ -866,7 +866,7 @@ impl Pending {
         &mut self,
         id: RelationshipId,
     ) {
-        self.deleted_relationships.insert(id.into());
+        self.relationship_deletes.insert(id.into());
     }
 
     pub fn deleted_relationships_bulk(
@@ -874,7 +874,7 @@ impl Pending {
         rels: &[RelationshipId],
     ) {
         for &id in rels {
-            self.deleted_relationships.insert(id.into());
+            self.relationship_deletes.insert(id.into());
         }
     }
 
@@ -957,13 +957,13 @@ impl Pending {
     }
 
     #[must_use]
-    pub fn has_deleted_nodes(&self) -> bool {
-        !self.deleted_nodes.is_empty()
+    pub fn has_node_deletes(&self) -> bool {
+        !self.node_deletes.is_empty()
     }
 
     #[must_use]
-    pub fn has_deleted_relationships(&self) -> bool {
-        !self.deleted_relationships.is_empty()
+    pub fn has_relationship_deletes(&self) -> bool {
+        !self.relationship_deletes.is_empty()
     }
 
     #[must_use]
@@ -972,25 +972,25 @@ impl Pending {
     }
 
     #[must_use]
-    pub fn is_node_deleted(
+    pub fn is_node_pending_delete(
         &self,
         id: NodeId,
     ) -> bool {
-        self.deleted_nodes.contains(id.into())
+        self.node_deletes.contains(id.into())
     }
 
-    /// Returns a clone of the pending-deleted nodes bitmap.
+    /// A clone of the nodes this transaction will delete.
     #[must_use]
-    pub fn deleted_nodes(&self) -> RoaringTreemap {
-        self.deleted_nodes.clone()
+    pub fn node_deletes(&self) -> RoaringTreemap {
+        self.node_deletes.clone()
     }
 
     #[must_use]
-    pub fn is_relationship_deleted(
+    pub fn is_relationship_pending_delete(
         &self,
         id: RelationshipId,
     ) -> bool {
-        self.deleted_relationships.contains(id.into())
+        self.relationship_deletes.contains(id.into())
     }
 
     /// Count pending-created relationships whose destination is `node_id` and
@@ -1051,7 +1051,7 @@ impl Pending {
         types: &[Arc<String>],
         g: &Graph,
     ) -> usize {
-        self.deleted_relationships
+        self.relationship_deletes
             .iter()
             .filter(|rel_id| {
                 let (_from, to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
@@ -1073,7 +1073,7 @@ impl Pending {
         types: &[Arc<String>],
         g: &Graph,
     ) -> usize {
-        self.deleted_relationships
+        self.relationship_deletes
             .iter()
             .filter(|rel_id| {
                 let (from, _to) = g.get_relationship_endpoints(RelationshipId::from(*rel_id));
@@ -1175,30 +1175,30 @@ impl Pending {
                 s.properties_removed += nremoved;
             }
         }
-        if !self.deleted_nodes.is_empty() {
-            stats.borrow_mut().nodes_deleted += self.deleted_nodes.len();
+        if !self.node_deletes.is_empty() {
+            stats.borrow_mut().nodes_deleted += self.node_deletes.len();
             self.deleted_node_labels = g
                 .borrow_mut()
-                .delete_nodes(&self.deleted_nodes, &mut self.index_docs.node_removes)
+                .delete_nodes(&self.node_deletes, &mut self.index_docs.node_removes)
                 .map_err(|e| e.to_string())?;
         }
         // Take relationship deletions BEFORE implicit edge processing
         // so we can pass them to delete_implicit_edges for dedup.
-        let explicit_rels = std::mem::take(&mut self.deleted_relationships);
+        let explicit_rels = std::mem::take(&mut self.relationship_deletes);
 
         // Bulk cascade-delete edges for implicitly deleted nodes.
         // This must run after delete_nodes so that node matrices are already
         // cleaned up, and before delete_relationships so explicit edges are
         // still tracked separately.
-        if !self.deleted_nodes.is_empty() {
+        if !self.node_deletes.is_empty() {
             let implicit_edges = g.borrow_mut().delete_implicit_edges(
-                &self.deleted_nodes,
+                &self.node_deletes,
                 &explicit_rels,
                 &mut self.index_docs.edge_removes,
             )?;
             let count = implicit_edges.len();
             stats.borrow_mut().relationships_deleted += count;
-            // Record in deleted_relationships so effects buffer can serialize them
+            // Record in `relationship_deletes` so the effects buffer can serialize them
             for DeletedEdge {
                 id: rel_id,
                 type_id,
@@ -1206,7 +1206,7 @@ impl Pending {
                 dst: to,
             } in implicit_edges
             {
-                self.deleted_relationships.insert(u64::from(rel_id));
+                self.relationship_deletes.insert(u64::from(rel_id));
                 self.deleted_endpoints.push(DeletedEdge {
                     id: rel_id,
                     type_id,
@@ -1223,7 +1223,7 @@ impl Pending {
             // Use the actually-removed relationships (delete_relationships skips
             // stale/missing ids) for stats and effects/constraint bookkeeping.
             stats.borrow_mut().relationships_deleted += endpoints.len();
-            self.deleted_relationships
+            self.relationship_deletes
                 .extend(endpoints.iter().map(|e| u64::from(e.id)));
             self.deleted_endpoints.extend(endpoints);
         }
@@ -1283,10 +1283,10 @@ impl Pending {
         }
 
         // Remove deleted entities from affected sets
-        for id in &self.deleted_nodes {
+        for id in &self.node_deletes {
             affected_node_ids.remove(id);
         }
-        for rel_id in &self.deleted_relationships {
+        for rel_id in &self.relationship_deletes {
             affected_edge_ids.remove(rel_id);
         }
 
@@ -1641,8 +1641,8 @@ impl Pending {
         self.created_nodes.clear();
         self.created_rel_types.clear();
 
-        self.deleted_nodes.clear();
-        self.deleted_relationships.clear();
+        self.node_deletes.clear();
+        self.relationship_deletes.clear();
         self.deleted_endpoints.clear();
         self.deleted_node_labels.clear();
         self.cancelled_nodes.clear();
@@ -1664,8 +1664,8 @@ impl Pending {
     pub fn effects_count(&self) -> u64 {
         self.created_nodes.len()
             + self.created_rel_types.len() as u64
-            + self.deleted_nodes.len()
-            + self.deleted_relationships.len()
+            + self.node_deletes.len()
+            + self.relationship_deletes.len()
             + self.new_nodes_attrs.len() as u64
             + self.existing_nodes_attrs.len() as u64
             + self.new_relationships_attrs.len() as u64

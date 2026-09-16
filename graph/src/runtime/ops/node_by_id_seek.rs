@@ -64,7 +64,7 @@ impl<'a> Iterator for NodeByIdSeekOp<'a> {
                     return Ok(None);
                 };
                 // Remove all deleted nodes at once.
-                range -= self.runtime.g.borrow().deleted_nodes();
+                range -= self.runtime.g.borrow().recycled_node_ids();
                 if range.is_empty() {
                     return Ok(None);
                 }

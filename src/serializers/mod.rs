@@ -218,8 +218,8 @@ impl Header {
             graph_name: graph_name.to_string(),
             node_count: graph.node_count(),
             edge_count: graph.relationship_count(),
-            deleted_node_count: graph.deleted_nodes().len(),
-            deleted_edge_count: graph.deleted_relationships().len(),
+            deleted_node_count: graph.recycled_node_ids().len(),
+            deleted_edge_count: graph.recycled_relationship_ids().len(),
             label_count: graph.label_matrices().len() as u64,
             relationship_count: graph.relationship_tensors().len() as u64,
             multi_edge: graph

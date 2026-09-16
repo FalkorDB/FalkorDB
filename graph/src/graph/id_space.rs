@@ -929,7 +929,7 @@ mod tests {
         delete(&mut g, &ids(&[0])).expect("delete");
         g.node_id_space().verify().expect("whole");
         assert_eq!(g.node_count(), 1);
-        assert_eq!(g.deleted_nodes_count(), 1);
+        assert_eq!(g.recycled_node_count(), 1);
     }
 
     #[test]

@@ -347,14 +347,14 @@ pub fn for_each_record(
         let graph = g.borrow();
         digest_updates(
             &p.existing_nodes_attrs,
-            &p.deleted_nodes,
+            &p.node_deletes,
             EntityType::Node,
             &graph,
             out,
         );
         digest_updates(
             &p.existing_relationships_attrs,
-            &p.deleted_relationships,
+            &p.relationship_deletes,
             EntityType::Relationship,
             &graph,
             out,
@@ -787,7 +787,7 @@ fn digest_deleted_nodes(
     p: &Pending,
     out: &mut impl FnMut(Record),
 ) {
-    if p.deleted_nodes.is_empty() {
+    if p.node_deletes.is_empty() {
         return;
     }
 
@@ -807,7 +807,7 @@ fn digest_deleted_nodes(
     let mut last: Option<usize> = None;
     let mut labels: Vec<u32> = Vec::new();
 
-    for id in &p.deleted_nodes {
+    for id in &p.node_deletes {
         while cursor < pairs.len() && pairs[cursor].node < id {
             cursor += 1;
         }
@@ -1970,7 +1970,7 @@ mod cancelled {
 
         assert_eq!(rg.relationship_count(), 0, "the edge does not survive");
         assert_eq!(
-            rg.deleted_relationships_count(),
+            rg.recycled_relationship_count(),
             1,
             "but its id reaches the recycle bin, which is why the pair is sent"
         );

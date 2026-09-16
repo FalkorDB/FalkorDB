@@ -92,7 +92,7 @@ impl<'a> IncludePendingOp<'a> {
 
         let pending = self.runtime.pending.borrow();
 
-        self.deleted_nodes = Some(pending.deleted_nodes());
+        self.deleted_nodes = Some(pending.node_deletes());
         self.label_removed_nodes = Some(pending.nodes_with_pending_label_removes(&label_ids));
 
         let pending_nodes = if label_ids.len() == self.node_pattern.labels.len() {

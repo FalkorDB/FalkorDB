@@ -2559,22 +2559,22 @@ impl Graph {
     }
 
     #[must_use]
-    pub fn deleted_nodes_count(&self) -> u64 {
+    pub fn recycled_node_count(&self) -> u64 {
         self.node_ids.recycled_count()
     }
 
     #[must_use]
-    pub const fn deleted_nodes(&self) -> &RoaringTreemap {
+    pub const fn recycled_node_ids(&self) -> &RoaringTreemap {
         self.node_ids.recycled()
     }
 
     #[must_use]
-    pub fn deleted_relationships_count(&self) -> u64 {
+    pub fn recycled_relationship_count(&self) -> u64 {
         self.relationship_ids.recycled_count()
     }
 
     #[must_use]
-    pub const fn deleted_relationships(&self) -> &RoaringTreemap {
+    pub const fn recycled_relationship_ids(&self) -> &RoaringTreemap {
         self.relationship_ids.recycled()
     }
 
