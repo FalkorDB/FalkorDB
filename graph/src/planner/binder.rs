@@ -802,7 +802,13 @@ impl Binder {
                 // the CALL body is isolated, not a child scope)
                 self.env_stack.push(HashMap::new());
 
-                if !imported.is_empty() {
+                if imported.is_empty() {
+                    // No import projection will be emitted below, so nothing
+                    // rebuilds the row the enclosing Apply feeds in. Reserve
+                    // the outer row's slots so the body's own variables do not
+                    // land on top of them.
+                    self.reserve_outer_slots(outer_env.len());
+                } else {
                     // Allocate fresh inner IDs for imported variables and build
                     // projection pairs that map outer → inner.
                     let projections = self.build_import_projections(&imported);
@@ -865,7 +871,12 @@ impl Binder {
                         let skip_count = usize::from(has_import);
                         let mut bound_clauses = Vec::with_capacity(clauses.len());
 
-                        if !imported.is_empty() {
+                        if imported.is_empty() {
+                            // Same reservation as the non-UNION body: with no
+                            // import projection, nothing rebuilds the row the
+                            // enclosing Apply feeds in.
+                            binder.reserve_outer_slots(outer_env.len());
+                        } else {
                             let projections = binder.build_import_projections(&imported);
                             bound_clauses.push(QueryIR::With {
                                 distinct: false,
@@ -922,6 +933,41 @@ impl Binder {
                 *self.current_env_mut() = HashMap::new();
                 self.bind_ir(other)
             }
+        }
+    }
+
+    /// Reserves the first `count` variable slots of the freshly pushed
+    /// `CALL {}` body scope.
+    ///
+    /// A runtime row is a dense array indexed by `Variable.id` alone —
+    /// `scope_id` is binder-only bookkeeping that never reaches the row. The
+    /// body runs under an `Apply` whose `Argument` leaf hands it the outer
+    /// row as-is, so unless something rebuilds that row the body's own
+    /// variables, numbered from 0 in their fresh scope, are written over the
+    /// outer bindings still sitting in those slots.
+    ///
+    /// An explicit `CALL { WITH x ... }` import is projected, and the
+    /// projection rebuilds the row; a body without one has no such clause, so
+    /// the outer slots are reserved here instead. Reservations are named
+    /// `_slot_N`: the `_` prefix keeps them out of `WITH *` / `RETURN *`
+    /// expansion, and `bind_call_subquery` skips them when it collects the
+    /// body's outputs.
+    fn reserve_outer_slots(
+        &mut self,
+        count: usize,
+    ) {
+        let scope_id = self.env_stack.len() as u32 - 1;
+        for id in 0..count as u32 {
+            let name = Arc::new(format!("_slot_{id}"));
+            self.current_env_mut().insert(
+                name.clone(),
+                Variable {
+                    name: Some(name),
+                    id,
+                    scope_id,
+                    ty: Type::Any,
+                },
+            );
         }
     }
 
