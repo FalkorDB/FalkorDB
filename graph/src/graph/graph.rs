@@ -1428,8 +1428,10 @@ impl Graph {
     /// [`IdSpaceError`], wrapped, if either space already contradicts itself —
     /// opening a batch over a corrupt one would re-anchor the boundary on the
     /// bad value and hide it.
-    /// `pub(crate)` on purpose: outside this crate the only way to have a batch
-    /// is [`Self::in_batch`], which cannot be left unopened.
+    /// `pub(crate)` for this crate's tests only. Production code reaches a batch
+    /// through [`Self::in_batch`] when it has a scope and
+    /// [`Self::roll_id_batches`] when it does not, and neither can open one
+    /// without also closing it.
     pub(crate) fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
         self.node_ids.open_batch().map_err(NodeOpError::node)?;
         self.relationship_ids
@@ -1472,12 +1474,29 @@ impl Graph {
         Ok(out)
     }
 
+    /// Close the open batch and begin the next one where it left the boundary.
+    ///
+    /// What a caller whose batch is not a scope needs: the write path's batch
+    /// ends and the next begins at one instant, partway through one `next()` of
+    /// a pull-based operator, so there is no frame for [`Self::in_batch`] to
+    /// wrap. One call rather than two so the open cannot be kept while the check
+    /// is dropped.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::IdSpace`] if the closing batch left an impossible id
+    /// space, or the next one would open over a space that contradicts itself.
+    pub(crate) fn roll_id_batches(&mut self) -> Result<(), NodeOpError> {
+        self.verify_id_batches()?;
+        self.open_id_batches()
+    }
+
     /// Check that both batches left possible id spaces behind.
     ///
     /// # Errors
     ///
     /// [`NodeOpError::IdSpace`], naming which of the two disagreed.
-    pub fn verify_id_batches(&self) -> Result<(), NodeOpError> {
+    fn verify_id_batches(&self) -> Result<(), NodeOpError> {
         self.node_ids.verify().map_err(NodeOpError::node)?;
         self.relationship_ids
             .verify()
