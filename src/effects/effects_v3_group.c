@@ -421,6 +421,8 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 // shapes in a query is small - a label set is parsed rather than computed, so
 // it is bounded by the query text - and a scan has no iteration order to get
 // wrong. The sort before emission is what makes the order normative either way.
+//
+// See _update_for for why its lookup is the other way round.
 static Group *_group_for
 (
 	EffectsV3Grouping *g,         // accumulator
@@ -778,15 +780,25 @@ static void _index_grow(EffectsV3Grouping *g) {
 
 // find the staged update for this entity, or open one
 //
-// WAS A LINEAR SCAN, and it made a single-attribute update O(n^2) over the
-// entities in the statement. `MATCH (n:P) SET n.age = n.age + 1` touches each
-// entity once, so the scan never hit: it walked everything staged so far,
-// found nothing, and appended. Measured at 462,415 instructions per entity at
-// n=100,000 against v2's flat 6,588, with 1,456 of 1,471 profile samples on
-// the scan line.
+// THE MIRROR OF _group_for, and the contrast is the clearest way to hold both:
+// that one is keyed by VALUE, this one by IDENTITY.
 //
-// The deduplication it performs is real but only multi-attribute writes need
-// it, and they were making every single-attribute write pay for it.
+//   _group_for    (opcode, shape)       one per distinct SHAPE    memo + scan
+//   _update_for   (opcode, entity id)   one per ENTITY            hash probe
+//
+// Which is what decides the lookup. Distinct shapes are few and bounded by the
+// query text, for the reason _group_for's own comment gives, so a scan wins on
+// constant factors there. ENTITIES are unbounded and data-dependent - a
+// `MATCH (n:P) SET ...` touches as many as match - so the same scan here would
+// be quadratic in the size of the match, which is why this one hashes.
+//
+// The memo follows from the same split. Consecutive entities overwhelmingly
+// share a shape, so one slot in front of _group_for's scan pays; there is no
+// equivalent win in front of an O(1) probe.
+//
+// In one line each: _group_for answers "which record does this finished shape
+// belong to", this answers "where is this entity's half-built update". Path 2
+// asks this one many times and that one once, at the flush.
 static PendingUpdate *_update_for
 (
 	EffectsV3Grouping *g,   // accumulator
