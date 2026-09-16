@@ -13,6 +13,61 @@
 #include <stdlib.h>
 #include <string.h>
 
+//------------------------------------------------------------------------------
+// THE FLOW: three ways in, one way out
+//------------------------------------------------------------------------------
+//
+//   1  AddNode / AddEdge -------------------------------.
+//      six opcodes, whole shape in one call              |
+//                                                        |
+//                                                        v
+//   2  StageUpdate --> PendingUpdate --------------> _group_for --> Group --.
+//      two opcodes, one attribute per call    (at the flush)                |
+//                                                                           |
+//                                                                           v
+//   3  AddSchema / AddAttribute -----------------> Announcement --------> Encode
+//      singular records, no grouping                (emitted FIRST)
+//
+// PATH 1, DIRECT. The caller hands over the whole shape at once, so the entity
+// goes straight into its group. Normalisation happens on the way IN: labels
+// sorted and deduplicated, attribute ids sorted with their values carried along.
+//
+// PATH 2, DEFERRED. An update's shape is the entity's WHOLE attribute set, and
+// C's write API delivers one attribute at a time - so the entity cannot pick a
+// group until the query stops producing attributes for it. It waits in Staging,
+// found by a hash index on (opcode, entity id), and the LAST value staged for an
+// attribute wins. Normalisation happens at the FLUSH instead, which is the one
+// structural consequence of the deferral and the source of most of the asymmetry
+// in this file.
+//
+// PATH 3, ANNOUNCEMENTS. Not batched at all: one statement, one record, no
+// count. They are emitted before everything else because a batched record
+// carries a bare schema or attribute id, and the replica has to have seen the
+// name before anything references it.
+//
+// THE JOIN is _flush_updates, which runs from both exits and is idempotent - a
+// caller normally asks for the count and then encodes. After it, Staging is
+// empty and every record-to-be is a Group.
+//
+// THE EXITS are Encode and RecordCount. RecordCount is the same decision made as
+// a dry run: flush, then count exactly what Encode would write, which is why it
+// cannot be const and why it consults _has_effect too.
+//
+// WHERE THE HEADER'S FOUR RULES ARE ENFORCED
+//
+//   1  one record per (opcode, shape)   _group_for, via _cmp_group
+//   2  groups sorted by key             Encode, the qsort - NOT the scan
+//   3  label sets normalised ascending  on the way in: AddNode, StageUpdate
+//   4  an attribute announced once      AddAttribute, the scan before appending
+//
+// Rule 2 sits at the exit rather than the entrance deliberately. _group_for
+// finds groups in ARRIVAL order, which is a property of the query text rather
+// than of the data, so the canonical order is imposed once at emission instead
+// of being maintained on every insert.
+//
+// _cmp_group therefore serves both rule 1 and rule 2 - the lookup and the sort -
+// which is why it is a total order and not merely an equality test.
+
 // which arm of a Group's shape union an opcode uses
 //
 // EXHAUSTIVE OVER EVERY EffectType WITH NO default, which is the price of the
@@ -139,10 +194,11 @@ typedef struct {
 		} edge;
 	} shape;
 
-	// owned. The arr carries its own length, so there is no second count to
-	// keep in step with it - the dedup below rewrites that length in place
+	// owned. The arr carries its own length, so there is no second count beside
+	// it to keep in step - StageUpdate appends or replaces, and the flush reads
+	// the length back with arr_len
 	StagedAttr *attrs;
-	} PendingUpdate;
+} PendingUpdate;
 
 // a schema or attribute announcement, kept in arrival order
 typedef struct {
@@ -355,7 +411,6 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	g->staging.index_cap = 256;   // power of two
 	g->staging.index_n   = 0;
 	g->staging.index     = rm_calloc(g->staging.index_cap, sizeof(UpdateSlot));
-
 
 	return g;
 }
@@ -627,9 +682,7 @@ void EffectsV3Grouping_AddEdge
 static Announcement *_new_announcement(EffectsV3Grouping *g) {
 	const Announcement blank = { 0 };
 	arr_append(g->announcements, blank);
-	Announcement *a = &arr_tail(g->announcements);
-	memset(a, 0, sizeof(*a));
-	return a;
+	return &arr_tail(g->announcements);
 }
 
 void EffectsV3Grouping_AddSchema
@@ -768,7 +821,7 @@ static PendingUpdate *_update_for
 
 	u->opcode    = opcode;
 	u->id        = id;
-	u->attrs = arr_new(StagedAttr, 4);
+	u->attrs     = arr_new(StagedAttr, 4);
 
 	if(_shape_of(opcode) == SHAPE_EDGE) {
 		u->shape.edge.relation_id = relation_id;
@@ -826,7 +879,6 @@ void EffectsV3Grouping_StageUpdate
 		}
 	}
 
-
 	const StagedAttr blank = { 0 };
 	arr_append(u->attrs, blank);
 	StagedAttr *a = &arr_tail(u->attrs);
@@ -841,8 +893,8 @@ void EffectsV3Grouping_StageUpdate
 // release everything a staged update owns
 //
 // Both the flush and the free path go through this, and the flush is the one
-// that matters: it sets n_updates to 0, and EffectsV3Grouping_Free frees per
-// update by iterating n_updates - so anything still owned at that point is
+// that matters: it clears the updates arr, and EffectsV3Grouping_Free releases
+// per update by iterating that arr - so anything still owned at that point is
 // unreachable. Every entity in a `SET` leaked its encoded value, its attribute
 // array and its label array, once per query.
 //
@@ -862,7 +914,6 @@ static void _update_release(PendingUpdate *u) {
 		rm_free(u->shape.node.labels);
 		u->shape.node.labels = NULL;
 	}
-
 }
 
 // fold every staged update into its group
@@ -920,7 +971,6 @@ static void _flush_updates(EffectsV3Grouping *g) {
 	}
 
 	arr_clear(g->staging.updates);
-
 
 	// the indices it holds now point past the end of a zero-length array.
 	// Cleared with a memset and the allocation kept - this is the teardown
