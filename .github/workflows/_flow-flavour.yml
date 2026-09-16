@@ -232,10 +232,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pre-pull RC image
+      - name: Pre-pull RC image, then drop the credential
         env:
           IMAGE: ${{ inputs.image }}
-        run: docker pull "$IMAGE"
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          # The next step runs ./flow.sh — test code from the pull request — in
+          # this workspace. The login above leaves a GHCR token in the docker
+          # config where that code could read it, and the image it needed is
+          # already local, so hand the credential back first.
+          docker logout ghcr.io
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
