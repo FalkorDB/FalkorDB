@@ -536,6 +536,53 @@ void test_effectsV3IdList_aRunHeadThatTurnsAscendingIsNotFolded(void) {
 	EffectsV3IdListBuilder_Free(b);
 }
 
+// THE RESTARTED RUN'S HEAD IS FOLDED IN, AND THIS ASSERTS THE SEGMENTATION
+//
+// Order is not the property that matters here. This is the one shape where the
+// two engines disagreed while BOTH preserved push order, so an order assertion
+// passes on either behaviour and says nothing:
+//
+//   Rust  ... RA/390/1, SA/370..459/46      the pair heads the new run
+//   C     ... RA/390/1, RA/370/2, SA/373..459/44   the pair orphaned outside it
+//
+// A segment acquires its direction when its second id arrives, and the run it
+// sits in has to be settled AT THAT MOMENT - ending the run one push later
+// leaves the segment stranded between two runs where no collapse can reach it.
+// Legal, order-preserving, and different bytes. Found by running 404 generated
+// sequences through both builders; three disagreed, all of them this.
+void test_effectsV3IdList_aRestartedRunHeadIsFoldedIntoItsBitmap(void) {
+	uint64_t ids[128];
+	size_t n = 0;
+	for(uint64_t v = 400; v >= 390; v -= 2) ids[n++] = v;  // descending run
+	ids[n++] = 370;                                        // ends it
+	ids[n++] = 371;                                        // and acquires ASCENDING
+	for(uint64_t v = 373; v < 460; v += 2) ids[n++] = v;   // long enough to collapse
+
+	EffectsV3IdListBuilder *b = _build(ids, n);
+
+	_assert_ids(b, ids, n, "restarted run head");
+
+	// the pair must be INSIDE the bitmap, which is what "restart at the
+	// segment" buys and "restart after it" does not
+	uint32_t ns = EffectsV3IdListBuilder_SegmentCount(b);
+	const EffectsV3Seg *lastseg = EffectsV3IdListBuilder_Segment(b, ns - 1);
+
+	TEST_ASSERT_(lastseg->kind == EFFECTS_V3_SEG_SET_ASCENDING,
+			"the tail should have collapsed to an ascending bitmap, got kind %d",
+			(int)lastseg->kind);
+
+	TEST_ASSERT_(lastseg->bitmap.min == 370,
+			"the 370,371 pair must head the collapsed run, so the bitmap starts "
+			"at 370 - got %llu, which means the pair was left outside it",
+			(unsigned long long)lastseg->bitmap.min);
+
+	TEST_ASSERT_(lastseg->bitmap.len == 46,
+			"the bitmap should hold the pair plus the 44 ids after it; got %u",
+			lastseg->bitmap.len);
+
+	EffectsV3IdListBuilder_Free(b);
+}
+
 TEST_LIST = {
 	{ "EffectsV3IdList:ascendingRunIsOneSegment",
 		test_effectsV3IdList_ascendingRunIsOneSegment },
@@ -565,5 +612,7 @@ TEST_LIST = {
 		test_effectsV3IdList_aDescendingRunOfRangesCanCollapse },
 	{ "EffectsV3IdList:aRunHeadThatTurnsAscendingIsNotFolded",
 		test_effectsV3IdList_aRunHeadThatTurnsAscendingIsNotFolded },
+	{ "EffectsV3IdList:aRestartedRunHeadIsFoldedIntoItsBitmap",
+		test_effectsV3IdList_aRestartedRunHeadIsFoldedIntoItsBitmap },
 	{ NULL, NULL }
 };
