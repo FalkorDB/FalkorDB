@@ -282,8 +282,37 @@ pub enum NodeOpError {
     /// [`crate::graph::id_space`] — because half of it needs a batch and half of
     /// it needs only the recycle bin, and splitting them across two types is how
     /// the two halves drift apart.
-    #[error(transparent)]
-    IdSpace(#[from] IdSpaceError),
+    ///
+    /// `kind` is added here rather than in [`IdSpaceError`] because the id space
+    /// deliberately does not know which entity it counts — it is the same type
+    /// twice — while every method on this graph does. It used to be a parameter
+    /// each caller passed by hand at the point of rendering, which is one more
+    /// thing to get wrong and six places to get it wrong in.
+    #[error("{kind} {source}")]
+    IdSpace {
+        kind: &'static str,
+        source: IdSpaceError,
+    },
+}
+
+impl NodeOpError {
+    /// The id-space refusal, as one about nodes.
+    #[must_use]
+    pub const fn node(source: IdSpaceError) -> Self {
+        Self::IdSpace {
+            kind: "node",
+            source,
+        }
+    }
+
+    /// The same, about relationships.
+    #[must_use]
+    pub const fn relationship(source: IdSpaceError) -> Self {
+        Self::IdSpace {
+            kind: "relationship",
+            source,
+        }
+    }
 }
 
 impl From<String> for NodeOpError {
@@ -1365,7 +1394,7 @@ impl Graph {
         &mut self,
         id: NodeId,
     ) -> Result<(), NodeOpError> {
-        self.node_ids.cancel(id.into())?;
+        self.node_ids.cancel(id.into()).map_err(NodeOpError::node)?;
         Ok(())
     }
 
@@ -1378,7 +1407,9 @@ impl Graph {
         &mut self,
         id: RelationshipId,
     ) -> Result<(), NodeOpError> {
-        self.relationship_ids.cancel(id.into())?;
+        self.relationship_ids
+            .cancel(id.into())
+            .map_err(NodeOpError::relationship)?;
         Ok(())
     }
 
@@ -1400,8 +1431,62 @@ impl Graph {
     /// opening a batch over a corrupt one would re-anchor the boundary on the
     /// bad value and hide it.
     pub fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
-        self.node_ids.open_batch()?;
-        self.relationship_ids.open_batch()?;
+        self.node_ids.open_batch().map_err(NodeOpError::node)?;
+        self.relationship_ids
+            .open_batch()
+            .map_err(NodeOpError::relationship)?;
+        Ok(())
+    }
+
+    /// Run `f` inside an id batch: opened before it, verified after it, and not
+    /// possible to forget either way.
+    ///
+    /// A batch is the span an [`IdSpace`] judges as one — a whole effects
+    /// buffer, or one `GRAPH.BULK` command. Both are a single function's body,
+    /// which is what lets a scope stand for the batch. The write path is not:
+    /// its batch ends and the next begins partway through one `next()` of a
+    /// pull-based operator, across many `AtomicRefCell` borrows, so there is no
+    /// frame to wrap and it rolls the batch over by hand.
+    ///
+    /// Forgetting to open one is silent, which is why this exists. It does not
+    /// fail, it does not crash, and the whole flow suite passes: the boundary
+    /// stays where the last batch left it and ids simply stop being reclaimed
+    /// across it — `CREATE (n) DELETE n WITH 1 AS x CREATE (m)` allocates id 1
+    /// where it should allocate 0. Against a C primary that is a divergence in
+    /// id-reuse order, which costs a full resync per delete-then-create cycle
+    /// and which a state-only comparison calls green.
+    ///
+    /// `f` failing skips the verification, which is right: a buffer that
+    /// stopped partway has not finished building the thing being checked.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `f` returns, or the id-space refusal — from opening over a
+    /// space that already contradicts itself, or from the batch having left an
+    /// impossible one behind.
+    pub fn in_batch<R, E>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<R, E>,
+    ) -> Result<R, E>
+    where
+        E: From<NodeOpError>,
+    {
+        self.open_id_batches()?;
+        let out = f(self)?;
+        self.verify_id_batches()?;
+        Ok(out)
+    }
+
+    /// Check that both batches left possible id spaces behind.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::IdSpace`], naming which of the two disagreed.
+    pub fn verify_id_batches(&self) -> Result<(), NodeOpError> {
+        self.node_ids.verify().map_err(NodeOpError::node)?;
+        self.relationship_ids
+            .verify()
+            .map_err(NodeOpError::relationship)?;
         Ok(())
     }
 
@@ -1476,7 +1561,7 @@ impl Graph {
         // boundary as it stood is the batch's, and the batch keeps it. An id
         // reaches the graph through this function or not at all, so nothing that
         // creates a node can be added later and forget to account for it.
-        self.node_ids.create(nodes)?;
+        self.node_ids.create(nodes).map_err(NodeOpError::node)?;
         self.grow_for_nodes(nodes);
         Ok(())
     }
@@ -1989,7 +2074,9 @@ impl Graph {
         // Judged and freed together: every id asked for is refused or none is,
         // and the ones that survive that leave the live count and enter the bin
         // in one step. Nodes resolve exactly, so the two sets are one.
-        self.node_ids.release(deleted_nodes, deleted_nodes)?;
+        self.node_ids
+            .release(deleted_nodes, deleted_nodes)
+            .map_err(NodeOpError::node)?;
 
         // Every removal below is a per-entity tombstone, and every lookup below
         // is a row seek. Nothing here touches an entry that does not belong to a
@@ -2315,7 +2402,9 @@ impl Graph {
         rel_ids: &[u64],
     ) -> Result<(), NodeOpError> {
         let ids: RoaringTreemap = rel_ids.iter().copied().collect();
-        self.relationship_ids.create(&ids)?;
+        self.relationship_ids
+            .create(&ids)
+            .map_err(NodeOpError::relationship)?;
 
         if let Some(&max_id) = rel_ids.iter().max() {
             let needed = max_id + 1;
@@ -2563,7 +2652,9 @@ impl Graph {
         // Refused over everything asked for, freed over what resolved. Phase 1
         // does not mutate, so a refusal here still leaves the graph untouched —
         // it has only cost the resolution walk.
-        self.relationship_ids.release(rels, &resolved)?;
+        self.relationship_ids
+            .release(rels, &resolved)
+            .map_err(NodeOpError::relationship)?;
         self.relationship_attrs.remove_all(&resolved);
 
         let mut endpoints: Vec<DeletedEdge> = Vec::with_capacity(resolved.len() as usize);

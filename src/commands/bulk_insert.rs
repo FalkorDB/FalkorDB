@@ -7,7 +7,7 @@ use crate::{
     telemetry,
 };
 use graph::{
-    graph::graph::{Graph, NodeId, RelationshipId},
+    graph::graph::{Graph, NodeId, NodeOpError, RelationshipId},
     identifier_limits::validate_identifier_len,
     runtime::value::Value,
     threadpool::spawn,
@@ -519,35 +519,40 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    // A bulk command has no `Pending`, so it opens the batches itself. One per
-    // command, spanning the reserve below and every create the tokens make.
-    g.open_id_batches().map_err(|e| e.to_string())?;
-    // Nothing outstanding: a bulk command reserves once, before it creates
-    // anything, so there is no reservation of its own to exclude.
-    let nothing_outstanding = RoaringTreemap::new();
-    let node_ids: Vec<NodeId> = g
-        .node_id_space()
-        .reserve(node_count, &nothing_outstanding)?
-        .into_iter()
-        .map(NodeId::from)
-        .collect();
-    let rel_ids: Vec<RelationshipId> = g
-        .relationship_id_space()
-        .reserve(edge_count, &nothing_outstanding)?
-        .into_iter()
-        .map(RelationshipId::from)
-        .collect();
-    let mut node_id_cursor = 0usize;
-    let mut rel_id_cursor = 0usize;
+    // A bulk command has no `Pending`, so the whole command is one batch and
+    // `Graph::in_batch` is what makes it one — opened before the reserve below,
+    // checked after the last token.
+    g.in_batch(|g| {
+        // Nothing outstanding: a bulk command reserves once, before it creates
+        // anything, so there is no reservation of its own to exclude.
+        let nothing_outstanding = RoaringTreemap::new();
+        let node_ids: Vec<NodeId> = g
+            .node_id_space()
+            .reserve(node_count, &nothing_outstanding)?
+            .into_iter()
+            .map(NodeId::from)
+            .collect();
+        let rel_ids: Vec<RelationshipId> = g
+            .relationship_id_space()
+            .reserve(edge_count, &nothing_outstanding)?
+            .into_iter()
+            .map(RelationshipId::from)
+            .collect();
+        let mut node_id_cursor = 0usize;
+        let mut rel_id_cursor = 0usize;
 
-    let null_ctx = std::ptr::null_mut();
-    for token in tokens.iter().take(node_token_count) {
-        process_node_token(g, token, &node_ids, &mut node_id_cursor, null_ctx, docs)?;
-    }
+        let null_ctx = std::ptr::null_mut();
+        for token in tokens.iter().take(node_token_count) {
+            process_node_token(g, token, &node_ids, &mut node_id_cursor, null_ctx, docs)?;
+        }
 
-    for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx, docs)?;
-    }
+        for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
+            process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx, docs)?;
+        }
+
+        Ok::<_, NodeOpError>(())
+    })
+    .map_err(|e| e.to_string())?;
 
     // Flush delta-plus into base to prevent large dp from slowing subsequent commands
     g.flush_for_bulk();
@@ -565,37 +570,42 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    // A bulk command has no `Pending`, so it opens the batches itself. One per
-    // command, spanning the reserve below and every create the tokens make.
-    g.open_id_batches().map_err(|e| e.to_string())?;
-    // Nothing outstanding: a bulk command reserves once, before it creates
-    // anything, so there is no reservation of its own to exclude.
-    let nothing_outstanding = RoaringTreemap::new();
-    let node_ids: Vec<NodeId> = g
-        .node_id_space()
-        .reserve(node_count, &nothing_outstanding)?
-        .into_iter()
-        .map(NodeId::from)
-        .collect();
-    let rel_ids: Vec<RelationshipId> = g
-        .relationship_id_space()
-        .reserve(edge_count, &nothing_outstanding)?
-        .into_iter()
-        .map(RelationshipId::from)
-        .collect();
-    let mut node_id_cursor = 0usize;
-    let mut rel_id_cursor = 0usize;
+    // A bulk command has no `Pending`, so the whole command is one batch and
+    // `Graph::in_batch` is what makes it one — opened before the reserve below,
+    // checked after the last token.
+    g.in_batch(|g| {
+        // Nothing outstanding: a bulk command reserves once, before it creates
+        // anything, so there is no reservation of its own to exclude.
+        let nothing_outstanding = RoaringTreemap::new();
+        let node_ids: Vec<NodeId> = g
+            .node_id_space()
+            .reserve(node_count, &nothing_outstanding)?
+            .into_iter()
+            .map(NodeId::from)
+            .collect();
+        let rel_ids: Vec<RelationshipId> = g
+            .relationship_id_space()
+            .reserve(edge_count, &nothing_outstanding)?
+            .into_iter()
+            .map(RelationshipId::from)
+            .collect();
+        let mut node_id_cursor = 0usize;
+        let mut rel_id_cursor = 0usize;
 
-    for token in tokens.iter().take(node_token_count) {
-        process_node_token(g, token, &node_ids, &mut node_id_cursor, raw_ctx, docs)?;
-        // Yield to let Redis process PING from other clients
-        unsafe { maybe_yield(raw_ctx) };
-    }
+        for token in tokens.iter().take(node_token_count) {
+            process_node_token(g, token, &node_ids, &mut node_id_cursor, raw_ctx, docs)?;
+            // Yield to let Redis process PING from other clients
+            unsafe { maybe_yield(raw_ctx) };
+        }
 
-    for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, raw_ctx, docs)?;
-        unsafe { maybe_yield(raw_ctx) };
-    }
+        for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
+            process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, raw_ctx, docs)?;
+            unsafe { maybe_yield(raw_ctx) };
+        }
+
+        Ok::<_, NodeOpError>(())
+    })
+    .map_err(|e| e.to_string())?;
 
     // Flush delta-plus into base to prevent O(N²) dp accumulation across commands
     g.flush_for_bulk();

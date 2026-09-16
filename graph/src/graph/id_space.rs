@@ -944,7 +944,7 @@ mod tests {
         let err = create(&mut g, &ids(&[5])).expect_err("5 is already this batch's");
         assert_eq!(
             err,
-            NodeOpError::IdSpace(IdSpaceError::AlreadyLive {
+            NodeOpError::node(IdSpaceError::AlreadyLive {
                 id: 5,
                 entry_bound: 0
             })
@@ -1011,7 +1011,7 @@ mod tests {
         delete(&mut g, &ids(&[1])).expect("the first delete is legitimate");
 
         let err = delete(&mut g, &ids(&[1])).expect_err("the second is not");
-        assert_eq!(err, NodeOpError::IdSpace(IdSpaceError::AlreadyRecycled(1)));
+        assert_eq!(err, NodeOpError::node(IdSpaceError::AlreadyRecycled(1)));
         assert_eq!(g.node_count(), 1, "and it was not deleted twice");
     }
 
@@ -1039,7 +1039,7 @@ mod tests {
         create(&mut g, &ids(&[0, 1])).expect("create");
 
         let err = delete(&mut g, &ids(&[7])).expect_err("7 was never allocated");
-        assert_eq!(err, NodeOpError::IdSpace(IdSpaceError::NeverCreated(7)));
+        assert_eq!(err, NodeOpError::node(IdSpaceError::NeverCreated(7)));
     }
 
     #[test]
@@ -1057,10 +1057,7 @@ mod tests {
         let mut g = graph();
         g.open_id_batches().expect("a consistent space");
         let err = create(&mut g, &ids(&[u64::MAX])).expect_err("not creatable");
-        assert_eq!(
-            err,
-            NodeOpError::IdSpace(IdSpaceError::IdOutOfRange(u64::MAX))
-        );
+        assert_eq!(err, NodeOpError::node(IdSpaceError::IdOutOfRange(u64::MAX)));
     }
 
     /// A reservation left outstanding across a batch boundary is refused, and

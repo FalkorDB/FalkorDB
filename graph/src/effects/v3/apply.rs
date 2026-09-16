@@ -64,26 +64,19 @@ pub fn apply_effects(
     // be read; `open_payload` owns that plaintext and the records borrow from it.
     let payload = open_payload(buf)?;
 
-    // One batch per id space, spanning the whole buffer. The graph owns them,
-    // so nothing here has to carry a space alongside the graph it describes —
-    // which leaves index documents as the only thing this accumulates.
-    g.open_id_batches().map_err(|e| node_op("node", e))?;
+    // The whole buffer is one batch in each id space, and `in_batch` is what
+    // makes that so rather than a call at the top that a later edit could drop.
+    // It also closes the batch, which is where the id space is checked: records
+    // are grouped by shape rather than ordered by id, so the space is
+    // legitimately fragmented partway through and only has to be whole at the
+    // end. Index documents are the one thing left for this to accumulate.
     let mut docs = IndexDocs::default();
-
-    for record in payload.records() {
-        apply_record(g, record?, &mut docs)?;
-    }
-
-    // Only now: records are grouped by shape rather than ordered by id, so the
-    // id space is legitimately fragmented partway through a buffer and only has
-    // to be whole at the end. A buffer that fails earlier never reaches this,
-    // which is right — it has not finished building the thing being checked.
-    g.node_id_space()
-        .verify()
-        .map_err(|e| id_space_error_map("node", e))?;
-    g.relationship_id_space()
-        .verify()
-        .map_err(|e| id_space_error_map("relationship", e))?;
+    g.in_batch(|g| {
+        for record in payload.records() {
+            apply_record(g, record?, &mut docs)?;
+        }
+        Ok::<_, ApplyError>(())
+    })?;
 
     g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
     g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
@@ -96,13 +89,12 @@ pub fn apply_effects(
 /// while doing the work. Every judgement about liveness belongs to
 /// [`IdSpace`] — it decides, and its refusals arrive wrapped, to be unwrapped
 /// straight back into the rendering [`id_space_error_map`] gives them.
-fn node_op(
-    kind: &'static str,
-    e: NodeOpError,
-) -> ApplyError {
-    match e {
-        NodeOpError::Graph(e) => ApplyError::Graph(e),
-        NodeOpError::IdSpace(e) => id_space_error_map(kind, e),
+impl From<NodeOpError> for ApplyError {
+    fn from(e: NodeOpError) -> Self {
+        match e {
+            NodeOpError::Graph(e) => Self::Graph(e),
+            NodeOpError::IdSpace { kind, source } => id_space_error_map(kind, source),
+        }
     }
 }
 
@@ -218,7 +210,7 @@ fn apply_record(
             // this graph's allocator. The graph refuses rather than
             // double-counting, so there is no separate check here to keep in step
             // with it either.
-            g.create_nodes(&nodes).map_err(|e| node_op("node", e))?;
+            g.create_nodes(&nodes)?;
 
             // The graph's bulk APIs take `&[u64]`, so the ids are materialized
             // once here rather than per call.
@@ -268,8 +260,7 @@ fn apply_record(
                 src.iter().collect(),
                 dst.iter().collect(),
             );
-            g.create_relationships_bulk(&type_name, &src, &dst, &ids)
-                .map_err(|e| node_op("relationship", e))?;
+            g.create_relationships_bulk(&type_name, &src, &dst, &ids)?;
 
             // As in `CreateNode` above: `attr_map` shape-checks internally, so
             // gating the whole call lets an empty `AttrSet` carrying values
@@ -367,15 +358,13 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut docs.node_removes)
-                .map_err(|e| node_op("node", e))?;
+            g.delete_nodes(&nodes, &mut docs.node_removes)?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut docs.edge_removes)
-                .map_err(|e| node_op("relationship", e))?;
+            g.delete_relationships(&edges, &mut docs.edge_removes)?;
             Ok(())
         }
 
