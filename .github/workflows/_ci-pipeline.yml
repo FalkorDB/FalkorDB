@@ -309,6 +309,7 @@ jobs:
     with:
       flavour: a-sanitizer
       vehicle: image
+      test_files: ${{ inputs.test_files }}
       # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
       # — historical from when the asan image bundled the browser stage.
       image: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-asan

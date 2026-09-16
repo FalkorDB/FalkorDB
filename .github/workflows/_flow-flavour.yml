@@ -64,10 +64,13 @@ on:
         type: string
         default: image
       test_files:
-        description: "JSON array of ALL flow test files. Used by the artifact vehicle, which has no docker split to make."
-        required: false
+        description: >
+          JSON array of ALL flow test files, used by the artifact vehicle, which
+          has no docker split to make. Required even for the image vehicle: a
+          matrix is expanded before the job's `if:` is evaluated, so an empty
+          array here fails the whole workflow at startup rather than skipping.
+        required: true
         type: string
-        default: "[]"
       artifact_name:
         description: "Name of the uploaded engine artifact (artifact vehicle only)"
         required: false
