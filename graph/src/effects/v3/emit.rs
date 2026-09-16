@@ -419,11 +419,9 @@ fn digest_cancelled(
     // Order is load-bearing: an edge's endpoints may themselves be cancelled
     // nodes, so the nodes are created before the edges and deleted after them,
     // exactly as `digest_deleted_edges` runs before `digest_deleted_nodes`.
-    let node_ids: IdList = {
-        let mut ids: Vec<u64> = p.cancelled_nodes.clone();
-        ids.sort_unstable();
-        ids.into_iter().collect()
-    };
+    // Already ascending: `cancelled_nodes` is a set, so the sort this used to
+    // do is the set's own ordering.
+    let node_ids: IdList = p.cancelled_nodes.iter().collect();
     if !p.cancelled_nodes.is_empty() {
         out(Record::CreateNode {
             ids: node_ids.clone(),
