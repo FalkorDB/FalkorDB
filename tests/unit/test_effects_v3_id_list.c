@@ -510,6 +510,32 @@ void test_effectsV3IdList_aDescendingRunOfRangesCanCollapse(void) {
 	EffectsV3IdListBuilder_Free(b);
 }
 
+// A RUN'S HEAD SEGMENT CAN ACQUIRE A DIRECTION AFTER THE RUN STARTS
+//
+// _restart_run leaves the direction UNDECIDED, and the segment it restarts at
+// is a lone id - no direction yet. The hot path can then extend that lone id
+// into a two-id ASCENDING range while the run is still undecided, and the id
+// after THAT can settle the run DESCENDING. The head segment then reads
+// against the run it heads, one segment along from the case above.
+//
+// The direction rule has to weigh the segment against the direction this push
+// WOULD settle on, not the one already committed, or the head slips through
+// while run_dir is still undecided. The rust-impl session hit exactly this on
+// their first attempt.
+void test_effectsV3IdList_aRunHeadThatTurnsAscendingIsNotFolded(void) {
+	uint64_t ids[64];
+	size_t n = 0;
+	ids[n++] = 500;
+	ids[n++] = 501;   // extends the head into a two-id ascending range
+	for(uint64_t v = 499; v >= 420; v -= 2) ids[n++] = v;  // settles it descending
+
+	EffectsV3IdListBuilder *b = _build(ids, n);
+
+	_assert_ids(b, ids, n, "run head that turned ascending");
+
+	EffectsV3IdListBuilder_Free(b);
+}
+
 TEST_LIST = {
 	{ "EffectsV3IdList:ascendingRunIsOneSegment",
 		test_effectsV3IdList_ascendingRunIsOneSegment },
@@ -537,5 +563,7 @@ TEST_LIST = {
 		test_effectsV3IdList_anAscendingPairDoesNotJoinADescendingRun },
 	{ "EffectsV3IdList:aDescendingRunOfRangesCanCollapse",
 		test_effectsV3IdList_aDescendingRunOfRangesCanCollapse },
+	{ "EffectsV3IdList:aRunHeadThatTurnsAscendingIsNotFolded",
+		test_effectsV3IdList_aRunHeadThatTurnsAscendingIsNotFolded },
 	{ NULL, NULL }
 };
