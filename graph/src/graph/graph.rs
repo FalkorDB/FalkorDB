@@ -1550,19 +1550,16 @@ impl Graph {
     /// its own is what stops a caller handing over a boundary that disagrees with
     /// the batch it is handing over with it.
     ///
-    /// A caller with no batch wants [`Self::mark_nodes_live`], which is a
-    /// different question rather than this one with a piece missing: its ids came
-    /// from [`Self::reserve_nodes`], so there is nothing a check could tell it
-    /// that the allocator did not already guarantee.
+    /// There is no unchecked way in. Every caller has a batch — the graph's own,
+    /// opened by [`Self::in_batch`] or [`Self::roll_id_batches`] — so the check
+    /// and the state move together and a caller cannot forget one.
     ///
     /// # Errors
     ///
     /// [`IdSpaceError::AlreadyLive`], wrapped, for the lowest id it cannot
-    /// create — one already handed out and not freed. Refusing is the point:
-    /// [`Self::mark_nodes_live`] moves the counters unconditionally, so an
-    /// already-live id used to double-count silently and shift every later fresh
-    /// id. A caller cannot forget the check when the operation itself is the
-    /// check.
+    /// create — one already handed out and not freed. Refusing is the point: the
+    /// live count moves unconditionally, so an already-live id used to
+    /// double-count silently and shift every later fresh id.
     ///
     /// [`NodeOpError::IdSpace`] if the ids do not fit the batch — see
     /// [`crate::graph::id_space`].

@@ -13,7 +13,7 @@
 //! hands ids out, [`IdSpace::cancel`] takes an unused one back,
 //! [`IdSpace::create`] makes them live, [`IdSpace::release`] frees them. `Graph`
 //! keeps no counter and no bitmap of its own; `node_count()` and
-//! `deleted_nodes()` read through to these.
+//! `recycled_node_ids()` read through to these.
 //!
 //! That is the point rather than a side effect. The boundary is
 //! `live + recycled.len()`, so every one of those operations has to move both
@@ -158,12 +158,21 @@ pub struct IdSpace {
     /// The boundary as it stood when the open batch began: ids below it were
     /// handed out, ids at or above it never were.
     entry_bound: u64,
-    /// Every id at or above `entry_bound` the open batch has *taken* — created,
-    /// or reserved and then cancelled. Those are the same thing to the boundary:
+    /// Every id the open batch has *taken* — created, or reserved and then
+    /// cancelled — at any value. Those are the same thing to the boundary:
     /// both move it by one, a create by making an id live and a cancellation by
     /// putting an allocated id in the free set. Counting only creates would make
     /// the invariant below false for every cancelled reservation, which is what
     /// used to keep [`Self::verify`] off the write path.
+    ///
+    /// Untrimmed, and that is load-bearing in two different directions.
+    /// [`Self::reserve`] must not re-issue *any* id this batch has taken, and a
+    /// reclaimed one sits below the boundary — trim it away and the batch hands
+    /// the same id to two nodes, which reaches a replica as one id created
+    /// twice in one buffer. The boundary arithmetic wants the opposite: an id
+    /// below the entry boundary was counted into it before the batch began, so
+    /// it must not be counted again. So the set keeps everything and
+    /// [`Self::checked`] and [`Self::verify`] trim at the point of counting.
     ///
     /// Only grows within a batch — a later delete does not un-allocate an id, it
     /// frees one that was.
@@ -331,19 +340,6 @@ impl IdSpace {
         }
     }
 
-    /// Whether an id is one the open batch is answerable for.
-    ///
-    /// Ids below the entry boundary were handed out before it began and counted
-    /// into the boundary already, so the batch does not account for them.
-    /// [`Self::cancel`] and [`Self::record_above`] turn on this and nothing
-    /// else, so it is written once.
-    const fn above_boundary(
-        &self,
-        id: u64,
-    ) -> bool {
-        id >= self.entry_bound
-    }
-
     /// The invariant this type maintains at every moment, in one expression:
     ///
     /// ```text
@@ -358,7 +354,7 @@ impl IdSpace {
     ///
     /// [`IdSpaceError::Inconsistent`], carrying both sides of the arithmetic.
     fn checked(&self) -> Result<(), IdSpaceError> {
-        let taken = self.taken.len();
+        let taken = above(&self.taken, self.entry_bound);
         let bound = self.bound();
         match self.entry_bound.checked_add(taken) {
             Some(expected) if expected == bound => Ok(()),
@@ -486,9 +482,7 @@ impl IdSpace {
         id: u64,
     ) -> Result<(), IdSpaceError> {
         self.recycled.insert(id);
-        if self.above_boundary(id) {
-            self.taken.insert(id);
-        }
+        self.taken.insert(id);
         self.checked()
     }
 
@@ -574,32 +568,8 @@ impl IdSpace {
         self.recycled -= nodes;
         self.live += nodes.len();
 
-        self.record_above(nodes);
+        self.taken |= nodes;
         self.checked()
-    }
-
-    /// Record the ids at or above the boundary into `taken`, trimming the rest.
-    ///
-    /// Both arms are the same operation — union in the ids at or above the
-    /// boundary — and differ only in whether anything has to be trimmed first. A
-    /// recycled id sits below the boundary and was counted into it already, so it
-    /// is not the id space growing.
-    ///
-    /// The allocator hands out recycled ids before fresh ones, so a single create
-    /// can carry both and neither arm is unusual. Trimming a copy rather than
-    /// filtering the iterator keeps the slow arm a container merge too, instead
-    /// of an insert per id.
-    fn record_above(
-        &mut self,
-        ids: &RoaringTreemap,
-    ) {
-        if ids.min().is_some_and(|min| self.above_boundary(min)) {
-            self.taken |= ids;
-        } else {
-            let mut above = ids.clone();
-            above.remove_range(..self.entry_bound);
-            self.taken |= above;
-        }
     }
 
     /// Check that ids the batch is about to delete were allocated here.
@@ -689,8 +659,10 @@ impl IdSpace {
         // the recycle bin, and the graph's own boundary counts them — so
         // judging against `created` alone would read a legitimate cancellation
         // as a hole and refuse it.
-        let created = self.taken.len();
-        let lowest_above = self.taken.min();
+        // Only the part at or above the boundary: `taken` is untrimmed, and an
+        // id below the boundary was counted into it before this batch began.
+        let created = above(&self.taken, self.entry_bound);
+        let lowest_above = self.taken.select(self.taken.len() - created);
         // `created == [entry_bound, entry_bound + created.len())`, spelled as the
         // two things that make it true: the set starts at the boundary, and it has
         // no gap between there and its highest id.
@@ -917,6 +889,22 @@ mod tests {
         create(&mut g, &ids(&[0])).expect("the recreate is legitimate");
         g.node_id_space().verify().expect("whole");
         assert_eq!(g.node_count(), 1);
+    }
+
+    #[test]
+    fn a_cancelled_reclaimed_id_is_not_reissued_in_the_same_batch() {
+        // One id handed out and given back before the batch opens: free, and
+        // below the boundary this opens at.
+        let mut space = IdSpace::restored(0, ids(&[0]));
+        assert_eq!(space.bound(), 1);
+        space.open_batch().expect("a consistent space");
+
+        let reclaimed = space.reserve(1, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(reclaimed, vec![0], "the free id comes back first");
+        space.cancel(0).expect("a consistent space");
+
+        let next = space.reserve(1, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(next, vec![1], "not 0 again, even though it is free");
     }
 
     #[test]
@@ -1169,7 +1157,7 @@ mod reclaim_ids_tests {
     }
 
     /// It appends, so a caller can reclaim into a vector that already holds
-    /// ids — which `reserve_nodes` does when a batch spans the bin and the
+    /// ids — which `reserve` does when a batch spans the free set and the
     /// fresh range.
     #[test]
     fn appends_rather_than_replaces() {
@@ -1251,11 +1239,13 @@ mod differential {
         /// What `verify` should say, from the model: `taken` must fill the range
         /// from the boundary upward, and the boundary must be where it puts it.
         fn verify_should_pass(&self) -> bool {
-            let contiguous = self.taken.is_empty()
-                || (*self.taken.iter().next().unwrap() == self.entry_bound
-                    && *self.taken.iter().next_back().unwrap()
-                        == self.entry_bound + self.taken.len() as u64 - 1);
-            contiguous && self.bound() == self.entry_bound + self.taken.len() as u64
+            // Only the part at or above the boundary, mirroring the untrimmed
+            // set the space keeps.
+            let above: Vec<u64> = self.taken.range(self.entry_bound..).copied().collect();
+            let contiguous = above.is_empty()
+                || (above[0] == self.entry_bound
+                    && *above.last().unwrap() == self.entry_bound + above.len() as u64 - 1);
+            contiguous && self.bound() == self.entry_bound + above.len() as u64
         }
     }
 
@@ -1357,9 +1347,7 @@ mod differential {
                         model.held.remove(&id);
                         model.free.remove(&id);
                         model.live.insert(id);
-                        if id >= model.entry_bound {
-                            model.taken.insert(id);
-                        }
+                        model.taken.insert(id);
                     }
                     creates += 1;
                     agree(&space, &model, step, "create");
@@ -1369,12 +1357,10 @@ mod differential {
                     let Some(&id) = model.held.iter().nth(((r >> 24) % 7) as usize) else {
                         continue;
                     };
-                    space.cancel(id);
+                    space.cancel(id).expect("a consistent space");
                     model.held.remove(&id);
                     model.free.insert(id);
-                    if id >= model.entry_bound {
-                        model.taken.insert(id);
-                    }
+                    model.taken.insert(id);
                     cancels += 1;
                     agree(&space, &model, step, "cancel");
                 }
@@ -1403,9 +1389,7 @@ mod differential {
                         for id in std::mem::take(&mut model.held) {
                             model.free.remove(&id);
                             model.live.insert(id);
-                            if id >= model.entry_bound {
-                                model.taken.insert(id);
-                            }
+                            model.taken.insert(id);
                         }
                         agree(&space, &model, step, "settle");
                     }
