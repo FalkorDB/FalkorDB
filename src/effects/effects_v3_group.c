@@ -8,6 +8,7 @@
 #include "effects_v3_encode.h"
 #include "effects_internal.h"
 #include "../util/rmalloc.h"
+#include "../util/arr.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -138,10 +139,10 @@ typedef struct {
 		} edge;
 	} shape;
 
-	StagedAttr *attrs;      // owned
-	uint32_t    n_attrs;
-	uint32_t    cap_attrs;
-} PendingUpdate;
+	// owned. The arr carries its own length, so there is no second count to
+	// keep in step with it - the dedup below rewrites that length in place
+	StagedAttr *attrs;
+	} PendingUpdate;
 
 // a schema or attribute announcement, kept in arrival order
 typedef struct {
@@ -170,20 +171,25 @@ static inline uint64_t _slot_hash(uint32_t op, uint64_t id) {
 	return x ^ (x >> 31);
 }
 
-struct EffectsV3Grouping {
-	Group *groups;
-	uint32_t n_groups;
-	uint32_t cap_groups;
-
-	Announcement *announcements;
-	uint32_t n_announcements;
-	uint32_t cap_announcements;
-
-	PendingUpdate *updates;
-	uint32_t n_updates;
-	uint32_t cap_updates;
+// THE DEFERRED PATH'S SCRATCH, and nothing else.
+//
+// Six of the eight batchable opcodes go straight into a group when they arrive,
+// because the caller hands over the whole shape at once. Only UPDATE_NODE and
+// UPDATE_EDGE arrive one attribute at a time, so only they need somewhere to
+// wait - and this is it.
+//
+// Separate from the payload below because its LIFETIME is different: it fills
+// during the query, drains into groups once, and is dead from then on. Keeping
+// it in the same struct made "the flush is a phase change" a fact about a
+// comment rather than about a type, and left scratch alive until free.
+typedef struct {
+	PendingUpdate *updates;  // arr
 
 	// (opcode, entity id) -> index into 'updates', plus one
+	//
+	// NOT an arr, and the exception is the point: this is a hash table, so its
+	// capacity is a power of two for mask probing and it grows at 70% load
+	// rather than when full. An arr's len/cap mean the wrong things here.
 	//
 	// OPEN ADDRESSED, and chosen for its TEARDOWN. This was a rax, which fixed
 	// the quadratic scan and then became the emitter's single largest cost:
@@ -194,10 +200,23 @@ struct EffectsV3Grouping {
 	//
 	// A flat table frees in one call and resets with a memset, which is the
 	// half a radix tree does worst. It stores an INDEX rather than a pointer
-	// because 'updates' is realloc'd, and index+1 so zero means empty.
+	// because 'updates' is reallocated, and index+1 so zero means empty.
 	UpdateSlot *index;
 	uint32_t    index_cap;   // always a power of two
 	uint32_t    index_n;     // occupied slots
+} Staging;
+
+struct EffectsV3Grouping {
+	//--------------------------------------------------------------------------
+	// the payload being built - this is the answer
+	//--------------------------------------------------------------------------
+
+	// emitted FIRST, because a batched record carries a bare schema or
+	// attribute id and the replica has to have seen the name
+	Announcement *announcements;  // arr
+
+	// emitted after them, in key order
+	Group *groups;                // arr
 
 	// the group the last lookup found, as an INDEX
 	//
@@ -210,6 +229,12 @@ struct EffectsV3Grouping {
 	// grows: a cached pointer would dangle into freed memory and usually still
 	// work, which is the worst kind. UINT32_MAX means nothing memoed.
 	uint32_t    last_group;
+
+	//--------------------------------------------------------------------------
+	// scratch for computing it - dead once the flush has run
+	//--------------------------------------------------------------------------
+
+	Staging staging;
 };
 
 //------------------------------------------------------------------------------
@@ -320,19 +345,14 @@ static bool _vacuous(const Group *grp) {
 EffectsV3Grouping *EffectsV3Grouping_New(void) {
 	EffectsV3Grouping *g = rm_malloc(sizeof(EffectsV3Grouping));
 
-	g->cap_groups        = 4;
-	g->groups            = rm_calloc(g->cap_groups, sizeof(Group));
-	g->n_groups          = 0;
-	g->cap_announcements = 4;
-	g->announcements     = rm_calloc(g->cap_announcements, sizeof(Announcement));
-	g->n_announcements   = 0;
-	g->cap_updates       = 4;
-	g->updates           = rm_calloc(g->cap_updates, sizeof(PendingUpdate));
-	g->n_updates         = 0;
-	g->index_cap = 256;   // power of two
-	g->index_n   = 0;
-	g->index     = rm_calloc(g->index_cap, sizeof(UpdateSlot));
-	g->last_group = UINT32_MAX;
+	g->groups        = arr_new(Group, 4);
+	g->announcements = arr_new(Announcement, 4);
+	g->last_group    = UINT32_MAX;
+
+	g->staging.updates   = arr_new(PendingUpdate, 4);
+	g->staging.index_cap = 256;   // power of two
+	g->staging.index_n   = 0;
+	g->staging.index     = rm_calloc(g->staging.index_cap, sizeof(UpdateSlot));
 
 
 	return g;
@@ -370,26 +390,25 @@ static Group *_group_for
 	// the shape the previous entity used, checked before the scan. Revalidated
 	// with the same comparator rather than trusted, so it is a shortcut and
 	// never a second source of truth
-	if(g->last_group < g->n_groups &&
+	const uint32_t n_groups = arr_len(g->groups);
+
+	if(g->last_group < n_groups &&
 	   _cmp_group(&probe, g->groups + g->last_group) == 0) {
 		return g->groups + g->last_group;
 	}
 
-	for(uint32_t i = 0; i < g->n_groups; i++) {
+	for(uint32_t i = 0; i < n_groups; i++) {
 		if(_cmp_group(&probe, g->groups + i) == 0) {
 			g->last_group = i;
 			return g->groups + i;
 		}
 	}
 
-	if(g->n_groups == g->cap_groups) {
-		g->cap_groups *= 2;
-		g->groups = rm_realloc(g->groups, g->cap_groups * sizeof(Group));
-	}
+	const Group blank = { 0 };
+	arr_append(g->groups, blank);
 
-	g->last_group = g->n_groups;
-	Group *grp = g->groups + g->n_groups++;
-	memset(grp, 0, sizeof(*grp));
+	g->last_group = n_groups;
+	Group *grp = g->groups + n_groups;
 
 	grp->opcode = opcode;
 
@@ -604,13 +623,9 @@ void EffectsV3Grouping_AddEdge
 }
 
 static Announcement *_new_announcement(EffectsV3Grouping *g) {
-	if(g->n_announcements == g->cap_announcements) {
-		g->cap_announcements *= 2;
-		g->announcements = rm_realloc(g->announcements,
-				g->cap_announcements * sizeof(Announcement));
-	}
-
-	Announcement *a = g->announcements + g->n_announcements++;
+	const Announcement blank = { 0 };
+	arr_append(g->announcements, blank);
+	Announcement *a = &arr_tail(g->announcements);
 	memset(a, 0, sizeof(*a));
 	return a;
 }
@@ -622,7 +637,7 @@ void EffectsV3Grouping_AddSchema
 	int id,                // schema id
 	const char *name       // schema name
 ) {
-	for(uint32_t i = 0; i < g->n_announcements; i++) {
+	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
 		Announcement *a = g->announcements + i;
 		if(a->opcode == EFFECT_ADD_SCHEMA && a->schema_type == t
 				&& a->schema_id == id) {
@@ -647,7 +662,7 @@ void EffectsV3Grouping_AddAttribute
 	// no node/relationship discriminator - correctly, since C has a single
 	// dictionary - so announcing per entity kind would introduce the same id
 	// twice under the same name
-	for(uint32_t i = 0; i < g->n_announcements; i++) {
+	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
 		Announcement *a = g->announcements + i;
 		if(a->opcode == EFFECT_ADD_ATTRIBUTE && a->attr_id == id) {
 			return;
@@ -689,20 +704,21 @@ static inline UpdateSlot *_index_probe
 
 // double the table and reinsert
 static void _index_grow(EffectsV3Grouping *g) {
-	const uint32_t cap = g->index_cap * 2;
+	const uint32_t cap = g->staging.index_cap * 2;
 	UpdateSlot *tbl = rm_calloc(cap, sizeof(UpdateSlot));
 
-	for(uint32_t i = 0; i < g->index_cap; i++) {
-		if(g->index[i].idx1 == 0) {
+	for(uint32_t i = 0; i < g->staging.index_cap; i++) {
+		if(g->staging.index[i].idx1 == 0) {
 			continue;
 		}
-		UpdateSlot *d = _index_probe(tbl, cap, g->index[i].op, g->index[i].id);
-		*d = g->index[i];
+		UpdateSlot *d = _index_probe(tbl, cap, g->staging.index[i].op,
+			g->staging.index[i].id);
+		*d = g->staging.index[i];
 	}
 
-	rm_free(g->index);
-	g->index     = tbl;
-	g->index_cap = cap;
+	rm_free(g->staging.index);
+	g->staging.index     = tbl;
+	g->staging.index_cap = cap;
 }
 
 // find the staged update for this entity, or open one
@@ -725,36 +741,32 @@ static PendingUpdate *_update_for
 	uint16_t n_labels,      // how many
 	RelationID relation_id  // relationship type
 ) {
-	UpdateSlot *slot = _index_probe(g->index, g->index_cap, (uint32_t)opcode, id);
+	UpdateSlot *slot = _index_probe(g->staging.index, g->staging.index_cap,
+			(uint32_t)opcode, id);
 	if(slot->idx1 != 0) {
-		return g->updates + (slot->idx1 - 1);
+		return g->staging.updates + (slot->idx1 - 1);
 	}
 
-	if(g->n_updates == g->cap_updates) {
-		g->cap_updates *= 2;
-		g->updates = rm_realloc(g->updates,
-				g->cap_updates * sizeof(PendingUpdate));
-	}
-
-	const uint32_t idx = g->n_updates++;
-	PendingUpdate *u = g->updates + idx;
-	memset(u, 0, sizeof(*u));
+	const uint32_t idx = arr_len(g->staging.updates);
+	const PendingUpdate blank = { 0 };
+	arr_append(g->staging.updates, blank);
+	PendingUpdate *u = g->staging.updates + idx;
 
 	// grown BEFORE the insert would push past 70%, and the slot re-probed
 	// because growing rehashes everything
-	if((g->index_n + 1) * 10 >= g->index_cap * 7) {
+	if((g->staging.index_n + 1) * 10 >= g->staging.index_cap * 7) {
 		_index_grow(g);
-		slot = _index_probe(g->index, g->index_cap, (uint32_t)opcode, id);
+		slot = _index_probe(g->staging.index, g->staging.index_cap,
+				(uint32_t)opcode, id);
 	}
 	slot->id   = id;
 	slot->op   = (uint32_t)opcode;
 	slot->idx1 = idx + 1;
-	g->index_n++;
+	g->staging.index_n++;
 
 	u->opcode    = opcode;
 	u->id        = id;
-	u->cap_attrs = 4;
-	u->attrs     = rm_calloc(u->cap_attrs, sizeof(StagedAttr));
+	u->attrs = arr_new(StagedAttr, 4);
 
 	if(_shape_of(opcode) == SHAPE_EDGE) {
 		u->shape.edge.relation_id = relation_id;
@@ -800,7 +812,7 @@ void EffectsV3Grouping_StageUpdate
 
 	// setting the same attribute twice in one query keeps the LAST value: the
 	// query's own order decides, and the wire carries one value per attribute
-	for(uint32_t i = 0; i < u->n_attrs; i++) {
+	for(uint32_t i = 0; i < arr_len(u->attrs); i++) {
 		if(u->attrs[i].id == attr_id) {
 			// the superseded value is FREED rather than orphaned: the arena
 			// used to keep it as dead bytes, and a leak here shows in no byte
@@ -812,12 +824,10 @@ void EffectsV3Grouping_StageUpdate
 		}
 	}
 
-	if(u->n_attrs == u->cap_attrs) {
-		u->cap_attrs *= 2;
-		u->attrs = rm_realloc(u->attrs, u->cap_attrs * sizeof(StagedAttr));
-	}
 
-	StagedAttr *a = u->attrs + u->n_attrs++;
+	const StagedAttr blank = { 0 };
+	arr_append(u->attrs, blank);
+	StagedAttr *a = &arr_tail(u->attrs);
 	a->id = attr_id;
 
 	// PERSISTED, not encoded. The caller's value does not outlive this call, so
@@ -838,10 +848,10 @@ void EffectsV3Grouping_StageUpdate
 static void _update_release(PendingUpdate *u) {
 	// each staged value is owned here now rather than living in a shared
 	// arena, so each is freed
-	for(uint32_t k = 0; k < u->n_attrs; k++) {
+	for(uint32_t k = 0; k < arr_len(u->attrs); k++) {
 		SIValue_Free(u->attrs[k].v);
 	}
-	rm_free(u->attrs);
+	arr_free(u->attrs);
 	u->attrs = NULL;
 
 	// only the node arm holds a pointer; freeing unconditionally would hand
@@ -851,7 +861,6 @@ static void _update_release(PendingUpdate *u) {
 		u->shape.node.labels = NULL;
 	}
 
-	u->n_attrs = 0;
 }
 
 // fold every staged update into its group
@@ -859,10 +868,10 @@ static void _update_release(PendingUpdate *u) {
 // deferred to here because an entity's SHAPE is not known until the query stops
 // producing attributes for it, and the shape is what selects the group
 static void _flush_updates(EffectsV3Grouping *g) {
-	for(uint32_t i = 0; i < g->n_updates; i++) {
-		PendingUpdate *u = g->updates + i;
+	for(uint32_t i = 0; i < arr_len(g->staging.updates); i++) {
+		PendingUpdate *u = g->staging.updates + i;
 
-		if(u->n_attrs == 0) {
+		if(arr_len(u->attrs) == 0) {
 			// still owns the array _update_for allocated for it
 			_update_release(u);
 			continue;
@@ -870,14 +879,16 @@ static void _flush_updates(EffectsV3Grouping *g) {
 
 		// attribute-id order is what makes two entities with the same set land
 		// in one group however their attributes happened to arrive
-		qsort(u->attrs, u->n_attrs, sizeof(StagedAttr), _cmp_staged_attr);
+		qsort(u->attrs, arr_len(u->attrs), sizeof(StagedAttr),
+				_cmp_staged_attr);
 
 		AttributeID ids[256];
-		AttributeID *attr_ids = (u->n_attrs <= 256)
+		const uint32_t n_staged = arr_len(u->attrs);
+		AttributeID *attr_ids = (n_staged <= 256)
 			? ids
-			: rm_malloc(sizeof(AttributeID) * u->n_attrs);
+			: rm_malloc(sizeof(AttributeID) * n_staged);
 
-		for(uint32_t k = 0; k < u->n_attrs; k++) {
+		for(uint32_t k = 0; k < n_staged; k++) {
 			attr_ids[k] = u->attrs[k].id;
 		}
 
@@ -886,13 +897,13 @@ static void _flush_updates(EffectsV3Grouping *g) {
 				is_edge ? NULL : u->shape.node.labels,
 				is_edge ? 0    : u->shape.node.n_labels,
 				is_edge ? u->shape.edge.relation_id : 0,
-				attr_ids, (uint16_t)u->n_attrs);
+				attr_ids, (uint16_t)n_staged);
 
 		EffectsV3IdListBuilder_Push(grp->ids, u->id);
 		// SERIALISED HERE, once, straight into the group's byte sequence -
 		// the only point at which these values become bytes
 		EffectsBuffer *w = EffectsBuffer_Wrap(grp->values);
-		for(uint32_t k = 0; k < u->n_attrs; k++) {
+		for(uint32_t k = 0; k < n_staged; k++) {
 			EffectsBuffer_WriteSIValue(&u->attrs[k].v, w);
 		}
 		EffectsBuffer_Free(w);
@@ -906,14 +917,14 @@ static void _flush_updates(EffectsV3Grouping *g) {
 		_update_release(u);
 	}
 
-	g->n_updates = 0;
+	arr_clear(g->staging.updates);
 
 
 	// the indices it holds now point past the end of a zero-length array.
 	// Cleared with a memset and the allocation kept - this is the teardown
 	// that cost 14.2% as a radix tree
-	memset(g->index, 0, g->index_cap * sizeof(UpdateSlot));
-	g->index_n = 0;
+	memset(g->staging.index, 0, g->staging.index_cap * sizeof(UpdateSlot));
+	g->staging.index_n = 0;
 }
 
 uint32_t EffectsV3Grouping_RecordCount
@@ -923,12 +934,12 @@ uint32_t EffectsV3Grouping_RecordCount
 	// fold first: a staged update has no group until its shape is complete
 	_flush_updates(g);
 
-	uint32_t n = g->n_announcements;
+	uint32_t n = arr_len(g->announcements);
 
 	// counts what would be EMITTED, so a vacuous group does not appear here
 	// either - a caller deciding whether a payload is worth sending must not
 	// be told about records that will not be in it
-	for(uint32_t i = 0; i < g->n_groups; i++) {
+	for(uint32_t i = 0; i < arr_len(g->groups); i++) {
 		if(!_vacuous(g->groups + i)) {
 			n++;
 		}
@@ -947,7 +958,7 @@ void EffectsV3Grouping_Encode
 
 	// announcements first: a bulk record carries a bare id, so the replica has
 	// to have seen the name before anything references it
-	for(uint32_t i = 0; i < g->n_announcements; i++) {
+	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
 		const Announcement *a = g->announcements + i;
 		// each opcode fills its own arm now; an announcement is one or the
 		// other, never both, and the record no longer has a shared slot that
@@ -966,9 +977,9 @@ void EffectsV3Grouping_Encode
 
 	// RULE 2: sorted by key. A scan finds groups in arrival order, which is a
 	// property of the query rather than of the ids, so it is sorted here
-	qsort(g->groups, g->n_groups, sizeof(Group), _cmp_group);
+	qsort(g->groups, arr_len(g->groups), sizeof(Group), _cmp_group);
 
-	for(uint32_t i = 0; i < g->n_groups; i++) {
+	for(uint32_t i = 0; i < arr_len(g->groups); i++) {
 		Group *grp = g->groups + i;
 
 		if(_vacuous(grp)) {
@@ -1080,7 +1091,7 @@ void EffectsV3Grouping_Free
 		return;
 	}
 
-	for(uint32_t i = 0; i < g->n_groups; i++) {
+	for(uint32_t i = 0; i < arr_len(g->groups); i++) {
 		Group *grp = g->groups + i;
 		EffectsV3IdListBuilder_Free(grp->ids);
 		EffectsBytes_Free(grp->values);
@@ -1101,18 +1112,22 @@ void EffectsV3Grouping_Free
 		}
 	}
 
-	for(uint32_t i = 0; i < g->n_announcements; i++) {
+	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
 		rm_free(g->announcements[i].name);
 	}
 
 	// anything still staged - an accumulator freed without being encoded
-	for(uint32_t i = 0; i < g->n_updates; i++) {
-		_update_release(g->updates + i);
+	for(uint32_t i = 0; i < arr_len(g->staging.updates); i++) {
+		_update_release(g->staging.updates + i);
 	}
-	rm_free(g->index);
-	rm_free(g->updates);
 
-	rm_free(g->groups);
-	rm_free(g->announcements);
+	// arr_free, not rm_free: an arr's pointer is the DATA, and its allocation
+	// begins one header earlier. Handing rm_free the data pointer frees an
+	// address the allocator never returned
+	arr_free(g->staging.updates);
+	rm_free(g->staging.index);
+
+	arr_free(g->groups);
+	arr_free(g->announcements);
 	rm_free(g);
 }
