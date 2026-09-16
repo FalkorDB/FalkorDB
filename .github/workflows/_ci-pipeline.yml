@@ -134,22 +134,35 @@ jobs:
           RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
   # Release flavour. The vehicle is the whole difference between the two events:
   # a pull request tests the binary it just built, the queue tests the image it
-  # is about to promote. Same 117 files, one definition.
+  # is about to promote. Same file list, same flavour config — two thin calls
+  # rather than one, because a job cannot choose its `uses:` at runtime and the
+  # two shapes cannot share a workflow run (see _flow-artifact.yml's header).
   flow-release:
-    needs: [build-engine, build-rc-image]
-    if: ${{ !cancelled() && (inputs.use_image && needs.build-rc-image.result == 'success' || !inputs.use_image && needs.build-engine.result == 'success') }}
+    needs: [build-engine]
+    if: ${{ !cancelled() && !inputs.use_image && needs.build-engine.result == 'success' }}
+    uses: ./.github/workflows/_flow-artifact.yml
+    permissions:
+      contents: read
+    with:
+      flavour: release
+      archs: '["amd64"]'
+      test_files: ${{ inputs.test_files }}
+      build_image: ${{ inputs.build_image }}
+    secrets: inherit
+
+  flow-release-image:
+    needs: [build-rc-image]
+    if: ${{ !cancelled() && inputs.use_image && needs.build-rc-image.result == 'success' }}
     uses: ./.github/workflows/_flow-flavour.yml
     permissions:
       contents: read
       packages: read
     with:
       flavour: release
-      vehicle: ${{ inputs.use_image && 'image' || 'artifact' }}
-      image: ${{ inputs.use_image && format('ghcr.io/falkordb/falkordb-server:rc-{0}', inputs.ci_key) || '' }}
-      archs: ${{ inputs.use_image && '["amd64", "arm64"]' || '["amd64"]' }}
+      image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}
+      archs: '["amd64", "arm64"]'
       services_files: ${{ inputs.services_files }}
       spawn_files: ${{ inputs.spawn_files }}
-      test_files: ${{ inputs.test_files }}
       build_image: ${{ inputs.build_image }}
     secrets: inherit
 
@@ -159,21 +172,19 @@ jobs:
   flow-coverage:
     needs: [build-engine-coverage]
     if: ${{ !cancelled() && needs.build-engine-coverage.result == 'success' }}
-    uses: ./.github/workflows/_flow-flavour.yml
+    uses: ./.github/workflows/_flow-artifact.yml
     permissions:
       contents: read
     with:
       flavour: coverage
-      vehicle: artifact
       archs: '["amd64"]'
-      services_files: ${{ inputs.services_files }}
-      spawn_files: ${{ inputs.spawn_files }}
       test_files: ${{ inputs.test_files }}
       build_image: ${{ inputs.build_image }}
       artifact_name: coverage-binary
       artifact_path: target/debug
       collect_coverage: true
     secrets: inherit
+
   build-rc-image:
     if: ${{ inputs.use_image }}
     uses: ./.github/workflows/_build-flavour.yml
@@ -308,8 +319,6 @@ jobs:
       packages: read
     with:
       flavour: a-sanitizer
-      vehicle: image
-      test_files: ${{ inputs.test_files }}
       # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
       # — historical from when the asan image bundled the browser stage.
       image: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-asan
