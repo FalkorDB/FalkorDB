@@ -400,6 +400,116 @@ void test_effectsV3IdList_extensionAtTheEndsOfTheIdSpace(void) {
 	}
 }
 
+// A STEP DOWN INSIDE AN ASCENDING RUN MUST NOT JOIN IT
+//
+// A collapsed run is re-read as a SET in ONE direction, so a descending range
+// left inside an ascending run comes back out ascending. Every id is present
+// and the count is right - the decoder's cardinality check passes and the
+// buffer applies - but two ids have swapped places. Rows are bound to ids
+// positionally, so two entities swap values on the replica: divergence no
+// state count and no length check can see.
+//
+// It survived because the rewrite claimed the run's direction only when it was
+// still undecided, so a run already going up kept the segment. Measured before
+// the fix on exactly this sequence: one SET_ASCENDING segment, with 5 and 4
+// emitted in the other order.
+void test_effectsV3IdList_aStepDownDoesNotJoinAnAscendingRun(void) {
+	// 1,2 to commit the run to ascending, 5,4 as the inversion, then a gapped
+	// ascending tail long enough to take the run past the collapse threshold -
+	// without it the run never collapses and the bug cannot show
+	uint64_t ids[128];
+	size_t n = 0;
+	ids[n++] = 1; ids[n++] = 2; ids[n++] = 5; ids[n++] = 4;
+	for(uint64_t v = 7; v < 200; v += 2) ids[n++] = v;
+
+	EffectsV3IdListBuilder *b = _build(ids, n);
+
+	// whatever it chose to build, it must read back in push order
+	_assert_ids(b, ids, n, "step down inside an ascending run");
+
+	EffectsV3IdListBuilder_Free(b);
+}
+
+// AND THE MIRROR: A MULTI-ID ASCENDING RANGE MUST NOT JOIN A DESCENDING RUN
+//
+// The companion to the test above, and the case that shows why "every segment
+// in the run is RANGE_ASCENDING" is the wrong property to rely on. A
+// descending run is BUILT from ascending segments - single ids, which have no
+// direction of their own - so the kind check is satisfied by exactly the
+// segment that breaks it: two consecutive ids read out of a SET_DESCENDING
+// come back the other way round.
+//
+// Measured before the fix on this sequence: one SET_DESCENDING segment, with
+// 150 and 151 emitted transposed.
+void test_effectsV3IdList_anAscendingPairDoesNotJoinADescendingRun(void) {
+	// a descending run of gapped singletons, which does collapse, with one
+	// ascending pair in the middle. The pair keeps the bitmap estimate cheap -
+	// one short run among isolated ids - so the run still earns its collapse
+	uint64_t ids[64];
+	size_t n = 0;
+	for(uint64_t v = 178; v > 150; v -= 2) ids[n++] = v;
+	ids[n++] = 150;
+	ids[n++] = 151;
+	for(uint64_t v = 148; v >= 100; v -= 2) ids[n++] = v;
+
+	EffectsV3IdListBuilder *b = _build(ids, n);
+
+	_assert_ids(b, ids, n, "ascending pair inside a descending run");
+
+	EffectsV3IdListBuilder_Free(b);
+}
+
+// A DESCENDING RUN OF RANGES CAN EARN A BITMAP, LIKE AN ASCENDING ONE
+//
+// The run tally used to be fed only by ascending ranges, so a descending run
+// built from ranges kept an empty tally and could never collapse however much
+// a bitmap would have saved. Rust charges both kinds (Segment::Range |
+// Segment::RangeDescending -> Run::absorb), so the two engines emitted
+// DIFFERENT BYTES for the same ids - measured on exactly this input: Rust one
+// bitmap segment, C ninety-eight ranges.
+//
+// Large ids on purpose. A range segment costs about ten bytes at this
+// magnitude while a roaring run costs four, so the bitmap is the cheaper
+// encoding and the tally has to be fed to notice. With small ids the ranges
+// win and BOTH engines decline to collapse, which is why the small case never
+// exposed the divergence.
+void test_effectsV3IdList_aDescendingRunOfRangesCanCollapse(void) {
+	const uint64_t base = 1000000000000ULL;
+	uint64_t ids[1024];
+	size_t n = 0;
+	for(uint64_t hi = base + 4000; hi > base + 100; hi -= 40) {
+		for(uint64_t v = hi; v > hi - 10; v--) {
+			ids[n++] = v;
+		}
+	}
+
+	EffectsV3IdListBuilder *b = _build(ids, n);
+
+	bool saw_bitmap = false;
+	uint32_t ns = EffectsV3IdListBuilder_SegmentCount(b);
+	for(uint32_t i = 0; i < ns; i++) {
+		if(EffectsV3IdListBuilder_Segment(b, i)->kind ==
+				EFFECTS_V3_SEG_SET_DESCENDING) {
+			saw_bitmap = true;
+		}
+	}
+
+	TEST_ASSERT_(saw_bitmap,
+			"%zu ids as descending ranges should have earned a descending "
+			"bitmap - Rust emits one for this input - but C built %u segments "
+			"with none", n, ns);
+
+	// and the SAME segmentation Rust reaches, not merely some bitmap: the
+	// whole point is that both engines choose the same encoding for one input
+	TEST_ASSERT_(ns == 1,
+			"Rust builds exactly 1 segment for this input; C built %u", ns);
+
+	// and the collapse must not have reordered anything doing it
+	_assert_ids(b, ids, n, "collapsed descending run of ranges");
+
+	EffectsV3IdListBuilder_Free(b);
+}
+
 TEST_LIST = {
 	{ "EffectsV3IdList:ascendingRunIsOneSegment",
 		test_effectsV3IdList_ascendingRunIsOneSegment },
@@ -421,5 +531,11 @@ TEST_LIST = {
 		test_effectsV3IdList_bitmapIsNeverRecollapsed },
 	{ "EffectsV3IdList:extensionAtTheEndsOfTheIdSpace",
 		test_effectsV3IdList_extensionAtTheEndsOfTheIdSpace },
+	{ "EffectsV3IdList:aStepDownDoesNotJoinAnAscendingRun",
+		test_effectsV3IdList_aStepDownDoesNotJoinAnAscendingRun },
+	{ "EffectsV3IdList:anAscendingPairDoesNotJoinADescendingRun",
+		test_effectsV3IdList_anAscendingPairDoesNotJoinADescendingRun },
+	{ "EffectsV3IdList:aDescendingRunOfRangesCanCollapse",
+		test_effectsV3IdList_aDescendingRunOfRangesCanCollapse },
 	{ NULL, NULL }
 };

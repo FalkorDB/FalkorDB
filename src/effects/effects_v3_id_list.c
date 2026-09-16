@@ -246,9 +246,23 @@ static void _maybe_collapse_run
 	for(uint32_t i = b->run_start; i < n; i++) {
 		const EffectsV3Seg *s = b->segments + i;
 
-		// a run under consideration holds only ranges: a Repeat starts its own
-		// run, and a collapsed bitmap is left behind by _restart_run
-		ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING);
+		// A RUN HOLDS ONLY RANGES - a Repeat starts its own run, and a
+		// collapsed bitmap is left behind by _restart_run - AND every range in
+		// it reads in the run's own direction.
+		//
+		// The second half is the one that matters and the one this assert used
+		// to be missing. It named the KIND, which is not the property the walk
+		// below needs: a two-id ascending range inside a descending run
+		// satisfies "is a range" and still comes back transposed out of the
+		// set, because the set is re-read in one direction. A single id has no
+		// direction and fits either way, which is why the length is part of it.
+		ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING ||
+			   s->kind == EFFECTS_V3_SEG_RANGE_DESCENDING);
+
+		ASSERT(EffectsV3Seg_Len(s) == 1 ||
+			   ((b->run_dir == RUN_DESCENDING)
+				? (s->kind == EFFECTS_V3_SEG_RANGE_DESCENDING)
+				: (s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING)));
 
 		uint64_t lo = EffectsV3Seg_Min(s);
 		uint64_t hi = EffectsV3Seg_Max(s);
@@ -394,6 +408,10 @@ void EffectsV3IdListBuilder_Push
 			last->kind      = EFFECTS_V3_SEG_RANGE_DESCENDING;
 			last->range.len = 2;
 
+			// this segment now reads DOWN. Whether it may stay in the run is
+			// NOT decided here: nothing can collapse between this rewrite and
+			// the next push, and that push weighs it against the run's
+			// direction before anything is charged. One rule, in one place
 			if(b->run_dir == RUN_UNDECIDED) {
 				b->run_dir = RUN_DESCENDING;
 			}
@@ -447,11 +465,42 @@ void EffectsV3IdListBuilder_Push
 			b->run_dir = (id < last_min) ? RUN_DESCENDING : RUN_ASCENDING;
 		}
 
+		// THE SEGMENT MUST READ IN THE RUN'S OWN DIRECTION, or the run ends
+		// here instead of taking it.
+		//
+		// A collapse re-reads the WHOLE run as one set in one direction, so a
+		// segment whose own ids run the other way comes back transposed: every
+		// id present, the count right, the decoder's cardinality check passed,
+		// and two rows on each other's entity. run_dir only describes how
+		// consecutive SEGMENTS step, so it does not say this by itself.
+		//
+		// A single id has no direction of its own and fits either way. Anything
+		// longer must agree with the run.
+		bool fits = (b->run_dir == RUN_ASCENDING)
+			? (last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING)
+			: (last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING ||
+			   EffectsV3Seg_Len(last) == 1);
+
+		if(!fits) {
+			_push_singleton(b, id);
+			_restart_run(b, b->n_segments - 1);
+			return;
+		}
+
 		// the segment being superseded has its final length now, so this is the
 		// moment its contribution is known - and the only moment it may be
 		// charged, since charging an open segment would make the collapse
 		// decision depend on when the encoder looked
-		if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING) {
+		// BOTH range kinds are charged. Weighing only the ascending ones left
+		// a descending run's tally permanently empty, so it could never earn a
+		// bitmap however much it would have saved - and Rust charges both
+		// (Segment::Range | Segment::RangeDescending -> Run::absorb), so the
+		// two engines emitted different bytes for the same ids: measured at
+		// 980 ids as descending ranges, Rust one bitmap segment against C's 98
+		// ranges. The tally is over the id SET, and a range's min and len say
+		// that whichever way it reads
+		if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING ||
+		   last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING) {
 			EffectsV3Run_AddRangeBytes(&b->run, EffectsV3Seg_EncodedLen(last));
 			EffectsV3Run_AddRange(&b->run, EffectsV3Seg_Min(last),
 					EffectsV3Seg_Len(last));
