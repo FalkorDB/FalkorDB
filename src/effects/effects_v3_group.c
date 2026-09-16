@@ -1283,7 +1283,7 @@ void EffectsV3Grouping_AddIndexField
 	// between two index effects, so the record this belongs to is not the
 	// last one
 	bool index_seen = false;  // any earlier record naming the same index
-	for(uint32_t i = 0; i < g->n_announcements; i++) {
+	for(uint32_t i = 0; i < arr_len(g->announcements); i++) {
 		Announcement *a = g->announcements + i;
 
 		if(a->opcode != opcode || a->schema_type != schema_type
