@@ -228,6 +228,45 @@ static void _push_singleton
 
 // replace the open run with its bitmap, if the arithmetic has already gone
 // that way
+// settle the run's direction against a segment that is about to acquire one,
+// ending the run where the two disagree
+//
+// A segment has no direction while it holds one id; the second id gives it one.
+// It may only take that direction inside a run that reads the same way, because
+// _maybe_collapse_run folds a run's ranges into one bitmap and reads that bitmap
+// back in ITS order, not each segment's.
+//
+// WHY HERE AND NOT AT THE CHARGE POINT, which can also see the conflict: the
+// charge point is one push too late to put this segment at the head of the new
+// run. Ending the run there leaves the segment orphaned between two runs, where
+// no collapse can ever reach it - which is legal and order-preserving, and emits
+// DIFFERENT BYTES from Rust, which restarts AT the segment. Measured on 404
+// generated sequences: three disagreed, all of this shape.
+//
+// The direction is set here rather than left for the next push. _restart_run
+// clears it, and a cleared run takes its direction from whichever way the
+// FOLLOWING id falls - which can be the opposite of the one this segment already
+// reads, putting an ascending pair at the head of a descending run and reversing
+// it in the collapse. That is the same bug one segment further along.
+static void _claim_direction
+(
+	EffectsV3IdListBuilder *b,  // builder
+	bool desc                   // the direction the segment is acquiring
+) {
+	RunDirection want = desc ? RUN_DESCENDING : RUN_ASCENDING;
+
+	if(b->run_dir == RUN_UNDECIDED || b->run_dir == want) {
+		b->run_dir = want;
+		return;
+	}
+
+	// the run ends AT this segment, which becomes the first of the next one -
+	// it is a range, so it is a legal thing for a run to start with, unlike a
+	// Repeat
+	_restart_run(b, b->n_segments - 1);
+	b->run_dir = want;
+}
+
 static void _maybe_collapse_run
 (
 	EffectsV3IdListBuilder *b  // builder
@@ -321,6 +360,19 @@ void EffectsV3IdListBuilder_Push
 	// tally, because a segment's cost is only folded in once it stops growing
 	//--------------------------------------------------------------------------
 
+	// BEFORE the extensions below, not after: once a segment has grown, nothing
+	// in it says which push gave it its direction. A one-id segment about to
+	// become a two-id one is exactly where a run's direction is decided or
+	// contradicted
+	if(last != NULL && last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING &&
+	   last->range.len == 1) {
+		if(last->range.base < UINT64_MAX && id == last->range.base + 1) {
+			_claim_direction(b, false);
+		} else if(last->range.base > 0 && id == last->range.base - 1) {
+			_claim_direction(b, true);
+		}
+	}
+
 	// one arm per kind and NO default, like every other switch over this enum
 	// in this file: when the enum grew from three kinds to five, the arms that
 	// had a default silently took the new values down the wrong path. An arm
@@ -408,13 +460,7 @@ void EffectsV3IdListBuilder_Push
 			last->kind      = EFFECTS_V3_SEG_RANGE_DESCENDING;
 			last->range.len = 2;
 
-			// this segment now reads DOWN. Whether it may stay in the run is
-			// NOT decided here: nothing can collapse between this rewrite and
-			// the next push, and that push weighs it against the run's
-			// direction before anything is charged. One rule, in one place
-			if(b->run_dir == RUN_UNDECIDED) {
-				b->run_dir = RUN_DESCENDING;
-			}
+			// the direction was already claimed above, before this rewrite
 			return;
 		}
 
@@ -458,38 +504,14 @@ void EffectsV3IdListBuilder_Push
 				continues_run = (id > last_max || id < last_min);
 				break;
 		}
-
-		if(continues_run) {
-			// THE STEP GOES THE RIGHT WAY, and that is only half of it: THE
-			// SEGMENT BEING LEFT BEHIND MUST READ THE RUN'S WAY TOO.
-			//
-			// A collapse re-reads the WHOLE run as one set in one direction,
-			// so a segment whose own ids run the other way comes back
-			// transposed: every id present, the count right, the decoder's
-			// cardinality check passed, and two rows on each other's entity.
-			// run_dir describes how consecutive SEGMENTS step, so it does not
-			// say this by itself.
-			//
-			// A single id has no direction of its own and fits either way.
-			// Anything longer must agree with the run.
-			RunDirection dir = (b->run_dir != RUN_UNDECIDED)
-				? b->run_dir
-				: ((id < last_min) ? RUN_DESCENDING : RUN_ASCENDING);
-
-			continues_run = (dir == RUN_ASCENDING)
-				? (last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING)
-				: (last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING ||
-				   EffectsV3Seg_Len(last) == 1);
-
-			// committed only if the run really does continue, so the else
-			// branch below still sees an undecided run to restart
-			if(continues_run) {
-				b->run_dir = dir;
-			}
-		}
 	}
 
 	if(continues_run) {
+		// an undecided run is settled by the id that continues it
+		if(b->run_dir == RUN_UNDECIDED) {
+			b->run_dir = (id < last_min) ? RUN_DESCENDING : RUN_ASCENDING;
+		}
+
 		// the segment being superseded has its final length now, so this is the
 		// moment its contribution is known - and the only moment it may be
 		// charged, since charging an open segment would make the collapse
