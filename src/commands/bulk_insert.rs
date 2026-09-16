@@ -519,12 +519,9 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    // A bulk command has no `Pending`, so the whole command is one batch and
-    // `Graph::in_batch` is what makes it one — opened before the reserve below,
-    // checked after the last token.
+    // A bulk command has no `Pending`, so the whole command is one batch.
     g.in_batch(|g| {
-        // Nothing outstanding: a bulk command reserves once, before it creates
-        // anything, so there is no reservation of its own to exclude.
+        // Reserved once, before anything is created, so nothing is outstanding.
         let nothing_outstanding = RoaringTreemap::new();
         let node_ids: Vec<NodeId> = g
             .node_id_space()
@@ -570,12 +567,9 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    // A bulk command has no `Pending`, so the whole command is one batch and
-    // `Graph::in_batch` is what makes it one — opened before the reserve below,
-    // checked after the last token.
+    // A bulk command has no `Pending`, so the whole command is one batch.
     g.in_batch(|g| {
-        // Nothing outstanding: a bulk command reserves once, before it creates
-        // anything, so there is no reservation of its own to exclude.
+        // Reserved once, before anything is created, so nothing is outstanding.
         let nothing_outstanding = RoaringTreemap::new();
         let node_ids: Vec<NodeId> = g
             .node_id_space()

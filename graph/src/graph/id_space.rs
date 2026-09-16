@@ -3,36 +3,32 @@
 //! possible.
 //!
 //! Written for nodes and used for relationships too: both are counted ids with a
-//! free set, and neither the invariant below nor the checks that enforce it
-//! mention which. The caller says which entity it is asking about when it renders
-//! a refusal.
+//! free set, and nothing below mentions which. The caller names the entity when
+//! it renders a refusal.
 //!
 //! ## What it owns
 //!
-//! `live` and `recycled` — the entity count and the free set. Everything that
-//! moves an id between those two states is a method here: [`IdSpace::reserve`]
+//! `live` and `recycled` — the entity count and the free set. Every id that
+//! moves between those states moves through a method here: [`IdSpace::reserve`]
 //! hands ids out, [`IdSpace::cancel`] takes an unused one back,
 //! [`IdSpace::create`] makes them live, [`IdSpace::release`] frees them. `Graph`
-//! keeps no counter and no bitmap of its own; its `node_count()` and
+//! keeps no counter and no bitmap of its own; `node_count()` and
 //! `deleted_nodes()` read through to these.
 //!
-//! One consequence is the reason it is worth doing. The boundary is
+//! That is the point rather than a side effect. The boundary is
 //! `live + recycled.len()`, so every one of those operations has to move both
-//! halves or move neither. Split across two owners they were written in twelve
-//! places in `graph.rs`, and a bin write that nothing counted was #2797 and the
-//! node-id-liveness bug before it. Here there is no way to write one half.
+//! halves or neither, and a free-set write that nothing counted was #2797 and
+//! the node-id-liveness bug before it. Here there is no way to write one half.
 //!
-//! It is a field of the *versioned* `Graph` rather than something a caller
-//! holds alongside one, and that is not an accident either. A write query is in
-//! reader mode for its whole mutation phase; what makes that safe is that the
-//! free set it mutates is a private MVCC clone, and rollback is the one atomic
-//! store that discards it. An id space living anywhere else would have to
-//! reproduce that, or lose it.
+//! It is a field of the *versioned* `Graph` because a write query is in reader
+//! mode for its whole mutation phase; what makes that safe is that the free set
+//! it mutates is a private MVCC clone, discarded by one atomic store on
+//! rollback. An id space living elsewhere would have to reproduce that.
 //!
 //! ## The invariant
 //!
-//! One equation, true at every moment, asserted on the way out of every
-//! operation that touches any of the four fields:
+//! One equation, true at every moment, returned by every operation that touches
+//! any of the four fields:
 //!
 //! ```text
 //! live + recycled.len() == entry_bound + taken.len()
@@ -40,27 +36,20 @@
 //!
 //! `taken` is every id at or above `entry_bound` the open batch has taken —
 //! created, or reserved and then cancelled. Those are the same thing to the
-//! boundary: a create moves an id from free to live, a cancellation puts an
-//! allocated id in the free set, and both mean one more id has been handed out.
-//! Counting only creates made the equation false for every cancelled
-//! reservation, which is why the write path could not be held to it —
-//! `CREATE (a)-[:R]->(b) DELETE b` reported
-//! `Miscounted { graph_bound: 2, expected: 1 }` against a ledger told only about
-//! creates.
+//! boundary: both mean one more id has been handed out. Counting only creates
+//! made the equation false for every cancelled reservation, which is what kept
+//! the write path from being held to it.
 //!
-//! What the equation buys is that the bug this module exists to prevent cannot
-//! survive a debug test run: a future operation that moves `live` or `recycled`
-//! without recording fails immediately, naming all four fields, instead of
-//! waiting for a replica to refuse a buffer. The one thing it cannot see is this
-//! file getting its own arithmetic right and its meaning wrong, which is what
-//! the differential test against a reference model is for.
+//! So an operation that moves `live` or `recycled` without recording fails the
+//! query, naming all four fields, rather than waiting for a replica to refuse a
+//! buffer. What it cannot see is this file getting its arithmetic right and its
+//! meaning wrong, which is what the differential test is for.
 //!
 //! ## The batch, and the shape it is judged by
 //!
 //! `entry_bound` and `taken` are the *batch*: the span judged as one unit — a
 //! whole effects buffer, or one commit segment of a write query.
-//! [`IdSpace::open_batch`] begins one, rebuilt rather than re-anchored, and it
-//! has a precondition worth reading before calling it.
+//! [`IdSpace::open_batch`] begins one, and has a precondition worth reading.
 //!
 //! A batch exists because density holds between batches and not within one. The
 //! effects apply path ingests records grouped by shape rather than ordered by
@@ -99,12 +88,10 @@ pub enum IdSpaceError {
     /// The boundary and the ledger disagree: an id changed state without both
     /// halves of the change happening.
     ///
-    /// Not a claim about the caller — every refusal above is. This one says the
-    /// id space contradicts itself, so a bug in this module reached production.
-    /// It is returned rather than asserted because a corrupt id space hands out
-    /// ids that are already live, and failing the query discards the private
-    /// MVCC version that holds the damage; a `debug_assert` would say nothing
-    /// in the build that matters.
+    /// Not a claim about the caller — every other refusal here is. This one says
+    /// a bug in this module reached production. Returned rather than asserted
+    /// because a corrupt id space hands out ids that are already live, and
+    /// failing the query discards the private MVCC version holding the damage.
     #[error(
         "the id space contradicts itself: {live} live + {recycled} free puts the boundary at \
          {bound}, but a batch opened at {entry_bound} having taken {taken} puts it at {expected}"
@@ -250,9 +237,7 @@ impl IdSpace {
 
     /// The id space an RDB decoded, with no batch open.
     ///
-    /// The one way to build a populated space from outside, and the reason the
-    /// count check in [`Self::verify`] is still a check: `live` arrives from a
-    /// decoder here, not from this type's own arithmetic.
+    /// The one way to build a populated space from outside.
     #[must_use]
     pub fn restored(
         live: u64,
@@ -320,11 +305,9 @@ impl IdSpace {
 
     /// The same id space in a new MVCC version, with a fresh batch.
     ///
-    /// A version is where a batch begins, so `created` is not carried: the
-    /// previous version's batch is finished by definition, and copying its set
-    /// forward would put per-batch state in a version readers hold — memory
-    /// `GRAPH.MEMORY` does not count and no reader would look at, and a `verify`
-    /// in the new version measuring the old version's creates.
+    /// A version is where a batch begins, so `taken` is not carried forward:
+    /// that would put per-batch state in a version readers hold, and have a
+    /// `verify` there measure the previous version's work.
     #[must_use]
     pub fn next_version(&self) -> Self {
         Self::restored(self.live, self.recycled.clone())
@@ -351,10 +334,9 @@ impl IdSpace {
     /// Whether an id is one the open batch is answerable for.
     ///
     /// Ids below the entry boundary were handed out before it began and counted
-    /// into the boundary already; the batch neither took them nor has to account
-    /// for them, whatever it does to them afterwards. [`Self::cancel`] and
-    /// [`Self::record_above`] turn on this and nothing else, so it is written
-    /// once.
+    /// into the boundary already, so the batch does not account for them.
+    /// [`Self::cancel`] and [`Self::record_above`] turn on this and nothing
+    /// else, so it is written once.
     const fn above_boundary(
         &self,
         id: u64,
@@ -368,20 +350,9 @@ impl IdSpace {
     /// live + recycled.len() == entry_bound + taken.len()
     /// ```
     ///
-    /// Read left to right it says the boundary is where the ids handed out put
-    /// it; read as two halves it says the count and the free set cannot move
-    /// without the ledger moving with them. Every operation that touches any of
-    /// the four fields returns this on the way out, so an operation that moves a
-    /// count without recording — the shape of #2797 and of the node-id-liveness
-    /// bug before it — fails the query rather than waiting for a replica to
-    /// notice, in release as well as in debug.
-    ///
-    /// It is *not* the whole of what [`Self::verify`] asks. This is the count;
-    /// verify also asks the shape — that `taken` fills the range from the
-    /// boundary upward — and that one is legitimately false partway through a
-    /// batch, because records arrive grouped by shape rather than ordered by id.
-    /// So the count is an invariant and the shape is a postcondition, and they
-    /// are checked in different places for that reason.
+    /// The count half only. [`Self::verify`] also asks the shape, which is
+    /// legitimately false partway through a batch — so the count is an invariant
+    /// and the shape a postcondition, checked in different places.
     ///
     /// # Errors
     ///
@@ -404,29 +375,23 @@ impl IdSpace {
 
     /// Close whatever batch was open and begin one here.
     ///
-    /// Rebuilt rather than re-anchored: a query that commits mid-flight opens a
-    /// second batch against a space the first one moved, and carrying `taken`
-    /// across would measure two batches against one boundary. An id the last
-    /// batch took is an ordinary recycled id to the next one.
+    /// Rebuilt rather than re-anchored: carrying `taken` across would measure
+    /// two batches against one boundary. An id the last batch took is an
+    /// ordinary recycled id to the next one.
     ///
     /// # Every reservation must be settled first
     ///
-    /// Created or cancelled — not left outstanding. The boundary counts live ids
-    /// and free ids and deliberately not reserved ones: reservations would grow
-    /// the GraphBLAS matrix dimension `algo_procedures.rs` derives from it while
+    /// Created or cancelled — not left outstanding. The boundary counts live and
+    /// free ids and deliberately not reserved ones: reservations would grow the
+    /// GraphBLAS matrix dimension `algo_procedures.rs` derives from it while
     /// leaving its liveness gate off, so `CALL algo.*` inside a write query would
-    /// walk phantom nodes. An id still held when this runs therefore lands
-    /// *below* the boundary it opens, where it reads as live-before-the-batch,
-    /// and the next [`Self::create`] of it is refused as
-    /// [`IdSpaceError::AlreadyLive`] — the batch correctly reporting that it was
-    /// asked to create something the space believes is already there.
+    /// walk phantom nodes. An id still held when this runs lands *below* the
+    /// boundary it opens, and the next [`Self::create`] of it is refused as
+    /// [`IdSpaceError::AlreadyLive`].
     ///
-    /// `Pending::commit` satisfies this by construction: every reserved id is
-    /// recorded into `created_nodes` the moment it is handed out, commit creates
-    /// all of them, and a cancellation goes to [`Self::cancel`] instead — so
-    /// nothing is outstanding by the time `clear` and the next open run. It is
-    /// written down because nothing enforces it, and a caller that reserved
-    /// lazily would find out a commit later.
+    /// `Pending::end_segment` satisfies this by construction — every reserved id
+    /// is recorded the moment it is handed out, and commit settles all of them.
+    /// Written down because nothing enforces it.
     ///
     /// # Errors
     ///
@@ -444,15 +409,13 @@ impl IdSpace {
 
     /// Reserve `count` ids, freed ones first and then fresh.
     ///
-    /// `issued` is every id this batch has already been handed and not yet
-    /// settled — reserved, still on its way to `create`. It is borrowed for the
-    /// call rather than kept, because the caller already keeps those ids
-    /// (`Pending::created_nodes`) and a copy here would be a second answer to
-    /// the same question, free to drift from the first. The free set it is
-    /// subtracted from is this space's own, and so is `taken`: a cancelled id is
-    /// recorded by [`Self::cancel`], so the caller must **not** pass it here as
-    /// well, or the boundary below counts it twice and leaves a gap the batch
-    /// never fills. A caller with nothing outstanding passes an empty set.
+    /// `issued` is every id this batch has been handed and not yet settled —
+    /// reserved, still on its way to `create`. Borrowed rather than kept,
+    /// because the caller already holds those ids (`Pending::created_nodes`) and
+    /// a copy here could drift from them. Cancelled ids must **not** be passed:
+    /// [`Self::cancel`] records them in `taken`, and passing them again counts
+    /// one id twice and leaves a gap the batch never fills. A caller with
+    /// nothing outstanding passes an empty set.
     ///
     /// A reserved id is left *in* `recycled`: [`Self::max_id`] and
     /// [`Self::is_free`] are derived from it and would go wrong mid-batch if a
@@ -460,15 +423,11 @@ impl IdSpace {
     /// taking the difference against what has been issued is what makes it mean
     /// that.
     ///
-    /// "Issued" keeps the ids this batch has since given back, and that is the
-    /// rule the whole thing rests on rather than an oversight. Cancelling a
-    /// reservation returns the id to the bin at once, so a space that forgot it
-    /// would offer it to the very next reserve and hand one id out twice inside
-    /// a single commit. The effects buffer emits a cancelled id as its own
-    /// create/delete pair, so the replica would be told to create that id twice
-    /// in one buffer and refuse the whole of it as already live. Between
-    /// batches the id is genuinely free again, which is why the space is opened
-    /// afresh per commit segment rather than re-anchored.
+    /// A cancelled id must not be reissued inside the batch that cancelled it:
+    /// the effects buffer emits it as its own create/delete pair, so a replica
+    /// told to create it twice in one buffer refuses the whole payload. Between
+    /// batches it is genuinely free again, which is why a batch is opened afresh
+    /// per commit segment rather than re-anchored.
     ///
     /// # Errors
     ///
@@ -508,24 +467,15 @@ impl IdSpace {
 
     /// Hand a reserved id back, unused.
     ///
-    /// The id joins the free set so the id space stays dense: it was allocated,
-    /// and if it simply vanished the next boundary would count an id nothing
-    /// holds. It joins `taken` for the same reason — the boundary moved, so the
-    /// ledger has to say so, or the invariant is false for every query that
-    /// cancels. That is what used to keep [`Self::verify`] off the write path:
-    /// `CREATE (a)-[:R]->(b) DELETE b` reported
-    /// `Miscounted { graph_bound: 2, expected: 1 }` against a ledger told only
-    /// about creates.
+    /// The id joins the free set so the space stays dense, and joins `taken`
+    /// because the boundary moved: an allocated id is now free, which is one
+    /// more id handed out. Recording it is also what stops [`Self::reserve`]
+    /// offering it again inside this batch, since reserve excludes `taken`.
     ///
-    /// Recording it here is also what stops [`Self::reserve`] offering the id
-    /// again inside this batch, since reserve excludes `taken`. The caller used
-    /// to carry that rule, holding its cancelled ids and passing them back as
-    /// `issued`; it no longer has to.
-    ///
-    /// A *reclaimed* reservation moves neither half, and both decline for the
-    /// same reason: [`Self::reserve`] leaves a reclaimed id in the free set, so
-    /// giving it back finds it already there, and it sits below the boundary,
-    /// which already counted it. So the invariant holds without a special case.
+    /// A *reclaimed* reservation moves neither half: [`Self::reserve`] leaves it
+    /// in the free set, and it sits below the boundary, which already counted
+    /// it. Both decline for the same reason, so the invariant needs no special
+    /// case.
     ///
     /// # Errors
     ///
@@ -564,25 +514,16 @@ impl IdSpace {
 
     /// Make `nodes` live, or refuse them and change nothing.
     ///
-    /// The whole of the transition: the ids leave the recycle bin, the live
-    /// count grows by as many, and the batch records them. One call because the
-    /// graph's boundary is `live + recycled.len()`, so half of this is a
-    /// boundary that moved for no reason — the shape of every id bug this type
-    /// exists to catch. The graph still *owns* both, which is what keeps
-    /// [`Self::verify`]'s count check a comparison against something this batch
-    /// did not derive.
+    /// The whole of the transition: the ids leave the free set, the live count
+    /// grows by as many, and the batch records them. One call because any half
+    /// of it alone is a boundary that moved for no reason.
     ///
-    /// `recycled` is the ids that are free right now — the graph's recycle bin.
-    /// An id in it is free whatever its value, so it is neither live nor a
-    /// duplicate, and removing it is what lets the two checks below tell a
-    /// genuine double claim from a legitimate recreate.
-    ///
-    /// One operation rather than a check, a move and a record the caller
-    /// sequences, because the order between them is load-bearing: the checks
-    /// read the bin, so freeing first would hide a double claim, and recording
-    /// first would leave the duplicate check finding the ids it had just
-    /// inserted. Merged, there is no order for a caller to get wrong and no way
-    /// to move the state without checking.
+    /// A free id is neither live nor a duplicate whatever its value, so
+    /// subtracting the free set first is what lets the checks below tell a
+    /// genuine double claim from a legitimate recreate. The order is
+    /// load-bearing — freeing first would hide a double claim, recording first
+    /// would leave the duplicate check finding what it just inserted — which is
+    /// why this is one call and not three for a caller to sequence.
     ///
     /// # Errors
     ///
@@ -699,18 +640,14 @@ impl IdSpace {
 
     /// Free `freed`, having first refused the whole of `requested`.
     ///
-    /// The mirror of [`Self::create`]: the ids leave the live count and enter
-    /// the recycle bin together, because a boundary that moves by halves is the
-    /// bug.
+    /// The mirror of [`Self::create`].
     ///
-    /// Two sets because the relationship side genuinely has two.
-    /// `delete_relationships` is handed a set of ids and frees only the ones it
-    /// could resolve to a type and both endpoints — stale ids are skipped
-    /// deliberately, so a caller naming one cannot corrupt the counters — while
-    /// the refusals have to judge everything it was *asked* for, or an id that
-    /// is already free would be waved through by being unresolvable. The node
-    /// side passes the same set twice, which is what "these are the same
-    /// question here" looks like written down rather than assumed.
+    /// Two sets because the relationship side genuinely has two:
+    /// `delete_relationships` frees only the ids it could resolve to a type and
+    /// both endpoints, skipping stale ones deliberately, but the refusals must
+    /// judge everything it was *asked* for — an id that is already free is
+    /// unresolvable for exactly that reason, and judging only the freed set
+    /// would wave it through. The node side passes the same set twice.
     ///
     /// # Errors
     ///
@@ -884,13 +821,10 @@ mod tests {
         // but the count says four ids were handed out where the batch recorded
         // three, and only comparing the two notices.
         //
-        // Built outright rather than driven through the graph, because no path
-        // reaches this state any more and that is the point of the change that
-        // made it so: the count and the free set moved on their own until
-        // `create` and `release` became the only things that move them. The arm
-        // is kept because the invariant is worth stating, and because `restore`
-        // still builds a space from numbers a decoder supplied — it is a
-        // backstop with no live caller, not a check with a hole behind it.
+        // Built outright because no path reaches this state any more: `create`
+        // and `release` are the only things that move the count and the free
+        // set, and they move `taken` with them. The arm is kept for arithmetic
+        // inside this file — a backstop with no live caller.
         let space = IdSpace::wedged(4, RoaringTreemap::new(), 0, range(0..3));
 
         let err = space
@@ -1060,14 +994,10 @@ mod tests {
         assert_eq!(err, NodeOpError::node(IdSpaceError::IdOutOfRange(u64::MAX)));
     }
 
-    /// A reservation left outstanding across a batch boundary is refused, and
-    /// the refusal names the id. This is [`IdSpace::open_batch`]'s precondition
-    /// seen from the failing side: the boundary does not count reservations, so
-    /// closing a batch over one puts it below the next boundary, where creating
-    /// it reads as recreating something live.
-    ///
-    /// Found by the differential test rather than reasoned about — the model
-    /// carried held ids across a boundary because nothing said it could not.
+    /// [`IdSpace::open_batch`]'s precondition, seen from the failing side: the
+    /// boundary does not count reservations, so closing a batch over one puts it
+    /// below the next boundary, where creating it reads as recreating something
+    /// live. Found by the differential test.
     #[test]
     fn a_reservation_that_outlives_its_batch_is_refused() {
         let mut space = IdSpace::new();
@@ -1295,10 +1225,8 @@ mod differential {
     /// definition rather than by arithmetic.
     ///
     /// `IdSpace` keeps a count where this keeps a set, and roaring containers
-    /// where this keeps a `BTreeSet`. That is the whole point: the two agree
-    /// only if the arithmetic and the container merges are both right, and the
-    /// encapsulation that made the old cross-owner audit unnecessary does
-    /// nothing for a bug *inside* the file.
+    /// where this keeps a `BTreeSet`, so the two agree only if the arithmetic
+    /// and the container merges are both right.
     #[derive(Default)]
     struct Model {
         live: BTreeSet<u64>,
@@ -1378,10 +1306,9 @@ mod differential {
     /// Drive every operation against a reference model, for long enough that
     /// batches close over reclaimed ids and cancellations several times.
     ///
-    /// This is what covers the residual risk after ownership: nothing outside
-    /// this file can desynchronise the count from the ledger any more, so what
-    /// is left is this file getting its own arithmetic wrong, and only a second
-    /// implementation of the same question can see that.
+    /// Encapsulation stops anything outside this file desynchronising the count
+    /// from the ledger; this is what covers the file getting its own arithmetic
+    /// wrong, which only a second implementation can see.
     #[test]
     fn random_operation_sequences_agree_with_a_reference_model() {
         let mut state = 0x2545_F491_4F6C_DD1D_u64;

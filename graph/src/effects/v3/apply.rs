@@ -64,12 +64,10 @@ pub fn apply_effects(
     // be read; `open_payload` owns that plaintext and the records borrow from it.
     let payload = open_payload(buf)?;
 
-    // The whole buffer is one batch in each id space, and `in_batch` is what
-    // makes that so rather than a call at the top that a later edit could drop.
-    // It also closes the batch, which is where the id space is checked: records
-    // are grouped by shape rather than ordered by id, so the space is
+    // The whole buffer is one batch, checked as `in_batch` closes it: records
+    // arrive grouped by shape rather than ordered by id, so the id space is
     // legitimately fragmented partway through and only has to be whole at the
-    // end. Index documents are the one thing left for this to accumulate.
+    // end.
     let mut docs = IndexDocs::default();
     g.in_batch(|g| {
         for record in payload.records() {

@@ -411,10 +411,6 @@ impl<'a> Runtime<'a> {
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
         if write {
             pending.borrow_mut().set_schema_baseline(&g);
-            // No batch is opened here: a write query runs against a private MVCC
-            // version, and `Graph::new_version` opens one as it clones. Opening
-            // a second would be a no-op that this constructor cannot report a
-            // failure from anyway.
         }
         Self {
             parameters,

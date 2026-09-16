@@ -139,14 +139,11 @@ pub struct Pending {
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
     pub(crate) created_rel_types: FxHashMap<RelationshipId, Arc<String>>,
     /// The relationship ids this batch has reserved and not yet cancelled — the
-    /// mirror of `created_nodes`, and what [`Self::issued_relationships`] lends
-    /// the allocator.
+    /// mirror of `created_nodes`.
     ///
-    /// It exists at all because the created relationships are kept as a map
-    /// keyed by id and a vector of cancellation records, and neither can be
-    /// differenced against the free set without being walked. A cancelled id
-    /// leaves here as it leaves `created_rels_by_type`, because from that moment
-    /// the id space is the thing that remembers it.
+    /// A set of its own because the created relationships are kept as a map
+    /// keyed by id and a vector of cancellation records, neither of which can be
+    /// differenced against the free set without being walked.
     pub(crate) taken_relationship_ids: RoaringTreemap,
     /// Nodes to be deleted
     pub(crate) deleted_nodes: RoaringTreemap,
@@ -400,13 +397,12 @@ impl Pending {
     }
 
     /// The node ids this batch holds that the id space does not know about yet:
-    /// reserved, still destined for `create_nodes` at commit, and so not yet
-    /// recorded anywhere the allocator can see.
+    /// reserved, still destined for `create_nodes` at commit.
     ///
-    /// Cancelled ids are deliberately *not* here. `IdSpace::cancel` records them
-    /// itself, and `IdSpace::reserve` excludes what it has recorded — so passing
-    /// them again would count one id twice when reserve places the next fresh
-    /// one, leaving a gap the batch never fills and `verify` reports as a hole.
+    /// Cancelled ids are deliberately *not* here — `IdSpace::cancel` records
+    /// them and `IdSpace::reserve` excludes what it has recorded, so passing
+    /// them again would count one id twice and leave a gap the batch never
+    /// fills.
     #[must_use]
     pub const fn issued_nodes(&self) -> &RoaringTreemap {
         &self.created_nodes
@@ -1578,29 +1574,22 @@ impl Pending {
     /// End the segment: discard its accumulated mutations and roll the graph's
     /// id batches over to where the commit just left the boundary.
     ///
-    /// The two are one call because they are one event, and because splitting
-    /// them was silent. A batch left unopened does not fail and does not crash:
-    /// the boundary stays where the last segment left it and ids simply stop
-    /// being reclaimed across it, so `CREATE (n) DELETE n WITH 1 AS x CREATE (m)`
+    /// One call because they are one event, and because splitting them was
+    /// silent: a batch left unopened does not fail, it just stops reclaiming ids
+    /// across the boundary, so `CREATE (n) DELETE n WITH 1 AS x CREATE (m)`
     /// allocates id 1 where it should allocate 0 — measured, with the whole flow
     /// suite passing. Against a C primary that is a divergence in id-reuse
     /// order, which costs a full resync per delete-then-create cycle.
     ///
-    /// Fusing them buys most of that back, and it is worth saying exactly how
-    /// much. Forgetting this now also forgets to discard the segment's
-    /// mutations, so the next commit re-creates ids that are already live and
-    /// the query dies with `node 0 is already live below the boundary 0`. That
-    /// covers every segment that created something which survived.
-    ///
-    /// It does **not** cover a segment whose only content was a cancellation:
-    /// there is nothing to re-create, so nothing collides, and
-    /// `CREATE (n) DELETE n WITH 1 AS x CREATE (m)` still quietly allocates id 1
-    /// where it should allocate 0. Both measured. Nothing in this module can
-    /// close that last case, and the reason is structural rather than an
-    /// oversight: a batch that never rolled over is indistinguishable from a
-    /// longer one, and both are valid id spaces — [`IdSpace::verify`] passes on
-    /// either. Catching it needs a notion of "a segment happened" that the id
-    /// space does not have and would have to be given.
+    /// Fused, forgetting this also forgets to discard the segment's mutations,
+    /// so the next commit re-creates live ids and the query dies with `node 0 is
+    /// already live below the boundary 0`. That covers every segment that
+    /// created something which survived, and **not** one whose only content was
+    /// a cancellation — nothing to re-create, so nothing collides. Both
+    /// measured. That last case cannot be closed from here: a batch that never
+    /// rolled over is indistinguishable from a longer one, and
+    /// [`IdSpace::verify`] passes on either. Catching it needs a notion of "a
+    /// segment happened" that the id space does not have.
     ///
     /// Runs after every `Commit`, so it must NOT touch `published` — a later failure
     /// has to undo the documents *all* of this query's `Commit`s published, not just

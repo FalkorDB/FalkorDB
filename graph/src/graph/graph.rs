@@ -283,11 +283,9 @@ pub enum NodeOpError {
     /// it needs only the recycle bin, and splitting them across two types is how
     /// the two halves drift apart.
     ///
-    /// `kind` is added here rather than in [`IdSpaceError`] because the id space
+    /// `kind` lives here rather than in [`IdSpaceError`] because the id space
     /// deliberately does not know which entity it counts — it is the same type
-    /// twice — while every method on this graph does. It used to be a parameter
-    /// each caller passed by hand at the point of rendering, which is one more
-    /// thing to get wrong and six places to get it wrong in.
+    /// twice — while every method on this graph does.
     #[error("{kind} {source}")]
     IdSpace {
         kind: &'static str,
@@ -1431,9 +1429,7 @@ impl Graph {
     /// opening a batch over a corrupt one would re-anchor the boundary on the
     /// bad value and hide it.
     /// `pub(crate)` on purpose: outside this crate the only way to have a batch
-    /// is [`Self::in_batch`], which cannot be left unopened. Inside it, the two
-    /// callers are that scope and `Pending::end_segment`, which is the one place
-    /// a batch legitimately rolls over rather than closing.
+    /// is [`Self::in_batch`], which cannot be left unopened.
     pub(crate) fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
         self.node_ids.open_batch().map_err(NodeOpError::node)?;
         self.relationship_ids
@@ -1447,21 +1443,16 @@ impl Graph {
     ///
     /// A batch is the span an [`IdSpace`] judges as one — a whole effects
     /// buffer, or one `GRAPH.BULK` command. Both are a single function's body,
-    /// which is what lets a scope stand for the batch. The write path is not:
-    /// its batch ends and the next begins partway through one `next()` of a
-    /// pull-based operator, across many `AtomicRefCell` borrows, so there is no
-    /// frame to wrap and it rolls the batch over by hand.
+    /// which is what lets a scope stand for the batch. The write path is not,
+    /// and rolls its batch over by hand in `Pending::end_segment`.
     ///
-    /// Forgetting to open one is silent, which is why this exists. It does not
-    /// fail, it does not crash, and the whole flow suite passes: the boundary
-    /// stays where the last batch left it and ids simply stop being reclaimed
-    /// across it — `CREATE (n) DELETE n WITH 1 AS x CREATE (m)` allocates id 1
-    /// where it should allocate 0. Against a C primary that is a divergence in
-    /// id-reuse order, which costs a full resync per delete-then-create cycle
-    /// and which a state-only comparison calls green.
+    /// Forgetting to open a batch is silent: the boundary stays where the last
+    /// one left it and ids stop being reclaimed across it, so
+    /// `CREATE (n) DELETE n WITH 1 AS x CREATE (m)` allocates id 1 where it
+    /// should allocate 0 — measured, with the whole flow suite passing.
     ///
-    /// `f` failing skips the verification, which is right: a buffer that
-    /// stopped partway has not finished building the thing being checked.
+    /// `f` failing skips the verification: a buffer that stopped partway has
+    /// not finished building the thing being checked.
     ///
     /// # Errors
     ///
@@ -1572,16 +1563,9 @@ impl Graph {
 
     /// Size the matrices to hold `nodes`.
     ///
-    /// The ledger half of the same transition is [`IdSpace::create`], and the
-    /// two are always a pair — which is why this is private and
-    /// [`Self::create_nodes`] is the only way in. It used to be public and
-    /// unchecked, for the write path, and what made that path different was that
-    /// a *cancelled reservation* — `CREATE (a)-[:R]->(b) DELETE b` — is an id
-    /// handed out and never created, which reads as a hole in the id space.
-    /// What closed the gap was not a check moving but the cancelled id becoming
-    /// something the batch is told about (#2839): `Pending` holds it in
-    /// `cancelled_nodes`, so the create at commit and the boundary at the next
-    /// one both account for it.
+    /// The ledger half of the same transition is [`IdSpace::create`] and the two
+    /// are always a pair, so this is private and [`Self::create_nodes`] is the
+    /// only way in.
     fn grow_for_nodes(
         &mut self,
         nodes: &RoaringTreemap,
@@ -2756,9 +2740,8 @@ impl Graph {
 
         let mut all_implicit: Vec<DeletedEdge> = Vec::new();
         // The same ids as `all_implicit`, as the set the ledger is told about.
-        // Accumulated across types and freed once at the end: the bin and the
-        // count used to be written in two different places from two different
-        // sets, which agreed only because an edge has exactly one type.
+        // Accumulated across types and freed once, so the count and the free set
+        // cannot be written from two different sets.
         let mut freed = RoaringTreemap::new();
         // Pairs where an endpoint survives — the survivor may still hold an
         // edge of another type, so these need a per-tensor check.
