@@ -12,21 +12,88 @@
 #include <stdlib.h>
 #include <string.h>
 
+// which arm of a Group's shape union an opcode uses
+//
+// EXHAUSTIVE OVER EVERY EffectType WITH NO default, which is the price of the
+// union below: reading the wrong arm is not a wrong answer, it is a label
+// pointer read out of a relationship id. A new opcode has to be classified
+// here or the compiler says so, and that is the only thing standing between a
+// ninth batchable record and a wild free in EffectsV3Grouping_Free.
+typedef enum {
+	SHAPE_NODE,  // carries a label set
+	SHAPE_EDGE,  // carries a relationship type, and maybe endpoints
+	SHAPE_NONE,  // not batchable - never reaches a Group at all
+} GroupShape;
+
+static GroupShape _shape_of(EffectType opcode) {
+	switch(opcode) {
+		case EFFECT_UPDATE_NODE:
+		case EFFECT_CREATE_NODE:
+		case EFFECT_DELETE_NODE:
+		case EFFECT_SET_LABELS:
+		case EFFECT_REMOVE_LABELS:
+			return SHAPE_NODE;
+
+		case EFFECT_UPDATE_EDGE:
+		case EFFECT_CREATE_EDGE:
+		case EFFECT_DELETE_EDGE:
+			return SHAPE_EDGE;
+
+		// singular records: one statement, one record, no count and nothing to
+		// batch. They are announcements or DDL and never reach _group_for
+		case EFFECT_UNKNOWN:
+		case EFFECT_ADD_SCHEMA:
+		case EFFECT_ADD_ATTRIBUTE:
+		case EFFECT_CREATE_INDEX:
+		case EFFECT_DROP_INDEX:
+		case EFFECT_CREATE_CONSTRAINT:
+		case EFFECT_DROP_CONSTRAINT:
+			break;
+	}
+
+	// SHAPE_NONE is the fail-SAFE answer, not a fail-fast one: it frees
+	// nothing and compares nothing, so a mistake here leaks rather than
+	// freeing an integer as a pointer. ASSERT would be silent in release,
+	// which is exactly where that distinction matters
+	return SHAPE_NONE;
+}
+
 // one (opcode, shape) group, with its rows accumulating
+//
+// The opcode is the DISCRIMINATOR and is compared first everywhere, so by the
+// time any arm is read both sides are known to be the same kind. That is what
+// makes the union safe here rather than a hazard: there is no path that picks
+// an arm without having established the opcode.
 typedef struct {
 	EffectType opcode;
 
-	// the shape, whichever half of it this opcode uses
-	LabelID   *labels;       // owned, ascending
-	uint16_t   n_labels;
-	RelationID relation_id;
+	// the half of the shape that depends on the entity kind
+	union {
+		struct {
+			LabelID *labels;   // owned, ascending
+			uint16_t n_labels;
+		} node;
+
+		struct {
+			RelationID relation_id;
+
+			// endpoints, on CREATE_EDGE and DELETE_EDGE only - an update
+			// recovers them from the graph, so it carries none. Nested here
+			// rather than beside the rows because they are unreachable on a
+			// node group by construction instead of by convention
+			EffectsV3IdListBuilder *src;
+			EffectsV3IdListBuilder *dst;
+		} edge;
+	} shape;
+
+	// NOT in the union: the four record types that carry attributes are two
+	// nodes and two edges, so attributes do not partition on the entity kind.
+	// They are simply empty on the four that carry none
 	AttributeID *attr_ids;   // owned
 	uint16_t     n_attrs;
 
 	// the rows
 	EffectsV3IdListBuilder *ids;
-	EffectsV3IdListBuilder *src;  // edge create/delete only
-	EffectsV3IdListBuilder *dst;
 	EffectsBytes *values;         // count * n_attrs SIValues, row-major
 	uint32_t count;               // entities filed here
 } Group;
@@ -150,15 +217,28 @@ static int _cmp_group(const void *va, const void *vb) {
 	int c = _cmp_u32((uint32_t)a->opcode, (uint32_t)b->opcode);
 	if(c != 0) return c;
 
-	c = _cmp_u32(a->n_labels, b->n_labels);
-	if(c != 0) return c;
-	for(uint16_t i = 0; i < a->n_labels; i++) {
-		c = _cmp_u32((uint32_t)a->labels[i], (uint32_t)b->labels[i]);
-		if(c != 0) return c;
-	}
+	// the opcodes are equal from here, so the same arm is live on both and
+	// only one of these is even a question
+	switch(_shape_of(a->opcode)) {
+		case SHAPE_NODE:
+			c = _cmp_u32(a->shape.node.n_labels, b->shape.node.n_labels);
+			if(c != 0) return c;
+			for(uint16_t i = 0; i < a->shape.node.n_labels; i++) {
+				c = _cmp_u32((uint32_t)a->shape.node.labels[i],
+						(uint32_t)b->shape.node.labels[i]);
+				if(c != 0) return c;
+			}
+			break;
 
-	c = _cmp_u32((uint32_t)a->relation_id, (uint32_t)b->relation_id);
-	if(c != 0) return c;
+		case SHAPE_EDGE:
+			c = _cmp_u32((uint32_t)a->shape.edge.relation_id,
+					(uint32_t)b->shape.edge.relation_id);
+			if(c != 0) return c;
+			break;
+
+		case SHAPE_NONE:
+			break;
+	}
 
 	c = _cmp_u32(a->n_attrs, b->n_attrs);
 	if(c != 0) return c;
@@ -211,7 +291,7 @@ static bool _vacuous(const Group *grp) {
 	// a label record's payload is its label set
 	if((grp->opcode == EFFECT_SET_LABELS
 				|| grp->opcode == EFFECT_REMOVE_LABELS)
-			&& grp->n_labels == 0) {
+			&& grp->shape.node.n_labels == 0) {
 		return true;
 	}
 
@@ -260,13 +340,17 @@ static Group *_group_for
 	uint16_t n_attrs              // how many
 ) {
 	Group probe = {
-		.opcode      = opcode,
-		.labels      = (LabelID *)labels,
-		.n_labels    = n_labels,
-		.relation_id = relation_id,
-		.attr_ids    = (AttributeID *)attr_ids,
-		.n_attrs     = n_attrs,
+		.opcode   = opcode,
+		.attr_ids = (AttributeID *)attr_ids,
+		.n_attrs  = n_attrs,
 	};
+
+	if(_shape_of(opcode) == SHAPE_EDGE) {
+		probe.shape.edge.relation_id = relation_id;
+	} else {
+		probe.shape.node.labels   = (LabelID *)labels;
+		probe.shape.node.n_labels = n_labels;
+	}
 
 	// the shape the previous entity used, checked before the scan. Revalidated
 	// with the same comparator rather than trusted, so it is a shortcut and
@@ -292,16 +376,20 @@ static Group *_group_for
 	Group *grp = g->groups + g->n_groups++;
 	memset(grp, 0, sizeof(*grp));
 
-	grp->opcode      = opcode;
-	grp->relation_id = relation_id;
-	grp->n_labels    = n_labels;
+	grp->opcode = opcode;
+
+	if(_shape_of(opcode) == SHAPE_EDGE) {
+		grp->shape.edge.relation_id = relation_id;
+	} else {
+		grp->shape.node.n_labels = n_labels;
+	}
 	grp->n_attrs     = n_attrs;
 	grp->ids         = EffectsV3IdListBuilder_New();
 	grp->values      = EffectsBytes_New(1024);
 
-	if(n_labels > 0) {
-		grp->labels = rm_malloc(sizeof(LabelID) * n_labels);
-		memcpy(grp->labels, labels, sizeof(LabelID) * n_labels);
+	if(_shape_of(opcode) == SHAPE_NODE && n_labels > 0) {
+		grp->shape.node.labels = rm_malloc(sizeof(LabelID) * n_labels);
+		memcpy(grp->shape.node.labels, labels, sizeof(LabelID) * n_labels);
 	}
 
 	if(n_attrs > 0) {
@@ -310,8 +398,8 @@ static Group *_group_for
 	}
 
 	if(opcode == EFFECT_CREATE_EDGE || opcode == EFFECT_DELETE_EDGE) {
-		grp->src = EffectsV3IdListBuilder_New();
-		grp->dst = EffectsV3IdListBuilder_New();
+		grp->shape.edge.src = EffectsV3IdListBuilder_New();
+		grp->shape.edge.dst = EffectsV3IdListBuilder_New();
 	}
 
 	return grp;
@@ -478,9 +566,9 @@ void EffectsV3Grouping_AddEdge
 	EffectsV3IdListBuilder_Push(grp->ids, id);
 
 	// an update recovers its endpoints from the graph, so it carries none
-	if(grp->src != NULL) {
-		EffectsV3IdListBuilder_Push(grp->src, src);
-		EffectsV3IdListBuilder_Push(grp->dst, dst);
+	if(grp->shape.edge.src != NULL) {
+		EffectsV3IdListBuilder_Push(grp->shape.edge.src, src);
+		EffectsV3IdListBuilder_Push(grp->shape.edge.dst, dst);
 	}
 
 	if(n_attrs > 0) {
@@ -862,9 +950,10 @@ void EffectsV3Grouping_Encode
 		EffectsV3IdList ids = EffectsV3IdListBuilder_ToIdList(grp->ids);
 		EffectsV3IdList src = { 0 };
 		EffectsV3IdList dst = { 0 };
-		if(grp->src != NULL) {
-			src = EffectsV3IdListBuilder_ToIdList(grp->src);
-			dst = EffectsV3IdListBuilder_ToIdList(grp->dst);
+		if(_shape_of(grp->opcode) == SHAPE_EDGE &&
+		   grp->shape.edge.src != NULL) {
+			src = EffectsV3IdListBuilder_ToIdList(grp->shape.edge.src);
+			dst = EffectsV3IdListBuilder_ToIdList(grp->shape.edge.dst);
 		}
 
 		// FILLED PER OPCODE, because each now owns its arm. A group knows its
@@ -874,8 +963,8 @@ void EffectsV3Grouping_Encode
 		switch(grp->opcode) {
 			case EFFECT_UPDATE_NODE:
 				r.update_node.count    = grp->count;
-				r.update_node.labels   = grp->labels;
-				r.update_node.n_labels = grp->n_labels;
+				r.update_node.labels   = grp->shape.node.labels;
+				r.update_node.n_labels = grp->shape.node.n_labels;
 				r.update_node.attr_ids = grp->attr_ids;
 				r.update_node.n_attrs  = grp->n_attrs;
 				r.update_node.ids      = ids;
@@ -883,7 +972,7 @@ void EffectsV3Grouping_Encode
 
 			case EFFECT_UPDATE_EDGE:
 				r.update_edge.count       = grp->count;
-				r.update_edge.relation_id = grp->relation_id;
+				r.update_edge.relation_id = grp->shape.edge.relation_id;
 				r.update_edge.attr_ids    = grp->attr_ids;
 				r.update_edge.n_attrs     = grp->n_attrs;
 				r.update_edge.ids         = ids;
@@ -891,8 +980,8 @@ void EffectsV3Grouping_Encode
 
 			case EFFECT_CREATE_NODE:
 				r.create_node.count    = grp->count;
-				r.create_node.labels   = grp->labels;
-				r.create_node.n_labels = grp->n_labels;
+				r.create_node.labels   = grp->shape.node.labels;
+				r.create_node.n_labels = grp->shape.node.n_labels;
 				r.create_node.attr_ids = grp->attr_ids;
 				r.create_node.n_attrs  = grp->n_attrs;
 				r.create_node.ids      = ids;
@@ -900,7 +989,7 @@ void EffectsV3Grouping_Encode
 
 			case EFFECT_CREATE_EDGE:
 				r.create_edge.count       = grp->count;
-				r.create_edge.relation_id = grp->relation_id;
+				r.create_edge.relation_id = grp->shape.edge.relation_id;
 				r.create_edge.attr_ids    = grp->attr_ids;
 				r.create_edge.n_attrs     = grp->n_attrs;
 				r.create_edge.ids         = ids;
@@ -910,14 +999,14 @@ void EffectsV3Grouping_Encode
 
 			case EFFECT_DELETE_NODE:
 				r.delete_node.count    = grp->count;
-				r.delete_node.labels   = grp->labels;
-				r.delete_node.n_labels = grp->n_labels;
+				r.delete_node.labels   = grp->shape.node.labels;
+				r.delete_node.n_labels = grp->shape.node.n_labels;
 				r.delete_node.ids      = ids;
 				break;
 
 			case EFFECT_DELETE_EDGE:
 				r.delete_edge.count       = grp->count;
-				r.delete_edge.relation_id = grp->relation_id;
+				r.delete_edge.relation_id = grp->shape.edge.relation_id;
 				r.delete_edge.ids         = ids;
 				r.delete_edge.src         = src;
 				r.delete_edge.dst         = dst;
@@ -925,15 +1014,15 @@ void EffectsV3Grouping_Encode
 
 			case EFFECT_SET_LABELS:
 				r.set_labels.count    = grp->count;
-				r.set_labels.labels   = grp->labels;
-				r.set_labels.n_labels = grp->n_labels;
+				r.set_labels.labels   = grp->shape.node.labels;
+				r.set_labels.n_labels = grp->shape.node.n_labels;
 				r.set_labels.ids      = ids;
 				break;
 
 			case EFFECT_REMOVE_LABELS:
 				r.remove_labels.count    = grp->count;
-				r.remove_labels.labels   = grp->labels;
-				r.remove_labels.n_labels = grp->n_labels;
+				r.remove_labels.labels   = grp->shape.node.labels;
+				r.remove_labels.n_labels = grp->shape.node.n_labels;
 				r.remove_labels.ids      = ids;
 				break;
 
@@ -947,7 +1036,8 @@ void EffectsV3Grouping_Encode
 		EffectsV3_EncodeRecordWithRawValues(&r, grp->values, out);
 
 		EffectsV3IdListBuilder_FreeIdList(&ids);
-		if(grp->src != NULL) {
+		if(_shape_of(grp->opcode) == SHAPE_EDGE &&
+		   grp->shape.edge.src != NULL) {
 			EffectsV3IdListBuilder_FreeIdList(&src);
 			EffectsV3IdListBuilder_FreeIdList(&dst);
 		}
@@ -965,11 +1055,22 @@ void EffectsV3Grouping_Free
 	for(uint32_t i = 0; i < g->n_groups; i++) {
 		Group *grp = g->groups + i;
 		EffectsV3IdListBuilder_Free(grp->ids);
-		EffectsV3IdListBuilder_Free(grp->src);
-		EffectsV3IdListBuilder_Free(grp->dst);
 		EffectsBytes_Free(grp->values);
-		rm_free(grp->labels);
 		rm_free(grp->attr_ids);
+
+		// THE ARM DECIDES WHAT IS A POINTER. Freeing unconditionally here
+		// would hand rm_free a relationship id on every edge group
+		switch(_shape_of(grp->opcode)) {
+			case SHAPE_NODE:
+				rm_free(grp->shape.node.labels);
+				break;
+			case SHAPE_EDGE:
+				EffectsV3IdListBuilder_Free(grp->shape.edge.src);
+				EffectsV3IdListBuilder_Free(grp->shape.edge.dst);
+				break;
+			case SHAPE_NONE:
+				break;
+		}
 	}
 
 	for(uint32_t i = 0; i < g->n_announcements; i++) {
