@@ -200,105 +200,33 @@ static void _write_name
 	EffectsBuffer_Free(wrapper);
 }
 
-// what a batched record carries, selected once from its arm
+// the AttrValues block: the bytes the accumulator already encoded, or the
+// record's own SIValues
 //
-// Records 1-8 share one wire shape - count, the shape half, the IdList, then
-// the values - which is why one generic writer serves all eight. Under the
-// split model each opcode owns its own arm, so that writer can no longer reach
-// the fields directly without knowing the opcode, and the obvious fix is eight
-// near-copies of it.
-//
-// This keeps the writer generic instead: the arm is selected once here, and a
-// NULL pointer or a zero count means "this opcode does not carry that part".
-// The switch has no `default:`, so a new opcode is a compile error rather than
-// a record that silently encodes as though it carried nothing.
-typedef struct {
-	uint32_t              count;
-	const LabelID        *labels;
-	uint16_t              n_labels;
-	bool                  has_relation;
-	RelationID            relation_id;
-	const AttributeID    *attr_ids;
-	uint16_t              n_attrs;
-	const EffectsV3IdList *ids;
-	const EffectsV3IdList *src;   // NULL unless the opcode carries endpoints
-	const EffectsV3IdList *dst;
-	const SIValue        *values;
-	uint64_t              n_values;
-} RecordView;
-
-static RecordView _view(const EffectsV3Record *r) {
-	RecordView v = { 0 };
-
-	switch(r->opcode) {
-		case EFFECT_UPDATE_NODE:
-			v.count = r->update_node.count;
-			v.labels = r->update_node.labels; v.n_labels = r->update_node.n_labels;
-			v.attr_ids = r->update_node.attr_ids; v.n_attrs = r->update_node.n_attrs;
-			v.ids = &r->update_node.ids;
-			v.values = r->update_node.values; v.n_values = r->update_node.n_values;
-			break;
-
-		case EFFECT_UPDATE_EDGE:
-			v.count = r->update_edge.count;
-			v.has_relation = true; v.relation_id = r->update_edge.relation_id;
-			v.attr_ids = r->update_edge.attr_ids; v.n_attrs = r->update_edge.n_attrs;
-			v.ids = &r->update_edge.ids;
-			v.values = r->update_edge.values; v.n_values = r->update_edge.n_values;
-			break;
-
-		case EFFECT_CREATE_NODE:
-			v.count = r->create_node.count;
-			v.labels = r->create_node.labels; v.n_labels = r->create_node.n_labels;
-			v.attr_ids = r->create_node.attr_ids; v.n_attrs = r->create_node.n_attrs;
-			v.ids = &r->create_node.ids;
-			v.values = r->create_node.values; v.n_values = r->create_node.n_values;
-			break;
-
-		case EFFECT_CREATE_EDGE:
-			v.count = r->create_edge.count;
-			v.has_relation = true; v.relation_id = r->create_edge.relation_id;
-			v.attr_ids = r->create_edge.attr_ids; v.n_attrs = r->create_edge.n_attrs;
-			v.ids = &r->create_edge.ids;
-			v.src = &r->create_edge.src; v.dst = &r->create_edge.dst;
-			v.values = r->create_edge.values; v.n_values = r->create_edge.n_values;
-			break;
-
-		case EFFECT_DELETE_NODE:
-			v.count = r->delete_node.count;
-			v.labels = r->delete_node.labels; v.n_labels = r->delete_node.n_labels;
-			v.ids = &r->delete_node.ids;
-			break;
-
-		case EFFECT_DELETE_EDGE:
-			v.count = r->delete_edge.count;
-			v.has_relation = true; v.relation_id = r->delete_edge.relation_id;
-			v.ids = &r->delete_edge.ids;
-			v.src = &r->delete_edge.src; v.dst = &r->delete_edge.dst;
-			break;
-
-		case EFFECT_SET_LABELS:
-			v.count = r->set_labels.count;
-			v.labels = r->set_labels.labels; v.n_labels = r->set_labels.n_labels;
-			v.ids = &r->set_labels.ids;
-			break;
-
-		case EFFECT_REMOVE_LABELS:
-			v.count = r->remove_labels.count;
-			v.labels = r->remove_labels.labels; v.n_labels = r->remove_labels.n_labels;
-			v.ids = &r->remove_labels.ids;
-			break;
-
-		case EFFECT_ADD_SCHEMA:
-		case EFFECT_ADD_ATTRIBUTE:
-		case EFFECT_CREATE_INDEX:
-		case EFFECT_DROP_INDEX:
-		case EFFECT_CREATE_CONSTRAINT:
-		case EFFECT_DROP_CONSTRAINT:
-			break;  // singular: handled before the generic path
+// The grouping path encodes values as they arrive and hands the finished block
+// over, so it is copied rather than re-encoded from SIValues the group no
+// longer holds. A record built by hand carries the values themselves.
+static void _write_values
+(
+	const EffectsBytes *raw,  // pre-encoded block, or NULL
+	const SIValue *values,    // count * n_attrs, row-major
+	uint64_t n_values,        // how many
+	EffectsBytes *out         // sink
+) {
+	if(raw == NULL) {
+		_write_attr_values(values, n_values, out);
+		return;
 	}
 
-	return v;
+	size_t n = EffectsBytes_Len(raw);
+	if(n == 0) {
+		return;
+	}
+
+	unsigned char *buf = rm_malloc(n);
+	EffectsBytes_CopyInto(raw, buf);
+	EffectsBytes_Write(out, buf, n);
+	rm_free(buf);
 }
 
 static void _encode_record
@@ -312,103 +240,127 @@ static void _encode_record
 
 	EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->opcode, sizeof(EffectType));
 
-	// records 11-14 are singular too, and carry no count for the same reason:
-	// one index statement, one constraint
-	if(r->opcode >= EFFECT_CREATE_INDEX && r->opcode <= EFFECT_DROP_CONSTRAINT) {
-		_encode_ddl_record(r, out);
-		return;
-	}
-
-	// records 9 and 10 are inherently singular: one schema, one attribute. They
-	// carry no count, which is the one exception to every batchable record
-	// being `opcode . count . blocks`
-	if(r->opcode == EFFECT_ADD_SCHEMA) {
-		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->add_schema.schema_type,
-				sizeof(SchemaType));
-		EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->add_schema.schema_id,
-				sizeof(int));
-		_write_name(r->add_schema.name, out);
-		return;
-	}
-
-	if(r->opcode == EFFECT_ADD_ATTRIBUTE) {
-		// two bytes, where a schema id beside it is four
-		EffectsV3_WriteUint(out, r->add_attribute.attr_id, sizeof(AttributeID));
-		_write_name(r->add_attribute.name, out);
-		return;
-	}
-
-	// every field the shared shape needs, selected from this opcode's arm once
-	const RecordView v = _view(r);
-
-	EffectsV3_WriteUint(out, v.count, sizeof(uint32_t));
-
-	//--------------------------------------------------------------------------
-	// the shape, once, BEFORE the ids
+	// ONE ARM PER OPCODE AND NO `default:`.
 	//
-	// every batchable record without exception: a record is self-describing
-	// before its rows. AttrValues is the one part that follows the IdList,
-	// because it is per row rather than per record
-	//--------------------------------------------------------------------------
-
+	// Records 1-8 share a wire shape - count, the shape half, AttrIds, the
+	// IdList, then AttrValues - and it is written out per opcode rather than
+	// once through a projection. That is a deliberate trade: eight arms restate
+	// the shared layout eight times, and in exchange every record's wire format
+	// is readable in one place, with no indirection between the opcode and the
+	// bytes it produces.
+	//
+	// Records 9 and 10 are singular: one schema, one attribute, and no count -
+	// the one exception to `opcode . count . blocks`. Records 11-14 are singular
+	// too and go to their own writer.
+	//
+	// Without a `default:` a fifteenth opcode is a compile error here rather
+	// than a record that silently encodes as nothing.
 	switch(r->opcode) {
 		case EFFECT_UPDATE_NODE:
-		case EFFECT_CREATE_NODE:
-		case EFFECT_DELETE_NODE:
-		case EFFECT_SET_LABELS:
-		case EFFECT_REMOVE_LABELS:
-			_write_label_set(v.labels, v.n_labels, out);
+			EffectsV3_WriteUint(out, r->update_node.count, sizeof(uint32_t));
+			_write_label_set(r->update_node.labels, r->update_node.n_labels, out);
+			_write_attr_ids(r->update_node.attr_ids, r->update_node.n_attrs, out);
+			EffectsV3_EncodeIdList(&r->update_node.ids, out);
+			_write_values(raw, r->update_node.values, r->update_node.n_values,
+					out);
 			break;
 
 		case EFFECT_UPDATE_EDGE:
-		case EFFECT_CREATE_EDGE:
-		case EFFECT_DELETE_EDGE:
-			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)v.relation_id,
+			EffectsV3_WriteUint(out, r->update_edge.count, sizeof(uint32_t));
+			EffectsV3_WriteUint(out,
+					(uint64_t)(uint32_t)r->update_edge.relation_id,
 					sizeof(RelationID));
+			_write_attr_ids(r->update_edge.attr_ids, r->update_edge.n_attrs, out);
+			// no endpoints: an update's are recoverable from the graph
+			EffectsV3_EncodeIdList(&r->update_edge.ids, out);
+			_write_values(raw, r->update_edge.values, r->update_edge.n_values,
+					out);
 			break;
 
-		default:
-			ASSERT(false && "unknown v3 record opcode");
-			return;
-	}
-
-	// only the four value-carrying records state attribute ids, and they state
-	// them here, with the shape - not beside the values
-	switch(r->opcode) {
-		case EFFECT_UPDATE_NODE:
-		case EFFECT_UPDATE_EDGE:
 		case EFFECT_CREATE_NODE:
+			EffectsV3_WriteUint(out, r->create_node.count, sizeof(uint32_t));
+			_write_label_set(r->create_node.labels, r->create_node.n_labels, out);
+			_write_attr_ids(r->create_node.attr_ids, r->create_node.n_attrs, out);
+			EffectsV3_EncodeIdList(&r->create_node.ids, out);
+			_write_values(raw, r->create_node.values, r->create_node.n_values,
+					out);
+			break;
+
 		case EFFECT_CREATE_EDGE:
-			_write_attr_ids(v.attr_ids, v.n_attrs, out);
+			EffectsV3_WriteUint(out, r->create_edge.count, sizeof(uint32_t));
+			EffectsV3_WriteUint(out,
+					(uint64_t)(uint32_t)r->create_edge.relation_id,
+					sizeof(RelationID));
+			_write_attr_ids(r->create_edge.attr_ids, r->create_edge.n_attrs, out);
+			EffectsV3_EncodeIdList(&r->create_edge.ids, out);
+			// endpoints are per edge rather than per record, so they are their
+			// own lists and they follow the ids
+			EffectsV3_EncodeIdList(&r->create_edge.src, out);
+			EffectsV3_EncodeIdList(&r->create_edge.dst, out);
+			_write_values(raw, r->create_edge.values, r->create_edge.n_values,
+					out);
 			break;
-		default:
+
+		case EFFECT_DELETE_NODE:
+			EffectsV3_WriteUint(out, r->delete_node.count, sizeof(uint32_t));
+			_write_label_set(r->delete_node.labels, r->delete_node.n_labels, out);
+			// no AttrIds block at all, which is not the same as an empty one
+			EffectsV3_EncodeIdList(&r->delete_node.ids, out);
+			_write_values(raw, NULL, 0, out);
 			break;
-	}
 
-	//--------------------------------------------------------------------------
-	// the rows
-	//--------------------------------------------------------------------------
+		case EFFECT_DELETE_EDGE:
+			EffectsV3_WriteUint(out, r->delete_edge.count, sizeof(uint32_t));
+			EffectsV3_WriteUint(out,
+					(uint64_t)(uint32_t)r->delete_edge.relation_id,
+					sizeof(RelationID));
+			EffectsV3_EncodeIdList(&r->delete_edge.ids, out);
+			EffectsV3_EncodeIdList(&r->delete_edge.src, out);
+			EffectsV3_EncodeIdList(&r->delete_edge.dst, out);
+			_write_values(raw, NULL, 0, out);
+			break;
 
-	EffectsV3_EncodeIdList(v.ids, out);
+		case EFFECT_SET_LABELS:
+			EffectsV3_WriteUint(out, r->set_labels.count, sizeof(uint32_t));
+			_write_label_set(r->set_labels.labels, r->set_labels.n_labels, out);
+			EffectsV3_EncodeIdList(&r->set_labels.ids, out);
+			_write_values(raw, NULL, 0, out);
+			break;
 
-	// endpoints are per edge rather than per record, so they are their own
-	// lists. Only create and delete carry them: an update's endpoints are
-	// recoverable from the graph, which is why UPDATE_EDGE has none
-	if(r->opcode == EFFECT_CREATE_EDGE || r->opcode == EFFECT_DELETE_EDGE) {
-		EffectsV3_EncodeIdList(v.src, out);
-		EffectsV3_EncodeIdList(v.dst, out);
-	}
+		case EFFECT_REMOVE_LABELS:
+			EffectsV3_WriteUint(out, r->remove_labels.count, sizeof(uint32_t));
+			_write_label_set(r->remove_labels.labels, r->remove_labels.n_labels,
+					out);
+			EffectsV3_EncodeIdList(&r->remove_labels.ids, out);
+			_write_values(raw, NULL, 0, out);
+			break;
 
-	if(raw != NULL) {
-		size_t n = EffectsBytes_Len(raw);
-		if(n > 0) {
-			unsigned char *buf = rm_malloc(n);
-			EffectsBytes_CopyInto(raw, buf);
-			EffectsBytes_Write(out, buf, n);
-			rm_free(buf);
-		}
-	} else {
-		_write_attr_values(v.values, v.n_values, out);
+		case EFFECT_ADD_SCHEMA:
+			EffectsV3_WriteUint(out,
+					(uint64_t)(uint32_t)r->add_schema.schema_type,
+					sizeof(SchemaType));
+			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->add_schema.schema_id,
+					sizeof(int));
+			_write_name(r->add_schema.name, out);
+			break;
+
+		case EFFECT_ADD_ATTRIBUTE:
+			// two bytes, where a schema id beside it is four
+			EffectsV3_WriteUint(out, r->add_attribute.attr_id,
+					sizeof(AttributeID));
+			_write_name(r->add_attribute.name, out);
+			break;
+
+		case EFFECT_CREATE_INDEX:
+		case EFFECT_DROP_INDEX:
+		case EFFECT_CREATE_CONSTRAINT:
+		case EFFECT_DROP_CONSTRAINT:
+			_encode_ddl_record(r, out);
+			break;
+
+		case EFFECT_UNKNOWN:
+			ASSERT(false && "unknown v3 record opcode");
+			break;
 	}
 }
 
