@@ -859,6 +859,14 @@ impl Pending {
         Ok(())
     }
 
+    pub fn clear_relationship_attributes(
+        &mut self,
+        id: RelationshipId,
+    ) {
+        self.new_relationships_attrs.remove(&id.into());
+        self.existing_relationships_attrs.remove(&id.into());
+    }
+
     #[must_use]
     pub fn get_relationship_attribute(
         &self,
