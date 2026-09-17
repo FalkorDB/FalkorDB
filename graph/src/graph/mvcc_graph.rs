@@ -59,7 +59,7 @@ use std::sync::{
 
 use atomic_refcell::AtomicRefCell;
 
-use crate::graph::graph::Graph;
+use crate::graph::graph::{Graph, NodeOpError};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -119,11 +119,25 @@ impl MvccGraph {
         }
     }
 
+    /// Publish `new_graph` as the current version.
+    ///
+    /// Validates before touching anything, so a refusal leaves the published
+    /// version untouched and the private one unpublished — the same outcome as
+    /// [`Self::rollback`], reached by returning rather than by the caller
+    /// remembering to check. This is the only place a version becomes visible,
+    /// which makes it the only place the check has to be.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Graph::validate`] refuses. The version is not published.
     pub fn commit(
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
-    ) {
+    ) -> Result<(), NodeOpError> {
         debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
+
+        // Before any of the work below, so a refusal changes nothing.
+        new_graph.borrow().validate()?;
 
         // Check if schema changed (new labels, relationship types, or attributes)
         // Single borrow for old graph to collect all schema counts
@@ -190,6 +204,7 @@ impl MvccGraph {
 
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
+        Ok(())
     }
 
     pub fn rollback(&self) {

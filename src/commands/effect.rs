@@ -19,7 +19,7 @@ use crate::{
 };
 use graph::effects::EffectsPayload;
 use parking_lot::RwLock;
-use redis_module::{Context, NextArg, RedisResult, RedisString, RedisValue};
+use redis_module::{Context, NextArg, RedisError, RedisResult, RedisString, RedisValue};
 use std::sync::Arc;
 
 pub fn graph_effect(
@@ -78,7 +78,9 @@ pub fn graph_effect(
 
     match result {
         Ok(()) => {
-            tg.graph.commit(g_arc);
+            tg.graph
+                .commit(g_arc)
+                .map_err(|e| RedisError::String(e.to_string()))?;
             ctx.replicate_verbatim();
             Ok(RedisValue::SimpleStringStatic("OK"))
         }

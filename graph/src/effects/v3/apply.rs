@@ -64,17 +64,22 @@ pub fn apply_effects(
     // be read; `open_payload` owns that plaintext and the records borrow from it.
     let payload = open_payload(buf)?;
 
-    // The whole buffer is one batch, checked as `in_batch` closes it: records
-    // arrive grouped by shape rather than ordered by id, so the id space is
-    // legitimately fragmented partway through and only has to be whole at the
-    // end.
+    // The whole buffer is one batch. It was opened by `Graph::new_version` when
+    // this write version was made, and it is checked by `Graph::validate` when
+    // the version is published — records arrive grouped by shape rather than
+    // ordered by id, so the id space is legitimately fragmented partway through
+    // and only has to be whole at the end.
     let mut docs = IndexDocs::default();
-    g.in_batch(|g| {
-        for record in payload.records() {
-            apply_record(g, record?, &mut docs)?;
-        }
-        Ok::<_, ApplyError>(())
-    })?;
+    for record in payload.records() {
+        apply_record(g, record?, &mut docs)?;
+    }
+
+    // Refusing a divergent buffer is this function's contract, and the refusal
+    // it hands back is part of the replication protocol's diagnostics — the
+    // caller must not commit a version built from one. `MvccGraph::commit`
+    // validates again before publishing; that is the net under every write path,
+    // not a substitute for rejecting the buffer here.
+    g.validate()?;
 
     g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
     g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);

@@ -1438,40 +1438,6 @@ impl Graph {
         Ok(())
     }
 
-    /// Run `f` inside an id batch: opened before it, verified after it, and not
-    /// possible to forget either way.
-    ///
-    /// A batch is the span an [`IdSpace`] judges as one — a whole effects
-    /// buffer, or one `GRAPH.BULK` command. Both are a single function's body,
-    /// which is what lets a scope stand for the batch. The write path is not,
-    /// and rolls its batch over by hand in `Pending::end_segment`.
-    ///
-    /// Forgetting to open a batch is silent: the boundary stays where the last
-    /// one left it and ids stop being reclaimed across it, so
-    /// `CREATE (n) DELETE n WITH 1 AS x CREATE (m)` allocates id 1 where it
-    /// should allocate 0 — measured, with the whole flow suite passing.
-    ///
-    /// `f` failing skips the verification: a buffer that stopped partway has
-    /// not finished building the thing being checked.
-    ///
-    /// # Errors
-    ///
-    /// Whatever `f` returns, or the id-space refusal — from opening over a
-    /// space that already contradicts itself, or from the batch having left an
-    /// impossible one behind.
-    pub fn in_batch<R, E>(
-        &mut self,
-        f: impl FnOnce(&mut Self) -> Result<R, E>,
-    ) -> Result<R, E>
-    where
-        E: From<NodeOpError>,
-    {
-        self.open_id_batches()?;
-        let out = f(self)?;
-        self.verify_id_batches()?;
-        Ok(out)
-    }
-
     /// Close the open batch and begin the next one where it left the boundary.
     ///
     /// What a caller whose batch is not a scope needs: the write path's batch
@@ -1487,6 +1453,21 @@ impl Graph {
     pub(crate) fn roll_id_batches(&mut self) -> Result<(), NodeOpError> {
         self.verify_id_batches()?;
         self.open_id_batches()
+    }
+
+    /// Check everything this graph must be true about itself before a version
+    /// of it is published.
+    ///
+    /// Deliberately opaque: callers are told *that* a version is checked, not
+    /// what is checked, so an invariant added later needs no call-site change.
+    /// Today that is the id batches; [`MvccGraph::commit`] is the only caller
+    /// and the only place a version becomes visible.
+    ///
+    /// # Errors
+    ///
+    /// The first refusal, naming the entity kind it is about.
+    pub fn validate(&self) -> Result<(), NodeOpError> {
+        self.verify_id_batches()
     }
 
     /// Check that both batches left possible id spaces behind.

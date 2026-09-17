@@ -1487,7 +1487,16 @@ fn commit_and_replicate(
     // Index document changes were already applied by each `CommitOp` while this
     // query held the write lock (so a later operator in the same query could see
     // them); nothing left to publish but the matrix version.
-    g.graph.commit(Arc::clone(&wq.graph));
+    // `commit` validates the version before publishing it. It cannot refuse one
+    // from here: every write query ends its last segment through
+    // `Pending::end_segment`, which verifies the batch and rolls it over, so the
+    // batch reaching this point is empty and passes trivially. A query with no
+    // `Commit` operator at all — index DDL — creates no ids and passes for the
+    // same reason. There is also nothing this could do about a refusal: the
+    // query has already succeeded and its reply is about to be serialized.
+    if g.graph.commit(Arc::clone(&wq.graph)).is_err() {
+        unreachable!("a committed write query leaves an empty, verified id batch");
+    }
     // Signal the key as modified so WATCH gets triggered.
     unsafe { ffi::signal_modified_key(ctx.ctx, key_name.as_bytes()) };
 
