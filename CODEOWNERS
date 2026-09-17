@@ -12,13 +12,13 @@
 # ruleset also enables "Require review from Code Owners" — which is the point,
 # and has to be turned on separately.
 #
-# /tests/ is deliberately not listed. Test code does execute, but a contributor
-# has to be able to add a test; that exposure is handled by the queue running
-# with persist-credentials off and no registry credential, not by review.
+# /tests/ and /flow.sh are deliberately not listed. Both execute, but a
+# contributor has to be able to add a test and adjust how it runs; that exposure
+# is handled by the queue running with persist-credentials off and no registry
+# credential, not by review.
 
-/build/          @FalkorDB/falkordb-devops
-/.github/        @FalkorDB/falkordb-devops
-/flow.sh         @FalkorDB/falkordb-devops
+/build/          @FalkorDB/falkordb-core
+/.github/        @FalkorDB/falkordb-core
 
 # Listed so weakening the rules above needs the same approval they do.
-/CODEOWNERS      @FalkorDB/falkordb-devops
+/CODEOWNERS      @FalkorDB/falkordb-core
