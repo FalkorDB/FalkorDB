@@ -60,11 +60,16 @@
 //! add_sub         ::= mul_div ( ('+' | '-') mul_div )*
 //! mul_div         ::= power ( ('*' | '/' | '%') power )*
 //! power           ::= unary ( '^' unary )*
-//! unary           ::= ['-'] postfix
+//! unary           ::= [ '+' | '-' ] postfix
 //! postfix         ::= primary ( '.' prop | '[' index ']' )*
-//! primary         ::= literal | variable | '(' expr ')' | function_call
+//! primary         ::= number_literal | variable | '(' expr ')' | function_call
 //!                    | CASE | list_comprehension | pattern_comprehension
+//! number_literal  ::= [ '-' ] number
 //! ```
+//!
+//! Signs do not stack: `unary` takes at most one, and only `number_literal`
+//! carries a second. So `- -1` parses, `- - -1` and `- -x` do not, matching
+//! Cypher's `expression3` and `numberLiteral` productions.
 //!
 //! ## Expression Precedence
 //!
@@ -82,7 +87,7 @@
 //!  6            + -
 //!  7            * / %
 //!  8            ^
-//!  9            unary -
+//!  9            unary + -
 //!  10 (highest) property access (.), indexing ([]), function calls
 //! ```
 //!
@@ -1832,10 +1837,94 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::too_many_lines)]
+    /// Reports whether the token after the current sign is a number, so the
+    /// sign belongs to the literal rather than being a unary operator.
+    ///
+    /// A number the lexer rejects counts too: reporting it with the sign the
+    /// query author wrote is the more useful error.
+    fn number_follows_sign(&mut self) -> bool {
+        let pos = self.lexer.pos(true);
+        self.lexer.next();
+
+        let is_number = matches!(
+            self.lexer.current(),
+            Ok(Token::Integer(_) | Token::Float(_)) | Err(_)
+        );
+
+        self.lexer.set_pos(pos);
+        is_number
+    }
+
+    /// Parses a numeric literal carrying its own leading minus, per Cypher's
+    ///
+    /// ```text
+    /// numberLiteral : MINUS? ( DECIMAL_DOUBLE | UNSIGNED_DECIMAL_INTEGER | … )
+    /// ```
+    ///
+    /// Returns `None`, having consumed nothing, when the minus is not directly
+    /// followed by a number: `-x` is a unary operator applied to a variable, not
+    /// a signed literal, and must be left for the caller.
+    fn parse_signed_number_literal(
+        &mut self
+    ) -> Result<Option<DynTree<ExprIR<Arc<String>>>>, String> {
+        let pos = self.lexer.pos(true);
+        self.lexer.next();
+
+        // `i64::MIN` only fits once the sign is applied, so the lexer hands it
+        // back already negated and a bare occurrence is the overflow case
+        let literal = match self.lexer.current() {
+            Ok(Token::Integer(i64::MIN)) => Value::Int(i64::MIN),
+            Ok(Token::Integer(i)) => Value::Int(-i),
+            Ok(Token::Float(f)) => Value::Float(-f),
+            // an overflowing literal reports itself with the sign the query
+            // author wrote. Restored first so this leaves the lexer where it
+            // found it on every path, not only the ones that currently recover
+            Err(e) => {
+                self.lexer.set_pos(pos);
+                return Err(e.replace("Integer overflow '", "Integer overflow '-"));
+            }
+            _ => {
+                self.lexer.set_pos(pos);
+                return Ok(None);
+            }
+        };
+
+        self.lexer.next();
+
+        Ok(Some(tree!(ExprIR::Constant(literal))))
+    }
+
     fn parse_primary_expr(
         &mut self,
         allow_pattern_predicate: bool,
     ) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+        // A numeric literal carries its own optional minus, per Cypher's
+        //
+        //   numberLiteral : MINUS? ( DECIMAL_DOUBLE | UNSIGNED_DECIMAL_INTEGER | … )
+        //
+        // This is what lets `- -5` parse while the unary rule above allows only
+        // one sign: the outer minus is the operator, the inner one belongs to
+        // the number. It is deliberately narrow — only a minus, and only
+        // directly before a number — so `- -x` and `+ +5` stay rejected, as
+        // they are in Cypher.
+        if self.lexer.current()? == Token::Dash
+            && let Some(literal) = self.parse_signed_number_literal()?
+        {
+            return Ok((literal, false));
+        }
+
+        // Reaching here on a sign means one is stacked on another, since the
+        // unary rule above already took the one it allows and a literal takes
+        // its own. Saying so beats the generic "Invalid input Dash", which
+        // reads as though a sign were never allowed here.
+        if let token @ (Token::Dash | Token::Plus) = self.lexer.current()? {
+            let sign = if token == Token::Dash { '-' } else { '+' };
+            return Err(self.lexer.format_error(&format!(
+                "Invalid input '{sign}': only one sign is allowed, and only a \
+                 number may carry a second one, as in '- -1'"
+            )));
+        }
+
         match self.lexer.current()? {
             Token::IdentifierOrKeyword {
                 keyword: Some(Keyword::Case),
@@ -1989,6 +2078,16 @@ impl<'a> Parser<'a> {
                 Ok((tree!(ExprIR::Parameter(param)), false))
             }
             Token::Integer(i) => {
+                // the lexer maps the unsigned 2^63 to `i64::MIN` because that is
+                // the only way it fits; reaching here without the sign that
+                // makes it fit means the literal really is out of range
+                if i == i64::MIN {
+                    return Err(format!(
+                        "Integer overflow '{}'",
+                        9_223_372_036_854_775_808_u64
+                    ));
+                }
+
                 self.lexer.next();
                 Ok((tree!(ExprIR::Constant(Value::Int(i))), false))
             }
@@ -2109,13 +2208,33 @@ impl<'a> Parser<'a> {
                     stack.push((current + 1, None));
                 } else if current == 9 {
                     // unary add or subtract
-                    optional_match_token!(self.lexer, Plus);
-                    let is_negate = optional_match_token!(self.lexer, Dash);
-
-                    // Handle integer overflow with negation
-                    if is_negate && let Err(err) = self.lexer.current() {
-                        return Err(err.replace("Integer overflow '", "Integer overflow '-"));
-                    }
+                    //
+                    // Exactly one sign, matching Cypher's `expression3`:
+                    //
+                    //   expression3 : expression2 | (PLUS | MINUS) expression2
+                    //
+                    // The rule does not recurse, so signs do not stack. What
+                    // makes `- -5` legal is the second rule, that a numeric
+                    // literal carries its own optional minus, applied where the
+                    // primary expression is parsed. `- -x` and `+ +5` are not
+                    // legal, since neither operand is a signed number.
+                    // A minus sitting directly on a number belongs to the
+                    // literal, not here, so leave it for the primary
+                    // expression. That keeps `-9223372036854775808` a literal,
+                    // which is the only way it fits, and makes the extra sign
+                    // in `- -9223372036854775808` an ordinary negation that
+                    // overflows.
+                    let is_negate = match self.lexer.current() {
+                        Ok(Token::Dash) if !self.number_follows_sign() => {
+                            self.lexer.next();
+                            true
+                        }
+                        Ok(Token::Plus) => {
+                            self.lexer.next();
+                            false
+                        }
+                        _ => false,
+                    };
 
                     let res = if is_negate {
                         // `-(-(-1))` keeps a Negate per level even though the
@@ -2423,23 +2542,6 @@ impl<'a> Parser<'a> {
                 }
                 9 => {
                     // unary add or subtract
-                    if matches!(res.root().data(), ExprIR::Negate)
-                        && matches!(
-                            res.root().child(0).data(),
-                            ExprIR::Constant(Value::Int(i64::MIN))
-                        )
-                    {
-                        let res = tree!(ExprIR::Constant(Value::Int(i64::MIN)));
-                        parse_expr_return!(stack, res);
-                        continue;
-                    } else if matches!(res.root().data(), ExprIR::Constant(Value::Int(i64::MIN))) {
-                        // This case should not happen with proper error handling
-                        // i64::MIN without negation means the literal was i64::MAX + 1
-                        return Err(format!(
-                            "Integer overflow '{}'",
-                            9_223_372_036_854_775_808_u64
-                        ));
-                    }
                     parse_expr_return!(stack, res);
                 }
                 10 => {
