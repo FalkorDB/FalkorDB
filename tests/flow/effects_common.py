@@ -1,43 +1,67 @@
-"""Shared fixture for the effects-v3 flow suites.
+"""Shared fixture for the effects flow suites.
 
-`test_effects_v3_*.py` each drive a real primary/replica pair and assert on
+`test_effects*.py` each drive a real primary/replica pair and assert on
 **both** sides. This module holds what they share: the `Env` setup, the waiting
 helpers, the MONITOR window machinery, and the log readers.
 
-Split out of a single 3.5k-line `test_effects_v3.py` so that CI shards them --
-the flow matrix cells on `test_file`, so each file now runs in its own cell
-against its own pair of service containers. Three things that bought:
+The files, and the question each one asks:
+
+  test_effects.py            does every opcode replicate at all?
+  test_effects_shapes.py     what must one buffer survive -- partitioning,
+                             supernodes, id reuse, compound statements?
+  test_effects_wire.py       framing, refusal of unreadable payloads,
+                             compression, byte determinism
+  test_effects_ddl.py        index and constraint DDL as effects, including
+                             indexes a query never named
+  test_effects_topology.py   divergence, forced resync, promotion
+  test_effects_commands.py   GRAPH.RECORD, and the commands that still
+                             replicate verbatim
+
+They are split rather than one file so CI shards them -- the flow matrix cells
+on `test_file`, so each file runs in its own cell against its own pair of
+service containers. Three things that bought:
 
   - `FAIL_FAST=1` stops a *file*, so one class's failure no longer hides every
-    class alphabetically after it. It did exactly that once: `06d` failed in CI
-    and `06e`, `07` and `08` were never reported at all.
-  - the cells run in parallel, and these suites are slow -- million-node builds,
-    100k-node batches, 120-second settle timeouts.
+    class alphabetically after it.
+  - the cells run in parallel, and these suites are slow -- million-node
+    builds, 100k-node batches, 120-second settle timeouts.
   - RLTest hands consecutive classes with identical `Env(...)` parameters the
     *same* server, so sharing a file means sharing server state. That coupling
     is now bounded to the classes grouped together on purpose.
 
-Run order WITHIN a file is the sorted order of the class prefixes, not the order
-they are written: `RLTest/loader.py:124` is `for symbol in dir(module)`, and
-`dir()` sorts. Order ACROSS files is not guaranteed and nothing here depends on
-it -- each file gets its own pair.
+Run order WITHIN a file is the sorted order of the class prefixes, not the
+order they are written: `RLTest/loader.py:124` is `for symbol in dir(module)`,
+and `dir()` sorts. Order ACROSS files is not guaranteed and nothing here
+depends on it -- each file gets its own pair.
+
+Everything here is Rust-to-Rust. `Env(env='oss', useSlaves=True)` builds
+RLTest's own primary and replica, both running this module; no C engine is
+involved, so nothing in these files is a cross-engine claim.
 
 A TRAP THE SPLIT INTRODUCED, for whoever edits `_setup` below. CI decides
 whether a flow file needs a private container by scanning **that file** for
 `Env(...)` flags -- `tests/flow/test_matrix_split.py`, and `files_for_entry`
 resolves an entry to the one file: **it does not follow imports.** The `Env(...)`
-call now lives here, not in the test files, so the classifier sees no `Env()` in
-any of them and routes all six to the shared-services bucket by default.
+call lives here, not in the test files, so the classifier sees no `Env()` in
+any of them and routes them all to the shared-services bucket by default.
 
-That is the correct destination today, and it was the original file's
-destination too -- `useSlaves` and `enableDebugCommand` are explicitly not
-spawn-forcing, because the services job supplies a replica container and enables
-debug regardless. But it is the right answer for the wrong reason. **If a
-spawn-forcing flag is ever added to the `Env(...)` below -- `shardsCount`,
-`oss-cluster`, or `moduleArgs` with an immutable key -- the classifier will not
-see it, every one of these files will stay in the services bucket where it
-cannot work, and nothing will say so.** Change the classifier to follow this
-import, or move that `Env(...)` back into the files that need it.
+That is the correct destination today -- `useSlaves` and `enableDebugCommand`
+are explicitly not spawn-forcing, because the services job supplies a replica
+container and enables debug regardless. But it is the right answer for the
+wrong reason. **If a spawn-forcing flag is ever added to the `Env(...)` below
+-- `shardsCount`, `oss-cluster`, or `moduleArgs` with an immutable key -- the
+classifier will not see it, every one of these files will stay in the services
+bucket where it cannot work, and nothing will say so.** Change the classifier
+to follow this import, or move that `Env(...)` back into the files that need it.
+
+A skip here is a skip EVERYWHERE, for the same reason. All of these files are
+in `services_files` and none is in `spawn_files`, so a guard of the form
+`if os.getenv("FALKORDB_USE_SERVICE"): Environment.skip(None)` does not mean
+"runs in the other mode" -- it means the class never runs in CI at all. The
+`SANITIZER` guard in `_setup` is the one deliberate exception: replication
+under sanitizer is unreliable (`test_replication.py` says the same), so the
+asan lane runs none of these, and its green checks are not evidence about
+this suite.
 """
 
 import itertools
@@ -59,11 +83,11 @@ from index_utils import (create_edge_range_index, create_node_fulltext_index,
 
 # A plain Redis key the tests SET on the primary purely so its replicated form
 # shows up in the replica's MONITOR feed as a fence post. See `monitor_mark`.
-MONITOR_MARK_KEY = "__effects_v3_mark__"
+MONITOR_MARK_KEY = "__effects_mark__"
 
 
 
-class _EffectsV3Base():
+class _EffectsBase():
     """A primary/replica pair with v3 selected, plus the waiting helpers.
 
     Not discovered as a test: RLTest only collects module-level names starting
@@ -72,7 +96,7 @@ class _EffectsV3Base():
 
     # Overridden per class so no two classes share a graph key. RLTest may hand
     # them the same server.
-    GRAPH_ID = "effects_v3"
+    GRAPH_ID = "effects_base"
 
     #-------------------------------------------------------------------------
     # setup
@@ -84,7 +108,7 @@ class _EffectsV3Base():
             Environment.skip(None)
 
         # No `enableDebugCommand`: every class here runs against the shared
-        # services container under CI (`test_matrix_split.py` puts all seven
+        # services container under CI (`test_matrix_split.py` puts all six
         # files in `services_files`), and `common.py:564` documents the flag as
         # a no-op in that mode anyway. Nothing here needs DEBUG.
         self.env, self.db = Env(env='oss', useSlaves=True)
@@ -342,6 +366,36 @@ class _EffectsV3Base():
     def count_in(window, cmd):
         return sum(1 for c in window if cmd in c)
 
+    def assert_effect_emitted(self, count=None):
+        """Fence the replica's feed and assert on the effects since the last
+        fence. Returns the window.
+
+        `count=None` (the default) means "at least one". That is deliberately
+        the weaker claim, because it is the one the per-opcode tests actually
+        make: they write and then ask whether the write shipped as an effect,
+        and several of them write more than once before asking. An exact
+        `count` is available and the classes that are *about* counting pass
+        one.
+
+        `count=0` is the useful strict case — nothing is still in flight —
+        which is what a test wants at its start when it shares a server with
+        the class's earlier tests.
+
+        Either way the fence drains the window, so a stale effect can satisfy
+        at most one call. Counting inside a fenced window rather than polling
+        for a line is what makes that true: MONITOR is asynchronous with
+        respect to replication, so a poll can return before the line lands and
+        the line then shows up inside a later test's window, where it reads as
+        that test's effect. See `monitor_mark`.
+        """
+        window = self.monitor_mark()
+        seen = self.count_in(window, 'GRAPH.EFFECT')
+        if count is None:
+            self.env.assertGreaterEqual(seen, 1)
+        else:
+            self.env.assertEqual(seen, count)
+        return window
+
     # A v3 buffer opens with `u8 version · u8 flags`, and bit 0 of the flags
     # byte is FLAG_COMPRESSED. MONITOR renders the two as escape sequences.
     HEADER_PLAIN      = r'\x03\x00'
@@ -468,21 +522,35 @@ class _EffectsV3Base():
 
 # ── zstd, for the compressed-framing cases below ──────────────────────────
 #
-# Only the two tests that need a *valid* frame use it; the corrupt-frame and
-# oversized-length cases are constructed from garbage on purpose. Guarded
-# because `compression.zstd` is 3.14+ and `zstandard` is not in
-# tests/requirements.txt — a missing zstd must skip two assertions, not the
-# file.
-try:
-    from compression import zstd as _zstd
+# Built by hand rather than taken from a library, because every library option
+# is absent where it matters. `compression.zstd` is Python 3.14+ and the flow
+# CI container is `debian:trixie-slim` (build/Dockerfile:53), whose python3 is
+# 3.13; `zstandard` is in neither tests/requirements.txt nor the image's pip
+# line (build/Dockerfile:141). The previous shim degraded to `None` and the one
+# test needing a valid frame skipped — locally it ran, in CI it printed [SKIP]
+# and the checksum-refusal path was asserted nowhere. Adding the package would
+# mean rebuilding the multi-arch toolchain image for one test.
+#
+# A single raw (uncompressed) block is a legal zstd frame, and nothing here
+# needs compression to actually happen — the reader has to accept the frame,
+# and the test then corrupts the checksum around it.
 
-    def zstd_compress(data):
-        return _zstd.compress(data)
-except ImportError:  # pragma: no cover - depends on the interpreter
-    try:
-        import zstandard as _zstandard
 
-        def zstd_compress(data):
-            return _zstandard.ZstdCompressor().compress(data)
-    except ImportError:
-        zstd_compress = None
+def zstd_raw_frame(data):
+    """`data` wrapped in a valid single-block zstd frame, no library needed.
+
+    Magic `0xFD2FB528`, then a Frame_Header_Descriptor with Single_Segment_flag
+    (bit 5) set and Frame_Content_Size_flag 0, so exactly one byte of content
+    size follows and no window descriptor does. Then one Block_Header — 24-bit
+    little-endian `(size << 3) | (type << 1) | last`, with type 0 meaning raw —
+    and the bytes themselves.
+    """
+    if len(data) > 255:
+        # A longer payload only needs a wider FCS field; no caller wants one,
+        # and failing loudly beats emitting a frame that decodes to garbage.
+        raise ValueError("single-byte frame content size holds at most 255 bytes")
+    return (b"\x28\xb5\x2f\xfd"
+            + b"\x20"
+            + bytes([len(data)])
+            + (((len(data) << 3) | 1)).to_bytes(3, "little")
+            + data)

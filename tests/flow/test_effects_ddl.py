@@ -1,6 +1,6 @@
 """Effects v3 -- schema DDL as effects: constraints and indexes announced, converged, dropped, and settled under races.
 
-See `effects_v3_common.py` for the shared fixture and why these are split.
+See `effects_common.py` for the shared fixture and why these are split.
 """
 
 import time
@@ -8,12 +8,14 @@ import time
 
 from common import *
 from constraint_utils import (create_mandatory_node_constraint, create_unique_node_constraint, drop_unique_node_constraint, list_constraints)
-from index_utils import (create_node_range_index, drop_node_range_index, list_indicies, wait_for_indices_to_sync)
+from index_utils import (create_edge_range_index, create_node_fulltext_index,
+                         create_node_range_index, drop_node_range_index,
+                         list_indicies, wait_for_indices_to_sync)
 
-from effects_v3_common import _EffectsV3Base
+from effects_common import _EffectsBase
 
 
-class testEffectsV3_02_ConstraintAsEffect(_EffectsV3Base):
+class testEffects_02_ConstraintAsEffect(_EffectsBase):
     """A constraint is announced as an effect, carrying its status.
 
     The announcement is of the *outcome*: the replica installs the status this
@@ -26,7 +28,7 @@ class testEffectsV3_02_ConstraintAsEffect(_EffectsV3Base):
     so the only thing the window contains is the constraint announcement.
     """
 
-    GRAPH_ID = "effects_v3_constraint"
+    GRAPH_ID = "effects_constraint"
 
     def __init__(self):
         self._setup()
@@ -114,7 +116,7 @@ class testEffectsV3_02_ConstraintAsEffect(_EffectsV3Base):
 #-----------------------------------------------------------------------------
 
 
-class testEffectsV3_03_ConstraintConvergence(_EffectsV3Base):
+class testEffects_03_ConstraintConvergence(_EffectsBase):
     """Above the async threshold a constraint is announced twice — once UNDER
     CONSTRUCTION, once with the settled status — and the replica must end with
     exactly ONE constraint at the settled status.
@@ -125,7 +127,7 @@ class testEffectsV3_03_ConstraintConvergence(_EffectsV3Base):
     stuck at UNDER CONSTRUCTION forever.
     """
 
-    GRAPH_ID = "effects_v3_async_constraint"
+    GRAPH_ID = "effects_async_constraint"
 
     # > 10_000 entities of the label is what pushes validation off the main
     # thread in Graph::create_constraint. At or below it the status is settled
@@ -214,7 +216,7 @@ class testEffectsV3_03_ConstraintConvergence(_EffectsV3Base):
 #-----------------------------------------------------------------------------
 
 
-class testEffectsV3_05_IndexAndConstraint(_EffectsV3Base):
+class testEffects_05_IndexAndConstraint(_EffectsBase):
     """An index, a unique constraint that depends on it, and the drops — with
     db.indexes() and db.constraints() compared on both sides at every step.
 
@@ -222,7 +224,7 @@ class testEffectsV3_05_IndexAndConstraint(_EffectsV3Base):
     this branch and would pin nothing.
     """
 
-    GRAPH_ID = "effects_v3_index_constraint"
+    GRAPH_ID = "effects_index_constraint"
 
     def _both_agree_on_schema(self):
         wait_for_indices_to_sync(self.master_graph)
@@ -332,7 +334,7 @@ class testEffectsV3_05_IndexAndConstraint(_EffectsV3Base):
 #-----------------------------------------------------------------------------
 
 
-class testEffectsV3_05b_IndexDDLMechanism(_EffectsV3Base):
+class testEffects_05b_IndexDDLMechanism(_EffectsBase):
     """*How* index DDL reaches the replica, not just whether the state matches.
 
     The resulting index looks the same however it arrived, so a state-only
@@ -341,7 +343,7 @@ class testEffectsV3_05b_IndexDDLMechanism(_EffectsV3Base):
     statement verbatim; v3 puts the evaluated map on the wire.
     """
 
-    GRAPH_ID = "effects_v3_index_ddl"
+    GRAPH_ID = "effects_index_ddl"
 
     def __init__(self):
         self._setup()
@@ -388,12 +390,12 @@ class testEffectsV3_05b_IndexDDLMechanism(_EffectsV3Base):
         self.assert_agree(q, [['german', ['der', 'die']]])
 
 
-class testEffectsV3_06b_ConstraintSettlingRaces(_EffectsV3Base):
+class testEffects_06b_ConstraintSettlingRaces(_EffectsBase):
     """What happens to a constraint left UNDER CONSTRUCTION when the settle is
     interrupted.
 
     Both tests need the gap between the two announcements to be wide enough to
-    act inside, and use the same lever `testEffectsV3_07_PromotedReplica`
+    act inside, and use the same lever `testEffects_07_PromotedReplica`
     documents: a UNIQUE constraint over three indexed properties of a million
     nodes sits there for roughly 400ms on a release build. MANDATORY will not
     do — its validation is a bare scan that settles in under 4ms even at that
@@ -405,7 +407,7 @@ class testEffectsV3_06b_ConstraintSettlingRaces(_EffectsV3Base):
     `GRAPH.CONSTRAINT CREATE` answers `Constraint already exists` from then on.
     """
 
-    GRAPH_ID = "effects_v3_settling_races"
+    GRAPH_ID = "effects_settling_races"
 
     N = 1_000_000
     PROPS = ('a', 'b', 'c')
@@ -567,3 +569,194 @@ class testEffectsV3_06b_ConstraintSettlingRaces(_EffectsV3Base):
         self.master_graph.query("CREATE (:After {v: 1})")
         self.wait_for_replica_offset()
         self.assert_agree("MATCH (n:After) RETURN count(n)", [[1]])
+
+
+#-----------------------------------------------------------------------------
+# 4f. The replica's indexes, for the schemas the query never named
+#-----------------------------------------------------------------------------
+
+
+class testEffects_04f_IndexesTheQueryNeverNamed(_EffectsBase):
+    """An update touches every index the entity belongs to, not the one the
+    pattern matched on.
+
+    `MATCH (n:A) SET n.x = 2` on an `(:A:B)` node has to leave **`:B`'s** index
+    on `x` correct too, and the query never says `B`. Same for edges: an
+    untyped `MATCH ()-[r]->() SET r.x = 2` has to leave `:R`'s index correct.
+
+    The interesting half is the replica. The primary can see the entity and
+    walk its own matrices; the replica only has the record. So these assert
+    through the index rather than through a scan — a stale index does not
+    return nothing, it returns the value the entity used to have, which a
+    `count(*)` over a full scan would never notice.
+    """
+
+    GRAPH_ID = "effects_derived_indexes"
+
+    def __init__(self):
+        self._setup()
+
+    def _assert_uses_index(self, q, op):
+        # Otherwise the assertions below pass on a full scan and prove nothing
+        # about index maintenance at all.
+        #
+        # **The primary only**, and that is a real limit rather than a
+        # convenience: `GRAPH.EXPLAIN` is registered `write` (`src/lib.rs`, and
+        # C registers it the same way), so a replica refuses it with "You can't
+        # write against a read only replica" even though it plans rather than
+        # executes. There is no way to read a replica's plan.
+        #
+        # So on the replica these tests assert the *answer*, and that the
+        # answer matches the primary's — which is index-backed only to the
+        # extent that the replica's planner makes the same choice, which is an
+        # inference. `test04` closes that hole: a fulltext procedure reads the
+        # index and nothing else, so there is no plan to infer about.
+        self.env.assertContains(op, str(self.master_graph.explain(q)))
+
+    def test01_a_second_label_index_the_query_never_mentioned(self):
+        self.set_effects_config()
+        create_node_range_index(self.master_graph, 'A', 'x', sync=True)
+        create_node_range_index(self.master_graph, 'B', 'x', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync("CREATE (:A:B {x: 1}), (:A {x: 1}), (:B {x: 1})")
+
+        by_b = "MATCH (n:B) WHERE n.x = $v RETURN count(n)"
+        self._assert_uses_index(
+            "MATCH (n:B) WHERE n.x = 1 RETURN count(n)", 'Node By Index Scan')
+        self.assert_agree(by_b, [[2]], params={'v': 1})
+
+        # only :A is named, and only the :A:B node and the :A node match
+        res = self.query_and_sync("MATCH (n:A) SET n.x = 2")
+        self.env.assertEqual(res.properties_set, 2)
+
+        # B's index has to have followed the :A:B node to its new value. The
+        # sharp assertion is the second one: a stale index still holds x = 1,
+        # so it answers this with 2 rather than 1.
+        self.assert_agree(by_b, [[1]], params={'v': 2})
+        self.assert_agree(by_b, [[1]], params={'v': 1})
+
+        # and the index agrees with an unindexed read of the same thing
+        self.assert_agree(
+            "MATCH (n:B) RETURN n.x ORDER BY n.x", [[1], [2]])
+        self.assert_graph_eq()
+
+    def test02_an_edge_type_index_the_query_never_mentioned(self):
+        # The reason UPDATE_EDGE carries its RelType: an untyped pattern still
+        # has to leave the type-scoped index correct on the replica.
+        self.set_effects_config()
+        create_edge_range_index(self.master_graph, 'R', 'x', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync(
+            """CREATE (a:EN {i: 1})-[:R {x: 1}]->(b:EN {i: 2}),
+                      (b)-[:R {x: 1}]->(a)""")
+
+        by_r = "MATCH ()-[r:R]->() WHERE r.x = $v RETURN count(r)"
+        self._assert_uses_index(
+            "MATCH ()-[r:R]->() WHERE r.x = 1 RETURN count(r)",
+            'Edge By Index Scan')
+        self.assert_agree(by_r, [[2]], params={'v': 1})
+
+        # untyped — the query never says R
+        res = self.query_and_sync("MATCH ()-[r]->() SET r.x = 2")
+        self.env.assertEqual(res.properties_set, 2)
+
+        self.assert_agree(by_r, [[2]], params={'v': 2})
+        self.assert_agree(by_r, [[0]], params={'v': 1})
+        self.assert_agree(
+            "MATCH ()-[r:R]->() RETURN r.x ORDER BY r.x", [[2], [2]])
+        self.assert_graph_eq()
+
+    def test03_two_edge_types_one_indexed(self):
+        # The record splits by type, so the unindexed type must not drag the
+        # indexed one's rows into its record — and the indexed type's index
+        # must still see every row that belongs to it.
+        self.set_effects_config()
+        create_edge_range_index(self.master_graph, 'IX', 'x', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync(
+            """UNWIND range(1, 20) AS i
+               CREATE (a:TN {i: i})-[:IX {x: i}]->(b:TN {i: -i}),
+                      (a)-[:NOIX {x: i}]->(b)""")
+        self.assert_agree(
+            "MATCH ()-[r:IX]->() WHERE r.x > 10 RETURN count(r)", [[10]])
+
+        res = self.query_and_sync("MATCH ()-[r:IX|NOIX]->() SET r.x = r.x + 100")
+        self.env.assertEqual(res.properties_set, 40)
+
+        self.assert_agree(
+            "MATCH ()-[r:IX]->() WHERE r.x > 110 RETURN count(r)", [[10]])
+        self.assert_agree(
+            "MATCH ()-[r:IX]->() WHERE r.x <= 100 RETURN count(r)", [[0]])
+        self.assert_agree(
+            "MATCH ()-[r:NOIX]->() RETURN count(r), min(r.x), max(r.x)",
+            [[20, 101, 120]])
+        self.assert_graph_eq()
+
+
+    def test04_the_replica_index_itself_answers(self):
+        # The other three assert what the replica *returns*, which goes through
+        # its planner, and a replica's plan cannot be read — GRAPH.EXPLAIN is a
+        # `write` command on both engines. So they establish the answer is
+        # right without establishing the index produced it.
+        #
+        # `db.idx.fulltext.queryNodes` has no such gap: it reads the fulltext
+        # index directly. If the replica never added the :FB document when the
+        # :FA half of the pattern was updated, this returns nothing, whatever
+        # the planner would have preferred.
+        self.set_effects_config()
+        create_node_fulltext_index(self.master_graph, 'FA', 'body', sync=True)
+        create_node_fulltext_index(self.master_graph, 'FB', 'body', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync("CREATE (:FA:FB {body: 'alpha'})")
+        probe = ("CALL db.idx.fulltext.queryNodes('FB', $t) "
+                 "YIELD node RETURN count(node)")
+        self.assert_agree(probe, [[1]], params={'t': 'alpha'})
+
+        # only :FA is named; :FB's index has to follow the same node
+        res = self.query_and_sync("MATCH (n:FA) SET n.body = 'omega'")
+        self.env.assertEqual(res.properties_set, 1)
+
+        self.assert_agree(probe, [[1]], params={'t': 'omega'})
+        # and the old term is gone from it — a stale index still answers 'alpha'
+        self.assert_agree(probe, [[0]], params={'t': 'alpha'})
+        self.assert_graph_eq()
+
+    def test05_deleting_a_node_clears_the_index_of_a_label_it_was_not_matched_by(self):
+        """A deleted node leaves every label index it was in, not just the
+        matched one.
+
+        This is the half that cannot be re-derived. `delete_nodes` clears the
+        label matrices, so by the time effects are built the node's labels are
+        gone from the graph — they are captured during the delete as flat
+        `(node, label)` pairs and regrouped per node by the emitter. If that
+        capture or that regrouping dropped a label, the replica would keep
+        serving a deleted node out of that label's index, and the node no
+        longer exists to notice it with.
+
+        Fulltext again, for the reason in `test04`: it reads the index directly,
+        so the replica assertion does not depend on what its planner chose.
+        """
+        self.set_effects_config()
+        create_node_fulltext_index(self.master_graph, 'DFA', 'body', sync=True)
+        create_node_fulltext_index(self.master_graph, 'DFB', 'body', sync=True)
+        self.wait_for_replica_offset()
+
+        self.query_and_sync(
+            "CREATE (:DFA:DFB {body: 'alpha'}), (:DFB {body: 'beta'})")
+        probe = ("CALL db.idx.fulltext.queryNodes('DFB', $t) "
+                 "YIELD node RETURN count(node)")
+        self.assert_agree(probe, [[1]], params={'t': 'alpha'})
+
+        # only :DFA is named
+        res = self.query_and_sync("MATCH (n:DFA) DELETE n")
+        self.env.assertEqual(res.nodes_deleted, 1)
+
+        # gone from :DFB's index too, and the :DFB-only node is untouched
+        self.assert_agree(probe, [[0]], params={'t': 'alpha'})
+        self.assert_agree(probe, [[1]], params={'t': 'beta'})
+        self.assert_agree("MATCH (n:DFB) RETURN count(n)", [[1]])
+        self.assert_graph_eq()

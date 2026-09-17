@@ -1,6 +1,6 @@
 """Effects v3 -- the bytes on the wire: what a reader refuses, what compression does to a payload, and that the same write twice produces the same bytes.
 
-See `effects_v3_common.py` for the shared fixture and why these are split.
+See `effects_common.py` for the shared fixture and why these are split.
 """
 
 import time
@@ -11,10 +11,10 @@ from constraint_utils import (create_mandatory_node_constraint, create_unique_no
 from graph_utils import graph_eq
 from index_utils import (create_node_range_index, wait_for_indices_to_sync)
 
-from effects_v3_common import _EffectsV3Base, zstd_compress
+from effects_common import _EffectsBase, zstd_raw_frame
 
 
-class testEffectsV3_00_UnreadableBuffer(_EffectsV3Base):
+class testEffects_00_UnreadableBuffer(_EffectsBase):
     """A `GRAPH.EFFECT` payload this build cannot read must be refused, leave
     the graph exactly as it was, and take nothing down.
 
@@ -34,11 +34,11 @@ class testEffectsV3_00_UnreadableBuffer(_EffectsV3Base):
 
     The replayed half needs no separate case per malformed shape:
     `graph_effect` funnels every `ApplyError` through one `is_replayed` check,
-    and `testEffectsV3_06c_DivergenceForcesResync` already pins that path end
+    and `testEffects_06c_DivergenceForcesResync` already pins that path end
     to end.
     """
 
-    GRAPH_ID = "effects_v3_unreadable"
+    GRAPH_ID = "effects_unreadable"
 
     def __init__(self):
         self._setup()
@@ -131,7 +131,7 @@ class testEffectsV3_00_UnreadableBuffer(_EffectsV3Base):
         # how a reader half-applies a future buffer and corrupts itself with the
         # rest; refusing on the header byte is how it does not.
         self.set_effects_config()
-        key = "effects_v3_unreadable_future"
+        key = "effects_unreadable_future"
         g = Graph(self.master, key)
         # One label, so the injected record's id 1 is the id this graph would
         # assign next and the apply path has no other reason to refuse it.
@@ -220,8 +220,6 @@ class testEffectsV3_00_UnreadableBuffer(_EffectsV3Base):
         self.assert_agree("MATCH (n:U) RETURN count(n), sum(n.v)", [[2, 3]])
 
     def test05_a_valid_frame_with_the_wrong_checksum_is_refused(self):
-        if zstd_compress is None:
-            Environment.skip(None)
         self.set_effects_config()
         full_before = self.master.info()["sync_full"]
 
@@ -230,7 +228,7 @@ class testEffectsV3_00_UnreadableBuffer(_EffectsV3Base):
         # that C can match it without vendoring zstd's own framing, which
         # means it is the last line of defence before the records are parsed.
         plain = b"\x03\x00\x00\x00\x01\x00\x00\x00"
-        frame = zstd_compress(plain)
+        frame = zstd_raw_frame(plain)
         msg = self._refused(self._compressed(len(plain), 0xdead_beef, frame),
                             "a compressed buffer with a wrong checksum")
         self.env.assertContains("checksum", msg.lower())
@@ -264,7 +262,7 @@ class testEffectsV3_00_UnreadableBuffer(_EffectsV3Base):
 #-----------------------------------------------------------------------------
 
 
-class testEffectsV3_06_Compression(_EffectsV3Base):
+class testEffects_06_Compression(_EffectsBase):
     """EFFECTS_COMPRESSION only changes the framing, never the outcome.
 
     The same workload is applied twice, into two graph keys, once with
@@ -272,7 +270,7 @@ class testEffectsV3_06_Compression(_EffectsV3Base):
     against each other as well as against their primaries.
     """
 
-    GRAPH_ID = "effects_v3_compression"
+    GRAPH_ID = "effects_compression"
 
     # Deliberately mixed: creates, an update, a removal, a delete and an edge,
     # so the compressed frame contains several record types.
@@ -327,7 +325,7 @@ class testEffectsV3_06_Compression(_EffectsV3Base):
         two-property constraint does not — so a narrow one would leave this
         asserting nothing, whichever way the code went.
         """
-        key = "effects_v3_comp_constraint"
+        key = "effects_comp_constraint"
         self.master_graph  = Graph(self.master,  key)
         self.replica_graph = Graph(self.replica, key)
         self.set_effects_config(64)
@@ -361,8 +359,8 @@ class testEffectsV3_06_Compression(_EffectsV3Base):
         self.env.assertEqual(rows[0][4], 'OPERATIONAL')
 
     def test01_compressed_and_uncompressed_reach_the_same_state(self):
-        plain, plain_payloads = self._run_workload("effects_v3_comp_off", 0)
-        zstd,  zstd_payloads  = self._run_workload("effects_v3_comp_on", 1024)
+        plain, plain_payloads = self._run_workload("effects_comp_off", 0)
+        zstd,  zstd_payloads  = self._run_workload("effects_comp_on", 1024)
 
         # Asserting on the flags byte is what stops this from quietly becoming
         # a second copy of the uncompressed run the day the threshold stops
@@ -386,8 +384,8 @@ class testEffectsV3_06_Compression(_EffectsV3Base):
         # graph_eq over the compressed run, including its indexes and
         # constraints, rather than only the aggregate probes above.
         self.set_effects_config(1024)
-        self.master_graph  = Graph(self.master,  "effects_v3_comp_on")
-        self.replica_graph = Graph(self.replica, "effects_v3_comp_on")
+        self.master_graph  = Graph(self.master,  "effects_comp_on")
+        self.replica_graph = Graph(self.replica, "effects_comp_on")
         create_node_range_index(self.master_graph, 'C', 'v', sync=True)
         create_unique_node_constraint(self.master_graph, 'C', 'v')
         self.wait_for_constraint_settled(self.master_graph, 'C')
@@ -406,7 +404,7 @@ class testEffectsV3_06_Compression(_EffectsV3Base):
 #-----------------------------------------------------------------------------
 
 
-class testEffectsV3_08_ByteDeterminism(_EffectsV3Base):
+class testEffects_08_ByteDeterminism(_EffectsBase):
     """The bytes, not just the state.
 
     Every other class here asserts that the replica *agrees* — which an encoder
@@ -421,7 +419,7 @@ class testEffectsV3_08_ByteDeterminism(_EffectsV3Base):
     rule is a function of the ids rather than of when the encoder looked.
     """
 
-    GRAPH_ID = "effects_v3_determinism"
+    GRAPH_ID = "effects_determinism"
 
     def __init__(self):
         self._setup()

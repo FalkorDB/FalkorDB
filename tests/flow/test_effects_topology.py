@@ -2,7 +2,7 @@
 
 This file is the reason the others do not need to worry about topology.
 
-See `effects_v3_common.py` for the shared fixture and why these are split.
+See `effects_common.py` for the shared fixture and why these are split.
 """
 
 import time
@@ -12,10 +12,10 @@ from common import *
 from constraint_utils import (create_unique_node_constraint)
 from index_utils import (create_node_range_index, wait_for_indices_to_sync)
 
-from effects_v3_common import _EffectsV3Base
+from effects_common import _EffectsBase
 
 
-class testEffectsV3_06c_DivergenceForcesResync(_EffectsV3Base):
+class testEffects_06c_DivergenceForcesResync(_EffectsBase):
     """A replica that cannot apply an effect must repair itself, not carry on.
 
     v3 detects far more divergence than v2 did — thirteen distinct checks
@@ -30,7 +30,7 @@ class testEffectsV3_06c_DivergenceForcesResync(_EffectsV3Base):
     reconnect.
     """
 
-    GRAPH_ID = "effects_v3_divergence"
+    GRAPH_ID = "effects_divergence"
 
     def __init__(self):
         self._setup()
@@ -137,7 +137,7 @@ class testEffectsV3_06c_DivergenceForcesResync(_EffectsV3Base):
         self.env.assertEqual(self.replica.ping(), True)
 
 
-class testEffectsV3_07_PromotedReplica(_EffectsV3Base):
+class testEffects_07_PromotedReplica(_EffectsBase):
     """A replica promoted while holding a constraint UNDER CONSTRUCTION must
     settle it itself.
 
@@ -160,7 +160,7 @@ class testEffectsV3_07_PromotedReplica(_EffectsV3Base):
     back before returning either way.
     """
 
-    GRAPH_ID = "effects_v3_promotion"
+    GRAPH_ID = "effects_promotion"
 
     N = 1_000_000
     PROPS = ('a', 'b', 'c')

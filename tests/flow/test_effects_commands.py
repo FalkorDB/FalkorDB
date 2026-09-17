@@ -1,6 +1,6 @@
 """Effects v3 -- the commands around a write: `GRAPH.RECORD`, and the ones that still replicate verbatim.
 
-See `effects_v3_common.py` for the shared fixture and why these are split.
+See `effects_common.py` for the shared fixture and why these are split.
 """
 
 import time
@@ -11,10 +11,10 @@ from constraint_utils import (create_unique_node_constraint)
 from graph_utils import graph_eq
 from index_utils import (create_node_range_index, list_indicies, wait_for_indices_to_sync)
 
-from effects_v3_common import _EffectsV3Base
+from effects_common import _EffectsBase
 
 
-class testEffectsV3_04d_RecordCommand(_EffectsV3Base):
+class testEffects_04d_RecordCommand(_EffectsBase):
     """`GRAPH.RECORD` replicates its write as an effect, like `GRAPH.QUERY`.
 
     RECORD adds an operator trace to a normal write; it is not a dry run.
@@ -29,7 +29,7 @@ class testEffectsV3_04d_RecordCommand(_EffectsV3Base):
     the command itself, not an effect. Hence the feed assertions.
     """
 
-    GRAPH_ID = "effects_v3_record"
+    GRAPH_ID = "effects_record"
 
     def __init__(self):
         self._setup()
@@ -136,7 +136,7 @@ class testEffectsV3_04d_RecordCommand(_EffectsV3Base):
 #-----------------------------------------------------------------------------
 
 
-class testEffectsV3_04e_VerbatimCommands(_EffectsV3Base):
+class testEffects_04e_VerbatimCommands(_EffectsBase):
     """The commands that were deliberately left replicating verbatim, and the
     effects that follow them.
 
@@ -156,7 +156,7 @@ class testEffectsV3_04e_VerbatimCommands(_EffectsV3Base):
     attributes, and by an assertion that nothing was refused.
     """
 
-    GRAPH_ID = "effects_v3_verbatim"
+    GRAPH_ID = "effects_verbatim"
 
     def __init__(self):
         self._setup()
@@ -286,7 +286,7 @@ class testEffectsV3_04e_VerbatimCommands(_EffectsV3Base):
         self.env.assertContains("EffectsV3Udf", self.udf_names(self.master))
         # `GRAPH.UDF` carries Redis's `write` flag for every subcommand, LIST
         # included, so reading the replica's libraries needs the read-only flag
-        # lifted — the same dance `testEffectsV3_05b_IndexDDLMechanism` does for
+        # lifted — the same dance `testEffects_05b_IndexDDLMechanism` does for
         # GRAPH.EXPLAIN, and lifted only for the read.
         self.env.assertContains("EffectsV3Udf", self.replica_udf_names())
         # and it is callable there, not merely listed

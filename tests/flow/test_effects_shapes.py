@@ -1,25 +1,28 @@
 """Effects v3 -- the record shapes the writer partitions and the reader reassembles, including the indexes a query never named.
 
-See `effects_v3_common.py` for the shared fixture and why these are split.
+See `effects_common.py` for the shared fixture and why these are split.
 """
 
 
 
 from common import *
 from graph_utils import graph_eq
-from index_utils import (create_edge_range_index, create_node_fulltext_index, create_node_range_index, wait_for_indices_to_sync)
+from constraint_utils import create_unique_node_constraint
+from index_utils import (create_edge_range_index, create_node_fulltext_index,
+                         create_node_range_index, list_indicies,
+                         wait_for_indices_to_sync)
 
-from effects_v3_common import _EffectsV3Base
+from effects_common import _EffectsBase
 
 
-class testEffectsV3_04_Shapes(_EffectsV3Base):
+class testEffects_04_Shapes(_EffectsBase):
     """The record shapes the v3 writer has to partition and the reader has to
     reassemble: multiple labels, differing property shapes in one query,
     points, lists, large batches, deletes interleaved with creates, and ids
     recycled by a delete-then-recreate.
     """
 
-    GRAPH_ID = "effects_v3_shapes"
+    GRAPH_ID = "effects_shapes"
 
     def __init__(self):
         self._setup()
@@ -205,7 +208,7 @@ class testEffectsV3_04_Shapes(_EffectsV3Base):
         # hands out the *smallest* freed id. On a graph with older free ids the
         # third commit gets one of those instead and the collision never
         # happens — which is exactly why the shared-graph tests miss this.
-        fresh = "effects_v3_recycle_one_buffer"
+        fresh = "effects_recycle_one_buffer"
         m = Graph(self.master, fresh)
         r = Graph(self.replica, fresh)
 
@@ -240,18 +243,18 @@ class testEffectsV3_04_Shapes(_EffectsV3Base):
 #-----------------------------------------------------------------------------
 
 
-class testEffectsV3_04c_HarderShapes(_EffectsV3Base):
+class testEffects_04c_HarderShapes(_EffectsBase):
     """Shapes with structure the writer's partitioning has to survive: an edge
     whose endpoints are one node, a very wide attribute set, and the operators
     that commit more than once so their records share a buffer.
 
-    `testEffectsV3_04_Shapes` covers volume and interleaving. These are the
+    `testEffects_04_Shapes` covers volume and interleaving. These are the
     shapes where the *blocks* are unusual — `IdSet` and `IdList` are distinct
     types precisely because edge endpoints repeat, and a self-loop is the
     smallest case where the same id appears in both endpoint lists.
     """
 
-    GRAPH_ID = "effects_v3_harder_shapes"
+    GRAPH_ID = "effects_harder_shapes"
 
     def __init__(self):
         self._setup()
@@ -464,191 +467,311 @@ class testEffectsV3_04c_HarderShapes(_EffectsV3Base):
 
 
 #-----------------------------------------------------------------------------
-# 4f. The replica's indexes, for the schemas the query never named
+# 4g. several kinds of record from one statement
+#
+# Moved here from the former test_effects_v3_compound.py: a compound statement
+# is a shape question -- what one buffer carries and in what order -- so it
+# belongs beside the other partitioning cases rather than in a file of its own.
+# The module docstring there explained why DDL cannot share a COMMIT with data;
+# that reasoning now lives on the class below.
 #-----------------------------------------------------------------------------
 
 
-class testEffectsV3_04f_IndexesTheQueryNeverNamed(_EffectsV3Base):
-    """An update touches every index the entity belongs to, not the one the
-    pattern matched on.
+class testEffects_04g_CompoundSequences(_EffectsBase):
+    """Several record kinds from one statement, applied in an order that works.
 
-    `MATCH (n:A) SET n.x = 2` on an `(:A:B)` node has to leave **`:B`'s** index
-    on `x` correct too, and the query never says `B`. Same for edges: an
-    untyped `MATCH ()-[r]->() SET r.x = 2` has to leave `:R`'s index correct.
-
-    The interesting half is the replica. The primary can see the entity and
-    walk its own matrices; the replica only has the record. So these assert
-    through the index rather than through a scan — a stale index does not
-    return nothing, it returns the value the entity used to have, which a
-    `count(*)` over a full scan would never notice.
+    `test07`-`test09` used to live here and were removed: they were DDL and
+    data in *separate* statements, which is a sequence rather than a
+    compound, and each was a weaker form of a test in `..._ddl.py` --
+    `05.test02` does rows-then-index and also compares the execution plan
+    on both sides, `05.test01` covers the drops, and a violating write is
+    already refused three times over in that file.
     """
 
-    GRAPH_ID = "effects_v3_derived_indexes"
+    GRAPH_ID = "effects_compound"
 
     def __init__(self):
         self._setup()
+        self.start_monitor('GRAPH.EFFECT')
 
-    def _assert_uses_index(self, q, op):
-        # Otherwise the assertions below pass on a full scan and prove nothing
-        # about index maintenance at all.
-        #
-        # **The primary only**, and that is a real limit rather than a
-        # convenience: `GRAPH.EXPLAIN` is registered `write` (`src/lib.rs`, and
-        # C registers it the same way), so a replica refuses it with "You can't
-        # write against a read only replica" even though it plans rather than
-        # executes. There is no way to read a replica's plan.
-        #
-        # So on the replica these tests assert the *answer*, and that the
-        # answer matches the primary's — which is index-backed only to the
-        # extent that the replica's planner makes the same choice, which is an
-        # inference. `test04` closes that hole: a fulltext procedure reads the
-        # index and nothing else, so there is no plan to infer about.
-        self.env.assertContains(op, str(self.master_graph.explain(q)))
-
-    def test01_a_second_label_index_the_query_never_mentioned(self):
+    def test01_schema_and_data_ride_one_buffer(self):
+        # A label, a relationship type and three attributes that do not exist
+        # yet, all introduced by the statement that first uses them. The replica
+        # has to intern every name before it can resolve the ids the node and
+        # edge records carry, so the schema records must lead.
         self.set_effects_config()
-        create_node_range_index(self.master_graph, 'A', 'x', sync=True)
-        create_node_range_index(self.master_graph, 'B', 'x', sync=True)
-        self.wait_for_replica_offset()
-
-        self.query_and_sync("CREATE (:A:B {x: 1}), (:A {x: 1}), (:B {x: 1})")
-
-        by_b = "MATCH (n:B) WHERE n.x = $v RETURN count(n)"
-        self._assert_uses_index(
-            "MATCH (n:B) WHERE n.x = 1 RETURN count(n)", 'Node By Index Scan')
-        self.assert_agree(by_b, [[2]], params={'v': 1})
-
-        # only :A is named, and only the :A:B node and the :A node match
-        res = self.query_and_sync("MATCH (n:A) SET n.x = 2")
-        self.env.assertEqual(res.properties_set, 2)
-
-        # B's index has to have followed the :A:B node to its new value. The
-        # sharp assertion is the second one: a stale index still holds x = 1,
-        # so it answers this with 2 rather than 1.
-        self.assert_agree(by_b, [[1]], params={'v': 2})
-        self.assert_agree(by_b, [[1]], params={'v': 1})
-
-        # and the index agrees with an unindexed read of the same thing
-        self.assert_agree(
-            "MATCH (n:B) RETURN n.x ORDER BY n.x", [[1], [2]])
-        self.assert_graph_eq()
-
-    def test02_an_edge_type_index_the_query_never_mentioned(self):
-        # The reason UPDATE_EDGE carries its RelType: an untyped pattern still
-        # has to leave the type-scoped index correct on the replica.
-        self.set_effects_config()
-        create_edge_range_index(self.master_graph, 'R', 'x', sync=True)
-        self.wait_for_replica_offset()
-
+        self.monitor_mark()
         self.query_and_sync(
-            """CREATE (a:EN {i: 1})-[:R {x: 1}]->(b:EN {i: 2}),
-                      (b)-[:R {x: 1}]->(a)""")
+            "CREATE (:Fresh {alpha: 1, beta: 'two'})"
+            "-[:FRESHLY {gamma: 3.5}]->(:Fresh {alpha: 2, beta: 'three'})")
+        window = self.monitor_mark()
 
-        by_r = "MATCH ()-[r:R]->() WHERE r.x = $v RETURN count(r)"
-        self._assert_uses_index(
-            "MATCH ()-[r:R]->() WHERE r.x = 1 RETURN count(r)",
-            'Edge By Index Scan')
-        self.assert_agree(by_r, [[2]], params={'v': 1})
+        # One commit, so one payload -- and it leads with schema, not with the
+        # node it describes. That is the assertion: a buffer that led with
+        # CREATE_NODE would name a label id the replica has not interned.
+        leading = self.leading_opcodes(window, self.GRAPH_ID)
+        self.env.assertTrue(
+            leading and leading[0] in ('ADD_SCHEMA', 'ADD_ATTRIBUTE'),
+            message=f"a buffer introducing new schema must lead with it, led with {leading}")
 
-        # untyped — the query never says R
-        res = self.query_and_sync("MATCH ()-[r]->() SET r.x = 2")
-        self.env.assertEqual(res.properties_set, 2)
-
-        self.assert_agree(by_r, [[2]], params={'v': 2})
-        self.assert_agree(by_r, [[0]], params={'v': 1})
+        self.assert_agree("MATCH (n:Fresh) RETURN count(n)", [[2]])
         self.assert_agree(
-            "MATCH ()-[r:R]->() RETURN r.x ORDER BY r.x", [[2], [2]])
+            "MATCH (:Fresh)-[e:FRESHLY]->(:Fresh) RETURN count(e), sum(e.gamma)",
+            [[1, 3.5]])
+        self.assert_agree(
+            "MATCH (n:Fresh) RETURN count(n.alpha), count(n.beta)", [[2, 2]])
         self.assert_graph_eq()
 
-    def test03_two_edge_types_one_indexed(self):
-        # The record splits by type, so the unindexed type must not drag the
-        # indexed one's rows into its record — and the indexed type's index
-        # must still see every row that belongs to it.
+    def test02_create_update_label_and_delete_in_one_statement(self):
+        # Four mutation kinds from one MATCH: a node created, an existing one
+        # updated, a label added to a third, a fourth deleted. Whatever order the
+        # writer partitions them into, both sides must end up agreeing -- and the
+        # deleted node must not come back as a side effect of the create.
         self.set_effects_config()
-        create_edge_range_index(self.master_graph, 'IX', 'x', sync=True)
-        self.wait_for_replica_offset()
-
         self.query_and_sync(
-            """UNWIND range(1, 20) AS i
-               CREATE (a:TN {i: i})-[:IX {x: i}]->(b:TN {i: -i}),
-                      (a)-[:NOIX {x: i}]->(b)""")
-        self.assert_agree(
-            "MATCH ()-[r:IX]->() WHERE r.x > 10 RETURN count(r)", [[10]])
+            "UNWIND range(1, 4) AS i CREATE (:Multi {i: i, tag: 'start'})")
 
-        res = self.query_and_sync("MATCH ()-[r:IX|NOIX]->() SET r.x = r.x + 100")
-        self.env.assertEqual(res.properties_set, 40)
+        self.query_and_sync("""
+            MATCH (a:Multi {i: 1}), (b:Multi {i: 2}), (c:Multi {i: 3})
+            CREATE (:Multi {i: 5, tag: 'added'})
+            SET a.tag = 'updated'
+            SET b:Extra
+            DELETE c
+        """)
 
-        self.assert_agree(
-            "MATCH ()-[r:IX]->() WHERE r.x > 110 RETURN count(r)", [[10]])
-        self.assert_agree(
-            "MATCH ()-[r:IX]->() WHERE r.x <= 100 RETURN count(r)", [[0]])
-        self.assert_agree(
-            "MATCH ()-[r:NOIX]->() RETURN count(r), min(r.x), max(r.x)",
-            [[20, 101, 120]])
+        self.assert_agree("MATCH (n:Multi) RETURN count(n)", [[4]])
+        self.assert_agree("MATCH (n:Multi {tag: 'updated'}) RETURN count(n)", [[1]])
+        self.assert_agree("MATCH (n:Extra) RETURN count(n)", [[1]])
+        self.assert_agree("MATCH (n:Multi {i: 3}) RETURN count(n)", [[0]])
+        self.assert_agree("MATCH (n:Multi {i: 5}) RETURN count(n)", [[1]])
         self.assert_graph_eq()
 
-
-    def test04_the_replica_index_itself_answers(self):
-        # The other three assert what the replica *returns*, which goes through
-        # its planner, and a replica's plan cannot be read — GRAPH.EXPLAIN is a
-        # `write` command on both engines. So they establish the answer is
-        # right without establishing the index produced it.
-        #
-        # `db.idx.fulltext.queryNodes` has no such gap: it reads the fulltext
-        # index directly. If the replica never added the :FB document when the
-        # :FA half of the pattern was updated, this returns nothing, whatever
-        # the planner would have preferred.
+    def test03_index_maintenance_rides_the_same_commit(self):
+        # With an index already present, a statement that creates, updates and
+        # deletes indexed rows carries all of that in one commit. The replica's
+        # index must answer for the rows as they finally are, not as any
+        # intermediate step left them.
         self.set_effects_config()
-        create_node_fulltext_index(self.master_graph, 'FA', 'body', sync=True)
-        create_node_fulltext_index(self.master_graph, 'FB', 'body', sync=True)
+        create_node_range_index(self.master_graph, 'Indexed', 'k', sync=True)
         self.wait_for_replica_offset()
+        self.query_and_sync(
+            "UNWIND range(1, 6) AS i CREATE (:Indexed {k: i, keep: true})")
 
-        self.query_and_sync("CREATE (:FA:FB {body: 'alpha'})")
-        probe = ("CALL db.idx.fulltext.queryNodes('FB', $t) "
-                 "YIELD node RETURN count(node)")
-        self.assert_agree(probe, [[1]], params={'t': 'alpha'})
+        self.query_and_sync("""
+            MATCH (n:Indexed) WHERE n.k <= 3
+            SET n.k = n.k + 100
+        """)
+        self.query_and_sync("MATCH (n:Indexed) WHERE n.k = 6 DELETE n")
 
-        # only :FA is named; :FB's index has to follow the same node
-        res = self.query_and_sync("MATCH (n:FA) SET n.body = 'omega'")
-        self.env.assertEqual(res.properties_set, 1)
+        wait_for_indices_to_sync(self.master_graph)
+        wait_for_indices_to_sync(self.replica_graph)
 
-        self.assert_agree(probe, [[1]], params={'t': 'omega'})
-        # and the old term is gone from it — a stale index still answers 'alpha'
-        self.assert_agree(probe, [[0]], params={'t': 'alpha'})
+        # Read through the index on both sides. A stale replica index answers
+        # these with the pre-update values and is the failure this catches.
+        self.assert_agree("MATCH (n:Indexed) WHERE n.k = 101 RETURN count(n)", [[1]])
+        self.assert_agree("MATCH (n:Indexed) WHERE n.k = 1 RETURN count(n)", [[0]])
+        self.assert_agree("MATCH (n:Indexed) WHERE n.k = 6 RETURN count(n)", [[0]])
+        self.assert_agree(
+            "MATCH (n:Indexed) WHERE n.k > 100 RETURN count(n)", [[3]])
+        self.assert_agree("MATCH (n:Indexed) RETURN count(n)", [[5]])
+        self.env.assertEqual(list_indicies(self.replica_graph).result_set,
+                             list_indicies(self.master_graph).result_set)
         self.assert_graph_eq()
 
-    def test05_deleting_a_node_clears_the_index_of_a_label_it_was_not_matched_by(self):
-        """A deleted node leaves every label index it was in, not just the
-        matched one.
+    def test04_a_violating_write_beside_a_valid_one_commits_neither(self):
+        # A UNIQUE constraint, then one statement whose rows are individually
+        # fine and collectively are not. The write is refused whole, so the
+        # replica must not have been told about the half that would have
+        # succeeded -- a partial buffer here is divergence, not a partial write.
+        self.set_effects_config()
+        self.query_and_sync("CREATE (:Uniq {u: 1})")
+        create_unique_node_constraint(self.master_graph, 'Uniq', 'u', sync=True)
+        self.wait_for_replica_offset()
+        self.wait_for_constraint_settled(self.master_graph, 'Uniq')
 
-        This is the half that cannot be re-derived. `delete_nodes` clears the
-        label matrices, so by the time effects are built the node's labels are
-        gone from the graph — they are captured during the delete as flat
-        `(node, label)` pairs and regrouped per node by the emitter. If that
-        capture or that regrouping dropped a label, the replica would keep
-        serving a deleted node out of that label's index, and the node no
-        longer exists to notice it with.
+        full_before = self.master.info()["sync_full"]
+        failures_before = self.effect_failures()
 
-        Fulltext again, for the reason in `test04`: it reads the index directly,
-        so the replica assertion does not depend on what its planner chose.
+        rejected = None
+        try:
+            self.master_graph.query(
+                "CREATE (:Uniq {u: 2}), (:Uniq {u: 1})")
+        except Exception as e:
+            rejected = str(e).lower()
+        self.env.assertTrue(
+            rejected is not None and "unique constraint violation" in rejected,
+            message=f"the duplicate must be refused, got {rejected!r}")
+
+        self.wait_for_replica_offset()
+        # Neither row survives: the valid one was in the same statement.
+        self.assert_agree("MATCH (n:Uniq) RETURN count(n)", [[1]])
+        self.assert_agree("MATCH (n:Uniq {u: 2}) RETURN count(n)", [[0]])
+        # And nothing was refused on the replica -- a refused write should send
+        # nothing, rather than sending something the replica then rejects.
+        self.env.assertEqual(self.effect_failures(), failures_before,
+            message="a refused write still put a buffer on the wire")
+        self.env.assertEqual(self.master.info()["sync_full"], full_before,
+            message="a refused write forced a resync")
+        self.assert_graph_eq()
+
+    def test05_new_schema_and_a_delete_of_the_same_label_in_one_statement(self):
+        # The shape `digest_cancelled` exists for, one level up: a label
+        # introduced and then emptied inside one statement. The schema addition
+        # is real and must survive even though no row that used it does.
+        self.set_effects_config()
+        self.query_and_sync(
+            "CREATE (:Doomed {only: 1}) WITH 1 AS x "
+            "MATCH (d:Doomed) DELETE d")
+
+        self.assert_agree("MATCH (n:Doomed) RETURN count(n)", [[0]])
+        # The label is interned on both sides even with no rows carrying it, so
+        # a later create resolves the same id rather than minting a second.
+        self.query_and_sync("CREATE (:Doomed {only: 2})")
+        self.assert_agree("MATCH (n:Doomed) RETURN count(n), sum(n.only)", [[1, 2]])
+        self.assert_graph_eq()
+
+    # ── DDL and data in consecutive commits ───────────────────────────────
+    #
+    # Not one buffer -- the parser forbids that -- but one *sequence*, which is
+    # what a replica actually sees. Each of these is two or more commits whose
+    # order is load-bearing on the far side.
+
+    def test06_an_index_created_then_populated_answers_on_the_replica(self):
+        # DDL first, data second. The replica applies CREATE_INDEX, then the
+        # CREATE_NODE records for rows the index must contain. If the index
+        # arrived but the rows were indexed against the pre-index state, the
+        # replica's index answers short.
+        self.set_effects_config()
+        self.query_and_sync("CREATE INDEX FOR (n:Seq) ON (n.k)")
+        self.query_and_sync(
+            "UNWIND range(1, 20) AS i CREATE (:Seq {k: i, pad: 'x'})")
+        wait_for_indices_to_sync(self.master_graph)
+        wait_for_indices_to_sync(self.replica_graph)
+
+        self.assert_agree("MATCH (n:Seq) WHERE n.k = 7 RETURN count(n)", [[1]])
+        self.assert_agree("MATCH (n:Seq) WHERE n.k > 15 RETURN count(n)", [[5]])
+        self.env.assertEqual(list_indicies(self.replica_graph).result_set,
+                             list_indicies(self.master_graph).result_set)
+        self.assert_graph_eq()
+
+    def test10_an_index_procedure_inside_a_write_query(self):
+        """DDL and data in ONE statement — and what actually happens today.
+
+        This is the shape the class is named for and the one it could not
+        reach: a single query that creates an index *and* mutates nodes. It is
+        written as a pin on current behaviour rather than on the intended
+        behaviour, because the procedure does not work, and the way it does not
+        work is worth catching.
+
+        `db.idx.fulltext.createNodeIndex` is registered as a `write procedure`
+        (`graph/src/runtime/functions/procedures.rs:328`) but its body is
+        `Ok(empty_procedure_batch())` — a stub. Two consequences, both pinned
+        below:
+
+        * it creates no index, so there is no index DDL in this buffer at all;
+        * it yields ZERO rows, so every clause after it runs zero times and the
+          trailing `CREATE` is silently dropped. Not an error — the query
+          succeeds and reports fewer nodes than it names.
+
+        When the stub is implemented this test goes red on both counts, which
+        is the point: whoever implements it has to come here and decide what
+        the replica should see.
         """
         self.set_effects_config()
-        create_node_fulltext_index(self.master_graph, 'DFA', 'body', sync=True)
-        create_node_fulltext_index(self.master_graph, 'DFB', 'body', sync=True)
-        self.wait_for_replica_offset()
+        self.monitor_mark()
+
+        # The arity, first. The C-style call takes label and field as separate
+        # arguments; this build takes exactly one map, so the C form is an
+        # error rather than a call that quietly does something else.
+        try:
+            self.master_graph.query(
+                "CALL db.idx.fulltext.createNodeIndex('Doc', 'body')")
+            self.env.assertTrue(False, 1)
+        except ResponseError as e:
+            self.env.assertContains("expected at most 1", str(e))
 
         self.query_and_sync(
-            "CREATE (:DFA:DFB {body: 'alpha'}), (:DFB {body: 'beta'})")
-        probe = ("CALL db.idx.fulltext.queryNodes('DFB', $t) "
-                 "YIELD node RETURN count(node)")
-        self.assert_agree(probe, [[1]], params={'t': 'alpha'})
+            "CREATE (:Pre {id: 100})-[:REL {w: 1}]->(:Pre {id: 101}) "
+            "WITH 1 AS one "
+            "CALL db.idx.fulltext.createNodeIndex({label: 'Doc'}) "
+            "CREATE (:Post {id: 200}) "
+            "RETURN one")
 
-        # only :DFA is named
-        res = self.query_and_sync("MATCH (n:DFA) DELETE n")
-        self.env.assertEqual(res.nodes_deleted, 1)
+        # No index was created, on either side. Scoped to the label the call
+        # named, not a global count: this class shares one graph and the tests
+        # before it leave indexes behind.
+        self.assert_agree(
+            "CALL db.indexes() YIELD label WHERE label = 'Doc' "
+            "RETURN count(label)", [[0]])
 
-        # gone from :DFB's index too, and the :DFB-only node is untouched
-        self.assert_agree(probe, [[0]], params={'t': 'alpha'})
-        self.assert_agree(probe, [[1]], params={'t': 'beta'})
-        self.assert_agree("MATCH (n:DFB) RETURN count(n)", [[1]])
+        # The two `:Pre` nodes and the relationship are there...
+        self.assert_agree("MATCH (n:Pre) RETURN count(n)", [[2]])
+        self.assert_agree("MATCH ()-[r:REL]->() RETURN count(r)", [[1]])
+
+        # ...and `:Post` is not, on either side. The write after the `CALL`
+        # never ran, because the stub ended the pipeline. The replica agreeing
+        # is the part that matters here: the master's buffer describes what the
+        # master actually did, so a write the master skipped is a write the
+        # replica must also not have.
+        self.assert_agree("MATCH (n:Post) RETURN count(n)", [[0]])
+
+        # And it all rode effects, with no verbatim GRAPH.QUERY fallback.
+        window = self.monitor_mark()
+        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
+        self.env.assertEqual(self.count_in(window, 'GRAPH.QUERY'), 0)
         self.assert_graph_eq()
+
+    def test11_a_non_deterministic_write_replicates_its_outcome(self):
+        """A write whose size and values the query text does not determine.
+
+        This is the one shape a replica cannot get right by re-running the
+        statement: `rand()` decides how many rows survive and what gets stored,
+        so re-execution reaches a different graph every time. It can only match
+        by applying what the primary actually did, which is the whole claim v3
+        makes. Nothing else in these files varies run to run — every other
+        write has an outcome fixed by its text.
+
+        So the assertions cannot hardcode a count. They compare the two sides.
+        """
+        self.set_effects_config()
+        self.monitor_mark()
+
+        self.query_and_sync(
+            "UNWIND range(0, 40) AS i "
+            "WITH i WHERE i = 0 OR rand() < 0.5 "
+            "CREATE (:Rnd {id: i, r: rand()}) "
+            "RETURN count(*)")
+
+        # The id SET, not just its size: two graphs can hold the same number of
+        # nodes and disagree about which ones, and a count alone cannot see it.
+        m, r = self.probe("MATCH (n:Rnd) RETURN n.id ORDER BY n.id")
+        self.env.assertEqual(r, m)
+
+        # `i = 0` is unconditional, so the write is never empty — without it a
+        # run where every `rand()` fell the wrong way would compare two empty
+        # graphs and pass without replicating anything.
+        self.env.assertTrue(len(m) >= 1)
+        self.env.assertTrue(len(m) <= 41)
+
+        # The stored `rand()` values too. These are the tightest pin in the
+        # file: they are not derivable from the query, not derivable from the
+        # ids, and a replica that re-executed would have its own.
+        m, r = self.probe("MATCH (n:Rnd) RETURN n.id, n.r ORDER BY n.id")
+        self.env.assertEqual(r, m)
+
+        # And the values have to be real randoms, or the comparison above is
+        # two columns of the same constant agreeing with each other. `rand()`
+        # returning a fixed value would leave every assertion here green while
+        # the test stopped meaning anything.
+        distinct = self.master_graph.ro_query(
+            "MATCH (n:Rnd) RETURN count(DISTINCT n.r), count(n)").result_set
+        self.env.assertEqual(distinct[0][0], distinct[0][1])
+        self.env.assertTrue(distinct[0][0] >= 1)
+
+        # One buffer, and no verbatim fallback -- a `rand()` write replicated
+        # verbatim is exactly the bug this test exists to catch.
+        window = self.monitor_mark()
+        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
+        self.env.assertEqual(self.count_in(window, 'GRAPH.QUERY'), 0)
+        self.assert_graph_eq()
+
