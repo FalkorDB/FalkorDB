@@ -1,8 +1,8 @@
 # Reusable workflow: run the flow-test matrix for ONE flavour.
 #
-# Why reusable: GHA caps a single workflow run's matrix at 256 cells.
-# `97 services-bucket files × multiple flavours × multiple archs` blows past
-# that limit, and GHA silently drops the over-budget matrix. By calling this
+# Why reusable: GHA caps a single workflow run's matrix at 256 cells, and
+# silently drops whatever is over budget rather than failing. The file list
+# times the flavours times the architectures goes past that. By calling this
 # workflow once per flavour from rust-pr.yml, each call gets its own 256-cell
 # budget — so adding a new flavour (tsan/ubsan/msan) is one more `uses:`
 # block in the caller, no matrix-budget juggling needed.
@@ -24,7 +24,7 @@ on:
         required: true
         type: string
       image:
-        description: "Full image ref for the falkordb service+replica containers (e.g. ghcr.io/falkordb/falkordb-server:rc-pr-42)"
+        description: "Full image ref for the falkordb service+replica containers"
         required: true
         type: string
       archs:
@@ -41,10 +41,6 @@ on:
         type: string
       build_image:
         description: "Toolchain image used as the job container (cargo + pytest + clang)"
-        required: true
-        type: string
-      pr_number:
-        description: "PR number — used for log-artifact naming + coverage image lookup"
         required: true
         type: string
       sanitizer_env:
@@ -70,6 +66,7 @@ jobs:
   services:
     name: ${{ inputs.flavour }}-flow-svc ${{ matrix.test_file }} (${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 30
     container:
       image: ${{ inputs.build_image }}
       credentials:
@@ -119,6 +116,12 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # persist-credentials defaults to true, which writes the token into
+          # .git/config — and the next step runs ./flow.sh, which is test code
+          # from the pull request, in this same workspace. Under merge_group
+          # that token is the base repository's.
+          persist-credentials: false
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
@@ -189,6 +192,7 @@ jobs:
     if: ${{ inputs.include_spawn }}
     name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 30
     container:
       image: ${{ inputs.build_image }}
       credentials:
@@ -213,6 +217,12 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # persist-credentials defaults to true, which writes the token into
+          # .git/config — and the next step runs ./flow.sh, which is test code
+          # from the pull request, in this same workspace. Under merge_group
+          # that token is the base repository's.
+          persist-credentials: false
       - name: Pre-create cov dir (coverage flavour only)
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
@@ -222,10 +232,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pre-pull RC image
+      - name: Pre-pull RC image, then drop the credential
         env:
           IMAGE: ${{ inputs.image }}
-        run: docker pull "$IMAGE"
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          # The next step runs ./flow.sh — test code from the pull request — in
+          # this workspace. The login above leaves a GHCR token in the docker
+          # config where that code could read it, and the image it needed is
+          # already local, so hand the credential back first.
+          docker logout ghcr.io
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
