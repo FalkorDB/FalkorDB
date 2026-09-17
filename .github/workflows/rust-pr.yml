@@ -1,11 +1,13 @@
 name: Rust PR
 
 on:
-  # No `branches:` filter. A pull request based on another feature branch — a
-  # stack — does not match a trunk filter, so stacked PRs got no engine CI at
-  # all. Nothing below needs a registry write, so there is no reason to
-  # withhold it from them.
+  # No trunk filter, so a pull request based on another feature branch — a
+  # stack — still gets engine CI; under a trunk-only filter those got none at
+  # all. `master` is excluded because it is the C tree: no Cargo workspace, so
+  # every job here would fail on it.
   pull_request:
+    branches-ignore:
+      - "master"
   # The merge queue tests the merge candidate on a branch in THIS repo, so the
   # token is the base repo's and `packages: write` is available — including for
   # a pull request from a fork, with no pull_request_target anywhere.
@@ -34,6 +36,10 @@ jobs:
   check-files:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      # the fork refusal resolves the queued pull request's head repo
+      pull-requests: read
     outputs:
       file_changed: ${{ steps.check.outputs.changed }}
       # One key for every per-run tag: `pr-<N>` on a pull request (byte-identical
@@ -105,6 +111,7 @@ jobs:
           # whether the diff filled the pipe buffer first.
           # shellcheck disable=SC2086
           git diff --name-only $RANGE > /tmp/changed-files.txt
+          echo "pattern=${PATTERN}" >> "$GITHUB_OUTPUT"
           if grep -qE "$PATTERN" /tmp/changed-files.txt; then
             echo "changed=true" | tee -a "$GITHUB_OUTPUT"
           else
@@ -118,11 +125,43 @@ jobs:
       # packages: write and writes a buildcache ref shared with main's own
       # toolchain builds; silently falling back to :latest instead produces
       # errors that look nothing like their cause. Refusing says what happened.
+      # Runs for merge_group too. The queue is where this matters most: the
+      # workflow there is read from the queue branch, so the code is about to
+      # execute with the base repository's token. github.event.pull_request is
+      # absent under merge_group, so the queued pull request is resolved from
+      # the ref — gh-readonly-queue/<base>/pr-<N>-<sha> — and its head repo
+      # checked. Anything unresolvable fails closed.
       - name: Refuse fork changes to build or CI infrastructure
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REF: ${{ github.ref }}
+          PATTERN: ${{ steps.check.outputs.pattern }}
         run: |
           set -euo pipefail
-          BLOCKED=$(grep -E "^(build/|\.github/)" /tmp/changed-files.txt || true)
+          if [ "$EVENT" = "merge_group" ]; then
+            N=$(printf '%s' "$REF" | sed -n 's|.*/pr-\([0-9]\+\)-[0-9a-f]*$|\1|p')
+            if [ -z "$N" ]; then
+              echo "::error::could not resolve the queued pull request from ref '$REF'"
+              exit 1
+            fi
+            PR_HEAD_REPO=$(gh api "/repos/${GITHUB_REPOSITORY}/pulls/${N}" --jq '.head.repo.full_name // empty')
+            if [ -z "$PR_HEAD_REPO" ]; then
+              echo "::error::could not resolve the head repository of queued PR #${N}"
+              exit 1
+            fi
+          fi
+          if [ "$PR_HEAD_REPO" = "$GITHUB_REPOSITORY" ]; then
+            echo "same-repository change; infrastructure paths are allowed"
+            exit 0
+          fi
+          # Same set the toolchain trigger watches, plus .github/ — anything
+          # narrower leaves a path that sets file_changed=true, starts the
+          # privileged `docker` job, and fails on the denied push instead of
+          # saying why. PATTERN is defined in the step above.
+          BLOCKED=$(grep -E "${PATTERN}|^\.github/" /tmp/changed-files.txt || true)
           if [ -n "$BLOCKED" ]; then
             echo "::error::This pull request changes build or CI infrastructure, which is not accepted from a fork."
             echo "::error::Paths: $(echo "$BLOCKED" | tr '\n' ' ')"
