@@ -1247,3 +1247,33 @@ class testIndexScanFlow():
         res = self.graph.query(q).result_set
         # `n.v` is a scalar int, never a list — no row should match.
         self.env.assertEqual(res, [])
+
+    def test_36_int_min_index_scan_retains_filter(self):
+        # Numeric index entries are stored as f64, so integers past 2^53
+        # collide; the residual filter above the index scan is what rejects
+        # those false positives. `i64::MIN` round-trips through f64 exactly,
+        # but every value up to `i64::MIN + 512` maps to the same f64, so the
+        # filter must be kept for it as well.
+        i64_min = -9223372036854775808
+        self.graph.query(f"""CREATE (:K {{v: {i64_min}}}),
+                                    (:K {{v: {i64_min + 1}}}),
+                                    (:K {{v: {i64_min + 512}}}),
+                                    (:K {{v: {i64_min + 1024}}}),
+                                    (:K {{v: 9223372036854775807}}),
+                                    (:K {{v: 0}})""")
+        self.graph.create_node_range_index('K', 'v')
+        wait_for_indices_to_sync(self.graph)
+
+        q = f"MATCH (n:K) WHERE n.v = {i64_min} RETURN n.v"
+        plan = str(self.graph.explain(q))
+        self.env.assertContains('Node By Index Scan', plan)
+        self.env.assertContains('Filter', plan)
+        self.env.assertEqual(self.graph.query(q).result_set, [[i64_min]])
+
+        # the same holds for the max end and for ranges
+        q = "MATCH (n:K) WHERE n.v = 9223372036854775807 RETURN n.v"
+        self.env.assertEqual(self.graph.query(q).result_set,
+                             [[9223372036854775807]])
+
+        q = f"MATCH (n:K) WHERE n.v > {i64_min} RETURN count(n)"
+        self.env.assertEqual(self.graph.query(q).result_set, [[5]])
