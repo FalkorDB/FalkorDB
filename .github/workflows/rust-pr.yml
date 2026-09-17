@@ -385,11 +385,20 @@ jobs:
       - coverage
       - fuzz
     steps:
-      - name: Assert no dependency failed
+      - name: Assert every prerequisite actually succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
           set -euo pipefail
           echo "$RESULTS" | jq .
-          echo "$RESULTS" | jq -e 'to_entries
-            | all(.value.result == "success" or .value.result == "skipped")' > /dev/null
+          # Not `all(success or skipped)`. That is how a gate goes green while
+          # nothing ran: one prerequisite fails, everything downstream skips,
+          # and the assertion sees nothing wrong. `docker` is the only job with
+          # a legitimate skip — it runs only when the toolchain changed — so it
+          # is the only one allowed to report anything but success.
+          echo "$RESULTS" | jq -e '
+            (.docker.result | . == "success" or . == "skipped")
+            and (to_entries
+                 | map(select(.key != "docker"))
+                 | all(.value.result == "success"))
+          ' > /dev/null
