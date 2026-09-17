@@ -405,12 +405,19 @@ jobs:
             echo "No fuzz artifacts found or directory is empty"           
           fi                                                                
 
-  # ── Image-free tier ────────────────────────────────────────────────────
-  # Everything below builds libfalkordb.so in the toolchain container, ships
-  # it as a job artifact, and tests against it. No image is built and nothing
-  # is pushed to a registry, so these run on a read-only GITHUB_TOKEN — which
-  # is what a pull_request from a fork gets. Shapes lifted from rust-push.yml.
-
+  # THE required status check. This is the one name to put in the ruleset; it
+  # covers branch protection and the merge queue together, because GitHub keeps
+  # a single required-check list for both ("merge queue and pull requests checks
+  # are coupled and configured under branch protection rules or rulesets").
+  #
+  # Why an aggregate rather than requiring the jobs themselves: a fork pull
+  # request runs the artifact vehicle only, so any image-vehicle job name would
+  # never report on a fork and would block it forever. One name that every path
+  # can produce is the only thing that works for fork and non-fork alike.
+  #
+  # It must also keep reporting on BOTH events — a required check that the
+  # merge_group run never reports fails the merge on a status that never
+  # arrives. Hence `if: !cancelled()`.
   ci-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
