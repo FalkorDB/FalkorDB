@@ -42,7 +42,7 @@ concurrency:
 
 jobs:
   sweep:
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       packages: write

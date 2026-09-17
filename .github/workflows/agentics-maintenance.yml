@@ -89,7 +89,7 @@ permissions: {}
 jobs:
   close-expired-entities:
     if: ${{ (!(github.event.repository.fork)) && github.event_name != 'push' && (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call' || inputs.operation == '') }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       discussions: write
       issues: write
@@ -129,7 +129,7 @@ jobs:
 
   cleanup-cache-memory:
     if: ${{ (!(github.event.repository.fork)) && github.event_name != 'push' && (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call' || inputs.operation == '' || inputs.operation == 'clean_cache_memories') }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       actions: write
     steps:
@@ -149,7 +149,7 @@ jobs:
 
   run_operation:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation != '' && inputs.operation != 'safe_outputs' && inputs.operation != 'create_labels' && inputs.operation != 'activity_report' && inputs.operation != 'close_agentic_workflows_issues' && inputs.operation != 'clean_cache_memories' && inputs.operation != 'update_pull_request_branches' && inputs.operation != 'validate' && inputs.operation != 'forecast' && (!(github.event.repository.fork)) }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       actions: write
       contents: write
@@ -204,7 +204,7 @@ jobs:
 
   update_pull_request_branches:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'update_pull_request_branches' && (!(github.event.repository.fork)) }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       contents: write
       pull-requests: write
@@ -238,7 +238,7 @@ jobs:
 
   apply_safe_outputs:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'safe_outputs' && (!(github.event.repository.fork)) }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       actions: read
       contents: write
@@ -291,7 +291,7 @@ jobs:
 
   create_labels:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'create_labels' && (!(github.event.repository.fork)) }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       issues: write
@@ -335,7 +335,7 @@ jobs:
 
   activity_report:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'activity_report' && (!(github.event.repository.fork)) }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     timeout-minutes: 120
     permissions:
       actions: read
@@ -440,7 +440,7 @@ jobs:
 
   forecast_report:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'forecast' && (!(github.event.repository.fork)) }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     timeout-minutes: 60
     permissions:
       actions: read
@@ -540,7 +540,7 @@ jobs:
 
   close_agentic_workflows_issues:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'close_agentic_workflows_issues' && (!(github.event.repository.fork)) }}
-    runs-on: ubuntu-slim
+    runs-on: incredibuild-runner
     permissions:
       issues: write
     steps:
@@ -571,7 +571,7 @@ jobs:
 
   validate_workflows:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'validate' && (!(github.event.repository.fork)) }}
-    runs-on: ubuntu-latest
+    runs-on: incredibuild-runner
     permissions:
       contents: read
       issues: write
