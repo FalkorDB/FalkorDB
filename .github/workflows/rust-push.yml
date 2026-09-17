@@ -52,60 +52,20 @@ jobs:
             echo "changed=false"
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
-  # Look up the merging PR once and share the number with the promote-* jobs.
-  # Same SHA→PR API call used by release-image.yml's release-event flow.
-  # Trunk-only: version branches don't promote toolchain or :edge.
-  #
-  # A commit with no PR *in this repo* is not an error — it just means no
-  # rc-pr-<N> image was ever built for it, so there is nothing to promote. The
-  # promote-* jobs gate on a non-empty pr_n and skip cleanly. See the step body.
-  find-pr:
-    needs: check-files
-    if: ${{ github.ref == 'refs/heads/main' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      pr_n: ${{ steps.pr.outputs.n }}
-    steps:
-      - name: Find merging PR number
-        id: pr
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SHA: ${{ github.sha }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          # Authoritative lookup: ask the API which PR(s) this commit landed via.
-          # Avoids parsing the merge-commit subject (squash subjects, merge subjects
-          # and rebase-and-merge subjects all differ; some workflows rewrite them).
-          N=$(gh api "/repos/${REPO}/commits/${SHA}/pulls" \
-            --jq 'map(select(.state == "closed" and .merged_at != null)) | .[0].number // empty')
-          if [ -z "$N" ]; then
-            # No PR in THIS repo => no rc-pr-<N> image exists for this commit, so
-            # promotion is impossible and failing would only add a red X. Commits
-            # reach a trunk without a PR when:
-            #     the commits' PRs live in the source repo, not the target;
-            #   - someone pushes (or force-pushes) straight to a trunk.
-            # Emit an empty pr_n; the promote-* jobs below skip on it. Downside
-            # accepted: a direct push to a trunk now skips promotion quietly
-            # instead of erroring, so watch for this notice if :edge stops
-            # advancing.
-            echo "::notice::commit ${SHA} has no merged PR in ${REPO}; skipping channel promotion (no rc-pr-<N> image to retag)"
-            echo "n=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "n=$N" >> "$GITHUB_OUTPUT"
 
-  # Promote the merging PR's toolchain image (ghcr.io/falkordb/falkordb-build:pr-<N>)
-  # to :latest by retagging the existing multi-arch manifest — no rebuild, so
-  # what was validated in PR CI is byte-identically what becomes :latest.
+  # Promote the toolchain image the MERGE QUEUE built (falkordb-build:mg-<sha>)
+  # to :latest by retagging the existing manifest — no rebuild, so what was
+  # validated is byte-identically what becomes :latest.
+  #
+  # Keyed on the commit SHA, not a PR number. The queue tests the merge
+  # candidate and that commit is what lands, so github.sha here is the same SHA
+  # the queue built under. The old commit->PR lookup existed because squash
+  # merges produced SHAs that were never built; the queue makes that false.
   # Gated on file_changed because the toolchain only gets a per-PR tag when
   # build/Dockerfile actually changed in that PR.
   docker:
-    needs: [check-files, find-pr]
-    if: ${{ needs.check-files.outputs.file_changed == 'true' && needs.find-pr.outputs.pr_n != '' && github.ref == 'refs/heads/main' }}
+    needs: check-files
+    if: ${{ needs.check-files.outputs.file_changed == 'true' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -120,18 +80,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote :pr-${{ needs.find-pr.outputs.pr_n }} → :latest
+      - name: Promote :mg-${{ github.sha }} → :latest
         env:
-          PR_NUM: ${{ needs.find-pr.outputs.pr_n }}
+          CI_KEY: mg-${{ github.sha }}
         run: |
           set -euo pipefail
           docker buildx imagetools create \
             -t ghcr.io/falkordb/falkordb-build:latest \
-            "ghcr.io/falkordb/falkordb-build:pr-${PR_NUM}"
+            "ghcr.io/falkordb/falkordb-build:${CI_KEY}"
 
-  # Promote the merging PR's runtime RC images (rc-pr-<N>) to the rolling
-  # `:edge` channel on every trunk merge — same byte-identical retag, no
-  # rebuild.
+  # Promote the runtime images the MERGE QUEUE built (rc-mg-<sha>) to the
+  # rolling `:edge` channel on every trunk merge — byte-identical retag.
+  #
+  # Deliberately NOT the PR's own rc-pr-<N> image, even though same-repo PRs
+  # still publish one. That image is built from the PR head; the queue's is
+  # built from the merge candidate, which is what actually lands. Promoting the
+  # PR image would ship bytes that were never tested in the combination that
+  # merged — the staleness this whole change exists to remove. A fork PR has no
+  # rc-pr-<N> at all, so keying on it would simply fail for forks.
   #
   # `:edge` serves the Rust engine now that this tree is the default branch.
   # The C engine's rolling images moved to the `edge-c` family on `master`, and
@@ -139,8 +105,7 @@ jobs:
   # `:edge-rs` stays as a deprecated alias. Bare `:latest` is untouched — that
   # pointer only moves at 6.0 GA, via release-image.yml. See issue #2290.
   promote-edge:
-    needs: find-pr
-    if: ${{ needs.find-pr.outputs.pr_n != '' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -165,9 +130,9 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Promote rc-pr-${{ needs.find-pr.outputs.pr_n }} → :edge (${{ matrix.repo }})
+      - name: Promote rc-mg-${{ github.sha }} → :edge (${{ matrix.repo }})
         env:
-          PR_NUM: ${{ needs.find-pr.outputs.pr_n }}
+          CI_KEY: mg-${{ github.sha }}
           REPO:   ${{ matrix.repo }}
         run: |
           set -euo pipefail
@@ -188,7 +153,7 @@ jobs:
             -t "docker.io/falkordb/${REPO}:edge" \
             -t "ghcr.io/falkordb/${REPO}:edge-rs" \
             -t "docker.io/falkordb/${REPO}:edge-rs" \
-            "ghcr.io/falkordb/${REPO}:rc-pr-${PR_NUM}"
+            "ghcr.io/falkordb/${REPO}:rc-${CI_KEY}"
 
   flow-test-matrix:
     runs-on: ubuntu-latest
