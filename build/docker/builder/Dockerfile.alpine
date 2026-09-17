@@ -11,10 +11,10 @@
 #
 # Redis: built from git at REDIS_VERSION (multi-stage). Must be built on
 # alpine itself — a glibc binary from debian:trixie-slim won't run against
-# musl. Same pinned tag (8.6.3) as the other toolchains and sanitize so
+# musl. Same pinned tag (8.10.1) as the other toolchains and sanitize so
 # every test sees identical Redis behaviour.
 
-ARG REDIS_VERSION=8.6.3
+ARG REDIS_VERSION=8.10.1
 
 #--------------------------------------------------------------------------
 # Stage 1: build redis-server / redis-cli on alpine itself (musl-linked).

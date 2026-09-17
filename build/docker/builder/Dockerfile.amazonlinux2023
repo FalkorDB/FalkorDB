@@ -4,10 +4,10 @@
 # with pip 3.31.6. Adds clang-devel for bindgen/clang-sys.
 #
 # Redis: built from git at REDIS_VERSION (multi-stage). Same pinned tag
-# (8.6.3) as the other toolchains and sanitize. Built on AL2023 itself so
+# (8.10.1) as the other toolchains and sanitize. Built on AL2023 itself so
 # the resulting glibc 2.34 binary runs in the same base.
 
-ARG REDIS_VERSION=8.6.3
+ARG REDIS_VERSION=8.10.1
 
 #--------------------------------------------------------------------------
 # Stage 1: build redis-server / redis-cli from source at a pinned tag.

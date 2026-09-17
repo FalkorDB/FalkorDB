@@ -7,7 +7,7 @@
 # Redis: built from git at REDIS_VERSION (multi-stage). See Dockerfile.ubuntu
 # for the rationale (same pattern, pinned to REDIS_VERSION).
 
-ARG REDIS_VERSION=8.6.3
+ARG REDIS_VERSION=8.10.1
 
 #--------------------------------------------------------------------------
 # Stage 1: build redis-server / redis-cli from source at a pinned tag.
