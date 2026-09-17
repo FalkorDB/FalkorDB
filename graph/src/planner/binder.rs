@@ -779,6 +779,34 @@ impl Binder {
     /// Bind the inner body of a CALL subquery with scope isolation.
     /// For Query bodies: set env to imported vars, bind normally.
     /// For Union bodies: create binders initialized with imported vars for each branch.
+    ///
+    /// # The body's entry projection
+    ///
+    /// Every body gets one, even a body that imports nothing, because it is
+    /// the record boundary between the outer scope and the body — not merely
+    /// the carrier for imported values.
+    ///
+    /// The body is bound in its own scope, so its variables are numbered from
+    /// 0; a runtime row is a dense array indexed by `Variable.id` alone, with
+    /// `scope_id` never reaching the row. The enclosing `Apply` feeds the
+    /// outer row into the body through an `Argument` leaf, so without a
+    /// boundary the body's variables are written over the outer bindings
+    /// occupying those same slots — a body predicate is then tested against an
+    /// outer value, and a body scan endpoint looks already bound.
+    ///
+    /// `Project` is that boundary: `ProjectOp` builds a fresh batch holding
+    /// only what it projects and drops its input, so nothing below it reaches
+    /// the body. An empty projection still carries row count and `origin_row`,
+    /// which is all a body importing nothing needs from the outer stream.
+    ///
+    /// This mirrors the C engine, where an `Argument` is planted only beneath
+    /// a childless `Project` (`_find_feeding_points`), so the outer record
+    /// likewise only ever enters a body through a projection that rebuilds it.
+    /// C can also omit the `Argument` entirely for a non-importing body, since
+    /// its `Apply` is row-at-a-time and re-runs the body per outer record;
+    /// Rust's `Apply` is batched and needs the `Argument` to carry cardinality
+    /// and `origin_row` correlation, so it takes the projection route for
+    /// every body.
     fn bind_call_body(
         &mut self,
         body: RawQueryIR,
@@ -802,24 +830,25 @@ impl Binder {
                 // the CALL body is isolated, not a child scope)
                 self.env_stack.push(HashMap::new());
 
-                if !imported.is_empty() {
-                    // Allocate fresh inner IDs for imported variables and build
-                    // projection pairs that map outer → inner.
-                    let projections = self.build_import_projections(&imported);
+                // Allocate fresh inner IDs for imported variables and build
+                // projection pairs that map outer → inner. Emitted even when
+                // nothing is imported: this clause is the body's entry
+                // projection, and the body needs it as a record boundary
+                // whether or not it carries a value across. See
+                // `bind_call_body`'s note on why.
+                let projections = self.build_import_projections(&imported);
 
-                    // Emit a bound import WITH as the first clause
-                    bound.push(QueryIR::With {
-                        distinct: false,
-                        all: false,
-                        exprs: projections,
-                        copy_from_parent: vec![],
-                        orderby: vec![],
-                        skip: None,
-                        limit: None,
-                        filter: None,
-                        write: false,
-                    });
-                }
+                bound.push(QueryIR::With {
+                    distinct: false,
+                    all: false,
+                    exprs: projections,
+                    copy_from_parent: vec![],
+                    orderby: vec![],
+                    skip: None,
+                    limit: None,
+                    filter: None,
+                    write: false,
+                });
 
                 // Bind remaining clauses (skip raw import WITH)
                 for clause in clauses.into_iter().skip(skip_count) {
@@ -865,20 +894,20 @@ impl Binder {
                         let skip_count = usize::from(has_import);
                         let mut bound_clauses = Vec::with_capacity(clauses.len());
 
-                        if !imported.is_empty() {
-                            let projections = binder.build_import_projections(&imported);
-                            bound_clauses.push(QueryIR::With {
-                                distinct: false,
-                                all: false,
-                                exprs: projections,
-                                copy_from_parent: vec![],
-                                orderby: vec![],
-                                skip: None,
-                                limit: None,
-                                filter: None,
-                                write: false,
-                            });
-                        }
+                        // Entry projection for this branch, emitted even when
+                        // the branch imports nothing (see `bind_call_body`).
+                        let projections = binder.build_import_projections(&imported);
+                        bound_clauses.push(QueryIR::With {
+                            distinct: false,
+                            all: false,
+                            exprs: projections,
+                            copy_from_parent: vec![],
+                            orderby: vec![],
+                            skip: None,
+                            limit: None,
+                            filter: None,
+                            write: false,
+                        });
 
                         for clause in clauses.into_iter().skip(skip_count) {
                             bound_clauses.push(binder.bind_ir(clause)?);
