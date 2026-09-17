@@ -373,7 +373,7 @@ pub fn for_each_record(
 /// the master skipped.
 ///
 /// The master takes a shortcut for these — `delete_pending_node` unwinds the
-/// node out of `Pending` and `return_node_id` hands the id back — so nothing
+/// node out of `Pending` and `cancel_node_id` hands the id back — so nothing
 /// it commits mentions the id at all. The buffer said nothing either, and the
 /// replica's id space came out one short: its next allocation after a
 /// promotion landed on a node that was already live, fusing two entities.
@@ -411,7 +411,7 @@ fn digest_cancelled(
     // Both kinds are cancelled by the same event: `delete_pending_node` unwinds
     // a node created in this commit, and every relationship hanging off it goes
     // with it. Their ids are reserved and returned the same way
-    // (`return_node_id` / `return_relationship_id` both push into a recycle
+    // (`cancel_node_id` / `cancel_relationship_id` both push into a recycle
     // bin), and `IdSpace::verify` checks both spaces for holes — so a buffer
     // that covers one and not the other is refused outright, naming the ids it
     // allocated and did not create.
@@ -1727,7 +1727,8 @@ mod cancelled {
         p.set_schema_baseline(g);
         p.stage_created_node(0, &[0], &[(0, Value::Int(1))]);
         p.stage_created_node(1, &[1], &[]);
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 
@@ -1823,7 +1824,8 @@ mod cancelled {
             NodeId::from(3_u64),
         ));
         // Cancels node 0, and with it the edge hanging off it.
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 
@@ -1949,7 +1951,8 @@ mod cancelled {
         ));
         // Node 0 is committed, so this cascades the pending edge without
         // cancelling the node — the shape `delete.rs` reaches twice.
-        p.remove_pending_relationships_for_node(NodeId::from(0_u64));
+        p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p.stage_deleted_node(0, &[0]);
 
         let mut buf = crate::effects::v3::new_buffer();
@@ -1960,10 +1963,9 @@ mod cancelled {
             let mut rg = replica.borrow_mut();
             rg.get_label_id_mut("A");
             rg.get_type_id_mut("R");
-            let mut space = crate::graph::id_space::IdSpace::at(rg.node_id_bound());
             let mut ids = RoaringTreemap::new();
             ids.insert(0);
-            rg.create_nodes(&ids, &mut space).unwrap();
+            rg.create_nodes(&ids).unwrap();
         }
         let mut rg = replica.borrow_mut();
         crate::effects::v3::apply::apply_effects(&mut rg, &buf)
@@ -1993,7 +1995,8 @@ mod cancelled {
         p.set_schema_baseline(&g);
         p.stage_created_node(0, &[0], &[]);
         p.stage_deleted_node(7, &[0]);
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
 
         let records = digest(&p, &g);
         let last_two = &records[records.len() - 2..];
@@ -2017,6 +2020,9 @@ mod cascade {
     /// `CREATE (a)-[:R]->(b) DELETE a` — the delete cascades to the edge before
     /// either reaches the graph.
     fn cascaded() -> Pending {
+        // A graph only so the cascade has somewhere to return the ids to; the
+        // fixture is the `Pending` it leaves behind.
+        let g = graph_cell();
         let mut p = Pending::default();
         p.stage_created_node(0, &[], &[]);
         p.stage_created_node(1, &[], &[]);
@@ -2026,7 +2032,8 @@ mod cascade {
             NodeId::from(1_u64),
             Arc::new("R".to_owned()),
         );
-        p.remove_pending_relationships_for_node(NodeId::from(0_u64));
+        p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 

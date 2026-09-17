@@ -25,7 +25,6 @@ use crate::effects::DecodeError;
 use crate::effects::v3::{self as v3, EffectEncode, Record, emit::for_each_record, open_payload};
 use crate::graph::graph::Graph;
 use crate::graph::graphblas::test_init::ensure_init;
-use crate::graph::id_space::IdSpace;
 use crate::runtime::pending::Pending;
 
 // ── graphs ──
@@ -64,14 +63,8 @@ pub(crate) fn with_edge(
 ) {
     let mut graph = g.borrow_mut();
     graph
-        .create_relationships_bulk(
-            &Arc::new(type_name.to_owned()),
-            &[0],
-            &[1],
-            &[id],
-            &mut IdSpace::at(0),
-        )
-        .expect("no batch, nothing to refuse");
+        .create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id])
+        .expect("a fixture's own ids, nothing to refuse");
 }
 
 /// One live node, labelled.
@@ -82,9 +75,7 @@ pub(crate) fn live_node(
 ) {
     let mut graph = g.borrow_mut();
     let ids: RoaringTreemap = std::iter::once(id).collect();
-    graph
-        .create_nodes(&ids, &mut IdSpace::at(0))
-        .expect("fixture ids are fresh");
+    graph.create_nodes(&ids).expect("fixture ids are fresh");
     let mut rows = Vec::new();
     let mut cols = Vec::new();
     for name in labels {
