@@ -48,7 +48,7 @@ jobs:
   analyze:
     needs: detect-toolchain
     name: Analyze
-    runs-on: ubuntu-latest
+    runs-on: github-benchmark-lg
     container: ${{ needs.detect-toolchain.outputs.image }}
     permissions:
       actions: read
