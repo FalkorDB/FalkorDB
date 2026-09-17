@@ -2,7 +2,7 @@ import os
 from common import *
 
 GRAPH_ID = "config"
-NUMBER_OF_CONFIGURATIONS = 22 # number of configurations available
+NUMBER_OF_CONFIGURATIONS = 23 # number of configurations available
 
 class testConfig(FlowTestsBase):
     def __init__(self):
@@ -50,7 +50,8 @@ class testConfig(FlowTestsBase):
                 # appended, not inserted: this list is checked POSITIONALLY
                 # against the enum order, so a new configuration has to go last
                 # in both places or every row after it fails
-                ("EFFECTS_VERSION", 2)
+                ("EFFECTS_VERSION", 2),
+                ("EFFECTS_COMPRESSION", 0)
         ]
 
         for i, config in enumerate(response):
