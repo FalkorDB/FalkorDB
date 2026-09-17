@@ -35,13 +35,12 @@ pub enum LeafFormat {
 const COMPACT_MIN_SAVING_BPE: usize = 8;
 
 /// Fewest **power-of-two** bytes (1, 2, 4, or 8) that hold `x`.
-const fn pow2_bytes_for(x: u64) -> usize {
-    match x {
-        0..=0xFF => 1,
-        0x100..=0xFFFF => 2,
-        0x1_0000..=0xFFFF_FFFF => 4,
-        _ => 8,
-    }
+///
+/// Thin wrapper: the choice is shared with the effects codec, which narrows ids
+/// the same way — see [`crate::narrow_int::width_for`]. Only the return type
+/// differs, because a page offset is a `usize` here and a wire field there.
+fn pow2_bytes_for(x: u64) -> usize {
+    crate::narrow_int::width_for(x) as usize
 }
 
 /// Merge two **sorted** `(key, doc)` sequences into one new `Vec`, dropping exact duplicates (so a tuple

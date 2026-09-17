@@ -32,9 +32,10 @@ updates:
     default-days: 7
 # Python test dependencies for the e2e / TCK / flow suites.
 #
-# `redis<8.1` in tests/requirements.txt is a deliberate pin with a documented
-# reason (falkordb-py 1.6.2 forwards `himport_registry` to the sync client).
-# Dependabot honours declared constraints and will not widen it, so the pin
+# `redis` in tests/requirements.txt carries an explicit upper bound with a
+# documented reason (redis-py 8.1.0 put `himport_registry` into
+# `connection_kwargs`; falkordb-py < 1.7.0 forwarded it to the sync client).
+# Dependabot honours declared constraints and will not widen the bound, so it
 # holds until someone edits it by hand.
 - directory: /tests
   package-ecosystem: pip

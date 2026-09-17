@@ -1,0 +1,140 @@
+# Reusable workflow: run one flavour's flow matrix against a BUILT ARTIFACT.
+#
+# Separate from _flow-flavour.yml, which does the same thing against a published
+# image, because GitHub expands every matrix in a workflow run before it
+# evaluates any job's `if:`. Both shapes in one file means both matrices count
+# against the same 256-cell budget even when one of them is skipped — which is a
+# startup failure, not a skipped job.
+#
+# No service containers and no registry read: the caller built the engine and
+# uploaded it, RLTest spawns redis locally with --loadmodule, and coverage
+# profiles land straight in the workspace. That is what lets a fork — and a
+# stacked pull request — run the flow suite at all.
+
+name: Flow tests (flavour, artifact)
+
+on:
+  workflow_call:
+    inputs:
+      flavour:
+        description: "Flavour label used in cell names (release / coverage / ...)"
+        required: true
+        type: string
+      archs:
+        description: "JSON array of architectures"
+        required: true
+        type: string
+      test_files:
+        description: "JSON array of all flow test files. One matrix: there is no docker split to make."
+        required: true
+        type: string
+      build_image:
+        description: "Toolchain image used as the job container"
+        required: true
+        type: string
+      artifact_name:
+        description: "Name of the uploaded engine artifact"
+        required: false
+        type: string
+        default: release-binary
+      artifact_path:
+        description: "Where to unpack it so flow.sh finds it"
+        required: false
+        type: string
+        default: target/release
+      sanitizer_env:
+        description: "Value for the SANITIZER env var"
+        required: false
+        type: string
+        default: ""
+      collect_coverage:
+        description: "Gate the profraw collection + codecov upload"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  #  No service containers, no registry read: the caller has
+  # already built the engine and uploaded it, RLTest spawns redis locally with
+  # --loadmodule, and coverage profiles land straight in the workspace. This is
+  # what lets a fork — and a stacked pull request — run the flow suite at all.
+  #
+  # One matrix over the whole file list rather than the services/spawn split:
+  # that split exists to decide which cells can share a docker service, and
+  # there is no docker here.
+  flow:
+    name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    container: ${{ inputs.build_image }}
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    env:
+      SANITIZER: ${{ inputs.sanitizer_env }}
+      CODE_COVERAGE: ${{ inputs.collect_coverage && '1' || '' }}
+      # Point flow.sh straight at where the artifact was unpacked, rather than
+      # setting RELEASE and letting it infer the directory. One source of truth,
+      # and it sidesteps a GitHub expression trap: `a && '' || '1'` does NOT
+      # yield '' when a is true — the empty string is falsy, so the `||` takes
+      # over and it always evaluates to '1'.
+      TARGET_DIR: ${{ inputs.artifact_path }}
+    strategy:
+      fail-fast: false
+      matrix:
+        test_file: ${{ fromJson(inputs.test_files) }}
+        arch: ${{ fromJson(inputs.archs) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The next step runs ./flow.sh, which is test code from the pull
+          # request, in this workspace. Do not leave the token in .git/config.
+          persist-credentials: false
+      - name: Download the engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ${{ inputs.artifact_path }}
+      - run: chmod +x ${{ inputs.artifact_path }}/libfalkordb.so
+      - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
+        env:
+          TEST_FILE: ${{ matrix.test_file }}
+        run: |
+          . /data/venv/bin/activate
+          TEST="$TEST_FILE" FAIL_FAST=1 ./flow.sh
+      - name: Collect coverage (profraw -> lcov)
+        if: ${{ !cancelled() && inputs.collect_coverage }}
+        env:
+          MODULE: ${{ inputs.artifact_path }}/libfalkordb.so
+        run: |
+          set -euo pipefail
+          # The module ran in-process, so LLVM has already flushed on exit and
+          # the profiles are in the workspace — no container to stop and copy
+          # out of. Still fail loudly on an empty set: a silent skip here is how
+          # coverage quietly stops being collected (see #2521).
+          PROFRAW=$(find . -type f -name "*.profraw" -size +0c 2>/dev/null || true)
+          if [ -z "$PROFRAW" ]; then
+            echo "::error::no profraw files produced"
+            exit 1
+          fi
+          # shellcheck disable=SC2086
+          llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
+          llvm-cov-22 export --format=lcov --instr-profile cov.profdata "$MODULE" > codecov.txt.all
+          lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() && inputs.collect_coverage }}
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov.txt
+          flags: flow-${{ inputs.flavour }}
+          disable_search: true
+      - name: Upload flow logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ inputs.flavour }}-flow-logs-${{ matrix.arch }}-${{ strategy.job-index }}
+          path: tests/flow/logs/
+          if-no-files-found: ignore

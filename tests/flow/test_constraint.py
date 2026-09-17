@@ -584,6 +584,68 @@ class testConstraintNodes():
         drop_node_range_index(self.g, "Author", "nickname")
         drop_node_range_index(self.g, "Author", "birthdate")
 
+    def test09_constraint_enforced_on_removed_and_readded_label(self):
+        # A label that is removed and re-added in the same query is still
+        # carried by the node at commit time, so constraints on it must be
+        # enforced. Before the fix for #2777 the pending add and the pending
+        # remove both sat in the transaction's bookkeeping and the remove won,
+        # so the node looked unlabelled to the constraint check and violations
+        # were silently let through.
+
+        #-----------------------------------------------------------------------
+        # unique constraint
+        #-----------------------------------------------------------------------
+        create_unique_node_constraint(self.g, "Rejoin", "v", sync=True)
+        self.g.query("CREATE (:Rejoin {v: 1})")
+
+        # duplicate created in the SAME query that removes and re-adds the
+        # constrained label must still be rejected
+        try:
+            self.g.query("MATCH (n:Rejoin {v: 1}) REMOVE n:Rejoin SET n:Rejoin CREATE (:Rejoin {v: 1})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Rejoin", str(e))
+
+        # the rejected query must not have left anything behind
+        self.env.assertEqual(self.g.query("MATCH (n:Rejoin) RETURN count(n)").result_set[0][0], 1)
+
+        # a node that re-acquires the label must also collide with an existing
+        # value it is updated into
+        self.g.query("CREATE (:Rejoin {v: 2})")
+        try:
+            self.g.query("MATCH (n:Rejoin {v: 2}) REMOVE n:Rejoin SET n:Rejoin SET n.v = 1")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type Rejoin", str(e))
+        self.env.assertEqual(self.g.query("MATCH (n:Rejoin {v: 2}) RETURN count(n)").result_set[0][0], 1)
+
+        # genuinely dropping the label frees the value — the constraint must
+        # not be over-enforced
+        result = self.g.query("MATCH (n:Rejoin {v: 1}) REMOVE n:Rejoin CREATE (:Rejoin {v: 1})")
+        self.env.assertEqual(result.labels_removed, 1)
+        self.env.assertEqual(result.nodes_created, 1)
+        self.env.assertEqual(self.g.query("MATCH (n:Rejoin) RETURN count(n)").result_set[0][0], 2)
+
+        #-----------------------------------------------------------------------
+        # mandatory constraint
+        #-----------------------------------------------------------------------
+        create_mandatory_node_constraint(self.g, "Mandate", "p", sync=True)
+        self.g.query("CREATE (:Mandate {p: 1})")
+
+        # dropping the mandatory property while the label is removed and
+        # re-added must be rejected — the node still ends up labelled
+        try:
+            self.g.query("MATCH (n:Mandate) REMOVE n:Mandate SET n:Mandate SET n.p = NULL")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("mandatory constraint violation", str(e))
+        self.env.assertEqual(self.g.query("MATCH (n:Mandate) RETURN n.p").result_set[0][0], 1)
+
+        # dropping the label for real releases the node from the constraint
+        result = self.g.query("MATCH (n:Mandate) REMOVE n:Mandate SET n.p = NULL")
+        self.env.assertEqual(result.labels_removed, 1)
+        self.env.assertEqual(self.g.query("MATCH (n:Mandate) RETURN count(n)").result_set[0][0], 0)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
@@ -998,6 +1060,137 @@ class testConstraintEdges():
         except ResponseError as e:
             self.env.assertContains("unique constraint violation, on edge of relationship-type Artist", str(e))
 
+# a composite UNIQUE constraint is vacuously satisfied when ANY of the
+# constrained properties is NULL / absent: the composite key is unknown, and an
+# unknown key can not be proven to collide with another. see issue #2778
+COMPOSITE_NULL_GRAPH_ID = "composite_unique_nulls"
+
+class testCompositeUniqueConstraintNulls():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(COMPOSITE_NULL_GRAPH_ID)
+        self.g = self.db.select_graph(COMPOSITE_NULL_GRAPH_ID)
+
+    def test01_partial_nodes_accepted(self):
+        g = self.g
+
+        create_unique_node_constraint(g, "P", "a", "b", sync=True)
+        c = get_constraint(g, "UNIQUE", "NODE", "P", "a", "b")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        # two nodes agreeing on 'a', both missing 'b'
+        g.query("CREATE (:P {a: 1})")
+        g.query("CREATE (:P {a: 1})")
+
+        # mirrored: two nodes agreeing on 'b', both missing 'a'
+        g.query("CREATE (:P {b: 7})")
+        g.query("CREATE (:P {b: 7})")
+
+        # an explicit NULL is equivalent to an absent property
+        g.query("CREATE (:P {a: 1, b: NULL})")
+
+        self.env.assertEqual(g.query("MATCH (n:P) RETURN count(n)").result_set[0][0], 5)
+
+    def test02_full_duplicate_still_rejected(self):
+        g = self.g
+
+        # every constrained property present -> the key is known and enforced
+        g.query("CREATE (:P {a: 5, b: 6})")
+
+        try:
+            g.query("CREATE (:P {a: 5, b: 6})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type P", str(e))
+
+        # a key sharing only one component is still distinct
+        g.query("CREATE (:P {a: 5, b: 7})")
+
+        self.env.assertEqual(g.query("MATCH (n:P) RETURN count(n)").result_set[0][0], 7)
+
+    def test03_completing_a_partial_key_is_enforced(self):
+        g = self.g
+
+        # this node's key is unknown, so it is accepted
+        g.query("CREATE (:P {a: 100, tag: 'partial'})")
+
+        # filling in the missing property would produce a real duplicate
+        g.query("CREATE (:P {a: 100, b: 200})")
+        try:
+            g.query("MATCH (n:P {tag: 'partial'}) SET n.b = 200")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type P", str(e))
+
+        # completing it to a distinct key is fine, and dropping the property
+        # makes the key unknown again
+        g.query("MATCH (n:P {tag: 'partial'}) SET n.b = 201")
+        g.query("MATCH (n:P {tag: 'partial'}) REMOVE n.b")
+
+    def test04_single_property_constraint_unchanged(self):
+        # for a single property "any null" and "all null" coincide
+        g = self.g
+
+        create_unique_node_constraint(g, "S", "a", sync=True)
+        c = get_constraint(g, "UNIQUE", "NODE", "S", "a")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        g.query("CREATE (:S {a: 1})")
+
+        try:
+            g.query("CREATE (:S {a: 1})")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type S", str(e))
+
+        g.query("CREATE (:S {a: 2})")
+
+        # nodes missing the constrained property do not participate
+        g.query("CREATE (:S {z: 1})")
+        g.query("CREATE (:S {z: 2})")
+
+        self.env.assertEqual(g.query("MATCH (n:S) RETURN count(n)").result_set[0][0], 4)
+
+    def test05_constraint_creation_over_existing_partial_data(self):
+        g = self.g
+
+        # partial entities must not block the constraint from becoming
+        # operational...
+        g.query("CREATE (:E {a: 1}), (:E {a: 1}), (:E {b: 2}), (:E {b: 2}), (:E {a: 3, b: 3})")
+        create_unique_node_constraint(g, "E", "a", "b", sync=True)
+        c = get_constraint(g, "UNIQUE", "NODE", "E", "a", "b")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        # ...but genuine duplicates must
+        g.query("CREATE (:D {a: 1, b: 1}), (:D {a: 1, b: 1})")
+        create_unique_node_constraint(g, "D", "a", "b", sync=True)
+        c = get_constraint(g, "UNIQUE", "NODE", "D", "a", "b")
+        self.env.assertEqual(c.status, "FAILED")
+
+    def test06_partial_edges_accepted(self):
+        g = self.g
+
+        create_unique_edge_constraint(g, "R", "a", "b", sync=True)
+        c = get_constraint(g, "UNIQUE", "RELATIONSHIP", "R", "a", "b")
+        self.env.assertEqual(c.status, "OPERATIONAL")
+
+        g.query("CREATE (:N {i: 1}), (:N {i: 2})")
+
+        # two edges agreeing on 'a', both missing 'b'
+        g.query("MATCH (x:N {i:1}), (y:N {i:2}) CREATE (x)-[:R {a: 1}]->(y)")
+        g.query("MATCH (x:N {i:1}), (y:N {i:2}) CREATE (x)-[:R {a: 1}]->(y)")
+
+        # a fully specified key is still enforced
+        g.query("MATCH (x:N {i:1}), (y:N {i:2}) CREATE (x)-[:R {a: 2, b: 2}]->(y)")
+        try:
+            g.query("MATCH (x:N {i:1}), (y:N {i:2}) CREATE (x)-[:R {a: 2, b: 2}]->(y)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation, on edge of relationship-type R", str(e))
+
+        self.env.assertEqual(g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0], 3)
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():
@@ -1027,7 +1220,7 @@ class testConstraintReplication():
             with self.replica.monitor() as m:
                 MONITOR_ATTACHED = True
                 for cmd in m.listen():
-                    if 'GRAPH.CONSTRAINT' in cmd['command']:
+                    if 'GRAPH.EFFECT' in cmd['command']:
                         self.monitor.append(cmd)
         except:
             pass
@@ -1051,24 +1244,71 @@ class testConstraintReplication():
         # create unique edge constraint over Knows since
         create_unique_edge_constraint(self.g, 'Knows', 'since', sync=True)
 
-        # validate constrains
+        # Six constraints, not six anything-else. The number that used to be
+        # here was 12: v2 replicated each `GRAPH.CONSTRAINT` *twice* — once on
+        # creation and once more as the signal that validation had finished,
+        # because the command had no way to carry a status. v3 carries the
+        # status in the announcement, so the repeat is not a signal any more.
+        #
+        # Each of these is announced once because this graph is empty, so
+        # validation runs inline on the main thread and the status is settled
+        # before the command returns. Above the async threshold there are two
+        # announcements — UNDER CONSTRUCTION, then the settled status — and
+        # that is `testEffectsV3_03_ConstraintConvergence`, which asserts both
+        # of them are CREATE_CONSTRAINT records rather than merely two effects.
         constraints = list_constraints(self.g)
         self.env.assertEqual(len(constraints), 6)
         for c in constraints:
             self.env.assertEqual(c.status, 'OPERATIONAL')
 
-        # each constraint should be replicated twice from source to replica:
-        # 1. upon creation
-        # 2. upon constraint becoming activate
+        # What is worth asserting here is *which command* carries a constraint to
+        # a replica, and that the replica converges — not how many payloads went
+        # past.
+        #
+        # Counting them was wrong twice over. A GRAPH.EFFECT payload is binary,
+        # so MONITOR cannot tell a constraint's effect from a node-create's, and
+        # the count is not six anyway: each `create_unique_*` helper builds a
+        # supporting index first, which is another effect. Measured, these six
+        # creates put eleven effects on the wire, so `>= 6` was passing with five
+        # to spare and functioning as a sleep.
+        #
+        # `test_effects_v3.py` pins the per-shape announcement counts, where the
+        # payloads are constructed rather than observed through MONITOR.
         self.source.execute_command("WAIT", 1, 0)
 
-        # wait for all 12 GRAPH.CONSTRAINT commands to be replicated
-        elapsed = 10
-        while len(self.monitor) < 12 and elapsed > 0:
-            time.sleep(0.2)
-            elapsed -= 0.2
+        replica_g = Graph(self.replica, GRAPH_ID)
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            self.source.execute_command("WAIT", 1, 0)
+            cs = list_constraints(replica_g)
+            if len(cs) == 6 and all(c.status == 'OPERATIONAL' for c in cs):
+                break
+            time.sleep(0.25)
 
-        self.env.assertEqual(len(self.monitor), 12)
+        replica_constraints = list_constraints(replica_g)
+        self.env.assertEqual(len(replica_constraints), 6)
+        for c in replica_constraints:
+            self.env.assertEqual(c.status, 'OPERATIONAL')
+
+        # And the mechanism: effects carried them.
+        self.env.assertGreater(len(self.monitor), 0)
+
+        # That no verbatim GRAPH.CONSTRAINT was replayed is asked of the
+        # replica's own command counters rather than of MONITOR, so it does not
+        # depend on what the filter above happens to collect — a filter that
+        # only keeps GRAPH.EFFECT would make a MONITOR-based check of this
+        # vacuously true, which reads like coverage and is not.
+        stats = self.replica.execute_command("INFO", "commandstats")
+        if not isinstance(stats, dict):
+            stats = {
+                k: v
+                for k, v in (
+                    line.split(':', 1) for line in str(stats).splitlines() if ':' in line
+                )
+            }
+        replayed = [k for k in stats if 'constraint' in k.lower()]
+        self.env.assertEqual(replayed, [],
+            message=f"the replica executed a verbatim constraint command: {replayed}")
 
     def test_02_async_validation_reaches_operational_on_replica(self):
         # Regression guard for the pause/role re-check added in #2371.
@@ -1103,3 +1343,66 @@ class testConstraintReplication():
         self.env.assertEqual(master_c.status, 'OPERATIONAL')
         self.env.assertIsNotNone(c)
         self.env.assertEqual(c.status, 'OPERATIONAL')
+
+
+class testConstraintSchemaRegistration():
+    """A constraint's label and properties have to be interned before it is stored.
+
+       The constraint itself holds names, so nothing at runtime needs the ids — but the
+       RDB stores it by attribute id (`encode_constraint_block` resolves each property
+       with `position(..).unwrap_or(0)`), so a property no entity has ever used is
+       persisted as id 0 and read back as whatever attribute 0 happens to be. That is
+       #2749, and it is silent: the constraint keeps enforcing, on the wrong property.
+
+       Not reachable through UNIQUE, which needs a supporting range index first and so
+       interns the property on the way. MANDATORY on an empty label is the case."""
+
+    def __init__(self):
+        # enableDebugCommand: this reloads via DEBUG RELOAD, which redis refuses
+        # by default.
+        self.env, self.db = Env(env='oss', enableDebugCommand=True)
+        self.con = self.env.getConnection()
+
+    def test01_a_constraint_on_an_unused_property_survives_a_reload(self):
+        g = self.db.select_graph("constraint_schema_registration")
+
+        # `a` is interned first, so it is attribute id 0 — the id an unresolved
+        # property falls back to. `Q` ends up an empty label, so MANDATORY on it
+        # validates trivially and reaches OPERATIONAL, which is what gets encoded.
+        g.query("CREATE (:P {a: 1})")
+        g.query("CREATE (:Q {b: 1})")
+        g.query("MATCH (n:Q) DELETE n")
+
+        create_mandatory_node_constraint(g, "Q", "z", sync=True)
+
+        # Interned by the create, not by any entity: no node has ever had `z`.
+        keys = [r[0] for r in g.query("CALL db.propertyKeys()").result_set]
+        self.env.assertContains("z", keys)
+
+        before = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(before, [["Q", ["z"]]])
+
+        self.con.execute_command("DEBUG", "RELOAD")
+
+        # Without the registration this comes back as ["a"] — attribute id 0.
+        after = g.query("CALL db.constraints() YIELD label, properties").result_set
+        self.env.assertEqual(after, before)
+
+    def test02_a_refused_create_interns_nothing(self):
+        g = self.db.select_graph("constraint_schema_refused")
+        g.query("CREATE (:R {c: 1})")
+
+        before = sorted(r[0] for r in g.query("CALL db.propertyKeys()").result_set)
+
+        # UNIQUE without a supporting range index is refused. The registration
+        # runs only after the create succeeds, so the name must not leak in.
+        try:
+            self.con.execute_command(
+                "GRAPH.CONSTRAINT", "CREATE", "constraint_schema_refused",
+                "UNIQUE", "NODE", "R", "PROPERTIES", "1", "neverseen")
+            self.env.assertTrue(False, message="UNIQUE without an index must be refused")
+        except ResponseError as e:
+            self.env.assertContains("missing supporting exact-match index", str(e))
+
+        after = sorted(r[0] for r in g.query("CALL db.propertyKeys()").result_set)
+        self.env.assertEqual(after, before)

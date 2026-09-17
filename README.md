@@ -371,9 +371,29 @@ CC=clang-22 CXX=clang++-22 ./graphblas.sh
 
 ##### Building RediSearch
 
+RediSearch lives at `deps/RediSearch` as a git submodule (same layout as the C
+engine on `master`). **git owns that checkout** — `redisearch.sh` only builds
+what is there, so populate it first:
+
 ```bash
+git submodule update --init --recursive
 ./redisearch.sh
 ```
+
+(`git clone --recurse-submodules` does the first step for you. The script exits
+with instructions if the submodule is empty.)
+
+To work on RediSearch itself, edit `deps/RediSearch` in place and re-run
+`./redisearch.sh` — it never fetches or resets, so local work is never
+clobbered. To land a RediSearch change, move the pin the ordinary way:
+
+```bash
+git -C deps/RediSearch checkout <sha>
+git add deps/RediSearch
+```
+
+The gitlink is the only place the commit is recorded, so there is nothing else
+to keep in step.
 
 - pytest - create virtualenv and install tests/requirements.txt
 

@@ -63,6 +63,7 @@ tests/flow/test_multi_pattern
 tests/flow/test_multi_writer.py
 tests/flow/test_multiple_edges
 tests/flow/test_node_by_id
+tests/flow/test_nul_bytes.py
 tests/flow/test_null_handling.py
 tests/flow/test_opening_node.py
 tests/flow/test_optimizations_plan.py

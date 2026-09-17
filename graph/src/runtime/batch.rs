@@ -86,6 +86,7 @@ pub const BATCH_SIZE: usize = 1024;
 
 /// Compact bitmap tracking which rows in a typed column are null.
 /// Bit `i` is set (1) if row `i` is null.
+#[derive(Clone, Debug)]
 pub struct NullBitmap {
     words: Vec<u64>,
     len: usize,
@@ -100,6 +101,16 @@ impl NullBitmap {
             words: vec![0u64; num_words],
             len,
         }
+    }
+
+    /// Creates a bitmap with every bit set (every row null).
+    #[must_use]
+    pub fn all(len: usize) -> Self {
+        let mut bitmap = Self::none(len);
+        for i in 0..len {
+            bitmap.set(i);
+        }
+        bitmap
     }
 
     /// Creates a bitmap from a slice of Values, setting bit `i` if `values[i]` is Null.
@@ -132,6 +143,26 @@ impl NullBitmap {
     #[must_use]
     pub fn any_null(&self) -> bool {
         self.words.iter().any(|&w| w != 0)
+    }
+
+    /// Marks row `idx` null.
+    #[inline]
+    pub fn set(
+        &mut self,
+        idx: usize,
+    ) {
+        debug_assert!(idx < self.len);
+        self.words[idx / 64] |= 1u64 << (idx % 64);
+    }
+
+    /// Marks row `idx` not null.
+    #[inline]
+    pub fn clear(
+        &mut self,
+        idx: usize,
+    ) {
+        debug_assert!(idx < self.len);
+        self.words[idx / 64] &= !(1u64 << (idx % 64));
     }
 }
 
@@ -248,6 +279,22 @@ pub fn classify_stored_column(values: Vec<Value>) -> Column {
 pub fn classify_column(values: Vec<Value>) -> (Column, NullBitmap) {
     let nulls = NullBitmap::from_values(&values);
     let column = classify_numeric(values, true, FloatLane::Promote);
+    (column, nulls)
+}
+
+/// Classifies a `Vec<Value>` for the comparison kernels, keeping every lane
+/// exact: an all-`Int` (or null) column becomes [`Column::Ints`], an all-`Float`
+/// one becomes [`Column::Floats`], and anything else — including a *mixed*
+/// int/float column — stays [`Column::Values`].
+///
+/// The difference from [`classify_column`] is [`FloatLane::Pure`]: promoting a
+/// mixed column to `f64` would round integers past 2^53, so `p.v = 9007199254740993`
+/// would match a stored `9007199254740992` in a filter while the scalar
+/// evaluator (which compares `Int` to `Int` exactly) says it does not.
+#[must_use]
+pub fn classify_exact_column(values: Vec<Value>) -> (Column, NullBitmap) {
+    let nulls = NullBitmap::from_values(&values);
+    let column = classify_numeric(values, true, FloatLane::Pure);
     (column, nulls)
 }
 

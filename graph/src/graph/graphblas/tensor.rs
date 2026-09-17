@@ -1694,6 +1694,31 @@ impl<'a> Iter<'a> {
             buf_pos: 0,
         }
     }
+
+    /// Re-seek to a new row range, reusing the underlying GraphBLAS iterators
+    /// instead of allocating a fresh pair.
+    ///
+    /// The mirror of [`versioned_matrix::Iter::seek`], for callers that scan
+    /// many single-row ranges of the same tensor. Building an `Iter` allocates
+    /// a `GxB_Iterator` per layer and, on the forward side, waits the tensor
+    /// first, so doing it per row makes the scan cost far more than the rows
+    /// it visits.
+    ///
+    /// The buffered multi-edge ids belong to the pair the iterator was sitting
+    /// on, so they are dropped here — after a seek the next `next()` must start
+    /// from the new range.
+    pub fn seek(
+        &mut self,
+        min_row: u64,
+        max_row: u64,
+    ) {
+        match &mut self.base {
+            BaseIter::Forward(it) => it.seek(min_row, max_row),
+            BaseIter::Backward(it) => it.seek(min_row, max_row),
+        }
+        self.buf.clear();
+        self.buf_pos = 0;
+    }
 }
 
 impl Iterator for Iter<'_> {

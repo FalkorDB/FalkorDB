@@ -93,21 +93,25 @@ fn main() {
     }
 
     // ---- RediSearch 8.6, embedded as a static library ----
-    // `redisearch.sh` builds the fork into
-    // redisearch/RediSearch/bin/<variant>/search-community. The main archive is
+    // `redisearch.sh` builds the fork (the deps/RediSearch submodule) into
+    // deps/RediSearch/bin/<variant>/search-community. The main archive is
     // `redisearch.so` (an ar archive despite the suffix); its C/C++ dependencies are
     // sibling .a files; the Rust crate is a separate libredisearch_rs.a one level up.
     // Local dev (and the asan Dockerfile, which runs redisearch.sh in-tree)
-    // build into `<repo>/redisearch/RediSearch/bin`; the Docker toolchain image
-    // (build/Dockerfile) builds into `/data/redisearch/RediSearch/bin`. Take the
+    // build into `<repo>/deps/RediSearch/bin`; the Docker toolchain image
+    // (build/Dockerfile) builds into `/data/deps/RediSearch/bin`. Take the
     // first that exists so the same build.rs works in every environment.
+    // `redisearch/RediSearch` is the pre-submodule layout, kept last so an
+    // existing local checkout still links until it is removed.
     let rs_bin = [
+        std::path::Path::new(&manifest_dir).join("../deps/RediSearch/bin"),
+        std::path::PathBuf::from("/data/deps/RediSearch/bin"),
         std::path::Path::new(&manifest_dir).join("../redisearch/RediSearch/bin"),
         std::path::PathBuf::from("/data/redisearch/RediSearch/bin"),
     ]
     .into_iter()
     .find_map(|p| p.canonicalize().ok().filter(|p| p.is_dir()))
-    .expect("redisearch/RediSearch/bin missing - run ./redisearch.sh first");
+    .expect("deps/RediSearch/bin missing - run ./redisearch.sh first");
 
     // The main archive is `redisearch.so` (macOS release) or `redisearch.a`
     // (Linux / sanitizer `debug-asan`), an ar archive in both cases. The
