@@ -369,7 +369,8 @@ void Constraint_Replicate
 void Constraint_Enforce
 (
 	Constraint c,            // constraint to enforce
-	struct GraphContext *gc  // graph context
+	struct GraphContext *gc, // graph context
+	RedisModuleCtx *redis_ctx  // context whose database owns the graph
 ) {
 	ASSERT(c != NULL);
 	ASSERT(Constraint_GetStatus(c) == CT_PENDING);
@@ -378,7 +379,7 @@ void Constraint_Enforce
 	Constraint_IncPendingChanges(c);
 
 	// add constraint enforcement task
-	Indexer_EnforceConstraint(c, (GraphContext*)gc);
+	Indexer_EnforceConstraint(c, (GraphContext*)gc, redis_ctx);
 }
 
 // enforce constraint on all relevant nodes

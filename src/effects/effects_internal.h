@@ -111,7 +111,8 @@ bool ApplyDropIndex
 bool ApplyCreateConstraint
 (
 	FILE *stream,     // effects stream
-	GraphContext *gc  // graph to operate on
+	GraphContext *gc, // graph to operate on
+	RedisModuleCtx *redis_ctx  // context whose database owns the graph
 );
 
 // process DropConstraint effect (drop_constraint_effect.c)

@@ -46,7 +46,8 @@ bool Effects_Apply
 (
 	GraphContext *gc,          // graph to operate on
 	const char *effects_buff,  // encoded effects
-	size_t l                   // size of buffer
+	size_t l,                  // size of buffer
+	RedisModuleCtx *redis_ctx  // context whose database owns the graph
 );
 
 // create a new effects-buffer

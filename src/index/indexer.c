@@ -6,10 +6,12 @@
 
 #include "indexer.h"
 #include "../redismodule.h"
+#include "../serializers/graphcontext_type.h"
 #include "../util/rmalloc.h"
 #include <assert.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <string.h>
 
 // lock indexer task queue
 #define INDEXER_LOCK_QUEUE()                            \
@@ -57,6 +59,7 @@ typedef struct {
 typedef struct {
 	GraphContext *gc;  // graph object
 	Constraint c;      // constraint to enforce
+	RedisModuleCtx *publication; // owned context in the graph's database
 } ConstraintEnforceCtx;
 
 // constraint drop context
@@ -76,6 +79,7 @@ typedef struct {
 
 // forward declarations
 static void _indexer_PopTask(IndexerTask *task);
+static void Indexer_AddTask(IndexerOp op, void *pdata);
 
 static Indexer *indexer = NULL;
 
@@ -119,6 +123,7 @@ static void _Indexer_ClearTasks(void) {
 			case INDEXER_CONSTRAINT_ENFORCE :
 				{
 					ConstraintEnforceCtx *ctx = (ConstraintEnforceCtx*)pdata ;
+					RedisModule_FreeThreadSafeContext(ctx->publication);
 					GraphContext_DecreaseRefCount (ctx->gc) ;
 					rm_free (ctx) ;
 					break ;
@@ -208,8 +213,9 @@ static void _indexer_enforce_constraint
 		// if index is not enabled and the constraint is not marked for deletion
 		// postpone the enforcement
 		if(!Index_Enabled(idx) && Constraint_PendingChanges(c) == 1) {
-			Indexer_EnforceConstraint(c, gc);
-			goto cleanup;
+			if (indexer->stop) goto cleanup;
+			Indexer_AddTask(INDEXER_CONSTRAINT_ENFORCE, ctx);
+			return;
 		}
 	}
 
@@ -227,22 +233,37 @@ static void _indexer_enforce_constraint
 	// as only active constraints are encoded within RDBs
 	// to make sure the constraint is introduced to the replica we re-issue it
 	// once the constraint becomes active
-	if(Constraint_GetStatus(c) == CT_ACTIVE) {
-		// lock before calling replicate
-		RedisModuleCtx *rm_ctx = RedisModule_GetThreadSafeContext(NULL);
+	{
+		// Serialize activation with key replacement and constraint deletion.
+		RedisModuleCtx *rm_ctx = ctx->publication;
 		RedisModule_ThreadSafeContextLock(rm_ctx);
 
-		Constraint_Replicate(rm_ctx, c, (const struct GraphContext*)gc);
+		// A retained GraphContext keeps memory alive, not the Redis key or
+		// its ownership. Check the exact generation under the publication lock.
+		const char *name = GraphContext_GetName(gc);
+		RedisModuleString *key_name = RedisModule_CreateString(rm_ctx, name, strlen(name));
+		RedisModuleKey *key = RedisModule_OpenKey(rm_ctx, key_name, REDISMODULE_READ);
+		GraphContext_AcquireReadLock(gc);
+		if (RedisModule_KeyType(key) == REDISMODULE_KEYTYPE_MODULE &&
+			RedisModule_ModuleTypeGetType(key) == GraphContextRedisModuleType_Get() &&
+			RedisModule_ModuleTypeGetValue(key) == gc &&
+			Constraint_PendingChanges(c) == 1 &&
+			Constraint_GetStatus(c) == CT_ACTIVE) {
+			Constraint_Replicate(rm_ctx, c, (const struct GraphContext*)gc);
+		}
+		GraphContext_ReleaseReadLock(gc);
+		RedisModule_CloseKey(key);
+		RedisModule_FreeString(rm_ctx, key_name);
 
-		// unlock and free
+		// Release publication locks before disposing of the task.
 		RedisModule_ThreadSafeContextUnlock(rm_ctx);
-		RedisModule_FreeThreadSafeContext(rm_ctx);
 	}
 
 	// decrease number of pending changes
 	Constraint_DecPendingChanges(c);
 
 cleanup:
+	RedisModule_FreeThreadSafeContext(ctx->publication);
 	// decrease graph reference count
 	GraphContext_DecreaseRefCount(gc);
 
@@ -318,7 +339,7 @@ static void *_indexer_run
 }
 
 // add a new task to indexer queue
-void _indexer_AddTask
+static void Indexer_AddTask
 (
 	IndexerOp op,
 	void *pdata
@@ -480,7 +501,7 @@ void Indexer_PopulateIndex
 	GraphContext_IncreaseRefCount (gc) ;
 
 	// place task into queue
-	_indexer_AddTask (INDEXER_IDX_POPULATE, ctx) ;
+	Indexer_AddTask (INDEXER_IDX_POPULATE, ctx) ;
 }
 
 // drops index asynchronously
@@ -513,15 +534,16 @@ void Indexer_DropIndex
 	GraphContext_IncreaseRefCount(gc);
 
 	// place task into queue
-	_indexer_AddTask(INDEXER_IDX_DROP, ctx);
+	Indexer_AddTask(INDEXER_IDX_DROP, ctx);
 }
 
 // enforces constraint
 // adds the task for enforcing the given constraint to the indexer
 void Indexer_EnforceConstraint
 (
-	Constraint c,     // constraint to enforce
-	GraphContext *gc  // graph context
+	Constraint c,          // constraint to enforce
+	GraphContext *gc,       // graph context
+	RedisModuleCtx *redis_ctx  // context whose database owns the graph
 ) {
 	ASSERT(c       != NULL);
 	ASSERT(gc      != NULL);
@@ -536,6 +558,8 @@ void Indexer_EnforceConstraint
 	ConstraintEnforceCtx *ctx = rm_malloc(sizeof(ConstraintEnforceCtx));
 	ctx->c  = c;
 	ctx->gc = gc;
+	ctx->publication = RedisModule_GetDetachedThreadSafeContext(redis_ctx);
+	RedisModule_SelectDb(ctx->publication, RedisModule_GetSelectedDb(redis_ctx));
 
 	// increase graph reference count
 	// count will be reduced once this task is perfomed
@@ -543,7 +567,7 @@ void Indexer_EnforceConstraint
 	// enforcement tasks and it is being asked to be deleted
 	GraphContext_IncreaseRefCount(gc);
 
-	_indexer_AddTask(INDEXER_CONSTRAINT_ENFORCE, ctx);
+	Indexer_AddTask(INDEXER_CONSTRAINT_ENFORCE, ctx);
 }
 
 // drops constraint asynchronously
@@ -575,7 +599,7 @@ void Indexer_DropConstraint
 	GraphContext_IncreaseRefCount(gc);
 
 	// place task into queue
-	_indexer_AddTask(INDEXER_CONSTRAINT_DROP, ctx);
+	Indexer_AddTask(INDEXER_CONSTRAINT_DROP, ctx);
 }
 
 // stop and free indexer
@@ -587,7 +611,7 @@ void Indexer_Stop(void) {
 	_Indexer_ClearTasks () ;
 
 	// add fake task to cause indexer thread to exit
-	_indexer_AddTask (INDEXER_EXIT, NULL) ;
+	Indexer_AddTask (INDEXER_EXIT, NULL) ;
 	
 	// wait for indexer thread to exit
 	pthread_join (indexer->t, NULL) ;
