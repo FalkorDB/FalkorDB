@@ -220,6 +220,22 @@ fn rebuild_context(
     rt.set_memory_limit(heap_size as usize);
     rt.set_max_stack_size(stack_size as usize);
 
+    // Bound the top-level evaluation below. `validate_script` guards the same
+    // code at registration, but its context is not this one: a library can
+    // read `globalThis` to tell which it is running in and loop only here.
+    // Rebuild also runs lazily on a worker thread on first call, so without
+    // this a script that passed validation pins that thread at 100% forever,
+    // and repeated calls exhaust the pool until every query hangs. Cap at the
+    // validation budget, since loading a library is what both do.
+    let timeout_ms = JS_TIMEOUT_MS.load(Ordering::Relaxed);
+    let effective_ms = if timeout_ms > 0 {
+        (timeout_ms as u64).min(JS_VALIDATE_CAP_MS)
+    } else {
+        JS_VALIDATE_CAP_MS
+    };
+    let deadline = Instant::now() + Duration::from_millis(effective_ms);
+    rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
+
     let ctx = Context::full(&rt).map_err(|e| format!("Failed to create JS context: {e}"))?;
 
     let functions = ctx.with(|ctx| {
@@ -264,7 +280,14 @@ fn rebuild_context(
         }
 
         Ok::<_, String>(persistent_funcs)
-    })?;
+    });
+
+    // Clear the load-time deadline so it cannot interrupt a later call; the
+    // call path installs its own handler per invocation. Done whether or not
+    // the load succeeded, so a failed rebuild leaves no stale handler behind.
+    rt.set_interrupt_handler(None::<Box<dyn FnMut() -> bool + Send>>);
+
+    let functions = functions?;
 
     *state = Some(ThreadJsState {
         runtime: rt,
