@@ -132,6 +132,11 @@ pub enum IdSpaceError {
     #[error("{id} is already live below the boundary {entry_bound}")]
     AlreadyLive { id: u64, entry_bound: u64 },
 
+    /// An id this batch has already taken — cancelled twice, or cancelled
+    /// after being created. Either way the caller has lost track of it.
+    #[error("{0} was already taken by this batch")]
+    AlreadyTaken(u64),
+
     /// A batch named `u64::MAX`, which has no boundary above it.
     #[error("{0} is past the end of the id space")]
     IdOutOfRange(u64),
@@ -318,7 +323,7 @@ impl IdSpace {
     /// that would put per-batch state in a version readers hold, and have a
     /// `verify` there measure the previous version's work.
     #[must_use]
-    pub fn next_version(&self) -> Self {
+    pub fn new_version(&self) -> Self {
         Self::restored(self.live, self.recycled.clone())
     }
 
@@ -481,8 +486,10 @@ impl IdSpace {
         &mut self,
         id: u64,
     ) -> Result<(), IdSpaceError> {
+        if !self.taken.insert(id) {
+            return Err(IdSpaceError::AlreadyTaken(id));
+        }
         self.recycled.insert(id);
-        self.taken.insert(id);
         self.checked()
     }
 
@@ -754,7 +761,7 @@ mod tests {
         // half arrives first, so mid-batch the graph reports its boundary as 100
         // while id 599 is allocated.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &range(500..600)).expect("the high half is legitimate");
         create(&mut g, &range(0..500)).expect("and so is the low half");
         g.node_id_space()
@@ -769,7 +776,7 @@ mod tests {
         // so it cannot reach 500 without having handed out 0..499 — whoever
         // produced this was not working from the same id space.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &range(500..600)).expect("nothing is wrong yet");
 
         let err = g
@@ -818,7 +825,7 @@ mod tests {
         // `highest - lowest` alone would pass it. Measured from the boundary it is
         // one short, and id 0 is the id nobody accounted for.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[1, 2, 3])).expect("the graph takes them");
 
         let err = g
@@ -844,7 +851,7 @@ mod tests {
         // the caller has removed the recycle bin first and a recreated id is in
         // it. See `creating_deleting_and_recreating_one_id_in_a_batch`.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &range(0..6)).expect("six fresh ids");
 
         let err = create(&mut g, &ids(&[5])).expect_err("5 is already this batch's");
@@ -863,7 +870,7 @@ mod tests {
         // Ids below the entry boundary were counted in the boundary the batch
         // started from, so recreating one leaves the range and the count alone.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("two fresh ids");
         delete(&mut g, &ids(&[0])).expect("deleting what this batch created");
         g.node_id_space().verify().expect("whole");
@@ -871,7 +878,7 @@ mod tests {
         // A fresh batch: id 0 sits in the recycle bin, so it is free to come
         // back and does not extend the range — which is only true if the bin is
         // part of the boundary this batch started from.
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0])).expect("id 0 is free");
         g.node_id_space().verify().expect("whole again");
     }
@@ -883,7 +890,7 @@ mod tests {
         // legitimate. The set does not shrink on the delete, so the recreate adds
         // nothing and the range stays whole.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0])).expect("create");
         delete(&mut g, &ids(&[0])).expect("delete");
         create(&mut g, &ids(&[0])).expect("the recreate is legitimate");
@@ -912,7 +919,7 @@ mod tests {
         // What a create-then-delete in one segment ships: both ids created, then
         // one deleted. The id space grew by two and one of them is free.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("create");
         delete(&mut g, &ids(&[0])).expect("delete");
         g.node_id_space().verify().expect("whole");
@@ -928,7 +935,7 @@ mod tests {
         // other half, and the first delete put id 1 in the recycle bin, so the
         // second is refused there.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("create");
         delete(&mut g, &ids(&[1])).expect("the first delete is legitimate");
 
@@ -944,11 +951,11 @@ mod tests {
         // or above. Whether it is live is the recycle bin's answer, and it is not
         // in the bin, so the delete stands.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("create");
         g.node_id_space().verify().expect("whole");
 
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         delete(&mut g, &ids(&[0])).expect("a live id from before the batch");
         assert_eq!(g.node_count(), 1);
         g.node_id_space().verify().expect("a delete leaves no hole");
@@ -957,7 +964,7 @@ mod tests {
     #[test]
     fn deleting_an_id_never_created_is_refused() {
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 1])).expect("create");
 
         let err = delete(&mut g, &ids(&[7])).expect_err("7 was never allocated");
@@ -969,7 +976,7 @@ mod tests {
         // `max_node_id()` returns 0 for an empty graph, so a boundary taken from
         // it reads as "id 0 has been handed out" and refuses this.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0])).expect("id 0 is fresh");
         g.node_id_space().verify().expect("whole");
     }
@@ -977,7 +984,7 @@ mod tests {
     #[test]
     fn the_last_id_is_refused_rather_than_wrapping_the_arithmetic() {
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         let err = create(&mut g, &ids(&[u64::MAX])).expect_err("not creatable");
         assert_eq!(err, NodeOpError::node(IdSpaceError::IdOutOfRange(u64::MAX)));
     }
@@ -1059,7 +1066,7 @@ mod tests {
         // That is the whole difference between the per-id refusals and the
         // end-of-batch check.
         let mut g = graph();
-        g.open_id_batches().expect("a consistent space");
+        g.roll_id_batches().expect("a consistent space");
         create(&mut g, &ids(&[0, 5])).expect("neither id is live");
         delete(&mut g, &ids(&[0])).expect("delete");
         assert_eq!(g.node_count(), 1);

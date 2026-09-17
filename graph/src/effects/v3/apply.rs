@@ -143,7 +143,12 @@ fn id_space_error_map(
         // Not a divergence and not a claim about the buffer: the replica's own
         // id space contradicts itself, so the buffer is refused because nothing
         // can be trusted to apply onto it, not because it was wrong.
-        e @ IdSpaceError::Inconsistent { .. } => ApplyError::Graph(format!("{kind} {e}")),
+        // Neither is a claim about the buffer: the replica's own id space
+        // contradicts itself, or its batch was asked to take one id twice. The
+        // buffer is refused because nothing can be trusted to apply onto it.
+        e @ (IdSpaceError::Inconsistent { .. } | IdSpaceError::AlreadyTaken(_)) => {
+            ApplyError::Graph(format!("{kind} {e}"))
+        }
     }
 }
 

@@ -1727,7 +1727,8 @@ mod cancelled {
         p.set_schema_baseline(g);
         p.stage_created_node(0, &[0], &[(0, Value::Int(1))]);
         p.stage_created_node(1, &[1], &[]);
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 
@@ -1823,7 +1824,8 @@ mod cancelled {
             NodeId::from(3_u64),
         ));
         // Cancels node 0, and with it the edge hanging off it.
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 
@@ -1949,7 +1951,8 @@ mod cancelled {
         ));
         // Node 0 is committed, so this cascades the pending edge without
         // cancelling the node — the shape `delete.rs` reaches twice.
-        p.remove_pending_relationships_for_node(NodeId::from(0_u64));
+        p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p.stage_deleted_node(0, &[0]);
 
         let mut buf = crate::effects::v3::new_buffer();
@@ -1992,7 +1995,8 @@ mod cancelled {
         p.set_schema_baseline(&g);
         p.stage_created_node(0, &[0], &[]);
         p.stage_deleted_node(7, &[0]);
-        p.delete_pending_node(NodeId::from(0_u64));
+        p.delete_pending_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
 
         let records = digest(&p, &g);
         let last_two = &records[records.len() - 2..];
@@ -2016,6 +2020,9 @@ mod cascade {
     /// `CREATE (a)-[:R]->(b) DELETE a` — the delete cascades to the edge before
     /// either reaches the graph.
     fn cascaded() -> Pending {
+        // A graph only so the cascade has somewhere to return the ids to; the
+        // fixture is the `Pending` it leaves behind.
+        let g = graph_cell();
         let mut p = Pending::default();
         p.stage_created_node(0, &[], &[]);
         p.stage_created_node(1, &[], &[]);
@@ -2025,7 +2032,8 @@ mod cascade {
             NodeId::from(1_u64),
             Arc::new("R".to_owned()),
         );
-        p.remove_pending_relationships_for_node(NodeId::from(0_u64));
+        p.remove_pending_relationships_for_node(NodeId::from(0_u64), &mut g.borrow_mut())
+            .expect("a consistent space");
         p
     }
 

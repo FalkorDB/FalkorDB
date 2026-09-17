@@ -133,7 +133,14 @@ pub(crate) struct CancelledRelationship {
 /// now is `effects_v3_emit::digest`, whose return type says precisely what
 /// replication makes of this.
 pub struct Pending {
-    /// Nodes created in this transaction
+    /// Nodes created in this transaction, and what the allocator must not
+    /// reissue: reserved, still destined for `create_nodes` at commit, and so
+    /// not yet recorded anywhere the id space can see.
+    ///
+    /// Cancelled ids are deliberately *not* here — `IdSpace::cancel` records
+    /// them and `IdSpace::reserve` excludes what it has recorded, so passing
+    /// them again would count one id twice and leave a gap the batch never
+    /// fills.
     pub(crate) created_nodes: RoaringTreemap,
     pub(crate) created_rels_by_type: FxHashMap<Arc<String>, Vec<(RelationshipId, NodeId, NodeId)>>,
     /// Reverse index: rel_id → type_name for O(1) existence/type lookups
@@ -396,25 +403,6 @@ impl Pending {
         self.schema_rel_attr_count = graph.get_relationship_attribute_names().len();
     }
 
-    /// The node ids this batch holds that the id space does not know about yet:
-    /// reserved, still destined for `create_nodes` at commit.
-    ///
-    /// Cancelled ids are deliberately *not* here — `IdSpace::cancel` records
-    /// them and `IdSpace::reserve` excludes what it has recorded, so passing
-    /// them again would count one id twice and leave a gap the batch never
-    /// fills.
-    #[must_use]
-    pub const fn issued_nodes(&self) -> &RoaringTreemap {
-        &self.created_nodes
-    }
-
-    /// The same for relationships. See [`Self::issued_nodes`] for why a
-    /// cancelled id is not in either.
-    #[must_use]
-    pub const fn issued_relationships(&self) -> &RoaringTreemap {
-        &self.taken_relationship_ids
-    }
-
     pub fn created_nodes(
         &mut self,
         ids: &[NodeId],
@@ -663,20 +651,29 @@ impl Pending {
     /// and also mark any pending-created relationships connected to it for deletion.
     /// Returns (label_ids, attrs, connected_pending_rels) — the relationships carry
     /// their type and staged attrs so callers can snapshot them for later reads.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError`] if returning an id left the graph's id space
+    /// contradicting itself.
     pub fn delete_pending_node(
         &mut self,
         id: NodeId,
-    ) -> (
-        OrderSet<LabelId>,
-        Vec<(u16, Value)>,
-        Vec<(
-            RelationshipId,
-            NodeId,
-            NodeId,
-            Arc<String>,
-            Option<Vec<(u16, Value)>>,
-        )>,
-    ) {
+        g: &mut Graph,
+    ) -> Result<
+        (
+            OrderSet<LabelId>,
+            Vec<(u16, Value)>,
+            Vec<(
+                RelationshipId,
+                NodeId,
+                NodeId,
+                Arc<String>,
+                Option<Vec<(u16, Value)>>,
+            )>,
+        ),
+        NodeOpError,
+    > {
         self.created_nodes.remove(id.into());
         // Collect pending labels
         let mut label_ids = OrderSet::default();
@@ -690,29 +687,40 @@ impl Pending {
             .or_else(|| self.existing_nodes_attrs.remove(&id.into()))
             .unwrap_or_default();
 
-        let rels = self.remove_pending_relationships_for_node(id);
+        let rels = self.remove_pending_relationships_for_node(id, g)?;
 
         // The one durable record that this id was ever handed out. Everything
         // above has just erased it from the structures the graph commits.
         self.cancelled_nodes.insert(id.into());
+        // And the graph's half, paired here for the same reason.
+        g.cancel_node_id(id)?;
 
-        (label_ids, attrs, rels)
+        Ok((label_ids, attrs, rels))
     }
 
     /// Remove and return all pending-created relationships incident on the
     /// given node, along with their staged attributes. Also cleans up
     /// `new_relationships_attrs` and `deleted_relationships` entries for
     /// each removed relationship so that `commit()` has no stale state.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError`] if returning an id left the graph's id space
+    /// contradicting itself.
     pub fn remove_pending_relationships_for_node(
         &mut self,
         id: NodeId,
-    ) -> Vec<(
-        RelationshipId,
-        NodeId,
-        NodeId,
-        Arc<String>,
-        Option<Vec<(u16, Value)>>,
-    )> {
+        g: &mut Graph,
+    ) -> Result<
+        Vec<(
+            RelationshipId,
+            NodeId,
+            NodeId,
+            Arc<String>,
+            Option<Vec<(u16, Value)>>,
+        )>,
+        NodeOpError,
+    > {
         let mut rels = Vec::new();
         for (type_name, entries) in &self.created_rels_by_type {
             for &(rel_id, from, to) in entries {
@@ -742,6 +750,9 @@ impl Pending {
             // returns the id to the free set. Leaving it here too would have the
             // allocator count it twice.
             self.taken_relationship_ids.remove(rel_id.into());
+            // The graph's half of the same event. Paired here so a caller cannot
+            // unwind the pending side and leave the id unreturned.
+            g.cancel_relationship_id(rel_id)?;
             // The one durable record that this id was ever handed out, the same
             // role `cancelled_nodes` plays for the node above.
             self.cancelled_relationships.push(CancelledRelationship {
@@ -753,7 +764,7 @@ impl Pending {
             result.push((rel_id, from, to, type_name, attrs));
         }
 
-        result
+        Ok(result)
     }
 
     pub fn created_relationship(

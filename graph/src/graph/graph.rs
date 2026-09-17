@@ -968,8 +968,8 @@ impl Graph {
             // the previous one's `created` set never reaches a published
             // version — nor the memory it holds, which `GRAPH.MEMORY` does not
             // count and no reader would ever look at.
-            node_ids: self.node_ids.next_version(),
-            relationship_ids: self.relationship_ids.next_version(),
+            node_ids: self.node_ids.new_version(),
+            relationship_ids: self.relationship_ids.new_version(),
             zero_matrix: self.zero_matrix.dup(),
             adjacancy_matrix: self.adjacancy_matrix.dup(),
             node_labels_matrix: self.node_labels_matrix.dup(),
@@ -1388,7 +1388,7 @@ impl Graph {
     ///
     /// [`IdSpaceError`], wrapped, if returning the id left the id space
     /// contradicting itself.
-    pub fn cancel_node_id(
+    pub(crate) fn cancel_node_id(
         &mut self,
         id: NodeId,
     ) -> Result<(), NodeOpError> {
@@ -1401,7 +1401,7 @@ impl Graph {
     /// # Errors
     ///
     /// As [`Self::cancel_node_id`].
-    pub fn cancel_relationship_id(
+    pub(crate) fn cancel_relationship_id(
         &mut self,
         id: RelationshipId,
     ) -> Result<(), NodeOpError> {
@@ -1428,11 +1428,9 @@ impl Graph {
     /// [`IdSpaceError`], wrapped, if either space already contradicts itself —
     /// opening a batch over a corrupt one would re-anchor the boundary on the
     /// bad value and hide it.
-    /// `pub(crate)` for this crate's tests only. Production code reaches a batch
-    /// through [`Self::in_batch`] when it has a scope and
-    /// [`Self::roll_id_batches`] when it does not, and neither can open one
-    /// without also closing it.
-    pub(crate) fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
+    /// Private: a batch is only ever opened as part of closing one, so callers
+    /// reach it through [`Self::in_batch`] or [`Self::roll_id_batches`].
+    fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
         self.node_ids.open_batch().map_err(NodeOpError::node)?;
         self.relationship_ids
             .open_batch()
@@ -2755,10 +2753,6 @@ impl Graph {
         }
 
         let mut all_implicit: Vec<DeletedEdge> = Vec::new();
-        // The same ids as `all_implicit`, as the set the ledger is told about.
-        // Accumulated across types and freed once, so the count and the free set
-        // cannot be written from two different sets.
-        let mut freed = RoaringTreemap::new();
         // Pairs where an endpoint survives — the survivor may still hold an
         // edge of another type, so these need a per-tensor check.
         let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> =
@@ -2820,7 +2814,6 @@ impl Graph {
             type_mask.build(&tm_rows, &tm_cols);
 
             let del_keys: RoaringTreemap = rels.iter().map(|&(id, _, _)| id).collect();
-            freed |= &del_keys;
             let type_name = &self.relationship_types[type_idx];
             let is_indexed = self.edge_indexer.has_index(type_name);
             for &(edge_id, src, dst) in &rels {
@@ -2875,6 +2868,10 @@ impl Graph {
         // anyway. An implicit edge that is already free, or that sits above the
         // entry boundary without this batch having created it, is this graph
         // disagreeing with itself.
+        // The ids as one set, so the count and the free set cannot be written
+        // from two different sets — they were, and agreed only because an edge
+        // has exactly one type.
+        let freed: RoaringTreemap = all_implicit.iter().map(|e| u64::from(e.id)).collect();
         self.relationship_ids
             .release(&freed, &freed)
             .map_err(|e| e.to_string())?;
