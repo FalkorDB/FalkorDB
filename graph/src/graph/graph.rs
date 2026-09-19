@@ -75,10 +75,12 @@ use std::{
 use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
+use itertools::Either;
 use lru::LruCache;
 use orx_tree::DynTree;
 use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
+use smallvec::SmallVec;
 use thiserror::Error;
 
 use crate::{
@@ -711,6 +713,19 @@ fn drop_index_bg(
 /// registration and `CONFIGURATION_NODE_CREATION_BUFFER` in the root crate
 /// reference this constant so the default lives in one place.
 pub const DEFAULT_NODE_CREATION_BUFFER: u64 = 16384;
+
+/// Largest label count for which [`Graph::get_node_label_ids`] reads a node's
+/// label row by point-probing every column instead of opening a GraphBLAS row
+/// iterator over it.
+///
+/// The probe costs O(labels) point reads; the iterator costs a fixed ~1,700
+/// instructions of `GxB_Iterator` setup and teardown however little the row
+/// holds. Measured on a 10k-node graph with `MATCH (n:Person) RETURN n`,
+/// interleaving both builds to cancel machine drift: -8.0% at 1 label, -6.7%
+/// at 4, -7.2% at 6, break-even at 8, +5.5% at 12. Six keeps the whole
+/// measured win and stays clear of the crossover, so a schema wide enough for
+/// the probe to lose keeps the iterator.
+const LABEL_PROBE_MAX: usize = 6;
 
 /// Effective NODE_CREATION_BUFFER configuration value: the chunk size (in
 /// entities) that matrix capacities grow by.
@@ -2232,14 +2247,43 @@ impl Graph {
         )
     }
 
+    /// The label ids on `id`, ascending.
+    ///
+    /// Reading one node's label row is a per-row operation: every projection
+    /// of a node does it once per row, through `labels(n)` or through the
+    /// node serialization `RETURN n` performs. `VersionedMatrix::iter` pays
+    /// `GxB_Iterator_new` + `GxB_rowIterator_attach` + the matching free —
+    /// about 1,700 instructions, the figure [`matrix::Iter::detached`]
+    /// documents — to read a row that almost always holds a single entry.
+    ///
+    /// On a schema narrow enough for it, probing the row column by column
+    /// skips that setup; it is the same point read
+    /// [`Self::node_has_label_id`] already answers a label test with, over
+    /// the same column range. Past [`LABEL_PROBE_MAX`] the probe's O(labels)
+    /// cost overtakes the iterator's fixed setup, so the iterator stays — the
+    /// 500-label schema `node_labels_index` exists for must not pay for the
+    /// narrow-schema win.
     #[allow(clippy::cast_possible_truncation)]
     pub fn get_node_label_ids(
         &self,
         id: NodeId,
     ) -> impl Iterator<Item = LabelId> {
-        self.node_labels_matrix
-            .iter(id.0, id.0)
-            .map(|(_, l)| LabelId(l as usize))
+        let label_count = self.node_labels.len();
+        if label_count <= LABEL_PROBE_MAX {
+            // `resize` reconciles `node_labels_matrix` to nodes x labels when a
+            // label is registered, so every column below `label_count` is in
+            // bounds — the same guarantee `node_has_label_id` relies on.
+            let mut found: SmallVec<[u64; 4]> = SmallVec::new();
+            self.node_labels_matrix
+                .probe_row_into(id.0, label_count as u64, &mut found);
+            Either::Left(found.into_iter().map(|l| LabelId(l as usize)))
+        } else {
+            Either::Right(
+                self.node_labels_matrix
+                    .iter(id.0, id.0)
+                    .map(|(_, l)| LabelId(l as usize)),
+            )
+        }
     }
 
     pub fn get_node_labels(
