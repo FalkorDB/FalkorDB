@@ -6,7 +6,7 @@ FROM $BASE_IMAGE AS compiler
 
 # `redis` removed — provided by the toolchain image
 # (build/docker/builder/Dockerfile.alpine) at /usr/local/bin/redis-server,
-# pinned to 8.10.1 like the other platforms and sanitize. apk's redis on
+# pinned to 8.10.2 like the other platforms and sanitize. apk's redis on
 # alpine 3.22 floats with the distro update cadence; pinning at the
 # toolchain layer keeps every test run on the same binary.
 ENV DEPS "curl automake libtool autoconf py3-pip wget cmake m4 git valgrind python3-dev build-base gcc musl-dev linux-headers"

@@ -11,11 +11,11 @@
 # explicit -I.
 #
 # Redis: built from git at REDIS_VERSION (multi-stage). Same pinned tag
-# (8.10.1) as the other toolchains and sanitize. Built on UBI8 with the
+# (8.10.2) as the other toolchains and sanitize. Built on UBI8 with the
 # default openssl-devel (1.1) since Redis's BUILD_TLS doesn't require
 # OpenSSL 3.
 
-ARG REDIS_VERSION=8.10.1
+ARG REDIS_VERSION=8.10.2
 
 #--------------------------------------------------------------------------
 # Stage 1: build redis-server / redis-cli from source at a pinned tag.

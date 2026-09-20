@@ -65,8 +65,8 @@ FalkorDB publishes two image variants:
 
 | Variant | Base | Tag suffix | Example |
 |---------|------|------------|---------|
-| **Debian** (default) | `redis:8.10.1` (Debian-based) | *(none)* | `falkordb/falkordb:latest` |
-| **Alpine** | `redis:8.10.1-alpine` | `-alpine` | `falkordb/falkordb:latest-alpine` |
+| **Debian** (default) | `redis:8.10.2` (Debian-based) | *(none)* | `falkordb/falkordb:latest` |
+| **Alpine** | `redis:8.10.2-alpine` | `-alpine` | `falkordb/falkordb:latest-alpine` |
 
 ### Security Recommendation
 

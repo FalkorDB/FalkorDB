@@ -6,7 +6,7 @@
 # Redis: built from git at REDIS_VERSION (multi-stage). Built on UBI9 so the
 # glibc 2.34 binary runs against the same base.
 
-ARG REDIS_VERSION=8.10.1
+ARG REDIS_VERSION=8.10.2
 
 #--------------------------------------------------------------------------
 # Stage 1: build redis-server / redis-cli from source at a pinned tag.
