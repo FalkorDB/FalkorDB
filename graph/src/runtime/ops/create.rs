@@ -169,6 +169,12 @@ impl Runtime<'_> {
                 pending.created_nodes(&node_ids);
                 pending.set_nodes_labels(&node_ids, &node.labels);
             }
+            // Count one Labels-added stat per (new node, label) pair. All the
+            // nodes reserved above are brand-new, so every label in
+            // `node.labels` is a fresh assignment on each of them. This matches
+            // the C engine, which counts label ASSIGNMENTS to nodes rather
+            // than newly-registered label TYPES in the schema.
+            self.stats.borrow_mut().labels_added += node_ids.len() * node.labels.len();
 
             // Evaluate attributes per row into id-sorted `Vec<(u16, Value)>`.
             // NOTE: eval() may borrow pending internally (e.g. property reads),
