@@ -447,6 +447,108 @@ def test_graph_crud():
     assert res.nodes_deleted == 3
     assert res.relationships_deleted == 3
 
+
+def test_create_named_single_node_path():
+    res = query("CREATE p=(n) RETURN p, n, nodes(p), relationships(p), length(p)", write=True)
+    assert res.nodes_created == 1
+    assert len(res.result_set) == 1
+    p, n, nodes, edges, length = res.result_set[0]
+    assert isinstance(p, Path)
+    assert p == Path([n], [])
+    assert nodes == [n]
+    assert edges == []
+    assert length == 0
+
+
+@pytest.mark.parametrize(
+    "pattern, node_vars, edge_vars, node_count, edge_count",
+    [
+        ("(a)-[r:R]->(b)", "[a,b]", "[r]", 2, 1),
+        ("(a)<-[r:R]-(b)", "[a,b]", "[r]", 2, 1),
+        ("(a)-[r:R]->(b)-[s:S]->(c)", "[a,b,c]", "[r,s]", 3, 2),
+        ("(a)-[r:R]->(a)", "[a,a]", "[r]", 1, 1),
+    ],
+)
+def test_create_named_relationship_path(pattern, node_vars, edge_vars, node_count, edge_count):
+    res = query(
+        f"CREATE p={pattern} RETURN p, nodes(p), relationships(p), length(p), {node_vars}, {edge_vars}",
+        write=True,
+    )
+    assert res.nodes_created == node_count
+    assert res.relationships_created == edge_count
+    assert len(res.result_set) == 1
+    p, nodes, edges, length, expected_nodes, expected_edges = res.result_set[0]
+    assert isinstance(p, Path)
+    assert p == Path(expected_nodes, expected_edges)
+    assert nodes == expected_nodes
+    assert edges == expected_edges
+    assert length == edge_count
+
+
+def test_create_named_path_with_bound_endpoint():
+    query("CREATE (:Start {v: 7})", write=True)
+    res = query(
+        "MATCH (a:Start) CREATE p=(a)-[r:R]->(b:End) "
+        "RETURN p, a, r, b",
+        write=True,
+    )
+    assert res.nodes_created == 1
+    assert res.relationships_created == 1
+    assert len(res.result_set) == 1
+    p, a, r, b = res.result_set[0]
+    assert p == Path([a, b], [r])
+    assert a.properties == {"v": 7}
+
+
+def test_create_named_paths_across_with_and_rows():
+    res = query(
+        "UNWIND [1,2,3] AS v "
+        "CREATE p=(a:A {v: v}), q=(b:B {v: v})-[r:R]->(c:C) "
+        "WITH v, p AS single, q AS edge "
+        "RETURN v, nodes(single)[0].v, length(single), "
+        "nodes(edge)[0].v, length(edge) ORDER BY v",
+        write=True,
+    )
+    assert res.nodes_created == 9
+    assert res.relationships_created == 3
+    assert res.result_set == [[v, v, 0, v, 1] for v in [1, 2, 3]]
+
+
+def test_create_named_path_without_return():
+    res = query("UNWIND [1,2,3] AS v CREATE p=(n:N {v: v})", write=True)
+    assert res.result_set == []
+    assert res.nodes_created == 3
+    assert query("MATCH (n:N) RETURN n.v ORDER BY n.v").result_set == [[1], [2], [3]]
+
+
+@pytest.mark.parametrize("update_after_create", [False, True])
+def test_create_named_paths_in_foreach(update_after_create):
+    final_clause = " SET b.v=v" if update_after_create else ""
+    res = query(
+        "FOREACH (v IN [1,2,3] | "
+        "CREATE p=(a:A {v: v}) CREATE q=(a)-[:R]->(b:B)"
+        f"{final_clause})",
+        write=True,
+    )
+    assert res.nodes_created == 6
+    assert res.relationships_created == 3
+    res = query("MATCH (a:A)-[:R]->(b:B) RETURN a.v, b.v ORDER BY a.v")
+    assert res.result_set == [[v, v if update_after_create else None] for v in [1, 2, 3]]
+
+
+def test_match_and_merge_named_paths_after_create():
+    created = query("CREATE (a:A)-[r:R]->(b:B) RETURN a, r, b", write=True)
+    a, r, b = created.result_set[0]
+    expected = [[Path([a, b], [r])]]
+    assert query("MATCH p=(:A)-[:R]->(:B) RETURN p").result_set == expected
+    assert query("MERGE p=(:A)-[:R]->(:B) RETURN p", write=True).result_set == expected
+    created = query("MERGE p=(a:C)-[r:S]->(b:D) RETURN p, a, r, b", write=True)
+    assert created.nodes_created == 2
+    assert created.relationships_created == 1
+    p, a, r, b = created.result_set[0]
+    assert p == Path([a, b], [r])
+
+
 def test_match_node_by_id():
     query("UNWIND range(0, 1000) AS x CREATE (n:N {v: x})", write=True)
 
