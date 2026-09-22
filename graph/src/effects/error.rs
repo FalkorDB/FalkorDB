@@ -2,8 +2,8 @@
 
 use thiserror::Error;
 
+use super::v3::BadFieldType;
 use super::v3::EFFECTS_VERSION;
-use crate::index::IndexType;
 
 // ── encode errors ──
 
@@ -45,26 +45,13 @@ pub enum EncodeError {
     #[error("field type {field_type:#06x} and the options block disagree about the vector half")]
     OptionsFieldTypeMismatch { field_type: u32 },
 
-    /// An index record this build would not be able to read back.
+    /// A `field_type` this build could not read back.
     ///
-    /// The mirror of [`DecodeError::UnknownIndexFieldType`], and it holds the
-    /// writer to the same rule as the reader: a build must not put a bit on the
-    /// wire whose conditional sections it does not itself know how to write.
-    /// Unreachable from any statement this engine accepts — `emit::index_field_flags`
-    /// is total over `IndexType` — which is why it must be loud rather than
-    /// silently truncated to the bits it does know.
-    #[error("index field type {field_type:#x} sets unknown bit {bit:#x}")]
-    UnknownIndexFieldType { field_type: u32, bit: u32 },
-
-    /// An index record naming two kinds of index at once. No single index is
-    /// both, and nothing emits it — refused rather than ranked.
-    #[error("index field type {field_type:#x} names both {first:?} and {kind:?} (bit {bit:#x})")]
-    MixedIndexFieldTypes {
-        field_type: u32,
-        bit: u32,
-        kind: IndexType,
-        first: IndexType,
-    },
+    /// The writer is held to the reader's rule, and reports it in the reader's
+    /// words: the condition and its sentence live in [`BadFieldType`], so the
+    /// two sides cannot describe the same refusal differently.
+    #[error(transparent)]
+    BadFieldType(#[from] BadFieldType),
 
     /// An index record built with an empty schema list.
     #[error("index record names no schema entity")]
@@ -157,38 +144,16 @@ pub enum DecodeError {
     #[error("unknown effect opcode {0}")]
     BadOpcode(u32),
 
-    /// An index record whose `field_type` sets a bit this build does not know.
+    /// A `field_type` naming no index this build can create.
     ///
-    /// Refused rather than masked off, for exactly the reason [`Self::UnknownFlags`]
-    /// is. The bits gate conditional sections of the options block, so reading
-    /// past one this build does not know leaves the cursor one section short and
-    /// parses the next record from inside this one. Even where it does not —
-    /// a `DROP_INDEX` carries no options — `apply::index_type_of` would have
-    /// called the unknown type a range index, which is a wrong index rather than
-    /// a refused buffer. The known set is [`crate::effects::v3::IndexFieldBit`]
-    /// itself: a bit is known if and only if it converts to a variant.
-    #[error(
-        "effects index record sets index field type bit {bit:#x}, which this build has \
-         no index type for (field type {field_type:#x})"
-    )]
-    UnknownIndexFieldType { field_type: u32, bit: u32 },
-
-    /// An index record whose `field_type` names two kinds of index at once.
-    ///
-    /// Nothing emits this: C selects its index type by equality and asserts
-    /// otherwise (`GraphHub_AddIndex`), and this engine's `index_field_flags` is
-    /// total over the same three values. Refused rather than ranked, because
-    /// ranking would build one index where the record asked for two.
-    #[error(
-        "effects index record sets bit {bit:#x} ({kind:?}) alongside {first:?} \
-         (field type {field_type:#x}); no index is both"
-    )]
-    MixedIndexFieldTypes {
-        field_type: u32,
-        bit: u32,
-        kind: IndexType,
-        first: IndexType,
-    },
+    /// Refused rather than masked off, for the reason [`Self::UnknownFlags`] is:
+    /// the bits gate conditional sections of the options block, so reading past
+    /// one this build does not know leaves the cursor a section short and parses
+    /// the next record from inside this one. Even a `DROP_INDEX`, which has no
+    /// options to desynchronise, would otherwise be classified as a range index
+    /// and drop the wrong one.
+    #[error(transparent)]
+    BadFieldType(#[from] BadFieldType),
 
     /// A `CREATE_INDEX`/`DROP_INDEX` that names no schema entity at all.
     ///

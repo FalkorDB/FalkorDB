@@ -448,7 +448,7 @@ fn check_index_record<T>(
     field_type: u32,
     schemas: &[SchemaRef<T>],
 ) -> Result<(), EncodeError> {
-    index_type_of(field_type).map_err(|e| e.encode(field_type))?;
+    index_type_of(field_type)?;
     if schemas.is_empty() {
         return Err(EncodeError::EmptyIndexSchemaList);
     }
@@ -745,7 +745,7 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             // The classifier is the validator: a `field_type` this layer accepts
             // is exactly one `index_type_of` can name a kind for. The kind
             // itself is the apply layer's business, so it is discarded here.
-            index_type_of(field_type).map_err(|e| e.decode(field_type))?;
+            index_type_of(field_type)?;
             let fields = IndexFields::decode(r)?.0;
             // A drop stops here — zero option bytes, not an empty block — and
             // the variant it becomes has no field for any.
@@ -2093,7 +2093,7 @@ mod tests {
 
             let buf = foreign_index_buffer(opcode, INDEX_FLD_RANGE | FUTURE_INDEX_BIT);
             match read_buffer(&buf) {
-                Err(DecodeError::UnknownIndexFieldType { bit, field_type }) => {
+                Err(DecodeError::BadFieldType(BadFieldType::UnknownBit { bit, field_type })) => {
                     assert_eq!(bit, FUTURE_INDEX_BIT, "{opcode:?} named the wrong bit");
                     assert_eq!(field_type, INDEX_FLD_RANGE | FUTURE_INDEX_BIT);
                 }
@@ -2112,7 +2112,7 @@ mod tests {
         assert!(
             matches!(
                 read_buffer(&buf),
-                Err(DecodeError::UnknownIndexFieldType { .. })
+                Err(DecodeError::BadFieldType(BadFieldType::UnknownBit { .. }))
             ),
             "a drop with an unknown field type decoded"
         );
@@ -2139,10 +2139,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                EncodeError::UnknownIndexFieldType {
+                EncodeError::BadFieldType(BadFieldType::UnknownBit {
                     bit: FUTURE_INDEX_BIT,
                     ..
-                }
+                })
             ),
             "{err:?}"
         );

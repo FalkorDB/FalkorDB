@@ -412,8 +412,7 @@ fn apply_record(
             // the record existed. Answered rather than unwrapped so a future
             // caller that reaches apply without decoding gets a refusal rather
             // than a silent misclassification.
-            let index_type =
-                index_type_of(field_type).map_err(|e| ApplyError::Decode(e.decode(field_type)))?;
+            let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
             // Every entity is verified above, including the ones this build
             // then refuses to index: a record that names three types is a
             // record about all three, and checking only the one that fits
@@ -461,8 +460,7 @@ fn apply_record(
             // the record existed. Answered rather than unwrapped so a future
             // caller that reaches apply without decoding gets a refusal rather
             // than a silent misclassification.
-            let index_type =
-                index_type_of(field_type).map_err(|e| ApplyError::Decode(e.decode(field_type)))?;
+            let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
             g.drop_index(&index_type, &schema_type, &label, &fields)?;
@@ -1949,10 +1947,19 @@ mod tests {
         // A bit with no variant is refused by name rather than falling through
         // to range; the error carries the bit so each layer reports it its own
         // way.
-        assert_eq!(index_type_of(0x20), Err(BadFieldType::UnknownBit(0x20)));
+        assert_eq!(
+            index_type_of(0x20),
+            Err(BadFieldType::UnknownBit {
+                field_type: 0x20,
+                bit: 0x20
+            })
+        );
         assert_eq!(
             index_type_of(INDEX_FLD_RANGE | 0x40),
-            Err(BadFieldType::UnknownBit(0x40))
+            Err(BadFieldType::UnknownBit {
+                field_type: INDEX_FLD_RANGE | 0x40,
+                bit: 0x40
+            })
         );
         // Two kinds at once is refused, not ranked. Nothing emits it — C picks
         // by equality and asserts otherwise, `index_field_flags` is total — and
@@ -1960,6 +1967,7 @@ mod tests {
         assert_eq!(
             index_type_of(INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR),
             Err(BadFieldType::MixedKinds {
+                field_type: INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR,
                 bit: INDEX_FLD_VECTOR,
                 kind: IndexType::Vector,
                 first: IndexType::Fulltext,
