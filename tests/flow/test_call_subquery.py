@@ -2885,3 +2885,97 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 2) # avgX
 
+
+    def test_54_writes_apply_to_every_input_row(self):
+        """A subquery performing writes must apply them once per input row.
+
+        A unit subquery used to run its write for the first input row only.
+        The remaining rows still passed through, so the cardinality and the
+        success reply looked right while the writes were silently dropped.
+        """
+
+        # DELETE inside a unit subquery removes every matched relationship,
+        # not just the one belonging to the first row
+        # https://github.com/FalkorDB/FalkorDB/issues/2159
+        self.graph.delete()
+        self.graph.query("""CREATE (a1:User {active: true}), (b1:User {active: false}),
+                                   (a2:User {active: true}), (b2:User {active: false}),
+                                   (a3:User {active: true}), (b3:User {active: false}),
+                                   (a1)-[:FRIEND]->(b1),
+                                   (a2)-[:FRIEND]->(b2),
+                                   (a3)-[:FRIEND]->(b3)""")
+
+        res = self.graph.query("""MATCH (a:User {active: true})-[r:FRIEND]->(b:User {active: false})
+                                  CALL { WITH r DELETE r }""")
+        self.env.assertEqual(res.relationships_deleted, 3)
+        self.get_res_and_assertEquals(
+            "MATCH ()-[r:FRIEND]->() RETURN count(r)", [[0]])
+
+        # the same when a filter selects a subset of the relationships: both
+        # matching edges go, the third is untouched
+        # https://github.com/FalkorDB/FalkorDB/issues/2164
+        self.graph.delete()
+        self.graph.query("""CREATE (n1:BugA {id: 1}), (n2:BugA {id: 2}),
+                                   (n1)-[:E {w: 1}]->(n2),
+                                   (n1)-[:E {w: 2}]->(n2),
+                                   (n1)-[:E {w: 1}]->(n2)""")
+
+        res = self.graph.query("""MATCH ()-[r:E]->() WHERE r.w = 1
+                                  CALL { WITH r DELETE r }""")
+        self.env.assertEqual(res.relationships_deleted, 2)
+        self.get_res_and_assertEquals(
+            "MATCH ()-[r:E]->() RETURN count(r)", [[1]])
+
+        # DETACH DELETE takes the same path: every active node and each of
+        # their relationships go, leaving only the inactive endpoints
+        # https://github.com/FalkorDB/FalkorDB/issues/2234
+        self.graph.delete()
+        self.graph.query("""CREATE (a1:U {active: true}), (b1:U {active: false}), (a1)-[:FRIEND]->(b1),
+                                   (a2:U {active: true}), (b2:U {active: false}), (a2)-[:FRIEND]->(b2),
+                                   (a3:U {active: true}), (b3:U {active: false}), (a3)-[:FRIEND]->(b3)""")
+
+        res = self.graph.query("MATCH (a:U {active: true}) CALL { WITH a DETACH DELETE a }")
+        self.env.assertEqual(res.nodes_deleted, 3)
+        self.env.assertEqual(res.relationships_deleted, 3)
+        self.get_res_and_assertEquals("MATCH (n:U) RETURN count(n)", [[3]])
+        self.get_res_and_assertEquals("MATCH ()-[r:FRIEND]->() RETURN count(r)", [[0]])
+
+        # MERGE runs per row as well, so each value of the driving list picks
+        # its own branch: three creations and two matches
+        # https://github.com/FalkorDB/FalkorDB/issues/2164
+        self.graph.delete()
+        self.graph.query("""CREATE (:Node {id: 1}), (:Node {id: 2}), (:Node {id: 3}),
+                                   (:Node {id: 4}), (:Node {id: 5})""")
+
+        res = self.graph.query("""UNWIND range(4, 8) AS i
+                                  CALL {
+                                      WITH i
+                                      MERGE (n:Node {id: i})
+                                        ON CREATE SET n.ctime = 1
+                                        ON MATCH  SET n.mtime = 1
+                                  }""")
+        self.env.assertEqual(res.nodes_created, 3)
+        self.get_res_and_assertEquals("MATCH (n:Node) RETURN count(n)", [[8]])
+        self.get_res_and_assertEquals(
+            "MATCH (n:Node) WHERE n.ctime IS NOT NULL RETURN count(n)", [[3]])
+        self.get_res_and_assertEquals(
+            "MATCH (n:Node) WHERE n.mtime IS NOT NULL RETURN count(n)", [[2]])
+
+        # a returning subquery that deletes must still emit one row per input
+        # row rather than collapsing them into one
+        # https://github.com/FalkorDB/FalkorDB/issues/1943
+        self.graph.delete()
+        self.graph.query("""CREATE (:Person {name: 'Alice'}), (:Person {name: 'Bob'}),
+                                   (:Person {name: 'Charlie'})""")
+
+        res = self.graph.query("""MATCH (p:Person)
+                                  WITH p LIMIT 2
+                                  CALL {
+                                      WITH p
+                                      DELETE p
+                                      RETURN 1 AS deleted
+                                  }
+                                  RETURN deleted""")
+        self.env.assertEqual(res.result_set, [[1], [1]])
+        self.env.assertEqual(res.nodes_deleted, 2)
+        self.get_res_and_assertEquals("MATCH (p:Person) RETURN count(p)", [[1]])
