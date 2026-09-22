@@ -16,10 +16,8 @@
 #include "../datatypes/array.h"
 #include "../graph/graph_hub.h"
 #include "../graph/graphcontext.h"
-#include "../graph/tensor/tensor.h"
 #include "../algorithms/cch.h"
-
-#include <math.h>
+#include "../index/cch_index.h"
 
 // CALL algo.CCH({relTypes: ['ROAD'],
 //                weightProp: 'cost',
@@ -222,137 +220,6 @@ error:
 	return false ;
 }
 
-// resolves a single edge's weight, defaulting to 1 if 'attr_id' is
-// missing/non-numeric on this particular edge -- matches Dijkstra/AStar's
-// per-edge fallback convention
-static double _edge_weight
-(
-	const Graph *g,       // graph owning the edge
-	AttributeID attr_id,  // weight attribute to read
-	EdgeID id             // edge whose weight is resolved
-) {
-	Edge e ;
-	bool found = Graph_GetEdge (g, id, &e) ;
-	ASSERT (found == true) ;
-
-	SIValue w = GraphEntity_GetNumericPropertyOrDefault ((GraphEntity *)&e, attr_id,
-			SI_LongVal (1)) ;
-	return SI_GET_NUMERIC (w) ;
-}
-
-// context for the GraphBLAS IndexUnaryOp that resolves each matrix entry to a
-// weight
-typedef struct {
-	const Graph *g;       // graph being queried
-	AttributeID attr_id;  // attribute id that holds the weight
-} EdgeWeightContext;
-
-// GraphBLAS IndexUnaryOp callback: reads the weight attribute off the edge(s)
-// at (i,j) and writes it to *z. a tensor cell is either a scalar EdgeID
-// (SCALAR_ENTRY) or, for parallel edges, a GrB_Vector of EdgeIDs (AS_VECTOR) --
-// in the latter case the cheapest parallel edge wins.
-static void _get_edge_weight
-(
-	double *z,                    // [output] weight value
-	const void *x,                // entry value (EdgeID, scalar or tagged vector)
-	GrB_Index i,                  // row index -- unused
-	GrB_Index j,                  // col index -- unused
-	const EdgeWeightContext *ctx  // user-supplied context (theta)
-) {
-	uint64_t entry = *(const uint64_t *)x ;
-
-	if (SCALAR_ENTRY (entry)) {
-		*z = _edge_weight (ctx->g, ctx->attr_id, (EdgeID)entry) ;
-		return ;
-	}
-
-	// multi-edge cell: the vector's stored indices are the parallel edges'
-	// EdgeIDs -- take the cheapest
-	GrB_Vector ids = AS_VECTOR (entry) ;
-
-	struct GB_Iterator_opaque _it ;
-	GxB_Iterator it = &_it ;
-	GrB_OK (GxB_Vector_Iterator_attach (it, ids, NULL)) ;
-
-	double min_w = INFINITY ;
-	GrB_Info info = GxB_Vector_Iterator_seek (it, 0) ;
-	while (info != GxB_EXHAUSTED) {
-		EdgeID id = (EdgeID) GxB_Vector_Iterator_getIndex (it) ;
-		double w = _edge_weight (ctx->g, ctx->attr_id, id) ;
-		if (w < min_w) {
-			min_w = w ;
-		}
-		info = GxB_Vector_Iterator_next (it) ;
-	}
-
-	*z = min_w ;
-}
-
-static GrB_Type         ctx_type    = NULL              ;
-static GrB_IndexUnaryOp get_weight  = NULL              ;
-static pthread_once_t index_op_once = PTHREAD_ONCE_INIT ;
-
-static void _init_tensor_ops
-(
-	void
-) {
-	GrB_OK (GrB_Type_new (&ctx_type, sizeof (EdgeWeightContext))) ;
-
-	GrB_OK (GrB_IndexUnaryOp_new (&get_weight,
-			(GxB_index_unary_function)_get_edge_weight, GrB_FP64, GrB_UINT64,
-			ctx_type)) ;
-}
-
-// TODO: switch to get_sub_weight_matrix
-// builds a plain GrB_FP64 weight matrix over 'g's full NodeID space (row/col k
-// IS NodeID k, always). each relation type's matrix is exported and its EdgeID
-// entries resolved to weights in bulk via the IndexUnaryOp above; entries from
-// different relation types landing on the same (src,dst) pair collapse to the
-// cheapest one via GrB_MIN_FP64.
-static GrB_Matrix _build_weight_matrix
-(
-	Graph *g,                     // graph providing the relation matrices
-	const RelationID *relTypeIDs, // relation types forming the sub-graph
-	uint relCount,                // number of relation types
-	AttributeID weightAtt         // edge attribute holding the weight
-) {
-	GrB_Index dim = Graph_RequiredMatrixDim (g) ;
-
-	GrB_Matrix A_w = NULL ;
-	GrB_OK (GrB_Matrix_new (&A_w, GrB_FP64, dim, dim)) ;
-
-	EdgeWeightContext w_ctx = { .g = g, .attr_id = weightAtt } ;
-
-	GrB_Scalar ctx_scalar = NULL ;
-
-	pthread_once (&index_op_once, _init_tensor_ops) ;
-
-	GrB_OK (GrB_Scalar_new (&ctx_scalar, ctx_type)) ;
-	GrB_OK (GrB_Scalar_setElement_UDT (ctx_scalar, (void *)&w_ctx)) ;
-
-	for (uint r = 0; r < relCount; r++) {
-		Delta_Matrix R = Graph_GetRelationMatrix (g, relTypeIDs [r], false) ;
-
-		GrB_Matrix U = NULL ;
-		GrB_OK (Delta_Matrix_export (&U, R, GrB_UINT64, NULL)) ;
-
-		GrB_Matrix Wr = NULL ;
-		GrB_OK (GrB_Matrix_new (&Wr, GrB_FP64, dim, dim)) ;
-		GrB_OK (GrB_Matrix_apply_IndexOp_Scalar (Wr, NULL, NULL, get_weight, U,
-					ctx_scalar, NULL)) ;
-		GrB_OK (GrB_free (&U)) ;
-
-		// combine relation types by taking the cheapest parallel edge
-		GrB_OK (GrB_Matrix_eWiseAdd_BinaryOp (A_w, NULL, NULL, GrB_MIN_FP64,
-					A_w, Wr, NULL)) ;
-		GrB_OK (GrB_free (&Wr)) ;
-	}
-
-	GrB_OK (GrB_free (&ctx_scalar)) ;
-
-	return A_w ;
-}
-
 // materialize every entry of 'S' (the improving shortcuts computed by
 // CCH_ExtractShortcuts) as a real shortcut-typed edge, carrying the shortcut's
 // weight under 'weightAtt'. returns the number of edges created.
@@ -542,7 +409,7 @@ static ProcedureResult Proc_CCHInvoke
 			"algo.CCH: building weight matrix over %u relationship type(s)",
 			arr_len (relTypeIDs)) ;
 
-	GrB_Matrix W = _build_weight_matrix (g, relTypeIDs, arr_len (relTypeIDs),
+	GrB_Matrix W = CCH_BuildWeightMatrix (g, relTypeIDs, arr_len (relTypeIDs),
 			weightAtt) ;
 	arr_free (relTypeIDs) ;
 

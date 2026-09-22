@@ -3,8 +3,9 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "encode_v19.h"
+#include "encode_v20.h"
 #include "../../../util/arr.h"
+#include "../../../index/cch_index.h"
 
 static void _RdbSaveAttributeKeys
 (
@@ -213,7 +214,7 @@ static void _RdbSaveSchema
 	_RdbSaveConstraintsData(rdb, s->constraints);
 }
 
-void RdbSaveGraphSchema_v19
+void RdbSaveGraphSchema_v20
 (
 	SerializerIO rdb,
 	GraphContext *gc
@@ -246,6 +247,24 @@ void RdbSaveGraphSchema_v19
 	for (unsigned short i = 0; i < relation_count; i++) {
 		Schema *s = GraphContext_GetSchemaByID (gc, i, SCHEMA_EDGE) ;
 		_RdbSaveSchema (rdb, s) ;
+	}
+}
+
+// encode the graph-level CCH path indices (their own encode state, so the full
+// hierarchy is written ONCE rather than per virtual key). Format:
+// #cch indices
+// per index: identity (rel types + weight attr) + full hierarchy
+// (see CCHIndex_RdbSave)
+void RdbSaveCCH_v20
+(
+	SerializerIO rdb,
+	GraphContext *gc
+) {
+	uint cch_count = GraphContext_CCHIndexCount (gc) ;
+	SerializerIO_WriteUnsigned (rdb, cch_count) ;
+
+	for (uint i = 0; i < cch_count; i++) {
+		CCHIndex_RdbSave (GraphContext_GetCCHIndexAt (gc, i), rdb) ;
 	}
 }
 

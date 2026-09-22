@@ -18,6 +18,8 @@
 #include "../util/identifier_limits.h"
 #include "../arithmetic/arithmetic_expression.h"
 
+#include <strings.h>   // strcasecmp
+
 typedef enum {
 	NOT_DEFINED = -0x01,  // Yet to be defined
 	REGULAR = 0x00,       // UNION
@@ -2158,6 +2160,19 @@ static VISITOR_STRATEGY _Validate_index_creation
 
 	vctx->clause = cypher_astnode_type(n);
 
+	// reject an unknown index-type keyword (the grammar accepts any word as the
+	// type; only these are meaningful)
+	const cypher_astnode_t *type =
+		cypher_ast_create_pattern_props_index_get_index_type(n);
+	if(type != NULL) {
+		const char *tn = cypher_ast_string_get_value(type);
+		if(strcasecmp(tn, "fulltext") != 0 && strcasecmp(tn, "vector") != 0 &&
+				strcasecmp(tn, "cch") != 0) {
+			ErrorCtx_SetError("Unknown index type '%s'", tn);
+			return VISITOR_BREAK;
+		}
+	}
+
 	const cypher_astnode_t *id = cypher_ast_create_pattern_props_index_get_identifier(n);
 	const char *name = cypher_ast_identifier_get_name(id);
 	_IdentifierAdd(vctx, name, NULL);
@@ -2178,6 +2193,17 @@ static VISITOR_STRATEGY _Validate_index_deletion
 	}
 
 	vctx->clause = cypher_astnode_type(n);
+
+	const cypher_astnode_t *type =
+		cypher_ast_drop_pattern_props_index_get_index_type(n);
+	if(type != NULL) {
+		const char *tn = cypher_ast_string_get_value(type);
+		if(strcasecmp(tn, "fulltext") != 0 && strcasecmp(tn, "vector") != 0 &&
+				strcasecmp(tn, "cch") != 0) {
+			ErrorCtx_SetError("Unknown index type '%s'", tn);
+			return VISITOR_BREAK;
+		}
+	}
 
 	const cypher_astnode_t *id = cypher_ast_drop_pattern_props_index_get_identifier(n);
 	const char *name = cypher_ast_identifier_get_name(id);

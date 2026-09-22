@@ -114,13 +114,9 @@ explain-option = < EXPLAIN >           { $$ = explain_option(); }
 schema-command =
     ( create-index-on
     | create-index-for
-    | create-fulltext-index-for
-    | create-vector-index-for
     | create-constraint
     | drop-index
     | drop-index-for
-    | drop-fulltext-index-for
-    | drop-vector-index-for
     | drop-constraint
     ) ~{ERR("a schema command")}
     (SEMICOLON | EOF)
@@ -134,72 +130,47 @@ create-index-on =
                                        { $$ = create_index(l); }
     -
 
+# CREATE [<type>] INDEX FOR (<node>) | ()-[<rel>]-() ON (<props>) [OPTIONS {..}]
+# <type> is an optional keyword (e.g. FULLTEXT, VECTOR, CCH) captured verbatim as
+# a string; the semantic layer decides which types are valid. a node pattern
+# carries a single label; a relationship pattern may span several types (A|B|..).
 create-index-for =
-    < CREATE-INDEX-FOR
+    < CREATE ( it:index-type | it:_null_ ) INDEX - FOR -
       ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
         (ON | ON-EACH) - LEFT-PAREN p:property-key-name
                                        { sequence_add(p); }
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
-        )* RIGHT-PAREN >
-                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, NULL, false);
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
+                                       { $$ = create_pattern_index(i, l, it, o, false);
 									   }
       | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
-        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        LEFT-SQ-PAREN - i:identifier l:label ( PIPE - index-reltype )*
+        RIGHT-SQ-PAREN -
         DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
         (ON | ON-EACH) - LEFT-PAREN p:property-key-name
                                        { sequence_add(p); }
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
-        )* RIGHT-PAREN >
-                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, NULL, true);
+        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
+                                       { $$ = create_pattern_index(i, l, it, o, true);
 									   }
     ) -
 
-create-fulltext-index-for =
-    < CREATE-FULLTEXT-INDEX-FOR
-      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
-        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
-                                       { sequence_add(p); }
-        ( COMMA - p:property-key-name
-                                       { sequence_add(p); }
-        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
-                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, o, false);
-									   }
-      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
-        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
-        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
-        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
-                                       { sequence_add(p); }
-        ( COMMA - p:property-key-name
-                                       { sequence_add(p); }
-        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
-                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, o, true);
-									   }
-    ) -
+# an optional leading index-type keyword, captured verbatim as a string. matched
+# only when immediately followed by INDEX, so a bare `CREATE INDEX` (no type)
+# doesn't mistake the INDEX keyword for a type name.
+index-type = < { strbuf_reset(); } symbolic-name > - &INDEX
+                                       { $$ = strbuf_string(); }
+    -
 
-create-vector-index-for =
-    < CREATE-VECTOR-INDEX-FOR
-      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
-        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
-                                       { sequence_add(p); }
-        ( COMMA - p:property-key-name
-                                       { sequence_add(p); }
-        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
-                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, o, false);
-									   }
-      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
-        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
-        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
-        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
-                                       { sequence_add(p); }
-        ( COMMA - p:property-key-name
-                                       { sequence_add(p); }
-        )* RIGHT-PAREN ((- OPTIONS - o:map-literal) | o:_null_) >
-                                       { $$ = create_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, o, true);
-									   }
-    ) -
-    
+# a relationship type inside a relationship-pattern index, as a label node. the
+# first type keeps its colon (via `label`); subsequent `A|B` entries may omit it.
+index-reltype = _block_start_          { strbuf_reset(); }
+    ( ':' - symbolic-name | symbolic-name ) ~{ERR("a relationship type")}
+    _block_merge_                      { $$ = strbuf_label(); }
+    -
+
 
 create-constraint =
     < CREATE-CONSTRAINT-ON
@@ -225,69 +196,28 @@ drop-index =
                                        { $$ = drop_index(l); }
     -
 
+# DROP [<type>] INDEX FOR (<node>) | ()-[<rel>]-() ON (<props>) -- mirrors
+# create-index-for (no OPTIONS); a relationship pattern may span several types.
 drop-index-for =
-    < DROP-INDEX-FOR
+    < DROP ( it:index-type | it:_null_ ) INDEX - FOR -
       ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
         (ON | ON-EACH) - LEFT-PAREN p:property-key-name
                                        { sequence_add(p); }
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
         )* RIGHT-PAREN >
-                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, false);
+                                       { $$ = drop_pattern_index(i, l, it, false);
 									   }
       | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
-        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
+        LEFT-SQ-PAREN - i:identifier l:label ( PIPE - index-reltype )*
+        RIGHT-SQ-PAREN -
         DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
         (ON | ON-EACH) - LEFT-PAREN p:property-key-name
                                        { sequence_add(p); }
         ( COMMA - p:property-key-name
                                        { sequence_add(p); }
         )* RIGHT-PAREN >
-                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_RANGE, true);
-									   }
-    ) -
-
-drop-fulltext-index-for =
-    < DROP-FULLTEXT-INDEX-FOR
-      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
-        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
-                                       { sequence_add(p); }
-        ( COMMA - p:property-key-name
-                                       { sequence_add(p); }
-        )* RIGHT-PAREN >
-                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, false);
-									   }
-      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
-        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
-        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
-        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
-                                       { sequence_add(p); }
-        ( COMMA - p:property-key-name
-                                       { sequence_add(p); }
-        )* RIGHT-PAREN >
-                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_FULLTEXT, true);
-									   }
-    ) -
-
-drop-vector-index-for =
-    < DROP-VECTOR-INDEX-FOR
-      ( LEFT-PAREN - i:identifier l:label RIGHT-PAREN -
-        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
-                                       { sequence_add(p); }
-        ( COMMA - p:property-key-name
-                                       { sequence_add(p); }
-        )* RIGHT-PAREN >
-                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, false);
-									   }
-      | LEFT-PAREN - RIGHT-PAREN - (LEFT-ARROW-HEAD -)? DASH -
-        LEFT-SQ-PAREN - i:identifier l:label RIGHT-SQ-PAREN -
-        DASH - (RIGHT-ARROW-HEAD -)? LEFT-PAREN - RIGHT-PAREN -
-        (ON | ON-EACH) - LEFT-PAREN p:property-key-name
-                                       { sequence_add(p); }
-        ( COMMA - p:property-key-name
-                                       { sequence_add(p); }
-        )* RIGHT-PAREN >
-                                       { $$ = drop_pattern_index(i, l, CYPHER_INDEX_TYPE_VECTOR, true);
+                                       { $$ = drop_pattern_index(i, l, it, true);
 									   }
     ) -
 
@@ -1153,29 +1083,16 @@ CREATE-CONSTRAINT-ON = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
 CREATE-INDEX-ON = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
     [Ii][Nn][Dd][Ee][Xx] WB - [Oo][Nn] WB -)
     ~{ERR("CREATE INDEX ON")}
-CREATE-FULLTEXT-INDEX-FOR = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
-    [Ff][Uu][Ll][Ll][Tt][Ee][Xx][Tt] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
-    ~{ERR("CREATE INDEX FOR")}
-CREATE-VECTOR-INDEX-FOR = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
-    [Vv][Ee][Cc][Tt][Oo][Rr] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
-    ~{ERR("CREATE INDEX FOR")}
-CREATE-INDEX-FOR = [Cc]([Rr][Ee][Aa][Tt][Ee] WB -
-    [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
-    ~{ERR("CREATE INDEX FOR")}
 ON = [Oo][Nn] WB ~{ERR("ON")}
 ON-EACH = [Oo][Nn] WB - [Ee][Aa][Cc][Hh] ~{ERR("ON")}
 OPTIONS = [Oo][Pp][Tt][Ii][Oo][Nn][Ss] WB ~{ERR("ON")}
+INDEX = [Ii][Nn][Dd][Ee][Xx] WB - ~{ERR("INDEX")}
+FOR = [Ff][Oo][Rr] WB - ~{ERR("FOR")}
 DROP-CONSTRAINT-ON = [Dd]([Rr][Oo][Pp] WB -
     [Cc][Oo][Nn][Ss][Tt][Rr][Aa][Ii][Nn][Tt] WB - [Oo][Nn] WB -)
     ~{ERR("DROP CONSTRAINT ON")}
 DROP-INDEX-ON = [Dd]([Rr][Oo][Pp] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Oo][Nn] WB -)
     ~{ERR("DROP INDEX ON")}
-DROP-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
-    ~{ERR("DROP INDEX FOR")}
-DROP-FULLTEXT-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Ff][Uu][Ll][Ll][Tt][Ee][Xx][Tt] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
-    ~{ERR("DROP INDEX FOR")}
-DROP-VECTOR-INDEX-FOR = [Dd]([Rr][Oo][Pp] WB - [Vv][Ee][Cc][Tt][Oo][Rr] WB - [Ii][Nn][Dd][Ee][Xx] WB - [Ff][Oo][Rr] WB -)
-    ~{ERR("DROP INDEX FOR")}
 
 ASSERT = ([Aa][Ss][Ss][Ee][Rr][Tt] WB -) ~{ERR("ASSERT")}
 IS-UNIQUE = ([Ii][Ss] WB - [Uu][Nn][Ii][Qq][Uu][Ee] WB -) ~{ERR("IS UNIQUE")}

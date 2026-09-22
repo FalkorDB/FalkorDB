@@ -369,6 +369,7 @@ class testProcedures(FlowTestsBase):
             ["READ", "algo.maxFlow"],
             ["READ", "algo.pageRank"],
             ["READ", "db.constraints"],
+            ["READ", "db.idx.cch.query"],
             ["WRITE", "db.idx.fulltext.createNodeIndex"],
             ["WRITE", "db.idx.fulltext.drop"],
             ["READ", "db.idx.fulltext.queryNodes"],

@@ -19,6 +19,10 @@
 
 typedef struct GraphContext GraphContext;
 
+// forward declaration -- full definition in index/cch_index.h, kept out of this
+// widely-included header so GraphBLAS isn't pulled in everywhere
+typedef struct _CCHIndex CCHIndex;
+
 //------------------------------------------------------------------------------
 // GraphContext API
 //------------------------------------------------------------------------------
@@ -490,6 +494,115 @@ void GraphContext_RegisterWithModule
 GraphContext *GraphContext_UnsafeGetGraphContext
 (
 	const char *graph_name  // graph name
+);
+
+//------------------------------------------------------------------------------
+// CCH Index API
+//------------------------------------------------------------------------------
+
+// add a CCH path index to the graph context
+// the graph context takes ownership of 'idx'
+void GraphContext_AddCCHIndex
+(
+	GraphContext *gc,  // graph context
+	CCHIndex *idx      // CCH index to add
+);
+
+// retrieve the CCH index defined over exactly 'rel_types' and 'weight_attr'
+// returns NULL if no such index exists
+CCHIndex *GraphContext_GetCCHIndex
+(
+	const GraphContext *gc,       // graph context
+	const RelationID *rel_types,  // relationship types the index spans
+	uint n,                       // number of relationship types
+	AttributeID weight_attr       // edge weight attribute
+);
+
+// returns the number of CCH path indices on the graph context
+uint GraphContext_CCHIndexCount
+(
+	const GraphContext *gc  // graph context
+);
+
+// returns the i-th CCH path index, or NULL if 'i' is out of range
+CCHIndex *GraphContext_GetCCHIndexAt
+(
+	const GraphContext *gc,  // graph context
+	uint i                   // index position
+);
+
+//------------------------------------------------------------------------------
+// CCH index maintenance (coalesced; applied at query commit)
+//------------------------------------------------------------------------------
+
+// flag every CCH index spanning relationship type 'r' for a full rebuild
+// (topology change: edge add/delete)
+void GraphContext_CCHMarkRelRebuild
+(
+	GraphContext *gc,  // graph context
+	RelationID r       // relationship type mutated
+);
+
+// flag every CCH index spanning relationship type 'r' for re-customization
+// (metric change: an edge weight property update), recording the changed edge's
+// endpoints 'u'->'v' as the scope for an incremental re-customization
+void GraphContext_CCHMarkRelRecustomize
+(
+	GraphContext *gc,  // graph context
+	RelationID r,      // relationship type mutated
+	NodeID u,          // changed edge source node id
+	NodeID v           // changed edge destination node id
+);
+
+// an edge of type 'r' was added: incrementally re-customize CCH indices spanning
+// 'r' when its chordal arc already exists, else flag them for a full rebuild
+void GraphContext_CCHMarkRelEdgeAdded
+(
+	GraphContext *gc,  // graph context
+	RelationID r,      // relationship type of the added edge
+	NodeID u,          // added edge source node id
+	NodeID v           // added edge destination node id
+);
+
+// an edge of type 'r' was deleted: re-customize CCH indices spanning 'r' (the
+// chordal arc is kept + re-seeded) and count it toward the staleness valve
+void GraphContext_CCHMarkRelEdgeDeleted
+(
+	GraphContext *gc,  // graph context
+	RelationID r,      // relationship type of the deleted edge
+	NodeID u,          // deleted edge source node id
+	NodeID v           // deleted edge destination node id
+);
+
+// flag every CCH index for a full rebuild (a change to the whole node-id space:
+// node add/delete)
+void GraphContext_CCHMarkAllRebuild
+(
+	GraphContext *gc  // graph context
+);
+
+// apply pending maintenance to every dirty CCH index, then clear it. call once,
+// under the write lock, on the success path of a write query
+void GraphContext_CCHFlushDirty
+(
+	GraphContext *gc  // graph context
+);
+
+// discard pending CCH maintenance without applying it. call on the rollback path
+// of a write query -- the mutations were undone, so the indices are unchanged
+void GraphContext_CCHClearDirty
+(
+	GraphContext *gc  // graph context
+);
+
+// remove and free the CCH index defined over 'rel_types' and 'weight_attr'
+// returns true if a matching index was removed
+bool GraphContext_RemoveCCHIndex
+(
+	GraphContext *gc,             // graph context
+	const RelationID *rel_types,  // relationship types the index spans
+	uint n,                       // number of relationship types
+	AttributeID weight_attr       // edge weight attribute
 );
 
 //------------------------------------------------------------------------------

@@ -18,6 +18,7 @@
 #include "../errors/errors.h"
 #include "../errors/error_msgs.h"
 #include "../constraint/constraint.h"
+#include "../index/cch_index.h"
 #include "../util/identifier_limits.h"
 #include "../commands/execution_ctx.h"
 #include "../serializers/graphcontext_type.h"
@@ -332,6 +333,7 @@ GraphContext *GraphContext_New
 	gc->ref_count   = 0 ;  // no refences
 
 	gc->index_count      = 0 ;  // no indicies
+	gc->cch_indices      = arr_new (CCHIndex *, 0) ;  // no CCH path indices
 	gc->encoding_context = GraphEncodeContext_New () ;
 	gc->decoding_context = GraphDecodeContext_New () ;
 
@@ -1163,6 +1165,215 @@ void GraphContext_RemoveAttribute
 }
 
 //------------------------------------------------------------------------------
+// CCH Index API
+//------------------------------------------------------------------------------
+
+// add a CCH path index to the graph context
+// the graph context takes ownership of 'idx'
+void GraphContext_AddCCHIndex
+(
+	GraphContext *gc,  // graph context
+	CCHIndex *idx      // CCH index to add
+) {
+	ASSERT (gc  != NULL) ;
+	ASSERT (idx != NULL) ;
+
+	arr_append (gc->cch_indices, idx) ;
+}
+
+// retrieve the CCH index defined over exactly 'rel_types' and 'weight_attr'
+// returns NULL if no such index exists
+CCHIndex *GraphContext_GetCCHIndex
+(
+	const GraphContext *gc,       // graph context
+	const RelationID *rel_types,  // relationship types the index spans
+	uint n,                       // number of relationship types
+	AttributeID weight_attr       // edge weight attribute
+) {
+	ASSERT (gc != NULL) ;
+
+	uint count = arr_len (gc->cch_indices) ;
+	for (uint i = 0 ; i < count ; i++) {
+		CCHIndex *idx = gc->cch_indices [i] ;
+		if (CCHIndex_Matches (idx, rel_types, n, weight_attr)) {
+			return idx ;
+		}
+	}
+
+	return NULL ;
+}
+
+// returns the number of CCH path indices on the graph context
+uint GraphContext_CCHIndexCount
+(
+	const GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+	return arr_len (gc->cch_indices) ;
+}
+
+// returns the i-th CCH path index, or NULL if 'i' is out of range
+CCHIndex *GraphContext_GetCCHIndexAt
+(
+	const GraphContext *gc,  // graph context
+	uint i                   // index position
+) {
+	ASSERT (gc != NULL) ;
+	return (i < arr_len (gc->cch_indices)) ? gc->cch_indices [i] : NULL ;
+}
+
+void GraphContext_CCHMarkRelRebuild
+(
+	GraphContext *gc,  // graph context
+	RelationID r       // relationship type mutated
+) {
+	ASSERT (gc != NULL) ;
+
+	uint n = arr_len (gc->cch_indices) ;
+	for (uint i = 0 ; i < n ; i++) {
+		CCHIndex *idx = gc->cch_indices [i] ;
+		if (CCHIndex_CoversRelation (idx, r)) {
+			CCHIndex_MarkDirty (idx, CCH_DIRTY_REBUILD) ;
+		}
+	}
+}
+
+void GraphContext_CCHMarkRelRecustomize
+(
+	GraphContext *gc,  // graph context
+	RelationID r,      // relationship type mutated
+	NodeID u,          // changed edge source node id
+	NodeID v           // changed edge destination node id
+) {
+	ASSERT (gc != NULL) ;
+
+	uint n = arr_len (gc->cch_indices) ;
+	for (uint i = 0 ; i < n ; i++) {
+		CCHIndex *idx = gc->cch_indices [i] ;
+		if (CCHIndex_CoversRelation (idx, r)) {
+			// records the changed arc's endpoints and raises the level to
+			// RECUSTOMIZE -- the scope a future incremental re-customization needs
+			CCHIndex_MarkArcDirty (idx, u, v) ;
+		}
+	}
+}
+
+void GraphContext_CCHMarkRelEdgeAdded
+(
+	GraphContext *gc,  // graph context
+	RelationID r,      // relationship type of the added edge
+	NodeID u,          // added edge source node id
+	NodeID v           // added edge destination node id
+) {
+	ASSERT (gc != NULL) ;
+
+	uint n = arr_len (gc->cch_indices) ;
+	for (uint i = 0 ; i < n ; i++) {
+		CCHIndex *idx = gc->cch_indices [i] ;
+		if (CCHIndex_CoversRelation (idx, r)) {
+			CCHIndex_MarkEdgeAdded (idx, u, v) ;
+		}
+	}
+}
+
+void GraphContext_CCHMarkRelEdgeDeleted
+(
+	GraphContext *gc,  // graph context
+	RelationID r,      // relationship type of the deleted edge
+	NodeID u,          // deleted edge source node id
+	NodeID v           // deleted edge destination node id
+) {
+	ASSERT (gc != NULL) ;
+
+	uint n = arr_len (gc->cch_indices) ;
+	for (uint i = 0 ; i < n ; i++) {
+		CCHIndex *idx = gc->cch_indices [i] ;
+		if (CCHIndex_CoversRelation (idx, r)) {
+			CCHIndex_MarkEdgeDeleted (idx, u, v) ;
+		}
+	}
+}
+
+void GraphContext_CCHMarkAllRebuild
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	uint n = arr_len (gc->cch_indices) ;
+	for (uint i = 0 ; i < n ; i++) {
+		CCHIndex_MarkDirty (gc->cch_indices [i], CCH_DIRTY_REBUILD) ;
+	}
+}
+
+void GraphContext_CCHFlushDirty
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	uint n = arr_len (gc->cch_indices) ;
+	if (n == 0) {
+		return ;
+	}
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+	for (uint i = 0 ; i < n ; i++) {
+		CCHIndex *idx = gc->cch_indices [i] ;
+		switch (idx->dirty) {
+			case CCH_DIRTY_REBUILD:
+				CCHIndex_Build (idx, g) ;
+				break ;
+			case CCH_DIRTY_RECUSTOMIZE:
+				// an unbuilt index can't be re-customized -- fall back to build
+				if (CCHIndex_Built (idx)) CCHIndex_Recustomize (idx, g) ;
+				else                      CCHIndex_Build (idx, g) ;
+				break ;
+			case CCH_DIRTY_CLEAN:
+			default:
+				break ;
+		}
+	}
+}
+
+void GraphContext_CCHClearDirty
+(
+	GraphContext *gc  // graph context
+) {
+	ASSERT (gc != NULL) ;
+
+	uint n = arr_len (gc->cch_indices) ;
+	for (uint i = 0 ; i < n ; i++) {
+		CCHIndex_MarkClean (gc->cch_indices [i]) ;
+	}
+}
+
+// remove and free the CCH index defined over 'rel_types' and 'weight_attr'
+// returns true if a matching index was removed
+bool GraphContext_RemoveCCHIndex
+(
+	GraphContext *gc,             // graph context
+	const RelationID *rel_types,  // relationship types the index spans
+	uint n,                       // number of relationship types
+	AttributeID weight_attr       // edge weight attribute
+) {
+	ASSERT (gc != NULL) ;
+
+	uint count = arr_len (gc->cch_indices) ;
+	for (uint i = 0 ; i < count ; i++) {
+		CCHIndex *idx = gc->cch_indices [i] ;
+		if (CCHIndex_Matches (idx, rel_types, n, weight_attr)) {
+			CCHIndex_Free (idx) ;
+			// order is irrelevant, swap the tail into the freed slot
+			arr_del_fast (gc->cch_indices, i) ;
+			return true ;
+		}
+	}
+
+	return false ;
+}
+
+//------------------------------------------------------------------------------
 // Index API
 //------------------------------------------------------------------------------
 
@@ -1625,6 +1836,15 @@ void GraphContext_Free
 
 	arr_free_cb (gc->attributes, rm_free) ;
 	gc->attributes = NULL ;
+
+	//--------------------------------------------------------------------------
+	// free CCH path indices
+	//--------------------------------------------------------------------------
+
+	// CCHIndex_Free only releases CPU-side memory (the resident CCH + arrays),
+	// so unlike the RediSearch-backed indices it needs no GIL
+	arr_free_cb (gc->cch_indices, CCHIndex_Free) ;
+	gc->cch_indices = NULL ;
 
 	//--------------------------------------------------------------------------
 	// free queries log
