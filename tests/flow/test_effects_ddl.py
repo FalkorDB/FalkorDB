@@ -1,4 +1,5 @@
-"""Effects v3 -- schema DDL as effects: constraints and indexes announced, converged, dropped, and settled under races.
+"""Effects -- schema DDL as effects: constraints and indexes announced,
+converged, dropped, settled under races, and the indexes a query never named.
 
 See `effects_common.py` for the shared fixture and why these are split.
 """
@@ -15,7 +16,7 @@ from index_utils import (create_edge_range_index, create_node_fulltext_index,
 from effects_common import _EffectsBase
 
 
-class testEffects_02_ConstraintAsEffect(_EffectsBase):
+class testEffects_01_ConstraintAsEffect(_EffectsBase):
     """A constraint is announced as an effect, carrying its status.
 
     The announcement is of the *outcome*: the replica installs the status this
@@ -82,7 +83,7 @@ class testEffects_02_ConstraintAsEffect(_EffectsBase):
         self.env.assertEqual(self.constraint_rows(self.master_graph, 'Small'), [])
         self.env.assertEqual(self.constraint_rows(self.replica_graph, 'Small'), [])
 
-    def test04_a_failed_constraint_replicates_its_failure(self):
+    def test03_a_failed_constraint_replicates_its_failure(self):
         # The status travels, so FAILED has to arrive as FAILED. A replica that
         # re-derived the status would reach the same answer here, which is
         # precisely why the interesting assertion is that it did not have to.
@@ -116,7 +117,7 @@ class testEffects_02_ConstraintAsEffect(_EffectsBase):
 #-----------------------------------------------------------------------------
 
 
-class testEffects_03_ConstraintConvergence(_EffectsBase):
+class testEffects_02_ConstraintConvergence(_EffectsBase):
     """Above the async threshold a constraint is announced twice — once UNDER
     CONSTRUCTION, once with the settled status — and the replica must end with
     exactly ONE constraint at the settled status.
@@ -216,7 +217,7 @@ class testEffects_03_ConstraintConvergence(_EffectsBase):
 #-----------------------------------------------------------------------------
 
 
-class testEffects_05_IndexAndConstraint(_EffectsBase):
+class testEffects_04_IndexAndConstraint(_EffectsBase):
     """An index, a unique constraint that depends on it, and the drops — with
     db.indexes() and db.constraints() compared on both sides at every step.
 
@@ -334,7 +335,7 @@ class testEffects_05_IndexAndConstraint(_EffectsBase):
 #-----------------------------------------------------------------------------
 
 
-class testEffects_05b_IndexDDLMechanism(_EffectsBase):
+class testEffects_05_IndexDDLMechanism(_EffectsBase):
     """*How* index DDL reaches the replica, not just whether the state matches.
 
     The resulting index looks the same however it arrived, so a state-only
@@ -390,12 +391,13 @@ class testEffects_05b_IndexDDLMechanism(_EffectsBase):
         self.assert_agree(q, [['german', ['der', 'die']]])
 
 
-class testEffects_06b_ConstraintSettlingRaces(_EffectsBase):
+class testEffects_06_ConstraintSettlingRaces(_EffectsBase):
     """What happens to a constraint left UNDER CONSTRUCTION when the settle is
     interrupted.
 
     Both tests need the gap between the two announcements to be wide enough to
-    act inside, and use the same lever `testEffects_07_PromotedReplica`
+    act inside, and use the same lever `testEffects_02_PromotedReplica`
+    (test_effects_topology.py)
     documents: a UNIQUE constraint over three indexed properties of a million
     nodes sits there for roughly 400ms on a release build. MANDATORY will not
     do — its validation is a bare scan that settles in under 4ms even at that
@@ -514,12 +516,29 @@ class testEffects_06b_ConstraintSettlingRaces(_EffectsBase):
         #
         #   636173893  flow-release  / release-flow-svc  amd64
         #   af2120d80  flow-coverage / coverage-flow-svc amd64
+        #   38ab02b9e  flow-coverage / coverage-flow-svc amd64
+        #
+        # In those three runs this class was named `testEffectsV3_06b_` and
+        # then `testEffects_06b_ConstraintSettlingRaces`, and the file was
+        # `test_effects_v3_ddl.py`; grepping a CI log for the current name
+        # finds none of them.
         #
         # It is not deterministic either: re-running the second one passed
-        # without a code change. Roughly 2 sightings in 20 CI runs of this
-        # file, 0 in 3 serial local release runs. Both CI sightings are
+        # without a code change. Roughly 3 sightings in 30 CI runs of this
+        # file, 0 in 4 serial local release runs. Every CI sighting is
         # services mode at parallelism 4; it has still never been seen with
         # this class running alone.
+        #
+        # Two things the third sighting adds, both observations rather than
+        # mechanisms. It is now 2 of 3 on the COVERAGE lane specifically,
+        # where instrumentation slows everything down -- which is the
+        # direction a timing-sensitive race would lean, but three samples
+        # cannot carry that claim. And it is the first sighting since `04f`
+        # moved into this file, so the classes running before it are no
+        # longer the same set as for the first two; given the dependency
+        # below is the only condition under which this has ever been seen,
+        # that change is a variable, not a constant. The same run passed
+        # `test_effects_ddl.py` in both release lanes, amd64 and arm64.
         #
         # What it MEANS is still not established -- nobody has reproduced it on
         # demand, and no mechanism has been shown. Recorded as an observation
@@ -576,7 +595,7 @@ class testEffects_06b_ConstraintSettlingRaces(_EffectsBase):
 #-----------------------------------------------------------------------------
 
 
-class testEffects_04f_IndexesTheQueryNeverNamed(_EffectsBase):
+class testEffects_03_ImplicitIndexes(_EffectsBase):
     """An update touches every index the entity belongs to, not the one the
     pattern matched on.
 

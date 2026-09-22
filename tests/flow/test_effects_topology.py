@@ -1,4 +1,5 @@
-"""Effects v3 -- the classes that take the primary/replica pair APART and put it back: a forced resync, and a promotion.
+"""Effects -- the classes that take the primary/replica pair APART and put it
+back: a forced resync, and a promotion.
 
 This file is the reason the others do not need to worry about topology.
 
@@ -15,7 +16,7 @@ from index_utils import (create_node_range_index, wait_for_indices_to_sync)
 from effects_common import _EffectsBase
 
 
-class testEffects_06c_DivergenceForcesResync(_EffectsBase):
+class testEffects_01_DivergenceForcesResync(_EffectsBase):
     """A replica that cannot apply an effect must repair itself, not carry on.
 
     v3 detects far more divergence than v2 did — thirteen distinct checks
@@ -137,7 +138,7 @@ class testEffects_06c_DivergenceForcesResync(_EffectsBase):
         self.env.assertEqual(self.replica.ping(), True)
 
 
-class testEffects_07_PromotedReplica(_EffectsBase):
+class testEffects_02_PromotedReplica(_EffectsBase):
     """A replica promoted while holding a constraint UNDER CONSTRUCTION must
     settle it itself.
 

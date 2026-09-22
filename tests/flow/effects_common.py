@@ -6,16 +6,26 @@ helpers, the MONITOR window machinery, and the log readers.
 
 The files, and the question each one asks:
 
-  test_effects.py            does every opcode replicate at all?
+  test_effects_opcodes.py    does every opcode replicate at all?
+  test_effects_values.py     does every value survive the wire -- a null as a
+                             removal, and every other type unchanged?
   test_effects_shapes.py     what must one buffer survive -- partitioning,
                              supernodes, id reuse, compound statements?
+  test_effects_batch.py      does it hold at scale, and under random ops?
+  test_effects_commit.py     what one commit carries, and must not leak
   test_effects_wire.py       framing, refusal of unreadable payloads,
                              compression, byte determinism
   test_effects_ddl.py        index and constraint DDL as effects, including
-                             indexes a query never named
+                             the indexes a query never named
   test_effects_topology.py   divergence, forced resync, promotion
   test_effects_commands.py   GRAPH.RECORD, and the commands that still
                              replicate verbatim
+
+Class prefixes number 01..N WITHIN each file, and test methods 01..N within
+each class. They are not a global sequence: an earlier layout numbered classes
+00-08 across one file and kept the numbers through a split, which left the `04`
+family spread over three files and told the reader nothing about where a class
+lived.
 
 They are split rather than one file so CI shards them -- the flow matrix cells
 on `test_file`, so each file runs in its own cell against its own pair of
@@ -108,7 +118,7 @@ class _EffectsBase():
             Environment.skip(None)
 
         # No `enableDebugCommand`: every class here runs against the shared
-        # services container under CI (`test_matrix_split.py` puts all six
+        # services container under CI (`test_matrix_split.py` puts all nine
         # files in `services_files`), and `common.py:564` documents the flag as
         # a no-op in that mode anyway. Nothing here needs DEBUG.
         self.env, self.db = Env(env='oss', useSlaves=True)

@@ -1,4 +1,5 @@
-"""Effects v3 -- the commands around a write: `GRAPH.RECORD`, and the ones that still replicate verbatim.
+"""Effects -- the commands around a write: `GRAPH.RECORD`, and the ones
+that still replicate verbatim.
 
 See `effects_common.py` for the shared fixture and why these are split.
 """
@@ -14,7 +15,7 @@ from index_utils import (create_node_range_index, list_indicies, wait_for_indice
 from effects_common import _EffectsBase
 
 
-class testEffects_04d_RecordCommand(_EffectsBase):
+class testEffects_01_RecordCommand(_EffectsBase):
     """`GRAPH.RECORD` replicates its write as an effect, like `GRAPH.QUERY`.
 
     RECORD adds an operator trace to a normal write; it is not a dry run.
@@ -136,7 +137,7 @@ class testEffects_04d_RecordCommand(_EffectsBase):
 #-----------------------------------------------------------------------------
 
 
-class testEffects_04e_VerbatimCommands(_EffectsBase):
+class testEffects_02_VerbatimCommands(_EffectsBase):
     """The commands that were deliberately left replicating verbatim, and the
     effects that follow them.
 
@@ -286,7 +287,7 @@ class testEffects_04e_VerbatimCommands(_EffectsBase):
         self.env.assertContains("EffectsV3Udf", self.udf_names(self.master))
         # `GRAPH.UDF` carries Redis's `write` flag for every subcommand, LIST
         # included, so reading the replica's libraries needs the read-only flag
-        # lifted — the same dance `testEffects_05b_IndexDDLMechanism` does for
+        # lifted — the same dance `testEffects_05_IndexDDLMechanism` (test_effects_ddl.py) does for
         # GRAPH.EXPLAIN, and lifted only for the read.
         self.env.assertContains("EffectsV3Udf", self.replica_udf_names())
         # and it is callable there, not merely listed

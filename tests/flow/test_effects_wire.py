@@ -1,4 +1,5 @@
-"""Effects v3 -- the bytes on the wire: what a reader refuses, what compression does to a payload, and that the same write twice produces the same bytes.
+"""Effects -- the bytes on the wire: what a reader refuses, what compression
+does to a payload, and that the same write twice produces the same bytes.
 
 See `effects_common.py` for the shared fixture and why these are split.
 """
@@ -14,7 +15,7 @@ from index_utils import (create_node_range_index, wait_for_indices_to_sync)
 from effects_common import _EffectsBase, zstd_raw_frame
 
 
-class testEffects_00_UnreadableBuffer(_EffectsBase):
+class testEffects_01_UnreadableBuffer(_EffectsBase):
     """A `GRAPH.EFFECT` payload this build cannot read must be refused, leave
     the graph exactly as it was, and take nothing down.
 
@@ -34,7 +35,8 @@ class testEffects_00_UnreadableBuffer(_EffectsBase):
 
     The replayed half needs no separate case per malformed shape:
     `graph_effect` funnels every `ApplyError` through one `is_replayed` check,
-    and `testEffects_06c_DivergenceForcesResync` already pins that path end
+    and `testEffects_01_DivergenceForcesResync` (test_effects_topology.py)
+    already pins that path end
     to end.
     """
 
@@ -123,7 +125,7 @@ class testEffects_00_UnreadableBuffer(_EffectsBase):
                 + (len(name) + 1).to_bytes(8, "little")  # length includes the NUL
                 + name.encode() + b"\x00")
 
-    def test01b_a_future_version_whose_body_is_readable_is_still_refused(self):
+    def test02_a_future_version_whose_body_is_readable_is_still_refused(self):
         # The case the version check exists for, and the one a message-only
         # assertion would miss: a payload whose *records* this build reads
         # perfectly well, announced as a version it does not know. Decoding the
@@ -162,7 +164,7 @@ class testEffects_00_UnreadableBuffer(_EffectsBase):
                        ).result_set, [['Anchor'], ['Injected']])
         self._still_healthy(full_before)
 
-    def test02_a_flags_bit_this_build_does_not_know_is_refused(self):
+    def test03_a_flags_bit_this_build_does_not_know_is_refused(self):
         self.set_effects_config()
         full_before = self.master.info()["sync_full"]
 
@@ -178,7 +180,7 @@ class testEffects_00_UnreadableBuffer(_EffectsBase):
         self._still_healthy(full_before)
         self.assert_agree("MATCH (n:U) RETURN count(n), sum(n.v)", [[2, 3]])
 
-    def test03_a_truncated_header_is_refused(self):
+    def test04_a_truncated_header_is_refused(self):
         self.set_effects_config()
         full_before = self.master.info()["sync_full"]
 
@@ -199,7 +201,7 @@ class testEffects_00_UnreadableBuffer(_EffectsBase):
         self._still_healthy(full_before)
         self.assert_agree("MATCH (n:U) RETURN count(n), sum(n.v)", [[2, 3]])
 
-    def test04_a_corrupt_compressed_frame_is_refused(self):
+    def test05_a_corrupt_compressed_frame_is_refused(self):
         self.set_effects_config()
         full_before = self.master.info()["sync_full"]
 
@@ -219,7 +221,7 @@ class testEffects_00_UnreadableBuffer(_EffectsBase):
         self._still_healthy(full_before)
         self.assert_agree("MATCH (n:U) RETURN count(n), sum(n.v)", [[2, 3]])
 
-    def test05_a_valid_frame_with_the_wrong_checksum_is_refused(self):
+    def test06_a_valid_frame_with_the_wrong_checksum_is_refused(self):
         self.set_effects_config()
         full_before = self.master.info()["sync_full"]
 
@@ -243,7 +245,7 @@ class testEffects_00_UnreadableBuffer(_EffectsBase):
         self._still_healthy(full_before)
         self.assert_agree("MATCH (n:U) RETURN count(n), sum(n.v)", [[2, 3]])
 
-    def test06_a_client_cannot_send_an_effect_to_a_replica_at_all(self):
+    def test07_a_client_cannot_send_an_effect_to_a_replica_at_all(self):
         # The whole reason `is_replayed` can afford to be lenient: reaching a
         # replica's apply path from a client needs the replica to be writable,
         # and it is not. If this ever starts succeeding, the leniency in
@@ -262,7 +264,7 @@ class testEffects_00_UnreadableBuffer(_EffectsBase):
 #-----------------------------------------------------------------------------
 
 
-class testEffects_06_Compression(_EffectsBase):
+class testEffects_02_Compression(_EffectsBase):
     """EFFECTS_COMPRESSION only changes the framing, never the outcome.
 
     The same workload is applied twice, into two graph keys, once with
@@ -311,6 +313,47 @@ class testEffects_06_Compression(_EffectsBase):
             answers.append(m)
         return answers, payloads
 
+
+    def test01_compressed_and_uncompressed_reach_the_same_state(self):
+        plain, plain_payloads = self._run_workload("effects_comp_off", 0)
+        zstd,  zstd_payloads  = self._run_workload("effects_comp_on", 1024)
+
+        # Asserting on the flags byte is what stops this from quietly becoming
+        # a second copy of the uncompressed run the day the threshold stops
+        # being reached.
+        self.env.assertGreater(len(plain_payloads), 0)
+        self.env.assertGreater(len(zstd_payloads), 0)
+        # with compression off, nothing is framed as compressed
+        for p in plain_payloads:
+            self.env.assertTrue(p.startswith(self.HEADER_PLAIN))
+        # with it on, at least one buffer cleared the 1024-byte floor. Not all
+        # of them: the floor is a minimum, and the small buffers in this
+        # workload stay plain by design.
+        self.env.assertGreater(
+            sum(1 for p in zstd_payloads if p.startswith(self.HEADER_COMPRESSED)), 0)
+
+        # and the two runs agree probe for probe
+        for p, a, b in zip(self.PROBES, plain, zstd):
+            self.env.assertEqual(b, a)
+
+    def test02_a_compressed_graph_is_whole(self):
+        # graph_eq over the compressed run, including its indexes and
+        # constraints, rather than only the aggregate probes above.
+        self.set_effects_config(1024)
+        self.master_graph  = Graph(self.master,  "effects_comp_on")
+        self.replica_graph = Graph(self.replica, "effects_comp_on")
+        create_node_range_index(self.master_graph, 'C', 'v', sync=True)
+        create_unique_node_constraint(self.master_graph, 'C', 'v')
+        self.wait_for_constraint_settled(self.master_graph, 'C')
+        self.wait_for_constraint_settled(self.replica_graph, 'C')
+        self.wait_for_replica_offset()
+        wait_for_indices_to_sync(self.master_graph)
+        wait_for_indices_to_sync(self.replica_graph)
+        self.assert_graph_eq()
+
+        # leave the shared server with compression off
+        self.set_effects_config(0)
+
     def test03_a_constraint_announcement_is_sealed_like_any_other_payload(self):
         """A constraint announcement goes out through the format, not around it.
 
@@ -358,53 +401,13 @@ class testEffects_06_Compression(_EffectsBase):
         self.env.assertEqual(rows[0][0], 'MANDATORY')
         self.env.assertEqual(rows[0][4], 'OPERATIONAL')
 
-    def test01_compressed_and_uncompressed_reach_the_same_state(self):
-        plain, plain_payloads = self._run_workload("effects_comp_off", 0)
-        zstd,  zstd_payloads  = self._run_workload("effects_comp_on", 1024)
-
-        # Asserting on the flags byte is what stops this from quietly becoming
-        # a second copy of the uncompressed run the day the threshold stops
-        # being reached.
-        self.env.assertGreater(len(plain_payloads), 0)
-        self.env.assertGreater(len(zstd_payloads), 0)
-        # with compression off, nothing is framed as compressed
-        for p in plain_payloads:
-            self.env.assertTrue(p.startswith(self.HEADER_PLAIN))
-        # with it on, at least one buffer cleared the 1024-byte floor. Not all
-        # of them: the floor is a minimum, and the small buffers in this
-        # workload stay plain by design.
-        self.env.assertGreater(
-            sum(1 for p in zstd_payloads if p.startswith(self.HEADER_COMPRESSED)), 0)
-
-        # and the two runs agree probe for probe
-        for p, a, b in zip(self.PROBES, plain, zstd):
-            self.env.assertEqual(b, a)
-
-    def test02_a_compressed_graph_is_whole(self):
-        # graph_eq over the compressed run, including its indexes and
-        # constraints, rather than only the aggregate probes above.
-        self.set_effects_config(1024)
-        self.master_graph  = Graph(self.master,  "effects_comp_on")
-        self.replica_graph = Graph(self.replica, "effects_comp_on")
-        create_node_range_index(self.master_graph, 'C', 'v', sync=True)
-        create_unique_node_constraint(self.master_graph, 'C', 'v')
-        self.wait_for_constraint_settled(self.master_graph, 'C')
-        self.wait_for_constraint_settled(self.replica_graph, 'C')
-        self.wait_for_replica_offset()
-        wait_for_indices_to_sync(self.master_graph)
-        wait_for_indices_to_sync(self.replica_graph)
-        self.assert_graph_eq()
-
-        # leave the shared server with compression off
-        self.set_effects_config(0)
-
 
 #-----------------------------------------------------------------------------
 # 8. the same write produces the same bytes
 #-----------------------------------------------------------------------------
 
 
-class testEffects_08_ByteDeterminism(_EffectsBase):
+class testEffects_03_ByteDeterminism(_EffectsBase):
     """The bytes, not just the state.
 
     Every other class here asserts that the replica *agrees* — which an encoder

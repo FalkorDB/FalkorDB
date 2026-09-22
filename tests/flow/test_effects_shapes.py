@@ -1,4 +1,8 @@
-"""Effects v3 -- the record shapes the writer partitions and the reader reassembles, including the indexes a query never named.
+"""Effects -- the record shapes the writer partitions and the reader
+reassembles.
+
+The indexes a query never names moved to `test_effects_ddl.py`: implicit index
+maintenance is a DDL concern, not a partitioning one.
 
 See `effects_common.py` for the shared fixture and why these are split.
 """
@@ -15,7 +19,7 @@ from index_utils import (create_edge_range_index, create_node_fulltext_index,
 from effects_common import _EffectsBase
 
 
-class testEffects_04_Shapes(_EffectsBase):
+class testEffects_01_Shapes(_EffectsBase):
     """The record shapes the v3 writer has to partition and the reader has to
     reassemble: multiple labels, differing property shapes in one query,
     points, lists, large batches, deletes interleaved with creates, and ids
@@ -197,7 +201,7 @@ class testEffects_04_Shapes(_EffectsBase):
         self.assert_agree("MATCH (n:Recycled2) RETURN count(n), sum(n.i)",
                           [[100, 5050]])
 
-    def test06b_create_delete_and_recreate_one_id_in_one_buffer(self):
+    def test07_create_delete_and_recreate_one_id_in_one_buffer(self):
         # The case test06 does *not* reach. A query that commits three times
         # puts all three commits in ONE effects buffer, and the allocator
         # recycles a freed id across commits — so the buffer creates an id,
@@ -229,7 +233,7 @@ class testEffects_04_Shapes(_EffectsBase):
             m.ro_query("MATCH (n) RETURN count(n), labels(n)[0], ID(n)").result_set)
         self.env.assertTrue(graph_eq(m, r))
 
-    def test07_everything_still_agrees(self):
+    def test08_everything_still_agrees(self):
         # A whole-graph comparison once the shapes above have all been applied.
         # Cheap now: test05 removed the bulk of the nodes.
         self.query_and_sync("MATCH (n:Bulk) DELETE n")
@@ -243,12 +247,12 @@ class testEffects_04_Shapes(_EffectsBase):
 #-----------------------------------------------------------------------------
 
 
-class testEffects_04c_HarderShapes(_EffectsBase):
+class testEffects_02_HarderShapes(_EffectsBase):
     """Shapes with structure the writer's partitioning has to survive: an edge
     whose endpoints are one node, a very wide attribute set, and the operators
     that commit more than once so their records share a buffer.
 
-    `testEffects_04_Shapes` covers volume and interleaving. These are the
+    `testEffects_01_Shapes` covers volume and interleaving. These are the
     shapes where the *blocks* are unusual — `IdSet` and `IdList` are distinct
     types precisely because edge endpoints repeat, and a self-loop is the
     smallest case where the same id appears in both endpoint lists.
@@ -477,7 +481,7 @@ class testEffects_04c_HarderShapes(_EffectsBase):
 #-----------------------------------------------------------------------------
 
 
-class testEffects_04g_CompoundSequences(_EffectsBase):
+class testEffects_03_CompoundSequences(_EffectsBase):
     """Several record kinds from one statement, applied in an order that works.
 
     `test07`-`test09` used to live here and were removed: they were DDL and
@@ -654,7 +658,7 @@ class testEffects_04g_CompoundSequences(_EffectsBase):
                              list_indicies(self.master_graph).result_set)
         self.assert_graph_eq()
 
-    def test10_an_index_procedure_inside_a_write_query(self):
+    def test07_an_index_procedure_inside_a_write_query(self):
         """DDL and data in ONE statement — and what actually happens today.
 
         This is the shape the class is named for and the one it could not
@@ -721,7 +725,7 @@ class testEffects_04g_CompoundSequences(_EffectsBase):
         self.env.assertEqual(self.count_in(window, 'GRAPH.QUERY'), 0)
         self.assert_graph_eq()
 
-    def test11_a_non_deterministic_write_replicates_its_outcome(self):
+    def test08_a_non_deterministic_write_replicates_its_outcome(self):
         """A write whose size and values the query text does not determine.
 
         This is the one shape a replica cannot get right by re-running the
