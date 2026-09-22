@@ -309,18 +309,21 @@ impl IndexFieldBit {
     }
 }
 
-/// Which kind wins when one statement sets bits of several — the full-text,
-/// then vector, then range order `apply` used to spell out as an if/else ladder.
+/// Why a `field_type` names no index this build can create.
 ///
-/// A property of the kind, not of the bit, which is why it is not folded into
-/// [`IndexFieldBit::index_type`]. Exhaustive over `IndexType` for the same
-/// reason that one is over the bits: a fourth kind has to say where it ranks.
-const fn precedence(kind: IndexType) -> u8 {
-    match kind {
-        IndexType::Fulltext => 0,
-        IndexType::Vector => 1,
-        IndexType::Range => 2,
-    }
+/// Both arms carry the offending bit; the caller turns them into its own error
+/// type, since the wire layer reports a malformed record and the apply layer a
+/// buffer it will not apply.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BadFieldType {
+    /// A bit no [`IndexFieldBit`] variant claims.
+    UnknownBit(u32),
+    /// Bits naming two different kinds of index, which no single index can be.
+    MixedKinds {
+        bit: u32,
+        kind: IndexType,
+        first: IndexType,
+    },
 }
 
 /// Every set bit of `field_type`, isolated, lowest first.
@@ -342,33 +345,84 @@ fn field_type_bits(field_type: u32) -> impl Iterator<Item = u32> {
     })
 }
 
-/// The kind of index a `field_type` names, or `Err` with the first bit this
-/// build has no variant for.
+impl BadFieldType {
+    /// Render as a wire-decode failure, naming the `field_type` it came from.
+    ///
+    /// Here rather than at each call site so the three gates stay one line and
+    /// cannot describe the same refusal two different ways.
+    #[must_use]
+    pub const fn decode(
+        self,
+        field_type: u32,
+    ) -> DecodeError {
+        match self {
+            Self::UnknownBit(bit) => DecodeError::UnknownIndexFieldType { field_type, bit },
+            Self::MixedKinds { bit, kind, first } => DecodeError::MixedIndexFieldTypes {
+                field_type,
+                bit,
+                kind,
+                first,
+            },
+        }
+    }
+
+    /// Render as an encode refusal — the writer held to the reader's rule.
+    #[must_use]
+    pub const fn encode(
+        self,
+        field_type: u32,
+    ) -> EncodeError {
+        match self {
+            Self::UnknownBit(bit) => EncodeError::UnknownIndexFieldType { field_type, bit },
+            Self::MixedKinds { bit, kind, first } => EncodeError::MixedIndexFieldTypes {
+                field_type,
+                bit,
+                kind,
+                first,
+            },
+        }
+    }
+}
+
+/// The one kind of index a `field_type` names.
 ///
-/// One function, deliberately, rather than a validator beside a classifier.
-/// Two walks over the same bits would be two definitions of "known" that can
-/// drift apart — and the drift would be silent in the worst direction, a bit
-/// that validation accepts and classification then has to guess at. Callers
-/// that only want the check, like the encoder and the record decoder, discard
-/// the `Ok`; the point is that they cannot accept a `field_type` this module
-/// could not also classify.
+/// One function, deliberately, rather than a validator beside a classifier: two
+/// walks over the same bits would be two definitions of "known" that can drift,
+/// and the drift would be silent in the worst direction. Callers that only want
+/// the check, like the encoder and the record decoder, discard the `Ok`; the
+/// point is that they cannot accept a `field_type` this module could not also
+/// classify.
+///
+/// Several bits of the *same* kind are ordinary — `INDEX_FLD_RANGE` is three of
+/// them, and a range index over numbers and strings alone is `0x0A`. Bits of
+/// *different* kinds are refused rather than ranked. `apply` used to resolve
+/// them with a full-text, then vector, then range ladder; nothing can produce
+/// the case. C picks its type by equality and asserts otherwise
+/// (`graph_hub.c`, `GraphHub_AddIndex`), and `emit::index_field_flags` is total
+/// over the same three values. Ranking would mean silently building one index
+/// where the record asked for two, which is the shape of wrongness this whole
+/// gate exists to turn into a resync.
 ///
 /// An empty `field_type` is a range index, as it always was.
 ///
 /// # Errors
 ///
-/// The offending bit, for the caller to name in its own error type — the wire
-/// layer reports a malformed record, the apply layer a buffer it will not
-/// apply, and neither wants the other's.
-pub fn index_type_of(field_type: u32) -> Result<IndexType, u32> {
-    let mut best: Option<IndexType> = None;
+/// [`BadFieldType`], for the caller to render in its own error type.
+pub fn index_type_of(field_type: u32) -> Result<IndexType, BadFieldType> {
+    let mut first: Option<IndexType> = None;
     for bit in field_type_bits(field_type) {
-        let kind = IndexFieldBit::try_from(bit).map_err(|_| bit)?.index_type();
-        if best.is_none_or(|b| precedence(kind) < precedence(b)) {
-            best = Some(kind);
+        let kind = IndexFieldBit::try_from(bit)
+            .map_err(|_| BadFieldType::UnknownBit(bit))?
+            .index_type();
+        match first {
+            None => first = Some(kind),
+            Some(first) if first != kind => {
+                return Err(BadFieldType::MixedKinds { bit, kind, first });
+            }
+            Some(_) => {}
         }
     }
-    Ok(best.unwrap_or(IndexType::Range))
+    Ok(first.unwrap_or(IndexType::Range))
 }
 
 pub const INDEX_FLD_FULLTEXT: u32 = IndexFieldBit::Fulltext as u32;

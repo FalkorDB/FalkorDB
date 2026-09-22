@@ -448,8 +448,7 @@ fn check_index_record<T>(
     field_type: u32,
     schemas: &[SchemaRef<T>],
 ) -> Result<(), EncodeError> {
-    index_type_of(field_type)
-        .map_err(|bit| EncodeError::UnknownIndexFieldType { field_type, bit })?;
+    index_type_of(field_type).map_err(|e| e.encode(field_type))?;
     if schemas.is_empty() {
         return Err(EncodeError::EmptyIndexSchemaList);
     }
@@ -746,8 +745,7 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             // The classifier is the validator: a `field_type` this layer accepts
             // is exactly one `index_type_of` can name a kind for. The kind
             // itself is the apply layer's business, so it is discarded here.
-            index_type_of(field_type)
-                .map_err(|bit| DecodeError::UnknownIndexFieldType { field_type, bit })?;
+            index_type_of(field_type).map_err(|e| e.decode(field_type))?;
             let fields = IndexFields::decode(r)?.0;
             // A drop stops here — zero option bytes, not an empty block — and
             // the variant it becomes has no field for any.

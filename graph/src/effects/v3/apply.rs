@@ -412,9 +412,8 @@ fn apply_record(
             // the record existed. Answered rather than unwrapped so a future
             // caller that reaches apply without decoding gets a refusal rather
             // than a silent misclassification.
-            let index_type = index_type_of(field_type).map_err(|bit| {
-                ApplyError::Decode(DecodeError::UnknownIndexFieldType { field_type, bit })
-            })?;
+            let index_type =
+                index_type_of(field_type).map_err(|e| ApplyError::Decode(e.decode(field_type)))?;
             // Every entity is verified above, including the ones this build
             // then refuses to index: a record that names three types is a
             // record about all three, and checking only the one that fits
@@ -462,9 +461,8 @@ fn apply_record(
             // the record existed. Answered rather than unwrapped so a future
             // caller that reaches apply without decoding gets a refusal rather
             // than a silent misclassification.
-            let index_type = index_type_of(field_type).map_err(|bit| {
-                ApplyError::Decode(DecodeError::UnknownIndexFieldType { field_type, bit })
-            })?;
+            let index_type =
+                index_type_of(field_type).map_err(|e| ApplyError::Decode(e.decode(field_type)))?;
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
             g.drop_index(&index_type, &schema_type, &label, &fields)?;
@@ -1939,24 +1937,40 @@ mod tests {
 
     #[test]
     fn index_field_type_maps_by_bit_not_ordinal() {
-        use crate::effects::v3::{INDEX_FLD_FULLTEXT, INDEX_FLD_NUMERIC, INDEX_FLD_VECTOR};
+        use crate::effects::v3::{
+            BadFieldType, INDEX_FLD_FULLTEXT, INDEX_FLD_NUMERIC, INDEX_FLD_STR, INDEX_FLD_VECTOR,
+        };
         assert_eq!(index_type_of(INDEX_FLD_RANGE), Ok(IndexType::Range));
         assert_eq!(index_type_of(INDEX_FLD_FULLTEXT), Ok(IndexType::Fulltext));
         assert_eq!(index_type_of(INDEX_FLD_VECTOR), Ok(IndexType::Vector));
         // A range index is the OR of three scalar kinds, so bit-testing is the
         // only thing that classifies it correctly.
         assert_eq!(index_type_of(INDEX_FLD_NUMERIC), Ok(IndexType::Range));
-        // Precedence, which used to be an if/else ladder: a statement that is
-        // both full-text and vector is a full-text index.
+        // A bit with no variant is refused by name rather than falling through
+        // to range; the error carries the bit so each layer reports it its own
+        // way.
+        assert_eq!(index_type_of(0x20), Err(BadFieldType::UnknownBit(0x20)));
+        assert_eq!(
+            index_type_of(INDEX_FLD_RANGE | 0x40),
+            Err(BadFieldType::UnknownBit(0x40))
+        );
+        // Two kinds at once is refused, not ranked. Nothing emits it — C picks
+        // by equality and asserts otherwise, `index_field_flags` is total — and
+        // ranking would build one index where the record named two.
         assert_eq!(
             index_type_of(INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR),
-            Ok(IndexType::Fulltext)
+            Err(BadFieldType::MixedKinds {
+                bit: INDEX_FLD_VECTOR,
+                kind: IndexType::Vector,
+                first: IndexType::Fulltext,
+            })
         );
-        // And a bit with no variant is refused by name, rather than falling
-        // through to range — the error carries the offending bit so the wire
-        // and apply layers can each report it in their own terms.
-        assert_eq!(index_type_of(0x20), Err(0x20));
-        assert_eq!(index_type_of(INDEX_FLD_RANGE | 0x40), Err(0x40));
+        // But several bits of the *same* kind stay ordinary: a range index over
+        // numbers and strings alone is 0x0A, and the corpus carries one.
+        assert_eq!(
+            index_type_of(INDEX_FLD_NUMERIC | INDEX_FLD_STR),
+            Ok(IndexType::Range)
+        );
     }
 
     /// An option nobody stated must not arrive as one somebody did.

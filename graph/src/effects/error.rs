@@ -3,6 +3,7 @@
 use thiserror::Error;
 
 use super::v3::EFFECTS_VERSION;
+use crate::index::IndexType;
 
 // ── encode errors ──
 
@@ -54,6 +55,16 @@ pub enum EncodeError {
     /// silently truncated to the bits it does know.
     #[error("index field type {field_type:#x} sets unknown bit {bit:#x}")]
     UnknownIndexFieldType { field_type: u32, bit: u32 },
+
+    /// An index record naming two kinds of index at once. No single index is
+    /// both, and nothing emits it — refused rather than ranked.
+    #[error("index field type {field_type:#x} names both {first:?} and {kind:?} (bit {bit:#x})")]
+    MixedIndexFieldTypes {
+        field_type: u32,
+        bit: u32,
+        kind: IndexType,
+        first: IndexType,
+    },
 
     /// An index record built with an empty schema list.
     #[error("index record names no schema entity")]
@@ -161,6 +172,23 @@ pub enum DecodeError {
          no index type for (field type {field_type:#x})"
     )]
     UnknownIndexFieldType { field_type: u32, bit: u32 },
+
+    /// An index record whose `field_type` names two kinds of index at once.
+    ///
+    /// Nothing emits this: C selects its index type by equality and asserts
+    /// otherwise (`GraphHub_AddIndex`), and this engine's `index_field_flags` is
+    /// total over the same three values. Refused rather than ranked, because
+    /// ranking would build one index where the record asked for two.
+    #[error(
+        "effects index record sets bit {bit:#x} ({kind:?}) alongside {first:?} \
+         (field type {field_type:#x}); no index is both"
+    )]
+    MixedIndexFieldTypes {
+        field_type: u32,
+        bit: u32,
+        kind: IndexType,
+        first: IndexType,
+    },
 
     /// A `CREATE_INDEX`/`DROP_INDEX` that names no schema entity at all.
     ///
