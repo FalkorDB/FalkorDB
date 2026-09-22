@@ -21,7 +21,7 @@
 use super::records::IndexFieldOptions;
 use crate::{
     effects::v3::{
-        AttrRef, INDEX_FLD_FULLTEXT, INDEX_FLD_VECTOR, Record, SchemaRef, entity_tag, open_payload,
+        AttrRef, DecodeError, Record, SchemaRef, entity_tag, index_type_of, open_payload,
     },
     entity_type::EntityType,
     graph::{
@@ -408,7 +408,13 @@ fn apply_record(
             for field in &fields {
                 verify_attribute(g, field.id, &field.name)?;
             }
-            let index_type = index_type_of(field_type);
+            // `Ok` is guaranteed here: the decoder ran this same check before
+            // the record existed. Answered rather than unwrapped so a future
+            // caller that reaches apply without decoding gets a refusal rather
+            // than a silent misclassification.
+            let index_type = index_type_of(field_type).map_err(|bit| {
+                ApplyError::Decode(DecodeError::UnknownIndexFieldType { field_type, bit })
+            })?;
             // Every entity is verified above, including the ones this build
             // then refuses to index: a record that names three types is a
             // record about all three, and checking only the one that fits
@@ -452,7 +458,13 @@ fn apply_record(
             for field in &fields {
                 verify_attribute(g, field.id, &field.name)?;
             }
-            let index_type = index_type_of(field_type);
+            // `Ok` is guaranteed here: the decoder ran this same check before
+            // the record existed. Answered rather than unwrapped so a future
+            // caller that reaches apply without decoding gets a refusal rather
+            // than a silent misclassification.
+            let index_type = index_type_of(field_type).map_err(|bit| {
+                ApplyError::Decode(DecodeError::UnknownIndexFieldType { field_type, bit })
+            })?;
             let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
             g.drop_index(&index_type, &schema_type, &label, &fields)?;
@@ -791,33 +803,18 @@ fn index_options(
 /// the wire, in the log or in the data to say the two had parted — the silent
 /// class of divergence this whole layer is built to turn into resyncs.
 ///
-/// The empty case cannot arrive from the wire — `IndexSchemas::decode` refuses
-/// it — but it is answered here too rather than left to an `unwrap` that would
-/// depend on a guarantee two files away.
+/// Converting to a one-element array rather than testing the length and then
+/// indexing: it is the same single length check, but it hands back the element
+/// already destructured, so there is no `unwrap` left over whose safety depends
+/// on the line above it. The empty case cannot arrive from the wire —
+/// `IndexSchemas::decode` refuses it — and falls in with the too-many case here
+/// rather than needing an arm of its own.
 fn single_index_label(schemas: Vec<SchemaRef<String>>) -> Result<String, ApplyError> {
-    let count = schemas.len();
-    let mut it = schemas.into_iter();
-    match (it.next(), it.next()) {
-        (Some(one), None) => Ok(one.name),
-        _ => Err(ApplyError::MultiSchemaIndexUnsupported { count }),
-    }
-}
-
-/// `IndexFieldType` is a bit flag set, so this tests bits rather than matching
-/// a discriminant. Anything that is neither full-text nor vector is a range
-/// index — `INDEX_FLD_RANGE` is itself the union of the three scalar kinds.
-///
-/// That fall-through is only safe because the decoder refuses a `field_type`
-/// bit it does not know (`INDEX_FLD_KNOWN`). Without that gate this function is
-/// where a future index type quietly became a range one: it tests for the two
-/// kinds it knows and calls everything else the third.
-fn index_type_of(field_type: u32) -> IndexType {
-    if field_type & INDEX_FLD_FULLTEXT != 0 {
-        IndexType::Fulltext
-    } else if field_type & INDEX_FLD_VECTOR != 0 {
-        IndexType::Vector
-    } else {
-        IndexType::Range
+    match <[SchemaRef<String>; 1]>::try_from(schemas) {
+        Ok([one]) => Ok(one.name),
+        Err(schemas) => Err(ApplyError::MultiSchemaIndexUnsupported {
+            count: schemas.len(),
+        }),
     }
 }
 
@@ -1942,15 +1939,24 @@ mod tests {
 
     #[test]
     fn index_field_type_maps_by_bit_not_ordinal() {
-        assert_eq!(index_type_of(INDEX_FLD_RANGE), IndexType::Range);
-        assert_eq!(index_type_of(INDEX_FLD_FULLTEXT), IndexType::Fulltext);
-        assert_eq!(index_type_of(INDEX_FLD_VECTOR), IndexType::Vector);
+        use crate::effects::v3::{INDEX_FLD_FULLTEXT, INDEX_FLD_NUMERIC, INDEX_FLD_VECTOR};
+        assert_eq!(index_type_of(INDEX_FLD_RANGE), Ok(IndexType::Range));
+        assert_eq!(index_type_of(INDEX_FLD_FULLTEXT), Ok(IndexType::Fulltext));
+        assert_eq!(index_type_of(INDEX_FLD_VECTOR), Ok(IndexType::Vector));
         // A range index is the OR of three scalar kinds, so bit-testing is the
         // only thing that classifies it correctly.
+        assert_eq!(index_type_of(INDEX_FLD_NUMERIC), Ok(IndexType::Range));
+        // Precedence, which used to be an if/else ladder: a statement that is
+        // both full-text and vector is a full-text index.
         assert_eq!(
-            index_type_of(crate::effects::v3::INDEX_FLD_NUMERIC),
-            IndexType::Range
+            index_type_of(INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR),
+            Ok(IndexType::Fulltext)
         );
+        // And a bit with no variant is refused by name, rather than falling
+        // through to range — the error carries the offending bit so the wire
+        // and apply layers can each report it in their own terms.
+        assert_eq!(index_type_of(0x20), Err(0x20));
+        assert_eq!(index_type_of(INDEX_FLD_RANGE | 0x40), Err(0x40));
     }
 
     /// An option nobody stated must not arrive as one somebody did.

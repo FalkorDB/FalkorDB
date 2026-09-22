@@ -51,9 +51,9 @@ pub enum EncodeError {
     /// wire whose conditional sections it does not itself know how to write.
     /// Unreachable from any statement this engine accepts — `emit::index_field_flags`
     /// is total over `IndexType` — which is why it must be loud rather than
-    /// silently truncated to the known bits.
-    #[error("index field type {field_type:#x} sets unknown bits {bits:#x}")]
-    UnknownIndexFieldType { field_type: u32, bits: u32 },
+    /// silently truncated to the bits it does know.
+    #[error("index field type {field_type:#x} sets unknown bit {bit:#x}")]
+    UnknownIndexFieldType { field_type: u32, bit: u32 },
 
     /// An index record built with an empty schema list.
     #[error("index record names no schema entity")]
@@ -154,16 +154,13 @@ pub enum DecodeError {
     /// parses the next record from inside this one. Even where it does not —
     /// a `DROP_INDEX` carries no options — `apply::index_type_of` would have
     /// called the unknown type a range index, which is a wrong index rather than
-    /// a refused buffer. See [`crate::effects::v3::INDEX_FLD_KNOWN`].
+    /// a refused buffer. The known set is [`crate::effects::v3::IndexFieldBit`]
+    /// itself: a bit is known if and only if it converts to a variant.
     #[error(
-        "effects index record sets unknown index field type bits {bits:#x} \
-         (field type {field_type:#x}); this build reads {known:#x}"
+        "effects index record sets index field type bit {bit:#x}, which this build has \
+         no index type for (field type {field_type:#x})"
     )]
-    UnknownIndexFieldType {
-        field_type: u32,
-        bits: u32,
-        known: u32,
-    },
+    UnknownIndexFieldType { field_type: u32, bit: u32 },
 
     /// A `CREATE_INDEX`/`DROP_INDEX` that names no schema entity at all.
     ///

@@ -495,10 +495,8 @@ fn check_index_record<T>(
     field_type: u32,
     schemas: &[SchemaRef<T>],
 ) -> Result<(), EncodeError> {
-    let bits = field_type & !INDEX_FLD_KNOWN;
-    if bits != 0 {
-        return Err(EncodeError::UnknownIndexFieldType { field_type, bits });
-    }
+    index_type_of(field_type)
+        .map_err(|bit| EncodeError::UnknownIndexFieldType { field_type, bit })?;
     if schemas.is_empty() {
         return Err(EncodeError::EmptyIndexSchemaList);
     }
@@ -792,14 +790,11 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             // bit desynchronises — and before the drop path too, which has no
             // options to desynchronise but would otherwise hand `index_type_of`
             // a type it can only mistake for a range index.
-            let bits = field_type & !INDEX_FLD_KNOWN;
-            if bits != 0 {
-                return Err(DecodeError::UnknownIndexFieldType {
-                    field_type,
-                    bits,
-                    known: INDEX_FLD_KNOWN,
-                });
-            }
+            // The classifier is the validator: a `field_type` this layer accepts
+            // is exactly one `index_type_of` can name a kind for. The kind
+            // itself is the apply layer's business, so it is discarded here.
+            index_type_of(field_type)
+                .map_err(|bit| DecodeError::UnknownIndexFieldType { field_type, bit })?;
             let fields = IndexFields::decode(r)?.0;
             // A drop stops here — zero option bytes, not an empty block — and
             // the variant it becomes has no field for any.
@@ -2028,13 +2023,20 @@ mod tests {
         assert_eq!(INDEX_FLD_RANGE, 0x0E);
         assert_eq!(INDEX_FLD_FULLTEXT, 0x01);
         assert_eq!(INDEX_FLD_VECTOR, 0x10);
-        // Pinned so that widening the mask is a deliberate edit. Adding a bit
-        // here without also teaching `IndexFieldOptions` the section it gates
-        // and `apply::index_type_of` the type it names puts the decoder back to
-        // reading one section short — which is the failure this mask exists to
-        // stop. Refusing a bit we have not learned yet is the safe direction;
-        // accepting one we have not is not.
-        assert_eq!(INDEX_FLD_KNOWN, 0x1F);
+        // Every variant is a single bit. There is no mask to pin any more —
+        // `IndexFieldBit::try_from` is the known set — but a variant declared
+        // without an explicit discriminant would silently take the previous
+        // one plus one, which for a bit set is a value that can never be
+        // isolated from a `field_type` and so a type that quietly never works.
+        // `Cch` after `Vector = 0x10` would be `0x11`, and would compile.
+        for v in 0_u32..=0xFF {
+            if let Ok(bit) = IndexFieldBit::try_from(v) {
+                assert!(
+                    v.is_power_of_two(),
+                    "{bit:?} is {v:#x}, which is not a single bit"
+                );
+            }
+        }
         // And the two numberings C uses for the same node-or-edge enum: the
         // schema dictionary is 0-based, GraphEntityType is 1-based because
         // GETYPE_UNKNOWN takes 0.
@@ -2145,9 +2147,8 @@ mod tests {
 
     #[test]
     fn an_unknown_index_field_type_bit_is_refused_not_ignored() {
-        assert_eq!(
-            INDEX_FLD_KNOWN & FUTURE_INDEX_BIT,
-            0,
+        assert!(
+            IndexFieldBit::try_from(FUTURE_INDEX_BIT).is_err(),
             "0x20 is no longer unknown — this test needs a new bit"
         );
 
@@ -2161,10 +2162,8 @@ mod tests {
 
             let buf = foreign_index_buffer(opcode, INDEX_FLD_RANGE | FUTURE_INDEX_BIT);
             match read_buffer(&buf) {
-                Err(DecodeError::UnknownIndexFieldType {
-                    bits, field_type, ..
-                }) => {
-                    assert_eq!(bits, FUTURE_INDEX_BIT, "{opcode:?} named the wrong bit");
+                Err(DecodeError::UnknownIndexFieldType { bit, field_type }) => {
+                    assert_eq!(bit, FUTURE_INDEX_BIT, "{opcode:?} named the wrong bit");
                     assert_eq!(field_type, INDEX_FLD_RANGE | FUTURE_INDEX_BIT);
                 }
                 other => panic!("{opcode:?}: an unknown field type bit was not refused: {other:?}"),
@@ -2213,7 +2212,7 @@ mod tests {
             matches!(
                 err,
                 EncodeError::UnknownIndexFieldType {
-                    bits: FUTURE_INDEX_BIT,
+                    bit: FUTURE_INDEX_BIT,
                     ..
                 }
             ),
