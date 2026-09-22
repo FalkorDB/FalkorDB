@@ -289,23 +289,37 @@ pub enum IndexFieldBit {
 }
 
 impl IndexFieldBit {
-    /// What kind of index this bit means, and how it ranks when one statement
-    /// sets several — lower wins, reproducing the full-text, then vector, then
-    /// range ladder [`index_type_of`] used to spell out by hand in `apply`.
+    /// What kind of index this bit means.
     ///
-    /// The only exhaustive match left, and the one decision a new index type
-    /// actually has to make. Adding a variant fails to compile *here* — the
-    /// site that previously answered `Range` for anything it did not recognise,
-    /// which is how an unreadable index type became a silently wrong one.
+    /// The one decision a new index type has to make, and the reason the enum
+    /// earns its place: adding a variant fails to compile here, at the site that
+    /// previously answered `Range` for anything it did not recognise. It returns
+    /// an `IndexType` rather than matching with unit arms precisely so there is
+    /// no do-nothing arm to add — `Self::Cch => {}` would compile and leave the
+    /// classification below silently wrong.
     #[must_use]
-    pub const fn kind(self) -> (u8, IndexType) {
+    pub const fn index_type(self) -> IndexType {
         match self {
-            Self::Fulltext => (0, IndexType::Fulltext),
-            Self::Vector => (1, IndexType::Vector),
+            Self::Fulltext => IndexType::Fulltext,
+            Self::Vector => IndexType::Vector,
             // A range index is the union of the three scalar kinds; none of
             // them names a kind the others do not.
-            Self::Numeric | Self::Geo | Self::Str => (2, IndexType::Range),
+            Self::Numeric | Self::Geo | Self::Str => IndexType::Range,
         }
+    }
+}
+
+/// Which kind wins when one statement sets bits of several — the full-text,
+/// then vector, then range order `apply` used to spell out as an if/else ladder.
+///
+/// A property of the kind, not of the bit, which is why it is not folded into
+/// [`IndexFieldBit::index_type`]. Exhaustive over `IndexType` for the same
+/// reason that one is over the bits: a fourth kind has to say where it ranks.
+const fn precedence(kind: IndexType) -> u8 {
+    match kind {
+        IndexType::Fulltext => 0,
+        IndexType::Vector => 1,
+        IndexType::Range => 2,
     }
 }
 
@@ -347,14 +361,14 @@ fn field_type_bits(field_type: u32) -> impl Iterator<Item = u32> {
 /// layer reports a malformed record, the apply layer a buffer it will not
 /// apply, and neither wants the other's.
 pub fn index_type_of(field_type: u32) -> Result<IndexType, u32> {
-    let mut best: Option<(u8, IndexType)> = None;
+    let mut best: Option<IndexType> = None;
     for bit in field_type_bits(field_type) {
-        let kind = IndexFieldBit::try_from(bit).map_err(|_| bit)?.kind();
-        if best.is_none_or(|(rank, _)| kind.0 < rank) {
+        let kind = IndexFieldBit::try_from(bit).map_err(|_| bit)?.index_type();
+        if best.is_none_or(|b| precedence(kind) < precedence(b)) {
             best = Some(kind);
         }
     }
-    Ok(best.map_or(IndexType::Range, |(_, t)| t))
+    Ok(best.unwrap_or(IndexType::Range))
 }
 
 pub const INDEX_FLD_FULLTEXT: u32 = IndexFieldBit::Fulltext as u32;
