@@ -44,6 +44,21 @@ pub enum EncodeError {
     #[error("field type {field_type:#06x} and the options block disagree about the vector half")]
     OptionsFieldTypeMismatch { field_type: u32 },
 
+    /// An index record this build would not be able to read back.
+    ///
+    /// The mirror of [`DecodeError::UnknownIndexFieldType`], and it holds the
+    /// writer to the same rule as the reader: a build must not put a bit on the
+    /// wire whose conditional sections it does not itself know how to write.
+    /// Unreachable from any statement this engine accepts — `emit::index_field_flags`
+    /// is total over `IndexType` — which is why it must be loud rather than
+    /// silently truncated to the known bits.
+    #[error("index field type {field_type:#x} sets unknown bits {bits:#x}")]
+    UnknownIndexFieldType { field_type: u32, bits: u32 },
+
+    /// An index record built with an empty schema list.
+    #[error("index record names no schema entity")]
+    EmptyIndexSchemaList,
+
     /// A record header whose count does not match what its opcode allows.
     ///
     /// A batchable opcode needs a count and a singular one must not have it —
@@ -130,6 +145,32 @@ pub enum DecodeError {
     /// An opcode with no record shape.
     #[error("unknown effect opcode {0}")]
     BadOpcode(u32),
+
+    /// An index record whose `field_type` sets a bit this build does not know.
+    ///
+    /// Refused rather than masked off, for exactly the reason [`Self::UnknownFlags`]
+    /// is. The bits gate conditional sections of the options block, so reading
+    /// past one this build does not know leaves the cursor one section short and
+    /// parses the next record from inside this one. Even where it does not —
+    /// a `DROP_INDEX` carries no options — `apply::index_type_of` would have
+    /// called the unknown type a range index, which is a wrong index rather than
+    /// a refused buffer. See [`crate::effects::v3::INDEX_FLD_KNOWN`].
+    #[error(
+        "effects index record sets unknown index field type bits {bits:#x} \
+         (field type {field_type:#x}); this build reads {known:#x}"
+    )]
+    UnknownIndexFieldType {
+        field_type: u32,
+        bits: u32,
+        known: u32,
+    },
+
+    /// A `CREATE_INDEX`/`DROP_INDEX` that names no schema entity at all.
+    ///
+    /// The list exists so one statement can name several; naming none is not a
+    /// degenerate case of that, it is a record with nothing to index.
+    #[error("effects index record names no schema entity")]
+    EmptyIndexSchemaList,
 
     /// A payload flag this build does not understand. Rejected rather than
     /// ignored: decoding the records anyway would apply a prefix of something
@@ -237,6 +278,21 @@ pub enum ApplyError {
         name: String,
         id: i64,
     },
+
+    /// An index record naming several schema entities — a shape the wire can
+    /// carry but this build cannot apply.
+    ///
+    /// The record holds a list so that an index type spanning several
+    /// relationship types needs no wire change when it arrives. `Graph::create_index`
+    /// still takes one label, so until it grows a multi-entity form such a record
+    /// is refused by name. Applying its first entry instead would leave the
+    /// replica indexing a subset of what the primary indexed, with nothing
+    /// anywhere to say so.
+    #[error(
+        "effects buffer indexes {count} schema entities in one statement, which this build \
+         cannot apply. The buffer was not applied."
+    )]
+    MultiSchemaIndexUnsupported { count: usize },
 
     /// A create names an id that is neither in this replica's recycle bin nor
     /// past the first id it has never allocated — so it is already live here.

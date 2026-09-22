@@ -271,6 +271,27 @@ pub const INDEX_FLD_UNKNOWN: u32 = 0x00;
 /// `INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR` = `0x0E`.
 pub const INDEX_FLD_RANGE: u32 = INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR;
 
+/// Every `field_type` bit this build can read: `0x1F`.
+///
+/// Anything outside this mask is refused at decode rather than ignored, because
+/// an ignored bit here is not inert. The bits gate conditional sections of the
+/// options block — [`records::IndexFieldOptions`] writes and reads a vector half
+/// iff `INDEX_FLD_VECTOR` — so a bit this build does not know means the block is
+/// read one section short and the *next* record is parsed from inside this one.
+///
+/// The semantic layer could not catch it either: `apply::index_type_of` tests
+/// for full-text, then vector, and calls everything else a range index. So an
+/// index type this build cannot read would have quietly become one it can.
+/// That is the same shape as the RDB "no status word" bug — a reader running one
+/// field out of step, where one record may parse by luck and two cannot.
+///
+/// C's next index type lands at `0x20` (CCH is the prototype), and the `u32` on
+/// the wire leaves 27 bits above this free. Until this build learns such a bit,
+/// a buffer carrying it is divergence, and refusing the whole buffer is what
+/// turns that into a clean resync instead of an index of the wrong type.
+pub const INDEX_FLD_KNOWN: u32 =
+    INDEX_FLD_FULLTEXT | INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR | INDEX_FLD_VECTOR;
+
 // ── constraint types ──
 
 /// C's `ConstraintType` tag. The enum itself is `graph::constraint::
