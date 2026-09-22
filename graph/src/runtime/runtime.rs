@@ -499,7 +499,6 @@ impl<'a> Runtime<'a> {
     pub fn query(&'a self) -> Result<ResultSummary<'a>, String> {
         let start = Instant::now();
         let idx = self.plan.root().idx();
-        let labels_count = self.g.borrow().labels_count();
         let mut result = vec![];
         let mut batch_op = self.run_batch(idx)?;
         if self.result_set_size >= 0 {
@@ -537,7 +536,6 @@ impl<'a> Runtime<'a> {
         }
         let run_duration = start.elapsed();
 
-        self.stats.borrow_mut().labels_added += self.g.borrow().labels_count() - labels_count;
         self.stats.borrow_mut().execution_time = run_duration.as_secs_f64() * 1000.0;
         Ok(ResultSummary {
             stats: self.stats.take(),

@@ -400,7 +400,21 @@ impl Runtime<'_> {
                             {
                                 continue;
                             }
+                            // Count Labels-added per label that isn't already
+                            // on this node — including labels staged by an
+                            // earlier clause in this same query, so a repeated
+                            // `SET n:L` or a `SET n:L:L` counts once.
+                            // `Runtime::node_has_label_id` consults pending
+                            // before the committed matrix, so this stays
+                            // correct inside a transaction.
+                            let mut new_assignments = 0usize;
+                            for label in labels.iter() {
+                                if !self.node_has_label_id(id, *label) {
+                                    new_assignments += 1;
+                                }
+                            }
                             self.pending.borrow_mut().set_node_labels(id, labels);
+                            self.stats.borrow_mut().labels_added += new_assignments;
                         }
                         Some(Value::Null) => {}
                         _ => {
