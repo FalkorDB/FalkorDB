@@ -596,6 +596,25 @@ void Graph_AllocateEdges
 }
 
 // reset graph's reserved node count
+//
+// KNOWN ISSUE (concurrency): reserved_node_count is a GRAPH-GLOBAL counter, but
+// this reset is driven per-command from QueryCtx_Rollback(). A write query
+// reserves nodes (Graph_ReserveNode, count++) under the graph READ lock, then
+// releases that read lock to acquire the WRITE lock for its commit
+// (QueryCtx_AcquireWriteLock). In that gap an async GRAPH.CONSTRAINT op
+// (Async_Constraint_Op, a separate path from the single-writer queue) can take
+// the write lock, fail (e.g. "already exists"), and its QueryCtx_Rollback() call
+// lands here - zeroing the counter while the write query still has a reserved,
+// uncommitted node. The write query's subsequent commit then does count-- from
+// 0, underflowing below zero: an assert in debug (graph.c Graph_CreateNode), and
+// in release (assert compiled out) a negative count cast to uint64_t in
+// DataBlock_GetReservedIdx wraps to a bogus slot -> silent datablock corruption.
+//
+// A read-locked pre-check in _Constraint_Create (cmd_constraint.c) mitigates the
+// common triggers (redundant CREATE / missing supporting index) but leaves a
+// TOCTOU residual. The complete fix is to make reserved-node bookkeeping
+// PER-QueryCtx instead of graph-global, so a rollback only clears its own
+// reservations and can never zero a concurrent op's in-flight reservation.
 void Graph_ResetReservedNode
 (
 	Graph *g  // graph
