@@ -799,3 +799,55 @@ class testQueryValidationFlow(FlowTestsBase):
                         g.query("MATCH (n:P) RETURN count(n)").result_set, [[3]])
         finally:
             g.delete()
+
+    def test47_pattern_expression_in_inlined_properties(self):
+        # a pattern comprehension or pattern predicate inside a pattern's
+        # inline property map is never lowered by the planner, and used to
+        # reach the evaluator and take the server down as soon as the outer
+        # pattern had a candidate row. It is rejected up front, as FalkorDB C
+        # does.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.db.select_graph("inlined_pattern_expr")
+
+        try:
+            g.query("CREATE (a {k:1})-[:R {k:1}]->(b {k:1})")
+
+            queries = [
+                # relationship properties - the reported shape
+                "MATCH ()-[{k:size([(a)-[{k:1}]-()|a.k])}]-() RETURN 1",
+                # variable-length relationship properties
+                "MATCH ()-[*1..2 {k:size([(a)-->()|1])}]->() RETURN 1",
+                # node properties
+                "MATCH (n {k:[(n)-->(m) | m.k][0]}) RETURN n",
+                "MATCH (n {k:exists((n)-->())}) RETURN n",
+                # write clauses evaluate inline properties too
+                "CREATE ({k:size([(a)-->()|1])})",
+                "MERGE ({k:size([(a)-->()|1])})",
+            ]
+
+            for q in queries:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains(
+                            "Encountered unhandled type in inlined properties",
+                            str(e))
+
+            # inside a pattern predicate's properties it is rejected too; the
+            # predicate parse falls back, so only require a clean error
+            try:
+                g.query("""MATCH (n)
+                           WHERE (n)-[{k:size([(a)-->()|1])}]->()
+                           RETURN 1""")
+                self.env.assertTrue(False)
+            except redis.ResponseError:
+                pass
+
+            # the server survived, and a pattern comprehension outside inline
+            # properties, over a pattern with inline properties, still works
+            actual = g.query("""MATCH (a)-[{k:1}]->()
+                                RETURN [(a)-[{k:1}]->(x) | x.k] AS r""")
+            self.env.assertEqual(actual.result_set, [[[1]]])
+        finally:
+            g.delete()

@@ -2782,12 +2782,32 @@ impl<'a> Parser<'a> {
     /// Parses an inline property map, preserving "Unknown function" errors
     /// while replacing other parse errors with a generic inlined-properties message.
     fn parse_inline_properties(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        self.parse_map().map_err(|e| {
+        let attrs = self.parse_map().map_err(|e| {
             if e.starts_with("Unknown function") {
                 e
             } else {
                 String::from("Encountered unhandled type in inlined properties.")
             }
+        })?;
+        // The planner only lowers pattern comprehensions and pattern
+        // predicates found in clause expressions; one left inside an inline
+        // property map would reach the evaluator un-lowered (#2308).
+        // Reject it here, as FalkorDB C does.
+        if Self::contains_pattern_expr(&attrs) {
+            return Err(String::from(
+                "Encountered unhandled type in inlined properties.",
+            ));
+        }
+        Ok(attrs)
+    }
+
+    fn contains_pattern_expr(tree: &DynTree<ExprIR<Arc<String>>>) -> bool {
+        use orx_tree::Dfs;
+        tree.root().indices::<Dfs>().any(|idx| {
+            matches!(
+                tree.node(idx).data(),
+                ExprIR::PatternComprehension(_) | ExprIR::Pattern(_)
+            )
         })
     }
 
