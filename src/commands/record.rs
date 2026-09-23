@@ -19,10 +19,13 @@
 //! blocked; the main thread only resolves (or creates) the graph key.
 
 use crate::dispatch::must_run_inline;
+use crate::graph_core::{abandon_write, finish_write};
 use crate::query_session::QuerySession;
 use crate::{
     config::{CONFIGURATION_CACHE_SIZE, CONFIGURATION_IMPORT_FOLDER},
-    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    graph_core::{
+        BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph, up_to_nul,
+    },
     redis_type::GRAPH_TYPE,
     reply::reply_verbose_value,
 };
@@ -79,7 +82,6 @@ fn record_mut(
     } else {
         session.with_graph(|tg| tg.graph.read())
     };
-    let g_arc = Arc::clone(&g);
     let runtime = Runtime::new(
         g,
         parameters,
@@ -96,59 +98,12 @@ fn record_mut(
     );
     let outcome = runtime.query();
     if is_write {
+        // Deliberately the same two paths `GRAPH.QUERY` takes: RECORD adds an
+        // operator trace to a real write, it does not change how one is published
+        // or how a failed one is undone.
         match &outcome {
-            Err(_) => {
-                // Same undo a failed write does: bring the index back in line with
-                // committed state, then release the MVCC write slot.
-                let committed = session.with_graph(|tg| tg.graph.read());
-                runtime.resync_published_indexes(&committed);
-                session.with_graph(|tg| tg.graph.rollback());
-            }
-            Ok(result) => {
-                let stats = &result.stats;
-                let modified = stats.nodes_created > 0
-                    || stats.nodes_deleted > 0
-                    || stats.relationships_created > 0
-                    || stats.relationships_deleted > 0
-                    || stats.properties_set > 0
-                    || stats.properties_removed > 0
-                    || stats.labels_added > 0
-                    || stats.labels_removed > 0
-                    || stats.indexes_created > 0
-                    || stats.indexes_dropped > 0
-                    || runtime.effects_count.get() > 0;
-                // Effects encoding mirrors `execute_query_write`: index DDL carrying
-                // OPTIONS cannot round-trip, so those fall back to verbatim
-                // replication of the query.
-                let has_unencodable_index = runtime.plan.iter().any(
-                    |node| matches!(node, IR::CreateIndex { options, .. } if options.is_some()),
-                );
-                let effects_buffer = if has_unencodable_index {
-                    None
-                } else {
-                    let buf = crate::graph_core::should_use_effects(
-                        false,
-                        &runtime,
-                        stats.execution_time,
-                    );
-                    crate::graph_core::build_index_effects(&runtime, buf)
-                };
-                let wq = crate::graph_core::WriteQueryOk {
-                    graph: g_arc,
-                    effects_buffer,
-                    modified,
-                };
-                if session
-                    .with_graph_mut(|tg| {
-                        crate::graph_core::commit_and_replicate(tg, ctx, key_name, query, wq)
-                    })
-                    .is_none()
-                {
-                    // The plan's `Commit` never ran (`LIMIT 0` above it, say), so
-                    // nothing was mutated — release the slot without publishing.
-                    session.with_graph(|tg| tg.graph.rollback());
-                }
-            }
+            Err(_) => abandon_write(&session, &runtime),
+            Ok(result) => finish_write(&session, ctx, key_name, &runtime, &result.stats),
         }
     }
     let ids = plan.root().indices::<Bfs>().collect::<Vec<_>>();
@@ -221,22 +176,30 @@ pub fn graph_record(
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
-    let query = args.next_str()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
 
-    let key_name: Arc<str> = Arc::from(key_str.to_string().as_str());
     let key = ctx.open_key_writable(&key_str);
 
-    let graph = if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
-        graph.clone()
-    } else {
-        let graph = Arc::new(RwLock::new(ThreadedGraph::new(
-            *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-            &key_str.to_string(),
-        )));
-        key.set_value(&GRAPH_TYPE, graph.clone())?;
-        crate::graph_core::register_graph(key_str.to_string(), graph.clone());
-        graph
-    };
+    // `key_name` is the key the graph lives at, not C's name for it — see `graph_query`.
+    // An existing graph is at the key the command named; one created here lands at the
+    // key C rebuilds from the name.
+    let (graph, key_name): (Arc<RwLock<ThreadedGraph>>, Arc<str>) =
+        if let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? {
+            (graph.clone(), Arc::from(key_str.to_string()))
+        } else {
+            let name = c_graph_name(&key_str);
+            let graph = Arc::new(RwLock::new(ThreadedGraph::new(
+                *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
+                &name,
+            )));
+            // Stored under C's key, as GRAPH.QUERY does — see `c_graph_key`.
+            let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+            create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+            let key_name: Arc<str> = Arc::from(name.as_str());
+            register_graph(name, graph.clone());
+            (graph, key_name)
+        };
 
     // Contexts that cannot block run inline — same rules as GRAPH.QUERY, see
     // `must_run_inline`.

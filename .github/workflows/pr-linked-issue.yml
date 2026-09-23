@@ -8,15 +8,15 @@
 #   2. `edited` is in the trigger list, so re-titling/re-describing a PR
 #      re-evaluates the verdict rather than leaving a stale one.
 #
-# There are no exemptions: bot PRs (dependabot, batch-backport) must also close
-# an issue. That is a deliberate policy choice, not an oversight.
+# Dependabot is the one exemption: it opens dependency-bump PRs on its own and
+# cannot link an issue, so requiring one would leave every bump permanently
+# blocked. Its PRs pass this check without verification. Every other author,
+# bots included (e.g. batch-backport), must close an issue.
 #
 # WHY THE DEVELOPMENT SIDEBAR, NOT `Closes #N` KEYWORDS: GitHub only registers a
 # closing link from a body keyword when the PR targets the repository's DEFAULT
-# branch. Verified on this repo — PR #2245 (base `main-rs`, default `master`)
 # reported 0 closing references with `Closes #2243` as the first line of its
 # body, then reported 1 as soon as the issue was attached through the
-# Development sidebar. Development happens on non-default branches (`main-rs`,
 # `main`, version branches), so the sidebar is the mechanism authors must use and
 # the one the failure message points at. Do not "simplify" that guidance back to
 # keywords.
@@ -32,7 +32,6 @@ on:
     # Mirrors rust-pr.yml's branch filter.
     branches:
       - "main"
-      - "main-rs"
       - "[0-9]*.[0-9]*"
 
 permissions:
@@ -54,8 +53,26 @@ jobs:
           OWNER: ${{ github.repository_owner }}
           REPO: ${{ github.event.repository.name }}
           PR: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           set -euo pipefail
+
+          # Dependabot cannot link an issue to the PRs it opens, so requiring one
+          # would block every dependency bump forever. Pass without verifying.
+          # This is an in-step exit rather than a job-level `if:` so the required
+          # check still reports a conclusion on Dependabot PRs.
+          case "$PR_AUTHOR" in
+            'dependabot[bot]'|'dependabot-preview[bot]')
+              echo "PR #${PR} was opened by ${PR_AUTHOR}; linked-issue check skipped."
+              {
+                echo "### PR closes an issue"
+                echo ""
+                echo "Skipped: \`${PR_AUTHOR}\` PRs are exempt from the linked-issue requirement."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+              ;;
+          esac
+
           # closingIssuesReferences is the only source that covers BOTH a
           # `Closes #N` keyword in the PR body AND an issue attached through the
           # PR's "Development" sidebar. REST exposes neither.
@@ -99,7 +116,6 @@ jobs:
             echo "re-evaluate on its own — **re-run it** once the issue is linked."
             echo ""
             echo "> A \`Closes #<n>\` keyword in the PR body only registers a closing link when"
-            echo "> the PR targets the repository's **default branch**. On \`main-rs\`, \`main\`"
             echo "> and version branches it has no effect, so the sidebar is the mechanism that"
             echo "> works. Writing the keyword anyway is still useful for humans reading the PR."
             echo ""

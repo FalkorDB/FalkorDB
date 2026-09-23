@@ -1239,28 +1239,7 @@ impl CompareValue for Value {
             // only the type order, so `=` and `<>` were both always false
             // for vectors and MERGE on a vector property duplicated on
             // every execution (#2604).
-            (Self::VecF32(a), Self::VecF32(b)) => {
-                let len_a = a.len();
-                let len_b = b.len();
-                let ord = len_a.cmp(&len_b).then_with(|| {
-                    a.iter()
-                        .zip(b.iter())
-                        .map(|(x, y)| {
-                            // NaN components order less than everything; a
-                            // NaN compares equal only to another NaN.
-                            x.partial_cmp(y).unwrap_or(if x.is_nan() && y.is_nan() {
-                                Ordering::Equal
-                            } else if x.is_nan() {
-                                Ordering::Less
-                            } else {
-                                Ordering::Greater
-                            })
-                        })
-                        .find(|ord| *ord != Ordering::Equal)
-                        .unwrap_or(Ordering::Equal)
-                });
-                (ord, DisjointOrNull::None)
-            }
+            (Self::VecF32(a), Self::VecF32(b)) => (compare_vecf32(a, b), DisjointOrNull::None),
             (Self::Node(a), Self::Node(b)) => (a.cmp(b), DisjointOrNull::None),
             (Self::Relationship(rel_a), Self::Relationship(rel_b)) => {
                 (rel_a.cmp(rel_b), DisjointOrNull::None)
@@ -1431,12 +1410,17 @@ impl Value {
         let mut first_not_equal = Ordering::Equal;
         let mut null_counter: usize = 0;
         let mut not_equal_counter: usize = 0;
+        // members whose comparison was inconclusive for a reason other than
+        // NULL: incomparable types (`Disjoint`) or NaN
+        let mut inconclusive_counter: usize = 0;
 
         for (a_value, b_value) in a.iter().zip(b) {
             let (compare_result, disjoint_or_null) = a_value.compare_value(b_value);
             if disjoint_or_null != DisjointOrNull::None {
                 if disjoint_or_null == DisjointOrNull::ComparedNull {
                     null_counter += 1;
+                } else {
+                    inconclusive_counter += 1;
                 }
                 not_equal_counter += 1;
                 if first_not_equal == Ordering::Equal {
@@ -1450,14 +1434,31 @@ impl Value {
             }
         }
 
-        // if all the elements in the shared range yielded false comparisons
-        if not_equal_counter == min_len && null_counter < not_equal_counter {
+        // if all the elements in the shared range yielded false comparisons.
+        // `first_not_equal` still being `Equal` means no member actually
+        // decided the order — every comparison was inconclusive — so there is
+        // no conclusive verdict to report, and saying `None` here would claim
+        // the lists are equal.
+        if not_equal_counter == min_len
+            && null_counter < not_equal_counter
+            && first_not_equal != Ordering::Equal
+        {
             return (first_not_equal, DisjointOrNull::None);
         }
 
         // if there was a null comparison on non-disjoint arrays
         if null_counter > 0 && len_a == len_b {
             return (first_not_equal, DisjointOrNull::ComparedNull);
+        }
+
+        // a member compared inconclusively and no other member decided the
+        // order, so the list comparison is inconclusive too. Reachable only
+        // when a member pair shares a variant that `compare_value` has no arm
+        // for — none today, but a guard for any future variant — since every
+        // other inconclusive comparison reports an ordering. Lists of unequal
+        // length keep their old answer: length alone still decides them.
+        if inconclusive_counter > 0 && first_not_equal == Ordering::Equal && len_a == len_b {
+            return (Ordering::Equal, DisjointOrNull::Disjoint);
         }
 
         // if there was a difference in some member, without any null compare
@@ -1505,6 +1506,74 @@ impl Value {
             }
         }
         (Ordering::Equal, DisjointOrNull::None)
+    }
+
+    /// True when Cypher `=` involving this value can never be TRUE — not even
+    /// against an identical copy of itself.
+    ///
+    /// `=` is three-valued, and [`Self::compare_value`] reports that faithfully
+    /// in its [`DisjointOrNull`] flag: `[1, null]` against `[1, null]` is
+    /// `(Ordering::Equal, ComparedNull)`, meaning *"equal as far as the
+    /// non-NULL elements go, but the answer is UNKNOWN"*. Such a value carries
+    /// its own verdict — an inconclusive comparison comes from its contents,
+    /// and nothing it is compared against can clear that — so comparing it with
+    /// itself decides the question for every possible partner. `ExprEval` maps
+    /// the same flags to `Value::Null` when it evaluates `=`, so a caller that
+    /// honours this predicate agrees with the `=` operator by construction.
+    ///
+    /// **Not for grouping.** `DISTINCT`, aggregation keys and `UNION` compare
+    /// under grouping semantics, where NULL *does* equal NULL: `UNWIND [null,
+    /// null] AS x RETURN DISTINCT x` is one row, while `null = null` is NULL.
+    /// This predicate answers the `=` question only. Its caller today is the
+    /// `Value Hash Join` operator, which uses it to keep a key that can never
+    /// join out of its hash table.
+    #[must_use]
+    pub fn is_never_equal(&self) -> bool {
+        // The exact test is a self-comparison, but it is not free on the shapes
+        // that need it least -- `compare_map` allocates and sorts both key
+        // lists on every call -- so a cheap walk gates it.
+        self.may_fail_self_match()
+            && !matches!(
+                self.compare_value(self),
+                (Ordering::Equal, DisjointOrNull::None)
+            )
+    }
+
+    /// Cheap conservative pre-filter for [`Self::is_never_equal`]: `false` only
+    /// for values that are *certain* to compare equal to themselves.
+    ///
+    /// A hint, not the decision — the exact comparison it gates is what
+    /// decides — so being wrong either way is safe: a false positive merely
+    /// pays for that comparison, and a false negative only reports `false` from
+    /// `is_never_equal` for a value that can never be equal, which is the
+    /// conservative answer every caller must already handle. Variants are
+    /// therefore listed only where `compare_value` is *known* to give a
+    /// conclusive self-comparison; everything else answers `true` and gets
+    /// compared properly, which is also what stops a newly added variant from
+    /// silently slipping past.
+    fn may_fail_self_match(&self) -> bool {
+        match self {
+            // Self-comparison of these is `(Equal, None)` by construction.
+            Self::Bool(_)
+            | Self::Int(_)
+            | Self::String(_)
+            | Self::Node(_)
+            | Self::Relationship(_)
+            | Self::Datetime(_)
+            | Self::Date(_)
+            | Self::Time(_)
+            | Self::Duration(_) => false,
+            // NaN never compares equal, not even to itself -- also as a
+            // vector element (`compare_vecf32`).
+            Self::Float(f) => f.is_nan(),
+            Self::VecF32(v) => v.iter().any(|f| f.is_nan()),
+            // A container is unmatchable exactly when one of its members is.
+            Self::List(items) | Self::Path(items) => items.iter().any(Self::may_fail_self_match),
+            Self::Map(entries) => entries.values().any(Self::may_fail_self_match),
+            // Null (`ComparedNull`), Point (NaN coordinates) -- and any future
+            // variant.
+            _ => true,
+        }
     }
 }
 
@@ -1740,6 +1809,46 @@ fn compare_floats(
         None => (Ordering::Less, DisjointOrNull::NaN),
     }
 }
+
+/// Orders two vectors the way C's `SIVector_Compare` does: dimension first,
+/// then the first element where `x != y` decides by `x > y`. So a NaN element
+/// never compares equal (not even to NaN) and orders `Less` in both
+/// directions.
+fn compare_vecf32(
+    a: &[f32],
+    b: &[f32],
+) -> Ordering {
+    fn first_difference(
+        a: &[f32],
+        b: &[f32],
+    ) -> Ordering {
+        a.iter()
+            .zip(b)
+            .find(|(x, y)| x != y)
+            .map_or(Ordering::Equal, |(x, y)| {
+                if x > y {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            })
+    }
+
+    a.len().cmp(&b.len()).then_with(|| {
+        // An early-exit loop does not vectorise, so scan fixed-size blocks
+        // with a branch-free `!=` reduction (NEON / SSE / AVX) and rescan
+        // element by element only the block that holds the difference.
+        let (blocks_a, rest_a) = a.as_chunks::<16>();
+        let (blocks_b, rest_b) = b.as_chunks::<16>();
+        for (x, y) in blocks_a.iter().zip(blocks_b) {
+            if x.iter().zip(y).fold(false, |diff, (p, q)| diff | (p != q)) {
+                return first_difference(x, y);
+            }
+        }
+        first_difference(rest_a, rest_b)
+    })
+}
+
 #[derive(Default, Debug)]
 pub struct ValuesDeduper {
     seen: RefCell<rustc_hash::FxHashSet<u64>>,
@@ -1939,15 +2048,11 @@ impl Decode<19> for Value {
 
 #[cfg(test)]
 mod vecf32_compare_tests {
-    use super::CompareValue;
-    use super::DisjointOrNull;
-    use super::Ordering;
-    use super::Value;
+    use super::{CompareValue, DisjointOrNull, Ordering, Value};
     use std::sync::Arc;
-    use thin_vec::{ThinVec, thin_vec as thin_vec_from_slice};
 
     fn vecf32(values: &[f32]) -> Value {
-        Value::VecF32(Arc::new(ThinVec::from_slice(values)))
+        Value::VecF32(Arc::new(values.iter().copied().collect()))
     }
 
     fn eq(
@@ -2013,17 +2118,205 @@ mod vecf32_compare_tests {
 
     #[test]
     fn vecf32_with_nan_components() {
-        // NaN orders below everything and compares equal only to NaN.
-        assert!(eq(&vecf32(&[1.0, f32::NAN]), &vecf32(&[1.0, f32::NAN])));
-        assert!(!eq(&vecf32(&[1.0, f32::NAN]), &vecf32(&[1.0, 2.0])));
-        // NaN orders below a number in both directions.
+        // As in C's `SIVector_Compare`: a NaN element is never equal, not even
+        // to NaN, and orders `Less` whichever side it is on.
+        let nan = vecf32(&[1.0, f32::NAN]);
+        assert!(!eq(&nan, &nan));
+        assert!(!eq(&nan, &vecf32(&[1.0, 2.0])));
         assert_eq!(
             ordering(&vecf32(&[f32::NAN]), &vecf32(&[1.0])),
             Ordering::Less
         );
         assert_eq!(
             ordering(&vecf32(&[1.0]), &vecf32(&[f32::NAN])),
-            Ordering::Greater
+            Ordering::Less
         );
+    }
+
+    // The comparison scans 16-element blocks before the tail, so place the
+    // first difference in a block, in the tail, and behind a later one.
+    #[test]
+    fn vecf32_first_difference_decides_at_any_position() {
+        let base: Vec<f32> = (0..37).map(|i| i as f32).collect();
+        assert!(eq(&vecf32(&base), &vecf32(&base)));
+        for i in [0, 15, 16, 31, 32, 36] {
+            let mut bigger = base.clone();
+            bigger[i] += 0.5;
+            // A later, opposite difference must not override the first one.
+            if i < 36 {
+                bigger[36] -= 100.0;
+            }
+            assert_eq!(
+                ordering(&vecf32(&base), &vecf32(&bigger)),
+                Ordering::Less,
+                "{i}"
+            );
+            assert_eq!(
+                ordering(&vecf32(&bigger), &vecf32(&base)),
+                Ordering::Greater,
+                "{i}"
+            );
+        }
+        // Signed zeros are equal, as with C's `!=`.
+        assert!(eq(&vecf32(&[0.0; 20]), &vecf32(&[-0.0; 20])));
+    }
+}
+
+#[cfg(test)]
+mod is_never_equal_tests {
+    use super::{CompareValue, DisjointOrNull, OrderMap, Ordering, Value};
+    use std::sync::Arc;
+
+    fn list(items: Vec<Value>) -> Value {
+        Value::List(Arc::new(items.into_iter().collect()))
+    }
+
+    fn map(entries: Vec<(&str, Value)>) -> Value {
+        Value::Map(Arc::new(OrderMap::from_vec(
+            entries
+                .into_iter()
+                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .collect(),
+        )))
+    }
+
+    fn vector(items: Vec<f32>) -> Value {
+        Value::VecF32(Arc::new(items.into_iter().collect()))
+    }
+
+    /// Every value whose `=` can never be TRUE, at any nesting depth.
+    #[test]
+    fn values_carrying_an_unknown_are_never_equal() {
+        assert!(Value::Null.is_never_equal());
+        assert!(Value::Float(f64::NAN).is_never_equal());
+        assert!(list(vec![Value::Int(1), Value::Null]).is_never_equal());
+        assert!(list(vec![list(vec![Value::Null])]).is_never_equal());
+        assert!(map(vec![("a", Value::Null)]).is_never_equal());
+        assert!(list(vec![map(vec![("a", Value::Null)])]).is_never_equal());
+        assert!(map(vec![("a", Value::Float(f64::NAN))]).is_never_equal());
+
+        // A NaN vector element never compares equal either, at any depth.
+        assert!(vector(vec![1.0, f32::NAN]).is_never_equal());
+        assert!(list(vec![vector(vec![f32::NAN])]).is_never_equal());
+        assert!(list(vec![vector(vec![1.0]), Value::Null]).is_never_equal());
+        assert!(list(vec![list(vec![vector(vec![f32::NAN])])]).is_never_equal());
+        assert!(map(vec![("a", vector(vec![f32::NAN]))]).is_never_equal());
+    }
+
+    /// `compare_list` must not report a conclusive verdict when no member
+    /// actually decided the order. Its "all members compared false" branch used
+    /// to return `(Equal, None)` in that case, which reads as *"these lists are
+    /// equal, definitively"* -- so `[vec, null]` matched itself. Vectors now
+    /// compare element-wise, so lists of them get a conclusive verdict.
+    #[test]
+    fn compare_list_keeps_an_inconclusive_verdict() {
+        let vec_list = list(vec![vector(vec![1.0, 2.0])]);
+        assert_eq!(
+            vec_list.compare_value(&vec_list),
+            (Ordering::Equal, DisjointOrNull::None)
+        );
+        assert_eq!(
+            vec_list.compare_value(&list(vec![vector(vec![9.0, 9.0])])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        // Mixed: one member equal, one member NULL.
+        let mixed = list(vec![vector(vec![1.0]), Value::Null]);
+        assert_eq!(
+            mixed.compare_value(&mixed),
+            (Ordering::Equal, DisjointOrNull::ComparedNull)
+        );
+
+        // Everything that already had a decisive ordering keeps it. A real
+        // inequality still outranks an unknown, NaN still reports an ordering,
+        // and length alone still decides lists of different length.
+        assert_eq!(
+            list(vec![Value::Int(1), Value::Null])
+                .compare_value(&list(vec![Value::Int(2), Value::Null])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            list(vec![Value::Float(f64::NAN)]).compare_value(&list(vec![Value::Float(f64::NAN)])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            vec_list.compare_value(&list(vec![vector(vec![1.0, 2.0]), Value::Int(1)])),
+            (Ordering::Less, DisjointOrNull::None)
+        );
+        assert_eq!(
+            list(vec![Value::Int(1)]).compare_value(&list(vec![Value::Int(1)])),
+            (Ordering::Equal, DisjointOrNull::None)
+        );
+    }
+
+    /// Values that compare equal to themselves, so `=` can hold for them.
+    #[test]
+    fn ordinary_values_are_not_never_equal() {
+        assert!(!Value::Int(1).is_never_equal());
+        assert!(!Value::Float(1.5).is_never_equal());
+        assert!(!Value::Float(f64::INFINITY).is_never_equal());
+        assert!(!Value::Bool(true).is_never_equal());
+        assert!(!Value::String(Arc::new("x".to_string())).is_never_equal());
+        assert!(!Value::Datetime(0).is_never_equal());
+        assert!(!list(vec![]).is_never_equal());
+        assert!(!list(vec![Value::Int(1), Value::Int(2)]).is_never_equal());
+        assert!(!map(vec![]).is_never_equal());
+        assert!(!map(vec![("a", Value::Int(1))]).is_never_equal());
+        assert!(!vector(vec![]).is_never_equal());
+        assert!(!vector(vec![1.0, 2.0]).is_never_equal());
+        assert!(!list(vec![vector(vec![1.0, 2.0])]).is_never_equal());
+    }
+
+    /// `is_never_equal` must agree with the self-comparison it stands for, and
+    /// the pre-filter must only ever skip values that really do self-match --
+    /// the invariant that lets the cheap walk gate the exact comparison.
+    #[test]
+    fn agrees_with_the_self_comparison_it_stands_for() {
+        let corpus = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(0),
+            Value::Float(1.5),
+            Value::Float(f64::NAN),
+            Value::Float(f64::INFINITY),
+            Value::String(Arc::new("x".to_string())),
+            Value::Datetime(0),
+            Value::Date(0),
+            Value::Time(0),
+            Value::Duration(0),
+            list(vec![]),
+            list(vec![Value::Int(1), Value::Int(2)]),
+            list(vec![Value::Int(1), Value::Null]),
+            list(vec![Value::Float(f64::NAN)]),
+            list(vec![list(vec![Value::Null])]),
+            list(vec![map(vec![("a", Value::Null)])]),
+            map(vec![]),
+            map(vec![("a", Value::Int(1))]),
+            map(vec![("a", Value::Null)]),
+            map(vec![("a", Value::Float(f64::NAN))]),
+            vector(vec![1.0, 2.0]),
+            list(vec![vector(vec![1.0, 2.0])]),
+            list(vec![vector(vec![1.0]), Value::Null]),
+            list(vec![list(vec![vector(vec![1.0])])]),
+            map(vec![("a", vector(vec![1.0]))]),
+            vector(vec![]),
+            vector(vec![1.0, f32::NAN]),
+            list(vec![vector(vec![f32::NAN])]),
+            map(vec![("a", vector(vec![f32::NAN]))]),
+        ];
+        for v in corpus {
+            let self_matches =
+                matches!(v.compare_value(&v), (Ordering::Equal, DisjointOrNull::None));
+            assert_eq!(
+                v.is_never_equal(),
+                !self_matches,
+                "is_never_equal disagrees with the self-comparison for {v:?}"
+            );
+            if !v.may_fail_self_match() {
+                assert!(
+                    self_matches,
+                    "pre-filter waved through a value that cannot match itself: {v:?}"
+                );
+            }
+        }
     }
 }

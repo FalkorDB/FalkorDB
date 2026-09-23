@@ -502,6 +502,42 @@ class testQueryValidationFlow(FlowTestsBase):
         expected_result = [[34]]
         self.env.assertEqual(actual_result.result_set, expected_result)
 
+        # A self-reference nested inside a comprehension is the same error, but
+        # it used to reach evaluation and crash the server in GraphEntity_Keys.
+        # The query must be *rejected*: returning an empty key/property list
+        # for an entity that does not exist yet would silently accept an
+        # invalid query.
+        # See https://github.com/FalkorDB/FalkorDB/issues/415
+        node_count = self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0]
+
+        queries = [
+                # the original report: 'child1' is referenced from within an
+                # any() predicate, and the inner comprehension variable 'root'
+                # shadows the node created by the same clause
+                ("""CREATE (root:Root {name: 'x'}),
+                           (child1:TextNode {var: floor(any(v4 IN [2] WHERE child1 = [root IN keys(root)]))}),
+                           (child2:IntNode {v0: 0})""", "'child1' not defined"),
+                # minimal forms of the same thing
+                ("""CREATE (a:L {v: keys(a)})""", "'a' not defined"),
+                ("""CREATE (a:L {v: properties(a)})""", "'a' not defined"),
+                ("""CREATE (a:L {v: [x IN keys(a) | x]})""", "'a' not defined"),
+                ("""CREATE (a:L {v: any(x IN [1] WHERE a.q = 1)})""", "'a' not defined"),
+                # the same holds for a relationship reading itself
+                ("""CREATE (a:L)-[r:R {v: keys(r)}]->(b:L)""", "'r' not defined"),
+                ("""CREATE (a:L)-[r:R {v: properties(r)}]->(b:L)""", "'r' not defined")]
+
+        for query, expected in queries:
+            try:
+                self.graph.query(query)
+                assert(False)
+            except redis.ResponseError as e:
+                self.env.assertContains(expected, str(e))
+
+        # the rejected CREATEs must not have partially applied
+        self.env.assertEqual(
+                self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0],
+                node_count)
+
     # Test a query that allocates a large buffer.
     def test35_large_query(self):
         retval = "abcdef" * 1_000
@@ -700,3 +736,66 @@ class testQueryValidationFlow(FlowTestsBase):
 
         q = "OPTIONAL MATCH (a) RETURN a UNION MATCH (a) RETURN a"
         self.graph.query(q)
+
+    def test46_repeated_relationship_variable(self):
+        # reusing a relationship variable used to crash the server in several
+        # shapes: within a single pattern, inside a pattern predicate reached
+        # through WITH, and across a chain of WITH/WHERE clauses. Every shape
+        # must now produce either rows or a clean error, and the server must
+        # survive it.
+        g = self.db.select_graph("repeated_rel_var")
+
+        try:
+            g.query("""CREATE (a:P {name: 'A'}), (a)-[:R]->(a),
+                              (:P {name: 'B'})-[:R]->(:P {name: 'C'})""")
+
+            # the same variable twice in one pattern can never match and is
+            # rejected - it used to trip an assertion in query graph
+            # construction and take the server down
+            # https://github.com/FalkorDB/FalkorDB/issues/465
+            try:
+                g.query("WITH NULL AS a0 MATCH ()-[a0]-()-[a0]-() RETURN 1")
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                # Expecting an error.
+                self.env.assertContains("same relationship variable", str(e))
+
+            # referencing a bound relationship variable from a pattern
+            # predicate is legal - each pattern uses it once - and used to be
+            # rejected with that same 'multiple patterns' error
+            # https://github.com/FalkorDB/FalkorDB/issues/1335
+            actual = g.query("""MATCH (n0)-[r0]->(n0)
+                                WHERE ()<-[r0]-(n0)
+                                RETURN n0.name""")
+            self.env.assertEqual(actual.result_set, [['A']])
+
+            # a relationship variable repeated inside a pattern predicate,
+            # reached through WITH, used to segfault. Rejecting it and
+            # returning no rows are both acceptable - crashing is not.
+            # https://github.com/FalkorDB/FalkorDB/issues/1982
+            # https://github.com/FalkorDB/FalkorDB/issues/1333
+            queries = ["""MATCH (p:P)-[r:R]-()
+                          WITH p, r
+                          WHERE (p)-[r:R]->()<-[r:R]-()
+                          RETURN p.name""",
+                       """MATCH (n0)--(n0)
+                          WITH *
+                          WHERE (n0)--(n0)
+                          MATCH (n1)-[r1]-()
+                          WITH *
+                          WHERE (n1)-[r1]->()<-[r1]-()
+                          RETURN *"""]
+
+            for q in queries:
+                try:
+                    self.env.assertEqual(g.query(q).result_set, [])
+                except redis.ResponseError:
+                    # a clean rejection is acceptable, a crash is not
+                    pass
+
+                # the server must still answer - the crash used to arrive
+                # asynchronously, after the reply
+                self.env.assertEqual(
+                        g.query("MATCH (n:P) RETURN count(n)").result_set, [[3]])
+        finally:
+            g.delete()

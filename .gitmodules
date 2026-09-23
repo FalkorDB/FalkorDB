@@ -1,0 +1,3 @@
+[submodule "deps/RediSearch"]
+	path = deps/RediSearch
+	url = https://github.com/FalkorDB/RediSearch.git

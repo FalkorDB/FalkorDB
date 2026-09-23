@@ -2,12 +2,13 @@ use crate::dispatch::must_run_inline;
 use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{BlockedClient, ThreadedGraph, ffi, register_graph},
+    graph_core::{BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
     redis_type::GRAPH_TYPE,
     telemetry,
 };
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
+    graph::id_space::IdSpace,
     identifier_limits::validate_identifier_len,
     runtime::value::Value,
     threadpool::spawn,
@@ -218,8 +219,10 @@ fn discard_created_graph(
     ctx: &Context,
     key_str: &RedisString,
 ) {
-    telemetry::delete_stream(ctx, &key_str.to_string());
-    let key = ctx.open_key_writable(key_str);
+    // The graph was created under C's name, so that — not the addressed key — is
+    // what has to be taken back out of the keyspace.
+    telemetry::delete_stream(ctx, &c_graph_name(key_str));
+    let key = ctx.open_key_writable(&c_graph_key(ctx, key_str));
     let _ = key.delete();
 }
 
@@ -356,6 +359,7 @@ fn process_node_token(
     data: &[u8],
     node_ids: &[NodeId],
     node_id_cursor: &mut usize,
+    space: &mut IdSpace,
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
@@ -409,7 +413,8 @@ fn process_node_token(
         return Ok(());
     }
 
-    g.create_nodes(&nodes_bitmap);
+    g.create_nodes(&nodes_bitmap, space)
+        .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
     g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes, true);
@@ -436,6 +441,7 @@ fn process_edge_token(
     data: &[u8],
     rel_ids: &[RelationshipId],
     rel_id_cursor: &mut usize,
+    space: &mut IdSpace,
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
@@ -494,7 +500,8 @@ fn process_edge_token(
         return Ok(());
     }
 
-    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids);
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids, space)
+        .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
     if !resolved_rel_attrs.is_empty() {
@@ -516,18 +523,48 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count)?;
-    let rel_ids = g.reserve_relationships(edge_count)?;
+    // A bulk command has no `Pending`, so it opens the id spaces itself. One
+    // per command, spanning the reserve below and every create the tokens make.
+    let mut node_space = g.open_node_id_space();
+    let mut rel_space = g.open_relationship_id_space();
+    // Nothing issued yet: a bulk command reserves once, before it creates
+    // anything, so there is no earlier batch of its own to exclude.
+    let node_ids: Vec<NodeId> = node_space
+        .reserve(node_count, g.deleted_nodes(), &[])?
+        .into_iter()
+        .map(NodeId::from)
+        .collect();
+    let rel_ids: Vec<RelationshipId> = rel_space
+        .reserve(edge_count, g.deleted_relationships(), &[])?
+        .into_iter()
+        .map(RelationshipId::from)
+        .collect();
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
     let null_ctx = std::ptr::null_mut();
     for token in tokens.iter().take(node_token_count) {
-        process_node_token(g, token, &node_ids, &mut node_id_cursor, null_ctx, docs)?;
+        process_node_token(
+            g,
+            token,
+            &node_ids,
+            &mut node_id_cursor,
+            &mut node_space,
+            null_ctx,
+            docs,
+        )?;
     }
 
     for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx, docs)?;
+        process_edge_token(
+            g,
+            token,
+            &rel_ids,
+            &mut rel_id_cursor,
+            &mut rel_space,
+            null_ctx,
+            docs,
+        )?;
     }
 
     // Flush delta-plus into base to prevent large dp from slowing subsequent commands
@@ -546,19 +583,49 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count)?;
-    let rel_ids = g.reserve_relationships(edge_count)?;
+    // A bulk command has no `Pending`, so it opens the id spaces itself. One
+    // per command, spanning the reserve below and every create the tokens make.
+    let mut node_space = g.open_node_id_space();
+    let mut rel_space = g.open_relationship_id_space();
+    // Nothing issued yet: a bulk command reserves once, before it creates
+    // anything, so there is no earlier batch of its own to exclude.
+    let node_ids: Vec<NodeId> = node_space
+        .reserve(node_count, g.deleted_nodes(), &[])?
+        .into_iter()
+        .map(NodeId::from)
+        .collect();
+    let rel_ids: Vec<RelationshipId> = rel_space
+        .reserve(edge_count, g.deleted_relationships(), &[])?
+        .into_iter()
+        .map(RelationshipId::from)
+        .collect();
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
     for token in tokens.iter().take(node_token_count) {
-        process_node_token(g, token, &node_ids, &mut node_id_cursor, raw_ctx, docs)?;
+        process_node_token(
+            g,
+            token,
+            &node_ids,
+            &mut node_id_cursor,
+            &mut node_space,
+            raw_ctx,
+            docs,
+        )?;
         // Yield to let Redis process PING from other clients
         unsafe { maybe_yield(raw_ctx) };
     }
 
     for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, raw_ctx, docs)?;
+        process_edge_token(
+            g,
+            token,
+            &rel_ids,
+            &mut rel_id_cursor,
+            &mut rel_space,
+            raw_ctx,
+            docs,
+        )?;
         unsafe { maybe_yield(raw_ctx) };
     }
 
@@ -750,13 +817,16 @@ pub fn graph_bulk_insert(
     let graph = match existing {
         Some(g) => g,
         None => {
-            let key = ctx.open_key_writable(&key_str);
+            // Created under C's name and stored at the key rebuilt from it, not at
+            // the key the command addressed — see `c_graph_key`.
+            let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+            let name = c_graph_name(&key_str);
             let g = Arc::new(RwLock::new(ThreadedGraph::new(
                 *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-                &key_str.to_string(),
+                &name,
             )));
             key.set_value(&GRAPH_TYPE, g.clone())?;
-            register_graph(key_str.to_string(), g.clone());
+            register_graph(name, g.clone());
             g
         }
     };
@@ -955,7 +1025,11 @@ pub fn graph_bulk_insert(
                         // retake the GIL for this keyspace write.
                         let _gil = hold_gil();
                         let cleanup_ctx = Context::new(ts_ctx);
-                        let key_name = cleanup_ctx.create_string(key_bytes.as_slice());
+                        // `create_string` is `CString::new(..).unwrap()`, so a key
+                        // holding an interior NUL aborted the process here (#2490) —
+                        // the one constructor that cannot carry the bytes this path
+                        // deliberately captured. ptr+len carries them.
+                        let key_name = RedisString::create_from_slice(ts_ctx, key_bytes.as_slice());
                         discard_created_graph(&cleanup_ctx, &key_name);
                     }
                     let cerr = ffi::sanitise_error(msg);

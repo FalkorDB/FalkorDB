@@ -83,11 +83,12 @@ use super::{
     GrB_DESC_RST1, GrB_DESC_RT0, GrB_DESC_RT0T1, GrB_DESC_RT1, GrB_DESC_S, GrB_DESC_SC,
     GrB_DESC_SCT0, GrB_DESC_SCT0T1, GrB_DESC_SCT1, GrB_DESC_ST0, GrB_DESC_ST0T1, GrB_DESC_ST1,
     GrB_DESC_T0, GrB_DESC_T0T1, GrB_DESC_T1, GrB_Descriptor, GrB_GLOBAL, GrB_Global_set_INT32,
-    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_build_BOOL, GrB_Matrix_build_UINT64,
-    GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp, GrB_Matrix_eWiseMult_Semiring,
-    GrB_Matrix_extractElement_BOOL, GrB_Matrix_extractElement_UINT64, GrB_Matrix_free,
-    GrB_Matrix_get_INT32, GrB_Matrix_ncols, GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals,
-    GrB_Matrix_removeElement, GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
+    GrB_Info, GrB_Matrix, GrB_Matrix_apply, GrB_Matrix_assign_BOOL, GrB_Matrix_build_BOOL,
+    GrB_Matrix_build_UINT64, GrB_Matrix_clear, GrB_Matrix_dup, GrB_Matrix_eWiseAdd_BinaryOp,
+    GrB_Matrix_eWiseMult_Semiring, GrB_Matrix_extractElement_BOOL,
+    GrB_Matrix_extractElement_UINT64, GrB_Matrix_free, GrB_Matrix_get_INT32, GrB_Matrix_ncols,
+    GrB_Matrix_new, GrB_Matrix_nrows, GrB_Matrix_nvals, GrB_Matrix_removeElement,
+    GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
     GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
     GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
@@ -813,6 +814,72 @@ impl<T> Matrix<T> {
         }
     }
 
+    /// The index widths GraphBLAS chose for this matrix, as
+    /// `(row bits, column bits)`. Read-only in GraphBLAS and derived from the
+    /// declared dimensions, so this is how a shape choice is checked rather
+    /// than assumed.
+    #[cfg(test)]
+    pub(super) fn integer_bits_for_test(&self) -> (i32, i32) {
+        unsafe {
+            let (mut r, mut c) = (0i32, 0i32);
+            // Checked: a failed getter leaves the initialised zero behind, and
+            // reporting "0-bit indices" would read as a result rather than an
+            // error.
+            let ri = GrB_Matrix_get_INT32(
+                *self.m,
+                &raw mut r,
+                GxB_Option_Field::GxB_ROWINDEX_INTEGER_BITS as i32,
+            );
+            assert_eq!(ri, GrB_Info::GrB_SUCCESS, "row index bits: {ri:?}");
+            let ci = GrB_Matrix_get_INT32(
+                *self.m,
+                &raw mut c,
+                GxB_Option_Field::GxB_COLINDEX_INTEGER_BITS as i32,
+            );
+            assert_eq!(ci, GrB_Info::GrB_SUCCESS, "column index bits: {ci:?}");
+            (r, c)
+        }
+    }
+
+    /// Ask GraphBLAS for 32-bit row and column index arrays. Only a *hint*: it
+    /// is honoured when the matrix's declared dimensions fit, and ignored when
+    /// they do not, so a caller cannot make indices too narrow for the data.
+    #[cfg(test)]
+    pub(super) fn hint_32bit_indices_for_test(&mut self) -> (i32, i32) {
+        unsafe {
+            let r = GrB_Matrix_set_INT32(
+                *self.m,
+                32,
+                GxB_Option_Field::GxB_ROWINDEX_INTEGER_HINT as i32,
+            );
+            let c = GrB_Matrix_set_INT32(
+                *self.m,
+                32,
+                GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT as i32,
+            );
+            (r as i32, c as i32)
+        }
+    }
+
+    /// Ask GraphBLAS globally for 32-bit indices on matrices created after this
+    /// point. Returns the two status codes.
+    #[cfg(test)]
+    pub(super) fn global_hint_32bit_for_test() -> (i32, i32) {
+        unsafe {
+            let r = GrB_Global_set_INT32(
+                GrB_GLOBAL,
+                32,
+                GxB_Option_Field::GxB_ROWINDEX_INTEGER_HINT as i32,
+            );
+            let c = GrB_Global_set_INT32(
+                GrB_GLOBAL,
+                32,
+                GxB_Option_Field::GxB_COLINDEX_INTEGER_HINT as i32,
+            );
+            (r as i32, c as i32)
+        }
+    }
+
     pub fn clear(&mut self) {
         unsafe {
             let info = GrB_Matrix_clear(*self.m);
@@ -1274,6 +1341,42 @@ impl Matrix<bool> {
         self.has_pending.store(true, Ordering::Relaxed);
     }
 
+    /// Set every pair in `rows` x `cols` to `true`, in one GraphBLAS call.
+    ///
+    /// `GrB_Matrix_assign_BOOL` takes the two index lists and forms the
+    /// cartesian product itself, so the product is never enumerated on this
+    /// side — which is the whole reason for the method. Setting a million
+    /// nodes' single label went from a million `setElement` calls to one.
+    ///
+    /// No mask, no accumulator and no descriptor: assign writes `x` at every
+    /// `(i, j)` in `I x J` and leaves everything outside that block alone,
+    /// which is the union this wants. Duplicates in either list are harmless —
+    /// assigning `true` twice is assigning `true`.
+    pub fn assign_product_true(
+        &mut self,
+        rows: &[u64],
+        cols: &[u64],
+    ) {
+        if rows.is_empty() || cols.is_empty() {
+            return;
+        }
+        unsafe {
+            let info = GrB_Matrix_assign_BOOL(
+                *self.m,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                true,
+                rows.as_ptr(),
+                rows.len() as u64,
+                cols.as_ptr(),
+                cols.len() as u64,
+                std::ptr::null_mut(),
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        self.has_pending.store(true, Ordering::Relaxed);
+    }
+
     /// Bulk-insert entries from (row, col) arrays. Matrix must be empty.
     /// Uses a single GraphBLAS FFI call instead of N individual setElement
     /// calls; the scalar variant needs no values array and produces an iso
@@ -1491,7 +1594,9 @@ impl<E: IterExtract> Drop for Iter<E> {
                 // debug_assert: don't panic in Drop (see Matrix::drop above).
                 debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
             }
-            GxB_Iterator_free(&raw mut self.inner);
+            if !self.inner.is_null() {
+                GxB_Iterator_free(&raw mut self.inner);
+            }
         }
     }
 }
@@ -1509,6 +1614,37 @@ impl<E: IterExtract> Iter<E> {
         min_row: u64,
         max_row: u64,
     ) -> Self {
+        let mut it = Self::detached(m);
+        it.seek(min_row, max_row);
+        it
+    }
+
+    /// An iterator over `m` with no `GxB_Iterator` behind it yet: it yields
+    /// nothing until [`Self::seek`] attaches one.
+    ///
+    /// `GxB_Iterator_new` + `GxB_rowIterator_attach` + the matching free cost
+    /// about 1,700 instructions, which is most of what a single-row scan of a
+    /// small matrix pays. A caller that has established the range holds no
+    /// entry can skip all of it and still hand back a real iterator — one that
+    /// attaches if it is ever re-seeked somewhere the answer differs, so
+    /// skipping stays an optimisation rather than a promise the caller has to
+    /// keep.
+    #[must_use]
+    pub fn detached<T>(m: &Matrix<T>) -> Self {
+        Self {
+            m: m.m.clone(),
+            inner: null_mut(),
+            depleted: true,
+            max_row: 0,
+            _extract: PhantomData,
+        }
+    }
+
+    /// Attach the GraphBLAS iterator if this is still detached.
+    fn attach(&mut self) {
+        if !self.inner.is_null() {
+            return;
+        }
         unsafe {
             let mut iter = MaybeUninit::uninit();
             let info = GxB_Iterator_new(iter.as_mut_ptr());
@@ -1518,25 +1654,9 @@ impl<E: IterExtract> Iter<E> {
                 "GxB_Iterator_new failed: {info:?}"
             );
             let iter = iter.assume_init();
-            let info = GxB_rowIterator_attach(iter, *m.m, null_mut());
+            let info = GxB_rowIterator_attach(iter, *self.m, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-            let mut info = GxB_rowIterator_seekRow(iter, min_row);
-            debug_assert!(
-                info == GrB_Info::GrB_SUCCESS
-                    || info == GrB_Info::GrB_NO_VALUE
-                    || info == GrB_Info::GxB_EXHAUSTED
-            );
-            while info == GrB_Info::GrB_NO_VALUE && GxB_rowIterator_getRowIndex(iter) < max_row {
-                info = GxB_rowIterator_nextRow(iter);
-            }
-            Self {
-                m: m.m.clone(),
-                inner: iter,
-                depleted: info != GrB_Info::GrB_SUCCESS
-                    || GxB_rowIterator_getRowIndex(iter) > max_row,
-                max_row,
-                _extract: PhantomData,
-            }
+            self.inner = iter;
         }
     }
 }
@@ -1551,6 +1671,7 @@ impl<E: IterExtract> Iter<E> {
         min_row: u64,
         max_row: u64,
     ) {
+        self.attach();
         unsafe {
             let mut info = GxB_rowIterator_seekRow(self.inner, min_row);
             debug_assert!(
