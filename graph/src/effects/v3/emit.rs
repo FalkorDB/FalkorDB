@@ -267,11 +267,19 @@ pub fn build_index_buffer<W: EffectWrite + ?Sized>(
     // untouched rather than torn. A drop has no options field at all; a create
     // always states its block, with a presence byte per option, so "nothing
     // said" survives the wire as nothing said.
+    // One entry today: every index statement this engine parses names a single
+    // label or relationship type. The list is what lets an index type that names
+    // several arrive without moving the wire, so the emitter builds one even
+    // while it can only ever fill it with one entry.
+    let schemas = vec![v3::SchemaRef {
+        id: label_id,
+        name: ix.label.to_owned(),
+    }];
+
     let record = if create {
         Record::CreateIndex {
             schema_type: ix.entity_type,
-            label_id,
-            label: ix.label.to_owned(),
+            schemas,
             field_type: index_field_flags(ix.index_type),
             fields,
             options: wire_index_options(ix),
@@ -279,8 +287,7 @@ pub fn build_index_buffer<W: EffectWrite + ?Sized>(
     } else {
         Record::DropIndex {
             schema_type: ix.entity_type,
-            label_id,
-            label: ix.label.to_owned(),
+            schemas,
             field_type: index_field_flags(ix.index_type),
             fields,
         }
@@ -1009,8 +1016,7 @@ mod tests {
         assert!(matches!(records[0], Record::AddLabel { id: 0, .. }));
         assert!(matches!(records[1], Record::AddAttribute { id: 0, .. }));
         let Record::CreateIndex {
-            label_id,
-            ref label,
+            ref schemas,
             field_type,
             ref fields,
             ref options,
@@ -1019,7 +1025,8 @@ mod tests {
         else {
             panic!("expected a create-index record, got {:?}", records[2]);
         };
-        assert_eq!((label_id, label.as_str()), (0, "D"));
+        assert_eq!(schemas.len(), 1);
+        assert_eq!((schemas[0].id, schemas[0].name.as_str()), (0, "D"));
         assert_eq!(field_type, v3::INDEX_FLD_FULLTEXT);
         assert_eq!(fields.len(), 1);
         assert_eq!((fields[0].id, fields[0].name.as_str()), (0, "body"));

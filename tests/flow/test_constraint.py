@@ -1272,8 +1272,9 @@ class testConstraintReplication():
         # creates put eleven effects on the wire, so `>= 6` was passing with five
         # to spare and functioning as a sleep.
         #
-        # `test_effects_v3.py` pins the per-shape announcement counts, where the
-        # payloads are constructed rather than observed through MONITOR.
+        # `test_effects_ddl.py` pins the per-shape announcement counts, where
+        # the payloads are read off the wire rather than counted through
+        # MONITOR.
         self.source.execute_command("WAIT", 1, 0)
 
         replica_g = Graph(self.replica, GRAPH_ID)
