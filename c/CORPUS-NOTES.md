@@ -275,10 +275,29 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
 - **NOTHING HERE EVER APPLIES A RECORD.** This is the largest gap in the file
   and it was implicit until `effects-v3-corp` named it. Every consumer of this
   corpus decodes and re-encodes: `EffectsV3_Decode`, `EffectsV3_Encode`,
-  `EffectsBuffer_Buffer`. Counted rather than remembered — `EffectsV3_Apply`,
-  `EffectsV3_ApplyRecord` and `Effects_Apply` appear **zero** times across
-  `test_effects_v3_roundtrip.c`, `test_effects_v3_corpus.c`,
-  `effects_v3_corpus.h` and `tests/unit/test_effects_v3_wire.c`.
+  `EffectsBuffer_Buffer`. Counted rather than
+  remembered, and **true of both engines** — this is not a C-side shortcoming:
+
+      C     EffectsV3_Apply / EffectsV3_ApplyRecord / Effects_Apply   0
+            EffectsV3_Decode                                          8   (control)
+      Rust  apply_effects                                             0
+            open_payload / records() / encode                      2/2/24 (control)
+
+  Counted by `effects-v3-corp` on the Rust side, over
+  `graph/src/effects/v3/fixtures.rs`, the only Rust file that reads this corpus.
+
+  **Re-derive it with the scope, not branch-wide**, because this very section
+  now contains those symbols and will match:
+
+      git grep -l EffectsV3_Apply -- 'c/tests/unit/*'      # 0 - the real answer
+      git grep -l EffectsV3_Apply                          # 1 - this file
+
+  Always pair it with a control that must match (`EffectsV3_Decode`), so a zero
+  proves the search works rather than that the pattern was wrong. corp's first
+  Rust count came back non-zero and was entirely prose: fixture NAMES matching
+  `create_index`, and a comment describing the C abort matching `apply` and
+  `GraphHub`. A grep for a concept matches the file that discusses the concept —
+  only the actual entry point is an answer.
 
   So "39 fixtures, byte-identical, green on both engines" means the BYTES are
   agreed. It does not mean a single one of these records has ever been handed to
