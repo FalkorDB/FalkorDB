@@ -1,4 +1,5 @@
 from common import *
+from index_utils import wait_for_indices_to_sync
 
 GRAPH_ID = "query_validation"
 
@@ -849,5 +850,114 @@ class testQueryValidationFlow(FlowTestsBase):
             actual = g.query("""MATCH (a)-[{k:1}]->()
                                 RETURN [(a)-[{k:1}]->(x) | x.k] AS r""")
             self.env.assertEqual(actual.result_set, [[[1]]])
+        finally:
+            g.delete()
+
+    def test48_pattern_comprehension_in_clause_expressions(self):
+        # the planner lowers a pattern comprehension into its own sub-plan only
+        # where it plans for one; in SET, DELETE, procedure arguments and
+        # YIELD ... WHERE it used to reach the evaluator un-lowered and crash
+        # the server. Every shape must now produce correct rows or a clean
+        # error.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.db.select_graph("clause_pattern_comprehension")
+
+        def reset():
+            g.query("MATCH (n) DETACH DELETE n")
+            g.query("""CREATE (:A {name: 'a'})-[:R]->(:A {name: 'b'})""")
+
+        try:
+            g.query("RETURN 1")
+            reset()
+
+            # SET, in every form, reading the graph through a comprehension
+            queries = [
+                ("MATCH (n:A) SET n.p = size([(n)-->() | 1])",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', 0]]),
+                ("MATCH (n:A) SET n += {p: [(n)-->(y) | y.name]}",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', ['b']], ['b', []]]),
+                ("MATCH (n:A) SET n = {name: n.name, p: [(n)<--(y) | y.name]}",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', []], ['b', ['a']]]),
+                ("MATCH (n:A) SET n.p = size([(n)-->() | 1]), n.q = size([()-->(n) | 1])",
+                 "MATCH (n:A) RETURN n.name, n.p, n.q ORDER BY n.name",
+                 [['a', 1, 0], ['b', 0, 1]]),
+                ("MATCH (n:A) FOREACH (x IN [1] | SET n.p = size([(n)-->() | x]))",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', 0]]),
+                # a CALL body that ends the query used to lose its scope
+                # table, so any sub-plan in it indexed past the end
+                ("MATCH (n:A) CALL { WITH n SET n.p = size([(n)<--() | 1]) }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 0], ['b', 1]]),
+                ("MATCH (n:A) CALL { WITH n UNWIND [(n)-->(y) | y] AS y SET y.p = 1 }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', None], ['b', 1]]),
+                ("MATCH (n:A) CALL { WITH n WITH n WHERE size([(n)-->() | 1]) > 0 SET n.p = 1 }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', None]]),
+                # DELETE an entity picked by a comprehension
+                ("MATCH (n:A {name: 'a'}) DETACH DELETE head([(n)-->(y) | y])",
+                 "MATCH (n:A) RETURN n.name",
+                 [['a']]),
+            ]
+            for write, read, expected in queries:
+                g.query(write)
+                self.env.assertEqual(g.query(read).result_set, expected)
+                reset()
+
+            # a SET feeding a RETURN inside a UNION branch; the branch's
+            # variables must not be clobbered by the comprehension's result
+            q = """MATCH (n:A) SET n.p = size([(n)-->() | 1])
+                   RETURN n.name AS name, n.p AS p
+                   UNION
+                   RETURN 'z' AS name, 9 AS p"""
+            actual = sorted(g.query(q).result_set)
+            self.env.assertEqual(actual, [['a', 1], ['b', 0], ['z', 9]])
+            reset()
+
+            # procedure arguments and YIELD ... WHERE
+            q = """MATCH (n:A {name: 'a'})
+                   CALL db.labels() YIELD label
+                   WHERE size([(n)-->() | 1]) = 1
+                   RETURN label"""
+            self.env.assertEqual(g.query(q).result_set, [['A']])
+
+            g.query("CREATE FULLTEXT INDEX FOR (n:A) ON (n.name)")
+            wait_for_indices_to_sync(g)
+            q = """MATCH (n:A {name: 'a'})
+                   CALL db.idx.fulltext.queryNodes('A', head([(n)-->(y) | y.name]))
+                   YIELD node
+                   RETURN node.name"""
+            self.env.assertEqual(g.query(q).result_set, [['b']])
+            q = """CALL db.idx.fulltext.queryNodes('A', 'a|b') YIELD node
+                   WHERE size([(node)-->() | 1]) = 1
+                   RETURN node.name"""
+            self.env.assertEqual(g.query(q).result_set, [['a']])
+
+            # the index drop is planned with a label known up front, so a
+            # computed one is rejected rather than tripping the planner
+            try:
+                g.query("""MATCH (n:A {name: 'a'})
+                           CALL db.idx.fulltext.drop(head([(n)-->() | 'A']))""")
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("must be a string literal", str(e))
+
+            # MERGE applies ON CREATE / ON MATCH itself, after matching, so
+            # there is no place to run a sub-plan; rejected as in FalkorDB C
+            for q in ["MERGE (n:A {name: 'a'}) ON MATCH SET n.p = size([(n)-->() | 1])",
+                      "MERGE (n:B) ON CREATE SET n.p = size([(x)-->() | 1])"]:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains("not supported in MERGE", str(e))
+
+            # the server is still up
+            self.env.assertEqual(
+                    g.query("MATCH (n:A) RETURN count(n)").result_set, [[2]])
         finally:
             g.delete()

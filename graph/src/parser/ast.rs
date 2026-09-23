@@ -1170,6 +1170,15 @@ impl<TVar: Eq + Hash + Display> QueryIR<TVar> {
                         }
                     }
                 }
+                // The planner turns this call into a DropIndex on a label
+                // known at plan time, so it has to be a string literal.
+                if proc.name == "db.idx.fulltext.drop"
+                    && !matches!(args[0].root().data(), ExprIR::Constant(Value::String(_)))
+                {
+                    return Err(String::from(
+                        "The first argument of db.idx.fulltext.drop must be a string literal",
+                    ));
+                }
                 Ok(())
             }
             Self::Match { pattern, .. } => {

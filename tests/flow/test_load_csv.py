@@ -403,6 +403,22 @@ class testLoadLocalCSV():
             except Exception as e:
                 self.env.assertContains("CSV field terminator can only be one character wide", str(e))
 
+    def test15_pattern_comprehension_in_file_path(self):
+        # the file path is evaluated per input row, so a pattern
+        # comprehension in it has to be planned as a sub-plan; it used to
+        # reach the evaluator un-lowered and crash the server
+        g = self.db.select_graph("load_csv_pattern_comprehension")
+        try:
+            g.query(f"""CREATE (:F {{name: 'a'}})-[:R]->
+                               (:F {{file: 'file://{SHORT_CSV_WITHOUT_HEADERS}'}})""")
+            q = """MATCH (f:F {name: 'a'})
+                   LOAD CSV FROM head([(f)-->(x) | x.file]) AS row
+                   RETURN row"""
+            result = g.query(q).result_set
+            self.env.assertEqual(result, [[row] for row in SHORT_CSV_WITHOUT_HEADERS_DATA])
+        finally:
+            g.delete()
+
 
 class testLoadRemoteCSV():
     def __init__(self):
