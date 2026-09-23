@@ -372,6 +372,55 @@ class testEffects_05_IndexDDLMechanism(_EffectsBase):
         self.env.assertEqual(list_indicies(self.replica_graph).result_set,
                              list_indicies(self.master_graph).result_set)
 
+    def test03_a_multi_attribute_statement_crosses_as_one_statement(self):
+        # Every other index statement in this suite names a single attribute, so
+        # without this the record's attribute list is only ever exercised at
+        # length one. A record that carried only the first attribute would leave
+        # the replica with a narrower index and nothing anywhere to say so —
+        # db.indexes() would still list a 'Multi' index, and it would still
+        # answer queries, just not the ones about the second property.
+        #
+        # The list is per *statement*, not per attribute. C sends one record per
+        # field and gets away with it because its index-level work is
+        # idempotent; this engine refuses a second announcement for the same
+        # label with "Can not override index configuration", so a per-field
+        # regression here would not merely be chattier — it would fail to apply.
+        self.set_effects_config()
+
+        # Register the label and both attributes first, so the index statement's
+        # own buffer is not led by the ADD_SCHEMA/ADD_ATTRIBUTE records that a
+        # first mention would put in front of it.
+        self.query_and_sync("CREATE (:Multi {first: 1, second: 2})")
+
+        self.monitor_mark()
+        self.master_graph.query("CREATE INDEX FOR (n:Multi) ON (n.first, n.second)")
+        self.wait_for_replica_offset()
+        window = self.monitor_mark()
+        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
+        self.env.assertEqual(self._verbatim(window), 0)
+        self.env.assertEqual(
+            self.leading_opcodes(window, self.GRAPH_ID), ['CREATE_INDEX'])
+
+        # Both attributes arrived, in the statement's order.
+        q = ("CALL db.indexes() YIELD label, properties "
+             "WHERE label = 'Multi' RETURN properties")
+        self.assert_agree(q, [[['first', 'second']]])
+
+        # The drop mirrors it. A drop able to name only one attribute would
+        # leave a multi-attribute index undroppable over the wire, which is why
+        # the two records carry the same lists or neither does.
+        self.monitor_mark()
+        self.master_graph.query("DROP INDEX FOR (n:Multi) ON (n.first, n.second)")
+        self.wait_for_replica_offset()
+        window = self.monitor_mark()
+        self.env.assertEqual(self.count_in(window, 'GRAPH.EFFECT'), 1)
+        self.env.assertEqual(self._verbatim(window), 0)
+        self.env.assertEqual(
+            self.leading_opcodes(window, self.GRAPH_ID), ['DROP_INDEX'])
+        self.assert_agree(
+            "CALL db.indexes() YIELD label WHERE label = 'Multi' RETURN count(*)",
+            [[0]])
+
     def test02_options_ride_the_effect_and_survive(self):
         self.set_effects_config()
         self.monitor_mark()
