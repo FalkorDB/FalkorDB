@@ -1048,3 +1048,54 @@ class testQueryValidationFlow(FlowTestsBase):
                     g.query("MATCH (t:T) RETURN count(t)").result_set, [[3]])
         finally:
             g.delete()
+
+    def test51_pattern_comprehension_reading_a_loop_variable(self):
+        # a pattern comprehension that reads a list comprehension, quantifier
+        # or reduce variable was hoisted out of the loop and evaluated once,
+        # before the variable was bound, silently giving wrong results. It is
+        # now planned as a nested plan run for every iteration, as Neo4j does.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("loop_variable_pattern_comprehension")
+        try:
+            g.query("CREATE (:N {name: 'a', k: 1})-[:R]->(:N {name: 'b', k: 2})")
+            ns = "MATCH (n:N) WITH n ORDER BY n.name WITH collect(n) AS ns "
+
+            queries = [
+                # the loop variable in the pattern
+                (ns + "RETURN [x IN ns | size([(x)-->() | 1])]", [[[1, 0]]]),
+                (ns + "RETURN [x IN ns | [(x)-->(y) | y.name]]", [[[['b'], []]]]),
+                (ns + "RETURN [x IN ns WHERE size([(x)<--() | 1]) > 0 | x.name]",
+                 [[['b']]]),
+                (ns + "RETURN [x IN ns | [y IN ns | size([(x)-->(y) | 1])]]",
+                 [[[[0, 1], [0, 0]]]]),
+                # in the comprehension's WHERE / result only
+                ("""MATCH (n:N) RETURN n.name,
+                          [x IN [1, 2] | [(n)-->(y) WHERE y.k = x | y.name]]
+                   ORDER BY n.name""",
+                 [['a', [[], ['b']]], ['b', [[], []]]]),
+                ("""MATCH (n:N) RETURN n.name, [x IN range(1, 2) | [(n)-->() | x]]
+                   ORDER BY n.name""",
+                 [['a', [[1], [2]]], ['b', [[], []]]]),
+                # quantifiers and reduce, including the accumulator
+                (ns + """RETURN any(x IN ns WHERE size([(x)-->() | 1]) > 1),
+                                all(x IN ns WHERE size([(x)--() | 1]) = 1)""",
+                 [[False, True]]),
+                (ns + "RETURN reduce(s = 0, x IN ns | s + size([(x)-->() | 1]))",
+                 [[1]]),
+                (ns + """RETURN reduce(s = 0, x IN ns |
+                                s + size([(x)<--(y) WHERE y.k = s + 1 | 1]))""",
+                 [[1]]),
+                # a bare pattern in a loop predicate is an existence test
+                (ns + "RETURN [x IN ns WHERE (x)-->() | x.name]", [[['a']]]),
+                (ns + "RETURN none(x IN ns WHERE (x)<--()), single(x IN ns WHERE (x)-->())",
+                 [[False, True]]),
+            ]
+            for q, expected in queries:
+                self.env.assertEqual(g.query(q).result_set, expected)
+
+            # in a write clause
+            g.query(ns + "FOREACH (x IN ns | SET x.c = size([(x)-->() | 1]))")
+            actual = g.query("MATCH (n:N) RETURN n.name, n.c ORDER BY n.name").result_set
+            self.env.assertEqual(actual, [['a', 1], ['b', 0]])
+        finally:
+            g.delete()

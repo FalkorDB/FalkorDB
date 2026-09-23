@@ -264,6 +264,17 @@ pub enum ExprIR<TVar> {
     /// Pattern predicate should be rewritten in planner (boxed; see
     /// `PatternComprehension`).
     Pattern(Box<QueryGraph<Arc<String>, Arc<String>, TVar>>),
+    /// A pattern comprehension that reads a variable bound inside the
+    /// enclosing expression (a list comprehension, quantifier or `reduce`
+    /// variable), so it cannot be hoisted into an Apply below the operator.
+    /// The planner turns it into a nested plan that the evaluator runs each
+    /// time the expression is evaluated, with the current row (loop bindings
+    /// included) as the plan's argument row.
+    /// Children: the variables it reads, so passes that ask which variables
+    /// an expression uses still see them.
+    ///
+    /// Boxed: rare, and an inline `TVar` would widen the enum.
+    NestedPlan(Box<NestedPlanRef<TVar>>),
     /// shortestPath((a)-[*]->(b))
     /// Children: [source_var_expr, dest_var_expr]
     ///
@@ -377,6 +388,7 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             }
             Self::Paren => write!(f, "()"),
             Self::Pattern(_) => write!(f, "<pattern>"),
+            Self::NestedPlan(nested) => write!(f, "nested plan #{}", nested.id),
             Self::ShortestPath(_) => write!(f, "shortestPath()"),
             Self::MapProjection => write!(f, "map_projection"),
             Self::CompiledRegex(rf) => match rf.kind {
@@ -387,6 +399,16 @@ impl<TVar: Display + std::fmt::Debug> Display for ExprIR<TVar> {
             Self::Case { .. } => write!(f, "CASE"),
         }
     }
+}
+
+/// Where a [`ExprIR::NestedPlan`] finds its plan and its result.
+#[derive(Clone, Debug)]
+pub struct NestedPlanRef<TVar> {
+    /// Index of the plan among the query's nested plans (the children after
+    /// the first of the plan's `NestedPlans` root).
+    pub id: u32,
+    /// The variable the plan collects the comprehension's list into.
+    pub result: TVar,
 }
 
 /// Quantifier types for list predicates (all, any, none, single).

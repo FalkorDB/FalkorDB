@@ -50,8 +50,8 @@ use crate::{
     entity_type::EntityType,
     index::indexer::{IndexQuery, IndexType},
     parser::ast::{
-        AllShortestPaths, BoundQueryIR, ExprIR, QueryExpr, QueryGraph, QueryIR, QueryNode,
-        QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable,
+        AllShortestPaths, BoundQueryIR, ExprIR, NestedPlanRef, QueryExpr, QueryGraph, QueryIR,
+        QueryNode, QueryPath, QueryRelationship, SetItem, SupportAggregation, Variable,
     },
     runtime::functions::GraphFn,
     runtime::orderset::OrderSet,
@@ -294,6 +294,11 @@ pub enum IR {
     },
     /// Remove duplicate rows
     Distinct,
+    /// Root of a plan whose expressions hold nested plans
+    /// (`ExprIR::NestedPlan`). Child 0 is the query's plan and runs as if it
+    /// were the root; child `1 + id` is nested plan `id`, which the evaluator
+    /// runs on demand.
+    NestedPlans,
     /// UNION of multiple sub-query branches.
     /// Each child is a fully-planned branch.
     Union,
@@ -519,6 +524,7 @@ impl Display for IR {
             Self::Commit => write!(f, "Commit"),
             Self::ForEach { var, .. } => write!(f, "ForEach | {var}"),
             Self::Union => write!(f, "Union"),
+            Self::NestedPlans => write!(f, "Nested Plans"),
             Self::Distinct => write!(f, "Distinct"),
             Self::CreateIndex { label, attrs, .. } => {
                 write!(f, "Create Index | :{label}({attrs:?})")
@@ -603,6 +609,14 @@ pub struct Planner {
     /// clause-local labels from an OPTIONAL MATCH on a bound alias) must be
     /// re-verified with a hasLabels filter.
     verified_labels: HashMap<(u32, u32), OrderSet<Arc<String>>>,
+    /// Plans for the `ExprIR::NestedPlan`s minted so far, by id; `finish`
+    /// hangs them under the plan's root.
+    nested_plans: Vec<DynTree<IR>>,
+    /// Variables bound by the list comprehensions, quantifiers and `reduce`s
+    /// enclosing the expression `extract_pattern_comprehensions` is visiting,
+    /// innermost last. A pattern comprehension reading one of them cannot be
+    /// hoisted out of the loop and becomes a nested plan instead.
+    loop_vars: Vec<Variable>,
 }
 
 /// A pattern comprehension (or inline pattern) hoisted out of a projection
@@ -676,7 +690,26 @@ impl Planner {
             visited: HashSet::new(),
             scope_vars,
             verified_labels: HashMap::new(),
+            nested_plans: vec![],
+            loop_vars: vec![],
         }
+    }
+
+    /// Complete a plan built by `plan`: when its expressions hold nested
+    /// plans, root it at `IR::NestedPlans` with the query's plan first and
+    /// each nested plan after it, in id order.
+    pub fn finish(
+        &mut self,
+        plan: DynTree<IR>,
+    ) -> DynTree<IR> {
+        if self.nested_plans.is_empty() {
+            return plan;
+        }
+        let mut root = tree!(IR::NestedPlans, plan);
+        for nested in std::mem::take(&mut self.nested_plans) {
+            root.root_mut().push_child_tree(nested);
+        }
+        root
     }
 
     /// Mint a fresh variable with an ID unique within the given scope.
@@ -917,15 +950,15 @@ impl Planner {
                     mode,
                 ));
 
-                extracted.push(ExtractedComprehension {
-                    var: var.clone(),
+                let comprehension = ExtractedComprehension {
+                    var,
                     graph: graph.as_ref().clone(),
                     where_filter: where_tree,
                     result_expr: result_tree,
                     paths: vec![],
                     nested,
-                });
-                DynTree::new(ExprIR::Variable(var))
+                };
+                self.hoist_or_nest(node, comprehension, extracted)
             }
             ExprIR::Pattern(graph) if mode != PatternMode::SemiApply => {
                 let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
@@ -946,40 +979,156 @@ impl Planner {
                 }
                 let query_path = Arc::new(QueryPath::new(path_var.clone(), path_component_vars));
 
-                extracted.push(ExtractedComprehension {
-                    var: var.clone(),
+                let comprehension = ExtractedComprehension {
+                    var,
                     graph: graph.as_ref().clone(),
                     where_filter: None,
                     result_expr: Arc::new(DynTree::new(ExprIR::Variable(path_var))),
                     paths: vec![query_path],
                     nested: vec![],
-                });
+                };
+                let list = self.hoist_or_nest(node, comprehension, extracted);
                 if mode == PatternMode::Exists {
                     // The pattern was a predicate, so hand the caller a
                     // boolean rather than the list of matched paths.
                     let mut length = DynTree::new(ExprIR::Length);
-                    length
-                        .root_mut()
-                        .push_child_tree(DynTree::new(ExprIR::Variable(var)));
+                    length.root_mut().push_child_tree(list);
                     let mut gt = DynTree::new(ExprIR::Gt);
                     gt.root_mut().push_child_tree(length);
                     gt.root_mut().push_child(ExprIR::Constant(Value::Int(0)));
                     gt
                 } else {
-                    DynTree::new(ExprIR::Variable(var))
+                    list
                 }
             }
             _ => {
                 let child_mode = mode.descend(node.data());
+                // The loop variables this node binds, and the child from
+                // which on they are in scope (the list itself is not).
+                let (bound, first_scoped): (Vec<Variable>, usize) = match node.data() {
+                    ExprIR::ListComprehension(var) | ExprIR::Quantifier { var, .. } => {
+                        (vec![var.clone()], 1)
+                    }
+                    ExprIR::Reduce(vars) => {
+                        (vec![vars.accumulator.clone(), vars.iterator.clone()], 2)
+                    }
+                    _ => (vec![], usize::MAX),
+                };
                 let mut new_tree = DynTree::new(node.data().clone());
-                for child in node.children() {
+                for (i, child) in node.children().enumerate() {
+                    let outer_len = self.loop_vars.len();
+                    if i >= first_scoped {
+                        self.loop_vars.extend(bound.iter().cloned());
+                    }
+                    // A list comprehension's WHERE and a quantifier's
+                    // predicate are booleans per element: a bare pattern
+                    // there is an existence test, never a list of paths.
+                    let child_mode = if i == 1
+                        && matches!(
+                            node.data(),
+                            ExprIR::ListComprehension(_) | ExprIR::Quantifier { .. }
+                        ) {
+                        PatternMode::Exists
+                    } else {
+                        child_mode
+                    };
                     let child_tree = self
                         .extract_pattern_comprehensions(&child, scope_id, extracted, child_mode);
+                    self.loop_vars.truncate(outer_len);
                     new_tree.root_mut().push_child_tree(child_tree);
                 }
                 new_tree
             }
         }
+    }
+
+    /// Stand-in for an extracted pattern comprehension: the variable its
+    /// collected list is bound to, with the comprehension queued in
+    /// `extracted` for its Apply sub-plan. When it reads a variable bound by
+    /// an enclosing loop (see `loop_vars`) it cannot run before the loop, so
+    /// it becomes a nested plan the evaluator runs for each iteration instead,
+    /// as Neo4j's nested plan expressions do.
+    fn hoist_or_nest(
+        &mut self,
+        node: &DynNode<ExprIR<Variable>>,
+        comprehension: ExtractedComprehension,
+        extracted: &mut Vec<ExtractedComprehension>,
+    ) -> DynTree<ExprIR<Variable>> {
+        let is_loop_var = |v: &Variable, loop_vars: &[Variable]| {
+            loop_vars
+                .iter()
+                .any(|l| l.id == v.id && l.scope_id == v.scope_id)
+        };
+        let reads = Self::pattern_expr_variables(node);
+        if !reads.iter().any(|v| is_loop_var(v, &self.loop_vars)) {
+            let var = comprehension.var.clone();
+            extracted.push(comprehension);
+            return DynTree::new(ExprIR::Variable(var));
+        }
+
+        // The loop variables arrive in the argument row, bound like any
+        // variable of the outer stream.
+        let saved = self.visited.clone();
+        for v in &self.loop_vars {
+            self.visited.insert((v.id, v.scope_id));
+        }
+        let plan = self.build_pattern_comprehension_plan(&comprehension);
+        // What the nested plan reads from the row: variables bound outside
+        // its own pattern. Listed as children so passes that ask what an
+        // expression uses see them.
+        let free: Vec<Variable> = reads
+            .into_iter()
+            .filter(|v| self.visited.contains(&(v.id, v.scope_id)))
+            .collect();
+        self.visited = saved;
+
+        let id = self.nested_plans.len() as u32;
+        self.nested_plans.push(plan);
+        let mut res = DynTree::new(ExprIR::NestedPlan(Box::new(NestedPlanRef {
+            id,
+            result: comprehension.var,
+        })));
+        for v in free {
+            res.root_mut().push_child(ExprIR::Variable(v));
+        }
+        res
+    }
+
+    /// Every variable a pattern comprehension or existential pattern
+    /// mentions, in its pattern, predicate or result, nested ones included;
+    /// each once.
+    fn pattern_expr_variables(node: &DynNode<ExprIR<Variable>>) -> Vec<Variable> {
+        let mut vars: Vec<Variable> = vec![];
+        let mut add = |v: &Variable| {
+            if !vars
+                .iter()
+                .any(|w| w.id == v.id && w.scope_id == v.scope_id)
+            {
+                vars.push(v.clone());
+            }
+        };
+        let mut stack = vec![node.clone()];
+        while let Some(n) = stack.pop() {
+            match n.data() {
+                ExprIR::Variable(v) => add(v),
+                ExprIR::PatternComprehension(graph) | ExprIR::Pattern(graph) => {
+                    for v in graph.variables() {
+                        add(&v);
+                    }
+                    for rel in graph.relationships() {
+                        for attrs in [&rel.attrs, &rel.from.attrs, &rel.to.attrs] {
+                            stack.push(attrs.root());
+                        }
+                    }
+                    for n in graph.nodes() {
+                        stack.push(n.attrs.root());
+                    }
+                }
+                _ => {}
+            }
+            stack.extend(n.children());
+        }
+        vars
     }
 
     /// Extract the pattern comprehensions of a clause's list expression
@@ -2995,7 +3144,11 @@ impl Planner {
                     // decomposition mints synthetic variables by indexing
                     // `scope_vars`, which panics on an empty Default table.
                     let mut planner = Self::new(self.scope_vars.clone());
-                    planner.plan(branch)
+                    // Nested plan ids are indices into one query-wide list.
+                    planner.nested_plans = std::mem::take(&mut self.nested_plans);
+                    let plan = planner.plan(branch);
+                    self.nested_plans = std::mem::take(&mut planner.nested_plans);
+                    plan
                 }));
                 if !all {
                     res = tree!(IR::Distinct, res);

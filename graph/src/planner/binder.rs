@@ -2017,6 +2017,11 @@ impl Binder {
                         ExprIR::FuncInvocation(func)
                     }
                     ExprIR::Paren => ExprIR::Paren,
+                    ExprIR::NestedPlan(_) => {
+                        return Err(String::from(
+                            "A nested plan is created by the planner, never parsed",
+                        ));
+                    }
                     ExprIR::ShortestPath(info) => {
                         // Verify children (source/dest vars) are bound
                         for child in &children {
@@ -2301,7 +2306,8 @@ impl Binder {
             | ExprIR::GetElement
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
-            | ExprIR::PatternComprehension(_) => false,
+            | ExprIR::PatternComprehension(_)
+            | ExprIR::NestedPlan(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
             ExprIR::Eq
@@ -2369,6 +2375,7 @@ impl Binder {
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
             | ExprIR::PatternComprehension(_)
+            | ExprIR::NestedPlan(_)
             | ExprIR::Or
             | ExprIR::And
             | ExprIR::Xor
