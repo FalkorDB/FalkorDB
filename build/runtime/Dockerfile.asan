@@ -116,15 +116,40 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 # so we no longer need libomp5 / libomp-22-dev / gcc (was just for JIT `cc`).
 # We still need llvm-symbolizer-22 for readable ASAN backtraces, plus the
 # gcc-compatible libasan runtime.
+#
+# Everything here comes from deb.debian.org. This stage used to add the
+# apt.llvm.org repo (wget llvm.sh -> llvm.sh probes the repo URL, probes the
+# GPG key URL, downloads the key -> apt-get install llvm-22): four round-trips
+# to one third-party host, any of which fails the image. That host throttles
+# CI egress and took the merge queue down repeatedly -- see the COPY below,
+# which gets the same symbolizer out of the builder stage instead.
+#
+# The tail of this list is the runtime closure of that symbolizer: libcurl4
+# for the binary itself, and libedit2/libffi8/libxml2/libz3-4/libzstd1/zlib1g
+# for libLLVM. `apt-get install llvm-22` used to resolve these for us, so the
+# smoke test after the COPY is what keeps the hand-maintained list honest.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ca-certificates bash openssl wget gnupg lsb-release libasan8 && \
-    wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && ./llvm.sh 22 && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends llvm-22 && \
-    apt-get purge -y wget gnupg lsb-release && \
-    apt-get autoremove -y && \
-    apt-get clean && rm -rf /var/lib/apt/lists/* /llvm.sh
+        ca-certificates bash openssl libasan8 \
+        libcurl4 libedit2 libffi8 libxml2 libz3-4 libzstd1 zlib1g && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# llvm-symbolizer, lifted from the toolchain image rather than reinstalled.
+# The builder has it because llvm.sh installs clang-22 with recommends on,
+# which pulls llvm-22-dev -> llvm-22 (the package that ships the symbolizer
+# and llvm-objcopy-22, already used by the builder stage above).
+#
+# The binary's RUNPATH is $ORIGIN/../lib, so keeping the /usr/lib/llvm-22
+# bin/lib layout makes it self-locating: no LD_LIBRARY_PATH, no ldconfig, and
+# no arch-specific multiarch path to get wrong. 101 KB of binary, and the
+# 143 MB libLLVM it links -- which the old `llvm-22` install pulled in anyway,
+# on top of ~90 MB of unused llvm tools and the clang/lldb/lld/clangd that
+# llvm.sh drags in by default and the purge above never removed.
+COPY --from=builder /usr/lib/llvm-22/lib/libLLVM.so.22.1 /usr/lib/llvm-22/lib/
+COPY --from=builder /usr/lib/llvm-22/bin/llvm-symbolizer /usr/lib/llvm-22/bin/
+# Fail the build loudly if the closure above ever goes stale -- otherwise a
+# missing .so degrades ASAN output to raw addresses only at test time.
+RUN /usr/lib/llvm-22/bin/llvm-symbolizer --version
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -144,7 +169,7 @@ ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \
     BROWSER=0 \
     FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000" \
-    ASAN_SYMBOLIZER_PATH=/usr/bin/llvm-symbolizer-22 \
+    ASAN_SYMBOLIZER_PATH=/usr/lib/llvm-22/bin/llvm-symbolizer \
     RS_GLOBAL_DTORS=1 \
     ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1" \
     LSAN_OPTIONS="suppressions=/var/lib/falkordb/asan.supp:use_tls=0"
