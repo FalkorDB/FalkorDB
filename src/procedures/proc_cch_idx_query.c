@@ -383,12 +383,16 @@ static ProcedureResult Proc_CCHIdxQueryInvoke
 	GraphContext *gc = QueryCtx_GetGraphCtx () ;
 	Graph        *g  = QueryCtx_GetGraph () ;
 
-	// locate the CCH index for this (relTypes, weightProp)
+	// locate the CCH index for this (relTypes, weightProp).
+	// the query reflects the last-committed hierarchy: pending maintenance from
+	// writes earlier in the SAME query is flushed only at commit (see
+	// GraphContext_CCHFlushDirty in cmd_query.c), so -- like every other index --
+	// this read does not observe the query's own uncommitted mutations
 	CCHIndex *idx = GraphContext_GetCCHIndex (gc, rels, relCount, weightAtt) ;
 	if (idx == NULL || idx->cch == NULL) {
 		ErrorCtx_SetError ("db.idx.cch.query: no CCH index over these "
 				"relationship types and weight attribute; create one with "
-				"db.idx.cch.create") ;
+				"CREATE CCH INDEX FOR ()-[e:<types>]->() ON (e.<weight>)") ;
 		arr_free (rels) ;
 		return PROCEDURE_ERR ;
 	}
@@ -507,7 +511,8 @@ static ProcedureResult Proc_CCHIdxQueryInvoke
 			// edge: the hierarchy is inconsistent with the graph. fail loudly
 			// rather than return a garbage path
 			ErrorCtx_SetError ("db.idx.cch.query: inconsistent hierarchy "
-					"(rebuild it with db.idx.cch.create)") ;
+					"(drop and recreate the index: DROP CCH INDEX ... then "
+					"CREATE CCH INDEX ...)") ;
 			res = PROCEDURE_ERR ;
 		}
 		arr_free (road) ;
