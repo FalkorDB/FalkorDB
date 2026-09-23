@@ -348,6 +348,113 @@ impl EffectDecode<3> for IndexFields<Vec<AttrRef<String>>> {
     }
 }
 
+/// A `SchemaRef`'s floor: 4-byte id, 8-byte length, and the NUL
+/// `EffectWrite::string` always writes. Thirteen not twelve for the reason
+/// [`MIN_ATTR_REF_BYTES`] is eleven not ten.
+const MIN_SCHEMA_REF_BYTES: usize = 13;
+
+/// One schema entity of an index statement, by id and name.
+///
+/// A list of these replaced a singular `label_id` + `label` so one record can
+/// name *n* entities: C's prototype CCH syntax indexes several relationship
+/// types at once (`ON ()-[r:ROAD|:R]-()`).
+///
+/// Id *and* name, like [`AttrRef`], never a bare id — `apply::verify_schema`
+/// checks the id against the name, so a diverged dictionary is a refusal rather
+/// than an index over whatever that id means locally. [`Record::SetLabels`] can
+/// use bare ids because `ADD_SCHEMA` precedes it in the same buffer.
+///
+/// `u32` where [`AttrRef`] is `u16`: the width each already travels at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SchemaRef<S> {
+    pub id: u32,
+    pub name: S,
+}
+
+/// `u16 n` · `(u32 id, string name) × n`. Generic over the string for the same
+/// reason [`IndexFields`] is: owned and borrowed callers both avoid allocating.
+pub struct IndexSchemas<S>(pub S);
+
+impl<T: AsRef<str>> EffectEncode<3> for IndexSchemas<&[SchemaRef<T>]> {
+    fn encode<W: EffectWrite + ?Sized>(
+        &self,
+        buf: &mut W,
+    ) -> Result<(), EncodeError> {
+        let schemas = self.0;
+        buf.reserve(2 + schemas.len() * MIN_SCHEMA_REF_BYTES);
+        let n = u16::try_from(schemas.len()).map_err(|_| EncodeError::BlockCountTooLarge {
+            block: "IndexSchemas",
+            len: schemas.len(),
+        })?;
+        buf.u16(n);
+        // Ascending by id, whatever order the caller held them in: `:ROAD|:R`
+        // and `:R|:ROAD` are one statement, so canonical bytes are the format's
+        // property rather than caller discipline (as `emit::digest_created_nodes`
+        // does for labels). Canonicalised, not refused like the `field_type`
+        // disagreements nearby — both orders say the same thing, so there is
+        // nothing to guess between.
+        //
+        // It buys only that the same statement against the same schema state
+        // produces the same bytes; two orders may register different ids and so
+        // differ legitimately. References are sorted, not entries, so `T` need
+        // not be `Ord` and no name is cloned.
+        let mut order: Vec<&SchemaRef<T>> = schemas.iter().collect();
+        order.sort_unstable_by_key(|s| s.id);
+        for s in order {
+            buf.schema_id(s.id);
+            buf.string(s.name.as_ref());
+        }
+        Ok(())
+    }
+}
+
+impl EffectDecode<3> for IndexSchemas<Vec<SchemaRef<String>>> {
+    fn decode(r: &mut Reader<'_>) -> Result<Self, DecodeError> {
+        let n = r.u16()?;
+        let n = r.guard_count(u64::from(n), MIN_SCHEMA_REF_BYTES)?;
+        // Nothing to index is malformed, not a degenerate list — refused here
+        // so apply never has to invent a reason it has no label.
+        if n == 0 {
+            return Err(DecodeError::EmptyIndexSchemaList);
+        }
+        // The contract, stated because no fixture can arbitrate it: an encoder
+        // MUST sort ascending by id; a decoder MUST accept any order, and keeps
+        // it as sent, so re-encoding is what canonicalises.
+        //
+        // Tolerant deliberately. `check_attr_shape` requires ascending attribute
+        // ids and C's `AttributeSet_Add` appends in written order, so an ordinary
+        // multi-property CREATE from a C primary resyncs a Rust replica forever
+        // while C-to-C looks healthy. That list has a reason this one lacks — its
+        // ids are positional against the value rows — whereas every entry here
+        // carries its own id and name, so order is presentation.
+        let mut schemas = Vec::with_capacity(n);
+        for _ in 0..n {
+            schemas.push(SchemaRef {
+                id: r.u32()?,
+                name: r.string()?,
+            });
+        }
+        Ok(Self(schemas))
+    }
+}
+
+/// Refuse an index record this build could not read back, before a byte of it
+/// is written.
+///
+/// Up here rather than inside [`IndexSchemas`] because a block refusing
+/// mid-encode leaves a header behind for the next record to append after — the
+/// same reason the options/`field_type` check precedes `write_header`.
+fn check_index_record<T>(
+    field_type: u32,
+    schemas: &[SchemaRef<T>],
+) -> Result<(), EncodeError> {
+    index_type_of(field_type)?;
+    if schemas.is_empty() {
+        return Err(EncodeError::EmptyIndexSchemaList);
+    }
+    Ok(())
+}
+
 /// `13 CREATE_CONSTRAINT` / `14 DROP_CONSTRAINT`.
 ///
 /// The property count is a **`u8`**, not the `u16` used elsewhere — C's
@@ -444,19 +551,26 @@ pub enum Record {
     /// even when every presence byte in it is zero. A drop has no field for one
     /// at all, which is what makes "a drop carries no options" a fact about the
     /// type rather than a comment.
+    ///
+    /// `schemas` is a list, not one label, so that an index type spanning
+    /// several relationship types costs no wire change when it arrives — see
+    /// [`SchemaRef`]. Every entry shares the record's one `schema_type`: an
+    /// index is over labels or over relationship types, never a mix.
     CreateIndex {
         schema_type: EntityType,
-        label_id: u32,
-        label: String,
+        schemas: Vec<SchemaRef<String>>,
         field_type: u32,
         fields: Vec<AttrRef<String>>,
         options: IndexFieldOptions,
     },
     /// `12 DROP_INDEX` — mirrors the create, and carries no options at all.
+    ///
+    /// Mirrors it in the schema list too. A drop that could only name one
+    /// entity would make an index over several undroppable over the wire, so
+    /// the two records change shape together or not at all.
     DropIndex {
         schema_type: EntityType,
-        label_id: u32,
-        label: String,
+        schemas: Vec<SchemaRef<String>>,
         field_type: u32,
         fields: Vec<AttrRef<String>>,
     },
@@ -622,9 +736,16 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
         }
         Opcode::CreateIndex | Opcode::DropIndex => {
             let schema_type = entity_from_schema_tag(r.u32()?)?;
-            let label_id = r.u32()?;
-            let label = r.string()?;
+            let schemas = IndexSchemas::decode(r)?.0;
             let field_type = r.u32()?;
+            // Before the options block, because that block is what an unknown
+            // bit desynchronises — and before the drop path too, which has no
+            // options to desynchronise but would otherwise hand `index_type_of`
+            // a type it can only mistake for a range index.
+            // The classifier is the validator: a `field_type` this layer accepts
+            // is exactly one `index_type_of` can name a kind for. The kind
+            // itself is the apply layer's business, so it is discarded here.
+            index_type_of(field_type)?;
             let fields = IndexFields::decode(r)?.0;
             // A drop stops here — zero option bytes, not an empty block — and
             // the variant it becomes has no field for any.
@@ -632,8 +753,7 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
                 let options = IndexFieldOptions::decode_sized(r, field_type)?;
                 Record::CreateIndex {
                     schema_type,
-                    label_id,
-                    label,
+                    schemas,
                     field_type,
                     fields,
                     options,
@@ -641,8 +761,7 @@ pub fn read_record(r: &mut Reader<'_>) -> Result<Record, DecodeError> {
             } else {
                 Record::DropIndex {
                     schema_type,
-                    label_id,
-                    label,
+                    schemas,
                     field_type,
                     fields,
                 }
@@ -932,18 +1051,18 @@ impl EffectEncode<3> for Record {
             // query.
             Record::CreateIndex {
                 schema_type,
-                label_id,
-                label,
+                schemas,
                 field_type,
                 fields,
                 options,
             } => {
                 // Checked before a single byte goes out. `encode_sized` checks
-                // this too, but it runs after the header, label and field list
+                // this too, but it runs after the header, schemas and field list
                 // are already written — so refusing there left a partial record
                 // in the buffer for the next one to be appended after, which is
                 // a worse failure than the one being prevented. Found by the
                 // test below asserting the buffer is untouched on refusal.
+                check_index_record(*field_type, schemas)?;
                 if options.vector.is_some() != (field_type & INDEX_FLD_VECTOR != 0) {
                     return Err(EncodeError::OptionsFieldTypeMismatch {
                         field_type: *field_type,
@@ -951,8 +1070,7 @@ impl EffectEncode<3> for Record {
                 }
                 write_header(buf, Opcode::CreateIndex, None)?;
                 buf.u32(schema_tag(*schema_type));
-                buf.schema_id(*label_id);
-                buf.string(label);
+                IndexSchemas(schemas.as_slice()).encode(buf)?;
                 buf.u32(*field_type);
                 IndexFields(fields.as_slice()).encode(buf)?;
                 // No `expect` here any more: a create's options are a field,
@@ -964,15 +1082,14 @@ impl EffectEncode<3> for Record {
             // bytes, not an empty block. There is no field for one to write.
             Record::DropIndex {
                 schema_type,
-                label_id,
-                label,
+                schemas,
                 field_type,
                 fields,
             } => {
+                check_index_record(*field_type, schemas)?;
                 write_header(buf, Opcode::DropIndex, None)?;
                 buf.u32(schema_tag(*schema_type));
-                buf.schema_id(*label_id);
-                buf.string(label);
+                IndexSchemas(schemas.as_slice()).encode(buf)?;
                 buf.u32(*field_type);
                 IndexFields(fields.as_slice()).encode(buf)?;
             }
@@ -1552,8 +1669,10 @@ mod tests {
         .unwrap();
         Record::CreateIndex {
             schema_type: EntityType::Node,
-            label_id: 7,
-            label: "L".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 7,
+                name: "L".to_owned(),
+            }],
             field_type: INDEX_FLD_RANGE,
             fields: vec![AttrRef {
                 id: 0,
@@ -1565,8 +1684,10 @@ mod tests {
         .unwrap();
         Record::DropIndex {
             schema_type: EntityType::Node,
-            label_id: 7,
-            label: "L".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 7,
+                name: "L".to_owned(),
+            }],
             field_type: INDEX_FLD_RANGE,
             fields: vec![AttrRef {
                 id: 0,
@@ -1798,8 +1919,10 @@ mod tests {
         // reader has only the field type, so this is the desync case.
         let vector_without_the_bit = Record::CreateIndex {
             schema_type: EntityType::Node,
-            label_id: 0,
-            label: "L".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 0,
+                name: "L".to_owned(),
+            }],
             field_type: INDEX_FLD_STR,
             fields: vec![AttrRef {
                 id: 0,
@@ -1820,8 +1943,10 @@ mod tests {
         // And the mirror: the bit set with no vector half to write.
         let bit_without_the_vector = Record::CreateIndex {
             schema_type: EntityType::Node,
-            label_id: 0,
-            label: "L".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 0,
+                name: "L".to_owned(),
+            }],
             field_type: INDEX_FLD_VECTOR,
             fields: vec![AttrRef {
                 id: 0,
@@ -1849,6 +1974,18 @@ mod tests {
         assert_eq!(INDEX_FLD_RANGE, 0x0E);
         assert_eq!(INDEX_FLD_FULLTEXT, 0x01);
         assert_eq!(INDEX_FLD_VECTOR, 0x10);
+        // No mask to pin any more — `IndexFieldBit::try_from` is the known set
+        // — but a variant declared without a discriminant silently takes the
+        // previous plus one, which for a bit set can never be isolated from a
+        // `field_type`. `Cch` after `Vector = 0x10` would be `0x11`, and compile.
+        for v in 0_u32..=0xFF {
+            if let Ok(bit) = IndexFieldBit::try_from(v) {
+                assert!(
+                    v.is_power_of_two(),
+                    "{bit:?} is {v:#x}, which is not a single bit"
+                );
+            }
+        }
         // And the two numberings C uses for the same node-or-edge enum: the
         // schema dictionary is 0-based, GraphEntityType is 1-based because
         // GETYPE_UNKNOWN takes 0.
@@ -1868,13 +2005,324 @@ mod tests {
         );
     }
 
+    /// The next free `field_type` bit — where C's CCH index type will land.
+    const FUTURE_INDEX_BIT: u32 = 0x20;
+
+    /// An index record as a *foreign* encoder would send it. Hand-written
+    /// because `Record::encode` refuses these. Everything but `field_type` is
+    /// well formed, so a refusal can only be about the bit.
+    fn foreign_index_buffer(
+        opcode: Opcode,
+        field_type: u32,
+    ) -> Vec<u8> {
+        let mut buf = new_buffer();
+        write_header(&mut buf, opcode, None).unwrap();
+        buf.u32(schema_tag(EntityType::Node));
+        buf.u16(1);
+        buf.schema_id(0);
+        buf.string("L");
+        buf.u32(field_type);
+        buf.u16(1);
+        buf.u16(0);
+        buf.string("a");
+        if opcode == Opcode::CreateIndex {
+            // language, stopwords, weight, nostem, phonetic — all absent. No
+            // vector half, because no caller of this sets that bit.
+            for _ in 0..5 {
+                buf.u8(0);
+            }
+        }
+        buf
+    }
+
+    #[test]
+    fn a_pre_list_index_record_is_refused_never_misread() {
+        // The head was `u32 label_id · string label`. Nothing in production
+        // speaks it — v3 is in no release — but a dev AOF does: effects buffers
+        // are built for the AOF too (`graph_core.rs`, on `ContextFlags::AOF`),
+        // so a build with `appendonly yes` that touched index DDL has old-layout
+        // records on disk.
+        //
+        // On little-endian the first two bytes of `label_id` land where the
+        // count now is, so a small id reads as a plausible count. Only "refused"
+        // is the invariant — the error differs by id, and by opcode, since a
+        // drop is five bytes shorter and its count guard fires where the
+        // create's does not.
+        //
+        // Refused without allocating, which is the part a fuzzer would care
+        // about: `Reader::string` bounds-checks through `take` before copying,
+        // so the 7-exabyte length a misaligned read produces never reaches an
+        // allocator.
+        for opcode in [Opcode::CreateIndex, Opcode::DropIndex] {
+            for label_id in [0u32, 1, 3, 5, 260, 70_000] {
+                let mut buf = new_buffer();
+                write_header(&mut buf, opcode, None).unwrap();
+                buf.u32(schema_tag(EntityType::Node));
+                buf.u32(label_id);
+                buf.string("Person");
+                buf.u32(INDEX_FLD_RANGE);
+                buf.u16(1);
+                buf.u16(0);
+                buf.string("age");
+                if opcode == Opcode::CreateIndex {
+                    for _ in 0..5 {
+                        buf.u8(0);
+                    }
+                }
+                assert!(
+                    read_buffer(&buf).is_err(),
+                    "a pre-list {opcode:?} with label_id {label_id} was read as a record"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_unknown_index_field_type_bit_is_refused_not_ignored() {
+        assert!(
+            IndexFieldBit::try_from(FUTURE_INDEX_BIT).is_err(),
+            "0x20 is no longer unknown — this test needs a new bit"
+        );
+
+        for opcode in [Opcode::CreateIndex, Opcode::DropIndex] {
+            // Control first: without it, a refusal below would prove only that
+            // the hand-written bytes were malformed.
+            let control = foreign_index_buffer(opcode, INDEX_FLD_RANGE);
+            read_buffer(&control)
+                .unwrap_or_else(|e| panic!("{opcode:?} control buffer must decode, got {e}"));
+
+            let buf = foreign_index_buffer(opcode, INDEX_FLD_RANGE | FUTURE_INDEX_BIT);
+            match read_buffer(&buf) {
+                Err(DecodeError::BadFieldType(BadFieldType::UnknownBit { bit, field_type })) => {
+                    assert_eq!(bit, FUTURE_INDEX_BIT, "{opcode:?} named the wrong bit");
+                    assert_eq!(field_type, INDEX_FLD_RANGE | FUTURE_INDEX_BIT);
+                }
+                other => panic!("{opcode:?}: an unknown field type bit was not refused: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_drop_index_refuses_an_unknown_bit_though_it_has_no_options_block() {
+        // A drop carries no options, so nothing desynchronises — it is refused
+        // anyway, because `index_type_of` would otherwise call the unknown type
+        // a range index and drop the wrong one. Notices if the guard ever moves
+        // into the options block.
+        let buf = foreign_index_buffer(Opcode::DropIndex, FUTURE_INDEX_BIT);
+        assert!(
+            matches!(
+                read_buffer(&buf),
+                Err(DecodeError::BadFieldType(BadFieldType::UnknownBit { .. }))
+            ),
+            "a drop with an unknown field type decoded"
+        );
+    }
+
+    #[test]
+    fn an_unknown_index_field_type_bit_never_reaches_the_wire() {
+        // The writer is held to the reader's rule. Unreachable from any
+        // statement the engine accepts, so it guards a future emitter that
+        // learns a bit before this layer does.
+        let mut buf = new_buffer();
+        let err = Record::CreateIndex {
+            schema_type: EntityType::Node,
+            schemas: vec![SchemaRef {
+                id: 0,
+                name: "L".to_owned(),
+            }],
+            field_type: INDEX_FLD_RANGE | FUTURE_INDEX_BIT,
+            fields: vec![],
+            options: IndexFieldOptions::none_given(None),
+        }
+        .encode(&mut buf)
+        .expect_err("an unknown field type bit was encoded");
+        assert!(
+            matches!(
+                err,
+                EncodeError::BadFieldType(BadFieldType::UnknownBit {
+                    bit: FUTURE_INDEX_BIT,
+                    ..
+                })
+            ),
+            "{err:?}"
+        );
+        assert_eq!(buf, new_buffer(), "a refused record wrote bytes anyway");
+    }
+
+    #[test]
+    fn an_index_record_carries_several_schema_entities_in_one_statement() {
+        // The shape CCH needs: `ON ()-[r:ROAD|:R]-()` names two relationship
+        // types in one statement.
+        let mut buf = new_buffer();
+        Record::CreateIndex {
+            schema_type: EntityType::Relationship,
+            schemas: vec![
+                SchemaRef {
+                    id: 4,
+                    name: "ROAD".to_owned(),
+                },
+                SchemaRef {
+                    id: 9,
+                    name: "R".to_owned(),
+                },
+            ],
+            field_type: INDEX_FLD_RANGE,
+            fields: vec![AttrRef {
+                id: 0,
+                name: "cost".to_owned(),
+            }],
+            options: IndexFieldOptions::none_given(None),
+        }
+        .encode(&mut buf)
+        .unwrap();
+
+        let records = read_buffer(&buf).unwrap();
+        let [Record::CreateIndex { schemas, .. }] = records.as_slice() else {
+            panic!("expected one create-index record, got {records:?}");
+        };
+        assert_eq!(
+            schemas
+                .iter()
+                .map(|s| (s.id, s.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(4, "ROAD"), (9, "R")],
+            "both entities must survive, by id and by name"
+        );
+    }
+
+    #[test]
+    fn schema_entities_are_sorted_by_id_whatever_order_they_were_built_in() {
+        // `:ROAD|:R` and `:R|:ROAD` are one statement; which way a parser walked
+        // the alternation must not reach the wire.
+        let road = SchemaRef {
+            id: 4,
+            name: "ROAD".to_owned(),
+        };
+        let r = SchemaRef {
+            id: 9,
+            name: "R".to_owned(),
+        };
+
+        let encode = |schemas: Vec<SchemaRef<String>>| {
+            let mut buf = new_buffer();
+            Record::DropIndex {
+                schema_type: EntityType::Relationship,
+                schemas,
+                field_type: INDEX_FLD_RANGE,
+                fields: vec![],
+            }
+            .encode(&mut buf)
+            .unwrap();
+            buf
+        };
+
+        assert_eq!(
+            encode(vec![road.clone(), r.clone()]),
+            encode(vec![r.clone(), road.clone()]),
+            "caller order reached the wire"
+        );
+
+        // The pairing survives the reorder: the assertion above would hold even
+        // if sorting swapped ids and left names in place.
+        let buf = encode(vec![r, road]);
+        let records = read_buffer(&buf).unwrap();
+        let [Record::DropIndex { schemas, .. }] = records.as_slice() else {
+            panic!("expected one drop-index record, got {records:?}");
+        };
+        assert_eq!(
+            schemas
+                .iter()
+                .map(|s| (s.id, s.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(4, "ROAD"), (9, "R")],
+        );
+    }
+
+    #[test]
+    fn an_unsorted_schema_list_from_the_wire_is_accepted() {
+        // The half of the ordering contract no fixture can arbitrate: a
+        // generated fixture is already in some order, so a conformance run
+        // passes whether the decoder enforces or tolerates. A foreign encoder
+        // emitting in statement order must apply, not resync.
+        let mut wire = new_buffer();
+        write_header(&mut wire, Opcode::DropIndex, None).unwrap();
+        wire.u32(schema_tag(EntityType::Relationship));
+        wire.u16(2);
+        wire.schema_id(9); // descending: a sorting encoder would never emit this
+        wire.string("R");
+        wire.schema_id(4);
+        wire.string("ROAD");
+        wire.u32(INDEX_FLD_RANGE);
+        wire.u16(0);
+
+        let records = read_buffer(&wire).expect("an unsorted schema list was refused");
+        let [Record::DropIndex { schemas, .. }] = records.as_slice() else {
+            panic!("expected one drop-index record, got {records:?}");
+        };
+        // As sent, not normalised: re-encoding is what canonicalises.
+        assert_eq!(
+            schemas
+                .iter()
+                .map(|s| (s.id, s.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(9, "R"), (4, "ROAD")],
+        );
+    }
+
+    #[test]
+    fn an_index_record_naming_no_schema_entity_is_refused() {
+        let mut buf = new_buffer();
+        let err = Record::DropIndex {
+            schema_type: EntityType::Node,
+            schemas: vec![],
+            field_type: INDEX_FLD_RANGE,
+            fields: vec![],
+        }
+        .encode(&mut buf)
+        .expect_err("a record with nothing to index was encoded");
+        assert!(matches!(err, EncodeError::EmptyIndexSchemaList), "{err:?}");
+        assert_eq!(buf, new_buffer(), "a refused record wrote bytes anyway");
+
+        // The decoder does not lean on the encoder's discipline.
+        let mut wire = new_buffer();
+        write_header(&mut wire, Opcode::DropIndex, None).unwrap();
+        wire.u32(schema_tag(EntityType::Node));
+        wire.u16(0);
+        wire.u32(INDEX_FLD_RANGE);
+        wire.u16(0);
+        assert!(
+            matches!(read_buffer(&wire), Err(DecodeError::EmptyIndexSchemaList)),
+            "an empty schema list decoded"
+        );
+    }
+
+    #[test]
+    fn an_implausible_schema_count_is_refused_before_allocating() {
+        // A wire-sized count must not be believed far enough to reserve for.
+        let mut wire = new_buffer();
+        write_header(&mut wire, Opcode::DropIndex, None).unwrap();
+        wire.u32(schema_tag(EntityType::Node));
+        wire.u16(u16::MAX);
+        wire.u32(INDEX_FLD_RANGE);
+        wire.u16(0);
+        assert!(
+            matches!(
+                read_buffer(&wire),
+                Err(DecodeError::ImplausibleCount { .. })
+            ),
+            "a 65,535-entity count was believed"
+        );
+    }
+
     #[test]
     fn create_index_keeps_the_name_beside_each_id() {
         let mut buf = new_buffer();
         Record::CreateIndex {
             schema_type: EntityType::Node,
-            label_id: 3,
-            label: "Person".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 3,
+                name: "Person".to_owned(),
+            }],
             field_type: INDEX_FLD_RANGE,
             fields: vec![AttrRef {
                 id: 9,
@@ -1889,8 +2337,10 @@ mod tests {
             records[0],
             Record::CreateIndex {
                 schema_type: EntityType::Node,
-                label_id: 3,
-                label: "Person".into(),
+                schemas: vec![SchemaRef {
+                    id: 3,
+                    name: "Person".into(),
+                }],
                 field_type: INDEX_FLD_RANGE,
                 fields: vec![AttrRef {
                     id: 9,
@@ -1919,8 +2369,10 @@ mod tests {
             .collect();
         Record::CreateIndex {
             schema_type: EntityType::Node,
-            label_id: 1,
-            label: "L".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 1,
+                name: "L".to_owned(),
+            }],
             field_type: INDEX_FLD_RANGE,
             fields,
             options: IndexFieldOptions::none_given(None),
@@ -2077,8 +2529,10 @@ mod tests {
         let mut buf = new_buffer();
         Record::DropIndex {
             schema_type: EntityType::Relationship,
-            label_id: 1,
-            label: "KNOWS".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 1,
+                name: "KNOWS".to_owned(),
+            }],
             field_type: INDEX_FLD_RANGE,
             fields: vec![AttrRef {
                 id: 0,
@@ -2235,8 +2689,10 @@ mod tests {
         let mut buf = Vec::new();
         Record::DropIndex {
             schema_type: EntityType::Node,
-            label_id: 1,
-            label: "L".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 1,
+                name: "L".to_owned(),
+            }],
             field_type: INDEX_FLD_RANGE,
             fields: vec![AttrRef {
                 id: 0,

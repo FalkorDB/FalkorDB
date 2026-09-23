@@ -64,6 +64,7 @@ use crate::{
     entity_type::EntityType,
     graph::constraint::{ConstraintStatus, ConstraintType},
     graph::graphblas::serialization::index_field_type,
+    index::IndexType,
 };
 
 /// Buffer header. C accepts any version `<= EFFECTS_VERSION` and branches per
@@ -86,7 +87,7 @@ mod staging;
 mod test_aux;
 pub mod value;
 
-use num_enum::TryFromPrimitive;
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use std::sync::atomic::{AtomicI64, Ordering};
 
 /// Smallest v3 payload worth compressing, in bytes. **0 disables it.**
@@ -251,21 +252,139 @@ pub const fn update_opcode(entity: EntityType) -> Opcode {
 
 // ── index field types ──
 //
-// Also derived from the RDB module's copy of C's `index_field.h`. This is a
-// **bit flag set**, not an ordinal — several can be OR'd — which is why
-// `INDEX_FLD_RANGE` is the union of the three scalar kinds and reads as `0x0E`
-// rather than having a discriminant of its own. A bit set is the one shape an
-// enum genuinely cannot model, so these stay constants.
+// From the RDB module's copy of C's `index_field.h`. A `field_type` is a bit
+// set, several OR'd, which is why `INDEX_FLD_RANGE` is the union of the three
+// scalar kinds (`0x0E`) rather than a bit of its own. Those constants are `u64`
+// for the RDB's writer; the wire carries four, so the cast happens once below.
 
-// `index_field_type`'s constants are `u64`, because the RDB writes them through
-// `write_unsigned`. The wire carries four bytes, so these are the same values at
-// the width the wire uses — cast here rather than at each of the eighteen call
-// sites across this layer, emit, apply and the corpus generator.
-pub const INDEX_FLD_FULLTEXT: u32 = index_field_type::INDEX_FLD_FULLTEXT as u32;
-pub const INDEX_FLD_NUMERIC: u32 = index_field_type::INDEX_FLD_NUMERIC as u32;
-pub const INDEX_FLD_GEO: u32 = index_field_type::INDEX_FLD_GEO as u32;
-pub const INDEX_FLD_STR: u32 = index_field_type::INDEX_FLD_STR as u32;
-pub const INDEX_FLD_VECTOR: u32 = index_field_type::INDEX_FLD_VECTOR as u32;
+/// One bit of C's index field mask, with the bit as the discriminant.
+///
+/// A `field_type` *value* is a set and cannot be one variant, but the alphabet
+/// of bits is closed — and making the alphabet an enum is what turns "remember
+/// to update the mask" into a compile error. `TryFromPrimitive` removes the mask
+/// rather than relocating it: a bit is known iff it converts, so no list can
+/// drift from the variants.
+///
+/// Discriminants come from `index_field_type`, so C's header copy stays the
+/// source of the numbers and this is only the source of the set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
+#[repr(u32)]
+pub enum IndexFieldBit {
+    Fulltext = index_field_type::INDEX_FLD_FULLTEXT as u32,
+    Numeric = index_field_type::INDEX_FLD_NUMERIC as u32,
+    Geo = index_field_type::INDEX_FLD_GEO as u32,
+    Str = index_field_type::INDEX_FLD_STR as u32,
+    Vector = index_field_type::INDEX_FLD_VECTOR as u32,
+}
+
+impl IndexFieldBit {
+    /// What kind of index this bit means — the one decision a new index type
+    /// has to make, and where adding a variant fails to compile.
+    ///
+    /// Returns an `IndexType` rather than matching with unit arms so there is no
+    /// do-nothing arm to add: `Self::Cch => {}` would compile and leave the
+    /// classification silently wrong.
+    #[must_use]
+    pub const fn index_type(self) -> IndexType {
+        match self {
+            Self::Fulltext => IndexType::Fulltext,
+            Self::Vector => IndexType::Vector,
+            // A range index is the union of the three scalar kinds; none of
+            // them names a kind the others do not.
+            Self::Numeric | Self::Geo | Self::Str => IndexType::Range,
+        }
+    }
+}
+
+/// Why a `field_type` names no index this build can create.
+///
+/// An error itself, not a tag for callers to render: the sentence is the same
+/// wherever it is reported. [`DecodeError`] and [`EncodeError`] wrap it
+/// transparently, so `?` converts and each gate is one line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum BadFieldType {
+    /// A bit no [`IndexFieldBit`] variant claims.
+    #[error(
+        "index field type {field_type:#x} sets bit {bit:#x}, which this build has \
+         no index type for"
+    )]
+    UnknownBit { field_type: u32, bit: u32 },
+
+    /// Bits naming two different kinds of index, which no single index can be.
+    #[error(
+        "index field type {field_type:#x} names both {first:?} and {kind:?} \
+         (bit {bit:#x}); no index is both"
+    )]
+    MixedKinds {
+        field_type: u32,
+        bit: u32,
+        kind: IndexType,
+        first: IndexType,
+    },
+}
+
+/// Every set bit of `field_type`, isolated, lowest first. Iterating rather than
+/// masking is what lets the enum be the whole definition of "known": each bit is
+/// offered to `try_from` alone, so one no variant claims has nowhere to hide.
+fn field_type_bits(field_type: u32) -> impl Iterator<Item = u32> {
+    let mut rest = field_type;
+    std::iter::from_fn(move || {
+        if rest == 0 {
+            return None;
+        }
+        // Lowest set bit, then clear it. `wrapping_neg` because `-rest` on the
+        // sign bit would overflow in debug.
+        let lowest = rest & rest.wrapping_neg();
+        rest &= rest - 1;
+        Some(lowest)
+    })
+}
+
+/// The one kind of index a `field_type` names.
+///
+/// Validator and classifier in one: two walks over the same bits would be two
+/// definitions of "known" that can drift. The encoder and record decoder discard
+/// the `Ok` — the point is that they cannot accept a `field_type` this module
+/// could not also classify.
+///
+/// Several bits of the *same* kind are ordinary — `INDEX_FLD_RANGE` is three,
+/// and `0x0A` is a range index over numbers and strings. Different kinds are
+/// refused, not ranked: nothing can produce the case (C picks by equality and
+/// asserts otherwise in `GraphHub_AddIndex`; `emit::index_field_flags` is total),
+/// and ranking would build one index where the record named two.
+///
+/// An empty `field_type` is a range index, as it always was.
+///
+/// # Errors
+///
+/// [`BadFieldType`], which both wire error types wrap transparently.
+pub fn index_type_of(field_type: u32) -> Result<IndexType, BadFieldType> {
+    let mut first: Option<IndexType> = None;
+    for bit in field_type_bits(field_type) {
+        let kind = IndexFieldBit::try_from(bit)
+            .map_err(|_| BadFieldType::UnknownBit { field_type, bit })?
+            .index_type();
+        match first {
+            None => first = Some(kind),
+            Some(first) if first != kind => {
+                return Err(BadFieldType::MixedKinds {
+                    field_type,
+                    bit,
+                    kind,
+                    first,
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    Ok(first.unwrap_or(IndexType::Range))
+}
+
+pub const INDEX_FLD_FULLTEXT: u32 = IndexFieldBit::Fulltext as u32;
+pub const INDEX_FLD_NUMERIC: u32 = IndexFieldBit::Numeric as u32;
+pub const INDEX_FLD_GEO: u32 = IndexFieldBit::Geo as u32;
+pub const INDEX_FLD_STR: u32 = IndexFieldBit::Str as u32;
+pub const INDEX_FLD_VECTOR: u32 = IndexFieldBit::Vector as u32;
 
 pub const INDEX_FLD_UNKNOWN: u32 = 0x00;
 /// `INDEX_FLD_NUMERIC | INDEX_FLD_GEO | INDEX_FLD_STR` = `0x0E`.
