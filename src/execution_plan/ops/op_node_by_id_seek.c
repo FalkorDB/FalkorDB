@@ -128,7 +128,12 @@ pull:
 		// re-evealuate ID ranges
 		if(!BitmapRange_FromRanges(op->ranges, op->ids, op->child_record, 0,
 					Graph_UncompactedNodeCount(op->g))) {
-			return NULL;
+			// this record yields an empty ID range (e.g. a non-integer or
+			// out-of-range value) - skip it and pull the next record rather
+			// than returning NULL, which would terminate the op and silently
+			// drop every remaining record
+			OpBase_DeleteRecord(&op->child_record);
+			goto pull;
 		}
 
 		roaring64_iterator_reinit(op->ids, op->it);
