@@ -177,17 +177,18 @@ class testNullHandlingFlow(FlowTestsBase):
             self.env.assertContains("Value Hash Join", str(graph.explain(query)))
             self.env.assertEqual(graph.query(query).result_set, expected_result)
 
-        # A value Cypher cannot compare at all must not report equality just
-        # because it sits inside a list. Two vectors are never equal to each
-        # other, whatever their contents, and a null beside one still wins.
-        incomparable = [("vecf32([1.0,2.0]) = vecf32([1.0,2.0])", False),
-                        ("[vecf32([1.0,2.0])] = [vecf32([1.0,2.0])]", False),
-                        ("[vecf32([1.0,2.0])] = [vecf32([9.0,9.0])]", False),
-                        ("[vecf32([1.0]), null] = [vecf32([1.0]), null]", None),
-                        # length still decides lists of unequal length
-                        ("[vecf32([1.0])] = [vecf32([1.0]), 1]", False)]
+        # Vectors compare element-wise, as in C, also inside a list; a null
+        # beside one still wins, and a NaN element is never equal.
+        vectors = [("vecf32([1.0,2.0]) = vecf32([1.0,2.0])", True),
+                   ("vecf32([1.0,2.0]) = vecf32([9.0,9.0])", False),
+                   ("[vecf32([1.0,2.0])] = [vecf32([1.0,2.0])]", True),
+                   ("[vecf32([1.0,2.0])] = [vecf32([9.0,9.0])]", False),
+                   ("[vecf32([1.0]), null] = [vecf32([1.0]), null]", None),
+                   ("vecf32([0.0/0.0]) = vecf32([0.0/0.0])", False),
+                   # length still decides lists of unequal length
+                   ("[vecf32([1.0])] = [vecf32([1.0]), 1]", False)]
 
-        for expression, expected in incomparable:
+        for expression, expected in vectors:
             actual = graph.query(f"RETURN {expression}").result_set[0][0]
             self.env.assertEqual(actual, expected)
 
