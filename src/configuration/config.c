@@ -1755,23 +1755,16 @@ bool Config_Option_set
 				return false ;
 			}
 
-			// range-checked HERE rather than at the wire, so the failure lands
-			// on the operator who typed it instead of on a replica that cannot
-			// read what arrived
-			if (version != 2 && version != 3) {
-				return false ;
-			}
-
-			// and refused if this build cannot READ what it would emit
+			// bounded HERE rather than at the wire, so a bad value fails the
+			// operator who typed it rather than a replica that cannot read
+			// what arrived
 			//
-			// The safe range is not static: it depends on the read ceiling
-			// compiled in. A build that emits a version it cannot itself read
-			// can be a master to a peer of its own vintage that refuses the
-			// payload and resyncs forever - which is the failure the
-			// read/emit split exists to prevent, and it only works if the
-			// ordering is enforced rather than assumed. Teach every reader
-			// first, then flip writers.
-			if (version > EFFECTS_VERSION) {
+			// The upper bound is the compiled read ceiling, not a literal: a
+			// build must never emit a version it cannot itself read, and
+			// written this way, teaching the reader is the only edit. The
+			// floor is 2 - v1 is read-only, apply special-cases it and nothing
+			// writes it
+			if (version < 2 || version > EFFECTS_VERSION) {
 				return false ;
 			}
 

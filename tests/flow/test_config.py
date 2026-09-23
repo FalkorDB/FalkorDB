@@ -310,6 +310,30 @@ class testConfig(FlowTestsBase):
             except redis.exceptions.ResponseError as e:
                 assert(("Failed to set config value %s to invalid" % config) in str(e))
 
+    def test09b_effects_version_range(self):
+        # bounded below by what is emittable and above by what this build can
+        # READ - the ceiling compiled into effects.h, not a literal, so the
+        # bound moves when a reader is taught rather than needing a second edit
+        # here. 1 is refused because v1 is read-only; 4 because no reader
+        # understands it yet
+        for good in (2, 3):
+            self.env.assertEqual(
+                    self.db.config_set("EFFECTS_VERSION", good), "OK",
+                    message=f"EFFECTS_VERSION {good} should be accepted")
+            self.env.assertEqual(self.db.config_get("EFFECTS_VERSION"), good)
+
+        for bad in (0, 1, 4, 5):
+            try:
+                self.db.config_set("EFFECTS_VERSION", bad)
+                self.env.assertTrue(False,
+                        message=f"EFFECTS_VERSION {bad} should have been refused")
+            except redis.exceptions.ResponseError as e:
+                assert "Failed to set config value" in str(e)
+
+        # leave it as the build ships it, so later tests are not run against a
+        # version this suite happened to set
+        self.db.config_set("EFFECTS_VERSION", 2)
+
     def test10_set_get_vkey_max_entity_count(self):
         config_name = "VKEY_MAX_ENTITY_COUNT"
         config_value = 100
