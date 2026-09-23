@@ -1845,6 +1845,23 @@ impl Binder {
                 Ok(new_tree)
             }
             ExprIR::PatternComprehension(graph) => {
+                // Where parent-scope variables are visible (ORDER BY), a name
+                // the pattern shares with one must refer to it rather than
+                // become a fresh pattern-local variable, as it would in an
+                // ordinary expression. Copy such names in first, so
+                // `bind_graph` reuses them and the cleanup below keeps them.
+                if self.use_parent_scope {
+                    for name in graph.variables() {
+                        if !name.starts_with("_anon")
+                            && !self.current_env().contains_key(&name)
+                            && !locals.iter().any(|scope| scope.contains_key(&name))
+                        {
+                            // Not a parent variable either: the pattern binds it.
+                            let _ = self.resolve_name(&name, locals);
+                        }
+                    }
+                }
+
                 // Snapshot outer scope so pattern-local aliases can be
                 // cleaned up after binding (they must not leak outward).
                 let outer_scope_names: HashSet<Arc<String>> =

@@ -407,7 +407,10 @@ class testLoadLocalCSV():
         # the file path is evaluated per input row, so a pattern
         # comprehension in it has to be planned as a sub-plan; it used to
         # reach the evaluator un-lowered and crash the server
-        g = self.db.select_graph("load_csv_pattern_comprehension")
+        name = "load_csv_pattern_comprehension"
+        if name in self.db.list_graphs():
+            self.db.select_graph(name).delete()
+        g = self.db.select_graph(name)
         try:
             g.query(f"""CREATE (:F {{name: 'a'}})-[:R]->
                                (:F {{file: 'file://{SHORT_CSV_WITHOUT_HEADERS}'}})""")

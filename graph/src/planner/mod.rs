@@ -803,7 +803,7 @@ impl Planner {
     }
 
     /// Walk past the Apply chain a clause operator (`ForEach`, `Unwind`,
-    /// `Set`, `Delete`, `LoadCsv`, a procedure call or index query) carries
+    /// `Set`, `Remove`, `Delete`, `LoadCsv`, a procedure call or index query) carries
     /// for pattern comprehensions in its expressions, so the
     /// preceding clause is stitched below the sub-plans rather than as an
     /// extra child.
@@ -819,6 +819,7 @@ impl Planner {
             IR::ForEach { .. } => 2,
             IR::Unwind { .. }
             | IR::Set(_)
+            | IR::Remove(_)
             | IR::Delete { .. }
             | IR::LoadCsv { .. }
             | IR::ProcedureCall { .. }
@@ -837,6 +838,24 @@ impl Planner {
             }
         }
         idx
+    }
+
+    /// Feed `input` into an Apply chain built by
+    /// `extract_clause_expr_comprehensions`, as child(0) of its innermost,
+    /// still single-child Apply.
+    fn stitch_below_apply_chain(
+        mut chain: DynTree<IR>,
+        input: DynTree<IR>,
+    ) -> DynTree<IR> {
+        let mut idx = chain.root().idx();
+        while Self::is_saturated_apply(&chain, idx) {
+            idx = chain.node(idx).child(0).idx();
+        }
+        chain
+            .node_mut(idx)
+            .child_mut(0)
+            .push_sibling_tree(Side::Left, input);
+        chain
     }
 
     /// Build a pattern sub-plan for a graph, saving and restoring visited state.
@@ -2124,10 +2143,7 @@ impl Planner {
     ) -> DynTree<IR> {
         // Check if any expressions contain pattern comprehensions or patterns.
         // Only rebuild expressions if patterns need to be extracted.
-        let needs_extraction = exprs.iter().any(|(_, e)| Self::has_pattern_expr(&e.root()))
-            || orderby
-                .iter()
-                .any(|(e, _)| Self::has_pattern_expr(&e.root()));
+        let needs_extraction = exprs.iter().any(|(_, e)| Self::has_pattern_expr(&e.root()));
 
         // Extract pattern comprehensions from all projection expressions BEFORE
         // clearing visited — the sub-plans need to know which variables are
@@ -2154,24 +2170,6 @@ impl Planner {
         } else {
             exprs
         };
-        // Also extract from orderby expressions
-        let orderby: Vec<_> = if needs_extraction {
-            orderby
-                .into_iter()
-                .map(|(expr, desc)| {
-                    let rebuilt = self.extract_pattern_comprehensions(
-                        &expr.root(),
-                        pre_scope_id,
-                        &mut all_extracted,
-                        PatternMode::Collect,
-                    );
-                    (Arc::new(rebuilt) as QueryExpr<Variable>, desc)
-                })
-                .collect()
-        } else {
-            orderby
-        };
-
         // Build Apply + Aggregate sub-plans for each extracted pattern comprehension.
         // This uses the CURRENT (pre-clear) visited set so plan_match knows which
         // variables are already bound by the outer stream.
@@ -2278,6 +2276,15 @@ impl Planner {
             res = tree!(IR::Distinct, res);
         }
         if !orderby.is_empty() {
+            // The binder resolves ORDER BY against the projected scope, so
+            // its pattern comprehensions are planned above the projection,
+            // now that `visited` holds just the projected variables.
+            let mut orderby = orderby;
+            let chain =
+                self.extract_clause_expr_comprehensions(orderby.iter_mut().map(|(e, _)| e), None);
+            if let Some(chain) = chain {
+                res = Self::stitch_below_apply_chain(chain, res);
+            }
             res = tree!(IR::Sort(orderby), res);
         }
         if let Some(skip_expr) = skip {
@@ -2685,6 +2692,11 @@ impl Planner {
                 // `descend_clause_expr_applies`).
                 let mut exprs = exprs;
                 let chain = self.extract_clause_expr_comprehensions(&mut exprs, None);
+                // The yielded columns are bound from here on, for the YIELD
+                // ... WHERE predicate and the clauses that follow.
+                for v in &named_outputs {
+                    self.visited.insert((v.id, v.scope_id));
+                }
                 let mut res = match proc.name.as_str() {
                     "db.idx.fulltext.queryNodes" => tree!(IR::NodeByFulltextScan {
                         node: yield_by_field("node")
@@ -2876,7 +2888,14 @@ impl Planner {
                 }
                 res
             }
-            QueryIR::Remove(items) => tree!(IR::Remove(items)),
+            QueryIR::Remove(mut items) => {
+                let chain = self.extract_clause_expr_comprehensions(&mut items, None);
+                let mut res = tree!(IR::Remove(items));
+                if let Some(chain) = chain {
+                    res.root_mut().push_child_tree(chain);
+                }
+                res
+            }
             QueryIR::LoadCsv {
                 mut file_path,
                 headers,
@@ -3051,9 +3070,22 @@ impl Planner {
                         }
                     }
                 } else {
-                    // Non-returning: side-effect only, wrap in Optional so
-                    // outer row survives even if inner produces nothing
-                    tree!(IR::Apply, tree!(IR::Optional(vec![]), inner_plan))
+                    // Non-returning: side-effect only. A keyless Aggregate
+                    // drains the body and always yields exactly one row, so
+                    // each outer row passes through once, however many rows
+                    // the body produced (none included).
+                    tree!(
+                        IR::Apply,
+                        tree!(
+                            IR::Aggregate {
+                                names: vec![],
+                                keys: vec![],
+                                aggregations: vec![],
+                                projections: vec![],
+                            },
+                            inner_plan
+                        )
+                    )
                 }
             }
             QueryIR::ForEach {

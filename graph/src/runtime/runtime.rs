@@ -359,9 +359,16 @@ impl ReturnNames for DynNode<'_, IR> {
                 }
                 v
             }
-            IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
-                self.child(0).get_return_names()
+            // A Sort may sit on the Apply chain binding its ORDER BY pattern
+            // comprehensions; the columns are those of the chain's input.
+            IR::Sort(_) => {
+                let mut child = self.child(0);
+                while matches!(child.data(), IR::Apply) {
+                    child = child.child(0);
+                }
+                child.get_return_names()
             }
+            IR::Skip(_) | IR::Limit(_) | IR::Distinct => self.child(0).get_return_names(),
             IR::Union => self.child(0).get_return_names(),
             IR::Aggregate { names, .. } => names.clone(),
             _ => vec![],
