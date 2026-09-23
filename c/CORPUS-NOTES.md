@@ -272,6 +272,30 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
   is in `tests/unit/test_effects_v3_roundtrip.c`, gated until C's lands. So:
   **ruled on both engines, implemented on Rust, pending on C** — not yet an
   invariant either engine can rely on the other to hold.
+- **NOTHING HERE EVER APPLIES A RECORD.** This is the largest gap in the file
+  and it was implicit until `effects-v3-corp` named it. Every consumer of this
+  corpus decodes and re-encodes: `EffectsV3_Decode`, `EffectsV3_Encode`,
+  `EffectsBuffer_Buffer`. Counted rather than remembered — `EffectsV3_Apply`,
+  `EffectsV3_ApplyRecord` and `Effects_Apply` appear **zero** times across
+  `test_effects_v3_roundtrip.c`, `test_effects_v3_corpus.c`,
+  `effects_v3_corpus.h` and `tests/unit/test_effects_v3_wire.c`.
+
+  So "39 fixtures, byte-identical, green on both engines" means the BYTES are
+  agreed. It does not mean a single one of these records has ever been handed to
+  a graph. A record can round-trip perfectly and still be unapplyable, and that
+  is not hypothetical here: `rec_create_index` and `rec_drop_index` carry
+  `field_type` values that **crash a live C instance** — `SIGABRT` on the create
+  arm, `SIGSEGV` on the drop arm (null deref at `IndexSpec_CreateField+176`
+  reached through `GraphHub_DropIndex` <- `EffectsV3_ApplyRecord`). Those two
+  fixtures have been in the corpus the whole time, verified by everyone and
+  caught by nobody, because every check on them stops at the byte layer.
+
+  It also means the `--no-exec` hazard noted elsewhere does not reach this
+  suite: the ASAN sweep cannot die on those fixtures, because it never calls the
+  code that crashes. Apply is covered by the flow tests and by the reader's unit
+  tests, both of which drive a live instance; it is not covered here, and this
+  corpus should not be cited as though it were.
+
 - **Count width code 3 (eight bytes) is unreachable for an ENCODER, and must
   still be handled by a DECODER.** A record's id count is a `u32` and a
   segment's count is bounded by it, so four bytes is the widest a conforming
