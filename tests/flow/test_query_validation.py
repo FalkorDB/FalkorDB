@@ -1,4 +1,5 @@
 from common import *
+from index_utils import wait_for_indices_to_sync
 
 GRAPH_ID = "query_validation"
 
@@ -13,6 +14,13 @@ class testQueryValidationFlow(FlowTestsBase):
     def populate_graph(self):
         # Create a single graph.
         self.graph.query("CREATE ({age:34})")
+
+    def fresh_graph(self, name):
+        # a run interrupted before its cleanup (e.g. by a server crash) can
+        # leave the graph behind; start from an empty one
+        if name in self.db.list_graphs():
+            self.db.select_graph(name).delete()
+        return self.db.select_graph(name)
 
     # Expect an error when trying to use a function which does not exists.
     def test01_none_existing_function(self):
@@ -797,5 +805,334 @@ class testQueryValidationFlow(FlowTestsBase):
                 # asynchronously, after the reply
                 self.env.assertEqual(
                         g.query("MATCH (n:P) RETURN count(n)").result_set, [[3]])
+        finally:
+            g.delete()
+
+    def test47_pattern_expression_in_inlined_properties(self):
+        # a pattern comprehension or pattern predicate inside a pattern's
+        # inline property map is never lowered by the planner, and used to
+        # reach the evaluator and take the server down as soon as the outer
+        # pattern had a candidate row. It is rejected up front, as FalkorDB C
+        # does.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("inlined_pattern_expr")
+
+        try:
+            g.query("CREATE (a {k:1})-[:R {k:1}]->(b {k:1})")
+
+            queries = [
+                # relationship properties - the reported shape
+                "MATCH ()-[{k:size([(a)-[{k:1}]-()|a.k])}]-() RETURN 1",
+                # variable-length relationship properties
+                "MATCH ()-[*1..2 {k:size([(a)-->()|1])}]->() RETURN 1",
+                # node properties
+                "MATCH (n {k:[(n)-->(m) | m.k][0]}) RETURN n",
+                "MATCH (n {k:exists((n)-->())}) RETURN n",
+                # write clauses evaluate inline properties too
+                "CREATE ({k:size([(a)-->()|1])})",
+                "MERGE ({k:size([(a)-->()|1])})",
+            ]
+
+            for q in queries:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains(
+                            "Encountered unhandled type in inlined properties",
+                            str(e))
+
+            # inside a pattern predicate's properties it is rejected too; the
+            # predicate parse falls back, so only require a clean error
+            rejected = False
+            try:
+                g.query("""MATCH (n)
+                           WHERE (n)-[{k:size([(a)-->()|1])}]->()
+                           RETURN 1""")
+            except redis.ResponseError:
+                rejected = True
+            self.env.assertTrue(rejected)
+
+            # index OPTIONS are evaluated once, with no input row to run a
+            # sub-plan on
+            for q in ["""CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS
+                         {dimension: size([(a)-->() | 1]) + 1,
+                          similarityFunction: 'euclidean'}""",
+                      """CREATE FULLTEXT INDEX FOR (n:A) ON (n.name) OPTIONS
+                         {language: head([(a)-->() | 'english'])}"""]:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains("not supported in index OPTIONS", str(e))
+
+            # the server survived, and a pattern comprehension outside inline
+            # properties, over a pattern with inline properties, still works
+            actual = g.query("""MATCH (a)-[{k:1}]->()
+                                RETURN [(a)-[{k:1}]->(x) | x.k] AS r""")
+            self.env.assertEqual(actual.result_set, [[[1]]])
+        finally:
+            g.delete()
+
+    def test48_pattern_comprehension_in_clause_expressions(self):
+        # the planner lowers a pattern comprehension into its own sub-plan only
+        # where it plans for one; in SET, DELETE, procedure arguments and
+        # YIELD ... WHERE it used to reach the evaluator un-lowered and crash
+        # the server. Every shape must now produce correct rows or a clean
+        # error.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("clause_pattern_comprehension")
+
+        def reset():
+            g.query("MATCH (n) DETACH DELETE n")
+            g.query("""CREATE (:A {name: 'a'})-[:R]->(:A {name: 'b'})""")
+
+        try:
+            g.query("RETURN 1")
+            reset()
+
+            # SET, in every form, reading the graph through a comprehension
+            queries = [
+                ("MATCH (n:A) SET n.p = size([(n)-->() | 1])",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', 0]]),
+                ("MATCH (n:A) SET n += {p: [(n)-->(y) | y.name]}",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', ['b']], ['b', []]]),
+                ("MATCH (n:A) SET n = {name: n.name, p: [(n)<--(y) | y.name]}",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', []], ['b', ['a']]]),
+                ("MATCH (n:A) SET n.p = size([(n)-->() | 1]), n.q = size([()-->(n) | 1])",
+                 "MATCH (n:A) RETURN n.name, n.p, n.q ORDER BY n.name",
+                 [['a', 1, 0], ['b', 0, 1]]),
+                ("MATCH (n:A) FOREACH (x IN [1] | SET n.p = size([(n)-->() | x]))",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', 0]]),
+                # a CALL body that ends the query used to lose its scope
+                # table, so any sub-plan in it indexed past the end
+                ("MATCH (n:A) CALL { WITH n SET n.p = size([(n)<--() | 1]) }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 0], ['b', 1]]),
+                ("MATCH (n:A) CALL { WITH n UNWIND [(n)-->(y) | y] AS y SET y.p = 1 }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', None], ['b', 1]]),
+                ("MATCH (n:A) CALL { WITH n WITH n WHERE size([(n)-->() | 1]) > 0 SET n.p = 1 }",
+                 "MATCH (n:A) RETURN n.name, n.p ORDER BY n.name",
+                 [['a', 1], ['b', None]]),
+                # REMOVE from an entity picked by a comprehension
+                ("MATCH (n:A {name: 'a'}) REMOVE head([(n)-->(y) | y]).name",
+                 "MATCH (n:A) RETURN n.name ORDER BY n.name",
+                 [['a'], [None]]),
+                # DELETE an entity picked by a comprehension
+                ("MATCH (n:A {name: 'a'}) DETACH DELETE head([(n)-->(y) | y])",
+                 "MATCH (n:A) RETURN n.name",
+                 [['a']]),
+            ]
+            for write, read, expected in queries:
+                g.query(write)
+                self.env.assertEqual(g.query(read).result_set, expected)
+                reset()
+
+            # SET applies its items in order: a comprehension sees what the
+            # items before it set, in the same SET or a consecutive one, and
+            # not what the items after it will set
+            q = """MATCH (n:A {name: 'a'})
+                   SET n.p = 1, n.q = head([(n)-->() | n.p]), n.r = n.q + 1
+                   SET n.s = head([(n)-->() | n.r]), n.p = 5
+                   RETURN n.p, n.q, n.r, n.s"""
+            self.env.assertEqual(g.query(q).result_set, [[5, 1, 2, 2]])
+            q = """MATCH (n:A {name: 'a'})
+                   SET n.t = head([(n)-->() | n.u]), n.u = 1
+                   RETURN n.t, n.u"""
+            self.env.assertEqual(g.query(q).result_set, [[None, 1]])
+            reset()
+
+            # a SET feeding a RETURN inside a UNION branch; the branch's
+            # variables must not be clobbered by the comprehension's result
+            q = """MATCH (n:A) SET n.p = size([(n)-->() | 1])
+                   RETURN n.name AS name, n.p AS p
+                   UNION
+                   RETURN 'z' AS name, 9 AS p"""
+            actual = sorted(g.query(q).result_set)
+            self.env.assertEqual(actual, [['a', 1], ['b', 0], ['z', 9]])
+            reset()
+
+            # procedure arguments and YIELD ... WHERE
+            q = """MATCH (n:A {name: 'a'})
+                   CALL db.labels() YIELD label
+                   WHERE size([(n)-->() | 1]) = 1
+                   RETURN label"""
+            self.env.assertEqual(g.query(q).result_set, [['A']])
+
+            g.query("CREATE FULLTEXT INDEX FOR (n:A) ON (n.name)")
+            wait_for_indices_to_sync(g)
+            q = """MATCH (n:A {name: 'a'})
+                   CALL db.idx.fulltext.queryNodes('A', head([(n)-->(y) | y.name]))
+                   YIELD node
+                   RETURN node.name"""
+            self.env.assertEqual(g.query(q).result_set, [['b']])
+            q = """CALL db.idx.fulltext.queryNodes('A', 'a|b') YIELD node
+                   WHERE size([(node)-->() | 1]) = 1
+                   RETURN node.name"""
+            self.env.assertEqual(g.query(q).result_set, [['a']])
+
+            # the index drop is planned with a label known up front, so a
+            # computed one is rejected rather than tripping the planner
+            try:
+                g.query("""MATCH (n:A {name: 'a'})
+                           CALL db.idx.fulltext.drop(head([(n)-->() | 'A']))""")
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("must be a string literal", str(e))
+
+            # MERGE applies ON CREATE / ON MATCH itself, after matching, so
+            # there is no place to run a sub-plan; rejected as in FalkorDB C
+            for q in ["MERGE (n:A {name: 'a'}) ON MATCH SET n.p = size([(n)-->() | 1])",
+                      "MERGE (n:B) ON CREATE SET n.p = size([(x)-->() | 1])"]:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains("not supported in MERGE", str(e))
+
+            # the server is still up
+            self.env.assertEqual(
+                    g.query("MATCH (n:A) RETURN count(n)").result_set, [[2]])
+        finally:
+            g.delete()
+
+    def test49_pattern_comprehension_in_order_by(self):
+        # ORDER BY is resolved against the projected scope, but its pattern
+        # comprehensions were planned below the projection, so every such
+        # query failed with "Variable ? not found".
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("order_by_pattern_comprehension")
+        try:
+            g.query("""CREATE (:N {name: 'a'})-[:R]->(:N {name: 'b'}),
+                              (:N {name: 'c'})""")
+
+            queries = [
+                # n is not projected: the comprehension must still see the
+                # row's n, not a fresh pattern-local one
+                ("""MATCH (n:N) RETURN n.name AS nm
+                    ORDER BY size([(n)<--() | 1]) DESC, nm""",
+                 [['b'], ['a'], ['c']]),
+                ("""MATCH (n:N) RETURN DISTINCT n.name AS nm
+                    ORDER BY size([(n)-->() | 1]) DESC, nm""",
+                 [['a'], ['b'], ['c']]),
+                # a projected alias
+                ("""MATCH (n:N) RETURN n.name AS nm, n AS m
+                    ORDER BY size([(m)<--() | 1]) DESC, nm""",
+                 None),
+                # alongside a projection comprehension, with SKIP / LIMIT
+                ("""MATCH (n:N) RETURN n.name AS nm, size([(n)-->() | 1]) AS c
+                    ORDER BY size([(n)<--() | 1]) DESC, nm SKIP 1 LIMIT 1""",
+                 [['a', 1]]),
+                ("""MATCH (n:N) WITH n ORDER BY size([(n)<--() | 1]) DESC LIMIT 1
+                    RETURN n.name""",
+                 [['b']]),
+            ]
+            for q, expected in queries:
+                actual = g.query(q).result_set
+                if expected is None:
+                    actual = [row[:1] for row in actual]
+                    expected = [['b'], ['a'], ['c']]
+                self.env.assertEqual(actual, expected)
+        finally:
+            g.delete()
+
+    def test50_unit_subquery_keeps_outer_cardinality(self):
+        # a CALL subquery that returns nothing passes each outer row through
+        # exactly once, however many rows its body produced; an uncorrelated
+        # body used to multiply the outer rows by its own row count
+        g = self.fresh_graph("unit_subquery_cardinality")
+        try:
+            g.query("CREATE (:A {name: 'a'}), (:A {name: 'b'})")
+
+            q = "CALL { MATCH (n:A) SET n.p = 1 } RETURN 1 AS one"
+            self.env.assertEqual(g.query(q).result_set, [[1]])
+
+            q = """CALL { MATCH (n:A) SET n.p = 2 }
+                   MATCH (m:A) RETURN m.name, m.p ORDER BY m.name"""
+            self.env.assertEqual(g.query(q).result_set, [['a', 2], ['b', 2]])
+
+            # a correlated body matching several rows per outer row
+            q = """MATCH (n:A {name: 'a'})
+                   CALL { WITH n MATCH (m:A) SET m.p = 3 }
+                   RETURN n.name"""
+            self.env.assertEqual(g.query(q).result_set, [['a']])
+
+            # a body producing no rows still keeps the outer row
+            q = "CALL { MATCH (n:Missing) SET n.p = 1 } RETURN 1 AS one"
+            self.env.assertEqual(g.query(q).result_set, [[1]])
+
+            # every row of the body still runs
+            q = """UNWIND [1, 2] AS i
+                   CALL { WITH i UNWIND range(1, i) AS j CREATE (:T {i: i, j: j}) }
+                   RETURN i"""
+            self.env.assertEqual(g.query(q).result_set, [[1], [2]])
+            self.env.assertEqual(
+                    g.query("MATCH (t:T) RETURN count(t)").result_set, [[3]])
+        finally:
+            g.delete()
+
+    def test51_pattern_comprehension_reading_a_loop_variable(self):
+        # a pattern comprehension that reads a list comprehension, quantifier
+        # or reduce variable was hoisted out of the loop and evaluated once,
+        # before the variable was bound, silently giving wrong results. It is
+        # now planned as a nested plan run for every iteration, as Neo4j does.
+        # https://github.com/FalkorDB/FalkorDB/issues/2308
+        g = self.fresh_graph("loop_variable_pattern_comprehension")
+        try:
+            g.query("CREATE (:N {name: 'a', k: 1})-[:R]->(:N {name: 'b', k: 2})")
+            ns = "MATCH (n:N) WITH n ORDER BY n.name WITH collect(n) AS ns "
+
+            queries = [
+                # the loop variable in the pattern
+                (ns + "RETURN [x IN ns | size([(x)-->() | 1])]", [[[1, 0]]]),
+                (ns + "RETURN [x IN ns | [(x)-->(y) | y.name]]", [[[['b'], []]]]),
+                (ns + "RETURN [x IN ns WHERE size([(x)<--() | 1]) > 0 | x.name]",
+                 [[['b']]]),
+                (ns + "RETURN [x IN ns | [y IN ns | size([(x)-->(y) | 1])]]",
+                 [[[[0, 1], [0, 0]]]]),
+                # in the comprehension's WHERE / result only
+                ("""MATCH (n:N) RETURN n.name,
+                          [x IN [1, 2] | [(n)-->(y) WHERE y.k = x | y.name]]
+                   ORDER BY n.name""",
+                 [['a', [[], ['b']]], ['b', [[], []]]]),
+                ("""MATCH (n:N) RETURN n.name, [x IN range(1, 2) | [(n)-->() | x]]
+                   ORDER BY n.name""",
+                 [['a', [[1], [2]]], ['b', [[], []]]]),
+                # quantifiers and reduce, including the accumulator
+                (ns + """RETURN any(x IN ns WHERE size([(x)-->() | 1]) > 1),
+                                all(x IN ns WHERE size([(x)--() | 1]) = 1)""",
+                 [[False, True]]),
+                (ns + "RETURN reduce(s = 0, x IN ns | s + size([(x)-->() | 1]))",
+                 [[1]]),
+                (ns + """RETURN reduce(s = 0, x IN ns |
+                                s + size([(x)<--(y) WHERE y.k = s + 1 | 1]))""",
+                 [[1]]),
+                # a bare pattern in a comprehension's own WHERE is an
+                # existence test too, in a projection as in a filter
+                ("""MATCH (n:N) RETURN n.name, [(n)-->(m) WHERE NOT (m)-->() | m.name]
+                    ORDER BY n.name""",
+                 [['a', ['b']], ['b', []]]),
+                # a nested plan inside another comprehension reads that
+                # comprehension's pattern variables
+                (ns + """RETURN [x IN ns | [(x)-->(m) |
+                                  [y IN [1] | size([(m)<--(z) WHERE z = x | y])]]]""",
+                 [[[[[1]], []]]]),
+                # a bare pattern in a loop predicate is an existence test
+                (ns + "RETURN [x IN ns WHERE (x)-->() | x.name]", [[['a']]]),
+                (ns + "RETURN none(x IN ns WHERE (x)<--()), single(x IN ns WHERE (x)-->())",
+                 [[False, True]]),
+            ]
+            for q, expected in queries:
+                self.env.assertEqual(g.query(q).result_set, expected)
+
+            # in a write clause
+            g.query(ns + "FOREACH (x IN ns | SET x.c = size([(x)-->() | 1]))")
+            actual = g.query("MATCH (n:N) RETURN n.name, n.c ORDER BY n.name").result_set
+            self.env.assertEqual(actual, [['a', 1], ['b', 0]])
         finally:
             g.delete()
