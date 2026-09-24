@@ -2140,17 +2140,11 @@ impl<'a> Parser<'a> {
         &mut self,
         allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
+        // Each frame carries the height of the tree it has built so far, so
+        // nesting that builds on this stack rather than the call stack is
+        // still bounded, by `check_depth`, as the tree grows.
         let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>, 0usize)];
-        // Stack heights at which a tree level is still open. Constructs that
-        // nest on `stack` rather than the call stack are invisible to
-        // `nested`, so their depth is counted here instead. A level closes
-        // when the frame that opened it is popped, which is what the prune
-        // below detects.
-        let mut open: Vec<usize> = Vec::new();
         while let Some((current, res, height)) = stack.pop() {
-            while open.last().is_some_and(|&at| at >= stack.len()) {
-                open.pop();
-            }
             let Some(res) = res else {
                 if current < 3 || (current > 3 && current < 9) || current == 10 {
                     stack.push((current, None, 0));
@@ -2184,12 +2178,6 @@ impl<'a> Parser<'a> {
                     }
 
                     let (res, height) = if is_negate {
-                        // `-(-(-1))` keeps a Negate per level even though the
-                        // parens around it collapse, so this is a real level.
-                        if open.len() >= Self::MAX_TREE_DEPTH {
-                            return Err(self.too_deep(Self::MAX_TREE_DEPTH));
-                        }
-                        open.push(stack.len());
                         (Some(tree!(ExprIR::Negate)), 1)
                     } else {
                         (None, 0)
@@ -2201,15 +2189,6 @@ impl<'a> Parser<'a> {
                     let ((res, recurse), child_height) =
                         self.with_child_height(|s| s.parse_primary_expr(allow_pattern_predicate))?;
                     if recurse {
-                        // A list keeps a node per level; a parenthesis does
-                        // not - `(((1)))` collapses to `1` however deep it
-                        // goes, and test_parentheses pins 10000 of them.
-                        if !matches!(res.root().data(), ExprIR::Paren) {
-                            if open.len() >= Self::MAX_TREE_DEPTH {
-                                return Err(self.too_deep(Self::MAX_TREE_DEPTH));
-                            }
-                            open.push(stack.len());
-                        }
                         // What follows is parsed into this still-empty node,
                         // so it is one level tall for now.
                         stack.push((current, Some(res), 1));
@@ -2531,15 +2510,10 @@ impl<'a> Parser<'a> {
                     // Each postfix step wraps what came before, so a chain
                     // like `x[0][0][0]...` leans one level deeper per step
                     // while the brackets stay balanced and this stack stays
-                    // flat - neither of the other two guards sees it. Wrapping
-                    // copies the accumulated tree, so an unbounded chain is
+                    // flat. Wrapping copies the accumulated tree, so the
+                    // height is checked every step, before the chain can get
                     // quadratic as well as deep.
-                    let mut steps = 0u32;
                     loop {
-                        steps += 1;
-                        if steps > Self::MAX_TREE_DEPTH as u32 {
-                            return Err(self.too_deep(Self::MAX_TREE_DEPTH));
-                        }
                         match self.lexer.current()? {
                             Token::LBrace => {
                                 self.lexer.next();
@@ -3454,7 +3428,8 @@ mod tests {
     /// The parser reaches these three different ways - plain call recursion
     /// (`{k:{k:..}}`, `CALL {}`), iteration on `parse_expr`'s own stack
     /// (`[[..]]`, `-(-(..))`), and left-leaning postfix chains (`x[0][0]`) -
-    /// so each needs its own guard, and each is listed here.
+    /// and call recursion is bounded by `MAX_NESTING` while the other two are
+    /// bounded by the height of the tree they build, so each is listed here.
     fn nesting_shapes(n: usize) -> Vec<(&'static str, String)> {
         let mut shapes = vec![
             (
