@@ -86,24 +86,32 @@ bool BitmapRange_FromRanges (
 	for (int i = 0; i < n; i++) {
 		SIValue v = AR_EXP_Evaluate (ranges[i].exp, r) ;
 		AST_Operator op = ranges[i].op ;
+		SIType t = SI_TYPE (v) ;
 
-		// the range is over integer node ids, so only a numeric bound can
-		// constrain it; a non-numeric value (string, list, map, bool, null)
-		// equals no id and yields an empty range
-		if (!(SI_TYPE(v) & SI_NUMERIC)) {
+		// only a numeric bound can constrain an integer id range; a non-numeric
+		// value (string, list, map, bool, null) equals no id -> empty range
+		if (!(t & SI_NUMERIC)) {
+			SIValue_Free (v) ;  // free heap-backed values (string/list/map)
 			return false ;
 		}
 
-		// resolve the bound to the tightest integer that preserves the
-		// comparison's meaning against integer ids: an integer is used as-is,
-		// a floating-point value is rounded toward the range interior per the
-		// operator, e.g. ID(n) > 2.0 -> id >= 3, ID(n) <= 2.5 -> id <= 2,
-		// while ID(n) = 2.5 matches no id
+		// capture the numeric value, then release v: it is not needed past this
+		// point, and freeing it every iteration avoids leaking a heap-backed
+		// SIValue per incoming record. numeric SIValues are inline so this is a
+		// no-op for them, but it keeps a single, uniform ownership boundary
+		int64_t ival = v.longval ;
+		double  dval = v.doubleval ;
+		SIValue_Free (v) ;
+
+		// resolve the bound to the tightest integer preserving the comparison
+		// against integer ids: an integer is used as-is; a floating-point value
+		// is rounded toward the range interior per operator (ID(n) > 2.0 ->
+		// id >= 3, ID(n) <= 2.5 -> id <= 2), while ID(n) = 2.5 matches no id
 		int64_t bound ;
-		if (SI_TYPE(v) == T_INT64) {
-			bound = v.longval ;
+		if (t == T_INT64) {
+			bound = ival ;
 		} else {  // T_DOUBLE
-			double d = v.doubleval ;
+			double d = dval ;
 
 			// NaN compares false against every id -> empty range
 			if (isnan(d)) {
@@ -134,7 +142,19 @@ bool BitmapRange_FromRanges (
 			}
 		}
 
-		if (!BitmapRange_Tighten (bound, op, &min, &max)) {
+		// node ids are non-negative and BitmapRange_Tighten operates on
+		// uint64_t, so a bound at/below zero would underflow (OP_LT computes
+		// bound - 1). normalize: a lower bound below zero is vacuous - every id
+		// satisfies it - while an upper/equality bound below the first id makes
+		// the range empty
+		if (bound < 0 || (bound == 0 && op == OP_LT)) {
+			if (op == OP_GT || op == OP_GE) {
+				continue ;      // vacuous lower bound, nothing to tighten
+			}
+			return false ;      // impossible upper/equality bound -> empty
+		}
+
+		if (!BitmapRange_Tighten ((uint64_t) bound, op, &min, &max)) {
 			return false ;
 		}
 	}

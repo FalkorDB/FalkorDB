@@ -450,6 +450,15 @@ class testNodeByIDFlow(FlowTestsBase):
                     "MATCH (n) WHERE ID(n) %s %s RETURN n ORDER BY n.id" % (op, bound),
                     "MATCH (n) WHERE n.id  %s %s RETURN n ORDER BY n.id" % (op, bound))
 
+        # bounds at or below zero must not underflow the unsigned range helper:
+        # a lower bound below the first id is vacuous (all ids match), an
+        # upper/equality bound below it is empty
+        for pred in ["< 0.0", "<= 0.0", "< 0", "> -5.0", ">= -5.0",
+                     "<= -5.0", "< -5.0", "> -1", "= -3"]:
+            assert_seek_eq(
+                "MATCH (n) WHERE ID(n) %s RETURN n ORDER BY n.id" % pred,
+                "MATCH (n) WHERE n.id  %s RETURN n ORDER BY n.id" % pred)
+
         # integral doubles from an UNWIND match; fractional ones are skipped
         assert_seek_eq(
             "UNWIND [2.0, 3.5, 4.0] AS x MATCH (n) WHERE ID(n) = x RETURN n ORDER BY n.id",
