@@ -1,4 +1,5 @@
 from common import *
+import math
 from math import floor, ceil, sqrt
 
 GRAPH_ID = "aggregations"
@@ -421,3 +422,45 @@ class testAggregations():
         # The server is still there — the point of the domain check.
         self.env.assertEqual(
             self.graph.query("MATCH (q:Q) RETURN count(*)").result_set, [[5]])
+
+    def test_nan_grouping_and_min_max(self):
+        # Issue #2913: grouping compared keys with `=`, under which NaN is not
+        # equal to itself, so every NaN opened its own group; and min/max let
+        # a NaN displace the current best and then be displaced by the next
+        # value (`min` over [1.0, NaN, 3.0] was 3.0). C groups all NaNs
+        # together, and its min/max skip a comparison against NaN.
+        g = self.db.select_graph("agg_nan")
+
+        def kind(v):
+            if isinstance(v, float) and math.isnan(v):
+                return 'nan'
+            if isinstance(v, list):
+                return 'list'
+            if isinstance(v, dict):
+                return 'map'
+            return v
+
+        try:
+            res = g.query("""UNWIND [0.0/0.0, 1.0, 0.0/0.0, -(0.0/0.0), [0.0/0.0],
+                                     [0.0/0.0], {a: 0.0/0.0}, {a: 0.0/0.0}, 1] AS x
+                             RETURN x, count(*)""").result_set
+            self.env.assertEqual(sorted((str(kind(r[0])), r[1]) for r in res),
+                                 [('1.0', 2), ('list', 2), ('map', 2), ('nan', 3)])
+
+            g.query("UNWIND [1.0, 0.0/0.0, 3.0, 0.0/0.0] AS v CREATE (:N {v: v})")
+            # property key (bulk path) and a computed key
+            for key in ["n.v", "n.v + 0"]:
+                res = g.query(f"MATCH (n:N) RETURN {key} AS k, count(*)").result_set
+                self.env.assertEqual(sorted((str(kind(r[0])), r[1]) for r in res),
+                                     [('1.0', 1), ('3.0', 1), ('nan', 2)])
+
+            # bulk property input, computed input, and a grouped aggregation
+            for q in ["MATCH (n:N) RETURN min(n.v), max(n.v)",
+                      "MATCH (n:N) RETURN min(n.v + 0), max(n.v + 0)",
+                      "UNWIND [1.0, 0.0/0.0, 3.0] AS x RETURN min(x), max(x)",
+                      "UNWIND [1.0, 3.0, 0.0/0.0] AS x RETURN min(x), max(x)",
+                      "UNWIND [1.0, 0.0/0.0, 3.0] AS x RETURN 1 AS k, min(x), max(x)"]:
+                row = g.query(q).result_set[0]
+                self.env.assertEqual(row[-2:], [1.0, 3.0])
+        finally:
+            g.delete()
