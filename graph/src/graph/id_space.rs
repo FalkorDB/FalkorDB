@@ -898,6 +898,49 @@ mod tests {
         assert_eq!(g.node_count(), 1);
     }
 
+    /// An id cannot be cancelled twice, and cannot be cancelled after being
+    /// created. Either means the caller has lost track of it.
+    #[test]
+    fn an_id_the_batch_already_took_cannot_be_cancelled() {
+        let mut space = IdSpace::new();
+        space.reserve(2, &RoaringTreemap::new()).expect("reserved");
+
+        space.cancel(0).expect("the first cancellation is ordinary");
+        assert_eq!(
+            space.cancel(0).expect_err("the second is not"),
+            IdSpaceError::AlreadyTaken(0)
+        );
+
+        space.create(&ids(&[1])).expect("id 1 is this batch's");
+        assert_eq!(
+            space
+                .cancel(1)
+                .expect_err("created, so no longer cancellable"),
+            IdSpaceError::AlreadyTaken(1)
+        );
+    }
+
+    /// And the guard is against `taken`, not the free set.
+    ///
+    /// A *reclaimed* reservation is already free before it is cancelled —
+    /// [`IdSpace::reserve`] leaves it there — so a guard that asked "is this id
+    /// already free" would refuse the one caller behaving correctly. The
+    /// question is whether this batch has taken it, not whether it is free.
+    #[test]
+    fn cancelling_a_reclaimed_id_is_still_allowed() {
+        // One id handed out and given back before this batch: free on entry.
+        let mut space = IdSpace::restored(0, ids(&[0]));
+        space.open_batch().expect("a consistent space");
+
+        let reclaimed = space.reserve(1, &RoaringTreemap::new()).expect("reserved");
+        assert_eq!(reclaimed, vec![0], "and it comes back out of the free set");
+        assert!(space.is_free(0), "reserve leaves it free until commit");
+
+        space
+            .cancel(0)
+            .expect("already free, but this batch has not taken it before now");
+    }
+
     #[test]
     fn a_cancelled_reclaimed_id_is_not_reissued_in_the_same_batch() {
         // One id handed out and given back before the batch opens: free, and
