@@ -32,19 +32,12 @@ void EffectsV3_EncodeSegment
 	const EffectsV3IdListSegment *s,  // segment to write
 	EffectsBytes *out                 // sink
 ) {
-	// ONE ARM PER KIND AND NO `default:`.
-	//
-	// This was three arms with a `default:` catching the last, and direction
-	// came from a separate flag OR-ed in above the switch. Under a closed set
-	// that folds direction into the kind, that shape would have swallowed both
-	// Set variants in the default arm while the flag it read disappeared - so
-	// a descending set would have emitted an ASCENDING header over descending
-	// payload. Well-formed, every length check passing, ids replayed the wrong
-	// way round by the reader.
-	//
-	// A `default:` over a closed enum turns "I handled every case" into "I
-	// handled the ones I thought of". Without one, a sixth kind is a compile
-	// error here.
+	// ONE ARM PER KIND AND NO `default:`. Direction lives in the kind, so an arm
+	// that swallowed both Set variants would emit an ASCENDING header over a
+	// descending payload - well formed, every length check passing, ids replayed
+	// the wrong way round by the reader. A `default:` over a closed enum turns
+	// "I handled every case" into "I handled the ones I thought of"; without one
+	// a sixth kind is a compile error here.
 	uint8_t header = 0;
 
 	switch(s->kind) {
@@ -243,18 +236,15 @@ static void _encode_record
 	// ONE ARM PER OPCODE AND NO `default:`.
 	//
 	// Records 1-8 share a wire shape - count, the shape half, AttrIds, the
-	// IdList, then AttrValues - and it is written out per opcode rather than
-	// once through a projection. That is a deliberate trade: eight arms restate
-	// the shared layout eight times, and in exchange every record's wire format
-	// is readable in one place, with no indirection between the opcode and the
-	// bytes it produces.
+	// IdList, then AttrValues - written out per opcode rather than once through
+	// a projection. A deliberate trade: eight arms restate the shared layout
+	// eight times, and in exchange every record's format is readable in one
+	// place, with no indirection between the opcode and the bytes.
 	//
-	// Records 9 and 10 are singular: one schema, one attribute, and no count -
-	// the one exception to `opcode . count . blocks`. Records 11-14 are singular
-	// too and go to their own writer.
-	//
-	// Without a `default:` a fifteenth opcode is a compile error here rather
-	// than a record that silently encodes as nothing.
+	// Records 9 and 10 are singular - one schema, one attribute, no count - the
+	// one exception to `opcode . count . blocks`. Records 11-14 are singular too
+	// and go to their own writer. Without a `default:` a fifteenth opcode is a
+	// compile error rather than a record that silently encodes as nothing.
 	switch(r->opcode) {
 		case EFFECT_UPDATE_NODE:
 			EffectsV3_WriteUint(out, r->update_node.count, sizeof(uint32_t));
@@ -424,16 +414,15 @@ static void _write_opt_u64
 // Options travel in the RDB's field order, each behind a presence byte, and the
 // presence byte means "THE STATEMENT SAID THIS" rather than "this is the
 // default". An effect MUTATES an index that may already exist, where the RDB
-// writes a whole one - so writing a default in place of an absent option is not
-// a harmless substitution, it is an instruction to change something the
-// statement never mentioned. That diverged a live replica with "Can not
-// override index configuration: Language is already set".
+// writes a whole one - so writing a default in place of an absent option is an
+// instruction to change something the statement never mentioned. That diverged a
+// live replica with "Can not override index configuration: Language is already
+// set".
 //
 // The text half is written WHATEVER the field type - five clear bytes when
 // nothing is stated - so there is one gate, the vector half, not two.
-//
-// `dimension` alone has no presence byte, because a vector field must have one.
-// That is why a vector block carries five values behind four markers.
+// `dimension` alone has no presence byte, because a vector field must have one:
+// a vector block carries five values behind four markers.
 static void _write_index_options
 (
 	const EffectsV3IndexOptions *o,  // options to write
@@ -504,14 +493,9 @@ static void _encode_ddl_record
 	const EffectsV3Record *r,  // record to write
 	EffectsBytes *out          // sink
 ) {
-	// ONE ARM PER OPCODE, where this was two branches serving four.
-	//
-	// That shape only ever worked because the flat record let four opcodes
-	// alias one set of fields; the split model removes the aliasing, and there
-	// is no field name correct for both halves of either old branch. Reading
-	// r->create_index.name when the opcode is DROP_INDEX is valid C and wrong,
-	// so the branches follow the opcodes rather than the wire layout they
-	// happen to share.
+	// ONE ARM PER OPCODE rather than per wire layout: each opcode has its own
+	// fields, so reading r->create_index.name when the opcode is DROP_INDEX is
+	// valid C and wrong.
 	switch(r->opcode) {
 		case EFFECT_CREATE_INDEX:
 			EffectsV3_WriteUint(out, (uint64_t)(uint32_t)r->create_index.schema_type,

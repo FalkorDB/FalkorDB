@@ -9,22 +9,16 @@
 
 // EffectsBytes is a growable append-only byte sequence
 //
-// held as a linked list of fixed-size blocks, so an append never reallocates
-// and never moves bytes already written. This is the representation
-// EffectsBuffer used to own directly; it is now its own type because more than
-// one of them has to be alive at a time.
+// Held as a linked list of fixed-size blocks, so an append never reallocates and
+// never moves bytes already written. Its own type because more than one has to
+// be alive at a time: v2 emits one record per effect in arrival order, so its
+// bytes are final the moment an effect is recorded, while a v3 record states its
+// count and shape ahead of its rows - so nothing can be serialized until the
+// query stops producing effects and every group accumulates on its own. A group
+// needs two, rows and values, concatenated once the count is known.
 //
-// v2 could write straight into a single sequence: it emits one record per
-// effect, in arrival order, so the bytes are final the moment an effect is
-// recorded. v3 cannot. A v3 payload is one record per (opcode, shape), and a
-// record states its count and its shape ahead of its rows - so no record can
-// be serialized until the query has finished producing effects, and every
-// group has to accumulate on its own until then. A group needs two of these:
-// its rows and its values grow independently, and are concatenated once the
-// count is known.
-//
-// nothing here interprets the bytes. Widths, order and grouping belong to the
-// callers.
+// Nothing here interprets the bytes. Widths, order and grouping are the
+// caller's.
 typedef struct EffectsBytes EffectsBytes;
 
 // create a new byte sequence, allocating space in blocks of block_size

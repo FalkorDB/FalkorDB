@@ -8,24 +8,20 @@
 //
 // An effects v3 Ascending segment carries a roaring64 bitmap verbatim, so the
 // two engines agree on that segment only if their two roaring implementations
-// serialize the same set to the same bytes. That was measured once, by hand, on
-// 2026-09-03 (harness in .handover/roaring-parity): identical on all 11 shapes,
-// on both construction paths. A measurement that lives in a scratch directory
-// rots the moment CRoaring is bumped and nobody notices, which is why it is
-// here instead.
+// serialize the same set to the same bytes. Measured by hand on 2026-09-03
+// (harness in .handover/roaring-parity): identical on all 11 shapes, on both
+// construction paths. A measurement in a scratch directory rots the moment
+// CRoaring is bumped and nobody notices, which is why it is here instead.
 //
 // The expected bytes below are the RUST CRATE's output, captured from that
-// harness. Nothing in this file runs Rust: the crate's bytes are the constants
-// and CRoaring is the thing under test. So a CRoaring bump that changes the
-// wire fails here, which is the whole point -- C vendors CRoaring 4.5.1 at
+// harness; nothing here runs Rust. So a CRoaring bump that changes the wire
+// fails here, which is the point -- C vendors CRoaring 4.5.1 at
 // src/util/roaring.{c,h} and the crate is version-pinned exactly in
 // graph/Cargo.toml for the same reason.
 //
-// WHAT THIS DOES NOT COVER. Only the byte comparison is platform-independent
-// and runs everywhere. The ASAN runs over the truncation corpus are CI-on-Linux
-// (`make unit-tests SAN=address`); on darwin the unit targets link the objects
-// rather than the shared library and the sanitizer story differs. Nothing here
-// needs a sanitizer to be meaningful.
+// Only the byte comparison is platform-independent and runs everywhere. The ASAN
+// runs over the truncation corpus are CI-on-Linux (`make unit-tests
+// SAN=address`); nothing here needs a sanitizer to be meaningful.
 
 #include "src/util/roaring.h"
 
@@ -247,12 +243,9 @@ void test_effectsV3Roaring_idByIdPath(void) {
 // roaring's optimize() is path dependent: a container reached from an array
 // store converts to runs only on a strict win, one reached from a run store
 // stays runs unless strictly beaten -- and a run-flavoured bitmap carries a
-// different header. This asserts the difference is still real, on the shapes
-// where it was measured.
-//
-// If a CRoaring bump ever makes the two paths converge, this test fails and
-// that is the correct outcome: the encoder's constraint would then rest on
-// something no longer true, and somebody should decide that deliberately
+// different header. This asserts the difference is still real on the shapes
+// where it was measured. If a CRoaring bump makes the two paths converge this
+// fails, which is the correct outcome: somebody should decide that deliberately
 // rather than discover it from a replica whose bitmaps do not match.
 void test_effectsV3Roaring_constructionPathIsNormative(void) {
 	// measured 2026-09-03 and reproduced here; the magnitudes are the evidence
@@ -306,32 +299,23 @@ void test_effectsV3Roaring_constructionPathIsNormative(void) {
 			checked);
 }
 
-// optimize() is normative because both engines must make the SAME choice --
-// not because it makes anything smaller.
+// optimize() is normative because both engines must make the SAME choice -- not
+// because it makes anything smaller. Measured against this CRoaring, "a size win
+// an encoder must not forget" is wrong in both directions:
 //
-// It is tempting to describe rule 2 as a size win an encoder must not forget.
-// Measured against this CRoaring, that is wrong in both directions, and the
-// wrongness is worth pinning because it changes what a reader should conclude
-// from a green run:
+//   * on the construction path rule 3 MANDATES -- one add_range_closed per range
+//     -- run_optimize changes the bytes of exactly ONE of these eleven shapes,
+//     and none of the twelve cost shapes; add_range_closed already produces run
+//     containers, so the call is very nearly a no-op there
+//   * on that one shape it makes the output BIGGER: many_pairs_one_bucket is 55
+//     bytes unoptimized and 60 optimized
 //
-//   * On the construction path rule 3 MANDATES -- one add_range_closed per
-//     range -- run_optimize changes the bytes of exactly ONE of these eleven
-//     shapes, and none of the twelve cost shapes. add_range_closed already
-//     produces run containers, so the call is very nearly a no-op there.
-//   * On that one shape it makes the output BIGGER: many_pairs_one_bucket is
-//     55 bytes unoptimized and 60 optimized.
-//
-// So an encoder that skipped optimize() while building by ranges would produce
-// identical bytes on almost everything and disagree on the rest, which is the
-// worst failure shape available: it would pass casual testing and diverge a
-// replica on one write in a hundred. The rule earns its place as a
-// normalization both sides perform, and this test asserts the measurement
-// rather than a comfortable story about it.
-//
-// Where optimize() genuinely dominates is the path rule 3 forbids: built id by
-// id, dense_10k is 8220 bytes unoptimized against 27 optimized. That is
-// asserted below, and it is the reason the two rules are stated separately --
-// neither implies the other.
+// So an encoder skipping optimize() while building by ranges would produce
+// identical bytes on almost everything and disagree on the rest -- the worst
+// failure shape available. Where optimize() genuinely dominates is the path rule
+// 3 forbids: built id by id, dense_10k is 8220 bytes unoptimized against 27
+// optimized. Asserted below, and the reason the two rules are stated
+// separately -- neither implies the other.
 void test_effectsV3Roaring_optimizeIsNormative(void) {
 	int differed_by_range = 0;
 	int differed_by_id    = 0;
@@ -453,31 +437,23 @@ void test_effectsV3Roaring_measuredFloor(void) {
 // The collapse rule decides whether to emit an Ascending segment by ARITHMETIC:
 // `range_bytes >= 32 AND 5 + bitmap_bytes < range_bytes`, where bitmap_bytes is
 // computed in closed form rather than by building a trial bitmap. If that
-// arithmetic is wrong, an encoder collapses when it should not, or does not when
-// it should, and two engines emit different bytes for the same write.
+// arithmetic is wrong, two engines emit different bytes for the same write.
 //
-// Rust pins its formula against the `roaring` crate on twelve container shapes,
-// chosen to hit array, bitset and run containers, the four-container offset
-// threshold and both boundary widths (`predicted_matches_roaring`, verified
-// passing at feat/effects-v3). Nothing pinned it against CRoaring, which is what
-// C will actually size against -- so a formula ported into C could be correct
-// about the crate and wrong about the library in this tree.
-//
-// These are those twelve shapes, with the sizes the crate produces for them.
-// Since Rust asserts formula == crate.serialized_size() and that test passes,
-// these numbers ARE the formula's predictions, and asserting CRoaring reproduces
-// them closes the chain:
+// Rust pins its formula against the `roaring` crate on twelve container shapes
+// (`predicted_matches_roaring`). Nothing pinned it against CRoaring, which is
+// what C sizes against -- so a formula ported into C could be right about the
+// crate and wrong about the library in this tree. These are those twelve shapes
+// with the sizes the crate produces, so asserting CRoaring reproduces them
+// closes the chain:
 //
 //     formula == crate      (predicted_matches_roaring, Rust side)
 //     crate   == CRoaring   (here)
-//     therefore formula == CRoaring
+//     formula == CRoaring   (test_effects_v3_run_cost.c, the C port)
 //
-// Built with one add_range_closed per range, matching the crate's one
-// insert_range per range, because rule 3 makes construction path normative.
-//
-// WHAT THIS DOES NOT YET DO. It pins the SIZES the formula must predict, not a
-// C implementation of the formula -- the writer owns porting RunCost/Run, and
-// when that lands, this table is what it should be asserted against directly.
+// Shapes chosen to hit array, bitset and run containers, the four-container
+// offset threshold and both boundary widths. Built with one add_range_closed per
+// range, matching the crate's one insert_range per range, because rule 3 makes
+// the construction path normative.
 typedef struct {
 	const char         *name;                  // shape name
 	int                 n_ranges;              // number of inclusive ranges

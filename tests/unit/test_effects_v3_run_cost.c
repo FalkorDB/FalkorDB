@@ -7,10 +7,9 @@
 // produces.
 //
 // The collapse rule decides whether to emit an Ascending segment by ARITHMETIC:
-// `range_bytes >= 32 AND 5 + bitmap_bytes < range_bytes`, where bitmap_bytes is
-// computed in closed form rather than by building a trial bitmap. If that
-// arithmetic is wrong, an encoder collapses when it should not, or fails to when
-// it should, and two engines emit different bytes for the same write.
+// `range_bytes >= 32 AND 5 + bitmap_bytes < range_bytes`, with bitmap_bytes in
+// closed form rather than a trial build. If that arithmetic is wrong, two
+// engines emit different bytes for the same write.
 //
 // The chain this closes:
 //
@@ -18,18 +17,15 @@
 //     crate        == CRoaring    test_effects_v3_roaring.c, twelve shapes
 //     C formula    == CRoaring    HERE, on those same twelve shapes
 //
-// so the C formula predicts what the Rust formula predicts. The shapes and
-// their expected byte counts are taken from that table, which took them from
-// the pinned crate (=0.11.5); they are asserted here against BOTH the recorded
-// number and what this tree's CRoaring 4.5.1 actually serializes, because a
-// formula pinned against only one of those can be right about the crate and
-// wrong about the library it will really size against.
+// so the C formula predicts what the Rust formula predicts. The shapes and their
+// expected byte counts come from that table, which took them from the pinned
+// crate (=0.11.5); they are asserted against BOTH the recorded number and what
+// this tree's CRoaring 4.5.1 serializes, because a formula pinned against only
+// one can be right about the crate and wrong about the library.
 //
-// Shapes were chosen to hit array, bitset and run containers, the
-// four-container offset-table threshold, and both the 2^16 and 2^32 boundaries.
-//
-// Built with one add_range_closed per range, matching the crate's one
-// insert_range per range, because rule 3 makes construction path normative.
+// Shapes hit array, bitset and run containers, the four-container offset-table
+// threshold, and both the 2^16 and 2^32 boundaries. Built with one
+// add_range_closed per range, because rule 3 makes construction path normative.
 
 #include "src/effects/effects_v3_run_cost.h"
 #include "src/util/roaring.h"
@@ -215,14 +211,12 @@ void test_effectsV3RunCost_bucketSplitCountsRuns(void) {
 //
 // The twelve shapes above pin the sizes the formula predicts. They cannot catch
 // an off-by-one in what is IN SCOPE when the rule is evaluated, because that is
-// invisible to every input except the two straddling the threshold - which is
-// exactly the mistake this test exists for.
+// invisible to every input except the two straddling the threshold.
 //
 // ONLY SEGMENTS THAT HAVE STOPPED GROWING COUNT. On pushing the nth id the nth
 // segment is still open and can still be extended, so it is excluded from
-// range_bytes and from the candidate bitmap alike. Including it makes the
-// decision depend on when the encoder happened to look rather than on the ids,
-// which is the whole reason the rule is phrased over closed segments.
+// range_bytes and from the candidate bitmap alike - including it makes the
+// decision depend on when the encoder happened to look rather than on the ids.
 //
 // Singletons at 100, 102, ... : each closed one is a lone Range costing
 // 1 + width(base) + width(len) = 3 bytes. Charging the n-1 closed segments puts

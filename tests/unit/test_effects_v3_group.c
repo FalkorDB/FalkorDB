@@ -7,12 +7,9 @@
 //
 // THE CONFORMANCE CORPUS CANNOT ARBITRATE ANY OF THIS. A fixture pins what one
 // record looks like; grouping decides which entities are inside it, and that
-// decision leaves no trace in the bytes of a single record. Two engines can
-// agree on every fixture and still emit different payloads for the same write.
-//
-// So these are property tests over the accumulator rather than byte
-// comparisons. "Two entities of the same shape produce one record" is a
-// statement about a function, and a fixture can only ever be one example of it.
+// leaves no trace in the bytes of a single record. Two engines can agree on
+// every fixture and still emit different payloads for the same write. So these
+// are property tests over the accumulator rather than byte comparisons.
 //
 // The four rules under test are all invisible in the wire format:
 //
@@ -354,13 +351,11 @@ void test_effectsV3Group_schemaAnnouncedOncePerTypeAndId(void) {
 // a create with NO PROPERTIES, and a node with NO LABELS
 //
 // The conformance corpus has a present case for 26 blocks whose cardinality can
-// be zero and an empty counterpart for one of them, so it cannot arbitrate
-// these - and this suite had the same hole for the same reason, since its
-// shapes were drawn from the fixtures that exist. The decoder half of exactly
-// this gap was a live bug: C's v3 decoder refused `CREATE (:Person)` while a
-// fully green corpus and 26 green flow tests did not notice.
-//
-// So the encoder is pinned to emit them independently of when fixtures arrive.
+// be zero and an empty counterpart for one of them, so it cannot arbitrate these
+// - and this suite had the same hole, its shapes being drawn from the fixtures
+// that exist. The decoder half of exactly this gap was a live bug: C's v3 decoder
+// refused `CREATE (:Person)` while a fully green corpus and 26 green flow tests
+// did not notice.
 void test_effectsV3Group_emptyBlocks(void) {
 	{
 		// CREATE (:Person) - a label, no properties
@@ -434,33 +429,26 @@ void test_effectsV3Group_emptyBlocks(void) {
 
 // A RECORD WITH NO EFFECT IS NOT EMITTED.
 //
-// The rule, which covers three categories without a per-record table:
+// The rule, which covers three categories without a per-record table: a record
+// has no effect if removing an empty block leaves it saying nothing about any
+// entity it names. An empty block that DESCRIBES the entities the record names
+// is information and is legal; a schema announcement is a binding rather than an
+// instruction and is legal regardless of what references it.
 //
-//   A record has no effect if removing an empty block leaves it saying
-//   nothing about any entity it names. Such records must not be emitted. An empty
-//   block that DESCRIBES the entities the record names is information and is
-//   legal. A schema announcement is a binding rather than an instruction and
-//   is legal regardless of whether anything references it.
+// So the distinction is which block is the record's SUBJECT, not whether a block
+// is empty - which is why the empty-block cases above stay legal while these do
+// not. `MATCH (n) SET n:Foo REMOVE n:Foo` leaves a label set that empties out,
+// and a label record's entire payload IS its label set.
 //
-// The distinction is which block is the record's SUBJECT, not whether a block
-// is empty - which is why the empty-block cases above stay legal while these
-// do not. `MATCH (n) SET n:Foo REMOVE n:Foo` leaves a label set that empties
-// out, and a label record's entire payload IS its label set, so with none it
-// is an instruction to do nothing.
-//
-// This reverses what this test asserted before the ruling. Emitting matched
-// what a Rust master emitted at the time, which kept the two encoders
-// agreeing; the ruling found that Rust's own emitter already suppresses the
+// The ruling that settled it: Rust's own emitter already suppresses the
 // exactly-analogous no-effect update - set_node_attributes refuses to stage an
-// empty attribute map - so the label path was an inconsistency in their
-// emitter rather than a property of the format. Fixing the outlier beat
-// legalising it.
+// empty attribute map - so the label path was an inconsistency in their emitter
+// rather than a property of the format, and fixing the outlier beat legalising
+// it.
 //
-// Readers TOLERATE these rather than refusing them, and that asymmetry is
-// deliberate: rejecting a zero-label record removes no parse surface, because
-// DELETE_NODE and CREATE_NODE require the zero-length LabelSet path anyway, so
-// rejection would buy no safety and cost a resync loop against any peer still
-// emitting one.
+// Readers TOLERATE these rather than refusing them: rejecting a zero-label
+// record removes no parse surface, since DELETE_NODE and CREATE_NODE require the
+// zero-length LabelSet path anyway.
 void test_effectsV3Group_recordsWithNoEffectAreNotEmitted(void) {
 	{
 		// a label record with no labels: its whole payload is the label set
@@ -631,11 +619,10 @@ void test_effectsV3Group_stagedUpdates(void) {
 
 // SETTING THE SAME ATTRIBUTE TWICE KEEPS THE LAST VALUE
 //
-// The overwrite arm of the staging path, which nothing here covered. It matters
-// more since values moved into an arena: the superseded encoding is left behind
-// as dead bytes rather than freed, so "the last value wins" now depends on the
-// staged attribute's offset being repointed rather than on a buffer being
-// replaced. Getting that wrong emits the FIRST value and still produces a
+// The overwrite arm of the staging path. It matters more since values moved into
+// an arena: the superseded encoding is left behind as dead bytes rather than
+// freed, so "the last value wins" depends on the staged attribute's offset being
+// repointed. Getting that wrong emits the FIRST value and still produces a
 // well-formed payload of exactly the right length.
 void test_effectsV3Group_lastValueWins(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
@@ -686,11 +673,8 @@ void test_effectsV3Group_lastValueWins(void) {
 // offset instead of a copy, the second statement would silently rewrite the
 // first statement's values - same record shape, same length, wrong contents.
 //
-// My first version of this test asserted the opposite and failed: it expected
-// the first statement's value to be absent from the second payload. It is not,
-// and should not be - an accumulator is cumulative, groups are never cleared by
-// an encode, so both records are in the second payload by design. The test was
-// wrong, not the code.
+// Both records are in the second payload by design: an accumulator is
+// cumulative, and groups are never cleared by an encode.
 void test_effectsV3Group_flushedGroupOutlivesTheArena(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 	LabelID labels[] = { 1 };
