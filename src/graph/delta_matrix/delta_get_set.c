@@ -60,7 +60,7 @@ GrB_Info Delta_Matrix_setMatrices
 		GrB_OK (Delta_transpose_calculate(C)) ;
 	}
 
-	Delta_Matrix_validate(C, false);
+	ASSERT(Delta_Matrix_validate(C, DM_TVAL_FAST));
 
 	return GrB_SUCCESS;
 }
@@ -100,6 +100,7 @@ GrB_Info Delta_Matrix_setM
 		GrB_OK (Delta_transpose_calculate(C)) ;
 	}
 
+	ASSERT(Delta_Matrix_validate(C, DM_TVAL_FAST));
 	return GrB_SUCCESS;
 }
 
