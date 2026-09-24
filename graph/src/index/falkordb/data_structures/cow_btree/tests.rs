@@ -1238,3 +1238,32 @@ fn integrity_adversarial_ascending_then_cascade_delete() {
     assert!(t.is_empty());
     assert_eq!(t.len(), 0);
 }
+
+#[test]
+fn insert_batch_keeps_the_max_max_tuple() {
+    // Regression: the branch sweep gave the last child every entry `< (u64::MAX, u64::MAX)`, so the
+    // largest possible tuple routed into no child and was silently dropped whenever the root was a branch.
+    // The single-tuple `insert` path had no such sentinel.
+    let top = (u64::MAX, u64::MAX);
+
+    let mut small = CowBTree::<4, 4>::from_sorted(&(0..20u64).map(|i| (i, i)).collect::<Vec<_>>());
+    small.insert_batch(&[top]);
+    assert_eq!(small.point(u64::MAX).collect::<Vec<_>>(), vec![u64::MAX]);
+    assert_eq!(small.len(), 21);
+    check_invariants(&small, false);
+
+    let mut wide =
+        CowBTree::<256, 256>::from_sorted(&(0..1_000u64).map(|i| (i, i)).collect::<Vec<_>>());
+    wide.insert_batch(&[(5, 5_000), (u64::MAX, 0), top]);
+    assert_eq!(tree_range(&wide, u64::MAX, u64::MAX), vec![0, u64::MAX]);
+    assert_eq!(wide.len(), 1_003);
+    check_invariants(&wide, false);
+}
+
+#[test]
+fn integrity_differential_smallest_branch() {
+    // `BRANCH_MAX = 4` is the smallest fan-out the const assert accepts (3 is rejected: its underflow
+    // threshold `3 / 2 == 1` never flags a single-child branch, so remove leaves the tree malformed).
+    differential::<2, 4>(0x7777_7777, 3000, 30);
+    differential::<4, 4>(0x8888_8888, 3000, 30);
+}

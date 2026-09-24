@@ -96,13 +96,21 @@ fn read_width(
 /// `u8` (see [`CompactLeaf::build`]).
 ///
 /// The `BRANCH_MAX` const generic is the maximum number of children per branch page / fan-out (a branch
-/// splits on overflow and merges below `BRANCH_MAX / 2`). It must be `>= 3`: the [`pack_branches`]
-/// `BRANCH_MAX + 1` special case (which rewrites a trailing single-child remainder into a `BRANCH_MAX - 1`
-/// + `2` split, so no branch is ever born with a single child) needs `BRANCH_MAX - 1 >= 2`.
+/// splits on overflow and merges below `BRANCH_MAX / 2`). It must be `>= 4`: the [`pack_branches`]
+/// `BRANCH_MAX + 1` special case (which rewrites a trailing single-child remainder into a
+/// `BRANCH_MAX - 1` plus `2` split, so no branch is ever born with a single child) needs
+/// `BRANCH_MAX - 1 >= 2`, and `remove` must see a branch merged down to one child as underflowed, i.e.
+/// `1 < BRANCH_MAX / 2`. At `3` a single-child branch is never repaired and its lone child drains into an
+/// empty non-root leaf.
 ///
 /// Both default to 256, which keeps behaviour identical to the original fixed bounds; the assert in
 /// [`CowBTree::new`] / [`CowBTree::from_sorted`] / `Default` trips any out-of-range monomorphization that
-/// builds a tree.
+/// builds a tree:
+///
+/// ```compile_fail
+/// use graph::index::falkordb::data_structures::cow_btree::CowBTree;
+/// let _ = CowBTree::<2, 3>::new();
+/// ```
 #[derive(Clone)]
 pub struct CowBTree<const LEAF_MAX: usize = 256, const BRANCH_MAX: usize = 256> {
     root: Node<LEAF_MAX, BRANCH_MAX>,
@@ -112,8 +120,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Default for CowBTree<LEAF_M
     fn default() -> Self {
         const {
             assert!(
-                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
-                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
+                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 4,
+                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
             );
         }
         Self {
@@ -128,8 +136,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     pub fn new() -> Self {
         const {
             assert!(
-                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
-                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
+                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 4,
+                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
             );
         }
         Self::default()
@@ -142,8 +150,8 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> CowBTree<LEAF_MAX, BRANCH_M
     pub fn from_sorted(pairs: &[(u64, u64)]) -> Self {
         const {
             assert!(
-                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 3,
-                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 3 (the pack_branches BRANCH_MAX+1 split needs >= 3)"
+                LEAF_MAX >= 2 && LEAF_MAX <= 256 && BRANCH_MAX >= 4,
+                "LEAF_MAX must be 2..=256 (compact index is u8); BRANCH_MAX >= 4 (the BRANCH_MAX / 2 underflow threshold must flag a single-child branch)"
             );
         }
         // Enforced in all builds (not just `debug`): a violation silently corrupts the tree — the

@@ -194,15 +194,16 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 let mut cursor = 0usize;
                 for (child_idx, child) in branch.children.iter().enumerate() {
                     // Each child owns keys strictly below its right separator; the last child (no separator)
-                    // owns everything remaining.
-                    let child_upper = branch
-                        .seps
-                        .get(child_idx)
-                        .copied()
-                        .unwrap_or((u64::MAX, u64::MAX));
+                    // owns everything remaining — taken outright, not by comparing against a
+                    // `(u64::MAX, u64::MAX)` sentinel, which would drop that very tuple.
                     let start = cursor;
-                    while cursor < batch.len() && batch[cursor] < child_upper {
-                        cursor += 1;
+                    match branch.seps.get(child_idx) {
+                        Some(&child_upper) => {
+                            while cursor < batch.len() && batch[cursor] < child_upper {
+                                cursor += 1;
+                            }
+                        }
+                        None => cursor = batch.len(),
                     }
                     let for_child = &batch[start..cursor];
                     if for_child.is_empty() {
