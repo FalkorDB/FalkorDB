@@ -251,9 +251,7 @@ jobs:
           if [ "$IS_LATEST" = "true" ]; then
             # From 6.0 GA the Rust engine is the default, so :latest moves on
             # BOTH registries — same as the rebuild path in _build-flavour.yml.
-            # :latest-rs stays as a deprecated alias (same manifest, costs
-            # nothing) so anything pinned to it keeps working.
-            EXTRA_TAGS="$EXTRA_TAGS -t ghcr.io/falkordb/${REPO}:latest -t falkordb/${REPO}:latest -t falkordb/${REPO}:latest-rs"
+            EXTRA_TAGS="$EXTRA_TAGS -t ghcr.io/falkordb/${REPO}:latest -t falkordb/${REPO}:latest"
           fi
           docker buildx imagetools create \
             -t "ghcr.io/falkordb/${REPO}:${TAG}" \
