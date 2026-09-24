@@ -49,7 +49,7 @@ use crate::runtime::{
         classify_numeric,
     },
     runtime::Runtime,
-    value::{CompareValue, Value},
+    value::{Value, sort_cmp_f64},
 };
 use orx_tree::{Dyn, NodeIdx, NodeRef};
 use smallvec::SmallVec;
@@ -77,7 +77,7 @@ impl OrderedKey {
         &self,
         other: &Self,
     ) -> Ordering {
-        let (ordering, _) = self.value.compare_value(&other.value);
+        let ordering = self.value.sort_cmp(&other.value);
         if self.desc {
             ordering.reverse()
         } else {
@@ -129,9 +129,9 @@ fn compare_row_content(
     let n = a.len().max(b.len());
     for id in 0..n {
         let ordering = match (a.get_by_id(id as u32), b.get_by_id(id as u32)) {
-            (Some(va), Some(vb)) => va.compare_value(vb).0,
-            (Some(va), None) => va.compare_value(&Value::Null).0,
-            (None, Some(vb)) => Value::Null.compare_value(vb).0,
+            (Some(va), Some(vb)) => va.sort_cmp(vb),
+            (Some(va), None) => va.sort_cmp(&Value::Null),
+            (None, Some(vb)) => Value::Null.sort_cmp(vb),
             (None, None) => Ordering::Equal,
         };
         if ordering != Ordering::Equal {
@@ -195,11 +195,11 @@ impl Ord for HeapEntry {
 /// comparator can compare raw scalars and skip the `Value` enum dispatch.
 ///
 /// A null anywhere keeps the whole key on the `Values` path (so a sort key with
-/// nulls compares byte-for-byte like `Value::compare_value`); otherwise a typed
+/// nulls compares byte-for-byte like `Value::sort_cmp`); otherwise a typed
 /// `Ints`/`Floats` column passes straight through and anything else is
 /// reclassified to the narrowest numeric lane. A key stays `Ints`/`Floats` only
 /// when *every* row evaluated it to the same primitive type, which keeps
-/// [`Column::compare_at`] byte-for-byte identical to `Value::compare_value`.
+/// [`Column::compare_at`] byte-for-byte identical to `Value::sort_cmp`.
 fn classify_sort_key(
     col: Column,
     nulls: &NullBitmap,
@@ -227,6 +227,34 @@ fn classify_sort_key(
             FloatLane::Pure,
         ),
     }
+}
+
+/// Orders two rows that tie on the primary sort key: the remaining keys
+/// (direction-folded), then a position-by-position content compare, then
+/// arrival order. Kept out of line so the primary-key comparator the sort
+/// inlines stays small.
+#[inline(never)]
+fn tiebreak(
+    trees: &[(QueryExpr<Variable>, bool)],
+    typed_keys: &[Column],
+    combined: &Batch<'_>,
+    num_columns: usize,
+    a: usize,
+    b: usize,
+) -> Ordering {
+    for (k, (_tree, desc)) in trees.iter().enumerate().skip(1) {
+        let ordering = typed_keys[k].compare_at(a, b);
+        if ordering != Ordering::Equal {
+            return if *desc { ordering.reverse() } else { ordering };
+        }
+    }
+    for id in 0..num_columns {
+        let ordering = combined.compare_rows_at(id as u32, a, b);
+        if ordering != Ordering::Equal {
+            return ordering;
+        }
+    }
+    a.cmp(&b)
 }
 
 pub struct SortOp<'a> {
@@ -310,19 +338,7 @@ impl<'a> SortOp<'a> {
         // borrows the stored values instead of cloning. Only invoked on a
         // primary-key tie, so the random-access content scan rarely fires.
         let tiebreak = |a: usize, b: usize| -> Ordering {
-            for (k, (_tree, desc)) in trees.iter().enumerate().skip(1) {
-                let ordering = typed_keys[k].compare_at(a, b);
-                if ordering != Ordering::Equal {
-                    return if *desc { ordering.reverse() } else { ordering };
-                }
-            }
-            for id in 0..num_columns {
-                let ordering = combined.compare_rows_at(id as u32, a, b);
-                if ordering != Ordering::Equal {
-                    return ordering;
-                }
-            }
-            a.cmp(&b)
+            tiebreak(trees, &typed_keys, &combined, num_columns, a, b)
         };
         // Pack the primary key inline so the sort scans contiguous `(key, idx)`
         // pairs instead of indices that random-gather the key column — the same
@@ -345,7 +361,7 @@ impl<'a> SortOp<'a> {
             Column::Floats(keys) => {
                 let mut pairs: Vec<(f64, u32)> = (0..total).map(|i| (keys[i], i as u32)).collect();
                 pairs.sort_unstable_by(|&(ka, ia), &(kb, ib)| {
-                    let primary = ka.partial_cmp(&kb).unwrap_or(Ordering::Less);
+                    let primary = sort_cmp_f64(ka, kb);
                     let primary = if primary_desc {
                         primary.reverse()
                     } else {
