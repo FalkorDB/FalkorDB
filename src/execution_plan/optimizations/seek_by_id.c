@@ -23,14 +23,32 @@
 // a variable resolved upstream, or a compound expression such as 'ID(a) + 1';
 // it is evaluated against the incoming record at runtime
 
-// returns true if 'exp' is exactly an ID(node) function call
+// returns true if 'exp' is exactly ID(<scanned_alias>) - an id() call whose
+// single argument is the scanned entity itself (a bare variadic operand), and
+// not an attribute or other expression such as ID(n.v).
+//
+// the optimization REPLACES the ID(...) side with a range seek and discards
+// that expression, so accepting anything other than the scanned node here
+// would silently drop the real predicate (e.g. ID(n.v) = 5 would be executed
+// as ID(n) IN {5}, returning wrong rows instead of evaluating ID(n.v))
 static bool _is_id_call
 (
-	const AR_ExpNode *exp
+	const AR_ExpNode *exp,
+	const char *scanned_alias
 ) {
-	return exp->type          == AR_EXP_OP           &&
-		   exp->op.child_count == 1                  &&
-		   strcasecmp(exp->op.f->name, "id") == 0;
+	if(exp->type          != AR_EXP_OP ||
+	   exp->op.child_count != 1        ||
+	   strcasecmp(exp->op.f->name, "id") != 0) {
+		return false;
+	}
+
+	// the id() argument must be the scanned entity itself: a bare variadic
+	// operand whose alias matches the scan's alias (a property access such as
+	// n.v is an AR_EXP_OP, not a variadic, so it is rejected here)
+	const AR_ExpNode *arg = exp->op.children[0];
+	return arg->type         == AR_EXP_OPERAND  &&
+		   arg->operand.type == AR_EXP_VARIADIC &&
+		   strcmp(arg->operand.variadic.entity_alias, scanned_alias) == 0;
 }
 
 // returns true if 'alias' is referenced anywhere within 'exp'
@@ -79,9 +97,10 @@ static bool _idFilter
 	AR_ExpNode *id_side  = on_lhs ? lhs : rhs;
 	AR_ExpNode *val_side = on_lhs ? rhs : lhs;
 
-	// the side describing the scanned node must be exactly ID(n)
-	// rejects e.g. 'ID(n) + 1 = 5' or 'n.v = 5'
-	if(!_is_id_call(id_side)) return false;
+	// the side describing the scanned node must be exactly ID(n), where n is
+	// the scanned entity itself - rejects e.g. 'ID(n) + 1 = 5', 'n.v = 5' and
+	// 'ID(n.v) = 5' (id of an attribute rather than the scanned node)
+	if(!_is_id_call(id_side, scanned_alias)) return false;
 
 	// 'val_side' is guaranteed not to reference the scanned node,
 	// hence it is resolvable from the incoming record

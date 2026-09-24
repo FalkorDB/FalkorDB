@@ -299,6 +299,21 @@ class testNodeByIDFlow(FlowTestsBase):
         resultsetB = self.graph.query("MATCH (n) RETURN n ORDER BY n.id").result_set
         self.env.assertEqual(resultsetA, resultsetB)
 
+        # the ID() side must be ID(<scanned node>) itself, not id() of an
+        # attribute or other expression. the optimization discards the ID(...)
+        # expression, so optimizing ID(n.id) = x + 1 would silently execute it
+        # as ID(n) IN {x+1} instead of evaluating id() on the attribute. it must
+        # NOT be optimized, and then errors at runtime like the plain filter
+        query = """UNWIND range(0, 4) AS x MATCH (n) WHERE ID(n.id) = x + 1 RETURN n"""
+        self.env.assertNotIn("NodeByIdSeek", str(self.graph.explain(query)))
+        raised = False
+        try:
+            self.graph.query(query)
+        except Exception as e:
+            raised = True
+            self.env.assertContains("Type mismatch", str(e))
+        self.env.assertTrue(raised)
+
     # Try to fetch none existing entities by ID(s).
     def test_for_none_existing_entity_ids(self):
         # Try to fetch an entity with a none existing ID.
@@ -412,4 +427,36 @@ class testNodeByIDFlow(FlowTestsBase):
                 raised = True
                 self.env.assertContains("Type mismatch", str(e))
             self.env.assertTrue(raised)
+
+    # a non-integer numeric bound must be resolved to the correct integer range
+    # per the operator - ID(n) > 2.0 means id >= 3, ID(n) <= 2.5 means id <= 2,
+    # ID(n) = 2.5 matches no id - instead of collapsing to an empty range and
+    # returning nothing. covers compile-time doubles and runtime doubles
+    # (parameters, UNWIND).
+    def test_seek_by_id_double_bounds(self):
+        # optimized (ID(n)) query must use the seek and match the un-optimized
+        # (n.id) equivalent, which keeps full numeric-comparison semantics
+        def assert_seek_eq(id_q, prop_q):
+            self.env.assertIn("NodeByIdSeek", str(self.graph.explain(id_q)))
+            self.env.assertNotIn("NodeByIdSeek", str(self.graph.explain(prop_q)))
+            self.env.assertEqual(self.graph.query(id_q).result_set,
+                                 self.graph.query(prop_q).result_set)
+
+        # every comparison operator, against an integral (2.0) and a fractional
+        # (2.5) double bound
+        for op in [">", ">=", "<", "<=", "="]:
+            for bound in ["2.0", "2.5"]:
+                assert_seek_eq(
+                    "MATCH (n) WHERE ID(n) %s %s RETURN n ORDER BY n.id" % (op, bound),
+                    "MATCH (n) WHERE n.id  %s %s RETURN n ORDER BY n.id" % (op, bound))
+
+        # integral doubles from an UNWIND match; fractional ones are skipped
+        assert_seek_eq(
+            "UNWIND [2.0, 3.5, 4.0] AS x MATCH (n) WHERE ID(n) = x RETURN n ORDER BY n.id",
+            "UNWIND [2.0, 3.5, 4.0] AS x MATCH (n) WHERE n.id  = x RETURN n ORDER BY n.id")
+
+        # a runtime double parameter is resolved the same way
+        self.env.assertEqual(
+            self.graph.query("MATCH (n) WHERE ID(n) > $p RETURN n ORDER BY n.id", {'p': 2.0}).result_set,
+            self.graph.query("MATCH (n) WHERE n.id  > $p RETURN n ORDER BY n.id", {'p': 2.0}).result_set)
 

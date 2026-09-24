@@ -7,6 +7,8 @@
 #include "bitmap_range.h"
 #include "../../query_ctx.h"
 
+#include <math.h>
+
 // tighten the range
 // e.g.
 // 3 < n < 10 && 1 < n < 8
@@ -83,13 +85,56 @@ bool BitmapRange_FromRanges (
 
 	for (int i = 0; i < n; i++) {
 		SIValue v = AR_EXP_Evaluate (ranges[i].exp, r) ;
+		AST_Operator op = ranges[i].op ;
 
-		// fail if range expression isn't an integer
-		if (SI_TYPE(v) != T_INT64) {
+		// the range is over integer node ids, so only a numeric bound can
+		// constrain it; a non-numeric value (string, list, map, bool, null)
+		// equals no id and yields an empty range
+		if (!(SI_TYPE(v) & SI_NUMERIC)) {
 			return false ;
 		}
 
-		if (!BitmapRange_Tighten (v.longval, ranges[i].op, &min, &max)) {
+		// resolve the bound to the tightest integer that preserves the
+		// comparison's meaning against integer ids: an integer is used as-is,
+		// a floating-point value is rounded toward the range interior per the
+		// operator, e.g. ID(n) > 2.0 -> id >= 3, ID(n) <= 2.5 -> id <= 2,
+		// while ID(n) = 2.5 matches no id
+		int64_t bound ;
+		if (SI_TYPE(v) == T_INT64) {
+			bound = v.longval ;
+		} else {  // T_DOUBLE
+			double d = v.doubleval ;
+
+			// NaN compares false against every id -> empty range
+			if (isnan(d)) {
+				return false ;
+			}
+
+			// clamp to a window that converts exactly to int64 (node ids never
+			// exceed 2^53); a bound outside it saturates and is then clamped
+			// against [min, max] by BitmapRange_Tighten
+			const double LIM = 9007199254740992.0 ;  // 2^53
+			if (d >  LIM) d =  LIM ;
+			if (d < -LIM) d = -LIM ;
+
+			switch (op) {
+				case OP_LT:  bound = (int64_t) ceil  (d) ; break ;  // id <  d
+				case OP_GE:  bound = (int64_t) ceil  (d) ; break ;  // id >= d
+				case OP_LE:  bound = (int64_t) floor (d) ; break ;  // id <= d
+				case OP_GT:  bound = (int64_t) floor (d) ; break ;  // id >  d
+				case OP_EQUAL:
+					// no integer equals a fractional value -> empty range
+					if (floor (d) != d) {
+						return false ;
+					}
+					bound = (int64_t) d ;
+					break ;
+				default:
+					return false ;
+			}
+		}
+
+		if (!BitmapRange_Tighten (bound, op, &min, &max)) {
 			return false ;
 		}
 	}
