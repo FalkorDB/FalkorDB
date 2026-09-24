@@ -43,6 +43,9 @@ typedef bool (*SyncMatrixFunc)(const Graph *, Delta_Matrix, GrB_Index, GrB_Index
 
 struct Graph {
 	int reserved_node_count;           // number of nodes not commited yet
+	                                   // NOTE: graph-global but reset per-command
+	                                   // on rollback; racy across concurrent ops -
+	                                   // see Graph_ResetReservedNode
 	DataBlock *nodes;                  // graph nodes stored in blocks
 	DataBlock *edges;                  // graph edges stored in blocks
 	Delta_Matrix adjacency_matrix;     // adjacency matrix, holds all graph connections
