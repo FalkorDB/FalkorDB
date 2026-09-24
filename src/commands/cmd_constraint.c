@@ -374,6 +374,20 @@ static const char *_Constraint_CreatePrecheck
 ) {
 	ASSERT (gc != NULL && label != NULL && props != NULL && n > 0) ;
 
+	// duplicate property names are rejected by GraphHub_AddConstraint BEFORE its
+	// already-exists / supporting-index checks ("Properties cannot contain
+	// duplicates"). detect them here by NAME - detecting by attribute ID would
+	// miss a duplicated name that isn't an attribute yet - and on any duplicate
+	// defer to the authoritative path so it emits the canonical error, rather
+	// than this precheck rejecting with a misleading "missing supporting index"
+	for (uint8_t i = 0 ; i < n ; i++) {
+		for (uint8_t j = i + 1 ; j < n ; j++) {
+			if (strcmp (props [i], props [j]) == 0) {
+				return NULL ;  // let GraphHub_AddConstraint emit the dup error
+			}
+		}
+	}
+
 	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
 	Schema *s = GraphContext_GetSchema (gc, label, st) ;
 
@@ -486,20 +500,16 @@ static bool _Constraint_Create
 	GraphContext_AcquireReadLock (gc) ;
 	const char *precheck_err =
 		_Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
-	GraphContext_ReleaseLock (gc) ;
+	GraphContext_ReleaseReadLock (gc) ;
 
 	if (precheck_err != NULL) {
-		// RedisModule_ReplyWithError touches the blocked client's reply
-		// state, unsafe without the thread-safe context lock off-thread
-		if (from_thread) {
-			RedisModule_ThreadSafeContextLock (ctx) ;
-		}
-
+		// reply lock-free: on the async path this is a blocked-client
+		// thread-safe context whose replies are buffered and flushed on
+		// UnblockClient, so no GIL is needed (same as the success reply in
+		// Constraint_Op and the write-locked error paths below); on the sync
+		// AOF/replicated path there is no blocked client and we are already on
+		// the main thread holding the GIL, where taking it again would deadlock
 		RedisModule_ReplyWithError (ctx, precheck_err) ;
-
-		if (from_thread) {
-			RedisModule_ThreadSafeContextUnlock (ctx) ;
-		}
 
 		QueryCtx_Free  () ;
 		ErrorCtx_Clear () ;
