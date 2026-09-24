@@ -14,77 +14,53 @@
 
 // builds an IdList's segments as the ids arrive
 //
-// An IdList is an ordered, duplicate-preserving list of entity ids, written as
-// a count of segments followed by the segments. There is no plain form, no
-// dictionary, and no discriminator for the list as a whole - the segments ARE
-// the encoding, decided as the ids are pushed rather than rediscovered later.
-// So a bulk create or a delete-by-label is one Range from the first push to
-// the last and never allocates beyond it.
+// An IdList is an ordered, duplicate-preserving list of entity ids, written as a
+// count of segments followed by the segments. There is no plain form and no
+// dictionary - the segments ARE the encoding, decided as the ids are pushed
+// rather than rediscovered later, so a bulk create is one Range from the first
+// push to the last and never allocates beyond it.
 //
-// The segmentation is NORMATIVE. Two engines must reach the same segments for
-// the same ids, or the same write produces different bytes, so every decision
+// The segmentation is NORMATIVE: two engines must reach the same segments for
+// the same ids, or the same write produces different bytes. So every decision
 // here is fixed by the format rather than chosen for this implementation:
 //
 //   * the collapse rule is evaluated on every new segment against the run's own
 //     shape, using closed-form arithmetic (effects_v3_run_cost.h)
 //   * a bitmap is built with one add_range_closed per contributing range, never
 //     id by id - the same set serializes to different bytes depending on how it
-//     was built, so construction path is part of the format
-//   * run_optimize is called once, unconditionally. On the mandated
-//     construction path it is a NORMALIZATION rather than a size win: it leaves
-//     most shapes untouched and can make one larger. Skipping it produces
-//     identical bytes on most sets and different bytes on a few, which is the
-//     worst available failure - it passes casual testing and diverges a replica
-//     on a minority of writes
+//     was built, so the construction path is part of the format
+//   * run_optimize is called once, unconditionally. On that path it is a
+//     NORMALIZATION rather than a size win, and skipping it produces identical
+//     bytes on most sets and different bytes on a few - the worst available
+//     failure, since it passes casual testing and diverges a replica on a
+//     minority of writes
 //   * a Repeat never carries a direction. One id however many times reads the
-//     same both ways, so the bit would carry no information and a decoder
-//     rejects it there rather than ignoring it
+//     same both ways, so a decoder rejects the bit rather than ignoring it
 
-// the kind enum and the header-bit macros come from effects_v3.h, which is the
-// shared contract: duplicating them here would let the two drift apart, and a
-// segment kind that differs between the encoder and the decoder is precisely
-// the disagreement the corpus exists to catch.
-
-// THE BUILDER'S SEGMENT AND THE CONTRACT'S ARE TWO OBJECTS, DELIBERATELY.
-//
-// EffectsV3IdListSegment (effects_v3.h) is a DECODED record; this is a MUTABLE
-// ACCUMULATOR. They describe the same wire shape and are not the same thing,
-// and the duplication is worth stating because the obvious reaction is to
-// collapse them.
-//
-// Collapsing forces one of two regressions, not a trade:
-//
-//   * the decoded form would carry a live roaring bitmap, which means
-//     DESERIALISING EVERY SEGMENT AT DECODE - and the contract's own invariant
-//     is that an IdList is never expanded there, one valid segment being four
-//     billion ids in seven bytes;
-//
-//   * or this form would serialise on every push, which is exactly the trial
-//     build the closed-form cost model exists to avoid.
-//
-// The sharpest difference is below: this caches min and max EXACTLY, because
-// the builder routes the next push on them. Deriving one from the other and
-// the length assumes the ids are gapless, which is precisely what a bitmap
-// segment is not. A decoded segment has no such need and carries no such
-// fields.
+// the kind enum and the header-bit macros come from effects_v3.h, the shared
+// contract: a segment kind that differs between the encoder and the decoder is
+// precisely the disagreement the corpus exists to catch.
 
 // one segment under construction
 //
-// BOTH EXTREMES ARE CACHED on a bitmap segment rather than one being derived
-// from the other and the length. Deriving assumes the ids are gapless, which is
-// exactly what a bitmap segment is not - the derived extreme is then wrong by
-// however much the gaps total, and a wrong extreme both misroutes the next
-// push and, if it ever reaches a range insertion, fabricates ids the set does
-// not hold
+// A SEPARATE TYPE from the contract's EffectsV3IdListSegment (effects_v3.h),
+// which is a DECODED record, deliberately: collapsing the two forces one of two
+// regressions. Either the decoded form carries a live roaring bitmap, which
+// means deserialising every segment at decode - and the contract's invariant is
+// that an IdList is never expanded there, one valid segment being four billion
+// ids in seven bytes - or this form serialises on every push, which is the trial
+// build the closed-form cost model exists to avoid.
+//
+// Hence the fields a decoded segment has no use for: BOTH EXTREMES ARE CACHED on
+// a bitmap segment, because the builder routes the next push on them. Deriving
+// one assumes the ids are gapless, which is exactly what a bitmap segment is not
+// - the derived extreme is then wrong by however much the gaps total, misrouting
+// the next push and, if it reaches a range insertion, fabricating ids the set
+// does not hold.
 typedef struct {
-	// DIRECTION IS IN THE KIND, not a flag beside it.
-	//
-	// It was a bool, which let a descending Repeat be written down even though
-	// the combination has no meaning - one id held 'count' times reads the same
-	// either way - and the code carried an assert to forbid what the type
-	// allowed. The contract's closed set made that unrepresentable; carrying a
-	// flag as well would have been two fields encoding one fact, which is what
-	// the split removed one layer up.
+	// direction is in the kind, not a flag beside it: the contract's closed set
+	// makes a descending Repeat unrepresentable rather than merely forbidden by
+	// an assert
 	EffectsV3IdListSegmentKind kind;
 	union {
 		struct {
@@ -114,8 +90,7 @@ EffectsV3IdListBuilder *EffectsV3IdListBuilder_New(void);
 //
 // ids arrive in whatever order the write produced them: duplicates and steps
 // backwards are the ordinary case, not an error. Edge endpoints are nothing but
-// repeats, and a scan walking nodes downward writes a strictly descending
-// column
+// repeats, and a scan walking nodes downward writes a strictly descending column
 void EffectsV3IdListBuilder_Push
 (
 	EffectsV3IdListBuilder *b,  // builder
@@ -149,15 +124,13 @@ void EffectsV3IdListBuilder_Free
 
 // convert what the builder holds into the shared wire representation
 //
-// This is where a freshly built list acquires its width codes: each value is
-// given the narrowest width that holds it, and each bitmap is serialized to a
-// blob. A DECODED list already carries the widths its peer chose, and those are
-// preserved rather than recomputed - so the two paths meet at the same struct
-// and the encoder never has to know which one it is writing.
-//
-// Recomputing on the re-encode path would be wrong even though it usually
-// agrees: a peer may legitimately write a value wider than it needs, and a
-// round trip that narrows it produces different bytes from the ones it read.
+// Where a freshly built list acquires its width codes: each value is given the
+// narrowest width that holds it, and each bitmap is serialized to a blob. A
+// DECODED list already carries the widths its peer chose, and those are
+// preserved rather than recomputed - a peer may legitimately write a value wider
+// than it needs, and a round trip that narrows it produces different bytes from
+// the ones it read. The two paths meet at the same struct, so the encoder never
+// has to know which one it is writing.
 //
 // the caller owns the result and must free it with
 // EffectsV3IdListBuilder_FreeIdList

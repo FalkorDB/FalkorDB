@@ -226,8 +226,6 @@ static void _push_singleton
 	_append(b, s);
 }
 
-// replace the open run with its bitmap, if the arithmetic has already gone
-// that way
 // settle the run's direction against a segment that is about to acquire one,
 // ending the run where the two disagree
 //
@@ -238,16 +236,15 @@ static void _push_singleton
 //
 // WHY HERE AND NOT AT THE CHARGE POINT, which can also see the conflict: the
 // charge point is one push too late to put this segment at the head of the new
-// run. Ending the run there leaves the segment orphaned between two runs, where
-// no collapse can ever reach it - which is legal and order-preserving, and emits
-// DIFFERENT BYTES from Rust, which restarts AT the segment. Measured on 404
-// generated sequences: three disagreed, all of this shape.
+// run, leaving it orphaned between two runs where no collapse can reach it -
+// legal and order-preserving, and DIFFERENT BYTES from Rust, which restarts AT
+// the segment. Measured on 404 generated sequences: three disagreed, all of this
+// shape.
 //
-// The direction is set here rather than left for the next push. _restart_run
-// clears it, and a cleared run takes its direction from whichever way the
-// FOLLOWING id falls - which can be the opposite of the one this segment already
-// reads, putting an ascending pair at the head of a descending run and reversing
-// it in the collapse. That is the same bug one segment further along.
+// The direction is set here rather than left for the next push, because a run
+// cleared by _restart_run takes its direction from whichever way the FOLLOWING
+// id falls - which can put an ascending pair at the head of a descending run and
+// reverse it in the collapse. The same bug one segment further along.
 static void _claim_direction
 (
 	EffectsV3IdListBuilder *b,  // builder
@@ -285,16 +282,13 @@ static void _maybe_collapse_run
 	for(uint32_t i = b->run_start; i < n; i++) {
 		const EffectsV3Seg *s = b->segments + i;
 
-		// A RUN HOLDS ONLY RANGES - a Repeat starts its own run, and a
-		// collapsed bitmap is left behind by _restart_run - AND every range in
-		// it reads in the run's own direction.
-		//
-		// The second half is the one that matters and the one this assert used
-		// to be missing. It named the KIND, which is not the property the walk
-		// below needs: a two-id ascending range inside a descending run
-		// satisfies "is a range" and still comes back transposed out of the
-		// set, because the set is re-read in one direction. A single id has no
-		// direction and fits either way, which is why the length is part of it.
+		// A RUN HOLDS ONLY RANGES - a Repeat starts its own run, and a collapsed
+		// bitmap is left behind by _restart_run - AND every range in it reads in
+		// the run's own direction. The second half is what the walk below needs:
+		// the KIND alone is not, since a two-id ascending range inside a
+		// descending run satisfies "is a range" and still comes back transposed,
+		// the set being re-read in one direction. A single id has no direction
+		// and fits either way, which is why the length is part of it.
 		ASSERT(s->kind == EFFECTS_V3_SEG_RANGE_ASCENDING ||
 			   s->kind == EFFECTS_V3_SEG_RANGE_DESCENDING);
 
@@ -381,14 +375,14 @@ void EffectsV3IdListBuilder_Push
 	if(last != NULL) {
 		switch(last->kind) {
 			case EFFECTS_V3_SEG_RANGE_ASCENDING:
-				// "is this the id one past the end?" - a question with no
-				// answer at the top of the id space, where base + len leaves
-				// it. The wrap is defined in C rather than a trap, which makes
-				// it worse here than undefined: base = UINT64_MAX, len = 1
-				// computes 0, so pushing id 0 after the highest id extends the
-				// range instead of starting a new segment, and the result
-				// claims an id that does not exist and reports max below min.
-				// So the sum is only asked for when it exists
+				// "is this the id one past the end?" - a question with no answer
+				// at the top of the id space, where base + len leaves it. The
+				// wrap is defined rather than trapped, which makes it worse than
+				// undefined: base = UINT64_MAX, len = 1 computes 0, so pushing
+				// id 0 after the highest id extends the range instead of
+				// starting a segment, claiming an id that does not exist and
+				// reporting max below min. So the sum is only asked for when it
+				// exists
 				if(last->range.base <= UINT64_MAX - (uint64_t)last->range.len &&
 				   id == last->range.base + (uint64_t)last->range.len) {
 					// one more consecutive id: every bulk create, every
@@ -516,14 +510,11 @@ void EffectsV3IdListBuilder_Push
 		// moment its contribution is known - and the only moment it may be
 		// charged, since charging an open segment would make the collapse
 		// decision depend on when the encoder looked
-		// BOTH range kinds are charged. Weighing only the ascending ones left
-		// a descending run's tally permanently empty, so it could never earn a
-		// bitmap however much it would have saved - and Rust charges both
-		// (Segment::Range | Segment::RangeDescending -> Run::absorb), so the
-		// two engines emitted different bytes for the same ids: measured at
-		// 980 ids as descending ranges, Rust one bitmap segment against C's 98
-		// ranges. The tally is over the id SET, and a range's min and len say
-		// that whichever way it reads
+		// BOTH range kinds are charged, as Rust charges both (Segment::Range |
+		// Segment::RangeDescending -> Run::absorb): weighing only the ascending
+		// ones leaves a descending run's tally permanently empty, so it can
+		// never earn a bitmap however much it would save. The tally is over the
+		// id SET, and a range's min and len say that whichever way it reads
 		if(last->kind == EFFECTS_V3_SEG_RANGE_ASCENDING ||
 		   last->kind == EFFECTS_V3_SEG_RANGE_DESCENDING) {
 			EffectsV3Run_AddRangeBytes(&b->run, EffectsV3Seg_EncodedLen(last));
@@ -650,13 +641,9 @@ void EffectsV3IdListBuilder_FreeIdList
 		return;
 	}
 
-	// BOTH Set arms own a blob. This tested one kind when there was one Set
-	// kind; splitting direction into the kind made the descending half leak,
-	// and no test would have shown it - the decoder's mirror of this function
-	// had the identical defect for the identical reason.
-	//
-	// Switched rather than if-ed, with no default, so a sixth kind is a
-	// compile error here rather than a silent leak.
+	// BOTH Set arms own a blob, and testing one kind leaks the other half.
+	// Switched rather than if-ed, with no default, so a sixth kind is a compile
+	// error here rather than a silent leak.
 	for(uint32_t i = 0; i < l->n; i++) {
 		switch(l->segments[i].kind) {
 			case EFFECTS_V3_SEG_SET_ASCENDING:

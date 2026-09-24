@@ -70,13 +70,10 @@
 // the floor below which there is nothing to weigh
 //
 // the smallest treemap roaring can serialize is 27 bytes - a run container, the
-// cheapest of the three - so a run costing less than that cannot lose to one.
-// 32 rather than 27 because the arithmetic is only worth running once a bitmap
-// is plausibly competitive, not the instant it becomes possible
-//
-// (30 is the ARRAY container's floor. Both were measured on this tree's
-// CRoaring while checking parity; the constant is unchanged, the reason the
-// spec gave for it was wrong)
+// cheapest of the three - so a run costing less than that cannot lose to one. 32
+// rather than 27 because the arithmetic is only worth running once a bitmap is
+// plausibly competitive, not the instant it becomes possible. (30 is the ARRAY
+// container's floor; both measured on this tree's CRoaring.)
 #define ROARING_FLOOR_BYTES 32
 
 // how many ids share one bucket
@@ -190,13 +187,11 @@ void EffectsV3Run_AddRange
 		return;
 	}
 
-	// grouped as base + (len - 1), not base + len - 1. The two agree for every
+	// grouped as base + (len - 1), not base + len - 1: the two agree for every
 	// input, but the second computes base + len first, which wraps through zero
-	// for a range ending at the top of the id space and only lands on the right
-	// answer via the following subtraction. Grouping it this way keeps the
-	// arithmetic inside the range's own validity condition - a well-formed
-	// ascending range satisfies len - 1 <= UINT64_MAX - base, which is exactly
-	// the statement that this addition does not overflow
+	// for a range ending at the top of the id space. This grouping stays inside
+	// the range's own validity condition - len - 1 <= UINT64_MAX - base is
+	// exactly the statement that this addition does not overflow
 	uint64_t end = base + (len - 1);
 	uint64_t lo  = base;
 
@@ -239,14 +234,11 @@ void EffectsV3Run_AddRange
 			run->bucket_runs = 1;
 		}
 
-		// guard the increment as well: piece_end == UINT64_MAX would wrap
-		// test for the end BEFORE advancing rather than at the top of the loop.
-		// A range reaching UINT64_MAX makes piece_end + 1 wrap to zero, and a
-		// `while (lo <= end)` condition would then restart from the bottom of
-		// the id space and never terminate. Nothing to do with overflow being
-		// trapped - it is defined and silent on unsigned in C - the wrapped
-		// value is simply a valid loop index, which is what makes it a hang
-		// rather than a fault
+		// test for the end BEFORE advancing, so the increment is guarded too: a
+		// range reaching UINT64_MAX makes piece_end + 1 wrap to zero, and a
+		// `while (lo <= end)` condition would restart from the bottom of the id
+		// space and never terminate. The wrapped value is a valid loop index,
+		// which is what makes it a hang rather than a fault
 		if(piece_end >= end) {
 			break;
 		}
