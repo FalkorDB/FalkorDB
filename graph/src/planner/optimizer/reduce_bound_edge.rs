@@ -1,5 +1,5 @@
 //! Reduces `CondTraverse`'s `bind_relationship` to false when the edge alias
-//! is not consumed by any ancestor operator.
+//! is not read by any operator (see `variable_read_outside`).
 //!
 //! A chain-less `CondTraverse` binds its edge alias to a representative edge
 //! id, and finding one costs a tensor lookup per surviving row — up to three
@@ -25,7 +25,7 @@
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
-use super::reduce_expand_into::ir_references_variable;
+use super::reduce_expand_into::variable_read_outside;
 
 pub(super) fn reduce_bound_edge(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
@@ -42,18 +42,7 @@ pub(super) fn reduce_bound_edge(plan: &mut DynTree<IR>) {
             _ => continue,
         };
 
-        // Walk ancestors to check if the edge alias is referenced.
-        let mut referenced = false;
-        let mut cur = idx;
-        while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), alias_id, alias_scope_id) {
-                referenced = true;
-                break;
-            }
-            cur = parent.idx();
-        }
-
-        if !referenced
+        if !variable_read_outside(plan, idx, alias_id, alias_scope_id)
             && let IR::CondTraverse {
                 bind_relationship, ..
             } = plan.node_mut(idx).data_mut()
@@ -154,6 +143,14 @@ mod tests {
     #[test]
     fn edge_read_after_a_with_barrier_is_bound() {
         let plan = optimized_plan("MATCH (a:N)-[r:R]->(b:N) WITH r AS e RETURN e");
+        assert_eq!(bound_edges(&plan), vec![true]);
+    }
+
+    #[test]
+    fn edge_read_inside_a_call_subquery_is_bound() {
+        // The CALL body is a sibling branch of the traverse, not an ancestor.
+        let plan =
+            optimized_plan("MATCH (a:N)-[r:R]->(b:N) CALL { WITH r RETURN id(r) AS i } RETURN i");
         assert_eq!(bound_edges(&plan), vec![true]);
     }
 
