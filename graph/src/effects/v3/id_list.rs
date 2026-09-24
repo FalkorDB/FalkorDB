@@ -1168,16 +1168,23 @@ impl IdList {
 
     /// Adopt segments read off the wire, verbatim.
     ///
-    /// The run tally starts fresh at the last segment rather than being
-    /// reconstructed. A decoded list is iterated, not extended, and the tally is
-    /// read by [`Self::push`] alone — so the only consequence is that a later
-    /// push would not collapse across the boundary, and encoding is unaffected
-    /// because it writes the segments as they are.
+    /// The run starts empty, **after** every decoded segment, the same place
+    /// `maybe_collapse_run` leaves it after a collapse. The tally is read only
+    /// by [`Self::push`], so this matters only if a decoded list is extended.
+    /// A later push can still extend the last decoded segment in place, but no
+    /// collapse ever folds a decoded segment in. Encoding is unaffected because
+    /// it writes the segments as they are.
+    ///
+    /// Starting the run *at* the last segment was wrong, because that segment
+    /// can be anything the wire held. A `Repeat` there tripped the collapse's
+    /// "only ranges" assert. A descending range there was folded into an
+    /// ascending bitmap and came back reversed, so the ids paired with the
+    /// wrong rows.
     fn from_segments(
         segments: SmallVec<[Segment; 2]>,
         len: usize,
     ) -> Self {
-        let start = segments.len().saturating_sub(1);
+        let start = segments.len();
         Self {
             segments,
             len,
@@ -2506,5 +2513,122 @@ mod repeats_stay_out_of_runs {
         let mut r = Reader::new(&buf);
         let back = read_ids(&mut r, ids.len() as u32).expect("must not be refused");
         assert_eq!(back.iter().collect::<Vec<_>>(), ids);
+    }
+}
+
+#[cfg(test)]
+mod pushing_onto_a_decoded_list {
+    use super::*;
+
+    fn decode(ids: &[u64]) -> IdList {
+        let mut buf = Vec::new();
+        IdList::from(ids).encode(&mut buf).unwrap();
+        let mut r = Reader::new(&buf);
+        read_ids(&mut r, ids.len() as u32).expect("an encoded list decodes")
+    }
+
+    /// Push `more` onto the decoded `head`, and require the ids in push order,
+    /// both in memory and after another trip over the wire.
+    fn extends(
+        head: &[u64],
+        more: &[u64],
+    ) {
+        let mut list = decode(head);
+        for &id in more {
+            list.push(id);
+        }
+        let want: Vec<u64> = head.iter().chain(more).copied().collect();
+        assert_eq!(list.iter().collect::<Vec<_>>(), want, "{head:?} + {more:?}");
+        assert_eq!(list.len(), want.len());
+
+        let mut buf = Vec::new();
+        list.encode(&mut buf).unwrap();
+        let mut r = Reader::new(&buf);
+        let back = read_ids(&mut r, want.len() as u32).expect("must decode");
+        assert_eq!(back.iter().collect::<Vec<_>>(), want, "and the wire agrees");
+    }
+
+    /// Gapped ascending ids, enough of them that the run collapses.
+    fn gapped(from: u64) -> Vec<u64> {
+        (0..60).map(|i| from + i * 2).collect()
+    }
+
+    #[test]
+    fn a_descending_tail_is_not_reversed_by_a_later_collapse() {
+        // The run used to start at the decoded `RangeDescending { 10, 3 }`, so
+        // the collapse folded it into an ascending bitmap: 8, 9, 10, 20, ...
+        extends(&[10, 9, 8], &gapped(20));
+    }
+
+    #[test]
+    fn a_repeat_tail_is_not_folded_into_a_later_collapse() {
+        // And a decoded `Repeat` inside the run tripped the collapse's assert.
+        extends(&[7, 7], &gapped(20));
+    }
+
+    #[test]
+    fn every_tail_shape_survives_being_extended() {
+        // One head per segment shape the wire can end on, each extended by a
+        // push sequence per shape a push can start with.
+        let heads: [&[u64]; 6] = [
+            &[5],
+            &[5, 6, 7],
+            &[7, 6, 5],
+            &[7, 7, 7],
+            &gapped(100),
+            &gapped(100).into_iter().rev().collect::<Vec<_>>(),
+        ];
+        let tails: [Vec<u64>; 7] = [
+            gapped(1_000),
+            gapped(1_000).into_iter().rev().collect(),
+            (0..60).map(|i| 90 - i).collect(),
+            vec![7, 8, 9],
+            vec![6, 5, 4],
+            vec![7; 5],
+            vec![4, 5, 4, 5, 3, 1_000, 2],
+        ];
+        for head in heads {
+            for tail in &tails {
+                extends(head, tail);
+            }
+        }
+    }
+
+    /// The same property over seeded random sequences, split at any point.
+    ///
+    /// Built from phases, each one step shape repeated: consecutive up or
+    /// down, a repeat, or a gapped walk either way. A long enough gapped phase
+    /// collapses into a bitmap, so collapses land on both sides of the split
+    /// and after every kind of decoded tail.
+    #[test]
+    fn random_sequences_split_anywhere_survive() {
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        let mut next = move |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        for _ in 0..2_000 {
+            let mut ids = Vec::new();
+            let mut id = 1 << 20;
+            for _ in 0..next(4) + 1 {
+                let kind = next(6);
+                for _ in 0..next(60) + 1 {
+                    id = match kind {
+                        0 => id + 1,
+                        1 => id - 1,
+                        2 => id,
+                        3 => id + 2,
+                        4 => id - 2,
+                        _ => (1 << 20) + next(1 << 20),
+                    };
+                    ids.push(id);
+                }
+            }
+            let split = next(ids.len() as u64) as usize + 1;
+            let (head, more) = ids.split_at(split);
+            extends(head, more);
+        }
     }
 }
