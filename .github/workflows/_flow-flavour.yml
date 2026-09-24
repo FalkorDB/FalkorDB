@@ -1,8 +1,8 @@
 # Reusable workflow: run the flow-test matrix for ONE flavour.
 #
-# Why reusable: GHA caps a single workflow run's matrix at 256 cells.
-# `97 services-bucket files × multiple flavours × multiple archs` blows past
-# that limit, and GHA silently drops the over-budget matrix. By calling this
+# Why reusable: GHA caps a single workflow run's matrix at 256 cells, and
+# silently drops whatever is over budget rather than failing. The file list
+# times the flavours times the architectures goes past that. By calling this
 # workflow once per flavour from rust-pr.yml, each call gets its own 256-cell
 # budget — so adding a new flavour (tsan/ubsan/msan) is one more `uses:`
 # block in the caller, no matrix-budget juggling needed.
@@ -24,7 +24,7 @@ on:
         required: true
         type: string
       image:
-        description: "Full image ref for the falkordb service+replica containers (e.g. ghcr.io/falkordb/falkordb-server:rc-pr-42)"
+        description: "Full image ref for the falkordb service+replica containers"
         required: true
         type: string
       archs:
@@ -41,10 +41,6 @@ on:
         type: string
       build_image:
         description: "Toolchain image used as the job container (cargo + pytest + clang)"
-        required: true
-        type: string
-      pr_number:
-        description: "PR number — used for log-artifact naming + coverage image lookup"
         required: true
         type: string
       sanitizer_env:
@@ -70,8 +66,12 @@ jobs:
   services:
     name: ${{ inputs.flavour }}-flow-svc ${{ matrix.test_file }} (${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 30
     container:
       image: ${{ inputs.build_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
       options: --volume /var/run/docker.sock:/var/run/docker.sock
     permissions:
       contents: read
@@ -82,12 +82,6 @@ jobs:
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-        # Bind-mount the host cov/ dir so coverage cells can collect the
-        # profraw files the instrumented .so writes to /var/lib/falkordb/cov
-        # (via LLVM_PROFILE_FILE in Dockerfile.coverage). Harmless for non-
-        # coverage cells — only the coverage image emits profraw.
-        volumes:
-          - ${{ github.workspace }}/cov:/var/lib/falkordb/cov
         env:
           # Empty FALKORDB_ARGS overrides the image's compiled-in default
           # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
@@ -100,8 +94,6 @@ jobs:
         credentials:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-        volumes:
-          - ${{ github.workspace }}/cov:/var/lib/falkordb/cov
         env:
           FALKORDB_ARGS: ""
           REDIS_ARGS: "--replicaof falkordb 6379 --enable-debug-command yes"
@@ -124,9 +116,12 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Pre-create cov dir (coverage flavour only)
-        if: inputs.collect_coverage
-        run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
+        with:
+          # persist-credentials defaults to true, which writes the token into
+          # .git/config — and the next step runs ./flow.sh, which is test code
+          # from the pull request, in this same workspace. Under merge_group
+          # that token is the base repository's.
+          persist-credentials: false
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
@@ -139,13 +134,30 @@ jobs:
           COV_IMAGE: ${{ inputs.image }}
         run: |
           set -euo pipefail
+          # LLVM flushes the instrumented module's profile when Redis exits.
+          # GitHub otherwise stops service containers only after all steps.
+          SERVICE_IDS=$(docker ps -aq --filter "ancestor=$COV_IMAGE")
+          if [ -z "$SERVICE_IDS" ]; then
+            echo "::error::unable to find coverage service containers"
+            exit 1
+          fi
+          # Every container uses PID 1 and the same module hash, so copy each
+          # profile directory separately to avoid filename collisions.
+          for service_id in $SERVICE_IDS; do
+            if [ "$(docker inspect -f '{{.State.Running}}' "$service_id")" = "true" ]; then
+              docker stop --time 60 "$service_id" >/dev/null
+            fi
+            profile_dir="${GITHUB_WORKSPACE}/cov/${service_id}"
+            mkdir -p "$profile_dir"
+            docker cp "${service_id}:/var/lib/falkordb/cov/." "$profile_dir"
+          done
           CID=$(docker create "$COV_IMAGE")
           docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
           docker rm "$CID" >/dev/null
-          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -name "*.profraw" 2>/dev/null || true)
+          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -type f -name "*.profraw" -size +0c 2>/dev/null || true)
           if [ -z "$PROFRAW" ]; then
-            echo "::warning::no profraw files produced — skipping coverage export"
-            exit 0
+            echo "::error::no profraw files produced"
+            exit 1
           fi
           llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
@@ -155,6 +167,8 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov.txt
+          disable_search: true
       - name: Capture service container logs on failure
         if: failure()
         run: |
@@ -178,8 +192,12 @@ jobs:
     if: ${{ inputs.include_spawn }}
     name: ${{ inputs.flavour }}-flow ${{ matrix.test_file }} (${{ matrix.arch }})
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    timeout-minutes: 30
     container:
       image: ${{ inputs.build_image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
       options: --volume /var/run/docker.sock:/var/run/docker.sock
     permissions:
       contents: read
@@ -199,6 +217,12 @@ jobs:
         arch: ${{ fromJson(inputs.archs) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # persist-credentials defaults to true, which writes the token into
+          # .git/config — and the next step runs ./flow.sh, which is test code
+          # from the pull request, in this same workspace. Under merge_group
+          # that token is the base repository's.
+          persist-credentials: false
       - name: Pre-create cov dir (coverage flavour only)
         if: inputs.collect_coverage
         run: mkdir -p "${GITHUB_WORKSPACE}/cov" && chmod 0777 "${GITHUB_WORKSPACE}/cov"
@@ -208,10 +232,17 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Pre-pull RC image
+      - name: Pre-pull RC image, then drop the credential
         env:
           IMAGE: ${{ inputs.image }}
-        run: docker pull "$IMAGE"
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          # The next step runs ./flow.sh — test code from the pull request — in
+          # this workspace. The login above leaves a GHCR token in the docker
+          # config where that code could read it, and the image it needed is
+          # already local, so hand the credential back first.
+          docker logout ghcr.io
       - name: Run Flow test - ${{ matrix.test_file }} (${{ inputs.flavour }}, ${{ matrix.arch }})
         env:
           TEST_FILE: ${{ matrix.test_file }}
@@ -227,10 +258,10 @@ jobs:
           CID=$(docker create "$COV_IMAGE")
           docker cp "${CID}:/var/lib/falkordb/bin/falkordb.so" ./libfalkordb-coverage.so
           docker rm "$CID" >/dev/null
-          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -name "*.profraw" 2>/dev/null || true)
+          PROFRAW=$(find "${GITHUB_WORKSPACE}/cov" -type f -name "*.profraw" -size +0c 2>/dev/null || true)
           if [ -z "$PROFRAW" ]; then
-            echo "::warning::no profraw files produced — skipping coverage export"
-            exit 0
+            echo "::error::no profraw files produced"
+            exit 1
           fi
           llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
           llvm-cov-22 export --format=lcov --instr-profile cov.profdata ./libfalkordb-coverage.so > codecov.txt.all
@@ -240,6 +271,8 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./codecov.txt
+          disable_search: true
       - name: Upload flow logs on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

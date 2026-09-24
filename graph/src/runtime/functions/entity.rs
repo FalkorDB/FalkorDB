@@ -87,10 +87,14 @@ pub fn register(funcs: &mut Functions) {
             let mut iter = args.iter();
             match (iter.next(), iter.next()) {
                 (Some(&Value::Node(id)), Some(Value::List(required_labels))) => {
-                    // Validate that all items in the list are strings
+                    // One pass: a label is interpreted, and rejected, in exactly
+                    // one place. The whole list is still type-checked even once
+                    // the answer is settled — `hasLabels(n, ['A', 1])` is an
+                    // error, not `false`.
+                    let mut has_all = true;
                     for label_value in required_labels.iter() {
-                        match label_value {
-                            Value::String(_) => {}
+                        let name = match label_value {
+                            Value::String(name) => name,
                             Value::Int(_) => {
                                 return Err("Type mismatch: expected String but was Integer".to_string());
                             }
@@ -101,19 +105,12 @@ pub fn register(funcs: &mut Functions) {
                                 return Err("Type mismatch: expected String but was Boolean".to_string());
                             }
                             _ => return Err("Type mismatch: expected String".to_string()),
-                        }
+                        };
+                        // The `n:Label` predicate's hot path, once per row: one
+                        // bit of the label matrix instead of the node's whole
+                        // label set.
+                        has_all = has_all && runtime.node_has_label(id, name);
                     }
-
-                    // Get the actual labels of the node
-                    let node_labels = runtime.get_node_labels(id);
-                    // Check if all required labels are present
-                    let has_all = required_labels.iter().all(|req_label| {
-                        if let Value::String(req_str) = req_label {
-                            node_labels.iter().any(|node_label| node_label == req_str)
-                        } else {
-                            false
-                        }
-                    });
 
                     Ok(Value::Bool(has_all))
                 }

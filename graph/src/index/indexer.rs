@@ -124,7 +124,7 @@ impl IndexOptions {
                     Some(TextIndexOptions {
                         weight: opts.weight,
                         nostem: opts.nostem,
-                        phonetic: opts.phonetic,
+                        phonetic: opts.phonetic.clone(),
                         ..Default::default()
                     })
                 } else {
@@ -275,13 +275,13 @@ impl Indexer {
             let field = if let Some(ref vopts) = vector_options {
                 Arc::new(Field::new_with_vector_options(
                     CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
-                    index_type.clone(),
+                    *index_type,
                     vopts.clone(),
                 ))
             } else {
                 Arc::new(Field::new(
                     CString::new(field_name.as_str()).map_err(|e| e.to_string())?,
-                    index_type.clone(),
+                    *index_type,
                     field_options.clone(),
                 ))
             };
@@ -586,7 +586,7 @@ impl Indexer {
         &self,
         label: &Arc<String>,
         attr: &Arc<String>,
-    ) -> Option<u32> {
+    ) -> Option<u64> {
         let guard = self.index.load();
         let index = guard.get(label)?;
         let fields = index.get_fields(attr)?;

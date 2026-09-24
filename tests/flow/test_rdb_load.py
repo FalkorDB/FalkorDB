@@ -1,15 +1,28 @@
 from common import *
+import time
 
 
 class testRdbLoad():
     def __init__(self):
-        self.env, self.db = Env(moduleArgs='VKEY_MAX_ENTITY_COUNT 10')
+        self.env, self.db = Env(moduleArgs='VKEY_MAX_ENTITY_COUNT 10',
+                                enableDebugCommand=True)
         self.conn = self.env.getConnection()
 
     # assert that |keyspace| == `n`
     def validate_key_count(self, n):
         keys = self.conn.keys('*')
         self.env.assertEqual(len(keys), n)
+
+    # The telemetry stream is written by a background thread on its own
+    # schedule — batched, so it lands a few milliseconds after the query that
+    # produced it. Counting the keyspace right after a query and expecting the
+    # stream to be in it was a race; wait for it instead.
+    def _wait_for_telemetry(self, timeout=30):
+        deadline = time.monotonic() + timeout
+        while self.conn.type('telemetry{x}') == 'none':
+            if time.monotonic() >= deadline:
+                raise AssertionError("telemetry stream never appeared")
+            time.sleep(0.01)
 
     # validate that the imported data exists
     def _test_data(self):
@@ -31,6 +44,7 @@ class testRdbLoad():
         self.env.assertEqual(aux, 1)
 
         # Dump all keys (graphdata + graphmeta virtual keys + telemetry stream)
+        self._wait_for_telemetry()
         all_keys = self.conn.keys('*')
         self.env.assertEqual(len(all_keys), 4)  # 1 graphdata key + 2 graphmeta keys + 1 telemetry stream
         dumps = {}
@@ -76,3 +90,60 @@ class testRdbLoad():
 
         # Verify save works after load
         self.conn.save()
+
+    def test_restore_under_a_different_key(self):
+        # Restoring a graph DUMP under a key name other than the one it was
+        # dumped from used to alias the two keys: only the original showed up
+        # in GRAPH.LIST, writes to the restored key mutated the original, and
+        # the server segfaulted while loading the resulting RDB.
+        # See https://github.com/FalkorDB/FalkorDB/issues/2048
+        self.conn.flushall()
+
+        src = self.db.select_graph("src")
+        src.query("CREATE (:A {v: 1})-[:R {w: 2}]->(:B {v: 3})")
+
+        self.conn.restore("dst", 0, self.conn.dump("src"))
+
+        # both graphs are listed, and both hold the same data
+        graphs = [g.decode() if isinstance(g, bytes) else g
+                  for g in self.conn.execute_command("GRAPH.LIST")]
+        self.env.assertIn("src", graphs)
+        self.env.assertIn("dst", graphs)
+
+        dst = self.db.select_graph("dst")
+        q = "MATCH (a:A)-[e:R]->(b:B) RETURN a.v, e.w, b.v"
+        self.env.assertEqual(src.query(q).result_set, [[1, 2, 3]])
+        self.env.assertEqual(dst.query(q).result_set, [[1, 2, 3]])
+
+        # the two graphs are independent: a write to one is not visible in the
+        # other, in either direction
+        dst.query("CREATE (:ONLY_IN_DST)")
+        src.query("CREATE (:ONLY_IN_SRC)")
+
+        count = "MATCH (n:%s) RETURN count(n)"
+        self.env.assertEqual(src.query(count % "ONLY_IN_DST").result_set, [[0]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_SRC").result_set, [[0]])
+        self.env.assertEqual(src.query(count % "ONLY_IN_SRC").result_set, [[1]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_DST").result_set, [[1]])
+
+        # the restored graph must survive an RDB round trip
+        self.conn.execute_command("DEBUG", "RELOAD")
+
+        self.env.assertEqual(src.query(q).result_set, [[1, 2, 3]])
+        self.env.assertEqual(dst.query(q).result_set, [[1, 2, 3]])
+
+        # each graph kept its own write, and only its own
+        self.env.assertEqual(src.query(count % "ONLY_IN_SRC").result_set, [[1]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_DST").result_set, [[1]])
+        self.env.assertEqual(src.query(count % "ONLY_IN_DST").result_set, [[0]])
+        self.env.assertEqual(dst.query(count % "ONLY_IN_SRC").result_set, [[0]])
+
+        # a write issued after the reload must still not leak across keys: a
+        # decoder that re-created the alias would only show up on mutation
+        dst.query("CREATE (:AFTER_RELOAD_DST)")
+        src.query("CREATE (:AFTER_RELOAD_SRC)")
+
+        self.env.assertEqual(src.query(count % "AFTER_RELOAD_SRC").result_set, [[1]])
+        self.env.assertEqual(dst.query(count % "AFTER_RELOAD_DST").result_set, [[1]])
+        self.env.assertEqual(src.query(count % "AFTER_RELOAD_DST").result_set, [[0]])
+        self.env.assertEqual(dst.query(count % "AFTER_RELOAD_SRC").result_set, [[0]])

@@ -37,8 +37,9 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_precision_loss)]
+use crate::effects::EffectsBuffer;
 use crate::{
-    graph::graph::{Graph, NodeId, RelationshipId},
+    graph::graph::{Graph, LabelId, NodeId, RelationshipId},
     identifier_limits::validate_identifier_len,
     index::indexer::{IndexOptions, IndexType, TextIndexOptions, VectorIndexOptions},
     parser::ast::{ExprIR, QueryExpr, Variable},
@@ -132,6 +133,8 @@ pub struct Runtime<'a> {
     pub stats: RefCell<QueryStatistics>,
     /// Query execution plan tree
     pub plan: Arc<DynTree<IR>>,
+    /// Root of each nested plan, by id (see `IR::NestedPlans`).
+    nested_plans: Vec<NodeIdx<Dyn<IR>>>,
     /// The host value holding this query's locks (see [`crate::locks`]). Reached
     /// through [`Runtime::write_escalation`] by the operators that mutate shared
     /// state, so the dependency is explicit at the point of use.
@@ -171,13 +174,16 @@ pub struct Runtime<'a> {
     /// Maximum number of result rows to return. Negative means unlimited.
     pub result_set_size: i64,
     /// Effects buffer built before commit, for replication.
-    pub effects_buffer: RefCell<Option<Vec<u8>>>,
+    pub effects_buffer: RefCell<Option<EffectsBuffer>>,
     /// Total number of effect records across all commits in this query.
     pub effects_count: Cell<u64>,
-    /// Whether commits should serialize an effects buffer. Callers clear
-    /// this when replication has no possible consumer (no AOF, no replica
-    /// has ever attached); the replication layer then falls back to
-    /// verbatim query propagation, which Redis discards for free.
+    /// Whether commits should serialize an effects buffer.
+    ///
+    /// Cleared only when replication has no possible consumer — no AOF, and no
+    /// replica has ever attached — because there is no fallback behind it any
+    /// more: with verbatim query propagation gone, a write that builds no
+    /// buffer is a write nothing can replay. `REPLICATION_CONSUMERS` is
+    /// therefore sticky once set, and defaults to set.
     pub build_effects: Cell<bool>,
     /// Timestamp captured at the start of the transaction/query.
     /// Used by `date.transaction()`, `localtime.transaction()`, and `localdatetime.transaction()`
@@ -242,6 +248,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::CartesianProduct
                 | IR::ValueHashJoin { .. }
                 | IR::Union
+                | IR::NestedPlans
                 | IR::Apply
                 | IR::SemiApply
                 | IR::AntiSemiApply
@@ -355,10 +362,17 @@ impl ReturnNames for DynNode<'_, IR> {
                 }
                 v
             }
-            IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
-                self.child(0).get_return_names()
+            // A Sort may sit on the Apply chain binding its ORDER BY pattern
+            // comprehensions; the columns are those of the chain's input.
+            IR::Sort(_) => {
+                let mut child = self.child(0);
+                while matches!(child.data(), IR::Apply) {
+                    child = child.child(0);
+                }
+                child.get_return_names()
             }
-            IR::Union => self.child(0).get_return_names(),
+            IR::Skip(_) | IR::Limit(_) | IR::Distinct => self.child(0).get_return_names(),
+            IR::Union | IR::NestedPlans => self.child(0).get_return_names(),
             IR::Aggregate { names, .. } => names.clone(),
             _ => vec![],
         }
@@ -404,9 +418,15 @@ impl<'a> Runtime<'a> {
         write_escalation: &'a dyn crate::locks::WriteEscalation,
     ) -> Self {
         let return_names = plan.root().get_return_names();
+        let nested_plans = if matches!(plan.root().data(), IR::NestedPlans) {
+            plan.root().children().skip(1).map(|c| c.idx()).collect()
+        } else {
+            vec![]
+        };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
         if write {
             pending.borrow_mut().set_schema_baseline(&g);
+            pending.borrow_mut().open_id_boundaries(&g);
         }
         Self {
             parameters,
@@ -415,6 +435,7 @@ impl<'a> Runtime<'a> {
             pending,
             stats: RefCell::new(QueryStatistics::default()),
             plan,
+            nested_plans,
             write_escalation,
             return_names,
             value_dedupers: RefCell::new(rustc_hash::FxHashMap::default()),
@@ -653,6 +674,32 @@ impl<'a> Runtime<'a> {
         }
     }
 
+    /// Run nested plan `id` with `row` as its argument row and return the
+    /// list it collects into `result`.
+    pub fn run_nested_plan(
+        &'a self,
+        id: u32,
+        result: &Variable,
+        row: &Row,
+    ) -> Result<Value, String> {
+        let idx = *self
+            .nested_plans
+            .get(id as usize)
+            .ok_or_else(|| format!("nested plan #{id} not found"))?;
+        let mut op = self.run_batch(idx)?;
+        let mut arg = BatchBuilder::new();
+        arg.push_row(row);
+        op.set_argument_batch(arg.finish());
+        // The plan's root is the comprehension's keyless collect (see
+        // `Planner::build_pattern_comprehension_plan`), which drains its
+        // input and yields a single batch of a single row: the list, empty
+        // when nothing matched. Anything else is a planner bug.
+        let missing = || format!("nested plan #{id} produced no result");
+        let batch = op.next().ok_or_else(missing)??;
+        let row = batch.active_indices().next().ok_or_else(missing)?;
+        batch.value_at(result.id, row).ok_or_else(missing)
+    }
+
     /// Iteratively builds a batch-mode operator tree for the given IR node.
     ///
     /// The recursive form was prone to stack overflow under ASAN: the body
@@ -717,11 +764,13 @@ impl<'a> Runtime<'a> {
                     IR::AllNodeScan(n) => n,
                     _ => unreachable!(),
                 };
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByLabelScan(NodeByLabelScanOp::new(
                     self,
                     Box::new(child),
                     node_pattern,
                     idx,
+                    record_cap,
                 )))
             }
             IR::IncludePending { node } => {
@@ -917,6 +966,7 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeByIndexScan { node, index, query } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByIndexScan(NodeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -924,6 +974,7 @@ impl<'a> Runtime<'a> {
                     index,
                     query,
                     idx,
+                    record_cap,
                 )))
             }
             IR::EdgeByIndexScan {
@@ -932,6 +983,7 @@ impl<'a> Runtime<'a> {
                 transposed,
             } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::EdgeByIndexScan(EdgeByIndexScanOp::new(
                     self,
                     Box::new(child),
@@ -939,6 +991,7 @@ impl<'a> Runtime<'a> {
                     query,
                     *transposed,
                     idx,
+                    record_cap,
                 )))
             }
             IR::CartesianProduct => {
@@ -1053,6 +1106,8 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Union => Ok(BatchOp::Union(UnionOp::new(self, idx))),
+            // The query's plan is child 0; the nested plans run on demand.
+            IR::NestedPlans => Ok(pop_or_once(&mut children)),
             IR::PathBuilder(paths) => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::PathBuilder(PathBuilderOp::new(
@@ -1180,12 +1235,14 @@ impl<'a> Runtime<'a> {
             }
             IR::NodeByLabelAndIdScan { node, filter } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::NodeByLabelAndIdScan(NodeByLabelAndIdScanOp::new(
                     self,
                     Box::new(child),
                     node,
                     filter,
                     idx,
+                    record_cap,
                 )))
             }
             IR::CondVarLenTraverse {
@@ -1196,6 +1253,7 @@ impl<'a> Runtime<'a> {
                 ..
             } => {
                 let child = pop_or_once(&mut children);
+                let record_cap = self.record_cap(idx);
                 Ok(BatchOp::CondVarLenTraverse(CondVarLenTraverseOp::new(
                     self,
                     Box::new(child),
@@ -1204,6 +1262,7 @@ impl<'a> Runtime<'a> {
                     *emit_path,
                     path_var.as_ref().map(|v| v.id),
                     idx,
+                    record_cap,
                 )))
             }
             IR::AllShortestPaths(relationship_pattern) => {
@@ -1231,66 +1290,20 @@ impl<'a> Runtime<'a> {
                 index_type,
                 entity_type,
                 options,
-            } => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-                let index_options = match options {
-                    Some(expr) => {
-                        let val = {
-                            let this = &self;
-                            let idx = expr.root().idx();
-                            super::eval::ExprEval::from_runtime(this).eval(
-                                expr,
-                                idx,
-                                super::eval::NO_ROW,
-                                None,
-                            )
-                        }?;
-                        match val {
-                            Value::Map(map) => map_to_index_options(index_type, &map)?,
-                            _ => return Err("Index options must be a map".into()),
-                        }
-                    }
-                    None => None,
-                };
-                // Index DDL mutates the shared, non-MVCC index directly (not via
-                // `pending`) and calls host FFI that needs the global lock, so
-                // become a writer first — same contract as `CommitOp`.
-                self.write_escalation().upgrade_to_write()?;
-                self.g.borrow_mut().create_index(
-                    index_type,
-                    entity_type,
-                    label,
-                    attrs,
-                    index_options,
-                )?;
-                self.stats.borrow_mut().indexes_created += attrs.len();
-                Ok(BatchOp::Once(None))
-            }
+            } => super::index_ddl::create_index(
+                self,
+                label,
+                attrs,
+                index_type,
+                entity_type,
+                options.as_ref(),
+            ),
             IR::DropIndex {
                 label,
                 attrs,
                 index_type,
                 entity_type,
-            } => {
-                if !self.write {
-                    return Err(String::from(
-                        "graph.RO_QUERY is to be executed only on read-only queries",
-                    ));
-                }
-
-                // See `CreateIndex` above: DDL runs in writer mode.
-                self.write_escalation().upgrade_to_write()?;
-                let dropped =
-                    self.g
-                        .borrow_mut()
-                        .drop_index(index_type, entity_type, label, attrs)?;
-                self.stats.borrow_mut().indexes_dropped += dropped;
-                Ok(BatchOp::Once(None))
-            }
+            } => super::index_ddl::drop_index(self, label, attrs, index_type, entity_type),
         }
     }
 
@@ -1659,6 +1672,71 @@ impl<'a> Runtime<'a> {
         labels.iter().map(|l| g.get_label_by_id(*l)).collect()
     }
 
+    /// Whether `id` carries the label named `name` — the whole answer, for
+    /// every node this query can see, without building the node's label set.
+    ///
+    /// This is the single place a label test is decided, and it decides it in
+    /// the same order [`Self::get_node_labels`] does: a node deleted by this
+    /// query answers from the labels captured at the delete, a label this query
+    /// staged answers from the staged state, and everything else is one bit of
+    /// the committed label matrix.
+    ///
+    /// `n:Person` reaches the runtime as a `hasLabels` call, and answering it
+    /// through `get_node_labels` costs two `OrderSet`s and an `Arc<String>`
+    /// clone per stored label, then compares label *names*, for every row. On
+    /// the benchmark graph `MATCH (n) WHERE n:Person RETURN count(n)` spent
+    /// 48.9M instructions over 15k nodes — 3.3k a row — against 22.4M on the C
+    /// engine, while the same scan filtering on a property (`n.id < 5`) costs
+    /// 2.0M. A label test is one bit in the label matrix; this reads that bit.
+    pub fn node_has_label(
+        &self,
+        id: NodeId,
+        name: &str,
+    ) -> bool {
+        // A name the graph has never registered is on no node at all, not even
+        // one this query just created: `CREATE (:L)` registers `L` before it
+        // stages the label. Resolving a known name is a walk over the label
+        // names — a handful of entries, no allocation.
+        let Some(label_id) = self.label_id(name) else {
+            return false;
+        };
+        self.node_has_label_id(id, label_id)
+    }
+
+    /// The registered id for a label name, or `None` when the graph has never
+    /// seen it.
+    ///
+    /// Split out so a caller testing the same label across many rows resolves
+    /// the name once instead of per row — see the `hasLabels` column kernel.
+    #[must_use]
+    pub fn label_id(
+        &self,
+        name: &str,
+    ) -> Option<LabelId> {
+        self.g.borrow().get_label_id(name)
+    }
+
+    /// [`Self::node_has_label`] with the name already resolved.
+    ///
+    /// Same three-way answer in the same order: a node this query deleted
+    /// answers from the labels captured at the delete, a label this query
+    /// staged answers from the staged state, and everything else is one bit of
+    /// the committed label matrix.
+    #[must_use]
+    pub fn node_has_label_id(
+        &self,
+        id: NodeId,
+        label_id: LabelId,
+    ) -> bool {
+        if let Some(deleted) = self.deleted_nodes.borrow().get(&id) {
+            return deleted.labels.contains(&label_id);
+        }
+        self.pending
+            .borrow()
+            .node_has_label(id, label_id)
+            .unwrap_or_else(|| self.g.borrow().node_has_label_id(id, label_id))
+    }
+
     pub fn get_node_attrs(
         &self,
         id: NodeId,
@@ -1795,7 +1873,13 @@ impl<'a> Runtime<'a> {
     }
 }
 
-fn map_to_index_options(
+/// Convert a Cypher `OPTIONS {...}` map into typed index options.
+///
+/// Public because the v3 effects apply path needs it too: v3 carries the
+/// options map on the wire (v2 dropped it), and the replica has to turn it back
+/// into the same `IndexOptions` the master built, not a re-derived
+/// approximation.
+pub fn map_to_index_options(
     index_type: &IndexType,
     kv_map: &OrderMap<Arc<String>, Value>,
 ) -> Result<Option<IndexOptions>, String> {
@@ -1822,11 +1906,19 @@ fn map_to_index_options(
             // sets only RediSearch's default phonetic flag, which maps
             // to Double Metaphone English — other algorithm codes
             // (dm:fr / dm:pt / dm:es) aren't wired up here.
+            // Stored as the algorithm code, but the accepted set is unchanged:
+            // a bool for on/off, or the one code this engine implements. C can
+            // send `dm:fr` and the wire can carry it — that is refused when it
+            // is applied, not when it is parsed here.
             let phonetic = match get("phonetic") {
-                Some(Value::Bool(b)) => Some(*b),
+                Some(Value::Bool(b)) => Some(if *b {
+                    "dm:en".to_owned()
+                } else {
+                    String::new()
+                }),
                 Some(Value::String(s)) => {
                     if s.eq_ignore_ascii_case("dm:en") {
-                        Some(true)
+                        Some("dm:en".to_owned())
                     } else {
                         return Err(format!(
                             "Unsupported phonetic algorithm '{s}'; only 'dm:en' is supported"
@@ -1873,7 +1965,7 @@ fn map_to_index_options(
                     if *n < 0 {
                         return Err("Invalid vector index configuration: dimension must be a non-negative integer".into());
                     }
-                    *n as u32
+                    *n as u64
                 }
                 None => 0,
                 _ => {

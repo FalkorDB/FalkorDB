@@ -259,11 +259,26 @@ echo "[Step 4e] Running flow tests..."
 # redis-benchmark nor valgrind, neither of which the toolchain image ships.
 # Guarded because bench/ is not on every branch.
 run_bench_queries() {
-    if [[ -f "${REPO_DIR}/bench/run_bench.py" ]]; then
+    # bench/ used to be a single run_bench.py and is now a uv project exposing a
+    # `bench` CLI, where `measure --once` is the same unmeasured coverage pass.
+    # Try the current form first and fall back to the old script, so this works
+    # whichever shape the branch has.
+    if [[ -f "${REPO_DIR}/bench/pyproject.toml" ]] && command -v uv >/dev/null 2>&1; then
+        (cd "${REPO_DIR}" && run_with_retry "bench measure --once" \
+            uv run --project bench bench measure --once)
+    elif [[ -f "${REPO_DIR}/bench/run_bench.py" ]]; then
         (cd "${REPO_DIR}" && run_with_retry "bench --once" \
             python3 bench/run_bench.py --once)
     else
-        echo "   Skipped: no bench/run_bench.py on this branch."
+        # Not a benign skip: the benchmark query set carries shapes no functional
+        # suite issues, so without it those kernels are missing from the harvest
+        # and the benchmark silently runs generic — the exact regression PreJIT
+        # exists to prevent. Fail loudly into the summary rather than log a line
+        # that scrolls past.
+        echo "   WARNING: no runnable bench query set — need bench/pyproject.toml plus" >&2
+        echo "   uv on PATH, or bench/run_bench.py. Benchmark-only kernels will be" >&2
+        echo "   ABSENT from this harvest." >&2
+        FAILURES+=("bench query set (no runner found — harvest is incomplete)")
     fi
 }
 echo "[Step 4f] Running benchmark query set (--once)..."

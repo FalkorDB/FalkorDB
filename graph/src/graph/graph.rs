@@ -17,9 +17,6 @@
 //! ┌──────────────────────────────────────────────────────────────────────┐
 //! │                         Graph Structure                             │
 //! ├──────────────────────────┬───────────────────────────────────────────┤
-//! │ all_nodes_matrix         │ Diagonal matrix: node_id -> bool         │
-//! │                          │ (set for every live node)                │
-//! ├──────────────────────────┼───────────────────────────────────────────┤
 //! │ adjacancy_matrix         │ Boolean matrix: src x dst -> bool        │
 //! │                          │ (union of all relationship types)        │
 //! ├──────────────────────────┼───────────────────────────────────────────┤
@@ -82,18 +79,21 @@ use lru::LruCache;
 use orx_tree::DynTree;
 use parking_lot::{Mutex, MutexGuard};
 use roaring::RoaringTreemap;
+use thiserror::Error;
 
 use crate::{
     entity_type::EntityType,
     graph::{
         attribute_store::{AttrNameMap, AttributeStore},
         constraint::{Constraint, ConstraintStatus, ConstraintType},
+        endpoint_index::EndpointIndex,
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
-            tensor::{Tensor, compound_key},
+            tensor::Tensor,
             versioned_matrix::{self, VersionedMatrix},
         },
+        id_space::{IdSpace, IdSpaceError},
     },
     index::{
         Field,
@@ -235,6 +235,63 @@ pub struct MemoryUsageReport {
     pub indices_sz: usize,
 }
 
+/// One label a deleted node carried, as [`Graph::delete_nodes`] reports them.
+///
+/// Named for the same reason as [`DeletedEdge`] and `AttrRef`: two `u64`s side
+/// by side, where transposing them attributes every label to the wrong node and
+/// nothing about the types would notice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct DeletedNodeLabel {
+    pub node: u64,
+    pub label: u64,
+}
+
+/// A relationship removed by [`Graph::delete_relationships`] or
+/// [`Graph::delete_implicit_edges`]: its id, **its type**, and its endpoints.
+///
+/// The type is captured here because it cannot be recovered afterwards — the
+/// edge is gone by the time effects are built — and v3's `DELETE_EDGE` groups by
+/// it. `index_remove_edge_docs` is not a substitute: it is only populated for
+/// types that actually carry an index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DeletedEdge {
+    /// The edge's own id.
+    pub id: RelationshipId,
+    /// Its relationship type.
+    pub type_id: u64,
+    /// Its endpoints, in wire order. Named rather than positional because both
+    /// are `NodeId`: a transposition here reverses every deleted edge and
+    /// nothing about the types would catch it.
+    pub src: NodeId,
+    pub dst: NodeId,
+}
+
+/// Why a bulk node operation refused.
+///
+/// Typed rather than a `String` because the effects apply path renders these
+/// into a divergence report an operator reads, and "which id, and which of the
+/// two ways it was wrong" is the whole content of that report.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum NodeOpError {
+    /// Anything the graph itself reported while doing the work.
+    #[error("{0}")]
+    Graph(String),
+
+    /// The ids do not fit the graph's id space. Every judgement about whether a
+    /// node is live is made there rather than here — see
+    /// [`crate::graph::id_space`] — because half of it needs a batch and half of
+    /// it needs only the recycle bin, and splitting them across two types is how
+    /// the two halves drift apart.
+    #[error(transparent)]
+    IdSpace(#[from] IdSpaceError),
+}
+
+impl From<String> for NodeOpError {
+    fn from(e: String) -> Self {
+        Self::Graph(e)
+    }
+}
+
 /// The main graph data structure.
 ///
 /// Stores nodes, relationships, labels, and properties using sparse matrices
@@ -248,13 +305,6 @@ pub struct MemoryUsageReport {
 ///
 /// The Graph is `Send + Sync` but not internally synchronized. Use [`MvccGraph`]
 /// for concurrent access with proper read/write isolation.
-/// Sentinel for an empty/deleted slot in [`Graph::edge_endpoints`].
-///
-/// Equals `compound_key(u32::MAX, u32::MAX)`, which would only collide with a
-/// real edge whose endpoints are both node id `u32::MAX` (4.29 billion) — not
-/// reachable in practice, since the tensor compound key caps node ids at u32.
-const EDGE_NO_ENDPOINT: u64 = u64::MAX;
-
 pub struct Graph {
     /// Graph name (Redis key name)
     name: String,
@@ -262,10 +312,6 @@ pub struct Graph {
     node_cap: u64,
     /// Maximum relationship capacity (for matrix sizing)
     relationship_cap: u64,
-    /// Number of node IDs reserved (including deleted)
-    reserved_node_count: u64,
-    /// Number of relationship IDs reserved (including deleted)
-    reserved_relationship_count: u64,
     /// Current count of active nodes
     node_count: u64,
     /// Current count of active relationships
@@ -282,20 +328,23 @@ pub struct Graph {
     node_labels_matrix: VersionedMatrix<bool>,
     /// Matrix mapping relationships to their types
     relationship_type_matrix: VersionedMatrix<bool>,
-    /// Matrix with all nodes (for full scans)
-    all_nodes_matrix: VersionedMatrix<bool>,
     /// Per-label matrices (label ID → node membership)
     labels_matices: Vec<VersionedMatrix<bool>>,
     /// Per-type relationship tensors (type ID → src×dst×edge_id)
     relationship_matrices: Vec<Tensor>,
-    /// Graph-wide reverse index: `edge_id` → `compound_key(src, dst)` for O(1)
-    /// endpoint lookup, stored as a dense vector indexed by edge id. Edge IDs
-    /// are densely allocated, so a `Vec` is far more compact than a hash map
-    /// (8 B/edge vs ~31 B with control bytes + load-factor slack). Wrapped in
-    /// `Arc` so MVCC `new_version` is O(1); the first edge mutation per
-    /// version pays one `Arc::make_mut` deep clone, node-only writes pay
-    /// nothing. Empty/deleted slots hold [`EDGE_NO_ENDPOINT`].
-    edge_endpoints: Arc<Vec<u64>>,
+    /// Graph-wide reverse index: `edge_id` → `(src, dst)` for O(1) endpoint
+    /// lookup, as contiguous slots indexed by edge id. Edge IDs are densely
+    /// allocated, so slots are far more compact than a hash map (~31 B/edge
+    /// with control bytes and load-factor slack). Wrapped in `Arc` so MVCC
+    /// `new_version` is O(1); the first edge mutation per version pays one
+    /// `Arc::make_mut` deep clone of the tier it writes to — not of the whole
+    /// index — and node-only writes pay nothing.
+    ///
+    /// [`EndpointIndex`] sizes its fields to the endpoints it holds, so this is
+    /// 6 bytes per edge on a graph of millions of nodes rather than a flat 8 —
+    /// and it has no ceiling, where the previous `(src << 32) | dst` packing
+    /// refused any node id past 2^32.
+    edge_endpoints: Arc<EndpointIndex>,
     /// The graph's one attribute-name dictionary: name → id and id → name, shared by
     /// both stores below so an id means the same attribute everywhere it appears — in a
     /// span, the RDB, a `GRAPH.EFFECT`, or a compact reply.
@@ -316,6 +365,14 @@ pub struct Graph {
     edge_indexer: Indexer,
     /// Label names (ID → name mapping)
     node_labels: Vec<Arc<String>>,
+    /// Label name → ID, the reverse of `node_labels`.
+    ///
+    /// A label test is a per-row operation (`n:Person` for every row of a scan),
+    /// so resolving the name must not walk the whole schema: with 500 labels
+    /// registered, `MATCH (n) WHERE n:Person RETURN count(n)` over 10k nodes
+    /// measured 2.1x the same query on a one-label schema, all of it in the
+    /// walk. Maintained only by `intern_label`, so it cannot drift.
+    node_labels_index: FxHashMap<String, LabelId>,
     /// Relationship type names (ID → name mapping)
     relationship_types: Vec<Arc<String>>,
     /// LRU cache for query plans
@@ -693,8 +750,6 @@ impl Graph {
             name: name.to_string(),
             node_cap: n,
             relationship_cap: e,
-            reserved_node_count: 0,
-            reserved_relationship_count: 0,
             node_count: 0,
             relationship_count: 0,
             deleted_nodes: RoaringTreemap::new(),
@@ -703,16 +758,16 @@ impl Graph {
             adjacancy_matrix: VersionedMatrix::<bool>::new(n, n),
             node_labels_matrix: VersionedMatrix::<bool>::new(0, 0),
             relationship_type_matrix: VersionedMatrix::<bool>::new(0, 0),
-            all_nodes_matrix: VersionedMatrix::<bool>::new(n, n),
             labels_matices: Vec::new(),
             relationship_matrices: Vec::new(),
-            edge_endpoints: Arc::new(Vec::new()),
+            edge_endpoints: Arc::new(EndpointIndex::default()),
             attrs_name: AttrNameMap::default(),
             node_attrs: AttributeStore::new(),
             relationship_attrs: AttributeStore::new(),
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
             node_labels: Vec::new(),
+            node_labels_index: FxHashMap::default(),
             relationship_types: Vec::new(),
             cache: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(cache_size.max(1)).expect("cache_size.max(1) is always >= 1"),
@@ -739,7 +794,6 @@ impl Graph {
         adjacancy_matrix: VersionedMatrix<bool>,
         node_labels_matrix: VersionedMatrix<bool>,
         relationship_type_matrix: VersionedMatrix<bool>,
-        all_nodes_matrix: VersionedMatrix<bool>,
         labels_matices: Vec<VersionedMatrix<bool>>,
         relationship_matrices: Vec<Tensor>,
         node_labels: Vec<Arc<String>>,
@@ -750,18 +804,50 @@ impl Graph {
     ) -> Self {
         // Rebuild the graph-wide reverse index after RDB load to ensure
         // complete sync with the decoded edges.
-        let mut edge_endpoints: Vec<u64> = Vec::new();
+        // Two scans rather than one scan into a `Vec` of triples: materialising
+        // them would add ~24 bytes per edge of peak memory on top of the graph
+        // being restored, which is enough to fail a load that would otherwise
+        // fit. The first scan takes only maxima, which sizes the index once, so
+        // the second neither widens nor reallocates.
+        //
+        // The first pass also recovers where the index's width tiers begin.
+        // Sizing everything to the graph's widest endpoint would be simpler and
+        // would flatten the tiering on every load; under incremental growth an
+        // edge lands in the widest tier any earlier edge needed, so tier `r`
+        // begins at the smallest edge id whose own endpoints need at least `r`.
+        // Three scalars, no per-edge state.
+        let mut max_edge_id = 0u64;
+        let mut starts = [u64::MAX; 3];
         for tensor in &relationship_matrices {
             for (src, dst, edge_id) in tensor.iter_edges() {
-                let idx = edge_id as usize;
-                if idx >= edge_endpoints.len() {
-                    edge_endpoints.resize(idx + 1, EDGE_NO_ENDPOINT);
+                max_edge_id = max_edge_id.max(edge_id);
+                let rank = EndpointIndex::rank_for(src.max(dst));
+                for r in 1..=rank {
+                    let slot = &mut starts[usize::from(r) - 1];
+                    *slot = (*slot).min(edge_id);
                 }
-                edge_endpoints[idx] = compound_key(src, dst);
             }
         }
-        // Drop the doubling slack left by the incremental resizes above.
-        edge_endpoints.shrink_to_fit();
+        let len = if relationship_matrices.iter().any(|t| t.edge_count() > 0) {
+            max_edge_id + 1
+        } else {
+            0
+        };
+        // A tier nothing reached starts at the end, i.e. stays empty. Clamped
+        // monotone so a later tier never begins before an earlier one.
+        let mut acc = len;
+        for slot in starts.iter_mut().rev() {
+            acc = acc.min(*slot);
+            *slot = acc;
+        }
+        let to_slot = |v: u64| usize::try_from(v).expect("edge id exceeds usize");
+        let mut edge_endpoints = EndpointIndex::default();
+        edge_endpoints.prepare_tiers(starts.map(to_slot), to_slot(len));
+        for tensor in &relationship_matrices {
+            for (src, dst, edge_id) in tensor.iter_edges() {
+                edge_endpoints.set(edge_id, src, dst);
+            }
+        }
 
         let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
         let node_cap = node_count + deleted_nodes.len();
@@ -771,8 +857,6 @@ impl Graph {
             name: name.to_string(),
             node_cap: node_cap.next_multiple_of(chunk).max(64),
             relationship_cap: relationship_cap.next_multiple_of(chunk).max(64),
-            reserved_node_count: 0,
-            reserved_relationship_count: 0,
             node_count,
             relationship_count,
             deleted_nodes,
@@ -781,7 +865,6 @@ impl Graph {
             adjacancy_matrix,
             node_labels_matrix,
             relationship_type_matrix,
-            all_nodes_matrix,
             labels_matices,
             relationship_matrices,
             edge_endpoints: Arc::new(edge_endpoints),
@@ -790,6 +873,11 @@ impl Graph {
             relationship_attrs,
             node_indexer: Indexer::default(),
             edge_indexer: Indexer::default(),
+            node_labels_index: node_labels
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (l.as_str().to_string(), LabelId(i)))
+                .collect(),
             node_labels,
             relationship_types,
             cache: Arc::new(Mutex::new(LruCache::new(
@@ -803,7 +891,6 @@ impl Graph {
 
     /// Rebuild derived matrices after RDB load.
     ///
-    /// - `all_nodes_matrix`: diagonal `(id, id) = true` for all live nodes
     /// - `relationship_type_matrix`: `(edge_id, type_index) = true` for all edges
     /// - Tensor backward (`mt`): transpose of forward (`m`)
     pub fn rebuild_derived_matrices(&mut self) {
@@ -814,18 +901,6 @@ impl Graph {
         let rc = self.relationship_cap;
         self.relationship_type_matrix
             .resize(rc, self.relationship_types.len() as u64);
-
-        // Rebuild all_nodes_matrix from all live node IDs (0..=max_id skipping deleted).
-        // Cannot rebuild only from label matrices: unlabeled nodes do not appear in any
-        // label matrix but still need to be in all_nodes_matrix for MATCH (n) scans.
-        if self.node_count > 0 {
-            let max_id = self.node_count + self.deleted_nodes.len() - 1;
-            for id in 0..=max_id {
-                if !self.deleted_nodes.contains(id) {
-                    self.all_nodes_matrix.set(id, id, true);
-                }
-            }
-        }
 
         // Rebuild relationship_type_matrix and tensor backward matrices
         for (type_idx, tensor) in self.relationship_matrices.iter_mut().enumerate() {
@@ -849,8 +924,6 @@ impl Graph {
 
     #[must_use]
     pub fn new_version(&self) -> Self {
-        debug_assert_eq!(self.reserved_node_count, 0);
-        debug_assert_eq!(self.reserved_relationship_count, 0);
         // One dictionary clone per version instead of the two the split tables cost.
         let attrs_name = self.attrs_name.clone();
         let node_attrs = self.node_attrs.new_version();
@@ -866,8 +939,6 @@ impl Graph {
             name: self.name.clone(),
             node_cap: self.node_cap,
             relationship_cap: self.relationship_cap,
-            reserved_node_count: 0,
-            reserved_relationship_count: 0,
             node_count: self.node_count,
             relationship_count: self.relationship_count,
             deleted_nodes: self.deleted_nodes.clone(),
@@ -876,7 +947,6 @@ impl Graph {
             adjacancy_matrix: self.adjacancy_matrix.dup(),
             node_labels_matrix: self.node_labels_matrix.dup(),
             relationship_type_matrix: self.relationship_type_matrix.dup(),
-            all_nodes_matrix: self.all_nodes_matrix.dup(),
             labels_matices: self
                 .labels_matices
                 .iter()
@@ -890,6 +960,7 @@ impl Graph {
             node_indexer: self.node_indexer.clone(),
             edge_indexer: self.edge_indexer.clone(),
             node_labels: self.node_labels.clone(),
+            node_labels_index: self.node_labels_index.clone(),
             relationship_types: self.relationship_types.clone(),
             cache: self.cache.clone(),
             constraints: self.constraints.clone(),
@@ -999,33 +1070,47 @@ impl Graph {
         self.attrs_name.iter()
     }
 
+    /// Register `label`, or return the id it already has. The only writer of
+    /// `node_labels` and `node_labels_index`, so the two stay in step.
+    fn intern_label(
+        &mut self,
+        label: &Arc<String>,
+    ) -> LabelId {
+        if let Some(&id) = self.node_labels_index.get(label.as_str()) {
+            return id;
+        }
+        let id = LabelId(self.node_labels.len());
+        self.node_labels.push(label.clone());
+        self.node_labels_index
+            .insert(label.as_str().to_string(), id);
+        id
+    }
+
     pub fn get_label_id_mut(
         &mut self,
         label: &str,
     ) -> LabelId {
-        if let Some(pos) = self
-            .node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(LabelId)
-        {
-            return pos;
+        if let Some(id) = self.get_label_id(label) {
+            return id;
         }
 
-        self.node_labels.push(Arc::new(label.to_string()));
+        let id = self.intern_label(&Arc::new(label.to_string()));
         self.labels_matices
             .push(VersionedMatrix::<bool>::new(self.node_cap, self.node_cap));
-        LabelId(self.node_labels.len() - 1)
+        // Registering a label changes a matrix dimension — `node_labels_matrix`
+        // is nodes x labels — so it is reconciled here, where the dimension
+        // changed, rather than by whichever write reaches the new column first.
+        // Once per label ever, and `resize` is four comparisons when nothing
+        // else moved.
+        self.resize();
+        id
     }
 
     pub fn get_label_id(
         &self,
         label: &str,
     ) -> Option<LabelId> {
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(LabelId)
+        self.node_labels_index.get(label).copied()
     }
 
     pub fn get_type_id(
@@ -1146,6 +1231,7 @@ impl Graph {
         let mut planner = Planner::new(scope_vars);
         let start = Instant::now();
         let plan = planner.plan(ir);
+        let plan = planner.finish(plan);
         let optimize_plan = optimize(&plan, self, &param_values);
         plan_duration = start.elapsed();
 
@@ -1175,28 +1261,21 @@ impl Graph {
         &self,
         label: &str,
     ) -> Option<&VersionedMatrix<bool>> {
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label)
-            .map(|i| &self.labels_matices[i])
+        self.get_label_id(label)
+            .map(|id| &self.labels_matices[id.0])
     }
 
     fn get_label_matrix_mut(
         &mut self,
         label: &Arc<String>,
     ) -> &mut VersionedMatrix<bool> {
-        if !self.node_labels.contains(label) {
-            self.node_labels.push(label.clone());
-
+        let id = self.intern_label(label);
+        if id.0 == self.labels_matices.len() {
             let m = VersionedMatrix::<bool>::new(self.node_cap, self.node_cap);
-            self.labels_matices.insert(self.node_labels.len() - 1, m);
+            self.labels_matices.insert(id.0, m);
+            self.resize();
         }
-
-        self.node_labels
-            .iter()
-            .position(|l| l.as_str() == label.as_str())
-            .map(|i| &mut self.labels_matices[i])
-            .expect("label was just inserted")
+        &mut self.labels_matices[id.0]
     }
 
     fn get_relationship_matrix_mut(
@@ -1210,6 +1289,11 @@ impl Graph {
                 self.relationship_types.len() - 1,
                 Tensor::new(self.node_cap, self.node_cap),
             );
+            // As for labels above: `relationship_type_matrix` is relationships
+            // x types, so registering a type changes one of its dimensions.
+            // `create_relationships_bulk` reconciles too, but that is the write
+            // catching up rather than the change accounting for itself.
+            self.resize();
         }
 
         self.relationship_types
@@ -1268,11 +1352,16 @@ impl Graph {
         self.attrs_name.get_index_of(attr)
     }
 
+    /// Hand a reserved id back, unused.
+    ///
+    /// The id goes to the recycle bin so the id space stays dense: it was
+    /// allocated, and if it simply vanished the next boundary would count an id
+    /// nothing holds. Nothing else has to be undone, because a reservation is
+    /// not state this graph keeps — see [`Self::reserve_nodes`].
     pub fn return_node_id(
         &mut self,
         id: NodeId,
     ) {
-        self.reserved_node_count -= 1;
         self.deleted_nodes.insert(id.into());
     }
 
@@ -1280,78 +1369,113 @@ impl Graph {
         &mut self,
         id: RelationshipId,
     ) {
-        self.reserved_relationship_count -= 1;
         self.deleted_relationships.insert(id.into());
     }
 
-    pub fn reserve_node(&mut self) -> NodeId {
-        if self.reserved_node_count < self.deleted_nodes.len() {
-            let id = self.deleted_nodes.select(self.reserved_node_count).unwrap();
-            self.reserved_node_count += 1;
-            return NodeId(id);
-        }
-        self.reserved_node_count += 1;
-        NodeId(self.node_count + self.reserved_node_count - 1)
-    }
-
-    /// Increment the reserved node counter without allocating a specific ID.
-    /// Used by effect replay where the actual ID comes from the primary.
-    pub const fn inc_reserved_node_count(&mut self) {
-        self.reserved_node_count += 1;
-    }
-
-    /// Reserve `count` node ids, failing instead of aborting when `count` cannot be
-    /// allocated.
+    /// Open an id space against this graph's node boundary.
     ///
-    /// `GRAPH.BULK` reserves from a client-declared count, so the allocation size is
-    /// attacker-influenced: `Vec::with_capacity` panicked on the capacity overflow, and the
-    /// panic hook (`src/module_init.rs`) exits the process, so it took the server down
-    /// (#2426). `try_reserve_exact` turns that into an error the command can report.
-    pub fn reserve_nodes(
-        &mut self,
-        count: usize,
-    ) -> Result<Vec<NodeId>, String> {
-        let mut ids = Vec::new();
-        ids.try_reserve_exact(count)
-            .map_err(|_| format!("failed to reserve {count} node ids"))?;
-        let count = count as u64;
-        let deleted_len = self.deleted_nodes.len();
-        let available = deleted_len.saturating_sub(self.reserved_node_count);
-        let reclaimed = count.min(available);
-
-        // First reclaim from deleted nodes.
-        //
-        // One ordered walk, not a rank lookup per id: `RoaringTreemap::select(i)`
-        // restarts at the first container every call, summing cardinalities until
-        // it reaches `i` and then scanning words inside that container, so a
-        // batch of N reclaims costs O(N * position) rather than O(pool). It was
-        // the hottest single leaf in the module on a create-after-delete profile.
-        // `skip` walks the same iterator once, so the whole batch is one pass.
-        let base = self.reserved_node_count;
-        self.reserved_node_count += reclaimed;
-        ids.extend(
-            self.deleted_nodes
-                .iter()
-                .skip(base as usize)
-                .take(reclaimed as usize)
-                .map(NodeId),
-        );
-
-        // Allocate remaining from the end
-        let remaining = count - reclaimed;
-        let start = self.node_count + self.reserved_node_count;
-        self.reserved_node_count += remaining;
-        ids.extend((start..start + remaining).map(NodeId));
-
-        Ok(ids)
+    /// The one place the boundary is turned into a batch, so a caller does not
+    /// have to know which of `node_count`, `max_node_id` or the recycle bin it
+    /// is derived from — and so a caller in another crate can have one at all.
+    #[must_use]
+    pub fn open_node_id_space(&self) -> IdSpace {
+        IdSpace::at(self.node_id_bound())
     }
 
+    /// The same for relationships.
+    #[must_use]
+    pub fn open_relationship_id_space(&self) -> IdSpace {
+        IdSpace::at(self.relationship_id_bound())
+    }
+
+    /// Where the node id space ends: ids below were handed out, ids at or above
+    /// never were. True as stated only between batches, where the space is dense
+    /// — which is exactly when an [`IdSpace`] is opened against it.
+    #[must_use]
+    pub fn node_id_bound(&self) -> u64 {
+        self.node_count + self.deleted_nodes.len()
+    }
+
+    /// The same for relationships.
+    #[must_use]
+    pub fn relationship_id_bound(&self) -> u64 {
+        self.relationship_count + self.deleted_relationships.len()
+    }
+
+    /// Create every node in `nodes` as part of a batch, or refuse and change
+    /// nothing.
+    ///
+    /// The batch is required rather than optional because it is the only thing
+    /// that can say what "already live" means here. Records inside one effects
+    /// buffer are grouped by shape rather than ordered by id, so a create of
+    /// 500..600 may precede one of 0..500; judged against a boundary this graph
+    /// derives, the second is rejected — the derived boundary has advanced to
+    /// 100 — even though the buffer is legitimate. The batch carries the boundary
+    /// as it stood before any of that, which is the only one the whole buffer can
+    /// be judged against.
+    ///
+    /// Reading the boundary off the batch rather than taking it as a parameter of
+    /// its own is what stops a caller handing over a boundary that disagrees with
+    /// the batch it is handing over with it.
+    ///
+    /// A caller with no batch wants [`Self::mark_nodes_live`], which is a
+    /// different question rather than this one with a piece missing: its ids came
+    /// from [`Self::reserve_nodes`], so there is nothing a check could tell it
+    /// that the allocator did not already guarantee.
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError::AlreadyLive`], wrapped, for the lowest id it cannot
+    /// create — one already handed out and not freed. Refusing is the point:
+    /// [`Self::mark_nodes_live`] moves the counters unconditionally, so an
+    /// already-live id used to double-count silently and shift every later fresh
+    /// id. A caller cannot forget the check when the operation itself is the
+    /// check.
+    ///
+    /// [`NodeOpError::IdSpace`] if the ids do not fit the batch — see
+    /// [`crate::graph::id_space`].
     pub fn create_nodes(
+        &mut self,
+        nodes: &RoaringTreemap,
+        id_space: &mut IdSpace,
+    ) -> Result<(), NodeOpError> {
+        // One call, checked and recorded together. The bin is this graph's half
+        // of "is it live" and it is handed over; the boundary is the batch's, and
+        // the batch keeps it. An id reaches the graph through this function or
+        // not at all, so nothing that creates a node can be added later and
+        // forget to account for it.
+        id_space.record_created(nodes, &self.deleted_nodes)?;
+        self.mark_nodes_live(nodes);
+        Ok(())
+    }
+
+    /// Move `nodes` from reserved to live, and size the matrices to hold them.
+    ///
+    /// Also the write path's entry point, where it is deliberately unchecked.
+    /// What the two create paths have in common is this and only this — they
+    /// differ in what they check *before* it, not in what they do. Factoring the
+    /// check instead meant a boundary parameter with `0` standing for "do not
+    /// check", which is a value pretending to be a mode: it made the unchecked
+    /// path return a `Result` that could not be anything but `Ok`, and left the
+    /// reader to work out why.
+    ///
+    /// Putting the ids through [`Self::create_nodes`] instead does not work, and
+    /// it is worth saying why because it looks like it should. [`IdSpace`]'s
+    /// invariant is that every id from the entry boundary upward was created by
+    /// the batch, and a *cancelled reservation* is an id handed out and never
+    /// created — so `CREATE (a)-[:R]->(b) DELETE b` breaks it by construction.
+    /// Both placements were measured: with the space opened at commit the check
+    /// refuses a's id 0 as `AlreadyLive`, and with it opened before the
+    /// reservation `verify` refuses the result as
+    /// `Miscounted { graph_bound: 2, expected: 1 }` — either way a legitimate
+    /// query. The hole is real and `IdSpace` is right to reject it; the two
+    /// paths ask genuinely different questions. Making one path of them means
+    /// giving `IdSpace` the reservations too, which is #2839.
+    pub fn mark_nodes_live(
         &mut self,
         nodes: &RoaringTreemap,
     ) {
         self.node_count += nodes.len();
-        self.reserved_node_count -= nodes.len();
         self.deleted_nodes -= nodes;
 
         // Ensure capacity covers the highest node ID (effects replay may
@@ -1365,9 +1489,6 @@ impl Graph {
         }
 
         self.resize();
-
-        self.all_nodes_matrix
-            .set_all::<true>(nodes.iter().map(|id| (id, id)));
     }
 
     #[must_use]
@@ -1384,6 +1505,69 @@ impl Graph {
             return 0;
         }
         self.relationship_count + self.deleted_relationships.len() - 1
+    }
+
+    /// Set node attributes from a record's row-major layout.
+    ///
+    /// The map form makes the caller allocate a `Vec` per entity and this
+    /// function sort them back into the id order the wire already had. See
+    /// [`AttributeStore::insert_attrs_rows`].
+    /// Set node attributes from a record's row-major layout, for nodes already
+    /// known to share one label set.
+    ///
+    /// The labels come from the caller rather than from this graph, and on the
+    /// replication path that is the point: a v3 `UPDATE_NODE` states the label
+    /// set the **primary** saw, so indexing under it makes the replica's index
+    /// hold what the primary's holds. Re-deriving would make the replica agree
+    /// with its own label matrix instead — which is the same thing only while
+    /// nothing has diverged, and silently different once something has.
+    ///
+    /// It is also the cheap form, for the same reason
+    /// [`Self::set_relationships_attributes_of_type`] is.
+    /// [`Self::set_nodes_attributes`] walks `node_labels_matrix.iter(id, id)`
+    /// per node to answer the same question; here the record's grouping has
+    /// already established that every id shares the set, so the
+    /// indexed-attribute test runs once for the whole record and what remains
+    /// per node is an insert.
+    ///
+    /// There is no label-deriving row-major counterpart any more. Both callers
+    /// on the apply path — `CREATE_NODE` and `UPDATE_NODE` — carry a
+    /// `LabelSet`, so one existed only to re-derive what the record had already
+    /// stated. `set_nodes_attributes` stays for the query path, where the node
+    /// is being read anyway and no record has spoken for it.
+    ///
+    /// `label_ids` must be within this graph's dictionary — `apply` bounds-checks
+    /// them through `checked_label_ids` before calling, the way C's
+    /// `ApplyUpdateEdge` checks its `r_id`.
+    pub fn set_nodes_attributes_rows_of_labels(
+        &mut self,
+        ids: &[u64],
+        label_ids: &[u64],
+        attr_ids: &[u16],
+        rows: &[Value],
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    ) -> Result<(usize, usize), String> {
+        let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;
+
+        if self.node_indexer.has_indices() {
+            for &label_id in label_ids {
+                let Some(label) = self.node_labels.get(label_id as usize) else {
+                    continue;
+                };
+                // Once per (label, attribute) for the whole record, rather than
+                // once per (node, label, attribute).
+                let indexed = attr_ids.iter().any(|&attr_id| {
+                    self.attrs_name
+                        .get(attr_id as usize)
+                        .is_some_and(|key| self.node_indexer.has_indexed_attr(label, key))
+                });
+                if indexed {
+                    let docs = index_add_docs.entry(label_id).or_default();
+                    docs.extend(ids.iter().copied());
+                }
+            }
+        }
+        Ok((nremoved, nset))
     }
 
     pub fn set_nodes_attributes(
@@ -1630,6 +1814,84 @@ impl Graph {
         }
     }
 
+    /// Give every id in `ids` every label in `label_ids`.
+    ///
+    /// The pair form takes the cartesian product already expanded, which means
+    /// the caller allocates `ids x labels` twice over and this function then
+    /// regroups it back into the per-label lists it wanted in the first place.
+    /// A million-node create with one label spends about 24 MB of scratch
+    /// saying something the two input slices already said.
+    ///
+    /// Here the product stays an iterator: `set_all` consumes one, and each
+    /// label's diagonal is just `ids`.
+    pub fn set_node_labels_product(
+        &mut self,
+        ids: &[u64],
+        label_ids: &[u64],
+        index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
+        all_new: bool,
+    ) {
+        // Which labels are indexed, decided once per label rather than once per
+        // pair. Collected before the mutations below so the immutable borrows
+        // of `node_labels` and `node_indexer` end first.
+        let indexed: Vec<u64> = label_ids
+            .iter()
+            .copied()
+            .filter(|&lid| {
+                self.node_labels
+                    .get(lid as usize)
+                    .is_some_and(|label| self.node_indexer.has_index(label))
+            })
+            .collect();
+        for lid in indexed {
+            let label = self.node_labels[lid as usize].clone();
+            for &id in ids {
+                // The node has to hold an attribute this label *indexes*, not
+                // merely some attribute.
+                //
+                // The point is symmetry with the remove side rather than a
+                // demonstrated leak. `delete_nodes` has always tested exactly
+                // this, so with the looser test here a node whose attributes
+                // are none of them indexed was added to the index and never
+                // matched by a removal. Whether RediSearch materializes a
+                // document for a node with no indexed field is not observable
+                // from outside the module — it is linked in, so `FT.INFO` is
+                // not reachable — so this makes the two predicates the same
+                // rather than fixing something measured.
+                if self
+                    .attr_names(&self.node_attrs, id)
+                    .any(|attr| self.node_indexer.has_indexed_attr(&label, &attr))
+                {
+                    index_add_docs.entry(lid).or_default().insert(id);
+                }
+            }
+        }
+
+        for &lid in label_ids {
+            let diag = ids.iter().map(|&id| (id, id));
+            if all_new {
+                self.labels_matices[lid as usize].set_all::<true>(diag);
+            } else {
+                self.labels_matices[lid as usize].set_all::<false>(diag);
+            }
+        }
+
+        // The cartesian product, handed to GraphBLAS as two index lists rather
+        // than enumerated here. `GrB_Matrix_assign` forms `ids x label_ids`
+        // itself, so a million nodes taking one label is one call instead of a
+        // million `setElement`s — and the slices are already exactly the `I`
+        // and `J` it wants, so nothing is built to pass them.
+        //
+        // `set_product::<false>` cannot take that path — an existing node's
+        // pair may already be live in the committed base, which only a
+        // per-entry probe can tell — so it degrades to the iterator form.
+        if all_new {
+            self.node_labels_matrix.set_product::<true>(ids, label_ids);
+        } else {
+            self.node_labels_matrix.set_product::<false>(ids, label_ids);
+        }
+    }
+
     /// Bulk set node labels using parallel row/col slices (2 FFI calls per matrix).
     ///
     /// `all_new` asserts every `(node, label)` pair is fresh — the node was
@@ -1695,11 +1957,28 @@ impl Graph {
         }
     }
 
+    /// Delete `deleted_nodes`, returning the `(node_id, label_id)` pairs they
+    /// carried.
+    ///
+    /// The pairs are a by-product, not extra work: clearing the label matrices
+    /// already has to collect them. Effects replication needs them because the
+    /// label set is what tells a replica which label-scoped indexes to clear,
+    /// and by the time the effect is encoded — after `commit` — the labels are
+    /// gone from the graph. Same reason `delete_relationships` hands back its
+    /// endpoints. They arrive grouped by node in ascending node order; a node
+    /// with no labels contributes none, so a caller reconciling against
+    /// `deleted_nodes` must expect gaps.
     pub fn delete_nodes(
         &mut self,
         deleted_nodes: &RoaringTreemap,
         remove_docs: &mut FxHashMap<u64, RoaringTreemap>,
-    ) -> Result<(), String> {
+        id_space: &IdSpace,
+    ) -> Result<Vec<DeletedNodeLabel>, NodeOpError> {
+        // Both halves of "is this node live", and both belong to the id space:
+        // the bin's half needs only the bin, so it is asked whether or not there
+        // is a batch, and the boundary's half needs one.
+        IdSpace::refuse_recycled(deleted_nodes, &self.deleted_nodes)?;
+        id_space.refuse_undeletable(deleted_nodes)?;
         self.deleted_nodes |= deleted_nodes;
         self.node_count -= deleted_nodes.len();
 
@@ -1728,10 +2007,6 @@ impl Graph {
         // `delta_invariants_hold_across_mutation_sequences`, and this specific
         // substitution is machine-checked as
         // `eff_removeMask_eq_foldl_remove` in `proofs/versioned_matrix`.
-        for id in deleted_nodes {
-            self.all_nodes_matrix.remove(id, id);
-        }
-
         // Which labels each deleted node carries. Collected first because the
         // iterator borrows `node_labels_matrix` for the duration and the removals
         // below need it mutably.
@@ -1741,16 +2016,23 @@ impl Graph {
         // per-node iterator construction that the full scan had replaced. There
         // is no size threshold: this is O(|deleted|) for every delete, so there
         // is no shape of input the old whole-matrix scan would win.
-        let mut pairs: Vec<(u64, u64)> = Vec::with_capacity(deleted_nodes.len() as usize);
+        let mut pairs: Vec<DeletedNodeLabel> = Vec::with_capacity(deleted_nodes.len() as usize);
         {
             let mut it = self.node_labels_matrix.iter(0, self.node_cap);
             for node_id in deleted_nodes {
                 it.seek(node_id, node_id);
-                pairs.extend(it.by_ref());
+                pairs.extend(
+                    it.by_ref()
+                        .map(|(node, label)| DeletedNodeLabel { node, label }),
+                );
             }
         }
 
-        for (node_id, label_id) in pairs {
+        for &DeletedNodeLabel {
+            node: node_id,
+            label: label_id,
+        } in &pairs
+        {
             let lid = label_id as usize;
 
             let label = &self.node_labels[lid];
@@ -1768,7 +2050,7 @@ impl Graph {
         }
 
         self.node_attrs.remove_all(deleted_nodes);
-        Ok(())
+        Ok(pairs)
     }
 
     pub fn get_node_relationships(
@@ -1842,8 +2124,8 @@ impl Graph {
     ) -> usize {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, true))
-            .count()
+            .map(|m| m.col_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of incoming edges to a node, filtered by relationship types.
@@ -1856,8 +2138,8 @@ impl Graph {
         types
             .iter()
             .filter_map(|t| self.get_relationship_matrix(t))
-            .flat_map(|m| m.iter(id.0, id.0, true))
-            .count()
+            .map(|m| m.col_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of outgoing edges from a node.
@@ -1868,8 +2150,8 @@ impl Graph {
     ) -> usize {
         self.relationship_matrices
             .iter()
-            .flat_map(move |m| m.iter(id.0, id.0, false))
-            .count()
+            .map(|m| m.row_degree(id.0) as usize)
+            .sum()
     }
 
     /// Count the number of outgoing edges from a node, filtered by relationship types.
@@ -1882,8 +2164,8 @@ impl Graph {
         types
             .iter()
             .filter_map(|t| self.get_relationship_matrix(t))
-            .flat_map(|m| m.iter(id.0, id.0, false))
-            .count()
+            .map(|m| m.row_degree(id.0) as usize)
+            .sum()
     }
 
     #[must_use]
@@ -1894,10 +2176,14 @@ impl Graph {
     ) -> Box<dyn Iterator<Item = NodeId>> {
         if labels.is_empty() {
             // Full scan: live node IDs are exactly `0..=max_node_id` minus the
-            // deleted set, identical to the diagonal of `all_nodes_matrix`.
-            // A range walk with a roaring-bitmap membership check avoids the
-            // per-element GraphBLAS row-iterator overhead, which dominates the
-            // cost of unfiltered `MATCH (n)` scans.
+            // deleted set. A range walk with a roaring-bitmap membership check
+            // avoids the per-element GraphBLAS row-iterator overhead, which
+            // dominates the cost of unfiltered `MATCH (n)` scans.
+            //
+            // It is also why no matrix of live nodes is kept: the bitmap
+            // already answers the question, and maintaining a parallel
+            // GraphBLAS diagonal made every write pay structural upkeep
+            // proportional to the graph rather than to the write.
             if self.node_count == 0 {
                 return Box::new(std::iter::empty());
             }
@@ -2002,73 +2288,28 @@ impl Graph {
             .get_attrs_by_idx_batch_into(keys, attr_idx, default, out);
     }
 
-    pub fn reserve_relationship(&mut self) -> RelationshipId {
-        if self.reserved_relationship_count < self.deleted_relationships.len() {
-            let id = self
-                .deleted_relationships
-                .select(self.reserved_relationship_count)
-                .unwrap();
-            self.reserved_relationship_count += 1;
-            return RelationshipId(id);
-        }
-        self.reserved_relationship_count += 1;
-        RelationshipId(self.relationship_count + self.reserved_relationship_count - 1)
-    }
-
-    /// Increment the reserved relationship counter without allocating a specific ID.
-    /// Used by effect replay where the actual ID comes from the primary.
-    pub const fn inc_reserved_relationship_count(&mut self) {
-        self.reserved_relationship_count += 1;
-    }
-
-    /// Reserve `count` relationship ids. Fallible for the same reason as
-    /// [`Self::reserve_nodes`]: `GRAPH.BULK` sizes this from a client-declared count.
-    pub fn reserve_relationships(
-        &mut self,
-        count: usize,
-    ) -> Result<Vec<RelationshipId>, String> {
-        let mut ids = Vec::new();
-        ids.try_reserve_exact(count)
-            .map_err(|_| format!("failed to reserve {count} relationship ids"))?;
-        let count = count as u64;
-        let deleted_len = self.deleted_relationships.len();
-        let available = deleted_len.saturating_sub(self.reserved_relationship_count);
-        let reclaimed = count.min(available);
-
-        // First reclaim from deleted relationships. One ordered walk rather than a
-        // rank lookup per id — see `reserve_nodes` for why `select` per id is
-        // quadratic across a batch.
-        let base = self.reserved_relationship_count;
-        self.reserved_relationship_count += reclaimed;
-        ids.extend(
-            self.deleted_relationships
-                .iter()
-                .skip(base as usize)
-                .take(reclaimed as usize)
-                .map(RelationshipId),
-        );
-
-        // Allocate remaining from the end
-        let remaining = count - reclaimed;
-        let start = self.relationship_count + self.reserved_relationship_count;
-        self.reserved_relationship_count += remaining;
-        ids.extend((start..start + remaining).map(RelationshipId));
-
-        Ok(ids)
-    }
-
     /// Create relationships of a single type using flat arrays.
-    /// Avoids HashMap overhead while using individual GraphBLAS set calls.
+    ///
+    /// Avoids HashMap overhead while using individual GraphBLAS set calls. The
+    /// id space is required rather than optional: every caller has one now, and
+    /// "checked against nothing" was a value pretending to be a mode.
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError`], wrapped, when `id_space` is given and the ids do not fit
+    /// it — the relationship counterpart of what [`Self::create_nodes`] refuses.
     pub fn create_relationships_bulk(
         &mut self,
         type_name: &Arc<String>,
         srcs: &[u64],
         dsts: &[u64],
         rel_ids: &[u64],
-    ) {
+        id_space: &mut IdSpace,
+    ) -> Result<(), NodeOpError> {
+        let ids: RoaringTreemap = rel_ids.iter().copied().collect();
+        id_space.record_created(&ids, &self.deleted_relationships)?;
         let count = srcs.len() as u64;
         self.relationship_count += count;
-        self.reserved_relationship_count -= count;
 
         for &id in rel_ids {
             if self.deleted_relationships.is_empty() {
@@ -2100,15 +2341,16 @@ impl Graph {
         // Reserve exactly: MVCC clones reset capacity to `len`, so amortized
         // doubling here would only leave ~2x slack behind, never save reallocs.
         let endpoints = Arc::make_mut(&mut self.edge_endpoints);
-        if let Some(&max_id) = rel_ids.iter().max() {
-            let needed = max_id as usize + 1;
-            if needed > endpoints.len() {
-                endpoints.reserve_exact(needed - endpoints.len());
-                endpoints.resize(needed, EDGE_NO_ENDPOINT);
-            }
+        // Size for the whole batch first: growing per edge is a reallocation
+        // per edge, since the index reserves exactly rather than doubling.
+        if let (Some(&max_id), Some(max_endpoint)) = (
+            rel_ids.iter().max(),
+            srcs.iter().chain(dsts.iter()).max().copied(),
+        ) {
+            endpoints.prepare(max_id, max_endpoint);
         }
         for ((&src, &dst), &id) in srcs.iter().zip(dsts.iter()).zip(rel_ids.iter()) {
-            endpoints[id as usize] = compound_key(src, dst);
+            endpoints.set(id, src, dst);
         }
 
         self.adjacancy_matrix
@@ -2118,6 +2360,7 @@ impl Graph {
         let type_ids: Vec<u64> = vec![type_id; rel_ids.len()];
         self.relationship_type_matrix
             .set_all::<true>(rel_ids.iter().copied().zip(type_ids.iter().copied()));
+        Ok(())
     }
 
     /// Fold oversized delta-plus into the base for all shared matrices at
@@ -2127,7 +2370,6 @@ impl Graph {
     /// fold pathology cannot occur, and deferring to the next version's
     /// `dup`/`flush` would leave the final command's deltas unfolded.
     pub fn flush_for_bulk(&mut self) {
-        self.all_nodes_matrix.fold_latched();
         self.node_labels_matrix.fold_latched();
         for m in &mut self.labels_matices {
             m.fold_latched();
@@ -2160,8 +2402,6 @@ impl Graph {
         self.node_labels_matrix.wait_base();
         self.relationship_type_matrix.fold_oversized();
         self.relationship_type_matrix.wait_base();
-        self.all_nodes_matrix.fold_oversized();
-        self.all_nodes_matrix.wait_base();
         for m in &mut self.labels_matices {
             m.fold_oversized();
             m.wait_base();
@@ -2180,7 +2420,6 @@ impl Graph {
         self.adjacancy_matrix.wait_all();
         self.node_labels_matrix.wait_all();
         self.relationship_type_matrix.wait_all();
-        self.all_nodes_matrix.wait_all();
         for m in &self.labels_matices {
             m.wait_all();
         }
@@ -2199,7 +2438,6 @@ impl Graph {
             && self.adjacancy_matrix.is_synced()
             && self.node_labels_matrix.is_synced()
             && self.relationship_type_matrix.is_synced()
-            && self.all_nodes_matrix.is_synced()
             && self.labels_matices.iter().all(VersionedMatrix::is_synced)
             && self.relationship_matrices.iter().all(Tensor::is_synced)
     }
@@ -2211,6 +2449,28 @@ impl Graph {
     ) -> Result<(usize, usize), String> {
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates(attrs, index_add_edge_docs);
+        Ok((nremoved, nset))
+    }
+
+    /// As [`Self::set_relationships_attributes`], for edges already known to
+    /// share one type.
+    ///
+    /// The difference is entirely in the index bookkeeping: the general form
+    /// calls `get_relationship_type_id` per edge, and that is a
+    /// `relationship_type_matrix.iter(id, id)` each time — the per-entity delta
+    /// iteration `import_node_attrs` documents as O(accumulated delta). Every
+    /// caller that already knows the type should state it.
+    ///
+    /// The v3 `UPDATE_EDGE` record does, since #2570: its group key is the
+    /// relationship type, so one record is one type by construction.
+    pub fn set_relationships_attributes_of_type(
+        &mut self,
+        type_id: TypeId,
+        attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
+        index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
+    ) -> Result<(usize, usize), String> {
+        let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
+        self.track_edge_index_updates_of_type(type_id, attrs, index_add_edge_docs);
         Ok((nremoved, nset))
     }
 
@@ -2269,10 +2529,15 @@ impl Graph {
         &mut self,
         rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
+        id_space: &IdSpace,
+    ) -> Result<Vec<DeletedEdge>, NodeOpError> {
         if rels.is_empty() {
             return Ok(Vec::new());
         }
+        // Both halves of "is this relationship live", exactly as the node side
+        // asks them: the bin needs no batch, the boundary needs one.
+        IdSpace::refuse_recycled(rels, &self.deleted_relationships)?;
+        id_space.refuse_undeletable(rels)?;
         let num_types = self.relationship_matrices.len();
 
         // --- Phase 1: resolve (type, src, dst) per edge without mutating state ---
@@ -2305,8 +2570,7 @@ impl Graph {
         self.relationship_count -= resolved.len();
         self.relationship_attrs.remove_all(&resolved);
 
-        let mut endpoints: Vec<(RelationshipId, NodeId, NodeId)> =
-            Vec::with_capacity(resolved.len() as usize);
+        let mut endpoints: Vec<DeletedEdge> = Vec::with_capacity(resolved.len() as usize);
         // (edge_id, type_id) pairs for a single bulk removal from the type matrix.
         let mut tm_rows: Vec<u64> = Vec::with_capacity(endpoints.capacity());
         let mut tm_cols: Vec<u64> = Vec::with_capacity(endpoints.capacity());
@@ -2333,7 +2597,12 @@ impl Graph {
             for &(edge_id, src, dst) in type_rels {
                 tm_rows.push(edge_id);
                 tm_cols.push(type_id);
-                endpoints.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+                endpoints.push(DeletedEdge {
+                    id: RelationshipId(edge_id),
+                    type_id,
+                    src: NodeId(src),
+                    dst: NodeId(dst),
+                });
                 self.clear_edge_endpoint(edge_id);
             }
 
@@ -2378,9 +2647,10 @@ impl Graph {
     /// the edges. Edges already in `explicit_rels` are skipped (they're handled
     /// by `delete_relationships`).
     ///
-    /// The adjacency matrix is NOT updated for node pairs where both endpoints
-    /// are deleted — those entries are unreachable since the nodes themselves
-    /// are gone.
+    /// Every pair that loses its last edge is cleared from the adjacency
+    /// matrix, including pairs whose endpoints are both deleted: node ids are
+    /// recycled from `deleted_nodes`, so a bit left behind is not unreachable,
+    /// it describes an edge between whichever nodes take the ids next (#2771).
     /// Returns the list of implicitly deleted edges as `(edge_id, src, dst)`
     /// so the caller can record them for effects/replication.
     pub fn delete_implicit_edges(
@@ -2388,40 +2658,56 @@ impl Graph {
         deleted_nodes: &RoaringTreemap,
         explicit_rels: &RoaringTreemap,
         index_remove_edge_docs: &mut FxHashMap<u64, FxHashMap<u64, (u64, u64)>>,
-    ) -> Result<Vec<(RelationshipId, NodeId, NodeId)>, String> {
+    ) -> Result<Vec<DeletedEdge>, String> {
         if self.relationship_matrices.is_empty() {
             return Ok(Vec::new());
         }
 
-        let mut all_implicit: Vec<(RelationshipId, NodeId, NodeId)> = Vec::new();
-        // Pairs where only one endpoint is deleted — need adjacency check
+        let mut all_implicit: Vec<DeletedEdge> = Vec::new();
+        // Pairs where an endpoint survives — the survivor may still hold an
+        // edge of another type, so these need a per-tensor check.
         let mut check_adj_pairs: std::collections::HashSet<(u64, u64)> =
             std::collections::HashSet::default();
+        // Pairs where both endpoints are deleted — known non-adjacent, no
+        // check needed. `Tensor::remove_all` yields each pair at most once, so
+        // a duplicate here means two relationship types connected the same
+        // pair; the bulk `build` below collapses those, so they are left in.
+        let mut dead_adj_pairs: Vec<(u64, u64)> = Vec::new();
 
         for type_idx in 0..self.relationship_matrices.len() {
             let mut rels: Vec<(u64, u64, u64)> = Vec::new();
 
-            // Collect all edges for deleted nodes from this tensor
-            for node_id in deleted_nodes {
-                // Outgoing edges
-                for (src, dst, edge_id) in
-                    self.relationship_matrices[type_idx].iter(node_id, node_id, false)
-                {
-                    if !explicit_rels.contains(edge_id) {
-                        rels.push((edge_id, src, dst));
+            // Collect all edges for deleted nodes from this tensor.
+            //
+            // One iterator pair for the whole type, re-seeked per node, rather
+            // than a fresh pair per node: building one allocates a
+            // `GxB_Iterator` per layer and waits the tensor, so per-node
+            // construction cost scales with the deleted set and the number of
+            // relationship types while having nothing to do with how many edges
+            // those nodes actually have. Deleting a million edgeless nodes over
+            // six types built twelve million iterators to yield nothing.
+            {
+                let tensor = &self.relationship_matrices[type_idx];
+                let mut outgoing = tensor.iter(0, 0, false);
+                let mut incoming = tensor.iter(0, 0, true);
+                for node_id in deleted_nodes {
+                    outgoing.seek(node_id, node_id);
+                    for (src, dst, edge_id) in &mut outgoing {
+                        if !explicit_rels.contains(edge_id) {
+                            rels.push((edge_id, src, dst));
+                        }
                     }
-                }
-                // Incoming edges — skip if source is also a deleted node
-                // (those edges are already collected from the source's
-                // outgoing iteration), and skip self-loops already found above.
-                for (src, dst, edge_id) in
-                    self.relationship_matrices[type_idx].iter(node_id, node_id, true)
-                {
-                    if src != node_id
-                        && !deleted_nodes.contains(src)
-                        && !explicit_rels.contains(edge_id)
-                    {
-                        rels.push((edge_id, src, dst));
+                    // Incoming edges — skip if source is also a deleted node
+                    // (those edges are already collected from the source's
+                    // outgoing iteration), and skip self-loops already found above.
+                    incoming.seek(node_id, node_id);
+                    for (src, dst, edge_id) in &mut incoming {
+                        if src != node_id
+                            && !deleted_nodes.contains(src)
+                            && !explicit_rels.contains(edge_id)
+                        {
+                            rels.push((edge_id, src, dst));
+                        }
                     }
                 }
             }
@@ -2443,7 +2729,12 @@ impl Graph {
             let type_name = &self.relationship_types[type_idx];
             let is_indexed = self.edge_indexer.has_index(type_name);
             for &(edge_id, src, dst) in &rels {
-                all_implicit.push((RelationshipId(edge_id), NodeId(src), NodeId(dst)));
+                all_implicit.push(DeletedEdge {
+                    id: RelationshipId(edge_id),
+                    type_id,
+                    src: NodeId(src),
+                    dst: NodeId(dst),
+                });
 
                 // Stage an edge-index document removal so cascade
                 // deletes don't leave stale index hits on the next
@@ -2466,8 +2757,19 @@ impl Graph {
             // Batch-remove from tensor — remove_all uses bulk mask operations
             let emptied = self.relationship_matrices[type_idx].remove_all(&rels);
             for (src, dst) in emptied {
-                // Only check adjacency if the other endpoint is NOT deleted
-                if !deleted_nodes.contains(src) || !deleted_nodes.contains(dst) {
+                // Both endpoints are being deleted, so no edge between them
+                // can survive the commit: every edge incident to a deleted
+                // node is either collected above or sits in `explicit_rels`,
+                // which `delete_relationships` removes later in this same
+                // commit. Clearing the pair is therefore unconditionally
+                // right, and skipping the tensor probe below is not merely an
+                // optimisation — running ahead of `delete_relationships`, that
+                // probe would still find an explicitly-deleted edge of another
+                // type between this pair and conclude it is adjacent, leaving
+                // the clear to be redone by that later pass.
+                if deleted_nodes.contains(src) && deleted_nodes.contains(dst) {
+                    dead_adj_pairs.push((src, dst));
+                } else {
                     check_adj_pairs.insert((src, dst));
                 }
             }
@@ -2475,18 +2777,35 @@ impl Graph {
 
         self.relationship_count -= all_implicit.len() as u64;
 
-        // Update adjacency_matrix only for pairs where one endpoint survives
-        let mut adj_mask = Matrix::<bool>::new(self.node_cap, self.node_cap);
+        // Clear adjacency for every pair that lost its last edge, in one bulk
+        // `build` rather than a `setElement` per pair — matching what
+        // `delete_relationships` does. Both halves feed the same coordinate
+        // lists so a mass `DETACH DELETE` crosses the FFI boundary once, and
+        // `GxB_Matrix_build_Scalar` yields an iso mask (one shared value, not
+        // a byte per entry) that repeated `set` calls would not. It also
+        // collapses duplicate coordinates itself, so the cross-type repeats in
+        // `dead_adj_pairs` need no separate dedup pass — sorting them here
+        // would only re-do work the build has to do anyway.
+        let mut adj_rows: Vec<u64> =
+            Vec::with_capacity(dead_adj_pairs.len() + check_adj_pairs.len());
+        let mut adj_cols: Vec<u64> = Vec::with_capacity(adj_rows.capacity());
+        for (src, dst) in dead_adj_pairs {
+            adj_rows.push(src);
+            adj_cols.push(dst);
+        }
         for (src, dst) in check_adj_pairs {
             let has_edges = self
                 .relationship_matrices
                 .iter()
                 .any(|tensor| tensor.get(src, dst).next().is_some());
             if !has_edges {
-                adj_mask.set(src, dst, true);
+                adj_rows.push(src);
+                adj_cols.push(dst);
             }
         }
-        if adj_mask.nvals() > 0 {
+        if !adj_rows.is_empty() {
+            let mut adj_mask = Matrix::<bool>::new(self.node_cap, self.node_cap);
+            adj_mask.build(&adj_rows, &adj_cols);
             self.adjacancy_matrix.remove_mask(&adj_mask);
         }
 
@@ -2665,10 +2984,7 @@ impl Graph {
         &self,
         edge_id: u64,
     ) -> Option<(u64, u64)> {
-        self.edge_endpoints
-            .get(edge_id as usize)
-            .filter(|&&key| key != EDGE_NO_ENDPOINT)
-            .map(|&key| (key >> 32, key & 0xFFFF_FFFF))
+        self.edge_endpoints.get(edge_id)
     }
 
     /// Clear an edge's endpoint slot in the reverse index (on deletion).
@@ -2677,9 +2993,7 @@ impl Graph {
         &mut self,
         edge_id: u64,
     ) {
-        if let Some(slot) = Arc::make_mut(&mut self.edge_endpoints).get_mut(edge_id as usize) {
-            *slot = EDGE_NO_ENDPOINT;
-        }
+        Arc::make_mut(&mut self.edge_endpoints).clear(edge_id);
     }
 
     /// Returns (src, dst) for an edge via the maintained reverse index.
@@ -2758,7 +3072,6 @@ impl Graph {
         self.adjacancy_matrix.resize(self.node_cap, self.node_cap);
         self.node_labels_matrix
             .resize(self.node_cap, self.labels_matices.len() as u64);
-        self.all_nodes_matrix.resize(self.node_cap, self.node_cap);
         for label_matrix in &mut self.labels_matices {
             label_matrix.resize(self.node_cap, self.node_cap);
         }
@@ -3534,16 +3847,24 @@ impl Graph {
         &mut self.constraints
     }
 
-    /// Create a constraint with validation of existing data.
+    /// Create a constraint, validating the data already in the graph.
+    ///
+    /// Returns whether validation was left unfinished: `false` if it ran
+    /// inline and the constraint is already in its final status, `true` if the
+    /// data is large enough that the constraint was parked UNDER CONSTRUCTION
+    /// and the caller must settle it on a background thread.
+    /// Does **not** intern the label or the property names. That is the
+    /// command layer's, in `register_constraint_schema` — see the note there
+    /// for why the two are separated and why the order is load-bearing.
     pub fn create_constraint(
         &mut self,
         ct: ConstraintType,
         entity_type: EntityType,
-        label: Arc<String>,
-        properties: Vec<Arc<String>>,
+        label: &Arc<String>,
+        properties: &[Arc<String>],
     ) -> Result<bool, String> {
         if ct == ConstraintType::Unique
-            && !self.has_supporting_index(&entity_type, &label, &properties)
+            && !self.has_supporting_index(&entity_type, label, properties)
         {
             return Err("missing supporting exact-match index".into());
         }
@@ -3552,7 +3873,7 @@ impl Graph {
         let existing_idx = self
             .constraints
             .iter()
-            .position(|c| c.matches(&ct, &entity_type, &label, &properties));
+            .position(|c| c.matches(&ct, &entity_type, label, properties));
         if let Some(idx) = existing_idx {
             if self.constraints[idx].status == ConstraintStatus::Failed {
                 // Remove the failed constraint so it can be recreated
@@ -3562,9 +3883,13 @@ impl Graph {
             }
         }
 
-        let mut constraint = Constraint::new(ct, entity_type, label, properties);
+        // Cloned here, where the values are actually stored, rather than by
+        // the caller — which needs its own copies afterwards to announce the
+        // constraint and was cloning for that reason. Both are `Arc`, so this
+        // is a refcount bump plus one small vector, on a DDL path.
+        let mut constraint = Constraint::new(ct, entity_type, label.clone(), properties.to_vec());
 
-        // Get entity count to decide sync vs async validation
+        // Entity count decides inline validation vs a background thread.
         let count = self.get_constraint_entity_count(&constraint);
 
         if count <= 10_000 {
@@ -3575,12 +3900,12 @@ impl Graph {
                 constraint.status = ConstraintStatus::Failed;
             }
             self.constraints.push(constraint);
-            Ok(false) // no async validation needed
+            Ok(false) // validated inline, nothing left to do
         } else {
             // Large dataset: mark under construction, caller spawns background validation
             constraint.status = ConstraintStatus::UnderConstruction;
             self.constraints.push(constraint);
-            Ok(true) // async validation needed
+            Ok(true) // caller must settle it on a background thread
         }
     }
 
@@ -3589,6 +3914,37 @@ impl Graph {
         &mut self,
         constraint: Constraint,
     ) {
+        self.constraints.push(constraint);
+    }
+
+    /// Install a constraint with the status the primary reached, adding it if
+    /// this graph does not have it yet and updating the status if it does.
+    ///
+    /// Idempotent because the primary announces a constraint **twice**: once
+    /// when it is created, still under construction, and again when validation
+    /// finishes and it is either operational or failed. A plain add would leave
+    /// a duplicate; a plain "already exists, ignore" would leave the replica
+    /// believing it is still under construction forever, which is what makes
+    /// the second announcement load-bearing rather than noise.
+    pub fn upsert_constraint_raw(
+        &mut self,
+        ct: ConstraintType,
+        entity_type: EntityType,
+        label: &Arc<String>,
+        properties: &[Arc<String>],
+        status: ConstraintStatus,
+    ) {
+        if let Some(existing) = self.constraints.iter_mut().find(|c| {
+            c.ct == ct
+                && c.entity_type == entity_type
+                && c.label == *label
+                && c.properties == properties
+        }) {
+            existing.status = status;
+            return;
+        }
+        let mut constraint = Constraint::new(ct, entity_type, label.clone(), properties.to_vec());
+        constraint.status = status;
         self.constraints.push(constraint);
     }
 
@@ -3635,7 +3991,7 @@ impl Graph {
         }
     }
 
-    /// Read-only phase of async constraint validation: compute the outcome
+    /// Read-only phase of background constraint validation: compute the outcome
     /// (valid / invalid) for every constraint currently under construction,
     /// without mutating state. Pair with
     /// [`apply_constraint_validation_results`] under a write lock.
@@ -3730,7 +4086,9 @@ impl Graph {
                         self.get_node_attribute(NodeId(node_id), prop)
                     });
                     if key.is_empty() {
-                        continue; // All NULL → skip
+                        // a constrained property is NULL or absent, so this node
+                        // does not participate in the constraint
+                        continue;
                     }
                     if !seen.insert(key) {
                         return false;
@@ -3748,6 +4106,8 @@ impl Graph {
                         self.get_relationship_attribute(RelationshipId(edge_id), prop)
                     });
                     if key.is_empty() {
+                        // a constrained property is NULL or absent, so this edge
+                        // does not participate in the constraint
                         continue;
                     }
                     if !seen.insert(key) {
@@ -3759,26 +4119,29 @@ impl Graph {
         }
     }
 
+    /// Build the composite unique-constraint key for `properties`.
+    ///
+    /// Returns an empty key as soon as *any* constrained property is NULL or
+    /// absent: such a key is unknown, and an unknown key cannot be proven to
+    /// collide with another, so the entity satisfies the constraint vacuously.
+    /// Callers treat an empty key as "this entity does not participate in the
+    /// constraint" and skip it.
     #[must_use]
     pub fn build_composite_key(
         properties: &[Arc<String>],
         mut get: impl FnMut(&Arc<String>) -> Option<Value>,
     ) -> Vec<u8> {
-        let mut all_null = true;
         let mut key = Vec::new();
         for prop in properties {
             match get(prop) {
                 Some(v) if !matches!(v, Value::Null) => {
-                    all_null = false;
                     key.extend_from_slice(format!("{v:?}").as_bytes());
                 }
-                _ => {
-                    key.push(0); // NULL marker
-                }
+                _ => return Vec::new(),
             }
             key.push(b'|');
         }
-        if all_null { Vec::new() } else { key }
+        key
     }
 
     /// Drop a constraint by type, entity type, label and properties.
@@ -3906,27 +4269,6 @@ impl Graph {
         result
     }
 
-    /// Build a diagonal boolean matrix of nodes matching any of the given labels.
-    /// If `labels` is empty, returns the all_nodes matrix.
-    #[must_use]
-    pub fn build_node_mask_matrix(
-        &self,
-        labels: &[Arc<String>],
-    ) -> Matrix<bool> {
-        if labels.is_empty() {
-            self.all_nodes_matrix.extract()
-        } else {
-            let mut result = Matrix::<bool>::new(self.node_cap, self.node_cap);
-            for label in labels {
-                if let Some(label_id) = self.get_label_id(label) {
-                    let m = self.labels_matices[usize::from(label_id)].extract();
-                    result.element_wise_add(None, None, Some(&m), None);
-                }
-            }
-            result
-        }
-    }
-
     /// Compute a detailed breakdown of memory usage for `GRAPH.MEMORY USAGE`.
     ///
     /// `samples` controls how many entities are sampled per label/type when
@@ -3955,25 +4297,26 @@ impl Graph {
         }
 
         // --- node block storage ---
-        // Everything a node costs that is not its property values: the matrix
-        // recording that the node exists (the Rust stand-in for C's per-node
-        // DataBlock item, and the reason an attribute-less node is not free),
-        // the attribute store's unattributed bytes, and the deleted-id bitmap.
-        // Property values are reported under the attribute components, and
+        // Everything a node costs that is not its property values: the
+        // attribute store's unattributed bytes (the per-node slot, which is
+        // what makes an attribute-less node not free, and the counterpart of
+        // C's per-node DataBlock item) and the deleted-id bitmap. Node
+        // existence itself costs nothing beyond those — it is the id range
+        // minus that bitmap, not a stored structure. Property values are
+        // reported under the attribute components, and
         // `structural_memory_usage` excludes exactly those, so the two halves
         // cover the store without overlap.
-        let node_block_storage_sz: usize = self.all_nodes_matrix.memory_usage()
-            + self.node_attrs.structural_memory_usage()
-            + self.deleted_nodes.serialized_size();
+        let node_block_storage_sz: usize =
+            self.node_attrs.structural_memory_usage() + self.deleted_nodes.serialized_size();
 
         // --- edge block storage ---
         // Mirrors the node side: the matrix recording each edge's existence and
-        // type, plus the graph-wide edge_id → compound_key reverse index (a dense
-        // vector holding one u64 per edge slot).
+        // type, plus the graph-wide edge_id → endpoint reverse index (one slot
+        // per edge id, 4, 6, 8 or 16 bytes wide depending on the tier).
         let edge_block_storage_sz: usize = self.relationship_type_matrix.memory_usage()
             + self.relationship_attrs.structural_memory_usage()
             + self.deleted_relationships.serialized_size()
-            + self.edge_endpoints.capacity() * std::mem::size_of::<u64>();
+            + self.edge_endpoints.memory_usage();
 
         // --- node attributes by label (sampling) ---
         let mut node_attr_by_label: Vec<(Arc<String>, usize)> = Vec::new();
@@ -4029,14 +4372,16 @@ impl Graph {
         let total_nodes = self.node_count;
         let unlabeled_count = total_nodes.saturating_sub(total_labeled);
         let unlabeled_node_attr_sz = if unlabeled_count > 0 {
-            // Sample unlabeled nodes from all_nodes_matrix, skipping labeled ones.
+            // Sample unlabeled nodes, skipping labeled ones. Live ids are the
+            // id range minus the deleted set — the same walk `get_nodes` uses
+            // for an unfiltered scan.
             let mut sampled_mem: usize = 0;
             let mut sampled_count: usize = 0;
-            for (node_id, _) in self.all_nodes_matrix.iter(0, u64::MAX) {
+            for node_id in 0..=self.max_node_id() {
                 if sampled_count >= samples {
                     break;
                 }
-                if seen[node_id as usize] {
+                if self.deleted_nodes.contains(node_id) || seen[node_id as usize] {
                     continue;
                 }
                 sampled_mem += self.estimate_entity_attr_size(&self.node_attrs, node_id);
@@ -4283,5 +4628,502 @@ mod attr_id_space_tests {
                 "RDB position {id} disagrees with the live id for {name}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod composite_key_tests {
+    use super::*;
+
+    fn key(
+        props: &[&str],
+        present: &[(&str, Value)],
+    ) -> Vec<u8> {
+        let props: Vec<Arc<String>> = props.iter().map(|p| Arc::new((*p).to_string())).collect();
+        Graph::build_composite_key(&props, |p| {
+            present
+                .iter()
+                .find(|(name, _)| name == &p.as_str())
+                .map(|(_, v)| v.clone())
+        })
+    }
+
+    /// Every constrained property present → a real key that discriminates.
+    #[test]
+    fn complete_key_is_built_and_discriminates() {
+        let a = key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))]);
+        assert!(!a.is_empty());
+        assert_eq!(
+            a,
+            key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(2))])
+        );
+        assert_ne!(
+            a,
+            key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Int(3))])
+        );
+    }
+
+    /// A missing or NULL component makes the whole key unknown, so the entity
+    /// is vacuously unique — regardless of which component it is.
+    #[test]
+    fn any_null_component_yields_empty_key() {
+        assert!(key(&["a", "b"], &[("a", Value::Int(1))]).is_empty());
+        assert!(key(&["a", "b"], &[("b", Value::Int(2))]).is_empty());
+        assert!(key(&["a", "b"], &[]).is_empty());
+        assert!(key(&["a", "b"], &[("a", Value::Int(1)), ("b", Value::Null)]).is_empty());
+        assert!(key(&["a", "b"], &[("a", Value::Null), ("b", Value::Int(2))]).is_empty());
+        assert!(
+            key(
+                &["a", "b", "c"],
+                &[("a", Value::Int(1)), ("c", Value::Int(3))]
+            )
+            .is_empty()
+        );
+    }
+
+    /// For a single property ALL and ANY coincide, so behaviour is unchanged.
+    #[test]
+    fn single_property_is_unaffected() {
+        assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
+        assert!(key(&["a"], &[]).is_empty());
+        assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod reservation_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    fn graph() -> Graph {
+        ensure_init();
+        Graph::new(64, 64, 0, 0, "r")
+    }
+
+    /// One query's worth of node reservations, driven the way `CreateOp` drives
+    /// them: reserve a batch, record it, reserve the next.
+    ///
+    /// `outstanding` comes from the recorded set rather than from a counter,
+    /// which is the whole point — the test would still pass against a stored
+    /// count, so what it is really pinning is that the ids do not collide.
+    struct Query {
+        /// What commit will create.
+        created: RoaringTreemap,
+        /// What this batch gave back. With `created` it is exactly what the
+        /// allocator must not reissue — `Pending`'s two sets.
+        cancelled: RoaringTreemap,
+        /// Where the id space stood when the batch opened: the one thing
+        /// `Pending` keeps.
+        entry: u64,
+    }
+
+    impl Query {
+        fn new(g: &Graph) -> Self {
+            Self {
+                created: RoaringTreemap::new(),
+                cancelled: RoaringTreemap::new(),
+                entry: g.node_id_bound(),
+            }
+        }
+
+        fn reserve(
+            &mut self,
+            g: &mut Graph,
+            n: usize,
+        ) -> Vec<u64> {
+            let before = &self.created | &self.cancelled;
+            let ids = IdSpace::at(self.entry)
+                .reserve(n, g.deleted_nodes(), &[&self.created, &self.cancelled])
+                .expect("reserved");
+            for &id in &ids {
+                assert!(
+                    !before.contains(id),
+                    "{id} was handed out twice in one query"
+                );
+                self.created.insert(id);
+            }
+            ids
+        }
+
+        /// Cancel a reservation, as `DELETE` of a pending-created node does.
+        /// The id leaves `created`, so commit will not make it — but the space
+        /// keeps it, so this query will not be handed it again.
+        fn cancel(
+            &mut self,
+            g: &mut Graph,
+            id: u64,
+        ) {
+            assert!(self.created.remove(id), "cancelling an id never reserved");
+            self.cancelled.insert(id);
+            g.return_node_id(NodeId(id));
+        }
+
+        fn commit(
+            self,
+            g: &mut Graph,
+        ) {
+            g.create_nodes(&self.created, &mut IdSpace::at(self.entry))
+                .expect("the allocator's own ids must be creatable");
+        }
+    }
+
+    fn delete(
+        g: &mut Graph,
+        ids: &[u64],
+    ) {
+        let bm: RoaringTreemap = ids.iter().copied().collect();
+        let mut docs = FxHashMap::default();
+        // A batch that created nothing: every id here predates it, which is
+        // what makes them deletable.
+        let space = g.open_node_id_space();
+        g.delete_nodes(&bm, &mut docs, &space).expect("deleted");
+    }
+
+    /// Between queries the id space is dense: `handed_out` ids have been
+    /// issued, and every one of them is either live or in the recycle bin.
+    ///
+    /// Checked as two independent readings rather than one, because the
+    /// boundary is *derived* from the same two numbers it would otherwise be
+    /// compared against. Walking the bin gives a count that does not come from
+    /// `deleted_nodes.len()`, so a bin holding an id at or above the boundary —
+    /// an id nothing ever handed out — is caught rather than cancelling out.
+    /// This is the same pairing [`IdSpace::verify`] makes, and what it would
+    /// refuse as `Miscounted` if a replica were told this.
+    fn assert_dense(
+        g: &Graph,
+        handed_out: u64,
+    ) {
+        assert_eq!(
+            g.node_id_bound(),
+            handed_out,
+            "the boundary must count every id ever handed out"
+        );
+        let free = (0..handed_out)
+            .filter(|&id| g.is_node_deleted(NodeId(id)))
+            .count() as u64;
+        assert_eq!(
+            handed_out - free,
+            g.node_count,
+            "{free} of the {handed_out} issued ids are free, so {} should be live, not {}",
+            handed_out - free,
+            g.node_count
+        );
+    }
+
+    /// Successive batches in one query must not overlap. The graph keeps no
+    /// record of what it handed out, so this is entirely carried by the
+    /// `outstanding` the caller passes — pass a stale one and the second batch
+    /// repeats the first.
+    #[test]
+    fn successive_batches_do_not_overlap() {
+        let mut g = graph();
+        let mut q = Query::new(&g);
+
+        let mut all = Vec::new();
+        for _ in 0..5 {
+            all.extend(q.reserve(&mut g, 1024));
+        }
+
+        assert_eq!(all, (0..5120).collect::<Vec<_>>(), "dense and in order");
+        q.commit(&mut g);
+        assert_dense(&g, 5120);
+    }
+
+    /// Freed ids are handed out before fresh ones, lowest first.
+    #[test]
+    fn reclaims_from_the_bin_before_allocating_fresh() {
+        let mut g = graph();
+        let mut q = Query::new(&g);
+        q.reserve(&mut g, 10);
+        q.commit(&mut g);
+        delete(&mut g, &[2, 5, 7]);
+
+        let mut q = Query::new(&g);
+        assert_eq!(q.reserve(&mut g, 2), vec![2, 5]);
+        assert_eq!(q.reserve(&mut g, 1), vec![7], "then the last freed id");
+        assert_eq!(q.reserve(&mut g, 2), vec![10, 11], "then fresh");
+        q.commit(&mut g);
+        assert_dense(&g, 12);
+    }
+
+    /// A single batch that empties the bin and keeps going must not let the two
+    /// halves collide. The fresh ids start above every id ever handed out — not
+    /// above `node_count`, which the reclaimed half has not reached yet.
+    #[test]
+    fn one_batch_spanning_the_bin_and_fresh_ids() {
+        let mut g = graph();
+        let mut q = Query::new(&g);
+        q.reserve(&mut g, 10);
+        q.commit(&mut g);
+        delete(&mut g, &[3]);
+
+        // 9 live (0..10 minus 3), one in the bin, so 10 ids handed out.
+        let mut q = Query::new(&g);
+        assert_eq!(
+            q.reserve(&mut g, 3),
+            vec![3, 10, 11],
+            "the freed id, then above the boundary"
+        );
+        q.commit(&mut g);
+        assert_dense(&g, 12);
+    }
+
+    /// `CREATE (a)-[:R]->(b) DELETE b` — the shape that makes the boundary
+    /// overstate itself mid-query. b's id must reach the recycle bin, or the
+    /// space is left with a hole that the next query's boundary counts as live.
+    #[test]
+    fn a_cancelled_reservation_returns_to_the_bin() {
+        let mut g = graph();
+        let mut q = Query::new(&g);
+        let ids = q.reserve(&mut g, 2);
+        assert_eq!(ids, vec![0, 1]);
+        q.cancel(&mut g, 1);
+        q.commit(&mut g);
+
+        assert!(g.is_node_deleted(NodeId(1)), "b's id is free, not lost");
+        assert_eq!(g.node_count, 1);
+        assert_dense(&g, 2);
+
+        // A *later* query does hand it back out — by then it is a different
+        // effects buffer, where recreating a recycled id is ordinary.
+        let mut q = Query::new(&g);
+        assert_eq!(q.reserve(&mut g, 1), vec![1]);
+        q.commit(&mut g);
+        assert_dense(&g, 2);
+    }
+
+    /// Cancelling and reserving again within one query must not hand the
+    /// cancelled id to two different nodes.
+    #[test]
+    fn reserving_after_a_cancellation_in_the_same_query() {
+        let mut g = graph();
+        let mut q = Query::new(&g);
+        q.reserve(&mut g, 3);
+        q.cancel(&mut g, 1);
+
+        // Id 1 is back in the bin, but this query has already had it, so it is
+        // not offered again — the next two ids are fresh. Handing it back would
+        // put the same id in two records of one effects buffer: the cancelled
+        // node's own create/delete pair, and the real create that reused it.
+        // A replica refuses that buffer as `AlreadyLive`, measured.
+        let next = q.reserve(&mut g, 2);
+        assert_eq!(next, vec![3, 4], "not 1 again, even though it is free");
+        q.commit(&mut g);
+
+        // Still dense: five ids handed out, four live and 1 in the bin.
+        assert_dense(&g, 5);
+        assert!(g.is_node_deleted(NodeId(1)));
+    }
+
+    /// The relationship allocator is the same code over the other pair of
+    /// counters, so it gets the same walk: reclaim lowest-first, then fresh.
+    #[test]
+    fn relationship_ids_reclaim_then_allocate_fresh() {
+        let mut g = graph();
+        let mut q = Query::new(&g);
+        q.reserve(&mut g, 4);
+        q.commit(&mut g);
+
+        let type_name = Arc::new("R".to_owned());
+        let mut space = g.open_relationship_id_space();
+        let ids = space
+            .reserve(3, g.deleted_relationships(), &[])
+            .expect("reserved");
+        assert_eq!(ids, vec![0, 1, 2]);
+        g.create_relationships_bulk(&type_name, &[0, 1, 2], &[1, 2, 3], &ids, &mut space)
+            .expect("the allocator's own ids must be creatable");
+
+        let mut docs = FxHashMap::default();
+        let doomed: RoaringTreemap = std::iter::once(1).collect();
+        let del_space = g.open_relationship_id_space();
+        g.delete_relationships(&doomed, &mut docs, &del_space)
+            .expect("deleted");
+
+        // One in the bin, two live, so three ids handed out.
+        // A fresh query, so nothing is outstanding: the first batch committed.
+        let space = g.open_relationship_id_space();
+        let ids = space
+            .reserve(2, g.deleted_relationships(), &[])
+            .expect("reserved");
+        assert_eq!(ids, vec![1, 3], "the freed id, then above the boundary");
+    }
+
+    /// A second batch must not re-hand-out the first batch's reclaimed ids.
+    /// This is the case the graph's own counter used to carry, and the one that
+    /// breaks loudest if `outstanding` is ever passed as a constant.
+    #[test]
+    fn outstanding_covers_ids_reclaimed_by_an_earlier_batch() {
+        let mut g = graph();
+        let mut q = Query::new(&g);
+        q.reserve(&mut g, 8);
+        q.commit(&mut g);
+        delete(&mut g, &[0, 1, 2, 3, 4, 5]);
+
+        let mut q = Query::new(&g);
+        assert_eq!(q.reserve(&mut g, 2), vec![0, 1]);
+        assert_eq!(q.reserve(&mut g, 2), vec![2, 3], "not 0 and 1 again");
+        assert_eq!(q.reserve(&mut g, 2), vec![4, 5]);
+        assert_eq!(
+            q.reserve(&mut g, 2),
+            vec![8, 9],
+            "bin exhausted, then fresh"
+        );
+        q.commit(&mut g);
+        assert_dense(&g, 10);
+    }
+}
+
+#[cfg(test)]
+mod adjacency_cascade_tests {
+    use super::super::graphblas::test_init::ensure_init;
+    use super::*;
+
+    fn build(
+        name: &str,
+        node_count: usize,
+        edges: &[(u64, u64, &str)],
+    ) -> Graph {
+        ensure_init();
+        let mut g = Graph::new(16, 16, 1, 0, name);
+        let mut space = g.open_node_id_space();
+        let ids: RoaringTreemap = space
+            .reserve(node_count, g.deleted_nodes(), &[])
+            .unwrap()
+            .into_iter()
+            .collect();
+        g.create_nodes(&ids, &mut space).unwrap();
+        let mut rel_space = g.open_relationship_id_space();
+        for &(src, dst, type_name) in edges {
+            let rel_id = rel_space
+                .reserve(1, g.deleted_relationships(), &[])
+                .unwrap()[0];
+            g.create_relationships_bulk(
+                &Arc::new(type_name.to_string()),
+                &[src],
+                &[dst],
+                &[rel_id],
+                &mut rel_space,
+            )
+            .unwrap();
+        }
+        g
+    }
+
+    /// The commit-time cascade for `DELETE n`: node removal, then implicit
+    /// removal of every edge incident to a deleted node. Mirrors the order in
+    /// `Pending::commit`.
+    fn delete_nodes_cascade(
+        g: &mut Graph,
+        nodes: &[u64],
+    ) {
+        let deleted: RoaringTreemap = nodes.iter().copied().collect();
+        let mut node_docs = FxHashMap::default();
+        let mut edge_docs = FxHashMap::default();
+        let space = g.open_node_id_space();
+        g.delete_nodes(&deleted, &mut node_docs, &space).unwrap();
+        g.delete_implicit_edges(&deleted, &RoaringTreemap::new(), &mut edge_docs)
+            .unwrap();
+    }
+
+    /// What a traversal without a bound relationship reads: `CondTraverse`
+    /// takes the adjacency matrix and emits pairs from it directly, with no
+    /// tensor lookup to disagree with.
+    fn adjacency_entries(g: &Graph) -> Vec<(u64, u64)> {
+        g.build_adjacency_matrix(&[]).iter(0, g.node_cap).collect()
+    }
+
+    /// Deleting an edge together with both of its endpoints has to clear the
+    /// adjacency entry.
+    ///
+    /// This is #2771. The entry used to be left behind on the theory that a
+    /// pair of deleted nodes is unreachable — but node ids are recycled out of
+    /// `deleted_nodes`, so the next two nodes created inherit the bit and
+    /// `MATCH (x)-->(y)` invents an edge between them. `MATCH (x)-[r]->(y)` was
+    /// unaffected: binding `r` forces a tensor lookup, which finds nothing, so
+    /// two plans over the same data disagreed.
+    #[test]
+    fn deleting_both_endpoints_clears_adjacency() {
+        for (name, node_count, edges, delete) in [
+            (
+                "adj_cascade_simple",
+                2,
+                &[(0u64, 1u64, "R")][..],
+                &[0u64, 1][..],
+            ),
+            ("adj_cascade_self_loop", 1, &[(0, 0, "R")][..], &[0][..]),
+            (
+                "adj_cascade_parallel",
+                2,
+                &[(0, 1, "R"), (0, 1, "R"), (0, 1, "S")][..],
+                &[0, 1][..],
+            ),
+            (
+                "adj_cascade_both_directions",
+                2,
+                &[(0, 1, "R"), (1, 0, "S")][..],
+                &[0, 1][..],
+            ),
+        ] {
+            let mut g = build(name, node_count, edges);
+            assert!(
+                g.adjacency_matrix().nvals() > 0,
+                "{name}: nothing to delete"
+            );
+
+            delete_nodes_cascade(&mut g, delete);
+
+            assert_eq!(
+                g.adjacency_matrix().nvals(),
+                0,
+                "{name}: adjacency entry survived the deletion of both endpoints"
+            );
+            assert!(
+                adjacency_entries(&g).is_empty(),
+                "{name}: a traversal would still see a phantom edge"
+            );
+        }
+    }
+
+    /// The converse: clearing must not overreach. An edge between surviving
+    /// nodes keeps its adjacency entry when a neighbour is deleted.
+    #[test]
+    fn surviving_edges_keep_their_adjacency() {
+        // 0 -> 1 -> 2, and a second type between the survivors.
+        let mut g = build(
+            "adj_cascade_survivor",
+            3,
+            &[(0, 1, "R"), (1, 2, "R"), (1, 2, "S")],
+        );
+
+        delete_nodes_cascade(&mut g, &[0]);
+
+        assert_eq!(adjacency_entries(&g), vec![(1, 2)]);
+    }
+
+    /// Deleting one type between a pair that also has an edge of another type
+    /// leaves the pair adjacent — the per-tensor check, not the both-endpoints
+    /// shortcut, decides this.
+    #[test]
+    fn pair_stays_adjacent_while_another_type_remains() {
+        let mut g = build("adj_cascade_multi_type", 3, &[(0, 1, "R"), (0, 1, "S")]);
+        let mut edge_docs = FxHashMap::default();
+
+        // Drop just the R edge (id 0) explicitly; S (id 1) stays.
+        let del_space = g.open_relationship_id_space();
+        g.delete_relationships(
+            &RoaringTreemap::from_iter([0u64]),
+            &mut edge_docs,
+            &del_space,
+        )
+        .unwrap();
+        assert_eq!(adjacency_entries(&g), vec![(0, 1)]);
+
+        // Now delete node 2, which is unrelated: the 0->1 pair is untouched.
+        delete_nodes_cascade(&mut g, &[2]);
+        assert_eq!(adjacency_entries(&g), vec![(0, 1)]);
+
+        // And deleting both endpoints clears it, S edge included.
+        delete_nodes_cascade(&mut g, &[0, 1]);
+        assert!(adjacency_entries(&g).is_empty());
     }
 }

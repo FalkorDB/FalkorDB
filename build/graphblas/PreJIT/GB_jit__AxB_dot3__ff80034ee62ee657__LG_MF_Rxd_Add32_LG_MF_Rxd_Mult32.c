@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__AxB_dot3__ff80034ee62ee657__LG_MF_Rxd_Add32_LG_MF_Rxd_Mult32.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -178,13 +178,13 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x2da241266dc537b3 ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = GB_LG_MF_Rxd_Add32_USER_DEFN ;
     defn [1] = GB_LG_MF_Rxd_Mult32_USER_DEFN ;
     defn [2] = GB_LG_MF_resultTuple32_USER_DEFN ;
     defn [3] = GB_LG_MF_flowEdge_USER_DEFN ;
     defn [4] = NULL ;
-    if (id_size != 16 || term_size != 0) return (false) ;
+    if (id_memsize != 16 || term_memsize != 0) return (false) ;
     GB_DECLARE_IDENTITY_CONST (zidentity) ;
     if (id == NULL || memcmp (id, &zidentity, 16) != 0) return (false) ;
     return (true) ;

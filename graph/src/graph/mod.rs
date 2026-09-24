@@ -63,6 +63,8 @@
 pub mod attribute_store;
 pub mod constraint;
 pub mod cow;
+pub mod endpoint_index;
 pub mod graph;
 pub mod graphblas;
+pub mod id_space;
 pub mod mvcc_graph;

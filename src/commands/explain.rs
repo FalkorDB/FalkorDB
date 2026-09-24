@@ -22,7 +22,7 @@ use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
     commands::EMPTY_KEY_ERR,
-    graph_core::{BlockedClient, ThreadedGraph, ffi},
+    graph_core::{BlockedClient, ThreadedGraph, ffi, up_to_nul},
     redis_type::GRAPH_TYPE,
 };
 use graph::{graph::graph::Plan, threadpool::spawn};
@@ -63,7 +63,8 @@ pub fn graph_explain(
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
-    let query = args.next_str()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
 
     let key = ctx.open_key(&key);
     let Some(graph) = key.get_value::<Arc<RwLock<ThreadedGraph>>>(&GRAPH_TYPE)? else {

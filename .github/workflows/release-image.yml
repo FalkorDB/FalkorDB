@@ -71,11 +71,10 @@ jobs:
       is_latest:         ${{ steps.derive.outputs.is_latest }}
       browser_tag:       ${{ steps.derive.outputs.browser_tag }}
       commit_sha:        ${{ steps.derive.outputs.commit_sha }}
-      rc_pr_n:           ${{ steps.derive.outputs.rc_pr_n }}
       push_to_dockerhub: ${{ steps.derive.outputs.push_to_dockerhub }}
     steps:
-      # Refuse workflow_dispatch from anywhere except a trunk (main, or the
-      # interim main-rs in FalkorDB/FalkorDB) or a version branch (X.Y). Release
+      # Refuse workflow_dispatch from anywhere except main or a version branch
+      # (X.Y). Release
       # events and workflow_call (from release-tag.yml) are unaffected — those
       # are driven by a tag, which in practice only points at a trunk / version
       # branch anyway. This guards against a dispatch from a feature branch
@@ -85,8 +84,8 @@ jobs:
         env:
           REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "$REF_NAME" != "main" && "$REF_NAME" != "main-rs" && ! "$REF_NAME" =~ ^[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::workflow_dispatch must run from a trunk (main, main-rs) or a version branch (X.Y); got ref_name=$REF_NAME"
+          if [[ "$REF_NAME" != "main" && ! "$REF_NAME" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::workflow_dispatch must run from main or a version branch (X.Y); got ref_name=$REF_NAME"
             exit 1
           fi
 
@@ -113,7 +112,6 @@ jobs:
           set -euo pipefail
 
           IS_LATEST=false
-          RC_PR_N=""
 
           # Dispatch on the EVENT first, so the two pre-existing paths keep their
           # exact behaviour regardless of how `inputs` defaults are surfaced.
@@ -156,18 +154,15 @@ jobs:
           # decision. Shared by the release event and the tag-push path, so it
           # lives outside the branching above.
           if [ "$MODE" = "retag" ]; then
-            # PR lookup — the validated artifact is keyed by PR number, not
-            # by commit SHA, because squash/rebase merges produce new SHAs
-            # that were never built. Fail loudly if the release commit has
-            # no associated merged PR; the operator can fall back to
-            # workflow_dispatch for a fresh build from that SHA.
-            RC_PR_N=$(gh api "/repos/${REPO}/commits/${COMMIT_SHA}/pulls" \
-              --jq 'map(select(.merged_at != null)) | .[0].number // empty')
-            if [ -z "$RC_PR_N" ]; then
-              echo "::error::no merged PR associated with release commit ${COMMIT_SHA}"
-              echo "::error::if you need to ship this commit, re-run via workflow_dispatch with commit_sha=${COMMIT_SHA}"
-              exit 1
-            fi
+            # The validated artifact is keyed by the COMMIT the merge queue
+            # built, which is the commit that landed. The old PR-number lookup
+            # existed because squash merges produced SHAs that were never built;
+            # the queue makes that premise false, so the SHA is both sufficient
+            # and more direct.
+            #
+            # Deliberately not the PR's own rc-pr-<N>: that image is built from
+            # the PR head rather than the merge candidate, and a fork PR never
+            # publishes one at all.
 
             # IS_LATEST=true only when this release is the highest semver
             # across all (non-draft, non-prerelease) releases. A backport
@@ -209,10 +204,9 @@ jobs:
             echo "is_latest=${IS_LATEST}"
             echo "browser_tag=${BROWSER_TAG}"
             echo "commit_sha=${COMMIT_SHA}"
-            echo "rc_pr_n=${RC_PR_N}"
             echo "push_to_dockerhub=${PUSH_HUB}"
           } >> "$GITHUB_OUTPUT"
-          echo "Derived: mode=${MODE} tag=${TAG} is_latest=${IS_LATEST} commit_sha=${COMMIT_SHA} rc_pr=${RC_PR_N} push_hub=${PUSH_HUB}"
+          echo "Derived: mode=${MODE} tag=${TAG} is_latest=${IS_LATEST} commit_sha=${COMMIT_SHA} push_hub=${PUSH_HUB}"
 
   # Retag path: release event. docker buildx imagetools create copies the
   # multi-arch manifest from rc-pr-<N> to the release tags on both registries
@@ -229,7 +223,7 @@ jobs:
       matrix:
         repo: [falkordb, falkordb-server]
     steps:
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Login to Docker Hub
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -244,15 +238,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Retag rc-pr-${{ needs.prepare.outputs.rc_pr_n }} → ${{ needs.prepare.outputs.tag }} (${{ matrix.repo }})
+      - name: Retag rc-mg-${{ needs.prepare.outputs.commit_sha }} → ${{ needs.prepare.outputs.tag }} (${{ matrix.repo }})
         env:
           TAG:       ${{ needs.prepare.outputs.tag }}
           IS_LATEST: ${{ needs.prepare.outputs.is_latest }}
-          RC_PR_N:   ${{ needs.prepare.outputs.rc_pr_n }}
+          COMMIT_SHA: ${{ needs.prepare.outputs.commit_sha }}
           REPO:      ${{ matrix.repo }}
         run: |
           set -euo pipefail
-          SRC="ghcr.io/falkordb/${REPO}:rc-pr-${RC_PR_N}"
+          SRC="ghcr.io/falkordb/${REPO}:rc-mg-${COMMIT_SHA}"
           EXTRA_TAGS=""
           if [ "$IS_LATEST" = "true" ]; then
             # GHCR gets :latest (Rust port is the only thing there).

@@ -120,9 +120,26 @@ use orx_tree::{DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use thin_vec::ThinVec;
+use thiserror::Error;
 /// Opening of every rejection [`Parser::too_deep`] produces, and what
 /// [`is_too_deep`] recognises.
 const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
+
+/// A place where a pattern comprehension cannot be planned as a sub-plan, so
+/// the parser rejects one found there (#2308).
+#[derive(Debug, Clone, Copy, Error)]
+enum ForbiddenPatternComprehension {
+    /// A pattern's inline property map; worded as FalkorDB C words it, and
+    /// also the rejection for any other map the parser cannot accept there.
+    #[error("Encountered unhandled type in inlined properties.")]
+    InlineProperties,
+    /// MERGE's ON CREATE / ON MATCH SET, which MERGE applies itself.
+    #[error("Pattern comprehensions are not supported in MERGE ON CREATE / ON MATCH SET.")]
+    MergeSet,
+    /// Index OPTIONS, evaluated once with no input row.
+    #[error("Pattern comprehensions are not supported in index OPTIONS.")]
+    IndexOptions,
+}
 
 /// Rejections [`evaluate_param`] produces for a value that is not a literal.
 ///
@@ -196,6 +213,9 @@ pub struct Parser<'a> {
     /// [`Parser::with_child_height`] last cleared it, so a helper that embeds
     /// those expressions in a tree of its own can account for their height.
     max_child_height: usize,
+    /// Set while parsing where a pattern comprehension cannot be planned as
+    /// a sub-plan, to the rejection to raise if one is found there.
+    forbidden_pattern_comprehension: Option<ForbiddenPatternComprehension>,
 }
 
 impl<'a> Parser<'a> {
@@ -246,6 +266,7 @@ impl<'a> Parser<'a> {
             depth: 0,
             expr_height: 0,
             max_child_height: 0,
+            forbidden_pattern_comprehension: None,
         }
     }
 
@@ -611,7 +632,11 @@ impl<'a> Parser<'a> {
                 IndexType::Range
             };
             let options = if (vector || fulltext) && optional_match_token!(self.lexer => Options) {
-                Some(Arc::new(self.parse_map()?))
+                // Evaluated once, with no input row for a sub-plan to run on.
+                Some(Arc::new(self.without_pattern_comprehensions(
+                    ForbiddenPatternComprehension::IndexOptions,
+                    Self::parse_map,
+                )?))
             } else {
                 None
             };
@@ -1111,15 +1136,20 @@ impl<'a> Parser<'a> {
         let mut on_match_set_items = vec![];
         let mut on_create_set_items = vec![];
         while optional_match_token!(self.lexer => On) {
-            if optional_match_token!(self.lexer => Match) {
-                match_token!(self.lexer => Set);
-                self.parse_set_items(&mut on_match_set_items)?;
+            // MERGE applies these items itself, once it has matched or
+            // created the pattern, so no sub-plan can run in between to
+            // bind a pattern comprehension; rejected as in FalkorDB C.
+            let items = if optional_match_token!(self.lexer => Match) {
+                &mut on_match_set_items
             } else if optional_match_token!(self.lexer => Create) {
-                match_token!(self.lexer => Set);
-                self.parse_set_items(&mut on_create_set_items)?;
+                &mut on_create_set_items
             } else {
                 return Err(self.lexer.format_error("Expected MATCH or CREATE after ON"));
-            }
+            };
+            match_token!(self.lexer => Set);
+            self.without_pattern_comprehensions(ForbiddenPatternComprehension::MergeSet, |s| {
+                s.parse_set_items(items)
+            })?;
         }
         Ok(QueryIR::Merge {
             pattern,
@@ -2707,6 +2737,23 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
+    /// Run `parse` with pattern comprehensions rejected as `place`.
+    fn without_pattern_comprehensions<T>(
+        &mut self,
+        place: ForbiddenPatternComprehension,
+        parse: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let outer = self.forbidden_pattern_comprehension.replace(place);
+        let res = parse(self);
+        self.forbidden_pattern_comprehension = outer;
+        res
+    }
+
+    fn reject_forbidden_pattern_comprehension(&self) -> Result<(), String> {
+        self.forbidden_pattern_comprehension
+            .map_or(Ok(()), |place| Err(place.to_string()))
+    }
+
     /// Parses the contents after an opening `[` bracket.
     ///
     /// Uses backtracking to distinguish between:
@@ -2740,6 +2787,7 @@ impl<'a> Parser<'a> {
             && self.lexer.current()? == Token::LParen
             && let Ok(result) = self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
         {
+            self.reject_forbidden_pattern_comprehension()?;
             self.reject_aggregate(&result)?;
             return Ok((result, false));
         }
@@ -2748,6 +2796,7 @@ impl<'a> Parser<'a> {
         // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
         if self.lexer.current()? == Token::LParen {
             if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate) {
+                self.reject_forbidden_pattern_comprehension()?;
                 self.reject_aggregate(&result)?;
                 return Ok((result, false));
             }
@@ -2853,11 +2902,17 @@ impl<'a> Parser<'a> {
     /// Parses an inline property map, preserving "Unknown function" errors
     /// while replacing other parse errors with a generic inlined-properties message.
     fn parse_inline_properties(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        self.parse_map().map_err(|e| {
+        // parse_map already refuses pattern predicates in its values; pattern
+        // comprehensions are refused too, as FalkorDB C does.
+        self.without_pattern_comprehensions(
+            ForbiddenPatternComprehension::InlineProperties,
+            Self::parse_map,
+        )
+        .map_err(|e| {
             if e.starts_with("Unknown function") {
                 e
             } else {
-                String::from("Encountered unhandled type in inlined properties.")
+                ForbiddenPatternComprehension::InlineProperties.to_string()
             }
         })
     }
