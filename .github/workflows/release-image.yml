@@ -78,7 +78,7 @@ jobs:
       # events and workflow_call (from release-tag.yml) are unaffected — those
       # are driven by a tag, which in practice only points at a trunk / version
       # branch anyway. This guards against a dispatch from a feature branch
-      # pushing user-facing tags (latest-rs, semver) built from un-merged code.
+      # pushing user-facing tags (latest, semver) built from un-merged code.
       - name: Reject dispatch from non-release-bearing ref
         if: github.event_name == 'workflow_dispatch'
         env:
@@ -249,11 +249,11 @@ jobs:
           SRC="ghcr.io/falkordb/${REPO}:rc-mg-${COMMIT_SHA}"
           EXTRA_TAGS=""
           if [ "$IS_LATEST" = "true" ]; then
-            # GHCR gets :latest (Rust port is the only thing there).
-            # Docker Hub gets :latest-rs — the bare :latest tag on Docker
-            # Hub currently points at the C-port image and we don't want
-            # to clobber it until/unless we decide to flip the default.
-            EXTRA_TAGS="$EXTRA_TAGS -t ghcr.io/falkordb/${REPO}:latest -t falkordb/${REPO}:latest-rs"
+            # From 6.0 GA the Rust engine is the default, so :latest moves on
+            # BOTH registries — same as the rebuild path in _build-flavour.yml.
+            # :latest-rs stays as a deprecated alias (same manifest, costs
+            # nothing) so anything pinned to it keeps working.
+            EXTRA_TAGS="$EXTRA_TAGS -t ghcr.io/falkordb/${REPO}:latest -t falkordb/${REPO}:latest -t falkordb/${REPO}:latest-rs"
           fi
           docker buildx imagetools create \
             -t "ghcr.io/falkordb/${REPO}:${TAG}" \
