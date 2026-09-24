@@ -8,7 +8,6 @@ use crate::{
 };
 use graph::{
     graph::graph::{Graph, NodeId, RelationshipId},
-    graph::id_space::IdSpace,
     identifier_limits::validate_identifier_len,
     runtime::value::Value,
     threadpool::spawn,
@@ -359,7 +358,6 @@ fn process_node_token(
     data: &[u8],
     node_ids: &[NodeId],
     node_id_cursor: &mut usize,
-    space: &mut IdSpace,
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
@@ -413,8 +411,7 @@ fn process_node_token(
         return Ok(());
     }
 
-    g.create_nodes(&nodes_bitmap, space)
-        .map_err(|e| e.to_string())?;
+    g.create_nodes(&nodes_bitmap).map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
     g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes, true);
@@ -441,7 +438,6 @@ fn process_edge_token(
     data: &[u8],
     rel_ids: &[RelationshipId],
     rel_id_cursor: &mut usize,
-    space: &mut IdSpace,
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
@@ -500,7 +496,7 @@ fn process_edge_token(
         return Ok(());
     }
 
-    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids, space)
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids)
         .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
@@ -523,19 +519,19 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    // A bulk command has no `Pending`, so it opens the id spaces itself. One
-    // per command, spanning the reserve below and every create the tokens make.
-    let mut node_space = g.open_node_id_space();
-    let mut rel_space = g.open_relationship_id_space();
-    // Nothing issued yet: a bulk command reserves once, before it creates
-    // anything, so there is no earlier batch of its own to exclude.
-    let node_ids: Vec<NodeId> = node_space
-        .reserve(node_count, g.deleted_nodes(), &[])?
+    // A bulk command has no `Pending`, so the whole command is one batch: opened
+    // with this write version, checked when it is published.
+    // Reserved once, before anything is created, so nothing is outstanding.
+    let nothing_outstanding = RoaringTreemap::new();
+    let node_ids: Vec<NodeId> = g
+        .node_id_space()
+        .reserve(node_count, &nothing_outstanding)?
         .into_iter()
         .map(NodeId::from)
         .collect();
-    let rel_ids: Vec<RelationshipId> = rel_space
-        .reserve(edge_count, g.deleted_relationships(), &[])?
+    let rel_ids: Vec<RelationshipId> = g
+        .relationship_id_space()
+        .reserve(edge_count, &nothing_outstanding)?
         .into_iter()
         .map(RelationshipId::from)
         .collect();
@@ -544,27 +540,11 @@ fn bulk_insert_sync(
 
     let null_ctx = std::ptr::null_mut();
     for token in tokens.iter().take(node_token_count) {
-        process_node_token(
-            g,
-            token,
-            &node_ids,
-            &mut node_id_cursor,
-            &mut node_space,
-            null_ctx,
-            docs,
-        )?;
+        process_node_token(g, token, &node_ids, &mut node_id_cursor, null_ctx, docs)?;
     }
 
     for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(
-            g,
-            token,
-            &rel_ids,
-            &mut rel_id_cursor,
-            &mut rel_space,
-            null_ctx,
-            docs,
-        )?;
+        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, null_ctx, docs)?;
     }
 
     // Flush delta-plus into base to prevent large dp from slowing subsequent commands
@@ -583,19 +563,19 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    // A bulk command has no `Pending`, so it opens the id spaces itself. One
-    // per command, spanning the reserve below and every create the tokens make.
-    let mut node_space = g.open_node_id_space();
-    let mut rel_space = g.open_relationship_id_space();
-    // Nothing issued yet: a bulk command reserves once, before it creates
-    // anything, so there is no earlier batch of its own to exclude.
-    let node_ids: Vec<NodeId> = node_space
-        .reserve(node_count, g.deleted_nodes(), &[])?
+    // A bulk command has no `Pending`, so the whole command is one batch: opened
+    // with this write version, checked when it is published.
+    // Reserved once, before anything is created, so nothing is outstanding.
+    let nothing_outstanding = RoaringTreemap::new();
+    let node_ids: Vec<NodeId> = g
+        .node_id_space()
+        .reserve(node_count, &nothing_outstanding)?
         .into_iter()
         .map(NodeId::from)
         .collect();
-    let rel_ids: Vec<RelationshipId> = rel_space
-        .reserve(edge_count, g.deleted_relationships(), &[])?
+    let rel_ids: Vec<RelationshipId> = g
+        .relationship_id_space()
+        .reserve(edge_count, &nothing_outstanding)?
         .into_iter()
         .map(RelationshipId::from)
         .collect();
@@ -603,29 +583,13 @@ fn bulk_insert_sync_yield(
     let mut rel_id_cursor = 0usize;
 
     for token in tokens.iter().take(node_token_count) {
-        process_node_token(
-            g,
-            token,
-            &node_ids,
-            &mut node_id_cursor,
-            &mut node_space,
-            raw_ctx,
-            docs,
-        )?;
+        process_node_token(g, token, &node_ids, &mut node_id_cursor, raw_ctx, docs)?;
         // Yield to let Redis process PING from other clients
         unsafe { maybe_yield(raw_ctx) };
     }
 
     for token in tokens.iter().skip(node_token_count).take(rel_token_count) {
-        process_edge_token(
-            g,
-            token,
-            &rel_ids,
-            &mut rel_id_cursor,
-            &mut rel_space,
-            raw_ctx,
-            docs,
-        )?;
+        process_edge_token(g, token, &rel_ids, &mut rel_id_cursor, raw_ctx, docs)?;
         unsafe { maybe_yield(raw_ctx) };
     }
 
@@ -775,7 +739,7 @@ pub fn graph_bulk_insert(
     // Bound the declared counts by what the payload can describe.
     //
     // `node_count` and `edge_count` are pure client input, and they size a `Vec` of ids
-    // directly in `Graph::reserve_nodes` / `reserve_relationships`. Unbounded, that is a
+    // directly in the two `IdSpace::reserve` calls this command reaches. Unbounded, that is a
     // crash: `GRAPH.BULK g BEGIN 9223372036854775807 0 0 0` carries no payload at all, and
     // the capacity overflow aborted the whole process (#2426). Below the overflow threshold
     // it is a memory-amplification vector, since the reservation really happens.
@@ -859,14 +823,29 @@ pub fn graph_bulk_insert(
                 &mut docs,
             )
         };
+        // The commit joins the token result rather than sitting in the `Ok` arm
+        // below. `commit` validates before publishing, and returning its refusal
+        // straight to the caller skipped the whole error arm — so a `BEGIN` that
+        // failed validation left the graph key it had just created registered and
+        // empty, with no insert in it and nothing to remove it.
+        //
+        // The index documents are published first and stay published if the
+        // commit is then refused. `BulkIndexDocs` has no inverse for the edge
+        // side — `commit_edge_index` wants src and dst per removed edge, which
+        // this type does not keep — and the alternative, publishing after the
+        // swap, moves a non-MVCC mutation to where concurrent readers can reach
+        // the graph. A refusal here is an engine fault, and for `BEGIN`, the one
+        // case that can leave documents behind for entities that were never
+        // committed, the discard below takes the whole key and its index with it.
+        let result = result.and_then(|()| {
+            // Every token succeeded, so the index documents are safe to publish. Do it
+            // while `g_arc` is still the un-published fork: after the swap it may be
+            // borrowed by concurrent readers.
+            docs.publish(&mut g_arc.borrow_mut());
+            tg.graph.commit(g_arc).map_err(|e| e.to_string())
+        });
         return match result {
             Ok(()) => {
-                // Every token succeeded, so the index documents are safe to publish. Do it
-                // while `g_arc` is still the un-published fork: after the swap it may be
-                // borrowed by concurrent readers, and on the error arm below it is thrown
-                // away — which is precisely what must happen to the documents too.
-                docs.publish(&mut g_arc.borrow_mut());
-                tg.graph.commit(g_arc);
                 ctx.replicate_verbatim();
                 let reply = format!("{node_count} nodes created, {edge_count} relations created");
                 Ok(RedisValue::SimpleString(reply))
@@ -976,9 +955,12 @@ pub fn graph_bulk_insert(
                 // the number of indexed rows — paid only when the graph actually has an
                 // index, since `docs` is otherwise empty.
                 docs.publish(&mut g_arc.borrow_mut());
-                session
+                if let Err(e) = session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
-                    .expect("writer mode after upgrade_to_write");
+                    .expect("writer mode after upgrade_to_write")
+                {
+                    break 'phase Err(e.to_string());
+                }
                 // Replicate the client's own argument strings.
                 //
                 // `RM_ReplicateVerbatim` cannot be used from here. It propagates

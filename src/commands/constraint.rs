@@ -252,6 +252,17 @@ pub fn settle_constraint(
             // master's to finish, and `enforce_pending_constraints_after_promotion`
             // is what picks it up.
             Err(WriteAbort::GraphUnregistered | WriteAbort::NotAMaster) => break,
+            // The version failed its own validation, so it was never published.
+            // Permanent: retrying re-runs the same arithmetic on the same graph.
+            // Logged loudly because the constraint is left unenforced and the id
+            // space it was refused over is an engine fault, not a user error.
+            Err(WriteAbort::Invalid(e)) => {
+                redis_module::logging::log_warning(format!(
+                    "constraint announcement on graph '{key_display}' was refused: {e}. \
+                     The constraint is not being enforced."
+                ));
+                break;
+            }
         }
     }
 
@@ -309,6 +320,11 @@ fn attempt_settle(
     // `Ok(())`, which breaks the retry loop as if the constraint had settled and
     // leaves it UNDER CONSTRUCTION with nothing logged and nothing to re-drive
     // it. It is transient, so it belongs in the retry arm.
+    // `commit` validates the version before publishing it. The closure answers
+    // a bool, so a refusal is carried out here rather than returned: it is
+    // permanent, and retrying it until the deadline would report the constraint
+    // as merely stuck.
+    let mut invalid: Option<String> = None;
     let settled = session
         .with_graph_mut(|tg| {
             let Some(g_arc) = tg.graph.write() else {
@@ -318,7 +334,10 @@ fn attempt_settle(
                 .borrow_mut()
                 .apply_constraint_validation_results(results);
             let settled = Arc::clone(&g_arc);
-            tg.graph.commit(g_arc);
+            if let Err(e) = tg.graph.commit(g_arc) {
+                invalid = Some(e.to_string());
+                return false;
+            }
 
             if was_replicated {
                 return true;
@@ -380,6 +399,14 @@ fn attempt_settle(
         .expect("writer mode after upgrade_to_write");
     if settled {
         Ok(())
+    } else if let Some(e) = invalid {
+        // Before the busy arm, and not merged into it: the closure answers one
+        // bool for two very different refusals, and the retry loop treats them
+        // as opposites. Dropping this on the floor made a permanent engine
+        // fault look like a busy write slot, so the loop retried the same
+        // arithmetic on the same graph for the full five-minute budget and then
+        // reported the constraint as merely stuck.
+        Err(WriteAbort::Invalid(e))
     } else {
         Err(WriteAbort::WriteSlotBusy)
     }
@@ -559,7 +586,9 @@ pub fn graph_constraint(
             // The effect is built from the graph this write mutated, so keep a
             // handle before `commit` consumes the one it swaps in.
             let mutated = Arc::clone(&g_arc);
-            tg.graph.commit(g_arc);
+            tg.graph
+                .commit(g_arc)
+                .map_err(|e| WriteAbort::Invalid(e.to_string()))?;
 
             // Spawn background validation for large datasets on a dedicated
             // OS thread (not the query threadpool). Validation can take
