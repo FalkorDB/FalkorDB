@@ -53,6 +53,9 @@ impl<K: PartialEq, V> OrderMap<K, V> {
     /// Build from pairs whose keys the caller guarantees are already unique
     /// (e.g. CSV columns deduplicated once per file). Skips the per-key
     /// duplicate scan that [`OrderMap::insert`] performs.
+    ///
+    /// Uniqueness is checked in debug builds only. A duplicate key in release
+    /// makes `==` asymmetric and leaves the key reachable after `remove`.
     #[must_use]
     pub fn from_unique_keys(pairs: impl IntoIterator<Item = (K, V)>) -> Self
     where
