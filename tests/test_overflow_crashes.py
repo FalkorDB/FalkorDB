@@ -110,6 +110,30 @@ def test_unwind_range_normal_values_still_work():
     assert res.result_set == [[[10, 8, 6, 4, 2]]]
 
 
+
+# The lazy UNWIND iterator used to step past the last element with an
+# unchecked add: next to i64::MAX/MIN it wrapped around and never terminated
+# (release) or panicked (debug). Results must match the eager range().
+@pytest.mark.parametrize("args, expected", [
+    ("9223372036854775806, 9223372036854775807",
+     [9223372036854775806, 9223372036854775807]),
+    ("9223372036854775800, 9223372036854775807, 3",
+     [9223372036854775800, 9223372036854775803, 9223372036854775806]),
+    ("-9223372036854775807, -9223372036854775807 - 1, -1",
+     [-9223372036854775807, -9223372036854775808]),
+    ("-9223372036854775801, -9223372036854775807 - 1, -4",
+     [-9223372036854775801, -9223372036854775805]),
+    ("0, -10, -9223372036854775807 - 1", [0]),
+    ("-1, 9223372036854775807, 9223372036854775807",
+     [-1, 9223372036854775806]),
+])
+def test_unwind_range_near_i64_bounds(args, expected):
+    res = common.g.query(f"UNWIND range({args}) AS x RETURN collect(x)")
+    assert res.result_set == [[expected]]
+    res = common.g.query(f"RETURN range({args})")
+    assert res.result_set == [[expected]]
+
+
 # --- Duration overflow tests --------------------------------------------------
 # `construct_duration_secs` previously used unchecked i64 arithmetic on the
 # user-supplied duration components, panicking (and crashing the server) on
