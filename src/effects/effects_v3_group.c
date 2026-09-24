@@ -28,30 +28,22 @@
 //   3  AddSchema / AddAttribute -----------------> Announcement --------> Encode
 //      singular records, no grouping                (emitted FIRST)
 //
-// PATH 1, DIRECT. The caller hands over the whole shape at once, so the entity
-// goes straight into its group. Normalisation happens on the way IN: labels
-// sorted and deduplicated, attribute ids sorted with their values carried along.
+// PATH 1 normalises on the way IN - labels sorted and deduplicated, attribute
+// ids sorted with their values carried along.
 //
-// PATH 2, DEFERRED. An update's shape is the entity's WHOLE attribute set, and
-// C's write API delivers one attribute at a time - so the entity cannot pick a
-// group until the query stops producing attributes for it. It waits in Staging,
-// found by a hash index on (opcode, entity id), and the LAST value staged for an
-// attribute wins. Normalisation happens at the FLUSH instead, which is the one
-// structural consequence of the deferral and the source of most of the asymmetry
-// in this file.
+// PATH 2 cannot: an update's shape is the entity's WHOLE attribute set and C's
+// write API delivers one attribute at a time, so the entity waits in Staging,
+// keyed by (opcode, entity id), until the query stops producing attributes for
+// it - last value winning. It normalises at the FLUSH, which is the source of
+// most of the asymmetry in this file.
 //
-// PATH 3, ANNOUNCEMENTS. Not batched at all: one statement, one record, no
-// count. They are emitted before everything else because a batched record
-// carries a bare schema or attribute id, and the replica has to have seen the
-// name before anything references it.
+// PATH 3 is emitted first because a batched record carries a bare schema or
+// attribute id, and the replica must have seen the name before anything
+// references it.
 //
-// THE JOIN is _flush_updates, which runs from both exits and is idempotent - a
-// caller normally asks for the count and then encodes. After it, Staging is
-// empty and every record-to-be is a Group.
-//
-// THE EXITS are Encode and RecordCount. RecordCount is the same decision made as
-// a dry run: flush, then count exactly what Encode would write, which is why it
-// cannot be const and why it consults _has_effect too.
+// THE JOIN is _flush_updates, idempotent, reached from both exits. THE EXITS are
+// Encode and RecordCount - the same decision made as a dry run, which is why
+// RecordCount cannot be const and consults _has_effect too.
 //
 // WHERE THE HEADER'S FOUR RULES ARE ENFORCED
 //
@@ -60,13 +52,10 @@
 //   3  label sets normalised ascending  on the way in: AddNode, StageUpdate
 //   4  an attribute announced once      AddAttribute, the scan before appending
 //
-// Rule 2 sits at the exit rather than the entrance deliberately. _group_for
-// finds groups in ARRIVAL order, which is a property of the query text rather
-// than of the data, so the canonical order is imposed once at emission instead
-// of being maintained on every insert.
-//
-// _cmp_group therefore serves both rule 1 and rule 2 - the lookup and the sort -
-// which is why it is a total order and not merely an equality test.
+// Rule 2 sits at the exit because _group_for finds groups in ARRIVAL order, a
+// property of the query text rather than of the data; the canonical order is
+// imposed once at emission. So _cmp_group serves rule 1 and rule 2 both, which
+// is why it is a total order and not merely an equality test.
 
 // which arm of a Group's shape union an opcode uses
 //
@@ -158,17 +147,10 @@ typedef struct {
 typedef struct {
 	AttributeID id;
 
-	// THE VALUE, not its encoding.
-	//
-	// The SIValue belongs to the caller and does not outlive the call, so it has
-	// to be made to outlive it somehow. SIValue_Persist is the cheap way: it
-	// clones a volatile value and leaves an owned one alone. Encoding it here
-	// instead would need an arena to hold the bytes, a scratch sink to write
-	// them through, and a second copy per attribute - and would leave dead bytes
-	// behind whenever a later write superseded one.
-	//
-	// So it is serialised once, at the flush, straight into its group's buffer.
-	// Rust's Pending holds Value for the same reason.
+	// the VALUE, not its encoding: SIValue_Persist clones a volatile value and
+	// leaves an owned one alone. Encoding here would need an arena, a scratch
+	// sink and a second copy per attribute, and would leave dead bytes behind
+	// whenever a later write superseded one. Serialised once, at the flush.
 	SIValue v;
 } StagedAttr;
 
@@ -227,35 +209,24 @@ static inline uint64_t _slot_hash(uint32_t op, uint64_t id) {
 	return x ^ (x >> 31);
 }
 
-// THE DEFERRED PATH'S SCRATCH, and nothing else.
+// the deferred path's scratch, and nothing else
 //
-// Six of the eight batchable opcodes go straight into a group when they arrive,
-// because the caller hands over the whole shape at once. Only UPDATE_NODE and
-// UPDATE_EDGE arrive one attribute at a time, so only they need somewhere to
-// wait - and this is it.
-//
-// Separate from the payload below because its LIFETIME is different: it fills
-// during the query, drains into groups once, and is dead from then on. Keeping
-// it in the same struct made "the flush is a phase change" a fact about a
-// comment rather than about a type, and left scratch alive until free.
+// Only UPDATE_NODE and UPDATE_EDGE arrive one attribute at a time; the other six
+// batchable opcodes carry their whole shape and go straight into a group.
+// Separate from the payload below because its LIFETIME is: it fills during the
+// query, drains into groups once, and is dead from then on.
 typedef struct {
 	PendingUpdate *updates;  // arr
 
 	// (opcode, entity id) -> index into 'updates', plus one
 	//
-	// NOT an arr, and the exception is the point: this is a hash table, so its
-	// capacity is a power of two for mask probing and it grows at 70% load
-	// rather than when full. An arr's len/cap mean the wrong things here.
+	// Open addressed, so not an arr: power-of-two capacity for mask probing,
+	// grown at 70% load. Chosen for its TEARDOWN rather than its lookups - it is
+	// built and destroyed once per payload, and on a single-attribute update
+	// every lookup misses, so allocating and freeing dominates probing.
 	//
-	// OPEN ADDRESSED, and chosen for its TEARDOWN rather than its lookups. This
-	// table is built and destroyed once per payload, and on a single-attribute
-	// update every lookup misses and nothing is ever merged - so the work that
-	// dominates is creating and freeing it, not probing it. A flat table frees
-	// in one call and resets with a memset; a node-per-entry structure pays for
-	// the same lifetime one allocation at a time.
-	//
-	// It stores an INDEX rather than a pointer because 'updates' is reallocated,
-	// and index+1 so zero means empty.
+	// An INDEX rather than a pointer because 'updates' is reallocated, and
+	// index+1 so zero means empty.
 	UpdateSlot *index;
 	uint32_t    index_cap;   // always a power of two
 	uint32_t    index_n;     // occupied slots
@@ -275,14 +246,11 @@ struct EffectsV3Grouping {
 
 	// the group the last lookup found, as an INDEX
 	//
-	// _group_for is a linear scan with a memcmp comparator, run once per
-	// flushed entity, and consecutive entities overwhelmingly share a shape -
-	// a bulk create has exactly one. One slot in front of the scan turns the
-	// common case into a single comparison.
-	//
-	// An index rather than a pointer, because the array is realloc'd when it
-	// grows: a cached pointer would dangle into freed memory and usually still
-	// work, which is the worst kind. UINT32_MAX means nothing memoed.
+	// _group_for is a linear scan and consecutive entities overwhelmingly share
+	// a shape - a bulk create has exactly one - so one slot in front of it turns
+	// the common case into a single comparison. An index rather than a pointer,
+	// because the array is realloc'd when it grows: a cached pointer would
+	// dangle and usually still work. UINT32_MAX means nothing memoed.
 	uint32_t    last_group;
 
 	//--------------------------------------------------------------------------
@@ -352,33 +320,19 @@ static int _cmp_label(const void *a, const void *b) {
 
 // whether a record would actually say something about the entities it names
 //
-// A record with NO effect must not be emitted: it is well formed, it parses,
-// and applying it changes nothing. The rule covers three categories without a
-// per-record table:
-//
-//   A record has no effect if removing an empty block leaves it saying nothing
-//   about any entity it names. An empty block that DESCRIBES the entities the
-//   record names is information and is legal. A schema announcement is a
-//   binding rather than an instruction and is legal regardless of whether
-//   anything references it.
-//
-// So the distinction is which block is the record's SUBJECT, not whether a
-// block is empty:
+// Such a record is well formed and parses, and applying it changes nothing. The
+// rule, without a per-record table: it has no effect if removing an empty block
+// leaves it saying nothing about any entity it names. What decides is which
+// block is the record's SUBJECT, not whether a block is empty:
 //
 //   DELETE_NODE with no labels    LEGAL - says these nodes carried no labels
 //   CREATE_NODE with no attrs     LEGAL - says these nodes have no properties
-//   SET_LABELS with no labels     NO EFFECT - a label record's whole payload IS
-//                                 its label set, so with none it is an
-//                                 instruction to do nothing
-//   any record naming no entities NO EFFECT - it cannot say anything about any
+//   SET_LABELS with no labels     NO EFFECT - the label set IS the whole payload
+//   any record naming no entities NO EFFECT - it names nothing to speak about
 //
-// Readers deliberately TOLERATE these rather than refusing them. Rejecting
-// count = 0 at the header removes parse surface, because every block would
-// otherwise need a zero-length path both engines agree on; rejecting a
-// zero-label record removes nothing, since DELETE_NODE and CREATE_NODE require
-// the zero-length LabelSet path anyway. So rejection buys no safety and costs a
-// resync loop against any peer still emitting one. Tolerate on read, refuse to
-// emit.
+// Readers TOLERATE these rather than refusing them: DELETE_NODE and CREATE_NODE
+// need the zero-length LabelSet path anyway, so refusing buys no parse surface
+// back and costs a resync loop against any peer still emitting one.
 static bool _has_effect(const Group *grp) {
 	// names no entities, so it says nothing about any
 	if(grp->count == 0) {
@@ -416,11 +370,9 @@ EffectsV3Grouping *EffectsV3Grouping_New(void) {
 
 // find the group matching this shape, or open one
 //
-// A linear scan rather than a hash table, deliberately: the number of distinct
-// shapes in a query is small - a label set is parsed rather than computed, so
-// it is bounded by the query text - and a scan has no iteration order to get
-// wrong. The sort before emission is what makes the order normative either way.
-//
+// A linear scan rather than a hash, deliberately: the number of distinct shapes
+// in a query is small - a label set is parsed rather than computed, so it is
+// bounded by the query text - and a scan has no iteration order to get wrong.
 // See _update_for for why its lookup is the other way round.
 static Group *_group_for
 (
@@ -497,17 +449,13 @@ static Group *_group_for
 	return grp;
 }
 
-// append a row's values through the shared SIValue codec
 // one (attribute id, value) pair
 //
 // Exists so that sorting the ids CARRIES THE VALUES WITH THEM. A record's rows
-// are row-major - entity k, attribute j is values[k * n + j], paired with
-// attr_ids[j] - so sorting the id array alone lands every value on the wrong
-// attribute, in a payload that is well-formed, passes every length check and
-// passes a receiver's ascending check too. Neither engine would complain and
-// nothing would surface until someone read the data.
-//
-// Pairing makes that unspellable rather than a thing to remember.
+// are row-major - entity k, attribute j is values[k * n + j] - so sorting the id
+// array alone lands every value on the wrong attribute, in a payload that is
+// well formed, passes every length check, and passes a receiver's ascending
+// check too. Pairing makes that unspellable rather than a thing to remember.
 typedef struct {
 	AttributeID id;
 	SIValue     v;
@@ -521,15 +469,12 @@ static int _cmp_attr_pair(const void *a, const void *b) {
 
 // sort an entity's attributes into ascending id order, values following
 //
-// WHY THE EMITTER SORTS, rather than leaving it to a receiver: attr_ids is half
-// the partition key of a batched record. Without a canonical order {a,b} and
-// {b,a} are different shapes, so the same logical write produces a different
-// record count and different bytes on two engines - and the conformance corpus
-// stops being able to arbitrate anything. Sorting at the receiver cannot fix
-// that, because the grouping has already happened by then.
-//
-// It is a same-engine defect too: _group_for compares the id array as given, so
-// those two orders land in different groups on C alone today.
+// The emitter sorts rather than the receiver because attr_ids is half the
+// partition key of a batched record: without a canonical order {a,b} and {b,a}
+// are different shapes, so the same logical write produces a different record
+// count and different bytes on two engines. A receiver cannot fix that, the
+// grouping has already happened. It is a same-engine defect too - _group_for
+// compares the id array as given.
 static void _sort_attrs
 (
 	AttrPair *out,               // n pairs
@@ -779,25 +724,16 @@ static void _index_grow(EffectsV3Grouping *g) {
 
 // find the staged update for this entity, or open one
 //
-// THE MIRROR OF _group_for, and the contrast is the clearest way to hold both:
-// that one is keyed by VALUE, this one by IDENTITY.
+// The mirror of _group_for: that one is keyed by VALUE, this one by IDENTITY.
 //
 //   _group_for    (opcode, shape)       one per distinct SHAPE    memo + scan
 //   _update_for   (opcode, entity id)   one per ENTITY            hash probe
 //
-// Which is what decides the lookup. Distinct shapes are few and bounded by the
-// query text, for the reason _group_for's own comment gives, so a scan wins on
-// constant factors there. ENTITIES are unbounded and data-dependent - a
-// `MATCH (n:P) SET ...` touches as many as match - so the same scan here would
-// be quadratic in the size of the match, which is why this one hashes.
-//
-// The memo follows from the same split. Consecutive entities overwhelmingly
-// share a shape, so one slot in front of _group_for's scan pays; there is no
-// equivalent win in front of an O(1) probe.
-//
-// In one line each: _group_for answers "which record does this finished shape
-// belong to", this answers "where is this entity's half-built update". Path 2
-// asks this one many times and that one once, at the flush.
+// Which is what decides the lookup. Shapes are few and bounded by the query
+// text, so a scan wins on constant factors; ENTITIES are unbounded and
+// data-dependent - `MATCH (n:P) SET ...` touches as many as match - so the same
+// scan would be quadratic in the size of the match. The memo follows from the
+// same split: there is no win in front of an O(1) probe.
 static PendingUpdate *_update_for
 (
 	EffectsV3Grouping *g,   // accumulator
@@ -904,11 +840,8 @@ void EffectsV3Grouping_StageUpdate
 // release everything a staged update owns
 //
 // Both the flush and the free path go through this, and the flush is the one
-// that matters: it clears the updates arr, and EffectsV3Grouping_Free releases
-// per update by iterating that arr - so anything still owned at that point is
-// unreachable. Every entity in a `SET` leaked its encoded value, its attribute
-// array and its label array, once per query.
-//
+// that matters: it clears the updates arr, which EffectsV3Grouping_Free iterates
+// to release per update - so anything still owned at that point is unreachable.
 // Idempotent, so freeing an accumulator that was never flushed is still correct.
 static void _update_release(PendingUpdate *u) {
 	// each staged value is owned here now rather than living in a shared

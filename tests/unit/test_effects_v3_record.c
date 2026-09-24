@@ -5,16 +5,14 @@
 
 // The record encoder, checked against the conformance fixtures.
 //
-// The segment tests compared a slice; these compare WHOLE PAYLOADS, version
-// byte and flags byte included, because a record fixture is a complete
-// GRAPH.EFFECT payload. That closes the one gap the slice comparison left: it
-// could not catch a field written in the wrong place relative to the record
-// framing, only one written wrongly inside the list.
+// The segment tests compared a slice; these compare WHOLE PAYLOADS, version byte
+// and flags byte included, because a record fixture is a complete GRAPH.EFFECT
+// payload. That closes the one gap the slice comparison left: a field written in
+// the wrong place relative to the record framing.
 //
-// Records are built by hand rather than through a grouping layer, which does
-// not exist yet. That is deliberate for 2c: it isolates the ENCODING from the
-// GROUPING, so a failure here is a wire-format disagreement and not a decision
-// about which entities belong in the same record.
+// Records are built by hand rather than through the grouping layer, to isolate
+// the ENCODING from the GROUPING - so a failure here is a wire-format
+// disagreement and not a decision about which entities share a record.
 //
 // The fixtures are not ground truth - they are generated from the Rust encoder.
 // Ground truth is C's own source for the reused primitives and
@@ -378,9 +376,7 @@ void test_effectsV3Record_indexDDL(void) {
 	}
 }
 
-// THE VECTOR OPTIONS BLOCK, which is the only fixture exercising options
-// non-empty and the only thing in these four records I could not derive from a
-// single example
+// THE VECTOR OPTIONS BLOCK, the only fixture exercising options non-empty
 //
 // Five values behind FOUR presence bytes, because `dimension` has none - a
 // vector field must have one, so there is nothing for a presence byte to say.
@@ -417,15 +413,13 @@ void test_effectsV3Record_indexVectorOptions(void) {
 
 // CREATE_CONSTRAINT and DROP_CONSTRAINT
 //
-// Two details a constraint encoder gets wrong by reading the index record
-// beside it: the property count is a u8 where an index field count is a u16,
-// and GraphEntityType is 1-BASED because GETYPE_UNKNOWN takes 0 - so a node is
-// 1, not 0.
+// Two details a constraint encoder gets wrong by reading the index record beside
+// it: the property count is a u8 where an index field count is a u16, and
+// GraphEntityType is 1-BASED because GETYPE_UNKNOWN takes 0 - so a node is 1.
 //
-// And CREATE carries a ConstraintStatus that DROP does not. It is the one place
-// v3 states more than C: a replica never validates, so the announcement is the
-// only thing that can distinguish an enforcing constraint from one still
-// building.
+// And CREATE carries a ConstraintStatus that DROP does not - the one place v3
+// states more than C: a replica never validates, so the announcement is the only
+// thing that can distinguish an enforcing constraint from one still building.
 void test_effectsV3Record_constraintDDL(void) {
 	{
 		EffectsV3AttrRef props[] = { { 12, "name" } };

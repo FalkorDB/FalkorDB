@@ -36,9 +36,8 @@
 // EffectsV3IdListSegmentKind, which folds direction in and so has five values
 // to the wire's three - these are the numbers on the bytes, and they do not
 // move.
-// the wire kind values now live in effects_v3.h beside the other macros that
-// describe the header byte - the encoder needs them too, which is the TODO the
-// decoder carried here resolved rather than duplicated
+// the wire kind values live in effects_v3.h beside the other macros that
+// describe the header byte, because the encoder needs them too
 #define WIRE_SEG_RANGE  EFFECTS_V3_WIRE_SEG_RANGE
 #define WIRE_SEG_SET    EFFECTS_V3_WIRE_SEG_SET
 #define WIRE_SEG_REPEAT EFFECTS_V3_WIRE_SEG_REPEAT

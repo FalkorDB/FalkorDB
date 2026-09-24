@@ -11,35 +11,27 @@
 
 // groups a query's mutations into v3 records as they arrive
 //
-// A v3 payload is one record per (opcode, shape), so nothing can be serialized
-// until the query stops producing effects: a record states its count and its
-// shape ahead of its rows. This is the accumulator that makes that possible -
-// entities are filed into their group on arrival, and the records are emitted
-// once at the end.
+// A v3 record states its count and its shape ahead of its rows, so nothing can
+// be serialized until the query stops producing effects. Entities are filed into
+// their group on arrival and the records are emitted once at the end.
 //
-// FOUR RULES LIVE HERE, and each is a byte-for-byte divergence if missed. None
-// of them is visible in the wire format, which is why the conformance corpus
-// cannot arbitrate any of them: a fixture pins what one record looks like, not
-// which entities ended up inside it.
+// FOUR RULES LIVE HERE, each a byte-for-byte divergence if missed. None is
+// visible in the wire format, so the conformance corpus cannot arbitrate any of
+// them: a fixture pins what one record looks like, not which entities are in it.
 //
-//   1. ONE RECORD PER (opcode, shape). Two entities of the same shape share a
-//      record; two that differ in any component of it do not. Shape is the
-//      attribute IDS and never the values, plus the labels for a node and the
-//      relationship type for an edge.
+//   1. ONE RECORD PER (opcode, shape). Shape is the attribute IDS and never the
+//      values, plus the labels for a node and the relationship type for an edge.
 //
 //   2. GROUPS ARE SORTED BY KEY before emission. A hash table iterates
 //      arbitrarily, so the same query could emit its records in a different
-//      order on two runs of the same engine, let alone on two engines. That
-//      alone defeats the byte-for-byte comparison everything else rests on.
+//      order on two runs of one engine, let alone on two engines.
 //
 //   3. LABEL SETS ARE NORMALISED ASCENDING. Callers keep their own order, so
-//      [7,8] and [8,7] arrive for the same set. They are ONE shape, and the
-//      ascending form is what makes two engines that agree on the set agree on
-//      the bytes.
+//      [7,8] and [8,7] arrive for the same set; they are ONE shape.
 //
 //   4. A NEW ATTRIBUTE IS ANNOUNCED ONCE per payload, not once per group that
-//      uses it. This is the only rule that spans groups, so it is the one a
-//      per-group implementation satisfies locally and violates globally.
+//      uses it - the only rule that spans groups, so the one a per-group
+//      implementation satisfies locally and violates globally.
 typedef struct EffectsV3Grouping EffectsV3Grouping;
 
 // create an accumulator
@@ -111,15 +103,14 @@ void EffectsV3Grouping_AddEdge
 // stage ONE attribute of an entity's update
 //
 // v2's write API hands over one (entity, attribute, value) at a time, but a v3
-// record's shape is the entity's WHOLE updated attribute set - so an update
-// cannot be filed into a group until the query stops producing attributes for
-// that entity. These are staged per entity and folded into groups at emission.
+// record's shape is the entity's WHOLE updated attribute set - so an update is
+// staged per entity and folded into a group at emission, once the query stops
+// producing attributes for it.
 //
 // The value is encoded IMMEDIATELY, because the SIValue belongs to the caller
-// and will not outlive the call. It is kept tagged with its attribute id and
-// the tagged blobs are concatenated in attribute-id order at flush, which is
-// what lets attributes arrive in any order and still produce one canonical
-// shape.
+// and will not outlive the call. The tagged blobs are concatenated in
+// attribute-id order at the flush, which is what lets attributes arrive in any
+// order and still produce one canonical shape.
 //
 // A T_NULL value is a removal and is staged like any other: the attribute is
 // part of the shape and the null is what instructs the replica to drop it.
@@ -138,10 +129,8 @@ void EffectsV3Grouping_StageUpdate
 // how many records the accumulator would emit
 //
 // NOT const: staged updates are folded into their groups here if they have not
-// been already, because an entity's shape - and therefore which group it joins
-// - is not known until the query stops producing attributes for it. Counting
-// without folding would report fewer records than the payload contains, and a
-// caller deciding whether a payload is worth sending would act on it.
+// been already. Counting without folding would report fewer records than the
+// payload contains, and a caller deciding whether to send would act on it.
 uint32_t EffectsV3Grouping_RecordCount
 (
 	EffectsV3Grouping *g  // accumulator

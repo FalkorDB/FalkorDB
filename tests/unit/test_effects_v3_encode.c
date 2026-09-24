@@ -5,11 +5,9 @@
 
 // The segment encoder, checked against the conformance fixtures.
 //
-// Every test before this one was self-consistent: the builder was asserted
-// against my own reading of the format, and the cost model against a table of
-// sizes. This is the first check where the expected bytes came from somewhere
-// else - the Rust encoder, via the fixture corpus - so it is the first thing
-// that can catch both halves of my own work being wrong in the same direction.
+// The first check here whose expected bytes came from somewhere else - the Rust
+// encoder, via the fixture corpus - so the first that can catch both halves of
+// this work being wrong in the same direction.
 //
 // The fixtures are NOT ground truth. They are generated from the Rust encoder,
 // so if it is wrong about the format they enshrine the error faithfully. Ground
@@ -17,11 +15,10 @@
 // for the v3 blocks. A disagreement is settled against those and the fixture
 // regenerated - not by editing the expectation here.
 //
-// The IdList bytes are extracted from each fixture rather than the whole
-// payload being rebuilt: these cases are DELETE_NODE records, so the record
-// framing around the list belongs to a later test, and asserting on the slice
-// this code actually produces keeps a failure pointing at the encoder rather
-// than at whatever else the record carries.
+// The IdList bytes are extracted from each fixture rather than the whole payload
+// being rebuilt: these cases are DELETE_NODE records, so the record framing
+// belongs to a later test, and asserting on the slice this code produces keeps a
+// failure pointing at the encoder.
 
 #include "src/effects/effects_v3_encode.h"
 #include "src/effects/effects_v3_id_list.h"
@@ -142,15 +139,12 @@ void test_effectsV3Encode_matchesFixtureSegments(void) {
 
 // THE COLLAPSE BOUNDARY, from the corpus rather than from my own arithmetic.
 //
-// These two cases are the same shape one id apart - ids 0, 1024, 2048, ... -
-// and the corpus says 18 of them stay as 18 Range segments while 19 become one
-// bitmap. So they pin the whole chain end to end against bytes I did not
-// produce: the cost model's prediction, the collapse decision, the
-// segmentation, and the encoding.
-//
-// This is a stronger check than the synthetic threshold test in
-// test_effects_v3_run_cost.c, which asserts the decision against my own
-// reading of the rule. Here the boundary itself came from the other engine.
+// Two cases of the same shape one id apart - ids 0, 1024, 2048, ... - where the
+// corpus says 18 stay as 18 Range segments while 19 become one bitmap. They pin
+// the whole chain against bytes I did not produce: the cost model's prediction,
+// the collapse decision, the segmentation and the encoding. Stronger than the
+// synthetic threshold test in test_effects_v3_run_cost.c, which asserts the
+// decision against my own reading of the rule.
 //
 // They also carry the only NON-ZERO width codes in the corpus: a base of 1024
 // needs two bytes, so collapse_below's segments are header 0x04 - value width
@@ -217,23 +211,21 @@ void test_effectsV3Encode_collapseBoundaryFromCorpus(void) {
 
 // DIRECTION AND WIDTH, against the corpus.
 //
-// These eight cases exist because the original corpus could not distinguish a
-// correct header layout from several wrong ones: every seg_* case has one-byte
-// ids, so both width fields are zero, and swapping the two width shifts left
-// all of them passing. Now codes 2 and 3 appear in the value field and codes 1
-// and 2 in the count field, which nothing touched before at all.
+// The original corpus could not distinguish a correct header layout from several
+// wrong ones: every seg_* case has one-byte ids, so both width fields are zero
+// and swapping the two width shifts leaves all of them passing. These eight put
+// codes 2 and 3 in the value field and 1 and 2 in the count field.
 //
-// The direction pair is an encoder test rather than a decoder one.
-// dir_ascending and dir_descending are the same eight ids in opposite orders
-// and their payloads differ in exactly two bytes: the header (0x00 -> 0x40) and
-// the base (200 -> 207, lowest vs highest). That is the builder's descending
-// rules expressed as bytes rather than as my reading of them.
+// The direction pair is an encoder test rather than a decoder one: dir_ascending
+// and dir_descending are the same eight ids in opposite orders, and their
+// payloads differ in exactly two bytes - the header (0x00 -> 0x40) and the base
+// (200 -> 207, lowest vs highest). The builder's descending rules expressed as
+// bytes rather than as my reading of them.
 //
 // Each case also asserts the header carries the field its NAME claims, with
-// dir_ascending's cleared bit as the control. Without that a case named
+// dir_ascending's cleared bit as the control. Without that, a case named
 // value_width_8_bytes that quietly encoded as width 0 would sit in the table
-// looking like coverage - the same defect as four passing seg_* cases proving
-// nothing about widths.
+// looking like coverage.
 void test_effectsV3Encode_directionAndWidthFromCorpus(void) {
 	struct {
 		const char *name;
@@ -415,23 +407,19 @@ void test_effectsV3Encode_headerFields(void) {
 
 // a width WIDER than the value needs is written back as it stands
 //
-// This is the re-encode path, and it is the reason the shared segment struct
-// carries the widths as fields rather than deriving them. A freshly built
-// segment gets the narrowest width that holds each value; a DECODED one
-// carries whatever its peer chose, and a peer may legitimately write a value
-// wider than it needs. Narrowing on the way back out produces different bytes
-// for the same ids, which fails a round trip and looks like a decoder bug.
+// The re-encode path, and the reason the shared segment struct carries the
+// widths as fields rather than deriving them: a decoded segment carries whatever
+// width its peer chose, and a peer may legitimately write a value wider than it
+// needs. Narrowing on the way back out produces different bytes for the same
+// ids, which fails a round trip and looks like a decoder bug.
 //
-// Built here by hand rather than through the builder, because the builder
-// cannot produce this - which is exactly why it needs its own test.
+// Built here by hand rather than through the builder, because the builder cannot
+// produce this - which is exactly why it needs its own test.
 //
-// THE FIELDS ARE HEADER CODES, 0..3 - not byte counts. This test used to set
-// them to 4 meaning "four bytes" and passed, because the builder and the
-// encoder were both using byte counts: a symmetric error, invisible to any
-// test that only ever encodes. It was the decode-then-re-encode round trip
-// that exposed it, since the DECODER fills these from the header bits and
-// therefore stores 0..3 - so a decoded segment re-encoded as widths of "0
-// bytes" and dropped every value field.
+// THE FIELDS ARE HEADER CODES, 0..3 - not byte counts. Byte counts pass every
+// encode-only test, because the encoder makes the same assumption; the DECODER
+// fills these from the header bits, so a decoded segment re-encodes as widths of
+// "0 bytes" and drops every value field.
 void test_effectsV3Encode_observedWidthsArePreserved(void) {
 	// base 5 and len 3 both fit in one byte; code 2 says four bytes anyway
 	EffectsV3IdListSegment s = {
@@ -528,12 +516,11 @@ void test_effectsV3Encode_countsAreStated(void) {
 // the width fields are HEADER CODES, and the builder must store them that way
 //
 // The units of EffectsV3Segment.value_width are the whole contract between the
-// two directions: the DECODER fills it from header bits 2-3, so it holds 0..3.
-// The builder once stored a byte count instead - 1, 2, 4 or 8 - and every
-// encode-only test agreed with it, because the encoder made the same
-// assumption. The two halves were each self-consistent and disagreed only
-// where they meet, which is a decoded segment being re-encoded: widths of
-// "0 bytes" that dropped every value field.
+// two directions: the DECODER fills it from header bits 2-3, so it holds 0..3. A
+// builder storing a byte count instead - 1, 2, 4 or 8 - agrees with every
+// encode-only test, because the encoder makes the same assumption; the two
+// halves are each self-consistent and disagree only where they meet, at a
+// decoded segment being re-encoded.
 //
 // This pins the units without needing a fixture, so it fails on the spot
 // rather than waiting for a round trip to be wired up.
