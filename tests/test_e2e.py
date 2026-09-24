@@ -1711,6 +1711,15 @@ def test_nested_list():
     assert res.result_set == [expected]
 
 
+def test_block_comments():
+    # A block comment ends at the first `*/`, not at the first `/` (#2901).
+    assert query("RETURN 5 /* a/ -1 //*/").result_set == [[5]]
+    assert query("RETURN 1 /* a/b */ + 1").result_set == [[2]]
+    # A lone `/` is division, and an unterminated `/*` is not a comment.
+    query_exception("RETURN 1 /", "Invalid input")
+    query_exception("RETURN 1 /* never closed", "Invalid input")
+
+
 def test_deep_expression_nesting_is_rejected():
     # Parentheses that cannot collapse - each one wraps an operator - used to
     # build a tree deep enough to overflow the stack of the stages that walk
