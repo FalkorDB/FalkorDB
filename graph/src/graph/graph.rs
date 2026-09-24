@@ -1231,6 +1231,7 @@ impl Graph {
         let mut planner = Planner::new(scope_vars);
         let start = Instant::now();
         let plan = planner.plan(ir);
+        let plan = planner.finish(plan);
         let optimize_plan = optimize(&plan, self, &param_values);
         plan_duration = start.elapsed();
 

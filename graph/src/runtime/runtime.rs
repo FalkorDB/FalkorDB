@@ -133,6 +133,8 @@ pub struct Runtime<'a> {
     pub stats: RefCell<QueryStatistics>,
     /// Query execution plan tree
     pub plan: Arc<DynTree<IR>>,
+    /// Root of each nested plan, by id (see `IR::NestedPlans`).
+    nested_plans: Vec<NodeIdx<Dyn<IR>>>,
     /// The host value holding this query's locks (see [`crate::locks`]). Reached
     /// through [`Runtime::write_escalation`] by the operators that mutate shared
     /// state, so the dependency is explicit at the point of use.
@@ -246,6 +248,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                 | IR::CartesianProduct
                 | IR::ValueHashJoin { .. }
                 | IR::Union
+                | IR::NestedPlans
                 | IR::Apply
                 | IR::SemiApply
                 | IR::AntiSemiApply
@@ -359,10 +362,17 @@ impl ReturnNames for DynNode<'_, IR> {
                 }
                 v
             }
-            IR::Sort(_) | IR::Skip(_) | IR::Limit(_) | IR::Distinct => {
-                self.child(0).get_return_names()
+            // A Sort may sit on the Apply chain binding its ORDER BY pattern
+            // comprehensions; the columns are those of the chain's input.
+            IR::Sort(_) => {
+                let mut child = self.child(0);
+                while matches!(child.data(), IR::Apply) {
+                    child = child.child(0);
+                }
+                child.get_return_names()
             }
-            IR::Union => self.child(0).get_return_names(),
+            IR::Skip(_) | IR::Limit(_) | IR::Distinct => self.child(0).get_return_names(),
+            IR::Union | IR::NestedPlans => self.child(0).get_return_names(),
             IR::Aggregate { names, .. } => names.clone(),
             _ => vec![],
         }
@@ -408,6 +418,11 @@ impl<'a> Runtime<'a> {
         write_escalation: &'a dyn crate::locks::WriteEscalation,
     ) -> Self {
         let return_names = plan.root().get_return_names();
+        let nested_plans = if matches!(plan.root().data(), IR::NestedPlans) {
+            plan.root().children().skip(1).map(|c| c.idx()).collect()
+        } else {
+            vec![]
+        };
         let pending = Lazy::new((|| RefCell::new(Pending::new())) as fn() -> RefCell<Pending>);
         if write {
             pending.borrow_mut().set_schema_baseline(&g);
@@ -420,6 +435,7 @@ impl<'a> Runtime<'a> {
             pending,
             stats: RefCell::new(QueryStatistics::default()),
             plan,
+            nested_plans,
             write_escalation,
             return_names,
             value_dedupers: RefCell::new(rustc_hash::FxHashMap::default()),
@@ -656,6 +672,32 @@ impl<'a> Runtime<'a> {
             }
             _ => node.get_child(0).map(|c| vec![c.idx()]).unwrap_or_default(),
         }
+    }
+
+    /// Run nested plan `id` with `row` as its argument row and return the
+    /// list it collects into `result`.
+    pub fn run_nested_plan(
+        &'a self,
+        id: u32,
+        result: &Variable,
+        row: &Row,
+    ) -> Result<Value, String> {
+        let idx = *self
+            .nested_plans
+            .get(id as usize)
+            .ok_or_else(|| format!("nested plan #{id} not found"))?;
+        let mut op = self.run_batch(idx)?;
+        let mut arg = BatchBuilder::new();
+        arg.push_row(row);
+        op.set_argument_batch(arg.finish());
+        // The plan's root is the comprehension's keyless collect (see
+        // `Planner::build_pattern_comprehension_plan`), which drains its
+        // input and yields a single batch of a single row: the list, empty
+        // when nothing matched. Anything else is a planner bug.
+        let missing = || format!("nested plan #{id} produced no result");
+        let batch = op.next().ok_or_else(missing)??;
+        let row = batch.active_indices().next().ok_or_else(missing)?;
+        batch.value_at(result.id, row).ok_or_else(missing)
     }
 
     /// Iteratively builds a batch-mode operator tree for the given IR node.
@@ -1064,6 +1106,8 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Union => Ok(BatchOp::Union(UnionOp::new(self, idx))),
+            // The query's plan is child 0; the nested plans run on demand.
+            IR::NestedPlans => Ok(pop_or_once(&mut children)),
             IR::PathBuilder(paths) => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::PathBuilder(PathBuilderOp::new(
