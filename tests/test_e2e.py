@@ -1885,3 +1885,60 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+# Every shape reads the edge `r` (or var-len path `p`) only from an operator
+# that is not an ancestor of its traverse — a sibling branch of Apply
+# (CALL {}, OPTIONAL MATCH, pattern predicate / comprehension) — or from an
+# expression the optimizer used to skip (CREATE/MERGE properties, UNWIND and
+# FOREACH lists). Each must still see one row per parallel edge (#2896).
+PARALLEL_EDGE_READS = [
+    ("MATCH (a:A)-[r:R]->(b) CALL { WITH r RETURN 1 AS one } RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[r:R]->(b) CALL { WITH r RETURN id(r) AS i } RETURN i ORDER BY i", [[0], [1]]),
+    ("MATCH (a:A)-[r:R]->(b) CALL { WITH r WITH r AS e RETURN 1 AS one } RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[r:R]->(b) CALL { WITH * RETURN 1 AS one } RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[r:R]->(b) CALL { WITH r CALL { WITH r RETURN 1 AS one } RETURN one } RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[r:R]->(b) CALL { WITH r RETURN 1 AS x UNION ALL WITH r RETURN 2 AS x } RETURN count(*)", [[4]]),
+    ("MATCH (a:A)-[r:R]->(b) CALL { WITH r MATCH (q:B) WHERE id(q) <> id(r) + 100 RETURN q } RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[r:R]->(b) OPTIONAL MATCH (c:B) WHERE c.v <> id(r) RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[r:R]->(b) WHERE (b)<-[:R]-(:A {v: id(r) - id(r)}) RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[r:R]->(b) WITH [(a)-[:R]->(x:B) WHERE x.v <> id(r) | 1] AS l RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[r:R]->(b) UNWIND [r] AS x RETURN count(*)", [[2]]),
+    ("MATCH (a:A)-[p:R*1..2]->(b) CALL { WITH p RETURN length(p) AS s } RETURN s", [[1], [1]]),
+    ("MATCH (a:A)-[p:R*1..2]->(b) OPTIONAL MATCH (c:B) WHERE length(p) = 1 RETURN count(c)", [[2]]),
+    ("MATCH (a:A)-[p:R*1..2]->(b) UNWIND p AS x RETURN count(x)", [[2]]),
+]
+
+
+@pytest.mark.parametrize("q, expected", PARALLEL_EDGE_READS)
+def test_parallel_edges_read_outside_traverse_ancestors(q, expected):
+    query("CREATE (a:A {v: 0})-[:R]->(b:B {v: 0}) CREATE (a)-[:R]->(b)", write=True)
+    res = query(q)
+    assert res.result_set == expected
+
+
+PARALLEL_EDGE_WRITES = [
+    ("MATCH (a:A)-[r:R]->(b) CALL { WITH r CREATE (:Q) }", 2),
+    ("MATCH (a:A)-[r:R]->(b) FOREACH (x IN [r] | CREATE (:Q))", 2),
+    ("MATCH (a:A)-[r:R]->(b) FOREACH (x IN [1] | CREATE (:Q {w: id(r)}))", 2),
+    ("MATCH (a:A)-[r:R]->(b) CREATE (:Q {w: id(r)})", 2),
+    ("MATCH (a:A)-[r:R]->(b) MERGE (:Q {w: id(r)})", 2),
+    ("MATCH (a:A)-[p:R*1..2]->(b) CREATE (:Q {n: length(p)})", 2),
+]
+
+
+@pytest.mark.parametrize("q, created", PARALLEL_EDGE_WRITES)
+def test_parallel_edges_written_outside_traverse_ancestors(q, created):
+    query("CREATE (a:A {v: 0})-[:R]->(b:B {v: 0}) CREATE (a)-[:R]->(b)", write=True)
+    res = query(q, write=True)
+    assert res.nodes_created == created
+    res = query("MATCH (q:Q) RETURN count(q)")
+    assert res.result_set == [[created]]
+
+
+def test_parallel_edges_deleted_inside_call_subquery():
+    query("CREATE (a:A)-[:R]->(b:B) CREATE (a)-[:R]->(b)", write=True)
+    res = query("MATCH (a:A)-[r:R]->(b) CALL { WITH r DELETE r }", write=True)
+    assert res.relationships_deleted == 2
+    res = query("MATCH ()-[r:R]->() RETURN count(r)")
+    assert res.result_set == [[0]]
