@@ -842,6 +842,9 @@ impl Hash for Value {
                 let diff = *x - casted as f64;
                 if diff == 0.0 {
                     casted.hash(state);
+                } else if x.is_nan() {
+                    // every NaN is one grouping key, whatever its sign/payload
+                    f64::NAN.to_bits().hash(state);
                 } else {
                     x.to_bits().hash(state);
                 }
