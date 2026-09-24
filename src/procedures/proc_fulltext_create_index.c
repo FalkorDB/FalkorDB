@@ -256,17 +256,15 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 	const char* phonetics[fields_count];
 
 	// WHICH of the three the statement actually STATED, as opposed to which
-	// ones ended up with a value - every field ends up with all three.
+	// ended up with a value - every field ends up with all three.
 	//
-	// The distinction is invisible locally, because an option left out gets
-	// the same default here that Index_FulltextCreate would apply anyway. It
-	// is not invisible on the wire: an effect carries a presence flag per
-	// option meaning "the statement said this", and an effect MUTATES an index
-	// that may already exist. Announcing a default as though it had been
+	// Invisible locally, because an option left out gets the same default here
+	// that Index_FulltextCreate would apply anyway. Not invisible on the wire:
+	// an effect carries a presence flag meaning "the statement said this", and
+	// MUTATES an index that may already exist. Announcing a default as though
 	// stated has already diverged a live replica once with language, and
 	// phonetic is worse - C's default is the literal string "no" while Rust
-	// reads any non-empty phonetic as ENABLED, so an unstated phonetic sent as
-	// its default turns itself ON when it crosses engines.
+	// reads any non-empty phonetic as ENABLED.
 	bool weight_stated  [fields_count];
 	bool nostem_stated  [fields_count];
 	bool phonetic_stated[fields_count];
@@ -351,16 +349,12 @@ ProcedureResult Proc_FulltextCreateNodeIdxInvoke
 		Map_Add(&options, SI_ConstStringVal("nostem"),
 				SI_BoolVal(nostems[i]));
 
-		// THE STATED MAP, which is a different question: not "what will this
-		// field end up with" but "what did the statement actually say". Only
-		// v3 reads it, because only v3 has a presence flag per option, and a
-		// flag that means "the statement said this" cannot be answered from a
-		// map that was pre-filled with defaults.
-		//
-		// It matters most for phonetic: C's default is the literal string "no"
-		// (index_field.h:15) while Rust reads any non-empty phonetic as
-		// ENABLED, so an unstated phonetic announced as its default turns
-		// itself on when it crosses engines.
+		// THE STATED MAP: not "what will this field end up with" but "what did
+		// the statement actually say". Only v3 reads it, because only v3 has a
+		// presence flag per option, and that flag cannot be answered from a map
+		// pre-filled with defaults. It matters most for phonetic: C's default is
+		// the literal string "no" (index_field.h:15) while Rust reads any
+		// non-empty phonetic as ENABLED.
 		//
 		// Rebuilt per field rather than edited, so a value one field stated
 		// cannot survive into the next.

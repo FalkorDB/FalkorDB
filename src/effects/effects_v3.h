@@ -506,27 +506,22 @@ void EffectsV3_RecordsFree
 
 // EffectsV3_Encode is DEFINED
 //
-// Exactly that, and nothing more. The flag's only consumer links a round trip
-// against it, so its meaning is a contract with that consumer - I briefly
-// redefined it to mean "every record has a producing path", which is a true
-// and useful statement about a different thing, and would have set the flag
-// while EffectsV3_Encode was still undefined. That is precisely the failure
-// four lines of comment above say this flag exists to prevent.
-//
-// A readiness flag answers "will this link", never "is this good".
+// Exactly that, and nothing more: the flag's only consumer links a round trip
+// against it. A readiness flag answers "will this link", never "is this good" -
+// widening it to something true about a different thing, such as every record
+// having a producing path, would set it while EffectsV3_Encode is undefined.
 #define EFFECTS_V3_ENCODE_READY 1
 
 // every one of the 14 records has a producing path into the accumulator
 //
-// A separate question from linkability, and worth its own flag rather than a
-// looser reading of the one above. A record whose encoder nothing CALLS emits
-// a well-formed EMPTY payload rather than a refusal - the master stays correct
-// and the replica silently does not - which is the failure shape that survives
-// every consistency check. So this says the accumulator is reachable from the
-// effect writers for all 14, which is what makes an empty payload impossible.
+// A separate question from linkability, and worth its own flag: a record whose
+// encoder nothing CALLS emits a well-formed EMPTY payload rather than a refusal,
+// so the master stays correct and the replica silently does not - the failure
+// shape that survives every consistency check. This says the accumulator is
+// reachable from the effect writers for all 14.
 //
-// tests/flow/test_effects_v3_emit.py is what holds it: an unrouted effect logs
-// and refuses to replicate, and that test fails on the log.
+// tests/flow/test_effects_v3_emit.py holds it: an unrouted effect logs and
+// refuses to replicate, and that test fails on the log.
 #define EFFECTS_V3_ALL_RECORDS_WIRED 1
 
 // a record declaring count == 0 is refused at the header

@@ -45,11 +45,10 @@ void EffectsBuffer_AddCreateIndexEffect
 		// v3 is ONE RECORD PER STATEMENT while this is called once per FIELD,
 		// so the field is staged and the record is emitted when the query
 		// stops producing fields
-		// 'stated', not 'options'. v3 carries a presence flag per option
-		// meaning "the statement said this", and 'options' has been pre-filled
-		// with defaults by the time it reaches here - answering the flag from
-		// it would announce options the user never wrote. v2 keeps taking
-		// 'options' below, unchanged, because its bytes are frozen.
+		//
+		// 'stated', not 'options': v3's presence flag means "the statement said
+		// this", and 'options' has been pre-filled with defaults by the time it
+		// reaches here. v2 keeps taking 'options' below, its bytes being frozen.
 		EffectsV3Grouping_AddIndexField (EffectsBuffer_V3 (buff),
 				EFFECT_CREATE_INDEX, st, label_id, label, (uint32_t) t,
 				attr_id, attr, stated) ;

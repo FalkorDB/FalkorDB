@@ -1031,18 +1031,16 @@ void EffectsV3Grouping_AddConstraint
 
 // convert C's options map into the wire's typed block
 //
-// THE MAP KEY IS THE PRESENCE BIT. A key present in the map is exactly an
-// option the statement stated, so every field here is a lookup and never a
-// default - which is what keeps "the statement did not say" distinguishable
-// from "the statement said the default value".
+// THE MAP KEY IS THE PRESENCE BIT. A key present in the map is exactly an option
+// the statement stated, so every field here is a lookup and never a default -
+// which keeps "the statement did not say" distinguishable from "the statement
+// said the default value".
 //
-// Reaching past the map to the field's stored options would break that, and
-// not subtly: C seeds every field's phonetic with the literal string "no"
-// (index_field.h:15, applied at index_field.c:24 and :57), while Rust reads
-// any non-empty phonetic as ENABLED. An unstated phonetic sent as its stored
-// default therefore turns itself on when it crosses engines. Same reasoning
-// for the other four, and language has already diverged a live replica this
-// way once - "Can not override index configuration: Language is already set".
+// Reaching past the map to the field's stored options breaks that, and not
+// subtly: C seeds every field's phonetic with the literal string "no"
+// (index_field.h:15), while Rust reads any non-empty phonetic as ENABLED, so an
+// unstated phonetic sent as its stored default turns itself on when it crosses
+// engines. Language has already diverged a live replica this way once.
 static void _options_from_map
 (
 	EffectsV3IndexOptions *o,  // block to fill

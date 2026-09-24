@@ -797,17 +797,15 @@ void test_effectsV3Group_valuesFollowTheirAttributes(void) {
 // AND A REPEATED ID NEVER REACHES THE WIRE
 //
 // The contract is STRICTLY ascending, so a repeat is as much a violation as a
-// descending pair - and it is the more dangerous of the two, because the two
-// readers disagree about it. Rust refuses `w[0] >= w[1]` and resyncs. A C
-// replica ACCEPTS it, takes both pairs, drops the second write to the id and
-// leaves the attribute that lost its column unset: no error, no log, no
-// resync, and a replica quietly holding different data from its primary. A
+// descending pair - and the more dangerous of the two, because the two readers
+// disagree about it. Rust refuses `w[0] >= w[1]` and resyncs; a C replica
+// ACCEPTS it, takes both pairs, drops the second write to the id and leaves the
+// attribute that lost its column unset. No error, no log, no resync, and a
 // state-only check calls that green.
 //
-// Nothing upstream produces one today - C folds `SET n.v = 1, n.v = 2` into a
-// single effect, and ATTRIBUTE_ID_ALL is expanded to a diff rather than
-// emitted - so this pins a guarantee the encoder makes rather than a bug it
-// had. That is the point: the invariant is local now instead of borrowed.
+// Nothing upstream produces one today, so this pins a guarantee the encoder
+// makes rather than a bug it had: the invariant is local now instead of
+// borrowed.
 void test_effectsV3Group_repeatedAttributeIsCollapsed(void) {
 	LabelID labels[] = { 1 };
 	// attribute 7 written twice, and out of order, so the collapse has to
@@ -1082,11 +1080,10 @@ void test_effectsV3Group_identicalFieldOptionsFold(void) {
 //
 // Index_SetStopwords objects if stopwords are set AT ALL, so a statement that
 // splits into two records must not repeat them - the second application fails
-// and the replica refuses a payload that is otherwise correct. The split here
-// is forced by differing weights, which is the only way C produces one.
-//
-// A language-only version of this test is green either way, because
-// Index_SetLanguage objects only when the language DIFFERS.
+// and the replica refuses a payload that is otherwise correct. The split here is
+// forced by differing weights, the only way C produces one. A language-only
+// version of this test is green either way, because Index_SetLanguage objects
+// only when the language DIFFERS.
 void test_effectsV3Group_indexLevelOptionsStatedOnce(void) {
 	EffectsV3Grouping *g = EffectsV3Grouping_New();
 

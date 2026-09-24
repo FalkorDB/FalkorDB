@@ -554,17 +554,15 @@ static void _encode_ddl_record
 // encode records back into a payload
 //
 // The seam the conformance round trip is built on: decode a fixture the OTHER
-// engine produced, re-encode it here, and compare bytes. That is the only test
-// that puts C's encoder and Rust's bytes against each other deterministically -
-// a live pair shows the two engines agreeing about a graph, not about a
-// payload, and a fixture comparison alone never runs C's encoder at all.
+// engine produced, re-encode it here, compare bytes. The only test that puts C's
+// encoder and Rust's bytes against each other deterministically - a live pair
+// shows the two engines agreeing about a graph, not about a payload, and a
+// fixture comparison alone never runs C's encoder.
 //
-// It is deliberately thin, and deliberately NOT the accumulator. The
-// accumulator answers "what should this query emit", which is where the
-// grouping and ordering rules live; this answers "write exactly these records,
-// in exactly this order". A round trip has to reproduce what it was handed,
-// including a record order the accumulator would have chosen differently, so
-// routing it through the accumulator would make the test agree with itself.
+// Deliberately NOT the accumulator, which answers "what should this query emit";
+// this answers "write exactly these records, in exactly this order". A round
+// trip has to reproduce what it was handed, including a record order the
+// accumulator would have chosen differently.
 //
 // Returns false only on an internal failure - records that decoded cleanly
 // always re-encode.

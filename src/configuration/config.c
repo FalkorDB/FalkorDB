@@ -487,12 +487,10 @@ static uint64_t Config_effects_threshold_get(void)
 // the payload version a new effects-buffer stamps and encodes
 //
 // Separate from EFFECTS_VERSION in effects.h, which is the highest version this
-// build can READ. The two answer different questions and the ordering
-// constraint is always: teach every reader first, then flip writers. This is
-// the writer half, and it is the only thing that moves.
-//
-// Defaults to 2, so building the v3 emitter changes no behaviour until an
-// operator asks for it.
+// build can READ. The ordering constraint is always: teach every reader first,
+// then flip writers. This is the writer half, and the only thing that moves.
+// Defaults to 2, so building the v3 emitter changes nothing until an operator
+// asks for it.
 static void Config_effects_version_set(
 	uint64_t version)
 {
@@ -1760,10 +1758,9 @@ bool Config_Option_set
 			// what arrived
 			//
 			// The upper bound is the compiled read ceiling, not a literal: a
-			// build must never emit a version it cannot itself read, and
-			// written this way, teaching the reader is the only edit. The
-			// floor is 2 - v1 is read-only, apply special-cases it and nothing
-			// writes it
+			// build must never emit a version it cannot itself read, and this
+			// way teaching the reader is the only edit. The floor is 2 - v1 is
+			// read-only, apply special-cases it and nothing writes it
 			if (version < 2 || version > EFFECTS_VERSION) {
 				return false ;
 			}
