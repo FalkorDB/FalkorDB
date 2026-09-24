@@ -853,6 +853,19 @@ class testQueryValidationFlow(FlowTestsBase):
                 rejected = True
             self.env.assertTrue(rejected)
 
+            # index OPTIONS are evaluated once, with no input row to run a
+            # sub-plan on
+            for q in ["""CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS
+                         {dimension: size([(a)-->() | 1]) + 1,
+                          similarityFunction: 'euclidean'}""",
+                      """CREATE FULLTEXT INDEX FOR (n:A) ON (n.name) OPTIONS
+                         {language: head([(a)-->() | 'english'])}"""]:
+                try:
+                    g.query(q)
+                    self.env.assertTrue(False)
+                except redis.ResponseError as e:
+                    self.env.assertContains("not supported in index OPTIONS", str(e))
+
             # the server survived, and a pattern comprehension outside inline
             # properties, over a pattern with inline properties, still works
             actual = g.query("""MATCH (a)-[{k:1}]->()
@@ -919,6 +932,20 @@ class testQueryValidationFlow(FlowTestsBase):
                 g.query(write)
                 self.env.assertEqual(g.query(read).result_set, expected)
                 reset()
+
+            # SET applies its items in order: a comprehension sees what the
+            # items before it set, in the same SET or a consecutive one, and
+            # not what the items after it will set
+            q = """MATCH (n:A {name: 'a'})
+                   SET n.p = 1, n.q = head([(n)-->() | n.p]), n.r = n.q + 1
+                   SET n.s = head([(n)-->() | n.r]), n.p = 5
+                   RETURN n.p, n.q, n.r, n.s"""
+            self.env.assertEqual(g.query(q).result_set, [[5, 1, 2, 2]])
+            q = """MATCH (n:A {name: 'a'})
+                   SET n.t = head([(n)-->() | n.u]), n.u = 1
+                   RETURN n.t, n.u"""
+            self.env.assertEqual(g.query(q).result_set, [[None, 1]])
+            reset()
 
             # a SET feeding a RETURN inside a UNION branch; the branch's
             # variables must not be clobbered by the comprehension's result
@@ -1085,6 +1112,16 @@ class testQueryValidationFlow(FlowTestsBase):
                 (ns + """RETURN reduce(s = 0, x IN ns |
                                 s + size([(x)<--(y) WHERE y.k = s + 1 | 1]))""",
                  [[1]]),
+                # a bare pattern in a comprehension's own WHERE is an
+                # existence test too, in a projection as in a filter
+                ("""MATCH (n:N) RETURN n.name, [(n)-->(m) WHERE NOT (m)-->() | m.name]
+                    ORDER BY n.name""",
+                 [['a', ['b']], ['b', []]]),
+                # a nested plan inside another comprehension reads that
+                # comprehension's pattern variables
+                (ns + """RETURN [x IN ns | [(x)-->(m) |
+                                  [y IN [1] | size([(m)<--(z) WHERE z = x | y])]]]""",
+                 [[[[[1]], []]]]),
                 # a bare pattern in a loop predicate is an existence test
                 (ns + "RETURN [x IN ns WHERE (x)-->() | x.name]", [[['a']]]),
                 (ns + "RETURN none(x IN ns WHERE (x)<--()), single(x IN ns WHERE (x)-->())",

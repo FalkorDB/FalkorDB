@@ -617,6 +617,10 @@ pub struct Planner {
     /// innermost last. A pattern comprehension reading one of them cannot be
     /// hoisted out of the loop and becomes a nested plan instead.
     loop_vars: Vec<Variable>,
+    /// Pattern variables of the pattern comprehensions enclosing that
+    /// expression. A nested plan inside one runs on the enclosing
+    /// comprehension's rows, where they are bound.
+    pattern_vars: Vec<Variable>,
 }
 
 /// A pattern comprehension (or inline pattern) hoisted out of a projection
@@ -692,6 +696,7 @@ impl Planner {
             verified_labels: HashMap::new(),
             nested_plans: vec![],
             loop_vars: vec![],
+            pattern_vars: vec![],
         }
     }
 
@@ -848,6 +853,22 @@ impl Planner {
         tree: &DynTree<IR>,
         mut idx: NodeIdx<Dyn<IR>>,
     ) -> NodeIdx<Dyn<IR>> {
+        loop {
+            let next = Self::descend_one_clause_expr_chain(tree, idx);
+            // An Apply still waiting for its input is where stitching goes.
+            // A chain that already has one sits on the Set holding a SET's
+            // earlier items (see `QueryIR::Set`), whose input slot is below.
+            if next == idx || matches!(tree.node(next).data(), IR::Apply) {
+                return next;
+            }
+            idx = next;
+        }
+    }
+
+    fn descend_one_clause_expr_chain(
+        tree: &DynTree<IR>,
+        mut idx: NodeIdx<Dyn<IR>>,
+    ) -> NodeIdx<Dyn<IR>> {
         let min_children = match tree.node(idx).data() {
             IR::ForEach { .. } => 2,
             IR::Unwind { .. }
@@ -930,12 +951,17 @@ impl Planner {
                 let var = self.fresh_var(scope_id, Type::List(Box::new(Type::Any)));
 
                 let mut nested = Vec::new();
+                let outer_pattern_vars = self.pattern_vars.len();
+                self.pattern_vars.extend(graph.variables());
+                // The comprehension's own WHERE is a boolean per match and
+                // its result a value, whatever context the comprehension
+                // itself sits in.
                 let where_tree = {
                     let t = self.extract_pattern_comprehensions(
                         &node.child(0),
                         scope_id,
                         &mut nested,
-                        mode,
+                        PatternMode::Exists,
                     );
                     if matches!(t.root().data(), ExprIR::Constant(Value::Bool(true))) {
                         None
@@ -947,8 +973,9 @@ impl Planner {
                     &node.child(1),
                     scope_id,
                     &mut nested,
-                    mode,
+                    PatternMode::Collect,
                 ));
+                self.pattern_vars.truncate(outer_pattern_vars);
 
                 let comprehension = ExtractedComprehension {
                     var,
@@ -1066,10 +1093,11 @@ impl Planner {
             return DynTree::new(ExprIR::Variable(var));
         }
 
-        // The loop variables arrive in the argument row, bound like any
-        // variable of the outer stream.
+        // The loop variables, and the pattern variables of any comprehension
+        // it sits in, arrive in the argument row, bound like any variable of
+        // the outer stream.
         let saved = self.visited.clone();
-        for v in &self.loop_vars {
+        for v in self.loop_vars.iter().chain(&self.pattern_vars) {
             self.visited.insert((v.id, v.scope_id));
         }
         let plan = self.build_pattern_comprehension_plan(&comprehension);
@@ -3025,17 +3053,46 @@ impl Planner {
                 }
                 res
             }
-            QueryIR::Set(mut items) => {
-                let exprs = items.iter_mut().flat_map(|item| match item {
-                    SetItem::Attribute { target, value, .. } => vec![target, value],
-                    SetItem::Label { .. } => vec![],
-                });
-                let chain = self.extract_clause_expr_comprehensions(exprs, None);
-                let mut res = tree!(IR::Set(items));
-                if let Some(chain) = chain {
-                    res.root_mut().push_child_tree(chain);
+            QueryIR::Set(items) => {
+                // SET applies its items in order, and a later item sees what
+                // the earlier ones set (`SET n.p = 1, n.q = n.p`), but a
+                // comprehension's sub-plan runs before the operator it feeds.
+                // So an item with one starts a new Set, fed by the Set holding
+                // the items before it.
+                let has_pattern = |item: &SetItem<Arc<String>, Variable>| match item {
+                    SetItem::Attribute { target, value, .. } => {
+                        Self::has_pattern_expr(&target.root())
+                            || Self::has_pattern_expr(&value.root())
+                    }
+                    SetItem::Label { .. } => false,
+                };
+                let mut groups: Vec<Vec<SetItem<Arc<String>, Variable>>> = vec![];
+                for item in items {
+                    match groups.last_mut() {
+                        Some(group) if !has_pattern(&item) => group.push(item),
+                        _ => groups.push(vec![item]),
+                    }
                 }
-                res
+                let mut res: Option<DynTree<IR>> = None;
+                for mut group in groups {
+                    let exprs = group.iter_mut().flat_map(|item| match item {
+                        SetItem::Attribute { target, value, .. } => vec![target, value],
+                        SetItem::Label { .. } => vec![],
+                    });
+                    let chain = self.extract_clause_expr_comprehensions(exprs, None);
+                    let mut set = tree!(IR::Set(group));
+                    let input = match (chain, res.take()) {
+                        (Some(chain), Some(earlier)) => {
+                            Some(Self::stitch_below_apply_chain(chain, earlier))
+                        }
+                        (chain, earlier) => chain.or(earlier),
+                    };
+                    if let Some(input) = input {
+                        set.root_mut().push_child_tree(input);
+                    }
+                    res = Some(set);
+                }
+                res.expect("SET has at least one item")
             }
             QueryIR::Remove(mut items) => {
                 let chain = self.extract_clause_expr_comprehensions(&mut items, None);

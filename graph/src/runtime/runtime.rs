@@ -74,7 +74,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use thin_vec::ThinVec;
 
 /// Query result containing statistics and returned tuples.
 pub struct ResultSummary<'a> {
@@ -691,14 +690,14 @@ impl<'a> Runtime<'a> {
         let mut arg = BatchBuilder::new();
         arg.push_row(row);
         op.set_argument_batch(arg.finish());
-        // The plan ends in a keyless collect, so it yields exactly one row.
-        for batch in op {
-            let batch = batch?;
-            if let Some(row) = batch.active_indices().next() {
-                return Ok(batch.value_at(result.id, row).unwrap_or(Value::Null));
-            }
-        }
-        Ok(Value::List(Arc::new(ThinVec::new())))
+        // The plan's root is the comprehension's keyless collect (see
+        // `Planner::build_pattern_comprehension_plan`), which drains its
+        // input and yields a single batch of a single row: the list, empty
+        // when nothing matched. Anything else is a planner bug.
+        let missing = || format!("nested plan #{id} produced no result");
+        let batch = op.next().ok_or_else(missing)??;
+        let row = batch.active_indices().next().ok_or_else(missing)?;
+        batch.value_at(result.id, row).ok_or_else(missing)
     }
 
     /// Iteratively builds a batch-mode operator tree for the given IR node.
