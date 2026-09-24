@@ -210,11 +210,8 @@ pub fn register(funcs: &mut Functions) {
         fn sign(_, args) {
             match &args[0] {
                 Value::Int(n) => Ok(Value::Int(n.signum())),
-                Value::Float(f) => Ok(if *f == 0.0 {
-                    Value::Int(0)
-                } else {
-                    Value::Float(f.signum().round())
-                }),
+                // Integer result like C and openCypher; ±0.0 and NaN give 0.
+                Value::Float(f) => Ok(Value::Int(i64::from(*f > 0.0) - i64::from(*f < 0.0))),
                 Value::Null => Ok(Value::Null),
 
                 _ => unreachable!(),
