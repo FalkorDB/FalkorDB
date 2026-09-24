@@ -41,7 +41,7 @@
 use super::{FnType, Functions, Type};
 use crate::runtime::{
     runtime::Runtime,
-    value::{CompareValue, DisjointOrNull, Value},
+    value::{CompareValue, DisjointOrNull, Value, sort_cmp_f64},
 };
 use std::{cmp::Ordering, sync::Arc};
 use thin_vec::thin_vec;
@@ -612,11 +612,7 @@ pub fn finalize_percentile_disc(ctx: Value) -> Value {
         return Value::Null;
     }
 
-    Arc::make_mut(values).sort_by(|a, b| {
-        a.get_numeric()
-            .partial_cmp(&b.get_numeric())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    Arc::make_mut(values).sort_by(|a, b| sort_cmp_f64(a.get_numeric(), b.get_numeric()));
 
     let index = if *percentile > 0.0 {
         (values.len() as f64 * *percentile).ceil() as usize - 1
@@ -642,11 +638,7 @@ pub fn finalize_percentile_cont(ctx: Value) -> Value {
         return Value::Null;
     }
 
-    Arc::make_mut(values).sort_by(|a, b| {
-        a.get_numeric()
-            .partial_cmp(&b.get_numeric())
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    Arc::make_mut(values).sort_by(|a, b| sort_cmp_f64(a.get_numeric(), b.get_numeric()));
 
     #[allow(clippy::float_cmp)]
     if *percentile == 1.0 || values.len() == 1 {
