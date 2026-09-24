@@ -461,6 +461,8 @@ static bool _Constraint_Create
 	// TODO: find a better way
 	QueryCtx_SetGraphCtx (gc) ;
 
+	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
+
 	//--------------------------------------------------------------------------
 	// fast read-locked rejection of the common, benign CREATE failures
 	//--------------------------------------------------------------------------
@@ -487,15 +489,23 @@ static bool _Constraint_Create
 	GraphContext_ReleaseLock (gc) ;
 
 	if (precheck_err != NULL) {
+		// RedisModule_ReplyWithError touches the blocked client's reply
+		// state, unsafe without the thread-safe context lock off-thread
+		if (from_thread) {
+			RedisModule_ThreadSafeContextLock (ctx) ;
+		}
+
 		RedisModule_ReplyWithError (ctx, precheck_err) ;
+
+		if (from_thread) {
+			RedisModule_ThreadSafeContextUnlock (ctx) ;
+		}
+
 		QueryCtx_Free  () ;
 		ErrorCtx_Clear () ;
 		GraphContext_DecreaseRefCount (gc) ;
 		return false ;
 	}
-
-	// acquire graph write lock
-	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
 
 	if (from_thread) {
 		RedisModule_ThreadSafeContextLock (ctx) ;
