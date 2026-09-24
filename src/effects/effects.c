@@ -106,30 +106,25 @@ void EffectsBuffer_WriteBytes
 	// A v2 record written while v3 is active means some Add*Effect was never
 	// routed into the accumulator. EffectsBuffer_Buffer serializes the groups
 	// and ignores this stream in v3, so the record would be SILENTLY DROPPED -
-	// a replica that never learns of the mutation, which is worse than a
-	// refused payload because nothing reports it.
+	// worse than a refused payload, because nothing reports it.
 	//
-	// Both a log AND an assert, because they cover different builds: ASSERT
-	// compiles to nothing without RG_DEBUG, so it stops a debug and CI build
-	// at the offending writer while the log is what a release build leaves
-	// behind.
+	// A log AND an assert, because they cover different builds: ASSERT compiles
+	// to nothing without RG_DEBUG, so it stops a debug and CI build at the
+	// offending writer while the log is what a release build leaves behind.
 	if(unlikely(eb->v3 != NULL)) {
 		// AN EFFECT WITH NO v3 PATH IS A BUG, NOT A CONDITION TO SURVIVE.
 		//
 		// All 14 records have a producing path (EFFECTS_V3_ENCODE_READY), so
-		// nothing reaches here. If a fifteenth effect is ever added without
-		// routing it, this is where that shows up - and it has to be loud,
-		// because the two quiet answers are both wrong. Dropping the write
-		// loses the effect silently. Marking the buffer incomplete so the
-		// caller replays the query text instead - which is what this used to
-		// do - is exact between two C engines and silently wrong against
-		// Rust, whose db.idx.fulltext.createNodeIndex takes a single map where
-		// C's is variadic: the rescue that saves a C replica leaves a Rust one
-		// without the index and without an error.
+		// nothing reaches here. A fifteenth effect added without routing it
+		// shows up here, and it has to be loud, because both quiet answers are
+		// wrong: dropping the write loses the effect, and replaying the query
+		// text instead is exact between two C engines and silently wrong
+		// against Rust, whose db.idx.fulltext.createNodeIndex takes a single
+		// map where C's is variadic.
 		//
-		// So: assert, which stops a debug and CI build at the writer that
-		// forgot its v3 path, and log at warning in release. The fix is always
-		// to route the effect, never to re-add a fallback.
+		// So: assert, stopping a debug and CI build at the writer that forgot
+		// its v3 path, and log at warning in release. The fix is always to
+		// route the effect, never to re-add a fallback.
 		RedisModule_Log(NULL, "warning",
 			"GRAPH.EFFECT an effect (%zu bytes) reached a v3 buffer with no v3 "
 			"encoding path and WILL NOT BE REPLICATED; its writer needs to "
@@ -448,14 +443,13 @@ uint64_t EffectsBuffer_Length
 // take over a buffer's body so pre-built records can be written into it
 //
 // EffectsBuffer_Buffer has TWO possible bodies: the accumulator's output when
-// one is attached, and eb->records otherwise. EffectsV3_Encode writes records
-// it was handed, so the accumulator has to be out of the way first - otherwise
+// one is attached, and eb->records otherwise. EffectsV3_Encode writes records it
+// was handed, so the accumulator has to be out of the way first - otherwise
 // everything written here is serialised over and silently discarded.
 //
 // Refuses a buffer that has already staged effects rather than throwing them
-// away. 'version' and 'flags' come from the payload being reproduced, because
-// re-encoding what was decoded must reproduce its header too, not the header
-// this build would have chosen.
+// away. 'version' and 'flags' come from the payload being reproduced: re-encoding
+// what was decoded must reproduce its header too.
 EffectsBytes *EffectsBuffer_TakeBody
 (
 	EffectsBuffer *eb,  // effects-buffer
@@ -864,17 +858,15 @@ static void EffectsBuffer_AddEdgeUpdateEffect
 //
 // All three per-attribute writers converge here: add, update and remove are one
 // record family in v2 and one shape in v3. A v3 record's shape is the entity's
-// WHOLE updated attribute set, so this stages rather than emits - the group is
-// not selectable until the query stops producing attributes for this entity.
+// WHOLE updated attribute set, so this stages rather than emits.
 //
-// REMOVE-ALL IS STATED EXPLICITLY, not as a sentinel. v2 writes
-// ATTRIBUTE_ID_ALL as the attribute id and lets apply special-case it; v3
-// cannot, because the attribute ids ARE the record's shape, so a sentinel there
-// would name something that is not an attribute. `SET n = {} SET n.x = 1` would
-// then produce a shape mixing the two with nothing to say which applied first,
-// and a dedicated record has the same problem between records. Stating every
-// removed attribute explicitly needs no ordering, because it resolves to the
-// end state rather than replaying operations.
+// REMOVE-ALL IS STATED EXPLICITLY, not as a sentinel. v2 writes ATTRIBUTE_ID_ALL
+// as the attribute id and lets apply special-case it; v3 cannot, because the
+// attribute ids ARE the record's shape. `SET n = {} SET n.x = 1` would then
+// produce a shape mixing the two with nothing to say which applied first, and a
+// dedicated record has the same problem between records. Stating every removed
+// attribute explicitly needs no ordering, because it resolves to the end state
+// rather than replaying operations.
 static void _StageV3Update
 (
 	EffectsBuffer *buff,          // effect buffer
@@ -1025,12 +1017,10 @@ void EffectsBuffer_AddEntityUpdateAttributeEffect
 // file a label vector into the v3 accumulator
 //
 // v3 states the LABEL SET and the node ids rather than a serialized GraphBLAS
-// vector - which is the point of the record changing: v2's blob couples the
-// wire to whatever GraphBLAS each engine was built against.
-//
-// The vector is named with its label, and it has already had redundancies
-// stripped upstream (staged_updates.c), so every node in it genuinely gains or
-// loses the label.
+// vector, which is the point of the record changing: v2's blob couples the wire
+// to whatever GraphBLAS each engine was built against. The vector is named with
+// its label and has already had redundancies stripped upstream
+// (staged_updates.c), so every node in it genuinely gains or loses the label.
 static void _StageV3Labels
 (
 	EffectsBuffer *buff,  // effect buffer
