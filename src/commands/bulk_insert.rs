@@ -13,9 +13,7 @@ use graph::{
     threadpool::spawn,
 };
 use parking_lot::RwLock;
-use redis_module::{
-    Context, ContextFlags, NextArg, RedisError, RedisResult, RedisString, RedisValue, raw,
-};
+use redis_module::{Context, ContextFlags, NextArg, RedisResult, RedisString, RedisValue, raw};
 use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::ffi::CString;
@@ -741,7 +739,7 @@ pub fn graph_bulk_insert(
     // Bound the declared counts by what the payload can describe.
     //
     // `node_count` and `edge_count` are pure client input, and they size a `Vec` of ids
-    // directly in `Graph::reserve_nodes` / `reserve_relationships`. Unbounded, that is a
+    // directly in the two `IdSpace::reserve` calls this command reaches. Unbounded, that is a
     // crash: `GRAPH.BULK g BEGIN 9223372036854775807 0 0 0` carries no payload at all, and
     // the capacity overflow aborted the whole process (#2426). Below the overflow threshold
     // it is a memory-amplification vector, since the reservation really happens.
@@ -825,16 +823,29 @@ pub fn graph_bulk_insert(
                 &mut docs,
             )
         };
+        // The commit joins the token result rather than sitting in the `Ok` arm
+        // below. `commit` validates before publishing, and returning its refusal
+        // straight to the caller skipped the whole error arm — so a `BEGIN` that
+        // failed validation left the graph key it had just created registered and
+        // empty, with no insert in it and nothing to remove it.
+        //
+        // The index documents are published first and stay published if the
+        // commit is then refused. `BulkIndexDocs` has no inverse for the edge
+        // side — `commit_edge_index` wants src and dst per removed edge, which
+        // this type does not keep — and the alternative, publishing after the
+        // swap, moves a non-MVCC mutation to where concurrent readers can reach
+        // the graph. A refusal here is an engine fault, and for `BEGIN`, the one
+        // case that can leave documents behind for entities that were never
+        // committed, the discard below takes the whole key and its index with it.
+        let result = result.and_then(|()| {
+            // Every token succeeded, so the index documents are safe to publish. Do it
+            // while `g_arc` is still the un-published fork: after the swap it may be
+            // borrowed by concurrent readers.
+            docs.publish(&mut g_arc.borrow_mut());
+            tg.graph.commit(g_arc).map_err(|e| e.to_string())
+        });
         return match result {
             Ok(()) => {
-                // Every token succeeded, so the index documents are safe to publish. Do it
-                // while `g_arc` is still the un-published fork: after the swap it may be
-                // borrowed by concurrent readers, and on the error arm below it is thrown
-                // away — which is precisely what must happen to the documents too.
-                docs.publish(&mut g_arc.borrow_mut());
-                tg.graph
-                    .commit(g_arc)
-                    .map_err(|e| RedisError::String(e.to_string()))?;
                 ctx.replicate_verbatim();
                 let reply = format!("{node_count} nodes created, {edge_count} relations created");
                 Ok(RedisValue::SimpleString(reply))

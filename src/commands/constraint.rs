@@ -258,7 +258,8 @@ pub fn settle_constraint(
             // space it was refused over is an engine fault, not a user error.
             Err(WriteAbort::Invalid(e)) => {
                 redis_module::logging::log_warning(format!(
-                    "constraint announcement on graph '{key_display}' was refused: {e}. The                      constraint is not being enforced."
+                    "constraint announcement on graph '{key_display}' was refused: {e}. \
+                     The constraint is not being enforced."
                 ));
                 break;
             }
@@ -398,6 +399,14 @@ fn attempt_settle(
         .expect("writer mode after upgrade_to_write");
     if settled {
         Ok(())
+    } else if let Some(e) = invalid {
+        // Before the busy arm, and not merged into it: the closure answers one
+        // bool for two very different refusals, and the retry loop treats them
+        // as opposites. Dropping this on the floor made a permanent engine
+        // fault look like a busy write slot, so the loop retried the same
+        // arithmetic on the same graph for the full five-minute budget and then
+        // reported the constraint as merely stuck.
+        Err(WriteAbort::Invalid(e))
     } else {
         Err(WriteAbort::WriteSlotBusy)
     }
