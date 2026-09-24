@@ -286,7 +286,16 @@ pub enum NodeOpError {
     /// `kind` lives here rather than in [`IdSpaceError`] because the id space
     /// deliberately does not know which entity it counts — it is the same type
     /// twice — while every method on this graph does.
-    #[error("{kind} {source}")]
+    ///
+    /// Worded for the person who sees it. Every variant of [`IdSpaceError`] is
+    /// an engine fault — none of them is something a query can ask for — so the
+    /// message leads with that and with the one fact that person needs, which is
+    /// that nothing was written. The arithmetic follows for whoever reads the
+    /// report.
+    #[error(
+        "internal error in the {kind} id space: {source}. No part of this write was applied. \
+         This is a bug in FalkorDB rather than a problem with the query — please report it"
+    )]
     IdSpace {
         kind: &'static str,
         source: IdSpaceError,
@@ -1428,8 +1437,9 @@ impl Graph {
     /// [`IdSpaceError`], wrapped, if either space already contradicts itself —
     /// opening a batch over a corrupt one would re-anchor the boundary on the
     /// bad value and hide it.
-    /// Private: a batch is only ever opened as part of closing one, so callers
-    /// reach it through [`Self::in_batch`] or [`Self::roll_id_batches`].
+    /// Private: a batch is only ever opened as part of closing one, so the only
+    /// production caller is [`Self::roll_id_batches`]. A version that has just
+    /// been forked opens its own through [`IdSpace::new_version`].
     fn open_id_batches(&mut self) -> Result<(), NodeOpError> {
         self.node_ids.open_batch().map_err(NodeOpError::node)?;
         self.relationship_ids
@@ -1440,11 +1450,10 @@ impl Graph {
 
     /// Close the open batch and begin the next one where it left the boundary.
     ///
-    /// What a caller whose batch is not a scope needs: the write path's batch
-    /// ends and the next begins at one instant, partway through one `next()` of
-    /// a pull-based operator, so there is no frame for [`Self::in_batch`] to
-    /// wrap. One call rather than two so the open cannot be kept while the check
-    /// is dropped.
+    /// A batch is not a scope: the write path's batch ends and the next begins
+    /// at one instant, partway through one `next()` of a pull-based operator,
+    /// so there is no frame for a guard to wrap. One call rather than two so
+    /// the open cannot be kept while the check is dropped.
     ///
     /// # Errors
     ///
@@ -1530,8 +1539,8 @@ impl Graph {
     /// the batch it is handing over with it.
     ///
     /// There is no unchecked way in. Every caller has a batch — the graph's own,
-    /// opened by [`Self::in_batch`] or [`Self::roll_id_batches`] — so the check
-    /// and the state move together and a caller cannot forget one.
+    /// opened when the version was forked and rolled by [`Self::roll_id_batches`]
+    /// — so the check and the state move together and a caller cannot forget one.
     ///
     /// # Errors
     ///
@@ -2849,6 +2858,15 @@ impl Graph {
         // anyway. An implicit edge that is already free, or that sits above the
         // entry boundary without this batch having created it, is this graph
         // disagreeing with itself.
+        //
+        // Asked after the tensors, attributes and reverse index have already
+        // been mutated, which looks like it would leave a half-deleted graph
+        // behind. It cannot: `self` is the private MVCC version, the only
+        // caller propagates this error out through `Pending::commit`, and a
+        // write query that returns an error never reaches `commit` — the fork
+        // is dropped with the damage inside it. Unwinding by hand would mean
+        // resolving every implicit edge in a read-only pass first, which buys
+        // nothing over the rollback that already exists.
         // The ids as one set, so the count and the free set cannot be written
         // from two different sets — they were, and agreed only because an edge
         // has exactly one type.
