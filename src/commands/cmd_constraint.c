@@ -375,15 +375,16 @@ static const char *_Constraint_CreatePrecheck
 	ASSERT (gc != NULL && label != NULL && props != NULL && n > 0) ;
 
 	// duplicate property names are rejected by GraphHub_AddConstraint BEFORE its
-	// already-exists / supporting-index checks ("Properties cannot contain
-	// duplicates"). detect them here by NAME - detecting by attribute ID would
-	// miss a duplicated name that isn't an attribute yet - and on any duplicate
-	// defer to the authoritative path so it emits the canonical error, rather
-	// than this precheck rejecting with a misleading "missing supporting index"
+	// already-exists / supporting-index checks. reject them HERE with the same
+	// canonical message: deferring to the write-locked path would resolve the
+	// attributes, fail, and take QueryCtx_Rollback() - the reserved-node reset
+	// this precheck exists to avoid. detect by NAME (attribute-ID comparison
+	// would miss a duplicated name that isn't an attribute yet); names map 1:1
+	// to IDs, so this matches GraphHub_AddConstraint's ID-based check
 	for (uint8_t i = 0 ; i < n ; i++) {
 		for (uint8_t j = i + 1 ; j < n ; j++) {
 			if (strcmp (props [i], props [j]) == 0) {
-				return NULL ;  // let GraphHub_AddConstraint emit the dup error
+				return "Properties cannot contain duplicates" ;
 			}
 		}
 	}
