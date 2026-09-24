@@ -58,11 +58,10 @@ static size_t _EffectsBuffer_HeaderLen
 
 // write the payload header into dst, returning dst advanced past it
 //
-// the header is written here rather than when the buffer is created, which is
-// where v2 wrote it. Two reasons, and the second is the one that forces it:
-// v3's flags byte is not settled until the record stream is complete, and a v3
-// payload's records cannot be emitted in arrival order at all - they are
-// grouped, so nothing can precede them in the buffer
+// written here rather than when the buffer is created, which is where v2 wrote
+// it: v3's flags byte is not settled until the record stream is complete, and a
+// v3 payload's records are grouped rather than emitted in arrival order, so
+// nothing can precede them in the buffer
 static unsigned char *_EffectsBuffer_WriteHeader
 (
 	const EffectsBuffer *eb,  // effects-buffer
@@ -95,41 +94,30 @@ void EffectsBuffer_WriteBytes
 
 // write a length-prefixed, NUL-terminated string
 //
-// THE SPEC NOW SAYS BYTE LENGTH, NOT strlen. The corrected rule is "the value's
-// byte length + 1, then len bytes, the last a NUL", and a reader must use the
-// length rather than call strlen, because a value may contain interior NULs.
-// Rust produces them: openCypher's \uXXXX escape can encode one, so
-// size('a<NUL>b') is 3 there where strlen would report 1.
+// THE SPEC SAYS BYTE LENGTH, NOT strlen: "the value's byte length + 1, then len
+// bytes, the last a NUL", and a reader must use the length rather than call
+// strlen, because a value may contain interior NULs. Rust produces them -
+// openCypher's \uXXXX escape can encode one, so size('a<NUL>b') is 3 there where
+// strlen would report 1.
 //
-// THIS STILL WRITES strlen + 1, deliberately, for three independent reasons.
-// They are listed separately because they EXPIRE SEPARATELY - collapsing them
-// into one "we cannot do this" would read as permanent, and none of them is:
+// THIS STILL WRITES strlen + 1, for three reasons that EXPIRE SEPARATELY:
 //
 //   * C cannot express such a value. It does not implement \uXXXX at all -
 //     measured, C reports size 6 for the escape Rust reports 1 for, and 8 where
-//     Rust reports 3 - so no input with an interior NUL can reach here.
+//     Rust reports 3 - so no input with an interior NUL can reach here. Ends
+//     the day C implements the unicode escape.
 //
 //   * SIValue has no length for a string. `char *stringval` is the entire
 //     representation (value.h), so the byte length does not exist to be
-//     written. Conforming means changing a core type used everywhere, which is
-//     not the effects path's to change.
+//     written. Ends if anyone adds one to SIValue.
 //
-//   * This writer is SHARED WITH v2, whose framing must not move. Changing it
-//     alters shipped v2 bytes, so conforming would need a v3-only string
-//     writer - a second SIValue codec, which is the one thing this file must
-//     not grow.
+//   * This writer is SHARED WITH v2, whose framing must not move. Conforming
+//     would need a v3-only string writer - a second SIValue codec, the one
+//     thing this file must not grow. Ends only when v2 does.
 //
-// WHICH ONE EXPIRES WHEN:
-//
-//   the escape gap      ends the day C implements the unicode escape
-//   the missing length  ends if anyone adds one to SIValue
-//   the shared writer   ends only when v2 does
-//
-// So a reader arriving later should check which of the three still holds
-// rather than assuming the conclusion survived.
-//
-// So C conforms by construction rather than by intent. The day C gains \uXXXX
-// support this becomes a silent truncation on the wire, and the fix then is a
+// So C conforms by construction rather than by intent, and a reader arriving
+// later should check which of the three still holds. The day C gains \uXXXX
+// support this becomes a silent truncation on the wire, and the fix is then a
 // length on SIValue rather than anything here.
 void EffectsBuffer_WriteString
 (
@@ -903,15 +891,13 @@ void EffectsBuffer_Free
 // wrap a byte sink the caller owns as an effects-buffer
 //
 // This exists so v3 can use the SHARED SIValue codec against its own sinks
-// without a second copy of it. A v3 record is one record per (opcode, shape),
-// so a group's values accumulate in that group's sink rather than in a
-// buffer's record stream - but they must be encoded by exactly the codec v2
-// uses, because writing a second one is how the Rust side acquired a bug where
+// without a second copy of it: a group's values accumulate in that group's sink
+// rather than in a buffer's record stream, but must be encoded by exactly the
+// codec v2 uses - writing a second one is how the Rust side acquired a bug where
 // a replica's string pool stayed empty.
 //
 // The returned buffer borrows the sink: freeing it frees the wrapper only. It
-// carries no header and does not count effects, because it is not a payload -
-// it is a handle for the writers that take one.
+// carries no header and does not count effects, because it is not a payload.
 EffectsBuffer *EffectsBuffer_Wrap
 (
 	EffectsBytes *sink  // sink to write into; not owned

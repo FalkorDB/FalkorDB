@@ -52,8 +52,7 @@ void EffectsBuffer_IncEffectCount
 // lets v3 reach the shared SIValue codec against its own sinks: a grouped
 // record's values accumulate in that group's sink rather than in a buffer's
 // record stream, and a second SIValue codec is exactly the thing not to write.
-//
-// the returned buffer BORROWS the sink - freeing it frees the wrapper only
+// The returned buffer BORROWS the sink - freeing it frees the wrapper only.
 EffectsBuffer *EffectsBuffer_Wrap
 (
 	EffectsBytes *sink  // sink to write into; not owned

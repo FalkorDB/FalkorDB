@@ -13,11 +13,9 @@
 // v3 wire writers for the shared blocks
 //
 // Everything here writes LITTLE-ENDIAN explicitly, byte at a time, rather than
-// copying a struct or an integer's storage. v2 writes its records through
-// packed structs, which is correct only while both engines run little-endian
-// and is a silent wrong answer the day one does not. The widths here are also
-// chosen per value rather than fixed, so there is no native type to copy from
-// in the first place.
+// copying an integer's storage the way v2's packed structs do - which is correct
+// only while both engines run little-endian. The widths are per value anyway, so
+// there is no native type to copy from.
 
 // the segment header's field positions come from effects_v3.h
 
@@ -31,17 +29,14 @@ void EffectsV3_WriteUint
 
 // write one segment: its header byte, then its payload
 //
-// THE WIDTHS COME FROM THE SEGMENT, not from its values. A freshly built
-// segment was given the narrowest width that holds each value when the builder
-// converted it; a decoded one carries whatever width its peer chose. Writing
-// what the struct says is what makes a decode-then-encode round trip reproduce
-// the peer's bytes rather than this engine's arithmetic - a peer may
-// legitimately use a wider field than it needs, and narrowing it on the way
-// back out is a different buffer for the same ids.
+// THE WIDTHS COME FROM THE SEGMENT, not from its values: a decoded segment
+// carries whatever width its peer chose, and writing that back is what makes a
+// decode-then-encode round trip reproduce the peer's bytes rather than this
+// engine's arithmetic.
 //
-// a Range and a Repeat write two values at the widths their header declares; an
+// A Range and a Repeat write two values at the widths their header declares; an
 // Ascending writes a u32 blob length then the portable roaring serialization,
-// and its width fields are unused and written zero
+// and its width fields are unused and written zero.
 void EffectsV3_EncodeSegment
 (
 	const EffectsV3IdListSegment *s,  // segment to write
@@ -51,11 +46,9 @@ void EffectsV3_EncodeSegment
 // write an IdList: a u32 segment count, then the segments
 //
 // both counts are on the wire - the segment count here, and every segment's own
-// length - even though the record's id count could imply them. A segment list
-// has to be well-formed on its own rather than only inside the record carrying
-// it: inferring either makes a truncated list indistinguishable from a complete
-// one, and lets a wrong record count be absorbed silently by the final segment,
-// binding rows to the wrong entities instead of failing
+// length - even though the record's id count could imply them: inferring either
+// makes a truncated list indistinguishable from a complete one, and lets a wrong
+// record count be absorbed by the final segment instead of failing
 void EffectsV3_EncodeIdList
 (
 	const EffectsV3IdList *l,  // list to write
@@ -64,11 +57,10 @@ void EffectsV3_EncodeIdList
 
 // write one record: its opcode, then whatever that opcode carries
 //
-// The shape comes FIRST, before the ids, for every batchable record without
-// exception - a record is self-describing before its rows. AttrValues is the
-// one part that follows the IdList, because it is per row rather than per
-// record, which is why the attribute ids and their values are two blocks and
-// not one.
+// The shape comes FIRST, before the ids, for every batchable record: a record is
+// self-describing before its rows. AttrValues is the one part following the
+// IdList, because it is per row rather than per record - which is why the
+// attribute ids and their values are two blocks and not one.
 //
 //   1 UPDATE_NODE     count · LabelSet · AttrIds · IdList · AttrValues
 //   2 UPDATE_EDGE     count · RelType  · AttrIds · IdList · AttrValues
@@ -80,10 +72,10 @@ void EffectsV3_EncodeIdList
 //   9 ADD_SCHEMA      SchemaType · id · name        - no count, inherently one
 //  10 ADD_ATTRIBUTE   attr_id · name                - no count, inherently one
 //
-// DELETE_NODE's LabelSet is not decoration: they are the labels the node
-// actually held, captured as it was deleted, and a replica needs them to clear
-// the right label-scoped index documents. `MATCH (n:A) DELETE n` over an
-// (:A:B) node must clear :B's indexes too, and the pattern cannot say so.
+// DELETE_NODE's LabelSet is not decoration: it is the labels the node actually
+// held, which a replica needs to clear the right label-scoped index documents -
+// `MATCH (n:A) DELETE n` over an (:A:B) node must clear :B's too, and the
+// pattern cannot say so.
 void EffectsV3_EncodeRecord
 (
 	const EffectsV3Record *r,  // record to write
@@ -94,9 +86,7 @@ void EffectsV3_EncodeRecord
 //
 // The grouping accumulator encodes each row's values as the row arrives, so by
 // emission time it holds bytes rather than SIValues - the values it was handed
-// belonged to the caller and are long gone. Re-encoding is not an option, and
-// keeping every SIValue alive until the query ends would mean owning a copy of
-// every property written.
+// belonged to the caller and are long gone.
 //
 // 'values' supplies the AttrValues block verbatim; the record's own 'values'
 // and 'n_values' are ignored. Everything before that block is written exactly

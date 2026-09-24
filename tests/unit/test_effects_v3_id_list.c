@@ -5,10 +5,8 @@
 
 // The IdList segment builder: which segments a sequence of ids becomes.
 //
-// This is normative, not an implementation choice. Two engines must reach the
-// same segments for the same ids or the same write produces different bytes,
-// so every assertion here is about the format rather than about this code being
-// self-consistent.
+// Normative, not an implementation choice: two engines must reach the same
+// segments for the same ids or the same write produces different bytes.
 //
 // What the twelve cost shapes and the threshold test do NOT cover, and this
 // does: the extension arms, the two lone-id rewrites, which segments end a run,
@@ -273,14 +271,11 @@ void test_effectsV3IdList_gappedRunCollapses(void) {
 // A REPEAT IS NEVER INSIDE THE RUN.
 //
 // A Repeat cannot become a bitmap: a bitmap holds a value once, a Repeat holds
-// it count times. If the run still began at the Repeat, a later collapse would
-// fold it in - keeping ONE copy of the id while counting all of them - and the
-// segment's cardinality would then disagree with the ids it describes. That
-// fails the decoder's cardinality check and refuses the buffer, so the replica
-// resyncs and fails again identically.
+// it count times. Folding one in would keep ONE copy while counting all of them,
+// so the segment's cardinality would disagree with the ids it describes - the
+// decoder's check refuses the buffer, and the replica resyncs and fails again.
 //
-// The sequence: a repeat, then a long gapped ascending run behind it, long
-// enough that the run collapses.
+// The sequence: a repeat, then a gapped ascending run long enough to collapse.
 void test_effectsV3IdList_repeatIsNeverCollapsed(void) {
 	uint64_t ids[42];
 	ids[0] = 100;
@@ -335,11 +330,10 @@ void test_effectsV3IdList_bitmapIsNeverRecollapsed(void) {
 // the extension arms ask "is this the id one past the end?", which has no
 // answer at either end of the id space
 //
-// Unsigned wraparound is DEFINED in C rather than a trap, which makes this
-// worse than undefined behaviour: base + len for base = UINT64_MAX, len = 1 is
-// 0, so pushing id 0 after the highest id silently extends the range. The
-// result claims an id that does not exist and reports a max below its min. The
-// descending arm asks the mirror question and needs the mirror guard.
+// base + len for base = UINT64_MAX, len = 1 is 0 - defined rather than trapped -
+// so pushing id 0 after the highest id silently extends the range, claiming an
+// id that does not exist and reporting a max below its min. The descending arm
+// asks the mirror question and needs the mirror guard.
 void test_effectsV3IdList_extensionAtTheEndsOfTheIdSpace(void) {
 	{
 		// the highest id, then the lowest: two unrelated ids, two segments
@@ -403,16 +397,11 @@ void test_effectsV3IdList_extensionAtTheEndsOfTheIdSpace(void) {
 // A STEP DOWN INSIDE AN ASCENDING RUN MUST NOT JOIN IT
 //
 // A collapsed run is re-read as a SET in ONE direction, so a descending range
-// left inside an ascending run comes back out ascending. Every id is present
-// and the count is right - the decoder's cardinality check passes and the
-// buffer applies - but two ids have swapped places. Rows are bound to ids
-// positionally, so two entities swap values on the replica: divergence no
-// state count and no length check can see.
-//
-// It survived because the rewrite claimed the run's direction only when it was
-// still undecided, so a run already going up kept the segment. Measured before
-// the fix on exactly this sequence: one SET_ASCENDING segment, with 5 and 4
-// emitted in the other order.
+// left inside an ascending run comes back out ascending. Every id is present and
+// the count is right - the cardinality check passes and the buffer applies - but
+// two ids have swapped places, and rows are bound to ids positionally, so two
+// entities swap values on the replica. Measured before the fix on exactly this
+// sequence: one SET_ASCENDING segment, with 5 and 4 emitted in the other order.
 void test_effectsV3IdList_aStepDownDoesNotJoinAnAscendingRun(void) {
 	// 1,2 to commit the run to ascending, 5,4 as the inversion, then a gapped
 	// ascending tail long enough to take the run past the collapse threshold -
@@ -432,15 +421,11 @@ void test_effectsV3IdList_aStepDownDoesNotJoinAnAscendingRun(void) {
 
 // AND THE MIRROR: A MULTI-ID ASCENDING RANGE MUST NOT JOIN A DESCENDING RUN
 //
-// The companion to the test above, and the case that shows why "every segment
-// in the run is RANGE_ASCENDING" is the wrong property to rely on. A
-// descending run is BUILT from ascending segments - single ids, which have no
-// direction of their own - so the kind check is satisfied by exactly the
-// segment that breaks it: two consecutive ids read out of a SET_DESCENDING
-// come back the other way round.
-//
-// Measured before the fix on this sequence: one SET_DESCENDING segment, with
-// 150 and 151 emitted transposed.
+// The case that shows why "every segment in the run is RANGE_ASCENDING" is the
+// wrong property to rely on: a descending run is BUILT from ascending segments -
+// single ids, which have no direction of their own - so the kind check is
+// satisfied by exactly the segment that breaks it. Measured before the fix on
+// this sequence: one SET_DESCENDING segment, 150 and 151 transposed.
 void test_effectsV3IdList_anAscendingPairDoesNotJoinADescendingRun(void) {
 	// a descending run of gapped singletons, which does collapse, with one
 	// ascending pair in the middle. The pair keeps the bitmap estimate cheap -
@@ -461,18 +446,16 @@ void test_effectsV3IdList_anAscendingPairDoesNotJoinADescendingRun(void) {
 
 // A DESCENDING RUN OF RANGES CAN EARN A BITMAP, LIKE AN ASCENDING ONE
 //
-// The run tally used to be fed only by ascending ranges, so a descending run
-// built from ranges kept an empty tally and could never collapse however much
-// a bitmap would have saved. Rust charges both kinds (Segment::Range |
-// Segment::RangeDescending -> Run::absorb), so the two engines emitted
-// DIFFERENT BYTES for the same ids - measured on exactly this input: Rust one
-// bitmap segment, C ninety-eight ranges.
+// Fed only by ascending ranges, a descending run built from ranges keeps an
+// empty tally and can never collapse however much a bitmap would save. Rust
+// charges both kinds (Segment::Range | Segment::RangeDescending -> Run::absorb),
+// so the two engines emitted DIFFERENT BYTES for the same ids - measured on
+// exactly this input: Rust one bitmap segment, C ninety-eight ranges.
 //
-// Large ids on purpose. A range segment costs about ten bytes at this
-// magnitude while a roaring run costs four, so the bitmap is the cheaper
-// encoding and the tally has to be fed to notice. With small ids the ranges
-// win and BOTH engines decline to collapse, which is why the small case never
-// exposed the divergence.
+// Large ids on purpose: a range segment costs about ten bytes at this magnitude
+// against a roaring run's four, so the bitmap is cheaper and the tally has to be
+// fed to notice. With small ids the ranges win and BOTH engines decline, which
+// is why the small case never exposed the divergence.
 void test_effectsV3IdList_aDescendingRunOfRangesCanCollapse(void) {
 	const uint64_t base = 1000000000000ULL;
 	uint64_t ids[1024];
@@ -512,16 +495,14 @@ void test_effectsV3IdList_aDescendingRunOfRangesCanCollapse(void) {
 
 // A RUN'S HEAD SEGMENT CAN ACQUIRE A DIRECTION AFTER THE RUN STARTS
 //
-// _restart_run leaves the direction UNDECIDED, and the segment it restarts at
-// is a lone id - no direction yet. The hot path can then extend that lone id
-// into a two-id ASCENDING range while the run is still undecided, and the id
-// after THAT can settle the run DESCENDING. The head segment then reads
-// against the run it heads, one segment along from the case above.
+// _restart_run leaves the direction UNDECIDED and restarts at a lone id, which
+// has none either. The hot path can extend that lone id into a two-id ASCENDING
+// range while the run is still undecided, and the id after THAT can settle the
+// run DESCENDING - so the head reads against the run it heads, one segment along
+// from the case above.
 //
 // The direction rule has to weigh the segment against the direction this push
-// WOULD settle on, not the one already committed, or the head slips through
-// while run_dir is still undecided. The rust-impl session hit exactly this on
-// their first attempt.
+// WOULD settle on, not the one already committed, or the head slips through.
 void test_effectsV3IdList_aRunHeadThatTurnsAscendingIsNotFolded(void) {
 	uint64_t ids[64];
 	size_t n = 0;
@@ -538,18 +519,17 @@ void test_effectsV3IdList_aRunHeadThatTurnsAscendingIsNotFolded(void) {
 
 // THE RESTARTED RUN'S HEAD IS FOLDED IN, AND THIS ASSERTS THE SEGMENTATION
 //
-// Order is not the property that matters here. This is the one shape where the
+// Order is not the property that matters here: this is the one shape where the
 // two engines disagreed while BOTH preserved push order, so an order assertion
-// passes on either behaviour and says nothing:
+// passes on either behaviour and says nothing.
 //
-//   Rust  ... RA/390/1, SA/370..459/46      the pair heads the new run
-//   C     ... RA/390/1, RA/370/2, SA/373..459/44   the pair orphaned outside it
+//   Rust  ... RA/390/1, SA/370..459/46            the pair heads the new run
+//   C     ... RA/390/1, RA/370/2, SA/373..459/44  the pair orphaned outside it
 //
 // A segment acquires its direction when its second id arrives, and the run it
-// sits in has to be settled AT THAT MOMENT - ending the run one push later
-// leaves the segment stranded between two runs where no collapse can reach it.
-// Legal, order-preserving, and different bytes. Found by running 404 generated
-// sequences through both builders; three disagreed, all of them this.
+// sits in has to be settled AT THAT MOMENT - one push later leaves it stranded
+// between two runs where no collapse can reach it. Found by running 404
+// generated sequences through both builders; three disagreed, all of them this.
 void test_effectsV3IdList_aRestartedRunHeadIsFoldedIntoItsBitmap(void) {
 	uint64_t ids[128];
 	size_t n = 0;
