@@ -607,8 +607,11 @@ impl EndpointIndex {
         starts: [usize; 3],
         len: usize,
     ) {
-        let [s1, s2, s3] = starts.map(|s| s.min(len));
-        debug_assert!(s1 <= s2 && s2 <= s3, "tier starts must be ordered");
+        // Clamped monotone (a later tier never begins before an earlier one) so
+        // the tier sizes below cannot underflow whatever the caller passes.
+        let s1 = starts[0].min(len);
+        let s2 = starts[1].clamp(s1, len);
+        let s3 = starts[2].clamp(s2, len);
         for (rank, n) in [(0u8, s1), (1, s2 - s1), (2, s3 - s2), (3, len - s3)] {
             if n == 0 {
                 continue;
@@ -905,6 +908,21 @@ mod tests {
         );
         for e in 0..2000u64 {
             assert_eq!(restored.get(e), grown.get(e), "slot {e}");
+        }
+    }
+
+    /// Out-of-order tier starts are clamped monotone rather than underflowing
+    /// `s2 - s1` (a debug panic, and a wrapped `usize` reservation in release).
+    #[test]
+    fn prepare_tiers_clamps_unordered_starts() {
+        let mut ix = EndpointIndex::default();
+        ix.prepare_tiers([10, 5, 0], 20);
+        for e in 0..20u64 {
+            ix.set(e, e, 1 << 20);
+        }
+        assert_eq!(ix.len(), 20);
+        for e in 0..20u64 {
+            assert_eq!(ix.get(e), Some((e, 1 << 20)), "slot {e}");
         }
     }
 
