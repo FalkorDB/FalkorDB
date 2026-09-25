@@ -1885,3 +1885,22 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_self_loop_hop_after_other_hops_keeps_them():
+    """A fixed-length self-loop whose node is reached only through a later
+    (var-length) hop must not drop the hops planned before it (#2999)."""
+    query(
+        "CREATE (a:A {v:1})-[:R]->(b:B {v:2})-[:S]->(c:C {v:3}), (c)-[:L]->(c), "
+        "(:C {v:4})-[:L]->(:C {v:4}), (b)-[:S]->(:C {v:5})",
+        write=True,
+    )
+    for q in [
+        "MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (a)-[:R]->(b)-[:S*1..1]->(c)-[:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (a)-[:R]->(b)-[:S*]->(c:C {v: 3})-[e:L]->(c) RETURN a.v, b.v, c.v",
+        "MATCH (c)-[:L]->(c)<-[:S*]-(b)<-[:R]-(a) RETURN a.v, b.v, c.v",
+    ]:
+        assert query(q).result_set == [[1, 2, 3]], q
+    res = query("MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c)-[:L]->(c) RETURN count(*)")
+    assert res.result_set == [[1]]
