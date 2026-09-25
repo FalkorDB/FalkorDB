@@ -421,3 +421,19 @@ class testAggregations():
         # The server is still there — the point of the domain check.
         self.env.assertEqual(
             self.graph.query("MATCH (q:Q) RETURN count(*)").result_set, [[5]])
+
+    def test_distinct_state_is_per_group(self):
+        # Each group's DISTINCT seen-set was keyed by a 64-bit hash of the
+        # group's key row, so two groups whose keys collide shared one set
+        # and the second group skipped values seen by the first (#2969).
+        # The two keys below collide under that hash.
+        q = """UNWIND [[[0, 0], 1], [[1, -1452335207727870361], 1]] AS p
+               WITH p[0] AS k, p[1] AS v
+               RETURN k, count(*), count(DISTINCT v), collect(DISTINCT v) ORDER BY k"""
+        self.get_res_and_assertEquals(q, [[[0, 0], 1, 1, [1]],
+                                          [[1, -1452335207727870361], 1, 1, [1]]])
+        # the same through the per-row aggregation path
+        q = """UNWIND [[[0, 0], 1], [[1, -1452335207727870361], 1]] AS p
+               WITH p[0] AS k, p[1] AS v
+               RETURN k, {c: count(DISTINCT v)}.c ORDER BY k"""
+        self.get_res_and_assertEquals(q, [[[0, 0], 1], [[1, -1452335207727870361], 1]])
