@@ -351,6 +351,19 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         }))
                     };
 
+                // An undirected pattern matches each edge in both
+                // orientations (a self-loop once), as `CondTraverse` does;
+                // the index yields it once, `src -> dst`.
+                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                    if rp.bidirectional {
+                        Box::new(base.flat_map(|(src, dst, edge)| {
+                            std::iter::once((src, dst, edge))
+                                .chain((src != dst).then_some((dst, src, edge)))
+                        }))
+                    } else {
+                        base
+                    };
+
                 // Filter edges by *both* endpoints when the child has
                 // already bound them. `transposed` flips which
                 // graph-side (src/dst) role the pattern's from/to
