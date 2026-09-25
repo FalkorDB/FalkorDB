@@ -1681,6 +1681,9 @@ impl<'a> BatchOp<'a> {
                 op.left_pos = 0;
                 op.right_match_envs.clear();
                 op.right_match_pos = 0;
+                // Several outer rows at once (a batched correlated sub-plan):
+                // join only rows of the same `origin_row`.
+                op.per_origin = batch.len() > 1;
                 op.right.set_argument_batch(batch.clone().into_compacted());
                 op.child.set_argument_batch(batch);
             }
