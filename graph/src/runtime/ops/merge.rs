@@ -53,6 +53,9 @@ pub struct MergeOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
     pending: VecDeque<PendingMerge>,
+    /// Every input row with its matches, filled by `match_all` on the first
+    /// `next()` and then processed in input order.
+    matched: Option<VecDeque<(Row, Vec<Row>)>>,
     merge_child_idx: NodeIdx<Dyn<IR>>,
     pattern: &'a QueryGraph<Arc<String>, Arc<String>, Variable>,
     resolved_pattern: OnceCell<QueryGraph<Arc<String>, LabelId, Variable>>,
@@ -83,6 +86,7 @@ impl<'a> MergeOp<'a> {
             runtime,
             child,
             pending: VecDeque::new(),
+            matched: None,
             merge_child_idx,
             pattern,
             resolved_pattern: OnceCell::new(),
@@ -247,6 +251,52 @@ impl<'a> MergeOp<'a> {
         Ok(hasher.finish())
     }
 
+    /// Consumes the whole input and runs the match sub-plan for every row
+    /// before anything is created or updated, like C's eager `op_merge.c`.
+    /// Matching batch by batch while creating in between made the result
+    /// depend on where the batch boundaries fell: a later batch saw an earlier
+    /// batch's creations (and their `ON CREATE SET`), a row of the same batch
+    /// did not. Rows of one batch still share one match sub-plan run.
+    fn match_all(&mut self) -> Result<VecDeque<(Row, Vec<Row>)>, String> {
+        let mut matched = VecDeque::new();
+        for batch in self.child.by_ref() {
+            let batch = batch?;
+
+            // Build argument batch with origin_row stamped.
+            let input_envs: Vec<Row> = batch
+                .active_indices()
+                .enumerate()
+                .map(|(i, row)| {
+                    let mut e = BatchRow::new(&batch, row).to_owned_row();
+                    e.origin_row = i as u32;
+                    e
+                })
+                .collect();
+
+            let arg_batch = batch.clone_active_rows_seq_origin();
+
+            // Create ONE match subtree for all input rows.
+            let mut subtree = self.runtime.run_batch(self.merge_child_idx)?;
+            subtree.set_argument_batch(arg_batch);
+
+            // Materialize all matches grouped by origin_row.
+            let num_inputs = input_envs.len();
+            let mut match_groups: Vec<Vec<Row>> = (0..num_inputs).map(|_| Vec::new()).collect();
+
+            for sub_result in subtree.by_ref() {
+                let sub_batch = sub_result?;
+                for row in sub_batch.active_indices() {
+                    let env = BatchRow::new(&sub_batch, row).to_owned_row();
+                    let origin = env.origin_row as usize;
+                    match_groups[origin].push(env);
+                }
+            }
+            drop(subtree);
+            matched.extend(input_envs.into_iter().zip(match_groups));
+        }
+        Ok(matched)
+    }
+
     /// Drains rows from `self.pending` into `envs` until `BATCH_SIZE` is reached
     /// or all pending are exhausted.
     fn drain_pending(
@@ -289,143 +339,101 @@ impl<'a> Iterator for MergeOp<'a> {
             return Some(Err(e));
         }
 
-        while builder.len() < BATCH_SIZE {
-            let batch = match self.child.next() {
-                Some(Ok(b)) => b,
-                Some(Err(e)) => {
-                    self.is_error = true;
-                    return Some(Err(e));
-                }
-                None => break,
-            };
-
-            // Build argument batch with origin_row stamped.
-            let input_envs: Vec<Row> = batch
-                .active_indices()
-                .enumerate()
-                .map(|(i, row)| {
-                    let mut e = BatchRow::new(&batch, row).to_owned_row();
-                    e.origin_row = i as u32;
-                    e
-                })
-                .collect();
-
-            let arg_batch = batch.clone_active_rows_seq_origin();
-
-            // Create ONE match subtree for all input rows.
-            let mut subtree = match self.runtime.run_batch(self.merge_child_idx) {
-                Ok(s) => s,
+        // Match every input row first (see `match_all`).
+        if self.matched.is_none() {
+            match self.match_all() {
+                Ok(matched) => self.matched = Some(matched),
                 Err(e) => {
                     self.is_error = true;
                     return Some(Err(e));
                 }
+            }
+        }
+
+        while builder.len() < BATCH_SIZE {
+            let Some((input_env, matches)) = self.matched.as_mut().and_then(VecDeque::pop_front)
+            else {
+                break;
             };
-            subtree.set_argument_batch(arg_batch);
-
-            // Materialize all matches grouped by origin_row.
-            let num_inputs = input_envs.len();
-            let mut match_groups: Vec<Vec<Row>> = (0..num_inputs).map(|_| Vec::new()).collect();
-
-            for sub_result in subtree.by_ref() {
-                match sub_result {
-                    Ok(sub_batch) => {
-                        for row in sub_batch.active_indices() {
-                            let env = BatchRow::new(&sub_batch, row).to_owned_row();
-                            let origin = env.origin_row as usize;
-                            match_groups[origin].push(env);
-                        }
-                    }
+            let input_env = &input_env;
+            if matches.is_empty() {
+                // No matches found, do create fallback.
+                match self.do_create_fallback(input_env.clone()) {
+                    Ok(result_env) => builder.push_row(&result_env),
                     Err(e) => {
                         self.is_error = true;
                         return Some(Err(e));
                     }
                 }
-            }
-            drop(subtree);
+            } else {
+                // Check if all pattern variables are already bound.
+                // All nodes must be bound, and every *named* relationship
+                // alias must also be bound. Anonymous relationships
+                // (_anon_* prefix) are not individually tracked, so when
+                // all nodes are bound the pattern is fully constrained.
+                // Only when a user-named relationship variable is unbound
+                // do we need to iterate all matches.
+                let pattern = self.resolve_pattern();
+                let all_vars_bound = pattern
+                    .nodes()
+                    .iter()
+                    .all(|node| input_env.is_bound_by_id(node.alias.id))
+                    && pattern
+                        .relationships()
+                        .iter()
+                        .filter(|rel| {
+                            rel.alias
+                                .name
+                                .as_ref()
+                                .is_some_and(|n| !n.starts_with("_anon_"))
+                        })
+                        .all(|rel| input_env.is_bound_by_id(rel.alias.id));
 
-            // Process each input row in order.
-            for (i, input_env) in input_envs.iter().enumerate() {
-                let matches = std::mem::take(&mut match_groups[i]);
-
-                if matches.is_empty() {
-                    // No matches found, do create fallback.
-                    match self.do_create_fallback(input_env.clone()) {
-                        Ok(result_env) => builder.push_row(&result_env),
+                if all_vars_bound {
+                    // Only first match needed.
+                    let first = &matches[0];
+                    let mut vars = input_env.clone();
+                    vars.merge(first);
+                    let resolved = self.resolve_on_match_set_items();
+                    let mut row_builder = BatchBuilder::new();
+                    row_builder.push_row(&vars);
+                    let result_batch = row_builder.finish();
+                    match self.runtime.set_batch(resolved, &result_batch) {
+                        Ok(()) => {
+                            builder.push_row(&BatchRow::new(&result_batch, 0).to_owned_row());
+                        }
                         Err(e) => {
                             self.is_error = true;
                             return Some(Err(e));
                         }
                     }
                 } else {
-                    // Check if all pattern variables are already bound.
-                    // All nodes must be bound, and every *named* relationship
-                    // alias must also be bound. Anonymous relationships
-                    // (_anon_* prefix) are not individually tracked, so when
-                    // all nodes are bound the pattern is fully constrained.
-                    // Only when a user-named relationship variable is unbound
-                    // do we need to iterate all matches.
-                    let pattern = self.resolve_pattern();
-                    let all_vars_bound = pattern
-                        .nodes()
-                        .iter()
-                        .all(|node| input_env.is_bound_by_id(node.alias.id))
-                        && pattern
-                            .relationships()
-                            .iter()
-                            .filter(|rel| {
-                                rel.alias
-                                    .name
-                                    .as_ref()
-                                    .is_some_and(|n| !n.starts_with("_anon_"))
-                            })
-                            .all(|rel| input_env.is_bound_by_id(rel.alias.id));
+                    // Process first match inline, queue remaining for lazy drain.
+                    let mut match_iter = matches.into_iter();
+                    let first = match_iter.next().unwrap();
 
-                    if all_vars_bound {
-                        // Only first match needed.
-                        let first = &matches[0];
-                        let mut vars = input_env.clone();
-                        vars.merge(first);
-                        let resolved = self.resolve_on_match_set_items();
-                        let mut row_builder = BatchBuilder::new();
-                        row_builder.push_row(&vars);
-                        let result_batch = row_builder.finish();
-                        match self.runtime.set_batch(resolved, &result_batch) {
-                            Ok(()) => {
-                                builder.push_row(&BatchRow::new(&result_batch, 0).to_owned_row());
-                            }
-                            Err(e) => {
-                                self.is_error = true;
-                                return Some(Err(e));
-                            }
+                    let mut vars = input_env.clone();
+                    vars.merge(&first);
+                    let resolved = self.resolve_on_match_set_items();
+                    let mut row_builder = BatchBuilder::new();
+                    row_builder.push_row(&vars);
+                    let result_batch = row_builder.finish();
+                    match self.runtime.set_batch(resolved, &result_batch) {
+                        Ok(()) => {
+                            builder.push_row(&BatchRow::new(&result_batch, 0).to_owned_row());
                         }
-                    } else {
-                        // Process first match inline, queue remaining for lazy drain.
-                        let mut match_iter = matches.into_iter();
-                        let first = match_iter.next().unwrap();
+                        Err(e) => {
+                            self.is_error = true;
+                            return Some(Err(e));
+                        }
+                    }
 
-                        let mut vars = input_env.clone();
-                        vars.merge(&first);
-                        let resolved = self.resolve_on_match_set_items();
-                        let mut row_builder = BatchBuilder::new();
-                        row_builder.push_row(&vars);
-                        let result_batch = row_builder.finish();
-                        match self.runtime.set_batch(resolved, &result_batch) {
-                            Ok(()) => {
-                                builder.push_row(&BatchRow::new(&result_batch, 0).to_owned_row());
-                            }
-                            Err(e) => {
-                                self.is_error = true;
-                                return Some(Err(e));
-                            }
-                        }
-
-                        let remaining: VecDeque<Row> = match_iter.collect();
-                        if !remaining.is_empty() {
-                            self.pending.push_back(PendingMerge {
-                                env: input_env.clone(),
-                                matches: remaining,
-                            });
-                        }
+                    let remaining: VecDeque<Row> = match_iter.collect();
+                    if !remaining.is_empty() {
+                        self.pending.push_back(PendingMerge {
+                            env: input_env.clone(),
+                            matches: remaining,
+                        });
                     }
                 }
             }
