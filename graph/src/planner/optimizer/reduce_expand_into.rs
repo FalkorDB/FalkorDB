@@ -156,6 +156,11 @@ pub(super) fn reduce_expand_into(plan: &mut DynTree<IR>) {
 /// (`(a)-[r]->(x)<-[s]-(c)` over `a⇉x`). Drop it from every sibling list, so a
 /// collapsed edge takes no part in uniqueness, as in C: the row count is then
 /// the number of endpoint pairs, whichever edges they carry.
+///
+/// The collapsed edge keeps its *own* id: a non-empty list is what keeps its
+/// traverse off the batched path, which binds no relationship column, and the
+/// representative must stay bound for readers `ir_references_variable` does not
+/// see (e.g. `UNWIND e`, `CREATE (...{p: e.p})`).
 fn forget_sibling_edge(
     plan: &mut DynTree<IR>,
     edge_id: u32,
@@ -174,6 +179,7 @@ fn forget_sibling_edge(
             ..
         } = plan.node_mut(idx).data_mut()
             && relationship.alias.scope_id == edge_scope_id
+            && relationship.alias.id != edge_id
         {
             sibling_edges.retain(|&id| id != edge_id);
         }
