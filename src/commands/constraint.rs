@@ -397,7 +397,7 @@ pub fn graph_constraint(
 
     // Operation: CREATE or DROP
     let op_str = args.next_str()?;
-    let is_create = match op_str.to_uppercase().as_str() {
+    let is_create = match op_str.to_ascii_uppercase().as_str() {
         "CREATE" => true,
         "DROP" => false,
         _ => {
@@ -412,7 +412,7 @@ pub fn graph_constraint(
 
     // Constraint type
     let ct_str = args.next_str()?;
-    let ct = match ct_str.to_uppercase().as_str() {
+    let ct = match ct_str.to_ascii_uppercase().as_str() {
         "UNIQUE" => ConstraintType::Unique,
         "MANDATORY" => ConstraintType::Mandatory,
         _ => {
@@ -424,9 +424,9 @@ pub fn graph_constraint(
 
     // Entity type
     let et_str = args.next_str()?;
-    let entity_type = match et_str.to_uppercase().as_str() {
-        "NODE" | "LABEL" => EntityType::Node,
-        "RELATIONSHIP" | "EDGE" => EntityType::Relationship,
+    let entity_type = match et_str.to_ascii_uppercase().as_str() {
+        "NODE" => EntityType::Node,
+        "RELATIONSHIP" => EntityType::Relationship,
         _ => {
             return Err(redis_module::RedisError::String(
                 "Invalid constraint entity type".into(),
@@ -446,15 +446,14 @@ pub fn graph_constraint(
 
     // PROPERTIES keyword
     let props_kw = args.next_str()?;
-    if props_kw.to_uppercase() != "PROPERTIES" {
+    if !props_kw.eq_ignore_ascii_case("PROPERTIES") {
         return Err(redis_module::RedisError::String(
             "Expected PROPERTIES keyword".into(),
         ));
     }
 
-    // Property count
-    let prop_count_str = args.next_str()?;
-    let prop_count: i64 = prop_count_str.parse().map_err(|_| {
+    // Property count: Redis `string2ll` as in C (canonical decimal, no `+1` / `01`)
+    let prop_count: i64 = args.next_arg()?.parse_integer().map_err(|_| {
         redis_module::RedisError::String(
             "Number of properties must be an integer between 1 and 255".into(),
         )
