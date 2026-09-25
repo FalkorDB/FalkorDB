@@ -1294,3 +1294,30 @@ class testIndexScanFlow():
         res = self.graph.query(q).result_set
         # `n.v` is a scalar int, never a list — no row should match.
         self.env.assertEqual(res, [])
+
+    def test_39_in_needs_the_bare_property(self):
+        # `abs(n.a) IN [1]` and `2 IN [n.a, n.b]` only contain n.a; they
+        # must not become `n.a IN [..]` or an array-contains on n.a.
+        with_idx = self.db.select_graph("index_parity_idx")
+        no_idx = self.db.select_graph("index_parity_scan")
+        setup = "CREATE (:L {k:1, a:1}), (:L {k:2, a:-1}), (:L {k:3, a:2, b:7})"
+        try:
+            with_idx.create_node_range_index('L', 'a')
+            wait_for_indices_to_sync(with_idx)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            for q in ["MATCH (n:L) WHERE abs(n.a) IN [1] RETURN n.k",
+                      "MATCH (n:L) WHERE toString(n.a) IN ['1'] RETURN n.k",
+                      "MATCH (n:L) WHERE n.a + 1 IN [2] RETURN n.k",
+                      "MATCH (n:L) WHERE 2 IN [n.a, n.b] RETURN n.k",
+                      "MATCH (n:L) WHERE -1 IN [n.a] RETURN n.k"]:
+                self.env.assertNotContains('Node By Index Scan', str(with_idx.explain(q)))
+                self.env.assertEqual(sorted(with_idx.query(q).result_set),
+                                     sorted(no_idx.query(q).result_set), message=q)
+            # the bare property is still served by the index
+            q = "MATCH (n:L) WHERE n.a IN [1, 2] RETURN n.k"
+            self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)))
+            self.env.assertEqual(sorted(with_idx.query(q).result_set), [[1], [3]])
+        finally:
+            with_idx.delete()
+            no_idx.delete()
