@@ -35,7 +35,7 @@
 //! Falls back to per-row sub-plan execution when the sub-plan contains blocking
 //! operators (Aggregate) that accumulate state across all rows.
 
-use crate::parser::ast::Variable;
+use crate::parser::ast::{ExprIR, Variable};
 use crate::planner::{IR, subtree_contains};
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchBuilder, BatchOp, BatchRow, Column},
@@ -43,7 +43,7 @@ use crate::runtime::{
     runtime::Runtime,
     value::Value,
 };
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, NodeIdx, NodeRef, Traversal, Traverser};
 
 /// Active batched sub-plan for all rows from one input batch.
 struct ActiveSubPlan<'a> {
@@ -96,6 +96,10 @@ pub struct ApplyOp<'a> {
     /// Per-row mode state (used when can_batch is false).
     per_row: Option<Box<PerRowState<'a>>>,
     can_batch: bool,
+    /// The `DISTINCT` aggregate arguments inside the sub-plan. Per-row mode
+    /// resets their entries in [`Runtime::value_dedupers`] after each
+    /// invocation; entries of enclosing aggregates must survive.
+    sub_plan_distincts: Vec<NodeIdx<Dyn<ExprIR<Variable>>>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -132,6 +136,12 @@ impl<'a> ApplyOp<'a> {
             )
         });
 
+        let sub_plan_distincts = if can_batch {
+            Vec::new()
+        } else {
+            sub_plan_distincts(runtime, child_idx)
+        };
+
         Self {
             runtime,
             child,
@@ -141,6 +151,7 @@ impl<'a> ApplyOp<'a> {
             pending_batch: None,
             per_row: None,
             can_batch,
+            sub_plan_distincts,
             idx,
         }
     }
@@ -277,10 +288,16 @@ impl<'a> ApplyOp<'a> {
                             builder.push_row(&fallback);
                         }
                         st.current = None;
-                        // Clear DISTINCT deduplication state between per-row
-                        // subquery invocations so that each CALL {} execution
-                        // starts with a fresh deduper.
-                        self.runtime.value_dedupers.borrow_mut().clear();
+                        // Reset the sub-plan's DISTINCT state so the next
+                        // CALL {} invocation starts fresh. Only its own
+                        // entries: the map is runtime-wide, and an enclosing
+                        // `count(DISTINCT ..)` is still accumulating.
+                        if !self.sub_plan_distincts.is_empty() {
+                            self.runtime
+                                .value_dedupers
+                                .borrow_mut()
+                                .retain(|(idx, _), _| !self.sub_plan_distincts.contains(idx));
+                        }
                     }
                 }
                 continue;
@@ -347,4 +364,31 @@ impl<'a> Iterator for ApplyOp<'a> {
             self.next_per_row()
         }
     }
+}
+
+/// The `DISTINCT` nodes of every aggregate expression in the plan subtree
+/// rooted at `root`: the keys, together with a group id, under which those
+/// aggregates keep their state in [`Runtime::value_dedupers`].
+fn sub_plan_distincts(
+    runtime: &Runtime<'_>,
+    root: NodeIdx<Dyn<IR>>,
+) -> Vec<NodeIdx<Dyn<ExprIR<Variable>>>> {
+    let mut out = Vec::new();
+    for ir in runtime
+        .plan
+        .node(root)
+        .walk_with(&mut Traversal.bfs().over_nodes())
+    {
+        if let IR::Aggregate { aggregations, .. } = ir.data() {
+            for (_, tree) in aggregations {
+                out.extend(
+                    tree.root()
+                        .walk_with(&mut Traversal.bfs().over_nodes())
+                        .filter(|n| matches!(n.data(), ExprIR::Distinct))
+                        .map(|n| n.idx()),
+                );
+            }
+        }
+    }
+    out
 }

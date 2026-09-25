@@ -2979,3 +2979,25 @@ updating clause.")
         self.env.assertEqual(res.result_set, [[1], [1]])
         self.env.assertEqual(res.nodes_deleted, 2)
         self.get_res_and_assertEquals("MATCH (p:Person) RETURN count(p)", [[1]])
+
+    def test_55_outer_distinct_aggregate_survives_call(self):
+        # Every per-row CALL {} invocation used to clear the runtime-wide
+        # DISTINCT state, including that of an enclosing aggregate, so each
+        # value was counted once per 1024-row batch (#2779).
+        res = self.graph.query("""UNWIND range(1, 3000) AS i
+                                  CALL { WITH i RETURN i % 2 AS v LIMIT 1 }
+                                  RETURN count(DISTINCT v), collect(DISTINCT v)""")
+        self.env.assertEqual(res.result_set, [[2, [1, 0]]])
+
+        # grouped outer aggregate
+        res = self.graph.query("""UNWIND range(1, 3000) AS i
+                                  CALL { WITH i RETURN i % 5 AS v LIMIT 1 }
+                                  RETURN i % 2 AS k, count(DISTINCT v) ORDER BY k""")
+        self.env.assertEqual(res.result_set, [[0, 5], [1, 5]])
+
+        # the sub-plan's own DISTINCT still starts fresh for every row
+        res = self.graph.query("""UNWIND range(1, 3000) AS i
+                                  CALL { WITH i UNWIND [i, i, i + 1] AS x
+                                         RETURN count(DISTINCT x) AS c }
+                                  RETURN min(c), max(c), count(DISTINCT i)""")
+        self.env.assertEqual(res.result_set, [[2, 2, 3000]])
