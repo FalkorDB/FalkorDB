@@ -1536,6 +1536,19 @@ impl Decode<19> for Tensor {
         let fwd_dm = Matrix::<bool>::decode(r)?;
         let nrows = fwd_m.nrows();
         let ncols = fwd_m.ncols();
+        // Encode writes the three layers at one size. A payload that doesn't
+        // would have the merge below write outside `m`.
+        for (layer, dims) in [
+            ("delta-plus", (fwd_dp.nrows(), fwd_dp.ncols())),
+            ("delta-minus", (fwd_dm.nrows(), fwd_dm.ncols())),
+        ] {
+            if dims != (nrows, ncols) {
+                return Err(format!(
+                    "Tensor decode: forward {layer} is {}x{}, base is {nrows}x{ncols}",
+                    dims.0, dims.1
+                ));
+            }
+        }
 
         // Inline representation: `m` is UINT64 inline edge ids with MULTI_EDGE
         // sentinels; `me` holds all ids of multi-edge pairs. The on-disk forward
@@ -2427,6 +2440,51 @@ mod tests {
         assert_eq!(back.get(b + 11, 12).collect::<Vec<_>>(), vec![9999]);
         assert_eq!(back.edge_count(), t.edge_count());
         assert_eq!(back.multi_pairs(), t.multi_pairs());
+    }
+
+    /// A `GRAPH.RESTORE` payload is untrusted: a corrupt multi-edge id blob has
+    /// to fail the decode, not panic (the module's panic hook exits the server).
+    #[test]
+    fn decode_rejects_a_corrupt_multi_edge_blob() {
+        ensure_init();
+        let mut t = Tensor::new(16, 16);
+        t.set_all_from_slices(&[1, 1], &[2, 2], &[10, 11]);
+        let t = t.dup();
+        t.wait();
+        let mut tape = Tape::default();
+        t.encode(&mut tape);
+        // The id blob is the last buffer on the tape; keep only its header.
+        let last = tape
+            .ops
+            .iter()
+            .rposition(|op| matches!(op, TapeOp::Buffer(_)))
+            .expect("no id blob on the tape");
+        if let TapeOp::Buffer(blob) = &mut tape.ops[last] {
+            blob.truncate(8);
+        }
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("corrupt blob accepted");
+        assert!(
+            err.contains("GxB_Vector_deserialize"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The forward delta layers must match the base's size: merging a larger
+    /// delta would write outside the rebuilt forward matrix.
+    #[test]
+    fn decode_rejects_forward_layers_of_different_sizes() {
+        ensure_init();
+        let mut tape = Tape::default();
+        Matrix::<u64>::new(4, 4).encode(&mut tape);
+        Matrix::<u64>::new(8, 8).encode(&mut tape);
+        Matrix::<bool>::new(4, 4).encode(&mut tape);
+        tape.ops.push_back(TapeOp::Unsigned(0));
+        let err = Tensor::decode(&mut tape)
+            .err()
+            .expect("mismatched layers accepted");
+        assert!(err.contains("delta-plus is 8x8"), "unexpected error: {err}");
     }
 
     /// `me` is created with a narrow column space so GraphBLAS stores its
