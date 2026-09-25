@@ -1191,6 +1191,62 @@ class testCompositeUniqueConstraintNulls():
 
         self.env.assertEqual(g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0], 3)
 
+BULK_UNIQUE_GRAPH_ID = "unique_bulk_writes"
+
+class testUniqueConstraintBulkWrites():
+    """UNIQUE enforcement for write queries that touch many entities at once:
+    duplicates among the query's own entities and against existing ones are
+    caught, and enforcement is linear in the label size (it used to rescan the
+    whole label for every affected entity)."""
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(BULK_UNIQUE_GRAPH_ID)
+        self.g = self.db.select_graph(BULK_UNIQUE_GRAPH_ID)
+
+    def _rejects(self, q, msg):
+        try:
+            self.g.query(q)
+            self.env.assertTrue(False, message=q)
+        except ResponseError as e:
+            self.env.assertContains(msg, str(e))
+
+    def test01_nodes(self):
+        g = self.g
+        create_unique_node_constraint(g, "B", "v", sync=True)
+
+        # 20k nodes in one query: seconds-to-minutes when enforcement was
+        # quadratic, tens of milliseconds now
+        start = time.time()
+        g.query("UNWIND range(1, 20000) AS x CREATE (:B {v: x})")
+        self.env.assertLess(time.time() - start, 10)
+
+        msg = "unique constraint violation on node of type B"
+        # duplicate within the query's own nodes
+        self._rejects("UNWIND [-1, -2, -1] AS x CREATE (:B {v: x})", msg)
+        # duplicate of an existing node, among many new ones
+        self._rejects("UNWIND range(20001, 21000) + [500] AS x CREATE (:B {v: x})", msg)
+        # an existing node updated to another existing node's value
+        self._rejects("MATCH (n:B {v: 1}) SET n.v = 20000", msg)
+        # swapping two values in one query leaves no duplicate
+        g.query("MATCH (a:B {v: 1}), (b:B {v: 2}) SET a.v = 2, b.v = 1")
+        self.env.assertEqual(g.query("MATCH (n:B) RETURN count(n)").result_set[0][0], 20000)
+
+    def test02_edges(self):
+        g = self.g
+        create_unique_edge_constraint(g, "T", "v", sync=True)
+        g.query("CREATE (:A), (:Z)")
+
+        start = time.time()
+        g.query("MATCH (a:A), (z:Z) UNWIND range(1, 20000) AS x CREATE (a)-[:T {v: x}]->(z)")
+        self.env.assertLess(time.time() - start, 10)
+
+        msg = "unique constraint violation, on edge of relationship-type T"
+        self._rejects("MATCH (a:A), (z:Z) UNWIND [-1, -2, -1] AS x CREATE (a)-[:T {v: x}]->(z)", msg)
+        self._rejects("MATCH (a:A), (z:Z) UNWIND range(20001, 21000) + [500] AS x CREATE (a)-[:T {v: x}]->(z)", msg)
+        self._rejects("MATCH ()-[e:T {v: 1}]->() SET e.v = 20000", msg)
+        self.env.assertEqual(g.query("MATCH ()-[e:T]->() RETURN count(e)").result_set[0][0], 20000)
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():
