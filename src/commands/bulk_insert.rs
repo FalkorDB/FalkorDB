@@ -169,6 +169,37 @@ fn read_property(
     }
 }
 
+/// Whether a token header names some property more than once.
+fn has_duplicates(attr_ids: &[u16]) -> bool {
+    attr_ids
+        .iter()
+        .enumerate()
+        .any(|(i, a)| attr_ids[..i].contains(a))
+}
+
+/// Reads one record's properties, one value per header column, dropping nulls.
+///
+/// A header may name a property twice (`p,q,p`); the first non-null value wins, so an
+/// entity never holds two entries for one attribute. This is what C reads back: its
+/// loader appends both, and every lookup returns the first. `has_dups` (from
+/// [`has_duplicates`]) keeps the check off the common path.
+fn read_record_attrs(
+    data: &[u8],
+    idx: &mut usize,
+    attr_ids: &[u16],
+    has_dups: bool,
+) -> Result<Vec<(u16, Value)>, String> {
+    let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
+    for &attr_id in attr_ids {
+        let val = read_property(data, idx)?;
+        if matches!(val, Value::Null) || (has_dups && entries.iter().any(|(a, _)| *a == attr_id)) {
+            continue;
+        }
+        entries.push((attr_id, val));
+    }
+    Ok(entries)
+}
+
 /// Parse header: label names (colon-separated) + property names
 ///
 /// `entity` names the kind of identifier the leading names carry — a label
@@ -374,6 +405,7 @@ fn process_node_token(
         .iter()
         .map(|name| g.get_or_create_node_attr_id(name))
         .collect();
+    let has_dups = has_duplicates(&attr_ids);
 
     // Collect all node data first, then insert at the end
     let mut nodes_bitmap = RoaringTreemap::new();
@@ -396,13 +428,7 @@ fn process_node_token(
         }
 
         if !attr_ids.is_empty() {
-            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
-            for &attr_id in &attr_ids {
-                let val = read_property(data, &mut idx)?;
-                if !matches!(val, Value::Null) {
-                    entries.push((attr_id, val));
-                }
-            }
+            let entries = read_record_attrs(data, &mut idx, &attr_ids, has_dups)?;
             if !entries.is_empty() {
                 resolved_attrs.push((raw_id, entries));
             }
@@ -461,6 +487,7 @@ fn process_edge_token(
         .iter()
         .map(|name| g.get_or_create_rel_attr_id(name))
         .collect();
+    let has_dups = has_duplicates(&attr_ids);
 
     // Collect all edge data first, then bulk-insert at the end
     let mut srcs: Vec<u64> = Vec::new();
@@ -483,13 +510,7 @@ fn process_edge_token(
         edge_ids.push(rel_id.into());
 
         if !attr_ids.is_empty() {
-            let mut entries: Vec<(u16, Value)> = Vec::with_capacity(attr_ids.len());
-            for &attr_id in &attr_ids {
-                let val = read_property(data, &mut idx)?;
-                if !matches!(val, Value::Null) {
-                    entries.push((attr_id, val));
-                }
-            }
+            let entries = read_record_attrs(data, &mut idx, &attr_ids, has_dups)?;
             if !entries.is_empty() {
                 resolved_rel_attrs.push((rel_id.into(), entries));
             }
