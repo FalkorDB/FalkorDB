@@ -3736,20 +3736,25 @@ impl Graph {
         }
         let metric = self.node_indexer.get_vector_metric(label, &attr);
         let query_vec = Arc::clone(&vector);
+        // `k` is user input. The index cannot hold more documents than there are
+        // nodes, and a `k` far beyond that makes the KNN query return nothing.
+        let k = k.min(self.node_count.max(1) as usize);
         let raw_iter = self.node_indexer.vector_query(label, field, vector, k)?;
 
         // Resolve the attribute name to its numeric slot once, rather than
         // re-hashing the attribute string for every KNN result. If the
         // attribute is unknown there are no vectors to score.
-        let mut out: Vec<(NodeId, f64)> = Vec::with_capacity(k);
         let Some(attr_idx) = self.get_node_attribute_id(&attr).map(|i| i as u16) else {
-            return Ok(out.into_iter());
+            return Ok(Vec::new().into_iter());
         };
         // Collect the candidate ids first, then fetch their vectors in one
         // fused batch pass. This amortizes the per-shard read lock and gives
         // the attribute cache sequential access instead of one isolated
         // lookup per KNN result.
         let node_ids: Vec<NodeId> = raw_iter.map(|(id, _score)| NodeId(id)).collect();
+        // Sized by the results, not by `k`: `k` is user input and may be far
+        // larger than the index (an allocation of `k` entries aborts the server).
+        let mut out: Vec<(NodeId, f64)> = Vec::with_capacity(node_ids.len());
         let mut vecs: Vec<Value> = Vec::with_capacity(node_ids.len());
         self.get_node_attributes_by_idx(&node_ids, attr_idx, &Value::Null, &mut vecs);
         for (node_id, entity) in node_ids.into_iter().zip(vecs) {
@@ -3791,14 +3796,15 @@ impl Graph {
         }
         let metric = self.edge_indexer.get_vector_metric(label, &attr);
         let query_vec = Arc::clone(&vector);
+        // Clamp the user-supplied `k` to the index's capacity (see `vector_query_nodes`).
+        let k = k.min(self.relationship_count.max(1) as usize);
         let raw_iter = self
             .edge_indexer
             .vector_query_edges(label, field, vector, k)?;
 
         // Resolve the attribute slot once instead of per KNN result.
-        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::with_capacity(k);
         let Some(attr_idx) = self.get_relationship_attribute_id(&attr).map(|i| i as u16) else {
-            return Ok(out.into_iter());
+            return Ok(Vec::new().into_iter());
         };
         // Collect candidate triples first, then fetch their vectors in one
         // fused batch pass (see `vector_query_nodes`).
@@ -3806,6 +3812,8 @@ impl Graph {
             .map(|(src, dst, eid, _score)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
             .collect();
         let edge_ids: Vec<RelationshipId> = triples.iter().map(|&(_, _, eid)| eid).collect();
+        // Sized by the results, not by the user-supplied `k` (see `vector_query_nodes`).
+        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::with_capacity(triples.len());
         let mut vecs: Vec<Value> = Vec::with_capacity(edge_ids.len());
         self.get_relationship_attributes_by_idx(&edge_ids, attr_idx, &Value::Null, &mut vecs);
         for ((src, dst, edge_id), entity) in triples.into_iter().zip(vecs) {
