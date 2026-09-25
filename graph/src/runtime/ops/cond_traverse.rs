@@ -895,6 +895,7 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         // Process reverse relationships for bidirectional patterns.
+        let fwd_end = out.len();
         if let Some(ref rev_iter_cell) = state.rev_iter {
             let mut rev_borrow;
             let mut bwd_borrow;
@@ -939,6 +940,15 @@ impl<'a> CondTraverseOp<'a> {
                 &state.rev_src_label_ids,
                 &state.rev_dst_label_ids,
             );
+
+            // Collapse mode keeps one representative edge per matrix pair, so
+            // a pair stored in both directions (a->b and b->a) was produced by
+            // both scans. C collapses per pattern pair (A + Aᵀ is boolean):
+            // drop the reverse results the forward scan already produced.
+            let has_edge_filter = matches!(&filter_attrs, Value::Map(m) if !m.is_empty());
+            if !emit_relationship && !has_edge_filter && fwd_end > start && out.len() > fwd_end {
+                Self::drop_reverse_duplicates(out, start, fwd_end);
+            }
         }
 
         // When both this CT and its child are anonymous bidirectional,
@@ -970,6 +980,30 @@ impl<'a> CondTraverseOp<'a> {
         drop(g);
 
         Ok(())
+    }
+
+    /// Remove from `out[fwd_end..]` (reverse-scan results) every `(from, to)`
+    /// pair already present in `out[start..fwd_end]` (forward-scan results).
+    /// The forward results of one row come off a row-major matrix iterator, so
+    /// they are normally sorted and a binary search suffices.
+    fn drop_reverse_duplicates(
+        out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
+        start: usize,
+        fwd_end: usize,
+    ) {
+        let key = |t: &(NodeId, NodeId, RelationshipId)| (u64::from(t.0), u64::from(t.1));
+        let mut fwd: Vec<(u64, u64)> = out[start..fwd_end].iter().map(key).collect();
+        if !fwd.is_sorted() {
+            fwd.sort_unstable();
+        }
+        let mut w = fwd_end;
+        for r in fwd_end..out.len() {
+            if fwd.binary_search(&key(&out[r])).is_err() {
+                out.swap(w, r);
+                w += 1;
+            }
+        }
+        out.truncate(w);
     }
 
     /// Processes relationship pairs from an iterator without materializing them.
