@@ -432,9 +432,14 @@ impl Binder {
                 // Labels written in CREATE are labels to create, not
                 // constraints: on a bound node they must not tighten the
                 // MATCH that bound it (a new node cannot be referenced by a
-                // later MATCH without a WITH in between).
-                let saved_labels = self.node_labels.clone();
+                // later MATCH without a WITH in between).  Nodes the CREATE
+                // itself introduces keep their labels, so a following MERGE
+                // can still reject new labels on them (VariableAlreadyBound).
+                let mut saved_labels = self.node_labels.clone();
                 let bound = self.bind_graph_create(&pattern);
+                for (key, labels) in self.node_labels.drain() {
+                    saved_labels.entry(key).or_insert(labels);
+                }
                 self.node_labels = saved_labels;
                 Ok(QueryIR::Create(bound?))
             }
