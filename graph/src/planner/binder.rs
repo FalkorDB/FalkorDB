@@ -429,8 +429,14 @@ impl Binder {
                 })
             }
             QueryIR::Create(pattern) => {
-                let bound = self.bind_graph_create(&pattern)?;
-                Ok(QueryIR::Create(bound))
+                // Labels written in CREATE are labels to create, not
+                // constraints: on a bound node they must not tighten the
+                // MATCH that bound it (a new node cannot be referenced by a
+                // later MATCH without a WITH in between).
+                let saved_labels = self.node_labels.clone();
+                let bound = self.bind_graph_create(&pattern);
+                self.node_labels = saved_labels;
+                Ok(QueryIR::Create(bound?))
             }
             QueryIR::CreateIndex {
                 label,
@@ -1879,7 +1885,12 @@ impl Binder {
                 // bind_graph uses define_name_in_scope which reuses
                 // outer-scope variables (e.g. 'n' from MATCH) and creates
                 // fresh variables only for new aliases (anonymous nodes/rels).
-                let bound_graph = self.bind_graph(graph, false)?;
+                // Labels inside a pattern comprehension constrain it only,
+                // not the outer MATCH that bound a shared node.
+                let saved_labels = self.node_labels.clone();
+                let bound_graph = self.bind_graph(graph, false);
+                self.node_labels = saved_labels;
+                let bound_graph = bound_graph?;
 
                 let children = node_ref
                     .children()
