@@ -603,6 +603,16 @@ class testTemporalDuration(FlowTestsBase):
         expected = time(hour=7, minute=49, second=40)
         self.env.assertEqual(actual, expected)
 
+        # a time keeps only its time of day: days/months in the duration
+        # vanish and the clock wraps around midnight (openCypher, C)
+        q = """RETURN localtime('01:00') + duration({days: 1}) = localtime('01:00'),
+                      localtime('01:00') + duration({months: 1}) = localtime('01:00'),
+                      localtime('01:00') - duration({days: 3}) = localtime('01:00'),
+                      localtime('23:00') + duration({hours: 2}) = localtime('01:00'),
+                      localtime('01:00') - duration({hours: 2}) = localtime('23:00')"""
+        actual = self.graph.query(q).result_set[0]
+        self.env.assertEqual(actual, [True, True, True, True, True])
+
         try:
             q = """RETURN duration({hours:2, minutes:40, seconds:30})
                    -
