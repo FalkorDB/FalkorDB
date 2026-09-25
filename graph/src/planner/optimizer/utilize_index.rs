@@ -782,16 +782,20 @@ fn try_filter_pushdown<T: IndexSubject>(
             let mut needs_post = false;
             for child in filter.root().children() {
                 let conjunct = child.clone_as_tree();
-                if let Some((_, label, query)) = try_single_filter_scan(subject, &conjunct, graph) {
-                    needs_post |= pushed_needs_post_filter(subject, &conjunct);
-                    merged = Some(match merged {
-                        None => (label, query),
-                        Some((prev_label, prev_q)) => {
-                            (prev_label, merge_range_queries(prev_q, query))
-                        }
-                    });
-                } else {
-                    remaining.push(conjunct);
+                // One index scan reads one label's index. A conjunct served
+                // by another label's index (`(n:A:B) WHERE n.x = 1 AND n.y
+                // = 2`, x indexed on A and y on B) stays in the post-filter.
+                match try_single_filter_scan(subject, &conjunct, graph) {
+                    Some((_, label, query)) if merged.as_ref().is_none_or(|(l, _)| *l == label) => {
+                        needs_post |= pushed_needs_post_filter(subject, &conjunct);
+                        merged = Some(match merged {
+                            None => (label, query),
+                            Some((prev_label, prev_q)) => {
+                                (prev_label, merge_range_queries(prev_q, query))
+                            }
+                        });
+                    }
+                    _ => remaining.push(conjunct),
                 }
             }
             merged.map(|(label, q)| (label, q, remaining, needs_post))
@@ -802,15 +806,16 @@ fn try_filter_pushdown<T: IndexSubject>(
             let mut needs_post = false;
             for child in filter.root().children() {
                 let branch = child.clone_as_tree();
-                if let Some((_, label, q)) = try_single_filter_scan(subject, &branch, graph) {
-                    needs_post |= pushed_needs_post_filter(subject, &branch);
-                    if or_label.is_none() {
-                        or_label = Some(label);
-                    }
-                    or_queries.push(q);
-                } else {
+                let (_, label, q) = try_single_filter_scan(subject, &branch, graph)?;
+                // Every branch must be served by the same label's index;
+                // a branch on another label's index would be looked up in
+                // an index that doesn't hold its field.
+                if or_label.as_ref().is_some_and(|l| *l != label) {
                     return None;
                 }
+                needs_post |= pushed_needs_post_filter(subject, &branch);
+                or_label = Some(label);
+                or_queries.push(q);
             }
             or_label.and_then(|label| {
                 (!or_queries.is_empty())

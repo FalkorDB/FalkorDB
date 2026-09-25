@@ -1331,3 +1331,21 @@ class testIndexScanFlow():
              "MATCH (n:L) WHERE n.v = point({latitude:1.0, longitude:2.0}) RETURN n.k",
              "MATCH (n:L) WHERE n.v = 4503599627370495 + 4503599627370495 + 3 RETURN n.k",
              "MATCH (n:L) WHERE n.v > 4503599627370495 * 2 RETURN n.k"])
+
+    def test_37_multi_label_conditions_stay_on_their_index(self):
+        # (n:A:B) with x indexed on A and y on B: the condition on y must
+        # not be looked up in A's index.
+        self._index_vs_scan(
+            [('A', 'x'), ('B', 'y')],
+            "CREATE (:A:B {x:1, y:2, k:'ab'}), (:A:B {x:1, y:3, k:'ab2'}), (:A {x:1, y:2, k:'a'})",
+            ["MATCH (n:A:B) WHERE n.x = 1 AND n.y = 2 RETURN n.k",
+             "MATCH (n:B:A) WHERE n.y = 2 AND n.x = 1 RETURN n.k",
+             "MATCH (n:A:B {x:1, y:2}) RETURN n.k",
+             "MATCH (n:A:B) WHERE n.x = 1 AND n.x < 5 AND n.y = 3 RETURN n.k"])
+        # OR across two labels' indexes can't be one index query.
+        self._index_vs_scan(
+            [('A', 'x'), ('B', 'y')],
+            "CREATE (:A:B {x:1, y:2, k:'ab'}), (:A:B {x:1, y:3, k:'ab2'})",
+            ["MATCH (n:A:B) WHERE n.y = 2 OR n.x = 1 RETURN n.k",
+             "MATCH (n:A:B) WHERE n.x = 1 OR n.y = 2 RETURN n.k"],
+            expect_index=False)
