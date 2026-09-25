@@ -1793,6 +1793,15 @@ class test_udf_javascript():
         v2 = self.graph.query("RETURN lib_args.f(1, 2, 3)").result_set[0][0]
         self.env.assertEqual(v2, [1, 2])
 
+    def test_graph_global_at_load(self):
+        """
+        A library may reference the `graph` global at top level: LOAD
+        validates it in a context that defines `graph`, as the runtime does.
+        """
+
+        self.db.udf_load("gg", "var G = graph; falkor.register('f', function() { return typeof G.traverse; });")
+        self.env.assertEqual(self.graph.query("RETURN gg.f()").result_set, [['function']])
+
     def test_returning_undefined(self):
         """
         UDFs returning `undefined` should map to Cypher NULL.
