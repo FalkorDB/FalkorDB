@@ -921,7 +921,6 @@ impl<'a> Parser<'a> {
                 ..
             } => {
                 self.lexer.next();
-                optional_match_token!(self.lexer => Match);
                 self.parse_match_clause(false)
             }
             Token::IdentifierOrKeyword {
@@ -937,8 +936,10 @@ impl<'a> Parser<'a> {
             } => {
                 self.lexer.next();
                 match_token!(self.lexer => Csv);
-                let headers = optional_match_token!(self.lexer => With)
-                    && optional_match_token!(self.lexer => Headers);
+                let headers = optional_match_token!(self.lexer => With);
+                if headers {
+                    match_token!(self.lexer => Headers);
+                }
                 match_token!(self.lexer => From);
                 let file_path = Arc::new(self.parse_expr(false)?);
                 match_token!(self.lexer => As);
@@ -2190,12 +2191,16 @@ impl<'a> Parser<'a> {
                         self.lexer.next();
                         not_count += 1;
                     }
-                    let (res, height) = if not_count % 2 == 1 {
-                        (Some(tree!(ExprIR::Not)), 1)
+                    // NOT type-checks its operand, so `NOT NOT x` is not `x`.
+                    // A longer run still folds, keeping its parity: to one
+                    // NOT, or to two that the operand is placed under.
+                    if not_count == 0 {
+                        stack.push((current, None, 0));
                     } else {
-                        (None, 0)
-                    };
-                    stack.push((current, res, height));
+                        for _ in 0..(2 - not_count % 2) {
+                            stack.push((current, Some(tree!(ExprIR::Not)), 1));
+                        }
+                    }
                     stack.push((current + 1, None, 0));
                 } else if current == 9 {
                     // unary add or subtract
@@ -2402,7 +2407,9 @@ impl<'a> Parser<'a> {
                                     res
                                 );
                             }
-                            parse_expr_return!(self, stack, res, height);
+                            // More predicates may follow, e.g.
+                            // `x IS NULL IN [false]`: come back to this level.
+                            stack.push((current, Some(res), height));
                             continue;
                         }
                         // Negated predicates: peek after NOT to decide
@@ -2719,11 +2726,15 @@ impl<'a> Parser<'a> {
         allow_pattern_predicate: bool,
     ) -> Result<Vec<DynTree<ExprIR<Arc<String>>>>, String> {
         let mut exprs = Vec::new();
-        while !expression_list_type.is_end_token(&self.lexer.current()?) {
-            exprs.push(self.parse_expr(allow_pattern_predicate)?);
-            match self.lexer.current()? {
-                Token::Comma => self.lexer.next(),
-                _ => break,
+        // Only an empty list may end at once: after a `,` an expression must
+        // follow, so `f(1,)` is an error.
+        if !expression_list_type.is_end_token(&self.lexer.current()?) {
+            loop {
+                exprs.push(self.parse_expr(allow_pattern_predicate)?);
+                match self.lexer.current()? {
+                    Token::Comma => self.lexer.next(),
+                    _ => break,
+                }
             }
         }
 
@@ -3224,6 +3235,7 @@ impl<'a> Parser<'a> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr(false)?;
             if recurse {
+                self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
             }
@@ -3271,6 +3283,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A `SET`/`REMOVE` target that opens a nested expression may only open
+    /// it with `(`: an open list literal would otherwise be dropped and its
+    /// first element read as the target, so `SET [n).x = 5` set `n.x`.
+    fn reject_unparenthesized_target(
+        &self,
+        expr: &DynTree<ExprIR<Arc<String>>>,
+    ) -> Result<(), String> {
+        if matches!(expr.root().data(), ExprIR::Paren) {
+            Ok(())
+        } else {
+            Err(self.lexer.format_error("Invalid input '[': expected '('"))
+        }
+    }
+
     fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut remove_items = vec![];
         self.parse_remove_items(&mut remove_items)?;
@@ -3290,6 +3316,7 @@ impl<'a> Parser<'a> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr(false)?;
             if recurse {
+                self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
             }
@@ -3633,8 +3660,8 @@ mod tests {
     }
 
     // Nesting that collapses costs the later stages nothing, so it is not
-    // capped: `(((1)))` folds to `1` and `NOT NOT x` to `x`, however many
-    // there are. test_parentheses in the e2e suite pins the first at 10000.
+    // capped: `(((1)))` folds to `1` and a run of NOTs to one or two,
+    // however many there are. test_parentheses in the e2e suite pins the first at 10000.
     #[test]
     fn collapsing_nesting_is_not_capped() {
         for (name, query) in [
@@ -3664,6 +3691,61 @@ mod tests {
                     "{name}: 16 levels rejected as too deep: {e}"
                 );
             }
+        }
+    }
+
+    // Inputs outside the grammar that used to parse, each by a different
+    // slip: a call's trailing comma, a doubled MATCH, `WITH` without
+    // `HEADERS`, and a SET/REMOVE target opened by `[` but closed by `)`.
+    #[test]
+    fn invalid_syntax_is_rejected() {
+        with_functions();
+        for query in [
+            "RETURN abs(-1,)",
+            "RETURN toUpper('a',)",
+            "MATCH MATCH (n) RETURN n",
+            "LOAD CSV WITH FROM 'file://x.csv' AS r RETURN r",
+            "MATCH (n) SET [n).x = 5",
+            "MATCH (n) REMOVE [n).x",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "RETURN abs(-1)",
+            "RETURN rand()",
+            "LOAD CSV WITH HEADERS FROM 'file://x.csv' AS r RETURN r",
+            "LOAD CSV FROM 'file://x.csv' AS r RETURN r",
+            "MATCH (n) SET (n).x = 5",
+            "MATCH (n) REMOVE (n).x",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
+        }
+    }
+
+    // The grammar lets any number of string, list and null predicates
+    // follow one another, `IS NULL` included.
+    #[test]
+    fn predicates_chain_after_is_null() {
+        with_functions();
+        for query in [
+            "RETURN 1 IS NULL IN [false]",
+            "RETURN 'a' IS NULL STARTS WITH 'a'",
+            "RETURN 1 IS NOT NULL = true",
+            "RETURN 1 IS NULL IS NOT NULL IN [true]",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
+        }
+    }
+
+    // NOT type-checks its operand, so `NOT NOT x` is not `x`: a run of NOTs
+    // still folds, but to one or two, never to none.
+    #[test]
+    fn not_not_keeps_its_type_check() {
+        with_functions();
+        for (nots, expected) in [(1, 1), (2, 2), (3, 1), (4, 2), (5, 1)] {
+            let query = format!("RETURN {}1", "NOT ".repeat(nots));
+            let ir = format!("{:?}", Parser::new(&query).parse().unwrap());
+            assert_eq!(ir.matches("Not").count(), expected, "{query}: {ir}");
         }
     }
 
