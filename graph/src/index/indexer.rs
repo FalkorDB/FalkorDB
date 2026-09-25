@@ -700,6 +700,33 @@ impl Indexer {
         })
     }
 
+    /// Record that a writer set or removed the documents of `ids` on `label`,
+    /// so a population batch running before the writer's commit does not
+    /// overwrite them from the older committed graph. Caller holds
+    /// [`Self::write_lock`], which serializes this with population batches.
+    pub fn note_written(
+        &self,
+        label: &Arc<String>,
+        ids: impl IntoIterator<Item = u64>,
+    ) {
+        if let Some(index) = self.index.load().get(label) {
+            index.note_written(ids);
+        }
+    }
+
+    /// Ids a population batch for `ticket` must skip because a writer already
+    /// published newer documents for them; `None` when there are none.
+    #[must_use]
+    pub fn written_during_population(
+        &self,
+        ticket: &PopulationTicket,
+    ) -> Option<RoaringTreemap> {
+        self.index
+            .load()
+            .get(ticket.label())
+            .and_then(|index| index.written_during_population(ticket.generation_id()))
+    }
+
     #[must_use]
     pub fn enabled(
         &self,

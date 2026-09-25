@@ -65,6 +65,7 @@ use std::{
 };
 
 use parking_lot::Mutex;
+use roaring::RoaringTreemap;
 
 use crate::runtime::value::Value;
 
@@ -895,6 +896,13 @@ struct PendingSlots {
     current_pending: i32,
     /// Pending tickets for older generations aggregated together.
     stale_pending: i32,
+    /// Entities whose documents a writer set or removed while the current
+    /// generation was populating. Population reads the *committed* graph, but a
+    /// writer publishes its documents before its MVCC commit, so a batch running
+    /// in between would overwrite a writer's document with the value the writer
+    /// just replaced. Batches skip these ids: the writer's document is newer.
+    /// Only tracked while `current_pending > 0`, and reset with the generation.
+    written: RoaringTreemap,
 }
 
 /// RAII handle for a RediSearch index spec (`RefManager`). Owns one strong
@@ -1011,6 +1019,7 @@ impl Default for Index {
                 current_generation: id,
                 current_pending: 0,
                 stale_pending: 0,
+                written: RoaringTreemap::new(),
             })),
             progress: AtomicU64::new(0),
             total: AtomicU64::new(0),
@@ -1043,6 +1052,7 @@ impl Index {
         slots.stale_pending += slots.current_pending;
         slots.current_generation = self.id;
         slots.current_pending = 0;
+        slots.written.clear();
     }
 
     /// Copy this `Index` for a clone-and-swap schema update.
@@ -2110,6 +2120,9 @@ impl Index {
             if prev > 0 {
                 slots.current_pending -= 1;
             }
+            if slots.current_pending == 0 {
+                slots.written.clear();
+            }
             prev
         } else {
             let prev = slots.stale_pending;
@@ -2132,6 +2145,30 @@ impl Index {
         } else {
             slots.stale_pending
         }
+    }
+
+    /// Record that a writer set or removed the documents of `ids`, if this
+    /// index is populating (see `PendingSlots::written`).
+    pub fn note_written(
+        &self,
+        ids: impl IntoIterator<Item = u64>,
+    ) {
+        let mut slots = self.pending_slots.lock();
+        if slots.current_pending > 0 {
+            slots.written.extend(ids);
+        }
+    }
+
+    /// The ids a population batch of `generation_id` must skip, or `None` when
+    /// there are none (or the generation is no longer current).
+    #[must_use]
+    pub fn written_during_population(
+        &self,
+        generation_id: u64,
+    ) -> Option<RoaringTreemap> {
+        let slots = self.pending_slots.lock();
+        (generation_id == slots.current_generation && !slots.written.is_empty())
+            .then(|| slots.written.clone())
     }
 
     /// Get the current pending changes count.
