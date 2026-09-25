@@ -58,6 +58,11 @@ pub(crate) fn create_index<'a>(
         Some(Value::Map(map)) => map_to_index_options(index_type, map)?,
         _ => None,
     };
+    // A vector index needs its dimension and similarity function (C rejects a
+    // missing OPTIONS block the same way).
+    if *index_type == IndexType::Vector && index_options.is_none() {
+        return Err("Invalid vector index configuration".into());
+    }
     // Index DDL mutates the shared, non-MVCC index directly (not via `pending`)
     // and calls host FFI that needs the global lock, so become a writer first —
     // same contract as `CommitOp`.
