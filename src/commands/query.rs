@@ -19,6 +19,7 @@
 //! `graph_core`.
 
 use crate::{
+    commands::query_args::{QueryFlags, parse_query_flags},
     config::CONFIGURATION_CACHE_SIZE,
     graph_core::{
         ThreadedGraph, c_graph_key, c_graph_name, query_mut, register_graph,
@@ -42,6 +43,12 @@ pub fn graph_query(
     ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
+    let QueryFlags {
+        compact,
+        track_memory,
+        timeout,
+        version: version_check,
+    } = parse_query_flags(&args)?;
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
     // C ends the query at its first NUL byte; see `up_to_nul`.
@@ -52,26 +59,6 @@ pub fn graph_query(
         let id = FILE_ID.fetch_add(1, Ordering::Relaxed);
         let mut file = File::create(format!("fuzz/corpus/fuzz_target_runtime/output{id}.txt"))?;
         file.write_all(query.as_bytes())?;
-    }
-
-    let mut compact = false;
-    let mut track_memory = false;
-    let mut version_check: Option<u64> = None;
-    let mut timeout: Option<i64> = None;
-    while let Ok(arg) = args.next_str() {
-        // Matched case-insensitively, as the C dispatcher does with strcasecmp:
-        // `TIMEOUT` is the documented spelling.
-        if arg.eq_ignore_ascii_case("--compact") {
-            compact = true;
-        } else if arg.eq_ignore_ascii_case("--track-memory") {
-            track_memory = true;
-        } else if arg.eq_ignore_ascii_case("version") {
-            let ver_str = args.next_str()?;
-            version_check = Some(ver_str.parse::<u64>()?);
-        } else if arg.eq_ignore_ascii_case("timeout") {
-            let t_str = args.next_str()?;
-            timeout = Some(t_str.parse::<i64>()?);
-        }
     }
 
     // Try read-only key access first to avoid triggering WATCH on existing graphs.

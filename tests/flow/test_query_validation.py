@@ -199,6 +199,39 @@ class testQueryValidationFlow(FlowTestsBase):
             assert("wrong number of arguments" in str(e))
             pass
 
+    # QUERY, RO_QUERY, PROFILE and EXPLAIN share C's flag parser
+    def test17b_query_flags(self):
+        cmds = ["GRAPH.QUERY", "GRAPH.RO_QUERY", "GRAPH.PROFILE", "GRAPH.EXPLAIN"]
+        bad = [
+            (("TIMEOUT", "-5"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "+10"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "010"), "Failed to parse query timeout value"),
+            (("TIMEOUT", "abc"), "Failed to parse query timeout value"),
+            (("TIMEOUT",), "Failed to parse query timeout value"),
+            (("version", "4294967296"), "Failed to parse graph version value"),
+            (("version", "-1"), "Failed to parse graph version value"),
+            (("version",), "Failed to parse graph version value"),
+            # at most 8 arguments, command name included
+            (("a", "b", "c", "d", "e", "f"), "wrong number of arguments"),
+        ]
+        for cmd in cmds:
+            for flags, err in bad:
+                try:
+                    self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", *flags)
+                    self.env.assertTrue(False, message=f"{cmd} {flags}")
+                except redis.ResponseError as e:
+                    self.env.assertContains(err, str(e))
+
+            # valid flags, unknown ones skipped
+            for flags in [("TIMEOUT", "0"), ("timeout", "10"), ("a", "b", "c", "d", "e")]:
+                self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", *flags)
+
+        # a non-UTF-8 argument is an unknown flag, not the end of the flags
+        for cmd in ["GRAPH.QUERY", "GRAPH.RO_QUERY"]:
+            res = self.redis_con.execute_command(cmd, GRAPH_ID, "RETURN 1", b"\xff", "--compact")
+            # compact header: [[type, name]]
+            self.env.assertEqual(res[0], [[1, "1"]])
+
     # Run queries in which compile-time variables are accessed but not defined.
     def test18_undefined_variable_access(self):
         try:
