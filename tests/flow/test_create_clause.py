@@ -250,3 +250,11 @@ class testCreateClause():
                 # it and nothing else.
                 if len(nodes) != len(set(nodes)) or len(edges) != len(set(edges)):
                     break
+
+    def test20_create_labels_do_not_constrain_the_match(self):
+        # A label written on a bound node in CREATE is not a MATCH
+        # constraint: every matched node must still produce a row.
+        self.g.query("CREATE (:A {v:1})-[:R]->(:B {v:0}), (:B {v:5})")
+        res = self.g.query("MATCH (a) CREATE (a:Z)-[:T]->(:C) RETURN count(*)")
+        self.env.assertEqual(res.result_set, [[3]])
+        self.env.assertEqual(res.relationships_created, 3)
