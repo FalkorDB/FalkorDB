@@ -30,9 +30,11 @@
 //!
 //! ## Round-Trip Safety
 //!
-//! Graph entities (Node, Edge, Path, Point) carry hidden `__falkor_type` and
-//! `__falkor_*_id` properties on their JS objects. These markers allow
-//! [`js_to_value`] to reconstruct the correct Rust variant without ambiguity.
+//! Graph entities (Node, Edge, Path) are instances of a Rust class that holds
+//! the entity, and [`js_to_value`] reads it back from there; their visible
+//! `__falkor_type` / `__falkor_*_id` properties are informational only, so a
+//! plain JS object that copies them converts to a Map. Point carries a
+//! `__falkor_type` marker.
 //! User-supplied map keys that start with `__falkor_` are escaped during
 //! `value_to_js` and unescaped during `js_to_value` to prevent collisions.
 //!
@@ -254,60 +256,19 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
     if val.is_object() {
         let obj = val.as_object().unwrap();
 
-        // Check for our custom classes via hidden __falkor_type property
-        if let Ok(ftype) = obj.get::<_, String>("__falkor_type") {
-            match ftype.as_str() {
-                "node" => {
-                    let id: u64 = obj.get("__falkor_node_id").map_err(|e| format!("{e}"))?;
-                    return Ok(Value::Node(id.into()));
-                }
-                "edge" => {
-                    let id: u64 = obj.get("__falkor_edge_id").map_err(|e| format!("{e}"))?;
-                    return Ok(Value::Relationship(id.into()));
-                }
-                "path" => {
-                    let nodes_arr: Array = obj.get("nodes").map_err(|e| format!("{e}"))?;
-                    let rels_arr: Array = obj.get("relationships").map_err(|e| format!("{e}"))?;
-                    let n_nodes = nodes_arr.len();
-                    let n_rels = rels_arr.len();
-                    if n_rels != n_nodes.saturating_sub(1) {
-                        return Err(format!(
-                            "Invalid path: expected {} relationships for {} nodes, got {}",
-                            n_nodes.saturating_sub(1),
-                            n_nodes,
-                            n_rels
-                        ));
-                    }
-                    let mut path_values = Vec::with_capacity(n_nodes + n_rels);
-                    for i in 0..n_nodes {
-                        let node_val: JsValue = nodes_arr.get(i).map_err(|e| format!("{e}"))?;
-                        let node = js_to_value(node_val)?;
-                        if !matches!(node, Value::Node(_)) {
-                            return Err(format!(
-                                "Invalid path: element at node position {i} is not a Node"
-                            ));
-                        }
-                        path_values.push(node);
-                        if i < n_rels {
-                            let rel_val: JsValue = rels_arr.get(i).map_err(|e| format!("{e}"))?;
-                            let rel = js_to_value(rel_val)?;
-                            if !matches!(rel, Value::Relationship(_)) {
-                                return Err(format!(
-                                    "Invalid path: element at relationship position {i} is not a Relationship"
-                                ));
-                            }
-                            path_values.push(rel);
-                        }
-                    }
-                    return Ok(Value::Path(Arc::new(path_values.into())));
-                }
-                "point" => {
-                    let lat: f64 = obj.get("latitude").map_err(|e| format!("{e}"))?;
-                    let lon: f64 = obj.get("longitude").map_err(|e| format!("{e}"))?;
-                    return Ok(Value::Point(Point::new(lat as f32, lon as f32)));
-                }
-                _ => {}
-            }
+        // Node, Edge and Path objects are instances of a Rust class that holds
+        // the entity; a plain object carrying the same `__falkor_type` marker
+        // is a Map (as in C), so JS cannot forge a reference to an entity.
+        if let Some(entity) = crate::udf::js_classes::entity_value(obj) {
+            return Ok(entity);
+        }
+
+        if let Ok(ftype) = obj.get::<_, String>("__falkor_type")
+            && ftype == "point"
+        {
+            let lat: f64 = obj.get("latitude").map_err(|e| format!("{e}"))?;
+            let lon: f64 = obj.get("longitude").map_err(|e| format!("{e}"))?;
+            return Ok(Value::Point(Point::new(lat as f32, lon as f32)));
         }
 
         // Check constructor name for Date/RegExp
