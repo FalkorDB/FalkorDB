@@ -79,6 +79,7 @@ use fuse_optional_traverse::fuse_optional_traverse;
 use push_filters_down::push_filters_down;
 use reduce_bound_edge::reduce_bound_edge;
 use reduce_count::reduce_count;
+pub(crate) use reduce_expand_into::ir_references_variable;
 use reduce_expand_into::reduce_expand_into;
 use reduce_var_len_path::reduce_var_len_path;
 use reorder_labels::reorder_labels;
