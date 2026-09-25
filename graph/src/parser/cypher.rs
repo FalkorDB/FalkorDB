@@ -127,7 +127,7 @@ const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
 
 /// A place where a pattern comprehension cannot be planned as a sub-plan, so
 /// the parser rejects one found there (#2308).
-#[derive(Debug, Clone, Copy, Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Error)]
 enum ForbiddenPatternComprehension {
     /// A pattern's inline property map; worded as FalkorDB C words it, and
     /// also the rejection for any other map the parser cannot accept there.
@@ -216,6 +216,21 @@ pub struct Parser<'a> {
     /// Set while parsing where a pattern comprehension cannot be planned as
     /// a sub-plan, to the rejection to raise if one is found there.
     forbidden_pattern_comprehension: Option<ForbiddenPatternComprehension>,
+    /// `[` positions already tried, and failed, as a pattern comprehension,
+    /// with everything else that decides whether the attempt can succeed.
+    /// See [`Parser::parse_list_literal_or_comprehension`].
+    not_pattern_comprehension: HashSet<PatternComprehensionAttempt>,
+}
+
+/// Where and in what context [`Parser::parse_list_literal_or_comprehension`]
+/// tried to read a pattern comprehension: the position after the `[`, and the
+/// parser state the attempt's outcome depends on besides the input.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PatternComprehensionAttempt {
+    pos: usize,
+    allow_pattern_predicate: bool,
+    forbidden: Option<ForbiddenPatternComprehension>,
+    depth: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -267,6 +282,7 @@ impl<'a> Parser<'a> {
             expr_height: 0,
             max_child_height: 0,
             forbidden_pattern_comprehension: None,
+            not_pattern_comprehension: HashSet::new(),
         }
     }
 
@@ -2781,26 +2797,49 @@ impl<'a> Parser<'a> {
         }
         self.restore_state(saved);
 
-        // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
-        if let Some(var) = self.try_parse_ident()
-            && optional_match_token!(self.lexer, Equal)
-            && self.lexer.current()? == Token::LParen
-            && let Ok(result) = self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
+        // 2) and 3) re-read what follows the `[` from the start, so when they
+        // fail, whatever nests inside is parsed twice, and a list like this
+        // one inside it twice again: exponential in the nesting. So they are
+        // only tried where they can succeed - after `(` or a name, with a `|`
+        // before the closing `]` - and never twice in the same place: an
+        // attempt's outcome depends only on the input and the context kept
+        // in `attempt`.
+        let attempt = PatternComprehensionAttempt {
+            pos: saved.pos,
+            allow_pattern_predicate,
+            forbidden: self.forbidden_pattern_comprehension,
+            depth: self.depth,
+        };
+        if matches!(
+            self.lexer.current(),
+            Ok(Token::LParen | Token::IdentifierOrKeyword { .. })
+        ) && !self.not_pattern_comprehension.contains(&attempt)
+            && self.list_has_top_level_pipe()
         {
-            self.reject_forbidden_pattern_comprehension()?;
-            self.reject_aggregate(&result)?;
-            return Ok((result, false));
-        }
-        self.restore_state(saved);
-
-        // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
-        if self.lexer.current()? == Token::LParen {
-            if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate) {
+            // 2) Try named pattern comprehension: [var = (pattern) ... | expr]
+            if let Some(var) = self.try_parse_ident()
+                && optional_match_token!(self.lexer, Equal)
+                && self.lexer.current()? == Token::LParen
+                && let Ok(result) =
+                    self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
+            {
                 self.reject_forbidden_pattern_comprehension()?;
                 self.reject_aggregate(&result)?;
                 return Ok((result, false));
             }
             self.restore_state(saved);
+
+            // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
+            if self.lexer.current()? == Token::LParen {
+                if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate)
+                {
+                    self.reject_forbidden_pattern_comprehension()?;
+                    self.reject_aggregate(&result)?;
+                    return Ok((result, false));
+                }
+                self.restore_state(saved);
+            }
+            self.not_pattern_comprehension.insert(attempt);
         }
 
         // 4) Default: list literal
@@ -2808,6 +2847,34 @@ impl<'a> Parser<'a> {
             tree!(ExprIR::List),
             !optional_match_token!(self.lexer, RBrace),
         ))
+    }
+
+    /// Whether a `|` comes before the `]` that closes the list whose `[` was
+    /// just consumed, outside any bracket nested in it, and before any `,`
+    /// there. A pattern comprehension has such a `|` and no such `,`; a list
+    /// literal cannot have the `|`. Brackets are only counted, not parsed,
+    /// and the position is left where it was.
+    fn list_has_top_level_pipe(&mut self) -> bool {
+        let state = self.save_state();
+        let mut open = 0usize;
+        let found = loop {
+            match self.lexer.current() {
+                Ok(Token::Pipe) if open == 0 => break true,
+                Ok(Token::Comma) if open == 0 => break false,
+                Ok(Token::LParen | Token::LBrace | Token::LBracket) => open += 1,
+                Ok(Token::RParen | Token::RBrace | Token::RBracket) => {
+                    if open == 0 {
+                        break false;
+                    }
+                    open -= 1;
+                }
+                Ok(Token::EndOfFile) | Err(_) => break false,
+                Ok(_) => {}
+            }
+            self.lexer.next();
+        };
+        self.restore_state(state);
+        found
     }
 
     fn parse_list_comprehension(
@@ -3771,6 +3838,59 @@ mod tests {
                 param_of(value).unwrap_err(),
                 "Invalid parameter expression.",
                 "parameter `{value}`",
+            );
+        }
+    }
+
+    // `[` followed by `(` is tried as a pattern comprehension before it is
+    // parsed as a list literal. When the property map inside held another such
+    // list, every level parsed its inside twice: 20 levels (228 bytes) took
+    // 12 s, each level doubling it. The attempt is now skipped where no `|`
+    // closes the list, and never repeated where it already failed.
+    #[test]
+    fn nested_pattern_comprehension_attempts_are_not_exponential() {
+        with_functions();
+        let nest = |wrap: fn(String) -> String| {
+            let mut e = String::from("1");
+            for _ in 0..40 {
+                e = wrap(e);
+            }
+            e
+        };
+        let queries = [
+            format!("RETURN {}", nest(|e| format!("[(x {{k: {e}}})]"))),
+            format!("RETURN {}", nest(|e| format!("[(x {{k: {e}}}) - 1]"))),
+            format!("RETURN {}", nest(|e| format!("[p = (x {{k: {e}}})]"))),
+            format!(
+                "MATCH (x) WHERE {} RETURN x",
+                nest(|e| format!("(x {{k: [{e}]}})"))
+            ),
+        ];
+        for query in queries {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let q = query.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(Parser::new(&q).parse().map(|_| ()));
+            });
+            let res = rx.recv_timeout(std::time::Duration::from_secs(10));
+            assert!(res.is_ok(), "still parsing after 10 s: {query}");
+            assert!(res.unwrap().is_ok(), "rejected {query}");
+        }
+        // What is tried must still be found where it is there to find, and
+        // still refused where it was refused.
+        assert!(
+            Parser::new("MATCH (a) RETURN [(x {k: [(a)-->(b) | b]}) | x]")
+                .parse()
+                .is_err()
+        );
+        for query in [
+            "MATCH (a) RETURN [(x {k: [1]})-->(y) | [(y)-->(z) | z]]",
+            "MATCH (a) RETURN {k: [(a)-->(b) | b]}",
+            "MATCH (a) RETURN [p = (a)-->(b) WHERE [(b)-->(c) | c] <> [] | p]",
+        ] {
+            assert!(
+                Parser::new(query).parse().is_ok(),
+                "failed to parse: {query}"
             );
         }
     }
