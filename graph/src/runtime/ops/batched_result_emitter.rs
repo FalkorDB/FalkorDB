@@ -535,6 +535,13 @@ pub struct BatchedResultEmitter<'a, I: GatherItem> {
     /// `UNWIND`, which had the pinned cap from the start, cost 8.36 G against
     /// 148 M for the identical query with no `LIMIT` at all.
     pack_ceiling: usize,
+    /// When set, [`emit_lazy`](Self::emit_lazy) keeps the parent row of every
+    /// row it emits in [`parent_rows`](Self::parent_rows), for operators that
+    /// track per-row lineage across batches (the bidirectional traverse dedup).
+    record_parent_rows: bool,
+    /// Parent row (within the seeded batch) of each row of the last emitted
+    /// batch. Only filled when `record_parent_rows` is set.
+    parent_rows: Vec<usize>,
 }
 
 impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
@@ -564,6 +571,8 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             pending: None,
             cursor: 0,
             pack_ceiling,
+            record_parent_rows: false,
+            parent_rows: Vec::new(),
         }
     }
 
@@ -600,7 +609,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// transpose it back into columns at the end.
     fn start_batch(&self) -> (bool, Vec<usize>, I::Lanes) {
         let should_expand = self.batch.as_ref().is_some_and(|b| b.num_columns() > 0);
-        let indices = if should_expand {
+        let indices = if should_expand || self.record_parent_rows {
             Vec::with_capacity(self.pack_ceiling)
         } else {
             Vec::new()
@@ -620,12 +629,13 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         should_expand: bool,
     ) {
         let ceiling = self.pack_ceiling;
+        let keep_rows = should_expand || self.record_parent_rows;
         let (row, iter) = self.pending.as_mut().expect("pending is set");
         let row = *row;
         let mut drained = false;
         while *count < ceiling && !drained {
             if let Some(item) = iter.next() {
-                if should_expand {
+                if keep_rows {
                     indices.push(row);
                 }
                 item.push_into(&self.binding, lanes);
@@ -735,7 +745,25 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             self.drain_pending_entry(&mut indices, &mut lanes, &mut count, should_expand);
         }
         self.pack_ceiling = self.pack_ceiling.saturating_mul(2).min(BATCH_SIZE);
-        Ok(self.finish_batch(&indices, lanes, count, should_expand))
+        let out = self.finish_batch(&indices, lanes, count, should_expand);
+        if self.record_parent_rows {
+            self.parent_rows = indices;
+        }
+        Ok(out)
+    }
+
+    /// Start recording the parent row of every emitted row; read them back
+    /// with [`parent_rows`](Self::parent_rows) after each
+    /// [`emit_lazy`](Self::emit_lazy).
+    pub(crate) const fn record_parent_rows(&mut self) {
+        self.record_parent_rows = true;
+    }
+
+    /// Parent row (within the seeded batch) of each row of the batch the last
+    /// [`emit_lazy`](Self::emit_lazy) returned. Empty unless
+    /// [`record_parent_rows`](Self::record_parent_rows) was called.
+    pub(crate) fn parent_rows(&self) -> &[usize] {
+        &self.parent_rows
     }
 
     /// Drop all queued state. Used by correlated (Apply) plans that re-seed the
