@@ -865,8 +865,13 @@ impl Binder {
                         }
                         _ => (false, HashMap::new()),
                     };
+                    // The branch's scopes must not share ids with the live
+                    // outer ones: a branch variable would read the outer
+                    // variable's record slot. Start them where a plain CALL
+                    // body starts, above the outer scopes, which stay empty
+                    // placeholders here.
                     let mut binder = Self {
-                        env_stack: vec![HashMap::new()],
+                        env_stack: vec![HashMap::new(); self.env_stack.len() + 1],
                         use_parent_scope: false,
                         parent_to_child_scope: HashMap::new(),
                         copy_from_parent: HashMap::new(),
