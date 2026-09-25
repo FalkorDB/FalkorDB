@@ -2774,9 +2774,12 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
 
                 runtime.check_timeout()?;
                 let mut nodes: GrB_Vector = null_mut();
-                let node_vec_len = compact_to_id
-                    .as_ref()
-                    .map_or_else(|| g.node_count(), |m| m.len() as u64);
+                // Unfiltered, the matrix spans every id up to the highest
+                // (deleted ids included, as above), so the source vector must too.
+                let node_vec_len = compact_to_id.as_ref().map_or_else(
+                    || g.node_count() + g.deleted_nodes_count(),
+                    |m| m.len() as u64,
+                );
                 GrB_Vector_new(&raw mut nodes, GrB_BOOL, node_vec_len);
                 GrB_Vector_assign_BOOL(
                     nodes,
