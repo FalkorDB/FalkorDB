@@ -890,8 +890,11 @@ impl Drop for BlockedClient {
 ///
 /// Rules:
 /// - Per-query timeout cannot exceed TIMEOUT_MAX (if set).
-/// - Per-query timeout is only applied to read queries (write queries ignore it).
-/// - Falls back to TIMEOUT_DEFAULT, then deprecated TIMEOUT.
+/// - Once TIMEOUT_DEFAULT or TIMEOUT_MAX is set, every timeout — the per-query one
+///   included — applies to reads and writes alike; a write that runs out of time
+///   is rolled back. Under the deprecated TIMEOUT alone, only reads time out.
+///   This is C's `timeout_rw` (`_read_flags`, `cmd_dispatcher.c`).
+/// - Falls back to TIMEOUT_DEFAULT, then TIMEOUT_MAX, then deprecated TIMEOUT.
 /// - Returns None for unlimited.
 fn compute_effective_timeout(
     per_query_timeout: Option<i64>,
@@ -901,13 +904,15 @@ fn compute_effective_timeout(
     let timeout_default = TIMEOUT_DEFAULT.load(Ordering::Relaxed);
     let timeout_legacy = TIMEOUT.load(Ordering::Relaxed);
 
-    // Per-query timeout: enforce TIMEOUT_MAX limit, skip for writes
+    // C's `timeout_rw`: the new-style configs make timeouts apply to writes too.
+    let timeout_rw = timeout_max > 0 || timeout_default > 0;
+
+    // Per-query timeout: enforce TIMEOUT_MAX limit
     if let Some(pq) = per_query_timeout {
         if timeout_max > 0 && pq > timeout_max {
             return Err("The query TIMEOUT parameter value cannot exceed the TIMEOUT_MAX configuration parameter value".to_string());
         }
-        // Per-query timeout is ignored for write queries
-        if !is_write && pq > 0 {
+        if pq > 0 && (!is_write || timeout_rw) {
             return Ok(Some(pq as u64));
         }
     }
