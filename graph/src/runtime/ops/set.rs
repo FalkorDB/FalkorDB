@@ -81,10 +81,13 @@ impl Runtime<'_> {
         // Pre-check: if no nodes/relationships have been deleted in this
         // transaction, we can skip the per-row deletion checks entirely.
         let has_deleted_nodes = !self.deleted_nodes.borrow().is_empty();
+        let has_deleted_rels = !self.deleted_relationships.borrow().is_empty();
         let has_pending_deleted_nodes = self.pending.borrow().has_deleted_nodes();
         let has_pending_deleted_rels = self.pending.borrow().has_deleted_relationships();
-        let skip_delete_checks =
-            !has_deleted_nodes && !has_pending_deleted_nodes && !has_pending_deleted_rels;
+        let skip_delete_checks = !has_deleted_nodes
+            && !has_deleted_rels
+            && !has_pending_deleted_nodes
+            && !has_pending_deleted_rels;
 
         for row in batch.active_indices() {
             let view = BatchRow::new(batch, row);
@@ -257,11 +260,7 @@ impl Runtime<'_> {
                             }
                         }
                         Value::Relationship(target_rel) => {
-                            if !skip_delete_checks
-                                && ((self.g.borrow().is_relationship_deleted(target_rel)
-                                    && !self.pending.borrow().is_relationship_created(target_rel))
-                                    || self.pending.borrow().is_relationship_deleted(target_rel))
-                            {
+                            if !skip_delete_checks && self.is_relationship_deleted(target_rel) {
                                 continue;
                             }
                             if let Some(attr) = attr {
