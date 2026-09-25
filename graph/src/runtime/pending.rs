@@ -26,7 +26,7 @@
 
 use std::{cell::RefCell, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use atomic_refcell::AtomicRefCell;
 use roaring::RoaringTreemap;
@@ -1409,6 +1409,11 @@ impl Pending {
         };
         let label_id = usize::from(label_id) as u64;
 
+        // UNIQUE: key every affected member once, then compare the rest of the
+        // label against those keys in a single pass. Rescanning the label per
+        // affected node made one write query quadratic in its size.
+        let mut keys: FxHashSet<Vec<u8>> = FxHashSet::default();
+        let mut members = RoaringTreemap::new();
         for node_id in affected_node_ids {
             // Check if this node has the constrained label
             if !self.constraint_node_has_label(g, node_id, label_id) {
@@ -1437,29 +1442,31 @@ impl Pending {
                         // does not participate in the constraint
                         continue;
                     }
-
-                    // Build a set of all existing keys for this label in one pass
-                    if let Some(lm) = g.get_label_matrix(label) {
-                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
-                        for (other_id, _) in lm.iter(0, u64::MAX) {
-                            let other_key =
-                                Graph::build_composite_key(&constraint.properties, |prop| {
-                                    g.get_node_attribute(other_id.into(), prop)
-                                });
-                            if other_key.is_empty() {
-                                // likewise, this node does not participate
-                                continue;
-                            }
-                            if let Some(&existing_id) = seen.get(&other_key)
-                                && existing_id != other_id
-                            {
-                                return Err(format!(
-                                    "unique constraint violation on node of type {label}"
-                                ));
-                            }
-                            seen.insert(other_key, other_id);
-                        }
+                    members.insert(node_id);
+                    if !keys.insert(key) {
+                        return Err(format!(
+                            "unique constraint violation on node of type {label}"
+                        ));
                     }
+                }
+            }
+        }
+
+        if !keys.is_empty()
+            && let Some(lm) = g.get_label_matrix(label)
+        {
+            for (other_id, _) in lm.iter(0, u64::MAX) {
+                if members.contains(other_id) {
+                    continue;
+                }
+                let other_key = Graph::build_composite_key(&constraint.properties, |prop| {
+                    g.get_node_attribute(other_id.into(), prop)
+                });
+                // an empty key does not participate
+                if !other_key.is_empty() && keys.contains(&other_key) {
+                    return Err(format!(
+                        "unique constraint violation on node of type {label}"
+                    ));
                 }
             }
         }
@@ -1474,6 +1481,9 @@ impl Pending {
     ) -> Result<(), String> {
         let type_name = &constraint.label;
 
+        // UNIQUE: same single pass as `check_node_constraint`.
+        let mut keys: FxHashSet<Vec<u8>> = FxHashSet::default();
+        let mut members = RoaringTreemap::new();
         for edge_id in affected_edge_ids {
             // Edges created this transaction resolve their type from
             // Pending's reverse index — no relationship-matrix read, which
@@ -1510,29 +1520,31 @@ impl Pending {
                         // does not participate in the constraint
                         continue;
                     }
-
-                    // Build a set of all existing keys for this type in one pass
-                    if let Some(tensor) = g.get_relationship_matrix(type_name) {
-                        let mut seen: FxHashMap<Vec<u8>, u64> = FxHashMap::default();
-                        for (_, _, other_eid) in tensor.iter(0, u64::MAX, false) {
-                            let other_key =
-                                Graph::build_composite_key(&constraint.properties, |prop| {
-                                    g.get_relationship_attribute(other_eid.into(), prop)
-                                });
-                            if other_key.is_empty() {
-                                // likewise, this edge does not participate
-                                continue;
-                            }
-                            if let Some(&existing_id) = seen.get(&other_key)
-                                && existing_id != other_eid
-                            {
-                                return Err(format!(
-                                    "unique constraint violation, on edge of relationship-type {type_name}"
-                                ));
-                            }
-                            seen.insert(other_key, other_eid);
-                        }
+                    members.insert(edge_id);
+                    if !keys.insert(key) {
+                        return Err(format!(
+                            "unique constraint violation, on edge of relationship-type {type_name}"
+                        ));
                     }
+                }
+            }
+        }
+
+        if !keys.is_empty()
+            && let Some(tensor) = g.get_relationship_matrix(type_name)
+        {
+            for (_, _, other_eid) in tensor.iter(0, u64::MAX, false) {
+                if members.contains(other_eid) {
+                    continue;
+                }
+                let other_key = Graph::build_composite_key(&constraint.properties, |prop| {
+                    g.get_relationship_attribute(other_eid.into(), prop)
+                });
+                // an empty key does not participate
+                if !other_key.is_empty() && keys.contains(&other_key) {
+                    return Err(format!(
+                        "unique constraint violation, on edge of relationship-type {type_name}"
+                    ));
                 }
             }
         }
