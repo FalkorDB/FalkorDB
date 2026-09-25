@@ -182,6 +182,31 @@ class testTemporalDate(FlowTestsBase):
             self.env.assertTrue(b)
             self.env.assertEqual(ts, expected)
 
+    # out-of-range components and malformed week strings used to panic inside
+    # chrono and crash the server; they must be rejected with an error
+    def test_date_out_of_range_components(self):
+        queries = [
+            ("RETURN date({year: 2020, week: 10000000000})", "week"),
+            ("RETURN date({year: 2020, week: 0})", "week"),
+            ("RETURN localdatetime({year: 2020, week: -9223372036854775807})", "week"),
+            ("RETURN date({year: 2020, quarter: 2, dayOfQuarter: 9223372036854775807})", "dayOfQuarter"),
+            ("RETURN date({year: 2021, quarter: 1, dayOfQuarter: 200})", "dayOfQuarter"),
+            ("RETURN date({year: 2020, quarter: 4294967297})", "quarter"),
+            ("RETURN date('2020W1é')", "week"),
+        ]
+        for q, msg in queries:
+            try:
+                self.graph.query(q)
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn(msg, str(e))
+
+        # the server is still up and in-range components still work
+        q = """RETURN toString(date({year: 1984, week: 53})),
+                      toString(date({year: 1984, quarter: 4, dayOfQuarter: 92}))"""
+        res = self.graph.query(q)
+        self.env.assertEqual(res.result_set[0], ['1984-12-31', '1984-12-31'])
+
     def test_date_compare(self):
         q = """WITH date({year: 1980, month: 12, day: 24}) AS x,
                     date({year: 1984, month: 10, day: 11}) AS d
