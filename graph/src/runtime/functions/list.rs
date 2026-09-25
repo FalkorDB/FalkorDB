@@ -34,6 +34,25 @@ use crate::runtime::{
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
 
+/// The `start..end` span `list.remove(list, idx, count)` drops from a list of
+/// `len` elements: a negative `idx` counts from the end, and the span is
+/// clamped to the list. `None` (nothing removed) when `idx` is out of range
+/// or `count` is not positive.
+fn remove_span(
+    len: usize,
+    idx: i64,
+    count: i64,
+) -> Option<(usize, usize)> {
+    let len_i = len as i64;
+    let normalized = if idx < 0 { len_i + idx } else { idx };
+    if normalized < 0 || normalized >= len_i || count <= 0 {
+        return None;
+    }
+    // `normalized + count` can exceed `i64::MAX` for a huge `count`.
+    let end = (normalized.saturating_add(count) as usize).min(len);
+    Some((normalized as usize, end))
+}
+
 pub fn register(funcs: &mut Functions) {
     cypher_fn!(funcs, "size",
         args: [Type::union([
@@ -157,15 +176,9 @@ pub fn register(funcs: &mut Functions) {
                         None => 1,
                         _ => return Ok(Value::Null),
                     };
-                    let len = vs.len() as i64;
-                    // Normalize negative index
-                    let normalized = if idx < 0 { len + idx } else { idx };
-                    // Out of range or non-positive count: return original
-                    if normalized < 0 || normalized >= len || count <= 0 {
+                    let Some((start, end)) = remove_span(vs.len(), idx, count) else {
                         return Ok(Value::List(Arc::clone(vs)));
-                    }
-                    let start = normalized as usize;
-                    let end = ((normalized + count) as usize).min(vs.len());
+                    };
                     let mut result = ThinVec::with_capacity(vs.len() - (end - start));
                     result.extend_from_slice(&vs[..start]);
                     result.extend_from_slice(&vs[end..]);
@@ -341,4 +354,19 @@ pub fn register(funcs: &mut Functions) {
             }
         }
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remove_span;
+
+    #[test]
+    fn remove_span_clamps_huge_count() {
+        assert_eq!(remove_span(3, 1, i64::MAX), Some((1, 3)));
+        assert_eq!(remove_span(3, -1, i64::MAX), Some((2, 3)));
+        assert_eq!(remove_span(3, 0, 2), Some((0, 2)));
+        assert_eq!(remove_span(3, 3, 1), None);
+        assert_eq!(remove_span(3, i64::MIN, 1), None);
+        assert_eq!(remove_span(3, 1, 0), None);
+    }
 }
