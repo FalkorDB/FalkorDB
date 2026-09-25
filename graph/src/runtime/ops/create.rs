@@ -136,6 +136,41 @@ impl<'a> Iterator for CreateOp<'a> {
 }
 
 impl Runtime<'_> {
+    /// Drop the deleted-node snapshots of ids that are being handed out again.
+    ///
+    /// The snapshots are keyed by id and every accessor consults them before
+    /// the graph, so a snapshot left behind for a reissued id shadows the live
+    /// node that now owns it: its labels, properties and liveness read as the
+    /// dead node's, and `MERGE` fails to see it and creates a duplicate
+    /// (#2876). Ids are recycled across commit boundaries within a query, so
+    /// this happens whenever a `DELETE` is followed, after a `WITH`, by a
+    /// `CREATE`. Once the id is live again it names the new node, which is also
+    /// what C answers for a variable still bound to the deleted one.
+    fn forget_deleted_nodes(
+        &self,
+        ids: &[NodeId],
+    ) {
+        let mut deleted = self.deleted_nodes.borrow_mut();
+        if !deleted.is_empty() {
+            for id in ids {
+                deleted.remove(id);
+            }
+        }
+    }
+
+    /// The same for relationships.
+    fn forget_deleted_relationships(
+        &self,
+        ids: &[RelationshipId],
+    ) {
+        let mut deleted = self.deleted_relationships.borrow_mut();
+        if !deleted.is_empty() {
+            for id in ids {
+                deleted.remove(id);
+            }
+        }
+    }
+
     pub fn create_batch(
         &self,
         pattern: &QueryGraph<Arc<String>, LabelId, Variable>,
@@ -162,6 +197,8 @@ impl Runtime<'_> {
                     .map(NodeId::from)
                     .collect()
             };
+
+            self.forget_deleted_nodes(&node_ids);
 
             // Record creations and set labels in batch
             {
@@ -289,6 +326,8 @@ impl Runtime<'_> {
                     .map(RelationshipId::from)
                     .collect()
             };
+
+            self.forget_deleted_relationships(&ids);
 
             // Record all created relationships directly into pending (no intermediate Vec)
             let type_name = rel.types.first().unwrap().clone();
