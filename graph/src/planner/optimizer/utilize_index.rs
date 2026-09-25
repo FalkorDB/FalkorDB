@@ -633,7 +633,18 @@ fn try_in_filter_scan<T: IndexSubject>(
         _ => return None,
     };
 
-    let attr = extract_attribute_from_subtree(filter, attr_side)?;
+    // The index side must be the scanned property itself. `abs(n.a) IN
+    // [1]` or `2 IN [n.a, n.b]` only *contain* `n.a`; pushing them as
+    // `n.a IN [...]` or as an array-contains on `n.a` selects other rows.
+    let attr_node = filter.node(attr_side);
+    let ExprIR::Property(attr) = attr_node.data() else {
+        return None;
+    };
+    if !matches!(attr_node.get_child(0).map(|c| c.data()), Some(ExprIR::Variable(v)) if v == subject.alias())
+    {
+        return None;
+    }
+    let attr = attr.clone();
     let label = subject
         .all_labels()
         .find(|l| T::is_indexed(graph, l, &attr, &IndexType::Range))?
