@@ -421,3 +421,16 @@ class testAggregations():
         # The server is still there — the point of the domain check.
         self.env.assertEqual(
             self.graph.query("MATCH (q:Q) RETURN count(*)").result_set, [[5]])
+
+    def test_list_literal_of_aggregates(self):
+        # An aggregate that is an element of a list literal used to end the
+        # whole expression's evaluation, so the list collapsed to that one
+        # aggregate's value (#2945).
+        self.get_res_and_assertEquals(
+            "UNWIND [1, 2] AS x RETURN [min(x), max(x)], [count(x), 5]",
+            [[[1, 2], [2, 5]]])
+        self.get_res_and_assertEquals(
+            "UNWIND [1, 2] AS x RETURN size([count(x)])", [[1]])
+        self.get_res_and_assertEquals(
+            "UNWIND [1, 2, 3] AS x RETURN x % 2 AS k, [count(x), sum(x)] AS l ORDER BY k",
+            [[0, [1, 2]], [1, [2, 4]]])
