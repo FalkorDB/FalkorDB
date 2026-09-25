@@ -213,3 +213,65 @@ class testEffects_03_UpdateThenDelete(_EffectsBase):
             for label in ("UDb", "UDc", "UDd"):
                 self.env.assertEqual(
                     g.ro_query(f"MATCH (n:{label}) RETURN count(n)").result_set[0][0], 0)
+
+
+class testEffects_04_NothingSurvives(_EffectsBase):
+    """A write that changes the schema or the id space and nothing else.
+
+    `CREATE (a:A {p:1}) DELETE a` leaves no entity behind, but registers `A`
+    and `p` and hands out (then recycles) node id 0; `OPTIONAL MATCH (n:Nope)
+    SET n:L` registers `L` and touches nothing. Both used to ship no payload
+    at all: the commit only built one when `Pending::effects_count` was
+    non-zero, and that count includes neither cancelled entities nor newly
+    registered names. The replica then refused the next payload's
+    `ADD_SCHEMA` (it would number the label differently) and was forced into
+    a full resync — or, for a cancelled edge attribute, silently kept a
+    shorter attribute dictionary than its primary.
+    """
+
+    GRAPH_ID = "effects_nothing_survives"
+
+    def __init__(self):
+        self._setup()
+
+    def test01_schema_and_cancelled_writes_replicate(self):
+        full_before = self.master.info()["sync_full"]
+        diverged_before = self.replica_log_diverged()
+        failures_before = self.effect_failures()
+
+        queries = [
+            "CREATE (a:A {p:1}) DELETE a",
+            "OPTIONAL MATCH (n:Nope) SET n:L6",
+            "MERGE (a:M1 {p5:1}) DELETE a",
+            "CREATE (a)-[:T1 {p4:1}]->(b) DELETE a, b",
+            "CREATE (:B {q:2})",
+            "CREATE (:K4)-[:T2]->()",
+        ]
+        for q in queries:
+            self.query_and_sync(q)
+
+        # The replica applied every payload: no refusal, no resync.
+        self.env.assertEqual(self.effect_failures(), failures_before)
+        self.env.assertEqual(self.master.info()["sync_full"], full_before)
+        diverged = self.replica_log_diverged()
+        if diverged is not None:
+            self.env.assertEqual(diverged, diverged_before)
+
+        # Same entities, same ids, same dictionaries on both sides. The ids
+        # are the recycled ones: every cancelled id went back to the bin, and
+        # the replica has to have put it there too. `T1` is absent on both --
+        # a type whose every edge was cancelled is never registered.
+        self.assert_graph_eq()
+        self.assert_agree(
+            "MATCH (n) RETURN id(n), labels(n), properties(n) ORDER BY id(n)",
+            [[0, ["B"], {"q": 2}], [1, ["K4"], {}], [2, [], {}]])
+        self.assert_agree(
+            "CALL db.labels() YIELD label RETURN collect(label)",
+            [[["A", "L6", "M1", "B", "K4"]]])
+        self.assert_agree(
+            "CALL db.propertyKeys() YIELD propertyKey RETURN collect(propertyKey)",
+            [[["p", "p5", "p4", "q"]]])
+        self.assert_agree(
+            "CALL db.relationshipTypes() YIELD relationshipType "
+            "RETURN collect(relationshipType)",
+            [[["T2"]]])
