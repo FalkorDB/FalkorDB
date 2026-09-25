@@ -1,6 +1,6 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG TARGETPLATFORM=linux/amd64
-ARG REDIS_VERSION=8.10.1
+ARG REDIS_VERSION=8.10.2
 
 # Stage 1: chef/planner — same cache split as the regular Dockerfile so a
 # source-only change skips the dep cook.
