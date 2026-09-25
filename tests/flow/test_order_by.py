@@ -225,3 +225,26 @@ class testOrderBy(FlowTestsBase):
             # not accumulate duplicate cities and roads
             g.delete()
 
+
+    def test09_top_k_budget(self):
+        """ORDER BY ... top-k keeps every row the Limit above it can use:
+        all Skips between them count, and a traverse between them is a
+        barrier (#2957, #2659)."""
+        g = self.db.select_graph("order_by_top_k_budget")
+        try:
+            q = """UNWIND range(1, 20) AS x WITH x ORDER BY x SKIP 0
+                   RETURN x SKIP 10 LIMIT 10"""
+            self.env.assertEqual(g.query(q).result_set, [[x] for x in range(11, 21)])
+
+            q = """UNWIND range(1, 20) AS x WITH x ORDER BY x SKIP 3
+                   WITH x SKIP 3 RETURN x SKIP 3 LIMIT 3"""
+            self.env.assertEqual(g.query(q).result_set, [[10], [11], [12]])
+
+            # the LIMIT applies after the second MATCH, so the Sort must not
+            # keep only the first row (C returns no rows here)
+            g.query("CREATE (:A {id:1}), (:A {id:2})-[:R]->(:B {id:20})")
+            q = """MATCH (a:A) WITH a ORDER BY a.id
+                   MATCH (a)-[:R]->(b) RETURN b.id LIMIT 1"""
+            self.env.assertEqual(g.query(q).result_set, [[20]])
+        finally:
+            g.delete()

@@ -239,10 +239,9 @@ pub struct SortOp<'a> {
     order: Vec<usize>,
     pos: usize,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
-    /// When set, only the top `limit` rows (after skip) are needed.
-    limit: Option<usize>,
-    /// Number of rows to skip before the limit applies.
-    skip: usize,
+    /// When set, only the first `record_cap` rows (the downstream
+    /// `limit + Σ skip`) are needed.
+    record_cap: Option<usize>,
 }
 
 impl<'a> SortOp<'a> {
@@ -251,8 +250,7 @@ impl<'a> SortOp<'a> {
         child: Box<BatchOp<'a>>,
         trees: &'a [(QueryExpr<Variable>, bool)],
         idx: NodeIdx<Dyn<IR>>,
-        limit: Option<usize>,
-        skip: usize,
+        record_cap: Option<usize>,
     ) -> Self {
         Self {
             runtime,
@@ -262,8 +260,7 @@ impl<'a> SortOp<'a> {
             order: Vec::new(),
             pos: 0,
             idx,
-            limit,
-            skip,
+            record_cap,
         }
     }
 
@@ -488,9 +485,8 @@ impl<'a> Iterator for SortOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         // Consume and sort all input on the first call.
         if let Some(child) = self.child.take() {
-            let result = match self.limit {
-                Some(limit) => {
-                    let cap = limit.saturating_add(self.skip);
+            let result = match self.record_cap {
+                Some(cap) => {
                     if cap <= TOP_K_HEAP_MAX {
                         Self::build_top_k(self.runtime, self.trees, child, cap)
                     } else {
