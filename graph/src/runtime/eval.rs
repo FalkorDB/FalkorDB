@@ -1019,7 +1019,34 @@ impl<'a> ExprEval<'a> {
                     let e = env.ok_or_else(|| String::from("Variable not found"))?;
                     let mut row = e.to_owned_row();
                     let mut acc = thin_vec![];
-                    if let Some(result) = self.eval_iter_expr(&node.child(0), env)? {
+                    // A list literal or `range(..)` always yields a list, so
+                    // stream it without materialising (`eval_iter_expr`). Any
+                    // other source is checked here: `eval_iter_expr`'s UNWIND
+                    // fallback would turn null into no rows and a scalar into
+                    // one, where a comprehension gives null / a type error.
+                    let source = node.child(0);
+                    let items = match source.data() {
+                        ExprIR::List => self.eval_iter_expr(&source, env)?,
+                        ExprIR::FuncInvocation(func) if func.name == "range" => {
+                            self.eval_iter_expr(&source, env)?
+                        }
+                        _ => match self.eval_node(&source, env, agg_group_key)? {
+                            Value::List(values) => Some(RowIter::many(Box::new(
+                                Arc::unwrap_or_clone(values).into_iter(),
+                            ))),
+                            Value::Null => {
+                                res.push(Value::Null);
+                                continue;
+                            }
+                            value => {
+                                return Err(format!(
+                                    "Type mismatch: expected List or Null but was {}",
+                                    value.name()
+                                ));
+                            }
+                        },
+                    };
+                    if let Some(result) = items {
                         for value in result {
                             row.insert(var, value);
                             match self.eval_node(&node.child(1), Some(&row), agg_group_key)? {
