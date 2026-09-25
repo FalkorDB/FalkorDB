@@ -1191,6 +1191,79 @@ class testCompositeUniqueConstraintNulls():
 
         self.env.assertEqual(g.query("MATCH ()-[r:R]->() RETURN count(r)").result_set[0][0], 3)
 
+VALUE_EQUALITY_GRAPH_ID = "unique_value_equality"
+
+# (first, second, duplicate?) — what C's UNIQUE constraint decides for a second
+# entity whose constrained value is `second` when one with `first` exists.
+# Numbers are one domain compared as doubles (Bool included), strings compare
+# byte for byte, and C does not enforce UNIQUE on lists, points, temporals or
+# vectors at all.
+UNIQUE_VALUE_PAIRS = [
+    ("1",                   "1",                   True),
+    ("1",                   "1.0",                 True),
+    ("1",                   "true",                True),
+    ("0",                   "false",               True),
+    ("0.0",                 "-0.0",                True),
+    ("9007199254740992",    "9007199254740993",    True),
+    ("'a'",                 "'a'",                 True),
+    ("1",                   "2",                   False),
+    ("1",                   "'1'",                 False),
+    ("'a'",                 "'A'",                 False),
+    ("[1, 2]",              "[1, 2]",              False),
+    ("point({latitude: 1, longitude: 2})", "point({latitude: 1, longitude: 2})", False),
+    ("date('2020-01-01')",  "date('2020-01-01')",  False),
+    ("duration({days: 1})", "duration({days: 1})", False),
+    ("vecf32([1.0])",       "vecf32([1.0])",       False),
+]
+
+class testUniqueConstraintValueEquality():
+    def __init__(self):
+        self.env, self.db = Env()
+        self.con = self.env.getConnection()
+        self.con.delete(VALUE_EQUALITY_GRAPH_ID)
+        self.g = self.db.select_graph(VALUE_EQUALITY_GRAPH_ID)
+
+    def _admits(self, q):
+        try:
+            self.g.query(q)
+            return True
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation", str(e))
+            return False
+
+    def test01_node_create_and_set(self):
+        for i, (a, b, dup) in enumerate(UNIQUE_VALUE_PAIRS):
+            lbl = f"N{i}"
+            create_unique_node_constraint(self.g, lbl, "v", sync=True)
+            self.g.query(f"CREATE (:{lbl} {{v: {a}}})")
+            admitted = self._admits(f"CREATE (:{lbl} {{v: {b}}})")
+            self.env.assertEqual(admitted, not dup, message=f"CREATE {a} then {b}")
+
+            lbl = f"S{i}"
+            create_unique_node_constraint(self.g, lbl, "v", sync=True)
+            self.g.query(f"CREATE (:{lbl} {{v: {a}}}), (:{lbl} {{w: 1}})")
+            admitted = self._admits(f"MATCH (n:{lbl} {{w: 1}}) SET n.v = {b}")
+            self.env.assertEqual(admitted, not dup, message=f"{a} then SET {b}")
+
+    def test02_edge_create(self):
+        for i, (a, b, dup) in enumerate(UNIQUE_VALUE_PAIRS):
+            rel = f"R{i}"
+            create_unique_edge_constraint(self.g, rel, "v", sync=True)
+            self.g.query(f"CREATE ()-[:{rel} {{v: {a}}}]->()")
+            admitted = self._admits(f"CREATE ()-[:{rel} {{v: {b}}}]->()")
+            self.env.assertEqual(admitted, not dup, message=f"CREATE {a} then {b}")
+
+    def test03_constraint_over_existing_data(self):
+        # validating existing data uses the same equality: equal values make
+        # the new constraint FAILED, unenforced kinds leave it OPERATIONAL
+        for i, (a, b, dup) in enumerate(UNIQUE_VALUE_PAIRS):
+            lbl = f"X{i}"
+            self.g.query(f"CREATE (:{lbl} {{v: {a}}}), (:{lbl} {{v: {b}}})")
+            create_unique_node_constraint(self.g, lbl, "v", sync=True)
+            c = get_constraint(self.g, "UNIQUE", "NODE", lbl, "v")
+            self.env.assertEqual(c.status, "FAILED" if dup else "OPERATIONAL",
+                                 message=f"existing {a} and {b}")
+
 MONITOR_ATTACHED = False
 
 class testConstraintReplication():
