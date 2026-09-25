@@ -900,3 +900,28 @@ class testIndexCreationFlow():
         self.env.assertEqual(row_by_column["entitytype"], "NODE")
         self.env.assertEqual(row_by_column["status"], "OPERATIONAL")
 
+
+    def test18_field_added_during_population_is_populated(self):
+        # A field added to a label's index while that index is still being
+        # populated must itself be populated: the index may only report
+        # OPERATIONAL once every field covers every existing node.
+        graph_name = "index_field_added_during_population"
+        graph = self.db.select_graph(graph_name)
+        n = 30000  # several population batches
+
+        for _ in range(5):
+            if graph_name in self.db.list_graphs():
+                graph.delete()
+            graph.query("UNWIND range(1, $n) AS x CREATE (:L {a:x, b:x})", {'n': n})
+
+            # second field arrives while the first is populating
+            create_node_range_index(graph, 'L', 'a')
+            create_node_range_index(graph, 'L', 'b')
+            wait_for_indices_to_sync(graph)
+
+            for attr in ['a', 'b']:
+                q = f"MATCH (n:L) WHERE n.{attr} > 0 RETURN count(n)"
+                plan = str(graph.explain(q))
+                self.env.assertIn("Node By Index Scan", plan)
+                count = graph.ro_query(q).result_set[0][0]
+                self.env.assertEqual(count, n, message=f"index on L.{attr}")
