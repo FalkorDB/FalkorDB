@@ -118,6 +118,40 @@ struct CtState {
     chain_dst_label_ids: Vec<Vec<LabelId>>,
 }
 
+/// Where a row of a bidirectional chain comes from: the input record that
+/// entered the chain's first traverse, and the source node that traverse
+/// bound for it (one record yields several sources when the first traverse
+/// scans an unbound `from`). C's `F` matrix has one row per such pair.
+type Lineage = (u64, u64);
+
+/// Seen `(record, source, destination)` keys of a bidirectional-chain dedup.
+///
+/// The rows of one record reach the dedup contiguously, so keys of earlier
+/// records are dead once a new one starts; the set is cleared at a record
+/// change once it has grown, bounding its memory without paying a clear per
+/// record.
+#[derive(Default)]
+struct BidirDedup {
+    record: u64,
+    seen: rustc_hash::FxHashSet<(u64, u64, u64)>,
+}
+
+impl BidirDedup {
+    const CLEAR_AT: usize = 4096;
+
+    fn enter(
+        &mut self,
+        record: u64,
+    ) {
+        if record != self.record {
+            self.record = record;
+            if self.seen.len() >= Self::CLEAR_AT {
+                self.seen.clear();
+            }
+        }
+    }
+}
+
 pub struct CondTraverseOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
@@ -174,15 +208,26 @@ pub struct CondTraverseOp<'a> {
     /// by this CT may be created by a sibling Commit earlier in the same
     /// query, so capturing them at construction would miss them.
     state: std::cell::RefCell<Option<CtState>>,
-    /// For bidirectional anonymous-edge CTs, tracks (source, dest) pairs
-    /// already emitted to deduplicate rows that reach the same pair via
-    /// different intermediate nodes — matching C FalkorDB's matrix-multiply
-    /// semantics.
-    bidir_dedup: Option<std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
-    /// When the child is also an anonymous bidir CT, stores the child's
-    /// from-alias so the dedup key uses the original scan source (not the
-    /// intermediate node).  When None, dedup uses this CT's own from-alias.
-    dedup_source_alias: Option<Variable>,
+    /// Set when this CT and its child CT are chained anonymous undirected
+    /// hops: deduplicates `(lineage, destination)` so each record entering
+    /// the chain yields every destination once — C FalkorDB evaluates such a
+    /// chain as one matrix product `F · (A+Aᵀ) · (A+Aᵀ)` with one row of `F`
+    /// per input record.
+    bidir_dedup: Option<std::cell::RefCell<BidirDedup>>,
+    /// Lineage id of each row of the seeded batch, taken from the child CT's
+    /// [`out_lineage`](Self::out_lineage). Only used with `bidir_dedup`.
+    in_lineage: std::cell::RefCell<Vec<Lineage>>,
+    /// Set by a parent CT that deduplicates on lineage: record, in
+    /// `out_lineage`, which input record each emitted row descends from.
+    track_lineage: bool,
+    /// Lineage id of each row of the batch last returned by `next` (when
+    /// `track_lineage`). A chain-start CT numbers its own input rows; a CT
+    /// with `bidir_dedup` forwards the lineage of its input rows.
+    pub(crate) out_lineage: Vec<Lineage>,
+    /// Lineage id of row 0 of the seeded batch, for a chain-start CT.
+    lineage_base: u64,
+    /// First lineage id not yet handed out, for a chain-start CT.
+    lineage_next: u64,
     /// Structural eligibility for the batched F·A path. Computed once at
     /// construction. Variants like emit_relationship, bidir, sibling-edge
     /// uniqueness, and non-empty inline attribute predicates fall back to
@@ -260,10 +305,11 @@ impl<'a> CondTraverseOp<'a> {
         let rp = relationship_pattern;
 
         // When this CT and its child CT are both anonymous bidirectional
-        // edges, enable cross-row (from, to) deduplication to replicate
-        // C FalkorDB's matrix-multiply semantics.  Use the child's
-        // from-alias as the dedup source so we deduplicate by
-        // (original_scan_source, final_destination).
+        // edges, deduplicate (record, destination) across rows to replicate
+        // C FalkorDB's matrix-multiply semantics. The record is the row that
+        // entered the chain, identified by a lineage id the child CT stamps
+        // on every row it emits (and forwards, when it is itself a dedup CT
+        // of a longer chain).
         //
         // Only enable when the intermediate node (this CT's from-alias,
         // which is the child CT's to-alias) is anonymous.  If the
@@ -276,27 +322,23 @@ impl<'a> CondTraverseOp<'a> {
             .name
             .as_ref()
             .is_some_and(|n| n.starts_with("_anon"));
-        let (bidir_dedup, dedup_source_alias) =
-            if !emit_relationship && rp.bidirectional && intermediate_is_anon {
-                if let BatchOp::CondTraverse(ref child_ct) = *child {
-                    if !child_ct.emit_relationship && child_ct.relationship_pattern.bidirectional {
-                        (
-                            Some(std::cell::RefCell::new(std::collections::HashSet::<(
-                                u64,
-                                u64,
-                            )>::new(
-                            ))),
-                            Some(child_ct.relationship_pattern.from.alias.clone()),
-                        )
-                    } else {
-                        (None, None)
-                    }
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
+        let mut child = child;
+        let bidir_dedup = match &mut *child {
+            BatchOp::CondTraverse(child_ct)
+                if !emit_relationship
+                    && rp.bidirectional
+                    && intermediate_is_anon
+                    && !child_ct.emit_relationship
+                    && child_ct.relationship_pattern.bidirectional
+                    && child_ct.relationship_pattern.to.alias.id == rp.from.alias.id =>
+            {
+                child_ct.track_lineage = true;
+                child_ct.emitter.record_parent_rows();
+                debug_assert!(!child_ct.batched_eligible);
+                Some(std::cell::RefCell::new(BidirDedup::default()))
+            }
+            _ => None,
+        };
 
         // For fused chains the batched path is the ONLY correct path —
         // expand_row only handles single-hop. The planner inserts a Filter
@@ -350,7 +392,11 @@ impl<'a> CondTraverseOp<'a> {
             produced: 0,
             state: std::cell::RefCell::new(None),
             bidir_dedup,
-            dedup_source_alias,
+            in_lineage: std::cell::RefCell::new(Vec::new()),
+            track_lineage: false,
+            out_lineage: Vec::new(),
+            lineage_base: 0,
+            lineage_next: 0,
             batched_eligible,
         }
     }
@@ -761,8 +807,8 @@ impl<'a> CondTraverseOp<'a> {
         sibling_edges: &[u32],
         transposed: bool,
         state_cell: &std::cell::RefCell<Option<CtState>>,
-        bidir_dedup: Option<&std::cell::RefCell<std::collections::HashSet<(u64, u64)>>>,
-        dedup_source_alias: Option<&Variable>,
+        bidir_dedup: Option<&std::cell::RefCell<BidirDedup>>,
+        in_lineage: &std::cell::RefCell<Vec<Lineage>>,
         batch: &Batch<'a>,
         row_idx: usize,
         out: &mut Vec<(NodeId, NodeId, RelationshipId)>,
@@ -942,28 +988,22 @@ impl<'a> CondTraverseOp<'a> {
         }
 
         // When both this CT and its child are anonymous bidirectional,
-        // deduplicate output rows by (scan_source, final_dest) across
+        // deduplicate output rows by (record lineage, final_dest) across
         // expand_row calls — matching C FalkorDB's matrix-multiply semantics.
-        if let Some(dedup) = bidir_dedup {
-            let source_alias = dedup_source_alias.unwrap();
-            // The scan source is a parent-carried column, constant for every
-            // result of this row, so read it once.
-            let src_key = match batch.value_at(source_alias.id, row_idx) {
-                Some(Value::Node(id)) => Some(u64::from(id)),
-                _ => None,
-            };
-            let mut seen = dedup.borrow_mut();
+        if let Some(dedup) = bidir_dedup
+            && out.len() > start
+        {
+            let (record, source) = in_lineage.borrow()[row_idx];
+            let mut dedup = dedup.borrow_mut();
+            dedup.enter(record);
             let mut i = start;
             while i < out.len() {
                 // `out[i].1` is the `to` endpoint bound on the produced row.
-                let key = src_key.map(|s| (s, u64::from(out[i].1)));
-                if let Some(k) = key
-                    && !seen.insert(k)
-                {
+                if dedup.seen.insert((record, source, u64::from(out[i].1))) {
+                    i += 1;
+                } else {
                     out.swap_remove(i);
-                    continue;
                 }
-                i += 1;
             }
         }
 
@@ -1115,6 +1155,35 @@ impl<'a> CondTraverseOp<'a> {
         }
     }
 
+    /// Record in `out_lineage` the lineage of each row of `out`, given the
+    /// seeded-batch row each one was gathered from.
+    /// A CT with `bidir_dedup` forwards `in_lineage`; a chain start numbers
+    /// its input rows from `lineage_base` and pairs them with the `from` node
+    /// bound on the row. Takes the fields explicitly so it can be called
+    /// while other fields of `self` are borrowed.
+    fn stamp_lineage(
+        out_lineage: &mut Vec<Lineage>,
+        forward: Option<&std::cell::RefCell<Vec<Lineage>>>,
+        lineage_base: u64,
+        from_alias: u32,
+        out: &Batch<'a>,
+        parent_rows: &[usize],
+    ) {
+        out_lineage.clear();
+        if let Some(in_lineage) = forward {
+            let in_lineage = in_lineage.borrow();
+            out_lineage.extend(parent_rows.iter().map(|&r| in_lineage[r]));
+        } else {
+            out_lineage.extend(parent_rows.iter().enumerate().map(|(i, &r)| {
+                let source = match out.value_at(from_alias, i) {
+                    Some(Value::Node(id)) => u64::from(id),
+                    _ => u64::MAX,
+                };
+                (lineage_base + r as u64, source)
+            }));
+        }
+    }
+
     /// Trim a produced batch to the remaining `record_cap` budget (when set),
     /// advancing `produced`. Takes the fields explicitly so it can be called
     /// while disjoint fields of `self` are borrowed by the emitter closure.
@@ -1198,7 +1267,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
         let transposed = self.transposed;
         let state_cell = &self.state;
         let bidir_dedup = self.bidir_dedup.as_ref();
-        let dedup_source_alias = self.dedup_source_alias.as_ref();
+        let in_lineage = &self.in_lineage;
         let record_cap = self.record_cap;
         let optional = self.optional;
         let unmatched_cell = &self.optional_unmatched;
@@ -1225,7 +1294,7 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                     transposed,
                     state_cell,
                     bidir_dedup,
-                    dedup_source_alias,
+                    in_lineage,
                     batch,
                     row_idx,
                     &mut expanded,
@@ -1242,7 +1311,18 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                 }
             }) {
                 Ok(Some(out)) => {
-                    return Some(Ok(Self::trim_to_cap(record_cap, &mut self.produced, out)));
+                    let out = Self::trim_to_cap(record_cap, &mut self.produced, out);
+                    if self.track_lineage {
+                        Self::stamp_lineage(
+                            &mut self.out_lineage,
+                            bidir_dedup.map(|_| in_lineage),
+                            self.lineage_base,
+                            rp.from.alias.id,
+                            &out,
+                            &self.emitter.parent_rows()[..out.len()],
+                        );
+                    }
+                    return Some(Ok(out));
                 }
                 Ok(None) => {
                     // Seeded batch exhausted: flush any null-padded fallback
@@ -1255,17 +1335,37 @@ impl<'a> Iterator for CondTraverseOp<'a> {
                                 .batch()
                                 .expect("unmatched rows imply a seeded batch");
                             let fb = self.null_pad(src, &unmatched);
-                            return Some(Ok(Self::trim_to_cap(record_cap, &mut self.produced, fb)));
+                            let fb = Self::trim_to_cap(record_cap, &mut self.produced, fb);
+                            if self.track_lineage {
+                                Self::stamp_lineage(
+                                    &mut self.out_lineage,
+                                    bidir_dedup.map(|_| in_lineage),
+                                    self.lineage_base,
+                                    rp.from.alias.id,
+                                    &fb,
+                                    &unmatched[..fb.len()],
+                                );
+                            }
+                            return Some(Ok(fb));
                         }
                     }
                     // Seeded batch exhausted (or none installed). Pull the next
                     // child batch and decide fast vs. per-row path for it.
                     match self.child.next() {
                         Some(Ok(b)) => {
-                            // Reset bidirectional dedup for each new input batch
-                            // so Apply/Optional scopes see fresh state.
-                            if let Some(ref dedup) = self.bidir_dedup {
-                                dedup.borrow_mut().clear();
+                            // Lineage of the new input rows: forwarded from the
+                            // child CT when deduplicating, else numbered here.
+                            // Ids are never reused, so Apply/Optional scopes
+                            // re-entering the chain start from fresh state.
+                            if bidir_dedup.is_some()
+                                && let BatchOp::CondTraverse(child_ct) = &mut *self.child
+                            {
+                                *in_lineage.borrow_mut() =
+                                    std::mem::take(&mut child_ct.out_lineage);
+                            }
+                            if self.track_lineage && bidir_dedup.is_none() {
+                                self.lineage_base = self.lineage_next;
+                                self.lineage_next += b.len() as u64;
                             }
                             // Try the batched mxm path on the whole batch. When it
                             // fully handles the batch (`true`) its output is
