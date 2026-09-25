@@ -1885,3 +1885,33 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_merge_named_path_as_last_clause():
+    """`MERGE p=…` is planned as PathBuilder(Merge); as the last clause of a
+    query, a CALL {} body or a FOREACH body the preceding clause must feed the
+    Merge, not become a sibling of it (#2993)."""
+    query("CREATE (:A {v: 1})", write=True)
+
+    res = query("MATCH (a:A) MERGE p=(a)-[:T]->(x:X)", write=True)
+    assert res.nodes_created == 1
+    assert res.relationships_created == 1
+
+    res = query("UNWIND [1, 2] AS i MERGE p=(x:X {v: i})", write=True)
+    assert res.nodes_created == 2
+
+    res = query("MATCH (a:A) CALL { WITH a MERGE p=(a)-[:U]->(:X) }", write=True)
+    assert res.nodes_created == 1
+    assert res.relationships_created == 1
+
+    res = query("FOREACH (i IN [1] | CREATE (y:Y) MERGE p=(y)-[:T]->(:X))", write=True)
+    assert res.nodes_created == 2
+    assert res.relationships_created == 1
+
+    # Merging again matches instead of creating.
+    res = query("MATCH (a:A) MERGE p=(a)-[:T]->(x:X)", write=True)
+    assert res.nodes_created == 0
+    assert res.relationships_created == 0
+
+    res = query("MATCH p=(:A)-[:T]->(:X) RETURN length(p)")
+    assert res.result_set == [[1]]

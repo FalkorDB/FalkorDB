@@ -840,6 +840,20 @@ impl Planner {
         matches!(tree.node(idx).data(), IR::Apply) && tree.node(idx).num_children() > 1
     }
 
+    /// A MERGE with a named path is planned as `PathBuilder(Merge)`; the
+    /// preceding clause feeds the Merge, so step over the PathBuilder.
+    fn step_over_path_builder(
+        tree: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> NodeIdx<Dyn<IR>> {
+        let node = tree.node(idx);
+        if matches!(node.data(), IR::PathBuilder(_)) && node.num_children() > 0 {
+            node.child(0).idx()
+        } else {
+            idx
+        }
+    }
+
     /// Walk past the Apply chain a clause operator (`ForEach`, `Unwind`,
     /// `Set`, `Remove`, `Delete`, `LoadCsv`, a procedure call or index query) carries
     /// for pattern comprehensions in its expressions, so the
@@ -2634,6 +2648,8 @@ impl Planner {
         let mut iter = plans.into_iter().rev();
         let mut res = iter.next().unwrap();
         // Walk down to find the insertion point past post-processing operators.
+        // A MERGE with a named path is `PathBuilder(Merge)`: its input goes
+        // below the Merge, as in the loop's walk.
         let mut idx = res.root().idx();
         while matches!(res.node(idx).data(), |IR::Sort(_)| IR::Skip(_)
             | IR::Limit(_)
@@ -2641,7 +2657,8 @@ impl Planner {
             | IR::Filter(_)
             | IR::SemiApply
             | IR::AntiSemiApply
-            | IR::OrApplyMultiplexer(_))
+            | IR::OrApplyMultiplexer(_)
+            | IR::PathBuilder(_))
             || Self::is_saturated_apply(&res, idx)
         {
             idx = res.node(idx).child(0).idx();
@@ -3332,7 +3349,10 @@ impl Planner {
                 // Stitch body plans together (same as plan_query stitching)
                 let mut body_iter = body_plans.into_iter().rev();
                 let mut body_plan = body_iter.next().unwrap();
-                let mut idx = Self::descend_clause_expr_applies(&body_plan, body_plan.root().idx());
+                let mut idx = Self::descend_clause_expr_applies(
+                    &body_plan,
+                    Self::step_over_path_builder(&body_plan, body_plan.root().idx()),
+                );
                 for n in body_iter {
                     if body_plan.node(idx).num_children() > 0 {
                         idx = body_plan
@@ -3342,7 +3362,10 @@ impl Planner {
                     } else {
                         idx = body_plan.node_mut(idx).push_child_tree(n);
                     }
-                    idx = Self::descend_clause_expr_applies(&body_plan, idx);
+                    idx = Self::descend_clause_expr_applies(
+                        &body_plan,
+                        Self::step_over_path_builder(&body_plan, idx),
+                    );
                 }
                 // Do NOT wrap in Commit — mutations accumulate in pending
                 // across all iterations and are committed by the outer Commit
