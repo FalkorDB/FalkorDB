@@ -74,7 +74,7 @@ OSNICK = _get_osnick()
 
 def Env(
     moduleArgs=None,
-    env="oss",
+    env=None,
     useSlaves=False,
     enableDebugCommand=False,
     shardsCount=None,
