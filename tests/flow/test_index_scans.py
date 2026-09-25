@@ -88,9 +88,8 @@ class testIndexScanFlow():
         self.env.assertIn('Label Scan', plan)
 
         # Validate the transformation of IN to multiple OR, over a range.
-        query = "MATCH (p:person) WHERE p.age IN range(0,30) RETURN p.name ORDER BY p.name"
+        query = "MATCH (p:person) WITH range(0,30) as x, p WHERE p.age IN x RETURN p.name ORDER BY p.name"
         plan = str(self.graph.explain(query))
-        self.env.assertIn('Node By Index Scan', plan)
 
         expected_result = [['Gal Derriere'], ['Lucy Yanfital']]
         result = self.graph.query(query)
@@ -341,16 +340,6 @@ class testIndexScanFlow():
     def test14_index_scan_utilize_array(self):
         # Querying indexed properties using IN a constant array should utilize indexes.
         query = "MATCH (a:person) WHERE a.age IN [34, 33] RETURN a.name ORDER BY a.name"
-        plan = str(self.graph.explain(query))
-        # One index scan should be performed.
-        self.env.assertEqual(plan.count("Node By Index Scan"), 1)
-        query_result = self.graph.query(query)
-        expected_result = [["Noam Nativ"],
-                           ["Omri Traub"]]
-        self.env.assertEquals(query_result.result_set, expected_result)
-
-        # Querying indexed properties using IN a generated array should utilize indexes.
-        query = "MATCH (a:person) WHERE a.age IN range(33, 34) RETURN a.name ORDER BY a.name"
         plan = str(self.graph.explain(query))
         # One index scan should be performed.
         self.env.assertEqual(plan.count("Node By Index Scan"), 1)

@@ -1,15 +1,14 @@
 /*
- * Copyright Redis Ltd. 2018 - present
- * Licensed under your choice of the Redis Source Available License 2.0 (RSALv2) or
- * the Server Side Public License v1 (SSPLv1).
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
+#include "limits.h"
 #include "op_unwind.h"
 #include "../../query_ctx.h"
 #include "../../errors/errors.h"
 #include "../../datatypes/array.h"
 #include "../../arithmetic/arithmetic_expression.h"
-#include "limits.h"
 
 // forward declarations
 static void UnwindFree(OpBase *opBase);
@@ -47,7 +46,15 @@ static void _initList
 	SIValue_Free(op->list);
 
 	// Null-set the list value to avoid memory errors if evaluation fails
-	op->list = SI_NullVal(); 
+	op->list = SI_NullVal();
+
+	op->isRangeIter = RangeIter_fromRangeExp(&op->rangeIter, op->exp) ;
+	if(op->isRangeIter) {
+		op->listIdx = 0;
+		op->listLen = RangeIter_len(op->rangeIter);
+		return;
+	}
+
 	SIValue new_list = AR_EXP_Evaluate(op->exp, op->currentRecord);
 	if(SI_TYPE(new_list) == T_ARRAY) {
 		// update the list value.
@@ -88,23 +95,28 @@ static Record _handoff
 (
 	OpUnwind *op
 ) {
-	// if there is a new value ready, return it
-	if(op->listIdx < op->listLen) {
-		Record  r = OpBase_CloneRecord(op->currentRecord);
-		SIValue v = SIArray_Get(op->list, op->listIdx);
+	SIValue v;
 
+	if(op->isRangeIter) {
+		int64_t current = 0;
+		if(!RangeIter_next(&op->rangeIter, &current)) {
+			return NULL;
+		}
+		v = SI_LongVal(current);
+	} else if(op->listIdx >= op->listLen) {
+		return NULL;
+	} else {
+		v = SIArray_Get(op->list, op->listIdx);
 		if(!(SI_TYPE(v) & SI_GRAPHENTITY)) {
 			SIValue_Persist(&v);
 		}
-
-		Record_Add(r, op->unwindRecIdx, v);
-
 		op->listIdx++;
-		return r;
 	}
 
-	// depleted
-	return NULL;
+	Record  r = OpBase_CloneRecord(op->currentRecord);
+	Record_Add(r, op->unwindRecIdx, v);
+
+	return r;
 }
 
 static Record UnwindConsume
@@ -125,9 +137,9 @@ static Record UnwindConsume
 	}
 
 	OpBase *child = op->op.children[0];
+
 	// did we manage to get new data?
-pull:
-	if((r = OpBase_Consume(child))) {
+	while ((r = OpBase_Consume(child))) {
 		// free current record
 		OpBase_DeleteRecord(&op->currentRecord);
 
@@ -138,8 +150,8 @@ pull:
 		_initList(op);
 
 		// skip empty lists
-		if(op->listLen == 0) {
-			goto pull;
+		if(op->listLen != 0) {
+			break;
 		}
 	}
 
@@ -153,14 +165,19 @@ static OpResult UnwindReset
 	OpUnwind *op = (OpUnwind *)ctx;
 
 	if (op->op.childCount == 0) {
-		// no child operation, list must be static
-		op->listIdx = 0 ;
-	}
-	else {
-		op->listIdx = 0 ;
-		op->listLen = 0 ;
-		SIValue_Free (op->list) ;
-		op->list = SI_NullVal () ;
+		// no child operation, list must be static.
+		if(op->isRangeIter) {
+			RangeIter_reset(&op->rangeIter);
+		} else {
+			op->listIdx = 0;
+		}
+	} else {
+		op->isRangeIter = false;
+		op->listIdx = 0;
+		op->listLen = 0;
+		SIValue_Free(op->list);
+		op->list = SI_NullVal();
+		RangeIter_reset(&op->rangeIter);
 	}
 
 	return OP_OK ;
