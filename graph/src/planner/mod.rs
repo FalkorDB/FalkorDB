@@ -39,8 +39,9 @@ use std::{
     sync::Arc,
 };
 
-use crate::planner::optimizer::collect_expr_variables;
+use crate::planner::optimizer::{collect_expr_variables, ir_references_variable};
 use crate::runtime::functions::{FnType, Type, get_functions};
+use crate::runtime::runtime::GetVariables;
 use crate::runtime::value::Value;
 use crate::tree;
 
@@ -2670,10 +2671,11 @@ impl Planner {
             if matches!(
                 res.node(idx).data(),
                 IR::CartesianProduct | IR::ValueHashJoin { .. }
-            ) && Self::needs_apply_wrapping(&n)
+            ) && (Self::needs_apply_wrapping(&n) || Self::reads_plan_variables(&res, idx, &n))
             {
                 // When stitching a data-producing clause (LOAD CSV, UNWIND,
-                // WITH, etc.) into a CartesianProduct, wrap the CartesianProduct
+                // WITH, etc.) into a CartesianProduct — or a clause whose
+                // variables a branch of it reads — wrap the CartesianProduct
                 // in Apply so that bound variables from the preceding clause
                 // propagate via Argument leaves.
                 // This matches the FalkorDB C project's approach.
@@ -2799,6 +2801,30 @@ impl Planner {
                 _ => return true,
             }
         }
+    }
+
+    /// Returns true if the subtree at `idx` mentions a variable that plan `n`
+    /// binds. A MATCH after `MATCH … WHERE` is planned with the earlier
+    /// clause's variables already bound (`MATCH (a) WHERE .. MATCH
+    /// (a)-->(b), (c)` makes `(a)-->(b)` a traversal from a bound `a`), so
+    /// `n` cannot be just another independent CartesianProduct branch: the
+    /// branch reading `a` would see none of `n`'s rows and re-bind `a`.
+    fn reads_plan_variables(
+        res: &DynTree<IR>,
+        idx: NodeIdx<Dyn<IR>>,
+        n: &DynTree<IR>,
+    ) -> bool {
+        let bound = n.root().get_variables();
+        let mentioned = res.node(idx).get_variables();
+        bound.iter().any(|v| {
+            mentioned
+                .iter()
+                .any(|m| m.id == v.id && m.scope_id == v.scope_id)
+                || res
+                    .node(idx)
+                    .walk::<Bfs>()
+                    .any(|ir| ir_references_variable(ir, v.id, v.scope_id))
+        })
     }
 
     /// Walk the plan tree and insert an `Argument` node as child(0) of any
