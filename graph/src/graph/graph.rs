@@ -2067,6 +2067,51 @@ impl Graph {
             })
     }
 
+    /// The lowest of `nodes` that still has a relationship, in either direction.
+    ///
+    /// Per type, whichever side is smaller is walked: the type's edges, checking
+    /// both endpoints, or the nodes, seeking each one's row in both directions.
+    /// A bulk delete ships its edges first, so the tensors it reaches here are
+    /// usually empty or small, and walking them costs far less than a seek per
+    /// node. The seeking side re-seeks two iterators rather than rebuilding
+    /// them: building one allocates a `GxB_Iterator` per layer.
+    #[must_use]
+    pub fn first_node_with_relationships(
+        &self,
+        nodes: &RoaringTreemap,
+    ) -> Option<u64> {
+        let mut first: Option<u64> = None;
+        for m in &self.relationship_matrices {
+            let edges = m.edge_count();
+            if edges == 0 {
+                continue;
+            }
+            if edges <= nodes.len() {
+                first = m
+                    .iter(0, u64::MAX, false)
+                    .flat_map(|(src, dst, _)| [src, dst])
+                    .filter(|id| nodes.contains(*id))
+                    .chain(first)
+                    .min();
+                continue;
+            }
+            let mut out = m.iter(0, 0, false);
+            let mut inc = m.iter(0, 0, true);
+            for id in nodes {
+                if first.is_some_and(|f| f <= id) {
+                    break;
+                }
+                out.seek(id, id);
+                inc.seek(id, id);
+                if out.next().is_some() || inc.next().is_some() {
+                    first = Some(id);
+                    break;
+                }
+            }
+        }
+        first
+    }
+
     /// Returns an iterator over all relationship tensors (one per type).
     pub fn relationship_matrices_iter(&self) -> impl Iterator<Item = &Tensor> {
         self.relationship_matrices.iter()
