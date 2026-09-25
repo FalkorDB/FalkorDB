@@ -31,6 +31,19 @@ use std::fmt::Write;
 use std::os::raw::c_char;
 use std::sync::Arc;
 
+/// C's `%f`: Rust's `{:.6}` agrees on every finite value and on `inf` / `-inf`,
+/// but spells NaN `NaN` where C prints `nan`.
+fn write_f(
+    out: &mut String,
+    f: f64,
+) {
+    if f.is_nan() {
+        out.push_str("nan");
+    } else {
+        let _ = write!(out, "{f:.6}");
+    }
+}
+
 /// Build a Cypher-style string representation of a value, matching the C
 /// FalkorDB `SIValue_ToString` output used for verbose list/map/path/vector.
 fn format_value_to_string(
@@ -43,9 +56,7 @@ fn format_value_to_string(
         Value::Int(i) => {
             let _ = write!(out, "{i}");
         }
-        Value::Float(f) => {
-            let _ = write!(out, "{f:.6}");
-        }
+        Value::Float(f) => write_f(out, *f),
         Value::String(s) => out.push_str(s),
         Value::Datetime(ts) => out.push_str(&Value::format_datetime(*ts)),
         Value::Date(ts) => out.push_str(&Value::format_date(*ts)),
@@ -85,7 +96,7 @@ fn format_value_to_string(
                 if i > 0 {
                     out.push_str(", ");
                 }
-                let _ = write!(out, "{:.6}", f64::from(*f));
+                write_f(out, f64::from(*f));
             }
             out.push('>');
         }
@@ -518,8 +529,10 @@ pub fn reply_verbose_value(
             drop(bg);
         }
         Value::Point(point) => {
+            // C's top-level verbose point has no space after the colons, unlike
+            // the nested form in `format_value_to_string` (`SIValue_ToString`).
             let str = format!(
-                "point({{latitude: {:.6}, longitude: {:.6}}})",
+                "point({{latitude:{:.6}, longitude:{:.6}}})",
                 point.latitude, point.longitude
             );
             reply_with_str(ctx, &str);
