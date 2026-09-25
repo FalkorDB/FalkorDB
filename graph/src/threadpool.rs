@@ -31,7 +31,7 @@
 
 use std::thread::{self, JoinHandle};
 
-use crossfire::{MRx, MTx, mpmc::Array};
+use crossfire::{MRx, MTx, mpmc::List};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 
@@ -46,7 +46,7 @@ struct ThreadPool {
     /// to call `drain(..).join()`. Never touched by `spawn` — the hot
     /// path is lock-free.
     workers: Mutex<Vec<JoinHandle<()>>>,
-    sender: MTx<Array<Job>>,
+    sender: MTx<List<Job>>,
     size: usize,
 }
 
@@ -55,8 +55,13 @@ unsafe impl Sync for ThreadPool {}
 impl ThreadPool {
     pub fn new(size: usize) -> Self {
         let mut workers = Vec::with_capacity(size);
-        let (sender, receiver): (MTx<Array<Job>>, MRx<Array<Job>>) =
-            crossfire::mpmc::bounded_blocking(1024);
+        // Unbounded, like C's thpool job queue. `spawn` runs on the Redis main
+        // thread, which holds the GIL; a bounded queue makes it block there once
+        // full, while every running worker waits for that same GIL to escalate
+        // its write — a permanent deadlock. Admission is capped instead by
+        // `MAX_QUEUED_QUERIES` before dispatch ("Max pending queries exceeded").
+        let (sender, receiver): (MTx<List<Job>>, MRx<List<Job>>) =
+            crossfire::mpmc::unbounded_blocking();
         for _ in 0..size {
             let rx = receiver.clone();
             let worker = thread::spawn(move || {

@@ -2,6 +2,9 @@ from common import Env, SOCKET_TIMEOUT
 from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 import asyncio
+import os
+import resource
+import signal
 
 # 1.test getting and setting config
 #
@@ -10,9 +13,14 @@ import asyncio
 #
 # 3. test overflowing the server when there's no limit
 #    expect not to get any exceptions
+#
+# 4. flood the server with more queued writes than any fixed queue capacity
+#    expect every write to complete and the server to stay responsive
 
 GRAPH_ID = "max_pending_queries"
 SLOW_QUERY = "UNWIND range (0, 1000000) AS x WITH x WHERE (x / 2) = 50 RETURN x"
+FLOOD_NODES = 1000
+FLOOD_QUERY = f"UNWIND range(1, {FLOOD_NODES}) AS x CREATE (:N)"
 
 
 async def issue_query(self, g, q):
@@ -84,3 +92,65 @@ class testPendingQueryLimit():
         error_encountered = self.stress_server()
 
         self.env.assertTrue(error_encountered)
+
+    def test_04_flood_beyond_queue_capacity(self):
+        # More concurrent writes than the old 1024-slot thread-pool queue and
+        # the old 1024-slot per-graph write queue could hold. With bounded
+        # queues the Redis main thread blocked on a full pool queue while
+        # holding the GIL that running writers wait for, and pool workers
+        # blocked on a full write queue while holding the graph read lock the
+        # write drainer waits for: the server hung forever, PING included.
+        self.db.config_set("MAX_QUEUED_QUERIES", 4294967295)
+
+        n = 2500
+        graphs = ["flood_single"] + [f"flood_{i}" for i in range(8)]
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        want = n + 256
+        if soft < want:
+            resource.setrlimit(resource.RLIMIT_NOFILE,
+                               (want if hard == resource.RLIM_INFINITY else min(want, hard), hard))
+        soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        n = min(n, soft - 256)
+
+        def enc(*args):
+            out = f"*{len(args)}\r\n"
+            for a in args:
+                out += f"${len(a.encode())}\r\n{a}\r\n"
+            return out.encode()
+
+        async def one(graph):
+            r, w = await asyncio.open_connection(self.env.host, self.env.port)
+            try:
+                w.write(enc("GRAPH.QUERY", graph, FLOOD_QUERY))
+                await w.drain()
+                return await r.readline()
+            finally:
+                w.close()
+
+        async def flood(targets):
+            return await asyncio.wait_for(
+                asyncio.gather(*[one(g) for g in targets]), timeout=120)
+
+        # all writes on one graph, then spread over several graphs
+        for targets in ([graphs[0]] * n,
+                        [graphs[1 + i % 8] for i in range(n)]):
+            try:
+                replies = asyncio.run(flood(targets))
+            except asyncio.TimeoutError:
+                self.env.assertTrue(False, message="server hung under a write flood")
+                # a deadlocked server never answers the teardown either
+                try:
+                    os.kill(self.env.envRunner.masterProcess.pid, signal.SIGKILL)
+                except Exception:
+                    pass
+                return
+            errors = [r for r in replies if not r.startswith(b"*")]
+            self.env.assertEqual(errors, [])
+
+        self.env.assertTrue(self.db.connection.ping())
+        count = self.db.select_graph(graphs[0]).ro_query(
+            "MATCH (n:N) RETURN count(n)").result_set[0][0]
+        self.env.assertEqual(count, n * FLOOD_NODES)
+        total = sum(self.db.select_graph(g).ro_query(
+            "MATCH (n:N) RETURN count(n)").result_set[0][0] for g in graphs[1:])
+        self.env.assertEqual(total, n * FLOOD_NODES)
