@@ -106,8 +106,8 @@ pub static CONFIGURATION_CMD_INFO: AtomicBool = AtomicBool::new(true);
 pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(MAX_INFO_QUERIES_CAP);
 /// Whether graph teardown may happen off the calling thread. Settable at run-time as
 /// in C, but not yet read: this engine always frees off-thread (see
-/// `graph_core::graph_free`).
-pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
+/// `graph_core::graph_free`), so it defaults to 1 — C's default, and what happens.
+pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(1);
 
 // ── Read-only runtime configs ──
 
