@@ -152,6 +152,8 @@ OpBase *ExecutionPlan_ProcessPattern
 
 				if (!src_bounded || !dest_bounded) {
 					ErrorCtx_SetError (EMSG_ALLSHORTESTPATH_SRC_DST_RESLOVED) ;
+					arr_free (exps) ;
+					return NULL ;
 				}
 			}
 			root = NewCondVarLenTraverseOp (plan, g, exp) ;

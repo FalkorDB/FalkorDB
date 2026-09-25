@@ -284,6 +284,32 @@ class testAllShortestPaths():
         actual_result = self.cyclic_graph.query(query)
         self.env.assertEqual(actual_result.result_set, expected_result)
 
+    def test08_allshortestpaths_unbound_endpoints_raises_error(self):
+        """
+        allShortestPaths requires both endpoint variables to be already bound.
+        When a and b are introduced for the first time inside the allShortestPaths
+        pattern (not pre-bound in a preceding clause), the engine must return a
+        descriptive compile-time error instead of crashing the server (issue #2127).
+        """
+
+        # a and b are NOT pre-bound — allShortestPaths should reject this
+        query = ("MATCH p = allShortestPaths((a:Paper)-[*..2]-(b:Paper)) "
+                 "WITH *, count(a) AS count_a RETURN p")
+
+        err = None
+        try:
+            self.graph.query(query)
+        except redis.exceptions.ResponseError as e:
+            err = str(e)
+
+        # A compile-time error is the required outcome: the engine must reject
+        # allShortestPaths with unbound endpoints instead of crashing the server.
+        self.env.assertIsNotNone(err)
+        self.env.assertIn("Source and destination must already be resolved", err)
+
+        # confirm the server is still alive after the query
+        self.env.assertIsNotNone(self.graph.query("RETURN 1"))
+
     def test07_all_shortest_paths_unreachables(self):
         """
         try to find shortest path between two unreachable nodes

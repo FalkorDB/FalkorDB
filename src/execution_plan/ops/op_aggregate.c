@@ -105,6 +105,7 @@ static XXH64_hash_t _ComputeGroupKey
 		AR_ExpNode *exp = op->key_exps[i];
 		// note if AR_EXP_Evaluate throws a runtime exception we will leak
 		keys[i] = AR_EXP_Evaluate(exp, r);
+
 		// update the hash state with the current value.
 		SIValue_HashUpdate(keys[i], &state);
 	}
