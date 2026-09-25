@@ -69,7 +69,7 @@ Our goal is to build a high-performance Knowledge Graph tailored for Large Langu
 
 ## GET STARTED
 
-### Step 1
+### Using Docker
 
 To quickly try out FalkorDB, launch an instance using docker:
 
@@ -77,10 +77,29 @@ To quickly try out FalkorDB, launch an instance using docker:
 docker run -p 6379:6379 -p 3000:3000 -it --rm -v ./data:/var/lib/falkordb/data falkordb/falkordb
 ```
 
-### Step 2
-
 Then, open your browser and navigate to `http://localhost:3000`.
 
+### Using Snap (Linux)
+
+Install FalkorDB as a snap package:
+
+```bash
+sudo snap install falkordb
+```
+
+The FalkorDB service will start automatically. Connect using redis-cli:
+
+```bash
+redis-cli
+127.0.0.1:6379> GRAPH.QUERY social "CREATE (:person {name: 'Alice'})"
+```
+
+For the latest development version:
+```bash
+sudo snap install falkordb --edge
+```
+
+### Client Libraries
 
 You can also interact with FalkorDB using any of the supported [Client Libraries](https://docs.falkordb.com/clients.html)
 

@@ -76,3 +76,10 @@ redis.conf
 
 # ctags
 tags
+
+# snap build artifacts
+*.snap
+/parts/
+/stage/
+/prime/
+/build/snap/.snapcraft/

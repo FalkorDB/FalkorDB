@@ -1,0 +1,102 @@
+name: Build and Publish Snap
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - "[0-9]+.[0-9]+"
+    tags:
+      - v[0-9]+.[0-9]+.[0-9]+*
+  pull_request:
+    branches:
+      - master
+      - "[0-9]+.[0-9]+"
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runs-on }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: amd64
+            runs-on: ubuntu-latest
+          - architecture: arm64
+            runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Install snapcraft
+        run: |
+          sudo snap install snapcraft --classic
+
+      - name: Build snap
+        id: snapcraft
+        run: |
+          # Copy snapcraft.yaml to repository root for building
+          cp build/snap/snapcraft.yaml snapcraft.yaml
+          
+          # Build the snap using destructive mode (builds in current environment)
+          sudo snapcraft --destructive-mode --verbose
+          
+          # Find the generated snap file
+          SNAP_FILE=$(ls *.snap | head -1)
+          echo "snap=$(pwd)/${SNAP_FILE}" >> $GITHUB_OUTPUT
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: falkordb-snap-${{ matrix.architecture }}
+          path: ${{ steps.snapcraft.outputs.snap }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    # Only publish on tags (releases) or master branch
+    if: github.event_name == 'push' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/master')
+    steps:
+      - name: Download amd64 snap
+        uses: actions/download-artifact@v6
+        with:
+          name: falkordb-snap-amd64
+          path: ./snaps
+
+      - name: Download arm64 snap
+        uses: actions/download-artifact@v6
+        with:
+          name: falkordb-snap-arm64
+          path: ./snaps
+
+      - name: Install snapcraft
+        run: |
+          sudo snap install snapcraft --classic
+
+      - name: Publish to Snap Store (edge channel)
+        if: github.ref == 'refs/heads/master'
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          for snap in ./snaps/*.snap; do
+            echo "Publishing $snap to edge channel..."
+            snapcraft upload --release edge "$snap"
+          done
+
+      - name: Publish to Snap Store (stable channel)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          for snap in ./snaps/*.snap; do
+            echo "Publishing $snap to stable and candidate channels..."
+            snapcraft upload --release stable,candidate "$snap"
+          done
