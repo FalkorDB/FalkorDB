@@ -137,7 +137,9 @@ static bool index_delete
 	//--------------------------------------------------------------------------
 
 	// lock
-	QueryCtx_AcquireWriteLock () ;
+	if (!QueryCtx_AcquireWriteLock ()) {
+		return false;
+	}
 
 	ResultSet *result_set = QueryCtx_GetResultSet () ;
 
@@ -447,7 +449,9 @@ static void index_create
 		   idx_type == INDEX_FLD_VECTOR);
 
 	// lock
-	QueryCtx_AcquireWriteLock () ;
+	if (!QueryCtx_AcquireWriteLock ()) {
+		goto cleanup;
+	}
 
 	Index idx = NULL;
 	ResultSet *result_set = QueryCtx_GetResultSet();
