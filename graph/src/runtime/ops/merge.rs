@@ -259,7 +259,7 @@ impl<'a> MergeOp<'a> {
     /// did not. Rows of one batch still share one match sub-plan run.
     fn match_all(&mut self) -> Result<VecDeque<(Row, Vec<Row>)>, String> {
         let mut matched = VecDeque::new();
-        while let Some(batch) = self.child.next() {
+        for batch in self.child.by_ref() {
             let batch = batch?;
 
             // Build argument batch with origin_row stamped.
