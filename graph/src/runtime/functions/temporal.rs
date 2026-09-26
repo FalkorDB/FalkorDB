@@ -184,7 +184,14 @@ fn parse_date_string(s: &str) -> Result<NaiveDate, String> {
             _ => Err(format!("Invalid date string: {s}")),
         }
     } else {
-        // Compact formats: YYYY, YYYYMM, YYYYDDD, YYYYMMDD
+        // Compact formats: YYYY, YYYYMM, YYYYDDD, YYYYMMDD.
+        // `digits_only` drops non-digits rather than rejecting them, so
+        // `date('2o15o7o21')` would otherwise dispatch on `20150721` and answer
+        // 2015-07-21. Every documented compact form is already all digits, so
+        // nothing valid is lost by refusing the rest.
+        if !s.chars().all(char::is_ascii_digit) {
+            return Err(format!("Invalid date string: {s}"));
+        }
         match digits_only.len() {
             4 => {
                 let year: i32 = digits_only
@@ -294,6 +301,11 @@ fn parse_time_string(s: &str) -> Result<NaiveTime, String> {
         NaiveTime::from_hms_opt(hour, minute, second).ok_or_else(|| format!("Invalid time: {s}"))
     } else {
         let digits: String = s.chars().filter(char::is_ascii_digit).collect();
+        // Same as the compact date branch: `localtime('xx123456yy')` must not
+        // parse as 12:34:56. The fraction was already stripped above.
+        if !s.chars().all(char::is_ascii_digit) {
+            return Err(format!("Invalid time string: {s}"));
+        }
         match digits.len() {
             2 => {
                 let hour: u32 = digits.parse().map_err(|_| format!("Invalid hour: {s}"))?;
@@ -820,4 +832,66 @@ pub fn register(funcs: &mut Functions) {
         LOCALDATETIME_SLOTS,
     );
     funcs.set_struct_fn("duration", duration_struct_pure, DURATION_SLOTS);
+}
+
+#[cfg(test)]
+mod compact_parser_rejects_junk_tests {
+    use super::{parse_date_string, parse_time_string};
+    use chrono::{Datelike, Timelike};
+
+    // The compact parsers built their digit buffer with
+    // `filter(char::is_ascii_digit)`, which silently dropped every other
+    // character, so junk around a valid date or time parsed as the valid one.
+    #[test]
+    fn compact_date_rejects_embedded_letters() {
+        assert!(parse_date_string("2o15o7o21").is_err());
+        assert!(parse_date_string("hello20230506world").is_err());
+    }
+
+    #[test]
+    fn compact_date_rejects_other_punctuation() {
+        assert!(parse_date_string("+2015").is_err());
+        assert!(parse_date_string("2015 07 21").is_err());
+    }
+
+    #[test]
+    fn compact_date_keeps_every_documented_form() {
+        let y = parse_date_string("2015").unwrap();
+        assert_eq!((y.year(), y.month(), y.day()), (2015, 1, 1));
+        let ym = parse_date_string("201507").unwrap();
+        assert_eq!((ym.year(), ym.month(), ym.day()), (2015, 7, 1));
+        let ymd = parse_date_string("20150721").unwrap();
+        assert_eq!((ymd.year(), ymd.month(), ymd.day()), (2015, 7, 21));
+        let ord = parse_date_string("2015202").unwrap();
+        assert_eq!((ord.year(), ord.month(), ord.day()), (2015, 7, 21));
+    }
+
+    #[test]
+    fn the_hyphenated_and_week_forms_are_untouched() {
+        let ym = parse_date_string("2015-07").unwrap();
+        assert_eq!((ym.year(), ym.month(), ym.day()), (2015, 7, 1));
+        let ymd = parse_date_string("2015-07-21").unwrap();
+        assert_eq!((ymd.year(), ymd.month(), ymd.day()), (2015, 7, 21));
+        assert!(parse_date_string("2015-W30-2").is_ok());
+    }
+
+    #[test]
+    fn colon_less_time_rejects_embedded_letters() {
+        assert!(parse_time_string("xx123456yy").is_err());
+    }
+
+    #[test]
+    fn colon_less_time_keeps_every_documented_form() {
+        assert_eq!(parse_time_string("21").unwrap().hour(), 21);
+        assert_eq!(parse_time_string("2140").unwrap().minute(), 40);
+        assert_eq!(parse_time_string("214032").unwrap().second(), 32);
+        // The fraction is stripped before the digits are inspected.
+        assert_eq!(parse_time_string("214032.142").unwrap().second(), 32);
+    }
+
+    #[test]
+    fn the_colon_time_form_is_untouched() {
+        let t = parse_time_string("21:40:32").unwrap();
+        assert_eq!((t.hour(), t.minute(), t.second()), (21, 40, 32));
+    }
 }
