@@ -121,6 +121,20 @@ bool ApplyDropConstraint
 	GraphContext *gc  // graph to operate on
 );
 
+// process CreateCCH effect (create_cch_effect.c)
+bool ApplyCreateCCH
+(
+	FILE *stream,     // effects stream
+	GraphContext *gc  // graph to operate on
+);
+
+// process DropCCH effect (drop_cch_effect.c)
+bool ApplyDropCCH
+(
+	FILE *stream,     // effects stream
+	GraphContext *gc  // graph to operate on
+);
+
 // process UpdateNode effect
 // returns false if the effect references a node that doesn't exist locally
 // (replica has diverged from the master)

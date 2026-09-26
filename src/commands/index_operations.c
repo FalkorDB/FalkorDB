@@ -7,10 +7,22 @@
 #include "../query_ctx.h"
 #include "../index/index.h"
 #include "../index/indexer.h"
+#include "../index/cch_index.h"
 #include "index_operations.h"
 #include "../graph/graph_hub.h"
+#include "../effects/effects.h"
+#include "../util/arr.h"
 #include "../datatypes/datatypes.h"
 #include "../arithmetic/arithmetic_expression_construct.h"
+
+#include <strings.h>   // strcasecmp
+
+// forward declarations (definitions further down)
+static const char *_create_index_type_name(const cypher_astnode_t *op);
+static const char *_drop_index_type_name(const cypher_astnode_t *op);
+static bool _is_cch(const char *type_name);
+static void cch_index_create(GraphContext *gc, const cypher_astnode_t *index_op);
+static bool cch_index_drop(GraphContext *gc, const cypher_astnode_t *op);
 
 // parse drop index old format
 // DROP INDEX ON :N(name)
@@ -74,20 +86,17 @@ static void _index_delete_parse_new_format
 	*is_relation = cypher_ast_drop_pattern_props_index_pattern_is_relation(op);
 	*is_node = !*is_relation;
 
-	// determine index type
-	switch(cypher_ast_drop_pattern_props_index_get_index_type(op)) {
-		case CYPHER_INDEX_TYPE_RANGE:
-			*idx_type = INDEX_FLD_RANGE;
-			break;
-		case CYPHER_INDEX_TYPE_FULLTEXT:
-			*idx_type = INDEX_FLD_FULLTEXT;
-			break;
-		case CYPHER_INDEX_TYPE_VECTOR:
-			*idx_type = INDEX_FLD_VECTOR;
-			break;
-		default:
-			assert(false && "unknown index type");
-			break;
+	// determine index type (NULL keyword => plain range); CCH drops take their
+	// own path and never reach here
+	const char *type_name = _drop_index_type_name(op);
+	if(type_name == NULL) {
+		*idx_type = INDEX_FLD_RANGE;
+	} else if(strcasecmp(type_name, "fulltext") == 0) {
+		*idx_type = INDEX_FLD_FULLTEXT;
+	} else if(strcasecmp(type_name, "vector") == 0) {
+		*idx_type = INDEX_FLD_VECTOR;
+	} else {
+		*idx_type = INDEX_FLD_RANGE;
 	}
 }
 
@@ -112,6 +121,12 @@ static bool index_delete
 	bool       is_relation  = false;  // relation index
 	const char *lbl         = NULL;   // removed label
 	const char *attr        = NULL;   // removed attribute
+
+	// a CCH path index drop takes its own path (own object + effect)
+	if(t == CYPHER_AST_DROP_PATTERN_PROPS_INDEX &&
+			_is_cch(_drop_index_type_name(op))) {
+		return cch_index_drop(gc, op);
+	}
 
 	if(t == CYPHER_AST_DROP_PROPS_INDEX) {
 		_index_delete_parse_old_format(&is_node, &is_relation, &attr, &lbl,
@@ -238,16 +253,17 @@ static void parse_new_format
 	// extract index type
 	//--------------------------------------------------------------------------
 
-	switch(cypher_ast_create_pattern_props_index_get_index_type(index_op)) {
-		case CYPHER_INDEX_TYPE_RANGE:
-			*idx_type = INDEX_FLD_RANGE;
-			break;
-		case CYPHER_INDEX_TYPE_FULLTEXT:
-			*idx_type = INDEX_FLD_FULLTEXT;
-			break;
-		case CYPHER_INDEX_TYPE_VECTOR:
-			*idx_type = INDEX_FLD_VECTOR;
-			break;
+	// index type keyword (NULL => plain range); CCH is handled on its own path
+	const char *type_name = _create_index_type_name(index_op);
+	if(type_name == NULL) {
+		*idx_type = INDEX_FLD_RANGE;
+	} else if(strcasecmp(type_name, "fulltext") == 0) {
+		*idx_type = INDEX_FLD_FULLTEXT;
+	} else if(strcasecmp(type_name, "vector") == 0) {
+		*idx_type = INDEX_FLD_VECTOR;
+	} else {
+		// unknown types are rejected during validation; default keeps this safe
+		*idx_type = INDEX_FLD_RANGE;
 	}
 
 	//--------------------------------------------------------------------------
@@ -388,12 +404,165 @@ bool IndexOperation_ExtractLevelConfig
 	return true ;
 }
 
+// the index-type keyword string of a create/drop pattern-props-index node, or
+// NULL for a plain range index
+static const char *_create_index_type_name(const cypher_astnode_t *op) {
+	const cypher_astnode_t *t =
+		cypher_ast_create_pattern_props_index_get_index_type(op);
+	return (t == NULL) ? NULL : cypher_ast_string_get_value(t);
+}
+
+static const char *_drop_index_type_name(const cypher_astnode_t *op) {
+	const cypher_astnode_t *t =
+		cypher_ast_drop_pattern_props_index_get_index_type(op);
+	return (t == NULL) ? NULL : cypher_ast_string_get_value(t);
+}
+
+static bool _is_cch(const char *type_name) {
+	return type_name != NULL && strcasecmp(type_name, "cch") == 0;
+}
+
+// collect the relationship-type names of a pattern-props-index node into a fresh
+// arr_ of (non-owned, parser-owned) name strings. a relationship pattern index
+// may span several types: ()-[e:A|B]->()
+static const char **_index_reltype_names(const cypher_astnode_t *op) {
+	const char **names = arr_new(const char *, 1);
+	uint n = cypher_astnode_nchildren(op);
+	for(uint i = 0; i < n; i++) {
+		const cypher_astnode_t *c = cypher_astnode_get_child(op, i);
+		if(cypher_astnode_type(c) == CYPHER_AST_LABEL) {
+			arr_append(names, cypher_ast_label_get_name(c));
+		}
+	}
+	return names;
+}
+
+// CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.weight)
+// builds a Customizable Contraction Hierarchy path index over the relationship
+// types for the weight property. unknown relationship types / weight attribute
+// are created (as any CREATE INDEX may introduce new schema). writes nothing to
+// the graph; the hierarchy lives inside the index.
+static void cch_index_create
+(
+	GraphContext *gc,                  // graph context
+	const cypher_astnode_t *index_op   // AST create pattern-props-index node
+) {
+	// CCH is a relationship pathfinding index
+	if(!cypher_ast_create_pattern_props_index_pattern_is_relation(index_op)) {
+		ErrorCtx_SetError("CCH index is only supported on relationships");
+		return;
+	}
+
+	// exactly one property: the edge weight
+	uint nprops = cypher_ast_create_pattern_props_index_nprops(index_op);
+	if(nprops != 1) {
+		ErrorCtx_SetError("CCH index requires exactly one property, the edge weight");
+		return;
+	}
+	const char *weight = cypher_ast_prop_name_get_value(
+			cypher_ast_property_operator_get_prop_name(
+				cypher_ast_create_pattern_props_index_get_property_operator(
+					index_op, 0)));
+
+	const char **rel_names = _index_reltype_names(index_op);   // >= 1 (grammar)
+
+	QueryCtx_AcquireWriteLock();
+
+	// resolve-or-create the relationship schemas + weight attribute; these emit
+	// their own schema/attribute effects, ordered before the CCH effect below
+	uint rc = arr_len(rel_names);
+	RelationID *rel_ids = arr_new(RelationID, rc);
+	for(uint i = 0; i < rc; i++) {
+		Schema *s = GraphHub_AddSchema(gc, rel_names[i], SCHEMA_EDGE, true);
+		arr_append(rel_ids, Schema_GetID(s));
+	}
+	AttributeID weight_attr = GraphHub_FindOrAddAttribute(gc, weight, true);
+
+	// one CCH index per (relTypes, weightProp)
+	if(GraphContext_GetCCHIndex(gc, rel_ids, arr_len(rel_ids), weight_attr)
+			!= NULL) {
+		ErrorCtx_SetError("a CCH index already exists over these relationship "
+				"types and weight attribute");
+		arr_free(rel_ids);
+		arr_free(rel_names);
+		return;
+	}
+
+	CCHIndex *idx = CCHIndex_New(rel_ids, arr_len(rel_ids), weight_attr);
+	CCHIndex_Build(idx, GraphContext_GetGraph(gc));
+	GraphContext_AddCCHIndex(gc, idx);
+
+	ResultSet_IndexCreated(QueryCtx_GetResultSet(), INDEX_OK);
+
+	// definition-only create-CCH effect (replication + AOF); each receiver
+	// rebuilds its own hierarchy
+	EffectsBuffer_AddCreateCCHEffect(QueryCtx_GetEffectsBuffer(), rel_ids,
+			rel_names, rc, weight_attr, weight);
+
+	arr_free(rel_ids);
+	arr_free(rel_names);
+}
+
+// DROP CCH INDEX FOR ()-[e:A|B]->() ON (e.weight)
+static bool cch_index_drop
+(
+	GraphContext *gc,            // graph context
+	const cypher_astnode_t *op   // AST drop pattern-props-index node
+) {
+	if(!cypher_ast_drop_pattern_props_index_pattern_is_relation(op)) {
+		ErrorCtx_SetError("CCH index is only supported on relationships");
+		return false;
+	}
+	uint nprops = cypher_ast_drop_pattern_props_index_nprops(op);
+	if(nprops != 1) {
+		ErrorCtx_SetError("CCH index requires exactly one property, the edge weight");
+		return false;
+	}
+	const char *weight = cypher_ast_prop_name_get_value(
+			cypher_ast_property_operator_get_prop_name(
+				cypher_ast_drop_pattern_props_index_get_property_operator(op, 0)));
+
+	const char **rel_names = _index_reltype_names(op);
+
+	// resolve ids -- all must already exist to match a live index
+	uint rc = arr_len(rel_names);
+	RelationID *rel_ids = arr_new(RelationID, rc);
+	AttributeID weight_attr = GraphContext_GetAttributeID(gc, weight);
+	bool resolvable = (weight_attr != ATTRIBUTE_ID_NONE);
+	for(uint i = 0; i < rc && resolvable; i++) {
+		Schema *s = GraphContext_GetSchema(gc, rel_names[i], SCHEMA_EDGE);
+		if(s == NULL) { resolvable = false; break; }
+		arr_append(rel_ids, Schema_GetID(s));
+	}
+
+	QueryCtx_AcquireWriteLock();
+
+	bool removed = resolvable && GraphContext_RemoveCCHIndex(gc, rel_ids,
+			arr_len(rel_ids), weight_attr);
+	if(!removed) {
+		ErrorCtx_SetError("no CCH index over these relationship types and weight "
+				"attribute");
+		arr_free(rel_ids);
+		arr_free(rel_names);
+		return false;
+	}
+
+	ResultSet_IndexDeleted(QueryCtx_GetResultSet(), INDEX_OK);
+	EffectsBuffer_AddDropCCHEffect(QueryCtx_GetEffectsBuffer(), rel_ids,
+			rel_names, arr_len(rel_ids), weight_attr, weight);
+
+	arr_free(rel_ids);
+	arr_free(rel_names);
+	return true;
+}
+
 // create index
 // CREATE INDEX ON :N(name)
 // CREATE INDEX FOR (n:N) ON (n.name)
 // CREATE INDEX FOR ()-[e:R]-() ON (e.name)
 // CREATE FULLTEXT INDEX FOR (n:N) ON (n.name)
 // CREATE VECTOR INDEX FOR ()-[e:R]-() ON (e.name)
+// CREATE CCH INDEX FOR ()-[e:A|B]->() ON (e.name)
 static void index_create
 (
 	GraphContext *gc,  // graph context
@@ -417,6 +586,15 @@ static void index_create
 
 	// extract info from AST
 	cypher_astnode_type_t t = cypher_astnode_type(index_op);
+
+	// a CCH path index is a graph-level structure, not a Schema/RediSearch index;
+	// it takes a dedicated path (own object + effect), bypassing the generic flow
+	if(t == CYPHER_AST_CREATE_PATTERN_PROPS_INDEX &&
+			_is_cch(_create_index_type_name(index_op))) {
+		cch_index_create(gc, index_op);
+		return;
+	}
+
 	if(t == CYPHER_AST_CREATE_NODE_PROPS_INDEX) {
 		parse_old_format(index_op, &label, &fields, &nfields, &et, &idx_type,
 				&options);

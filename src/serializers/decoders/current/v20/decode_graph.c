@@ -3,8 +3,9 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-#include "decode_v19.h"
+#include "decode_v20.h"
 #include "../../../../index/indexer.h"
+#include "../../../../index/cch_index.h"
 
 static GraphContext *_GetOrCreateGraphContext
 (
@@ -106,7 +107,7 @@ static GraphContext *_DecodeHeader
 	}
 
 	// decode graph schemas
-	RdbLoadGraphSchema_v19 (rdb, gc, !first_vkey) ;
+	RdbLoadGraphSchema_v20 (rdb, gc, !first_vkey) ;
 
 	// save decode statistics for later progess reporting
 	// e.g. "Decoded 20000/4500000 nodes"
@@ -184,7 +185,7 @@ GraphContext *RdbLoadGraphContext_latest
 		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
-				RdbLoadNodes_v19(rdb, g, payload.entities_count);
+				RdbLoadNodes_v20(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -196,7 +197,7 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v19(rdb, g, payload.entities_count);
+				RdbLoadDeletedNodes_v20(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -208,7 +209,7 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			case ENCODE_STATE_EDGES:
-				RdbLoadEdges_v19(rdb, g, payload.entities_count);
+				RdbLoadEdges_v20(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -218,7 +219,7 @@ GraphContext *RdbLoadGraphContext_latest
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v19(rdb, g, payload.entities_count);
+				RdbLoadDeletedEdges_v20(rdb, g, payload.entities_count);
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -234,7 +235,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading label matrices",
 						GraphContext_GetName(gc));
 
-				RdbLoadLabelMatrices_v19(rdb, g);
+				RdbLoadLabelMatrices_v20(rdb, g);
 				break;
 
 			case ENCODE_STATE_RELATION_MATRICES:
@@ -242,7 +243,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading relation matrices",
 						GraphContext_GetName(gc));
 
-				RdbLoadRelationMatrices_v19(rdb, g);
+				RdbLoadRelationMatrices_v20(rdb, g);
 				break;
 
 			case ENCODE_STATE_ADJ_MATRIX:
@@ -250,7 +251,7 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading Adjacency matrix",
 						GraphContext_GetName(gc));
 
-				RdbLoadAdjMatrix_v19(rdb, g);
+				RdbLoadAdjMatrix_v20(rdb, g);
 				break;
 
 			case ENCODE_STATE_LBLS_MATRIX:
@@ -258,7 +259,11 @@ GraphContext *RdbLoadGraphContext_latest
 						"Graph '%s' loading Labels matrix",
 						GraphContext_GetName(gc));
 
-				RdbLoadLblsMatrix_v19(rdb, g);
+				RdbLoadLblsMatrix_v20(rdb, g);
+				break;
+
+			case ENCODE_STATE_CCH_INDICES:
+				RdbLoadCCH_v20(rdb, gc);
 				break;
 
 			default:
@@ -343,6 +348,10 @@ GraphContext *RdbLoadGraphContext_latest
 				}
 			}
 		}
+
+		// graph-level CCH path indices are loaded whole (hierarchy included) by
+		// RdbLoadCCH_v20 during the ENCODE_STATE_CCH_INDICES payload -- no
+		// post-load rebuild is needed anymore
 
 		// make sure graph doesn't contains may pending changes
 		ASSERT(Graph_Pending(g) == false);

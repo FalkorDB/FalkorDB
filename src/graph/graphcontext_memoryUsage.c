@@ -10,6 +10,7 @@
 #include "entities/attribute_set.h"
 #include "../schema/schema.h"
 #include "../index/index.h"
+#include "../index/cch_index.h"
 #include "../util/arr.h"
 
 #include <sys/param.h>
@@ -366,6 +367,12 @@ void GraphContext_EstimateMemoryUsage
 
 		if (active_idx  != NULL) result->indices_sz += Index_MemoryUsage (active_idx) ;
 		if (pending_idx != NULL) result->indices_sz += Index_MemoryUsage (pending_idx) ;
+	}
+
+	// graph-level CCH path indices (own resident hierarchy, not RediSearch-backed)
+	uint n_cch = GraphContext_CCHIndexCount (gc) ;
+	for (uint i = 0 ; i < n_cch ; i++) {
+		result->indices_sz += CCHIndex_MemoryUsage (GraphContext_GetCCHIndexAt (gc, i)) ;
 	}
 
 	//--------------------------------------------------------------------------

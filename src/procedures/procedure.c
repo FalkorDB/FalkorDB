@@ -72,6 +72,14 @@ void Proc_Register() {
 	_procRegister("db.idx.vector.queryRelationships", Proc_VectorQueryRelCtx);
 
 	//--------------------------------------------------------------------------
+	// register CCH path index generator
+	//--------------------------------------------------------------------------
+
+	// create/drop are the CREATE/DROP CCH INDEX DDL statements; only the
+	// point-to-point query remains a procedure (no DDL equivalent)
+	_procRegister("db.idx.cch.query",  Proc_CCHIdxQueryCtx);
+
+	//--------------------------------------------------------------------------
 	// register db metadata statistics
 	//--------------------------------------------------------------------------
 

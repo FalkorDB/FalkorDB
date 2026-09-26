@@ -7,10 +7,14 @@
 #include "GraphBLAS.h"
 #include "metis.h"
 #include "../util/arr.h"
+#include "../util/dict.h"
 #include "../util/rmalloc.h"
+#include "../serializers/serializer_io.h"
+#include "utils/priority_heap.h"
 #include "cch.h"
 
 #include <math.h>
+#include <string.h>
 
 // METIS_NodeND requires idx_t and int64_t to line up (see build.sh's
 // build_metis(), which builds METIS with i64=1 specifically to match
@@ -51,6 +55,13 @@ void CCH_Free
 		rm_free (cch->up) ;
 	}
 
+	if (cch->down != NULL) {
+		for (int64_t rank = 0 ; rank < cch->n ; rank++) {
+			arr_free (cch->down [rank]) ;
+		}
+		rm_free (cch->down) ;
+	}
+
 	if (cch->up_w != NULL) {
 		for (int64_t rank = 0 ; rank < cch->n ; rank++) {
 			rm_free (cch->up_w [rank]) ;
@@ -80,6 +91,56 @@ void CCH_Free
 	}
 
 	rm_free (cch) ;
+}
+
+size_t CCH_MemoryUsage
+(
+	const CCH *cch
+) {
+	if (cch == NULL) {
+		return 0 ;
+	}
+
+	int64_t n  = cch->n ;
+	size_t  sz = RedisModule_MallocSize ((void *) cch) ;
+
+	// rank-space fixed arrays
+	if (cch->perm   != NULL) sz += RedisModule_MallocSize (cch->perm)   ;
+	if (cch->iperm  != NULL) sz += RedisModule_MallocSize (cch->iperm)  ;
+	if (cch->xadj   != NULL) sz += RedisModule_MallocSize (cch->xadj)   ;
+	if (cch->adjncy != NULL) sz += RedisModule_MallocSize (cch->adjncy) ;
+	if (cch->parent != NULL) sz += RedisModule_MallocSize (cch->parent) ;
+
+	// upward / downward adjacency: a pointer array plus one arr_ per rank
+	if (cch->up != NULL) {
+		sz += RedisModule_MallocSize (cch->up) ;
+		for (int64_t r = 0 ; r < n ; r++) {
+			if (cch->up [r] != NULL) sz += arr_bytesize (cch->up [r]) ;
+		}
+	}
+	if (cch->down != NULL) {
+		sz += RedisModule_MallocSize (cch->down) ;
+		for (int64_t r = 0 ; r < n ; r++) {
+			if (cch->down [r] != NULL) sz += arr_bytesize (cch->down [r]) ;
+		}
+	}
+
+	// per-arc metric outputs: a pointer array plus one plain array per rank
+	#define _CCH_ARC_ARR(field)                                          \
+		if (cch->field != NULL) {                                        \
+			sz += RedisModule_MallocSize (cch->field) ;                  \
+			for (int64_t r = 0 ; r < n ; r++) {                          \
+				if (cch->field [r] != NULL)                              \
+					sz += RedisModule_MallocSize (cch->field [r]) ;      \
+			}                                                            \
+		}
+	_CCH_ARC_ARR (up_w)   ;
+	_CCH_ARC_ARR (dn_w)   ;
+	_CCH_ARC_ARR (up_mid) ;
+	_CCH_ARC_ARR (dn_mid) ;
+	#undef _CCH_ARC_ARR
+
+	return sz ;
 }
 
 // builds the CSR (xadj/adjncy) representation METIS_NodeND expects: the
@@ -424,6 +485,32 @@ static void _build_chordal_supergraph
 	cch->up = up ;
 }
 
+// build cch->down, the inverse of cch->up: down[hi] lists every lo < hi with
+// hi in up[lo]. iterating lo in increasing rank and appending lo to down[hi]
+// leaves each down list sorted ascending (mirroring up's sorted order), which an
+// incremental recustomization relies on to intersect lower neighbourhoods.
+static void _build_down_adjacency
+(
+	CCH *cch
+) {
+	int64_t n = cch->n ;
+
+	int64_t **down = rm_calloc (n, sizeof (int64_t *)) ;
+	for (int64_t rank = 0 ; rank < n ; rank++) {
+		down [rank] = arr_new (int64_t, 2) ;
+	}
+
+	for (int64_t lo = 0 ; lo < n ; lo++) {
+		int64_t *ulo = cch->up [lo] ;
+		for (uint32_t i = 0 ; i < arr_len (ulo) ; i++) {
+			int64_t hi = ulo [i] ;          // hi > lo
+			arr_append (down [hi], lo) ;    // lo is a lower neighbour of hi
+		}
+	}
+
+	cch->down = down ;
+}
+
 void CCH_ChordalTriangulation
 (
 	CCH *cch
@@ -436,6 +523,17 @@ void CCH_ChordalTriangulation
 
 	_build_elimination_tree   (cch) ;
 	_build_chordal_supergraph (cch) ;
+	_build_down_adjacency     (cch) ;
+
+	// xadj / adjncy / parent are Phase-1 scratch: the raw skeleton fed to METIS
+	// (xadj/adjncy) and the elimination tree (parent). they are read only while
+	// building the chordal supergraph, above -- never by Phase 2, the query, or
+	// incremental maintenance (a topology change rebuilds them from the graph
+	// anyway). free them now to keep the resident hierarchy lean. NULL so
+	// CCH_Free doesn't double-free and CCH_MemoryUsage counts them as 0.
+	rm_free (cch->xadj)   ; cch->xadj   = NULL ;
+	rm_free (cch->adjncy) ; cch->adjncy = NULL ;
+	rm_free (cch->parent) ; cch->parent = NULL ;
 }
 
 //------------------------------------------------------------------------------
@@ -592,6 +690,178 @@ void CCH_Customize
 	cch->dn_mid = dn_mid ;
 }
 
+//------------------------------------------------------------------------------
+// Phase 2 (scoped): incremental re-customization after a weight change
+//------------------------------------------------------------------------------
+
+// like _find_upper but returns -1 instead of asserting when the arc (y,z) is
+// absent -- used where "not adjacent" is a legitimate answer (probing whether a
+// lower neighbour of one endpoint is also adjacent to the other).
+static int64_t _find_upper_opt
+(
+	const CCH *cch,
+	int64_t    y,
+	int64_t    z
+) {
+	int64_t *uy = cch->up [y] ;
+	int64_t  lo = 0 ;
+	int64_t  hi = (int64_t) arr_len (uy) - 1 ;
+
+	while (lo <= hi) {
+		int64_t mid = lo + ((hi - lo) >> 1) ;
+		if      (uy [mid] < z) lo = mid + 1 ;
+		else if (uy [mid] > z) hi = mid - 1 ;
+		else                   return mid ;
+	}
+
+	return -1 ;
+}
+
+// pack an arc, identified by its lower-endpoint rank and its slot in up[lo],
+// into the heap's NodeID field / the dedup set's key
+#define ARC_KEY(lo, slot) \
+	((void *)(uintptr_t)(((uint64_t)(lo) << 32) | (uint32_t)(slot)))
+
+void CCH_RecustomizeScoped
+(
+	CCH           *cch,
+	CCH_SeedFn     seed,
+	void          *ctx,
+	const int64_t *du,
+	const int64_t *dv,
+	uint64_t       k
+) {
+	ASSERT (cch       != NULL) ;
+	ASSERT (cch->up   != NULL) ;
+	ASSERT (cch->down != NULL) ;
+	ASSERT (cch->up_w != NULL) ;   // a prior full customization must exist
+	ASSERT (seed      != NULL) ;
+
+	int64_t n = cch->n ;
+
+	// 'queued' dedups arcs so each is processed at most once; the min-heap
+	// (keyed by lower-endpoint rank) yields arcs in the order the forward sweep
+	// would finalize them, so an arc is only recomputed once every arc it reads
+	// is already final
+	dict          *queued = HashTableCreate (&def_dt) ;
+	NodeWeightHeap heap ;
+	NodeWeightHeap_init (&heap) ;
+
+	#define ENQUEUE(lo_, slot_)                                                 \
+		do {                                                                    \
+			void *_key = ARC_KEY ((lo_), (slot_)) ;                             \
+			if (HashTableFetchValue (queued, _key) == NULL) {                   \
+				HashTableAdd (queued, _key, (void *)(uintptr_t)1) ;             \
+				NodeWeightHeap_offer (&heap,                                    \
+					(NodeWeightItem){ .node = (NodeID)(uintptr_t)_key,          \
+					                  .weight = (double)(lo_) }) ;              \
+			}                                                                   \
+		} while (0)
+
+	// seed: each changed original edge's chordal arc becomes the initial dirty
+	// front
+	for (uint64_t i = 0 ; i < k ; i++) {
+		int64_t a = (du [i] < (int64_t) n) ? cch->iperm [du [i]] : -1 ;
+		int64_t b = (dv [i] < (int64_t) n) ? cch->iperm [dv [i]] : -1 ;
+		if (a < 0 || b < 0 || a == b) continue ;
+		int64_t lo   = a < b ? a : b ;
+		int64_t hi   = a < b ? b : a ;
+		int64_t slot = _find_upper_opt (cch, lo, hi) ;
+		if (slot >= 0) ENQUEUE (lo, slot) ;
+	}
+
+	NodeWeightItem it ;
+	while (NodeWeightHeap_poll (&heap, &it)) {
+		uint64_t key  = (uint64_t) it.node ;
+		int64_t  lo   = (int64_t) (key >> 32) ;
+		int64_t  slot = (int64_t) (uint32_t) key ;
+		int64_t  hi   = cch->up [lo] [slot] ;
+
+		double old_up = cch->up_w [lo] [slot] ;
+		double old_dn = cch->dn_w [lo] [slot] ;
+
+		// reset the arc to its seed (raw original-edge weights, both directions)
+		double s_lohi, s_hilo ;
+		seed (ctx, cch->perm [lo], cch->perm [hi], &s_lohi, &s_hilo) ;
+
+		double  best_up = s_lohi ; int64_t mid_up = -1 ;
+		double  best_dn = s_hilo ; int64_t mid_dn = -1 ;
+
+		// re-relax over every lower common neighbour x of lo and hi. a common
+		// neighbour is exactly a rank in both lower-adjacency lists (x in down[lo]
+		// and x in down[hi] => x < lo < hi, arcs (x,lo) and (x,hi) both exist), so
+		// intersect the two ascending lists with a linear merge -- far cheaper for
+		// high-rank arcs (large down[]) than probing up[x] for every lower
+		// neighbour of lo
+		int64_t *dlo = cch->down [lo] ;
+		int64_t *dhi = cch->down [hi] ;
+		uint32_t na = arr_len (dlo), nb = arr_len (dhi) ;
+		uint32_t ai = 0, bi = 0 ;
+		while (ai < na && bi < nb) {
+			int64_t xa = dlo [ai], xb = dhi [bi] ;
+			if      (xa < xb) { ai++ ; continue ; }
+			if      (xa > xb) { bi++ ; continue ; }
+
+			int64_t x  = xa ;                            // common lower neighbour
+			int64_t iy = _find_upper_opt (cch, x, lo) ;  // slot of lo in up[x]
+			int64_t iz = _find_upper_opt (cch, x, hi) ;  // slot of hi in up[x]
+
+			// detour lo -> x -> hi : (lo->x) + (x->hi) = dn_w[x][iy] + up_w[x][iz]
+			double cand_up = cch->dn_w [x] [iy] + cch->up_w [x] [iz] ;
+			if (cand_up < best_up) { best_up = cand_up ; mid_up = x ; }
+
+			// detour hi -> x -> lo : (hi->x) + (x->lo) = dn_w[x][iz] + up_w[x][iy]
+			double cand_dn = cch->dn_w [x] [iz] + cch->up_w [x] [iy] ;
+			if (cand_dn < best_dn) { best_dn = cand_dn ; mid_dn = x ; }
+
+			ai++ ; bi++ ;
+		}
+
+		cch->up_w   [lo] [slot] = best_up ;
+		cch->up_mid [lo] [slot] = mid_up ;
+		cch->dn_w   [lo] [slot] = best_dn ;
+		cch->dn_mid [lo] [slot] = mid_dn ;
+
+		// if the arc actually changed, every arc that reads it might change too:
+		// the top arcs of the apex-'lo' triangles {lo, hi, w}, w in up[lo]
+		if (best_up != old_up || best_dn != old_dn) {
+			int64_t *ul = cch->up [lo] ;
+			for (uint32_t wi = 0 ; wi < arr_len (ul) ; wi++) {
+				int64_t w = ul [wi] ;
+				if (w == hi) continue ;
+				int64_t d_lo   = hi < w ? hi : w ;
+				int64_t d_hi   = hi < w ? w  : hi ;
+				int64_t d_slot = _find_upper_opt (cch, d_lo, d_hi) ;
+				if (d_slot >= 0) ENQUEUE (d_lo, d_slot) ;
+			}
+		}
+	}
+
+	#undef ENQUEUE
+
+	NodeWeightHeap_free (&heap) ;
+	HashTableRelease (queued) ;
+}
+
+#undef ARC_KEY
+
+bool CCH_HasArc
+(
+	const CCH *cch,
+	int64_t    a,
+	int64_t    b
+) {
+	ASSERT (cch != NULL) ;
+
+	if (a == b || a < 0 || b < 0 || a >= cch->n || b >= cch->n) {
+		return false ;
+	}
+
+	int64_t lo = a < b ? a : b ;
+	int64_t hi = a < b ? b : a ;
+	return _find_upper_opt (cch, lo, hi) >= 0 ;
+}
+
 void CCH_ExtractShortcuts
 (
 	const CCH       *cch,
@@ -665,3 +935,102 @@ void CCH_ExtractShortcuts
 // Phase 3 (query) is not built into this module. The materialized SHORTCUT
 // edges + node ranks are queried by the stateless, concurrency-safe
 // rank-pruned bidirectional Dijkstra in proc_cch_query.c instead.
+
+//------------------------------------------------------------------------------
+// RDB serialization (full hierarchy)
+//------------------------------------------------------------------------------
+
+void CCH_RdbSave
+(
+	const CCH   *cch,
+	SerializerIO io
+) {
+	ASSERT (cch != NULL) ;
+	ASSERT (cch->up != NULL) ;   // a built hierarchy
+
+	int64_t n = cch->n ;
+	SerializerIO_WriteSigned (io, n) ;
+
+	// perm[n] (iperm is derived on load)
+	SerializerIO_WriteBuffer (io, cch->perm, n * sizeof (int64_t)) ;
+
+	// per rank: degree + upward adjacency + per-arc weights/middles
+	// (down[] is derived on load)
+	for (int64_t r = 0 ; r < n ; r++) {
+		uint32_t deg = arr_len (cch->up [r]) ;
+		SerializerIO_WriteUnsigned (io, deg) ;
+		if (deg > 0) {
+			SerializerIO_WriteBuffer (io, cch->up     [r], deg * sizeof (int64_t)) ;
+			SerializerIO_WriteBuffer (io, cch->up_w   [r], deg * sizeof (double))  ;
+			SerializerIO_WriteBuffer (io, cch->dn_w   [r], deg * sizeof (double))  ;
+			SerializerIO_WriteBuffer (io, cch->up_mid [r], deg * sizeof (int64_t)) ;
+			SerializerIO_WriteBuffer (io, cch->dn_mid [r], deg * sizeof (int64_t)) ;
+		}
+	}
+}
+
+// read 'nbytes' from 'io' into a freshly-allocated 'dst' array (rm-owned).
+// SerializerIO_ReadBuffer returns an rm-allocated buffer we copy then free, so
+// 'dst' follows the CCH allocation convention (rm_malloc / arr_ data)
+static void _read_into
+(
+	SerializerIO io,
+	void        *dst,
+	size_t       nbytes
+) {
+	size_t len ;
+	void *buf = SerializerIO_ReadBuffer (io, &len) ;
+	ASSERT (len == nbytes) ;
+	memcpy (dst, buf, nbytes) ;
+	rm_free (buf) ;
+}
+
+CCH *CCH_RdbLoad
+(
+	SerializerIO io
+) {
+	int64_t n = SerializerIO_ReadSigned (io) ;
+
+	CCH *cch = CCH_New (n) ;   // n set; every array NULL
+
+	// perm[n]
+	cch->perm = rm_malloc (sizeof (int64_t) * n) ;
+	_read_into (io, cch->perm, n * sizeof (int64_t)) ;
+
+	// per-rank pointer arrays
+	cch->up     = rm_calloc (n, sizeof (int64_t *)) ;
+	cch->up_w   = rm_malloc (sizeof (double  *) * n) ;
+	cch->dn_w   = rm_malloc (sizeof (double  *) * n) ;
+	cch->up_mid = rm_malloc (sizeof (int64_t *) * n) ;
+	cch->dn_mid = rm_malloc (sizeof (int64_t *) * n) ;
+
+	for (int64_t r = 0 ; r < n ; r++) {
+		uint32_t deg   = SerializerIO_ReadUnsigned (io) ;
+		int64_t  slots = deg > 0 ? deg : 1 ;   // match CCH_Customize's layout
+
+		cch->up     [r] = arr_newlen (int64_t, deg) ;   // arr_ with len == deg
+		cch->up_w   [r] = rm_malloc (sizeof (double)  * slots) ;
+		cch->dn_w   [r] = rm_malloc (sizeof (double)  * slots) ;
+		cch->up_mid [r] = rm_malloc (sizeof (int64_t) * slots) ;
+		cch->dn_mid [r] = rm_malloc (sizeof (int64_t) * slots) ;
+
+		if (deg > 0) {
+			_read_into (io, cch->up     [r], deg * sizeof (int64_t)) ;
+			_read_into (io, cch->up_w   [r], deg * sizeof (double))  ;
+			_read_into (io, cch->dn_w   [r], deg * sizeof (double))  ;
+			_read_into (io, cch->up_mid [r], deg * sizeof (int64_t)) ;
+			_read_into (io, cch->dn_mid [r], deg * sizeof (int64_t)) ;
+		}
+	}
+
+	// derive iperm from perm; xadj/adjncy/parent stay NULL (Phase-1 scratch)
+	cch->iperm = rm_malloc (sizeof (int64_t) * n) ;
+	for (int64_t r = 0 ; r < n ; r++) {
+		cch->iperm [cch->perm [r]] = r ;
+	}
+
+	// derive down[] from up[]
+	_build_down_adjacency (cch) ;
+
+	return cch ;
+}
