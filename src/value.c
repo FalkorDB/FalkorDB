@@ -7,6 +7,7 @@
 #include "RG.h"
 #include "value.h"
 #include "util/rmalloc.h"
+#include "util/wire_string.h"
 #include "graph/entities/node.h"
 #include "graph/entities/edge.h"
 #include "datatypes/datatypes.h"
@@ -1102,16 +1103,16 @@ XXH64_hash_t SIValue_HashCode
 }
 
 // reads SIValue off of binary stream
-SIValue SIValue_FromBinary
+bool SIValue_FromBinary
 (
-    FILE *stream  // stream to read value from
+	FILE *stream,  // stream to read value from
+	SIValue *out   // [output] value read
 ) {
-	ASSERT(stream != NULL);
+	ASSERT (stream != NULL);
+	ASSERT (out    != NULL);
 
 	// read value type
 	SIType t;
-	SIValue v;
-	size_t len;  // string length
 
 	bool     b;
 	int64_t  i;
@@ -1119,95 +1120,115 @@ SIValue SIValue_FromBinary
 	Point    p;
 	char    *s;
 	time_t  ts;
-	struct SIValue *array;
 
-	fread_assert(&t, sizeof(SIType), stream);
+	// leave the caller with a value that is always safe to free, whatever
+	// happens below
+	*out = SI_NullVal();
+
+	if (!fread_checked (&t, sizeof (SIType), stream)) {
+		return false;
+	}
+
 	switch(t) {
 		case T_POINT:
 			// read point from stream
-			fread_assert(&p, sizeof(v.point), stream);
-			v = SI_Point(p.latitude, p.longitude);
+			if (!fread_checked (&p, sizeof (p), stream)) {
+				return false;
+			}
+			*out = SI_Point(p.latitude, p.longitude);
 			break;
 
 		case T_ARRAY:
 			// read array from stream
-			v = SIArray_FromBinary(stream);
-			break;
+			return SIArray_FromBinary (stream, out);
 
 		case T_STRING:
-			// read string length from stream
-			fread_assert(&len, sizeof(len), stream);
-			s = rm_malloc(sizeof(char) * len);
-			// read string from stream
-			fread_assert(s, sizeof(char) * len, stream);
-			v = SI_TransferStringVal(s);
+			s = ReadWireString (stream);
+			if (s == NULL) {
+				return false;
+			}
+			*out = SI_TransferStringVal(s);
 			break;
 
 		case T_INTERN_STRING:
-			// read string length from stream
-			fread_assert(&len, sizeof(len), stream);
-			s = rm_malloc(sizeof(char) * len);
-			// read string from stream
-			fread_assert(s, sizeof(char) * len, stream);
-			v = SI_InternStringVal(s);
+			s = ReadWireString (stream);
+			if (s == NULL) {
+				return false;
+			}
+			*out = SI_InternStringVal(s);
 			rm_free(s);
 			break;
 
 		case T_BOOL:
 			// read bool from stream
-			fread_assert(&b, sizeof(b), stream);
-			v = SI_BoolVal(b);
+			if (!fread_checked (&b, sizeof (b), stream)) {
+				return false;
+			}
+			*out = SI_BoolVal(b);
 			break;
 
 		case T_INT64:
 			// read int from stream
-			fread_assert(&i, sizeof(i), stream);
-			v = SI_LongVal(i);
+			if (!fread_checked (&i, sizeof (i), stream)) {
+				return false;
+			}
+			*out = SI_LongVal(i);
 			break;
 
 		case T_DOUBLE:
 			// read double from stream
-			fread_assert(&d, sizeof(d), stream);
-			v = SI_DoubleVal(d);
+			if (!fread_checked (&d, sizeof (d), stream)) {
+				return false;
+			}
+			*out = SI_DoubleVal(d);
 			break;
 
 		case T_VECTOR_F32:
-			v = SIVector_FromBinary(stream, t);
-			break;
+			return SIVector_FromBinary (stream, t, out);
 
 		case T_MAP:
-			v = Map_FromBinary (stream) ;
-			break;
+			return Map_FromBinary (stream, out);
 
 		case T_NULL:
-			v = SI_NullVal();
+			*out = SI_NullVal();
 			break;
 
 		case T_TIME:
-			fread_assert(&ts, sizeof(ts), stream);
-			v = SI_Time(ts);
+			if (!fread_checked (&ts, sizeof (ts), stream)) {
+				return false;
+			}
+			*out = SI_Time(ts);
 			break;
 
 		case T_DATE:
-			fread_assert(&ts, sizeof(ts), stream);
-			v = SI_Date(ts);
+			if (!fread_checked (&ts, sizeof (ts), stream)) {
+				return false;
+			}
+			*out = SI_Date(ts);
 			break;
 
 		case T_DATETIME:
-			fread_assert(&ts, sizeof(ts), stream);
-			v = SI_DateTime(ts);
+			if (!fread_checked (&ts, sizeof (ts), stream)) {
+				return false;
+			}
+			*out = SI_DateTime(ts);
 			break;
 
 		case T_DURATION:
-			fread_assert(&ts, sizeof(ts), stream);
-			v = SI_Duration(ts);
+			if (!fread_checked (&ts, sizeof (ts), stream)) {
+				return false;
+			}
+			*out = SI_Duration(ts);
 			break;
 
 		default:
-			assert(false && "unknown SIValue type");
+			// an unknown tag is a malformed payload, not an invariant
+			// violation - the old assert() compiled out under NDEBUG and
+			// returned an uninitialized SIValue
+			return false;
 	}
 
-	return v;
+	return true;
 }
 
 // compute SIValue memory usage

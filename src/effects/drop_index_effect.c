@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "../util/wire_string.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
@@ -69,17 +70,21 @@ bool ApplyDropIndex
 	int label_id ;
 	fread_assert (&label_id, sizeof (label_id), stream) ;
 
-	size_t l ;
-	fread_assert (&l, sizeof (l), stream) ;
-	char label [l] ;
-	fread_assert (label, l, stream) ;
+	// BOUNDED - see ReadWireString. These were stack arrays sized by a length
+	// off the wire, read with a macro whose ASSERT compiles out in release.
+	char *label = ReadWireString (stream) ;
+	if (label == NULL) {
+		return false ;
+	}
 
 	AttributeID attr_id ;
 	fread_assert (&attr_id, sizeof (attr_id), stream) ;
 
-	fread_assert (&l, sizeof (l), stream) ;
-	char attr [l] ;
-	fread_assert (attr, l, stream) ;
+	char *attr = ReadWireString (stream) ;
+	if (attr == NULL) {
+		rm_free (label) ;
+		return false ;
+	}
 
 	IndexFieldType t ;
 	fread_assert (&t, sizeof (t), stream) ;
@@ -88,13 +93,16 @@ bool ApplyDropIndex
 	// verify label & attribute against local state
 	//--------------------------------------------------------------------------
 
+	// single exit from here, so the two strings are freed on every path
+	bool res = false ;
+
 	Schema *s = VerifySchema (gc, st, label_id, label) ;
 	if (s == NULL) {
-		return false ;
+		goto cleanup ;
 	}
 
 	if (!VerifyAttribute (gc, attr_id, attr)) {
-		return false ;
+		goto cleanup ;
 	}
 
 	//--------------------------------------------------------------------------
@@ -105,13 +113,18 @@ bool ApplyDropIndex
 		RedisModule_Log (NULL, "warning",
 				"GRAPH.EFFECT DROP_INDEX references index field '%s' on "
 				"'%s' which doesn't exist locally", attr, label) ;
-		return false ;
+		goto cleanup ;
 	}
 
 	//--------------------------------------------------------------------------
 	// drop index field
 	//--------------------------------------------------------------------------
 
-	return GraphHub_DropIndex (gc, st, label, attr, t, false) == INDEX_OK ;
+	res = (GraphHub_DropIndex (gc, st, label, attr, t, false) == INDEX_OK) ;
+
+cleanup:
+	rm_free (label) ;
+	rm_free (attr) ;
+	return res ;
 }
 
