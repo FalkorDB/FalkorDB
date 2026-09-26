@@ -89,14 +89,27 @@ void buildMergeOp
 		arguments = (const char **)raxValues (bound_vars) ;
 	}
 
-	// convert all AST data required to populate our operations tree
-	AST_MergeContext merge_ctx = AST_PrepareMergeOp (clause, gc,
-			plan->query_graph, bound_vars) ;
-
 	// build the Match stream as a Merge child
 	const cypher_astnode_t *path = cypher_ast_merge_get_pattern_path (clause) ;
 	OpBase *match_stream =
 		ExecutionPlan_BuildOpsFromPath (plan, arguments, path) ;
+
+	// a NULL match-stream means an error was raised while building the merge
+	// pattern (typically by a preceding clause that left the query in an error
+	// state); abort before creating the Merge op so we don't wire a NULL child
+	// into the plan. the query will surface the error and the partially-built
+	// plan is discarded by the caller
+	if (match_stream == NULL) {
+		if (bound_vars) {
+			raxFree (bound_vars) ;
+		}
+		arr_free (arguments) ;
+		return ;
+	}
+
+	// convert all AST data required to populate our operations tree
+	AST_MergeContext merge_ctx = AST_PrepareMergeOp (clause, gc,
+			plan->query_graph, bound_vars) ;
 
 	// create a Merge operation
 	// it will store no information at this time except for any graph updates

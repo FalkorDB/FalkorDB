@@ -777,3 +777,65 @@ class testGraphMergeFlow():
         self.env.assertEquals(edge.properties['created'], True)
         self.env.assertEquals(edge.properties['matched'], True)
 
+    def test38_merge_after_erroring_clause(self):
+        """
+        an error raised while building a clause that precedes a MERGE used to
+        crash the server: the MERGE clause was still processed and built a NULL
+        match-stream which it then dereferenced (issue #239)
+
+        two error sources are covered:
+          1. a wrong-arity function call (now rejected during AST validation)
+          2. a non-boolean WHERE predicate (raised during plan construction),
+             which reaches the MERGE clause and exercises the buildMergeOp guard
+
+        verify each query fails gracefully with the expected error and that the
+        server survives to serve subsequent queries
+        """
+
+        self.graph.delete()
+        self.graph.query("CREATE (:Action {url:'u'}), (:Page {url:'u'})")
+
+        # (query, expected error substring)
+        cases = [
+            # rtrim accepts a single argument, two are supplied (customer shape)
+            ("""MATCH (a:Action) MATCH (p:Page)
+                WHERE p.url = a.url OR p.url = rtrim(a.url, '/') OR a.url = p.url + '/'
+                MERGE (a)-[:TARGETS]->(p) RETURN count(a)""",
+             "arguments to function"),
+            # minimal arity trigger: single wrong-arity call, no OR
+            ("""MATCH (a:Action) MATCH (p:Page)
+                WHERE p.url = rtrim(a.url, '/')
+                MERGE (a)-[:T]->(p) RETURN count(a)""",
+             "arguments to function"),
+            # too few arguments
+            ("""MATCH (a:Action) MATCH (p:Page)
+                WHERE p.url = toLower()
+                MERGE (a)-[:T]->(p) RETURN count(a)""",
+             "arguments to function"),
+            # non-boolean predicate in a MATCH preceding the MERGE
+            ("""MATCH (a:Action) WHERE 1 MATCH (p:Page)
+                MERGE (a)-[:T]->(p) RETURN count(a)""",
+             "Expected boolean predicate"),
+            # non-boolean disjunction preceding the MERGE
+            ("""MATCH (a:Action) WHERE a.url CONTAINS 'x' OR 'y' MATCH (p:Page)
+                MERGE (a)-[:T]->(p) RETURN count(a)""",
+             "Expected boolean predicate"),
+        ]
+
+        for q, expected in cases:
+            try:
+                self.graph.query(q)
+                assert False, "expected an error"
+            except redis.exceptions.ResponseError as e:
+                self.env.assertIn(expected, str(e))
+
+            # server must still be responsive after the failed query
+            res = self.graph.query("MATCH (n) RETURN count(n)").result_set
+            self.env.assertEquals(res[0][0], 2)
+
+        # a valid function of the same shape must still build and run the MERGE
+        res = self.graph.query("""MATCH (a:Action) MATCH (p:Page)
+                                  WHERE p.url = toLower(a.url)
+                                  MERGE (a)-[:T]->(p) RETURN count(a)""")
+        self.env.assertEquals(res.relationships_created, 1)
+
