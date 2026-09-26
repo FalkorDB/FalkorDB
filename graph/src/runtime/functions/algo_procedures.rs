@@ -1937,7 +1937,19 @@ fn parse_common_path_config(
             let mut types = Vec::with_capacity(list.len());
             for v in list.iter() {
                 match v {
-                    Value::String(s) => types.push(s.clone()),
+                    // Dedup. `get_node_relationships_by_type` collects one
+                    // matrix per listed type, so a repeat puts the same matrix
+                    // in the list twice: `enumerate_paths` then re-explores
+                    // every subtree once per copy and `record_found_path` fills
+                    // the k result slots with duplicates of a single path.
+                    // `relTypes` is a set everywhere else it is read, so an
+                    // order-preserving dedup is a no-op for a list without
+                    // repeats.
+                    Value::String(s) => {
+                        if !types.contains(s) {
+                            types.push(s.clone());
+                        }
+                    }
                     _ => return Err(String::from("relTypes must be array of strings")),
                 }
             }
