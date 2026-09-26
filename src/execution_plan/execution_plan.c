@@ -52,6 +52,14 @@ void ExecutionPlan_PopulateExecutionPlan
 		const cypher_astnode_t *clause =
 			cypher_ast_query_get_clause (ast->root, i) ;
 		ExecutionPlanSegment_ConvertClause (gc, ast, plan, clause) ;
+
+		// stop building once a clause has raised an error
+		// subsequent clauses may rely on state (e.g. bound variables or
+		// traversal ops) that a failed clause left incomplete, leading to
+		// crashes such as feeding a NULL match-stream into a Merge op
+		if (ErrorCtx_EncounteredError ()) {
+			break ;
+		}
 	}
 }
 

@@ -777,3 +777,51 @@ class testGraphMergeFlow():
         self.env.assertEquals(edge.properties['created'], True)
         self.env.assertEquals(edge.properties['matched'], True)
 
+    def test38_merge_after_invalid_function_arity(self):
+        """
+        a function invocation with a wrong number of arguments in a clause
+        preceding a MERGE used to crash the server: the arity error was raised
+        late during plan construction, leaving the following MERGE clause to
+        build a NULL match-stream and dereference it (issue #239)
+
+        verify the query now fails gracefully with the arity error and that the
+        server survives to serve subsequent queries
+        """
+
+        self.graph.delete()
+        self.graph.query("CREATE (:Action {url:'u'}), (:Page {url:'u'})")
+
+        # each of these places a wrong-arity function call in the WHERE of a
+        # MATCH that precedes a MERGE binding both matched entities
+        crashing_queries = [
+            # rtrim accepts a single argument, two are supplied (customer shape)
+            """MATCH (a:Action) MATCH (p:Page)
+               WHERE p.url = a.url OR p.url = rtrim(a.url, '/') OR a.url = p.url + '/'
+               MERGE (a)-[:TARGETS]->(p) RETURN count(a)""",
+            # minimal trigger: single wrong-arity call, no OR
+            """MATCH (a:Action) MATCH (p:Page)
+               WHERE p.url = rtrim(a.url, '/')
+               MERGE (a)-[:T]->(p) RETURN count(a)""",
+            # too few arguments
+            """MATCH (a:Action) MATCH (p:Page)
+               WHERE p.url = toLower()
+               MERGE (a)-[:T]->(p) RETURN count(a)""",
+        ]
+
+        for q in crashing_queries:
+            try:
+                self.graph.query(q)
+                assert False, "expected an arity error"
+            except redis.exceptions.ResponseError as e:
+                self.env.assertIn("arguments to function", str(e))
+
+            # server must still be responsive after the failed query
+            res = self.graph.query("MATCH (n) RETURN count(n)").result_set
+            self.env.assertEquals(res[0][0], 2)
+
+        # a valid function of the same shape must still build and run the MERGE
+        res = self.graph.query("""MATCH (a:Action) MATCH (p:Page)
+                                  WHERE p.url = toLower(a.url)
+                                  MERGE (a)-[:T]->(p) RETURN count(a)""")
+        self.env.assertEquals(res.relationships_created, 1)
+
