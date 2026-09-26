@@ -104,7 +104,12 @@ pub fn register(funcs: &mut Functions) {
                             Value::Bool(_) => {
                                 return Err("Type mismatch: expected String but was Boolean".to_string());
                             }
-                            _ => return Err("Type mismatch: expected String".to_string()),
+                            _ => {
+                                return Err(format!(
+                                    "Type mismatch: expected String but was {}",
+                                    label_value.name()
+                                ));
+                            }
                         };
                         // The `n:Label` predicate's hot path, once per row: one
                         // bit of the label matrix instead of the node's whole
@@ -316,7 +321,7 @@ fn parse_degree_args(
         Value::Null => None,
         other => {
             return Err(format!(
-                "Type mismatch: expected Node but was {:?}",
+                "Type mismatch: expected Node but was {}",
                 other.get_type()
             ));
         }
@@ -340,7 +345,7 @@ fn parse_degree_args(
                     }
                     other => {
                         return Err(format!(
-                            "Type mismatch: expected String but was {:?}",
+                            "Type mismatch: expected String but was {}",
                             other.get_type()
                         ));
                     }
@@ -367,7 +372,7 @@ fn parse_degree_args(
             }
             other => {
                 return Err(format!(
-                    "Type mismatch: expected String but was {:?}",
+                    "Type mismatch: expected String but was {}",
                     other.get_type()
                 ));
             }
@@ -375,4 +380,69 @@ fn parse_degree_args(
     }
 
     Ok((id, types))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Arc, ThinVec, Value, parse_degree_args};
+
+    fn list(items: Vec<Value>) -> Value {
+        Value::List(Arc::new(ThinVec::from(items)))
+    }
+
+    fn s(v: &str) -> Value {
+        Value::String(Arc::new(v.to_string()))
+    }
+
+    // `indegree`/`outdegree` are var-len, so `validate_args_type` is a no-op
+    // for them and this hand-rolled check is the only one they get. It named
+    // the received type with `{:?}` ("Int", "List(List(Any))") instead of the
+    // Display vocabulary the framework and C both use ("Integer", "List").
+    #[test]
+    fn node_argument_mismatch_names_the_received_type() {
+        let err = parse_degree_args("indegree", &[Value::Int(1)]).unwrap_err();
+        assert_eq!(err, "Type mismatch: expected Node but was Integer");
+    }
+
+    #[test]
+    fn list_argument_mismatch_names_the_received_type() {
+        let err =
+            parse_degree_args("outdegree", &[Value::Null, list(vec![Value::Int(1)])]).unwrap_err();
+        assert_eq!(err, "Type mismatch: expected String but was Integer");
+    }
+
+    #[test]
+    fn vararg_mismatch_names_the_received_type() {
+        let err = parse_degree_args("outdegree", &[Value::Null, Value::Int(1)]).unwrap_err();
+        assert_eq!(err, "Type mismatch: expected String but was Integer");
+    }
+
+    #[test]
+    fn a_bare_number_after_a_string_still_names_the_type() {
+        let err =
+            parse_degree_args("outdegree", &[Value::Null, s("R"), Value::Int(1)]).unwrap_err();
+        assert_eq!(err, "Type mismatch: expected String but was Integer");
+    }
+
+    #[test]
+    fn the_arity_message_is_untouched() {
+        let err =
+            parse_degree_args("outdegree", &[Value::Null, list(vec![s("R")]), s("R")]).unwrap_err();
+        assert_eq!(
+            err,
+            "Received 3 arguments to function 'outdegree', expected at most 2"
+        );
+    }
+
+    #[test]
+    fn the_accepted_shapes_are_untouched() {
+        assert_eq!(
+            parse_degree_args("indegree", &[Value::Null]).unwrap(),
+            (None, Vec::new())
+        );
+        assert_eq!(
+            parse_degree_args("outdegree", &[Value::Null, list(vec![s("R")])]).unwrap(),
+            (None, vec![Arc::new("R".to_string())])
+        );
+    }
 }
