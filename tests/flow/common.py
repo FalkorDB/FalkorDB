@@ -379,11 +379,29 @@ def _spawn_falkordb_cluster(image, shards, falkordb_args="",
     return nodes
 
 
+def _slots_have_unresolved_endpoint(slots):
+    """True if any node in a `CLUSTER SLOTS` reply still reports `?` as its
+    address.
+
+    The bootstrap clients are built without `decode_responses`, so the address
+    arrives as bytes; a str is accepted too so the check does not silently
+    become a no-op if that ever changes.
+    """
+    for entry in slots:
+        for node in entry[2:]:
+            addr = node[0]
+            if isinstance(addr, bytes):
+                addr = addr.decode()
+            if "?" in addr:
+                return True
+    return False
+
+
 def _bootstrap_cluster(shard_addrs, attempts=100, interval=0.2):
     """Form a Redis cluster from `shard_addrs` (list of (host, port)) using
     pure redis-py — no redis-cli dependency in the job/RC images.
 
-    Three phases:
+    Four phases:
       1. CLUSTER ADDSLOTSRANGE — split 16384 slots into N contiguous ranges
          and assign one per shard.
       2. CLUSTER MEET — from shard 0, meet every other shard. Cluster bus
@@ -391,6 +409,9 @@ def _bootstrap_cluster(shard_addrs, attempts=100, interval=0.2):
       3. Poll CLUSTER INFO on every shard until cluster_state=ok and
          cluster_known_nodes equals the shard count. Bounded retry mirrors
          _wait_for_redis's shape.
+      4. Poll CLUSTER SLOTS on every shard until no peer endpoint is reported
+         as "?", i.e. until the announced hostnames have merged. See the
+         comment on that loop for why phase 3 is not enough.
     """
     n = len(shard_addrs)
     if n == 0:
@@ -441,6 +462,31 @@ def _bootstrap_cluster(shard_addrs, attempts=100, interval=0.2):
             if last_exc is not None:
                 msg += f"; last error: {last_exc!r}"
             raise RuntimeError(msg)
+
+    # Phase 4. cluster_state=ok plus cluster_known_nodes == n only proves the
+    # gossip topology arrived: a peer learned through gossip counts as known
+    # before its --cluster-announce-hostname has been merged, and under
+    # --cluster-preferred-endpoint-type hostname an unmerged node is reported
+    # as "?". The cluster client snapshots that into its slot map when it is
+    # built, so any command that then opens a direct connection to every
+    # primary -- udf_load, the first such command in test_udf_cluster -- fails
+    # on "?:6379". Every shard announces a hostname, so "?" is never a steady
+    # state here; if it persists, failing loudly here beats handing the test a
+    # client that cannot connect.
+    for c, (h, p) in zip(clients, shard_addrs):
+        for _ in range(attempts):
+            try:
+                if not _slots_have_unresolved_endpoint(
+                        c.execute_command("CLUSTER", "SLOTS")):
+                    break
+            except Exception:
+                pass
+            time.sleep(interval)
+        else:
+            raise RuntimeError(
+                f"cluster shard {h}:{p} still reports a '?' endpoint for a peer "
+                f"after {attempts * interval:.1f}s; announced hostnames have "
+                f"not propagated")
 
 
 def _no_retry_client(c):
