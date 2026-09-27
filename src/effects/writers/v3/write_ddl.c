@@ -9,13 +9,13 @@
 // so a field is staged and the record is built when the query stops producing
 // fields - see effects_v3_group.h.
 
-#include "RG.h"
-#include "effects.h"
-#include "effects_internal.h"
-#include "effects_writer.h"
-#include "effects_v3_group.h"
+#include "../../../RG.h"
+#include "../../effects.h"
+#include "../../effects_internal.h"
+#include "write_v3.h"
+#include "../../effects_v3_group.h"
 
-static void _v3_CreateIndex
+void EffectsWriteV3_CreateIndex
 (
 	EffectsBuffer *buff,   // effect buffer
 	SchemaType st,         // schema type (node/edge)
@@ -37,7 +37,7 @@ static void _v3_CreateIndex
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-static void _v3_DropIndex
+void EffectsWriteV3_DropIndex
 (
 	EffectsBuffer *buff,   // effect buffer
 	SchemaType st,         // schema type (node/edge)
@@ -55,7 +55,7 @@ static void _v3_DropIndex
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-static void _v3_CreateConstraint
+void EffectsWriteV3_CreateConstraint
 (
 	EffectsBuffer *buff,          // effect buffer
 	ConstraintType ct,            // constraint type (unique/mandatory)
@@ -77,7 +77,7 @@ static void _v3_CreateConstraint
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-static void _v3_DropConstraint
+void EffectsWriteV3_DropConstraint
 (
 	EffectsBuffer *buff,          // effect buffer
 	ConstraintType ct,            // constraint type (unique/mandatory)
@@ -95,10 +95,3 @@ static void _v3_DropConstraint
 
 	EffectsBuffer_IncEffectCount (buff) ;
 }
-
-const EffectsWriter EFFECTS_WRITER_V3 = {
-	.CreateIndex      = _v3_CreateIndex,
-	.DropIndex        = _v3_DropIndex,
-	.CreateConstraint = _v3_CreateConstraint,
-	.DropConstraint   = _v3_DropConstraint,
-} ;
