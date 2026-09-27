@@ -9,23 +9,16 @@
 
 // the per-version write table, chosen once and never consulted again
 //
-// The split the RDB uses on its READ side: Decode_Previous switches on the
-// encoding version once, and a version's decoder never asks again. Here the
-// switch is EffectsBuffer_New, which already knows the version it will emit.
+// The split serializers/ uses on its read side: Decode_Previous switches on
+// the encoding version once, and a version's decoder never asks again. Here
+// the switch is EffectsBuffer_New, which already knows the version to emit.
 //
-// The RDB's write side needs no table, because a build encodes exactly one
-// version. Effects cannot: EFFECTS_VERSION is a runtime config, since a
-// v3-capable build still has to emit v2 for an older replica. So the version
-// is a value rather than a compile-time fact, and the table is what stops it
-// being re-tested at every call site.
-//
-// PARTIAL while the conversion proceeds. A slot exists per converted writer;
-// the rest still branch on EffectsBuffer_V3 inside effects.c.
+// A table rather than a compile-time choice because EFFECTS_VERSION is a
+// runtime config: a v3-capable build still has to emit v2 for an older
+// replica.
 typedef struct {
-	// entity writers
-	//
-	// The statistics each public entry point updates stay there: they belong to
-	// both versions, so they are the one thing a per-version arm must not own.
+	// entity writers. The statistics each public entry point updates stay
+	// there: they belong to both versions, so an arm must not own them
 	void (*CreateNode)
 	(
 		EffectsBuffer *buff,    // effect buffer
@@ -81,11 +74,10 @@ typedef struct {
 		const char *attr      // attribute name
 	);
 
-	// index DDL
+	// index DDL, one effect per FIELD on both wires
 	//
-	// one effect per FIELD on both wires. 'options' is the v2 wire and
-	// 'stated' the subset the statement named; each arm reads one of them and
-	// says which, rather than the shared entry point carrying both notes
+	// 'options' is the v2 wire and 'stated' the subset the statement named;
+	// each arm reads one of them and says which
 	void (*CreateIndex)
 	(
 		EffectsBuffer *buff,

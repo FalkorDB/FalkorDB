@@ -14,7 +14,7 @@
 
 // add a constraint deletion effect to buffer
 //
-// forwards to the version's writer; see effects_writer.h
+// forwards to the version's writer; see writers/effects_writer.h
 void EffectsBuffer_AddDropConstraintEffect
 (
 	EffectsBuffer *buff,          // effect buffer
