@@ -6,7 +6,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
-#include "effects_writer.h"
+#include "writers/effects_writer.h"
 #include "../util/wire_string.h"
 #include "../util/arr.h"
 #include "../graph/graph_hub.h"
