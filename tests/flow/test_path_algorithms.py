@@ -714,6 +714,55 @@ class testAllShortestPaths():
                 YIELD path RETURN length(path)""", timeout=60000).result_set,
             [])
 
+    def test12a_costprop_missing_on_an_edge_contributes_one(self):
+        """`edge_numeric_attr` has a single `default`, which collapsed two cases C
+        keeps apart: an unconfigured `costProp` contributes 0, but a configured
+        one falls back to 1 for an edge that does not carry the property. Rust
+        used 0 for both, so pathCost was under-reported -- and since
+        `enumerate_paths` gates `maxCost` on the running cost, it also pruned a
+        different set of paths."""
+
+        g = self.db.select_graph("costprop_default")
+        # :EC deliberately has no `cost` property.
+        g.query("""
+            CREATE (a:CP {id: 'A'}), (b:CP {id: 'B'}), (c:CP {id: 'C'}),
+                   (a)-[:EC {weight: 1, cost: 2}]->(b),
+                   (b)-[:EC {weight: 1}]->(c)""")
+
+        result = g.query("""
+            MATCH (s:CP {id: 'A'}), (t:CP {id: 'C'})
+            CALL algo.SPpaths({sourceNode: s, targetNode: t,
+                               weightProp: 'weight', costProp: 'cost'})
+            YIELD pathWeight, pathCost
+            RETURN pathWeight, pathCost""", timeout=60000)
+
+        # cost 2 on the first edge, 1 for the second because `costProp` is
+        # configured and the edge does not have it. Rust answered 2 before.
+        self.env.assertEqual(len(result.result_set), 1)
+        self.env.assertAlmostEqual(result.result_set[0][0], 2, delta=1e-9)
+        self.env.assertAlmostEqual(result.result_set[0][1], 3, delta=1e-9)
+
+        # No costProp at all still contributes nothing, which is the other C
+        # case and must not change.
+        unconfigured = g.query("""
+            MATCH (s:CP {id: 'A'}), (t:CP {id: 'C'})
+            CALL algo.SPpaths({sourceNode: s, targetNode: t, weightProp: 'weight'})
+            YIELD pathWeight, pathCost
+            RETURN pathWeight, pathCost""", timeout=60000)
+        self.env.assertEqual(len(unconfigured.result_set), 1)
+        self.env.assertAlmostEqual(unconfigured.result_set[0][0], 2, delta=1e-9)
+        self.env.assertAlmostEqual(unconfigured.result_set[0][1], 0, delta=1e-9)
+
+        # The default is also what `maxCost` is checked against, so a path over
+        # an edge with no `cost` now costs 3 and a maxCost of 2 rejects it.
+        capped = g.query("""
+            MATCH (s:CP {id: 'A'}), (t:CP {id: 'C'})
+            CALL algo.SPpaths({sourceNode: s, targetNode: t, weightProp: 'weight',
+                               costProp: 'cost', maxCost: 2})
+            YIELD pathWeight, pathCost
+            RETURN pathWeight, pathCost""", timeout=60000)
+        self.env.assertEqual(capped.result_set, [])
+
     def test13_rel_direction_both(self):
         """`relDirection: 'both'` had no behavioural coverage: a swapped branch
         in the direction handling passed the whole suite. C->A exists only by
