@@ -450,6 +450,22 @@ class testTemporalDuration(FlowTestsBase):
         result = self.graph.query("RETURN toString(duration('P1M')) AS s")
         self.env.assertEqual(result.result_set[0], ["P1M"])
 
+    def test_duration_from_string_rejects_a_number_with_no_unit(self):
+        # A number with no unit after it is not a valid ISO 8601 duration. The
+        # parser used to drop the trailing digits and answer PT0S. `P1Y5T1H` is
+        # the case a single check at the end misses: the time loop clears the
+        # buffer before it starts, so the `5` used to disappear there.
+        for bad in ['P5', 'P-', 'P1Y5', 'P1M2', 'PT1.5', 'PT4H5', 'P1Y5T1H']:
+            error = None
+            try:
+                self.graph.query("RETURN duration($str)", {'str': bad})
+            except Exception as e:
+                error = str(e)
+            self.env.assertTrue(
+                error is not None,
+                "duration('%s') was accepted, expected an error" % bad)
+            self.env.assertContains('missing unit', error)
+
     def test_month_end_duration_arithmetic(self):
         result = self.graph.query(
             """
