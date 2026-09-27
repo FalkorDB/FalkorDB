@@ -8,6 +8,7 @@
 #include "effects.h"
 #include "effects_bytes.h"
 #include "effects_internal.h"
+#include "effects_writer.h"
 #include "effects_v3_group.h"
 #include "../configuration/config.h"
 #include "../util/identifier_limits.h"
@@ -28,6 +29,11 @@ struct _EffectsBuffer {
 	// because a record states its count and shape ahead of its rows. NULL
 	// when this buffer emits v2
 	EffectsV3Grouping *v3;
+
+	// the write table, chosen at construction so no writer re-tests the
+	// version. See effects_writer.h; still partial, the unconverted writers
+	// branch on 'v3' below
+	const EffectsWriter *w;
 
 	// v3's flags byte. Zero for everything this build emits - C does not
 	// compress - and settable only so EffectsV3_Encode can reproduce the
@@ -371,6 +377,18 @@ void EffectsBuffer_IncEffectCount
 	buff->n++;
 }
 
+// the write table a buffer with this grouping must use
+//
+// Keyed on the GROUPING and not on the version: the v3 arms dereference it, so
+// a buffer holding no grouping cannot be given the v3 table whatever version
+// it is stamped with. EffectsBuffer_Wrap is exactly that buffer.
+static const EffectsWriter *_writer_for
+(
+	const EffectsV3Grouping *v3  // grouping, or NULL
+) {
+	return (v3 != NULL) ? &EFFECTS_WRITER_V3 : &EFFECTS_WRITER_V2;
+}
+
 // create a new effects-buffer
 EffectsBuffer *EffectsBuffer_New
 (
@@ -386,6 +404,7 @@ EffectsBuffer *EffectsBuffer_New
 	eb->version      = (uint8_t)emit;
 	eb->owns_records = true;
 	eb->v3           = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
+	eb->w            = _writer_for(eb->v3);
 	eb->flags        = 0;
 
 	// note: no header is written here. v2 stamped its version byte at
@@ -401,6 +420,15 @@ EffectsV3Grouping *EffectsBuffer_V3
 	ASSERT(eb != NULL);
 
 	return eb->v3;
+}
+
+const EffectsWriter *EffectsBuffer_Writer
+(
+	const EffectsBuffer *eb  // effects-buffer
+) {
+	ASSERT(eb != NULL);
+
+	return eb->w;
 }
 
 // reset effects-buffer
@@ -420,6 +448,7 @@ void EffectsBuffer_Reset
 	buff->n       = 0;
 	buff->version = (uint8_t)emit;
 	buff->v3      = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
+	buff->w       = _writer_for(buff->v3);
 	buff->flags   = 0;
 }
 
@@ -1257,6 +1286,7 @@ EffectsBuffer *EffectsBuffer_Wrap
 	eb->version      = EFFECTS_VERSION_EMIT;
 	eb->owns_records = false;
 	eb->v3           = NULL;
+	eb->w            = _writer_for(eb->v3);
 	eb->flags        = 0;
 
 	return eb;
