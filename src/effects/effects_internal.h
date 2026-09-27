@@ -43,6 +43,16 @@ void EffectsBuffer_WriteSIValue
 	EffectsBuffer *buff
 );
 
+// write an attribute set: a count then (id, value) pairs
+//
+// v2's shape. v3 states a record's attribute ids once and its values per row,
+// so it never writes this
+void EffectsBuffer_WriteAttributeSet
+(
+	const AttributeSet set,  // attribute set to write
+	EffectsBuffer *eb        // effects-buffer
+);
+
 // increment number of effects recorded in buffer
 void EffectsBuffer_IncEffectCount
 (

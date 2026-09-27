@@ -22,6 +22,65 @@
 // PARTIAL while the conversion proceeds. A slot exists per converted writer;
 // the rest still branch on EffectsBuffer_V3 inside effects.c.
 typedef struct {
+	// entity writers
+	//
+	// The statistics each public entry point updates stay there: they belong to
+	// both versions, so they are the one thing a per-version arm must not own.
+	void (*CreateNode)
+	(
+		EffectsBuffer *buff,    // effect buffer
+		const Node *n,          // node created
+		const LabelID *labels,  // node labels
+		ushort label_count      // number of labels
+	);
+
+	void (*CreateEdge)
+	(
+		EffectsBuffer *buff,  // effect buffer
+		const Edge *edge      // edge created
+	);
+
+	void (*DeleteNode)
+	(
+		EffectsBuffer *buff,  // effect buffer
+		const Node *node      // node deleted
+	);
+
+	void (*DeleteEdge)
+	(
+		EffectsBuffer *eb,  // effect buffer
+		const Edge *edge    // edge deleted
+	);
+
+	void (*UpdateEntity)
+	(
+		EffectsBuffer *buff,         // effect buffer
+		GraphEntity *entity,         // updated entity
+		AttributeID attr_id,         // updated attribute, or ATTRIBUTE_ID_ALL
+		SIValue value,               // value; a null is a removal
+		GraphEntityType entity_type  // entity type
+	);
+
+	void (*Labels)
+	(
+		EffectsBuffer *buff,  // effect buffer
+		GrB_Vector nodes,     // nodes the label applies to
+		EffectType opcode     // SET_LABELS or REMOVE_LABELS
+	);
+
+	void (*NewSchema)
+	(
+		EffectsBuffer *buff,      // effect buffer
+		const char *schema_name,  // name of the schema
+		SchemaType st             // type of the schema
+	);
+
+	void (*NewAttribute)
+	(
+		EffectsBuffer *buff,  // effect buffer
+		const char *attr      // attribute name
+	);
+
 	// index DDL
 	//
 	// one effect per FIELD on both wires. 'options' is the v2 wire and

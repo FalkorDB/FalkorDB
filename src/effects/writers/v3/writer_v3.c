@@ -11,6 +11,15 @@
 #include "write_v3.h"
 
 const EffectsWriter EFFECTS_WRITER_V3 = {
+	.CreateNode       = EffectsWriteV3_CreateNode,
+	.CreateEdge       = EffectsWriteV3_CreateEdge,
+	.DeleteNode       = EffectsWriteV3_DeleteNode,
+	.DeleteEdge       = EffectsWriteV3_DeleteEdge,
+	.UpdateEntity     = EffectsWriteV3_UpdateEntity,
+	.Labels           = EffectsWriteV3_Labels,
+	.NewSchema        = EffectsWriteV3_NewSchema,
+	.NewAttribute     = EffectsWriteV3_NewAttribute,
+
 	.CreateIndex      = EffectsWriteV3_CreateIndex,
 	.DropIndex        = EffectsWriteV3_DropIndex,
 	.CreateConstraint = EffectsWriteV3_CreateConstraint,
