@@ -9,6 +9,9 @@
 #include "src/effects/effects.h"
 #include "src/effects/effects_v3.h"
 #include "src/configuration/config.h"
+#include "src/effects/effects_v3_stream.h"
+#include "src/util/zstd/zstd_symbols.h"
+#include "src/util/zstd/zstd.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -21,6 +24,15 @@ void setup() {
 #include "acutest.h"
 
 // build a v3 payload: two byte header followed by 'n' bytes of records
+// little-endian u32, written explicitly so the test does not inherit whatever
+// the codec does
+static void _put_u32(char *dst, uint32_t v) {
+	dst[0] = (char)( v        & 0xFF);
+	dst[1] = (char)((v >> 8)  & 0xFF);
+	dst[2] = (char)((v >> 16) & 0xFF);
+	dst[3] = (char)((v >> 24) & 0xFF);
+}
+
 static char *_payload
 (
 	size_t n,           // record bytes
@@ -578,6 +590,58 @@ void test_reencode_does_not_inherit_the_compressed_flag() {
 	EffectsBuffer_Free(eb);
 }
 
+// an empty compressed payload must decode the same way on every platform
+//
+// fmemopen(p, 0) is EINVAL on Darwin and a valid empty stream on glibc, so a
+// zero length plaintext is a platform split unless the reader guards it: the
+// same bytes decoded to zero records on Linux and were refused as MALFORMED
+// on macOS.
+//
+// Neither encoder emits one - the worth-it rule never compresses an empty
+// record stream - so this is reachable only from a peer. Rust accepts it and
+// the uncompressed form (03 00) is accepted here, so refusing it is
+// divergence in both directions at once.
+void test_empty_compressed_payload_decodes_everywhere() {
+	Config_Option_set(Config_EFFECTS_VERSION, "3", NULL);
+
+	// a real frame over zero bytes, not hand-rolled - the point is that the
+	// payload is VALID and only its length is degenerate
+	char   frame[64];
+	size_t frame_len = ZSTD_compress(frame, sizeof(frame), "", 0, 1);
+	TEST_ASSERT(!ZSTD_isError(frame_len));
+
+	size_t len = EFFECTS_V3_HEADER_LEN + EFFECTS_V3_COMPRESSED_PREFIX + frame_len;
+	char  *p   = rm_malloc(len);
+
+	p[0] = 3;
+	p[1] = EFFECTS_V3_FLAG_COMPRESSED;
+	_put_u32(p + 2,  0);                 // uncompressed_length
+	_put_u32(p + 6,  (uint32_t)frame_len);
+	_put_u32(p + 10, CRC32("", 0));      // checksum of nothing
+	memcpy(p + EFFECTS_V3_HEADER_LEN + EFFECTS_V3_COMPRESSED_PREFIX, frame, frame_len);
+
+	// the codec accepts it
+	char   *plain     = NULL;
+	size_t  plain_len = 1;
+	TEST_ASSERT(EffectsV3_OpenCompressed(p + EFFECTS_V3_HEADER_LEN,
+				len - EFFECTS_V3_HEADER_LEN, &plain, &plain_len, NULL)
+			== EFFECTS_V3_OK);
+	TEST_ASSERT(plain_len == 0);
+	rm_free(plain);
+
+	// and so does the reader, which is where the platform split was: it opens
+	// and yields zero records rather than refusing
+	EffectsV3Reader r;
+	TEST_ASSERT(EffectsV3_ReaderOpen(p, len, &r) == EFFECTS_V3_OK);
+
+	EffectsV3Record rec;
+	TEST_ASSERT(EffectsV3_ReaderNext(&r, &rec) == false);
+	TEST_ASSERT(EffectsV3_ReaderStatus(&r) == EFFECTS_V3_OK);
+
+	EffectsV3_ReaderClose(&r);
+	rm_free(p);
+}
+
 TEST_LIST = {
 	{ "crc32_known_answers",                   test_crc32_known_answers},
 	{ "worth_it_boundary",                     test_worth_it_boundary},
@@ -592,5 +656,6 @@ TEST_LIST = {
 	{ "pre_v3_payload_is_never_compressed",    test_pre_v3_payload_is_never_compressed},
 	{ "truncation_and_corruption_sweep",       test_truncation_and_corruption_sweep},
 	{ "reencode_does_not_inherit_the_compressed_flag", test_reencode_does_not_inherit_the_compressed_flag},
+	{ "empty_compressed_payload_decodes_everywhere", test_empty_compressed_payload_decodes_everywhere},
 	{ NULL, NULL }
 };
