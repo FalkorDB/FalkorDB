@@ -315,6 +315,34 @@ the eight `dir_*`, `value_width_*` and `count_width_*` cases. What is left:
   tests, both of which drive a live instance; it is not covered here, and this
   corpus should not be cited as though it were.
 
+- **THE CORPUS SITS BELOW THE EMITTER, so no fixture can catch an emitter bug —
+  and a wider fixture would not change that.** The round trip calls
+  `EffectsV3_Encode`, which writes the records it was handed. It does **not** go
+  through the accumulator that a live server fills:
+  `effects_v3_encode.c` has zero references to `EffectsBuffer_AddCreateNodeEffect`
+  or `EffectsBuffer_AddCreateEdgeEffect` (they exist in three files, so the search
+  works), and zero to `EffectsV3Grouping`.
+
+  Measured against a real bug rather than argued. `067a7c558` flattened an
+  entity's attributes into `AttributeID ids[256]` inside
+  `EffectsBuffer_AddCreateNodeEffect` (effects.c:442) and
+  `EffectsBuffer_AddCreateEdgeEffect` (:512), clamping the stated count to match:
+  a master with 300 properties replicated 256, on both a node and an edge, with
+  no error, no log and no resync, because the payload was well formed and its
+  count agreed with its contents. It took a live pair with a wide entity to see
+  it; v2 carried all 300.
+
+  **The tempting fix is to add a 300-property fixture. It would not work.** The
+  clamp is on the path this corpus does not call — a fixture that wide would
+  decode and re-encode through `EffectsV3_Encode` byte-identically while a live
+  server still dropped 44 properties. The same boundary explains why the
+  single-slot group memo and the open-addressed index were invisible here.
+
+  So the corpus pins **the format**, not the emitter that produces it and not the
+  applier that consumes it. Emitter bugs need a live pair with a wide entity;
+  applier bugs need a live instance. Both are outside this file by construction,
+  not by omission.
+
 - **Count width code 3 (eight bytes) is unreachable for an ENCODER, and must
   still be handled by a DECODER.** A record's id count is a `u32` and a
   segment's count is bounded by it, so four bytes is the widest a conforming
