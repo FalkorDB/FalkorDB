@@ -8,6 +8,7 @@
 #include "effects.h"
 #include "effects_bytes.h"
 #include "effects_v3_group.h"
+#include "effects_writer.h"
 
 #include <stdio.h>
 
@@ -84,6 +85,12 @@ EffectsBuffer *EffectsBuffer_Wrap
 //------------------------------------------------------------------------------
 // shared apply-side helpers (defined in effects_apply.c)
 //------------------------------------------------------------------------------
+
+// the write table this buffer was built with, never NULL
+const EffectsWriter *EffectsBuffer_Writer
+(
+	const EffectsBuffer *eb  // effects-buffer
+);
 
 // resolve & verify a schema referenced by an effect via its id+name pair
 // (the id is authoritative - it's only valid because every schema mutation

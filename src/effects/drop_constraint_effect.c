@@ -6,12 +6,15 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "effects_writer.h"
 #include "../util/wire_string.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
 
 // add a constraint deletion effect to buffer
+//
+// forwards to the version's writer; see effects_writer.h
 void EffectsBuffer_AddDropConstraintEffect
 (
 	EffectsBuffer *buff,          // effect buffer
@@ -23,42 +26,8 @@ void EffectsBuffer_AddDropConstraintEffect
 	const char **attrs,           // constrained attribute names
 	uint8_t n                     // number of constrained attributes
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// constraint type
-	// entity type
-	// label id
-	// label name
-	// attribute count
-	// (attribute id, attribute name) pairs
-	//--------------------------------------------------------------------------
-
-	EffectType eff_t = EFFECT_DROP_CONSTRAINT ;
-
-	if (EffectsBuffer_V3 (buff) != NULL) {
-		// a drop carries no status - there is nothing to converge on
-		EffectsV3Grouping_AddConstraint (EffectsBuffer_V3 (buff),
-				EFFECT_DROP_CONSTRAINT, (uint32_t) ct, (uint32_t) et,
-				0, label_id, label, attr_ids, attrs, n) ;
-		EffectsBuffer_IncEffectCount (buff) ;
-		return ;
-	}
-
-	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
-
-	EffectsBuffer_WriteBytes (&ct, sizeof (ct), buff) ;
-	EffectsBuffer_WriteBytes (&et, sizeof (et), buff) ;
-	EffectsBuffer_WriteBytes (&label_id, sizeof (label_id), buff) ;
-	EffectsBuffer_WriteString (label, buff) ;
-
-	EffectsBuffer_WriteBytes (&n, sizeof (n), buff) ;
-	for (uint8_t i = 0; i < n; i++) {
-		EffectsBuffer_WriteBytes (attr_ids + i, sizeof (AttributeID), buff) ;
-		EffectsBuffer_WriteString (attrs [i], buff) ;
-	}
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->DropConstraint (buff, ct, et, label_id,
+			label, attr_ids, attrs, n) ;
 }
 
 // process DropConstraint effect
