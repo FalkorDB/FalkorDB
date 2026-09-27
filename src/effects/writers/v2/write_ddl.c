@@ -9,12 +9,12 @@
 // nothing here may change what it emits - the payload capture in
 // .handover/capture_v2_payloads.py is what holds that.
 
-#include "RG.h"
-#include "effects.h"
-#include "effects_internal.h"
-#include "effects_writer.h"
+#include "../../../RG.h"
+#include "../../effects.h"
+#include "../../effects_internal.h"
+#include "write_v2.h"
 
-static void _v2_CreateIndex
+void EffectsWriteV2_CreateIndex
 (
 	EffectsBuffer *buff,   // effect buffer
 	SchemaType st,         // schema type (node/edge)
@@ -52,7 +52,7 @@ static void _v2_CreateIndex
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-static void _v2_DropIndex
+void EffectsWriteV2_DropIndex
 (
 	EffectsBuffer *buff,   // effect buffer
 	SchemaType st,         // schema type (node/edge)
@@ -86,7 +86,7 @@ static void _v2_DropIndex
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-static void _v2_CreateConstraint
+void EffectsWriteV2_CreateConstraint
 (
 	EffectsBuffer *buff,          // effect buffer
 	ConstraintType ct,            // constraint type (unique/mandatory)
@@ -127,7 +127,7 @@ static void _v2_CreateConstraint
 	EffectsBuffer_IncEffectCount (buff) ;
 }
 
-static void _v2_DropConstraint
+void EffectsWriteV2_DropConstraint
 (
 	EffectsBuffer *buff,          // effect buffer
 	ConstraintType ct,            // constraint type (unique/mandatory)
@@ -166,10 +166,3 @@ static void _v2_DropConstraint
 
 	EffectsBuffer_IncEffectCount (buff) ;
 }
-
-const EffectsWriter EFFECTS_WRITER_V2 = {
-	.CreateIndex      = _v2_CreateIndex,
-	.DropIndex        = _v2_DropIndex,
-	.CreateConstraint = _v2_CreateConstraint,
-	.DropConstraint   = _v2_DropConstraint,
-} ;

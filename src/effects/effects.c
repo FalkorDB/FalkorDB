@@ -8,7 +8,7 @@
 #include "effects.h"
 #include "effects_bytes.h"
 #include "effects_internal.h"
-#include "effects_writer.h"
+#include "writers/effects_writer.h"
 #include "effects_v3_group.h"
 #include "../configuration/config.h"
 #include "../util/identifier_limits.h"

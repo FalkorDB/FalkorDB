@@ -8,7 +8,7 @@
 #include "effects.h"
 #include "effects_bytes.h"
 #include "effects_v3_group.h"
-#include "effects_writer.h"
+#include "writers/effects_writer.h"
 
 #include <stdio.h>
 

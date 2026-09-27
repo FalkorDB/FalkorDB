@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "effects.h"
+#include "../effects.h"
 
 // the per-version write table, chosen once and never consulted again
 //
