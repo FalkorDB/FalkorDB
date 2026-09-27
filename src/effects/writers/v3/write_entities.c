@@ -132,6 +132,58 @@ static void _StageV3Labels
 }
 
 
+// flatten an entity's attributes into parallel arrays for the accumulator
+//
+// SIZED BY THE ENTITY, not by a fixed array. These were AttributeID[256] with
+// the count clamped to 256, which silently dropped every attribute past the
+// 256th: the master kept them, the record never carried them, and the replica
+// held a node short of its properties with no error, no log and no resync.
+// Measured before the fix on a 300-property node - master 300, replica 256.
+//
+// Not a VLA either. n_attrs is a uint16_t and comes from the entity rather
+// than the wire, but 65,535 SIValues is still 1 MB of stack. Small sets stay
+// on the stack and the rest goes to the heap; the caller frees with
+// _release_attrs.
+#define ATTRS_STACK 64
+
+static uint16_t _flatten_attrs
+(
+	AttributeSet attrs,    // the entity's attributes
+	AttributeID **ids,     // out: ids, caller releases
+	SIValue **vals,        // out: values, caller releases
+	AttributeID *id_buf,   // caller's ATTRS_STACK-sized scratch
+	SIValue *val_buf       // caller's ATTRS_STACK-sized scratch
+) {
+	uint16_t n = AttributeSet_Count(attrs);
+
+	if(n > ATTRS_STACK) {
+		*ids  = rm_malloc(sizeof(AttributeID) * n);
+		*vals = rm_malloc(sizeof(SIValue) * n);
+	} else {
+		*ids  = id_buf;
+		*vals = val_buf;
+	}
+
+	for(uint16_t i = 0; i < n; i++) {
+		AttributeSet_GetIdx(attrs, i, (*ids) + i, (*vals) + i);
+	}
+
+	return n;
+}
+
+static void _release_attrs
+(
+	AttributeID *ids,      // ids from _flatten_attrs
+	SIValue *vals,         // values from _flatten_attrs
+	uint16_t n,            // how many
+	AttributeID *id_buf    // the scratch that was offered
+) {
+	if(ids != id_buf) {
+		rm_free(ids);
+		rm_free(vals);
+	}
+}
+
 void EffectsWriteV3_CreateNode
 (
 	EffectsBuffer *buff,    // effect buffer
@@ -139,19 +191,19 @@ void EffectsWriteV3_CreateNode
 	const LabelID *labels,  // node labels
 	ushort label_count      // number of labels
 ) {
-	AttributeSet attrs = *n->attributes;
-	uint16_t n_attrs = AttributeSet_Count(attrs);
+	AttributeID id_buf[ATTRS_STACK];
+	SIValue     val_buf[ATTRS_STACK];
+	AttributeID *ids;
+	SIValue     *vals;
 
-	AttributeID ids[256];
-	SIValue vals[256];
-	uint16_t k = (n_attrs <= 256) ? n_attrs : 256;
-	for(uint16_t i = 0; i < k; i++) {
-		AttributeSet_GetIdx(attrs, i, ids + i, vals + i);
-	}
+	uint16_t n_attrs = _flatten_attrs(*n->attributes, &ids, &vals, id_buf,
+			val_buf);
 
 	EffectsV3Grouping_AddNode(EffectsBuffer_V3(buff), EFFECT_CREATE_NODE, labels,
-			label_count, ENTITY_GET_ID(n), ids, vals, k);
+			label_count, ENTITY_GET_ID(n), ids, vals, n_attrs);
 	EffectsBuffer_IncEffectCount(buff);
+
+	_release_attrs(ids, vals, n_attrs, id_buf);
 }
 
 
@@ -160,21 +212,21 @@ void EffectsWriteV3_CreateEdge
 	EffectsBuffer *buff,  // effect buffer
 	const Edge *edge      // edge created
 ) {
-	AttributeSet attrs = *edge->attributes;
-	uint16_t n_attrs = AttributeSet_Count(attrs);
+	AttributeID id_buf[ATTRS_STACK];
+	SIValue     val_buf[ATTRS_STACK];
+	AttributeID *ids;
+	SIValue     *vals;
 
-	AttributeID ids[256];
-	SIValue vals[256];
-	uint16_t k = (n_attrs <= 256) ? n_attrs : 256;
-	for(uint16_t i = 0; i < k; i++) {
-		AttributeSet_GetIdx(attrs, i, ids + i, vals + i);
-	}
+	uint16_t n_attrs = _flatten_attrs(*edge->attributes, &ids, &vals, id_buf,
+			val_buf);
 
 	EffectsV3Grouping_AddEdge(EffectsBuffer_V3(buff), EFFECT_CREATE_EDGE,
 			Edge_GetRelationID(edge), ENTITY_GET_ID(edge),
 			Edge_GetSrcNodeID(edge), Edge_GetDestNodeID(edge),
-			ids, vals, k);
+			ids, vals, n_attrs);
 	EffectsBuffer_IncEffectCount(buff);
+
+	_release_attrs(ids, vals, n_attrs, id_buf);
 }
 
 
