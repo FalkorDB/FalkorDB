@@ -614,10 +614,24 @@ EffectsBytes *EffectsBuffer_TakeBody
 		eb->w = _writer_for(eb);
 	}
 
+	// MIGRATE THE SINK, do not just move the discriminant. 'version' names an
+	// arm, so a buffer built at v2 and taken over at v3 has to carry its sink
+	// across - assigning eb->version alone leaves the sink in the other arm's
+	// storage, and on a union that is memory corruption rather than a wrong
+	// answer: eb->v3.flags would land on byte 0 of eb->v2.bytes.
+	RecordSink rs = *_sink(eb);
+
 	eb->version = version;
+
 	if(version >= 3) {
-		eb->v3.flags = flags;
+		eb->v3.flags   = flags;
+		eb->v3.body    = BODY_RECORDS;
+		eb->v3.records = rs;
+	} else {
+		eb->v2 = rs;
 	}
+
+	eb->w = _writer_for(eb);
 
 	return _sink(eb)->bytes;
 }
