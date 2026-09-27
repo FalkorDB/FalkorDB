@@ -448,23 +448,20 @@ void test_pre_v3_payload_is_never_compressed() {
 
 // every field in the compressed header comes off the wire, so sweep them
 //
-// This is not a search for a specific bug; it is the test that makes the six
-// refusal paths actually execute, which is what a sanitizer run needs. Each of
-// them frees the decompression buffer on its way out, and a missed or repeated
-// free there is invisible to a test that only checks the returned status.
+// Not a search for a specific bug: this makes all six refusal paths execute,
+// which is what a sanitizer run needs. Each frees the decompression buffer on
+// the way out, and a missed or repeated free is invisible to a test that only
+// checks status.
 //
-// Two invariants hold for EVERY input, valid or not:
+// Two invariants hold for EVERY input:
 //
-//   * the status is OK or one of the refusals - never anything else, and never
-//     a crash. A truncated or corrupt payload arrives over a replication link
-//     and is applied inline on the main thread.
-//   * on any refusal '*plain' is NULL. A codec that returned a buffer
-//     alongside a failure would leak it on every corrupt payload, and the
-//     caller has no reason to look.
+//   * status is OK or a refusal - never anything else, never a crash. These
+//     payloads arrive over replication and are applied on the main thread.
+//   * on any refusal '*plain' is NULL, or every corrupt payload leaks.
 //
-// When a mutation happens to produce a still-valid payload, the plaintext is
-// checked rather than merely freed - a decoder that accepted corruption and
-// returned the wrong bytes would otherwise pass this.
+// Where a mutation happens to stay valid, the plaintext is checked rather
+// than just freed - otherwise a decoder that accepted corruption and returned
+// the wrong bytes would pass.
 static void _check_refusal_is_clean
 (
 	const char *body,
@@ -543,23 +540,18 @@ void test_truncation_and_corruption_sweep() {
 
 // re-encoding a payload that ARRIVED compressed must not claim compressed
 //
-// The decoder carries the payload's flags byte onto the records it produces,
-// and EffectsBuffer_TakeBody writes those flags back out on a re-encode, so a
-// round trip reproduces the header it decoded. That is right for every bit
-// except this one: the compressed bit describes THE BODY AS WRITTEN, and the
-// body a re-encode writes is the plaintext the decoder inflated. Inheriting
-// the bit emits a header claiming compressed over plaintext, and
-// EffectsV3_MaybeCompress then correctly declines to re-compress because the
-// bit is already set - which is what turns it from wasteful into corrupt. A
-// reader would try to inflate plaintext and refuse the payload.
+// A re-encode writes back the flags the decoder carried over, which is right
+// for every bit except this one: the compressed bit describes THE BODY AS
+// WRITTEN, and a re-encode writes the plaintext the decoder inflated.
+// Inheriting it emits a header claiming compressed over plaintext, which a
+// reader then tries to inflate and refuses.
 //
 // THIS STATE IS UNREACHABLE TODAY - EffectsV3_Encode has no callers - so it is
-// constructed by hand here rather than reached through a decode. Without that,
-// the guard would be unfalsifiable until the conformance round trip becomes
-// its first caller, and then it would be someone else's confusing failure.
+// built by hand rather than reached through a decode; otherwise the guard
+// stays unfalsifiable until someone else trips over it.
 //
-// Compression is left OFF for this test so nothing can set the bit
-// legitimately: the only way it can appear is by being inherited.
+// Compression is OFF here so nothing can set the bit legitimately - the only
+// way it can appear is by being inherited.
 void test_reencode_does_not_inherit_the_compressed_flag() {
 	Config_Option_set(Config_EFFECTS_VERSION, "3", NULL);
 	Config_Option_set(Config_EFFECTS_COMPRESSION, "0", NULL);

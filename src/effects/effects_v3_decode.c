@@ -1602,24 +1602,18 @@ EffectsV3Status EffectsV3_ReaderOpen
 	// compression
 	//--------------------------------------------------------------------------
 
-	// A compressed payload is a zstd frame where records would be, so it has to
+	// A compressed payload is a zstd frame where records would be, so it must
 	// be inflated whole before any of it can be read - the one place a payload
-	// cannot be streamed. The twelve byte prefix and the order of its checks
-	// live in EffectsV3_OpenCompressed: read exactly comp_len, refuse trailing
-	// bytes, treat plain_len as the allocation CEILING by passing it as zstd's
-	// destination capacity, then verify the expanded length, then the CRC-32
-	// over the plaintext.
+	// cannot be streamed. EffectsV3_OpenCompressed owns the prefix and the
+	// order of its checks.
 	//
-	// HERE rather than in _ReadHeader because this is the only place with all
-	// three things the inflate needs: the buffer, its length, and ownership of
-	// the stream. And because every decode path funnels through this function,
-	// one inflate site covers both the streaming and the collecting form -
-	// they cannot disagree about what a compressed payload means.
+	// HERE rather than in _ReadHeader because this is the only place with the
+	// buffer, its length and ownership of the stream, and because every decode
+	// path funnels through it, so the streaming and collecting forms cannot
+	// disagree about what a compressed payload means.
 	//
-	// The stream is re-pointed at the plaintext, which is a record stream with
-	// NO header of its own, since the header was never compressed. Everything
-	// downstream therefore reads inflated records without knowing it, and the
-	// uncompressed path is untouched.
+	// The stream is re-pointed at the plaintext, a record stream with NO
+	// header of its own, so everything downstream is untouched.
 	//
 	// It also re-bounds every fstream_remaining check for free: those measure
 	// the stream rather than r->n, so pointing the stream at the plaintext
@@ -1649,16 +1643,12 @@ EffectsV3Status EffectsV3_ReaderOpen
 		// REQUIRED, not hygiene. EffectsV3_ReaderNext bounds the walk with
 		// ftell (r->stream) >= r->n, so leaving n at the COMPRESSED length
 		// ends the walk at the first record boundary past it and silently
-		// drops every record after that: no error, no refusal, a short graph
-		// on the replica.
+		// drops the rest: no error, no refusal, a short graph on the replica.
 		//
-		// It is easy to believe this line is dead, because most payloads
-		// survive without it. A large write is a few small records followed
-		// by one big group, so every boundary falls in the first ~60 bytes -
-		// below the compressed length - and the terminator is never consulted
-		// again before EOF. The flow test's multi-group case picks a shape
-		// with a boundary ABOVE it deliberately; that case fails without this
-		// line and nothing else does.
+		// It looks dead because most payloads survive without it - their
+		// record boundaries all fall below the compressed length, so the
+		// terminator is never consulted again before EOF. Only the flow
+		// test's multi-group case fails when this line goes.
 		r->n = r->plain_len ;
 	}
 

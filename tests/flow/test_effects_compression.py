@@ -7,34 +7,29 @@ GRAPH_ID = "effects_compression"
 # The acceptance test for v3 payload compression: a C master emits a compressed
 # v3 payload and a C replica inflates and applies it.
 #
-# READ THIS BEFORE WEAKENING ANY ASSERTION HERE. The obvious version of this
-# test - "the replica ends up with the right data, and the compressed run moved
-# fewer bytes" - passes with EITHER HOOK DELETED. Both were verified by
-# deleting them:
+# READ THIS BEFORE WEAKENING ANY ASSERTION HERE. The obvious test - "the
+# replica has the right data and the compressed run moved fewer bytes" - passes
+# with EITHER HOOK DELETED, verified by deleting them:
 #
-#   * delete the READ hook and the replica refuses the payload, diverges, and
-#     takes a FULL RESYNC. The resync restores the data, so the node count and
-#     graph_eq both pass, and the resync moved 176,000 bytes against 215,292 -
-#     still fewer, so a direction-only byte assertion passed too.
-#   * delete the WRITE hook and the two runs move 215,269 and 215,292 bytes.
-#     A direction-only assertion passed on 23 bytes of NOISE.
+#   * without the READ hook the replica refuses, diverges and FULL RESYNCS.
+#     The resync restores the data, so graph_eq and the node count pass, and
+#     it moved 176,000 bytes against 215,292 - fewer, so a direction-only
+#     byte assertion passed too.
+#   * without the WRITE hook the two runs move 215,269 and 215,292 bytes: a
+#     direction-only assertion passing on 23 bytes of NOISE.
 #
-# So correctness of the replica proves nothing here: divergence is self-healing
-# and hides exactly the failure this test exists to catch. Three mechanism
-# checks are what give it teeth, and each one fails on a different break:
+# Divergence is self-healing, so replica correctness proves nothing. The teeth
+# are three mechanism checks, each failing on a different break:
 #
-#   1. failed_calls on the replica's GRAPH.EFFECT must not move - a refused
-#      effect increments it
-#   2. sync_full on the MASTER must not move - a refusal forces a resync, and
-#      this is what catches divergence being papered over
+#   1. failed_calls on the replica must not move - a refused effect bumps it
+#   2. sync_full on the MASTER must not move - this catches divergence being
+#      papered over by a resync
 #   3. the compressed run must move a FRACTION of the bytes, not merely fewer
 #
-# Deliberately NOT asserted: a specific ratio. zstd level 1's ratio on effects
-# payloads is a coin flip on record alignment - the same body measures 10,399
-# bytes at one alignment and ~31,100 at the other eight - so a tight threshold
-# would pin one payload's luck rather than a property of the format. The
-# measured ratio here is ~35x; the assertion is a floor of 4x, which clears the
-# worst alignment by a wide margin and still fails both breaks above.
+# NOT asserted: a specific ratio. Level 1's ratio swings on record alignment
+# (the same body measures 10,399 and ~31,100 bytes), so a tight threshold would
+# pin one payload's luck. Measured ~35x here; the floor is 4x, which clears the
+# worst alignment and still fails both breaks above.
 class testEffectsCompression():
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)
@@ -79,12 +74,10 @@ class testEffectsCompression():
         # this reads with ro_query.
         #
         # AND THE GRAPH KEY MAY NOT EXIST ON THE REPLICA YET. `master_link_status`
-        # being "up" says the connection is established, not that any write has
-        # replicated - the key appears only once the first one lands. Querying a
-        # graph that is not there raises "Invalid graph operation on empty key"
-        # rather than returning 0, so without this the test failed roughly half
-        # the time, and failed as an ERROR rather than as an assertion, which
-        # made it look like a product fault instead of a race in the test.
+        # "up" means the connection is established, not that anything has
+        # replicated; the key appears only with the first write. Querying a
+        # missing graph raises "Invalid graph operation on empty key" rather
+        # than returning 0, which failed this test about half the time.
         last = 0
         for _ in range(200):
             try:
@@ -158,22 +151,17 @@ class testEffectsCompression():
 
     # A SECOND SHAPE, because test01 cannot fail on a whole class of bug.
     #
-    # EffectsV3_ReaderNext ends the walk on ftell(stream) >= r->n, so after the
-    # reader swaps its stream to the inflated plaintext, r->n has to be the
-    # PLAINTEXT length. Left at the compressed length it stops the walk at the
-    # first record boundary past it and drops the rest - silently: the records
-    # that did arrive apply cleanly, so there is no refusal, no failed_calls,
-    # and no resync for test01's mechanism checks to catch.
+    # EffectsV3_ReaderNext ends the walk on ftell(stream) >= r->n, so once the
+    # reader swaps to the inflated plaintext, r->n must be the PLAINTEXT
+    # length. Left at the compressed length the walk stops at the first record
+    # boundary past it and drops the rest SILENTLY - the records that arrive
+    # apply cleanly, so no refusal, no failed_calls, no resync.
     #
-    # test01 cannot reach it. Its payload is four records at offsets 0, 22, 38
-    # and 54, and the fourth is the whole 215,082-byte node group, so every
-    # boundary sits below the 5,880-byte compressed length and the terminator
-    # is never consulted again before EOF. Measured, not assumed.
-    #
-    # This shape puts a boundary above it: two node groups and an edge group,
-    # each large, so the second and third boundaries land tens of thousands of
-    # bytes in. Verified by deleting `r->n = r->plain_len` - this test fails
-    # and test01 still passes.
+    # test01 cannot reach it: its payload is four records at offsets 0, 22, 38
+    # and 54, the fourth being the whole 215,082-byte group, so every boundary
+    # sits below the 5,880-byte compressed length (measured, not assumed).
+    # This shape puts boundaries tens of thousands of bytes in. Verified by
+    # deleting `r->n = r->plain_len`: this fails, test01 still passes.
     def test02_every_group_in_a_compressed_payload_applies(self):
         n = 4000
 
