@@ -45,8 +45,7 @@ void EffectsBuffer_WriteSIValue
 
 // write an attribute set: a count then (id, value) pairs
 //
-// v2's shape. v3 states a record's attribute ids once and its values per row,
-// so it never writes this
+// v2's shape; v3 states a record's attribute ids once and its values per row
 void EffectsBuffer_WriteAttributeSet
 (
 	const AttributeSet set,  // attribute set to write

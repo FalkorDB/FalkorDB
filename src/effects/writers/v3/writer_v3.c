@@ -3,10 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-// the v3 write table
-//
-// none of these emit - v3 is one record per STATEMENT where C calls per
-// FIELD, so a field is staged and the record built at the flush
+// the v3 write table, whose arms stage rather than emit
 
 #include "write_v3.h"
 

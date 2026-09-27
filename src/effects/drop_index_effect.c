@@ -14,7 +14,7 @@
 
 // add an index field deletion effect to buffer
 //
-// forwards to the version's writer; see effects_writer.h
+// forwards to the version's writer; see writers/effects_writer.h
 void EffectsBuffer_AddDropIndexEffect
 (
 	EffectsBuffer *buff,   // effect buffer

@@ -5,9 +5,9 @@
 
 // the v3 DDL writers
 //
-// None of these emit. v3 is one record per STATEMENT where C calls per FIELD,
-// so a field is staged and the record is built when the query stops producing
-// fields - see effects_v3_group.h.
+// None of these emit: a v3 record is one per STATEMENT while the write API
+// delivers one FIELD at a time, so a field is staged and the record built at
+// the flush - see effects_v3_group.h.
 
 #include "../../../RG.h"
 #include "../../effects.h"

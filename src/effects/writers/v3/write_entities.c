@@ -134,16 +134,12 @@ static void _StageV3Labels
 
 // flatten an entity's attributes into parallel arrays for the accumulator
 //
-// SIZED BY THE ENTITY, not by a fixed array. These were AttributeID[256] with
-// the count clamped to 256, which silently dropped every attribute past the
-// 256th: the master kept them, the record never carried them, and the replica
-// held a node short of its properties with no error, no log and no resync.
-// Measured before the fix on a 300-property node - master 300, replica 256.
+// SIZED BY THE ENTITY. A fixed AttributeID[256] with the count clamped to match
+// silently dropped every attribute past the 256th - measured on a live pair at
+// 300 properties, replica 256, with no error, log or resync.
 //
-// Not a VLA either. n_attrs is a uint16_t and comes from the entity rather
-// than the wire, but 65,535 SIValues is still 1 MB of stack. Small sets stay
-// on the stack and the rest goes to the heap; the caller frees with
-// _release_attrs.
+// Not a VLA either: n_attrs is a uint16_t, so 65,535 SIValues is a megabyte of
+// stack. Small sets stay on the stack, larger go to the heap.
 #define ATTRS_STACK 64
 
 static uint16_t _flatten_attrs

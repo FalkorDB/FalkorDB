@@ -5,9 +5,8 @@
 
 // the v2 DDL writers
 //
-// BYTE-FROZEN. v2 is shipped and read by engines this build will never see, so
-// nothing here may change what it emits - the payload capture in
-// .handover/capture_v2_payloads.py is what holds that.
+// BYTE-FROZEN: shipped and read by engines this build will never see. The
+// payload capture in .handover/capture_v2_payloads.py is what holds that.
 
 #include "../../../RG.h"
 #include "../../effects.h"
