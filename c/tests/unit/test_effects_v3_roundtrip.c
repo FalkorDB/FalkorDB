@@ -111,18 +111,27 @@ static void setup(void) {
 		char *cfg_err = NULL;
 		Config_Option_set(Config_EFFECTS_COMPRESSION, "0", &cfg_err);
 
-		// Pin EFFECTS_VERSION to 3 for the same reason, and it is now load
-		// bearing rather than tidy. EffectsBuffer_New reads
-		// Config_EFFECTS_VERSION to decide which arm of its union to open:
-		// >= 3 opens the v3 arm, anything else opens v2 and installs the v2
-		// writer table. A unit test's config struct is static and zeroed, so
-		// without this the buffer comes back on the V2 ARM and EffectsV3_Encode
-		// then writes v3 records through a v2 writer -- a segfault, not an
-		// error, because a union arm mismatch is valid C.
+		// Pin EFFECTS_VERSION to 3, as a PRECONDITION and not as a fix.
+		// EffectsBuffer_New reads Config_EFFECTS_VERSION to choose which arm
+		// of its union to open, and a unit test's config struct is static and
+		// zeroed, so without this the buffer comes back on the v2 arm. A test
+		// should pin the config its subject reads at construction rather than
+		// inherit whatever branch zero selects.
 		//
-		// Measured: before this line, roundTrip and truncation both died with
-		// SIGSEGV while decodesAll and rejections passed, which is exactly the
-		// split between the tests that re-encode and the tests that do not.
+		// IT IS NOT WHY THE SEGFAULT WENT AWAY, and the distinction cost a
+		// wrong diagnosis. When the write path was first split into per-version
+		// arms, EffectsBuffer_TakeBody moved the version discriminant without
+		// carrying the sink across arms: a buffer on the v2 arm taken over at
+		// version 3 wrote eb->v3.flags onto byte 0 of eb->v2.bytes and died on
+		// the next read, BEFORE any record was written. That was an engine
+		// defect whose precondition was the DEFAULT EFFECTS_VERSION, not an
+		// uninitialised config -- a production caller at version 2 would have
+		// hit it identically. Pinning 3 here removed the only condition that
+		// reached it, so these tests went green by not arriving rather than by
+		// the path being sound. Fixed properly in the engine (TakeBody now
+		// reinstates the sink in the arm `version` names, both directions).
+		//
+		// Keep the pin. Do not let it stand as the reason anything passes.
 		Config_Option_set(Config_EFFECTS_VERSION, "3", &cfg_err);
 		globals_ready = true;
 	}
