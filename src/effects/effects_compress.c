@@ -101,6 +101,15 @@ bool EffectsV3_MaybeCompress
 		return false ;
 	}
 
+	// the prefix carries both lengths as u32, and these are size_t. A record
+	// stream above UINT32_MAX would be narrowed silently on the way out and
+	// the reader would size its allocation from the wrapped value, so refuse
+	// to compress it - the uncompressed payload is unaffected and still
+	// correct
+	if (records_len > UINT32_MAX) {
+		return false ;
+	}
+
 	const char *records = buff + EFFECTS_V3_HEADER_LEN ;
 
 	size_t  bound = ZSTD_compressBound (records_len) ;
@@ -123,6 +132,14 @@ bool EffectsV3_MaybeCompress
 	}
 
 	// the two declared lengths and the checksum ride along, so they count
+	// same narrowing rule for the frame. Unreachable while records_len fits
+	// and the worth-it test below holds, but this is the line that writes the
+	// field, so it is the line that checks it
+	if (frame_len > UINT32_MAX) {
+		rm_free (frame) ;
+		return false ;
+	}
+
 	if (!EffectsV3_CompressionWorthIt (frame_len, records_len)) {
 		rm_free (frame) ;
 		return false ;
