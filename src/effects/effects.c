@@ -31,11 +31,10 @@ struct _EffectsBuffer {
 	EffectsV3Grouping *v3;
 
 	// the write table, chosen at construction so no writer re-tests the
-	// version. See effects_writer.h; still partial, the unconverted writers
-	// branch on 'v3' below
+	// version; see writers/effects_writer.h
 	const EffectsWriter *w;
 
-	// v3's flags byte. Zero for everything this build emits - C does not
+	// v3's flags byte. Zero for everything this build emits - nothing here
 	// compress - and settable only so EffectsV3_Encode can reproduce the
 	// header of a payload it was handed rather than assert one
 	uint8_t flags;
@@ -89,7 +88,7 @@ static unsigned char *_EffectsBuffer_WriteHeader
 	*dst++ = eb->version;
 
 	if(eb->version >= 3) {
-		// flags; bit 0 = compressed. C does not compress, so every buffer it
+		// flags; bit 0 = compressed. Nothing here compresses, so every buffer
 		// builds carries 0 here - but a re-encode has to reproduce the header
 		// of the payload it decoded, so the value is read rather than assumed
 		*dst++ = eb->flags;
@@ -152,10 +151,10 @@ void EffectsBuffer_WriteBytes
 //
 // THIS STILL WRITES strlen + 1, for three reasons that EXPIRE SEPARATELY:
 //
-//   * C cannot express such a value. It does not implement \uXXXX at all -
-//     measured, C reports size 6 for the escape Rust reports 1 for, and 8 where
-//     Rust reports 3 - so no input with an interior NUL can reach here. Ends
-//     the day C implements the unicode escape.
+//   * no value here can express one. The \uXXXX escape is not implemented -
+//     measured, size 6 for the escape Rust reports 1 for, and 8 where Rust
+//     reports 3 - so no input with an interior NUL can reach here. Ends the
+//     day the unicode escape is implemented.
 //
 //   * SIValue has no length for a string. `char *stringval` is the entire
 //     representation (value.h), so the byte length does not exist to be
@@ -379,9 +378,8 @@ void EffectsBuffer_IncEffectCount
 
 // the write table a buffer with this grouping must use
 //
-// Keyed on the GROUPING and not on the version: the v3 arms dereference it, so
-// a buffer holding no grouping cannot be given the v3 table whatever version
-// it is stamped with. EffectsBuffer_Wrap is exactly that buffer.
+// Keyed on the GROUPING, not the version: the v3 arms dereference it, so a
+// buffer holding none - EffectsBuffer_Wrap's - cannot be given the v3 table.
 static const EffectsWriter *_writer_for
 (
 	const EffectsV3Grouping *v3  // grouping, or NULL

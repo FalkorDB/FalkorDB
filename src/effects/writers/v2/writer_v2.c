@@ -3,10 +3,7 @@
  * Licensed under the Server Side Public License v1 (SSPLv1).
  */
 
-// the v2 write table
-//
-// v2 is shipped and read by engines this build will never see, so the
-// table is frozen alongside the bytes
+// the v2 write table, frozen alongside the bytes
 
 #include "write_v2.h"
 
