@@ -6,6 +6,7 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "effects_writer.h"
 #include "../util/wire_string.h"
 #include "../util/arr.h"
 #include "../graph/graph_hub.h"
@@ -15,6 +16,8 @@
 #include <stdio.h>
 
 // add an index field creation effect to buffer
+//
+// forwards to the version's writer; see effects_writer.h
 void EffectsBuffer_AddCreateIndexEffect
 (
 	EffectsBuffer *buff,   // effect buffer
@@ -27,46 +30,8 @@ void EffectsBuffer_AddCreateIndexEffect
 	SIValue options,       // index options - THE V2 WIRE, byte-frozen
 	SIValue stated         // the subset the statement named - v3 only
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// schema type
-	// label id
-	// label name
-	// attribute id
-	// attribute name
-	// index field type
-	// options (map)
-	//--------------------------------------------------------------------------
-
-	EffectType eff_t = EFFECT_CREATE_INDEX ;
-
-	if (EffectsBuffer_V3 (buff) != NULL) {
-		// v3 is ONE RECORD PER STATEMENT while this is called once per FIELD,
-		// so the field is staged and the record is emitted when the query
-		// stops producing fields
-		//
-		// 'stated', not 'options': v3's presence flag means "the statement said
-		// this", and 'options' has been pre-filled with defaults by the time it
-		// reaches here. v2 keeps taking 'options' below, its bytes being frozen.
-		EffectsV3Grouping_AddIndexField (EffectsBuffer_V3 (buff),
-				EFFECT_CREATE_INDEX, st, label_id, label, (uint32_t) t,
-				attr_id, attr, stated) ;
-		EffectsBuffer_IncEffectCount (buff) ;
-		return ;
-	}
-
-	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
-
-	EffectsBuffer_WriteBytes (&st, sizeof (st), buff) ;
-	EffectsBuffer_WriteBytes (&label_id, sizeof (label_id), buff) ;
-	EffectsBuffer_WriteString (label, buff) ;
-	EffectsBuffer_WriteBytes (&attr_id, sizeof (attr_id), buff) ;
-	EffectsBuffer_WriteString (attr, buff) ;
-	EffectsBuffer_WriteBytes (&t, sizeof (t), buff) ;
-	EffectsBuffer_WriteSIValue (&options, buff) ;
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->CreateIndex (buff, st, label_id, label,
+			attr_id, attr, t, options, stated) ;
 }
 
 // process CreateIndex effect
