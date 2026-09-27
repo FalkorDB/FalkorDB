@@ -69,25 +69,6 @@ static void _StageV3Update
 			attr_id, value);
 }
 
-// stage an update, reading a node's labels in the scope the macro needs
-//
-// NODE_GET_LABELS declares a variable-length array named `labels` in the
-// enclosing scope, so the staging has to happen where that array is still
-// alive rather than through a pointer that outlives it
-#define STAGE_V3_UPDATE(buff, entity, attr_id, value, entity_type)          \
-	do {                                                                    \
-		if((entity_type) == GETYPE_NODE) {                                  \
-			Graph *_g = QueryCtx_GetGraph();                                \
-			uint _n;                                                        \
-			NODE_GET_LABELS(_g, (Node *)(entity), _n);                      \
-			_StageV3Update((buff), (entity), (attr_id), (value),            \
-					(entity_type), labels, (uint16_t)_n);                   \
-		} else {                                                            \
-			_StageV3Update((buff), (entity), (attr_id), (value),            \
-					(entity_type), NULL, 0);                                \
-		}                                                                   \
-	} while(0)
-
 // file a label vector into the v3 accumulator
 //
 // v3 states the LABEL SET and the node ids rather than a serialized GraphBLAS
@@ -269,7 +250,21 @@ void EffectsWriteV3_UpdateEntity
 	SIValue value,               // value; a null is a removal
 	GraphEntityType entity_type  // entity type
 ) {
-	STAGE_V3_UPDATE(buff, entity, attr_id, value, entity_type);
+	// TWO CALLS RATHER THAN ONE, because NODE_GET_LABELS declares a
+	// variable-length array named 'labels' in the scope it expands into.
+	// Hoisting a pointer to it out of the branch to reach a single call below
+	// would leave that pointer dangling the moment the branch closes.
+	if(entity_type == GETYPE_NODE) {
+		Graph *g = QueryCtx_GetGraph();
+		uint n;
+		NODE_GET_LABELS(g, (Node *)entity, n);
+
+		_StageV3Update(buff, entity, attr_id, value, entity_type, labels,
+				(uint16_t)n);
+	} else {
+		_StageV3Update(buff, entity, attr_id, value, entity_type, NULL, 0);
+	}
+
 	EffectsBuffer_IncEffectCount(buff);
 }
 
