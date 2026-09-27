@@ -1634,7 +1634,14 @@ EffectsV3Status EffectsV3_ReaderOpen
 		}
 
 		fclose (r->stream) ;
-		r->stream = fmemopen (r->plain, r->plain_len, "r") ;
+
+		// at least one byte: fmemopen(p, 0) is EINVAL on Darwin and a valid
+		// empty stream on glibc, so a zero length plaintext would decode on
+		// one platform and be refused on the other. OpenCompressed always
+		// allocates at least one byte, and r->n below stays at the TRUE
+		// length, so ReaderNext stops before that byte is ever read.
+		r->stream = fmemopen (r->plain, r->plain_len > 0 ? r->plain_len : 1,
+				"r") ;
 		if (r->stream == NULL) {
 			r->status = EFFECTS_V3_MALFORMED ;
 			return r->status ;
