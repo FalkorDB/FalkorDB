@@ -240,32 +240,25 @@ EffectsV3Status EffectsV3_OpenCompressed
 		FAIL (EFFECTS_V3_COMPRESS_TRAILING, EFFECTS_V3_MALFORMED) ;
 	}
 
-	// 'declared_plain' is the allocation CEILING and it is applied by passing
-	// it as zstd's destination capacity: a frame that wants to expand beyond
-	// it is refused by zstd before writing anything, rather than after an
-	// allocation that has already happened. That distinction is the whole
-	// point - zstd's ratio on repetitive input is unbounded in practice, so a
-	// decoder that grows to fit whatever the frame expands to can be made to
+	// 'declared_plain' is the allocation CEILING, applied by passing it as
+	// zstd's destination capacity, so an over-expanding frame is refused
+	// BEFORE the allocation happens. zstd's ratio on repetitive input is
+	// unbounded in practice, so a decoder that grows to fit can be made to
 	// allocate gigabytes from a hundred byte payload.
 	//
-	// rm_malloc of 1 rather than 0 for an empty plaintext, so the pointer is
-	// distinguishable from the failure case. A zero length plaintext cannot
-	// be produced by EffectsV3_MaybeCompress - it would not clear the
-	// worth-it test - but the Rust reader accepts one, and refusing what the
-	// peer accepts is divergence
+	// rm_malloc of 1 rather than 0 for an empty plaintext, to keep the
+	// pointer distinguishable from failure. MaybeCompress cannot produce one,
+	// but the Rust reader accepts it, and refusing what the peer accepts is
+	// divergence
 	char *out = rm_malloc (declared_plain > 0 ? declared_plain : 1) ;
 
-	// 'declared_plain' is a u32 off the wire, so a single corrupt byte can ask
-	// for up to 4 GiB before zstd has looked at the frame. Refusing beats
-	// dereferencing NULL, and it beats the alternative of inventing a smaller
-	// ceiling: any constant we picked would also refuse a legitimate payload
-	// the peer accepts, and refusing what the peer accepts is divergence.
+	// 'declared_plain' is a u32 off the wire, so one corrupt byte can ask for
+	// 4 GiB before zstd has looked at the frame. Refusing beats dereferencing
+	// NULL, and beats inventing a smaller ceiling - any constant would also
+	// refuse legitimate payloads the peer accepts.
 	//
-	// This is not a divergence risk in the other direction either - a Rust
-	// reader allocating the same length aborts on allocation failure rather
-	// than accepting the payload, so nothing is lost by refusing it here. In
-	// the module rm_malloc aborts too; this path is reachable where it does
-	// not, which includes these tests.
+	// rm_malloc aborts inside the module, so this is reachable only where it
+	// does not, which includes these tests.
 	if (out == NULL) {
 		FAIL (EFFECTS_V3_COMPRESS_NO_MEMORY, EFFECTS_V3_MALFORMED) ;
 	}
