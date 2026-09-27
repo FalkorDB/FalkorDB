@@ -110,6 +110,20 @@ static void setup(void) {
 		// masks the compressed bit out on re-encode.
 		char *cfg_err = NULL;
 		Config_Option_set(Config_EFFECTS_COMPRESSION, "0", &cfg_err);
+
+		// Pin EFFECTS_VERSION to 3 for the same reason, and it is now load
+		// bearing rather than tidy. EffectsBuffer_New reads
+		// Config_EFFECTS_VERSION to decide which arm of its union to open:
+		// >= 3 opens the v3 arm, anything else opens v2 and installs the v2
+		// writer table. A unit test's config struct is static and zeroed, so
+		// without this the buffer comes back on the V2 ARM and EffectsV3_Encode
+		// then writes v3 records through a v2 writer -- a segfault, not an
+		// error, because a union arm mismatch is valid C.
+		//
+		// Measured: before this line, roundTrip and truncation both died with
+		// SIGSEGV while decodesAll and rejections passed, which is exactly the
+		// split between the tests that re-encode and the tests that do not.
+		Config_Option_set(Config_EFFECTS_VERSION, "3", &cfg_err);
 		globals_ready = true;
 	}
 }
@@ -314,6 +328,16 @@ static size_t _expected_short_encode
 // by setting the threshold to 64 and watching truncation fail alongside
 // roundTrip.
 static void _require_compression_off(void) {
+	// the arm EffectsBuffer_New will open, read back rather than assumed -- a
+	// zeroed config silently yields the v2 arm and a segfault downstream
+	uint64_t emit = 0;
+	Config_Option_get(Config_EFFECTS_VERSION, &emit);
+	TEST_ASSERT_(emit >= 3,
+			"EFFECTS_VERSION reads %llu, so EffectsBuffer_New will open the v2 "
+			"arm and EffectsV3_Encode will write v3 records through a v2 "
+			"writer. setup() pins it to 3; either that call failed or "
+			"something reset it.", (unsigned long long)emit);
+
 	uint64_t min_bytes = 0;
 	Config_Option_get(Config_EFFECTS_COMPRESSION, &min_bytes);
 
