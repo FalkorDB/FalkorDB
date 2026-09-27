@@ -889,8 +889,7 @@ void EffectsV3Grouping_StageUpdate
 			// used to keep it as dead bytes, and a leak here shows in no byte
 			// comparison
 			SIValue_Free(u->attrs[i].v);
-			u->attrs[i].v = value;
-			SIValue_Persist(&u->attrs[i].v);
+			u->attrs[i].v = SI_CloneValue(value);
 			return;
 		}
 	}
@@ -900,10 +899,19 @@ void EffectsV3Grouping_StageUpdate
 	StagedAttr *a = &arr_tail(u->attrs);
 	a->id = attr_id;
 
-	// PERSISTED, not encoded. The caller's value does not outlive this call, so
-	// it is cloned if volatile and taken as is if it already owns its memory
-	a->v = value;
-	SIValue_Persist(&a->v);
+	// CLONED, not persisted, and never taken as is.
+	//
+	// SIValue_Persist copies only an M_VOLATILE value; SIValue_Free releases
+	// only an M_SELF one. So a heap value the CALLER owns - M_SELF, which is
+	// what a runtime-computed string is - would be stored by pointer here and
+	// freed at the flush, which is a double free of memory the query still
+	// holds. `SET n.s = n.s + '!'` killed the server; `SET n.s = 'b'` did not,
+	// because constant folding makes it M_CONST and nothing frees that.
+	//
+	// The effects layer has never owned these values - v2 serialises them on
+	// the spot and frees nothing - so cloning is symmetric rather than a leak:
+	// the caller keeps theirs, _update_release frees ours.
+	a->v = SI_CloneValue(value);
 }
 
 // release everything a staged update owns
