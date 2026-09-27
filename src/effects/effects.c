@@ -19,26 +19,75 @@
 // initial size of a buffer's block
 #define EFFECTS_BUFFER_BLOCK_SIZE 62500
 
+// a byte sink and who owns it
+typedef struct {
+	EffectsBytes *bytes;  // the sink
+	bool owns;            // whether freeing the buffer frees it
+} RecordSink;
+
+// which body a v3 buffer is holding
+typedef enum {
+	BODY_RECORDS,   // bytes, after EffectsBuffer_TakeBody handed the sink over
+	BODY_GROUPING,  // groups, serialized once the query stops producing
+} BodyKind;
+
+// ONE ARM PER PAYLOAD VERSION, because each version's state is its own
+//
+// v2 is a sink and nothing else. v3 adds a flags byte - its header is two
+// bytes where v2's is one (_EffectsBuffer_WriteHeader) - and can hold either
+// a sink or an accumulator, because a v3 record states its count and shape
+// ahead of its rows and so cannot be written as effects arrive.
+//
+// Keyed on 'version', which is the one thing that always answers it. The inner
+// choice is NOT derivable from the version and needs its own tag:
+// EffectsBuffer_TakeBody stamps the version of the payload being reproduced -
+// 3, on the round trip - and then hands back a sink, so a v3 buffer is
+// perfectly able to be holding bytes.
+//
+// A fourth version adds an arm here rather than changing one.
 struct _EffectsBuffer {
-	EffectsBytes *records;  // encoded records; v2 only
-	uint64_t n;             // number of effects in buffer
-	uint8_t version;        // payload version this buffer emits
-	bool owns_records;      // whether freeing the buffer frees the sink
+	uint64_t n;       // number of effects in buffer
+	uint8_t  version; // payload version this buffer emits, and the arm below
 
-	// v3 accumulates into groups instead of writing records on arrival,
-	// because a record states its count and shape ahead of its rows. NULL
-	// when this buffer emits v2
-	EffectsV3Grouping *v3;
+	union {
+		RecordSink v2;
 
-	// the write table, chosen at construction so no writer re-tests the
-	// version; see writers/effects_writer.h
+		struct {
+			// zero for everything this build emits - nothing here compresses -
+			// and settable only so EffectsV3_Encode can reproduce the header
+			// of a payload it was handed rather than assert one
+			uint8_t flags;
+
+			BodyKind body;
+			union {
+				RecordSink        records;   // BODY_RECORDS
+				EffectsV3Grouping *grouping; // BODY_GROUPING
+			};
+		} v3;
+	};
+
+	// the write table for the live arm, chosen when the arm is opened so no
+	// writer re-tests it; see writers/effects_writer.h
 	const EffectsWriter *w;
-
-	// v3's flags byte. Zero for everything this build emits - nothing here
-	// compress - and settable only so EffectsV3_Encode can reproduce the
-	// header of a payload it was handed rather than assert one
-	uint8_t flags;
 };
+
+// the sink this buffer writes bytes into, or NULL while it is accumulating
+static const RecordSink *_sink_const
+(
+	const EffectsBuffer *eb  // effects-buffer
+) {
+	if(eb->version < 3)             return &eb->v2;
+	if(eb->v3.body == BODY_RECORDS) return &eb->v3.records;
+
+	return NULL;
+}
+
+static RecordSink *_sink
+(
+	EffectsBuffer *eb  // effects-buffer
+) {
+	return (RecordSink *)_sink_const(eb);
+}
 
 // forward declarations
 
@@ -91,7 +140,7 @@ static unsigned char *_EffectsBuffer_WriteHeader
 		// flags; bit 0 = compressed. Nothing here compresses, so every buffer
 		// builds carries 0 here - but a re-encode has to reproduce the header
 		// of the payload it decoded, so the value is read rather than assumed
-		*dst++ = eb->flags;
+		*dst++ = eb->v3.flags;
 	}
 
 	return dst;
@@ -116,7 +165,7 @@ void EffectsBuffer_WriteBytes
 	// A log AND an assert, because they cover different builds: ASSERT compiles
 	// to nothing without RG_DEBUG, so it stops a debug and CI build at the
 	// offending writer while the log is what a release build leaves behind.
-	if(unlikely(eb->v3 != NULL)) {
+	if(unlikely(_sink(eb) == NULL)) {
 		// AN EFFECT WITH NO v3 PATH IS A BUG, NOT A CONDITION TO SURVIVE.
 		//
 		// All 14 records have a producing path (EFFECTS_V3_ENCODE_READY), so
@@ -138,7 +187,7 @@ void EffectsBuffer_WriteBytes
 		return;
 	}
 
-	EffectsBytes_Write (eb->records, ptr, n) ;
+	EffectsBytes_Write (_sink(eb)->bytes, ptr, n) ;
 }
 
 // write a length-prefixed, NUL-terminated string
@@ -376,15 +425,81 @@ void EffectsBuffer_IncEffectCount
 	buff->n++;
 }
 
-// the write table a buffer with this grouping must use
+// the write table the live arm requires
 //
-// Keyed on the GROUPING, not the version: the v3 arms dereference it, so a
-// buffer holding none - EffectsBuffer_Wrap's - cannot be given the v3 table.
+// The arm is enough TODAY, and only because there are two of each. The rule is
+// two-level: the arm decides which tables are legal at all - a grouping table's
+// arms dereference the grouping, so a records-arm buffer cannot be given one
+// whatever version it is stamped with - and among the legal ones the version
+// picks. A second grouping version separates them, and this is the function
+// that has to grow the version argument; _open_body already holds it.
+//
+// A records-arm buffer never consults the table in the first place: the two
+// that exist, EffectsBuffer_Wrap's and EffectsBuffer_TakeBody's, are written
+// through WriteSIValue and EffectsV3_EncodeRecord, never through an Add*.
 static const EffectsWriter *_writer_for
 (
-	const EffectsV3Grouping *v3  // grouping, or NULL
+	const EffectsBuffer *eb  // effects-buffer
 ) {
-	return (v3 != NULL) ? &EFFECTS_WRITER_V3 : &EFFECTS_WRITER_V2;
+	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+		return &EFFECTS_WRITER_V3;
+	}
+
+	return &EFFECTS_WRITER_V2;
+}
+
+// release whichever arm is live
+static void _release_body
+(
+	EffectsBuffer *eb  // effects-buffer
+) {
+	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+		EffectsV3Grouping_Free(eb->v3.grouping);
+		return;
+	}
+
+	RecordSink *s = _sink(eb);
+	if(s->owns) {
+		EffectsBytes_Free(s->bytes);
+	}
+}
+
+// open the sink arm, borrowing 'sink' when one is supplied
+static void _open_sink
+(
+	EffectsBuffer *eb,   // effects-buffer
+	EffectsBytes *sink   // sink to borrow, or NULL to allocate one
+) {
+	RecordSink rs = {
+		.bytes = (sink != NULL) ? sink : EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE),
+		.owns  = (sink == NULL)
+	};
+
+	if(eb->version >= 3) {
+		eb->v3.body    = BODY_RECORDS;
+		eb->v3.records = rs;
+	} else {
+		eb->v2 = rs;
+	}
+}
+
+// open the arm this emit version calls for
+static void _open_body
+(
+	EffectsBuffer *eb,  // effects-buffer
+	uint64_t emit       // version to emit
+) {
+	eb->version = (uint8_t)emit;
+
+	if(emit >= 3) {
+		eb->v3.flags    = 0;
+		eb->v3.body     = BODY_GROUPING;
+		eb->v3.grouping = EffectsV3Grouping_New();
+	} else {
+		_open_sink(eb, NULL);
+	}
+
+	eb->w = _writer_for(eb);
 }
 
 // create a new effects-buffer
@@ -397,13 +512,9 @@ EffectsBuffer *EffectsBuffer_New
 	uint64_t emit = EFFECTS_VERSION_EMIT;
 	Config_Option_get(Config_EFFECTS_VERSION, &emit);
 
-	eb->n            = 0;
-	eb->records      = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
-	eb->version      = (uint8_t)emit;
-	eb->owns_records = true;
-	eb->v3           = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
-	eb->w            = _writer_for(eb->v3);
-	eb->flags        = 0;
+	eb->n = 0;
+
+	_open_body(eb, emit);
 
 	// note: no header is written here. v2 stamped its version byte at
 	// construction; it is now written by EffectsBuffer_Buffer, so that the
@@ -417,7 +528,9 @@ EffectsV3Grouping *EffectsBuffer_V3
 ) {
 	ASSERT(eb != NULL);
 
-	return eb->v3;
+	return (eb->version >= 3 && eb->v3.body == BODY_GROUPING)
+		? eb->v3.grouping
+		: NULL;
 }
 
 const EffectsWriter *EffectsBuffer_Writer
@@ -436,18 +549,22 @@ void EffectsBuffer_Reset
 ) {
 	ASSERT(buff != NULL);
 
-	EffectsBytes_Clear(buff->records);
-
-	EffectsV3Grouping_Free(buff->v3);
-
 	uint64_t emit = EFFECTS_VERSION_EMIT;
 	Config_Option_get(Config_EFFECTS_VERSION, &emit);
 
-	buff->n       = 0;
-	buff->version = (uint8_t)emit;
-	buff->v3      = (emit >= 3) ? EffectsV3Grouping_New() : NULL;
-	buff->w       = _writer_for(buff->v3);
-	buff->flags   = 0;
+	// the arm can change between queries, because the version is re-read here
+	// and an operator may have moved it
+	RecordSink *s = _sink(buff);
+
+	if(emit < 3 && buff->version < 3 && s != NULL) {
+		// same arm as last time: retain the first block rather than churn it
+		EffectsBytes_Clear(s->bytes);
+	} else {
+		_release_body(buff);
+		_open_body(buff, emit);
+	}
+
+	buff->n = 0;
 }
 
 // returns number of effects in buffer
@@ -485,18 +602,24 @@ EffectsBytes *EffectsBuffer_TakeBody
 ) {
 	ASSERT(eb != NULL);
 
-	if(eb->v3 != NULL) {
-		if(EffectsV3Grouping_RecordCount(eb->v3) > 0) {
+	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
+		if(EffectsV3Grouping_RecordCount(eb->v3.grouping) > 0) {
 			return NULL;
 		}
-		EffectsV3Grouping_Free(eb->v3);
-		eb->v3 = NULL;
+
+		// the transition: the accumulator goes and a sink opens in its place,
+		// inside the same v3 arm
+		EffectsV3Grouping_Free(eb->v3.grouping);
+		_open_sink(eb, NULL);
+		eb->w = _writer_for(eb);
 	}
 
 	eb->version = version;
-	eb->flags   = flags;
+	if(version >= 3) {
+		eb->v3.flags = flags;
+	}
 
-	return eb->records;
+	return _sink(eb)->bytes;
 }
 
 // get a copy of effects-buffer internal buffer
@@ -514,13 +637,15 @@ unsigned char *EffectsBuffer_Buffer
 	// v3 serializes its grouped records here, which is the only point at which
 	// they can be: a record states its count and shape ahead of its rows, so
 	// nothing could be written while effects were still arriving
-	EffectsBytes *body = eb->records;
+	EffectsBytes *body    = NULL;
 	EffectsBytes *v3_body = NULL;
 
-	if(eb->v3 != NULL) {
+	if(eb->version >= 3 && eb->v3.body == BODY_GROUPING) {
 		v3_body = EffectsBytes_New(EFFECTS_BUFFER_BLOCK_SIZE);
-		EffectsV3Grouping_Encode(eb->v3, v3_body);
+		EffectsV3Grouping_Encode(eb->v3.grouping, v3_body);
 		body = v3_body;
+	} else {
+		body = _sink_const(eb)->bytes;
 	}
 
 	size_t hdr = _EffectsBuffer_HeaderLen(eb->version);
@@ -736,11 +861,7 @@ void EffectsBuffer_Free
 ) {
 	if(eb == NULL) return;
 
-	if(eb->owns_records) {
-		EffectsBytes_Free(eb->records);
-	}
-
-	EffectsV3Grouping_Free(eb->v3);
+	_release_body(eb);
 
 	rm_free(eb);
 }
@@ -763,13 +884,15 @@ EffectsBuffer *EffectsBuffer_Wrap
 
 	EffectsBuffer *eb = rm_malloc(sizeof(EffectsBuffer));
 
-	eb->n            = 0;
-	eb->records      = sink;
-	eb->version      = EFFECTS_VERSION_EMIT;
-	eb->owns_records = false;
-	eb->v3           = NULL;
-	eb->w            = _writer_for(eb->v3);
-	eb->flags        = 0;
+	eb->n       = 0;
+	eb->version = EFFECTS_VERSION_EMIT;
+
+	if(eb->version >= 3) {
+		eb->v3.flags = 0;
+	}
+
+	_open_sink(eb, sink);
+	eb->w = _writer_for(eb);
 
 	return eb;
 }
