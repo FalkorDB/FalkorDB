@@ -74,7 +74,7 @@ class testEffectsCompression():
     def _replica_bytes_in(self):
         return self.replica.info("stats")["total_net_input_bytes"]
 
-    def _wait_for_count(self, n):
+    def _wait_for_count(self, n, q="MATCH (n:L) RETURN count(n)"):
         # GRAPH.QUERY is a write command and refused on a read-only replica, so
         # this reads with ro_query.
         #
@@ -88,7 +88,7 @@ class testEffectsCompression():
         last = 0
         for _ in range(200):
             try:
-                last = self.rg.ro_query("MATCH (n:L) RETURN count(n)").result_set[0][0]
+                last = self.rg.ro_query(q).result_set[0][0]
                 if last == n:
                     return n
             except redis.exceptions.ResponseError as e:
@@ -100,18 +100,17 @@ class testEffectsCompression():
             time.sleep(0.05)
         return last
 
-    def _write_run(self, min_bytes, n):
+    # the stats-wrapped write both tests share: run q on the master, let
+    # settle() wait for the replica and check what landed, and hold the three
+    # mechanism checks around it. Returns the bytes the replica read.
+    def _measured(self, min_bytes, q, settle):
         self.db.config_set("EFFECTS_COMPRESSION", min_bytes)
 
         calls0, failed0 = self._effect_stats()
         sync0           = self._sync_full()
         bytes0          = self._replica_bytes_in()
 
-        q = f"UNWIND range(1, {n}) AS i CREATE (:L {{v: i, s: 'padpadpadpadpadpad'}})"
-        res = self.mg.query(q)
-        self.env.assertEquals(res.nodes_created, n)
-
-        self.env.assertEquals(self._wait_for_count(n), n)
+        settle(self.mg.query(q))
         bytes1 = self._replica_bytes_in()
 
         calls1, failed1 = self._effect_stats()
@@ -127,6 +126,15 @@ class testEffectsCompression():
         self.env.assertEquals(self._sync_full(), sync0)
 
         return bytes1 - bytes0
+
+    def _write_run(self, min_bytes, n):
+        q = f"UNWIND range(1, {n}) AS i CREATE (:L {{v: i, s: 'padpadpadpadpadpad'}})"
+
+        def settle(res):
+            self.env.assertEquals(res.nodes_created, n)
+            self.env.assertEquals(self._wait_for_count(n), n)
+
+        return self._measured(min_bytes, q, settle)
 
     def test01_compressed_payload_round_trips(self):
         n = 5000
@@ -146,4 +154,45 @@ class testEffectsCompression():
 
         # and the graphs agree, so the inflated records applied correctly.
         # Necessary but NOT sufficient on its own, which is the whole point
+        self.env.assertTrue(graph_eq(self.mg, self.rg))
+
+    # A SECOND SHAPE, because test01 cannot fail on a whole class of bug.
+    #
+    # EffectsV3_ReaderNext ends the walk on ftell(stream) >= r->n, so after the
+    # reader swaps its stream to the inflated plaintext, r->n has to be the
+    # PLAINTEXT length. Left at the compressed length it stops the walk at the
+    # first record boundary past it and drops the rest - silently: the records
+    # that did arrive apply cleanly, so there is no refusal, no failed_calls,
+    # and no resync for test01's mechanism checks to catch.
+    #
+    # test01 cannot reach it. Its payload is four records at offsets 0, 22, 38
+    # and 54, and the fourth is the whole 215,082-byte node group, so every
+    # boundary sits below the 5,880-byte compressed length and the terminator
+    # is never consulted again before EOF. Measured, not assumed.
+    #
+    # This shape puts a boundary above it: two node groups and an edge group,
+    # each large, so the second and third boundaries land tens of thousands of
+    # bytes in. Verified by deleting `r->n = r->plain_len` - this test fails
+    # and test01 still passes.
+    def test02_every_group_in_a_compressed_payload_applies(self):
+        n = 4000
+
+        self.mg.delete()
+        self._wait_for_link()
+
+        pad = "padpadpadpadpadpad"
+        q   = (f"UNWIND range(1, {n}) AS i CREATE "
+               f"(:L {{v: i, s: '{pad}'}})-[:R {{w: i, t: '{pad}'}}]->(:M {{v: i, s: '{pad}'}})")
+
+        def settle(res):
+            self.env.assertEquals(res.nodes_created, 2 * n)
+            self.env.assertEquals(res.relationships_created, n)
+            self.env.assertEquals(
+                self._wait_for_count(n, "MATCH ()-[r:R]->() RETURN count(r)"), n)
+
+        self._measured(64, q, settle)
+
+        # the LAST group in the payload, which is the one a short walk loses
+        self.env.assertEquals(
+            self.rg.ro_query("MATCH (:L)-[:R]->(:M) RETURN count(*)").result_set[0][0], n)
         self.env.assertTrue(graph_eq(self.mg, self.rg))
