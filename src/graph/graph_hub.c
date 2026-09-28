@@ -713,8 +713,8 @@ Constraint GraphHub_AddConstraint
 			// remove constraint from schema
 			Schema_RemoveConstraint (s, c) ;
 
-			// free failed constraint
-			Constraint_Free (&c) ;
+			// Its enforcement task may still be finishing on the indexer.
+			Indexer_DropConstraint (c, gc) ;
 		}
 	}
 

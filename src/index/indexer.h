@@ -47,7 +47,8 @@ void Indexer_DropIndex
 void Indexer_EnforceConstraint
 (
 	Constraint c,  // constraint to enforce
-	GraphContext *gc  // graph context
+	GraphContext *gc, // graph context
+	RedisModuleCtx *redis_ctx  // context whose database owns the graph
 );
 
 // drops constraint asynchronously

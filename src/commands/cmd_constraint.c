@@ -534,7 +534,8 @@ static bool _Constraint_Create
 
 	// failed to add constraint
 	if (c == NULL) {
-		res = false ;
+		// Older AOFs contain both creation and activation announcements.
+		res = force_retrieve && status == CONSTRAINT_ALREADY_EXISTS ;
 		goto cleanup ;
 	}
 
@@ -550,6 +551,9 @@ static bool _Constraint_Create
 	RedisModule_Replicate (ctx, "GRAPH.EFFECT", "cb!", graph_name, buf, l) ;
 
 	rm_free (buf) ;
+
+	// Register the task while the constraint is still protected from DROP.
+	Constraint_Enforce (c, (struct GraphContext*)gc, ctx) ;
 
 cleanup:
 
@@ -568,9 +572,6 @@ cleanup:
 	if (res == false) {
 		// TODO: give additional information to caller
 		RedisModule_ReplyWithError (ctx, error_msg) ;
-	} else {
-		// constraint creation succeeded, enforce constraint
-		Constraint_Enforce (c, (struct GraphContext*)gc) ;
 	}
 
 	QueryCtx_Free  () ;
