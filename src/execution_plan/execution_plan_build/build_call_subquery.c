@@ -7,6 +7,7 @@
 #include "../../ast/ast.h"
 #include "../../util/arr.h"
 #include "../../query_ctx.h"
+#include "../../errors/errors.h"
 #include "../ops/op_eager.h"
 #include "../ops/op_apply.h"
 #include "../ops/op_argument.h"
@@ -184,6 +185,17 @@ void buildCallSubqueryPlan
 
 	// restore original AST
 	QueryCtx_SetAST (orig_ast) ;
+
+	// building the embedded plan raised an error (e.g. an invalid expression
+	// inside the subquery), leaving no usable embedded plan
+	// bail before dereferencing it; the outer builder stops and the
+	// partially-built plan is discarded by the caller
+	if (embedded_plan == NULL || ErrorCtx_EncounteredError ()) {
+		if (embedded_plan != NULL) {
+			ExecutionPlan_Free (embedded_plan) ;
+		}
+		return ;
+	}
 
 	// characterize whether the sub-query performs modifications or not
 	// if it is the call sub-query becomes eager, consuming all possible records
