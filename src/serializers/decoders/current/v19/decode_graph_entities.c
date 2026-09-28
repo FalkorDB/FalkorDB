@@ -96,6 +96,11 @@ static SIValue _RdbLoadSIArray
 	uint arrayLen = SerializerIO_ReadUnsigned(rdb);
 	SIValue list = SI_Array(arrayLen);
 	for(uint i = 0; i < arrayLen; i++) {
+		// stop appending on a short read; a partial array is a valid SIValue and
+		// the whole graph is torn down once the abort propagates
+		if(SerializerIO_Error(rdb)) {
+			break;
+		}
 		SIValue elem = _RdbLoadSIValue(rdb);
 		SIArray_AppendAsOwner (&list, &elem) ;
 	}
@@ -198,6 +203,11 @@ void RdbLoadNodes_v19
 		Node n;
 		NodeID id = SerializerIO_ReadUnsigned(rdb);
 
+		// abort on a short read before mutating the datablock with a bogus id
+		if(SerializerIO_Error(rdb)) {
+			return;
+		}
+
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->nodes, id);
 		*set = NULL;
 
@@ -207,8 +217,9 @@ void RdbLoadNodes_v19
 		_RdbLoadEntity(rdb, (GraphEntity *)&n);
 	}
 
-	// read encoded node count and validate
-	ASSERT(n + prev_graph_node_count == Graph_NodeCount(g));
+	// read encoded node count and validate (skipped on a short-read abort)
+	ASSERT(SerializerIO_Error(rdb) ||
+			n + prev_graph_node_count == Graph_NodeCount(g));
 }
 
 // decode deleted nodes
@@ -226,6 +237,13 @@ void RdbLoadDeletedNodes_v19
 	// read node deleted IDs list from the RDB
 	size_t n;
 	NodeID *deleted_nodes_list = (NodeID*)SerializerIO_ReadBuffer(rdb, &n);
+
+	// abort on a short read before validating the (empty) buffer against the
+	// expected count, which would otherwise trip the assert below
+	if (SerializerIO_Error(rdb)) {
+		rm_free(deleted_nodes_list);
+		return;
+	}
 
 	// validate buffer: must be aligned and match expected count
 	if (n % sizeof(NodeID) != 0 ||
@@ -269,6 +287,11 @@ void RdbLoadEdges_v19
 
 		EdgeID id = SerializerIO_ReadUnsigned(rdb);
 
+		// abort on a short read before mutating the datablock with a bogus id
+		if(SerializerIO_Error(rdb)) {
+			return;
+		}
+
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, id);
 		*set = NULL;
 
@@ -278,8 +301,9 @@ void RdbLoadEdges_v19
 		_RdbLoadEntity(rdb, (GraphEntity *)&e);
 	}
 
-	// read encoded edge count and validate
-	ASSERT(n + prev_edge_count == Graph_EdgeCount(g));
+	// read encoded edge count and validate (skipped on a short-read abort)
+	ASSERT(SerializerIO_Error(rdb) ||
+			n + prev_edge_count == Graph_EdgeCount(g));
 }
 
 // decode deleted edges
@@ -297,6 +321,13 @@ void RdbLoadDeletedEdges_v19
 	// read edge deleted IDs list from the RDB
 	size_t n;
 	EdgeID *deleted_edges_list = (EdgeID*)SerializerIO_ReadBuffer(rdb, &n);
+
+	// abort on a short read before validating the (empty) buffer against the
+	// expected count, which would otherwise trip the assert below
+	if (SerializerIO_Error(rdb)) {
+		rm_free(deleted_edges_list);
+		return;
+	}
 
 	// validate buffer: must be aligned and match expected count
 	if (n % sizeof(EdgeID) != 0 ||

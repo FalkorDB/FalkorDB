@@ -68,6 +68,12 @@ static void _DecodeTensors
 			// read tensor blob
 			GrB_Index blob_size;
 			void *blob = SerializerIO_ReadBuffer (rdb, (size_t*)&blob_size) ;
+
+			// abort on a short read before deserializing a partial tensor blob
+			if (SerializerIO_Error (rdb)) {
+				rm_free (blob) ;
+				return ;
+			}
 			ASSERT (blob != NULL) ;
 
 			GrB_Vector u;
@@ -126,6 +132,15 @@ static void _decode_and_load_vector
 	n_bytes   = SerializerIO_ReadUnsigned (rdb) ;
 	handling  = SerializerIO_ReadSigned   (rdb) ;
 
+	// abort on a short read before deriving a GrB_Type from an empty name and
+	// handing partial data to GraphBLAS
+	if (SerializerIO_Error (rdb)) {
+		rm_free (arr) ;
+		rm_free (t_name) ;
+		*v = NULL ;
+		return ;
+	}
+
 	// get GrB_Type
 	GrB_Type t;  // data type
 	info = GxB_Type_from_name (&t, t_name) ;
@@ -154,7 +169,13 @@ static GrB_Matrix _Decode_GrB_Matrix
 	GxB_Container container;
 
 	container = SerializerIO_ReadBuffer (rdb, &n) ;
-	ASSERT (n == sizeof(struct GxB_Container_struct)) ;
+
+	// a short read yields an empty / wrong-sized buffer; interpreting it as a
+	// container and writing its fields would overflow the allocation
+	if (SerializerIO_Error (rdb) || n != sizeof(struct GxB_Container_struct)) {
+		rm_free (container) ;
+		return NULL ;
+	}
 
 	// nullify container's vectors
     container->p = NULL ;
@@ -169,6 +190,13 @@ static GrB_Matrix _Decode_GrB_Matrix
 	_decode_and_load_vector (rdb, &container->p) ;
 	_decode_and_load_vector (rdb, &container->i) ;
 	_decode_and_load_vector (rdb, &container->b) ;
+
+	// abort on a short read before loading a matrix from a partial container;
+	// GxB_Container_free reclaims the container and any vectors already loaded
+	if (SerializerIO_Error (rdb)) {
+		GxB_Container_free (&container) ;
+		return NULL ;
+	}
 
 	// load A from the container
 	GrB_Matrix A;
@@ -207,6 +235,15 @@ static void _Decode_Delta_Matrix
 	GrB_Matrix DP = _Decode_GrB_Matrix (rdb) ;
 	GrB_Matrix DM = _Decode_GrB_Matrix (rdb) ;
 
+	// abort on a short read; free any matrices that were decoded and leave the
+	// delta matrix empty for the partial-graph teardown to reclaim
+	if (SerializerIO_Error (rdb) || M == NULL || DP == NULL || DM == NULL) {
+		if (M  != NULL) GrB_Matrix_free (&M) ;
+		if (DP != NULL) GrB_Matrix_free (&DP) ;
+		if (DM != NULL) GrB_Matrix_free (&DM) ;
+		return ;
+	}
+
 	GrB_Info info = Delta_Matrix_setMatrices (D, &M, &DP, &DM) ;
 	ASSERT (info == GrB_SUCCESS) ;
 }
@@ -232,8 +269,15 @@ void RdbLoadLabelMatrices_v19
 	
 	// decode each label matrix
 	for(int i = 0; i < n; i++) {
+		// abort on a short read
+		if(SerializerIO_Error(rdb)) {
+			return;
+		}
 		// read label ID
 		LabelID l = SerializerIO_ReadUnsigned(rdb);
+		if(SerializerIO_Error(rdb)) {
+			return;
+		}
 		Delta_Matrix lbl = Graph_GetLabelMatrix(g, l);
 		_Decode_Delta_Matrix(rdb, lbl);
 	}
@@ -261,8 +305,15 @@ void RdbLoadRelationMatrices_v19
 
 	// decode relationship matrices
 	for (int i = 0; i < n; i++) {
+		// abort on a short read
+		if (SerializerIO_Error (rdb)) {
+			return;
+		}
 		// read relation ID
 		RelationID r = SerializerIO_ReadUnsigned (rdb) ;
+		if (SerializerIO_Error (rdb)) {
+			return;
+		}
 		ASSERT (r == i) ;
 
 		// plant M matrix

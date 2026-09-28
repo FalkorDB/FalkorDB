@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "serializer_io.h"
+#include "serializer_io_internal.h"
 #include "../util/rmalloc.h"
 
 #include <stdio.h>
@@ -13,36 +14,22 @@
 
 #define BUFFER_SIZE 256000  // buffered-searializer buffer size 256KB
 
-typedef struct {
-	unsigned char *buffer;  // io buffer
-	size_t cap;             // io buffer capacity
-	size_t count;           // number of bytes written to io buffer
-	RedisModuleIO *stream;  // redis module io
-} BufferedIO;
+// probe whether a FILE* stream backend hit a read error / end of file
+static bool Stream_IsError
+(
+	void *stream  // FILE*
+) {
+	FILE *f = (FILE*)stream;
+	return ferror(f) != 0 || feof(f) != 0;
+}
 
-// generic serializer
-// contains a number of function pointers for data serialization
-struct SerializerIO_Opaque {
-	void (*WriteFloat)(void*, float);                 // write float
-	void (*WriteDouble)(void*, double);               // write dobule
-	void (*WriteSigned)(void*, int64_t);              // write signed int
-	void (*WriteUnsigned)(void*, uint64_t);           // write unsigned int
-	void (*WriteLongDouble)(void*, long double);      // write long double
-	void (*WriteString)(void*, RedisModuleString*);   // write RedisModuleString
-	void (*WriteBuffer)(void*, const void*, size_t);  // write bytes
-
-	float (*ReadFloat)(void*);                        // read float
-	double (*ReadDouble)(void*);                      // read dobule
-	int64_t (*ReadSigned)(void*);                     // read signed int
-	uint64_t (*ReadUnsigned)(void*);                  // read unsigned int
-	void* (*ReadBuffer)(void*, size_t*);              // read bytes
-	long double	(*ReadLongDouble)(void*);             // read long double
-	RedisModuleString* (*ReadString)(void*);          // read RedisModuleString
-
-	bool encoder;   // true is serializer is used for encoding, false decoding
-	void *stream;   // RedisModuleIO* or a Stream descriptor
-	bool free_buff; // true if serializer has a buffer to free
-};
+// probe whether a RedisModuleIO backend hit an IO error (e.g. short read)
+static bool RedisIO_IsError
+(
+	void *stream  // RedisModuleIO*
+) {
+	return RedisModule_IsIOError((RedisModuleIO*)stream);
+}
 
 //------------------------------------------------------------------------------
 // Serializer Write API
@@ -110,13 +97,15 @@ static void Stream_WriteBuffer
 }
 
 // macro for creating stream serializer read functions
+//
+// on a short read the value is left zeroed and feof/ferror is set on the stream;
+// Stream_IsError reports it so the read layer latches the sticky error flag
 #define STREAM_READ(suffix, t)                      \
 	static t Stream_Read##suffix(void *stream) {    \
 		ASSERT(stream != NULL);                     \
 		FILE *f = (FILE*)stream;                    \
-		t v;                                        \
-		size_t n = fread(&v, sizeof(t), 1, f);      \
-		ASSERT(n == 1);                             \
+		t v = (t)0;                                 \
+		fread(&v, sizeof(t), 1, f);                 \
 		return v;                                   \
 	}
 
@@ -139,16 +128,24 @@ static void *Stream_ReadBuffer
 	FILE *f = (FILE*)stream;
 
 	// read buffer's size
-	size_t len;
-	size_t read = fread(&len, sizeof(size_t), 1, f);
-	ASSERT(read == 1);
+	// on a short read leave the length at zero and bail out, never allocating
+	// from a garbage length; feof/ferror is reported by Stream_IsError
+	size_t len = 0;
+	if(fread(&len, sizeof(size_t), 1, f) != 1) {
+		if(n != NULL) *n = 0;
+		return NULL;
+	}
 
 	void *data = rm_malloc(sizeof(char) * len);
 
 	// read data
 	if (len > 0) {
-		read = fread(data, len, 1, f);
-		ASSERT(read == 1);
+		if(fread(data, len, 1, f) != 1) {
+			// short read on the payload
+			rm_free(data);
+			if(n != NULL) *n = 0;
+			return NULL;
+		}
 	}
 
 	if(n != NULL) *n = len;
@@ -161,10 +158,22 @@ static void *Stream_ReadBuffer
 //------------------------------------------------------------------------------
 
 // macro for creating the serializer read functions
-#define SERIALIZERIO_READ(suffix, t)              \
-t SerializerIO_Read##suffix(SerializerIO io) {    \
-	ASSERT(io != NULL);                           \
-	return io->Read##suffix(io->stream);          \
+//
+// reads short-circuit once an IO error (short read) has been latched, and every
+// read probes its backend afterwards so a truncated stream latches the sticky
+// error flag instead of crashing; callers detect it via SerializerIO_Error
+#define SERIALIZERIO_READ(suffix, t)                                   \
+t SerializerIO_Read##suffix(SerializerIO io) {                         \
+	ASSERT(io != NULL);                                               \
+	if(unlikely(io->error)) {                                         \
+		return (t)0;                                                  \
+	}                                                                \
+	t value = io->Read##suffix(io->stream);                          \
+	if(unlikely(io->IsError != NULL && io->IsError(io->stream))) {    \
+		io->error = true;                                            \
+		return (t)0;                                                  \
+	}                                                                \
+	return value;                                                    \
 }
 
 SERIALIZERIO_READ(Unsigned, uint64_t)
@@ -180,7 +189,37 @@ void *SerializerIO_ReadBuffer
 	SerializerIO io,  // stream
 	size_t *lenptr    // number of bytes to read
 ) {
-	return io->ReadBuffer(io->stream, lenptr);
+	ASSERT(io != NULL);
+
+	// once an IO error has been latched, stop touching the stream and hand back
+	// a safe, empty, heap-allocated buffer; callers can free it and keep going
+	// until the next error checkpoint aborts the decode
+	if(unlikely(io->error)) {
+		if(lenptr != NULL) *lenptr = 0;
+		return rm_calloc(1, 1);
+	}
+
+	size_t len = 0;
+	void *data = io->ReadBuffer(io->stream, &len);
+
+	if(unlikely(io->IsError != NULL && io->IsError(io->stream))) {
+		io->error = true;
+		if(data != NULL) rm_free(data);
+		if(lenptr != NULL) *lenptr = 0;
+		return rm_calloc(1, 1);
+	}
+
+	if(lenptr != NULL) *lenptr = len;
+	return data;
+}
+
+// returns true if a short read / IO error was encountered during decoding
+bool SerializerIO_Error
+(
+	SerializerIO io  // serializer
+) {
+	ASSERT(io != NULL);
+	return io->error;
 }
 
 //------------------------------------------------------------------------------
@@ -188,7 +227,8 @@ void *SerializerIO_ReadBuffer
 //------------------------------------------------------------------------------
 
 // load buffer from stream to memory
-static void _load_buffer
+// returns false on a short read (the underlying RedisModuleIO latched an error)
+static bool _load_buffer
 (
 	BufferedIO *buffer  // buffer
 ) {
@@ -202,15 +242,21 @@ static void _load_buffer
 	}
 
 	// read new buffer from stream
+	size_t cap = 0;
 	buffer->buffer =
-		(unsigned char*)RedisModule_LoadStringBuffer(buffer->stream,
-				&buffer->cap);
-
-	ASSERT(buffer->cap    > 0);
-	ASSERT(buffer->buffer != NULL);
+		(unsigned char*)RedisModule_LoadStringBuffer(buffer->stream, &cap);
 
 	// reset offset
 	buffer->count = 0;
+
+	// a short read yields a NULL buffer and latches the IO error on the stream
+	if(buffer->buffer == NULL || RedisModule_IsIOError(buffer->stream)) {
+		buffer->cap = 0;
+		return false;
+	}
+
+	buffer->cap = cap;
+	return true;
 }
 
 // flush buffer to underline stream
@@ -335,11 +381,16 @@ static t BufferSerializerIOv2_Read##suffix(void *io) {          \
                                                                 \
 	/* load buffer if depleted */                               \
 	if(unlikely(buffer->count == buffer->cap)) {                \
-		_load_buffer(buffer);                                   \
+		if(!_load_buffer(buffer)) {                             \
+			/* short read - latched via Buffered_IsError */     \
+			return (t)0;                                        \
+		}                                                       \
 	}                                                           \
                                                                 \
-	/* ensure there's at least sizeof(t) bytes in buffer */     \
-	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(t));  \
+	/* a truncated buffer may not hold a full value */          \
+	if(unlikely((buffer->cap - buffer->count) < REQUIRED_SIZE(t))) { \
+		return (t)0;                                            \
+	}                                                           \
                                                                 \
 	/* validate type */                                         \
 	SERIALIZER_VALIDATE_TYPE(t)                                 \
@@ -424,7 +475,11 @@ void *BufferSerializerIOv2_ReadBuffer
 
 	// load buffer if depleted
 	if (unlikely (buffer->count == buffer->cap)) {
-		_load_buffer (buffer) ;
+		if(!_load_buffer (buffer)) {
+			// short read - the read layer latches via Buffered_IsError
+			if(lenptr != NULL) *lenptr = 0;
+			return NULL;
+		}
 	}
 
 	ASSERT (buffer->cap > 0) ;
@@ -454,7 +509,11 @@ void *BufferSerializerIOv2_ReadBuffer
 			RedisModule_Assert (false) ;
 		}
 
-		_load_buffer (buffer) ;
+		if(!_load_buffer (buffer)) {
+			// short read - the read layer latches via Buffered_IsError
+			if(lenptr != NULL) *lenptr = 0;
+			return NULL;
+		}
 
 		ret = buffer->buffer ;
 
@@ -551,6 +610,9 @@ SerializerIO SerializerIO_FromStream
 	serializer->ReadUnsigned    = Stream_ReadUnsigned;
 	serializer->ReadLongDouble  = Stream_ReadLongDouble;
 
+	// decoders latch short reads via the backend error probe
+	if(!encoder) serializer->IsError = Stream_IsError;
+
 	return serializer;
 }
 
@@ -584,6 +646,9 @@ SerializerIO SerializerIO_FromRedisModuleIO
 	serializer->ReadString      = (RedisModuleString* (*)(void*))RedisModule_LoadString;
 	serializer->ReadUnsigned    = (uint64_t (*)(void*))RedisModule_LoadUnsigned;
 	serializer->ReadLongDouble  = (long double (*)(void*))RedisModule_LoadLongDouble;
+
+	// decoders latch short reads via the backend error probe
+	if(!encoder) serializer->IsError = RedisIO_IsError;
 
 	return serializer;
 }
@@ -634,6 +699,9 @@ SerializerIO SerializerIOv2_FromBufferedRedisModuleIO
 	serializer->stream    = buffer_io;
 	serializer->encoder   = encoder;
 	serializer->free_buff = true;
+
+	// decoders latch short reads via the backend error probe
+	if(!encoder) serializer->IsError = Buffered_IsError;
 
 	return serializer;
 }

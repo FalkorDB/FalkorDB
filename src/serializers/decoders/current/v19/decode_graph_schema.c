@@ -134,9 +134,9 @@ static void _RdbLoadIndex
 		RedisModule_Free (field_name) ;
 	}
 
-	if (!already_loaded) {
-		ASSERT (idx != NULL) ;
-
+	// idx is NULL when no fields were decoded (e.g. a short read truncated the
+	// field list); skip finalizing an index that was never built
+	if (!already_loaded && idx != NULL) {
 		Index_SetLanguage (idx, language) ;
 		if (stopwords != NULL) {
 			bool stopwords_set = Index_SetStopwords (idx, &stopwords) ;
@@ -202,6 +202,11 @@ static void _RdbLoadConstraint
 		attr_strs [i] = GraphContext_GetAttributeName (gc, attr) ;
 	}
 
+	// abort on a short read before building a constraint from partial fields
+	if(SerializerIO_Error(rdb)) {
+		return;
+	}
+
 	if(!already_loaded) {
 		GraphEntityType et = (Schema_GetType(s) == SCHEMA_NODE) ?
 			GETYPE_NODE : GETYPE_EDGE;
@@ -233,6 +238,9 @@ static void _RdbLoadConstraints
 	uint constraint_count = SerializerIO_ReadUnsigned(rdb);
 
 	for (uint i = 0; i < constraint_count; i++) {
+		if(SerializerIO_Error(rdb)) {
+			return;
+		}
 		_RdbLoadConstraint(rdb, gc, s, already_loaded);
 	}
 }
@@ -256,6 +264,12 @@ static void _RdbLoadSchema
 	Schema *s    = NULL;
 	int     id   = SerializerIO_ReadUnsigned (rdb) ;
 	char   *name = SerializerIO_ReadBuffer (rdb, NULL) ;
+
+	// abort on a short read before building schema objects from empty data
+	if (SerializerIO_Error (rdb)) {
+		RedisModule_Free (name) ;
+		return ;
+	}
 
 	if (!already_loaded) {
 		bool created = false ;
@@ -295,6 +309,10 @@ static void _RdbLoadAttributeKeys
 
 	uint count = SerializerIO_ReadUnsigned(rdb);
 	for(uint i = 0; i < count; i ++) {
+		// stop on a short read
+		if(SerializerIO_Error(rdb)) {
+			return;
+		}
 		char *attr = SerializerIO_ReadBuffer(rdb, NULL);
 		GraphContext_FindOrAddAttribute(gc, attr, NULL);
 		RedisModule_Free(attr);
@@ -324,6 +342,9 @@ void RdbLoadGraphSchema_v19
 
 	// Load each node schema
 	for (uint i = 0 ; i < schema_count ; i++) {
+		if(SerializerIO_Error(rdb)) {
+			return;
+		}
 		_RdbLoadSchema (rdb, gc, SCHEMA_NODE, already_loaded) ;
 	}
 
@@ -332,6 +353,9 @@ void RdbLoadGraphSchema_v19
 
 	// Load each edge schema
 	for (uint i = 0 ; i < schema_count ; i++) {
+		if(SerializerIO_Error(rdb)) {
+			return;
+		}
 		_RdbLoadSchema (rdb, gc, SCHEMA_EDGE, already_loaded) ;
 	}
 }

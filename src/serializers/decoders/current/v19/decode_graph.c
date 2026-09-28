@@ -102,7 +102,13 @@ static GraphContext *_DecodeHeader
 			arr_append (decoding_context->multi_edge,  multi_edge [i]) ;
 		}
 
-		GraphDecodeContext_SetKeyCount (decoding_context, key_number) ;
+		// on a short read key_number may be a bogus 0; setting the key count to
+		// 0 would make GraphDecodeContext_Finished() true and mislead
+		// GraphContext_Free into the full-graph (non-partial) teardown path.
+		// leave the count at its default (1) so the partial path is taken
+		if (!SerializerIO_Error (rdb)) {
+			GraphDecodeContext_SetKeyCount (decoding_context, key_number) ;
+		}
 	}
 
 	// decode graph schemas
@@ -181,6 +187,11 @@ GraphContext *RdbLoadGraphContext_latest
 	// The following switch checks which part of the graph the current key holds, and decodes it accordingly
 	uint payloads_count = arr_len(payloads);
 	for(uint i = 0; i < payloads_count; i++) {
+		// abort on a short read / IO error
+		if(SerializerIO_Error(rdb)) {
+			break;
+		}
+
 		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
@@ -268,6 +279,16 @@ GraphContext *RdbLoadGraphContext_latest
 	}
 
 	arr_free(payloads);
+
+	// abort on a short read / IO error
+	// return the partial graph without advancing the processed-key count or
+	// finalizing it; keeping GraphDecodeContext_Finished() false makes
+	// GraphContext_Free take the partial-graph teardown path, and the write
+	// lock (held since the first virtual key) is released there. the caller
+	// (RdbLoadGraph) owns the teardown decision
+	if(SerializerIO_Error(rdb)) {
+		return gc;
+	}
 
 	// update decode context
 	GraphDecodeContext_IncreaseProcessedKeyCount(decoding_context);
