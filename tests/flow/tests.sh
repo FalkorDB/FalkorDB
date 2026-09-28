@@ -153,10 +153,10 @@ setup_rltest() {
 
 build_redis_with_sanitizer() {
 	local san_type=$1
-	local redis_dir="/tmp/redis-san-build"
-	local redis_version="8.6.3"
+	local redis_version="8.10.2"
+	local redis_dir="/tmp/redis-san-build-$redis_version"
 	local ignorelist=$ROOT/tests/memcheck/redis.san-ignorelist
-	local build_log="/tmp/redis-san-build.log"
+	local build_log="/tmp/redis-san-build-$redis_version.log"
 	local original_dir="$PWD"
 
 	# Check if we already have a working ASAN Redis build
