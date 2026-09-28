@@ -52,6 +52,14 @@ void ExecutionPlan_PopulateExecutionPlan
 		const cypher_astnode_t *clause =
 			cypher_ast_query_get_clause (ast->root, i) ;
 		ExecutionPlanSegment_ConvertClause (gc, ast, plan, clause) ;
+
+		// stop building the moment a clause raised an error
+		// continuing would build subsequent clauses on top of a partially
+		// constructed / inconsistent plan, which later crashes when the plan
+		// is tied together or freed
+		if (ErrorCtx_EncounteredError ()) {
+			break ;
+		}
 	}
 }
 
@@ -231,6 +239,12 @@ static ExecutionPlan **_process_segments
 		// create ExecutionPlan segment that represents this slice of the AST
 		segment = _process_segment (ast_segment, seg_start_idx, seg_end_idx) ;
 		arr_append (segments, segment) ;
+
+		// stop processing further segments once a build error was raised
+		// the caller detects the error and tears down the partial segments
+		if (ErrorCtx_EncounteredError ()) {
+			break ;
+		}
 
 		// the next segment will start where the current one ended
 		seg_start_idx = seg_end_idx ;
@@ -434,6 +448,18 @@ ExecutionPlan *ExecutionPlan_FromTLS_AST(void) {
 
 	uint segment_count = arr_len (segments) ;
 	ASSERT (segment_count > 0) ;
+
+	// a build error leaves the segments partially constructed (e.g. a NULL
+	// segment root); tying them together or adding an implicit result would
+	// dereference / mis-wire those ops and crash
+	// tear down every partial segment and report the failure to the caller
+	if (ErrorCtx_EncounteredError ()) {
+		for (uint i = 0; i < segment_count; i++) {
+			ExecutionPlan_Free (segments[i]) ;
+		}
+		arr_free (segments) ;
+		return NULL ;
+	}
 
 	// connect all segments into a single ExecutionPlan
 	ExecutionPlan *plan = _tie_segments(segments, segment_count);

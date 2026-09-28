@@ -2884,3 +2884,47 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEquals(res[0][0], 2) # avgX
 
+    def test_54_erroring_clause_around_subquery(self):
+        """
+        an error raised while building the embedded plan of a CALL {} subquery
+        (or a clause preceding it) left plan construction poisoned; the outer
+        builder then dereferenced the failed embedded plan and crashed the
+        server (same class as issue #250 / #239)
+
+        the error is raised during plan construction (a non-boolean WHERE
+        predicate passes AST validation but fails while building the filter
+        tree); verify every query fails gracefully and the server survives
+        """
+
+        self.graph.delete()
+        self.graph.query("CREATE (:N {v: 1})-[:R]->(:N {v: 2})")
+
+        crashing_queries = [
+            # erroring predicate inside the subquery body
+            """MATCH (n:N)
+               CALL { WITH n MATCH (n)-[:R]->(m) WHERE 1 RETURN m }
+               RETURN n, m""",
+            # multi-segment subquery whose first segment errors
+            """MATCH (n:N)
+               CALL { WITH n MATCH (n) WHERE 1
+                      WITH n OPTIONAL MATCH (n)-[:R]->(m) RETURN m }
+               RETURN m""",
+            # erroring clause precedes the CALL subquery
+            """MATCH (n:N) WHERE 1
+               CALL { WITH n MATCH (n)-[:R]->(m) RETURN m }
+               RETURN n, m""",
+        ]
+
+        for q in crashing_queries:
+            self.expect_error(q, "Expected boolean predicate")
+
+            # the server must still be responsive after the failed query
+            res = self.graph.query("MATCH (n) RETURN count(n)").result_set
+            self.env.assertEquals(res[0][0], 2)
+
+        # the same shape with a valid predicate must still build and run
+        res = self.graph.query("""MATCH (n:N)
+                                  CALL { WITH n MATCH (n)-[:R]->(m) RETURN m }
+                                  RETURN n.v, m.v ORDER BY n.v""").result_set
+        self.env.assertEquals(res, [[1, 2]])
+
