@@ -64,17 +64,15 @@ class LoadExitCodeBase():
         self.rdb_path = os.path.join(self.rdb_dir, rdb_file)
 
     # stop the server, apply `damage` to its RDB and boot a new server process
-    # with the same command line: the RDB is loaded at startup, as in production
+    # the way RLTest boots its own: the RDB is loaded at startup, as in
+    # production, and a sanitizer report lands in the test logs
     def boot(self, damage=None):
         runner = self.env.envRunner
-        args = runner.masterProcess.args
 
-        try:
-            self.conn.execute_command("SHUTDOWN", "NOSAVE")
-        except Exception:
-            pass # the server closes the connection as it exits
-        runner.masterProcess.wait(timeout=60)
-        runner.masterProcess = None
+        # stopped with SIGTERM, as RLTest and Kubernetes do: the SHUTDOWN
+        # command fails an assertion in RediSearch's cleanup, which only runs
+        # in sanitizer and valgrind builds (RS_GLOBAL_DTORS)
+        self.env.stop()
 
         if damage is not None:
             with open(self.rdb_path, "rb") as f:
@@ -82,7 +80,8 @@ class LoadExitCodeBase():
             with open(self.rdb_path, "wb") as f:
                 f.write(damage(rdb))
 
-        return subprocess.Popen(args, cwd=self.rdb_dir,
+        return subprocess.Popen(runner.masterCmdArgs, env=runner.masterOSEnv,
+                                cwd=self.rdb_dir,
                                 stdout=subprocess.DEVNULL,
                                 stderr=subprocess.DEVNULL)
 
@@ -171,9 +170,5 @@ class testCleanExitAfterLoad(LoadExitCodeBase):
                 time.sleep(0.1)
         self.env.assertEquals(res[1][0][0], 2000)
 
-        try:
-            conn.execute_command("SHUTDOWN", "NOSAVE")
-        except Exception:
-            pass # the server closes the connection as it exits
-
+        process.terminate() # SIGTERM, see boot()
         self.env.assertEquals(self.exit_code(process), 0)
