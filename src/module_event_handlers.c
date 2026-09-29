@@ -19,8 +19,12 @@
 #include "serializers/graphmeta_type.h"
 #include "serializers/graphcontext_type.h"
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <sysexits.h>
 
 // forward declaration
 void RediSearch_CleanupModule();
@@ -400,6 +404,103 @@ static void _ModuleLoadedHandler
 	}
 }
 
+//------------------------------------------------------------------------------
+// load failure exit code
+//------------------------------------------------------------------------------
+
+// Redis ends a failed RDB/AOF load with a hard-coded exit code: 1, or 0 when
+// redis-check-rdb, which Redis runs in-process after a failed load from a
+// file, finds the file structurally sound (e.g. FalkorDB rejected a graph
+// whose checksum is valid). the module API offers no way to change it, so an
+// atexit handler replaces the status whenever the process exits while a load
+// is unfinished, letting an orchestrator tell a failed load from any other exit
+
+#define LOAD_FAILURE_EXIT_CODE EX_DATAERR  // 65
+
+static pid_t main_pid;                  // fork children inherit atexit handlers
+static bool  load_in_progress = false;  // a load started and has not ended
+static bool  load_failed      = false;  // Redis reported the load as failed
+static bool  load_checking    = false;  // redis-check-rdb re-reads the file
+
+// server loading event handler
+static void _LoadingEventHandler
+(
+	RedisModuleCtx *ctx,
+	RedisModuleEvent eid,
+	uint64_t subevent,
+	void *data
+) {
+	ASSERT(eid.id == REDISMODULE_EVENT_LOADING);
+
+	switch(subevent) {
+		case REDISMODULE_SUBEVENT_LOADING_RDB_START:
+		case REDISMODULE_SUBEVENT_LOADING_AOF_START:
+		case REDISMODULE_SUBEVENT_LOADING_REPL_START:
+			// a load starting while another is unfinished is redis-check-rdb,
+			// which only runs after a failed load and always exits the process
+			if(load_in_progress) {
+				load_checking = true;
+			}
+			load_in_progress = true;
+			load_failed      = false;
+			break;
+
+		case REDISMODULE_SUBEVENT_LOADING_ENDED:
+			// the checker ending says nothing about the load that failed
+			if(!load_checking) {
+				load_in_progress = false;
+			}
+			break;
+
+		case REDISMODULE_SUBEVENT_LOADING_FAILED:
+			// a failed AOF load exits right after this event, while a diskless
+			// replication load that lost its connection resumes instead:
+			// the next cron tick tells the two apart
+			load_failed = true;
+			break;
+
+		default:
+			break;
+	}
+}
+
+// server cron event handler
+// serverCron only runs once Redis is back in its event loop,
+// so a failed load that Redis survived is no longer in progress
+static void _CronLoopEventHandler
+(
+	RedisModuleCtx *ctx,
+	RedisModuleEvent eid,
+	uint64_t subevent,
+	void *data
+) {
+	if(load_failed && !load_checking) {
+		load_in_progress = false;
+		load_failed      = false;
+	}
+}
+
+// replaces the exit status of a process exiting while a load is unfinished
+static void _LoadFailureExitHandler(void) {
+	if(getpid() != main_pid || !load_in_progress) {
+		return;
+	}
+
+	RedisModule_Log(NULL, "warning",
+			"exiting with code %d: the server exited while loading data",
+			LOAD_FAILURE_EXIT_CODE);
+
+	// _exit skips stdio flushing, and redis-check-rdb's report is still buffered
+	fflush(NULL);
+	_exit(LOAD_FAILURE_EXIT_CODE);
+}
+
+static void _RegisterLoadFailureExitCode(void) {
+	main_pid = getpid();
+	int res = atexit(_LoadFailureExitHandler);
+	ASSERT(res == 0);
+}
+
 static void _RegisterServerEvents
 (
 	RedisModuleCtx *ctx
@@ -408,6 +509,16 @@ static void _RegisterServerEvents
 	res = RedisModule_SubscribeToServerEvent(ctx,
 			RedisModuleEvent_FlushDB,
 			_FlushDBHandler);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_SubscribeToServerEvent(ctx,
+			RedisModuleEvent_Loading,
+			_LoadingEventHandler);
+	ASSERT(res == REDISMODULE_OK);
+
+	res = RedisModule_SubscribeToServerEvent(ctx,
+			RedisModuleEvent_CronLoop,
+			_CronLoopEventHandler);
 	ASSERT(res == REDISMODULE_OK);
 
 	res = RedisModule_SubscribeToServerEvent(ctx,
@@ -677,5 +788,6 @@ void RegisterEventHandlers
 ) {
 	_RegisterForkHooks();       // set up hooks for forking logic to prevent bgsave deadlocks
 	_RegisterServerEvents(ctx); // set up hooks for del/rename and server events
+	_RegisterLoadFailureExitCode(); // exit with a distinct code when a load fails
 }
 
