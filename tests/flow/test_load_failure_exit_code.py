@@ -1,4 +1,5 @@
 from common import *
+from rdb_utils import *
 
 import os
 import time
@@ -18,17 +19,6 @@ GRAPH_ID = "g"
 MODULE_ARGS = "VKEY_MAX_ENTITY_COUNT 100000"
 
 
-# CRC-64 (Jones variant) - the checksum Redis stamps at the end of an RDB file
-def _crc64(data):
-    POLY = 0x95ac9329ac4bc9b5
-    crc = 0
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            crc = (crc >> 1) ^ POLY if (crc & 1) else (crc >> 1)
-    return crc & 0xFFFFFFFFFFFFFFFF
-
-
 # the module id of the graph key sits right after its RDB type and name:
 # RDB_TYPE_MODULE_2, name length, name, then 0x81 + big-endian u64 id whose
 # low 10 bits are the encoding version
@@ -46,7 +36,7 @@ def _reject_graph(rdb):
     off = _module_id_offset(rdb) + 6
     lo  = int.from_bytes(rdb[off:off + 2], "big")
     rdb[off:off + 2] = ((lo & ~0x3ff) | 0x3ff).to_bytes(2, "big")
-    rdb[-8:] = _crc64(bytes(rdb[:-8])).to_bytes(8, "little")
+    rdb[-8:] = crc64(bytes(rdb[:-8])).to_bytes(8, "little")
     return bytes(rdb)
 
 

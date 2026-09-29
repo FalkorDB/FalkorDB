@@ -420,7 +420,8 @@ static void _ModuleLoadedHandler
 static pid_t main_pid;                  // fork children inherit atexit handlers
 static bool  load_in_progress = false;  // a load started and has not ended
 static bool  load_failed      = false;  // Redis reported the load as failed
-static bool  load_checking    = false;  // redis-check-rdb re-reads the file
+static bool  load_checking    = false;  // redis-check-rdb re-reads the file,
+                                        // never cleared: Redis exits after it
 
 // server loading event handler
 static void _LoadingEventHandler

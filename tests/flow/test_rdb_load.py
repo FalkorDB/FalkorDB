@@ -1,4 +1,5 @@
 from common import *
+from rdb_utils import *
 
 # TODO: when introducing new encoder/decoder this needs to be updated consider
 # using GRAPH.DEBUG command to be able to get this data
@@ -56,26 +57,13 @@ class testRdbLoad():
 
         self.conn.save()
 
-    # CRC-64 (Jones variant) - the checksum Redis stamps into DUMP/RESTORE
-    # payload footers. reflected CRC, so the right-shift form uses the reflected
-    # Jones polynomial (reflect(0xad93d23594c935a9))
-    @staticmethod
-    def _crc64(data):
-        POLY = 0x95ac9329ac4bc9b5
-        crc = 0
-        for byte in data:
-            crc ^= byte
-            for _ in range(8):
-                crc = (crc >> 1) ^ POLY if (crc & 1) else (crc >> 1)
-        return crc & 0xFFFFFFFFFFFFFFFF
-
     # rebuild a valid DUMP payload from a (possibly truncated) module body:
     # <body><2-byte RDB version><8-byte CRC64>. without a correct footer Redis
     # rejects the payload before the module decoder ever runs
-    @classmethod
-    def _reframe(cls, body, version_bytes):
+    @staticmethod
+    def _reframe(body, version_bytes):
         payload = body + version_bytes
-        return payload + cls._crc64(payload).to_bytes(8, 'little')
+        return payload + crc64(payload).to_bytes(8, 'little')
 
     # a truncated RDB payload must fail the load gracefully - the module must
     # detect the short read, tear down the partial graph and error out, without
@@ -106,7 +94,7 @@ class testRdbLoad():
         # sanity: our CRC64 reproduces the footer of the known-good payload,
         # which proves the reframed truncated payloads below are accepted by
         # Redis and actually reach the module decoder
-        self.env.assertEqual(self._crc64(full[:-8]),
+        self.env.assertEqual(crc64(full[:-8]),
                              int.from_bytes(full[-8:], 'little'))
 
         self.conn.flushall()
