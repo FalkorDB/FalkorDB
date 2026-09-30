@@ -454,18 +454,14 @@ static ProcedureResult Proc_CCHIdxQueryInvoke
 		RankArc *arcs = arr_new (RankArc, 16) ;
 
 		// forward half: walk preds meet -> rs, collect reversed
-		RankArc *fa  = arr_new (RankArc, 8) ;
 		int64_t  cur = meet ;
 		while (true) {
 			SRec *r = HashTableFetchValue (fwd, KEY (cur)) ;
 			if (!r->has_pred) break ;
-			arr_append (fa, ((RankArc){ .f = r->pred, .t = cur })) ;
+			arr_append (arcs, ((RankArc){ .f = r->pred, .t = cur })) ;
 			cur = r->pred ;
 		}
-		for (int64_t i = (int64_t)arr_len (fa) - 1; i >= 0; i--) {
-			arr_append (arcs, fa [i]) ;
-		}
-		arr_free (fa) ;
+		arr_reverse (arcs) ;
 
 		// backward half: walk preds meet -> rt, already in forward order
 		cur = meet ;

@@ -709,9 +709,13 @@ static int64_t _find_upper_opt
 
 	while (lo <= hi) {
 		int64_t mid = lo + ((hi - lo) >> 1) ;
-		if      (uy [mid] < z) lo = mid + 1 ;
-		else if (uy [mid] > z) hi = mid - 1 ;
-		else                   return mid ;
+		if      (uy [mid] < z) {
+			lo = mid + 1 ;
+		} else if (uy [mid] > z) {
+			hi = mid - 1 ;
+		} else {
+			return mid ;
+		}
 	}
 
 	return -1 ;
@@ -764,8 +768,8 @@ void CCH_RecustomizeScoped
 		int64_t a = (du [i] < (int64_t) n) ? cch->iperm [du [i]] : -1 ;
 		int64_t b = (dv [i] < (int64_t) n) ? cch->iperm [dv [i]] : -1 ;
 		if (a < 0 || b < 0 || a == b) continue ;
-		int64_t lo   = a < b ? a : b ;
-		int64_t hi   = a < b ? b : a ;
+		int64_t lo   = MIN (a, b) ;
+		int64_t hi   = MAX (a, b) ;
 		int64_t slot = _find_upper_opt (cch, lo, hi) ;
 		if (slot >= 0) ENQUEUE (lo, slot) ;
 	}
@@ -799,8 +803,14 @@ void CCH_RecustomizeScoped
 		uint32_t ai = 0, bi = 0 ;
 		while (ai < na && bi < nb) {
 			int64_t xa = dlo [ai], xb = dhi [bi] ;
-			if      (xa < xb) { ai++ ; continue ; }
-			if      (xa > xb) { bi++ ; continue ; }
+			if (xa < xb) {
+				ai++ ;
+				continue ;
+			}
+			if (xa > xb) {
+				bi++ ;
+				continue ;
+			}
 
 			int64_t x  = xa ;                            // common lower neighbour
 			int64_t iy = _find_upper_opt (cch, x, lo) ;  // slot of lo in up[x]
@@ -808,11 +818,19 @@ void CCH_RecustomizeScoped
 
 			// detour lo -> x -> hi : (lo->x) + (x->hi) = dn_w[x][iy] + up_w[x][iz]
 			double cand_up = cch->dn_w [x] [iy] + cch->up_w [x] [iz] ;
-			if (cand_up < best_up) { best_up = cand_up ; mid_up = x ; }
+
+			if (cand_up < best_up) {
+				best_up = cand_up ;
+				mid_up = x ;
+			}
 
 			// detour hi -> x -> lo : (hi->x) + (x->lo) = dn_w[x][iz] + up_w[x][iy]
 			double cand_dn = cch->dn_w [x] [iz] + cch->up_w [x] [iy] ;
-			if (cand_dn < best_dn) { best_dn = cand_dn ; mid_dn = x ; }
+
+			if (cand_dn < best_dn) {
+				best_dn = cand_dn ;
+				mid_dn = x ;
+			}
 
 			ai++ ; bi++ ;
 		}
@@ -857,8 +875,8 @@ bool CCH_HasArc
 		return false ;
 	}
 
-	int64_t lo = a < b ? a : b ;
-	int64_t hi = a < b ? b : a ;
+	int64_t lo = MIN (a, b) ;
+	int64_t hi = MAX (a, b) ;
 	return _find_upper_opt (cch, lo, hi) >= 0 ;
 }
 

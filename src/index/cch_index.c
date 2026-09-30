@@ -64,8 +64,7 @@ CCHIndex *CCHIndex_New
 	// index's identity, so a repeated type (ROAD|ROAD) canonicalizes to one
 	RelationID *sorted = arr_newlen (RelationID, n) ;
 	uint k = _sort_unique (sorted, rel_types, n) ;
-	arr_hdr_t *hdr = arr_hdr (sorted) ;
-	hdr->len = k ;                    // shrink to the unique count
+	arr_trimm_len (sorted, k) ;
 	idx->rel_types = sorted ;
 
 	idx->weight_attr = weight_attr ;
