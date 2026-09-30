@@ -868,7 +868,26 @@ Schema *GraphContext_GetSchemaByID
 		_GetNodeSchemas (gc) :
 		_GetRelationSchemas (gc) ;
 
-	ASSERT (id < arr_len (schemas)) ;
+	// RANGE CHECKED, not asserted. This id can arrive from a replication
+	// payload - GRAPH.EFFECT resolves label and relationship ids through here -
+	// and ASSERT compiles to nothing when RG_DEBUG is off, so an out-of-range id
+	// indexed past the end and returned whatever was there. Sometimes NULL,
+	// which refuses correctly; often not, and then a DELETE_NODE naming a label
+	// this replica doesn't have silently deleted the node.
+	//
+	// BOTH HALVES OF THE CONDITION ARE LOAD BEARING. LabelID is signed and the
+	// wire carries it as an i32, so `id < 0` is tested explicitly rather than
+	// left to promotion against an unsigned arr_len - promotion rejects
+	// negatives today by accident of the types on either side, and stops doing
+	// so silently if either changes.
+	//
+	// Rates per id are in testUnknownLabelRefused and in the commit that added
+	// this; they vary with heap layout, which is why this is a bounds check
+	// rather than a filter on values observed to be dangerous.
+	if (id < 0 || (uint64_t)id >= arr_len (schemas)) {
+		return NULL ;
+	}
+
 	return schemas [id] ;
 }
 

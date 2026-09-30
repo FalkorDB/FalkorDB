@@ -188,9 +188,12 @@ void Map_ToString
 // creates a map from its binary representation
 // keys and values are read via SIValue_FromBinary, mirroring
 // SIArray_FromBinary
-SIValue Map_FromBinary
+// returns false if the stream is truncated or malformed; 'out' is always set
+// to a value that is safe to free
+bool Map_FromBinary
 (
-	FILE *stream  // stream containing binary representation of a map
+	FILE *stream,  // stream containing binary representation of a map
+	SIValue *out   // [output] map read
 );
 
 // defrag map
