@@ -291,8 +291,8 @@ void CCH_ExtractShortcuts
 	GrB_Matrix      *M    // [output] shortcut middle node ids, node-id space INT64
 ) ;
 
-// Phase 3 (query) is not part of this API: the materialized SHORTCUT edges +
-// node ranks are queried by the stateless, concurrency-safe rank-pruned
-// bidirectional Dijkstra in proc_cch_query.c, so many queries can run against
-// the same graph in parallel without any shared CCH scratch.
+// Phase 3 (query) is not part of this API: the hierarchy is queried by the
+// stateless, concurrency-safe rank-pruned bidirectional Dijkstra in
+// proc_cch_idx_query.c, so many queries can run against the same index in
+// parallel without any shared CCH scratch.
 

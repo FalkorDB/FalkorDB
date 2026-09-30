@@ -950,9 +950,9 @@ void CCH_ExtractShortcuts
 	*M = _M ;
 }
 
-// Phase 3 (query) is not built into this module. The materialized SHORTCUT
-// edges + node ranks are queried by the stateless, concurrency-safe
-// rank-pruned bidirectional Dijkstra in proc_cch_query.c instead.
+// Phase 3 (query) is not built into this module. The hierarchy is queried by
+// the stateless, concurrency-safe rank-pruned bidirectional Dijkstra in
+// proc_cch_idx_query.c instead.
 
 //------------------------------------------------------------------------------
 // RDB serialization (full hierarchy)

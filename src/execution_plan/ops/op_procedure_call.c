@@ -132,9 +132,9 @@ static Record ProcCallConsume
 		// perform ALL of their modifications inside Invoke and return only
 		// summary data via Step/Consume, so acquiring the write lock here, once,
 		// before Invoke covers every mutation they make. current write
-		// procedures: db.idx.fulltext.createNodeIndex, db.idx.fulltext.drop and
-		// algo.CCH. a future procedure that instead mutated from Step/Consume
-		// would take this lock too late and require revisiting.
+		// procedures: db.idx.fulltext.createNodeIndex and db.idx.fulltext.drop.
+		// a future procedure that instead mutated from Step/Consume would take
+		// this lock too late and require revisiting.
 
 		// lock if procedure can modify the graph
 		if (!Procedure_IsReadOnly (op->procedure)) {
