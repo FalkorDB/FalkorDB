@@ -62,19 +62,6 @@ typedef struct {
 // helpers
 //------------------------------------------------------------------------------
 
-// read an edge's weight (defaults to 1 when missing), populating e->attributes
-static double _edge_weight
-(
-	const Graph *g,
-	AttributeID weightAtt,
-	Edge *e
-) {
-	Graph_GetEdge (g, e->id, e) ;   // populate attributes
-	SIValue w = GraphEntity_GetNumericPropertyOrDefault ((GraphEntity *)e,
-			weightAtt, SI_LongVal (1)) ;
-	return SI_GET_NUMERIC (w) ;
-}
-
 // rank-pruned Dijkstra from 'start' over the upward graph. forward=true relaxes
 // each upper neighbor with its up_w (forward) weight; forward=false with its
 // dn_w (backward) weight. both directions only ever climb rank. fills 'recs'
@@ -193,7 +180,12 @@ static bool _best_road_edge
 	bool   found = false ;
 	for (uint32_t i = 0; i < arr_len (tmp); i++) {
 		Edge e = tmp [i] ;
-		double w = _edge_weight (g, weightAtt, &e) ;
+		// populate attributes (kept in *out for the returned path) and read the
+		// weight, defaulting to 1 when the attribute is missing
+		Graph_GetEdge (g, e.id, &e) ;
+		SIValue wv = GraphEntity_GetNumericPropertyOrDefault (
+				(GraphEntity *)&e, weightAtt, SI_LongVal (1)) ;
+		double w = SI_GET_NUMERIC (wv) ;
 		if (w < bw) { bw = w ; *out = e ; found = true ; }
 	}
 
@@ -497,8 +489,9 @@ static ProcedureResult Proc_CCHIdxQueryInvoke
 			Path_AppendNode (pdata->path, n0) ;
 
 			for (uint32_t i = 0; i < arr_len (road); i++) {
+				// road edges already arrive attribute-populated from
+				// _best_road_edge, so no re-fetch is needed here
 				Edge e = road [i] ;
-				Graph_GetEdge (g, e.id, &e) ;   // populate attributes for the path
 				Path_AppendEdge (pdata->path, e) ;
 
 				Node nn = GE_NEW_NODE () ;
