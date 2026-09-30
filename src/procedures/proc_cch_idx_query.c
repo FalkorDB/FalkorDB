@@ -384,10 +384,13 @@ static ProcedureResult Proc_CCHIdxQueryInvoke
 	Graph        *g  = QueryCtx_GetGraph () ;
 
 	// locate the CCH index for this (relTypes, weightProp).
-	// the query reflects the last-committed hierarchy: pending maintenance from
-	// writes earlier in the SAME query is flushed only at commit (see
-	// GraphContext_CCHFlushDirty in cmd_query.c), so -- like every other index --
-	// this read does not observe the query's own uncommitted mutations
+	// pathWeight reflects the last-committed hierarchy: CCH maintenance is
+	// commit-coalesced (flushed at commit, see GraphContext_CCHFlushDirty in
+	// cmd_query.c), so weight/topology mutations earlier in the SAME query are
+	// not observed here -- unlike inline-maintained indexes, which do reflect
+	// same-query writes. the returned path holds live entities, so reading their
+	// properties (e.g. e.w) may observe eager same-query updates and disagree
+	// with pathWeight
 	CCHIndex *idx = GraphContext_GetCCHIndex (gc, rels, relCount, weightAtt) ;
 	if (idx == NULL || idx->cch == NULL) {
 		ErrorCtx_SetError ("db.idx.cch.query: no CCH index over these "
