@@ -8,7 +8,7 @@
 #include "proc_ctx.h"
 
 // db.idx.cch.query -- answer a point-to-point shortest path using a CCH path
-// index built by db.idx.cch.create. Runs a rank-pruned bidirectional search
+// index built by the CREATE CCH INDEX DDL. Runs a rank-pruned bidirectional search
 // entirely over the index's in-memory hierarchy (no graph traversal), then
 // unpacks the resulting shortcut arcs back into the real road edges they stand
 // for. Read-only and stateless: many queries run concurrently against the same
