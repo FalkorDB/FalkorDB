@@ -354,6 +354,62 @@ class testOptionalFlow(FlowTestsBase):
 
         self.env.assertEquals(len(res), 4)
 
+    def test28_erroring_clause_before_optional_match(self):
+        """
+        an error raised while building a clause used to leave plan construction
+        in a poisoned state: subsequent clauses (a segment boundary WITH, an
+        OPTIONAL MATCH, ORDER BY, UNWIND, ...) were still built on top of the
+        partially-constructed / NULL-rooted plan, which crashed the server when
+        the segments were tied together or the plan was freed (issue #250)
+
+        this is the general form of the MERGE-only fix in #239: the crashing
+        query from the report is a read query whose erroring clause precedes an
+        OPTIONAL MATCH
+
+        the error is raised during plan construction (a non-boolean WHERE
+        predicate passes AST validation but fails while building the filter
+        tree); verify each query fails gracefully and the server survives
+        """
+
+        self.graph.delete()
+        self.graph.query("CREATE (:Label {v: 1})-[:REL]->(:Label {v: 2})")
+
+        # every query raises "Expected boolean predicate" while building the
+        # first clause, then relies on a following clause that previously ran
+        # against the poisoned plan
+        crashing_queries = [
+            # reported shape: erroring clause -> WITH -> OPTIONAL MATCH
+            """MATCH (a:Label) WHERE 1
+               WITH a OPTIONAL MATCH (a)-[:REL]->(b) RETURN a, b""",
+            # erroring clause -> WITH ORDER BY -> UNWIND (multiple segments)
+            """MATCH (a:Label) WHERE 1
+               WITH a ORDER BY a.v UNWIND [1, 2] AS x RETURN a, x""",
+            # non-boolean disjunction, then a segment boundary + OPTIONAL MATCH
+            """MATCH (a:Label) WHERE a.v = 1 OR 'x'
+               WITH a OPTIONAL MATCH (a)-[:REL]->(b) RETURN a, b""",
+            # error inside the OPTIONAL MATCH predicate itself
+            """MATCH (a:Label)
+               OPTIONAL MATCH (a)-[:REL]->(b) WHERE 1
+               WITH a, b UNWIND [1, 2] AS x RETURN a, b, x""",
+        ]
+
+        for q in crashing_queries:
+            try:
+                self.graph.query(q)
+                assert False, f"expected an error for: {q}"
+            except redis.exceptions.ResponseError as e:
+                self.env.assertContains("Expected boolean predicate", str(e))
+
+            # the server must still be responsive after the failed query
+            res = self.graph.query("MATCH (n) RETURN count(n)").result_set
+            self.env.assertEquals(res[0][0], 2)
+
+        # the same shapes with a valid predicate must still build and run
+        res = self.graph.query("""MATCH (a:Label) WHERE a.v = 1
+                                  WITH a OPTIONAL MATCH (a)-[:REL]->(b)
+                                  RETURN a.v, b.v""").result_set
+        self.env.assertEquals(res, [[1, 2]])
+
         # enlarge the graph
         q = "UNWIND range(0, 9) AS x CREATE (:Label)-[:REL]->()"
         self.graph.query(q)

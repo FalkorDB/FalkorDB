@@ -20,7 +20,7 @@ RUN set -ex ;\
 
 # Redis: provided by the toolchain image
 # (build/docker/builder/Dockerfile.amazonlinux2023) at
-# /usr/local/bin/redis-server, pinned to 8.6.3.
+# /usr/local/bin/redis-server, pinned to 8.10.2.
 
 # Create virtual environment
 RUN set -ex ;\

@@ -1231,3 +1231,64 @@ class testAllShortestPaths():
                 f"targetNode:v, weightProp:'w', relDirection:'{rd}', "
                 f"pathCount:100, relTypes:['R','S','R']}}) {ret}")
             self.env.assertEquals(dup, distinct)
+
+    def test29_fastpath_pathcost_hopcount_without_costprop(self):
+        # with no costProp, pathCost is the hop count (each edge defaults to 1),
+        # matching the exhaustive DFS -- not 0. Verify across all three fast
+        # paths (pathCount 1 / 0 / >1).
+        g = self.db.select_graph("fp_costhops")
+        g.query("""
+            CREATE (a:V {id:0}), (b:V {id:1}), (c:V {id:2}),
+                   (a)-[:R {w:1}]->(b), (b)-[:R {w:1}]->(c),
+                   (a)-[:R {w:5}]->(c)
+        """)
+        for pc in (1, 0, 3):
+            r = g.query(f"""
+                MATCH (u:V {{id:0}}), (v:V {{id:2}})
+                CALL algo.SPpaths({{sourceNode:u, targetNode:v, weightProp:'w',
+                  pathCount:{pc}}}) YIELD path, pathCost
+                RETURN length(path) AS hops, pathCost
+            """)
+            self.env.assertTrue(len(r.result_set) > 0)
+            for hops, cost in r.result_set:
+                # pathCost == number of edges on the path (hop count)
+                self.env.assertEquals(cost, float(hops))
+
+    def test30_kshortest_costprop_tiebreak(self):
+        # among equal-weight paths the k-shortest fast path (Yen) must select by
+        # (weight, cost, length) -- preferring lower cost -- matching the DFS,
+        # not pick a tie arbitrarily by length. three s->t routes:
+        #   P1: s-c-t  weight 3, cost 0   (cheapest weight)
+        #   P2: s-a-t  weight 5, cost 1   } equal weight, differ only on cost
+        #   P3: s-b-t  weight 5, cost 100 }
+        # with k=2 the result must be {P1, P2}; the cost-100 tie (P3) is excluded.
+        g = self.db.select_graph("fp_cost_tie")
+        g.query("""
+            CREATE (s:V {id:0}), (a:V {id:1}), (b:V {id:2}),
+                   (c:V {id:3}), (t:V {id:4}),
+                   (s)-[:R {w:1, c:0}]->(c),   (c)-[:R {w:2, c:0}]->(t),
+                   (s)-[:R {w:2, c:1}]->(a),   (a)-[:R {w:3, c:0}]->(t),
+                   (s)-[:R {w:2, c:100}]->(b), (b)-[:R {w:3, c:0}]->(t)
+        """)
+
+        def rows(dfs):
+            extra = ", maxLen:1000" if dfs else ""
+            r = g.query(f"""
+                MATCH (u:V {{id:0}}), (v:V {{id:4}})
+                CALL algo.SPpaths({{sourceNode:u, targetNode:v, weightProp:'w',
+                  costProp:'c', pathCount:2{extra}}})
+                YIELD path, pathWeight, pathCost
+                RETURN [n IN nodes(path)|n.id] AS ids, pathWeight, pathCost
+                ORDER BY pathWeight, pathCost
+            """)
+            return [(tuple(x[0]), x[1], x[2]) for x in r.result_set]
+
+        fast = rows(dfs=False)
+        dfs  = rows(dfs=True)
+
+        ids = set(t[0] for t in fast)
+        self.env.assertEquals(len(fast), 2)
+        self.env.assertContains((0, 1, 4), ids)       # P2 (cost 1) kept
+        self.env.assertNotContains((0, 2, 4), ids)    # P3 (cost 100) excluded
+        # selection agrees with the DFS
+        self.env.assertEquals(fast, dfs)

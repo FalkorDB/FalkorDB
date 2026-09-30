@@ -15,7 +15,7 @@ RUN set -ex ;\
 
 # Redis: provided by the toolchain image
 # (build/docker/builder/Dockerfile.{ubuntu,debian}) at
-# /usr/local/bin/redis-server, pinned to 8.6.3 like the sanitizer. The
+# /usr/local/bin/redis-server, pinned to 8.10.2 like the sanitizer. The
 # previous `apt-get install -y redis` step was a no-op on PATH (the
 # /usr/local/bin binary wins over apt's /usr/bin one) AND it failed in
 # practice on jammy bases — Ubuntu ships `redis 5:6.0.16-1ubuntu1` at apt
