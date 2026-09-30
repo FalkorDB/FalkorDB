@@ -6,12 +6,15 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "writers/effects_writer.h"
 #include "../util/wire_string.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
 
 // add an index field deletion effect to buffer
+//
+// forwards to the version's writer; see writers/effects_writer.h
 void EffectsBuffer_AddDropIndexEffect
 (
 	EffectsBuffer *buff,   // effect buffer
@@ -22,28 +25,8 @@ void EffectsBuffer_AddDropIndexEffect
 	const char *attr,      // attribute name
 	IndexFieldType t       // index field type (range/fulltext/vector)
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// schema type
-	// label id
-	// label name
-	// attribute id
-	// attribute name
-	// index field type
-	//--------------------------------------------------------------------------
-
-	EffectType eff_t = EFFECT_DROP_INDEX ;
-
-	EffectsBuffer_WriteBytes  (&eff_t, sizeof (eff_t), buff) ;
-	EffectsBuffer_WriteBytes  (&st, sizeof (st), buff) ;
-	EffectsBuffer_WriteBytes  (&label_id, sizeof (label_id), buff) ;
-	EffectsBuffer_WriteString (label, buff) ;
-	EffectsBuffer_WriteBytes  (&attr_id, sizeof (attr_id), buff) ;
-	EffectsBuffer_WriteString (attr, buff) ;
-	EffectsBuffer_WriteBytes  (&t, sizeof (t), buff) ;
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->DropIndex (buff, st, label_id, label,
+			attr_id, attr, t) ;
 }
 
 // process DropIndex effect

@@ -86,6 +86,30 @@ static bool _should_replicate_effects(void)
 	// then the query will be replicate via GRAPH.QUERY
 
 	//--------------------------------------------------------------------------
+	// v3 ALWAYS replicates as effects, whatever the threshold says
+	//--------------------------------------------------------------------------
+	//
+	// The threshold sends a cheap write as query text instead, which is only
+	// correct if the replica re-executing that text produces the same result and
+	// the same ids - the assumption effects exist to replace, and it does not
+	// hold across engines. Rust has already dropped the mechanism: their
+	// constant is EFFECTS_THRESHOLD_DEPRECATED, and at a threshold of 1e9 they
+	// still emit v3.
+	//
+	// SCOPE is narrow: the DEFAULT threshold is 0 (config.c) and 0 already
+	// returns true below, so the default configuration is unchanged. What
+	// changes is the non-zero case, reachable by configuration and never run by
+	// a cross-engine test - untested rather than known good.
+	//
+	// v2 keeps the heuristic. It has no cross-engine reader, so replaying its
+	// query text is as safe as it ever was.
+	uint64_t emit_version = EFFECTS_VERSION_EMIT;
+	Config_Option_get(Config_EFFECTS_VERSION, &emit_version);
+	if(emit_version >= 3) {
+		return true;
+	}
+
+	//--------------------------------------------------------------------------
 	// consult with configuration
 	//--------------------------------------------------------------------------
 
@@ -290,6 +314,18 @@ static void _ExecuteQuery
 		if (replicate) {
 			// determine rather or not to replicate via effects
 			// effect replication is mandatory if query is non deterministic
+			//
+			// Verbatim replication below is the ORIGINAL choice for a
+			// deterministic query cheap enough not to warrant effects, and no
+			// longer a fallback for an effect the encoder could not express:
+			// all 14 records have a producing path, so an effect writer with
+			// no v3 path is a bug that EffectsBuffer_WriteBytes reports where
+			// it happens.
+			//
+			// Papering over it was worse than it looked: replaying the query
+			// text is exact between two C engines and silently wrong against
+			// Rust, whose db.idx.fulltext.createNodeIndex takes a single map
+			// where C's is variadic.
 			if (EffectsBuffer_Length (QueryCtx_GetEffectsBuffer ()) > 0 &&
 			    (!exec_ctx->deterministic || _should_replicate_effects ())) {
 				// compute effects buffer
