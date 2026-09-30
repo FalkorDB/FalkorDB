@@ -284,13 +284,14 @@ class testAOFDivergence():
         # not just "did it crash": a real, reachable master is configured
         # here, so under the pre-fix behavior the deferred REPLICAOF cycle
         # would have succeeded and the replica would still be alive - it
-        # would NOT have exited. exit code 1 (a clean exit() call, not a
-        # signal - Popen.wait() would return a negative number for a
-        # crash) is specifically what our bail-during-loading path does.
+        # would NOT have exited. our bail-during-loading path makes a clean
+        # exit() call, not a signal - Popen.wait() would return a negative
+        # number for a crash - and since it exits while the AOF load is
+        # unfinished, the status is the load failure exit code (EX_DATAERR)
         slave_process = env.envRunner.slaveProcess
         exit_code = slave_process.wait(timeout=30)
         env.envRunner.slaveProcess = None
-        env.assertEquals(exit_code, 1)
+        env.assertEquals(exit_code, 65)
 
         # confirm it bailed for the right reason, when a log file is
         # available (RLTest may run with output capturing disabled, e.g.
