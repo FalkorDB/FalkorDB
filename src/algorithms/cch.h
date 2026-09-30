@@ -156,24 +156,6 @@ size_t CCH_MemoryUsage
 	const CCH *cch  // hierarchy to measure
 ) ;
 
-// serialize the resident hierarchy to 'io' (RDB): 'n', 'perm', and each rank's
-// upward adjacency + per-arc weights/middles. the derived structures (iperm,
-// down) and Phase-1 scratch (xadj/adjncy/parent) are NOT written -- they are
-// rebuilt / stay NULL on load.
-void CCH_RdbSave
-(
-	const CCH   *cch,  // hierarchy to serialize
-	SerializerIO io    // stream to write to
-) ;
-
-// reconstruct a hierarchy from 'io' (inverse of CCH_RdbSave): reads n/perm and
-// the per-rank arrays, then derives iperm + down. no rebuild, no METIS. caller
-// owns the returned CCH.
-CCH *CCH_RdbLoad
-(
-	SerializerIO io  // stream to read from
-) ;
-
 // step 1: computes a nested-dissection elimination order for 'A' via
 // METIS's METIS_NodeND (see the file-level comment above), populating
 // cch->perm/iperm -- and, as a side effect, cch->xadj/adjncy, the

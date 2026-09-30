@@ -197,17 +197,18 @@ size_t CCHIndex_MemoryUsage
 	const CCHIndex *idx  // index to measure
 );
 
-// serialize a built CCH index to 'io' (RDB): its identity (relationship types +
-// weight attribute) followed by the full resident hierarchy. the index must be
-// built (idx->cch != NULL).
+// serialize a CCH index definition to 'io' (RDB): its identity only
+// (relationship types + weight attribute). the resident hierarchy is NOT
+// written -- it is rebuilt from the graph at decode finalization.
 void CCHIndex_RdbSave
 (
 	const CCHIndex *idx,  // index to serialize
 	SerializerIO    io    // stream to write to
 );
 
-// reconstruct a fully-built CCH index from 'io' (inverse of CCHIndex_RdbSave).
-// no rebuild is performed -- the hierarchy is read straight from the stream.
+// reconstruct a CCH index definition from 'io' (inverse of CCHIndex_RdbSave).
+// the returned index is unbuilt (cch == NULL); the hierarchy is rebuilt from
+// the graph at decode finalization once the whole graph is materialized.
 CCHIndex *CCHIndex_RdbLoad
 (
 	SerializerIO io  // stream to read from

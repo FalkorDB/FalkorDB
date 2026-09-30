@@ -155,26 +155,26 @@ void CCHIndex_RdbSave
 	const CCHIndex *idx,
 	SerializerIO    io
 ) {
-	ASSERT (idx      != NULL) ;
-	ASSERT (idx->cch != NULL) ;   // only built indices are serialized
+	ASSERT (idx != NULL) ;
 
-	// identity: relationship types + weight attribute
+	// definition only: relationship types + weight attribute. the resident
+	// hierarchy is NOT serialized -- each index is rebuilt from the graph at
+	// decode finalization (see decode_graph.c), like every other index
 	uint n = arr_len (idx->rel_types) ;
 	SerializerIO_WriteUnsigned (io, n) ;
 	for (uint i = 0 ; i < n ; i++) {
 		SerializerIO_WriteUnsigned (io, idx->rel_types [i]) ;
 	}
 	SerializerIO_WriteUnsigned (io, idx->weight_attr) ;
-
-	// the resident hierarchy
-	CCH_RdbSave (idx->cch, io) ;
 }
 
 CCHIndex *CCHIndex_RdbLoad
 (
 	SerializerIO io
 ) {
-	// identity
+	// definition only: relationship types + weight attribute. the hierarchy is
+	// left unbuilt (cch == NULL) and rebuilt from the graph at decode
+	// finalization, once the whole graph has been materialized
 	uint n = SerializerIO_ReadUnsigned (io) ;
 	RelationID *rels = arr_new (RelationID, n) ;
 	for (uint i = 0 ; i < n ; i++) {
@@ -182,11 +182,7 @@ CCHIndex *CCHIndex_RdbLoad
 	}
 	AttributeID weight_attr = (AttributeID) SerializerIO_ReadUnsigned (io) ;
 
-	// the resident hierarchy -- attached directly, no rebuild
-	CCH *cch = CCH_RdbLoad (io) ;
-
 	CCHIndex *idx = CCHIndex_New (rels, arr_len (rels), weight_attr) ;
-	idx->cch = cch ;
 
 	arr_free (rels) ;
 	return idx ;

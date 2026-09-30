@@ -349,9 +349,13 @@ GraphContext *RdbLoadGraphContext_latest
 			}
 		}
 
-		// graph-level CCH path indices are loaded whole (hierarchy included) by
-		// RdbLoadCCH_v20 during the ENCODE_STATE_CCH_INDICES payload -- no
-		// post-load rebuild is needed anymore
+		// graph-level CCH path indices are decoded as definitions only (their
+		// identity) during ENCODE_STATE_CCH_INDICES; rebuild each hierarchy now
+		// that the whole graph is materialized, one after another
+		uint cch_count = GraphContext_CCHIndexCount(gc);
+		for(uint i = 0; i < cch_count; i++) {
+			CCHIndex_Build(GraphContext_GetCCHIndexAt(gc, i), g);
+		}
 
 		// make sure graph doesn't contains may pending changes
 		ASSERT(Graph_Pending(g) == false);
