@@ -413,26 +413,6 @@ static void addNeighbors
 	}
 }
 
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v ;
-
-	if (!GraphEntity_GetProperty (ge, id, &v)) {
-		return default_value ;
-	}
-
-	if (SI_TYPE(v) & SI_NUMERIC) {
-		return v ;
-	}
-
-	return default_value ;
-}
-
 // use DFS to find all paths from src tracking cost and weight
 static void SSpaths_next
 (
@@ -465,11 +445,11 @@ static void SSpaths_next
 			// for depth > 0 for each frontier node, there is a leading edge.
 			if(depth > 0) {
 				SIValue c =
-					_get_value_or_default ((GraphEntity *)&frontierConnection.edge,
+					GraphEntity_GetNumericPropertyOrDefault ((GraphEntity *)&frontierConnection.edge,
 							ctx->cost_prop, SI_LongVal (1)) ;
 
 				SIValue w =
-					_get_value_or_default ((GraphEntity *)&frontierConnection.edge,
+					GraphEntity_GetNumericPropertyOrDefault ((GraphEntity *)&frontierConnection.edge,
 							ctx->weight_prop, SI_LongVal (1)) ;
 
 				if (p->cost   + SI_GET_NUMERIC (c) <= ctx->max_cost &&
@@ -504,8 +484,8 @@ static void SSpaths_next
 			Path_PopNode(ctx->path);
 			if(Path_EdgeCount(ctx->path)) {
 				Edge e = Path_PopEdge(ctx->path);
-				SIValue c = _get_value_or_default((GraphEntity *)&e, ctx->cost_prop, SI_LongVal(1));
-				SIValue w = _get_value_or_default((GraphEntity *)&e, ctx->weight_prop, SI_LongVal(1));
+				SIValue c = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&e, ctx->cost_prop, SI_LongVal(1));
+				SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&e, ctx->weight_prop, SI_LongVal(1));
 				p->cost -= SI_GET_NUMERIC(c);
 				p->weight -= SI_GET_NUMERIC(w);
 			}

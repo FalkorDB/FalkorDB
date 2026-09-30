@@ -357,6 +357,8 @@ class testProcedures(FlowTestsBase):
         expected_result = [
             ["READ", "algo.AStar"],
             ["READ", "algo.BFS"],
+            ["WRITE", "algo.CCH"],
+            ["READ", "algo.CCH.query"],
             ["READ", "algo.HarmonicCentrality"],
             ["READ", "algo.MSF"],
             ["READ", "algo.SPpaths"],

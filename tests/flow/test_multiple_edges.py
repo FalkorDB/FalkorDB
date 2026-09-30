@@ -94,3 +94,29 @@ class testGraphMultipleEdgeFlow(FlowTestsBase):
         edge_count = actual_result.result_set[0][0]
         self.env.assertEquals(edge_count, 1)
 
+    # a star aggregation, e.g. count(*), doesn't reference the edge explicitly
+    # its result must still account for the multiplicity of parallel edges
+    # rather than collapsing them into a single record
+    def test_star_aggregation_over_parallel_edges(self):
+        g = self.db.select_graph("multi_edge_star")
+
+        # connect a to b with 3 parallel edges of type R
+        g.query("""CREATE (a:N {v:1}), (b:N {v:2}),
+                          (a)-[:R]->(b), (a)-[:R]->(b), (a)-[:R]->(b)""")
+
+        # every form of count(*) over a named (referenced) edge must account
+        # for each of the 3 parallel edges
+        queries = [
+            "MATCH (a)-[e]->(b) RETURN count(*)",
+            "MATCH (a:N)-[e]->(b) RETURN count(*)",      # labeled src, no reduceCount
+            "MATCH (a)-[e]->(b) WITH count(*) AS c RETURN c",
+            "MATCH (a)-[e]->(b) RETURN count(*) + 0",    # nested star aggregation
+        ]
+        for query in queries:
+            actual_result = g.query(query)
+            self.env.assertEquals(actual_result.result_set[0][0], 3)
+
+        # count(e), where the edge is referenced, was already correct
+        actual_result = g.query("MATCH (a)-[e]->(b) RETURN count(e)")
+        self.env.assertEquals(actual_result.result_set[0][0], 3)
+

@@ -54,6 +54,8 @@
 #include "../util/identifier_limits.h"
 #include "../graph/graphcontext_retrieve.h"
 
+#include <stdlib.h>
+
 #define PROPERTY_NAME_PATTERN "[a-zA-Z_][a-zA-Z0-9_$]*"
 
 extern pthread_t MAIN_THREAD_ID;  // redis main thread ID
@@ -330,6 +332,109 @@ cleanup:
 	return res ;
 }
 
+// compare two AttributeIDs, for qsort
+static int _cmp_attr_id
+(
+	const void *a,
+	const void *b
+) {
+	const AttributeID *_a = a ;
+	const AttributeID *_b = b ;
+	return *_a - *_b ;
+}
+
+// read-only pre-validation for constraint creation, run under the graph READ
+// lock before _Constraint_Create acquires the write lock.
+//
+// checks the two common, benign rejections a CREATE would otherwise perform
+// under the write lock: (a) the constraint already exists, and (b) a UNIQUE
+// constraint's supporting exact-match (range) index is missing. rejecting them
+// here - under a shared READ lock, without acquiring the write lock and without
+// QueryCtx_Rollback - avoids resetting the graph-global reserved-node counter,
+// which otherwise corrupts a concurrent write query's in-flight node
+// reservation (see Graph_ResetReservedNode).
+//
+// returns an error string when the CREATE is certain to fail, or NULL to
+// proceed to the authoritative, write-locked GraphHub_AddConstraint().
+//
+// TOCTOU: a NULL return is NOT a guarantee of success. Between this read-locked
+// check and acquiring the write lock, another op may register the same
+// constraint or drop the supporting index; GraphHub_AddConstraint() will then
+// still fail under the write lock and take the rollback (reserved-id reset)
+// path. this is a mitigation that removes the common case, not a complete fix -
+// see Graph_ResetReservedNode for the per-QueryCtx fix that closes it.
+static const char *_Constraint_CreatePrecheck
+(
+	GraphContext *gc,     // graph context
+	ConstraintType ct,    // constraint type (unique/mandatory)
+	GraphEntityType et,   // entity type (node/edge)
+	const char *label,    // label / relationship type
+	const char **props,   // constrained attribute names
+	uint8_t n             // number of constrained attributes
+) {
+	ASSERT (gc != NULL && label != NULL && props != NULL && n > 0) ;
+
+	// duplicate property names are rejected by GraphHub_AddConstraint BEFORE its
+	// already-exists / supporting-index checks. reject them HERE with the same
+	// canonical message: deferring to the write-locked path would resolve the
+	// attributes, fail, and take QueryCtx_Rollback() - the reserved-node reset
+	// this precheck exists to avoid. detect by NAME (attribute-ID comparison
+	// would miss a duplicated name that isn't an attribute yet); names map 1:1
+	// to IDs, so this matches GraphHub_AddConstraint's ID-based check
+	for (uint8_t i = 0 ; i < n ; i++) {
+		for (uint8_t j = i + 1 ; j < n ; j++) {
+			if (strcmp (props [i], props [j]) == 0) {
+				return "Properties cannot contain duplicates" ;
+			}
+		}
+	}
+
+	SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
+	Schema *s = GraphContext_GetSchema (gc, label, st) ;
+
+	// resolve attribute names to IDs WITHOUT creating them (read-only)
+	AttributeID attr_ids [n] ;
+	bool all_resolved = true ;
+	for (uint8_t i = 0 ; i < n ; i++) {
+		attr_ids [i] = GraphContext_GetAttributeID (gc, props [i]) ;
+		if (attr_ids [i] == ATTRIBUTE_ID_NONE) {
+			all_resolved = false ;
+		}
+	}
+
+	// Schema_GetConstraint / Schema_GetIndex match attributes positionally, and
+	// GraphHub_AddConstraint sorts the IDs before querying - match that ordering
+	if (all_resolved) {
+		qsort (attr_ids, n, sizeof (AttributeID), _cmp_attr_id) ;
+	}
+
+	// (a) does the constraint already exist?
+	// only decidable when the schema exists and every attribute resolves;
+	// otherwise the constraint cannot exist yet - fall through
+	if (s != NULL && all_resolved) {
+		Constraint c = Schema_GetConstraint (s, ct, attr_ids, n) ;
+		if (c != NULL && Constraint_GetStatus (c) != CT_FAILED) {
+			return "Constraint already exists" ;
+		}
+	}
+
+	// (b) a UNIQUE constraint requires a supporting exact-match (range) index.
+	// if the schema is missing, any attribute is missing, or no matching index
+	// exists, the supporting index is certainly absent
+	if (ct == CT_UNIQUE) {
+		Index idx = NULL ;
+		if (s != NULL && all_resolved) {
+			idx = Schema_GetIndex (s, attr_ids, n, INDEX_FLD_RANGE, true) ;
+		}
+		if (idx == NULL) {
+			return "missing supporting exact-match index" ;
+		}
+	}
+
+	// no certain failure - proceed to authoritative creation under the write lock
+	return NULL ;
+}
+
 // GRAPH.CONSTRAINT <key> CREATE UNIQUE/MANDATORY [NODE label / RELATIONSHIP
 // type] PROPERTIES prop_count prop0, prop1...
 static bool _Constraint_Create
@@ -371,8 +476,47 @@ static bool _Constraint_Create
 	// TODO: find a better way
 	QueryCtx_SetGraphCtx (gc) ;
 
-	// acquire graph write lock
 	bool from_thread = (pthread_equal (pthread_self(), MAIN_THREAD_ID) == 0) ;
+
+	//--------------------------------------------------------------------------
+	// fast read-locked rejection of the common, benign CREATE failures
+	//--------------------------------------------------------------------------
+
+	// reject a redundant CREATE (constraint already exists) or a UNIQUE
+	// constraint whose supporting index is missing WITHOUT acquiring the write
+	// lock. the write-locked failure path calls QueryCtx_Rollback(), which
+	// resets the graph-global reserved-node counter and can corrupt a
+	// concurrent write query's in-flight node reservation (underflow ->
+	// crash / silent datablock corruption). a read lock is shared, so it does
+	// not contend with that write query, and on rejection here no rollback is
+	// performed, so the reserved-node counter is left untouched.
+	//
+	// TOCTOU: this is a mitigation, not a complete fix. The state checked here
+	// may change between releasing this read lock and acquiring the write lock
+	// below (another op registers the same constraint, or drops the supporting
+	// index); GraphHub_AddConstraint() will then still fail under the write
+	// lock and take the rollback/reset path. Closing that residual requires
+	// making the reserved-node bookkeeping per-QueryCtx rather than
+	// graph-global.
+	GraphContext_AcquireReadLock (gc) ;
+	const char *precheck_err =
+		_Constraint_CreatePrecheck (gc, ct, et, lbl, props, n) ;
+	GraphContext_ReleaseReadLock (gc) ;
+
+	if (precheck_err != NULL) {
+		// reply lock-free: on the async path this is a blocked-client
+		// thread-safe context whose replies are buffered and flushed on
+		// UnblockClient, so no GIL is needed (same as the success reply in
+		// Constraint_Op and the write-locked error paths below); on the sync
+		// AOF/replicated path there is no blocked client and we are already on
+		// the main thread holding the GIL, where taking it again would deadlock
+		RedisModule_ReplyWithError (ctx, precheck_err) ;
+
+		QueryCtx_Free  () ;
+		ErrorCtx_Clear () ;
+		GraphContext_DecreaseRefCount (gc) ;
+		return false ;
+	}
 
 	if (from_thread) {
 		RedisModule_ThreadSafeContextLock (ctx) ;

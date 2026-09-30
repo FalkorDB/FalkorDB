@@ -16,7 +16,7 @@
 #include "../graph/graphcontext.h"
 #include "../datatypes/datatypes.h"
 #include "../algorithms/Dijkstra.h"
-#include "../algorithms/yen.h"
+#include "../algorithms/AStar.h"
 #include "../algorithms/all_weighted_shortest_paths.h"
 
 #include <float.h>
@@ -469,43 +469,20 @@ static void addNeighbors
 	}
 }
 
-// get numeric attribute value of an entity otherwise return default value
-static inline SIValue _get_value_or_default
-(
-	GraphEntity *ge,
-	AttributeID id,
-	SIValue default_value
-) {
-	SIValue v ;
-
-	if (!GraphEntity_GetProperty (ge, id, &v)) {
-		return default_value ;
-	}
-
-	if (SI_TYPE (v) & SI_NUMERIC) {
-		return v ;
-	}
-
-	return default_value ;
-}
-
-// sum costProp over a path's edges. cost isn't part of what the Dijkstra/Yen/
-// DAG fast paths optimize for -- it's a secondary attribute reported alongside
-// each path. returns 0 when no costProp was given, rather than defaulting
-// every edge to 1 and silently reporting the path length.
+// sum costProp over a path's edges, defaulting a missing value to 1. cost isn't
+// part of what the Dijkstra/Yen/DAG fast paths optimize for -- it's a secondary
+// attribute reported alongside each path. when no costProp is given
+// (cost_prop == ATTRIBUTE_ID_NONE) every edge contributes 1, so pathCost is the
+// hop count -- matching what the exhaustive DFS reports, rather than 0.
 static double _sum_path_cost
 (
 	const Path *p,
 	AttributeID cost_prop
 ) {
-	// sum costProp over the path's edges, defaulting a missing value to 1.
-	// when no costProp is given (cost_prop == ATTRIBUTE_ID_NONE) every edge
-	// contributes 1, so pathCost is the hop count -- matching what the
-	// exhaustive DFS reports, rather than 0.
 	double cost = 0;
 	uint edge_count = Path_EdgeCount (p);
 	for(uint i = 0; i < edge_count; i++) {
-		SIValue c = _get_value_or_default ((GraphEntity *) Path_GetEdge(p, i),
+		SIValue c = GraphEntity_GetNumericPropertyOrDefault ((GraphEntity *) Path_GetEdge(p, i),
 				cost_prop, SI_LongVal(1));
 		cost += SI_GET_NUMERIC(c);
 	}
@@ -635,8 +612,8 @@ static void _find_bound_path
 			ASSERT(idx != 0);
 			BoundParentRecord *rec = records + (idx - 1);
 
-			SIValue c = _get_value_or_default((GraphEntity *)&rec->edge, ctx->cost_prop,   SI_LongVal(1));
-			SIValue w = _get_value_or_default((GraphEntity *)&rec->edge, ctx->weight_prop, SI_LongVal(1));
+			SIValue c = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&rec->edge, ctx->cost_prop,   SI_LongVal(1));
+			SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&rec->edge, ctx->weight_prop, SI_LongVal(1));
 			cost   += SI_GET_NUMERIC(c);
 			weight += SI_GET_NUMERIC(w);
 
@@ -690,8 +667,8 @@ static void SPpaths_next
 			// if depth is 0 this is the source node, there is no leading edge to it.
 			// For depth > 0 for each frontier node, there is a leading edge.
 			if(depth > 0) {
-				SIValue c = _get_value_or_default((GraphEntity *)&frontierConnection.edge, ctx->cost_prop, SI_LongVal(1));
-				SIValue w = _get_value_or_default((GraphEntity *)&frontierConnection.edge, ctx->weight_prop, SI_LongVal(1));
+				SIValue c = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&frontierConnection.edge, ctx->cost_prop, SI_LongVal(1));
+				SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&frontierConnection.edge, ctx->weight_prop, SI_LongVal(1));
 				if(p->cost + SI_GET_NUMERIC(c) <= ctx->max_cost && p->weight + SI_GET_NUMERIC(w) <= max_weight) {
 					p->cost += SI_GET_NUMERIC(c);
 					p->weight += SI_GET_NUMERIC(w);
@@ -725,8 +702,8 @@ static void SPpaths_next
 			Path_PopNode(ctx->path);
 			if(Path_EdgeCount(ctx->path)) {
 				Edge e = Path_PopEdge(ctx->path);
-				SIValue c = _get_value_or_default((GraphEntity *)&e, ctx->cost_prop, SI_LongVal(1));
-				SIValue w = _get_value_or_default((GraphEntity *)&e, ctx->weight_prop, SI_LongVal(1));
+				SIValue c = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&e, ctx->cost_prop, SI_LongVal(1));
+				SIValue w = GraphEntity_GetNumericPropertyOrDefault((GraphEntity *)&e, ctx->weight_prop, SI_LongVal(1));
 				p->cost -= SI_GET_NUMERIC(c);
 				p->weight -= SI_GET_NUMERIC(w);
 			}
@@ -991,14 +968,24 @@ static ProcedureResult Proc_SPpathsInvoke
 
 	// k shortest loopless paths via Yen's algorithm, instead of exhaustive DFS
 	// enumeration bounded by the k-th best weight found so far.
+	//
+	// driven by AStar_KShortestPaths with no geographic heuristic (lat/lon ==
+	// ATTRIBUTE_ID_NONE, heur_scale == 0), so A[0] and short-route spurs are
+	// plain Dijkstra -- identical to the classic Yen this replaced. for long
+	// routes it decides at runtime, from k and the length of the first shortest
+	// path, to build a landmark potential (one reverse sweep from dst) that makes
+	// the many spur searches goal-directed. results are identical; only the
+	// exploration on long routes shrinks.
 	if (fast && single_pair_ctx->path_count > 1) {
 		Path   **paths ;
 		double  *weights ;
-		uint n = Yen_KShortestPaths (single_pair_ctx->g, src_id, dst_id,
+		uint n = AStar_KShortestPaths (&paths, &weights,
+				single_pair_ctx->g, src_id, dst_id,
 				single_pair_ctx->path_count, single_pair_ctx->dir,
 				single_pair_ctx->relationIDs, single_pair_ctx->relationMatrices,
 				single_pair_ctx->relationCount, single_pair_ctx->weight_prop,
-				single_pair_ctx->cost_prop, &paths, &weights) ;
+				single_pair_ctx->cost_prop, ATTRIBUTE_ID_NONE, ATTRIBUTE_ID_NONE,
+				0.0) ;
 
 		// load results into the same max-heap Proc_SPpathsStep drains, exactly
 		// as SPpaths_k_minimal does, so downstream behavior is unchanged.

@@ -19,15 +19,24 @@
 // ASSUMES weightProp is non-negative for every edge (same as Dijkstra,
 // same rationale, not enforced -- see Dijkstra.h).
 //
-// ASSUMES weightProp is expressed in the same units as the haversine
-// heuristic (meters) for the heuristic to remain admissible (never
-// overestimate the true remaining cost to dst) and therefore for A* to
-// guarantee an optimal result. If weightProp represents something else
-// (time, hop count, an abstract cost), the heuristic may overestimate
-// and A* can return a suboptimal (but still structurally valid) path.
-// This is a caller responsibility, not enforced at runtime -- mirrors
+// The haversine heuristic is computed in meters; 'heur_scale' converts it
+// into weightProp's units. For A* to remain admissible (never overestimate
+// the true remaining cost to dst, and therefore guarantee an optimal result)
+// heur_scale MUST be a lower bound on the weight accrued per meter of
+// straight-line progress across every edge:
+//   weightProp == distance in meters      -> heur_scale == 1
+//   weightProp == travel time (e.g hours) -> heur_scale == 1 / max_speed
+//                                            (max_speed in meters per hour)
+//   weightProp == hop count / abstract    -> heur_scale == 0 (h == 0, i.e.
+//                                            plain Dijkstra; any other value
+//                                            has no meaningful meter relation)
+// A heur_scale larger than that lower bound makes the heuristic inadmissible,
+// so A* can return a suboptimal (but still structurally valid) path; a
+// heur_scale <= 0 disables the heuristic (plain Dijkstra, always optimal).
+// Picking it is a caller responsibility, not enforced at runtime -- mirrors
 // how Dijkstra.c documents but does not enforce its non-negative-weight
-// precondition.
+// precondition. When unsure, underestimate: a smaller heur_scale only costs
+// extra exploration, never correctness.
 //
 // if dst, or any other node discovered during the search, is missing a
 // numeric latitudeProperty/longitudeProperty, its heuristic degrades to
@@ -50,7 +59,7 @@ bool AStar_ShortestPath
 (
 	Path **path,               // [output] src -> dst path
 	double *weight,            // [output] total path weight
-	Graph *g,                  // graph to traverse
+	const Graph *g,            // graph to traverse
 	NodeID src_id,             // source node
 	NodeID dst_id,             // destination node
 	GRAPH_EDGE_DIR dir,        // traverse direction
@@ -59,7 +68,8 @@ bool AStar_ShortestPath
 	int relationCount,         // length of relationIDs
 	AttributeID weight_prop,   // weight attribute id
 	AttributeID lat_prop,      // latitude attribute id, used for the heuristic
-	AttributeID lon_prop       // longitude attribute id, used for the heuristic
+	AttributeID lon_prop,      // longitude attribute id, used for the heuristic
+	double heur_scale          // meters -> weightProp units heuristic scale
 );
 
 // find up to 'k' shortest loopless paths from src to dst by ascending weight,
@@ -70,16 +80,20 @@ bool AStar_ShortestPath
 //
 // same weightProp / lat/lon preconditions as AStar_ShortestPath. candidate
 // paths are deduplicated by a 64-bit hash of their edge-id sequence, and the k
-// paths are selected by the lexicographic order (weight, cost, length) -- see
-// Yen_KShortestPaths (yen.h) for the cost_prop semantics; pass
-// ATTRIBUTE_ID_NONE to leave it unspecified.
+// paths are selected by the lexicographic order (weight, cost, length), cost
+// being the sum of 'cost_prop' over a path's edges (missing values default to
+// 1). pass ATTRIBUTE_ID_NONE for cost_prop to leave it unspecified: cost then
+// equals the hop count, so weight-only queries are unaffected. this matches
+// proc_sp_paths' path_cmp so the selected set and reported ordering agree.
 //
 // returns the number of paths found (<= k; 0 if dst is unreachable). '*paths'
 // and '*weights' are set to newly allocated parallel array_t buffers (Path*
 // and its total weight, ascending); the caller owns both arrays and each Path.
 uint AStar_KShortestPaths
 (
-	Graph *g,                  // graph to traverse
+	Path ***paths,             // [output] array_t of Path*, ascending weight
+	double **weights,          // [output] array_t of matching total weights
+	const Graph *g,            // graph to traverse
 	NodeID src,                // source node
 	NodeID dst,                // destination node
 	uint64_t k,                // number of paths to find
@@ -91,7 +105,6 @@ uint AStar_KShortestPaths
 	AttributeID cost_prop,     // secondary tie-break attribute, or NONE
 	AttributeID lat_prop,      // latitude attribute id, used for the heuristic
 	AttributeID lon_prop,      // longitude attribute id, used for the heuristic
-	Path ***paths,             // [output] array_t of Path*, ascending weight
-	double **weights           // [output] array_t of matching total weights
+	double heur_scale          // meters -> weightProp units heuristic scale
 );
 
