@@ -93,6 +93,26 @@ void CCH_Free
 	rm_free (cch) ;
 }
 
+// sum the bytes of a per-rank array-of-arrays: the pointer block plus each
+// rank's plain (rm_malloc'd) block. NULL-safe
+static size_t _arc_arr_bytes
+(
+	void  **arr,  // pointer array (one block per rank), or NULL
+	int64_t n     // number of ranks
+) {
+	if (arr == NULL) {
+		return 0 ;
+	}
+
+	size_t sz = RedisModule_MallocSize (arr) ;
+	for (int64_t r = 0 ; r < n ; r++) {
+		if (arr [r] != NULL) {
+			sz += RedisModule_MallocSize (arr [r]) ;
+		}
+	}
+	return sz ;
+}
+
 size_t CCH_MemoryUsage
 (
 	const CCH *cch
@@ -126,19 +146,10 @@ size_t CCH_MemoryUsage
 	}
 
 	// per-arc metric outputs: a pointer array plus one plain array per rank
-	#define _CCH_ARC_ARR(field)                                          \
-		if (cch->field != NULL) {                                        \
-			sz += RedisModule_MallocSize (cch->field) ;                  \
-			for (int64_t r = 0 ; r < n ; r++) {                          \
-				if (cch->field [r] != NULL)                              \
-					sz += RedisModule_MallocSize (cch->field [r]) ;      \
-			}                                                            \
-		}
-	_CCH_ARC_ARR (up_w)   ;
-	_CCH_ARC_ARR (dn_w)   ;
-	_CCH_ARC_ARR (up_mid) ;
-	_CCH_ARC_ARR (dn_mid) ;
-	#undef _CCH_ARC_ARR
+	sz += _arc_arr_bytes ((void **) cch->up_w,   n) ;
+	sz += _arc_arr_bytes ((void **) cch->dn_w,   n) ;
+	sz += _arc_arr_bytes ((void **) cch->up_mid, n) ;
+	sz += _arc_arr_bytes ((void **) cch->dn_mid, n) ;
 
 	return sz ;
 }

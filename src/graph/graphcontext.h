@@ -524,7 +524,9 @@ uint GraphContext_CCHIndexCount
 	const GraphContext *gc  // graph context
 );
 
-// returns the i-th CCH path index, or NULL if 'i' is out of range
+// returns the i-th CCH path index in insertion order, or NULL if 'i' is out of
+// range. position is not significant -- this pairs with GraphContext_CCHIndexCount
+// only to iterate every index; identity lookup is GraphContext_GetCCHIndex
 CCHIndex *GraphContext_GetCCHIndexAt
 (
 	const GraphContext *gc,  // graph context
