@@ -264,6 +264,8 @@ static void _ExecuteQuery
 	// in case of an error, rollback any modifications
 	if (ErrorCtx_EncounteredError ()) {
 		QueryCtx_Rollback () ;
+		// the mutations were undone; discard any pending CCH index maintenance
+		GraphContext_CCHClearDirty (gc) ;
 		// clear resultset statistics, avoiding commnad being replicated
 		ResultSet_Clear (result_set) ;
 		if (query_ctx->status != QueryExecutionStatus_TIMEDOUT) {
@@ -280,6 +282,11 @@ static void _ExecuteQuery
 					detail != NULL ? detail : "query execution failed") ;
 		}
 	} else {
+		// all mutations committed -- apply any pending CCH index maintenance
+		// (rebuild / re-customize), coalesced, once, while the write lock is
+		// still held. no-op for reads and when no CCH index exists
+		GraphContext_CCHFlushDirty (gc) ;
+
 		// replicate if graph was modified
 		// check both effect-buffer and result-set statistics
 		// in some edge cases the effect-buffer can have data which the

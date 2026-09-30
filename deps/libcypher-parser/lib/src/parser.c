@@ -205,14 +205,14 @@ static cypher_astnode_t *_create_index(yycontext *yy, cypher_astnode_t *label);
 #define create_pattern_index(i, t, it, o, r) _create_pattern_index(yy, i, t, it, o, r)
 static cypher_astnode_t *_create_pattern_index(yycontext *yy,
          cypher_astnode_t *identifier, cypher_astnode_t *label,
-         enum cypher_ast_index_type index_type, cypher_astnode_t *options,
+         cypher_astnode_t *index_type, cypher_astnode_t *options,
          bool is_relation);
 #define drop_index(l) _drop_index(yy, l)
 static cypher_astnode_t *_drop_index(yycontext *yy, cypher_astnode_t *label);
 #define drop_pattern_index(i, t, it, r) _drop_pattern_index(yy, i, t, it, r)
 static cypher_astnode_t *_drop_pattern_index(yycontext *yy,
          cypher_astnode_t *identifier, cypher_astnode_t *label,
-         enum cypher_ast_index_type index_type, bool is_relation);
+         cypher_astnode_t *index_type, bool is_relation);
 #define create_node_prop_constraint(i, l, e, u) \
         _create_node_prop_constraint(yy, i, l, e, u)
 static cypher_astnode_t *_create_node_prop_constraint(yycontext *yy,
@@ -1223,7 +1223,7 @@ cypher_astnode_t *_create_index(yycontext *yy, cypher_astnode_t *label)
 
 cypher_astnode_t *_create_pattern_index(yycontext *yy,
       cypher_astnode_t *identifier, cypher_astnode_t *label,
-      enum cypher_ast_index_type index_type, cypher_astnode_t *options,
+      cypher_astnode_t *index_type, cypher_astnode_t *options,
       bool is_relation)
 {
     assert(yy->prev_block != NULL &&
@@ -1269,7 +1269,7 @@ cypher_astnode_t *_drop_index(yycontext *yy, cypher_astnode_t *label)
 
 static cypher_astnode_t *_drop_pattern_index(yycontext *yy,
          cypher_astnode_t *identifier, cypher_astnode_t *label,
-         enum cypher_ast_index_type index_type, bool is_relation) {
+         cypher_astnode_t *index_type, bool is_relation) {
     assert(yy->prev_block != NULL &&
             "An AST node can only be created immediately after a `>` in the grammar");
     cypher_astnode_t *node = cypher_ast_drop_pattern_props_index(identifier,

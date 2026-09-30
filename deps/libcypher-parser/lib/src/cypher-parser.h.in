@@ -839,20 +839,19 @@ __cypherlang_pure
 const cypher_astnode_t *cypher_ast_drop_props_index_get_prop_name(
         const cypher_astnode_t *node, unsigned int index);
 
-enum cypher_ast_index_type {
-	CYPHER_INDEX_TYPE_RANGE,
-	CYPHER_INDEX_TYPE_FULLTEXT,
-	CYPHER_INDEX_TYPE_VECTOR
-};
-
 cypher_astnode_t *cypher_ast_drop_pattern_props_index(
         const cypher_astnode_t *identifier, const cypher_astnode_t *label,
-        enum cypher_ast_index_type index_type, bool is_relation,
+        const cypher_astnode_t *index_type, bool is_relation,
         cypher_astnode_t *const *prop_expressions, unsigned int nprops,
         cypher_astnode_t **children, unsigned int nchildren,
         struct cypher_input_range range);
 
-enum cypher_ast_index_type cypher_ast_drop_pattern_props_index_get_index_type(
+/**
+ * Get the index type of a `CYPHER_AST_DROP_PATTERN_PROPS_INDEX` node: a
+ * `CYPHER_AST_STRING` node holding the type keyword (e.g. "vector", "cch"), or
+ * NULL for a plain range index.
+ */
+const cypher_astnode_t *cypher_ast_drop_pattern_props_index_get_index_type(
         const cypher_astnode_t *astnode);
 
 const cypher_astnode_t *cypher_ast_drop_pattern_props_index_get_identifier(
@@ -889,22 +888,23 @@ bool cypher_ast_drop_pattern_props_index_pattern_is_relation(
 __cypherlang_must_check
 cypher_astnode_t *cypher_ast_create_pattern_props_index(
         const cypher_astnode_t *identifier, const cypher_astnode_t *label,
-	enum cypher_ast_index_type index_type, const cypher_astnode_t *options,
+	const cypher_astnode_t *index_type, const cypher_astnode_t *options,
         bool is_relation, cypher_astnode_t *const *prop_expressions,
 	unsigned int nprops, cypher_astnode_t **children, unsigned int nchildren,
 	struct cypher_input_range range);
 
 /**
- * Get the index_type of a `CYPHER_AST_CREATE_PATTERN_PROPS_INDEX` node.
+ * Get the index type of a `CYPHER_AST_CREATE_PATTERN_PROPS_INDEX` node.
  *
- * If the node is not an instance of `CYPHER_AST_CREATE_PATTERN_PROPS_INDEX` then
- * the result will be undefined.
+ * The index type is a `CYPHER_AST_STRING` node holding the type keyword the
+ * query used (e.g. "fulltext", "vector", "cch"), or NULL for a plain range
+ * index. The semantic layer decides which type keywords are valid.
  *
  * @param [node] The AST node.
- * @return A `CYPHER_AST_IDENTIFIER` node.
+ * @return A `CYPHER_AST_STRING` node, or NULL.
  */
 __cypherlang_pure
-enum cypher_ast_index_type cypher_ast_create_pattern_props_index_get_index_type(
+const cypher_astnode_t *cypher_ast_create_pattern_props_index_get_index_type(
         const cypher_astnode_t *astnode);
 /**
  * Get the reltype of a `CYPHER_AST_CREATE_PATTERN_PROPS_INDEX` node.

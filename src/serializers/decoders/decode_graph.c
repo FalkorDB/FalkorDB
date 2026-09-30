@@ -4,7 +4,8 @@
  */
 
 #include "decode_graph.h"
-#include "current/v19/decode_v19.h"
+#include "current/v20/decode_v20.h"
+#include "prev/v19/decode_v19.h"
 #include "../encoding_version.h"
 
 GraphContext *RdbLoadGraph
@@ -33,6 +34,10 @@ RdbLoadGraphContext_t Graph_GetDecoder
 	switch(version) {
 		case GRAPH_ENCODING_LATEST_V:
 			return RdbLoadGraphContext_latest ;
+		case 19:
+			// v19 shares the latest decoder signature (it carries the same
+			// `detached` parameter), so no adapter is needed
+			return RdbLoadGraphContext_v19 ;
 		default:
 			return NULL ;  // no SerializerIO decoder for this version
 	}

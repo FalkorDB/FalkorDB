@@ -269,7 +269,25 @@ class testIndexCreationFlow():
         except ResponseError as e:
             self.env.assertContains("Invalid input '1': expected an identifier", str(e))
 
-    def test07_index_creation_undefined_identifier(self):   
+        # multiple relationship types (:A|B) are only valid for a CCH path index;
+        # every other index type consumes a single type, so a multi-type pattern
+        # must be rejected rather than silently indexing only the first type
+        multi_type_err = ("Multiple relationship types in a single index are "
+                          "only supported for CCH indexes")
+        try:
+            self.graph.query("CREATE INDEX FOR ()-[e:A|B]->() ON (e.x)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains(multi_type_err, str(e))
+
+        # same restriction for an explicit non-CCH index-type keyword
+        try:
+            self.graph.query("CREATE FULLTEXT INDEX FOR ()-[e:A|B]->() ON (e.x)")
+            self.env.assertTrue(False)
+        except ResponseError as e:
+            self.env.assertContains(multi_type_err, str(e))
+
+    def test07_index_creation_undefined_identifier(self):
         # create index on undefined identifier
         try:
             self.graph.query("CREATE INDEX FOR (p:Person) ON (a.b)")

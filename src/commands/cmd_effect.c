@@ -8,6 +8,7 @@
 #include "../query_ctx.h"
 #include "../errors/errors.h"
 #include "../effects/effects.h"
+#include "../graph/graphcontext.h"
 #include "../graph/graphcontext_retrieve.h"
 #include "../replication/divergence_guard.h"
 
@@ -75,6 +76,16 @@ int Graph_Effect
 
 	// apply effects
 	bool ok = Effects_Apply (gc, effects_buff, l) ;
+
+	// apply (or, on failure, discard) any CCH path-index maintenance the effects
+	// triggered -- effect application is the replica / AOF-replay analogue of a
+	// query commit, so it must run the same flush the commit path does, while the
+	// write lock is still held
+	if (ok) {
+		GraphContext_CCHFlushDirty (gc) ;
+	} else {
+		GraphContext_CCHClearDirty (gc) ;
+	}
 
 	// restore graph sync policy
 	Graph_SetMatrixPolicy (g, policy) ;
