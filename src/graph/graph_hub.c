@@ -36,6 +36,10 @@ void GraphHub_CreateNode
 		Schema_AddNodeToIndex(s, n);
 	}
 
+	// a new node grows the node-id space (and may reuse a tombstoned id), so any
+	// CCH path index must be rebuilt
+	GraphContext_CCHMarkAllRebuild(gc);
+
 	// add node creation operation to undo log
 	if(log == true) {
 		UndoLog undo_log = QueryCtx_GetUndoLog();
@@ -69,6 +73,9 @@ void GraphHub_CreateNodes
 	// introduce nodes to graph
 	Graph_CreateNodes (GraphContext_GetGraph (gc), nodes, sets, node_count,
 			labels, label_count) ;
+
+	// new nodes -> rebuild any CCH path index
+	GraphContext_CCHMarkAllRebuild (gc) ;
 
 	//--------------------------------------------------------------------------
 	// collect schemas with indices
@@ -135,6 +142,10 @@ void GraphHub_CreateEdge
 	ASSERT(s != NULL);
 	Schema_AddEdgeToIndex(s, e);
 
+	// new edge of type 'r' -> re-customize CCH indices spanning 'r' (scoped when
+	// its chordal arc already exists; a new adjacency escalates to a rebuild)
+	GraphContext_CCHMarkRelEdgeAdded(gc, r, src, dst);
+
 	// add edge creation operation to undo log
 	if(log == true) {
 		UndoLog undo_log = QueryCtx_GetUndoLog();
@@ -157,6 +168,18 @@ void GraphHub_CreateEdges
 	ASSERT (edges != NULL) ;
 
 	Graph_CreateEdges (GraphContext_GetGraph (gc), r, edges, sets) ;
+
+	// new edges of type 'r' -> re-customize CCH indices spanning 'r', scoped per
+	// edge whose chordal arc already exists (a re-added / parallel edge); an edge
+	// that introduces a new adjacency escalates the index to a full rebuild. this
+	// is the path Cypher CREATE takes, so it must carry the Phase-A logic
+	if (GraphContext_CCHIndexCount (gc) > 0) {
+		uint ecount = arr_len (edges) ;
+		for (uint i = 0; i < ecount; i++) {
+			Edge *e = edges[i] ;
+			GraphContext_CCHMarkRelEdgeAdded (gc, r, e->src_id, e->dest_id) ;
+		}
+	}
 
 	Schema *s = GraphContext_GetSchemaByID (gc, r, SCHEMA_EDGE) ;
 	ASSERT (s != NULL) ;
@@ -235,6 +258,10 @@ void GraphHub_DeleteNodes
 		}
 	}
 
+	// deleting nodes (and their incident edges) changes topology and frees ids
+	// for reuse -> rebuild any CCH path index
+	GraphContext_CCHMarkAllRebuild (gc) ;
+
 	Graph_DeleteNodes (GraphContext_GetGraph (gc), nodes, n) ;
 }
 
@@ -282,6 +309,19 @@ void GraphHub_DeleteEdges
 		}
 	}
 
+	// removing an edge drops its arc's original-edge weight -> re-customize CCH
+	// indices spanning its relationship type (the chordal arc is kept + re-seeded;
+	// the staleness valve reclaims stale arcs later). marked before the delete, so
+	// the edge's endpoints are still readable; the commit-time flush then re-seeds
+	// from the post-deletion graph
+	if (GraphContext_CCHIndexCount (gc) > 0) {
+		for (uint i = 0; i < n; i++) {
+			Edge *e = edges + i ;
+			GraphContext_CCHMarkRelEdgeDeleted (gc, e->relationID, e->src_id,
+					e->dest_id) ;
+		}
+	}
+
 	Graph_DeleteEdges (GraphContext_GetGraph (gc), edges, n, implicit) ;
 }
 
@@ -316,6 +356,12 @@ void GraphHub_UpdateEntityProperties
 		GraphContext_AddNodeToIndices (gc, (Node *)ge) ;
 	} else {
 		GraphContext_AddEdgeToIndices (gc, (Edge *)ge) ;
+		// an edge property update may change the CCH weight metric -> re-customize
+		// indices spanning this edge's relationship type (topology unchanged),
+		// scoped to this edge's endpoints
+		Edge *_e = (Edge *)ge ;
+		GraphContext_CCHMarkRelRecustomize (gc, _e->relationID, _e->src_id,
+				_e->dest_id) ;
 	}
 }
 
@@ -411,12 +457,21 @@ void GraphHub_UpdateEdgeProperty
 
 		// remove edge from index
 		Schema_RemoveEdgeFromIndex (s, &e) ;
+
+		// the weight attribute (if any) was cleared -> re-customize CCH indices
+		GraphContext_CCHMarkRelRecustomize (gc, r_id, src_id, dest_id) ;
 		return ;
 	}
 
 	AttributeSetChangeType change ;
 	AttributeSet_Update (&change, e.attributes, &attr_id, &v, 1, false) ;
 	bool update_idx = (change != CT_NONE) ;
+
+	// an edge attribute changed -> re-customize CCH indices spanning 'r_id'
+	// (may be the weight metric; topology is unchanged)
+	if (update_idx == true) {
+		GraphContext_CCHMarkRelRecustomize (gc, r_id, src_id, dest_id) ;
+	}
 
 	// update index if
 	// 1. attribute was set/updated

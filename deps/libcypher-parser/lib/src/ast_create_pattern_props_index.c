@@ -25,7 +25,7 @@ struct create_pattern_index
     cypher_astnode_t _astnode;
     const cypher_astnode_t *identifier;
     const cypher_astnode_t *label;
-    enum cypher_ast_index_type index_type;
+    const cypher_astnode_t *index_type;
     const cypher_astnode_t *options;
     bool is_relation;
     unsigned int nprops;
@@ -52,13 +52,15 @@ const struct cypher_astnode_vt cypher_create_pattern_props_index_astnode_vt =
 
 cypher_astnode_t *cypher_ast_create_pattern_props_index(
         const cypher_astnode_t *identifier, const cypher_astnode_t *label,
-        enum cypher_ast_index_type index_type, const cypher_astnode_t *options,
+        const cypher_astnode_t *index_type, const cypher_astnode_t *options,
         bool is_relation, cypher_astnode_t *const *prop_expressions,
         unsigned int nprops, cypher_astnode_t **children,
         unsigned int nchildren, struct cypher_input_range range)
 {
     REQUIRE_CHILD(children, nchildren, label, CYPHER_AST_LABEL, NULL);
     REQUIRE_CHILD(children, nchildren, identifier, CYPHER_AST_IDENTIFIER, NULL);
+    REQUIRE_CHILD_OPTIONAL(children, nchildren, index_type, CYPHER_AST_STRING,
+            NULL);
     REQUIRE(nprops > 0, NULL);
     REQUIRE_CHILD_ALL(children, nchildren, prop_expressions, nprops,
             CYPHER_AST_PROPERTY_OPERATOR, NULL);
@@ -101,6 +103,8 @@ cypher_astnode_t *clone(const cypher_astnode_t *self,
 
     cypher_astnode_t *identifier = children[child_index(self, node->identifier)];
     cypher_astnode_t *label = children[child_index(self, node->label)];
+    cypher_astnode_t *index_type = (node->index_type == NULL) ? NULL :
+            children[child_index(self, node->index_type)];
     cypher_astnode_t *options = children[child_index(self, node->options)];
     cypher_astnode_t **prop_expressions = calloc(node->nprops,
             sizeof(cypher_astnode_t *));
@@ -114,7 +118,7 @@ cypher_astnode_t *clone(const cypher_astnode_t *self,
     }
 
     cypher_astnode_t *clone = cypher_ast_create_pattern_props_index(identifier,
-		   	label, node->index_type, options, node->is_relation,
+		   	label, index_type, options, node->is_relation,
             prop_expressions, node->nprops, children, self->nchildren,
             self->range);
     int errsv = errno;
@@ -123,7 +127,7 @@ cypher_astnode_t *clone(const cypher_astnode_t *self,
     return clone;
 }
 
-enum cypher_ast_index_type cypher_ast_create_pattern_props_index_get_index_type(
+const cypher_astnode_t *cypher_ast_create_pattern_props_index_get_index_type(
         const cypher_astnode_t *astnode)
 {
     REQUIRE_TYPE(astnode, CYPHER_AST_CREATE_PATTERN_PROPS_INDEX, NULL);

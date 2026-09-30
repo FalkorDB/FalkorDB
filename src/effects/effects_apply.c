@@ -793,6 +793,14 @@ bool Effects_Apply
 				ok = ApplyDropConstraint (stream, gc) ;
 				break ;
 
+			case EFFECT_CREATE_CCH:
+				ok = ApplyCreateCCH (stream, gc) ;
+				break ;
+
+			case EFFECT_DROP_CCH:
+				ok = ApplyDropCCH (stream, gc) ;
+				break ;
+
 			default:
 				RedisModule_Log (NULL, "warning",
 						"GRAPH.EFFECT encountered unknown effect type %d", t) ;

@@ -28,7 +28,8 @@ typedef enum {
 	ENCODE_STATE_RELATION_MATRICES = 7,  // encoding graph relation matrices
 	ENCODE_STATE_ADJ_MATRIX        = 8,  // encode graph adjacency matrix
 	ENCODE_STATE_LBLS_MATRIX       = 9,  // encoding graph labels matrix
-	ENCODE_STATE_FINAL             = 10  // encoding final state [MUSTN'T BE SAVED TO RDB]
+	ENCODE_STATE_CCH_INDICES       = 10, // encoding graph-level CCH path indices
+	ENCODE_STATE_FINAL             = 11  // encoding final state [MUSTN'T BE SAVED TO RDB]
 } EncodeState;
 
 // Header information encoded for every payload

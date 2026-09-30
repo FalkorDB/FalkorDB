@@ -29,6 +29,7 @@ typedef struct GraphContext {
 	Schema **node_schemas;                 // array of schemas for each node label
 	Schema **relation_schemas;             // array of schemas for each relation type
 	unsigned short index_count;            // number of indicies
+	struct _CCHIndex **cch_indices;        // graph-level CCH path indices (arr_)
 	SlowLog *slowlog;                      // slowlog associated with graph
 	QueriesLog queries_log;                // log last x executed queries
 	GraphEncodeContext *encoding_context;  // encode context of the graph
