@@ -147,7 +147,32 @@ class testCCHIndex(FlowTestsBase):
         except Exception as e:
             self.env.assertContains("already exists", str(e))
 
-    def test03_listed_in_db_indexes(self):
+    def test03_query_validation(self):
+        g = self._reset("cchi_qvalid")
+        # two metrics so we can request one that has no index
+        g.query("CREATE (:N{v:0})-[:ROAD{w:1, t:2}]->(:N{v:1})")
+        self._create(g, wp="w")
+        base = "MATCH (a:N{v:0}),(b:N{v:1}) "
+        bad = [
+            (base + "CALL db.idx.cch.query({sourceNode:a})", "sourceNode and targetNode"),
+            (base + "CALL db.idx.cch.query({sourceNode:1, targetNode:b, relTypes:['ROAD'],"
+                    " weightProp:'w'})", "must be nodes"),
+            (base + "CALL db.idx.cch.query({sourceNode:a, targetNode:b, relTypes:['NOPE'],"
+                    " weightProp:'w'})", "unknown relationship type"),
+            (base + "CALL db.idx.cch.query({sourceNode:a, targetNode:b, relTypes:['ROAD'],"
+                    " weightProp:'nope'})", "unknown attribute"),
+            # 't' is a real attribute but no CCH index is built over it
+            (base + "CALL db.idx.cch.query({sourceNode:a, targetNode:b, relTypes:['ROAD'],"
+                    " weightProp:'t'})", "no CCH index"),
+        ]
+        for q, msg in bad:
+            try:
+                g.query(q)
+                self.env.assertTrue(False)
+            except Exception as e:
+                self.env.assertContains(msg, str(e))
+
+    def test04_listed_in_db_indexes(self):
         g = self._reset("cchi_list")
         g.query("CREATE (:N {v:0})-[:ROAD{w:1}]->(:N {v:1})")
         self._create(g)
@@ -158,7 +183,7 @@ class testCCHIndex(FlowTestsBase):
         self.env.assertEquals(cch[0][3], 'RELATIONSHIP')
 
     # ---- incremental maintenance: weight change -> scoped recustomize ------
-    def test04_weight_update_recustomize(self):
+    def test05_weight_update_recustomize(self):
         g = self._reset("cchi_reweight")
         g.query("""CREATE (a:N{v:0}),(b:N{v:1}),(c:N{v:2}),
                    (a)-[:ROAD{w:10}]->(b),(b)-[:ROAD{w:10}]->(a),
@@ -178,7 +203,7 @@ class testCCHIndex(FlowTestsBase):
         self._check(g, 0, 1)
 
     # ---- batched weight changes in one commit ------------------------------
-    def test05_batch_weight_update(self):
+    def test06_batch_weight_update(self):
         g = self._reset("cchi_batch")
         edges = self._rand_graph(g, 30, 150, 7)
         self._create(g)
@@ -196,7 +221,7 @@ class testCCHIndex(FlowTestsBase):
                     self._check(g, s, t)
 
     # ---- a bulk change must trip the full-customization fallback -----------
-    def test06_large_batch_fallback(self):
+    def test07_large_batch_fallback(self):
         # rewriting every edge's weight in one query marks far more than n/8 arcs
         # dirty, so CCHIndex_Recustomize takes the full-customize branch. Result
         # must still match the oracle.
@@ -210,7 +235,7 @@ class testCCHIndex(FlowTestsBase):
                     self._check(g, s, t)
 
     # ---- randomized sweep: build + repeated re-weighting vs SPpaths --------
-    def test07_fuzz_reweight_vs_sppaths(self):
+    def test08_fuzz_reweight_vs_sppaths(self):
         for ti, (n, m) in enumerate([(10, 30), (20, 90), (35, 200)]):
             for seed in range(2):
                 g = self._reset(f"cchi_fz_{ti}_{seed}")
@@ -228,7 +253,7 @@ class testCCHIndex(FlowTestsBase):
                         self._check(g, s, t)
 
     # ---- Phase A: incremental topology maintenance -------------------------
-    def test08_edge_delete_and_readd(self):
+    def test09_edge_delete_and_readd(self):
         # deleting an edge keeps its chordal arc (re-seeded); re-adding it revives
         # the same arc -- both are scoped recustomizations, and both must leave the
         # index in sync with the graph
@@ -250,7 +275,7 @@ class testCCHIndex(FlowTestsBase):
         self.env.assertAlmostEqual(self._idx(g, 0, 1)[0], 1.5, delta=1e-9)
         self._check(g, 0, 1)
 
-    def test09_edge_add_new_adjacency(self):
+    def test10_edge_add_new_adjacency(self):
         # adding an edge between a pair with no chordal arc introduces a new
         # adjacency -> the index escalates to a full rebuild and stays correct
         g = self._reset("cchi_newedge")
@@ -264,7 +289,7 @@ class testCCHIndex(FlowTestsBase):
         self.env.assertAlmostEqual(self._idx(g, 0, 3)[0], 1, delta=1e-9)
         self._check(g, 0, 3)
 
-    def test10_topology_fuzz_vs_sppaths(self):
+    def test11_topology_fuzz_vs_sppaths(self):
         # random mix of weight change / delete / new-adjacency add / re-add,
         # checked against the SPpaths oracle after every mutation
         for ti, (n, m) in enumerate([(12, 40), (25, 120), (45, 260)]):
@@ -302,7 +327,7 @@ class testCCHIndex(FlowTestsBase):
                 for s, t in random.sample(allp, min(15, len(allp))):
                     self._check(g, s, t)
 
-    def test11_staleness_valve(self):
+    def test12_staleness_valve(self):
         # deleting many edges keeps stale arcs until the valve rebuilds; correctness
         # must hold across the threshold (1024 deletions for a small graph)
         g = self._reset("cchi_valve")
@@ -323,31 +348,6 @@ class testCCHIndex(FlowTestsBase):
         return self._rand_graph(g, n, m, seed)
 
     # ---- query-side validation / access control ---------------------------
-    def test12_query_validation(self):
-        g = self._reset("cchi_qvalid")
-        # two metrics so we can request one that has no index
-        g.query("CREATE (:N{v:0})-[:ROAD{w:1, t:2}]->(:N{v:1})")
-        self._create(g, wp="w")
-        base = "MATCH (a:N{v:0}),(b:N{v:1}) "
-        bad = [
-            (base + "CALL db.idx.cch.query({sourceNode:a})", "sourceNode and targetNode"),
-            (base + "CALL db.idx.cch.query({sourceNode:1, targetNode:b, relTypes:['ROAD'],"
-                    " weightProp:'w'})", "must be nodes"),
-            (base + "CALL db.idx.cch.query({sourceNode:a, targetNode:b, relTypes:['NOPE'],"
-                    " weightProp:'w'})", "unknown relationship type"),
-            (base + "CALL db.idx.cch.query({sourceNode:a, targetNode:b, relTypes:['ROAD'],"
-                    " weightProp:'nope'})", "unknown attribute"),
-            # 't' is a real attribute but no CCH index is built over it
-            (base + "CALL db.idx.cch.query({sourceNode:a, targetNode:b, relTypes:['ROAD'],"
-                    " weightProp:'t'})", "no CCH index"),
-        ]
-        for q, msg in bad:
-            try:
-                g.query(q)
-                self.env.assertTrue(False)
-            except Exception as e:
-                self.env.assertContains(msg, str(e))
-
     def test13_ro_query_access(self):
         # create + drop mutate index state (write procs) -> refused via RO_QUERY;
         # the read-only query is allowed through
