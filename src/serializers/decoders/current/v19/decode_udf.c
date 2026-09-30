@@ -25,10 +25,24 @@ void AUXLoadUDF_latest
 	uint64_t n = RedisModule_LoadUnsigned (io) ;
 
 	for (uint64_t i = 0; i < n; i++) {
-		size_t lib_len ;
-		size_t script_len ;
+		// abort on a short read; the count may be valid while the payload is
+		// truncated, so re-check before trusting each entry
+		if (RedisModule_IsIOError (io)) {
+			return ;
+		}
+
+		size_t lib_len    = 0 ;
+		size_t script_len = 0 ;
 		const char *lib    = RedisModule_LoadStringBuffer (io, &lib_len) ;
-		const char *script = RedisModule_LoadStringBuffer (io, &script_len) ; 
+		const char *script = RedisModule_LoadStringBuffer (io, &script_len) ;
+
+		// a short read yields NULL buffers and latches the IO error; bail out
+		// before decrementing the (zero) lengths or handing NULL to UDF_Load
+		if (RedisModule_IsIOError (io) || lib == NULL || script == NULL) {
+			if (lib    != NULL) RedisModule_Free ((void*)lib) ;
+			if (script != NULL) RedisModule_Free ((void*)script) ;
+			return ;
+		}
 
 		// do not count null terminator
 		lib_len-- ;

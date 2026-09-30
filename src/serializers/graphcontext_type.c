@@ -59,6 +59,13 @@ static void *_GraphContextType_RdbLoad
 		gc = RdbLoadGraph(rdb);
 	}
 
+	// decode failed (e.g. a short read on a truncated payload or replication
+	// stream); the decoder already tore down any partial graph - abort the load
+	// without registering, Redis treats a NULL return as a clean load failure
+	if(gc == NULL) {
+		return NULL;
+	}
+
 	// add GraphContext to global array of graphs
 	GraphContext_RegisterWithModule(gc);
 
@@ -93,9 +100,17 @@ static int _GraphContextType_AuxLoad
 ) {
 	if (when == REDISMODULE_AUX_BEFORE_RDB) {
 		AUXLoad (rdb) ;
+		// abort on a short read so Redis fails the load cleanly instead of
+		// proceeding with half-decoded auxiliary (UDF) state
+		if (RedisModule_IsIOError (rdb)) {
+			return REDISMODULE_ERR;
+		}
 		ModuleEventHandler_AUXBeforeKeyspaceEvent();
 	} else {
 		RedisModule_LoadUnsigned (rdb) ;
+		if (RedisModule_IsIOError (rdb)) {
+			return REDISMODULE_ERR;
+		}
 		ModuleEventHandler_AUXAfterKeyspaceEvent();
 	}
 

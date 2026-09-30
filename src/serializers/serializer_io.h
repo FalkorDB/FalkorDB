@@ -150,6 +150,14 @@ long double SerializerIO_ReadLongDouble
 	SerializerIO io  // stream
 );
 
+// returns true if a short read / IO error was encountered during decoding
+// once set the flag is sticky: further reads short-circuit and return zeroed
+// values, so decoders can keep going until the next checkpoint aborts the load
+bool SerializerIO_Error
+(
+	SerializerIO io  // serializer
+);
+
 #define SerializerIO_Write(io, value,...)                          \
 	_Generic                                                       \
 	(                                                              \
