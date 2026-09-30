@@ -776,6 +776,8 @@ void CCH_RecustomizeScoped
 	for (uint64_t i = 0 ; i < k ; i++) {
 		int64_t a = (du [i] < (int64_t) n) ? cch->iperm [du [i]] : -1 ;
 		int64_t b = (dv [i] < (int64_t) n) ? cch->iperm [dv [i]] : -1 ;
+		// skip arcs that can't map to a hierarchy arc: an endpoint outside the
+		// ranked id-space (a == -1 / b == -1) or a self-loop (a == b)
 		if (a < 0 || b < 0 || a == b) continue ;
 		int64_t lo   = MIN (a, b) ;
 		int64_t hi   = MAX (a, b) ;
