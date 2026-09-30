@@ -720,13 +720,9 @@ static int64_t _find_upper_opt
 
 	while (lo <= hi) {
 		int64_t mid = lo + ((hi - lo) >> 1) ;
-		if      (uy [mid] < z) {
-			lo = mid + 1 ;
-		} else if (uy [mid] > z) {
-			hi = mid - 1 ;
-		} else {
-			return mid ;
-		}
+		if      (uy [mid] < z) lo = mid + 1 ;
+		else if (uy [mid] > z) hi = mid - 1 ;
+		else                   return mid ;
 	}
 
 	return -1 ;
@@ -823,9 +819,11 @@ void CCH_RecustomizeScoped
 				continue ;
 			}
 
-			int64_t x  = xa ;                            // common lower neighbour
-			int64_t iy = _find_upper_opt (cch, x, lo) ;  // slot of lo in up[x]
-			int64_t iz = _find_upper_opt (cch, x, hi) ;  // slot of hi in up[x]
+			int64_t x  = xa ;                        // common lower neighbour
+			// x in down[lo] <=> lo in up[x] (likewise for hi), so both arcs are
+			// guaranteed to exist here -- use the asserting lookup
+			int64_t iy = _find_upper (cch, x, lo) ;  // slot of lo in up[x]
+			int64_t iz = _find_upper (cch, x, hi) ;  // slot of hi in up[x]
 
 			// detour lo -> x -> hi : (lo->x) + (x->hi) = dn_w[x][iy] + up_w[x][iz]
 			double cand_up = cch->dn_w [x] [iy] + cch->up_w [x] [iz] ;
@@ -858,8 +856,8 @@ void CCH_RecustomizeScoped
 			for (uint32_t wi = 0 ; wi < arr_len (ul) ; wi++) {
 				int64_t w = ul [wi] ;
 				if (w == hi) continue ;
-				int64_t d_lo   = hi < w ? hi : w ;
-				int64_t d_hi   = hi < w ? w  : hi ;
+				int64_t d_lo   = MIN (hi, w) ;
+				int64_t d_hi   = MAX (hi, w) ;
 				int64_t d_slot = _find_upper_opt (cch, d_lo, d_hi) ;
 				if (d_slot >= 0) ENQUEUE (d_lo, d_slot) ;
 			}
