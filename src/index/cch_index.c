@@ -490,8 +490,11 @@ void CCHIndex_Recustomize
 	// the scoped incremental path pays off while the changed set is small; once it
 	// spans a large fraction of the hierarchy the affected cones overlap so heavily
 	// that a single full customization is simpler and no slower (topology is
-	// unchanged here, so no METIS). 'n/8' is a coarse "bulk update" line
-	if (k <= (uint64_t) cch->n / 8) {
+	// unchanged here, so no METIS). 'n/8' is a coarse "bulk update" line.
+	// the scoped kernel also packs a rank into 32 bits (ARC_KEY in cch.c), so it
+	// only applies while the rank space fits in 32 bits; a larger graph falls back
+	// to the full (unpacked) customization
+	if (k <= (uint64_t) cch->n / 8 && (uint64_t) cch->n <= 0xFFFFFFFFULL) {
 		// incrementally re-customize just the affected cone of the changed arcs
 		ScopedSeedCtx sctx = {
 			.g         = g,

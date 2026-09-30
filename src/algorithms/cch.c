@@ -729,7 +729,9 @@ static int64_t _find_upper_opt
 }
 
 // pack an arc, identified by its lower-endpoint rank and its slot in up[lo],
-// into the heap's NodeID field / the dedup set's key
+// into the heap's NodeID field / the dedup set's key. the rank occupies the
+// high 32 bits, so this is lossless only while the rank space fits in 32 bits --
+// CCHIndex_Recustomize routes larger graphs to the full customization instead
 #define ARC_KEY(lo, slot) \
 	((void *)(uintptr_t)(((uint64_t)(lo) << 32) | (uint32_t)(slot)))
 
