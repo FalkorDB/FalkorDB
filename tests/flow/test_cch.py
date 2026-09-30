@@ -684,6 +684,13 @@ class testCCHIndex(FlowTestsBase):
             ("CREATE FOO INDEX FOR (n:N) ON (n.w)", "Unknown index type"),
             # a multi-label node pattern is a syntax error
             ("CREATE INDEX FOR (a:A|B) ON (a.x)", "Invalid input"),
+            # multi relationship-type patterns are CCH-only -- drops must reject
+            # them too, mirroring create, instead of silently dropping only the
+            # first type
+            ("DROP INDEX FOR ()-[e:A|B]->() ON (e.w)",
+             "only supported for CCH indexes"),
+            ("DROP FULLTEXT INDEX FOR ()-[e:A|B]->() ON (e.w)",
+             "only supported for CCH indexes"),
         ]
         for q, msg in bad:
             try:
