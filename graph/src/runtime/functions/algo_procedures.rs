@@ -2116,6 +2116,30 @@ fn edge_numeric_attr(
     })
 }
 
+/// Read an edge's `costProp`, which has two different fallbacks rather than the
+/// single one [`edge_numeric_attr`] takes.
+///
+/// C keeps them apart in `_sum_path_cost`: an unconfigured `costProp`
+/// contributes nothing, but a configured one falls back to 1 for any edge that
+/// does not carry the property. The weight side needs no such split -- C uses 1
+/// for both cases there, which is what `default = 1.0` already gives.
+///
+/// The value handling is deliberately identical to [`edge_numeric_attr`]: a
+/// negative or zero cost is reported as-is, because C does not clamp either
+/// (`Dijkstra.h` states non-negative weights as an unguarded precondition).
+/// Clamping is a Rust-vs-C policy question, not a parity fix - see #343.
+fn edge_cost_attr(
+    g: &Graph,
+    edge_id: RelationshipId,
+    prop: Option<&Arc<String>>,
+) -> f64 {
+    prop.map_or(0.0, |p| match g.get_relationship_attribute(edge_id, p) {
+        Some(Value::Float(f)) => f,
+        Some(Value::Int(i)) => i as f64,
+        _ => 1.0,
+    })
+}
+
 /// The endpoint an edge leads to when leaving `from`, or `None` when the edge
 /// does not leave `from` in the requested direction.
 fn far_endpoint(
@@ -2305,7 +2329,7 @@ fn dijkstra_single_path(
     // `costProp` is not what the search optimises for, just an attribute the
     // caller asked to have reported: sum it over the winning path only.
     let cost = edges.iter().fold(0.0, |acc, &(edge_id, _, _)| {
-        acc + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0)
+        acc + edge_cost_attr(g, edge_id, config.cost_prop.as_ref())
     });
 
     Ok(Some((edges, labels[&target].weight, cost)))
@@ -2394,7 +2418,7 @@ fn bfs_find_bound(
     let mut cost = 0.0;
     for edge_id in chain {
         weight += edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
-        cost += edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+        cost += edge_cost_attr(g, edge_id, config.cost_prop.as_ref());
     }
 
     Ok(Some((weight, cost)))
@@ -2515,7 +2539,7 @@ fn enumerate_paths(
             let (weight, cost) = edges.last().map_or((0.0, 0.0), |&(_, _, _, w, c)| (w, c));
             let next_weight =
                 weight + edge_numeric_attr(g, edge_id, config.weight_prop.as_ref(), 1.0);
-            let next_cost = cost + edge_numeric_attr(g, edge_id, config.cost_prop.as_ref(), 0.0);
+            let next_cost = cost + edge_cost_attr(g, edge_id, config.cost_prop.as_ref());
 
             // C gates on `weight + w <= max_weight` (max_weight defaulting to
             // DBL_MAX), which rejects NaN and infinity. The negated `> bound`
