@@ -28,6 +28,21 @@ int Graph_Effect
 		return RedisModule_WrongArity (ctx) ;
 	}
 
+	// GRAPH.EFFECT is an internal command: a master replicates its writes to
+	// replicas and the AOF as GRAPH.EFFECT, and it is applied there over the
+	// replication link or during AOF load. it must never run from an ordinary
+	// client - it executes on the main thread and mutates the shared schema /
+	// graph state directly, outside the single-writer election, so applied
+	// concurrently with a worker-thread write query it corrupts that state
+	// (torn schema arrays -> crash / master-replica divergence). accept it only
+	// from the replication link or AOF replay
+	int ctx_flags = RedisModule_GetContextFlags (ctx) ;
+	if ((ctx_flags &
+		 (REDISMODULE_CTX_FLAGS_REPLICATED | REDISMODULE_CTX_FLAGS_LOADING)) == 0) {
+		return RedisModule_ReplyWithError (ctx,
+			"ERR GRAPH.EFFECT is an internal command and can't be called directly") ;
+	}
+
 	// get graph context - never fails due to mere contention with another
 	// load (see GraphContext_RetrieveOrForce); reaching gc == NULL means a
 	// genuine, unrecoverable failure: a missing/corrupt dump, OOM, or a

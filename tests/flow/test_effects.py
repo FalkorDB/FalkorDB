@@ -1644,3 +1644,19 @@ class testEffects():
                                list_constraints(self.replica_graph))
         self.env.assertEquals(len(list_constraints(self.master_graph)), 1)
 
+    def test34_effect_rejected_from_client(self):
+        # GRAPH.EFFECT is an internal command: a master replicates its writes to
+        # replicas / the AOF as GRAPH.EFFECT, and it is applied there over the
+        # replication link or during AOF load. a direct client call must be
+        # rejected - applied outside the single-writer election it would corrupt
+        # the shared schema state. rejection happens before the payload is
+        # parsed, so any payload is refused.
+        try:
+            self.master.execute_command("GRAPH.EFFECT", GRAPH_ID, b"\x00")
+            self.env.assertTrue(False)  # expected a rejection
+        except ResponseError as e:
+            self.env.assertContains("internal command", str(e))
+
+        # the master is unharmed and still serving
+        self.env.assertTrue(self.master.ping())
+

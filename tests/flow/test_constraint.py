@@ -610,6 +610,99 @@ class testConstraintNodes():
         drop_unique_node_constraint(self.g, "Widget", "alpha", "zulu")
         self.env.assertEqual(len(widget_constraints()), 0)
 
+    def test10_concurrent_constraint_and_query(self):
+        # regression test for the schema-array corruption race.
+        #
+        # GRAPH.CONSTRAINT runs on an async worker thread, outside the
+        # single-writer election that serializes GRAPH.QUERY writes. before the
+        # fix a constraint op and a concurrent write query mutated the shared
+        # schema / attribute arrays and label matrices at the same time, which
+        # crashed the server within seconds - or persisted a graph with a
+        # duplicate label id / schema-vs-matrix count mismatch that crashes on
+        # reload. hammer both concurrently and assert the server survives and
+        # the schema round-trips through an RDB reload unchanged.
+
+        # heavy multi-threaded stress plus a mid-test server restart: too slow
+        # and timing-sensitive under Valgrind, and the restart-with-data trips
+        # LeakSanitizer's shutdown-gap false positive (see testConstraintAOF)
+        if SANITIZER or VALGRIND:
+            self.env.skip()
+
+        graph_id = "concurrent_constraint_query"
+        self.con.delete(graph_id)
+        self.db.select_graph(graph_id).query("CREATE (:seed)")  # ensure graph exists
+
+        ITERS   = 60   # iterations per thread
+        NTHREAD = 6    # threads per side
+
+        crashed = []   # non-empty => a connection died mid-request (server crash)
+
+        def constraint_worker(wid):
+            con = self.env.getConnection()
+            for i in range(ITERS):
+                if crashed:
+                    return
+                try:
+                    con.execute_command("GRAPH.CONSTRAINT", "CREATE", graph_id,
+                        "MANDATORY", "NODE", "CL_%d_%d" % (wid, i),
+                        "PROPERTIES", 1, "cp_%d_%d" % (wid, i))
+                except ResponseError:
+                    pass  # benign command-level error
+                except Exception as e:
+                    crashed.append(("constraint", wid, i, str(e)))
+                    return
+
+        def query_worker(wid):
+            con = self.env.getConnection()
+            for i in range(ITERS):
+                if crashed:
+                    return
+                try:
+                    con.execute_command("GRAPH.QUERY", graph_id,
+                        "CREATE (:QL_%d_%d {p:%d})" % (wid, i, i))
+                except ResponseError:
+                    pass
+                except Exception as e:
+                    crashed.append(("query", wid, i, str(e)))
+                    return
+
+        threads = []
+        for w in range(NTHREAD):
+            threads.append(threading.Thread(target=constraint_worker, args=(w,)))
+            threads.append(threading.Thread(target=query_worker, args=(w,)))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # the server must have survived the concurrent writers
+        self.env.assertEqual(crashed, [])
+
+        # ... and must still be responsive
+        con = self.env.getConnection()
+        self.env.assertTrue(con.ping())
+        g = self.db.select_graph(graph_id)
+
+        # wait for constraint enforcement to finish before reloading (reloading
+        # while enforcement is in flight is a separate, unrelated issue). these
+        # constraints are on empty labels, so enforcement completes immediately
+        for _ in range(50):
+            pending = [c for c in list_constraints(g)
+                       if c.status in ("PENDING", "UNDER CONSTRUCTION")]
+            if not pending:
+                break
+            time.sleep(0.1)
+
+        # the schema must be internally consistent: it round-trips through an
+        # RDB encode/decode without crashing or losing labels. a duplicate label
+        # id or a schema-vs-matrix count mismatch would crash this reload or
+        # change the label set
+        labels_before = sorted(r[0] for r in g.query("CALL db.labels()").result_set)
+        self.env.dumpAndReload(restart=True)  # save RDB, restart, load - a
+                                              # corrupt RDB would fail to reload
+        labels_after = sorted(r[0] for r in g.query("CALL db.labels()").result_set)
+        self.env.assertEqual(labels_before, labels_after)
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
