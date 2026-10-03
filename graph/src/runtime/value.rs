@@ -834,7 +834,15 @@ impl Hash for Value {
             }
             Self::Int(x) => {
                 2.hash(state);
-                x.hash(state);
+                // `Int` = `Float` compares `x as f64`, so above 2^53 several
+                // ints equal the same float (`2^53 + 1 = 2^53.0`). Hash such
+                // an int as that float does, or equal values would land in
+                // different buckets; below 2^53 the round-trip is exact.
+                if x.unsigned_abs() > 1 << f64::MANTISSA_DIGITS {
+                    (*x as f64 as i64).hash(state);
+                } else {
+                    x.hash(state);
+                }
             }
             Self::Float(x) => {
                 2.hash(state);
