@@ -2099,6 +2099,13 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        # coalesce needs at least one argument, as in C
+        try:
+            self.graph.query("RETURN coalesce()")
+            self.env.assertFalse(True)
+        except ResponseError as e:
+            self.env.assertIn("Received 0 arguments to function 'coalesce', expected at least 1", str(e))
     
     def test83_Replace(self):
         query_to_expected_result = {
