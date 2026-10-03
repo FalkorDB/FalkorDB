@@ -36,6 +36,13 @@ class testPath():
         expected_distance = 11352120
         self.assert_distance(a, b, expected_distance)
 
+        # antipodal points: half the circumference; the haversine term rounds
+        # just above 1 here and used to produce NaN
+        a = {'lat': -88.3, 'lon': -180}
+        b = {'lat': 88.3, 'lon': 0}
+        expected_distance = 20037518
+        self.assert_distance(a, b, expected_distance)
+
     def test_point_values(self):
         try:
             # latitude > 90

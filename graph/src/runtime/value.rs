@@ -132,8 +132,11 @@ impl Point {
         let dlat = lat2 - lat1;
         let dlon = lon2 - lon1;
 
+        // `a` is sin²(c/2), mathematically in [0, 1]; for (near-)antipodal
+        // points it rounds just above 1 and `(1.0 - a).sqrt()` would be NaN.
         let a = (lat1.cos() * lat2.cos())
-            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2));
+            .mul_add((dlon / 2.0).sin().powi(2), (dlat / 2.0).sin().powi(2))
+            .clamp(0.0, 1.0);
         let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
 
         // Earth's radius in meters
