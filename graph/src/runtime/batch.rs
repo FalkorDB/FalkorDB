@@ -988,10 +988,16 @@ impl<'a> Batch<'a> {
             let mut bound_anywhere = false;
             let mut nonnull_anywhere = false;
             for b in batches {
+                // Empty batches contribute no rows, so — as in
+                // `concat_typed_column` and the per-row concat — they cannot
+                // bind the slot either.
+                if b.active_len() == 0 {
+                    continue;
+                }
                 let col = b.column(vid);
                 // Same predicate as `is_bound_at`: present column AND not the
-                // value-only flag. A slot bound in *any* batch makes the whole
-                // concatenated column bound.
+                // value-only flag. A slot bound in *any* contributing batch
+                // makes the whole concatenated column bound.
                 if !matches!(col, Column::Unbound) && !b.value_only.test(i) {
                     bound_anywhere = true;
                 }
@@ -1401,13 +1407,15 @@ impl RowView for BatchRow<'_, '_> {
     }
 
     fn to_owned_row(&self) -> Row {
-        let mut r = Row::new();
+        // One slot per column, so the owned row answers `value_at` like this
+        // view: a column that is `Unbound` (trailing ones included) stays in
+        // scope as an unbound `Null`, and a value-only column keeps its value
+        // with the bound bit cleared.
+        let mut r = Row::with_capacity(self.batch.columns.len());
         for (var_id, col) in self.batch.columns.iter().enumerate() {
-            if !matches!(col, Column::Unbound) {
-                r.insert_by_id(var_id as u32, col.get(self.row));
-                if self.batch.value_only.test(var_id) {
-                    r.unbind_by_id(var_id as u32);
-                }
+            match col {
+                Column::Unbound => r.push_slot(Value::Null, false),
+                col => r.push_slot(col.get(self.row), !self.batch.value_only.test(var_id)),
             }
         }
         if let Some(origins) = &self.batch.origin_rows {
@@ -1834,5 +1842,64 @@ impl<'a> Iterator for BatchOp<'a> {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::{Batch, BatchBuilder, BatchRow, Column};
+    use crate::runtime::row::RowView;
+    use crate::runtime::value::Value;
+
+    /// `concat` must equal pushing every active row through a `BatchBuilder`:
+    /// a batch with no active rows contributes no rows, so it cannot bind a slot
+    /// that no contributing batch binds.
+    #[test]
+    fn concat_ignores_bindings_of_empty_batch() {
+        let a = Batch::from_columns([Column::Ints(vec![1])]);
+        // A `Values` column keeps column 1 off the typed fast path.
+        let mut b = Batch::from_columns([
+            Column::Ints(vec![2]),
+            Column::Values(vec![Value::String(Arc::new(String::from("s")))]),
+        ]);
+        b.set_selection(vec![]);
+        let concat = Batch::concat(&[a.clone(), b.clone()]);
+
+        let mut builder = BatchBuilder::new();
+        for batch in [&a, &b] {
+            for r in batch.active_indices() {
+                builder.push_row(&BatchRow::new(batch, r).to_owned_row());
+            }
+        }
+        let per_row = builder.finish();
+
+        assert_eq!(concat.len(), 1);
+        assert_eq!(concat.len(), per_row.len());
+        assert!(!per_row.is_bound_at(1, 0));
+        assert!(!concat.is_bound_at(1, 0));
+        assert!(concat.value_at(1, 0).is_none());
+    }
+
+    /// `to_owned_row` must agree with the view it materialises: a trailing
+    /// unbound column inside the batch's column space reads as `Some(Null)`
+    /// (unbound) on both, not `None` ("variable not found") on the owned row.
+    #[test]
+    fn to_owned_row_keeps_trailing_unbound_slots_in_scope() {
+        let b = Batch::from_columns([Column::Ints(vec![1]), Column::Unbound, Column::Unbound]);
+        let view = BatchRow::new(&b, 0);
+        let owned = view.to_owned_row();
+        for id in 0..4 {
+            assert_eq!(
+                format!("{:?}", view.value_at(id)),
+                format!("{:?}", owned.value_at(id)),
+                "slot {id}"
+            );
+        }
+        assert!(owned.is_bound_by_id(0));
+        assert!(!owned.is_bound_by_id(1));
+        assert!(!owned.is_bound_by_id(2));
+        assert!(owned.value_at(3).is_none());
     }
 }
