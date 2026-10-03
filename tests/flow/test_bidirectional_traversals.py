@@ -312,13 +312,64 @@ class testBidirectionalTraversals(FlowTestsBase):
 
     def test13_multiple_bidirectional_edges(self):
         # Traverse over 2 bidirectional edges.
+        # Cypher's relationship-uniqueness forbids binding the same edge to
+        # both patterns, so v1 can only reach v3 (and vice versa) — a result
+        # like ['v1', 'v1'] would require walking (e0) back and forth.
         query = """MATCH (a)-[]-()-[]-(c) RETURN a.val, c.val ORDER BY a.val, c.val"""
 
         actual_result = self.acyclic_graph.query(query)
-        expected_result = [['v1', 'v1'],
-                           ['v1', 'v3'],
-                           ['v2', 'v2'],
-                           ['v3', 'v1'],
-                           ['v3', 'v3']]
+        expected_result = [['v1', 'v3'],
+                           ['v3', 'v1']]
         self.env.assertEqual(actual_result.result_set, expected_result)
+
+    def test14_relationship_uniqueness(self):
+        # A single edge cannot satisfy a two-hop pattern: matching would have
+        # to reuse it for both hops, which Cypher's relationship-uniqueness
+        # forbids (issue #2441). Anonymous edges are no exception.
+        g = self.db.select_graph("single_edge")
+        g.query("CREATE (:L {val: 'v1'})-[:E]->(:L {val: 'v2'})")
+
+        for pattern in ["(a)-[:E]-(b)-[:E]-(c)",
+                        "(a)-[e1:E]-(b)-[e2:E]-(c)",
+                        "(a)-[e1:E]-(b)-[:E]-(c)",
+                        "(a)-[:E]-(b)-[e2:E]-(c)",
+                        "(a)--(b)--(c)",
+                        "(a)-[]-(b)-[]-(c)"]:
+            actual_result = g.query(f"MATCH {pattern} RETURN count(*)")
+            self.env.assertEqual(actual_result.result_set, [[0]])
+
+        # a named path over the same pattern is bound by the same rule
+        actual_result = g.query("MATCH p = (a)-[:E]-(b)-[:E]-(c) RETURN count(*)")
+        self.env.assertEqual(actual_result.result_set, [[0]])
+
+        # a single hop still matches, in both directions
+        actual_result = g.query("MATCH (a)-[:E]-(b) RETURN a.val, b.val ORDER BY a.val")
+        self.env.assertEqual(actual_result.result_set, [['v1', 'v2'], ['v2', 'v1']])
+
+        # a fresh MATCH clause starts a new uniqueness scope
+        actual_result = g.query("MATCH (a)-[:E]->(b) MATCH (c)-[:E]->(d) RETURN count(*)")
+        self.env.assertEqual(actual_result.result_set, [[1]])
+
+        # distinct edges satisfy the pattern
+        actual_result = self.acyclic_graph.query(
+                "MATCH (a)-[:E]-(b)-[:E]-(c) RETURN a.val, b.val, c.val ORDER BY a.val")
+        self.env.assertEqual(actual_result.result_set, [['v1', 'v2', 'v3'],
+                                                        ['v3', 'v2', 'v1']])
+
+    def test15_relationship_uniqueness_disjoint_types(self):
+        # Hops restricted to disjoint relationship types can never bind the
+        # same edge, so uniqueness must not filter anything out here.
+        g = self.db.select_graph("two_types")
+        g.query("""CREATE (a:L {val: 'v1'})-[:E]->(b:L {val: 'v2'}),
+                          (b)-[:F]->(:L {val: 'v3'})""")
+
+        actual_result = g.query(
+                "MATCH (a)-[:E]->(b)-[:F]->(c) RETURN a.val, b.val, c.val")
+        self.env.assertEqual(actual_result.result_set, [['v1', 'v2', 'v3']])
+
+        # a self-loop is a single edge: it cannot fill both hops
+        loop = self.db.select_graph("self_loop")
+        loop.query("CREATE (n:L {val: 'v1'})-[:E]->(n)")
+        actual_result = loop.query("MATCH (a)-[:E]->(b)-[:E]->(c) RETURN count(*)")
+        self.env.assertEqual(actual_result.result_set, [[0]])
 

@@ -51,27 +51,68 @@ pub(super) fn ir_references_variable(
                 .iter()
                 .any(|v| v.id == var_id && v.scope_id == scope_id)
         }),
-        IR::Unwind { var, .. } | IR::ForEach { var, .. } => {
-            var.id == var_id && var.scope_id == scope_id
+        IR::Unwind { expr, var } | IR::ForEach { list: expr, var } => {
+            (var.id == var_id && var.scope_id == scope_id)
+                || expr_references_variable(expr, var_id, scope_id)
         }
+        IR::Create(pattern) => query_graph_references_variable(pattern, var_id, scope_id),
         IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
             .iter()
             .any(|expr| expr_references_variable(expr, var_id, scope_id)),
         IR::Set(items) => set_items_reference_variable(items, var_id, scope_id),
         IR::Merge {
+            pattern,
             on_create,
             on_match,
-            ..
         } => {
-            set_items_reference_variable(on_create, var_id, scope_id)
+            query_graph_references_variable(pattern, var_id, scope_id)
+                || set_items_reference_variable(on_create, var_id, scope_id)
                 || set_items_reference_variable(on_match, var_id, scope_id)
         }
         IR::ValueHashJoin { lhs_exp, rhs_exp } => {
             expr_references_variable(lhs_exp, var_id, scope_id)
                 || expr_references_variable(rhs_exp, var_id, scope_id)
         }
+        // A traverse that lists the edge among its `sibling_edges` reads the
+        // binding to enforce relationship uniqueness, so the edge must stay
+        // bound (and keep emitting per-edge rows) even when no expression
+        // mentions it.
+        IR::CondTraverse {
+            relationship,
+            sibling_edges,
+            ..
+        }
+        | IR::ExpandInto {
+            relationship,
+            sibling_edges,
+            ..
+        } => relationship.alias.scope_id == scope_id && sibling_edges.contains(&var_id),
         _ => false,
     }
+}
+
+/// Check whether a CREATE/MERGE pattern reads the given variable, either as an
+/// entity alias or inside an inline attribute expression.
+fn query_graph_references_variable(
+    pattern: &crate::parser::ast::QueryGraph<
+        std::sync::Arc<String>,
+        std::sync::Arc<String>,
+        crate::parser::ast::Variable,
+    >,
+    var_id: u32,
+    scope_id: u32,
+) -> bool {
+    pattern.nodes().iter().any(|n| {
+        (n.alias.id == var_id && n.alias.scope_id == scope_id)
+            || expr_references_variable(&n.attrs, var_id, scope_id)
+    }) || pattern.relationships().iter().any(|r| {
+        (r.alias.id == var_id && r.alias.scope_id == scope_id)
+            || expr_references_variable(&r.attrs, var_id, scope_id)
+    }) || pattern.paths().iter().any(|p| {
+        p.vars
+            .iter()
+            .any(|v| v.id == var_id && v.scope_id == scope_id)
+    })
 }
 
 fn set_items_reference_variable(
