@@ -258,6 +258,40 @@ impl Binder {
         self.parent_to_child_scope.clear();
     }
 
+    /// Takes `names` out of the current scope while keeping their ids
+    /// reserved. Ids are minted as the scope table's length (here and in the
+    /// planner), so removing an entry whose id the bound IR still uses would
+    /// let the next variable of this scope reuse that id, and the two would
+    /// share one record slot. The entry stays under a hidden `_slot_` key
+    /// that no query can name and that RETURN * and CALL {} skip.
+    fn hide_names(
+        &mut self,
+        names: impl IntoIterator<Item = Arc<String>>,
+    ) {
+        let scope_id = self.env_stack.len() - 1;
+        for name in names {
+            if let Some(var) = self.env_stack[scope_id].remove(&name) {
+                let key = Arc::new(format!("_slot_{scope_id}_{}", var.id));
+                self.env_stack[scope_id].insert(key, var);
+            }
+        }
+    }
+
+    /// Hides every name of the current scope that is not in `keep`, leaving
+    /// the reserved and anonymous entries (`_`-prefixed) as they are.
+    fn hide_names_except(
+        &mut self,
+        keep: &HashSet<Arc<String>>,
+    ) {
+        let hidden: Vec<Arc<String>> = self
+            .current_env()
+            .keys()
+            .filter(|name| !keep.contains(*name) && !name.starts_with('_'))
+            .cloned()
+            .collect();
+        self.hide_names(hidden);
+    }
+
     #[allow(clippy::too_many_lines)]
     fn bind_ir(
         &mut self,
@@ -1180,6 +1214,11 @@ impl Binder {
             })
             .collect();
 
+        // Save env keys before binding orderby/skip/limit/filter so we can
+        // hide variables that were only added by those clauses.
+        let env_keys_before_filter: HashSet<Arc<String>> =
+            self.current_env().keys().cloned().collect();
+
         let orderby = orderby
             .iter()
             .map(|(expr, desc)| Ok((self.bind_expr(expr)?, *desc)))
@@ -1211,11 +1250,6 @@ impl Binder {
             }
         }
 
-        // Save env keys before binding filter/orderby/skip/limit so we can
-        // remove variables that were only added by those clauses.
-        let env_keys_before_filter: HashSet<Arc<String>> =
-            self.current_env().keys().cloned().collect();
-
         let skip = skip.map(|expr| self.bind_expr(&expr)).transpose()?;
         let limit = limit.map(|expr| self.bind_expr(&expr)).transpose()?;
         let filter = filter.map(|expr| self.bind_expr(&expr)).transpose()?;
@@ -1225,18 +1259,17 @@ impl Binder {
             return Err(String::from("Expected boolean predicate"));
         }
 
-        // Remove from current env any variables added only by filter/orderby/skip/limit.
-        // These should be available for the WHERE evaluation at runtime (kept in
-        // copy_from_parent) but not visible to subsequent clauses (RETURN *).
+        // Hide the variables added only by orderby/skip/limit/filter. They
+        // are available while those are evaluated (kept in copy_from_parent)
+        // but not visible to subsequent clauses (RETURN *, a CALL body's
+        // returned columns).
         let filter_only_keys: Vec<Arc<String>> = self
             .copy_from_parent
             .keys()
             .filter(|name| !env_keys_before_filter.contains(*name))
             .cloned()
             .collect();
-        for key in &filter_only_keys {
-            self.current_env_mut().remove(key);
-        }
+        self.hide_names(filter_only_keys);
 
         let copy_from_parent = self
             .copy_from_parent
@@ -1890,9 +1923,7 @@ impl Binder {
                 // Keep anonymous variables (_anon_*) since they are always created
                 // fresh and their IDs must be visible to scope_vars so the planner
                 // can avoid ID collisions.
-                self.current_env_mut().retain(|name, _| {
-                    outer_scope_names.contains(name) || name.starts_with("_anon")
-                });
+                self.hide_names_except(&outer_scope_names);
 
                 let mut new_tree =
                     DynTree::new(ExprIR::PatternComprehension(Box::new(bound_graph)));
@@ -2065,9 +2096,7 @@ impl Binder {
                         // Remove pattern-local aliases so they don't leak into
                         // the outer scope.  Keep anonymous variables (_anon_*)
                         // since their IDs must remain visible in scope_vars.
-                        self.current_env_mut().retain(|name, _| {
-                            outer_scope_names.contains(name) || name.starts_with("_anon")
-                        });
+                        self.hide_names_except(&outer_scope_names);
 
                         ExprIR::Pattern(Box::new(result?))
                     }
