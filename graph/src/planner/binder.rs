@@ -1162,21 +1162,19 @@ impl Binder {
             })
             .collect();
 
-        // When an ORDER BY expression (or a sub-expression within it) is an
-        // aggregation that matches a projected aggregation, rewrite it to
-        // reference the projected alias before binding.
+        // When an ORDER BY expression (or a sub-expression within it) matches
+        // a projected expression, rewrite it to reference the projected alias
+        // before binding, so the sort reads the column the projection already
+        // computed instead of re-evaluating it and carrying its inputs.
         // E.g. RETURN count(x) AS cnt ORDER BY count(x)  →  ORDER BY cnt
         // E.g. RETURN avg(x.age) AS a ORDER BY $p + avg(x.age) - 1000
         //   →  ORDER BY $p + a - 1000
+        // E.g. RETURN n.i ORDER BY n.i  →  ORDER BY `n.i`
         let orderby: Vec<_> = orderby
             .iter()
             .map(|(expr, desc)| {
-                if expr.is_aggregation() {
-                    let replaced = replace_agg_subtrees(&expr.root(), exprs);
-                    (Arc::new(replaced), *desc)
-                } else {
-                    (expr.clone(), *desc)
-                }
+                let replaced = replace_projected_subtrees(&expr.root(), exprs);
+                (Arc::new(replaced), *desc)
             })
             .collect();
 
@@ -2562,12 +2560,31 @@ fn rewrite_compiled_regex(
     )
 }
 
-/// Recursively walk an ORDER BY expression tree and replace any aggregation
-/// sub-tree that structurally matches a projected aggregation with a variable
-/// reference to the projection alias.
-fn replace_agg_subtrees(
+/// Recursively walk an ORDER BY expression tree and replace any sub-tree that
+/// structurally matches a projected expression with a variable reference to
+/// the projection alias.
+///
+/// Aggregations are always replaced when they match (an unmatched one is an
+/// error later on). A non-aggregate sub-tree is replaced only when it is
+/// [`is_alias_rewritable`] and none of its variables is shadowed by a
+/// projected alias: in `RETURN n.x AS n ORDER BY n.x` the ORDER BY `n` is the
+/// projected `n`, not the matched node, so `n.x` there is not the projection.
+fn replace_projected_subtrees(
     node: &DynNode<ExprIR<Arc<String>>>,
     exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
+) -> DynTree<ExprIR<Arc<String>>> {
+    let shadowed: HashSet<&Arc<String>> = exprs
+        .iter()
+        .filter(|(name, expr)| !matches!(expr.root().data(), ExprIR::Variable(v) if v == name))
+        .map(|(name, _)| name)
+        .collect();
+    replace_projected_subtrees_rec(node, exprs, &shadowed)
+}
+
+fn replace_projected_subtrees_rec(
+    node: &DynNode<ExprIR<Arc<String>>>,
+    exprs: &[(Arc<String>, QueryExpr<Arc<String>>)],
+    shadowed: &HashSet<&Arc<String>>,
 ) -> DynTree<ExprIR<Arc<String>>> {
     // If this node is an aggregate function, check if the subtree rooted here
     // matches any projected aggregation.
@@ -2580,16 +2597,84 @@ fn replace_agg_subtrees(
                 return DynTree::new(ExprIR::Variable(name.clone()));
             }
         }
+    } else if is_alias_rewritable(node, shadowed) {
+        let subtree = node.clone_as_tree();
+        for (name, proj_expr) in exprs {
+            if is_alias_rewritable(&proj_expr.root(), &HashSet::new())
+                && raw_exprs_structurally_equal(&subtree, proj_expr)
+            {
+                return DynTree::new(ExprIR::Variable(name.clone()));
+            }
+        }
     }
 
-    // Not a matching aggregation — reconstruct this node with recursively
+    // Not a matching projection — reconstruct this node with recursively
     // processed children.
     let mut new_tree = DynTree::new(node.data().clone());
     for child in node.children() {
-        let child_tree = replace_agg_subtrees(&child, exprs);
+        let child_tree = replace_projected_subtrees_rec(&child, exprs, shadowed);
         new_tree.root_mut().push_child_tree(child_tree);
     }
     new_tree
+}
+
+/// Whether a non-aggregate ORDER BY sub-tree may be replaced by the alias of
+/// a structurally equal projection: it references at least one variable, none
+/// of them in `shadowed`, and every node is deterministic and compared
+/// exactly by [`raw_exprs_structurally_equal`] (which, for node kinds outside
+/// this list, compares only the kind and not its payload).
+fn is_alias_rewritable(
+    node: &DynNode<ExprIR<Arc<String>>>,
+    shadowed: &HashSet<&Arc<String>>,
+) -> bool {
+    let mut has_variable = false;
+    for n in node.walk::<Dfs>() {
+        match n {
+            ExprIR::Variable(v) => {
+                if shadowed.contains(v) {
+                    return false;
+                }
+                has_variable = true;
+            }
+            ExprIR::FuncInvocation(f) => {
+                if f.is_aggregate() || f.non_deterministic || f.write {
+                    return false;
+                }
+            }
+            ExprIR::Constant(
+                Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::String(_),
+            )
+            | ExprIR::Property(_)
+            | ExprIR::Parameter(_)
+            | ExprIR::List
+            | ExprIR::Length
+            | ExprIR::GetElement
+            | ExprIR::GetElements
+            | ExprIR::IsNode
+            | ExprIR::IsRelationship
+            | ExprIR::Or
+            | ExprIR::Xor
+            | ExprIR::And
+            | ExprIR::Not
+            | ExprIR::Negate
+            | ExprIR::Eq
+            | ExprIR::Neq
+            | ExprIR::Lt
+            | ExprIR::Gt
+            | ExprIR::Le
+            | ExprIR::Ge
+            | ExprIR::In
+            | ExprIR::Add
+            | ExprIR::Sub
+            | ExprIR::Mul
+            | ExprIR::Div
+            | ExprIR::Pow
+            | ExprIR::Modulo
+            | ExprIR::Paren => {}
+            _ => return false,
+        }
+    }
+    has_variable
 }
 
 /// Compare two raw (pre-bind) expression trees structurally, ignoring
@@ -2672,6 +2757,68 @@ fn merge_scope_vars(
     for (scope, vars) in other.into_iter().enumerate() {
         if vars.len() > scope_vars[scope].len() {
             scope_vars[scope] = vars;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use orx_tree::{Bfs, NodeRef};
+
+    use super::Binder;
+    use crate::parser::cypher::Parser;
+    use crate::planner::{IR, Planner};
+    use crate::runtime::functions::init_functions;
+
+    /// Names of the variables the first `Project` of `query`'s plan carries
+    /// past the projection for a later clause (its `copies`).
+    fn project_copies(query: &str) -> Vec<String> {
+        let _ = init_functions();
+        let mut parser = Parser::new(query);
+        parser.parse_parameters().expect("parse parameters");
+        let raw = parser.parse().expect("parse");
+        let (ir, scope_vars) = Binder::default().bind(raw).expect("bind");
+        let plan = Planner::new(scope_vars).plan(ir);
+        plan.root()
+            .indices::<Bfs>()
+            .find_map(|idx| match plan.node(idx).data() {
+                IR::Project { copies, .. } => Some(
+                    copies
+                        .iter()
+                        .map(|(_, v)| v.name.as_deref().cloned().unwrap_or_default())
+                        .collect(),
+                ),
+                _ => None,
+            })
+            .expect("plan has a Project")
+    }
+
+    /// An ORDER BY expression that repeats a projection sorts on the projected
+    /// column, so its inputs are not carried through the projection (#2925).
+    #[test]
+    fn order_by_projected_expression_reads_the_alias() {
+        for q in [
+            "MATCH (n:N) RETURN n.i ORDER BY n.i LIMIT 10",
+            "MATCH (n:N) RETURN n.i ORDER BY n.i DESC",
+            "MATCH (n:N) RETURN n.i + 1 AS k ORDER BY n.i + 1",
+            "MATCH (n:N) RETURN n.i * 2 AS d ORDER BY n.i * 2 + 1",
+            "MATCH (n:N) RETURN DISTINCT toString(n.i) ORDER BY toString(n.i)",
+            "MATCH (n:N) WITH n.i AS i ORDER BY n.i RETURN i",
+        ] {
+            assert!(project_copies(q).is_empty(), "{q}");
+        }
+    }
+
+    /// Cases that must still evaluate the ORDER BY expression over the input.
+    #[test]
+    fn order_by_unmatched_or_unsafe_expression_keeps_its_inputs() {
+        for q in [
+            // no matching projection
+            "MATCH (n:N) RETURN n.i ORDER BY n.j",
+            // non-deterministic: a second call is not the projected value
+            "MATCH (n:N) RETURN n.i + rand() AS r ORDER BY n.i + rand()",
+        ] {
+            assert_eq!(project_copies(q), vec![String::from("n")], "{q}");
         }
     }
 }
