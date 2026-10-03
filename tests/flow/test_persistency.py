@@ -653,3 +653,31 @@ class testGraphPersistency():
 
         res = g.ro_query("MATCH (u:U) RETURN u.v").result_set
         self.env.assertEqual(res, [[2]])
+
+    # Loading a graph must not leak: every matrix decoded from the RDB used to
+    # leave behind the five empty component vectors its GraphBLAS container
+    # was created with, so used_memory grew on every reload.
+    def test_reload_does_not_leak(self):
+        g = self.db.select_graph("reload_leak")
+        g.query("""UNWIND range(1, 100) AS i
+                   CREATE (a:A:B {v: i})-[:R]->(b:C {v: i}), (a)-[:R]->(b),
+                          (a)-[:S]->(b), (b)-[:T]->(a)""")
+
+        def used_memory():
+            self.conn.execute_command("MEMORY PURGE")
+            return self.conn.info("memory")["used_memory"]
+
+        # warm up: the first reloads settle one-off allocations
+        for _ in range(3):
+            self.env.dumpAndReload()
+        before = used_memory()
+
+        reloads = 20
+        for _ in range(reloads):
+            self.env.dumpAndReload()
+        per_reload = (used_memory() - before) / reloads
+
+        res = g.ro_query("MATCH ()-[e]->() RETURN count(e)").result_set
+        self.env.assertEqual(res, [[400]])
+        # the leaking build grew ~30 KB per reload on this graph
+        self.env.assertLess(per_reload, 1024)
