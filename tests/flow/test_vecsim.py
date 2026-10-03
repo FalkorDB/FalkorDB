@@ -292,3 +292,13 @@ class testVecsim():
         g.query("CREATE (:DUser {tag: 'B', emb: vecf32($v)})", params={'v': v})
         self.env.assertEqual(knn_tags(v), ['B'])
 
+
+    def test11_huge_k_is_clamped(self):
+        # regression: k far larger than the index used to size an allocation by
+        # k (crashing the server) or make the KNN query return nothing.
+        for k in [1000000000000000, 9223372036854775807]:
+            res = query_node_vector_index(self.graph, "Person", "embeddings", k, [50, 50])
+            self.env.assertEqual(len(res.result_set), 1001)
+            res = query_edge_vector_index(self.graph, "Points", "embeddings", k, [50, 50])
+            self.env.assertGreater(len(res.result_set), 0)
+        self.env.assertTrue(self.conn.ping())
