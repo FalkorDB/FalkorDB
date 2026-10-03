@@ -1051,11 +1051,12 @@ impl Functions {
         }
         // Fall back to dynamic UDF registry (only for scalar/UDF function lookups,
         // not for Procedure or Aggregation which have distinct semantics).
+        // UDF names are case-sensitive, as in C.
         if matches!(fn_type, FnType::Function | FnType::Udf)
             && let Some(reg) = UDF_FUNCTIONS.get()
         {
             let guard = reg.read();
-            if let Some(graph_fn) = guard.get(lower.as_str()) {
+            if let Some(graph_fn) = guard.get(name) {
                 return Ok(graph_fn.clone());
             }
         }
@@ -1117,13 +1118,14 @@ pub fn init_udf_functions() {
     let _ = UDF_FUNCTIONS.set(RwLock::new(HashMap::new()));
 }
 
-/// Register a UDF in the dynamic registry.
+/// Register a UDF in the dynamic registry, keyed by its case-sensitive
+/// qualified name (`lib.func`).
 pub fn register_udf(
     name: &str,
     func: Arc<GraphFn>,
 ) {
     if let Some(reg) = UDF_FUNCTIONS.get() {
-        reg.write().insert(name.to_lowercase(), func);
+        reg.write().insert(name.to_string(), func);
         UDF_VERSION.fetch_add(1, Ordering::Release);
     }
 }
@@ -1131,7 +1133,7 @@ pub fn register_udf(
 /// Unregister a UDF from the dynamic registry.
 pub fn unregister_udf(name: &str) {
     if let Some(reg) = UDF_FUNCTIONS.get() {
-        reg.write().remove(&name.to_lowercase());
+        reg.write().remove(name);
         UDF_VERSION.fetch_add(1, Ordering::Release);
     }
 }
