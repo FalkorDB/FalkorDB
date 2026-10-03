@@ -1693,10 +1693,14 @@ where
         let prev = first?;
         for next in iter {
             let next = next?;
-            match prev.partial_cmp(&next) {
-                None => return Ok(Value::Null),
-                Some(Ordering::Less | Ordering::Greater) => {}
-                Some(Ordering::Equal) => return Ok(Value::Bool(false)),
+            // As C's `AR_NE`: null makes it null, and disjoint types or NaN
+            // are unequal even when the ordering half reads `Equal` (a map
+            // stops at its first disjoint value: `{a:1} <> {a:'x'}`).
+            match prev.compare_value(&next) {
+                (_, DisjointOrNull::ComparedNull) => return Ok(Value::Null),
+                (_, DisjointOrNull::NaN | DisjointOrNull::Disjoint)
+                | (Ordering::Less | Ordering::Greater, _) => {}
+                (Ordering::Equal, DisjointOrNull::None) => return Ok(Value::Bool(false)),
             }
         }
         Ok(Value::Bool(true))
