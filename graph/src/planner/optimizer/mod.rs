@@ -98,12 +98,37 @@ pub(crate) fn collect_expr_variables(expr: &DynTree<ExprIR<Variable>>) -> HashSe
     vars
 }
 
-/// Collects all variable IDs provided by a plan subtree.
+/// Collects the variable IDs a plan subtree provides to its parent.
+///
+/// `Project` and `Aggregate` start a fresh environment: only the variables
+/// they name survive them, so the walk records those and does not descend.
+/// Descending would be wrong, not merely imprecise — a variable ID is an index
+/// into its own scope's env, so a variable bound below a `WITH` routinely
+/// shares its ID with an unrelated one bound above it. Reporting the hidden one
+/// makes callers believe the subtree binds the visible one.
 pub(crate) fn collect_subtree_variables(node: &orx_tree::DynNode<IR>) -> HashSet<u32> {
-    use crate::runtime::runtime::GetVariables;
+    use crate::runtime::runtime::push_node_variables;
     let mut vars = HashSet::new();
-    for var in node.get_variables() {
-        vars.insert(var.id);
+    let mut stack = vec![node.clone()];
+    let mut own = Vec::new();
+    while let Some(node) = stack.pop() {
+        match node.data() {
+            IR::Project { exprs, copies } => {
+                vars.extend(exprs.iter().map(|(v, _)| v.id));
+                vars.extend(copies.iter().map(|(v, _)| v.id));
+            }
+            IR::Aggregate {
+                names, projections, ..
+            } => {
+                vars.extend(names.iter().map(|v| v.id));
+                vars.extend(projections.iter().map(|(v, _)| v.id));
+            }
+            ir => {
+                push_node_variables(ir, &mut own);
+                vars.extend(own.drain(..).map(|v| v.id));
+                stack.extend(node.children());
+            }
+        }
     }
     vars
 }

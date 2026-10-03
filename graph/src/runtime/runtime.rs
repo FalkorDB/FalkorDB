@@ -213,122 +213,133 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
     fn get_variables(&self) -> Vec<Variable> {
         let mut vars = vec![];
         for node in self.walk::<Bfs>() {
-            match node {
-                IR::Optional(variables) => vars.extend(variables.iter().cloned()),
-                IR::ProcedureCall {
-                    yields: named_outputs,
-                    ..
-                } => {
-                    vars.extend(named_outputs.clone());
-                }
-                IR::Unwind { var: variable, .. } => vars.push(variable.clone()),
-                IR::Create(query_graph)
-                | IR::Merge {
-                    pattern: query_graph,
-                    ..
-                } => {
-                    for node in query_graph.nodes() {
-                        vars.push(node.alias.clone());
-                    }
-                    for relationship in query_graph.relationships() {
-                        vars.push(relationship.alias.clone());
-                    }
-                    for path in query_graph.paths() {
-                        vars.push(path.var.clone());
-                    }
-                }
-                IR::ForEach { var, .. } | IR::LoadCsv { var, .. } => {
-                    vars.push(var.clone());
-                }
-                IR::Delete { .. }
-                | IR::Argument(_)
-                | IR::Set(_)
-                | IR::Remove(_)
-                | IR::Filter(_)
-                | IR::CartesianProduct
-                | IR::ValueHashJoin { .. }
-                | IR::Union
-                | IR::NestedPlans
-                | IR::Apply
-                | IR::SemiApply
-                | IR::AntiSemiApply
-                | IR::OrApplyMultiplexer(_)
-                | IR::Sort(_)
-                | IR::Skip(_)
-                | IR::Limit(_)
-                | IR::Distinct
-                | IR::Commit
-                | IR::IncludePending { .. }
-                | IR::CreateIndex { .. }
-                | IR::DropIndex { .. } => {}
-                IR::NodeByLabelScan { node, .. }
-                | IR::AllNodeScan(node)
-                | IR::NodeByIndexScan { node, .. }
-                | IR::NodeByLabelAndIdScan { node, .. }
-                | IR::NodeByIdSeek { node, .. } => {
-                    vars.push(node.alias.clone());
-                }
-                IR::NodeByFulltextScan { node, score, .. }
-                | IR::NodeByVectorScan { node, score, .. } => {
-                    vars.push(node.clone());
-                    if let Some(score) = score {
-                        vars.push(score.clone());
-                    }
-                }
-                IR::EdgeByFulltextScan { edge, score, .. }
-                | IR::EdgeByVectorScan { edge, score, .. } => {
-                    vars.push(edge.clone());
-                    if let Some(score) = score {
-                        vars.push(score.clone());
-                    }
-                }
-                IR::CondTraverse {
-                    relationship: query_relationship,
-                    ..
-                }
-                | IR::EdgeByIndexScan {
-                    relationship: query_relationship,
-                    ..
-                }
-                | IR::AllShortestPaths(query_relationship)
-                | IR::ExpandInto {
-                    relationship: query_relationship,
-                    ..
-                } => {
-                    vars.push(query_relationship.alias.clone());
-                    vars.push(query_relationship.from.alias.clone());
-                    vars.push(query_relationship.to.alias.clone());
-                }
-                IR::CondVarLenTraverse {
-                    relationship: query_relationship,
-                    path_var,
-                    ..
-                } => {
-                    vars.push(query_relationship.alias.clone());
-                    vars.push(query_relationship.from.alias.clone());
-                    vars.push(query_relationship.to.alias.clone());
-                    if let Some(path_var) = path_var {
-                        vars.push(path_var.clone());
-                    }
-                }
-                IR::PathBuilder(query_paths) => {
-                    for path in query_paths {
-                        vars.push(path.var.clone());
-                    }
-                }
-                IR::Aggregate {
-                    names: variables, ..
-                } => {
-                    vars.extend(variables.iter().cloned());
-                }
-                IR::Project { exprs: items, .. } => {
-                    vars.extend(items.iter().map(|v| v.0.clone()));
-                    break;
-                }
+            if push_node_variables(node, &mut vars) {
+                break;
             }
         }
         vars
     }
+}
+
+/// Appends the variables `node` itself binds (not those of its children) to
+/// `vars`. Returns `true` for a `Project`, where [`GetVariables`] stops its
+/// walk.
+pub(crate) fn push_node_variables(
+    node: &IR,
+    vars: &mut Vec<Variable>,
+) -> bool {
+    match node {
+        IR::Optional(variables) => vars.extend(variables.iter().cloned()),
+        IR::ProcedureCall {
+            yields: named_outputs,
+            ..
+        } => {
+            vars.extend(named_outputs.clone());
+        }
+        IR::Unwind { var: variable, .. } => vars.push(variable.clone()),
+        IR::Create(query_graph)
+        | IR::Merge {
+            pattern: query_graph,
+            ..
+        } => {
+            for node in query_graph.nodes() {
+                vars.push(node.alias.clone());
+            }
+            for relationship in query_graph.relationships() {
+                vars.push(relationship.alias.clone());
+            }
+            for path in query_graph.paths() {
+                vars.push(path.var.clone());
+            }
+        }
+        IR::ForEach { var, .. } | IR::LoadCsv { var, .. } => {
+            vars.push(var.clone());
+        }
+        IR::Delete { .. }
+        | IR::Argument(_)
+        | IR::Set(_)
+        | IR::Remove(_)
+        | IR::Filter(_)
+        | IR::CartesianProduct
+        | IR::ValueHashJoin { .. }
+        | IR::Union
+        | IR::NestedPlans
+        | IR::Apply
+        | IR::SemiApply
+        | IR::AntiSemiApply
+        | IR::OrApplyMultiplexer(_)
+        | IR::Sort(_)
+        | IR::Skip(_)
+        | IR::Limit(_)
+        | IR::Distinct
+        | IR::Commit
+        | IR::IncludePending { .. }
+        | IR::CreateIndex { .. }
+        | IR::DropIndex { .. } => {}
+        IR::NodeByLabelScan { node, .. }
+        | IR::AllNodeScan(node)
+        | IR::NodeByIndexScan { node, .. }
+        | IR::NodeByLabelAndIdScan { node, .. }
+        | IR::NodeByIdSeek { node, .. } => {
+            vars.push(node.alias.clone());
+        }
+        IR::NodeByFulltextScan { node, score, .. } | IR::NodeByVectorScan { node, score, .. } => {
+            vars.push(node.clone());
+            if let Some(score) = score {
+                vars.push(score.clone());
+            }
+        }
+        IR::EdgeByFulltextScan { edge, score, .. } | IR::EdgeByVectorScan { edge, score, .. } => {
+            vars.push(edge.clone());
+            if let Some(score) = score {
+                vars.push(score.clone());
+            }
+        }
+        IR::CondTraverse {
+            relationship: query_relationship,
+            ..
+        }
+        | IR::EdgeByIndexScan {
+            relationship: query_relationship,
+            ..
+        }
+        | IR::AllShortestPaths(query_relationship)
+        | IR::ExpandInto {
+            relationship: query_relationship,
+            ..
+        } => {
+            vars.push(query_relationship.alias.clone());
+            vars.push(query_relationship.from.alias.clone());
+            vars.push(query_relationship.to.alias.clone());
+        }
+        IR::CondVarLenTraverse {
+            relationship: query_relationship,
+            path_var,
+            ..
+        } => {
+            vars.push(query_relationship.alias.clone());
+            vars.push(query_relationship.from.alias.clone());
+            vars.push(query_relationship.to.alias.clone());
+            if let Some(path_var) = path_var {
+                vars.push(path_var.clone());
+            }
+        }
+        IR::PathBuilder(query_paths) => {
+            for path in query_paths {
+                vars.push(path.var.clone());
+            }
+        }
+        IR::Aggregate {
+            names: variables, ..
+        } => {
+            vars.extend(variables.iter().cloned());
+        }
+        IR::Project { exprs: items, .. } => {
+            vars.extend(items.iter().map(|v| v.0.clone()));
+            return true;
+        }
+    }
+    false
 }
 
 pub(crate) trait ReturnNames {
