@@ -1850,17 +1850,7 @@ impl Binder {
                 // become a fresh pattern-local variable, as it would in an
                 // ordinary expression. Copy such names in first, so
                 // `bind_graph` reuses them and the cleanup below keeps them.
-                if self.use_parent_scope {
-                    for name in graph.variables() {
-                        if !name.starts_with("_anon")
-                            && !self.current_env().contains_key(&name)
-                            && !locals.iter().any(|scope| scope.contains_key(&name))
-                        {
-                            // Not a parent variable either: the pattern binds it.
-                            let _ = self.resolve_name(&name, locals);
-                        }
-                    }
-                }
+                let aliases = self.import_parent_names(graph, locals);
 
                 // Snapshot outer scope so pattern-local aliases can be
                 // cleaned up after binding (they must not leak outward).
@@ -1893,6 +1883,9 @@ impl Binder {
                 self.current_env_mut().retain(|name, _| {
                     outer_scope_names.contains(name) || name.starts_with("_anon")
                 });
+                for name in &aliases {
+                    self.current_env_mut().remove(name);
+                }
 
                 let mut new_tree =
                     DynTree::new(ExprIR::PatternComprehension(Box::new(bound_graph)));
@@ -2042,6 +2035,13 @@ impl Binder {
                         unreachable!("produced only by the binder itself")
                     }
                     ExprIR::Pattern(pattern) => {
+                        // As for a pattern comprehension: where parent-scope
+                        // variables are visible (WITH ... WHERE, ORDER BY), a
+                        // name the pattern shares with one refers to it, so
+                        // copy it in before `bind_graph` would define a
+                        // fresh, unconstrained node under that name.
+                        let aliases = self.import_parent_names(&pattern, locals);
+
                         // Snapshot outer scope so pattern-local aliases can be
                         // cleaned up after binding (they must not leak outward).
                         let outer_scope_names: HashSet<Arc<String>> =
@@ -2068,6 +2068,9 @@ impl Binder {
                         self.current_env_mut().retain(|name, _| {
                             outer_scope_names.contains(name) || name.starts_with("_anon")
                         });
+                        for name in &aliases {
+                            self.current_env_mut().remove(name);
+                        }
 
                         ExprIR::Pattern(Box::new(result?))
                     }
@@ -2109,6 +2112,41 @@ impl Binder {
                 Ok(new_tree)
             }
         }
+    }
+
+    /// Where parent-scope variables are visible (WITH ... WHERE, ORDER BY),
+    /// a name a pattern shares with one of them refers to it rather than
+    /// becoming a fresh, unconstrained pattern variable. `bind_graph` looks
+    /// names up in the current scope only, so bring such names in first:
+    /// `resolve_name` copies a parent variable in under its name, and a name
+    /// the projection renamed (`WITH n AS m`) is entered under `n` for the
+    /// pattern's sake. Returns those renamed entries, which the caller
+    /// removes once the pattern is bound (their id stays held by `m`).
+    fn import_parent_names(
+        &mut self,
+        graph: &QueryGraph<Arc<String>, Arc<String>, Arc<String>>,
+        locals: &[HashMap<Arc<String>, Variable>],
+    ) -> Vec<Arc<String>> {
+        let mut aliases = vec![];
+        if !self.use_parent_scope {
+            return aliases;
+        }
+        for name in graph.variables() {
+            if name.starts_with("_anon")
+                || self.current_env().contains_key(&name)
+                || locals.iter().any(|scope| scope.contains_key(&name))
+            {
+                continue;
+            }
+            // Not a parent variable either: the pattern binds it.
+            if let Ok(var) = self.resolve_name(&name, locals)
+                && !self.current_env().contains_key(&name)
+            {
+                self.current_env_mut().insert(name.clone(), var);
+                aliases.push(name);
+            }
+        }
+        aliases
     }
 
     fn define_name_in_scope(
