@@ -2118,24 +2118,33 @@ impl<'a> Parser<'a> {
     // match one of those kind [..4], [4..], [4..5], [6]
     fn parse_list_operator_expression(
         &mut self,
-        mut lhs: DynTree<ExprIR<Arc<String>>>,
+        lhs: DynTree<ExprIR<Arc<String>>>,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let from = self.parse_expr(false);
-        if optional_match_token!(self.lexer, DotDot) {
-            let to = self.parse_expr(false);
-            match_token!(self.lexer, RBrace);
-            lhs = tree!(
-                ExprIR::GetElements,
-                lhs,
-                from.unwrap_or_else(|_| tree!(ExprIR::Constant(Value::Int(0)))),
-                to.unwrap_or_else(|_| tree!(ExprIR::Constant(Value::Int(i64::MAX))))
-            );
+        // A bound is left out only when `..` or `]` comes where it would
+        // start; one that is there but fails to parse is an error.
+        let from = if self.lexer.current()? == Token::DotDot {
+            None
         } else {
-            match_token!(self.lexer, RBrace);
-            lhs = tree!(ExprIR::GetElement, lhs, from?);
-        }
-
-        Ok(lhs)
+            let from = self.parse_expr(false)?;
+            if self.lexer.current()? != Token::DotDot {
+                match_token!(self.lexer, RBrace);
+                return Ok(tree!(ExprIR::GetElement, lhs, from));
+            }
+            Some(from)
+        };
+        match_token!(self.lexer, DotDot);
+        let to = if self.lexer.current()? == Token::RBrace {
+            None
+        } else {
+            Some(self.parse_expr(false)?)
+        };
+        match_token!(self.lexer, RBrace);
+        Ok(tree!(
+            ExprIR::GetElements,
+            lhs,
+            from.unwrap_or_else(|| tree!(ExprIR::Constant(Value::Int(0)))),
+            to.unwrap_or_else(|| tree!(ExprIR::Constant(Value::Int(i64::MAX))))
+        ))
     }
 
     fn parse_property_lookup(
@@ -3784,6 +3793,32 @@ mod tests {
                 err.starts_with("Failed to parse the value of parameter 'p'"),
                 "parameter `{value}` gave: {err}",
             );
+        }
+    }
+
+    // A slice bound that fails to parse is an error, not a missing bound:
+    // `[1,2,3][abs()..2]` used to run as `[1,2,3][..2]`.
+    #[test]
+    fn slice_bound_errors_are_reported() {
+        with_functions();
+        for query in [
+            "RETURN [1,2,3][1+..2]",
+            "RETURN [1,2,3][1..2+]",
+            "RETURN [1,2,3][abs()..2]",
+            "RETURN [1,2,3][1..abs()]",
+            "RETURN [1,2,3][(1..2]",
+            "RETURN [1,2,3][1..(2]",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "RETURN [1,2,3][..2]",
+            "RETURN [1,2,3][1..]",
+            "RETURN [1,2,3][..]",
+            "RETURN [1,2,3][1..2]",
+            "RETURN [1,2,3][abs(-1)..-1]",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
         }
     }
 

@@ -511,6 +511,15 @@ def test_list_range():
     assert res.result_set == [[[1, 2, 3]]]
 
 
+def test_list_range_bound_errors():
+    # A bound that fails to parse used to be read as a missing bound, so the
+    # slice ran as [..2] / [1..] instead of failing.
+    query_exception("RETURN [1, 2, 3][abs()..2]", "Received 0 arguments to function 'abs'")
+    query_exception("RETURN [1, 2, 3][1..abs()]", "Received 0 arguments to function 'abs'")
+    for q in ["RETURN [1, 2, 3][1+..2]", "RETURN [1, 2, 3][1..2+]", "RETURN [1, 2, 3][(1..2]"]:
+        query_exception(q, "Invalid input")
+
+
 @given(st.integers(-10, 10), st.integers(-10, 10))
 def test_prop_list_range(a, b):
     res = query(f"RETURN [1, 2, 3, 4, 5][{a}..{b}] AS r")
