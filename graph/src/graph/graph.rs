@@ -90,7 +90,7 @@ use crate::{
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
-            tensor::Tensor,
+            tensor::{GrB_INDEX_MAX, Tensor},
             versioned_matrix::{self, VersionedMatrix},
         },
         id_space::{IdSpace, IdSpaceError},
@@ -726,13 +726,23 @@ pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATIO
 /// bounds that slop while keeping resizes rare: each resize triggers
 /// GraphBLAS format conversions costing O(entries), so smaller growth
 /// steps measurably slow bulk inserts.
+///
+/// Never past `GrB_INDEX_MAX`, the largest dimension GraphBLAS accepts. The
+/// step is checked rather than wrapped: near the top of `u64` the unchecked
+/// `cap + cap / 4` wrapped, and because `cap` stays a multiple of the chunk it
+/// never reached `needed` again — an infinite loop in release. Ids that large
+/// are refused before they get here (`IdSpace::record_created`), so the clamp
+/// is what keeps a caller that forgets from hanging instead of failing. #2892.
 fn grow_cap(
     mut cap: u64,
     needed: u64,
 ) -> u64 {
     let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
-    while needed > cap {
-        cap = (cap + (cap / 4).max(chunk)).next_multiple_of(chunk);
+    while needed > cap && cap < GrB_INDEX_MAX {
+        cap = cap
+            .checked_add((cap / 4).max(chunk))
+            .and_then(|c| c.checked_next_multiple_of(chunk))
+            .map_or(GrB_INDEX_MAX, |c| c.min(GrB_INDEX_MAX));
     }
     cap
 }
@@ -5125,5 +5135,31 @@ mod adjacency_cascade_tests {
         // And deleting both endpoints clears it, S edge included.
         delete_nodes_cascade(&mut g, &[0, 1]);
         assert!(adjacency_entries(&g).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod grow_cap_tests {
+    use super::*;
+
+    /// #2892. Near the top of `u64` the unchecked step wrapped, and since the
+    /// capacity stays a multiple of the chunk it never reached `needed` — the
+    /// loop spun forever in release. It now stops at the largest dimension
+    /// GraphBLAS accepts.
+    #[test]
+    fn growth_stops_at_the_largest_graphblas_dimension() {
+        let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
+        assert_eq!(grow_cap(chunk, u64::MAX - 1), GrB_INDEX_MAX);
+        assert_eq!(grow_cap(chunk, GrB_INDEX_MAX), GrB_INDEX_MAX);
+        assert_eq!(grow_cap(GrB_INDEX_MAX - 1, GrB_INDEX_MAX), GrB_INDEX_MAX);
+    }
+
+    #[test]
+    fn ordinary_growth_is_unchanged() {
+        let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
+        assert_eq!(grow_cap(chunk, chunk), chunk);
+        assert_eq!(grow_cap(chunk, chunk + 1), 2 * chunk);
+        let cap = 100 * chunk;
+        assert_eq!(grow_cap(cap, cap + 1), cap + cap / 4);
     }
 }
