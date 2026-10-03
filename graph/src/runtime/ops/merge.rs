@@ -363,12 +363,15 @@ impl<'a> Iterator for MergeOp<'a> {
                     // (_anon_* prefix) are not individually tracked, so when
                     // all nodes are bound the pattern is fully constrained.
                     // Only when a user-named relationship variable is unbound
-                    // do we need to iterate all matches.
+                    // do we need to iterate all matches. A path variable also
+                    // binds the anonymous relationships, so with one every
+                    // match (e.g. each parallel edge) is a distinct row.
                     let pattern = self.resolve_pattern();
-                    let all_vars_bound = pattern
-                        .nodes()
-                        .iter()
-                        .all(|node| input_env.is_bound_by_id(node.alias.id))
+                    let all_vars_bound = pattern.paths().is_empty()
+                        && pattern
+                            .nodes()
+                            .iter()
+                            .all(|node| input_env.is_bound_by_id(node.alias.id))
                         && pattern
                             .relationships()
                             .iter()
