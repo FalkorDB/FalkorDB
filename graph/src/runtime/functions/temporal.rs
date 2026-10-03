@@ -58,7 +58,27 @@ fn get_int_field(
     })
 }
 
+/// Validate an optional date component against its inclusive range, with the
+/// same message as the C implementation.
+fn check_range(
+    name: &str,
+    value: Option<i64>,
+    min: i64,
+    max: i64,
+) -> Result<(), String> {
+    match value {
+        Some(v) if !(min..=max).contains(&v) => Err(format!(
+            "Invalid value for {name} (valid values {min} - {max})"
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Build a NaiveDate from optional components. Supports ymd, week, and quarter modes.
+///
+/// Every component is range-checked before it reaches chrono: chrono's
+/// `NaiveDate + TimeDelta` and `TimeDelta::days` panic on overflow, and a
+/// panic here takes the whole server down.
 fn date_from_components(
     year: Option<i64>,
     month: Option<i64>,
@@ -68,25 +88,27 @@ fn date_from_components(
     quarter: Option<i64>,
     day_of_quarter: Option<i64>,
 ) -> Result<NaiveDate, String> {
-    let year = year.unwrap_or(1970) as i32;
+    let year = year.unwrap_or(1970);
+    let year = i32::try_from(year).map_err(|_| format!("Invalid year: {year}"))?;
 
     if let Some(week) = week {
-        let dow_raw = day_of_week.unwrap_or(1);
-        if !(0..=6).contains(&dow_raw) {
-            return Err(format!("Invalid dayOfWeek: {dow_raw}, expected 0..6"));
-        }
-        let dow = dow_raw as u32;
+        check_range("week", Some(week), 1, 53)?;
+        // ISO day of week, as in the string form and C: 1 = Monday .. 7 = Sunday
+        check_range("dayOfWeek", day_of_week, 1, 7)?;
+        let day_offset = day_of_week.unwrap_or(1) - 1;
         let jan4 =
             NaiveDate::from_ymd_opt(year, 1, 4).ok_or_else(|| format!("Invalid year: {year}"))?;
         let weekday_of_jan4 = jan4.weekday().num_days_from_monday();
-        let iso_week1_monday = jan4 - chrono::Duration::days(i64::from(weekday_of_jan4));
-        let target_monday = iso_week1_monday + chrono::Duration::days((week - 1) * 7);
-        let day_offset = if dow == 0 { 6 } else { i64::from(dow) - 1 };
-        let result = target_monday + chrono::Duration::days(day_offset);
-        return Ok(result);
+        // week is in 1..=53, so the offset is at most 370 days
+        let days = (week - 1) * 7 + day_offset - i64::from(weekday_of_jan4);
+        return jan4
+            .checked_add_signed(chrono::Duration::days(days))
+            .ok_or_else(|| format!("Invalid date: year={year}, week={week}"));
     }
 
     if let Some(quarter) = quarter {
+        check_range("quarter", Some(quarter), 1, 4)?;
+        check_range("dayOfQuarter", day_of_quarter, 1, 92)?;
         let doq = day_of_quarter.unwrap_or(1);
         let quarter_start_month = ((quarter - 1) * 3 + 1) as u32;
         let base = NaiveDate::from_ymd_opt(year, quarter_start_month, 1)
@@ -96,9 +118,12 @@ fn date_from_components(
             .ok_or_else(|| format!("Invalid dayOfQuarter: {doq}"));
     }
 
-    let month = month.unwrap_or(1) as u32;
-    let day = day.unwrap_or(1) as u32;
-    NaiveDate::from_ymd_opt(year, month, day)
+    let month = month.unwrap_or(1);
+    let day = day.unwrap_or(1);
+    u32::try_from(month)
+        .ok()
+        .zip(u32::try_from(day).ok())
+        .and_then(|(m, d)| NaiveDate::from_ymd_opt(year, m, d))
         .ok_or_else(|| format!("Invalid date: year={year}, month={month}, day={day}"))
 }
 
@@ -245,12 +270,13 @@ fn parse_week_date(s: &str) -> Result<NaiveDate, String> {
         let week: u32 = rest.parse().map_err(|_| format!("Invalid week: {s}"))?;
         (week, chrono::Weekday::Mon)
     } else {
-        let week: u32 = rest[..2]
-            .parse()
-            .map_err(|_| format!("Invalid week: {s}"))?;
-        let d: u32 = rest[2..]
-            .parse()
-            .map_err(|_| format!("Invalid day of week: {s}"))?;
+        // `split_at_checked` rather than `rest[..2]`: byte 2 may fall inside a
+        // multi-byte character, and slicing there panics.
+        let (week, d) = rest
+            .split_at_checked(2)
+            .ok_or_else(|| format!("Invalid week: {s}"))?;
+        let week: u32 = week.parse().map_err(|_| format!("Invalid week: {s}"))?;
+        let d: u32 = d.parse().map_err(|_| format!("Invalid day of week: {s}"))?;
         let weekday = match d {
             1 => chrono::Weekday::Mon,
             2 => chrono::Weekday::Tue,
@@ -820,4 +846,137 @@ pub fn register(funcs: &mut Functions) {
         LOCALDATETIME_SLOTS,
     );
     funcs.set_struct_fn("duration", duration_struct_pure, DURATION_SLOTS);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{date_pure, date_struct_pure, localdatetime_pure};
+    use crate::runtime::{ordermap::OrderMap, value::Value};
+    use std::sync::Arc;
+
+    fn map(entries: &[(&str, i64)]) -> Value {
+        Value::Map(Arc::new(OrderMap::from_vec(
+            entries
+                .iter()
+                .map(|(k, v)| (Arc::new((*k).to_string()), Value::Int(*v)))
+                .collect(),
+        )))
+    }
+
+    fn date_slots(
+        year: i64,
+        week: Option<i64>,
+        quarter: Option<i64>,
+        day_of_quarter: Option<i64>,
+    ) -> Vec<Value> {
+        let slot = |v: Option<i64>| v.map_or(Value::Null, Value::Int);
+        vec![
+            Value::Int(year),
+            Value::Null,
+            Value::Null,
+            slot(week),
+            Value::Null,
+            slot(quarter),
+            slot(day_of_quarter),
+        ]
+    }
+
+    // Out-of-range week / quarter / dayOfQuarter components used to panic in
+    // chrono's `NaiveDate + TimeDelta` / `TimeDelta::days` and crash the server.
+    #[test]
+    fn date_out_of_range_components_error_instead_of_panicking() {
+        for week in [
+            0,
+            54,
+            10_000_000_000,
+            i64::MAX,
+            i64::MIN,
+            -9_223_372_036_854_775_807,
+        ] {
+            assert!(date_pure(&[map(&[("year", 2020), ("week", week)])]).is_err());
+            assert!(date_struct_pure(&date_slots(2020, Some(week), None, None)).is_err());
+            assert!(localdatetime_pure(&[map(&[("year", 2020), ("week", week)])]).is_err());
+        }
+        for doq in [0, 93, 200, i64::MAX, i64::MIN] {
+            assert!(
+                date_pure(&[map(&[
+                    ("year", 2020),
+                    ("quarter", 2),
+                    ("dayOfQuarter", doq)
+                ])])
+                .is_err()
+            );
+            assert!(date_struct_pure(&date_slots(2020, None, Some(2), Some(doq))).is_err());
+        }
+        for quarter in [0, 5, i64::MAX, i64::MIN, 4_294_967_297] {
+            assert!(date_pure(&[map(&[("year", 2020), ("quarter", quarter)])]).is_err());
+        }
+        // Years outside chrono's range, at both ends, with week arithmetic that
+        // would step past the representable range.
+        for year in [262_143, -262_144, 262_144, i64::MAX, 4_294_969_316] {
+            for week in [1, 53] {
+                let _ = date_pure(&[map(&[("year", year), ("week", week)])]);
+            }
+        }
+        assert!(date_pure(&[map(&[("year", 4_294_969_316)])]).is_err());
+    }
+
+    #[test]
+    fn date_week_string_with_multibyte_char_errors_instead_of_panicking() {
+        for s in ["2020W1é", "2020-W1é", "2020Wé1", "2020W€", "2020W12é"] {
+            assert!(date_pure(&[Value::String(Arc::new(s.to_string()))]).is_err());
+        }
+    }
+
+    // dayOfWeek is ISO 1..=7 (7 = Sunday), like the string form and C.
+    #[test]
+    fn date_day_of_week_is_iso() {
+        let sunday = date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", 7)])]).unwrap();
+        assert_eq!(
+            sunday,
+            date_pure(&[Value::String(Arc::new("2021-W01-7".to_string()))]).unwrap()
+        );
+        let monday = date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", 1)])]).unwrap();
+        assert_eq!(
+            monday,
+            date_pure(&[Value::String(Arc::new("2021-W01-1".to_string()))]).unwrap()
+        );
+        for dow in [0, 8, -1] {
+            assert!(date_pure(&[map(&[("year", 2021), ("week", 1), ("dayOfWeek", dow)])]).is_err());
+        }
+    }
+
+    #[test]
+    fn date_in_range_components_still_work() {
+        let d = |y: i32, m: u32, day: u32| {
+            Value::Date(
+                chrono::NaiveDate::from_ymd_opt(y, m, day)
+                    .unwrap()
+                    .and_hms_opt(0, 0, 0)
+                    .unwrap()
+                    .and_utc()
+                    .timestamp(),
+            )
+        };
+        assert_eq!(
+            date_pure(&[map(&[("year", 1984), ("week", 10)])]).unwrap(),
+            d(1984, 3, 5)
+        );
+        assert_eq!(
+            date_pure(&[map(&[("year", 1918), ("week", 53)])]).unwrap(),
+            d(1918, 12, 30)
+        );
+        assert_eq!(
+            date_pure(&[map(&[("year", 1984), ("quarter", 3), ("dayOfQuarter", 45)])]).unwrap(),
+            d(1984, 8, 14)
+        );
+        assert_eq!(
+            date_pure(&[map(&[("year", 1984), ("quarter", 4), ("dayOfQuarter", 92)])]).unwrap(),
+            d(1984, 12, 31)
+        );
+        assert_eq!(
+            date_pure(&[Value::String(Arc::new("2015-W30-2".to_string()))]).unwrap(),
+            d(2015, 7, 21)
+        );
+    }
 }
