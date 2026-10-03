@@ -340,8 +340,16 @@ ProcedureResult Proc_BetweennessInvoke
 	GrB_Matrix A;
 	GrB_Info info;
 
-	info = Build_Matrix(&A, &pdata->nodes, g, lbls, arr_len(lbls), rels,
-			arr_len(rels), false, true);
+	PGTM_config conf = DEFAULT_PGTM_CONFIG;
+	conf.g         = g;
+	conf.lbls      = lbls;
+	conf.n_lbls    = arr_len(lbls);
+	conf.rels      = rels;
+	conf.n_rels    = arr_len(rels);
+	conf.direction = GRAPH_EDGE_DIR_OUTGOING;
+	conf.compact   = false;
+
+	info = project_graph_to_matrix(&A, &pdata->nodes, conf);
 	ASSERT(info == GrB_SUCCESS);
 
 	// free build matrix inputs
