@@ -134,6 +134,10 @@ static Record CartesianProductConsume
 		return _YieldRecord(opBase);
 	}
 
+	// A zero-stream cartesian product is an identity stream: it emits one
+	// empty record on its first consume and then depletes.
+	if(op->op.childCount == 0) return NULL;
+
 	// pull from first stream
 	child = op->op.children[0];
 	childRecord = OpBase_Consume(child);
@@ -199,4 +203,3 @@ static void CartesianProductFree
 		rm_free(op->records);
 	}
 }
-
