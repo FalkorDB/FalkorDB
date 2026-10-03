@@ -1885,3 +1885,38 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_previous_match_where_kept_under_traverse():
+    """A `MATCH … WHERE` followed by a MATCH that traverses from it is stitched
+    under the next clause's CondTraverse; it must survive scan selection with
+    its WHERE, the clauses below it and the variables it binds (#2972)."""
+    setup = "CREATE (a:A {v:1})-[:R {w:2}]->(b:B {v:0}), (:B {v:5}), (a)-[:R {w:3}]->(b), (b)-[:S {w:1}]->(:C {v:7})"
+    query(setup, write=True)
+
+    cases = [
+        ("MATCH (a) WHERE a.v = 99 MATCH (a)-[r:R]->(b) RETURN count(r)", [[0]]),
+        ("MATCH (a:A) WHERE a.v = 2 MATCH (a)-[r:R]->(b:B) RETURN count(r)", [[0]]),
+        ("MATCH (a) WHERE a.v = 0 MATCH (x)-[:S]->(a) RETURN count(x)", [[0]]),
+        ("MATCH (a) WHERE a.v = 0 MATCH (x)-[:S]->(a) RETURN a.v, x.v", []),
+        ("MATCH (a) WHERE a.v = 1 MATCH (a)-[r:R]->(b) RETURN count(r)", [[2]]),
+        (
+            "UNWIND [1, 2] AS i MATCH (a) WHERE a.v = 1 MATCH (a)-[r:R]->(b) RETURN count(r)",
+            [[4]],
+        ),
+        (
+            "MATCH (x:C) WHERE x.v = 7 MATCH (a)-[r:R]->(b) RETURN x.v, count(r)",
+            [[7, 2]],
+        ),
+    ]
+    for q, expected in cases:
+        assert query(q).result_set == expected, q
+
+    # The dropped WHERE used to let rows reach writes: nothing may be deleted.
+    res = query(
+        "MATCH (a) WHERE a.v = 99 MATCH (a)-[:R]->(b) DETACH DELETE b",
+        write=True,
+    )
+    assert res.nodes_deleted == 0
+    assert res.relationships_deleted == 0
+    assert query("MATCH (n) RETURN count(n)").result_set == [[4]]
