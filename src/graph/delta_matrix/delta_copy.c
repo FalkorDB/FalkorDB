@@ -32,8 +32,8 @@ GrB_Info Delta_Matrix_dup
 	int mutex_res = pthread_mutex_init(&_C->mutex, NULL);
 	ASSERT(mutex_res == 0);
 
-	Delta_Matrix_validate(_C, true);
+	ASSERT (Delta_Matrix_validate (_C, DM_TVAL_BASIC));
+
 	*C = _C;
 	return GrB_SUCCESS;
 }
-
