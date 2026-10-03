@@ -459,6 +459,17 @@ class testTemporalDuration(FlowTestsBase):
         )
         self.env.assertEqual(result.result_set[0], ["2024-03-02", "2024-03-02T00:00:00"])
 
+        # subtraction rolls over the same way (C timegm normalisation), so
+        # d - dur = d + (-dur)
+        result = self.graph.query(
+            """
+            RETURN toString(date('2020-03-31') - duration({months: 1})) AS a,
+                   toString(date('2020-03-31') + duration({months: -1})) AS b,
+                   toString(localdatetime('2020-03-31T10:00:00') - duration({months: 1})) AS c
+            """
+        )
+        self.env.assertEqual(result.result_set[0], ["2020-03-02", "2020-03-02", "2020-03-02T10:00:00"])
+
     def test_duration_components(self):
         q = """WITH duration({years: 2, months:3, weeks:1, days:4, hours:5, minutes:22, seconds:7}) AS d
                RETURN d.years, d.months, d.weeks, d.days, d.hours, d.minutes, d.seconds"""
