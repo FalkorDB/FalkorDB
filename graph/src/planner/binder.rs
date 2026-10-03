@@ -1275,8 +1275,8 @@ impl Binder {
     /// numeric `Variable` IDs and checking that every referenced name is in
     /// scope.
     ///
-    /// The function walks the pattern in two groups (nodes, then
-    /// relationships).  For each entity it:
+    /// The function first defines every named relationship alias, then walks
+    /// the nodes and the relationships.  For each entity it:
     ///   1. Defines the alias in the current scope via `define_name_in_scope`.
     ///   2. Binds the inline property expression (`attrs`).
     ///
@@ -1310,6 +1310,24 @@ impl Binder {
         for raw_path in graph.paths() {
             self.define_name_in_scope(raw_path.var.clone(), Type::Path, true)?;
             named_path_names.insert(raw_path.var.clone());
+        }
+
+        // Define the named relationship aliases before binding any node attrs.
+        // Consecutive MATCH clauses are parsed into one pattern, so in
+        // `MATCH (a)-[r]->(b) MATCH (c {v: id(r)})` the node `c` is bound here
+        // together with `r`, and must see it as it sees `a`. The planner
+        // checks such attrs once every variable they read is bound. Nodes
+        // are still defined one by one, so a node's attrs cannot read a node
+        // that only appears later in the pattern.
+        for relationship in graph.relationships() {
+            if !relationship.alias.starts_with("_anon") {
+                let ty = if relationship.min_hops.is_some() {
+                    Type::Path
+                } else {
+                    Type::Relationship
+                };
+                self.define_name_in_scope(relationship.alias.clone(), ty, !is_create)?;
+            }
         }
 
         // Bind all nodes in the graph, merging duplicates by alias.
