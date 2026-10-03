@@ -292,3 +292,32 @@ class testVecsim():
         g.query("CREATE (:DUser {tag: 'B', emb: vecf32($v)})", params={'v': v})
         self.env.assertEqual(knn_tags(v), ['B'])
 
+
+    def test10_wrong_dimension_vector_keeps_other_indexes(self):
+        # regression: a vector whose dimension differs from the index's is not
+        # indexed, but the entity must stay in every other index on its label
+        # (RediSearch rejects the whole document if the vector is added).
+        g = Graph(self.conn, "vecsim_wrong_dim")
+
+        # pre-existing entity, indexed by background population
+        g.query("CREATE (:WUser {name: 'old', emb: vecf32([1,2,3])})")
+        create_node_range_index(g, "WUser", "name")
+        g.create_node_vector_index("WUser", "emb", dim=2,
+                                   similarity_function="euclidean")
+        wait_for_indices_to_sync(g)
+
+        # entities indexed on write: wrong dimension, then a good one
+        g.query("CREATE (:WUser {name: 'new', emb: vecf32([1,2,3])})")
+        g.query("CREATE (:WUser {name: 'good', emb: vecf32([1,2])})")
+        # updating the wrong-dimension vector re-indexes the entity
+        g.query("MATCH (u:WUser {name: 'old'}) SET u.emb = vecf32([4,5,6])")
+
+        for name in ['old', 'new', 'good']:
+            q = "MATCH (u:WUser) WHERE u.name = $name RETURN u.name"
+            self.env.assertIn("Node By Index Scan", str(g.explain(q, {'name': name})))
+            res = g.ro_query(q, {'name': name}).result_set
+            self.env.assertEqual(res, [[name]])
+
+        # only the vector of the index's dimension is in the vector index
+        res = query_node_vector_index(g, "WUser", "emb", 10, [1, 2]).result_set
+        self.env.assertEqual([row[0].properties['name'] for row in res], ['good'])
