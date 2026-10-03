@@ -1386,6 +1386,10 @@ impl Index {
         let Some(field) = self.fields.get(key).and_then(|f| f.first()) else {
             return std::ptr::null_mut();
         };
+        // An absent bound is unbounded, so it must include the infinity
+        // that stands in for it: `n.v > 0` selects a stored `+inf`.
+        let include_min = include_min || min.is_none();
+        let include_max = include_max || max.is_none();
         unsafe {
             RediSearch_CreateNumericNode(
                 self.rs_ptr(),
