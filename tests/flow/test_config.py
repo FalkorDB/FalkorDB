@@ -352,16 +352,18 @@ class testConfig(FlowTestsBase):
         """CMD_INFO and DELAY_INDEXING are settable at run-time, as in C"""
 
         for config_name in ["CMD_INFO", "DELAY_INDEXING"]:
-            for value, expected in [("no", 0), ("yes", 1), ("0", 0), ("1", 1)]:
+            for value, expected in [("no", 0), ("yes", 1), ("NO", 0), ("Yes", 1)]:
                 self.env.assertEqual(self.db.config_set(config_name, value), "OK")
                 self.env.assertEqual(self.db.config_get(config_name), expected)
 
-            # a non-boolean value is rejected, leaving the config as it was
-            try:
-                self.db.config_set(config_name, "maybe")
-                assert(False)
-            except redis.ResponseError as e:
-                assert(("Failed to set config value %s to maybe" % config_name) in str(e))
+            # anything but yes/no is rejected (C's _Config_ParseYesNo),
+            # leaving the config as it was
+            for value in ["maybe", "1", "0", "true", "false"]:
+                try:
+                    self.db.config_set(config_name, value)
+                    assert(False)
+                except redis.ResponseError as e:
+                    assert(("Failed to set config value %s to %s" % (config_name, value)) in str(e))
             self.env.assertEqual(self.db.config_get(config_name), 1)
 
         # restore defaults for the tests that follow
@@ -384,6 +386,41 @@ class testConfig(FlowTestsBase):
             except redis.ResponseError as e:
                 assert(("Failed to set config value MAX_INFO_QUERIES to %s" % invalid) in str(e))
         self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 1000)
+
+    def test14_c_validation(self):
+        """GRAPH.CONFIG rejects what C rejects"""
+
+        # ASYNC_DELETE defaults to yes, as in C
+        self.env.assertEqual(self.db.config_get("ASYNC_DELETE"), 1)
+
+        prev_conf = self.redis_con.execute_command("GRAPH.CONFIG GET *")
+
+        def expect_error(args, err):
+            try:
+                self.redis_con.execute_command("GRAPH.CONFIG", *args)
+                self.env.assertTrue(False, message=str(args))
+            except redis.ResponseError as e:
+                self.env.assertContains(err, str(e))
+
+        expect_error(("SET", "VKEY_MAX_ENTITY_COUNT", "-5"),
+                     "Failed to set config value VKEY_MAX_ENTITY_COUNT to -5")
+        for name in ["JS_HEAP_SIZE", "JS_STACK_SIZE"]:
+            for value in ["5", "0", "-1", "1048575", "x"]:
+                expect_error(("SET", name, value), f"{name} must be at least 1MB (1048576)")
+
+        # arity: GET takes exactly one name, SET name/value pairs
+        expect_error(("GET", "TIMEOUT", "extra"), "wrong number of arguments")
+        expect_error(("SET", "TIMEOUT"), "wrong number of arguments")
+        expect_error(("SET", "TIMEOUT", "0", "RESULTSET_SIZE"), "wrong number of arguments")
+        expect_error(("GET",), "wrong number of arguments")
+
+        # names are ASCII case-insensitive only: a dotless i does not fold to I
+        expect_error(("GET", "tımeout"), "Unknown configuration field")
+        expect_error(("SET", "tımeout", "0"), "Unknown configuration field")
+        self.env.assertEqual(self.db.config_get("timeout"), self.db.config_get("TIMEOUT"))
+
+        # nothing changed
+        self.env.assertEqual(self.redis_con.execute_command("GRAPH.CONFIG GET *"), prev_conf)
 
 import stat
 import shutil
