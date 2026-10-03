@@ -842,3 +842,24 @@ class testGraphMergeFlow():
             # above would also be satisfied by the pattern being skipped
             actual = self.graph.query("MATCH ()-[r:C]->() RETURN count(r)")
             self.env.assertEqual(actual.result_set, [[1]])
+
+    def test41_merge_result_does_not_depend_on_batch_boundaries(self):
+        # MERGE matched batch by batch and created in between, so a row in a
+        # later batch saw an earlier batch's creation (after ON CREATE SET)
+        # while a row of the same batch did not (#3039). Like C, every row is
+        # now matched before anything is created.
+        g = self.db.select_graph("merge_batch_boundaries")
+        for last in [2, 1025, 3000]:
+            res = g.query(f"""UNWIND range(1, {last}) AS x WITH x WHERE x = 1 OR x = {last}
+                              MERGE (n:L {{v: CASE x WHEN 1 THEN 1 ELSE 2 END}})
+                              ON CREATE SET n.v = 2""")
+            self.env.assertEqual(res.nodes_created, 2)
+            g.delete()
+
+        # duplicates across batches still resolve to one node per pattern
+        res = g.query("""UNWIND range(1, 3000) AS x
+                         MERGE (n:Q {v: x % 7}) ON CREATE SET n.c = x
+                         RETURN count(*), count(DISTINCT n)""")
+        self.env.assertEqual(res.result_set, [[3000, 7]])
+        self.env.assertEqual(res.nodes_created, 7)
+        g.delete()
