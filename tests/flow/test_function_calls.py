@@ -687,6 +687,15 @@ class testFunctionCallsFlow(FlowTestsBase):
             """RETURN toInteger(false)""": [[0]],
             """RETURN toInteger('1790460441484152222')""": [[1790460441484152222]],
             """RETURN toInteger('-1790460441484152222')""": [[-1790460441484152222]],
+            """RETURN toInteger('  1')""": [[1]],
+            """RETURN toInteger('1  ')""": [[1]],
+            """RETURN toInteger('  1  ')""": [[1]],
+            """RETURN toInteger('  1.1')""": [[1]],
+            """RETURN toInteger('1.1  ')""": [[1]],
+            """RETURN toInteger('  1.1  ')""": [[1]],
+            """RETURN toInteger('  -1790460441484152222')""": [[-1790460441484152222]],
+            """RETURN toInteger('-1790460441484152222  ')""": [[-1790460441484152222]],
+            """RETURN toInteger('  -1790460441484152222  ')""": [[-1790460441484152222]],
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
@@ -696,6 +705,12 @@ class testFunctionCallsFlow(FlowTestsBase):
             """RETURN toInteger('z')""",
             """RETURN toInteger(NULL)""",
             """RETURN toInteger('')""",
+            """RETURN toInteger('  ')""",
+            """RETURN toInteger('  z  ')""",
+            """RETURN toInteger('1 2')""",
+            """RETURN toInteger(' 1 2 ')""",
+            """RETURN toInteger('1. 2')""",
+            """RETURN toInteger('1 .2')""",
             """RETURN toInteger('18446744073709551616')""",
             """RETURN toInteger('-18446744073709551616')""",
         ]
@@ -837,6 +852,26 @@ class testFunctionCallsFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], True)
 
+        # strings with spaces
+        query = """RETURN toBoolean('  true')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBoolean('true  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBoolean('  true  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBoolean('  false')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
+        query = """RETURN toBoolean('false  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
+        query = """RETURN toBoolean('  false  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
+
     def test29_toBooleanOrNull(self):
         # boolean
         query = """RETURN toBooleanOrNull(true)"""
@@ -854,6 +889,27 @@ class testFunctionCallsFlow(FlowTestsBase):
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], False)
         query = """RETURN toBooleanOrNull('not a boolean')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
+        query = """RETURN toBooleanOrNull('  TruE')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBooleanOrNull('FaLsE  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
+        query = """RETURN toBooleanOrNull('  TruE  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], True)
+        query = """RETURN toBooleanOrNull('  FaLsE  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], False)
+        query = """RETURN toBooleanOrNull('   ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
+        query = """RETURN toBooleanOrNull('tr ue')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
+        query = """RETURN toBooleanOrNull('fa lse')"""
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
@@ -903,7 +959,25 @@ class testFunctionCallsFlow(FlowTestsBase):
         query = """RETURN toFloatOrNull('1.23')"""
         actual_result = self.graph.query(query)
         self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.23, 0.0001)
+        query = """RETURN toFloatOrNull('  1.23')"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.23, 0.0001)
+        query = """RETURN toFloatOrNull('1.23  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.23, 0.0001)
+        query = """RETURN toFloatOrNull('  1.23  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertAlmostEqual(actual_result.result_set[0][0], 1.23, 0.0001)
+        query = """RETURN toFloatOrNull('  ')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
         query = """RETURN toFloatOrNull('1.2.3')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
+        query = """RETURN toFloatOrNull('1 .23')"""
+        actual_result = self.graph.query(query)
+        self.env.assertEquals(actual_result.result_set[0][0], None)
+        query = """RETURN toFloatOrNull('1. 23')"""
         actual_result = self.graph.query(query)
         self.env.assertEquals(actual_result.result_set[0][0], None)
 
