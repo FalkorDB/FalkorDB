@@ -554,10 +554,13 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
         binding: I::Binding,
         record_cap: Option<usize>,
     ) -> Self {
-        let pack_ceiling = match record_cap {
-            Some(cap) if cap < BATCH_SIZE => cap.max(1),
-            _ => BATCH_SIZE,
-        };
+        // Written as a clamp rather than a guarded match arm
+        // (`Some(cap) if cap < BATCH_SIZE => cap.max(1)`): LLVM 21-23.1.0
+        // (rustc 1.91-1.98) miscompiles that form on aarch64-apple-darwin and
+        // drops the `cap < BATCH_SIZE` guard, so a cap above a batch came out
+        // as the ceiling itself (FalkorDB#2922).
+        let pack_ceiling = record_cap.map_or(BATCH_SIZE, |cap| cap.clamp(1, BATCH_SIZE));
+        debug_assert!((1..=BATCH_SIZE).contains(&pack_ceiling));
         Self {
             binding,
             batch: None,
@@ -599,6 +602,7 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// multi-column item never materializes an intermediate tuple `Vec` just to
     /// transpose it back into columns at the end.
     fn start_batch(&self) -> (bool, Vec<usize>, I::Lanes) {
+        debug_assert!(self.pack_ceiling <= BATCH_SIZE);
         let should_expand = self.batch.as_ref().is_some_and(|b| b.num_columns() > 0);
         let indices = if should_expand {
             Vec::with_capacity(self.pack_ceiling)
