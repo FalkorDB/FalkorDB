@@ -259,3 +259,39 @@ class testNodeByIDFlow(FlowTestsBase):
         except Exception as e:
             self.env.assertFalse("query crashed")
 
+
+    def test_non_integer_id_bounds(self):
+        # A seek must keep exactly the rows the `id(n) <op> x` filter it
+        # replaces keeps. A float compares numerically; null, NaN and
+        # non-numeric bounds never compare true, so they match nothing
+        # (they used to raise "Node ID must be an integer").
+        queries = [
+            ("MATCH (n) WHERE ID(n) = null RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) > null RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) = '1' RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) = true RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) = 0.0 / 0.0 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) = 1.0 RETURN count(n)", 1),
+            ("MATCH (n) WHERE ID(n) = 1.5 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) > 1.5 RETURN count(n)", 8),
+            ("MATCH (n) WHERE ID(n) >= 1.5 RETURN count(n)", 8),
+            ("MATCH (n) WHERE ID(n) < 2.5 RETURN count(n)", 3),
+            ("MATCH (n) WHERE ID(n) <= 2.5 RETURN count(n)", 3),
+            ("MATCH (n) WHERE ID(n) > 2.0 AND ID(n) < 5.0 RETURN count(n)", 2),
+            ("MATCH (n) WHERE ID(n) > 1.0 / 0.0 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) < 1.0 / 0.0 RETURN count(n)", 10),
+            ("MATCH (n) WHERE ID(n) > -1.0 / 0.0 RETURN count(n)", 10),
+            ("MATCH (n) WHERE ID(n) > -1 RETURN count(n)", 10),
+            ("MATCH (n) WHERE ID(n) >= -5 RETURN count(n)", 10),
+            ("MATCH (n) WHERE ID(n) <= -1 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) < -1.5 RETURN count(n)", 0),
+            ("MATCH (n) WHERE ID(n) > 9223372036854775807 RETURN count(n)", 0),
+            ("MATCH (n:person) WHERE ID(n) = 3.0 RETURN count(n)", 1),
+            ("MATCH (n:person) WHERE ID(n) = null RETURN count(n)", 0),
+            ("MATCH (n:person) WHERE ID(n) > -1 RETURN count(n)", 10),
+        ]
+        for query, expected in queries:
+            plan = str(self.graph.explain(query))
+            self.env.assertTrue("NodeByIdSeek" in plan or "Node By Label and ID Scan" in plan)
+            res = self.graph.query(query).result_set
+            self.env.assertEqual(res, [[expected]], message=query)

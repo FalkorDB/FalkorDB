@@ -1307,63 +1307,59 @@ impl<'a> Runtime<'a> {
         }
     }
 
+    /// Narrow the id range `[0, max_node_id]` by every `id(n) <op> expr`
+    /// conjunct the optimizer folded into a seek, or `None` when no id can
+    /// satisfy them all.
+    ///
+    /// The seek must return exactly the rows the `Filter` it replaced would
+    /// keep, so each bound follows Cypher's comparison of an integer id:
+    /// a negative bound is simply below every id (`id(n) > -1` keeps them
+    /// all, `id(n) <= -1` none), a float compares numerically (`id(n) = 1.0`
+    /// is node 1, `id(n) > 1.5` starts at 2), and a null, NaN or
+    /// non-numeric bound never compares true, so no row survives.
     pub fn evaluate_id_filter<R: super::row::RowView + ?Sized>(
         &self,
         filter: &Vec<(QueryExpr<Variable>, ExprIR<Variable>)>,
         vars: &R,
     ) -> Result<Option<RoaringTreemap>, String> {
-        let mut min = 0u64;
-        let mut max = self.g.borrow().max_node_id();
+        // Inclusive bounds, widened to i128 so that any `i64` and any finite
+        // float fit; `±inf` saturates, and the `± 1` below saturates with it.
+        let mut min = 0i128;
+        let mut max = i128::from(self.g.borrow().max_node_id());
         for (expr, op) in filter {
-            let id = match {
-                let this = &self;
+            let value = {
                 let idx = expr.root().idx();
-                super::eval::ExprEval::from_runtime(this).eval(expr, idx, Some(vars), None)
-            }? {
-                Value::Int(id) => id as u64,
-                _ => {
-                    return Err(String::from("Node ID must be an integer"));
-                }
+                super::eval::ExprEval::from_runtime(self).eval(expr, idx, Some(vars), None)
+            }?;
+            // The smallest id `>=` and the largest id `<=` the bound, so that a
+            // non-integer bound turns every operator into an integer one:
+            // `id > 1.5` is `id >= 2`, `id <= 1.5` is `id <= 1`, and
+            // `id = 1.5` has no solution because `ceil > floor`.
+            let (ceil, floor) = match value {
+                Value::Int(id) => (i128::from(id), i128::from(id)),
+                Value::Float(f) if !f.is_nan() => (f.ceil() as i128, f.floor() as i128),
+                _ => return Ok(None),
             };
             match op {
                 ExprIR::Eq => {
-                    if id < min || id > max {
-                        return Ok(None);
-                    }
-                    min = id;
-                    max = id;
+                    min = min.max(ceil);
+                    max = max.min(floor);
                 }
-                ExprIR::Gt => {
-                    if id >= max {
-                        return Ok(None);
-                    }
-                    min = std::cmp::max(min, id + 1);
-                }
-                ExprIR::Ge => {
-                    if id > max {
-                        return Ok(None);
-                    }
-                    min = std::cmp::max(min, id);
-                }
-                ExprIR::Lt => {
-                    if id <= min {
-                        return Ok(None);
-                    }
-                    max = std::cmp::min(max, id - 1);
-                }
-                ExprIR::Le => {
-                    if id < min {
-                        return Ok(None);
-                    }
-                    max = std::cmp::min(max, id);
-                }
+                ExprIR::Gt => min = min.max(floor.saturating_add(1)),
+                ExprIR::Ge => min = min.max(ceil),
+                ExprIR::Lt => max = max.min(ceil.saturating_sub(1)),
+                ExprIR::Le => max = max.min(floor),
                 _ => {
                     unreachable!()
                 }
             }
+            if min > max {
+                return Ok(None);
+            }
         }
+        // `0 <= min <= max <= max_node_id`, so both fit in a `u64`.
         let mut result = RoaringTreemap::new();
-        result.insert_range(min..=max);
+        result.insert_range(min as u64..=max as u64);
         Ok(Some(result))
     }
 
