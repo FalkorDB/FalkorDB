@@ -464,6 +464,24 @@ const fn node_value(id: NodeId) -> Value {
     Value::Node(id)
 }
 
+/// Reject a configuration naming a label or relationship type the graph does
+/// not have, with the procedure's C error message for each.
+fn check_known_labels_and_types(
+    g: &Graph,
+    labels: &[Arc<String>],
+    rel_types: &[Arc<String>],
+    unknown_label: impl Fn(&str) -> String,
+    unknown_type: impl Fn(&str) -> String,
+) -> Result<(), String> {
+    if let Some(l) = labels.iter().find(|l| g.get_label_id(l).is_none()) {
+        return Err(unknown_label(l));
+    }
+    if let Some(t) = rel_types.iter().find(|t| g.get_type_id(t).is_none()) {
+        return Err(unknown_type(t));
+    }
+    Ok(())
+}
+
 /// Collect all active node IDs from the graph matching ANY of the given labels.
 /// If labels is empty, returns all active node IDs.
 fn collect_node_ids(
@@ -709,7 +727,12 @@ fn register_pagerank(funcs: &mut Functions) {
             let rel_type = opt_string(&args[1], "relationshipType")?;
 
             let g = runtime.g.borrow();
-            if g.node_count() == 0 {
+            // As in C, a label or relationship type the graph does not have
+            // selects nothing, so there is nothing to rank.
+            if g.node_count() == 0
+                || label.as_ref().is_some_and(|l| g.get_label_id(l).is_none())
+                || rel_type.as_ref().is_some_and(|t| g.get_type_id(t).is_none())
+            {
                 return Ok(empty_procedure_batch());
             }
 
@@ -742,9 +765,13 @@ fn register_pagerank(funcs: &mut Functions) {
                     GrB_Matrix_resize(raw_adj, n, n);
                     (raw_adj, None)
                 } else {
-                    let active = collect_node_ids(&g, std::slice::from_ref(label.as_ref().unwrap()))
-                        .into_iter()
-                        .collect();
+                    let active: FxHashSet<u64> =
+                        collect_node_ids(&g, std::slice::from_ref(label.as_ref().unwrap()))
+                            .into_iter()
+                            .collect();
+                    if active.is_empty() {
+                        return Ok(empty_procedure_batch());
+                    }
                     let (lag_adj, _id_to_compact, compact_to_id, _n) =
                         build_compact_adj_from_tensors(&g, &rel_types, &active);
                     (lag_adj, Some(compact_to_id))
@@ -943,6 +970,13 @@ fn register_betweenness(funcs: &mut Functions) {
             };
 
             let g = runtime.g.borrow();
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("betweenness configuration, unknown label {l}"),
+                |t| format!("betweenness configuration, unknown relationship-type {t}"),
+            )?;
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -1231,6 +1265,13 @@ fn register_cdlp(funcs: &mut Functions) {
             };
 
             let g = runtime.g.borrow();
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("labelPropagation configuration, unknown label {l}"),
+                |t| format!("labelPropagation configuration, unknown relationship-type {t}"),
+            )?;
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
             }
@@ -2701,11 +2742,13 @@ fn register_harmonic_centrality(funcs: &mut Functions) {
             let rel_types = extract_rel_types(&config)?;
 
             let g = runtime.g.borrow();
-            for rt in &rel_types {
-                if g.get_type_id(rt).is_none() {
-                    return Err(format!("Relationship type '{rt}' does not exist"));
-                }
-            }
+            check_known_labels_and_types(
+                &g,
+                &node_labels,
+                &rel_types,
+                |l| format!("harmonic centrality configuration contains non-existent label:{l}"),
+                |t| format!("harmonic centrality configuration contains non-existent type:{t}"),
+            )?;
 
             if g.node_count() == 0 {
                 return Ok(empty_procedure_batch());
