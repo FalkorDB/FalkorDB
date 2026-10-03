@@ -167,10 +167,21 @@ fn parse_date_string(s: &str) -> Result<NaiveDate, String> {
             }
             2 => {
                 let year: i32 = parts[0].parse().map_err(|_| format!("Invalid year: {s}"))?;
-                let month: u32 = parts[1]
-                    .parse()
-                    .map_err(|_| format!("Invalid month: {s}"))?;
-                NaiveDate::from_ymd_opt(year, month, 1).ok_or_else(|| format!("Invalid date: {s}"))
+                if parts[1].len() == 3 {
+                    // YYYY-DDD - ISO ordinal date (day of year), e.g. 2015-202
+                    let ordinal: u32 = parts[1]
+                        .parse()
+                        .map_err(|_| format!("Invalid ordinal: {s}"))?;
+                    NaiveDate::from_yo_opt(year, ordinal)
+                        .ok_or_else(|| format!("Invalid ordinal date: {s}"))
+                } else {
+                    // YYYY-MM
+                    let month: u32 = parts[1]
+                        .parse()
+                        .map_err(|_| format!("Invalid month: {s}"))?;
+                    NaiveDate::from_ymd_opt(year, month, 1)
+                        .ok_or_else(|| format!("Invalid date: {s}"))
+                }
             }
             3 => {
                 let year: i32 = parts[0].parse().map_err(|_| format!("Invalid year: {s}"))?;
