@@ -41,7 +41,7 @@ use crate::{
 use atomic_refcell::AtomicRefCell;
 use crossfire::{
     MTx, Rx,
-    mpsc::{Array, bounded_blocking},
+    mpsc::{List, unbounded_blocking},
 };
 use graph::{
     effects::payload::take_effects_buffer,
@@ -530,8 +530,12 @@ pub static REPLICATION_CONSUMERS: AtomicBool = AtomicBool::new(true);
 
 pub struct ThreadedGraph {
     pub graph: MvccGraph,
-    pub sender: MTx<Array<Box<WriteMessage>>>,
-    pub receiver: Rx<Array<Box<WriteMessage>>>,
+    /// Unbounded: senders are pool workers holding this graph's read lock, and
+    /// the drainer must take the write lock to run each message. A bounded
+    /// channel lets a full queue park senders under the read lock while the
+    /// drainer waits for the write lock behind them — a deadlock.
+    pub sender: MTx<List<Box<WriteMessage>>>,
+    pub receiver: Rx<List<Box<WriteMessage>>>,
     pub write_loop: AtomicBool,
     pub slow_log: SlowLog,
 }
@@ -544,7 +548,7 @@ impl ThreadedGraph {
         cache_size: usize,
         name: &str,
     ) -> Self {
-        let (sender, receiver) = bounded_blocking(1024);
+        let (sender, receiver) = unbounded_blocking();
         Self {
             graph: MvccGraph::new(16384, 16384, cache_size, name),
             sender,
@@ -557,7 +561,7 @@ impl ThreadedGraph {
     /// Create a `ThreadedGraph` from an existing `MvccGraph`.
     /// Used by the RDB load path.
     pub fn from_mvcc(graph: MvccGraph) -> Self {
-        let (sender, receiver) = bounded_blocking(1024);
+        let (sender, receiver) = unbounded_blocking();
         Self {
             graph,
             sender,
