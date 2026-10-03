@@ -140,6 +140,12 @@ AR_ExpNode *AR_EXP_getChild
 	uint idx                 // child index to return
 );
 
+// get the number of children of root
+int AR_EXP_getChildCount
+(
+	const AR_ExpNode *root  // arithmetic expression node
+);
+
 // traverse an expression tree and add all entity aliases to a rax
 void AR_EXP_CollectEntities
 (

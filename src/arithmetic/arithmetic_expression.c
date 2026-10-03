@@ -763,6 +763,20 @@ AR_ExpNode *AR_EXP_setChild
 	return prev_child ;
 }
 
+// get the number of children of root
+int AR_EXP_getChildCount
+(
+	const AR_ExpNode *root  // arithmetic expression node
+) {
+	ASSERT(root != NULL);
+
+	if(root->type == AR_EXP_OP) {
+		return NODE_CHILD_COUNT(root) ;
+	}
+
+	return 0;
+}
+
 // get the ith child of root
 // in case root isn't a parent or idx > number of children NULL is returned
 AR_ExpNode *AR_EXP_getChild
