@@ -1412,6 +1412,16 @@ impl Index {
             return std::ptr::null_mut();
         };
 
+        // Equal bounds with an exclusive side (`> 'a' AND < 'a'`, `>= 'a'
+        // AND < 'a'`) select nothing; the exact-match shortcut below is
+        // only right when both sides are inclusive.
+        if let (Some(lo), Some(hi)) = (min, max)
+            && lo == hi
+            && !(include_min && include_max)
+        {
+            return unsafe { RediSearch_CreateEmptyNode(self.rs_ptr()) };
+        }
+
         let root = unsafe { RediSearch_CreateTagNode(self.rs_ptr(), field.name.as_ptr()) };
 
         // If both bounds are equal, use exact match (TagTokenNode)
