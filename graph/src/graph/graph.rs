@@ -4126,6 +4126,21 @@ impl Graph {
     /// collide with another, so the entity satisfies the constraint vacuously.
     /// Callers treat an empty key as "this entity does not participate in the
     /// constraint" and skip it.
+    ///
+    /// Two keys are equal exactly when C's `EnforceUniqueEntity` calls the
+    /// entities duplicates. C asks the supporting range index for an exact
+    /// match, which gives these semantics:
+    /// - `Bool`, `Int` and `Float` are one numeric domain compared as `f64`:
+    ///   `1`, `1.0` and `true` collide, `0.0` and `-0.0` collide, and integers
+    ///   beyond 2^53 collide with their `f64` neighbours.
+    /// - `String` is compared byte for byte (case-sensitive) and never equals
+    ///   a number.
+    /// - C does not check any other type (list, point, temporal, vecf32), so
+    ///   such a value leaves the entity vacuously unique, like NULL. So does
+    ///   NaN, which equals nothing.
+    ///
+    /// Every component is fixed-width or length-prefixed, so the concatenation
+    /// is unambiguous.
     #[must_use]
     pub fn build_composite_key(
         properties: &[Arc<String>],
@@ -4133,13 +4148,23 @@ impl Graph {
     ) -> Vec<u8> {
         let mut key = Vec::new();
         for prop in properties {
-            match get(prop) {
-                Some(v) if !matches!(v, Value::Null) => {
-                    key.extend_from_slice(format!("{v:?}").as_bytes());
+            let num = match get(prop) {
+                Some(Value::String(s)) => {
+                    key.push(b's');
+                    key.extend_from_slice(&(s.len() as u64).to_le_bytes());
+                    key.extend_from_slice(s.as_bytes());
+                    continue;
                 }
+                Some(Value::Bool(b)) => f64::from(u8::from(b)),
+                #[allow(clippy::cast_precision_loss)]
+                Some(Value::Int(i)) => i as f64,
+                Some(Value::Float(f)) if !f.is_nan() => f,
                 _ => return Vec::new(),
-            }
-            key.push(b'|');
+            };
+            // `+ 0.0` folds -0.0 into 0.0, the one pair of distinct bit
+            // patterns that compare equal.
+            key.push(b'n');
+            key.extend_from_slice(&(num + 0.0).to_bits().to_le_bytes());
         }
         key
     }
@@ -4634,6 +4659,8 @@ mod attr_id_space_tests {
 #[cfg(test)]
 mod composite_key_tests {
     use super::*;
+    use crate::runtime::value::Point;
+    use thin_vec::thin_vec;
 
     fn key(
         props: &[&str],
@@ -4687,6 +4714,100 @@ mod composite_key_tests {
         assert!(!key(&["a"], &[("a", Value::Int(1))]).is_empty());
         assert!(key(&["a"], &[]).is_empty());
         assert!(key(&["a"], &[("a", Value::Null)]).is_empty());
+    }
+
+    fn k1(v: Value) -> Vec<u8> {
+        key(&["v"], &[("v", v)])
+    }
+
+    fn s(v: &str) -> Value {
+        Value::String(Arc::new(v.to_string()))
+    }
+
+    /// Pairs C's UNIQUE constraint treats as duplicates (checked against the C
+    /// module): numbers compare as `f64` across Bool/Int/Float, strings byte
+    /// for byte.
+    #[test]
+    fn key_collides_where_c_rejects() {
+        let same = [
+            (Value::Int(1), Value::Int(1)),
+            (Value::Int(1), Value::Float(1.0)),
+            (Value::Int(1), Value::Bool(true)),
+            (Value::Int(0), Value::Bool(false)),
+            (Value::Float(1.0), Value::Bool(true)),
+            (Value::Float(0.0), Value::Float(-0.0)),
+            (Value::Int(0), Value::Float(-0.0)),
+            (
+                Value::Int(9_007_199_254_740_992),
+                Value::Int(9_007_199_254_740_993),
+            ),
+            (Value::Float(1.5), Value::Float(1.5)),
+            (Value::Float(f64::INFINITY), Value::Float(f64::INFINITY)),
+            (
+                Value::Float(f64::NEG_INFINITY),
+                Value::Float(f64::NEG_INFINITY),
+            ),
+            (s("a"), s("a")),
+            (s("a b"), s("a b")),
+            (s("a,b"), s("a,b")),
+            (s("\u{e9}"), s("\u{e9}")),
+        ];
+        for (a, b) in same {
+            let (ka, kb) = (k1(a.clone()), k1(b.clone()));
+            assert!(!ka.is_empty(), "{a:?} must participate");
+            assert_eq!(ka, kb, "{a:?} and {b:?} are duplicates in C");
+        }
+    }
+
+    /// Pairs C's UNIQUE constraint admits: distinct values, and value kinds C
+    /// does not check at all (lists, points, temporals, vecf32), which make the
+    /// entity vacuously unique like NULL. NaN equals nothing.
+    #[test]
+    fn key_differs_or_is_vacuous_where_c_accepts() {
+        let distinct = [
+            (Value::Int(1), Value::Int(2)),
+            (Value::Int(1), s("1")),
+            (Value::Bool(true), s("true")),
+            (s("a"), s("A")),
+            (s("a,b"), s("a")),
+            (s("ab"), s("a")),
+            (Value::Float(1.0), Value::Float(1.5)),
+        ];
+        for (a, b) in distinct {
+            assert_ne!(
+                k1(a.clone()),
+                k1(b.clone()),
+                "{a:?} and {b:?} are distinct in C"
+            );
+        }
+        let vacuous = [
+            Value::List(Arc::new(thin_vec![Value::Int(1), Value::Int(2)])),
+            Value::Point(Point {
+                latitude: 1.0,
+                longitude: 2.0,
+            }),
+            Value::Date(0),
+            Value::Datetime(0),
+            Value::Time(0),
+            Value::Duration(86_400),
+            Value::VecF32(Arc::new(thin_vec![1.0])),
+            Value::Float(f64::NAN),
+        ];
+        for v in vacuous {
+            assert!(
+                k1(v.clone()).is_empty(),
+                "C does not enforce UNIQUE on {v:?}"
+            );
+        }
+    }
+
+    /// Composite keys stay unambiguous when a string holds what looks like a
+    /// separator.
+    #[test]
+    fn composite_key_is_unambiguous() {
+        let a = key(&["a", "b"], &[("a", s("x|")), ("b", s("y"))]);
+        let b = key(&["a", "b"], &[("a", s("x")), ("b", s("|y"))]);
+        assert_ne!(a, b);
     }
 }
 
