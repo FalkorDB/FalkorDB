@@ -329,7 +329,9 @@ void CommitNewEntities
 	MATRIX_POLICY policy = Graph_GetMatrixPolicy (g) ;
 
 	// lock everything
-	QueryCtx_AcquireWriteLock () ;
+	if (!QueryCtx_AcquireWriteLock ()) {
+		return ;
+	}
 
 	if (node_count > 0) {
 		Graph_AllocateNodes (g, node_count) ;
