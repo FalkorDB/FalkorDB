@@ -236,70 +236,10 @@ impl<'a> EdgeByIndexScanOp<'a> {
                     ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(vars), None)
                 }?;
                 match list_val {
-                    Value::List(items) => {
-                        let equals = items
-                            .iter()
-                            .filter(|v| {
-                                matches!(
-                                    v,
-                                    Value::Int(_)
-                                        | Value::Float(_)
-                                        | Value::String(_)
-                                        | Value::Bool(_)
-                                )
-                            })
-                            .map(|v| IndexQuery::Equal {
-                                key: key.clone(),
-                                value: v.clone(),
-                            })
-                            .collect::<Vec<_>>();
-                        Ok(IndexQuery::Or(equals))
-                    }
+                    Value::List(items) => Ok(IndexQuery::in_list(key, &items)),
                     _ => Err("IN operator requires a list".into()),
                 }
             }
-        }
-    }
-
-    /// Check if an evaluated index query can be satisfied by the index.
-    fn can_utilize_index(q: &IndexQuery<Value>) -> bool {
-        use crate::index::Index;
-
-        const fn is_indexable(v: &Value) -> bool {
-            match v {
-                Value::Int(i) => !Index::int_loses_f64_precision(*i),
-                Value::Float(_)
-                | Value::String(_)
-                | Value::Bool(_)
-                | Value::Point(_)
-                | Value::Null => true,
-                _ => false,
-            }
-        }
-        match q {
-            IndexQuery::Equal { value, .. } => is_indexable(value),
-            IndexQuery::Range { min, max, .. } => {
-                min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
-            }
-            IndexQuery::And(children) | IndexQuery::Or(children) => {
-                // Empty `Or([])` / `And([])` is not a valid index
-                // query: the RediSearch backend treats it as
-                // match-all, which is unsafe when the optimizer has
-                // already pushed an IN-list whose elements were all
-                // filtered out at runtime (e.g. `IN [NULL]`). Force
-                // the fallback path so the retained post-filter
-                // re-establishes correctness.
-                !children.is_empty() && children.iter().all(Self::can_utilize_index)
-            }
-            IndexQuery::ArrayContains { value, .. } => match value {
-                // Match `Equal` / `Range`: reject int64s that lose
-                // f64 precision — the index can't represent them
-                // exactly so the query must fall back to post-filter.
-                Value::Int(i) => !Index::int_loses_f64_precision(*i),
-                Value::Float(_) | Value::String(_) | Value::Bool(_) => true,
-                _ => false,
-            },
-            _ => true,
         }
     }
 }
@@ -327,29 +267,29 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 // `get_all_edges` is materialized once into the op's
                 // cache and shared by all subsequent rows via `Arc`,
                 // so we don't rebuild the full-type Vec per row.
-                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
-                    if Self::can_utilize_index(&q) {
-                        Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
-                    } else {
-                        let cached = {
-                            let mut cache = self.all_edges_cache.borrow_mut();
-                            if cache.is_none() {
-                                *cache =
-                                    Some(Arc::new(self.runtime.g.borrow().get_all_edges(label)));
-                            }
-                            Arc::clone(cache.as_ref().unwrap())
-                        };
-                        let mut idx = 0usize;
-                        Box::new(std::iter::from_fn(move || {
-                            if idx < cached.len() {
-                                let v = cached[idx];
-                                idx += 1;
-                                Some(v)
-                            } else {
-                                None
-                            }
-                        }))
+                let base: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> = if q
+                    .can_be_served()
+                {
+                    Box::new(self.runtime.g.borrow().get_indexed_edges(label, q))
+                } else {
+                    let cached = {
+                        let mut cache = self.all_edges_cache.borrow_mut();
+                        if cache.is_none() {
+                            *cache = Some(Arc::new(self.runtime.g.borrow().get_all_edges(label)));
+                        }
+                        Arc::clone(cache.as_ref().unwrap())
                     };
+                    let mut idx = 0usize;
+                    Box::new(std::iter::from_fn(move || {
+                        if idx < cached.len() {
+                            let v = cached[idx];
+                            idx += 1;
+                            Some(v)
+                        } else {
+                            None
+                        }
+                    }))
+                };
 
                 // Filter edges by *both* endpoints when the child has
                 // already bound them. `transposed` flips which
