@@ -818,6 +818,54 @@ class testEntityUpdate():
         self.env.assertEqual(actual_node.properties['a'], 4)
         self.env.assertEqual(actual_node.properties['c'], 'str')
 
+    # Issue #2776: SET x = {...} / SET x = y (replace) must clear pending properties
+    def test42_set_replace_clears_pending_properties(self):
+        self.graph.delete()
+
+        # 1. Relationship target, map source
+        result = self.graph.query("CREATE ()-[r:R {a:1}]->() SET r = {b:2} RETURN properties(r)")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'b': 2})
+
+        # 2. Node target, node source
+        result = self.graph.query("CREATE (n:N {a:1}), (m:M {c:3}) SET n = m RETURN properties(n)")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'c': 3})
+
+        # 3. Node target, relationship source
+        result = self.graph.query("CREATE (n:N {a:1}), ()-[r:R {c:3}]->() SET n = r RETURN properties(n)")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'c': 3})
+
+        # 4. Relationship target, node source
+        result = self.graph.query("CREATE (n:N {c:3}), ()-[r:R {a:1}]->() SET r = n RETURN properties(r)")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'c': 3})
+
+        # 5. Relationship target, relationship source
+        result = self.graph.query("CREATE ()-[r1:R {a:1}]->(), ()-[r2:R {c:3}]->() SET r1 = r2 RETURN properties(r1)")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'c': 3})
+
+        # 6. Node target, map source (guard test)
+        result = self.graph.query("CREATE (n:N {a:1}) SET n = {b:2} RETURN properties(n)")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'b': 2})
+
+        # 7. Existing relationship with pending update in same query before replace
+        self.graph.delete()
+        self.graph.query("CREATE ()-[r:R {orig: 10}]->()")
+        result = self.graph.query("MATCH ()-[r:R]->() SET r.tmp = 99 SET r = {b: 2} RETURN properties(r)")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'b': 2})
+
+        # 8. Existing node with pending update in same query before replace with node source
+        self.graph.delete()
+        self.graph.query("CREATE (:N {orig: 10}), (:M {new_val: 42})")
+        result = self.graph.query("MATCH (n:N), (m:M) SET n.tmp = 99 SET n = m RETURN properties(n)")
+        props = result.result_set[0][0]
+        self.env.assertEqual(props, {'new_val': 42})
+
 class testEntityUpdateReplication():
     def __init__(self):
         self.env, self.db = Env(env='oss', useSlaves=True)
