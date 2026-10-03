@@ -1885,3 +1885,29 @@ def test_optional_match_null_merge():
         [None, [2]],
     ]
 
+
+
+def test_previous_match_correlates_with_cartesian_product():
+    """A `MATCH … WHERE` stitched into the next MATCH's CartesianProduct must
+    feed the component that reads its variables, not run as one more
+    independent branch (#2992)."""
+    setup = "CREATE (a:A {v:1})-[:R {w:2}]->(b:B {v:0}), (:B {v:5}), (a)-[:R {w:3}]->(b), (b)-[:S {w:1}]->(:C {v:7})"
+    query(setup, write=True)
+
+    cases = [
+        ("MATCH (a) WHERE a.v = 0 MATCH (a)-[:R]->(b), (c:C) RETURN a.v, b.v, c.v", []),
+        ("MATCH (a) WHERE a.v = 0 MATCH (x)-[:S]->(a), (b:B) RETURN a.v, b.v, x.v", []),
+        ("MATCH (a {v:5}) WHERE true MATCH (x:C), (a)-[:R]->(b) RETURN count(*)", [[0]]),
+        (
+            "MATCH (a:A) WHERE a.v = 1 MATCH (a)-[r:R]->(b), (c:C) RETURN a.v, b.v, c.v, r.w ORDER BY r.w",
+            [[1, 0, 7, 2], [1, 0, 7, 3]],
+        ),
+        (
+            "MATCH (a:A) WHERE a.v = 1 MATCH (b:B {v: a.v - 1}), (c:C) RETURN a.v, b.v, c.v",
+            [[1, 0, 7]],
+        ),
+        # Uncorrelated: still a plain cross product.
+        ("MATCH (a:A) WHERE a.v = 1 MATCH (b:B), (c:C) RETURN count(*)", [[2]]),
+    ]
+    for q, expected in cases:
+        assert query(q).result_set == expected, q
