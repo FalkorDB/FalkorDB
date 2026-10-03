@@ -524,9 +524,23 @@ impl<T> Encode<19> for Matrix<T> {
             let info = GxB_unload_Matrix_into_Container(self.inner(), container, null_mut());
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
-            // Write container struct bytes
+            // Write container struct bytes. Its pointer fields are heap
+            // addresses in this process: meaningless to a reader (decode
+            // rebuilds every component), and they would disclose the memory
+            // layout to anyone holding a DUMP / GRAPH.COPY payload or an RDB.
+            // Write them as null.
+            let mut header = std::ptr::read(container);
+            header.p = null_mut();
+            header.h = null_mut();
+            header.b = null_mut();
+            header.i = null_mut();
+            header.x = null_mut();
+            header.vector_future = [null_mut(); 11];
+            header.Y = null_mut();
+            header.matrix_future = [null_mut(); 15];
+            header.void_future = [null_mut(); 16];
             let container_bytes =
-                std::slice::from_raw_parts(container.cast::<u8>(), CONTAINER_STRUCT_SIZE);
+                std::slice::from_raw_parts((&raw const header).cast::<u8>(), CONTAINER_STRUCT_SIZE);
             w.write_buffer(container_bytes);
 
             // Write 5 vectors: x, h, p, i, b
@@ -1893,5 +1907,62 @@ mod tests {
             "iso build should be the cheaper of the two: {} vs {raw_bytes} bytes",
             scalar_built.memory_usage()
         );
+    }
+
+    /// The encoded container header must not carry this process's heap
+    /// addresses (its component pointers) into DUMP / GRAPH.COPY payloads.
+    #[test]
+    fn encode_writes_no_heap_addresses() {
+        use super::super::GxB_Container_struct as C;
+        use std::mem::offset_of;
+
+        struct FirstBuffer(Option<Vec<u8>>);
+        impl super::Writer for FirstBuffer {
+            fn write_unsigned(
+                &mut self,
+                _: u64,
+            ) {
+            }
+            fn write_signed(
+                &mut self,
+                _: i64,
+            ) {
+            }
+            fn write_double(
+                &mut self,
+                _: f64,
+            ) {
+            }
+            fn write_buffer(
+                &mut self,
+                d: &[u8],
+            ) {
+                self.0.get_or_insert_with(|| d.to_vec());
+            }
+        }
+
+        ensure_init();
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(1, 2, true);
+        m.wait();
+        let mut w = FirstBuffer(None);
+        super::Encode::encode(&m, &mut w);
+        let header = w.0.expect("no container header written");
+        // p..matrix_future are contiguous pointers, void_future runs to the end
+        for (what, range) in [
+            (
+                "vector / matrix pointers",
+                offset_of!(C, p)..offset_of!(C, iso),
+            ),
+            ("void pointers", offset_of!(C, void_future)..size_of::<C>()),
+        ] {
+            assert!(
+                header[range.clone()].iter().all(|&b| b == 0),
+                "{what} written into the payload: {:02x?}",
+                &header[range]
+            );
+        }
+        // encoding unloads and reloads the matrix; it must be intact
+        assert_eq!(m.get(1, 2), Some(true));
     }
 }
