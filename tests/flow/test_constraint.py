@@ -646,6 +646,40 @@ class testConstraintNodes():
         self.env.assertEqual(result.labels_removed, 1)
         self.env.assertEqual(self.g.query("MATCH (n:Mandate) RETURN count(n)").result_set[0][0], 0)
 
+    def test10_unique_constraint_numeric_type_equivalence(self):
+        # Issue #2774: UNIQUE constraint should treat equal numeric values (such as 1 and 1.0)
+        # as colliding, matching Cypher equality and preventing duplicate entities.
+        create_unique_node_constraint(self.g, "NumUnique", "id", sync=True)
+        self.g.query("CREATE (:NumUnique {id: 1})")
+
+        # Creating another node with id: 1.0 must fail the unique constraint
+        try:
+            self.g.query("CREATE (:NumUnique {id: 1.0})")
+            self.env.assertTrue(False, "Expected unique constraint violation for id: 1.0 colliding with id: 1")
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type NumUnique", str(e))
+
+        # Check that only 1 node was created
+        res = self.g.query("MATCH (p:NumUnique) RETURN count(p)")
+        self.env.assertEqual(res.result_set[0][0], 1)
+
+        # Also test updating an existing node with float to collide with int
+        self.g.query("CREATE (:NumUnique {id: 2})")
+        try:
+            self.g.query("MATCH (p:NumUnique {id: 2}) SET p.id = 1.0")
+            self.env.assertTrue(False, "Expected unique constraint violation when setting id to 1.0")
+        except ResponseError as e:
+            self.env.assertContains("unique constraint violation on node of type NumUnique", str(e))
+
+        # Check negative case: a distinct number (e.g. 1.5) must be allowed
+        self.g.query("CREATE (:NumUnique {id: 1.5})")
+        res = self.g.query("MATCH (p:NumUnique) RETURN count(p)")
+        self.env.assertEqual(res.result_set[0][0], 3)
+
+        # Cleanup
+        self.g.query("MATCH (p:NumUnique) DELETE p")
+        drop_unique_node_constraint(self.g, "NumUnique", "id")
+
 class testConstraintEdges():
     def __init__(self):
         self.env, self.db = Env()
