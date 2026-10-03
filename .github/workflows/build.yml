@@ -6,7 +6,7 @@ on:
       browser_tag:
         description: "Browser tag"
         required: false
-        default: "latest"
+        default: "edge"
       skip_tests:
         description: "Skip tests"
         required: false
@@ -445,7 +445,7 @@ jobs:
         if: matrix.platform.use_docker && matrix.build_type == 'release'
         id: set_browser_tag
         run: |
-          BROWSER_TAG="latest"
+          BROWSER_TAG="edge"
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             BROWSER_TAG=${{ github.event.inputs.browser_tag }}
           elif [[ "${{ github.ref }}" == "refs/heads/master" ]]; then
