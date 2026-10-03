@@ -54,6 +54,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Test runtime package failure handling
+        run: python3 tests/docker/test_runtime_package_failures.py
+
       - name: Detect changed builder Dockerfiles
         id: detect
         run: |
