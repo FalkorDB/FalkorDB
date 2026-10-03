@@ -1294,3 +1294,36 @@ class testIndexScanFlow():
         res = self.graph.query(q).result_set
         # `n.v` is a scalar int, never a list — no row should match.
         self.env.assertEqual(res, [])
+
+    def _index_vs_scan(self, indices, setup, queries, expect_index=True):
+        # Run each query on a graph with the indices and on one without,
+        # and require the same rows: an index must never change a result.
+        with_idx = self.db.select_graph("index_parity_idx")
+        no_idx = self.db.select_graph("index_parity_scan")
+        try:
+            for label, attr in indices:
+                with_idx.create_node_range_index(label, attr)
+            wait_for_indices_to_sync(with_idx)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            for q in queries:
+                if expect_index:
+                    self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)))
+                expected = sorted(no_idx.query(q).result_set)
+                actual = sorted(with_idx.query(q).result_set)
+                self.env.assertEqual(actual, expected, message=q)
+        finally:
+            with_idx.delete()
+            no_idx.delete()
+
+    def test_40_temporals_not_in_numeric_range(self):
+        # Temporals must not be indexed as their raw number, where numeric
+        # ranges would match them.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:5, k:'int'}), (:L {v:date('2020-01-01'), k:'date'}),"
+            " (:L {v:date('1960-01-01'), k:'old'}), (:L {v:duration('P1D'), k:'dur'}),"
+            " (:L {v:localdatetime('2020-01-01T00:00:00'), k:'ldt'})",
+            ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 86400 RETURN n.k"])
