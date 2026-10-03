@@ -890,14 +890,15 @@ pub(super) fn select_scan_node(
         // Order greedily instead: repeatedly take a hop with an endpoint
         // already bound, orient it to start from that endpoint, and mark its
         // other end bound. The chain is left alone if no such order exists.
-        let initial_bound: HashSet<u32> = {
-            let mut b = HashSet::new();
-            b.insert(best_node.alias.id);
-            if let Some(child) = &existing_child {
-                b.extend(collect_subtree_variables(&child.root()));
-            }
-            b
-        };
+        // Only what the new chain's leaf binds counts: the scan built for
+        // `best_node`, or else the kept outer-context child, which does not
+        // bind `best_node` just because it scored best — no scan is built for
+        // it then, and a hop or inline filter placed as if it were bound would
+        // read an unbound variable.
+        let initial_bound: HashSet<u32> = existing_child.as_ref().map_or_else(
+            || HashSet::from([best_node.alias.id]),
+            |child| collect_subtree_variables(&child.root()),
+        );
         let mut bound = initial_bound.clone();
         // Hops still to be placed, in pattern order. Each round removes the
         // one it picks, so what is left is both the candidate set and the
