@@ -837,12 +837,19 @@ impl Hash for Value {
                 x.hash(state);
             }
             Self::Float(x) => {
-                2.hash(state);
                 let casted = *x as i64;
                 let diff = *x - casted as f64;
                 if diff == 0.0 {
+                    // integral: share the integer's tag so `1` and `1.0` hash
+                    // alike, since they compare equal
+                    2.hash(state);
                     casted.hash(state);
                 } else {
+                    // non-integral: cannot equal any integer, so it gets its own
+                    // tag. Sharing the integer's tag collided, because the bits
+                    // of a small subnormal are a small integer: `5e-324` has bit
+                    // pattern 1 and hashed identically to `Int(1)`
+                    15.hash(state);
                     x.to_bits().hash(state);
                 }
             }
