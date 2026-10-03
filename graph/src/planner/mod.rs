@@ -1782,6 +1782,36 @@ impl Planner {
                 };
                 (base, has_bound, unfiltered)
             });
+            // Past the first hop, a fixed-length self-loop on a node nothing
+            // has bound yet could only scan that node again and cross it with
+            // the hops before it (the var-length hop that reaches it was
+            // sorted later). Move it to just after the first later hop that
+            // binds the node, so it becomes an ExpandInto on the bound node.
+            let mut i = 1;
+            while i < sorted_rels.len() {
+                let r = &sorted_rels[i];
+                let node = (r.from.alias.id, r.from.alias.scope_id);
+                let touches = |x: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>| {
+                    [&x.from, &x.to]
+                        .iter()
+                        .any(|n| (n.alias.id, n.alias.scope_id) == node)
+                };
+                let unbound_fixed_loop = r.from.alias.id == r.to.alias.id
+                    && r.min_hops.is_none()
+                    && r.all_shortest_paths == AllShortestPaths::No
+                    && !self.visited.contains(&node)
+                    && !sorted_rels[..i].iter().any(touches);
+                if unbound_fixed_loop
+                    && let Some(j) = sorted_rels[i + 1..]
+                        .iter()
+                        .position(|x| x.from.alias.id != x.to.alias.id && touches(x))
+                {
+                    let r = sorted_rels.remove(i);
+                    sorted_rels.insert(i + j + 1, r);
+                    continue;
+                }
+                i += 1;
+            }
             let mut iter = sorted_rels.iter();
             let Some(relationship) = iter.next() else {
                 // Node-only component (no relationships).
@@ -2127,16 +2157,23 @@ impl Planner {
                         }
                         ei
                     } else {
+                        // The node is not bound yet: scan it once per row of
+                        // the hops planned so far. `ExpandInto` reads only its
+                        // first child, so the scan has to sit on top of `res`
+                        // rather than beside it.
                         let attr_filter = inline_attrs_to_filter(
                             &relationship.from.alias,
                             &relationship.from.attrs,
                         );
                         let mut scan = if relationship.from.clone().labels.is_empty() {
-                            tree!(IR::AllNodeScan(relationship.from.clone()))
+                            tree!(IR::AllNodeScan(relationship.from.clone()), res)
                         } else {
-                            tree!(IR::NodeByLabelScan {
-                                node: relationship.from.clone(),
-                            })
+                            tree!(
+                                IR::NodeByLabelScan {
+                                    node: relationship.from.clone(),
+                                },
+                                res
+                            )
                         };
                         if let Some(filter_expr) = attr_filter {
                             scan = tree!(IR::Filter(Arc::new(filter_expr)), scan);
@@ -2147,8 +2184,7 @@ impl Planner {
                                 emit_relationship: emit_rel(relationship),
                                 sibling_edges: sibling_edges.clone()
                             },
-                            scan,
-                            res
+                            scan
                         )
                     }
                 } else if self
