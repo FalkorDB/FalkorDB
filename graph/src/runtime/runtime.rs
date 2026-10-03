@@ -568,84 +568,62 @@ impl<'a> Runtime<'a> {
         builder.finish()
     }
 
-    /// Walk IR ancestors from `idx` upward to find the effective limit.
-    /// Returns `None` if a non-transparent operation is encountered before
-    /// a Limit node, or if no Limit ancestor exists.
-    /// Only transparent operators (Project, Skip) are safe to propagate
-    /// through — Sort is NOT transparent because it needs all rows.
-    fn effective_limit(
+    /// Downstream row budget for `idx`: how many of its rows the `Limit` above
+    /// it can use, walking the ancestors from the parent up. A `Limit n`
+    /// bounds the budget at `n`, every `Skip s` on the way adds `s`, and a 1:1
+    /// `Project` passes it through. `CondTraverse`/`ExpandInto` map one row to
+    /// any number of rows, zero included, so they pass the budget only when
+    /// `through_traverse` is set. Anything else is a barrier (`None`).
+    fn row_budget(
         &self,
         idx: NodeIdx<Dyn<IR>>,
+        through_traverse: bool,
     ) -> Option<usize> {
+        let count = |expr: &QueryExpr<Variable>| match super::eval::ExprEval::from_runtime(self)
+            .eval(expr, expr.root().idx(), super::eval::NO_ROW, None)
+            .ok()?
+        {
+            Value::Int(n) if n >= 0 => Some(n as usize),
+            _ => None,
+        };
+        let mut skip = 0usize;
         let mut cur = idx;
         while let Some(parent) = self.plan.node(cur).parent() {
             match parent.data() {
-                IR::Limit(expr) => {
-                    let val = super::eval::ExprEval::from_runtime(self)
-                        .eval(expr, expr.root().idx(), super::eval::NO_ROW, None)
-                        .ok()?;
-                    return match val {
-                        Value::Int(n) if n >= 0 => Some(n as usize),
-                        _ => None,
-                    };
-                }
-                // These operators pass rows through 1:1 or 1:N — limit still
-                // provides a useful early-stop hint through them.
-                IR::Project { .. }
-                | IR::Skip(_)
-                | IR::CondTraverse { .. }
-                | IR::ExpandInto { .. } => {}
-                // Everything else is a barrier.
-                _ => {
-                    return None;
-                }
+                IR::Limit(expr) => return count(expr).map(|n| n.saturating_add(skip)),
+                IR::Skip(expr) => skip = skip.saturating_add(count(expr)?),
+                IR::Project { .. } => {}
+                IR::CondTraverse { .. } | IR::ExpandInto { .. } if through_traverse => {}
+                _ => return None,
             }
             cur = parent.idx();
         }
         None
     }
 
-    /// Walk IR ancestors from `idx` upward to find the effective skip.
-    /// Returns 0 if a row-reducing or eager operation is encountered before
-    /// a Skip node, or if no Skip ancestor exists.
-    fn effective_skip(
-        &self,
-        idx: NodeIdx<Dyn<IR>>,
-    ) -> usize {
-        let mut cur = idx;
-        while let Some(parent) = self.plan.node(cur).parent() {
-            match parent.data() {
-                IR::Skip(expr) => {
-                    let val = super::eval::ExprEval::from_runtime(self)
-                        .eval(expr, expr.root().idx(), super::eval::NO_ROW, None)
-                        .ok();
-                    return match val {
-                        Some(Value::Int(n)) if n >= 0 => n as usize,
-                        _ => 0,
-                    };
-                }
-                // Safe pass-through operators.
-                IR::Project { .. } | IR::Limit(_) => {}
-                // Everything else is a barrier.
-                _ => {
-                    return 0;
-                }
-            }
-            cur = parent.idx();
-        }
-        0
-    }
-
-    /// Combined downstream row budget for `idx`: `effective_limit + effective_skip`,
-    /// or `None` when no usable `Limit` ancestor exists. Accounts for both limit
-    /// and skip so a capped operator produces enough rows for a downstream
-    /// `SkipOp` + `LimitOp` pipeline.
+    /// Row budget as a sizing *hint* for [`BatchedResultEmitter`]'s pack
+    /// ceiling: walks through `CondTraverse`/`ExpandInto` too. It may be
+    /// smaller than what the `Limit` needs (a traverse can drop rows), which is
+    /// harmless because the ceiling only sizes batches and grows back.
+    ///
+    /// [`BatchedResultEmitter`]: super::ops::batched_result_emitter::BatchedResultEmitter
     fn record_cap(
         &self,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Option<usize> {
-        self.effective_limit(idx)
-            .map(|l| l.saturating_add(self.effective_skip(idx)))
+        self.row_budget(idx, true)
+    }
+
+    /// Row budget sound as a *hard* stop, for operators that emit at most
+    /// this many rows and then end (`CondTraverse`, `ExpandInto`, Sort's
+    /// top-k): only `Skip` and `Project` sit between `idx` and the `Limit`, so
+    /// the first `limit + Σ skip` rows are exactly the ones that can reach the
+    /// result.
+    fn hard_record_cap(
+        &self,
+        idx: NodeIdx<Dyn<IR>>,
+    ) -> Option<usize> {
+        self.row_budget(idx, false)
     }
 
     /// Returns the IR child indices that must be built before `idx` itself.
@@ -863,16 +841,14 @@ impl<'a> Runtime<'a> {
                 )))
             }
             IR::Sort(trees) => {
-                let limit = self.effective_limit(idx);
-                let skip = self.effective_skip(idx);
+                let record_cap = self.hard_record_cap(idx);
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::Sort(SortOp::new(
                     self,
                     Box::new(child),
                     trees,
                     idx,
-                    limit,
-                    skip,
+                    record_cap,
                 )))
             }
             IR::Aggregate {
@@ -917,9 +893,10 @@ impl<'a> Runtime<'a> {
                 optional,
                 bind_relationship,
             } => {
-                // Account for both limit and skip so the traverse produces
-                // enough rows for a downstream SkipOp + LimitOp pipeline.
-                let record_cap = self.record_cap(idx);
+                // The hard stop needs a budget sound through everything up to
+                // the Limit; the emitter only sizes batches from the hint.
+                let pack_hint = self.record_cap(idx);
+                let record_cap = self.hard_record_cap(idx);
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::CondTraverse(CondTraverseOp::new(
                     self,
@@ -932,6 +909,7 @@ impl<'a> Runtime<'a> {
                     *optional,
                     *bind_relationship,
                     idx,
+                    pack_hint,
                     record_cap,
                 )))
             }
@@ -940,9 +918,8 @@ impl<'a> Runtime<'a> {
                 emit_relationship,
                 sibling_edges,
             } => {
-                // Account for both limit and skip so the traverse produces
-                // enough rows for a downstream SkipOp + LimitOp pipeline.
-                let record_cap = self.record_cap(idx);
+                let pack_hint = self.record_cap(idx);
+                let record_cap = self.hard_record_cap(idx);
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::ExpandInto(ExpandIntoOp::new(
                     self,
@@ -951,6 +928,7 @@ impl<'a> Runtime<'a> {
                     *emit_relationship,
                     sibling_edges,
                     idx,
+                    pack_hint,
                     record_cap,
                 )))
             }

@@ -734,7 +734,12 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
             }
             self.drain_pending_entry(&mut indices, &mut lanes, &mut count, should_expand);
         }
-        self.pack_ceiling = self.pack_ceiling.saturating_mul(2).min(BATCH_SIZE);
+        // Grow only after a batch was actually emitted: operators call this
+        // before seeding their first input, and that empty call must not
+        // spend the small first batch.
+        if count > 0 {
+            self.pack_ceiling = self.pack_ceiling.saturating_mul(2).min(BATCH_SIZE);
+        }
         Ok(self.finish_batch(&indices, lanes, count, should_expand))
     }
 
@@ -781,6 +786,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{batch::BatchBuilder, row::Row};
 
     /// A hinted cap sizes the first batch and then doubles back to
     /// [`BATCH_SIZE`], so a lowered ceiling can never pin the emitter to a tiny
@@ -795,11 +801,15 @@ mod tests {
         let mut e = BatchedResultEmitter::<NodeId>::new(0, Some(10));
         assert_eq!(e.pack_ceiling, 10, "first batch is sized to the hint");
 
-        // Each emit_lazy doubles the ceiling. Drive it directly: with no batch
-        // seeded, emit_lazy returns None but still advances the ceiling.
+        // Each emitted batch doubles the ceiling. One seeded row whose results
+        // never run out keeps every emit_lazy call packing a full ceiling.
+        e.seed(one_row_batch());
         let mut seen = vec![e.pack_ceiling];
         for _ in 0..12 {
-            let _ = e.emit_lazy(|_b, _row| Ok(None)).expect("no batch seeded");
+            let out = e
+                .emit_lazy(|_b, _row| Ok(Some(RowIter::many(Box::new((0..).map(NodeId::from))))))
+                .expect("emit");
+            assert_eq!(out.map(|b| b.active_len()), Some(seen[seen.len() - 1]));
             seen.push(e.pack_ceiling);
         }
         assert_eq!(&seen[..5], &[10, 20, 40, 80, 160]);
@@ -807,6 +817,30 @@ mod tests {
             e.pack_ceiling, BATCH_SIZE,
             "ceiling saturates at BATCH_SIZE and never exceeds it"
         );
+    }
+
+    /// Operators call `emit_lazy` before seeding their first input; that call
+    /// emits nothing and must not grow the ceiling, or the first real batch is
+    /// already twice the hint.
+    #[test]
+    fn empty_emit_keeps_the_ceiling() {
+        let mut e = BatchedResultEmitter::<NodeId>::new(0, Some(1));
+        for _ in 0..3 {
+            assert!(e.emit_lazy(|_b, _row| Ok(None)).expect("emit").is_none());
+            assert_eq!(e.pack_ceiling, 1);
+        }
+        e.seed(one_row_batch());
+        let out = e
+            .emit_lazy(|_b, _row| Ok(Some(RowIter::many(Box::new((0..).map(NodeId::from))))))
+            .expect("emit");
+        assert_eq!(out.map(|b| b.active_len()), Some(1));
+        assert_eq!(e.pack_ceiling, 2);
+    }
+
+    fn one_row_batch() -> Batch<'static> {
+        let mut builder = BatchBuilder::new();
+        builder.push_row(&Row::new());
+        builder.finish()
     }
 
     /// A cap at or above a full batch is not a cap at all, and must not switch

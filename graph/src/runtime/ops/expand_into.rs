@@ -70,6 +70,7 @@ pub struct ExpandIntoOp<'a> {
 }
 
 impl<'a> ExpandIntoOp<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
@@ -77,6 +78,7 @@ impl<'a> ExpandIntoOp<'a> {
         emit_relationship: bool,
         sibling_edges: &'a [u32],
         idx: NodeIdx<Dyn<IR>>,
+        pack_hint: Option<usize>,
         record_cap: Option<usize>,
     ) -> Self {
         // Synthetic multi-label self-loop (MATCH (a:A:B:C) lowered to
@@ -87,15 +89,12 @@ impl<'a> ExpandIntoOp<'a> {
             == relationship_pattern.to.alias.id
             && relationship_pattern.from.labels.is_empty()
             && !relationship_pattern.to.labels.is_empty();
+        // `pack_hint` only sizes the emitter's batches; the hard stop is
+        // `record_cap`, which no row-dropping operator sits above.
         let emitter: BatchedResultEmitter<'a, RelationshipId> = if synthetic_label {
-            // `None`, measured: capping made no difference (346,839 against
-            // 355,075 instructions on `LIMIT 10`). `ExpandInto` never packs a
-            // wasted batch because its input is already capped upstream — the
-            // scan and the traverse feeding it both lower their own ceilings —
-            // so there is nothing here for a cap to save.
-            BatchedResultEmitter::new_without_alias(None)
+            BatchedResultEmitter::new_without_alias(pack_hint)
         } else {
-            BatchedResultEmitter::new(relationship_pattern.alias.id, None)
+            BatchedResultEmitter::new(relationship_pattern.alias.id, pack_hint)
         };
         Self {
             runtime,
