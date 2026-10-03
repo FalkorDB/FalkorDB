@@ -842,3 +842,23 @@ class testGraphMergeFlow():
             # above would also be satisfied by the pattern being skipped
             actual = self.graph.query("MATCH ()-[r:C]->() RETURN count(r)")
             self.env.assertEqual(actual.result_set, [[1]])
+
+    def test39_equal_patterns_in_separate_merge_clauses(self):
+        # The created-pattern cache was shared by every MERGE clause, so a
+        # later clause with an equal pattern reused the earlier clause's
+        # bindings: its own variable stayed unbound, or (in a UNION branch)
+        # it aliased the other branch's node (#3038).
+        g = self.db.select_graph("merge_equal_patterns")
+        res = g.query("""MERGE (a:M {v: 1}) ON CREATE SET a.v = 2
+                                  MERGE (b:M {v: 1})
+                                  RETURN a.v, b.v""")
+        self.env.assertEqual(res.result_set, [[2, 1]])
+        self.env.assertEqual(res.nodes_created, 2)
+
+        g.delete()
+        res = g.query("""MERGE (a:U {v: 1}) ON CREATE SET a.v = 2 RETURN a.v AS v
+                                  UNION ALL
+                                  MERGE (b:U {v: 1}) RETURN b.v AS v""")
+        self.env.assertEqual(res.result_set, [[2], [1]])
+        self.env.assertEqual(res.nodes_created, 2)
+        g.delete()
