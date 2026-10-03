@@ -150,7 +150,7 @@ pub const GrB_INDEX_MAX: u64 = (1u64 << 60) - 1;
 /// all-ones, so declaring `GrB_INDEX_MAX` rows is one short and that write is
 /// dropped — silently, in release, which is the very failure this module exists
 /// to remove. Pinned by `the_top_row_key_of_a_block_is_writable`.
-const ME_DIM: u64 = GrB_INDEX_MAX + 1;
+pub(super) const ME_DIM: u64 = GrB_INDEX_MAX + 1;
 
 /// Column count `me` is created with: the widest declaration for which
 /// GraphBLAS still stores column indices in 32 bits rather than 64.
@@ -166,7 +166,7 @@ const ME_DIM: u64 = GrB_INDEX_MAX + 1;
 /// Rows stay at [`ME_DIM`]. Narrowing them saves a further 0.40 B/id — row
 /// arrays hold one entry per multi-edge *pair*, not per id — and would need
 /// [`BLOCK_SHIFT`] at 15, i.e. a block per 32,768 nodes per axis.
-const ME_NARROW_NCOLS: u64 = 1 << 31;
+pub(super) const ME_NARROW_NCOLS: u64 = 1 << 31;
 
 /// Bits of each node id carried in the compound row key. Everything above them
 /// selects a *block* instead (see [`compound_key`]).
@@ -1325,6 +1325,17 @@ impl Tensor {
         dst: u64,
     ) -> Option<u64> {
         self.eff_get(src, dst)
+    }
+
+    /// Fold `me`'s deltas into its base unconditionally, bypassing the fold
+    /// policy's size threshold. Diagnostic hook for #2430. Folds every live
+    /// block, since #2579 split `me` across them.
+    #[cfg(test)]
+    pub fn fold_me_for_test(&mut self) {
+        for (_, me) in &mut self.me {
+            me.flush();
+            me.wait();
+        }
     }
 
     #[cfg(test)]
