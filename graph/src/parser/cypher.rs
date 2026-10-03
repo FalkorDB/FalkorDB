@@ -2537,6 +2537,21 @@ impl<'a> Parser<'a> {
                     // None arithmetic operators
                     let mut res = res;
                     let mut height = height;
+                    // A bare i64::MIN here is the literal 2^63, which only
+                    // level 9 can accept, when it is negated. A postfix
+                    // operator would wrap it out of that check's sight, and
+                    // it binds tighter than `-`, so it overflows either way.
+                    if matches!(res.root().data(), ExprIR::Constant(Value::Int(i64::MIN)))
+                        && matches!(
+                            self.lexer.current()?,
+                            Token::LBrace | Token::Dot | Token::LBracket | Token::Colon
+                        )
+                    {
+                        return Err(format!(
+                            "Integer overflow '{}'",
+                            9_223_372_036_854_775_808_u64
+                        ));
+                    }
                     // Each postfix step wraps what came before, so a chain
                     // like `x[0][0][0]...` leans one level deeper per step
                     // while the brackets stay balanced and this stack stays
@@ -3737,6 +3752,32 @@ mod tests {
                 slow.as_ref().map(|v| format!("{v:?}")),
                 "parameter `{value}` differs between the fast and expression paths",
             );
+        }
+    }
+
+    // Regression (#2909): the overflow check for an unnegated 2^63 lived in the
+    // unary level only, so a postfix operator hid the literal from it.
+    #[test]
+    fn unnegated_min_literal_overflows_under_postfix() {
+        with_functions();
+        for query in [
+            "RETURN 9223372036854775808.x",
+            "RETURN 9223372036854775808[0]",
+            "RETURN 9223372036854775808[0..1]",
+            "RETURN 9223372036854775808{.x}",
+            "RETURN 9223372036854775808:L",
+            "RETURN -9223372036854775808.x",
+        ] {
+            let err = Parser::new(query).parse().expect_err(query);
+            assert!(err.contains("Integer overflow"), "{query}: {err}");
+        }
+        // Negated and parenthesised, it is i64::MIN like any other value.
+        for query in [
+            "RETURN (-9223372036854775808)[0]",
+            "RETURN -9223372036854775808",
+            "RETURN -0x08000000000000000",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "{query}");
         }
     }
 

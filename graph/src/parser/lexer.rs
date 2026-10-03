@@ -268,14 +268,6 @@ static KEYWORD_MAP: phf::Map<&'static str, Keyword> = phf::phf_map! {
     "UNION" => Keyword::Union,
 };
 
-const MIN_I64: [&str; 5] = [
-    "0b1000000000000000000000000000000000000000000000000000000000000000", // binary
-    "0o1000000000000000000000",                                           // octal
-    "01000000000000000000000",                                            // octal
-    "9223372036854775808",                                                // decimal
-    "0x8000000000000000",                                                 // hex
-];
-
 pub struct Lexer<'a> {
     pub str: &'a str,
     pos: usize,
@@ -319,7 +311,7 @@ impl<'a> Lexer<'a> {
         let mut chars = str[pos..].chars();
         let mut next = chars.next();
 
-        while let Some(' ' | '\t' | '\n' | '/') = next {
+        while let Some(' ' | '\t' | '\r' | '\n' | '/') = next {
             if next == Some('/') {
                 len += 1;
                 next = chars.next();
@@ -626,6 +618,16 @@ impl<'a> Lexer<'a> {
                         return Ok((Token::Integer(0), len));
                     }
                 },
+                Some('e' | 'E') => {
+                    // `0e5`: the exponent is read by the float loop below.
+                    is_float = true;
+                    is_e = true;
+                    len += 1;
+                    if let Some('-' | '+') = str[pos + len..].chars().next() {
+                        chars.next();
+                        len += 1;
+                    }
+                }
                 Some(_) | None => {
                     return Ok((Token::Integer(0), len));
                 }
@@ -728,15 +730,6 @@ impl<'a> Lexer<'a> {
             };
         }
 
-        if str.eq_ignore_ascii_case(MIN_I64[0])
-            || str.eq_ignore_ascii_case(MIN_I64[1])
-            || str.eq_ignore_ascii_case(MIN_I64[2])
-            || str.eq_ignore_ascii_case(MIN_I64[3])
-            || str.eq_ignore_ascii_case(MIN_I64[4])
-        {
-            return Ok(Token::Integer(i64::MIN));
-        }
-
         let mut offset = 0;
         if radix == 8 {
             if str.starts_with("0o") || str.starts_with("0O") {
@@ -748,6 +741,11 @@ impl<'a> Lexer<'a> {
             offset = 2;
         }
         let number_str = &str[offset..];
+        // 2^63, however it is spelled, is handed back as i64::MIN: it is only
+        // valid negated, and the parser rejects it anywhere else.
+        if u64::from_str_radix(number_str, radix) == Ok(1 << 63) {
+            return Ok(Token::Integer(i64::MIN));
+        }
         i64::from_str_radix(number_str, radix).map_or_else(
             |err| match err.kind() {
                 IntErrorKind::PosOverflow => Err(format!("Integer overflow '{number_str}'")),
@@ -869,6 +867,50 @@ mod tests {
         lexer.set_pos(5000);
         let msg = lexer.format_error("boom");
         assert!(msg.contains('é'));
+    }
+
+    // Regression (#2909): `\r` was not whitespace, so CRLF queries failed.
+    #[test]
+    fn carriage_return_is_whitespace() {
+        assert_eq!(
+            lex_all("1\r\n2\r3").unwrap(),
+            vec![Token::Integer(1), Token::Integer(2), Token::Integer(3)]
+        );
+    }
+
+    // Regression (#2909): a leading `0` returned before the exponent was
+    // seen, so `0e5` lexed as `0` followed by the identifier `e5`.
+    #[test]
+    fn zero_with_exponent_is_float() {
+        for input in ["0e5", "0E1", "0e+1", "0e-2"] {
+            assert_eq!(lex_all(input).unwrap(), vec![Token::Float(0.0)], "{input}");
+        }
+        assert!(lex_all("0e").is_err());
+    }
+
+    // Regression (#2909): 2^63 - the digits of i64::MIN - was recognised by
+    // five fixed spellings only, so e.g. a leading zero made it overflow.
+    #[test]
+    fn every_spelling_of_two_to_the_63_lexes_as_min() {
+        for input in [
+            "9223372036854775808",
+            "0x8000000000000000",
+            "0x08000000000000000",
+            "0X0008000000000000000",
+            "0o1000000000000000000000",
+            "0o01000000000000000000000",
+            "01000000000000000000000",
+            "0b1000000000000000000000000000000000000000000000000000000000000000",
+            "0b01000000000000000000000000000000000000000000000000000000000000000",
+        ] {
+            assert_eq!(
+                lex_all(input).unwrap(),
+                vec![Token::Integer(i64::MIN)],
+                "{input}"
+            );
+        }
+        assert!(lex_all("0x8000000000000001").is_err());
+        assert!(lex_all("9223372036854775809").is_err());
     }
 
     #[test]

@@ -1711,6 +1711,18 @@ def test_nested_list():
     assert res.result_set == [expected]
 
 
+def test_literal_lexing_matches_c():
+    # Lexer and literal cases that differed from the C implementation (#2909).
+    assert query("UNWIND [1, 2] AS x\r\nRETURN x").result_set == [[1], [2]]
+    assert query("RETURN 0e5, 0E1, 0e-2").result_set == [[0.0, 0.0, 0.0]]
+    assert query("RETURN -0x08000000000000000").result_set == [
+        [-9223372036854775808]
+    ]
+    query_exception("RETURN 9223372036854775808.x", "Integer overflow")
+    query_exception("RETURN 9223372036854775808[0]", "Integer overflow")
+    query_exception("RETURN '\\u+041'", "Invalid unicode escape")
+
+
 def test_deep_expression_nesting_is_rejected():
     # Parentheses that cannot collapse - each one wraps an operator - used to
     # build a tree deep enough to overflow the stack of the stages that walk
