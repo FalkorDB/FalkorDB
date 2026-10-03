@@ -450,6 +450,15 @@ class testTemporalDuration(FlowTestsBase):
         result = self.graph.query("RETURN toString(duration('P1M')) AS s")
         self.env.assertEqual(result.result_set[0], ["P1M"])
 
+        # huge week/day counts are an overflow error, not a silently wrapped
+        # duration (2635249153387078803 * 7 wraps to 5 in i64)
+        for s in ['P2635249153387078803W', 'P1W9223372036854775807D']:
+            try:
+                self.graph.query(f"RETURN duration('{s}')")
+                self.env.assertFalse(True)
+            except ResponseError as e:
+                self.env.assertIn("overflow", str(e))
+
     def test_month_end_duration_arithmetic(self):
         result = self.graph.query(
             """

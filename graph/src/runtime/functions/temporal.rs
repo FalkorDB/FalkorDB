@@ -373,8 +373,17 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
             match ch {
                 'Y' => years = n,
                 'M' => months = n,
-                'W' => days += n * 7,
-                'D' => days += n,
+                'W' => {
+                    days = n
+                        .checked_mul(7)
+                        .and_then(|w| days.checked_add(w))
+                        .ok_or_else(|| format!("Duration overflow: weeks={n}"))?;
+                }
+                'D' => {
+                    days = days
+                        .checked_add(n)
+                        .ok_or_else(|| format!("Duration overflow: days={n}"))?;
+                }
                 _ => return Err(format!("Unknown duration component: {ch}")),
             }
         }
