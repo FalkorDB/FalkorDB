@@ -377,6 +377,25 @@ impl IdSpace {
         }
     }
 
+    /// Refuse ids that are not live right now: free, or never allocated.
+    ///
+    /// The two halves above, together, for records that act on an entity
+    /// rather than create or delete it — an update, a label change, an edge
+    /// endpoint. Without it such a record lands on a recycled id, and the next
+    /// entity that reclaims the id is born carrying it.
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError::AlreadyRecycled`] or [`IdSpaceError::NeverCreated`].
+    pub(crate) fn refuse_not_live(
+        &self,
+        ids: &RoaringTreemap,
+        recycled: &RoaringTreemap,
+    ) -> Result<(), IdSpaceError> {
+        Self::refuse_recycled(ids, recycled)?;
+        self.refuse_undeletable(ids)
+    }
+
     /// Check that the batch left a possible id space behind.
     ///
     /// # Errors
