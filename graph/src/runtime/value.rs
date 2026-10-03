@@ -1024,9 +1024,12 @@ impl Value {
             (Self::Datetime(d), Self::Duration(dur)) | (Self::Duration(dur), Self::Datetime(d)) => {
                 Ok(Self::Datetime(add_duration_to_timestamp(d, dur)?))
             }
-            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => {
-                Ok(Self::Time(add_duration_to_timestamp(t, dur)?))
-            }
+            // A time has no date: keep only the time of day. Every duration
+            // encoding is whole days (years/months/days) plus a clock offset,
+            // so the time of day of `t + dur` is the openCypher result.
+            (Self::Time(t), Self::Duration(dur)) | (Self::Duration(dur), Self::Time(t)) => Ok(
+                Self::Time((t.rem_euclid(86400) + dur.rem_euclid(86400)).rem_euclid(86400)),
+            ),
             (a, b) => Err(format!(
                 "Unexpected types for add operator ({}, {})",
                 a.name(),
@@ -1069,9 +1072,9 @@ impl Sub for Value {
             (Self::Datetime(d), Self::Duration(dur)) => {
                 Ok(Self::Datetime(sub_duration_from_timestamp(d, dur)?))
             }
-            (Self::Time(t), Self::Duration(dur)) => {
-                Ok(Self::Time(sub_duration_from_timestamp(t, dur)?))
-            }
+            (Self::Time(t), Self::Duration(dur)) => Ok(Self::Time(
+                (t.rem_euclid(86400) - dur.rem_euclid(86400)).rem_euclid(86400),
+            )),
             // Duration - Date/Datetime/Time is not allowed
             (Self::Duration(_), Self::Date(_) | Self::Datetime(_) | Self::Time(_)) => {
                 Err("Type mismatch: cannot subtract a temporal value from a duration".to_string())
