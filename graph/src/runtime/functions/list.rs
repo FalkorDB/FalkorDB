@@ -27,10 +27,7 @@
 #![allow(clippy::cast_possible_wrap)]
 
 use super::{FnType, Functions, Type};
-use crate::runtime::{
-    runtime::Runtime,
-    value::{CompareValue, Value},
-};
+use crate::runtime::{runtime::Runtime, value::Value};
 use std::sync::Arc;
 use thin_vec::{ThinVec, thin_vec};
 
@@ -197,7 +194,7 @@ pub fn register(funcs: &mut Functions) {
                         _ => return Ok(Value::Null),
                     };
                     let mut sorted: ThinVec<Value> = vs.iter().cloned().collect();
-                    sorted.sort_by(|a, b| a.compare_value(b).0);
+                    sorted.sort_by(Value::sort_cmp);
                     if !asc {
                         sorted.reverse();
                     }
