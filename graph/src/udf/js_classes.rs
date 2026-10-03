@@ -57,13 +57,68 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use atomic_refcell::AtomicRefCell;
+use rquickjs::Constructor;
+use rquickjs::class::{JsClass, Readable, Trace, Tracer};
 use rquickjs::object::Property;
-use rquickjs::{Array, Ctx, Function, Object, Value as JsValue};
+use rquickjs::{Array, Class, Ctx, Function, JsLifetime, Object, Value as JsValue};
 
 use crate::graph::graph::{Graph, NodeId, RelationshipId};
 use crate::runtime::runtime::Runtime;
 use crate::runtime::value::Value;
 use crate::udf::type_convert;
+
+/// The graph entity a JS Node/Edge/Path object stands for.
+///
+/// Every entity object handed to JS is an instance of this Rust class, and
+/// [`entity_value`] reads the entity back from the class data. JS code cannot
+/// create an instance, so a plain object that merely copies the visible
+/// `__falkor_type` / `__falkor_*_id` properties stays a Map, and changing
+/// those properties on a real entity object has no effect.
+pub struct JsEntity(Value);
+
+unsafe impl<'js> JsLifetime<'js> for JsEntity {
+    type Changed<'to> = JsEntity;
+}
+
+impl<'js> Trace<'js> for JsEntity {
+    fn trace<'a>(
+        &self,
+        _tracer: Tracer<'a, 'js>,
+    ) {
+    }
+}
+
+impl<'js> JsClass<'js> for JsEntity {
+    const NAME: &'static str = "FalkorEntity";
+
+    type Mutable = Readable;
+
+    fn constructor(_ctx: &Ctx<'js>) -> rquickjs::Result<Option<Constructor<'js>>> {
+        Ok(None)
+    }
+}
+
+fn new_entity_object<'js>(
+    ctx: &Ctx<'js>,
+    entity: Value,
+) -> Result<Object<'js>, String> {
+    Class::instance(ctx.clone(), JsEntity(entity))
+        .map(|cls| Object::clone(&cls))
+        .map_err(|e| format!("JS object error: {e}"))
+}
+
+/// The entity behind a JS object created by [`create_js_node`],
+/// [`create_js_edge`] or [`create_js_path`], or `None` for any other object.
+pub fn entity_value(obj: &Object<'_>) -> Option<Value> {
+    Class::<JsEntity>::from_object(obj).map(|cls| cls.borrow().0.clone())
+}
+
+fn node_id_of(value: &JsValue<'_>) -> Option<u64> {
+    match value.as_object().and_then(entity_value) {
+        Some(Value::Node(id)) => Some(id.into()),
+        _ => None,
+    }
+}
 
 thread_local! {
     static CURRENT_GRAPH: RefCell<Option<Arc<AtomicRefCell<Graph>>>> = const { RefCell::new(None) };
@@ -131,10 +186,10 @@ pub fn create_js_node<'js>(
     node_id: u64,
     graph: &Arc<AtomicRefCell<Graph>>,
 ) -> Result<JsValue<'js>, String> {
-    let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
+    let nid = NodeId::from(node_id);
+    let obj = new_entity_object(ctx, Value::Node(nid))?;
 
     let g = graph.borrow();
-    let nid = NodeId::from(node_id);
 
     // Hidden type markers
     obj.set("__falkor_type", "node")
@@ -178,8 +233,8 @@ pub fn create_js_node<'js>(
 
     drop(g);
 
-    // .getNeighbors(config?) method. A single shared JS function reads the
-    // node id from `this.__falkor_node_id`; it is eval'd ONCE per context —
+    // .getNeighbors(config?) method. A single shared JS function passes
+    // `this` to the native helper; it is eval'd ONCE per context —
     // per-node `ctx.eval` string builds made QuickJS re-parse JS source for
     // every node/edge materialized, dominating UDF traversal profiles. The
     // native helper is captured in the closure (not looked up through a
@@ -192,7 +247,7 @@ pub fn create_js_node<'js>(
             let helper = Function::new(ctx.clone(), js_get_neighbors_entry)
                 .map_err(|e| format!("JS function error: {e}"))?;
             let factory: Function = ctx
-                .eval("(h) => function(config) { return h(this.__falkor_node_id, config); }")
+                .eval("(h) => function(config) { return h(this, config); }")
                 .map_err(|e| format!("JS eval error: {e}"))?;
             let f: Function = factory
                 .call((helper,))
@@ -218,9 +273,8 @@ pub fn create_js_edge<'js>(
     graph: &Arc<AtomicRefCell<Graph>>,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
-    let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
-
     let rid = RelationshipId::from(rel_id);
+    let obj = new_entity_object(ctx, Value::Relationship(rid))?;
 
     // Hidden type markers
     obj.set("__falkor_type", "edge")
@@ -292,7 +346,10 @@ pub fn create_js_path<'js>(
     graph: &Arc<AtomicRefCell<Graph>>,
     runtime: Option<&Runtime<'_>>,
 ) -> Result<JsValue<'js>, String> {
-    let obj = Object::new(ctx.clone()).map_err(|e| format!("JS object error: {e}"))?;
+    let obj = new_entity_object(
+        ctx,
+        Value::Path(Arc::new(path_values.iter().cloned().collect())),
+    )?;
 
     obj.set("__falkor_type", "path")
         .map_err(|e| format!("JS set error: {e}"))?;
@@ -343,15 +400,18 @@ pub fn create_js_path<'js>(
     Ok(obj.into_value())
 }
 
-/// Entry point for getNeighbors from JS. Takes (node_id, config?) as arguments.
+/// Entry point for getNeighbors from JS. Takes (this, config?) as arguments.
 /// This is a standalone function (no closure captures) so rquickjs lifetime inference works.
 #[allow(clippy::needless_pass_by_value)]
 fn js_get_neighbors_entry<'js>(
     ctx: Ctx<'js>,
-    node_id: u64,
+    this: JsValue<'js>,
     config: rquickjs::function::Opt<Object<'js>>,
 ) -> Result<JsValue<'js>, rquickjs::Error> {
-    match js_get_neighbors(&ctx, node_id, config.0.as_ref()) {
+    let result = node_id_of(&this)
+        .ok_or_else(|| "getNeighbors must be called on a node".to_string())
+        .and_then(|node_id| js_get_neighbors(&ctx, node_id, config.0.as_ref()));
+    match result {
         Ok(val) => Ok(val),
         Err(e) => {
             let msg = match rquickjs::String::from_str(ctx.clone(), &e) {
@@ -719,10 +779,8 @@ fn js_traverse_impl<'js>(
     // Collect source node IDs
     let mut source_ids: Vec<u64> = Vec::new();
     for i in 0..nodes.len() {
-        let node: Object = nodes.get(i).map_err(|e| format!("Array get error: {e}"))?;
-        let nid: u64 = node
-            .get("__falkor_node_id")
-            .map_err(|e| format!("Node ID error: {e}"))?;
+        let node: JsValue = nodes.get(i).map_err(|e| format!("Array get error: {e}"))?;
+        let nid = node_id_of(&node).ok_or("Node ID error: traverse expects an array of nodes")?;
         source_ids.push(nid);
     }
 
