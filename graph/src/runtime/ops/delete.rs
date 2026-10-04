@@ -254,9 +254,9 @@ impl Runtime<'_> {
                     let pending_rels = self
                         .pending
                         .borrow_mut()
-                        .remove_pending_relationships_for_node(id);
+                        .remove_pending_relationships_for_node(id, &mut self.g.borrow_mut())
+                        .map_err(|e| e.to_string())?;
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
-                        self.g.borrow_mut().return_relationship_id(rel_id);
                         let attrs = rel_attrs_to_map(&self.g.borrow(), attrs.unwrap_or_default());
                         self.deleted_relationships.borrow_mut().insert(
                             rel_id,
@@ -402,15 +402,18 @@ impl Runtime<'_> {
                     // Already pending deletion, nothing to do
                 } else if self.pending.borrow().is_node_created(id) {
                     // Node was created in this transaction but not yet committed.
-                    let (label_ids, attrs, pending_rels) =
-                        self.pending.borrow_mut().delete_pending_node(id);
-                    // Return the node ID and relationship IDs to the graph for reuse.
-                    self.g.borrow_mut().return_node_id(id);
+                    // Unwinding the pending node returns its id, and its cascaded
+                    // edges' ids, to the graph — one call, so neither half can
+                    // happen without the other.
+                    let (label_ids, attrs, pending_rels) = self
+                        .pending
+                        .borrow_mut()
+                        .delete_pending_node(id, &mut self.g.borrow_mut())
+                        .map_err(|e| e.to_string())?;
                     // Snapshot the cascaded relationships so expressions still
                     // holding them (e.g. `startNode(r)`) can be evaluated after
                     // the node — and with it the edge — is gone.
                     for (rel_id, src, dest, type_name, rel_attrs) in pending_rels {
-                        self.g.borrow_mut().return_relationship_id(rel_id);
                         let rel_attrs =
                             rel_attrs_to_map(&self.g.borrow(), rel_attrs.unwrap_or_default());
                         self.deleted_relationships.borrow_mut().insert(
@@ -446,9 +449,9 @@ impl Runtime<'_> {
                     let pending_rels = self
                         .pending
                         .borrow_mut()
-                        .remove_pending_relationships_for_node(id);
+                        .remove_pending_relationships_for_node(id, &mut self.g.borrow_mut())
+                        .map_err(|e| e.to_string())?;
                     for (rel_id, src, dest, type_name, attrs) in pending_rels {
-                        self.g.borrow_mut().return_relationship_id(rel_id);
                         let attrs = rel_attrs_to_map(&self.g.borrow(), attrs.unwrap_or_default());
                         self.deleted_relationships.borrow_mut().insert(
                             rel_id,
