@@ -45,16 +45,20 @@ fn run() -> Result<()> {
         Some("-h" | "--help" | "help") => print!("{USAGE}"),
         Some("lock") => {
             let root = lock::root_for(&std::env::current_dir()?)?;
-            match args.get(1).map(String::as_str) {
-                None => println!("{}", lock::write(&root)?),
-                Some("--check") => {
+            match &args[1..] {
+                [] => println!("{}", lock::write(&root)?),
+                [check] if check == "--check" => {
                     lock::check(&root)?;
                     println!("{} is up to date", lock::LOCK_RELPATH);
                 }
-                Some(other) => return Err(err!("unknown option `{other}`\n\n{USAGE}")),
+                rest => return Err(err!("unexpected `{}`\n\n{USAGE}", rest.join(" "))),
             }
         }
         Some("prune") => cmd_prune(&args[1..])?,
+        // Clears the vendored kernels and runs for a long time: never on a typo.
+        Some("prejit") if args.len() > 1 => {
+            return Err(err!("unexpected `{}`\n\n{USAGE}", args[1..].join(" ")));
+        }
         Some("prejit") => prejit::regenerate(&Request::from_env()?.root)?,
         _ => {
             let mut request = Request::from_env()?;
@@ -83,11 +87,12 @@ fn cmd_prune(args: &[String]) -> Result<()> {
             "--dry-run" => opts.dry_run = true,
             "--worktree" => opts.worktree = Some(request.root.clone()),
             "--days" => {
-                let days: u64 = it
+                let secs = it
                     .next()
-                    .and_then(|d| d.parse().ok())
-                    .ok_or_else(|| err!("--days needs a number"))?;
-                opts.keep_for = Duration::from_secs(days * 24 * 3600);
+                    .and_then(|d| d.parse::<u64>().ok())
+                    .and_then(|days| days.checked_mul(24 * 3600))
+                    .ok_or_else(|| err!("--days needs a number of days"))?;
+                opts.keep_for = Duration::from_secs(secs);
             }
             other => return Err(err!("unknown option `{other}`\n\n{USAGE}")),
         }

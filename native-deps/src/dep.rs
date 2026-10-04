@@ -45,3 +45,18 @@ impl std::fmt::Display for Dep {
         f.write_str(self.name())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Dep;
+
+    #[test]
+    fn names_round_trip_through_parse_and_display() {
+        for dep in Dep::ALL {
+            assert_eq!(Dep::parse(dep.name()).unwrap(), dep);
+            assert_eq!(dep.to_string(), dep.name());
+        }
+        assert_eq!(Dep::parse(" GraphBLAS ").unwrap(), Dep::GraphBlas);
+        assert!(Dep::parse("graphblas2").is_err());
+    }
+}

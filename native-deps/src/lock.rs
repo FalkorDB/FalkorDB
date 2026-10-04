@@ -161,6 +161,11 @@ impl LockFile {
 /// since this is the one command that can run before the lock file exists, the
 /// git toplevel.
 pub fn root_for(cwd: &Path) -> Result<PathBuf> {
+    // An explicit root is honoured even before it has a lock file -- that is
+    // exactly when `lock` is first run.
+    if let Some(explicit) = crate::util::env_opt("FALKORDB_REPO_ROOT") {
+        return Ok(PathBuf::from(explicit));
+    }
     crate::util::find_repo_root(cwd).or_else(|e| {
         capture("git", &["rev-parse", "--show-toplevel"], Some(cwd))
             .map(|t| PathBuf::from(t.trim()))
@@ -228,8 +233,10 @@ fn summarize(text: &str) -> String {
         let line = line.trim();
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
             section = name.to_owned();
-        } else if let Some(rev) = line.strip_prefix("rev = ") {
-            out.push(format!("  {section} {rev}"));
+        } else if let Some((key, rev)) = line.split_once('=')
+            && key.trim() == "rev"
+        {
+            out.push(format!("  {section} {}", rev.trim()));
         }
     }
     out.join("\n")
@@ -276,12 +283,19 @@ pub fn from_git(root: &Path) -> Result<LockFile> {
             .cloned()
             .ok_or_else(|| err!("submodule {path} has no url in .gitmodules"))?;
 
+        // `<mode> <object> <stage>\t<path>`. Only a gitlink (mode 160000) at
+        // stage 0 is a pin: a plain file has a blob id there, and a conflicted
+        // index lists one line per side.
         let listing = capture("git", &["ls-files", "-s", "--", path], Some(root))?;
-        let rev = listing
-            .split_whitespace()
-            .nth(1)
-            .ok_or_else(|| err!("no gitlink recorded for {path}; run `git add {path}` first"))?
-            .to_owned();
+        let index_entry: Vec<&str> = listing.split_whitespace().collect();
+        let rev = match index_entry.as_slice() {
+            ["160000", rev, "0", _] => (*rev).to_owned(),
+            [] => bail!("no gitlink recorded for {path}; run `git add {path}` first"),
+            _ => bail!(
+                "{path} is not a resolved submodule gitlink in the index: `{}`",
+                listing.trim()
+            ),
+        };
 
         let pin = fields.get("branch").cloned().unwrap_or_else(|| {
             capture(

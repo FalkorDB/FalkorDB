@@ -99,6 +99,13 @@ fn assert_sanitizer_agrees(request: &Request) {
              unset: the CLEAN RediSearch archive will be linked. Set \
              REDISEARCH_SAN={rust} if you meant to instrument it too."
         ),
+        // The opposite is never deliberate: an instrumented archive in an
+        // uninstrumented module cannot load without the sanitizer runtime.
+        (None, Some(dep)) => panic!(
+            "native-deps: REDISEARCH_SAN={dep} but the Rust side is not built with \
+             -Zsanitizer={dep}; the instrumented RediSearch archive would not load in \
+             an uninstrumented module."
+        ),
         (Some(rust), Some(dep)) if rust != dep => panic!(
             "native-deps: -Zsanitizer={rust} disagrees with REDISEARCH_SAN={dep}; \
              the RediSearch archive would not match the module's sanitizer."
