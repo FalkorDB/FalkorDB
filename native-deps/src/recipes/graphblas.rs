@@ -6,26 +6,115 @@
 //!    FactoryKernel families that FalkorDB query plans never hit, mirroring the
 //!    tweak in the C engine's vendored copy.
 //! 2. `build/graphblas/PreJIT/GB_jit_*.c` are harvested kernels (see
-//!    `gen_prejit.sh`). GraphBLAS's cmake globs `PreJIT/*.c` and bakes them into
+//!    `native-deps prejit`). GraphBLAS's cmake globs `PreJIT/*.c` and bakes them into
 //!    `libgraphblas.a`, giving factory-comparable speed for the operations we
 //!    actually execute without any runtime JIT compilation.
 //!
 //! Both are cache-key inputs, so a re-harvest or a patch edit produces a new
 //! key rather than a silently stale archive.
 //!
-//! Harvest mode (`FALKORDB_PREJIT_HARVEST=1`, set by `gen_prejit.sh`) skips step
-//! 2 so every op falls through to the JIT engine and writes a fresh kernel into
-//! `~/.SuiteSparse/GrBx.y.z/c/` for collection.
+//! Harvest mode (`FALKORDB_PREJIT_HARVEST=1`, set by `native-deps prejit`) skips
+//! step 2 so every op falls through to the JIT engine and writes a fresh kernel
+//! into the JIT cache, which [`harvest_prejit`] then copies back. Vendoring and
+//! harvesting are the two directions of one flow, so both live here.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::err;
 use crate::error::Result;
+use crate::hash::collect_files;
 use crate::recipes::{CMake, Ctx, SourceGuard, cleanup_build_dir, prepare_entry};
-use crate::util::{copy_file, is_prejit_kernel, log, run};
+use crate::util::{copy_file, env_opt, is_prejit_kernel, log, run};
+
+/// The vendored kernels, relative to the FalkorDB checkout.
+pub const PREJIT_DIR: &str = "build/graphblas/PreJIT";
+
+/// The GraphBLAS version the submodule is at, e.g. `10.5.0`, read from its
+/// cmake. v10.5.0 renamed `GraphBLAS_VERSION_*` to `GraphBLAS_VER_*`; accept
+/// both so a bump across that rename is not a silent failure.
+pub fn version(source: &Path) -> Result<String> {
+    let file = source.join("cmake_modules/GraphBLAS_version.cmake");
+    let text = fs::read_to_string(&file).map_err(|e| {
+        err!(
+            "cannot read {}: {e} - run `git submodule update --init deps/GraphBLAS`",
+            file.display()
+        )
+    })?;
+    let field = |part: &str| -> Result<String> {
+        ["VER", "VERSION"]
+            .iter()
+            .find_map(|prefix| {
+                let tag = format!("GraphBLAS_{prefix}_{part} ");
+                text.lines()
+                    .find(|l| l.trim_start().starts_with("set") && l.contains(&tag))
+                    .and_then(|l| l.split(&tag).nth(1))
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .map(str::to_owned)
+            })
+            .ok_or_else(|| err!("{}: no GraphBLAS_VER_{part}", file.display()))
+    };
+    Ok(format!(
+        "{}.{}.{}",
+        field("MAJOR")?,
+        field("MINOR")?,
+        field("SUB")?
+    ))
+}
+
+/// GraphBLAS's runtime JIT cache for `version`: `~/.SuiteSparse/GrB<version>`.
+pub fn jit_cache(version: &str) -> Result<PathBuf> {
+    let home = env_opt("HOME").ok_or_else(|| err!("HOME is not set"))?;
+    Ok(PathBuf::from(home).join(format!(".SuiteSparse/GrB{version}")))
+}
+
+/// Start a harvest from nothing: delete the vendored kernels and the JIT
+/// cache's compiled output, so what [`harvest_prejit`] later finds is exactly
+/// what the harvest run compiled.
+pub fn clear_prejit(
+    root: &Path,
+    jit_cache: &Path,
+) -> Result<()> {
+    let vendor = root.join(PREJIT_DIR);
+    fs::create_dir_all(&vendor)?;
+    for entry in fs::read_dir(&vendor)?.flatten() {
+        if is_prejit_kernel(&entry.path()) {
+            fs::remove_file(entry.path())?;
+        }
+    }
+    for sub in ["c", "lib", "tmp"] {
+        let _ = fs::remove_dir_all(jit_cache.join(sub));
+    }
+    Ok(())
+}
+
+/// Copy every kernel the JIT compiled into the vendored set -- the reverse of
+/// [`vendor_prejit`], with the same filter. Returns how many were copied.
+pub fn harvest_prejit(
+    root: &Path,
+    jit_cache: &Path,
+) -> Result<usize> {
+    let compiled = jit_cache.join("c");
+    let kernels: Vec<PathBuf> = collect_files(&compiled)
+        .map_err(|e| err!("cannot list {}: {e}", compiled.display()))?
+        .into_iter()
+        .filter(|p| is_prejit_kernel(p))
+        .collect();
+    if kernels.is_empty() {
+        return Err(err!(
+            "no kernels under {} - did the harvest build run with \
+             FALKORDB_PREJIT_HARVEST=1 and --features prejit_harvest?",
+            compiled.display()
+        ));
+    }
+    let vendor = root.join(PREJIT_DIR);
+    for kernel in &kernels {
+        copy_file(kernel, &vendor.join(kernel.file_name().unwrap_or_default()))?;
+    }
+    Ok(kernels.len())
+}
 
 /// Build GraphBLAS and install it into `entry`, which becomes a cmake prefix
 /// (`include/suitesparse`, `lib/libgraphblas.a`, `lib/cmake/GraphBLAS`).
@@ -107,7 +196,7 @@ fn vendor_prejit(
         return Ok(());
     }
 
-    let vendor_dir = ctx.root.join("build/graphblas/PreJIT");
+    let vendor_dir = ctx.root.join(PREJIT_DIR);
     let dest_dir = source.join("PreJIT");
     let mut kernels: Vec<_> = fs::read_dir(&vendor_dir)
         .into_iter()
@@ -120,7 +209,7 @@ fn vendor_prejit(
 
     if kernels.is_empty() {
         log(&format!(
-            "no PreJIT kernels in {} - run gen_prejit.sh to populate",
+            "no PreJIT kernels in {} - run `native-deps prejit` to populate",
             vendor_dir.display()
         ));
         return Ok(());

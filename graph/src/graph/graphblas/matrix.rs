@@ -153,10 +153,10 @@ pub fn init(
         //   * `--features prejit_harvest` — GxB_JIT_ON: full JIT including
         //     compile-on-demand. Selected at build time, never at runtime —
         //     prevents an env-var typo from accidentally enabling JIT in
-        //     a shipped binary. Used exclusively by gen_prejit.sh to
+        //     a shipped binary. Used exclusively by `native-deps prejit` to
         //     populate ~/.SuiteSparse/GrBx.y.z/c/ with the .c kernel
         //     sources we then check in as the next generation of vendored
-        //     PreJIT (see gen_prejit.sh harvest mode).
+        //     PreJIT (see native-deps/src/prejit.rs).
         #[cfg(feature = "prejit_harvest")]
         let (jit_level, jit_name) = (GxB_JIT_Control::GxB_JIT_ON, "JIT_ON (harvest)");
         #[cfg(not(feature = "prejit_harvest"))]

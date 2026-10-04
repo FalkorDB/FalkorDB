@@ -23,6 +23,7 @@ pub mod hash;
 pub mod key;
 pub mod local;
 pub mod lock;
+pub mod prejit;
 pub mod prune;
 pub mod recipes;
 #[cfg(test)]
@@ -51,7 +52,7 @@ pub struct Request {
     pub deps: Vec<Dep>,
     /// Sanitizer flavor for RediSearch, e.g. `Some("address")`.
     pub san: Option<String>,
-    /// Build a GraphBLAS with no PreJIT kernels, for `gen_prejit.sh`.
+    /// Build a GraphBLAS with no PreJIT kernels, for `native-deps prejit`.
     pub prejit_harvest: bool,
     /// Rebuild even on a cache hit.
     pub force: bool,

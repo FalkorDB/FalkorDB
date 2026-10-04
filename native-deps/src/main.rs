@@ -9,6 +9,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use native_deps::cache::Cache;
+use native_deps::prejit;
 use native_deps::prune::{self, Options};
 use native_deps::{Dep, Request, Result, current_entries, ensure, err, lock};
 
@@ -16,6 +17,8 @@ const USAGE: &str = "\
 USAGE:
     native-deps [DEP...]       build or reuse the deps (default: all)
     native-deps lock [--check] regenerate / verify deps/native-deps.lock
+    native-deps prejit         regenerate build/graphblas/PreJIT (Linux toolchain
+                               image only; runs every test suite)
     native-deps prune [--dry-run] [--days N] [--worktree]
                                remove cache entries this checkout does not use
                                and nothing used for N days (default 14); and
@@ -52,6 +55,7 @@ fn run() -> Result<()> {
             }
         }
         Some("prune") => cmd_prune(&args[1..])?,
+        Some("prejit") => prejit::regenerate(&Request::from_env()?.root)?,
         _ => {
             let mut request = Request::from_env()?;
             if !args.is_empty() {
