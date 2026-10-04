@@ -49,6 +49,21 @@ impl Ctx<'_> {
         }
         Ok(dir)
     }
+
+    /// Per-checkout state for a dep: the lock that serialises in-place builds
+    /// of its source, and the journal that undoes an interrupted one.
+    ///
+    /// It lives in the worktree, next to the checkout it protects, so deleting
+    /// a worktree deletes its state too -- and a Docker dep stage, which copies
+    /// only the cache into the final image, never ships it.
+    pub fn source_state(
+        &self,
+        name: &str,
+    ) -> Result<PathBuf> {
+        let dir = self.root.join("deps/.native-deps").join(name);
+        fs::create_dir_all(&dir).map_err(|e| err!("cannot create {}: {e}", dir.display()))?;
+        Ok(dir)
+    }
 }
 
 /// Restores source files that a build mutates in place.
@@ -58,18 +73,32 @@ impl Ctx<'_> {
 /// original bytes and writing them back on drop makes those edits idempotent and
 /// keeps `git status` clean -- and unlike `git checkout --`, it works in a
 /// Docker context where the submodule has no `.git`.
-#[derive(Default)]
+///
+/// Drop does not run when the build is killed (Ctrl-C reaches the build
+/// script's whole process group), so every snapshot is also written to an
+/// on-disk journal *before* the change it protects. [`SourceGuard::recover`]
+/// replays it; `ensure` calls that under the source lock, before it looks at
+/// the checkout, so an interrupted build is undone rather than mistaken for a
+/// local edit.
 pub struct SourceGuard {
+    journal: PathBuf,
     /// `None` means the file did not exist and should be deleted on restore.
     saved: Vec<(PathBuf, Option<Vec<u8>>)>,
     /// Directories we created and must remove again on restore.
     created_dirs: Vec<PathBuf>,
 }
 
+const JOURNAL_INDEX: &str = "index";
+
 impl SourceGuard {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(journal: PathBuf) -> Result<Self> {
+        fs::create_dir_all(&journal)
+            .map_err(|e| err!("cannot create {}: {e}", journal.display()))?;
+        Ok(Self {
+            journal,
+            saved: Vec::new(),
+            created_dirs: Vec::new(),
+        })
     }
 
     /// Remember `path`'s current state so it can be put back later. Recording
@@ -86,6 +115,14 @@ impl SourceGuard {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(err!("cannot snapshot {}: {e}", path.display())),
         };
+        match &content {
+            Some(bytes) => {
+                let copy = self.saved.len().to_string();
+                fs::write(self.journal.join(&copy), bytes)?;
+                self.record(&format!("F {copy} {}", path.display()))?;
+            }
+            None => self.record(&format!("A {}", path.display()))?,
+        }
         self.saved.push((path.to_path_buf(), content));
         Ok(())
     }
@@ -99,16 +136,63 @@ impl SourceGuard {
         if path.exists() {
             return Ok(());
         }
+        self.record(&format!("D {}", path.display()))?;
         fs::create_dir(path).map_err(|e| err!("cannot create {}: {e}", path.display()))?;
         self.created_dirs.push(path.to_path_buf());
         Ok(())
+    }
+
+    fn record(
+        &self,
+        line: &str,
+    ) -> Result<()> {
+        use std::io::Write as _;
+        let mut index = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.journal.join(JOURNAL_INDEX))?;
+        writeln!(index, "{line}")?;
+        Ok(())
+    }
+
+    /// Undo whatever a killed build left behind in `journal`, then delete the
+    /// journal. Returns how many changes were undone; 0 if there was nothing.
+    pub fn recover(journal: &Path) -> Result<usize> {
+        let Ok(index) = fs::read_to_string(journal.join(JOURNAL_INDEX)) else {
+            let _ = fs::remove_dir_all(journal);
+            return Ok(0);
+        };
+        let lines: Vec<&str> = index.lines().collect();
+        for line in lines.iter().rev() {
+            let (kind, rest) = line.split_once(' ').unwrap_or((line, ""));
+            match kind {
+                "F" => {
+                    let (copy, path) = rest
+                        .split_once(' ')
+                        .ok_or_else(|| err!("corrupt journal line `{line}`"))?;
+                    fs::copy(journal.join(copy), path)
+                        .map_err(|e| err!("cannot restore {path}: {e}"))?;
+                }
+                "A" => {
+                    let _ = fs::remove_file(rest);
+                }
+                "D" => {
+                    let _ = fs::remove_dir(rest);
+                }
+                _ => return Err(err!("corrupt journal line `{line}`")),
+            }
+        }
+        fs::remove_dir_all(journal)?;
+        Ok(lines.len())
     }
 }
 
 impl Drop for SourceGuard {
     fn drop(&mut self) {
+        let mut ok = true;
         for path in self.created_dirs.drain(..).rev() {
             if let Err(e) = fs::remove_dir(&path) {
+                ok = false;
                 log(&format!(
                     "WARNING: could not remove {}: {e}",
                     path.display()
@@ -119,6 +203,7 @@ impl Drop for SourceGuard {
             match content {
                 Some(bytes) => {
                     if let Err(e) = fs::write(&path, bytes) {
+                        ok = false;
                         log(&format!(
                             "WARNING: could not restore {}: {e}",
                             path.display()
@@ -129,6 +214,11 @@ impl Drop for SourceGuard {
                     let _ = fs::remove_file(&path);
                 }
             }
+        }
+        // Keep the journal when something could not be put back, so the next
+        // run's `recover` gets another go at it.
+        if ok {
+            let _ = fs::remove_dir_all(&self.journal);
         }
     }
 }
@@ -174,7 +264,7 @@ pub fn ensure_git_root(
 }
 
 /// True if `link` is a gitlink file whose `gitdir:` target actually exists.
-fn gitlink_resolves(link: &Path) -> bool {
+pub(crate) fn gitlink_resolves(link: &Path) -> bool {
     let Ok(text) = fs::read_to_string(link) else {
         return false;
     };
@@ -294,4 +384,53 @@ pub fn cleanup_build_dir(build: &Path) {
         return;
     }
     let _ = fs::remove_dir_all(build);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::SourceGuard;
+    use crate::testing::TempDir;
+
+    #[test]
+    fn a_killed_build_is_undone_by_recover() {
+        let tmp = TempDir::new("journal");
+        let journal = tmp.0.join("journal");
+        let patched = tmp.0.join("control.h");
+        let copied = tmp.0.join("kernel.c");
+        let marker = tmp.0.join(".git");
+        fs::write(&patched, "original").unwrap();
+
+        let mut guard = SourceGuard::new(journal.clone()).unwrap();
+        guard.snapshot(&patched).unwrap();
+        fs::write(&patched, "patched").unwrap();
+        guard.snapshot(&copied).unwrap();
+        fs::write(&copied, "kernel").unwrap();
+        guard.create_dir(&marker).unwrap();
+        // What SIGINT does: the destructor never runs.
+        std::mem::forget(guard);
+
+        assert_eq!(SourceGuard::recover(&journal).unwrap(), 3);
+        assert_eq!(fs::read_to_string(&patched).unwrap(), "original");
+        assert!(!copied.exists(), "a file the build added must go");
+        assert!(!marker.exists(), "a directory the build created must go");
+        assert!(!journal.exists(), "a replayed journal must be deleted");
+        assert_eq!(SourceGuard::recover(&journal).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_finished_build_leaves_no_journal() {
+        let tmp = TempDir::new("journal-ok");
+        let journal = tmp.0.join("journal");
+        let file = tmp.0.join("control.h");
+        fs::write(&file, "original").unwrap();
+        {
+            let mut guard = SourceGuard::new(journal.clone()).unwrap();
+            guard.snapshot(&file).unwrap();
+            fs::write(&file, "patched").unwrap();
+        }
+        assert_eq!(fs::read_to_string(&file).unwrap(), "original");
+        assert!(!journal.exists());
+    }
 }

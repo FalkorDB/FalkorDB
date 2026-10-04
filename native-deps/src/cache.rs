@@ -222,6 +222,14 @@ impl BuildLock {
                     return Ok(Self { path });
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if holder_is_dead(&path) {
+                        log(&format!(
+                            "build lock {} was left by a process that is gone - taking it over",
+                            path.display()
+                        ));
+                        let _ = fs::remove_file(&path);
+                        continue;
+                    }
                     if lock_age(&path).is_some_and(|age| age > timeout) {
                         log(&format!(
                             "stale build lock {} (older than {}s) - taking it over",
@@ -252,13 +260,71 @@ impl Drop for BuildLock {
     }
 }
 
+/// True only when the lock names a pid and that process is certainly not
+/// running. A Ctrl-C'd build never runs its destructors, so without this its
+/// lock would block every build of that dep until the age timeout.
+fn holder_is_dead(path: &Path) -> bool {
+    let Some(pid) = fs::read_to_string(path).ok().and_then(|text| {
+        text.lines()
+            .find_map(|l| l.strip_prefix("pid "))
+            .map(|p| p.trim().to_owned())
+    }) else {
+        return false;
+    };
+    // Linux answers through /proc. The slim Debian base of the build images
+    // has no `kill` binary at all (only the shell builtin), so spawning one
+    // there would fail and silently degrade to the age timeout.
+    let proc = Path::new("/proc");
+    if proc.join("self").exists() {
+        return !proc.join(&pid).exists();
+    }
+    // Elsewhere (macOS), `kill -0` delivers nothing; it only asks whether the
+    // pid exists. If kill cannot run, assume alive and fall back to the age.
+    std::process::Command::new("kill")
+        .args(["-0", &pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| !status.success())
+}
+
 fn lock_age(path: &Path) -> Option<Duration> {
     fs::metadata(path).ok()?.modified().ok()?.elapsed().ok()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Stamp;
+    use std::fs;
+    use std::process::Command;
+
+    use super::{Stamp, holder_is_dead};
+    use crate::testing::TempDir;
+
+    #[test]
+    fn a_lock_from_an_exited_process_is_dead() {
+        let tmp = TempDir::new("lock");
+        let lock = tmp.0.join("x.lock");
+        let mut child = Command::new("true").spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        fs::write(&lock, format!("pid {pid}\nsince 0\n")).unwrap();
+        assert!(holder_is_dead(&lock));
+    }
+
+    #[test]
+    fn a_lock_from_a_live_process_is_not_dead() {
+        let tmp = TempDir::new("lock-live");
+        let lock = tmp.0.join("x.lock");
+        fs::write(&lock, format!("pid {}\nsince 0\n", std::process::id())).unwrap();
+        assert!(!holder_is_dead(&lock));
+    }
+
+    #[test]
+    fn a_lock_without_a_pid_is_left_to_the_timeout() {
+        let tmp = TempDir::new("lock-nopid");
+        let lock = tmp.0.join("x.lock");
+        fs::write(&lock, "").unwrap();
+        assert!(!holder_is_dead(&lock));
+    }
 
     #[test]
     fn stamp_round_trips() {

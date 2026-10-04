@@ -34,7 +34,7 @@ pub fn build(
     let source = ctx.source("redisearch")?;
     prepare_entry(entry)?;
 
-    let mut guard = SourceGuard::new();
+    let mut guard = SourceGuard::new(ctx.source_state("redisearch")?.join("journal"))?;
     // `src/redisearch_rs/ffi/build.rs` resolves its include paths relative to
     // the nearest ancestor containing a `.git`, and panics if there is none.
     super::ensure_git_root(&source, &mut guard)?;

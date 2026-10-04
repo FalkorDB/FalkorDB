@@ -1,13 +1,7 @@
-//! Cache keys.
+//! Cache keys: a hash of everything that can change a dep's artifacts.
 //!
-//! Each dep's artifacts live at a path derived from *everything that can change
-//! their bytes*. Identical inputs give an identical path and an instant reuse;
-//! different inputs give a different path, so flavors (a sanitizer RediSearch, a
-//! PreJIT-harvest GraphBLAS) coexist instead of overwriting each other.
-//!
-//! The manifest is canonical -- sorted, newline-delimited `key=value` -- so it
-//! never depends on environment iteration order, and it is stored verbatim in
-//! the `.stamp` so `diff`ing two stamps says exactly which input moved.
+//! The manifest behind a key is sorted `key=value` lines, stored verbatim in
+//! the `.stamp`, so diffing two stamps names the input that moved.
 
 use std::collections::BTreeMap;
 
@@ -17,30 +11,19 @@ use crate::recipes::Ctx;
 use crate::sha256::sha256_hex;
 use crate::util::{hash_file, hash_tree, is_prejit_kernel};
 
-/// Hex characters of the SHA-256 digest kept as the key. 64 bits is ample for a
-/// per-developer artifact cache and keeps paths readable.
+/// Hex characters of the SHA-256 kept: 64 bits, readable paths.
 const KEY_LEN: usize = 16;
 
-/// Hash of this crate's own sources, embedded at compile time by build.rs.
-///
-/// The cmake flags live in Rust now, so flipping `-O3` to `-O2` has to produce a
-/// new key. Computing it at compile time (rather than by hashing `native-deps/
-/// src/**` at runtime) means the library works even when it is consumed as a
-/// build-dependency from a directory that no longer exists.
+/// Hash of the recipe sources, embedded by build.rs, so a flag change in Rust
+/// is a key change.
 pub const RECIPE_HASH: &str = env!("NATIVE_DEPS_RECIPE_HASH");
 
-/// A canonical `key=value` manifest.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Manifest {
     entries: BTreeMap<String, String>,
 }
 
 impl Manifest {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn set(
         &mut self,
         key: &str,
@@ -62,7 +45,6 @@ impl Manifest {
         out
     }
 
-    /// The cache key: a truncated SHA-256 of the rendered manifest.
     #[must_use]
     pub fn key(&self) -> String {
         let mut digest = sha256_hex(self.render().as_bytes());
@@ -71,14 +53,12 @@ impl Manifest {
     }
 }
 
-/// Everything outside the manifest that the key computation needs.
 impl Ctx<'_> {
-    /// Inputs shared by every dep.
     fn common(
         &self,
         dep: Dep,
     ) -> Result<Manifest> {
-        let mut m = Manifest::new();
+        let mut m = Manifest::default();
         m.set("dep", dep.name())
             .set("source", &self.lock.get(dep.name())?.rev)
             .set("recipe", RECIPE_HASH)
@@ -137,18 +117,18 @@ mod tests {
 
     #[test]
     fn render_is_sorted_and_stable() {
-        let mut a = Manifest::new();
+        let mut a = Manifest::default();
         a.set("zebra", "1").set("alpha", "2").set("mid", "3");
         assert_eq!(a.render(), "alpha=2\nmid=3\nzebra=1\n");
 
-        let mut b = Manifest::new();
+        let mut b = Manifest::default();
         b.set("mid", "3").set("zebra", "1").set("alpha", "2");
         assert_eq!(a.key(), b.key(), "insertion order must not affect the key");
     }
 
     #[test]
     fn key_changes_with_any_input() {
-        let mut base = Manifest::new();
+        let mut base = Manifest::default();
         base.set("dep", "graphblas").set("source", "aaaa");
         let mut bumped = base.clone();
         bumped.set("source", "bbbb");
@@ -161,7 +141,7 @@ mod tests {
 
     #[test]
     fn key_is_hex_and_fixed_width() {
-        let mut m = Manifest::new();
+        let mut m = Manifest::default();
         m.set("dep", "lagraph");
         let key = m.key();
         assert_eq!(key.len(), super::KEY_LEN);

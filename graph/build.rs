@@ -27,6 +27,11 @@ fn main() {
         // A key change moves the prefix, so watching the stamp is enough to make
         // cargo re-run this script whenever a dependency is rebuilt.
         println!("cargo:rerun-if-changed={}", resolved.stamp_path().display());
+        // A pinned dep cannot change under us, but one built from a local
+        // checkout changes whenever it is edited.
+        if let Some(source) = &resolved.local_source {
+            println!("cargo:rerun-if-changed={}", source.display());
+        }
     }
 
     assert_sanitizer_agrees(&request);

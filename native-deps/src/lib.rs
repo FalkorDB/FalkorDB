@@ -19,10 +19,13 @@ pub mod cache;
 pub mod dep;
 pub mod error;
 pub mod key;
+pub mod local;
 pub mod lock;
 pub mod recipes;
 /// Minimal vendored SHA-256 -- see the file header for why it is hand-rolled.
 pub mod sha256;
+#[cfg(test)]
+mod testing;
 pub mod toolchain;
 pub mod util;
 
@@ -36,7 +39,7 @@ pub use crate::lock::LockFile;
 pub use crate::toolchain::Toolchain;
 
 use crate::cache::BuildLock;
-use crate::recipes::Ctx;
+use crate::recipes::{Ctx, SourceGuard};
 use crate::util::{env_flag, env_opt, find_repo_root, log, now_secs};
 
 /// What to resolve, and how.
@@ -105,6 +108,9 @@ pub struct Resolved {
     pub key: String,
     /// Directory holding `include/` and `lib/`.
     pub prefix: PathBuf,
+    /// Set when this was built from a checkout that differs from its pin: the
+    /// source directory, so `graph/build.rs` can rebuild when it is edited.
+    pub local_source: Option<PathBuf>,
 }
 
 impl Resolved {
@@ -243,17 +249,60 @@ fn resolve_one(
             prefix.display()
         ));
         let key = Stamp::read(&prefix).map_or_else(|_| "override".to_owned(), |s| s.key);
-        return Ok(Resolved { dep, key, prefix });
+        return Ok(Resolved {
+            dep,
+            key,
+            prefix,
+            local_source: None,
+        });
     }
 
     let manifest = ctx.manifest(dep, graphblas_key)?;
     let key = manifest.key();
 
+    // The common case takes no lock: a checkout on its pin, already published.
+    if !req.force
+        && ctx.local_changes(dep.name())?.is_none()
+        && let Some(prefix) = cache.lookup(dep, &key)
+    {
+        log(&format!("{dep}: cache hit {}", prefix.display()));
+        return Ok(Resolved {
+            dep,
+            key,
+            prefix,
+            local_source: None,
+        });
+    }
+
+    // Past here we may build in place. The checkout may also be mid-way through
+    // another process's build -- an IDE's `cargo check` with a different key,
+    // say -- whose patches look exactly like a local edit, or carry the debris
+    // of a build that was killed. So serialise with everyone using this
+    // checkout, undo what a killed build left, and only then believe it.
+    let source = ctx.lock.source_dir(&req.root, dep.name())?;
+    let state = ctx.source_state(dep.name())?;
+    let _source_lock = BuildLock::acquire(state.join("lock"))?;
+    let undone = SourceGuard::recover(&state.join("journal"))?;
+    if undone > 0 {
+        log(&format!(
+            "{dep}: undid {undone} change(s) an interrupted build left in {}",
+            source.display()
+        ));
+    }
+    if let Some(local) = ctx.local_changes(dep.name())? {
+        return resolve_local(req, ctx, cache, dep, manifest, &local, resolved_so_far);
+    }
+
     if !req.force
         && let Some(prefix) = cache.lookup(dep, &key)
     {
         log(&format!("{dep}: cache hit {}", prefix.display()));
-        return Ok(Resolved { dep, key, prefix });
+        return Ok(Resolved {
+            dep,
+            key,
+            prefix,
+            local_source: None,
+        });
     }
 
     if req.offline {
@@ -278,35 +327,99 @@ fn resolve_one(
         && let Some(prefix) = cache.lookup(dep, &key)
     {
         log(&format!("{dep}: cache hit after wait {}", prefix.display()));
-        return Ok(Resolved { dep, key, prefix });
+        return Ok(Resolved {
+            dep,
+            key,
+            prefix,
+            local_source: None,
+        });
     }
 
+    build_entry(ctx, dep, &entry, &key, &manifest, resolved_so_far)?;
+    Ok(Resolved {
+        dep,
+        key,
+        prefix: entry,
+        local_source: None,
+    })
+}
+
+/// Entry names of local builds start with this; keys never do, being hex.
+pub const LOCAL_PREFIX: &str = "local-";
+
+/// Resolve a dep whose checkout differs from its pin.
+///
+/// It is built into one slot per worktree, `<dep>/local-<worktree>`, which no
+/// key lookup can ever find -- so it is never handed to another worktree, nor
+/// to this one once its checkout is back on the pin. The slot is reused while
+/// the local state is unchanged: `graph/build.rs` reruns whenever the stamp
+/// moves, so rebuilding unconditionally would rebuild on every `cargo build`.
+fn resolve_local(
+    req: &Request,
+    ctx: &Ctx<'_>,
+    cache: &Cache,
+    dep: Dep,
+    mut manifest: key::Manifest,
+    local: &local::LocalChanges,
+    resolved_so_far: &Resolution,
+) -> Result<Resolved> {
+    let source = ctx.lock.source_dir(&req.root, dep.name())?;
+    log(&format!(
+        "WARNING: {} {}; using a build for this worktree only, outside the shared cache",
+        source.display(),
+        local.reason
+    ));
+
+    manifest.set("local", &local.fingerprint);
+    let key = format!("{LOCAL_PREFIX}{}", manifest.key());
+    let worktree = &sha256::sha256_hex(req.root.to_string_lossy().as_bytes())[..12];
+    let entry = cache.entry_dir(dep, &format!("{LOCAL_PREFIX}{worktree}"));
+
+    if !req.force && Stamp::read(&entry).is_ok_and(|s| s.key == key) {
+        log(&format!("{dep}: local build unchanged {}", entry.display()));
+    } else {
+        let _guard = BuildLock::acquire(entry.with_extension("lock"))?;
+        build_entry(ctx, dep, &entry, &key, &manifest, resolved_so_far)?;
+    }
+    Ok(Resolved {
+        dep,
+        key,
+        prefix: entry,
+        local_source: Some(source),
+    })
+}
+
+/// Build `dep` into `entry` and stamp it.
+fn build_entry(
+    ctx: &Ctx<'_>,
+    dep: Dep,
+    entry: &Path,
+    key: &str,
+    manifest: &key::Manifest,
+    resolved_so_far: &Resolution,
+) -> Result<()> {
     log(&format!("{dep}: building into {}", entry.display()));
     match dep {
-        Dep::GraphBlas => recipes::graphblas::build(ctx, &entry)?,
+        Dep::GraphBlas => recipes::graphblas::build(ctx, entry)?,
         Dep::LaGraph => {
             let gb = resolved_so_far.get(Dep::GraphBlas)?;
-            recipes::lagraph::build(ctx, &entry, &gb.prefix)?;
+            recipes::lagraph::build(ctx, entry, &gb.prefix)?;
         }
-        Dep::RediSearch => recipes::redisearch::build(ctx, &entry)?,
+        Dep::RediSearch => recipes::redisearch::build(ctx, entry)?,
     }
 
     // Written last: its presence is what marks the entry complete, so an
     // interrupted build is never adopted.
     Stamp {
-        key: key.clone(),
+        key: key.to_owned(),
         dep: dep.name().to_owned(),
         built_at: now_secs(),
         manifest: manifest.render(),
     }
-    .write(&entry)?;
+    .write(entry)?;
 
     log(&format!("{dep}: built {key}"));
-    Ok(Resolved {
-        dep,
-        key,
-        prefix: entry,
-    })
+    Ok(())
 }
 
 fn override_prefix(dep: Dep) -> Option<PathBuf> {

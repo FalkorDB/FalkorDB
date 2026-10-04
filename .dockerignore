@@ -32,3 +32,6 @@ tests/flow/logs/
 *.profdata
 codecov.txt*
 .DS_Store
+
+# A stale restore journal names host paths; replaying it in a build would fail.
+deps/.native-deps/
