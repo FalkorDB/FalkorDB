@@ -9,7 +9,7 @@ fn main() {
     //     This makes libfalkordb.{so,dylib} self-contained for OpenMP and is
     //     the path CI/Docker takes (build/libomp.sh installs to /opt/libomp).
     //   * otherwise → fall back to dynamic `-lomp`, resolved against the
-    //     system search path (apt's libomp-22-dev on Linux, homebrew's
+    //     system search path (apt's libomp-23-dev on Linux, homebrew's
     //     /opt/homebrew/opt/llvm/lib/libomp.dylib on macOS).
     // The LIBOMP_PREFIX env var lets local devs point at a non-root install
     // (e.g. PREFIX=$HOME/libomp ./build/libomp.sh) without needing sudo.
@@ -28,6 +28,7 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
+        println!("cargo:rustc-link-search=/usr/lib/llvm-23/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
@@ -291,10 +292,11 @@ fn llvm_tool(
         return brew;
     }
     // Linux toolchain images install versioned binaries via apt.llvm.org
-    // (e.g. /usr/bin/llvm-objdump-22) and often lack the bare name. Prefer the
+    // (e.g. /usr/bin/llvm-objdump-23) and often lack the bare name. Prefer the
     // bare name if present, else the highest available versioned one.
     for cand in [
         bin.to_owned(),
+        format!("{bin}-23"),
         format!("{bin}-22"),
         format!("{bin}-21"),
         format!("{bin}-20"),

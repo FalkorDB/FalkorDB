@@ -287,7 +287,7 @@ class testEffects_01_UnreadableBuffer(_EffectsBase):
                 + cls._single_id_list(dst))
 
     def test08_an_id_past_the_end_of_the_id_space_is_refused(self):
-        # #2892. These ids used to be admitted by `record_created` and sized
+        # #2892. These ids used to be admitted by `IdSpace::create` and sized
         # into the matrices before `verify` could call them a hole: 2^60 - 1
         # and up failed an assert in `GrB_Matrix_new` and killed the server,
         # and u64::MAX - 1 wrapped `grow_cap` into an infinite loop. The
