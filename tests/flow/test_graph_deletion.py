@@ -205,6 +205,49 @@ class testGraphDeletionFlow(FlowTestsBase):
         self.env.assertEqual(actual_result.nodes_deleted, 10)
         self.env.assertEqual(actual_result.relationships_deleted, 0)
 
+    def test12_1_cancelled_entities_are_counted(self):
+        # An entity created and deleted in the same segment never reaches the
+        # graph, but the query did create and delete it. Its create, its delete
+        # and the properties it was created with used to vanish from the
+        # statistics; C counts all three.
+        # https://github.com/FalkorDB/FalkorDB/issues/2966
+        self.graph.delete()
+        res = self.graph.query("CREATE (a:L {v:1, w:2}) DELETE a")
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.properties_set, 2)
+
+        # the node's pending edge is cascaded with it
+        self.graph.delete()
+        res = self.graph.query("CREATE (a)-[:R {x:1}]->(b {y:2}) DELETE a")
+        self.env.assertEqual(res.nodes_created, 2)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.env.assertEqual(res.properties_set, 2)
+
+        # a committed node's pending edge, cascaded by deleting the node
+        self.graph.delete()
+        self.graph.query("CREATE (:A)")
+        res = self.graph.query("MATCH (a:A) CREATE (a)-[:R {x:1}]->(b) DELETE a")
+        self.env.assertEqual(res.nodes_created, 1)
+        self.env.assertEqual(res.nodes_deleted, 1)
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.env.assertEqual(res.properties_set, 1)
+
+        # a pending edge deleted directly was already counted; unchanged
+        self.graph.delete()
+        res = self.graph.query("CREATE ()-[r:R {x:1}]->() DELETE r")
+        self.env.assertEqual(res.nodes_created, 2)
+        self.env.assertEqual(res.relationships_created, 1)
+        self.env.assertEqual(res.relationships_deleted, 1)
+        self.env.assertEqual(res.properties_set, 1)
+
+        # nothing was left behind
+        res = self.graph.query("MATCH (n) RETURN count(n)")
+        self.env.assertEqual(res.result_set, [[2]])
+
     def test13_delete_path_elements(self):
         self.graph.query("CREATE ()-[:R]->()")
 
