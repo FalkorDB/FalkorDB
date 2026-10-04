@@ -94,25 +94,6 @@ pub fn log(msg: &str) {
     eprintln!("native-deps: {msg}");
 }
 
-/// Recursively copy `src` into `dst`, creating `dst` if needed.
-pub fn copy_dir(
-    src: &Path,
-    dst: &Path,
-) -> Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src).map_err(|e| err!("cannot list {}: {e}", src.display()))? {
-        let entry = entry?;
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_dir(&from, &to)?;
-        } else {
-            copy_file(&from, &to)?;
-        }
-    }
-    Ok(())
-}
-
 /// Copy a single file, creating the destination's parent directory.
 pub fn copy_file(
     src: &Path,

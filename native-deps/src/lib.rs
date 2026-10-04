@@ -54,15 +54,6 @@ pub struct Request {
     pub prejit_harvest: bool,
     /// Rebuild even on a cache hit.
     pub force: bool,
-    /// Turn a cache miss into an actionable error instead of a build.
-    ///
-    /// Nothing in this repo sets it: the images deliberately let a miss fall
-    /// through to a rebuild so that editing a recipe inside the toolchain
-    /// container still works. It exists for callers that want the opposite --
-    /// notably a CI step asserting that an image's prebuilt artifacts really do
-    /// match the checked-out sources, where a 12-minute silent rebuild is a bug
-    /// worth failing on rather than absorbing.
-    pub offline: bool,
 }
 
 impl Request {
@@ -75,7 +66,6 @@ impl Request {
             san: env_opt("REDISEARCH_SAN"),
             prejit_harvest: env_flag("FALKORDB_PREJIT_HARVEST"),
             force: env_flag("FALKORDB_NATIVE_DEPS_FORCE"),
-            offline: env_flag("FALKORDB_NATIVE_DEPS_OFFLINE"),
         })
     }
 
@@ -88,7 +78,6 @@ impl Request {
             "CXX",
             "FALKORDB_DEPS_CACHE",
             "FALKORDB_NATIVE_DEPS_FORCE",
-            "FALKORDB_NATIVE_DEPS_OFFLINE",
             "FALKORDB_NATIVE_DEPS_PREBUILT",
             "FALKORDB_PREJIT_HARVEST",
             "FALKORDB_REPO_ROOT",
@@ -169,8 +158,7 @@ impl Resolution {
 /// 2. A read-only prebuilt root from `FALKORDB_NATIVE_DEPS_PREBUILT` holding an
 ///    entry for this exact key (how the Docker images ship prebuilt deps).
 /// 3. The writable cache.
-/// 4. Build it -- unless `offline`, in which case the miss is reported with the
-///    manifest so the mismatching input is obvious.
+/// 4. Build it.
 pub fn ensure(req: &Request) -> Result<Resolution> {
     let lock = LockFile::load(&req.root)?;
     let toolchain = Toolchain::detect()?;
@@ -305,20 +293,6 @@ fn resolve_one(
         });
     }
 
-    if req.offline {
-        return Err(err!(
-            "{dep} is not prebuilt for key {key} and FALKORDB_NATIVE_DEPS_OFFLINE is set.\n\
-             manifest:\n{}\navailable entries:\n  {}\n\
-             hint: run `native-deps build {dep}` to produce it",
-            indent(&manifest.render()),
-            if cache.available(dep).is_empty() {
-                "(none)".to_owned()
-            } else {
-                cache.available(dep).join("\n  ")
-            }
-        ));
-    }
-
     let entry = cache.entry_dir(dep, &key);
     let _guard = BuildLock::acquire(cache.root.join(dep.name()).join(format!("{key}.lock")))?;
 
@@ -441,14 +415,6 @@ fn override_prefix(dep: Dep) -> Option<PathBuf> {
     ));
     Some(prefix)
 }
-
-fn indent(text: &str) -> String {
-    text.lines()
-        .map(|l| format!("  {l}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Paths whose contents feed the cache key, for `cargo:rerun-if-changed`.
 #[must_use]
 pub fn watch_paths(root: &Path) -> Vec<PathBuf> {

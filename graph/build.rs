@@ -10,6 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use native_deps::util::find_archives;
 use native_deps::{Dep, Request, Resolved};
 
 fn main() {
@@ -46,8 +47,6 @@ fn main() {
     link_redisearch(redisearch);
 }
 
-/// Search paths for libomp and the LLVM runtime, emitted before any `-l` so the
-/// linker can resolve whichever OpenMP flavour `native-deps` built against.
 /// Cross-check `REDISEARCH_SAN` against the sanitizer the Rust side is actually
 /// being built with.
 ///
@@ -108,6 +107,8 @@ fn assert_sanitizer_agrees(request: &Request) {
     }
 }
 
+/// Search paths for libomp and the LLVM runtime, emitted before any `-l` so the
+/// linker can resolve whichever OpenMP flavour `native-deps` built against.
 fn link_openmp_search_paths() {
     println!("cargo:rustc-link-search={}/lib", libomp_prefix());
 
@@ -352,27 +353,4 @@ fn link_static(archive: &Path) {
     let name = stem.strip_prefix("lib").unwrap_or(stem);
     println!("cargo:rustc-link-search=native={}", dir.display());
     println!("cargo:rustc-link-lib=static={name}");
-}
-
-/// Recursively collect every `.a` archive under `dir`.
-fn find_archives(dir: &Path) -> Vec<PathBuf> {
-    let mut archives = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        for entry in fs::read_dir(&d).into_iter().flatten().flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("a"))
-            {
-                archives.push(path);
-            }
-        }
-    }
-    // `read_dir` yields entries in arbitrary order; sort so the static-library
-    // link order is deterministic and the build is reproducible.
-    archives.sort();
-    archives
 }

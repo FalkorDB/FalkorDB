@@ -92,27 +92,6 @@ impl Cache {
             .chain(std::iter::once(self.entry_dir(dep, key)))
             .find(|d| d.join(STAMP_NAME).is_file())
     }
-
-    /// Every key present for `dep`, for diagnostics when a lookup misses.
-    #[must_use]
-    pub fn available(
-        &self,
-        dep: Dep,
-    ) -> Vec<String> {
-        let mut keys = Vec::new();
-        for root in self.prebuilt.iter().chain(std::iter::once(&self.root)) {
-            let dir = root.join(dep.name());
-            for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
-                if entry.path().join(STAMP_NAME).is_file()
-                    && let Some(name) = entry.file_name().to_str()
-                {
-                    keys.push(format!("{}/{name}", dir.display()));
-                }
-            }
-        }
-        keys.sort();
-        keys
-    }
 }
 
 /// The completion marker for a cache entry.

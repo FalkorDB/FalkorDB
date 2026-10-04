@@ -30,7 +30,6 @@ OPTIONS:
     --dep <name>     restrict to a dep; repeatable (default: all)
     --san <kind>     sanitizer flavor for RediSearch, e.g. `address`
     --force          rebuild even on a cache hit
-    --offline        fail instead of building on a cache miss
     --combined       (key) print one hash covering every selected dep
     --json           machine-readable output
     --root <dir>     FalkorDB checkout to operate on (default: discovered)
@@ -39,7 +38,6 @@ OPTIONS:
 ENVIRONMENT:
     FALKORDB_DEPS_CACHE             cache root (default $HOME/.cache/falkordb/native-deps)
     FALKORDB_NATIVE_DEPS_PREBUILT   colon-separated read-only cache roots, searched first
-    FALKORDB_NATIVE_DEPS_OFFLINE    same as --offline
     FALKORDB_NATIVE_DEPS_FORCE      same as --force
     FALKORDB_NATIVE_DEPS_KEEP_BUILD keep the scratch cmake tree for debugging
     FALKORDB_PREJIT_HARVEST         build a GraphBLAS with no PreJIT kernels
@@ -65,7 +63,6 @@ struct Args {
     deps: Vec<Dep>,
     san: Option<String>,
     force: bool,
-    offline: bool,
     combined: bool,
     json: bool,
     check: bool,
@@ -94,7 +91,6 @@ fn run() -> Result<()> {
             "--san" => args.san = Some(it.next().ok_or_else(|| err!("--san needs a value"))?),
             "--root" => args.root = Some(it.next().ok_or_else(|| err!("--root needs a value"))?),
             "--force" => args.force = true,
-            "--offline" => args.offline = true,
             "--combined" => args.combined = true,
             "--json" => args.json = true,
             "--check" => args.check = true,
@@ -133,7 +129,6 @@ fn request(args: &Args) -> Result<Request> {
         san: args.san.clone().or_else(|| env_opt("REDISEARCH_SAN")),
         prejit_harvest: env_flag("FALKORDB_PREJIT_HARVEST"),
         force: args.force || env_flag("FALKORDB_NATIVE_DEPS_FORCE"),
-        offline: args.offline || env_flag("FALKORDB_NATIVE_DEPS_OFFLINE"),
     })
 }
 
