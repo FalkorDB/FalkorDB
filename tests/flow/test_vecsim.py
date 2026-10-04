@@ -321,3 +321,26 @@ class testVecsim():
         # only the vector of the index's dimension is in the vector index
         res = query_node_vector_index(g, "WUser", "emb", 10, [1, 2]).result_set
         self.env.assertEqual([row[0].properties['name'] for row in res], ['good'])
+
+    def test11_vector_index_without_dimension_keeps_other_indexes(self):
+        # regression: a vector field created without a dimension has no vector
+        # params in RediSearch; adding a vector to it must not drop the entity
+        # from the label's other indexes.
+        g = Graph(self.conn, "vecsim_no_dim")
+
+        g.query("CREATE (:NUser {name: 'old', emb: vecf32([1,2,3])})")
+        create_node_range_index(g, "NUser", "name")
+        try:
+            # may be refused (no dimension); what matters is the range index
+            g.query("CREATE VECTOR INDEX FOR (n:NUser) ON (n.emb)")
+        except ResponseError:
+            pass
+        wait_for_indices_to_sync(g)
+
+        g.query("CREATE (:NUser {name: 'new', emb: vecf32([1,2,3])})")
+
+        for name in ['old', 'new']:
+            q = "MATCH (u:NUser) WHERE u.name = $name RETURN u.name"
+            self.env.assertIn("Node By Index Scan", str(g.explain(q, {'name': name})))
+            res = g.ro_query(q, {'name': name}).result_set
+            self.env.assertEqual(res, [[name]])
