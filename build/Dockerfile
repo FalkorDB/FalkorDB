@@ -59,7 +59,7 @@ FROM debian:trixie-slim
 # libomp build below auto-detects the exact `X.Y.Z` from the installed
 # clang-${CLANG_MAJOR} binary, guaranteeing the libomp.a ABI matches the
 # clang we just installed even if apt.llvm.org bumps mid-week.
-ARG CLANG_MAJOR=22
+ARG CLANG_MAJOR=23
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV DEBIAN_FRONTEND=noninteractive
@@ -95,7 +95,7 @@ RUN apt install -y git make cmake curl zlib1g zlib1g-dev \
 # RediSearch builds so it stays cached across most PRs.
 COPY build/libomp.sh /tmp/libomp.sh
 # Derive LLVMORG_VERSION from clang-${CLANG_MAJOR} --version (output line 1
-# looks like e.g. "Ubuntu clang version 22.1.6"). This makes the libomp.a
+# looks like e.g. "Ubuntu clang version 23.1.2"). This makes the libomp.a
 # we embed ABI-matched to the clang we ship, with no manual lock-step bump.
 RUN LLVMORG_VERSION=$(clang-${CLANG_MAJOR} --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) && \
     test -n "${LLVMORG_VERSION}" || { echo "ERROR: failed to detect LLVMORG_VERSION from clang-${CLANG_MAJOR}" >&2; exit 1; } && \
