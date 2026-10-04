@@ -349,23 +349,6 @@ pub enum ApplyError {
         created: u64,
     },
 
-    /// The graph's own id boundary for `kind` is not where the ids it was given
-    /// put it.
-    ///
-    /// The entity's count is an independent counter, so the same id applied twice
-    /// moves it twice while the set of ids does not change. This is the only
-    /// place anything checks that counter against a value not derived from it.
-    #[error(
-        "effects buffer left this replica's {kind} id boundary at {graph_bound}, but the \
-         ids it carried put it at {expected}. The two engines have diverged; the buffer \
-         was not applied."
-    )]
-    CountMiscounted {
-        kind: &'static str,
-        graph_bound: u64,
-        expected: u64,
-    },
-
     /// A schema id the local dictionary does not hold.
     ///
     /// The field is unsigned on the wire, so C's sentinels cannot arrive as
