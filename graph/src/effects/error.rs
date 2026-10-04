@@ -349,9 +349,6 @@ pub enum ApplyError {
         created: u64,
     },
 
-    /// The graph's own id boundary for `kind` is not where the ids it was given
-    /// put it.
-    ///
     /// A schema id the local dictionary does not hold.
     ///
     /// The field is unsigned on the wire, so C's sentinels cannot arrive as
