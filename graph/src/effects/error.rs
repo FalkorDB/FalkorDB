@@ -35,6 +35,27 @@ pub enum EncodeError {
         got: usize,
     },
 
+    /// A record whose `AttrValues` block is not one value per entity per
+    /// attribute.
+    ///
+    /// The block has no length on the wire: the reader takes `count ×
+    /// attr_ids.len()` values. Any other number shifts the record boundary, so
+    /// the reader either refuses the buffer or reads the next record from the
+    /// wrong place.
+    #[error("{got} attribute values for {entities} entities of {attrs} attributes each")]
+    RowShapeMismatch {
+        entities: usize,
+        attrs: usize,
+        got: usize,
+    },
+
+    /// A batchable record covering no entities.
+    ///
+    /// The reader refuses one at the header, so writing it produces a buffer
+    /// this engine cannot read back.
+    #[error("record with opcode {opcode} covers no entities")]
+    EmptyRecord { opcode: u32 },
+
     /// A `CREATE_INDEX` whose options do not match the field type they are
     /// gated by.
     ///
