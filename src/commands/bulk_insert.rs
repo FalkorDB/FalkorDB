@@ -829,18 +829,20 @@ pub fn graph_bulk_insert(
         // failed validation left the graph key it had just created registered and
         // empty, with no insert in it and nothing to remove it.
         //
-        // The index documents are published first and stay published if the
-        // commit is then refused. `BulkIndexDocs` has no inverse for the edge
-        // side — `commit_edge_index` wants src and dst per removed edge, which
-        // this type does not keep — and the alternative, publishing after the
-        // swap, moves a non-MVCC mutation to where concurrent readers can reach
-        // the graph. A refusal here is an engine fault, and for `BEGIN`, the one
-        // case that can leave documents behind for entities that were never
-        // committed, the discard below takes the whole key and its index with it.
+        // The version is validated *before* the documents are published, and
+        // then again by `commit`. The documents go to RediSearch, which is not
+        // MVCC and has no version to throw away: once published they survive a
+        // rolled-back fork, and `BulkIndexDocs` cannot take them back — the edge
+        // side of `commit_edge_index` wants src and dst per removed edge, which
+        // this type does not keep. Asking first costs one walk of a roaring
+        // bitmap on a path that has just parsed a whole payload, and is the only
+        // ordering where a refusal leaves nothing behind.
+        //
+        // Still published before the swap rather than after it: `g_arc` is the
+        // un-published fork here, and after the swap a concurrent reader can
+        // hold the same graph, where this `borrow_mut` would panic.
         let result = result.and_then(|()| {
-            // Every token succeeded, so the index documents are safe to publish. Do it
-            // while `g_arc` is still the un-published fork: after the swap it may be
-            // borrowed by concurrent readers.
+            g_arc.borrow().validate().map_err(|e| e.to_string())?;
             docs.publish(&mut g_arc.borrow_mut());
             tg.graph.commit(g_arc).map_err(|e| e.to_string())
         });
@@ -954,6 +956,15 @@ pub fn graph_bulk_insert(
                 // insert that later rolls back. The cost is a GIL hold proportional to
                 // the number of indexed rows — paid only when the graph actually has an
                 // index, since `docs` is otherwise empty.
+                //
+                // Validated before publishing, as on the inline path above and
+                // for the same reason: RediSearch is not MVCC, so a document
+                // published here outlives the fork that `commit` would refuse,
+                // and nothing can take it back.
+                if let Err(e) = g_arc.borrow().validate() {
+                    session.with_graph(|tg| tg.graph.rollback());
+                    break 'phase Err(e.to_string());
+                }
                 docs.publish(&mut g_arc.borrow_mut());
                 if let Err(e) = session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
