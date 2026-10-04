@@ -215,7 +215,9 @@ fn link_redisearch(redisearch: &Resolved) {
         main.display()
     );
     link_static(&main);
-    for archive in find_archives(&redisearch.lib().join("deps")) {
+    for archive in
+        find_archives(&redisearch.lib().join("deps")).unwrap_or_else(|e| panic!("native-deps: {e}"))
+    {
         link_static(&archive);
     }
 

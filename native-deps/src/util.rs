@@ -177,12 +177,13 @@ pub fn copy_file(
 }
 
 /// Recursively collect every `.a` archive under `dir`, sorted so link order is
-/// deterministic.
-pub fn find_archives(dir: &Path) -> Vec<PathBuf> {
-    let mut out = collect_files(dir).unwrap_or_default();
+/// deterministic. An unreadable directory is an error, not "no archives": an
+/// entry stamped from a partial listing would fail later, at link time.
+pub fn find_archives(dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut out = collect_files(dir).map_err(|e| err!("cannot list {}: {e}", dir.display()))?;
     out.retain(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("a")));
     out.sort();
-    out
+    Ok(out)
 }
 
 /// Parallelism for `cmake --build -j`. Honours `JOBS` for parity with the shell

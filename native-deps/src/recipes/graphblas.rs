@@ -85,7 +85,13 @@ pub fn clear_prejit(
         }
     }
     for sub in ["c", "lib", "tmp"] {
-        let _ = fs::remove_dir_all(jit_cache.join(sub));
+        // A leftover kernel would be harvested as if this run compiled it.
+        match fs::remove_dir_all(jit_cache.join(sub)) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(err!("cannot clear {}: {e}", jit_cache.join(sub).display()));
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
@@ -158,15 +164,17 @@ pub fn build(
         .args(ctx.toolchain.openmp.cmake_args())
         .pipeline()?;
 
-    cleanup_build_dir(&build_dir);
-
+    // Checked before the scratch tree goes: its cmake logs are what explain a
+    // missing archive.
     let archive = entry.join("lib/libgraphblas.a");
     if !archive.is_file() {
         return Err(err!(
-            "GraphBLAS build finished but {} is missing",
-            archive.display()
+            "GraphBLAS build finished but {} is missing (build tree kept at {})",
+            archive.display(),
+            build_dir.display()
         ));
     }
+    cleanup_build_dir(&build_dir);
     Ok(())
 }
 

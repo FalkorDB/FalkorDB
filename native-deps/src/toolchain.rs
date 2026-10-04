@@ -24,9 +24,19 @@ pub enum OpenMp {
 }
 
 impl OpenMp {
-    /// The key-visible discriminator. Deliberately excludes the prefix path:
-    /// what changes the artifacts is static-vs-dynamic, and the target triple
-    /// already distinguishes the Homebrew prefixes that differ by architecture.
+    /// The cache-key value. A static libomp's prefix is part of it: the build
+    /// compiles against that prefix's `omp.h` and links its `libomp.a`, so a
+    /// different `LIBOMP_PREFIX` is a different artifact. Homebrew's prefix is
+    /// not -- it only differs by architecture, which the target triple covers.
+    #[must_use]
+    pub fn key(&self) -> String {
+        match self {
+            Self::Static { prefix } => format!("static:{}", prefix.display()),
+            other => other.tag().to_owned(),
+        }
+    }
+
+    /// The flavor alone.
     #[must_use]
     pub const fn tag(&self) -> &'static str {
         match self {

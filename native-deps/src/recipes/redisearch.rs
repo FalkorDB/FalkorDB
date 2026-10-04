@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 
 use crate::err;
 use crate::error::Result;
-use crate::recipes::{Ctx, SourceGuard, prepare_entry};
+use crate::recipes::{Ctx, SourceGuard, cleanup_build_dir, prepare_entry};
 use crate::util::{capture_opt, copy_file, find_archives, log, run_isolated};
 
 const MAIN_ARCHIVE_NAMES: [&str; 2] = ["redisearch.a", "redisearch.so"];
@@ -32,7 +32,8 @@ pub fn build(
     entry: &Path,
 ) -> Result<()> {
     let source = ctx.source("redisearch")?;
-    prepare_entry(entry)?;
+    // build.sh builds in place, under bin/, so the scratch dir stays empty.
+    let scratch = prepare_entry(entry)?;
 
     let mut guard = SourceGuard::new(
         ctx.source_state("redisearch")?.join("journal"),
@@ -77,7 +78,9 @@ pub fn build(
     }
 
     run_isolated("./build.sh", &args, &source, &env)?;
-    collect(&source, entry, ctx.san.is_some())
+    collect(&source, entry, ctx.san.is_some())?;
+    cleanup_build_dir(&scratch);
+    Ok(())
 }
 
 /// VecSim promotes some warnings to errors; our toolchain is newer than the one
@@ -155,7 +158,7 @@ fn collect(
     copy_file(&main, &entry.join("lib/libredisearch.a"))?;
 
     let mut count = 0usize;
-    for archive in find_archives(&search_dir) {
+    for archive in find_archives(&search_dir)? {
         if archive == main {
             continue;
         }
@@ -165,11 +168,19 @@ fn collect(
     }
 
     // RediSearch's Rust crate is a separate archive one level up, under a
-    // profile subdir that changes with the flavor (`release`, `debug-asan`, ...),
-    // so find it by name.
-    let rs = find_archives(&bin.join("redisearch_rs"))
+    // profile subdir named for the flavor (`release`, `debug-asan`, ...). Both
+    // flavors' outputs coexist there, so match the profile, not just the name:
+    // sorted, `debug-asan` comes first and a clean build would publish it.
+    let rs_root = bin.join("redisearch_rs");
+    let rs = find_archives(&rs_root)?
         .into_iter()
-        .find(|p| p.file_name().and_then(|n| n.to_str()) == Some("libredisearch_rs.a"))
+        .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("libredisearch_rs.a"))
+        .find(|p| {
+            p.strip_prefix(&rs_root)
+                .ok()
+                .and_then(|rel| rel.components().next())
+                .is_some_and(|profile| is_asan(&profile.as_os_str().to_string_lossy()) == want_asan)
+        })
         .ok_or_else(|| {
             err!(
                 "libredisearch_rs.a missing under {}",
@@ -182,6 +193,11 @@ fn collect(
         "collected libredisearch.a + {count} dependency archives + libredisearch_rs.a"
     ));
     Ok(())
+}
+
+/// Whether a build.sh variant or profile name is the sanitizer flavor.
+fn is_asan(name: &str) -> bool {
+    name.contains("asan")
 }
 
 /// Choose `bin/<variant>/search-community` for the requested flavor.
@@ -207,7 +223,11 @@ fn pick_variant(
         .find(|p| {
             p.is_dir()
                 && MAIN_ARCHIVE_NAMES.iter().any(|n| p.join(n).is_file())
-                && p.to_string_lossy().contains("asan") == want_asan
+                // The variant dir's own name, not the whole path: a checkout
+                // under a path containing "asan" must not flip the flavor.
+                && p.parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|v| is_asan(&v.to_string_lossy()) == want_asan)
         })
         .cloned()
         .ok_or_else(|| {
@@ -226,4 +246,54 @@ fn pick_variant(
                     .join(", ")
             )
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::Path;
+
+    use super::collect;
+    use crate::testing::TempDir;
+
+    fn put(
+        path: &Path,
+        contents: &str,
+    ) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn each_flavor_collects_its_own_archives() {
+        // Both flavors' outputs side by side, as build.sh leaves them, under a
+        // checkout whose path itself contains "asan".
+        let tmp = TempDir::new("asan-in-the-path");
+        let source = tmp.0.join("deps/RediSearch");
+        let bin = source.join("bin");
+        put(
+            &bin.join("linux-x64-release/search-community/redisearch.a"),
+            "main-clean",
+        );
+        put(
+            &bin.join("linux-x64-debug-asan/search-community/redisearch.a"),
+            "main-asan",
+        );
+        put(
+            &bin.join("redisearch_rs/release/libredisearch_rs.a"),
+            "rs-clean",
+        );
+        put(
+            &bin.join("redisearch_rs/debug-asan/libredisearch_rs.a"),
+            "rs-asan",
+        );
+
+        for (want_asan, flavor) in [(false, "clean"), (true, "asan")] {
+            let entry = tmp.0.join(format!("entry-{flavor}"));
+            collect(&source, &entry, want_asan).unwrap();
+            let read = |p: &str| fs::read_to_string(entry.join(p)).unwrap();
+            assert_eq!(read("lib/libredisearch.a"), format!("main-{flavor}"));
+            assert_eq!(read("rs/libredisearch_rs.a"), format!("rs-{flavor}"));
+        }
+    }
 }

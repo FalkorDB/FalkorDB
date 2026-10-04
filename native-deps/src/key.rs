@@ -57,7 +57,7 @@ impl Ctx<'_> {
         m.set("target", &self.toolchain.target);
         m.set("cc", &self.toolchain.cc_version);
         m.set("cxx", &self.toolchain.cxx_version);
-        m.set("openmp", self.toolchain.openmp.tag());
+        m.set("openmp", self.toolchain.openmp.key());
         match dep {
             Dep::GraphBlas => {
                 let patch = self.root.join("build/graphblas/GB_control.patch");
