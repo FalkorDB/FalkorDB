@@ -118,11 +118,6 @@ pub enum IdSpaceError {
         created: u64,
     },
 
-    /// The graph's own boundary is not where the created ids put it — it
-    /// counted something twice, or not at all.
-    #[error("the graph's boundary is {graph_bound}, but the ids created put it at {expected}")]
-    Miscounted { graph_bound: u64, expected: u64 },
-
     /// Already free: it is in the recycle bin, so there is nothing to delete.
     #[error("{0} is already in the recycle bin")]
     AlreadyRecycled(u64),
@@ -653,12 +648,20 @@ impl IdSpace {
     ///
     /// # Errors
     ///
-    /// [`IdSpaceError::Hole`] if the created ids do not fill the range from the
-    /// entry boundary upward, and [`IdSpaceError::Miscounted`] if the graph's own
-    /// boundary disagrees with where those ids put it. See the module docs for
-    /// why both are needed.
+    /// [`IdSpaceError::Inconsistent`] if the count half of the invariant does
+    /// not hold, and [`IdSpaceError::Hole`] if the created ids do not fill the
+    /// range from the entry boundary upward.
+    ///
+    /// The count is asked through [`Self::checked`] rather than recomputed here.
+    /// It used to be recomputed, as a deliberate second opinion: the boundary
+    /// was a counter on `Graph` and this compared it against a number derived
+    /// from the ids. Once the boundary became `live + recycled.len()` on this
+    /// type, the two expressions were the same one written twice, and the
+    /// `Miscounted` arm could not fire for any state a constructor or a mutator
+    /// can produce — `restored` derives `entry_bound` from the same two fields,
+    /// and every mutator ends in `checked`. One invariant, asked once.
     pub fn verify(&self) -> Result<(), IdSpaceError> {
-        let graph_bound = self.bound();
+        self.checked()?;
         // What the batch has *handed out* at or above the boundary, which is
         // what the boundary has to account for. On the effects path that is the
         // created ids and nothing else. On the write path it also holds the
@@ -704,16 +707,6 @@ impl IdSpace {
             });
         }
 
-        let expected = self
-            .entry_bound
-            .checked_add(created)
-            .ok_or(IdSpaceError::IdOutOfRange(u64::MAX))?;
-        if graph_bound != expected {
-            return Err(IdSpaceError::Miscounted {
-                graph_bound,
-                expected,
-            });
-        }
         Ok(())
     }
 }
@@ -800,10 +793,11 @@ mod tests {
         // but the count says four ids were handed out where the batch recorded
         // three, and only comparing the two notices.
         //
-        // Built outright because no path reaches this state any more: `create`
-        // and `release` are the only things that move the count and the free
-        // set, and they move `taken` with them. The arm is kept for arithmetic
-        // inside this file — a backstop with no live caller.
+        // Built outright because no path reaches this state: `create` and
+        // `release` are the only things that move the count and the free set,
+        // and they move `taken` with them. Kept as the one test that `verify`
+        // still asks the count at all — it answers through `checked` now, so
+        // this is also what would fail if that delegation were dropped.
         let space = IdSpace::wedged(4, RoaringTreemap::new(), 0, range(0..3));
 
         let err = space
@@ -811,8 +805,12 @@ mod tests {
             .expect_err("four ids counted, three recorded");
         assert_eq!(
             err,
-            IdSpaceError::Miscounted {
-                graph_bound: 4,
+            IdSpaceError::Inconsistent {
+                live: 4,
+                recycled: 0,
+                bound: 4,
+                entry_bound: 0,
+                taken: 3,
                 expected: 3,
             }
         );

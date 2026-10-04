@@ -136,14 +136,6 @@ fn id_space_error_map(
             highest,
             created,
         },
-        IdSpaceError::Miscounted {
-            graph_bound,
-            expected,
-        } => ApplyError::CountMiscounted {
-            kind,
-            graph_bound,
-            expected,
-        },
         IdSpaceError::IdOutOfRange(id) => ApplyError::IdPastEndOfSpace { kind, id },
         // Not a divergence and not a claim about the buffer: the replica's own
         // id space contradicts itself, so the buffer is refused because nothing
