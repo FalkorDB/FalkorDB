@@ -16,13 +16,12 @@
 //! wipes it and starts over. An `O_EXCL` lock file keeps two worktrees from
 //! building the same dep at the same time; the loser waits and then gets a hit.
 
-use std::fs;
+use std::fs::{self, TryLockError};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use crate::dep::Dep;
 use crate::error::Result;
-use crate::util::{env_opt, log, now_secs};
+use crate::util::{env_opt, log};
 use crate::{bail, err};
 
 pub const STAMP_NAME: &str = ".stamp";
@@ -32,7 +31,6 @@ pub const STAMP_NAME: &str = ".stamp";
 /// every `cargo build`.
 pub const USED_NAME: &str = ".used";
 const MANIFEST_SEPARATOR: &str = "--- manifest ---";
-const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 90 * 60;
 
 /// Where artifacts are looked up and written.
 #[derive(Debug, Clone)]
@@ -178,10 +176,16 @@ impl Stamp {
     }
 }
 
-/// An `O_EXCL` build lock. Released on drop, including on unwind.
+/// An exclusive build lock: a kernel advisory lock (`flock`) on a lock file.
+///
+/// The kernel drops it when the holder exits, however it exits, so a killed
+/// build can never leave a lock behind and nothing has to guess whether a
+/// holder is still alive. The lock file itself is never deleted: unlinking a
+/// path another process may be about to lock would let two processes hold
+/// "the" lock at once.
 #[derive(Debug)]
 pub struct BuildLock {
-    path: PathBuf,
+    _file: fs::File,
 }
 
 impl BuildLock {
@@ -193,137 +197,56 @@ impl BuildLock {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let timeout = lock_timeout();
-
-        let mut announced = false;
-        loop {
-            match fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-            {
-                Ok(mut f) => {
-                    use std::io::Write as _;
-                    let _ = writeln!(f, "pid {}\nsince {}", std::process::id(), now_secs());
-                    return Ok(Self { path });
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if holder_is_dead(&path) {
-                        log(&format!(
-                            "build lock {} was left by a process that is gone - taking it over",
-                            path.display()
-                        ));
-                        let _ = fs::remove_file(&path);
-                        continue;
-                    }
-                    if lock_age(&path).is_some_and(|age| age > timeout) {
-                        log(&format!(
-                            "stale build lock {} (older than {}s) - taking it over",
-                            path.display(),
-                            timeout.as_secs()
-                        ));
-                        let _ = fs::remove_file(&path);
-                        continue;
-                    }
-                    if !announced {
-                        log(&format!(
-                            "waiting for another build holding {}",
-                            path.display()
-                        ));
-                        announced = true;
-                    }
-                    std::thread::sleep(Duration::from_secs(2));
-                }
-                Err(e) => bail!("cannot create lock {}: {e}", path.display()),
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| err!("cannot open lock {}: {e}", path.display()))?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                log(&format!(
+                    "waiting for another build holding {}",
+                    path.display()
+                ));
+                file.lock()
+                    .map_err(|e| err!("cannot lock {}: {e}", path.display()))?;
             }
+            Err(TryLockError::Error(e)) => bail!("cannot lock {}: {e}", path.display()),
         }
+        Ok(Self { _file: file })
     }
 }
 
-impl Drop for BuildLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-/// True only when the lock names a pid and that process is certainly not
-/// running. A Ctrl-C'd build never runs its destructors, so without this its
-/// lock would block every build of that dep until the age timeout.
-/// A lock nobody will release: its holder is gone, or it has outlived the
-/// timeout.
-pub fn lock_is_stale(path: &Path) -> bool {
-    holder_is_dead(path) || lock_age(path).is_some_and(|age| age > lock_timeout())
-}
-
-fn lock_timeout() -> Duration {
-    Duration::from_secs(
-        env_opt("FALKORDB_NATIVE_DEPS_LOCK_TIMEOUT")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_LOCK_TIMEOUT_SECS),
-    )
-}
-
-fn holder_is_dead(path: &Path) -> bool {
-    let Some(pid) = fs::read_to_string(path).ok().and_then(|text| {
-        text.lines()
-            .find_map(|l| l.strip_prefix("pid "))
-            .map(|p| p.trim().to_owned())
-    }) else {
-        return false;
-    };
-    // Linux answers through /proc. The slim Debian base of the build images
-    // has no `kill` binary at all (only the shell builtin), so spawning one
-    // there would fail and silently degrade to the age timeout.
-    let proc = Path::new("/proc");
-    if proc.join("self").exists() {
-        return !proc.join(&pid).exists();
-    }
-    // Elsewhere (macOS), `kill -0` delivers nothing; it only asks whether the
-    // pid exists. If kill cannot run, assume alive and fall back to the age.
-    std::process::Command::new("kill")
-        .args(["-0", &pid])
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| !status.success())
-}
-
-fn lock_age(path: &Path) -> Option<Duration> {
-    fs::metadata(path).ok()?.modified().ok()?.elapsed().ok()
+/// True while some process holds the lock at `path`.
+#[must_use]
+pub fn is_locked(path: &Path) -> bool {
+    fs::File::open(path).is_ok_and(|f| matches!(f.try_lock(), Err(TryLockError::WouldBlock)))
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::process::Command;
-
-    use super::{Stamp, holder_is_dead};
+    use super::{BuildLock, Stamp, is_locked};
     use crate::testing::TempDir;
 
     #[test]
-    fn a_lock_from_an_exited_process_is_dead() {
+    fn a_lock_is_held_until_dropped() {
         let tmp = TempDir::new("lock");
-        let lock = tmp.0.join("x.lock");
-        let mut child = Command::new("true").spawn().unwrap();
-        let pid = child.id();
-        child.wait().unwrap();
-        fs::write(&lock, format!("pid {pid}\nsince 0\n")).unwrap();
-        assert!(holder_is_dead(&lock));
-    }
-
-    #[test]
-    fn a_lock_from_a_live_process_is_not_dead() {
-        let tmp = TempDir::new("lock-live");
-        let lock = tmp.0.join("x.lock");
-        fs::write(&lock, format!("pid {}\nsince 0\n", std::process::id())).unwrap();
-        assert!(!holder_is_dead(&lock));
-    }
-
-    #[test]
-    fn a_lock_without_a_pid_is_left_to_the_timeout() {
-        let tmp = TempDir::new("lock-nopid");
-        let lock = tmp.0.join("x.lock");
-        fs::write(&lock, "").unwrap();
-        assert!(!holder_is_dead(&lock));
+        let path = tmp.0.join("x.lock");
+        assert!(!is_locked(&path), "no file, no holder");
+        let lock = BuildLock::acquire(path.clone()).unwrap();
+        assert!(is_locked(&path));
+        drop(lock);
+        // Other tests in this process fork `git` concurrently, and a child
+        // forked just before the drop shares the descriptor until its exec --
+        // so release is prompt, not instant. Allow it a moment.
+        let released = (0..100).any(|_| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            !is_locked(&path)
+        });
+        assert!(released, "released on drop -- and on exit, by the kernel");
+        assert!(path.exists(), "the file stays; only the lock goes");
     }
 
     #[test]

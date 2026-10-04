@@ -8,8 +8,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use crate::cache::{Cache, STAMP_NAME, USED_NAME, lock_is_stale};
+use crate::cache::{Cache, STAMP_NAME, USED_NAME, is_locked};
 use crate::dep::Dep;
+use crate::err;
 use crate::error::Result;
 use crate::recipes::BUILD_DIR;
 
@@ -30,6 +31,8 @@ pub struct Removal {
     pub path: PathBuf,
     pub bytes: u64,
     pub reason: &'static str,
+    /// Set when the removal was attempted and failed.
+    pub error: Option<String>,
 }
 
 /// Decide what to remove from `cache`, and remove it unless `dry_run`.
@@ -40,7 +43,13 @@ pub fn prune(
     let mut out = Vec::new();
     for dep in Dep::ALL {
         let dir = cache.root.join(dep.name());
-        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(err!("cannot list {}: {e}", dir.display())),
+        };
+        for entry in entries {
+            let entry = entry?;
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().into_owned();
             if is_being_built(&path) {
@@ -52,6 +61,7 @@ pub fn prune(
                     bytes: size_of(&path),
                     path,
                     reason,
+                    error: None,
                 });
             } else if path.join(BUILD_DIR).is_dir() {
                 // A finished entry keeps nothing in its scratch build tree.
@@ -60,34 +70,37 @@ pub fn prune(
                     bytes: size_of(&scratch),
                     path: scratch,
                     reason: "leftover build tree",
+                    error: None,
                 });
             }
         }
     }
     if let Some(root) = &opts.worktree {
         let bin = root.join("deps/RediSearch/bin");
-        if bin.is_dir() {
+        // A RediSearch build writes bin/ while holding its source lock.
+        let busy = is_locked(
+            &root
+                .join(crate::recipes::SOURCE_STATE_DIR)
+                .join("redisearch/lock"),
+        );
+        if bin.is_dir() && !busy {
             out.push(Removal {
                 bytes: size_of(&bin),
                 path: bin,
                 reason: "in-tree RediSearch build output (--worktree)",
+                error: None,
             });
         }
     }
 
     if !opts.dry_run {
-        for r in &out {
+        for r in &mut out {
             let removed = if r.path.is_dir() {
                 fs::remove_dir_all(&r.path)
             } else {
                 fs::remove_file(&r.path)
             };
-            if let Err(e) = removed {
-                crate::util::log(&format!(
-                    "WARNING: could not remove {}: {e}",
-                    r.path.display()
-                ));
-            }
+            r.error = removed.err().map(|e| e.to_string());
         }
     }
     Ok(out)
@@ -99,9 +112,8 @@ fn verdict(
     name: &str,
     opts: &Options,
 ) -> Option<&'static str> {
-    if name.ends_with(".lock") {
-        return lock_is_stale(path).then_some("stale lock");
-    }
+    // Lock files stay: deleting one another process may be about to lock would
+    // let two builds hold it at once. They are empty.
     if !path.is_dir() {
         return None;
     }
@@ -111,7 +123,8 @@ fn verdict(
     if opts.keep_keys.contains(name) {
         return None;
     }
-    let idle = last_used(path).and_then(|t| SystemTime::now().duration_since(t).ok());
+    // A timestamp in the future (clock skew) reads as just used, not as old.
+    let idle = last_used(path).map(|t| SystemTime::now().duration_since(t).unwrap_or_default());
     match idle {
         Some(idle) if idle < opts.keep_for => None,
         _ if name.starts_with(crate::LOCAL_PREFIX) => Some("unused local build"),
@@ -120,8 +133,7 @@ fn verdict(
 }
 
 fn is_being_built(entry: &Path) -> bool {
-    let lock = entry.with_extension("lock");
-    entry.is_dir() && lock.exists() && !lock_is_stale(&lock)
+    entry.is_dir() && is_locked(&entry.with_extension("lock"))
 }
 
 /// When an entry was last resolved: `.used` if present, else the build time.
@@ -198,11 +210,7 @@ mod tests {
         entry(&gb.join("halfbuilt0000000"), false, DAY);
         entry(&gb.join("local-0123456789ab"), true, 30 * DAY);
         fs::create_dir_all(gb.join("recent0000000000/.build")).unwrap();
-        fs::write(
-            gb.join("dead0000000000000.lock"),
-            "pid 999999999\nsince 0\n",
-        )
-        .unwrap();
+        fs::write(gb.join("old0000000000000.lock"), "").unwrap();
         let cache = Cache {
             root: tmp.0.clone(),
             prebuilt: Vec::new(),
@@ -211,7 +219,7 @@ mod tests {
         let mut dry = opts(&["current0000000000"]);
         dry.dry_run = true;
         let planned = prune(&cache, &dry).unwrap();
-        assert_eq!(planned.len(), 5, "{planned:#?}");
+        assert_eq!(planned.len(), 4, "{planned:#?}");
         assert!(
             gb.join("old0000000000000").exists(),
             "dry run removed something"
@@ -224,9 +232,13 @@ mod tests {
             .collect();
         assert_eq!(
             left,
-            ["current0000000000", "recent0000000000"]
-                .map(String::from)
-                .into(),
+            [
+                "current0000000000",
+                "old0000000000000.lock",
+                "recent0000000000"
+            ]
+            .map(String::from)
+            .into(),
         );
         assert!(!gb.join("recent0000000000/.build").exists());
         assert!(gb.join("recent0000000000/lib/libx.a").exists());
@@ -239,11 +251,7 @@ mod tests {
         entry(&gb.join("building00000000"), false, DAY);
         // Mid-build an entry has no stamp yet, but does have its scratch tree.
         fs::create_dir_all(gb.join("building00000000/.build")).unwrap();
-        fs::write(
-            gb.join("building00000000.lock"),
-            format!("pid {}\nsince 0\n", std::process::id()),
-        )
-        .unwrap();
+        let _held = crate::cache::BuildLock::acquire(gb.join("building00000000.lock")).unwrap();
         let cache = Cache {
             root: tmp.0.clone(),
             prebuilt: Vec::new(),

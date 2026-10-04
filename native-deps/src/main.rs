@@ -100,7 +100,13 @@ fn cmd_prune(args: &[String]) -> Result<()> {
         "removed"
     };
     let mut total = 0;
+    let mut failed = 0;
     for r in &removals {
+        if let Some(e) = &r.error {
+            failed += 1;
+            println!("FAILED {} ({}): {e}", r.path.display(), r.reason);
+            continue;
+        }
         total += r.bytes;
         println!(
             "{verb} {} ({}, {})",
@@ -109,7 +115,10 @@ fn cmd_prune(args: &[String]) -> Result<()> {
             r.reason
         );
     }
-    println!("{verb} {} item(s), {}", removals.len(), mib(total));
+    println!("{verb} {} item(s), {}", removals.len() - failed, mib(total));
+    if failed > 0 {
+        return Err(err!("{failed} item(s) could not be removed"));
+    }
     Ok(())
 }
 

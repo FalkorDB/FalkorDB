@@ -187,7 +187,10 @@ pub fn ensure(req: &Request) -> Result<Resolution> {
             continue;
         }
         let resolved = resolve_one(req, &ctx, &cache, dep, &out)?;
-        cache::mark_used(&resolved.prefix);
+        // Only our own entries: an override prefix is someone else's directory.
+        if resolved.prefix.starts_with(&cache.root) {
+            cache::mark_used(&resolved.prefix);
+        }
         out.0.insert(dep, resolved);
     }
     Ok(out)
@@ -297,6 +300,15 @@ fn resolve_one(
 /// Entry names of local builds start with this; keys never do, being hex.
 pub const LOCAL_PREFIX: &str = "local-";
 
+/// The key of a local build of `manifest`.
+fn local_key(
+    mut manifest: key::Manifest,
+    local: &local::LocalChanges,
+) -> String {
+    manifest.set("local", &local.fingerprint);
+    format!("{LOCAL_PREFIX}{}", manifest.key())
+}
+
 /// The one local-build slot per dep that belongs to the worktree at `root`.
 fn local_entry_name(root: &Path) -> String {
     let worktree = &hash::sha256_hex(root.to_string_lossy().as_bytes())[..12];
@@ -317,7 +329,13 @@ pub fn current_entries(req: &Request) -> Result<BTreeSet<String>> {
         prejit_harvest: req.prejit_harvest,
     };
     let mut out = BTreeSet::from([local_entry_name(&req.root)]);
-    let graphblas = ctx.manifest(Dep::GraphBlas, None)?.key();
+    // LAGraph's key embeds GraphBLAS's as resolved -- a local key when the
+    // GraphBLAS checkout is off its pin -- exactly as in `ensure`.
+    let pinned = ctx.manifest(Dep::GraphBlas, None)?;
+    let graphblas = match ctx.local_changes(Dep::GraphBlas.name())? {
+        Some(local) => local_key(pinned, &local),
+        None => pinned.key(),
+    };
     out.insert(ctx.manifest(Dep::LaGraph, Some(&graphblas))?.key());
     out.insert(ctx.manifest(Dep::RediSearch, None)?.key());
     out.insert(graphblas);
@@ -347,8 +365,8 @@ fn resolve_local(
         local.reason
     ));
 
+    let key = local_key(manifest.clone(), local);
     manifest.set("local", &local.fingerprint);
-    let key = format!("{LOCAL_PREFIX}{}", manifest.key());
     let entry = cache.entry_dir(dep, &local_entry_name(&req.root));
 
     if !req.force && Stamp::read(&entry).is_ok_and(|s| s.key == key) {

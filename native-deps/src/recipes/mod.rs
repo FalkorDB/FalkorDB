@@ -60,7 +60,7 @@ impl Ctx<'_> {
         &self,
         name: &str,
     ) -> Result<PathBuf> {
-        let dir = self.root.join("deps/.native-deps").join(name);
+        let dir = self.root.join(SOURCE_STATE_DIR).join(name);
         fs::create_dir_all(&dir).map_err(|e| err!("cannot create {}: {e}", dir.display()))?;
         Ok(dir)
     }
@@ -363,6 +363,9 @@ impl CMake {
         self.install()
     }
 }
+
+/// Per-checkout locks and journals, relative to the FalkorDB checkout.
+pub const SOURCE_STATE_DIR: &str = "deps/.native-deps";
 
 /// The scratch build tree inside an entry, removed once the build installs.
 pub const BUILD_DIR: &str = ".build";
