@@ -2393,7 +2393,37 @@ impl Graph {
         dsts: &[u64],
         rel_ids: &[u64],
     ) -> Result<(), NodeOpError> {
+        // The three slices are read positionally below — `set_all_from_slices`,
+        // the endpoint index and the type matrix each walk all of `rel_ids`,
+        // zipped against `srcs` and `dsts`. The id space is told about the ids
+        // as a *set*. Nothing reconciles those two readings, so a caller that
+        // breaks either one makes them describe different graphs: `[0, 0]`
+        // counts one relationship and builds two tensor edges under the one id,
+        // and a short `srcs` silently truncates the zips while the id space has
+        // already counted every id.
+        //
+        // Refused rather than reconciled, because every shape that gets here is
+        // malformed and there is no reading of it to prefer. It matters most on
+        // `effects/v3/apply.rs`, where the ids arrive off the wire in a decoded
+        // `IdList` — the one caller whose input this process did not produce.
+        if srcs.len() != rel_ids.len() || dsts.len() != rel_ids.len() {
+            return Err(NodeOpError::Graph(format!(
+                "bulk relationship create got {} ids, {} sources and {} destinations; \
+                 the three must describe the same edges",
+                rel_ids.len(),
+                srcs.len(),
+                dsts.len()
+            )));
+        }
         let ids: RoaringTreemap = rel_ids.iter().copied().collect();
+        if ids.len() != rel_ids.len() as u64 {
+            return Err(NodeOpError::Graph(format!(
+                "bulk relationship create got {} ids of which only {} are distinct; \
+                 an id names one edge",
+                rel_ids.len(),
+                ids.len()
+            )));
+        }
         self.relationship_ids
             .create(&ids)
             .map_err(NodeOpError::relationship)?;
@@ -4898,7 +4928,7 @@ mod reservation_tests {
     /// `deleted_nodes.len()`, so a bin holding an id at or above the boundary —
     /// an id nothing ever handed out — is caught rather than cancelling out.
     /// This is the same pairing [`IdSpace::verify`] makes, and what it would
-    /// refuse as `Miscounted` if a replica were told this.
+    /// refuse as `IdSpaceError::Inconsistent` if a replica were told this.
     fn assert_dense(
         g: &Graph,
         handed_out: u64,
@@ -5056,6 +5086,42 @@ mod reservation_tests {
             .reserve(2, &RoaringTreemap::new())
             .expect("reserved");
         assert_eq!(ids, vec![1, 3], "the freed id, then above the boundary");
+    }
+
+    /// The three slices and the id set have to describe the same edges.
+    ///
+    /// Both shapes are refused before anything is mutated, which is the whole
+    /// point: the id space is told about a *set* while the tensor, the endpoint
+    /// index and the type matrix each walk the raw slice, and nothing downstream
+    /// reconciles the two readings. `[0, 0]` used to count one relationship and
+    /// build two tensor edges under the one id.
+    ///
+    /// It matters because `effects/v3/apply.rs` is a caller whose `rel_ids` come
+    /// off the wire, decoded from an `IdList` this process did not build.
+    #[test]
+    fn bulk_relationship_create_refuses_slices_that_disagree() {
+        let mut g = graph();
+        g.open_id_batches().expect("a consistent space");
+        let type_name = Arc::new("R".to_owned());
+
+        let duplicated = g
+            .create_relationships_bulk(&type_name, &[0, 0], &[1, 1], &[0, 0])
+            .expect_err("an id names one edge");
+        assert!(
+            duplicated.to_string().contains("only 1 are distinct"),
+            "{duplicated}"
+        );
+
+        let ragged = g
+            .create_relationships_bulk(&type_name, &[0], &[1, 2], &[0, 1])
+            .expect_err("two ids cannot share one source");
+        assert!(ragged.to_string().contains("1 sources"), "{ragged}");
+
+        // Refused before anything moved, so the space is still untouched and an
+        // honest create of the same ids still works.
+        g.create_relationships_bulk(&type_name, &[0, 1], &[1, 2], &[0, 1])
+            .expect("the well-formed call is unaffected");
+        assert_eq!(g.relationship_count(), 2);
     }
 
     /// A second batch must not re-hand-out the first batch's reclaimed ids.
