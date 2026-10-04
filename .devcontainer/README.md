@@ -9,7 +9,7 @@ The development container includes:
 - **Ubuntu 24.04** as the base image
 - **Redis server** installed via apt
 - **Rust toolchain** with all necessary components
-- **LLVM 21** with clang, clang++, llvm-cov, and llvm-profdata for building and code coverage
+- **LLVM 23** with clang, clang++, llvm-cov, and llvm-profdata for building and code coverage
 - **GraphBLAS**, **LAGraph** and **RediSearch** (with vector
   similarity support) prebuilt by the `native-deps` crate into its artifact
   cache, so `cargo build` in the container links them without recompiling

@@ -42,7 +42,7 @@ fn main() -> ExitCode {
 fn run() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        Some("-h" | "--help" | "help") => print!("{USAGE}"),
+        Some("-h" | "--help") => print!("{USAGE}"),
         Some("lock") => {
             let root = lock::root_for(&std::env::current_dir()?)?;
             match &args[1..] {

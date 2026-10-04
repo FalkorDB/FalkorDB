@@ -102,8 +102,9 @@ mod tests {
 
         b.set("source", "bbbb");
         assert_ne!(a.key(), b.key());
+        let before = a.key();
         a.set("san", "address");
-        assert_ne!(a.key(), Manifest::default().key());
+        assert_ne!(a.key(), before, "adding an input must change the key");
         assert_eq!(a.key().len(), 16);
         assert!(a.key().chars().all(|c| c.is_ascii_hexdigit()));
     }
