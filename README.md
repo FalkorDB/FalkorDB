@@ -322,7 +322,7 @@ GraphBLAS, LAGraph, and RediSearch must be built and installed before building t
 | Host | Compiler | OpenMP runtime |
 | --- | --- | --- |
 | macOS | `brew install llvm` (provides `clang` with OpenMP support) | `brew install libomp` |
-| Linux | `clang-22` (e.g. from [apt.llvm.org](https://apt.llvm.org/)) | `apt install libomp-22-dev` |
+| Linux | `clang-23` (e.g. from [apt.llvm.org](https://apt.llvm.org/)) | `apt install libomp-23-dev` |
 
 Local builds use whatever OpenMP package is on the system — `build/libomp.sh`
 is **not** required for local development. It is only invoked by the Docker

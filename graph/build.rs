@@ -119,6 +119,8 @@ fn link_openmp_search_paths() {
 
     #[cfg(target_os = "linux")]
     {
+        println!("cargo:rustc-link-search=/usr/lib/llvm-23/lib");
+        println!("cargo:rustc-link-search=/usr/lib/llvm-23/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
@@ -325,10 +327,12 @@ fn llvm_tool(
         return brew;
     }
     // Linux toolchain images install versioned binaries via apt.llvm.org
-    // (e.g. /usr/bin/llvm-objdump-22) and often lack the bare name. Prefer the
+    // (e.g. /usr/bin/llvm-objdump-23) and often lack the bare name. Prefer the
     // bare name if present, else the highest available versioned one.
     for cand in [
         bin.to_owned(),
+        format!("{bin}-23"),
+        format!("{bin}-23"),
         format!("{bin}-22"),
         format!("{bin}-21"),
         format!("{bin}-20"),

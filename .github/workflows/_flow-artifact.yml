@@ -120,8 +120,8 @@ jobs:
             exit 1
           fi
           # shellcheck disable=SC2086
-          llvm-profdata-22 merge --sparse $PROFRAW -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata "$MODULE" > codecov.txt.all
+          llvm-profdata-23 merge --sparse $PROFRAW -o cov.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov.profdata "$MODULE" > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload coverage to Codecov
         if: ${{ !cancelled() && inputs.collect_coverage }}

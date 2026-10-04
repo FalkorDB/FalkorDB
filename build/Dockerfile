@@ -68,7 +68,7 @@ FROM debian:trixie-slim AS deps-base
 # libomp build below auto-detects the exact `X.Y.Z` from the installed
 # clang-${CLANG_MAJOR} binary, guaranteeing the libomp.a ABI matches the
 # clang we just installed even if apt.llvm.org bumps mid-week.
-ARG CLANG_MAJOR=22
+ARG CLANG_MAJOR=23
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 ENV DEBIAN_FRONTEND=noninteractive
@@ -98,7 +98,7 @@ RUN apt install -y git make cmake curl zlib1g zlib1g-dev \
 # release hasn't moved.
 COPY build/libomp.sh /tmp/libomp.sh
 # Derive LLVMORG_VERSION from clang-${CLANG_MAJOR} --version (output line 1
-# looks like e.g. "Ubuntu clang version 22.1.6"). This makes the libomp.a
+# looks like e.g. "Ubuntu clang version 23.1.2"). This makes the libomp.a
 # we embed ABI-matched to the clang we ship, with no manual lock-step bump.
 RUN LLVMORG_VERSION=$(clang-${CLANG_MAJOR} --version | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1) && \
     test -n "${LLVMORG_VERSION}" || { echo "ERROR: failed to detect LLVMORG_VERSION from clang-${CLANG_MAJOR}" >&2; exit 1; } && \
@@ -117,7 +117,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 # preferences: the key a `cargo build` computes in the final stage must equal
 # the key each dep stage published under, or every prebuilt artifact misses and
 # gets rebuilt from scratch. Pin them as ENV once, here, so every stage that
-# inherits from deps-base agrees. (Passing `CC=clang-22` inline on individual
+# inherits from deps-base agrees. (Passing `CC=clang-23` inline on individual
 # RUN lines is NOT enough — cmake would probe `cc` elsewhere.)
 ENV CC=clang-${CLANG_MAJOR}
 ENV CXX=clang++-${CLANG_MAJOR}
