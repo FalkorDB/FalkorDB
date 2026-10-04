@@ -125,7 +125,10 @@ pub fn build(
     let source = ctx.source("graphblas")?;
     let build_dir = prepare_entry(entry)?;
 
-    let mut guard = SourceGuard::new(ctx.source_state("graphblas")?.join("journal"))?;
+    let mut guard = SourceGuard::new(
+        ctx.source_state("graphblas")?.join("journal"),
+        &ctx.lock.get("graphblas")?.rev,
+    )?;
     apply_patch(ctx, &source, &mut guard)?;
     vendor_prejit(ctx, &source, &mut guard)?;
     // GraphBLAS_PreJIT.cmake regenerates this tracked file in the source tree

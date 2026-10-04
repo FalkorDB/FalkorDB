@@ -249,7 +249,7 @@ fn resolve_one(
     let source = ctx.lock.source_dir(&req.root, dep.name())?;
     let state = ctx.source_state(dep.name())?;
     let _source_lock = BuildLock::acquire(state.join("lock"))?;
-    let undone = SourceGuard::recover(&state.join("journal"))?;
+    let undone = SourceGuard::recover(&state.join("journal"), &ctx.lock.get(dep.name())?.rev)?;
     if undone > 0 {
         log(&format!(
             "{dep}: undid {undone} change(s) an interrupted build left in {}",

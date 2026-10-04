@@ -31,7 +31,12 @@ impl Ctx<'_> {
         // A `.git` that is not a repository of its own (an empty marker left
         // by an interrupted build) makes git walk up to the superproject, whose
         // HEAD would read as a mismatch. Only trust an answer about `dir` itself.
-        let toplevel = git(&dir, &["rev-parse", "--show-toplevel"])?;
+        // git can also fail outright -- an empty marker in a Docker context,
+        // with no superproject to walk up to. That too means "cannot tell",
+        // and must not stop `ensure` before it recovers the marker.
+        let Ok(toplevel) = git(&dir, &["rev-parse", "--show-toplevel"]) else {
+            return Ok(None);
+        };
         if fs::canonicalize(toplevel.trim()).ok() != fs::canonicalize(&dir).ok() {
             return Ok(None);
         }
@@ -260,6 +265,20 @@ mod tests {
         fs::write(dir.join("a.c"), "int a = 1;\n").unwrap();
         let tc = toolchain();
         assert_eq!(ctx(&tmp.0, &lock, &tc).local_changes("dep").unwrap(), None);
+    }
+
+    #[test]
+    fn empty_git_marker_without_a_superproject_is_not_an_error() {
+        // A Docker context after an interrupted build: the marker, and no
+        // repository anywhere above it. git fails; that must read as "cannot
+        // tell", or ensure stops before it recovers the marker.
+        let tmp = TempDir::new("marker-alone");
+        let (dir, lock) = checkout(&tmp.0);
+        fs::remove_dir_all(dir.join(".git")).unwrap();
+        fs::create_dir(dir.join(".git")).unwrap();
+        let tc = toolchain();
+        let result = ctx(&tmp.0, &lock, &tc).local_changes("dep");
+        assert_eq!(result.unwrap(), None);
     }
 
     #[test]

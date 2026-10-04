@@ -91,14 +91,22 @@ pub struct SourceGuard {
 const JOURNAL_INDEX: &str = "index";
 
 impl SourceGuard {
-    pub fn new(journal: PathBuf) -> Result<Self> {
+    /// `rev` is the commit the source is pinned at. It is recorded so that
+    /// [`SourceGuard::recover`] never replays this journal onto a checkout that
+    /// has since moved to another commit.
+    pub fn new(
+        journal: PathBuf,
+        rev: &str,
+    ) -> Result<Self> {
         fs::create_dir_all(&journal)
             .map_err(|e| err!("cannot create {}: {e}", journal.display()))?;
-        Ok(Self {
+        let guard = Self {
             journal,
             saved: Vec::new(),
             created_dirs: Vec::new(),
-        })
+        };
+        guard.record(&format!("R {rev}"))?;
+        Ok(guard)
     }
 
     /// Remember `path`'s current state so it can be put back later. Recording
@@ -157,12 +165,35 @@ impl SourceGuard {
 
     /// Undo whatever a killed build left behind in `journal`, then delete the
     /// journal. Returns how many changes were undone; 0 if there was nothing.
-    pub fn recover(journal: &Path) -> Result<usize> {
+    ///
+    /// A journal written against a different `rev` is discarded unreplayed:
+    /// its snapshots are of another commit's files, and restoring them would
+    /// corrupt the checkout now in place. A removal that fails leaves the
+    /// journal for the next run to retry.
+    pub fn recover(
+        journal: &Path,
+        rev: &str,
+    ) -> Result<usize> {
         let Ok(index) = fs::read_to_string(journal.join(JOURNAL_INDEX)) else {
             let _ = fs::remove_dir_all(journal);
             return Ok(0);
         };
-        let lines: Vec<&str> = index.lines().collect();
+        let mut lines: Vec<&str> = index.lines().collect();
+        if lines.first().and_then(|l| l.strip_prefix("R ")) != Some(rev) {
+            log(&format!(
+                "WARNING: discarding {}: it was written for another commit",
+                journal.display()
+            ));
+            fs::remove_dir_all(journal)?;
+            return Ok(0);
+        }
+        lines.remove(0);
+        let gone = |r: std::io::Result<()>, what: &str| match r {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(err!("cannot remove {what}: {e}"))
+            }
+            _ => Ok(()),
+        };
         for line in lines.iter().rev() {
             let (kind, rest) = line.split_once(' ').unwrap_or((line, ""));
             match kind {
@@ -173,12 +204,8 @@ impl SourceGuard {
                     fs::copy(journal.join(copy), path)
                         .map_err(|e| err!("cannot restore {path}: {e}"))?;
                 }
-                "A" => {
-                    let _ = fs::remove_file(rest);
-                }
-                "D" => {
-                    let _ = fs::remove_dir(rest);
-                }
+                "A" => gone(fs::remove_file(rest), rest)?,
+                "D" => gone(fs::remove_dir(rest), rest)?,
                 _ => return Err(err!("corrupt journal line `{line}`")),
             }
         }
@@ -408,7 +435,7 @@ mod tests {
         let marker = tmp.0.join(".git");
         fs::write(&patched, "original").unwrap();
 
-        let mut guard = SourceGuard::new(journal.clone()).unwrap();
+        let mut guard = SourceGuard::new(journal.clone(), "rev1").unwrap();
         guard.snapshot(&patched).unwrap();
         fs::write(&patched, "patched").unwrap();
         guard.snapshot(&copied).unwrap();
@@ -417,12 +444,28 @@ mod tests {
         // What SIGINT does: the destructor never runs.
         std::mem::forget(guard);
 
-        assert_eq!(SourceGuard::recover(&journal).unwrap(), 3);
+        assert_eq!(SourceGuard::recover(&journal, "rev1").unwrap(), 3);
         assert_eq!(fs::read_to_string(&patched).unwrap(), "original");
         assert!(!copied.exists(), "a file the build added must go");
         assert!(!marker.exists(), "a directory the build created must go");
         assert!(!journal.exists(), "a replayed journal must be deleted");
-        assert_eq!(SourceGuard::recover(&journal).unwrap(), 0);
+        assert_eq!(SourceGuard::recover(&journal, "rev1").unwrap(), 0);
+    }
+
+    #[test]
+    fn a_journal_from_another_commit_is_not_replayed() {
+        let tmp = TempDir::new("journal-rev");
+        let journal = tmp.0.join("journal");
+        let file = tmp.0.join("control.h");
+        fs::write(&file, "old commit's original").unwrap();
+        let mut guard = SourceGuard::new(journal.clone(), "old").unwrap();
+        guard.snapshot(&file).unwrap();
+        std::mem::forget(guard);
+        // The checkout has since moved to `new`, which has its own content.
+        fs::write(&file, "new commit's file").unwrap();
+        assert_eq!(SourceGuard::recover(&journal, "new").unwrap(), 0);
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new commit's file");
+        assert!(!journal.exists());
     }
 
     #[test]
@@ -432,7 +475,7 @@ mod tests {
         let file = tmp.0.join("control.h");
         fs::write(&file, "original").unwrap();
         {
-            let mut guard = SourceGuard::new(journal.clone()).unwrap();
+            let mut guard = SourceGuard::new(journal.clone(), "rev1").unwrap();
             guard.snapshot(&file).unwrap();
             fs::write(&file, "patched").unwrap();
         }
