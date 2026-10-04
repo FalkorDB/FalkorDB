@@ -3222,16 +3222,8 @@ impl<'a> Parser<'a> {
         set_items: &mut Vec<SetItem<Arc<String>, Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr(false)?;
-            if recurse {
-                expr = self.parse_expr(false)?;
-                match_token!(self.lexer, RParen);
-            }
-            if self.lexer.current()? == Token::Dot {
-                while self.lexer.current()? == Token::Dot {
-                    self.lexer.next();
-                    expr = self.parse_property_lookup(expr)?;
-                }
+            let (expr, has_properties) = self.parse_update_target()?;
+            if has_properties {
                 match_token!(self.lexer, Equal);
                 let value = Arc::new(self.parse_expr(false)?);
                 set_items.push(SetItem::Attribute {
@@ -3271,6 +3263,33 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parses what a `SET` or `REMOVE` item updates: an expression followed
+    /// by an optional `.prop.prop...` chain, reporting whether a chain was
+    /// present.
+    ///
+    /// Each lookup wraps the tree before it, so the chain is charged against
+    /// [`Self::MAX_TREE_DEPTH`] step by step, as the postfix chain in
+    /// [`Self::parse_expr_inner`] is: otherwise `n.a.a.a...` builds a tree
+    /// the binder overflows its stack walking, quadratically slowly.
+    fn parse_update_target(&mut self) -> Result<(DynTree<ExprIR<Arc<String>>>, bool), String> {
+        let ((mut expr, recurse), child_height) =
+            self.with_child_height(|s| s.parse_primary_expr(false))?;
+        let mut height = child_height + Self::PRIMARY_LEVELS;
+        if recurse {
+            expr = self.parse_expr(false)?;
+            height = self.expr_height;
+            match_token!(self.lexer, RParen);
+        }
+        let has_properties = self.lexer.current()? == Token::Dot;
+        while self.lexer.current()? == Token::Dot {
+            self.lexer.next();
+            expr = self.parse_property_lookup(expr)?;
+            height += 1;
+            self.check_depth(height)?;
+        }
+        Ok((expr, has_properties))
+    }
+
     fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut remove_items = vec![];
         self.parse_remove_items(&mut remove_items)?;
@@ -3288,16 +3307,8 @@ impl<'a> Parser<'a> {
         remove_items: &mut Vec<QueryExpr<Arc<String>>>,
     ) -> Result<(), String> {
         loop {
-            let (mut expr, recurse) = self.parse_primary_expr(false)?;
-            if recurse {
-                expr = self.parse_expr(false)?;
-                match_token!(self.lexer, RParen);
-            }
-            if self.lexer.current()? == Token::Dot {
-                while self.lexer.current()? == Token::Dot {
-                    self.lexer.next();
-                    expr = self.parse_property_lookup(expr)?;
-                }
+            let (mut expr, has_properties) = self.parse_update_target()?;
+            if has_properties {
                 remove_items.push(Arc::new(expr));
             } else if self.lexer.current()? == Token::Colon {
                 expr = tree!(
@@ -3376,7 +3387,9 @@ impl<'a> Parser<'a> {
                     ..
                 } => {
                     self.lexer.next();
-                    body.push(self.parse_foreach_clause()?);
+                    // A nested FOREACH recurses like `CALL {}` does, so it is
+                    // bounded the same way.
+                    body.push(self.nested(Self::parse_foreach_clause)?);
                 }
                 _ => break,
             }
@@ -3543,6 +3556,23 @@ mod tests {
             (
                 "map projection",
                 format!("MATCH (a) RETURN {}a{{.k}}{}", "[".repeat(n), "]".repeat(n)),
+            ),
+            // Clauses that build expressions or recurse outside parse_expr.
+            (
+                "set property chain",
+                format!("MATCH (n) SET n{} = 1", ".a".repeat(n)),
+            ),
+            (
+                "remove property chain",
+                format!("MATCH (n) REMOVE n{}", ".a".repeat(n)),
+            ),
+            (
+                "foreach",
+                format!(
+                    "{}CREATE (){}",
+                    "FOREACH (x IN [1] | ".repeat(n),
+                    ")".repeat(n)
+                ),
             ),
         ];
         // The same nesting an expression can hide, wrapped in a clause.
