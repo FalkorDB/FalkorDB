@@ -2,7 +2,7 @@ ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 # Keep in sync with REDIS_VERSION in build/Dockerfile and build/runtime/Dockerfile
 # so all four images (toolchain, release, coverage, asan) build from the same
 # upstream redis tag.
-ARG REDIS_ASAN_VER=8.10.1
+ARG REDIS_ASAN_VER=8.10.2
 
 # Stage 1: ASAN-instrumented redis-server built from source.
 # Redis's Makefile honors SANITIZER=address (sets MALLOC=libc, adds
@@ -15,7 +15,7 @@ COPY tests/memcheck/redis.san-ignorelist /tmp/redis.san-ignorelist
 RUN git clone --depth 1 --branch ${REDIS_ASAN_VER} https://github.com/redis/redis.git redis-src && \
     cd redis-src && \
     CFLAGS="-fsanitize-ignorelist=/tmp/redis.san-ignorelist" \
-    make -j"$(nproc)" SANITIZER=address CC=clang-22 CXX=clang++-22 OPTIMIZATION="-O1" && \
+    make -j"$(nproc)" SANITIZER=address CC=clang-23 CXX=clang++-23 OPTIMIZATION="-O1" && \
     mkdir -p /out && cp src/redis-server /out/redis-server && \
     # Sanity check: a working ASAN binary has 100+ __asan_ symbols (init,
     # poison/unpoison, shadow memory bookkeeping). Mangled symbol names
@@ -57,7 +57,7 @@ COPY deps/RediSearch deps/RediSearch
 # git). All git metadata is .dockerignore'd, so create an empty marker -- see
 # .dockerignore for why this is a marker rather than the real gitlink.
 RUN mkdir -p deps/RediSearch/.git && \
-    CC=clang-22 CXX=clang++-22 REDISEARCH_SAN=address bash redisearch.sh
+    CC=clang-23 CXX=clang++-23 REDISEARCH_SAN=address bash redisearch.sh
 
 COPY . .
 
@@ -84,9 +84,9 @@ RUN set -eux; \
       "CARGO_TARGET_${RTU}_RUSTFLAGS=-Zsanitizer=address -Cdebuginfo=2 -Clink-arg=-Wl,--allow-multiple-definition" \
       "CFLAGS_${RT}=-fsanitize=address -fno-omit-frame-pointer" \
       "CXXFLAGS_${RT}=-fsanitize=address -fno-omit-frame-pointer" \
-      CXX=clang++-22 \
-      LLVM_OBJDUMP=/usr/bin/llvm-objdump-22 \
-      LLVM_OBJCOPY=/usr/bin/llvm-objcopy-22 \
+      CXX=clang++-23 \
+      LLVM_OBJDUMP=/usr/bin/llvm-objdump-23 \
+      LLVM_OBJCOPY=/usr/bin/llvm-objcopy-23 \
       cargo build --target "$RT"; \
     mkdir -p /out && cp "target/$RT/debug/libfalkordb.so" /out/falkordb.so
 
@@ -113,20 +113,20 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} && ln -s ${FALKORDB_DATA_PATH} /data
 
 # Runtime apt install. After PR #483 GraphBLAS JIT is disabled and libomp is
 # statically linked into the instrumented .so (graph/build.rs + libomp.sh),
-# so we no longer need libomp5 / libomp-22-dev / gcc (was just for JIT `cc`).
-# We still need llvm-symbolizer-22 for readable ASAN backtraces, plus the
+# so we no longer need libomp5 / libomp-23-dev / gcc (was just for JIT `cc`).
+# We still need llvm-symbolizer-23 for readable ASAN backtraces, plus the
 # gcc-compatible libasan runtime.
 #
 # Everything here comes from deb.debian.org. This stage used to add the
 # apt.llvm.org repo (wget llvm.sh -> llvm.sh probes the repo URL, probes the
-# GPG key URL, downloads the key -> apt-get install llvm-22): four round-trips
+# GPG key URL, downloads the key -> apt-get install llvm-<major>): four round-trips
 # to one third-party host, any of which fails the image. That host throttles
 # CI egress and took the merge queue down repeatedly -- see the COPY below,
 # which gets the same symbolizer out of the builder stage instead.
 #
 # The tail of this list is the runtime closure of that symbolizer: libcurl4
 # for the binary itself, and libedit2/libffi8/libxml2/libz3-4/libzstd1/zlib1g
-# for libLLVM. `apt-get install llvm-22` used to resolve these for us, so the
+# for libLLVM. `apt-get install llvm-<major>` used to resolve these for us, so the
 # smoke test after the COPY is what keeps the hand-maintained list honest.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -135,21 +135,21 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # llvm-symbolizer, lifted from the toolchain image rather than reinstalled.
-# The builder has it because llvm.sh installs clang-22 with recommends on,
-# which pulls llvm-22-dev -> llvm-22 (the package that ships the symbolizer
-# and llvm-objcopy-22, already used by the builder stage above).
+# The builder has it because llvm.sh installs clang-23 with recommends on,
+# which pulls llvm-23-dev -> llvm-23 (the package that ships the symbolizer
+# and llvm-objcopy-23, already used by the builder stage above).
 #
-# The binary's RUNPATH is $ORIGIN/../lib, so keeping the /usr/lib/llvm-22
+# The binary's RUNPATH is $ORIGIN/../lib, so keeping the /usr/lib/llvm-23
 # bin/lib layout makes it self-locating: no LD_LIBRARY_PATH, no ldconfig, and
 # no arch-specific multiarch path to get wrong. 101 KB of binary, and the
-# 143 MB libLLVM it links -- which the old `llvm-22` install pulled in anyway,
+# 143 MB libLLVM it links -- which the old `llvm-<major>` install pulled in anyway,
 # on top of ~90 MB of unused llvm tools and the clang/lldb/lld/clangd that
 # llvm.sh drags in by default and the purge above never removed.
-COPY --from=builder /usr/lib/llvm-22/lib/libLLVM.so.22.1 /usr/lib/llvm-22/lib/
-COPY --from=builder /usr/lib/llvm-22/bin/llvm-symbolizer /usr/lib/llvm-22/bin/
+COPY --from=builder /usr/lib/llvm-23/lib/libLLVM.so.23.1 /usr/lib/llvm-23/lib/
+COPY --from=builder /usr/lib/llvm-23/bin/llvm-symbolizer /usr/lib/llvm-23/bin/
 # Fail the build loudly if the closure above ever goes stale -- otherwise a
 # missing .so degrades ASAN output to raw addresses only at test time.
-RUN /usr/lib/llvm-22/bin/llvm-symbolizer --version
+RUN /usr/lib/llvm-23/bin/llvm-symbolizer --version
 
 WORKDIR ${FALKORDB_HOME}
 
@@ -169,7 +169,7 @@ ENV ARCH=${TARGETPLATFORM} \
     TLS=0 \
     BROWSER=0 \
     FALKORDB_ARGS="MAX_QUEUED_QUERIES 25 TIMEOUT 1000 RESULTSET_SIZE 10000" \
-    ASAN_SYMBOLIZER_PATH=/usr/lib/llvm-22/bin/llvm-symbolizer \
+    ASAN_SYMBOLIZER_PATH=/usr/lib/llvm-23/bin/llvm-symbolizer \
     RS_GLOBAL_DTORS=1 \
     ASAN_OPTIONS="detect_leaks=1:detect_odr_violation=0:halt_on_error=0:abort_on_error=0:symbolize=1:print_stacktrace=1:strict_string_checks=1:detect_stack_use_after_return=1" \
     LSAN_OPTIONS="suppressions=/var/lib/falkordb/asan.supp:use_tls=0"

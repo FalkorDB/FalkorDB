@@ -126,6 +126,15 @@ pub fn optimize(
     graph: &Graph,
     params: &HashMap<String, Value>,
 ) -> DynTree<IR> {
+    // The query's plan and each nested plan are independent plans.
+    if matches!(plan.root().data(), IR::NestedPlans) {
+        let mut root = DynTree::new(IR::NestedPlans);
+        for child in plan.root().children() {
+            let optimized = optimize(&child.clone_as_tree(), graph, params);
+            root.root_mut().push_child_tree(optimized);
+        }
+        return root;
+    }
     let mut optimized_plan = plan.clone();
 
     reduce_count(&mut optimized_plan, graph);

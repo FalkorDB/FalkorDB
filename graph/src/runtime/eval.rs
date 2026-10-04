@@ -59,7 +59,7 @@ use crate::{
         functions::{FnType, Type, apply_pow, regex_captures_list},
         ops::batched_result_emitter::RowIter,
         ordermap::OrderMap,
-        row::RowView,
+        row::{Row, RowView},
         runtime::Runtime,
         value::{CompareValue, Contains, DisjointOrNull, Value, ValueTypeOf},
     },
@@ -1061,6 +1061,13 @@ impl<'a> ExprEval<'a> {
                 }
                 ExprIR::PatternComprehension(_) => {
                     unreachable!("PatternComprehension should be handled by the planner")
+                }
+                ExprIR::NestedPlan(nested) => {
+                    let runtime = self
+                        .runtime
+                        .ok_or_else(|| String::from("A nested plan needs a runtime"))?;
+                    let row = env.map_or_else(Row::new, RowView::to_owned_row);
+                    res.push(runtime.run_nested_plan(nested.id, &nested.result, &row)?);
                 }
                 ExprIR::Paren => {
                     res.push(self.eval_node(&node.child(0), env, agg_group_key)?);
