@@ -57,7 +57,7 @@ ENV CXX=clang++-23
 COPY native-deps           native-deps
 COPY deps/native-deps.lock deps/native-deps.lock
 COPY deps/RediSearch       deps/RediSearch
-RUN cargo run --offline --manifest-path native-deps/Cargo.toml -- build redisearch --san address
+RUN cargo run --locked --manifest-path native-deps/Cargo.toml -- build redisearch --san address
 
 # Tells graph/build.rs to resolve the sanitizer flavour of RediSearch, i.e. to
 # compute the same key the line above published under.

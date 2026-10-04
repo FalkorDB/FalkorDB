@@ -94,7 +94,7 @@ jobs:
       # and cannot drift out of step with what actually goes into the build.
       - name: Compute the native-deps cache key
         id: deps-key
-        run: echo "key=$(cargo run -q --offline --manifest-path native-deps/Cargo.toml -- key --all --combined)" >> "$GITHUB_OUTPUT"
+        run: echo "key=$(cargo run -q --locked --manifest-path native-deps/Cargo.toml -- key --all --combined)" >> "$GITHUB_OUTPUT"
 
       - name: Restore native deps
         id: native-cache
@@ -105,7 +105,7 @@ jobs:
 
       - name: Build GraphBLAS + LAGraph + RediSearch
         if: steps.native-cache.outputs.cache-hit != 'true'
-        run: cargo run --offline --manifest-path native-deps/Cargo.toml -- ensure --all
+        run: cargo run --locked --manifest-path native-deps/Cargo.toml -- ensure --all
 
       - name: Save native deps
         # Only a trusted revision may WRITE this cache. The recipes come from

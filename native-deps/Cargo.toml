@@ -1,7 +1,7 @@
 # `native-deps` is deliberately its own workspace.
 #
 # The Docker dep stages build it with
-#   cargo build --offline --manifest-path native-deps/Cargo.toml
+#   cargo build --locked --manifest-path native-deps/Cargo.toml
 # and that must work with *only* this directory present in the build context.
 # If it were a member of the root workspace, cargo would demand the root
 # Cargo.toml, Cargo.lock and every sibling manifest -- so editing
@@ -27,9 +27,10 @@ path = "src/lib.rs"
 name = "native-deps"
 path = "src/main.rs"
 
-# Intentionally empty, and it must stay that way: zero external dependencies is
-# what makes `cargo build --offline` viable inside a network-isolated Docker
-# layer, keeps the compile sub-second when `graph/build.rs` pulls this in as a
-# build-dependency, and keeps this crate out of the root workspace's dependency
-# resolution entirely.
 [dependencies]
+sha2 = "0.10"
+thiserror = "2"
+
+# build.rs `include!`s src/hash.rs to compute the recipe hash.
+[build-dependencies]
+sha2 = "0.10"

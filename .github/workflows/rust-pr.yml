@@ -277,7 +277,7 @@ jobs:
         # with "detected dubious ownership" unless the workspace is marked safe.
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          cargo run --offline --manifest-path native-deps/Cargo.toml -- lock --check
+          cargo run --locked --manifest-path native-deps/Cargo.toml -- lock --check
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 40

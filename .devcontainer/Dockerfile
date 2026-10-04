@@ -72,7 +72,7 @@ COPY deps/GraphBLAS        /data/deps/GraphBLAS
 COPY deps/LAGraph          /data/deps/LAGraph
 COPY deps/RediSearch       /data/deps/RediSearch
 RUN cd /data && \
-    cargo run --offline --manifest-path native-deps/Cargo.toml -- ensure --all && \
+    cargo run --locked --manifest-path native-deps/Cargo.toml -- ensure --all && \
     rm -rf /data/native-deps /data/build /data/deps
 
 # Mark the populated cache read-only for the workspace build. The developer's

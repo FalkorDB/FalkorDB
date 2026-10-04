@@ -143,7 +143,7 @@ COPY deps/native-deps.lock /src/deps/native-deps.lock
 COPY build/graphblas       /src/build/graphblas
 COPY deps/GraphBLAS        /src/deps/GraphBLAS
 COPY deps/LAGraph          /src/deps/LAGraph
-RUN cargo run --offline --manifest-path native-deps/Cargo.toml -- build graphblas lagraph
+RUN cargo run --locked --manifest-path native-deps/Cargo.toml -- build graphblas lagraph
 
 # ---------------------------------------------------------------------------
 # redisearch-build: the RediSearch 8.6 fork as an embeddable static library.
@@ -161,7 +161,7 @@ FROM deps-base AS redisearch-build
 COPY native-deps           /src/native-deps
 COPY deps/native-deps.lock /src/deps/native-deps.lock
 COPY deps/RediSearch       /src/deps/RediSearch
-RUN cargo run --offline --manifest-path native-deps/Cargo.toml -- build redisearch
+RUN cargo run --locked --manifest-path native-deps/Cargo.toml -- build redisearch
 
 # ---------------------------------------------------------------------------
 # Final toolchain image.

@@ -18,12 +18,12 @@
 pub mod cache;
 pub mod dep;
 pub mod error;
+/// Minimal vendored SHA-256 -- see the file header for why it is hand-rolled.
+pub mod hash;
 pub mod key;
 pub mod local;
 pub mod lock;
 pub mod recipes;
-/// Minimal vendored SHA-256 -- see the file header for why it is hand-rolled.
-pub mod sha256;
 #[cfg(test)]
 mod testing;
 pub mod toolchain;
@@ -372,7 +372,7 @@ fn resolve_local(
 
     manifest.set("local", &local.fingerprint);
     let key = format!("{LOCAL_PREFIX}{}", manifest.key());
-    let worktree = &sha256::sha256_hex(req.root.to_string_lossy().as_bytes())[..12];
+    let worktree = &hash::sha256_hex(req.root.to_string_lossy().as_bytes())[..12];
     let entry = cache.entry_dir(dep, &format!("{LOCAL_PREFIX}{worktree}"));
 
     if !req.force && Stamp::read(&entry).is_ok_and(|s| s.key == key) {

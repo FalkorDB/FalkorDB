@@ -3,13 +3,12 @@
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::Read;
 use std::os::fd::AsFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::error::{Error, Result};
-use crate::sha256::{Sha256, hex};
+use crate::hash::collect_files;
 use crate::{bail, err};
 
 /// Run a command, streaming its output, and fail if it exits non-zero.
@@ -95,72 +94,6 @@ pub fn log(msg: &str) {
     eprintln!("native-deps: {msg}");
 }
 
-/// Streaming SHA-256 of a file's contents.
-pub fn hash_file(path: &Path) -> Result<String> {
-    let mut f = fs::File::open(path).map_err(|e| err!("cannot read {}: {e}", path.display()))?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 64 * 1024];
-    loop {
-        let n = f
-            .read(&mut buf)
-            .map_err(|e| err!("cannot read {}: {e}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hex(&hasher.finish()))
-}
-
-/// SHA-256 over every file under `dir` for which `keep` returns true, hashing
-/// the repo-relative path alongside the contents so a rename is a change.
-///
-/// A missing directory hashes as empty rather than erroring: `build/graphblas/
-/// PreJIT` is legitimately absent before the first `gen_prejit.sh` run.
-pub fn hash_tree(
-    dir: &Path,
-    keep: &dyn Fn(&Path) -> bool,
-) -> Result<String> {
-    let mut files = Vec::new();
-    collect_files(dir, &mut files)?;
-    files.retain(|p| keep(p));
-    files.sort();
-
-    let mut hasher = Sha256::new();
-    for path in &files {
-        let rel = path.strip_prefix(dir).unwrap_or(path);
-        hasher.update(rel.to_string_lossy().as_bytes());
-        hasher.update(b"\0");
-        hasher.update(hash_file(path)?.as_bytes());
-        hasher.update(b"\n");
-    }
-    Ok(hex(&hasher.finish()))
-}
-
-fn collect_files(
-    dir: &Path,
-    out: &mut Vec<PathBuf>,
-) -> Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        let entries = fs::read_dir(&d).map_err(|e| err!("cannot list {}: {e}", d.display()))?;
-        for entry in entries {
-            let entry = entry?;
-            let path = entry.path();
-            let ty = entry.file_type()?;
-            if ty.is_dir() {
-                stack.push(path);
-            } else {
-                out.push(path);
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Recursively copy `src` into `dst`, creating `dst` if needed.
 pub fn copy_dir(
     src: &Path,
@@ -199,8 +132,7 @@ pub fn copy_file(
 /// Recursively collect every `.a` archive under `dir`, sorted so link order is
 /// deterministic.
 pub fn find_archives(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let _ = collect_files(dir, &mut out);
+    let mut out = collect_files(dir).unwrap_or_default();
     out.retain(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("a")));
     out.sort();
     out

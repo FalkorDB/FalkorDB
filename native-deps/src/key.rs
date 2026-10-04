@@ -6,10 +6,11 @@
 use std::collections::BTreeMap;
 
 use crate::dep::Dep;
+use crate::err;
 use crate::error::Result;
+use crate::hash::{hash_file, hash_tree, sha256_hex};
 use crate::recipes::Ctx;
-use crate::sha256::sha256_hex;
-use crate::util::{hash_file, hash_tree, is_prejit_kernel};
+use crate::util::is_prejit_kernel;
 
 /// Hex characters of the SHA-256 kept: 64 bits, readable paths.
 const KEY_LEN: usize = 16;
@@ -81,7 +82,10 @@ impl Ctx<'_> {
         match dep {
             Dep::GraphBlas => {
                 let patch = self.root.join("build/graphblas/GB_control.patch");
-                m.set("patch", hash_file(&patch)?);
+                m.set(
+                    "patch",
+                    hash_file(&patch).map_err(|e| err!("cannot read {}: {e}", patch.display()))?,
+                );
                 m.set(
                     "prejit_harvest",
                     if self.prejit_harvest { "1" } else { "0" },
@@ -93,7 +97,8 @@ impl Ctx<'_> {
                 } else {
                     hash_tree(&self.root.join("build/graphblas/PreJIT"), &|p| {
                         is_prejit_kernel(p)
-                    })?
+                    })
+                    .map_err(|e| err!("cannot hash build/graphblas/PreJIT: {e}"))?
                 };
                 m.set("prejit", prejit);
             }

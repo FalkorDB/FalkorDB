@@ -7,9 +7,9 @@
 use std::fs;
 use std::process::ExitCode;
 
+use native_deps::hash::sha256_hex;
 use native_deps::key::RECIPE_HASH;
 use native_deps::lock::{self, LOCK_RELPATH, LockFile};
-use native_deps::sha256::sha256_hex;
 use native_deps::util::{capture, env_flag, env_opt, find_repo_root};
 use native_deps::{Dep, Request, Resolution, Result, ensure, err, keys};
 use std::path::PathBuf;

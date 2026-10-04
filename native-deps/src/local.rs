@@ -4,8 +4,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::error::Result;
+use crate::hash::sha256_hex;
 use crate::recipes::{Ctx, gitlink_resolves};
-use crate::sha256::sha256_hex;
 use crate::util::capture;
 
 impl Ctx<'_> {
