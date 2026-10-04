@@ -1693,6 +1693,31 @@ def test_list_comprehension():
 
 
 @pytest.mark.extra
+def test_syntax_outside_the_grammar_is_rejected():
+    # Each of these used to parse and run.
+    query_exception("RETURN abs(-1,)", "Invalid input")
+    query_exception("MATCH MATCH (n) RETURN n", "Invalid input")
+    query_exception("LOAD CSV WITH FROM 'file://x.csv' AS r RETURN r", "Invalid input")
+    query("CREATE (:SetBracket {x: 1})", write=True)
+    query_exception("MATCH (n:SetBracket) SET [n).x = 5", "Invalid input")
+    query_exception("MATCH (n:SetBracket) REMOVE [n).x", "Invalid input")
+    res = query("MATCH (n:SetBracket) RETURN n.x")
+    assert res.result_set == [[1]]
+    query("MATCH (n:SetBracket) DELETE n", write=True)
+
+
+def test_predicates_after_is_null():
+    res = query("RETURN 1 IS NULL IN [false], 1 IS NOT NULL = true, null IS NULL IS NOT NULL")
+    assert res.result_set == [[True, True, True]]
+
+
+def test_not_not_type_checks_its_operand():
+    query_exception("RETURN NOT NOT 1", "Type mismatch")
+    query_exception("RETURN NOT NOT NOT NOT 1", "Type mismatch")
+    res = query("RETURN NOT NOT true, NOT NOT NOT true, NOT NOT null")
+    assert res.result_set == [[True, False, None]]
+
+
 def test_parentheses():
     lparen = "(" * 10000
     rparen = ")" * 10000
