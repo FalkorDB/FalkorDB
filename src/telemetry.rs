@@ -530,6 +530,19 @@ pub fn snapshot_running() -> Vec<RunningQueryInfo> {
     out
 }
 
+/// Snapshot of the running queries for a crash report. Skips any shard whose
+/// lock is held: the crashing thread may be the one holding it, and blocking
+/// here would hang the report instead of writing it.
+pub fn try_snapshot_running() -> Vec<RunningQueryInfo> {
+    let mut out = Vec::new();
+    for shard in &REGISTRY {
+        if let Some(reg) = shard.try_lock() {
+            out.extend(reg.running.iter().cloned());
+        }
+    }
+    out
+}
+
 /// Snapshot of all currently waiting queries.
 pub fn snapshot_waiting() -> Vec<WaitingQueryInfo> {
     let mut out = Vec::new();
