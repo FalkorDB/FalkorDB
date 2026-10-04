@@ -35,6 +35,27 @@ pub enum EncodeError {
         got: usize,
     },
 
+    /// A record whose `AttrValues` block is not one value per entity per
+    /// attribute.
+    ///
+    /// The block has no length on the wire: the reader takes `count ×
+    /// attr_ids.len()` values. Any other number shifts the record boundary, so
+    /// the reader either refuses the buffer or reads the next record from the
+    /// wrong place.
+    #[error("{got} attribute values for {entities} entities of {attrs} attributes each")]
+    RowShapeMismatch {
+        entities: usize,
+        attrs: usize,
+        got: usize,
+    },
+
+    /// A batchable record covering no entities.
+    ///
+    /// The reader refuses one at the header, so writing it produces a buffer
+    /// this engine cannot read back.
+    #[error("record with opcode {opcode} covers no entities")]
+    EmptyRecord { opcode: u32 },
+
     /// A `CREATE_INDEX` whose options do not match the field type they are
     /// gated by.
     ///
@@ -371,23 +392,6 @@ pub enum ApplyError {
         entry_bound: u64,
         highest: u64,
         created: u64,
-    },
-
-    /// The graph's own id boundary for `kind` is not where the ids it was given
-    /// put it.
-    ///
-    /// The entity's count is an independent counter, so the same id applied twice
-    /// moves it twice while the set of ids does not change. This is the only
-    /// place anything checks that counter against a value not derived from it.
-    #[error(
-        "effects buffer left this replica's {kind} id boundary at {graph_bound}, but the \
-         ids it carried put it at {expected}. The two engines have diverged; the buffer \
-         was not applied."
-    )]
-    CountMiscounted {
-        kind: &'static str,
-        graph_bound: u64,
-        expected: u64,
     },
 
     /// A schema id the local dictionary does not hold.

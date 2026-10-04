@@ -27,7 +27,7 @@ use crate::{
     graph::{
         attribute_store::MAX_ATTRIBUTES,
         graph::{Graph, NodeOpError, TypeId},
-        id_space::{IdSpace, IdSpaceError},
+        id_space::IdSpaceError,
     },
     index::{IndexType, indexer::IndexOptions},
     runtime::{pending::IndexDocs, value::Value},
@@ -46,30 +46,16 @@ impl From<String> for ApplyError {
     }
 }
 
-/// What accumulates across a buffer and is settled once, at the end.
-struct BufferOps {
-    /// The same type the write path collects into, rather than a second set of
-    /// four maps that has to agree with it by inspection.
-    docs: IndexDocs,
-    /// The node id space this buffer is building.
-    ///
-    /// Held here rather than on the graph because its lifetime is the buffer's,
-    /// and a buffer is a thing only this file knows about. What the graph does
-    /// know is how to maintain one: `create_nodes` and `delete_nodes` take it and
-    /// feed it themselves, so nothing here can create a node and forget to
-    /// account for it — and nothing can be handed a graph without saying what to
-    /// do about validation, because the argument is not optional to supply.
-    nodes: IdSpace,
-    /// And the relationship one. Same type, same checks — the id spaces are two
-    /// counted ranges with recycle bins, and nothing about the invariant differs.
-    edges: IdSpace,
+/// Nodes a buffer deleted, and the edges it then created onto them.
+///
+/// The one way a legitimate buffer names a dead endpoint: a committed node
+/// deleted by the same query that created, and then cancelled, an edge off it.
+/// `digest_cancelled` runs after `digest_deleted_nodes`, so the pair's
+/// `CREATE_EDGE` arrives after the endpoint is already gone.
+#[derive(Default)]
+struct DeletedHere {
     /// Nodes an earlier record of this buffer deleted.
-    ///
-    /// The one way a legitimate buffer names a dead endpoint: a committed node
-    /// deleted by the same query that created, and then cancelled, an edge off
-    /// it. `digest_cancelled` runs after `digest_deleted_nodes`, so the pair's
-    /// `CREATE_EDGE` arrives after the endpoint is already gone.
-    deleted_nodes: RoaringTreemap,
+    nodes: RoaringTreemap,
     /// Edges created onto such a node and not yet deleted again. The pair nets
     /// out, so this must be empty by the end of the buffer; an edge still here
     /// is one left hanging off a recycled id.
@@ -95,34 +81,32 @@ pub fn apply_effects(
     // be read; `open_payload` owns that plaintext and the records borrow from it.
     let payload = open_payload(buf)?;
 
-    let mut ops = BufferOps {
-        docs: IndexDocs::default(),
-        nodes: IdSpace::at(g.node_id_bound()),
-        edges: IdSpace::at(g.relationship_id_bound()),
-        deleted_nodes: RoaringTreemap::new(),
-        dangling_edges: RoaringTreemap::new(),
-    };
-
+    // The whole buffer is one batch. It was opened by `Graph::new_version` when
+    // this write version was made, and it is checked by `Graph::validate` when
+    // the version is published — records arrive grouped by shape rather than
+    // ordered by id, so the id space is legitimately fragmented partway through
+    // and only has to be whole at the end.
+    let mut docs = IndexDocs::default();
+    let mut deleted_here = DeletedHere::default();
     for record in payload.records() {
-        apply_record(g, record?, &mut ops)?;
+        apply_record(g, record?, &mut docs, &mut deleted_here)?;
     }
 
-    // Only now: records are grouped by shape rather than ordered by id, so the
-    // id space is legitimately fragmented partway through a buffer and only has
-    // to be whole at the end. A buffer that fails earlier never reaches this,
-    // which is right — it has not finished building the thing being checked.
-    if let Some(id) = ops.dangling_edges.min() {
+    // Like the id space below, settled only now: the cancelled pair's
+    // `DELETE_EDGE` follows its `CREATE_EDGE`, so mid-buffer an edge onto a
+    // deleted node is legitimately still standing.
+    if let Some(id) = deleted_here.dangling_edges.min() {
         return Err(ApplyError::DanglingRelationship { id });
     }
-    ops.nodes
-        .verify(g.node_id_bound())
-        .map_err(|e| id_space_error_map("node", e))?;
-    ops.edges
-        .verify(g.relationship_id_bound())
-        .map_err(|e| id_space_error_map("relationship", e))?;
+    // Refusing a divergent buffer is this function's contract, and the refusal
+    // it hands back is part of the replication protocol's diagnostics — the
+    // caller must not commit a version built from one. `MvccGraph::commit`
+    // validates again before publishing; that is the net under every write path,
+    // not a substitute for rejecting the buffer here.
+    g.validate()?;
 
-    g.commit_index(&mut ops.docs.node_adds, &mut ops.docs.node_removes);
-    g.commit_edge_index(&mut ops.docs.edge_adds, &mut ops.docs.edge_removes);
+    g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
+    g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
     Ok(())
 }
 
@@ -132,13 +116,12 @@ pub fn apply_effects(
 /// while doing the work. Every judgement about liveness belongs to
 /// [`IdSpace`] — it decides, and its refusals arrive wrapped, to be unwrapped
 /// straight back into the rendering [`id_space_error_map`] gives them.
-fn node_op(
-    kind: &'static str,
-    e: NodeOpError,
-) -> ApplyError {
-    match e {
-        NodeOpError::Graph(e) => ApplyError::Graph(e),
-        NodeOpError::IdSpace(e) => id_space_error_map(kind, e),
+impl From<NodeOpError> for ApplyError {
+    fn from(e: NodeOpError) -> Self {
+        match e {
+            NodeOpError::Graph(e) => Self::Graph(e),
+            NodeOpError::IdSpace { kind, source } => id_space_error_map(kind, source),
+        }
     }
 }
 
@@ -177,22 +160,24 @@ fn id_space_error_map(
             highest,
             created,
         },
-        IdSpaceError::Miscounted {
-            graph_bound,
-            expected,
-        } => ApplyError::CountMiscounted {
-            kind,
-            graph_bound,
-            expected,
-        },
         IdSpaceError::IdOutOfRange(id) => ApplyError::IdPastEndOfSpace { kind, id },
+        // Not a divergence and not a claim about the buffer: the replica's own
+        // id space contradicts itself, so the buffer is refused because nothing
+        // can be trusted to apply onto it, not because it was wrong.
+        // Neither is a claim about the buffer: the replica's own id space
+        // contradicts itself, or its batch was asked to take one id twice. The
+        // buffer is refused because nothing can be trusted to apply onto it.
+        e @ (IdSpaceError::Inconsistent { .. } | IdSpaceError::AlreadyTaken(_)) => {
+            ApplyError::Graph(format!("{kind} {e}"))
+        }
     }
 }
 
 fn apply_record(
     g: &mut Graph,
     record: Record,
-    ops: &mut BufferOps,
+    docs: &mut IndexDocs,
+    deleted: &mut DeletedHere,
 ) -> Result<(), ApplyError> {
     match record {
         // One opcode, two variants: the wire's `SchemaType` byte is now the
@@ -250,8 +235,7 @@ fn apply_record(
             // this graph's allocator. The graph refuses rather than
             // double-counting, so there is no separate check here to keep in step
             // with it either.
-            g.create_nodes(&nodes, &mut ops.nodes)
-                .map_err(|e| node_op("node", e))?;
+            g.create_nodes(&nodes)?;
 
             // The graph's bulk APIs take `&[u64]`, so the ids are materialized
             // once here rather than per call.
@@ -265,7 +249,7 @@ fn apply_record(
             // them.
             let label_ids = checked_label_ids(g, &labels)?;
             if !label_ids.is_empty() {
-                g.set_node_labels_product(&ids, &label_ids, &mut ops.docs.node_adds, true);
+                g.set_node_labels_product(&ids, &label_ids, &mut docs.node_adds, true);
             }
             // Checked before the emptiness gate, not inside it. With no
             // attributes the check is what says `rows` must also be empty —
@@ -280,7 +264,7 @@ fn apply_record(
                     &label_ids,
                     &attr_ids,
                     &rows,
-                    &mut ops.docs.node_adds,
+                    &mut docs.node_adds,
                 )?;
             }
             Ok(())
@@ -307,25 +291,24 @@ fn apply_record(
             // A node this buffer deleted was live, so it is not a divergence
             // to name it — the cancelled pair does — but the edge must be gone
             // again by the end of the buffer.
-            let deleted_here = &endpoints & &ops.deleted_nodes;
-            require_live(g, EntityType::Node, &(endpoints - &deleted_here), ops)?;
+            let deleted_here = &endpoints & &deleted.nodes;
+            require_live(g, EntityType::Node, &(endpoints - &deleted_here))?;
             // `&[u64]` for the bulk APIs; materialized once each.
             let (ids, src, dst): (Vec<u64>, Vec<u64>, Vec<u64>) = (
                 ids.iter().collect(),
                 src.iter().collect(),
                 dst.iter().collect(),
             );
-            let dead_here = deleted_here & g.deleted_nodes();
+            let dead_here = deleted_here & g.node_id_space().recycled();
             if !dead_here.is_empty() {
-                ops.dangling_edges.extend(
+                deleted.dangling_edges.extend(
                     ids.iter()
                         .zip(src.iter().zip(&dst))
                         .filter(|(_, (s, d))| dead_here.contains(**s) || dead_here.contains(**d))
                         .map(|(&id, _)| id),
                 );
             }
-            g.create_relationships_bulk(&type_name, &src, &dst, &ids, &mut ops.edges)
-                .map_err(|e| node_op("relationship", e))?;
+            g.create_relationships_bulk(&type_name, &src, &dst, &ids)?;
 
             // As in `CreateNode` above: `attr_map` shape-checks internally, so
             // gating the whole call lets an empty `AttrSet` carrying values
@@ -333,7 +316,7 @@ fn apply_record(
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                g.set_relationships_attributes(&map, &mut ops.docs.edge_adds)?;
+                g.set_relationships_attributes(&map, &mut docs.edge_adds)?;
             }
             Ok(())
         }
@@ -352,7 +335,7 @@ fn apply_record(
             attr_ids,
             rows,
         } => {
-            require_live(g, EntityType::Node, &ids.to_roaring(), ops)?;
+            require_live(g, EntityType::Node, &ids.to_roaring())?;
             let ids: Vec<u64> = ids.iter().collect();
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             let label_ids = checked_label_ids(g, &labels)?;
@@ -361,7 +344,7 @@ fn apply_record(
                 &label_ids,
                 &attr_ids,
                 &rows,
-                &mut ops.docs.node_adds,
+                &mut docs.node_adds,
             )?;
             Ok(())
         }
@@ -372,7 +355,7 @@ fn apply_record(
             attr_ids,
             rows,
         } => {
-            require_live(g, EntityType::Relationship, &ids.to_roaring(), ops)?;
+            require_live(g, EntityType::Relationship, &ids.to_roaring())?;
             let ids: Vec<u64> = ids.iter().collect();
             // Stated once for the record, so the index bookkeeping does not
             // re-derive it per edge. `set_relationships_attributes` calls
@@ -382,24 +365,24 @@ fn apply_record(
             // Edges still go through the map form; only the node store has the
             // row-major entry point so far.
             let map = attr_map(g, &ids, &attr_ids, &rows)?;
-            g.set_relationships_attributes_of_type(type_id, &map, &mut ops.docs.edge_adds)?;
+            g.set_relationships_attributes_of_type(type_id, &map, &mut docs.edge_adds)?;
             Ok(())
         }
 
         Record::SetLabels { ids, labels } => {
-            require_live(g, EntityType::Node, &ids.to_roaring(), ops)?;
+            require_live(g, EntityType::Node, &ids.to_roaring())?;
             let label_ids = checked_label_ids(g, &labels)?;
             g.set_node_labels_product(
                 &ids.iter().collect::<Vec<_>>(),
                 &label_ids,
-                &mut ops.docs.node_adds,
+                &mut docs.node_adds,
                 false,
             );
             Ok(())
         }
 
         Record::RemoveLabels { ids, labels } => {
-            require_live(g, EntityType::Node, &ids.to_roaring(), ops)?;
+            require_live(g, EntityType::Node, &ids.to_roaring())?;
             let label_ids = checked_label_ids(g, &labels)?;
             // Removal still takes the expanded pairs; only the add path has
             // been given the compact form so far.
@@ -411,7 +394,7 @@ fn apply_record(
                     cols.push(lid);
                 }
             }
-            g.remove_nodes_labels(&rows, &cols, &mut ops.docs.node_removes);
+            g.remove_nodes_labels(&rows, &cols, &mut docs.node_removes);
             Ok(())
         }
 
@@ -424,7 +407,7 @@ fn apply_record(
             let nodes = ids.to_roaring();
             // Liveness first: the relationship check below seeks every id in
             // the tensors, which only hold rows for ids this graph allocated.
-            require_live(g, EntityType::Node, &nodes, ops)?;
+            require_live(g, EntityType::Node, &nodes)?;
             // The delete does not cascade — the primary ships every edge it
             // removed as a `DELETE_EDGE` ahead of this record — so a node that
             // still has one here would leave it dangling off a recycled id.
@@ -436,17 +419,15 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut ops.docs.node_removes, &ops.nodes)
-                .map_err(|e| node_op("node", e))?;
-            ops.deleted_nodes |= nodes;
+            g.delete_nodes(&nodes, &mut docs.node_removes)?;
+            deleted.nodes |= nodes;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut ops.docs.edge_removes, &ops.edges)
-                .map_err(|e| node_op("relationship", e))?;
-            ops.dangling_edges -= edges;
+            g.delete_relationships(&edges, &mut docs.edge_removes)?;
+            deleted.dangling_edges -= edges;
             Ok(())
         }
 
@@ -484,7 +465,7 @@ fn apply_record(
             // has always done it under concurrent writes: `populate_index_batch`
             // populates from a snapshot in 10,000-row batches, and entities
             // written *after* the snapshot are indexed by the write path instead
-            // (`BufferOps::docs` into `commit_index`). A later record that drops
+            // (`docs` into `commit_index`). A later record that drops
             // or recreates the index does not race it either — the population
             // ticket carries a generation, and a worker whose generation is
             // stale releases its ticket and stops rather than committing
@@ -683,6 +664,27 @@ fn resolve_type(
         })
 }
 
+/// Refuse a record that acts on an entity this replica does not hold live.
+///
+/// Live means allocated — before this buffer, or by an earlier record in it —
+/// and not in the recycle bin, which is exactly what [`IdSpace`] already
+/// answers for deletes. Records that update, relabel or connect an entity ask
+/// the same question: without it they write to a recycled id, and the next
+/// entity to reclaim that id is born with the write.
+fn require_live(
+    g: &Graph,
+    kind: EntityType,
+    ids: &RoaringTreemap,
+) -> Result<(), ApplyError> {
+    let (space, name) = match kind {
+        EntityType::Node => (g.node_id_space(), "node"),
+        EntityType::Relationship => (g.relationship_id_space(), "relationship"),
+    };
+    space
+        .refuse_not_live(ids)
+        .map_err(|e| id_space_error_map(name, e))
+}
+
 /// An `UPDATE_EDGE`'s relationship type, checked against this graph.
 ///
 /// The same check C's `ApplyUpdateEdge` makes — after reading the record, it
@@ -696,31 +698,6 @@ fn resolve_type(
 /// has no field for one, so "an edge update with no type" is no longer a state
 /// this can be handed. The `MissingRelType` error that reported it has been
 /// deleted rather than left unconstructible.
-/// Refuse a record that acts on an entity this replica does not hold live.
-///
-/// Live means allocated — before this buffer, or by an earlier record in it —
-/// and not in the recycle bin, which is exactly what [`IdSpace`] already
-/// answers for deletes. Records that update, relabel or connect an entity ask
-/// the same question: without it they write to a recycled id, and the next
-/// entity to reclaim that id is born with the write.
-fn require_live(
-    g: &Graph,
-    kind: EntityType,
-    ids: &RoaringTreemap,
-    ops: &BufferOps,
-) -> Result<(), ApplyError> {
-    match kind {
-        EntityType::Node => ops
-            .nodes
-            .refuse_not_live(ids, g.deleted_nodes())
-            .map_err(|e| id_space_error_map("node", e)),
-        EntityType::Relationship => ops
-            .edges
-            .refuse_not_live(ids, g.deleted_relationships())
-            .map_err(|e| id_space_error_map("relationship", e)),
-    }
-}
-
 fn checked_type_id(
     g: &Graph,
     relation_id: u32,

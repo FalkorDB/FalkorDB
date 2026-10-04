@@ -84,7 +84,7 @@ FALKORDB_PREJIT_HARVEST="${FALKORDB_PREJIT_HARVEST:-0}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)}"
 
 # Compiler: honour CC/CXX from the environment, else let cmake pick. The
-# Docker toolchain image exports CC=clang-22 / CXX=clang++-22.
+# Docker toolchain image exports CC=clang-23 / CXX=clang++-23.
 CMAKE_COMPILER_ARGS=()
 if [ -n "${CC:-}" ]; then CMAKE_COMPILER_ARGS+=(-DCMAKE_C_COMPILER="${CC}"); fi
 if [ -n "${CXX:-}" ]; then CMAKE_COMPILER_ARGS+=(-DCMAKE_CXX_COMPILER="${CXX}"); fi

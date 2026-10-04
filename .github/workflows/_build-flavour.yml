@@ -147,6 +147,20 @@ jobs:
           # ref — a PR branch, a queue entry — would otherwise publish layers
           # into the ref main's own builds restore from.
           cache-to: ${{ github.ref == 'refs/heads/main' && format('type=registry,ref=ghcr.io/falkordb/{1}:buildcache-{2}-{0},mode=max', matrix.arch, matrix.repo, inputs.flavour) || '' }}
+          # Never serve the stages that ship OS packages from that cache. A
+          # cached RUN is keyed on its command text and parent layer, not on
+          # what the Debian archive holds, so a hit skips `apt-get upgrade` and
+          # ships packages as old as the cache entry. `full` is FROM `server`
+          # and reruns with it anyway; it is named so that does not depend on
+          # it. The compile stages stay cached: redis-server and falkordb.so
+          # link libssl/libcrypto/libz dynamically, so the versions that ship
+          # come from these stages. A name with no stage behind it is ignored
+          # (Dockerfile.asan has no `full`). `pull` re-resolves the base image
+          # tags rather than reusing a copy the builder already holds.
+          pull: true
+          no-cache-filters: |
+            server
+            full
 
   # Manifest combining job — only for multi-arch (release).
   # For each unique repo in `cells`, combines the per-arch tags into a
