@@ -27,7 +27,7 @@ use crate::err;
 use crate::error::Result;
 use crate::hash::collect_files;
 use crate::recipes::{CMake, Ctx, SourceGuard, cleanup_build_dir, prepare_entry};
-use crate::util::{copy_file, env_opt, is_prejit_kernel, log, run};
+use crate::util::{copy_file, env_opt, is_prejit_kernel, log, run_isolated};
 
 /// The vendored kernels, relative to the FalkorDB checkout.
 pub const PREJIT_DIR: &str = "build/graphblas/PreJIT";
@@ -178,7 +178,7 @@ fn apply_patch(
     guard.snapshot(&source.join("Source/GB_control.h"))?;
     super::ensure_git_root(source, guard)?;
     log(&format!("applying {}", patch.display()));
-    run(
+    run_isolated(
         "git",
         &[OsStr::new("apply"), patch.as_os_str()],
         source,

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use crate::err;
 use crate::error::Result;
 use crate::recipes::{Ctx, SourceGuard, prepare_entry};
-use crate::util::{capture_opt, copy_file, find_archives, log, run};
+use crate::util::{capture_opt, copy_file, find_archives, log, run_isolated};
 
 const MAIN_ARCHIVE_NAMES: [&str; 2] = ["redisearch.a", "redisearch.so"];
 const VECSIM_CMAKELISTS: &str = "deps/VectorSimilarity/src/VecSim/CMakeLists.txt";
@@ -73,7 +73,7 @@ pub fn build(
         args.push(OsStr::new(&san_arg));
     }
 
-    run("./build.sh", &args, &source, &env)?;
+    run_isolated("./build.sh", &args, &source, &env)?;
     collect(&source, entry, ctx.san.is_some())
 }
 
@@ -109,7 +109,7 @@ fn install_nightly_rust_src(source: &Path) -> Result<()> {
         log("rustup not found; skipping rust-src provisioning for the sanitizer build");
         return Ok(());
     }
-    let _ = run(
+    let _ = run_isolated(
         "rustup",
         &[
             OsStr::new("toolchain"),

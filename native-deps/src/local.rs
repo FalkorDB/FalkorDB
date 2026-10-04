@@ -3,8 +3,9 @@
 use std::fs;
 use std::path::Path;
 
+use crate::err;
 use crate::error::Result;
-use crate::hash::sha256_hex;
+use crate::hash::{hash_file, sha256_hex};
 use crate::recipes::{Ctx, gitlink_resolves};
 use crate::util::capture;
 
@@ -36,7 +37,16 @@ impl Ctx<'_> {
         }
 
         let head = git(&dir, &["rev-parse", "HEAD"])?.trim().to_owned();
-        let diff = git(&dir, &["diff", "HEAD", "--submodule=diff"])?;
+        // A binary edit shows only as "Binary files differ", but the diff's
+        // `index <old>..<new>` line still carries the new blob hash. Untracked
+        // files do not appear at all, and count too: GraphBLAS's cmake globs
+        // PreJIT/*.c, tracked or not.
+        let mut diff = git(&dir, &["diff", "HEAD", "--submodule=diff"])?;
+        for file in git(&dir, &["ls-files", "--others", "--exclude-standard"])?.lines() {
+            let contents = hash_file(&dir.join(file))
+                .map_err(|e| err!("cannot read {}/{file}: {e}", dir.display()))?;
+            diff.push_str(&format!("untracked {file} {contents}\n"));
+        }
         let pinned = &self.lock.get(name)?.rev;
         let mut reasons = Vec::new();
         if &head != pinned {
@@ -134,6 +144,7 @@ mod tests {
             cxx: None,
             cc_version: "cc".into(),
             cxx_version: "cxx".into(),
+            rustc_version: "rustc".into(),
             target: "t".into(),
             openmp: OpenMp::Auto,
         }
@@ -182,6 +193,45 @@ mod tests {
             ctx.local_changes("dep").unwrap().unwrap().fingerprint,
             first.fingerprint,
             "a different edit must change the fingerprint"
+        );
+    }
+
+    #[test]
+    fn untracked_file_is_local() {
+        // GraphBLAS's cmake globs PreJIT/*.c, so an untracked kernel is built in.
+        let tmp = TempDir::new("untracked");
+        let (dir, lock) = checkout(&tmp.0);
+        let tc = toolchain();
+        fs::write(dir.join("extra.c"), "int extra;\n").unwrap();
+        let local = ctx(&tmp.0, &lock, &tc)
+            .local_changes("dep")
+            .unwrap()
+            .expect("an untracked file is local");
+        assert!(local.reason.contains("uncommitted"), "{}", local.reason);
+    }
+
+    #[test]
+    fn binary_edits_get_distinct_fingerprints() {
+        let tmp = TempDir::new("binary");
+        let (dir, lock) = checkout(&tmp.0);
+        fs::write(dir.join("blob.bin"), [0u8, 1, 2, 3]).unwrap();
+        git(&dir, &["add", "blob.bin"]);
+        git(&dir, &["commit", "-q", "-m", "blob"]);
+        let lock = LockFile {
+            entries: vec![Entry {
+                rev: git(&dir, &["rev-parse", "HEAD"]),
+                ..lock.entries[0].clone()
+            }],
+        };
+        let tc = toolchain();
+        let ctx = ctx(&tmp.0, &lock, &tc);
+        fs::write(dir.join("blob.bin"), [0u8, 9, 9, 9]).unwrap();
+        let first = ctx.local_changes("dep").unwrap().unwrap().fingerprint;
+        fs::write(dir.join("blob.bin"), [0u8, 7, 7, 7]).unwrap();
+        let second = ctx.local_changes("dep").unwrap().unwrap().fingerprint;
+        assert_ne!(
+            first, second,
+            "the diff's index line must carry the new blob hash"
         );
     }
 

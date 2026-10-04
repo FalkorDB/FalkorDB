@@ -76,7 +76,10 @@ impl Ctx<'_> {
                 "graphblas",
                 graphblas_key.expect("lagraph key requires the graphblas key"),
             ),
-            Dep::RediSearch => m.set("san", self.san.unwrap_or("none")),
+            Dep::RediSearch => {
+                m.set("san", self.san.unwrap_or("none"));
+                m.set("rustc", &self.toolchain.rustc_version);
+            }
         }
         Ok(m)
     }

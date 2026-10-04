@@ -121,7 +121,6 @@ fn link_openmp_search_paths() {
     #[cfg(target_os = "linux")]
     {
         println!("cargo:rustc-link-search=/usr/lib/llvm-23/lib");
-        println!("cargo:rustc-link-search=/usr/lib/llvm-23/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
@@ -212,7 +211,7 @@ fn link_redisearch(redisearch: &Resolved) {
     let main = redisearch.lib().join("libredisearch.a");
     assert!(
         main.is_file(),
-        "{} missing - run `native-deps ensure --force --dep redisearch`",
+        "{} missing - rebuild it with `FALKORDB_NATIVE_DEPS_FORCE=1 cargo run --manifest-path native-deps/Cargo.toml -- redisearch`",
         main.display()
     );
     link_static(&main);
@@ -240,7 +239,7 @@ fn link_redisearch(redisearch: &Resolved) {
 fn strip_linkme_sections(archive: &Path) -> PathBuf {
     assert!(
         archive.is_file(),
-        "{} missing - run `native-deps ensure --force --dep redisearch`",
+        "{} missing - rebuild it with `FALKORDB_NATIVE_DEPS_FORCE=1 cargo run --manifest-path native-deps/Cargo.toml -- redisearch`",
         archive.display()
     );
     println!("cargo:rerun-if-changed={}", archive.display());
@@ -332,7 +331,6 @@ fn llvm_tool(
     // bare name if present, else the highest available versioned one.
     for cand in [
         bin.to_owned(),
-        format!("{bin}-23"),
         format!("{bin}-23"),
         format!("{bin}-22"),
         format!("{bin}-21"),

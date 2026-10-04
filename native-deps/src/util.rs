@@ -18,11 +18,77 @@ pub fn run(
     cwd: &Path,
     env: &BTreeMap<String, String>,
 ) -> Result<()> {
+    spawn(program, args, cwd, env, false)
+}
+
+/// [`run`] for a recipe: without the variables Cargo sets for a build script
+/// or reads to steer a build (see [`is_cargo_build_var`]).
+///
+/// Recipes run inside `graph/build.rs`. Inherited, those variables reach
+/// RediSearch's own Cargo build -- an instrumented outer build's
+/// `CARGO_ENCODED_RUSTFLAGS`, say -- and change its output without changing
+/// the key it is published under.
+pub fn run_isolated(
+    program: &str,
+    args: &[&OsStr],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+) -> Result<()> {
+    spawn(program, args, cwd, env, true)
+}
+
+/// A variable Cargo sets for build scripts, or that steers a Cargo build.
+/// Network and registry configuration is kept: it changes how crates are
+/// fetched, not what they build into.
+#[must_use]
+pub fn is_cargo_build_var(name: &str) -> bool {
+    const KEEP: [&str; 5] = [
+        "CARGO_HOME",
+        "CARGO_NET_",
+        "CARGO_HTTP_",
+        "CARGO_REGISTRIES_",
+        "CARGO_REGISTRY_",
+    ];
+    const EXACT: [&str; 13] = [
+        "CARGO",
+        "RUSTFLAGS",
+        "RUSTDOCFLAGS",
+        "RUSTC",
+        "RUSTDOC",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTC_LINKER",
+        "TARGET",
+        "HOST",
+        "OUT_DIR",
+        "NUM_JOBS",
+        "OPT_LEVEL",
+    ];
+    if KEEP.iter().any(|k| name.starts_with(k)) {
+        return false;
+    }
+    name.starts_with("CARGO_") || name.starts_with("DEP_") || EXACT.contains(&name)
+}
+
+fn spawn(
+    program: &str,
+    args: &[&OsStr],
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    isolated: bool,
+) -> Result<()> {
     let rendered = render_cmd(program, args);
     log(&format!("$ {rendered}"));
 
     let mut cmd = Command::new(program);
     cmd.args(args).current_dir(cwd);
+    if isolated {
+        for (name, _) in std::env::vars_os() {
+            if name.to_str().is_some_and(is_cargo_build_var) {
+                cmd.env_remove(&name);
+            }
+        }
+    }
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -236,4 +302,37 @@ pub fn is_prejit_kernel(path: &Path) -> bool {
             .file_name()
             .and_then(|n| n.to_str())
             .is_some_and(|n| n.starts_with("GB_jit_"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_cargo_build_var;
+
+    #[test]
+    fn cargo_build_vars_are_recognised() {
+        for v in [
+            "CARGO_ENCODED_RUSTFLAGS",
+            "CARGO_MANIFEST_DIR",
+            "CARGO_FEATURE_PREJIT_HARVEST",
+            "CARGO_TARGET_DIR",
+            "RUSTFLAGS",
+            "RUSTC_WRAPPER",
+            "TARGET",
+            "OUT_DIR",
+            "DEP_Z_INCLUDE",
+        ] {
+            assert!(is_cargo_build_var(v), "{v} should be removed");
+        }
+        for v in [
+            "CARGO_HOME",
+            "CARGO_NET_OFFLINE",
+            "CC",
+            "CXX",
+            "PATH",
+            "HOME",
+            "RUSTUP_TOOLCHAIN",
+        ] {
+            assert!(!is_cargo_build_var(v), "{v} should be kept");
+        }
+    }
 }

@@ -14,7 +14,7 @@ use crate::err;
 use crate::error::Result;
 use crate::lock::LockFile;
 use crate::toolchain::Toolchain;
-use crate::util::{env_flag, jobs, log, run};
+use crate::util::{env_flag, jobs, log, run_isolated};
 
 /// Everything a recipe needs to build one dep.
 pub struct Ctx<'a> {
@@ -330,7 +330,7 @@ impl CMake {
         ];
         argv.extend(self.args.iter().map(OsString::from));
         let refs: Vec<&OsStr> = argv.iter().map(AsRef::as_ref).collect();
-        run("cmake", &refs, &self.source, &BTreeMap::new())
+        run_isolated("cmake", &refs, &self.source, &BTreeMap::new())
     }
 
     pub fn build(&self) -> Result<()> {
@@ -342,13 +342,13 @@ impl CMake {
             jobs.into(),
         ];
         let refs: Vec<&OsStr> = argv.iter().map(AsRef::as_ref).collect();
-        run("cmake", &refs, &self.source, &BTreeMap::new())
+        run_isolated("cmake", &refs, &self.source, &BTreeMap::new())
     }
 
     pub fn install(&self) -> Result<()> {
         let argv: Vec<OsString> = vec!["--install".into(), self.build.clone().into()];
         let refs: Vec<&OsStr> = argv.iter().map(AsRef::as_ref).collect();
-        run("cmake", &refs, &self.source, &BTreeMap::new())
+        run_isolated("cmake", &refs, &self.source, &BTreeMap::new())
     }
 
     /// Configure then build.
