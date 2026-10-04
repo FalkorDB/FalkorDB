@@ -190,33 +190,6 @@ pub fn ensure(req: &Request) -> Result<Resolution> {
     Ok(out)
 }
 
-/// Just the keys, without building anything. Used by `native-deps key` to feed
-/// CI cache keys.
-pub fn keys(req: &Request) -> Result<BTreeMap<Dep, String>> {
-    let lock = LockFile::load(&req.root)?;
-    let toolchain = Toolchain::detect()?;
-    let ctx = Ctx {
-        root: &req.root,
-        lock: &lock,
-        toolchain: &toolchain,
-        san: req.san.as_deref(),
-        prejit_harvest: req.prejit_harvest,
-    };
-
-    let mut out = BTreeMap::new();
-    let mut graphblas_key = None;
-    for dep in Dep::ALL {
-        let key = ctx.manifest(dep, graphblas_key.as_deref())?.key();
-        if dep == Dep::GraphBlas {
-            graphblas_key = Some(key.clone());
-        }
-        if req.deps.contains(&dep) {
-            out.insert(dep, key);
-        }
-    }
-    Ok(out)
-}
-
 fn resolve_one(
     req: &Request,
     ctx: &Ctx<'_>,

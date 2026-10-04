@@ -23,7 +23,7 @@ cargo build                               # graph/build.rs builds them via nativ
 build them ahead of time, or to see what is happening:
 
 ```bash
-cargo run --manifest-path native-deps/Cargo.toml -- ensure --all
+cargo run --manifest-path native-deps/Cargo.toml
 ```
 
 Results are cached at `$HOME/.cache/falkordb/native-deps/<dep>/<key>/`
@@ -33,8 +33,9 @@ the GB_control patch, the vendored PreJIT kernels, the recipe sources,
 
 If a build fails, `native-deps/src/recipes/<dep>.rs` documents the exact cmake
 flags (`-DGRAPHBLAS_COMPACT=OFF`, `-DCMAKE_POSITION_INDEPENDENT_CODE=ON`, static
-build). To rebuild one dep only, use e.g.
-`... -- build graphblas` — and note that a cache miss is diffable: each entry's
+build). To build one dep only, name it, e.g. `... -- graphblas`; add
+`FALKORDB_NATIVE_DEPS_FORCE=1` to rebuild it even on a cache hit. A cache miss
+is diffable: each entry's
 `.stamp` records the full key manifest after a `--- manifest ---` marker.
 
 ## 2. Build

@@ -368,7 +368,7 @@ below is only needed if you want to build them ahead of time or inspect the
 result:
 
 ```bash
-cargo run --manifest-path native-deps/Cargo.toml -- ensure --all
+cargo run --manifest-path native-deps/Cargo.toml
 ```
 
 On macOS, point it at Homebrew clang first (the system clang has no OpenMP):

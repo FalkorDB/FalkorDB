@@ -157,6 +157,84 @@ impl LockFile {
     }
 }
 
+/// Where `native-deps lock` operates: the checkout holding the lock file, or,
+/// since this is the one command that can run before the lock file exists, the
+/// git toplevel.
+pub fn root_for(cwd: &Path) -> Result<PathBuf> {
+    crate::util::find_repo_root(cwd).or_else(|e| {
+        capture("git", &["rev-parse", "--show-toplevel"], Some(cwd))
+            .map(|t| PathBuf::from(t.trim()))
+            .map_err(|_| e)
+    })
+}
+
+/// Regenerate the lock file from the gitlinks, returning a summary.
+pub fn write(root: &Path) -> Result<String> {
+    let generated = from_git(root)?.render();
+    let path = root.join(LOCK_RELPATH);
+    fs::write(&path, &generated).map_err(|e| err!("cannot write {}: {e}", path.display()))?;
+    let lock = LockFile::parse(&generated, &path)?;
+    let mut out = format!("wrote {}", path.display());
+    for e in &lock.entries {
+        out.push_str(&format!(
+            "\n  {} {} ({})",
+            e.name,
+            &e.rev[..e.rev.len().min(12)],
+            e.pin
+        ));
+    }
+    Ok(out)
+}
+
+/// Fail if the lock file no longer matches the gitlinks.
+///
+/// Compares path/url/rev, not the rendered text. `pin` is a human-readable
+/// tag that `from_git` recovers with `git describe` *inside* the submodule, and
+/// is not part of the cache key; a checkout without submodules -- which is all
+/// the lint job has -- cannot run that describe and falls back to the short
+/// rev, so comparing text would fail a correct lock file.
+pub fn check(root: &Path) -> Result<()> {
+    let path = root.join(LOCK_RELPATH);
+    let generated = from_git(root)?.render();
+    let current =
+        fs::read_to_string(&path).map_err(|e| err!("cannot read {}: {e}", path.display()))?;
+    let binding = |text: &str| -> Result<Vec<(String, String, String, String)>> {
+        let mut v: Vec<_> = LockFile::parse(text, &path)?
+            .entries
+            .into_iter()
+            .map(|e| (e.name, e.path, e.url, e.rev))
+            .collect();
+        v.sort();
+        Ok(v)
+    };
+    if binding(&generated)? == binding(&current)? {
+        return Ok(());
+    }
+    bail!(
+        "{LOCK_RELPATH} is stale.\n\
+         A gitlink under deps/ moved without the lock file being regenerated.\n\
+         Run `native-deps lock` and commit the result.\n\n\
+         expected:\n{}\n\ngot:\n{}",
+        summarize(&generated),
+        summarize(&current)
+    )
+}
+
+/// Condense a lock file to its `name rev` pairs for a diffable error message.
+fn summarize(text: &str) -> String {
+    let mut out = Vec::new();
+    let mut section = String::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = name.to_owned();
+        } else if let Some(rev) = line.strip_prefix("rev = ") {
+            out.push(format!("  {section} {rev}"));
+        }
+    }
+    out.join("\n")
+}
+
 /// Rebuild the lock file's contents from the superproject's git state
 /// (`.gitmodules` + the staged gitlinks).
 pub fn from_git(root: &Path) -> Result<LockFile> {

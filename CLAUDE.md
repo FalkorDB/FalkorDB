@@ -99,7 +99,7 @@ overrides the root). The key covers the submodule revision, the GB_control
 patch, the vendored PreJIT kernels, the recipe sources, `$CC`/`$CXX --version`,
 the target triple and the OpenMP/sanitizer flavour — so worktrees share archives
 and a compiler bump never yields a stale-ABI cache hit. Build them explicitly
-with `cargo run --manifest-path native-deps/Cargo.toml -- ensure --all`.
+with `cargo run --manifest-path native-deps/Cargo.toml`.
 
 To bump a dependency, move the gitlink and re-run
 `cargo run --manifest-path native-deps/Cargo.toml -- lock`; CI enforces that

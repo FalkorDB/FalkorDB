@@ -85,27 +85,28 @@ jobs:
       # Hosted macOS has no Docker toolchain image, so build the three deps
       # from source and cache them.
       #
-      # The key comes from native-deps itself rather than a hand-rolled
-      # hashFiles(): `key --all --combined` hashes exactly what the artefacts
-      # are ABI-tied to -- submodule revisions, the GB_control patch, the
-      # vendored PreJIT kernels, the recipe sources, $CC/$CXX --version, the
-      # target triple and the OpenMP flavour. That subsumes the old
-      # hashFiles(scripts) + explicit RediSearch pin + BREW_LLVM_VERSION trio,
-      # and cannot drift out of step with what actually goes into the build.
-      - name: Compute the native-deps cache key
-        id: deps-key
-        run: echo "key=$(cargo run -q --locked --manifest-path native-deps/Cargo.toml -- key --all --combined)" >> "$GITHUB_OUTPUT"
+      # Entries inside the cache are named by native-deps' own content key, so
+      # restoring an older cache (restore-keys) is always safe: a stale entry
+      # simply does not match and is rebuilt beside it. The exact key only has
+      # to change whenever native-deps' key could -- otherwise a restore that
+      # misses inside would rebuild every run and never be saved -- so it covers
+      # the same inputs: the pins, the recipe sources (as RECIPE_HASH does), the
+      # GB patch and PreJIT kernels, and the compiler.
+      - name: Fingerprint the compiler
+        id: cc
+        run: echo "hash=$("$CC" --version | head -1 | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
 
       - name: Restore native deps
         id: native-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: .deps/native-deps
-          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ steps.deps-key.outputs.key }}
+          key: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deps/native-deps.lock', 'native-deps/src/recipes/**', 'native-deps/src/toolchain.rs', 'native-deps/src/util.rs', 'build/graphblas/**') }}-cc${{ steps.cc.outputs.hash }}
+          restore-keys: macos-native-deps-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build GraphBLAS + LAGraph + RediSearch
         if: steps.native-cache.outputs.cache-hit != 'true'
-        run: cargo run --locked --manifest-path native-deps/Cargo.toml -- ensure --all
+        run: cargo run --locked --manifest-path native-deps/Cargo.toml
 
       - name: Save native deps
         # Only a trusted revision may WRITE this cache. The recipes come from
