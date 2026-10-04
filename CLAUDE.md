@@ -89,19 +89,24 @@ git submodule update --init --recursive
 cargo build   # graph/build.rs calls native-deps; nothing else to run
 ```
 
-git owns those checkouts — `native-deps` only builds what is there, and the
-gitlink is the only record of each pinned commit. The Docker images COPY the
+On macOS, export `CC`/`CXX` as Homebrew's clang first (see README): the system
+clang has no OpenMP, and GraphBLAS would silently build single-threaded.
+
+git owns those checkouts — `native-deps` only builds what is there. The gitlink
+is the authoritative pin; `deps/native-deps.lock` mirrors it for contexts with
+no `.git` (the Docker dep stages), and CI checks the two agree. The Docker images COPY the
 submodules in, so any workflow feeding one needs `submodules: recursive`.
 
 `native-deps` caches its output at
-`$HOME/.cache/falkordb/native-deps/<dep>/<key>/` (`$FALKORDB_DEPS_CACHE`
-overrides the root). The key covers the submodule revision, the GB_control
+`${XDG_CACHE_HOME:-$HOME/.cache}/falkordb/native-deps/<dep>/<key>/`
+(`$FALKORDB_DEPS_CACHE` overrides the root). The key covers the submodule revision, the GB_control
 patch, the vendored PreJIT kernels, the recipe sources, `$CC`/`$CXX --version`,
 the target triple and the OpenMP/sanitizer flavour — so worktrees share archives
 and a compiler bump never yields a stale-ABI cache hit. Build them explicitly
 with `cargo run --manifest-path native-deps/Cargo.toml`.
 
-To bump a dependency, move the gitlink and re-run
+To bump a dependency, move the gitlink and stage it (`git add deps/<Name>`:
+`lock` reads the pin from the index), then re-run
 `cargo run --manifest-path native-deps/Cargo.toml -- lock`; CI enforces that
 `deps/native-deps.lock` matches via `lock --check`.
 

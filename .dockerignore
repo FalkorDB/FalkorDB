@@ -5,6 +5,10 @@ target/
 # the dep stages COPY in (git owns the submodule; nothing clones it any more).
 deps/RediSearch/bin/
 deps/RediSearch/.install/
+# Trees the old graphblas.sh/redisearch.sh left in checkouts that predate the
+# submodules: never inputs, but a stale one would be sent with `COPY . .`.
+lagraph_lib/
+redisearch/
 # All git metadata, at any depth. A submodule's `.git` is normally a small
 # `gitdir:` pointer file, but one bootstrapped by an older redisearch.sh is a
 # full repository (~62MB of objects) -- so leaving these in would make the build

@@ -354,7 +354,15 @@ apt-installed clang and a hand-pinned `LLVMORG_VERSION`.
 [LAGraph](https://github.com/GraphBLAS/LAGraph.git) and
 [RediSearch](https://github.com/FalkorDB/RediSearch.git) are git submodules
 under `deps/`, built by the `native-deps` crate. **git owns those checkouts** —
-`native-deps` only builds what is there, so populate them first:
+`native-deps` only builds what is there, so populate them first.
+
+On macOS, point the build at Homebrew clang first: the system clang has no
+OpenMP, and GraphBLAS would build single-threaded without saying so.
+
+```bash
+export CC=$(brew --prefix llvm)/bin/clang
+export CXX=$(brew --prefix llvm)/bin/clang++
+```
 
 ```bash
 git submodule update --init --recursive
@@ -371,18 +379,11 @@ result:
 cargo run --manifest-path native-deps/Cargo.toml
 ```
 
-On macOS, point it at Homebrew clang first (the system clang has no OpenMP):
-
-```bash
-export CC=$(brew --prefix llvm)/bin/clang
-export CXX=$(brew --prefix llvm)/bin/clang++
-```
-
 ###### The artifact cache
 
 Results are cached at
-`$HOME/.cache/falkordb/native-deps/<dep>/<key>/` (`$FALKORDB_DEPS_CACHE`
-overrides the root). The key covers everything the artifacts are ABI-tied to:
+`${XDG_CACHE_HOME:-$HOME/.cache}/falkordb/native-deps/<dep>/<key>/`
+(`$FALKORDB_DEPS_CACHE` overrides the root). The key covers everything the artifacts are ABI-tied to:
 the submodule revision, the `GB_control` patch, the vendored PreJIT kernels, the
 recipe sources, `$CC`/`$CXX --version`, the target triple and the
 OpenMP/sanitizer flavour. Worktrees therefore share archives, and a compiler

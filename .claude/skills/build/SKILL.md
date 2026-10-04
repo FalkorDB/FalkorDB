@@ -14,6 +14,14 @@ libraries (GraphBLAS and RediSearch) that must be compiled and installed
 
 Only needed once per machine/container (skip if `cargo build` already works).
 
+On macOS, point the build at Homebrew clang first: the system clang has no
+OpenMP, and GraphBLAS would build single-threaded without saying so.
+
+```bash
+export CC=$(brew --prefix llvm)/bin/clang
+export CXX=$(brew --prefix llvm)/bin/clang++
+```
+
 ```bash
 git submodule update --init --recursive   # populates deps/{GraphBLAS,LAGraph,RediSearch}
 cargo build                               # graph/build.rs builds them via native-deps
@@ -26,7 +34,8 @@ build them ahead of time, or to see what is happening:
 cargo run --manifest-path native-deps/Cargo.toml
 ```
 
-Results are cached at `$HOME/.cache/falkordb/native-deps/<dep>/<key>/`
+Results are cached at
+`${XDG_CACHE_HOME:-$HOME/.cache}/falkordb/native-deps/<dep>/<key>/`
 (`$FALKORDB_DEPS_CACHE` overrides the root), keyed on the submodule revision,
 the GB_control patch, the vendored PreJIT kernels, the recipe sources,
 `$CC`/`$CXX --version`, the target triple and the OpenMP/sanitizer flavour.

@@ -269,7 +269,7 @@ pub fn find_repo_root(start: &Path) -> Result<PathBuf> {
 }
 
 /// `true` when the environment variable is set to something other than `0`,
-/// `false`, `no` or the empty string.
+/// `false`, `no`, `off` or the empty string.
 pub fn env_flag(name: &str) -> bool {
     std::env::var(name).is_ok_and(|v| {
         let v = v.trim().to_ascii_lowercase();

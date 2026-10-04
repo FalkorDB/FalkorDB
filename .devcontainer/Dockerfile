@@ -72,13 +72,15 @@ COPY deps/GraphBLAS        /data/deps/GraphBLAS
 COPY deps/LAGraph          /data/deps/LAGraph
 COPY deps/RediSearch       /data/deps/RediSearch
 RUN cd /data && \
+    FALKORDB_DEPS_CACHE=/opt/falkordb-deps \
     cargo run --locked --manifest-path native-deps/Cargo.toml && \
     rm -rf /data/native-deps /data/build /data/deps
 
-# Mark the populated cache read-only for the workspace build. The developer's
-# bind-mounted checkout resolves against it, so an untouched dep is never
-# rebuilt inside the container.
-ENV FALKORDB_NATIVE_DEPS_PREBUILT=/root/.cache/falkordb/native-deps
+# Expose the baked deps as a read-only root, apart from the writable cache: the
+# developer's bind-mounted checkout resolves against them, so an untouched dep
+# is never rebuilt, and anything it does build goes to the default cache
+# instead of mutating what the image shipped.
+ENV FALKORDB_NATIVE_DEPS_PREBUILT=/opt/falkordb-deps
 
 WORKDIR /workspace
 
