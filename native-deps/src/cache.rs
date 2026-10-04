@@ -26,6 +26,11 @@ use crate::util::{env_opt, log, now_secs};
 use crate::{bail, err};
 
 pub const STAMP_NAME: &str = ".stamp";
+/// Touched whenever an entry is resolved, so `prune` can tell what is in use.
+/// Not the stamp itself: graph/build.rs watches the stamp, and touching it on
+/// every resolve would rerun the build script -- and recompile `graph` -- on
+/// every `cargo build`.
+pub const USED_NAME: &str = ".used";
 const MANIFEST_SEPARATOR: &str = "--- manifest ---";
 const DEFAULT_LOCK_TIMEOUT_SECS: u64 = 90 * 60;
 
@@ -92,6 +97,12 @@ impl Cache {
             .chain(std::iter::once(self.entry_dir(dep, key)))
             .find(|d| d.join(STAMP_NAME).is_file())
     }
+}
+
+/// Record that `entry` was just resolved. Best effort: a read-only prebuilt root
+/// simply cannot record it, and is never pruned anyway.
+pub fn mark_used(entry: &Path) {
+    let _ = fs::write(entry.join(USED_NAME), b"");
 }
 
 /// The completion marker for a cache entry.
@@ -182,11 +193,7 @@ impl BuildLock {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let timeout = Duration::from_secs(
-            env_opt("FALKORDB_NATIVE_DEPS_LOCK_TIMEOUT")
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(DEFAULT_LOCK_TIMEOUT_SECS),
-        );
+        let timeout = lock_timeout();
 
         let mut announced = false;
         loop {
@@ -242,6 +249,20 @@ impl Drop for BuildLock {
 /// True only when the lock names a pid and that process is certainly not
 /// running. A Ctrl-C'd build never runs its destructors, so without this its
 /// lock would block every build of that dep until the age timeout.
+/// A lock nobody will release: its holder is gone, or it has outlived the
+/// timeout.
+pub fn lock_is_stale(path: &Path) -> bool {
+    holder_is_dead(path) || lock_age(path).is_some_and(|age| age > lock_timeout())
+}
+
+fn lock_timeout() -> Duration {
+    Duration::from_secs(
+        env_opt("FALKORDB_NATIVE_DEPS_LOCK_TIMEOUT")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_LOCK_TIMEOUT_SECS),
+    )
+}
+
 fn holder_is_dead(path: &Path) -> bool {
     let Some(pid) = fs::read_to_string(path).ok().and_then(|text| {
         text.lines()

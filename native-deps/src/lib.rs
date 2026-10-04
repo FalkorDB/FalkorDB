@@ -23,13 +23,14 @@ pub mod hash;
 pub mod key;
 pub mod local;
 pub mod lock;
+pub mod prune;
 pub mod recipes;
 #[cfg(test)]
 mod testing;
 pub mod toolchain;
 pub mod util;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub use crate::cache::{Cache, Stamp};
@@ -185,6 +186,7 @@ pub fn ensure(req: &Request) -> Result<Resolution> {
             continue;
         }
         let resolved = resolve_one(req, &ctx, &cache, dep, &out)?;
+        cache::mark_used(&resolved.prefix);
         out.0.insert(dep, resolved);
     }
     Ok(out)
@@ -294,6 +296,33 @@ fn resolve_one(
 /// Entry names of local builds start with this; keys never do, being hex.
 pub const LOCAL_PREFIX: &str = "local-";
 
+/// The one local-build slot per dep that belongs to the worktree at `root`.
+fn local_entry_name(root: &Path) -> String {
+    let worktree = &hash::sha256_hex(root.to_string_lossy().as_bytes())[..12];
+    format!("{LOCAL_PREFIX}{worktree}")
+}
+
+/// The cache entry names this checkout resolves to right now, computed without
+/// building anything: its pinned keys, and its own local-build slots. `prune`
+/// never removes these.
+pub fn current_entries(req: &Request) -> Result<BTreeSet<String>> {
+    let lock = LockFile::load(&req.root)?;
+    let toolchain = Toolchain::detect()?;
+    let ctx = Ctx {
+        root: &req.root,
+        lock: &lock,
+        toolchain: &toolchain,
+        san: req.san.as_deref(),
+        prejit_harvest: req.prejit_harvest,
+    };
+    let mut out = BTreeSet::from([local_entry_name(&req.root)]);
+    let graphblas = ctx.manifest(Dep::GraphBlas, None)?.key();
+    out.insert(ctx.manifest(Dep::LaGraph, Some(&graphblas))?.key());
+    out.insert(ctx.manifest(Dep::RediSearch, None)?.key());
+    out.insert(graphblas);
+    Ok(out)
+}
+
 /// Resolve a dep whose checkout differs from its pin.
 ///
 /// It is built into one slot per worktree, `<dep>/local-<worktree>`, which no
@@ -319,8 +348,7 @@ fn resolve_local(
 
     manifest.set("local", &local.fingerprint);
     let key = format!("{LOCAL_PREFIX}{}", manifest.key());
-    let worktree = &hash::sha256_hex(req.root.to_string_lossy().as_bytes())[..12];
-    let entry = cache.entry_dir(dep, &format!("{LOCAL_PREFIX}{worktree}"));
+    let entry = cache.entry_dir(dep, &local_entry_name(&req.root));
 
     if !req.force && Stamp::read(&entry).is_ok_and(|s| s.key == key) {
         log(&format!("{dep}: local build unchanged {}", entry.display()));

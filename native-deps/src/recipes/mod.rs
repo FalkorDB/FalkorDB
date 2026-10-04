@@ -364,6 +364,9 @@ impl CMake {
     }
 }
 
+/// The scratch build tree inside an entry, removed once the build installs.
+pub const BUILD_DIR: &str = ".build";
+
 /// Prepare `<entry>` for a fresh build: wipe whatever a previous interrupted
 /// attempt left behind (there is no `.stamp`, so nothing there is usable) and
 /// return the scratch build directory to use.
@@ -371,7 +374,7 @@ pub fn prepare_entry(entry: &Path) -> Result<PathBuf> {
     if entry.exists() {
         fs::remove_dir_all(entry).map_err(|e| err!("cannot clear {}: {e}", entry.display()))?;
     }
-    let build = entry.join(".build");
+    let build = entry.join(BUILD_DIR);
     fs::create_dir_all(&build)?;
     Ok(build)
 }

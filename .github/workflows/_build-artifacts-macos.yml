@@ -108,6 +108,13 @@ jobs:
         if: steps.native-cache.outputs.cache-hit != 'true'
         run: cargo run --locked --manifest-path native-deps/Cargo.toml
 
+      # restore-keys can hand back an older cache, and the save below would
+      # carry its superseded entries forward forever. Keep only what this
+      # revision resolves to.
+      - name: Prune superseded native deps
+        if: ${{ inputs.trusted_revision && steps.native-cache.outputs.cache-hit != 'true' }}
+        run: cargo run --locked --manifest-path native-deps/Cargo.toml -- prune --days 0
+
       - name: Save native deps
         # Only a trusted revision may WRITE this cache. The recipes come from
         # the checked-out tree, so on a PR build their output is
