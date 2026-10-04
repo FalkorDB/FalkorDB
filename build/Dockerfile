@@ -206,7 +206,7 @@ RUN python3 -m venv venv
 # it. The pin only bites when this image is rebuilt, which is why it surfaced
 # on a PR touching build/graphblas rather than on trunk. Drop it once
 # falkordb-py releases a fix.
-RUN venv/bin/pip install behave falkordb 'redis<8.1' falkordb-bulk-loader hypothesis pytest RLTest
+RUN venv/bin/pip install behave falkordb 'redis<8.1' falkordb-bulk-loader hypothesis pytest RLTest uv
 
 # ---- prebuilt native deps ----
 # Both stages publish into the same root, so the two COPYs compose into one

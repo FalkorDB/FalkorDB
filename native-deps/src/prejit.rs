@@ -28,10 +28,10 @@ use crate::bail;
 use crate::error::Result;
 use crate::lock::LockFile;
 use crate::recipes::graphblas;
-use crate::util::{capture_opt, env_opt, log, run};
+use crate::util::{capture_opt, copy_file, env_flag, env_opt, is_prejit_kernel, log, run};
 
 pub fn regenerate(root: &Path) -> Result<()> {
-    if env_opt("FALKORDB_PREJIT_HARVEST").is_some() {
+    if env_flag("FALKORDB_PREJIT_HARVEST") {
         bail!(
             "FALKORDB_PREJIT_HARVEST is set; unset it -- prejit sets it for the harvest \
              build itself, and the final build must run without it"
@@ -51,29 +51,52 @@ pub fn regenerate(root: &Path) -> Result<()> {
         );
     }
 
+    // Checked before anything is cleared: the benchmark queries carry shapes
+    // no functional suite issues, and a harvest without them would quietly
+    // drop those kernels -- the very regression PreJIT exists to prevent.
+    if !root.join("bench/pyproject.toml").is_file() || capture_opt("uv", &["--version"]).is_none() {
+        bail!(
+            "the benchmark workload needs bench/pyproject.toml and `uv` on PATH \
+             (`pip install uv`); without it benchmark-only kernels go missing"
+        );
+    }
+
     let env = workload_env(root);
     let mut harvest = env.clone();
     harvest.insert("FALKORDB_PREJIT_HARVEST".into(), "1".into());
     link_static_libomp_for_jit();
 
-    graphblas::clear_prejit(root, &jit_cache)?;
-    cargo(
-        root,
-        &harvest,
-        &["build", "--release", "--features", "prejit_harvest"],
-    )?;
-
-    let (steps, mut failures) = workload(root);
-    for (label, program, args) in steps {
-        log(&format!("workload: {label}"));
-        let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
-        if let Err(e) = run(program, &args, root, &harvest) {
-            log(&format!("WARNING: {label} failed ({e}); continuing"));
-            failures.push(label);
+    // The vendored kernels are cleared first, so put them back if anything
+    // before the harvest fails: a failed run must not leave the directory empty.
+    let backup = Backup::take(root)?;
+    let outcome = (|| -> Result<(usize, Vec<&'static str>)> {
+        graphblas::clear_prejit(root, &jit_cache)?;
+        cargo(
+            root,
+            &harvest,
+            &["build", "--release", "--features", "prejit_harvest"],
+        )?;
+        let mut failures = Vec::new();
+        for (label, program, args) in workload() {
+            log(&format!("workload: {label}"));
+            let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+            if let Err(e) = run(program, &args, root, &harvest) {
+                log(&format!("WARNING: {label} failed ({e}); continuing"));
+                failures.push(label);
+            }
         }
-    }
-
-    let harvested = graphblas::harvest_prejit(root, &jit_cache)?;
+        Ok((graphblas::harvest_prejit(root, &jit_cache)?, failures))
+    })();
+    let (harvested, failures) = match outcome {
+        Ok(done) => {
+            backup.discard();
+            done
+        }
+        Err(e) => {
+            backup.restore()?;
+            return Err(e);
+        }
+    };
     log(&format!(
         "harvested {harvested} kernel(s) into {}",
         graphblas::PREJIT_DIR
@@ -96,9 +119,8 @@ pub fn regenerate(root: &Path) -> Result<()> {
 
 type Step = (&'static str, &'static str, Vec<&'static str>);
 
-/// Everything the harvest should exercise, in order, and any part of it that
-/// cannot run here.
-fn workload(root: &Path) -> (Vec<Step>, Vec<&'static str>) {
+/// Everything the harvest should exercise, in order.
+fn workload() -> Vec<Step> {
     let mut steps = vec![
         (
             "cargo test",
@@ -127,19 +149,64 @@ fn workload(root: &Path) -> (Vec<Step>, Vec<&'static str>) {
         // are the only source of LAGraph's HLL dot4 kernels.
         ("flow tests", "./flow.sh", vec![]),
     ];
-    // The benchmark queries carry shapes no functional suite issues; without
-    // them the benchmark silently runs generic kernels, the very regression
-    // PreJIT exists to prevent.
-    if root.join("bench/pyproject.toml").is_file() && capture_opt("uv", &["--version"]).is_some() {
-        steps.push((
-            "bench queries",
-            "uv",
-            vec!["run", "--project", "bench", "bench", "measure", "--once"],
-        ));
-        (steps, Vec::new())
-    } else {
-        (steps, vec!["bench queries (no bench/pyproject.toml + uv)"])
+    // The benchmark queries carry shapes no functional suite issues.
+    steps.push((
+        "bench queries",
+        "uv",
+        vec!["run", "--project", "bench", "bench", "measure", "--once"],
+    ));
+    steps
+}
+
+/// A copy of the vendored kernels, taken before a harvest clears them.
+struct Backup {
+    root: std::path::PathBuf,
+    dir: std::path::PathBuf,
+}
+
+impl Backup {
+    fn take(root: &Path) -> Result<Self> {
+        let dir = std::env::temp_dir().join(format!("native-deps-prejit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)?;
+        for kernel in kernels(&root.join(graphblas::PREJIT_DIR))? {
+            copy_file(&kernel, &dir.join(kernel.file_name().unwrap_or_default()))?;
+        }
+        Ok(Self {
+            root: root.to_path_buf(),
+            dir,
+        })
     }
+
+    fn restore(&self) -> Result<()> {
+        let vendor = self.root.join(graphblas::PREJIT_DIR);
+        for stale in kernels(&vendor)? {
+            std::fs::remove_file(stale)?;
+        }
+        for kernel in kernels(&self.dir)? {
+            copy_file(
+                &kernel,
+                &vendor.join(kernel.file_name().unwrap_or_default()),
+            )?;
+        }
+        log(&format!(
+            "restored the vendored kernels in {}",
+            vendor.display()
+        ));
+        self.discard();
+        Ok(())
+    }
+
+    fn discard(&self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+fn kernels(dir: &Path) -> Result<Vec<std::path::PathBuf>> {
+    Ok(std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| is_prejit_kernel(p))
+        .collect())
 }
 
 /// The environment every child runs with.
@@ -252,6 +319,29 @@ mod tests {
             assert_eq!(v.split('.').count(), 3, "{v}");
             assert!(v.split('.').all(|p| p.parse::<u32>().is_ok()), "{v}");
         }
+    }
+
+    #[test]
+    fn a_failed_run_restores_the_vendored_kernels() {
+        let tmp = TempDir::new("prejit-backup");
+        let vendor = tmp.0.join(PREJIT_DIR);
+        fs::create_dir_all(&vendor).unwrap();
+        fs::write(vendor.join("GB_jit__committed.c"), "committed").unwrap();
+        fs::write(vendor.join("README"), "not a kernel").unwrap();
+
+        let backup = super::Backup::take(&tmp.0).unwrap();
+        // What a run that fails part-way leaves: cleared, plus a partial harvest.
+        fs::remove_file(vendor.join("GB_jit__committed.c")).unwrap();
+        fs::write(vendor.join("GB_jit__partial.c"), "partial").unwrap();
+        backup.restore().unwrap();
+
+        assert_eq!(
+            fs::read_to_string(vendor.join("GB_jit__committed.c")).unwrap(),
+            "committed"
+        );
+        assert!(!vendor.join("GB_jit__partial.c").exists());
+        assert!(vendor.join("README").exists());
+        assert!(!backup.dir.exists(), "the backup is removed once restored");
     }
 
     #[test]
