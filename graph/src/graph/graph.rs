@@ -3877,7 +3877,7 @@ impl Graph {
         let query_vec = Arc::clone(&vector);
         // `k` is user input. The index cannot hold more documents than there are
         // nodes, and a `k` far beyond that makes the KNN query return nothing.
-        let k = k.min(self.node_count.max(1) as usize);
+        let k = k.min(self.node_count().max(1) as usize);
         let raw_iter = self.node_indexer.vector_query(label, field, vector, k)?;
 
         // Resolve the attribute name to its numeric slot once, rather than
@@ -3936,7 +3936,7 @@ impl Graph {
         let metric = self.edge_indexer.get_vector_metric(label, &attr);
         let query_vec = Arc::clone(&vector);
         // Clamp the user-supplied `k` to the index's capacity (see `vector_query_nodes`).
-        let k = k.min(self.relationship_count.max(1) as usize);
+        let k = k.min(self.relationship_count().max(1) as usize);
         let raw_iter = self
             .edge_indexer
             .vector_query_edges(label, field, vector, k)?;
