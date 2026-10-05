@@ -864,8 +864,20 @@ class testAllShortestPaths():
 
         self.env.assertEqual(len(dup.result_set), expected_len)
         self.env.assertEqual(len(single.result_set), expected_len)
-        for row in dup.result_set:
-            self.env.assertContains(row, single.result_set)
+
+        # Compare which paths came back, not just how many. A repeated type
+        # used to fill the k result slots with copies of one path, and
+        # `len(dup) == expected_len` still held whenever the random graph
+        # happened to offer 3+ qualifying paths -- which is why this only
+        # flaked. Both queries are now the same query, so the two sets of paths
+        # have to be the same. Compared as node ids, and order-insensitively so
+        # the assertion rests on neither Path equality nor on the order the
+        # search happens to emit.
+        def node_ids(result):
+            return sorted(tuple(n.id for n in row[0].nodes())
+                          for row in result.result_set)
+
+        self.env.assertEqual(node_ids(dup), node_ids(single))
 
     def test18_sp_src_eq_dst(self):
         # sourceNode == targetNode is degenerate: minLen==1 requires at
