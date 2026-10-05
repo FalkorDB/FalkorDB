@@ -14,7 +14,7 @@ use super::EncodeState;
 use super::Header;
 use super::Schema;
 use super::buffered_io::BufferedReader;
-use super::{DECODE_STATE, PendingGraph};
+use super::{DECODE_STATE, PendingGraph, decode_capacity};
 
 /// What one RDB key turned out to hold.
 pub enum LoadedKey {
@@ -56,7 +56,7 @@ pub fn rdb_load_graph(
 
     // --- Key Schema (payload directory) ---
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    let mut payloads = Vec::with_capacity(decode_capacity(payload_count));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;
@@ -445,7 +445,7 @@ fn load_graph_from_reader(
     let schema = Schema::decode(r)?;
 
     let payload_count = r.read_unsigned()?;
-    let mut payloads = Vec::with_capacity(payload_count as usize);
+    let mut payloads = Vec::with_capacity(decode_capacity(payload_count));
     for _ in 0..payload_count {
         let state = r.read_unsigned()?;
         let count = r.read_unsigned()?;
