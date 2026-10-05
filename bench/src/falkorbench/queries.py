@@ -25,6 +25,13 @@ SETUP = [
     # edge and `{w: 11}` matches none. :KNOWS deliberately carries no
     # properties, which makes it useless for this — a predicate on it is not
     # 0%-selective, it is unsatisfiable against a property that does not exist.
+    #
+    # It doubles SETUP's edges (10,109 -> 20,109) but changes few rows outside
+    # its own: profiling every read row with and without it, 7 of 287 differ —
+    # the four that use it, the two catalogue procedures, and `untyped
+    # var-length`, which now walks both rings (6 -> 14 rows out of the walk).
+    # The untyped edge scans do not move: `reduce_count` answers them from
+    # per-type counts without visiting an edge.
     "UNWIND range(0, 9999) AS i MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 10000}) CREATE (a)-[:RATED {w: i % 10, c: 1}]->(b)",
     "MATCH (p:Person) SET p.age = p.id % 80, p.score = p.id * 1.5",
     # ---- Doc corpus for coverage features (fulltext / vector / edge index /
@@ -641,7 +648,7 @@ QUERIES = [
 
     # ---- one write against a large EDGE population -------------------------
     # Every sized row above creates and deletes *nodes*, so the edge count
-    # stays at SETUP's ~10k for the whole run and no row in the suite is
+    # stays at SETUP's ~20k for the whole run and no row in the suite is
     # sensitive to the cost of a write scaling with |E|. That hid #2687, where
     # the edge-endpoint index was copied whole on the first edge mutation of
     # every write transaction: 2,676,794 bytes allocated to create one edge
@@ -652,7 +659,7 @@ QUERIES = [
     # `urel create delete`, three orders of magnitude further up the edge count.
     # It DEPENDS on `bulk edges 200k` having run first, which `needs=` declares
     # so that selecting it by name pulls the builder in. Without that a named
-    # run measures it at 10k edges instead, quietly and without failing.
+    # run measures it at ~20k edges instead, quietly and without failing.
     #
     # Both go last so the 200k edges cannot shift any other row, and the
     # measured row follows a large *create* rather than a large delete, so it
