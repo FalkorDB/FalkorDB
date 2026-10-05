@@ -10,7 +10,9 @@ use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::constraint::{Constraint, ConstraintStatus, ConstraintType};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Encode, Reader, Writer, index_field_type};
+use graph::graph::graphblas::serialization::{
+    Decode, Encode, Reader, Writer, decode_capacity, index_field_type,
+};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::{Field, IndexInfo, IndexType, TextIndexOptions, VectorIndexOptions};
@@ -116,20 +118,6 @@ impl DecodeState {
 }
 
 pub use graph::graph::graphblas::serialization::{EncodeState, PayloadEntry};
-
-/// Largest capacity a decoder reserves up front for a count read from the
-/// payload.
-///
-/// Counts are raw u64 values and GRAPH.RESTORE accepts them from a client, so
-/// they can't be trusted to size an allocation. The decode loops stop at the
-/// first missing element anyway, so a real payload only pays for a few extra
-/// reallocations. GRAPH.BULK caps its allocations for the same reason.
-const MAX_DECODE_PREALLOC: usize = 1024;
-
-/// Capacity to reserve for `count` elements declared by the payload.
-pub(crate) fn decode_capacity(count: u64) -> usize {
-    usize::try_from(count).map_or(MAX_DECODE_PREALLOC, |n| n.min(MAX_DECODE_PREALLOC))
-}
 
 /// Graph header — shared between RDB encode and decode.
 #[allow(dead_code)]
