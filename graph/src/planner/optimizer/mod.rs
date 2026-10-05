@@ -215,13 +215,52 @@ fn debug_assert_no_pattern_attrs(plan: &DynTree<IR>) {
                 "traverse",
                 rel_is_clean(relationship) && chain.iter().all(|hop| rel_is_clean(hop)),
             ),
-            _ => continue,
+            // Constructor patterns: the attrs are the property template for the
+            // entity being built, not a predicate. Exempt — see above.
+            IR::Create(..) | IR::Merge { .. } => continue,
+            // No pattern element, so nothing that could carry attrs. Listed
+            // rather than left to a wildcard: an operator added later that
+            // embeds a `QueryNode` or `QueryRelationship` must stop this
+            // compiling until someone decides whether it is checked, instead of
+            // being skipped without anyone noticing.
+            IR::Argument(..)
+            | IR::Optional(..)
+            | IR::ProcedureCall { .. }
+            | IR::Unwind { .. }
+            | IR::Delete { .. }
+            | IR::Set(..)
+            | IR::Remove(..)
+            | IR::NodeByFulltextScan { .. }
+            | IR::EdgeByFulltextScan { .. }
+            | IR::NodeByVectorScan { .. }
+            | IR::EdgeByVectorScan { .. }
+            | IR::PathBuilder(..)
+            | IR::Filter(..)
+            | IR::CartesianProduct
+            | IR::ValueHashJoin { .. }
+            | IR::Apply
+            | IR::SemiApply
+            | IR::AntiSemiApply
+            | IR::OrApplyMultiplexer(..)
+            | IR::LoadCsv { .. }
+            | IR::Sort(..)
+            | IR::Skip(..)
+            | IR::Limit(..)
+            | IR::Aggregate { .. }
+            | IR::Project { .. }
+            | IR::Distinct
+            | IR::NestedPlans
+            | IR::Union
+            | IR::Commit
+            | IR::ForEach { .. }
+            | IR::CreateIndex { .. }
+            | IR::DropIndex { .. } => continue,
         };
         debug_assert!(
             clean,
             "{what} still carries inline pattern attrs after planning; they must be \
-             lowered exactly once (Filter, or edge_filter for the walks) and stripped: \
-             {}",
+             lowered exactly once (a Filter, or edge_filter for CondVarLenTraverse) and \
+             stripped: {}",
             plan.node(idx).data()
         );
     }
