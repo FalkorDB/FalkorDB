@@ -349,14 +349,14 @@ class testConfig(FlowTestsBase):
         self.env.assertEqual(creation_buffer_size, expected_response)
 
     def test12_set_get_runtime_booleans(self):
-        """CMD_INFO and DELAY_INDEXING are settable at run-time, as in C"""
+        """CMD_INFO and DELAY_INDEXING are settable at run-time"""
 
         for config_name in ["CMD_INFO", "DELAY_INDEXING"]:
             for value, expected in [("no", 0), ("yes", 1), ("NO", 0), ("Yes", 1)]:
                 self.env.assertEqual(self.db.config_set(config_name, value), "OK")
                 self.env.assertEqual(self.db.config_get(config_name), expected)
 
-            # anything but yes/no is rejected (C's _Config_ParseYesNo),
+            # anything but yes/no is rejected,
             # leaving the config as it was
             for value in ["maybe", "1", "0", "true", "false"]:
                 try:
@@ -375,7 +375,7 @@ class testConfig(FlowTestsBase):
         self.env.assertEqual(self.db.config_set("MAX_INFO_QUERIES", 42), "OK")
         self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 42)
 
-        # above the cap the value is clamped, not rejected - as C's setter does
+        # above the cap the value is clamped, not rejected
         self.env.assertEqual(self.db.config_set("MAX_INFO_QUERIES", 99999), "OK")
         self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 1000)
 
@@ -387,10 +387,10 @@ class testConfig(FlowTestsBase):
                 assert(("Failed to set config value MAX_INFO_QUERIES to %s" % invalid) in str(e))
         self.env.assertEqual(self.db.config_get("MAX_INFO_QUERIES"), 1000)
 
-    def test14_c_validation(self):
-        """GRAPH.CONFIG rejects what C rejects"""
+    def test14_config_validation(self):
+        """GRAPH.CONFIG validates values, arity and names"""
 
-        # ASYNC_DELETE defaults to yes, as in C
+        # ASYNC_DELETE defaults to yes
         self.env.assertEqual(self.db.config_get("ASYNC_DELETE"), 1)
 
         prev_conf = self.redis_con.execute_command("GRAPH.CONFIG GET *")
