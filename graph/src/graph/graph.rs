@@ -90,7 +90,7 @@ use crate::{
         graphblas::{
             matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
-            tensor::Tensor,
+            tensor::{GrB_INDEX_MAX, Tensor},
             versioned_matrix::{self, VersionedMatrix},
         },
         id_space::{IdSpace, IdSpaceError},
@@ -762,13 +762,23 @@ pub static NODE_CREATION_BUFFER: AtomicU64 = AtomicU64::new(DEFAULT_NODE_CREATIO
 /// bounds that slop while keeping resizes rare: each resize triggers
 /// GraphBLAS format conversions costing O(entries), so smaller growth
 /// steps measurably slow bulk inserts.
+///
+/// Never past `GrB_INDEX_MAX`, the largest dimension GraphBLAS accepts. The
+/// step is checked rather than wrapped: near the top of `u64` the unchecked
+/// `cap + cap / 4` wrapped, and because `cap` stays a multiple of the chunk it
+/// never reached `needed` again — an infinite loop in release. Ids that large
+/// are refused before they get here (`IdSpace::create`), so the clamp
+/// is what keeps a caller that forgets from hanging instead of failing. #2892.
 fn grow_cap(
     mut cap: u64,
     needed: u64,
 ) -> u64 {
     let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
-    while needed > cap {
-        cap = (cap + (cap / 4).max(chunk)).next_multiple_of(chunk);
+    while needed > cap && cap < GrB_INDEX_MAX {
+        cap = cap
+            .checked_add((cap / 4).max(chunk))
+            .and_then(|c| c.checked_next_multiple_of(chunk))
+            .map_or(GrB_INDEX_MAX, |c| c.min(GrB_INDEX_MAX));
     }
     cap
 }
@@ -3910,20 +3920,25 @@ impl Graph {
         }
         let metric = self.node_indexer.get_vector_metric(label, &attr);
         let query_vec = Arc::clone(&vector);
+        // `k` is user input. The index cannot hold more documents than there are
+        // nodes, and a `k` far beyond that makes the KNN query return nothing.
+        let k = k.min(self.node_count().max(1) as usize);
         let raw_iter = self.node_indexer.vector_query(label, field, vector, k)?;
 
         // Resolve the attribute name to its numeric slot once, rather than
         // re-hashing the attribute string for every KNN result. If the
         // attribute is unknown there are no vectors to score.
-        let mut out: Vec<(NodeId, f64)> = Vec::with_capacity(k);
         let Some(attr_idx) = self.get_node_attribute_id(&attr).map(|i| i as u16) else {
-            return Ok(out.into_iter());
+            return Ok(Vec::new().into_iter());
         };
         // Collect the candidate ids first, then fetch their vectors in one
         // fused batch pass. This amortizes the per-shard read lock and gives
         // the attribute cache sequential access instead of one isolated
         // lookup per KNN result.
         let node_ids: Vec<NodeId> = raw_iter.map(|(id, _score)| NodeId(id)).collect();
+        // Sized by the results, not by `k`: `k` is user input and may be far
+        // larger than the index (an allocation of `k` entries aborts the server).
+        let mut out: Vec<(NodeId, f64)> = Vec::with_capacity(node_ids.len());
         let mut vecs: Vec<Value> = Vec::with_capacity(node_ids.len());
         self.get_node_attributes_by_idx(&node_ids, attr_idx, &Value::Null, &mut vecs);
         for (node_id, entity) in node_ids.into_iter().zip(vecs) {
@@ -3965,14 +3980,15 @@ impl Graph {
         }
         let metric = self.edge_indexer.get_vector_metric(label, &attr);
         let query_vec = Arc::clone(&vector);
+        // Clamp the user-supplied `k` to the index's capacity (see `vector_query_nodes`).
+        let k = k.min(self.relationship_count().max(1) as usize);
         let raw_iter = self
             .edge_indexer
             .vector_query_edges(label, field, vector, k)?;
 
         // Resolve the attribute slot once instead of per KNN result.
-        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::with_capacity(k);
         let Some(attr_idx) = self.get_relationship_attribute_id(&attr).map(|i| i as u16) else {
-            return Ok(out.into_iter());
+            return Ok(Vec::new().into_iter());
         };
         // Collect candidate triples first, then fetch their vectors in one
         // fused batch pass (see `vector_query_nodes`).
@@ -3980,6 +3996,8 @@ impl Graph {
             .map(|(src, dst, eid, _score)| (NodeId(src), NodeId(dst), RelationshipId(eid)))
             .collect();
         let edge_ids: Vec<RelationshipId> = triples.iter().map(|&(_, _, eid)| eid).collect();
+        // Sized by the results, not by the user-supplied `k` (see `vector_query_nodes`).
+        let mut out: Vec<(NodeId, NodeId, RelationshipId, f64)> = Vec::with_capacity(triples.len());
         let mut vecs: Vec<Value> = Vec::with_capacity(edge_ids.len());
         self.get_relationship_attributes_by_idx(&edge_ids, attr_idx, &Value::Null, &mut vecs);
         for ((src, dst, edge_id), entity) in triples.into_iter().zip(vecs) {
@@ -5345,5 +5363,31 @@ mod adjacency_cascade_tests {
         // And deleting both endpoints clears it, S edge included.
         delete_nodes_cascade(&mut g, &[0, 1]);
         assert!(adjacency_entries(&g).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod grow_cap_tests {
+    use super::*;
+
+    /// #2892. Near the top of `u64` the unchecked step wrapped, and since the
+    /// capacity stays a multiple of the chunk it never reached `needed` — the
+    /// loop spun forever in release. It now stops at the largest dimension
+    /// GraphBLAS accepts.
+    #[test]
+    fn growth_stops_at_the_largest_graphblas_dimension() {
+        let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
+        assert_eq!(grow_cap(chunk, u64::MAX - 1), GrB_INDEX_MAX);
+        assert_eq!(grow_cap(chunk, GrB_INDEX_MAX), GrB_INDEX_MAX);
+        assert_eq!(grow_cap(GrB_INDEX_MAX - 1, GrB_INDEX_MAX), GrB_INDEX_MAX);
+    }
+
+    #[test]
+    fn ordinary_growth_is_unchanged() {
+        let chunk = NODE_CREATION_BUFFER.load(Ordering::Relaxed);
+        assert_eq!(grow_cap(chunk, chunk), chunk);
+        assert_eq!(grow_cap(chunk, chunk + 1), 2 * chunk);
+        let cap = 100 * chunk;
+        assert_eq!(grow_cap(cap, cap + 1), cap + cap / 4);
     }
 }

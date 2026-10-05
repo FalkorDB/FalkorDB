@@ -82,6 +82,18 @@
 use roaring::RoaringTreemap;
 use thiserror::Error;
 
+use crate::graph::graphblas::tensor::GrB_INDEX_MAX;
+
+/// One past the highest id a batch may create.
+///
+/// Every id is a row of the graph's matrices, and GraphBLAS refuses a dimension
+/// past `GrB_INDEX_MAX`: creating id `n` sizes them to at least `n + 1` rows, so
+/// the highest creatable id is one below it. Refused by [`IdSpace::create`],
+/// because the caller sizes the matrices before [`IdSpace::verify`] ever runs —
+/// an id past this used to fail an `assert` inside `GrB_Matrix_new` and take the
+/// process with it, and `u64::MAX - 1` looped forever in `grow_cap`. #2892.
+pub(crate) const ID_LIMIT: u64 = GrB_INDEX_MAX;
+
 /// Why a batch of ids does not describe a possible id space.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum IdSpaceError {
@@ -132,7 +144,7 @@ pub enum IdSpaceError {
     #[error("{0} was already taken by this batch")]
     AlreadyTaken(u64),
 
-    /// A batch named `u64::MAX`, which has no boundary above it.
+    /// A batch named an id at or above [`ID_LIMIT`], which no matrix can hold.
     #[error("{0} is past the end of the id space")]
     IdOutOfRange(u64),
 }
@@ -526,15 +538,16 @@ impl IdSpace {
     /// [`IdSpaceError::AlreadyLive`] for the lowest id that is already live —
     /// either handed out before the batch, or claimed earlier within it.
     ///
-    /// [`IdSpaceError::IdOutOfRange`] for `u64::MAX`. Nothing can be allocated
-    /// above it, and letting it through would wrap the arithmetic in
-    /// [`Self::verify`].
+    /// [`IdSpaceError::IdOutOfRange`] for the highest id at or above
+    /// [`ID_LIMIT`]. No matrix can be sized to hold it, and the caller sizes
+    /// them as soon as this returns, so it has to be refused here rather than
+    /// left to [`Self::verify`] to call a hole.
     pub fn create(
         &mut self,
         nodes: &RoaringTreemap,
     ) -> Result<(), IdSpaceError> {
-        if nodes.contains(u64::MAX) {
-            return Err(IdSpaceError::IdOutOfRange(u64::MAX));
+        if let Some(id) = nodes.max().filter(|&id| id >= ID_LIMIT) {
+            return Err(IdSpaceError::IdOutOfRange(id));
         }
 
         // What is not free: the only ids either check can object to.
@@ -735,7 +748,7 @@ impl IdSpace {
 }
 #[cfg(test)]
 mod tests {
-    use super::{IdSpace, IdSpaceError};
+    use super::{ID_LIMIT, IdSpace, IdSpaceError};
     use crate::graph::graph::{Graph, NodeOpError};
     use crate::graph::graphblas::test_init::ensure_init;
     use roaring::RoaringTreemap;
@@ -1079,6 +1092,38 @@ mod tests {
                 id: 0,
                 entry_bound: 2
             }
+        );
+    }
+
+    /// #2892. Every id at or above `ID_LIMIT` is refused before the create
+    /// sizes a matrix to it, and leaves the graph as it was. `2^60 - 1` and up
+    /// used to fail an assert in `GrB_Matrix_new`, and `u64::MAX - 1` looped
+    /// forever in `grow_cap`.
+    #[test]
+    fn an_id_no_matrix_can_hold_is_refused_before_anything_is_sized() {
+        for id in [ID_LIMIT, ID_LIMIT + 1, 1 << 61, u64::MAX - 1] {
+            let mut g = graph();
+            g.roll_id_batches().expect("a consistent space");
+            let err = create(&mut g, &ids(&[0, id])).expect_err("not creatable");
+            assert_eq!(err, NodeOpError::node(IdSpaceError::IdOutOfRange(id)));
+            assert_eq!(g.node_count(), 0, "a refused create must record nothing");
+        }
+    }
+
+    /// The other side of the boundary: the highest id a matrix can hold a row
+    /// for gets as far as `verify`, which calls it the hole it is.
+    #[test]
+    fn the_highest_creatable_id_reaches_verify() {
+        let mut g = graph();
+        g.roll_id_batches().expect("a consistent space");
+        create(&mut g, &ids(&[ID_LIMIT - 1])).expect("a matrix can hold it");
+        assert_eq!(
+            g.node_id_space().verify(),
+            Err(IdSpaceError::Hole {
+                entry_bound: 0,
+                highest: ID_LIMIT - 1,
+                created: 1,
+            })
         );
     }
 
