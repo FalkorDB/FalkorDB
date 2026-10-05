@@ -45,9 +45,9 @@ use graph::{
     udf,
 };
 use redis_module::{
-    Context, ContextFlags, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc, RedisModule_Free,
-    RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx, RedisModuleEvent,
-    Status, logging::log_warning,
+    Context, ContextFlags, InfoContext, REDISMODULE_OK, RedisModule_Alloc, RedisModule_Calloc,
+    RedisModule_Free, RedisModule_Realloc, RedisModule_SubscribeToServerEvent, RedisModuleCtx,
+    RedisModuleEvent, Status, basic_info_command_handler, logging::log_warning, raw,
 };
 use std::{os::raw::c_int, os::raw::c_void, panic, sync::Arc, sync::atomic::AtomicI64};
 
@@ -246,6 +246,13 @@ pub fn graph_init(
             ctx.log_notice("Failed initializing RediSearch.");
             return Status::Err;
         }
+
+        // RediSearch_Init registers its own INFO callback on our module, and
+        // Redis keeps one per module, so without this `INFO modules` reports
+        // RediSearch's version and settings as `graph_version` etc. Register
+        // ours after it, the same order C uses (module.c: RediSearch_Init, then
+        // setupCrashHandlers).
+        raw::register_info_function(ctx.ctx, Some(info_func));
 
         // RediSearch 8.6 changed the default scorer from TFIDF to BM25STD.
         // FalkorDB compares absolute fulltext scores against the legacy TFIDF
@@ -481,6 +488,24 @@ pub fn graph_init(
     }
 
     Status::Ok
+}
+
+/// The module's INFO callback. Adds nothing to a normal `INFO`, matching C's
+/// `InfoFunc` (debug.c). For a crash report it keeps redis-module's default
+/// trace info and, like C, lists every query that was executing.
+extern "C" fn info_func(
+    ctx: *mut raw::RedisModuleInfoCtx,
+    for_crash_report: c_int,
+) {
+    if for_crash_report == 0 {
+        return;
+    }
+    basic_info_command_handler(&InfoContext::new(ctx), true);
+
+    raw::add_info_section(ctx, Some("executing commands"));
+    for q in telemetry::try_snapshot_running() {
+        raw::add_info_field_str(ctx, "command", &format!("{} {}", q.graph_name, q.query));
+    }
 }
 
 const unsafe extern "C" fn on_flush(

@@ -2,6 +2,7 @@
 
 use thiserror::Error;
 
+use super::v3::BadFieldType;
 use super::v3::EFFECTS_VERSION;
 
 // ── encode errors ──
@@ -34,6 +35,27 @@ pub enum EncodeError {
         got: usize,
     },
 
+    /// A record whose `AttrValues` block is not one value per entity per
+    /// attribute.
+    ///
+    /// The block has no length on the wire: the reader takes `count ×
+    /// attr_ids.len()` values. Any other number shifts the record boundary, so
+    /// the reader either refuses the buffer or reads the next record from the
+    /// wrong place.
+    #[error("{got} attribute values for {entities} entities of {attrs} attributes each")]
+    RowShapeMismatch {
+        entities: usize,
+        attrs: usize,
+        got: usize,
+    },
+
+    /// A batchable record covering no entities.
+    ///
+    /// The reader refuses one at the header, so writing it produces a buffer
+    /// this engine cannot read back.
+    #[error("record with opcode {opcode} covers no entities")]
+    EmptyRecord { opcode: u32 },
+
     /// A `CREATE_INDEX` whose options do not match the field type they are
     /// gated by.
     ///
@@ -43,6 +65,18 @@ pub enum EncodeError {
     /// next record is parsed from the middle of them.
     #[error("field type {field_type:#06x} and the options block disagree about the vector half")]
     OptionsFieldTypeMismatch { field_type: u32 },
+
+    /// A `field_type` this build could not read back.
+    ///
+    /// The writer is held to the reader's rule, and reports it in the reader's
+    /// words: the condition and its sentence live in [`BadFieldType`], so the
+    /// two sides cannot describe the same refusal differently.
+    #[error(transparent)]
+    BadFieldType(#[from] BadFieldType),
+
+    /// An index record built with an empty schema list.
+    #[error("index record names no schema entity")]
+    EmptyIndexSchemaList,
 
     /// A record header whose count does not match what its opcode allows.
     ///
@@ -130,6 +164,24 @@ pub enum DecodeError {
     /// An opcode with no record shape.
     #[error("unknown effect opcode {0}")]
     BadOpcode(u32),
+
+    /// A `field_type` naming no index this build can create.
+    ///
+    /// Refused rather than masked off, for the reason [`Self::UnknownFlags`] is:
+    /// the bits gate conditional sections of the options block, so reading past
+    /// one this build does not know leaves the cursor a section short and parses
+    /// the next record from inside this one. Even a `DROP_INDEX`, which has no
+    /// options to desynchronise, would otherwise be classified as a range index
+    /// and drop the wrong one.
+    #[error(transparent)]
+    BadFieldType(#[from] BadFieldType),
+
+    /// A `CREATE_INDEX`/`DROP_INDEX` that names no schema entity at all.
+    ///
+    /// The list exists so one statement can name several; naming none is not a
+    /// degenerate case of that, it is a record with nothing to index.
+    #[error("effects index record names no schema entity")]
+    EmptyIndexSchemaList,
 
     /// A payload flag this build does not understand. Rejected rather than
     /// ignored: decoding the records anyway would apply a prefix of something
@@ -238,6 +290,21 @@ pub enum ApplyError {
         id: i64,
     },
 
+    /// An index record naming several schema entities — a shape the wire can
+    /// carry but this build cannot apply.
+    ///
+    /// The record holds a list so that an index type spanning several
+    /// relationship types needs no wire change when it arrives. `Graph::create_index`
+    /// still takes one label, so until it grows a multi-entity form such a record
+    /// is refused by name. Applying its first entry instead would leave the
+    /// replica indexing a subset of what the primary indexed, with nothing
+    /// anywhere to say so.
+    #[error(
+        "effects buffer indexes {count} schema entities in one statement, which this build \
+         cannot apply. The buffer was not applied."
+    )]
+    MultiSchemaIndexUnsupported { count: usize },
+
     /// A create names an id that is neither in this replica's recycle bin nor
     /// past the first id it has never allocated — so it is already live here.
     /// `kind` says which entity: nodes and relationships are checked the same
@@ -301,23 +368,6 @@ pub enum ApplyError {
         entry_bound: u64,
         highest: u64,
         created: u64,
-    },
-
-    /// The graph's own id boundary for `kind` is not where the ids it was given
-    /// put it.
-    ///
-    /// The entity's count is an independent counter, so the same id applied twice
-    /// moves it twice while the set of ids does not change. This is the only
-    /// place anything checks that counter against a value not derived from it.
-    #[error(
-        "effects buffer left this replica's {kind} id boundary at {graph_bound}, but the \
-         ids it carried put it at {expected}. The two engines have diverged; the buffer \
-         was not applied."
-    )]
-    CountMiscounted {
-        kind: &'static str,
-        graph_bound: u64,
-        expected: u64,
     },
 
     /// A schema id the local dictionary does not hold.

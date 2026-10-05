@@ -7,9 +7,7 @@
 # Trigger: add the `benchmark-cov` label to a PR. Only on the `labeled` event,
 # never on later pushes while the label happens to sit there. To re-run, remove
 # and re-add the label. Skipped for fork PRs (read-only GITHUB_TOKEN, cannot
-# comment) and for PRs that do not target a trunk. TRUNK is `main` or `main-rs` —
 # the same pair rust-push.yml gates channel promotion on, since #2279 migrated the
-# default development branch to `main` while `main-rs` still carries the tree. The
 # C engine keeps `master`, which has no Cargo workspace to build, so a PR
 # targeting it is skipped rather than failed.
 #
@@ -105,7 +103,7 @@ jobs:
   preflight:
     if: >-
       github.event.label.name == 'benchmark-cov' &&
-      contains(fromJSON('["main","main-rs"]'), github.event.pull_request.base.ref) &&
+      contains(fromJSON('["main"]'), github.event.pull_request.base.ref) &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -21,13 +21,13 @@
 use super::records::IndexFieldOptions;
 use crate::{
     effects::v3::{
-        AttrRef, INDEX_FLD_FULLTEXT, INDEX_FLD_VECTOR, Record, entity_tag, open_payload,
+        AttrRef, DecodeError, Record, SchemaRef, entity_tag, index_type_of, open_payload,
     },
     entity_type::EntityType,
     graph::{
         attribute_store::MAX_ATTRIBUTES,
         graph::{Graph, NodeOpError, TypeId},
-        id_space::{IdSpace, IdSpaceError},
+        id_space::IdSpaceError,
     },
     index::{IndexType, indexer::IndexOptions},
     runtime::{pending::IndexDocs, value::Value},
@@ -43,25 +43,6 @@ impl From<String> for ApplyError {
     fn from(e: String) -> Self {
         Self::Graph(e)
     }
-}
-
-/// What accumulates across a buffer and is settled once, at the end.
-struct BufferOps {
-    /// The same type the write path collects into, rather than a second set of
-    /// four maps that has to agree with it by inspection.
-    docs: IndexDocs,
-    /// The node id space this buffer is building.
-    ///
-    /// Held here rather than on the graph because its lifetime is the buffer's,
-    /// and a buffer is a thing only this file knows about. What the graph does
-    /// know is how to maintain one: `create_nodes` and `delete_nodes` take it and
-    /// feed it themselves, so nothing here can create a node and forget to
-    /// account for it — and nothing can be handed a graph without saying what to
-    /// do about validation, because the argument is not optional to supply.
-    nodes: IdSpace,
-    /// And the relationship one. Same type, same checks — the id spaces are two
-    /// counted ranges with recycle bins, and nothing about the invariant differs.
-    edges: IdSpace,
 }
 
 /// Apply a whole `GRAPH.EFFECT` payload.
@@ -83,29 +64,25 @@ pub fn apply_effects(
     // be read; `open_payload` owns that plaintext and the records borrow from it.
     let payload = open_payload(buf)?;
 
-    let mut ops = BufferOps {
-        docs: IndexDocs::default(),
-        nodes: IdSpace::at(g.node_id_bound()),
-        edges: IdSpace::at(g.relationship_id_bound()),
-    };
-
+    // The whole buffer is one batch. It was opened by `Graph::new_version` when
+    // this write version was made, and it is checked by `Graph::validate` when
+    // the version is published — records arrive grouped by shape rather than
+    // ordered by id, so the id space is legitimately fragmented partway through
+    // and only has to be whole at the end.
+    let mut docs = IndexDocs::default();
     for record in payload.records() {
-        apply_record(g, record?, &mut ops)?;
+        apply_record(g, record?, &mut docs)?;
     }
 
-    // Only now: records are grouped by shape rather than ordered by id, so the
-    // id space is legitimately fragmented partway through a buffer and only has
-    // to be whole at the end. A buffer that fails earlier never reaches this,
-    // which is right — it has not finished building the thing being checked.
-    ops.nodes
-        .verify(g.node_id_bound())
-        .map_err(|e| id_space_error_map("node", e))?;
-    ops.edges
-        .verify(g.relationship_id_bound())
-        .map_err(|e| id_space_error_map("relationship", e))?;
+    // Refusing a divergent buffer is this function's contract, and the refusal
+    // it hands back is part of the replication protocol's diagnostics — the
+    // caller must not commit a version built from one. `MvccGraph::commit`
+    // validates again before publishing; that is the net under every write path,
+    // not a substitute for rejecting the buffer here.
+    g.validate()?;
 
-    g.commit_index(&mut ops.docs.node_adds, &mut ops.docs.node_removes);
-    g.commit_edge_index(&mut ops.docs.edge_adds, &mut ops.docs.edge_removes);
+    g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
+    g.commit_edge_index(&mut docs.edge_adds, &mut docs.edge_removes);
     Ok(())
 }
 
@@ -115,13 +92,12 @@ pub fn apply_effects(
 /// while doing the work. Every judgement about liveness belongs to
 /// [`IdSpace`] — it decides, and its refusals arrive wrapped, to be unwrapped
 /// straight back into the rendering [`id_space_error_map`] gives them.
-fn node_op(
-    kind: &'static str,
-    e: NodeOpError,
-) -> ApplyError {
-    match e {
-        NodeOpError::Graph(e) => ApplyError::Graph(e),
-        NodeOpError::IdSpace(e) => id_space_error_map(kind, e),
+impl From<NodeOpError> for ApplyError {
+    fn from(e: NodeOpError) -> Self {
+        match e {
+            NodeOpError::Graph(e) => Self::Graph(e),
+            NodeOpError::IdSpace { kind, source } => id_space_error_map(kind, source),
+        }
     }
 }
 
@@ -160,22 +136,23 @@ fn id_space_error_map(
             highest,
             created,
         },
-        IdSpaceError::Miscounted {
-            graph_bound,
-            expected,
-        } => ApplyError::CountMiscounted {
-            kind,
-            graph_bound,
-            expected,
-        },
         IdSpaceError::IdOutOfRange(id) => ApplyError::IdPastEndOfSpace { kind, id },
+        // Not a divergence and not a claim about the buffer: the replica's own
+        // id space contradicts itself, so the buffer is refused because nothing
+        // can be trusted to apply onto it, not because it was wrong.
+        // Neither is a claim about the buffer: the replica's own id space
+        // contradicts itself, or its batch was asked to take one id twice. The
+        // buffer is refused because nothing can be trusted to apply onto it.
+        e @ (IdSpaceError::Inconsistent { .. } | IdSpaceError::AlreadyTaken(_)) => {
+            ApplyError::Graph(format!("{kind} {e}"))
+        }
     }
 }
 
 fn apply_record(
     g: &mut Graph,
     record: Record,
-    ops: &mut BufferOps,
+    docs: &mut IndexDocs,
 ) -> Result<(), ApplyError> {
     match record {
         // One opcode, two variants: the wire's `SchemaType` byte is now the
@@ -233,8 +210,7 @@ fn apply_record(
             // this graph's allocator. The graph refuses rather than
             // double-counting, so there is no separate check here to keep in step
             // with it either.
-            g.create_nodes(&nodes, &mut ops.nodes)
-                .map_err(|e| node_op("node", e))?;
+            g.create_nodes(&nodes)?;
 
             // The graph's bulk APIs take `&[u64]`, so the ids are materialized
             // once here rather than per call.
@@ -248,7 +224,7 @@ fn apply_record(
             // them.
             let label_ids = checked_label_ids(g, &labels)?;
             if !label_ids.is_empty() {
-                g.set_node_labels_product(&ids, &label_ids, &mut ops.docs.node_adds, true);
+                g.set_node_labels_product(&ids, &label_ids, &mut docs.node_adds, true);
             }
             // Checked before the emptiness gate, not inside it. With no
             // attributes the check is what says `rows` must also be empty —
@@ -263,7 +239,7 @@ fn apply_record(
                     &label_ids,
                     &attr_ids,
                     &rows,
-                    &mut ops.docs.node_adds,
+                    &mut docs.node_adds,
                 )?;
             }
             Ok(())
@@ -284,8 +260,7 @@ fn apply_record(
                 src.iter().collect(),
                 dst.iter().collect(),
             );
-            g.create_relationships_bulk(&type_name, &src, &dst, &ids, &mut ops.edges)
-                .map_err(|e| node_op("relationship", e))?;
+            g.create_relationships_bulk(&type_name, &src, &dst, &ids)?;
 
             // As in `CreateNode` above: `attr_map` shape-checks internally, so
             // gating the whole call lets an empty `AttrSet` carrying values
@@ -293,7 +268,7 @@ fn apply_record(
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             if !attr_ids.is_empty() {
                 let map = attr_map(g, &ids, &attr_ids, &rows)?;
-                g.set_relationships_attributes(&map, &mut ops.docs.edge_adds)?;
+                g.set_relationships_attributes(&map, &mut docs.edge_adds)?;
             }
             Ok(())
         }
@@ -320,7 +295,7 @@ fn apply_record(
                 &label_ids,
                 &attr_ids,
                 &rows,
-                &mut ops.docs.node_adds,
+                &mut docs.node_adds,
             )?;
             Ok(())
         }
@@ -340,7 +315,7 @@ fn apply_record(
             // Edges still go through the map form; only the node store has the
             // row-major entry point so far.
             let map = attr_map(g, &ids, &attr_ids, &rows)?;
-            g.set_relationships_attributes_of_type(type_id, &map, &mut ops.docs.edge_adds)?;
+            g.set_relationships_attributes_of_type(type_id, &map, &mut docs.edge_adds)?;
             Ok(())
         }
 
@@ -349,7 +324,7 @@ fn apply_record(
             g.set_node_labels_product(
                 &ids.iter().collect::<Vec<_>>(),
                 &label_ids,
-                &mut ops.docs.node_adds,
+                &mut docs.node_adds,
                 false,
             );
             Ok(())
@@ -367,7 +342,7 @@ fn apply_record(
                     cols.push(lid);
                 }
             }
-            g.remove_nodes_labels(&rows, &cols, &mut ops.docs.node_removes);
+            g.remove_nodes_labels(&rows, &cols, &mut docs.node_removes);
             Ok(())
         }
 
@@ -383,32 +358,40 @@ fn apply_record(
             // bin. The other — at or above the boundary this buffer started from
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
-            g.delete_nodes(&nodes, &mut ops.docs.node_removes, &ops.nodes)
-                .map_err(|e| node_op("node", e))?;
+            g.delete_nodes(&nodes, &mut docs.node_removes)?;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
-            g.delete_relationships(&edges, &mut ops.docs.edge_removes, &ops.edges)
-                .map_err(|e| node_op("relationship", e))?;
+            g.delete_relationships(&edges, &mut docs.edge_removes)?;
             Ok(())
         }
 
         Record::CreateIndex {
             schema_type,
-            label_id,
-            label,
+            schemas,
             field_type,
             fields,
             options,
         } => {
-            verify_schema(g, schema_type, label_id, &label)?;
+            for s in &schemas {
+                verify_schema(g, schema_type, s.id, &s.name)?;
+            }
             for field in &fields {
                 verify_attribute(g, field.id, &field.name)?;
             }
-            let index_type = index_type_of(field_type);
-            let label = Arc::new(label);
+            // `Ok` is guaranteed here: the decoder ran this same check before
+            // the record existed. Answered rather than unwrapped so a future
+            // caller that reaches apply without decoding gets a refusal rather
+            // than a silent misclassification.
+            let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
+            // Every entity is verified above, including the ones this build
+            // then refuses to index: a record that names three types is a
+            // record about all three, and checking only the one that fits
+            // through `create_index` would report the wrong reason when the
+            // dictionary has diverged on another.
+            let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
             // Population is spawned, not run here. `populate_indexes_sync` ran
             // on the Redis main thread, so a replica applying an index over a
@@ -419,7 +402,7 @@ fn apply_record(
             // has always done it under concurrent writes: `populate_index_batch`
             // populates from a snapshot in 10,000-row batches, and entities
             // written *after* the snapshot are indexed by the write path instead
-            // (`BufferOps::docs` into `commit_index`). A later record that drops
+            // (`docs` into `commit_index`). A later record that drops
             // or recreates the index does not race it either — the population
             // ticket carries a generation, and a worker whose generation is
             // stale releases its ticket and stops rather than committing
@@ -436,17 +419,22 @@ fn apply_record(
 
         Record::DropIndex {
             schema_type,
-            label_id,
-            label,
+            schemas,
             field_type,
             fields,
         } => {
-            verify_schema(g, schema_type, label_id, &label)?;
+            for s in &schemas {
+                verify_schema(g, schema_type, s.id, &s.name)?;
+            }
             for field in &fields {
                 verify_attribute(g, field.id, &field.name)?;
             }
-            let index_type = index_type_of(field_type);
-            let label = Arc::new(label);
+            // `Ok` is guaranteed here: the decoder ran this same check before
+            // the record existed. Answered rather than unwrapped so a future
+            // caller that reaches apply without decoding gets a refusal rather
+            // than a silent misclassification.
+            let index_type = index_type_of(field_type).map_err(DecodeError::from)?;
+            let label = Arc::new(single_index_label(schemas)?);
             let fields: Vec<Arc<String>> = fields.into_iter().map(|f| Arc::new(f.name)).collect();
             g.drop_index(&index_type, &schema_type, &label, &fields)?;
             Ok(())
@@ -771,16 +759,31 @@ fn index_options(
     }
 }
 
-/// `IndexFieldType` is a bit flag set, so this tests bits rather than matching
-/// a discriminant. Anything that is neither full-text nor vector is a range
-/// index — `INDEX_FLD_RANGE` is itself the union of the three scalar kinds.
-fn index_type_of(field_type: u32) -> IndexType {
-    if field_type & INDEX_FLD_FULLTEXT != 0 {
-        IndexType::Fulltext
-    } else if field_type & INDEX_FLD_VECTOR != 0 {
-        IndexType::Vector
-    } else {
-        IndexType::Range
+/// The one schema entity this build can build an index over.
+///
+/// The record carries a list so that an index type spanning several
+/// relationship types needs no wire change when it arrives (see
+/// `records::SchemaRef`). `Graph::create_index` still takes a single label, so
+/// until it grows a multi-entity form a record naming more than one is refused
+/// by name.
+///
+/// Refused, not truncated to its first entry. Truncating would leave the replica
+/// holding an index over a subset of what the primary indexed, with nothing on
+/// the wire, in the log or in the data to say the two had parted — the silent
+/// class of divergence this whole layer is built to turn into resyncs.
+///
+/// Converting to a one-element array rather than testing the length and then
+/// indexing: it is the same single length check, but it hands back the element
+/// already destructured, so there is no `unwrap` left over whose safety depends
+/// on the line above it. The empty case cannot arrive from the wire —
+/// `IndexSchemas::decode` refuses it — and falls in with the too-many case here
+/// rather than needing an arm of its own.
+fn single_index_label(schemas: Vec<SchemaRef<String>>) -> Result<String, ApplyError> {
+    match <[SchemaRef<String>; 1]>::try_from(schemas) {
+        Ok([one]) => Ok(one.name),
+        Err(schemas) => Err(ApplyError::MultiSchemaIndexUnsupported {
+            count: schemas.len(),
+        }),
     }
 }
 
@@ -1544,6 +1547,51 @@ mod tests {
     }
 
     #[test]
+    fn a_multi_schema_index_is_refused_rather_than_partly_applied() {
+        // The wire can name several entities in one index statement so that a
+        // future index type needs no wire change. This build's `create_index`
+        // takes one label, so such a record is refused by name — applying its
+        // first entry would leave the replica indexing a subset of what the
+        // primary indexed, with nothing anywhere to say the two had parted.
+        let mut g = graph();
+        g.get_label_id_mut("A");
+        g.get_label_id_mut("B");
+        g.add_node_attribute_name("p");
+
+        let mut buf = new_buffer();
+        Record::CreateIndex {
+            schema_type: EntityType::Node,
+            schemas: vec![
+                SchemaRef {
+                    id: 0,
+                    name: "A".to_owned(),
+                },
+                SchemaRef {
+                    id: 1,
+                    name: "B".to_owned(),
+                },
+            ],
+            field_type: INDEX_FLD_RANGE,
+            fields: vec![AttrRef {
+                id: 0,
+                name: "p".to_owned(),
+            }],
+            options: IndexFieldOptions::none_given(None),
+        }
+        .encode(&mut buf)
+        .unwrap();
+
+        let err = apply_effects(&mut g, &buf).expect_err("a two-label index was applied");
+        assert!(
+            matches!(err, ApplyError::MultiSchemaIndexUnsupported { count: 2 }),
+            "{err:?}"
+        );
+
+        // Nothing is built on the way to refusing either: `single_index_label`
+        // runs before `Graph::create_index` is called at all.
+    }
+
+    #[test]
     fn a_stale_label_id_is_caught_by_its_name() {
         // VerifySchema's job: the id resolves, but to something else.
         let mut g = graph();
@@ -1553,8 +1601,10 @@ mod tests {
         let mut buf = new_buffer();
         Record::CreateIndex {
             schema_type: EntityType::Node,
-            label_id: 0,
-            label: "Expected".to_owned(),
+            schemas: vec![SchemaRef {
+                id: 0,
+                name: "Expected".to_owned(),
+            }],
             field_type: INDEX_FLD_RANGE,
             fields: vec![AttrRef {
                 id: 0,
@@ -1858,14 +1908,49 @@ mod tests {
 
     #[test]
     fn index_field_type_maps_by_bit_not_ordinal() {
-        assert_eq!(index_type_of(INDEX_FLD_RANGE), IndexType::Range);
-        assert_eq!(index_type_of(INDEX_FLD_FULLTEXT), IndexType::Fulltext);
-        assert_eq!(index_type_of(INDEX_FLD_VECTOR), IndexType::Vector);
+        use crate::effects::v3::{
+            BadFieldType, INDEX_FLD_FULLTEXT, INDEX_FLD_NUMERIC, INDEX_FLD_STR, INDEX_FLD_VECTOR,
+        };
+        assert_eq!(index_type_of(INDEX_FLD_RANGE), Ok(IndexType::Range));
+        assert_eq!(index_type_of(INDEX_FLD_FULLTEXT), Ok(IndexType::Fulltext));
+        assert_eq!(index_type_of(INDEX_FLD_VECTOR), Ok(IndexType::Vector));
         // A range index is the OR of three scalar kinds, so bit-testing is the
         // only thing that classifies it correctly.
+        assert_eq!(index_type_of(INDEX_FLD_NUMERIC), Ok(IndexType::Range));
+        // A bit with no variant is refused by name rather than falling through
+        // to range; the error carries the bit so each layer reports it its own
+        // way.
         assert_eq!(
-            index_type_of(crate::effects::v3::INDEX_FLD_NUMERIC),
-            IndexType::Range
+            index_type_of(0x20),
+            Err(BadFieldType::UnknownBit {
+                field_type: 0x20,
+                bit: 0x20
+            })
+        );
+        assert_eq!(
+            index_type_of(INDEX_FLD_RANGE | 0x40),
+            Err(BadFieldType::UnknownBit {
+                field_type: INDEX_FLD_RANGE | 0x40,
+                bit: 0x40
+            })
+        );
+        // Two kinds at once is refused, not ranked. Nothing emits it — C picks
+        // by equality and asserts otherwise, `index_field_flags` is total — and
+        // ranking would build one index where the record named two.
+        assert_eq!(
+            index_type_of(INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR),
+            Err(BadFieldType::MixedKinds {
+                field_type: INDEX_FLD_FULLTEXT | INDEX_FLD_VECTOR,
+                bit: INDEX_FLD_VECTOR,
+                kind: IndexType::Vector,
+                first: IndexType::Fulltext,
+            })
+        );
+        // But several bits of the *same* kind stay ordinary: a range index over
+        // numbers and strings alone is 0x0A, and the corpus carries one.
+        assert_eq!(
+            index_type_of(INDEX_FLD_NUMERIC | INDEX_FLD_STR),
+            Ok(IndexType::Range)
         );
     }
 

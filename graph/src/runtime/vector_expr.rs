@@ -501,13 +501,17 @@ impl<'a> VectorEval<'a> {
             let mut still_unclaimed = Vec::with_capacity(unclaimed.len());
             for (offset, &pos) in unclaimed.iter().enumerate() {
                 let matched = match &subject {
-                    // Value form: the arm matches when it equals the subject.
-                    // `Value`'s equality, deliberately — this engine matches a
-                    // null subject against a `WHEN null` arm (pinned by
-                    // test_function_calls.py's `test68_Case`), where openCypher
-                    // would fall through to `ELSE`. The per-row `eval_case`
-                    // does the same, and the two must not diverge.
-                    Some(subject) => when.get(offset) == subject.get(pos),
+                    // Value form: the arm matches when it compares equal to the
+                    // subject on the same terms as `=`, so a `null` on either
+                    // side selects nothing rather than matching another `null`.
+                    // `PartialEq` would say those two nulls are equal, because
+                    // it keeps only the ordering half of `compare_value`. The
+                    // per-row `eval_case` reads the other half too, and the two
+                    // must not diverge.
+                    Some(subject) => {
+                        compare_values(&when.get(offset), &subject.get(pos), CmpOp::Eq)
+                            == Some(true)
+                    }
                     // Searched form: anything but `false` / `null` matches, so
                     // a non-boolean condition is truthy rather than an error.
                     None => !matches!(when.get(offset), Value::Bool(false) | Value::Null),

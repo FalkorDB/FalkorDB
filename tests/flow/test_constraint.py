@@ -391,6 +391,26 @@ class testConstraintNodes():
             self.env.assertContains("Number of properties must be an integer between 1 and 255", str(e))
 
         #-----------------------------------------------------------------------
+        # property count is read as C's string2ll: no sign, no leading zeros
+        #-----------------------------------------------------------------------
+        for count in ["+1", "01", " 1", "1x"]:
+            try:
+                self.con.execute_command("GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", "NODE", "label", "PROPERTIES", count, "New_Attr")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Number of properties must be an integer between 1 and 255", str(e))
+
+        #-----------------------------------------------------------------------
+        # the entity type is NODE or RELATIONSHIP, as in C
+        #-----------------------------------------------------------------------
+        for entity in ["LABEL", "EDGE"]:
+            try:
+                self.con.execute_command("GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, "MANDATORY", entity, "New_Label", "PROPERTIES", 1, "New_Attr")
+                self.env.assertTrue(False)
+            except ResponseError as e:
+                self.env.assertContains("Invalid constraint entity type", str(e))
+
+        #-----------------------------------------------------------------------
         # del constraint on non exsisting label
         #-----------------------------------------------------------------------
         try:
@@ -1272,8 +1292,9 @@ class testConstraintReplication():
         # creates put eleven effects on the wire, so `>= 6` was passing with five
         # to spare and functioning as a sleep.
         #
-        # `test_effects_v3.py` pins the per-shape announcement counts, where the
-        # payloads are constructed rather than observed through MONITOR.
+        # `test_effects_ddl.py` pins the per-shape announcement counts, where
+        # the payloads are read off the wire rather than counted through
+        # MONITOR.
         self.source.execute_command("WAIT", 1, 0)
 
         replica_g = Graph(self.replica, GRAPH_ID)
