@@ -57,25 +57,30 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 # Set working directory for build scripts
 WORKDIR /data
 
-# Copy build scripts, and the RediSearch submodule they build (git owns the pin;
-# redisearch.sh only builds what is checked out, so the source must be present)
-COPY graphblas.sh redisearch.sh /data/
-COPY deps/RediSearch /data/deps/RediSearch
+# Prebuild the three native deps so a fresh container can `cargo build` without
+# a 12-minute wait. native-deps owns the recipes and caches the results under
+# $HOME/.cache/falkordb/native-deps, keyed on the submodule revisions, the
+# GB_control patch, the vendored PreJIT kernels, $CC/$CXX and the OpenMP
+# flavour. CC/CXX are ENV rather than per-RUN because they are key inputs: the
+# key `cargo build` computes inside the container must match what is baked here.
+ENV CC=clang-23
+ENV CXX=clang++-23
+COPY native-deps           /data/native-deps
+COPY deps/native-deps.lock /data/deps/native-deps.lock
+COPY build/graphblas       /data/build/graphblas
+COPY deps/GraphBLAS        /data/deps/GraphBLAS
+COPY deps/LAGraph          /data/deps/LAGraph
+COPY deps/RediSearch       /data/deps/RediSearch
+RUN cd /data && \
+    FALKORDB_DEPS_CACHE=/opt/falkordb-deps \
+    cargo run --locked --manifest-path native-deps/Cargo.toml && \
+    rm -rf /data/native-deps /data/build /data/deps
 
-# Build and install GraphBLAS using project script
-RUN chmod +x graphblas.sh && \
-    CC=clang-23 CXX=clang++-23 ./graphblas.sh
-
-# Build and install RediSearch using project script
-# Build in /data so output lands at /data/deps/RediSearch/bin/, which is one of
-# graph/build.rs's absolute fallbacks -- no symlink needed.
-# RediSearch's redisearch_rs build scripts find their source root by walking up
-# for a `.git` entry (build_utils::git_root; existence check only, never invokes
-# git). All git metadata is .dockerignore'd, so create an empty marker -- see
-# .dockerignore for why this is a marker rather than the real gitlink.
-RUN mkdir -p /data/deps/RediSearch/.git && \
-    chmod +x redisearch.sh && \
-    ./redisearch.sh
+# Expose the baked deps as a read-only root, apart from the writable cache: the
+# developer's bind-mounted checkout resolves against them, so an untouched dep
+# is never rebuilt, and anything it does build goes to the default cache
+# instead of mutating what the image shipped.
+ENV FALKORDB_NATIVE_DEPS_PREBUILT=/opt/falkordb-deps
 
 WORKDIR /workspace
 
