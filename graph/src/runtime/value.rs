@@ -334,6 +334,161 @@ impl Value {
         s
     }
 
+    /// Encode a value into a canonical binary key for constraint uniqueness checks.
+    ///
+    /// Invariant: `a == b ==> encode_constraint_key(a) == encode_constraint_key(b)`.
+    /// Numeric types (`Int` and `Float`) are normalized such that whole floats within
+    /// 64-bit integer range encode identically to their integer counterparts (e.g. `1` and `1.0`,
+    /// or `0` and `0.0` / `-0.0`).
+    pub fn encode_constraint_key(
+        &self,
+        buf: &mut Vec<u8>,
+    ) {
+        const TAG_NULL: u8 = 0;
+        const TAG_BOOL: u8 = 1;
+        const TAG_INT: u8 = 2;
+        const TAG_FLOAT: u8 = 3;
+        const TAG_STRING: u8 = 4;
+        const TAG_LIST: u8 = 5;
+        const TAG_MAP: u8 = 6;
+        const TAG_NODE: u8 = 7;
+        const TAG_RELATIONSHIP: u8 = 8;
+        const TAG_PATH: u8 = 9;
+        const TAG_VEC_F32: u8 = 10;
+        const TAG_POINT: u8 = 11;
+        const TAG_DATETIME: u8 = 12;
+        const TAG_DATE: u8 = 13;
+        const TAG_TIME: u8 = 14;
+        const TAG_DURATION: u8 = 15;
+
+        match self {
+            Self::Null => {
+                buf.push(TAG_NULL);
+            }
+            Self::Bool(b) => {
+                buf.push(TAG_BOOL);
+                buf.push(u8::from(*b));
+            }
+            Self::Int(i) => {
+                buf.push(TAG_INT);
+                buf.extend_from_slice(&i.to_be_bytes());
+            }
+            Self::Float(f) => {
+                // Whole floats within i64 range are normalized to TAG_INT so that
+                // Value::Int(x) and Value::Float(x.0) produce the exact same key.
+                // -0.0 and 0.0 both normalize to 0i64.
+                if f.is_finite()
+                    && f.fract() == 0.0
+                    && *f >= (i64::MIN as f64)
+                    && *f <= (i64::MAX as f64)
+                {
+                    let i = if *f == 0.0 { 0i64 } else { *f as i64 };
+                    if (i as f64) == *f {
+                        buf.push(TAG_INT);
+                        buf.extend_from_slice(&i.to_be_bytes());
+                        return;
+                    }
+                }
+                buf.push(TAG_FLOAT);
+                let bits = if f.is_nan() {
+                    f64::NAN.to_bits()
+                } else if *f == 0.0 {
+                    0.0f64.to_bits()
+                } else {
+                    f.to_bits()
+                };
+                buf.extend_from_slice(&bits.to_be_bytes());
+            }
+            Self::String(s) => {
+                buf.push(TAG_STRING);
+                buf.extend_from_slice(&(s.len() as u32).to_be_bytes());
+                buf.extend_from_slice(s.as_bytes());
+            }
+            Self::List(list) => {
+                buf.push(TAG_LIST);
+                buf.extend_from_slice(&(list.len() as u32).to_be_bytes());
+                for item in list.iter() {
+                    item.encode_constraint_key(buf);
+                }
+            }
+            Self::Map(map) => {
+                buf.push(TAG_MAP);
+                buf.extend_from_slice(&(map.len() as u32).to_be_bytes());
+                let mut keys: Vec<&Arc<String>> = map.keys().collect();
+                keys.sort();
+                for k in keys {
+                    buf.extend_from_slice(&(k.len() as u32).to_be_bytes());
+                    buf.extend_from_slice(k.as_bytes());
+                    map[k].encode_constraint_key(buf);
+                }
+            }
+            Self::Node(id) => {
+                buf.push(TAG_NODE);
+                buf.extend_from_slice(&id.0.to_be_bytes());
+            }
+            Self::Relationship(id) => {
+                buf.push(TAG_RELATIONSHIP);
+                buf.extend_from_slice(&id.0.to_be_bytes());
+            }
+            Self::Path(path) => {
+                buf.push(TAG_PATH);
+                buf.extend_from_slice(&(path.len() as u32).to_be_bytes());
+                for item in path.iter() {
+                    item.encode_constraint_key(buf);
+                }
+            }
+            Self::VecF32(v) => {
+                buf.push(TAG_VEC_F32);
+                buf.extend_from_slice(&(v.len() as u32).to_be_bytes());
+                for x in v.iter() {
+                    let bits = if x.is_nan() {
+                        f32::NAN.to_bits()
+                    } else if *x == 0.0 {
+                        0.0f32.to_bits()
+                    } else {
+                        x.to_bits()
+                    };
+                    buf.extend_from_slice(&bits.to_be_bytes());
+                }
+            }
+            Self::Point(p) => {
+                buf.push(TAG_POINT);
+                let lat_bits = if p.latitude.is_nan() {
+                    f32::NAN.to_bits()
+                } else if p.latitude == 0.0 {
+                    0.0f32.to_bits()
+                } else {
+                    p.latitude.to_bits()
+                };
+                let lon_bits = if p.longitude.is_nan() {
+                    f32::NAN.to_bits()
+                } else if p.longitude == 0.0 {
+                    0.0f32.to_bits()
+                } else {
+                    p.longitude.to_bits()
+                };
+                buf.extend_from_slice(&lat_bits.to_be_bytes());
+                buf.extend_from_slice(&lon_bits.to_be_bytes());
+            }
+            Self::Datetime(ts) => {
+                buf.push(TAG_DATETIME);
+                buf.extend_from_slice(&ts.to_be_bytes());
+            }
+            Self::Date(ts) => {
+                buf.push(TAG_DATE);
+                buf.extend_from_slice(&ts.to_be_bytes());
+            }
+            Self::Time(ts) => {
+                buf.push(TAG_TIME);
+                buf.extend_from_slice(&ts.to_be_bytes());
+            }
+            Self::Duration(ts) => {
+                buf.push(TAG_DURATION);
+                buf.extend_from_slice(&ts.to_be_bytes());
+            }
+        }
+    }
+
     /// Estimate the heap-allocated bytes owned by this value.
     ///
     /// Used by the in-memory attribute cache to track memory consumption.
