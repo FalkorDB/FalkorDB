@@ -546,12 +546,11 @@ impl<'a> CondVarLenTraverseOp<'a> {
             }
         }
 
-        // The edge filter reads only the edge alias, plus the `@prev` marker:
-        // the planner and `absorb_edge_filters_into_vlt` only ever put
-        // edge-only predicates here, and both are inserted per frame before it
-        // is evaluated. So it needs an empty row to bind them into, not a copy
-        // of the input row.
-        let edge_filter = edge_filter.map(|f| (f, Row::new()));
+        // The edge filter's environment is the input row, extended per edge
+        // with the edge alias (and the `@prev` marker). It needs the whole row:
+        // the planner writes inline attrs here, and those can name any variable
+        // bound earlier — `-[:R* {weight: p.limit}]->` reads `p`.
+        let edge_filter = edge_filter.map(|f| (f, vars.to_owned_row()));
 
         Ok(Some(RowIter::many(Box::new(VarLenIter {
             runtime,

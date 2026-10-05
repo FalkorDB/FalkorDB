@@ -274,3 +274,16 @@ class testInlinePatternAttributes(FlowTestsBase):
         actual_result = g.query("MATCH (n:M) RETURN count(*)")
         self.env.assertEqual(actual_result.result_set, [[1]])
         g.delete()
+
+    # An inline attr on a walk's edge can read a variable bound earlier, so the
+    # predicate needs the input row, not just the edge. `{weight: p.limit}` came
+    # back empty when the walk evaluated it in a row holding only the edge.
+    def test17_var_len_edge_attr_reads_another_variable(self):
+        g = self.db.select_graph(GRAPH_ID + "_vlt_outer")
+        g.query(
+            "CREATE (p:P {limit: 1})-[:R {weight: 1}]->(m:M)-[:R {weight: 1}]->(:Q), "
+            "(m)-[:R {weight: 2}]->(:Q)"
+        )
+        actual = g.query("MATCH (p:P) MATCH (p)-[:R* {weight: p.limit}]->(x) RETURN count(x)")
+        self.env.assertEqual(actual.result_set, [[2]])
+        g.delete()
