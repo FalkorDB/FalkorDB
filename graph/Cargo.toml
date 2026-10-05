@@ -53,3 +53,6 @@ thin-vec = "0.2.18"
 thiserror = "2"
 zstd = { version = "0.14.0", default-features = false, features = ["arrays", "legacy", "zdict_builder"] }
 crc32fast = "1.4"
+
+[build-dependencies]
+native-deps = { path = "../native-deps" }
