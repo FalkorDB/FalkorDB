@@ -2979,3 +2979,33 @@ updating clause.")
         self.env.assertEqual(res.result_set, [[1], [1]])
         self.env.assertEqual(res.nodes_deleted, 2)
         self.get_res_and_assertEquals("MATCH (p:Person) RETURN count(p)", [[1]])
+
+    def test_55_union_branch_variables_do_not_alias_outer_ones(self):
+        # The branches of a UNION inside CALL {} have their own scopes: a
+        # branch variable must not read the record slot of an outer one.
+        self.graph.delete()
+        self.graph.query("CREATE (:A {v:1})-[:R]->(:B {v:0}), (:B {v:5})")
+
+        self.get_res_and_assertEquals(
+            """MATCH (n:A)
+               CALL { MATCH (q:B) RETURN q UNION MATCH (q:B) RETURN q }
+               RETURN n.v, q.v ORDER BY q.v""",
+            [[1, 0], [1, 5]])
+
+        self.get_res_and_assertEquals(
+            """MATCH (n:A)
+               CALL { MATCH (q:B) RETURN q UNION ALL MATCH (q:B) RETURN q }
+               RETURN n.v, q.v ORDER BY q.v""",
+            [[1, 0], [1, 0], [1, 5], [1, 5]])
+
+        self.get_res_and_assertEquals(
+            """MATCH (n)
+               CALL { MATCH (q:B) RETURN q.v AS qv UNION ALL MATCH (q:A) RETURN q.v AS qv }
+               RETURN n.v, qv ORDER BY n.v, qv""",
+            [[0, 0], [0, 1], [0, 5], [1, 0], [1, 1], [1, 5], [5, 0], [5, 1], [5, 5]])
+
+        self.get_res_and_assertEquals(
+            """MATCH (n:A)
+               CALL { MATCH (q:B) RETURN q.v AS x UNION MATCH (q:A) RETURN q.v AS x }
+               WITH n, x MATCH (m:B) RETURN n.v, x, m.v ORDER BY x, m.v""",
+            [[1, 0, 0], [1, 0, 5], [1, 1, 0], [1, 1, 5], [1, 5, 0], [1, 5, 5]])
