@@ -293,6 +293,19 @@ class testInlinePatternAttributes(FlowTestsBase):
         self.env.assertEqual(actual.result_set, [[2]])
         g.delete()
 
+    def test18_all_shortest_paths_edge_attr_reads_another_variable(self):
+        g = self.db.select_graph(GRAPH_ID + "_asp_outer")
+        g.query(
+            "CREATE (p:P {limit: 1})-[:R {weight: 1}]->(m:M)-[:R {weight: 1}]->(:Q {n: 1}), "
+            "(m)-[:R {weight: 2}]->(:Q {n: 2})"
+        )
+        actual = g.query(
+            "MATCH (p:P), (q:Q {n: 1}) WITH p, q "
+            "MATCH path = allShortestPaths((p)-[:R* {weight: p.limit}]->(q)) RETURN length(path)"
+        )
+        self.env.assertEqual(actual.result_set, [[2]])
+        g.delete()
+
     # A predicate folded into a traverse is evaluated per edge, and must answer a
     # non-boolean the way a Filter does — a type error — instead of quietly
     # rejecting the edge. A null still just drops it.
@@ -310,4 +323,23 @@ class testInlinePatternAttributes(FlowTestsBase):
                 self.env.assertContains("expected Boolean but was Integer", str(e))
         actual = g.query("MATCH (a:A)-[r:R]->(b) WHERE r.missing RETURN count(a)")
         self.env.assertEqual(actual.result_set, [[0]])
+        g.delete()
+
+    # Above a walk the edge alias holds the walk's edges, not one edge, so a WHERE
+    # on it asks about the whole walk. Folding it into the walk as a per-edge test
+    # would change the question: `r[0]` would index into a single edge.
+    def test20_where_on_a_walk_edge_alias_keeps_its_meaning(self):
+        g = self.db.select_graph(GRAPH_ID + "_walksem")
+        g.query(
+            "CREATE (a:W {n: 1})-[:R {k: 1}]->(:W {n: 2})-[:R {k: 1}]->(c:W {n: 3}), "
+            "(a)-[:R {k: 1}]->(c)"
+        )
+        shortest = (
+            "MATCH (a:W {n: 1}), (c:W {n: 3}) WITH a, c "
+            "MATCH p = allShortestPaths((a)-[r:R*]->(c))"
+        )
+        actual = g.query(shortest + " WHERE r[0].k = 1 RETURN length(p)")
+        self.env.assertEqual(actual.result_set, [[1]])
+        actual = g.query(shortest + " WHERE all(x IN r WHERE x.k = 1) RETURN length(p)")
+        self.env.assertEqual(actual.result_set, [[1]])
         g.delete()

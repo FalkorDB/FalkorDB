@@ -174,9 +174,9 @@ pub fn optimize(
 /// pattern.
 ///
 /// A MATCH pattern's `{k: v}` is a predicate, and the planner lowers it into
-/// exactly one place: an `IR::Filter` for nodes, the fixed-length traverses
-/// and `AllShortestPaths`, or `edge_filter` for `CondVarLenTraverse`. Anything
-/// left on the pattern is a second source of truth. That is
+/// exactly one place: an `IR::Filter` for nodes and for the fixed-length
+/// traverses, or `edge_filter` for the walks, which cannot express it as a
+/// Filter. Anything left on the pattern is a second source of truth. That is
 /// not hypothetical — the two used to disagree, `push_filters_down` merged the
 /// duplicates into `And(p, p)`, and no index could serve the result.
 ///
@@ -206,7 +206,7 @@ fn debug_assert_no_pattern_attrs(plan: &DynTree<IR>) {
             IR::EdgeByIndexScan { relationship, .. }
             | IR::CondVarLenTraverse { relationship, .. }
             | IR::ExpandInto { relationship, .. } => ("traverse", rel_is_clean(relationship)),
-            IR::AllShortestPaths(relationship) => ("traverse", rel_is_clean(relationship)),
+            IR::AllShortestPaths { relationship, .. } => ("traverse", rel_is_clean(relationship)),
             IR::CondTraverse {
                 relationship,
                 chain,
@@ -259,7 +259,7 @@ fn debug_assert_no_pattern_attrs(plan: &DynTree<IR>) {
         debug_assert!(
             clean,
             "{what} still carries inline pattern attrs after planning; they must be \
-             lowered exactly once (a Filter, or edge_filter for CondVarLenTraverse) and \
+             lowered exactly once (a Filter, or edge_filter for the walks) and \
              stripped: {}",
             plan.node(idx).data()
         );

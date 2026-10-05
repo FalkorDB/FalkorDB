@@ -33,7 +33,7 @@ use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp, BatchRow},
     eval::ExprEval,
-    row::{Row, RowView},
+    row::RowView,
     runtime::Runtime,
     value::Value,
 };
@@ -56,7 +56,7 @@ pub struct AllShortestPathsOp<'a> {
     /// edge attributes. Applied during the BFS so a failing edge prunes the
     /// frontier; a `Filter` above this operator could only reject an assembled
     /// path, which is both later and a different question.
-    edge_filter: Option<QueryExpr<Variable>>,
+    edge_filter: Option<&'a QueryExpr<Variable>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -65,7 +65,7 @@ impl<'a> AllShortestPathsOp<'a> {
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-        edge_filter: Option<QueryExpr<Variable>>,
+        edge_filter: Option<&'a QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -98,11 +98,12 @@ impl<'a> AllShortestPathsOp<'a> {
     ) -> Result<Option<RowIter<'a, Value>>, String> {
         let vars = BatchRow::new(batch, row_idx);
 
-        // The fused predicate reads only the edge alias (`split_edge_filter`
-        // fuses nothing else), bound per edge, so the environment it needs is
-        // an empty row rather than a copy of the input row. `insert` overwrites
-        // the alias slot in place, so the row is reused across edges.
-        let mut edge_filter = edge_filter.map(|f| (f, Row::new()));
+        // The edge filter's environment is the input row, extended per edge
+        // with the edge alias. It needs the whole row: the planner writes
+        // inline attrs here, and those can name any variable bound earlier —
+        // `-[:R* {weight: p.limit}]->` reads `p`. `insert` overwrites the
+        // alias slot in place, so the row is reused across edges.
+        let mut edge_filter = edge_filter.map(|f| (f, vars.to_owned_row()));
         let evaluator = ExprEval::from_runtime(runtime);
 
         // Get source node
@@ -322,7 +323,7 @@ impl<'a> Iterator for AllShortestPathsOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
-        let edge_filter = self.edge_filter.as_ref();
+        let edge_filter = self.edge_filter;
         loop {
             // Enumerate each active parent row's shortest paths (the BFS +
             // DFS-backtrack borrows the graph, so it runs eagerly) and let the
