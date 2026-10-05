@@ -78,7 +78,7 @@ pub fn build(
     }
 
     run_isolated("./build.sh", &args, &source, &env)?;
-    collect(&source, entry, ctx.san.is_some())?;
+    collect(&source, entry, ctx.san.is_some(), &ctx.toolchain.target)?;
     cleanup_build_dir(&scratch);
     Ok(())
 }
@@ -134,6 +134,7 @@ fn collect(
     source: &Path,
     entry: &Path,
     want_asan: bool,
+    host_triple: &str,
 ) -> Result<()> {
     let bin = source.join("bin");
     let search_dir = pick_variant(&bin, want_asan)?;
@@ -167,19 +168,22 @@ fn collect(
         count += 1;
     }
 
-    // RediSearch's Rust crate is a separate archive one level up, under a
-    // profile subdir named for the flavor (`release`, `debug-asan`, ...). Both
-    // flavors' outputs coexist there, so match the profile, not just the name:
-    // sorted, `debug-asan` comes first and a clean build would publish it.
+    // RediSearch's Rust crate is a separate archive under bin/redisearch_rs,
+    // where both flavors' outputs coexist. The profile dir does not tell them
+    // apart (`release` for both); the layout does: for a sanitizer build, and
+    // only then, build.sh sets CARGO_BUILD_TARGET to the host triple, so cargo
+    // nests that build one level deeper, as `<triple>/<profile>/`.
     let rs_root = bin.join("redisearch_rs");
     let rs = find_archives(&rs_root)?
         .into_iter()
         .filter(|p| p.file_name().and_then(|n| n.to_str()) == Some("libredisearch_rs.a"))
         .find(|p| {
-            p.strip_prefix(&rs_root)
+            let under_triple = p
+                .strip_prefix(&rs_root)
                 .ok()
                 .and_then(|rel| rel.components().next())
-                .is_some_and(|profile| is_asan(&profile.as_os_str().to_string_lossy()) == want_asan)
+                .is_some_and(|first| first.as_os_str() == host_triple);
+            under_triple == want_asan
         })
         .ok_or_else(|| {
             err!(
@@ -266,7 +270,9 @@ mod tests {
 
     #[test]
     fn each_flavor_collects_its_own_archives() {
-        // Both flavors' outputs side by side, as build.sh leaves them, under a
+        // Both flavors' outputs side by side, laid out as build.sh leaves them
+        // -- the sanitizer Rust build nests under the host triple, as CI's log
+        // shows (redisearch_rs/x86_64-unknown-linux-gnu/release/) -- under a
         // checkout whose path itself contains "asan".
         let tmp = TempDir::new("asan-in-the-path");
         let source = tmp.0.join("deps/RediSearch");
@@ -284,13 +290,13 @@ mod tests {
             "rs-clean",
         );
         put(
-            &bin.join("redisearch_rs/debug-asan/libredisearch_rs.a"),
+            &bin.join("redisearch_rs/x86_64-unknown-linux-gnu/release/libredisearch_rs.a"),
             "rs-asan",
         );
 
         for (want_asan, flavor) in [(false, "clean"), (true, "asan")] {
             let entry = tmp.0.join(format!("entry-{flavor}"));
-            collect(&source, &entry, want_asan).unwrap();
+            collect(&source, &entry, want_asan, "x86_64-unknown-linux-gnu").unwrap();
             let read = |p: &str| fs::read_to_string(entry.join(p)).unwrap();
             assert_eq!(read("lib/libredisearch.a"), format!("main-{flavor}"));
             assert_eq!(read("rs/libredisearch_rs.a"), format!("rs-{flavor}"));

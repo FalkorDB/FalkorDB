@@ -149,7 +149,6 @@ mod tests {
             cxx: None,
             cc_version: "cc".into(),
             cxx_version: "cxx".into(),
-            rustc_version: "rustc".into(),
             target: "t".into(),
             openmp: OpenMp::Auto,
         }

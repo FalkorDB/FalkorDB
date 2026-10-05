@@ -76,10 +76,10 @@ impl Ctx<'_> {
                 "graphblas",
                 graphblas_key.expect("lagraph key requires the graphblas key"),
             ),
-            Dep::RediSearch => {
-                m.set("san", self.san.unwrap_or("none"));
-                m.set("rustc", &self.toolchain.rustc_version);
-            }
+            // Not rustc: CI's fuzz job links the image's stable-built archive
+            // into a nightly-built target, a pairing that works and that a
+            // rustc-keyed lookup would turn into a rebuild with no sources.
+            Dep::RediSearch => m.set("san", self.san.unwrap_or("none")),
         }
         Ok(m)
     }

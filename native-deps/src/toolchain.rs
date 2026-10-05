@@ -112,11 +112,6 @@ pub struct Toolchain {
     /// clang point releases underneath us, so this belongs in the cache key.
     pub cc_version: String,
     pub cxx_version: String,
-    /// `rustc -V` as RediSearch's own Cargo build will see it: its Rust
-    /// archive bundles a `std` that we link over ours with
-    /// `--allow-multiple-definition`, which is only sound when both came from
-    /// the same compiler.
-    pub rustc_version: String,
     pub target: String,
     pub openmp: OpenMp,
 }
@@ -132,8 +127,6 @@ impl Toolchain {
             cc_version: version_line(&cc_probe).unwrap_or_else(|| format!("unknown ({cc_probe})")),
             cxx_version: version_line(&cxx_probe)
                 .unwrap_or_else(|| format!("unknown ({cxx_probe})")),
-            rustc_version: capture_opt("rustc", &["-V"])
-                .map_or_else(|| "unknown".to_owned(), |v| v.trim().to_owned()),
             cc,
             cxx,
             target: host_triple(),
