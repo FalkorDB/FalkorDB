@@ -35,11 +35,9 @@
 //! If only some AND conjuncts are indexable, the indexable ones are merged
 //! into the scan and the remaining conjuncts stay as a reduced Filter.
 //!
-//! **Inline node attributes:**
-//!
-//! Also converts `NodeByLabelScan` nodes that carry inline property attributes
-//! (e.g. `(n:Person {name: 'Alice'})`) into `NodeByIndexScan` when the
-//! attribute is indexed.
+//! **Inline node attributes** (e.g. `(n:Person {name: 'Alice'})`) need no path
+//! of their own: the planner lowers them to an `IR::Filter` like any other
+//! predicate, so they reach an index through the rewrite above.
 //!
 //! ## Supported operators and index types
 //!
@@ -1016,10 +1014,10 @@ fn apply_filter_pushdown<T: IndexSubject>(
     }
 }
 
-/// Attempt an index rewrite at `idx` for subject kind `T`. Tries the
-/// filter-pushdown path first (scan under a `Filter`), then the
-/// inline-attr path (pattern with inline `{attr: value}`). Returns
-/// `true` if either path modified the plan.
+/// Attempt an index rewrite at `idx` for subject kind `T`: push the
+/// indexable conjuncts of the `Filter` above the scan into an index scan.
+/// Inline `{attr: value}` predicates arrive here as that `Filter` too. Returns
+/// `true` if the plan was modified.
 fn try_index_rewrite<T: IndexSubject>(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,

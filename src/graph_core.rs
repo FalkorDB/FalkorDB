@@ -50,11 +50,11 @@ use graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
     },
-    planner::IR,
+    planner::{IR, filter_is_fused_away},
     runtime::runtime::{QueryStatistics, Runtime},
     threadpool::{pending_count, spawn},
 };
-use orx_tree::{Collection, Dfs, NodeRef};
+use orx_tree::{Collection, Dfs, Dyn, DynTree, NodeIdx, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
@@ -823,14 +823,13 @@ pub fn execute_query_write(
 fn reply_profile(
     ctx: &Context,
     runtime: &Runtime,
-    plan: &orx_tree::DynTree<IR>,
+    plan: &DynTree<IR>,
 ) {
     let all_ops: Vec<_> = plan.root().indices::<Dfs>().collect();
     // Hide only what builds no operator: a `Filter` folded whole into the
     // traverse below it. `Commit` builds a `CommitOp` and runs, so it stays —
     // matching `GRAPH.EXPLAIN`, which has always shown it.
-    let hidden =
-        |idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>| graph::planner::filter_is_fused_away(plan, idx);
+    let hidden = |idx: NodeIdx<Dyn<IR>>| filter_is_fused_away(plan, idx);
     let ops: Vec<_> = all_ops.iter().filter(|idx| !hidden(**idx)).collect();
     let profile_data = runtime.profile_data.borrow();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
