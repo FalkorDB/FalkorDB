@@ -58,32 +58,47 @@ pub(super) fn ir_references_variable(
             .iter()
             .any(|(expr, _)| expr_references_variable(expr, var_id, scope_id)),
         IR::Aggregate {
-            keys, aggregations, ..
+            keys,
+            aggregations,
+            projections,
+            ..
         } => {
             keys.iter()
                 .any(|(_, expr)| expr_references_variable(expr, var_id, scope_id))
                 || aggregations
                     .iter()
                     .any(|(_, expr)| expr_references_variable(expr, var_id, scope_id))
+                // Variables carried through from the input. Both sides are
+                // counted: over-reporting a reader only makes a caller keep
+                // something it could have dropped.
+                || projections.iter().any(|(a, b)| {
+                    (a.id == var_id && a.scope_id == scope_id)
+                        || (b.id == var_id && b.scope_id == scope_id)
+                })
         }
         IR::PathBuilder(paths) => paths.iter().any(|p| {
             p.vars
                 .iter()
                 .any(|v| v.id == var_id && v.scope_id == scope_id)
         }),
-        IR::Unwind { var, .. } | IR::ForEach { var, .. } => {
-            var.id == var_id && var.scope_id == scope_id
+        // The list they iterate is read; `UNWIND [e] AS x` reads `e`.
+        IR::Unwind { expr: list, var } | IR::ForEach { list, var } => {
+            expr_references_variable(list, var_id, scope_id)
+                || (var.id == var_id && var.scope_id == scope_id)
         }
         IR::Delete { exprs, .. } | IR::Remove(exprs) => exprs
             .iter()
             .any(|expr| expr_references_variable(expr, var_id, scope_id)),
         IR::Set(items) => set_items_reference_variable(items, var_id, scope_id),
+        // The pattern's property expressions are read too:
+        // `MERGE (x {w: e.w})` reads `e`, as `CREATE` does below.
         IR::Merge {
+            pattern,
             on_create,
             on_match,
-            ..
         } => {
-            set_items_reference_variable(on_create, var_id, scope_id)
+            query_graph_references_variable(pattern, var_id, scope_id)
+                || set_items_reference_variable(on_create, var_id, scope_id)
                 || set_items_reference_variable(on_match, var_id, scope_id)
         }
         IR::ValueHashJoin { lhs_exp, rhs_exp } => {
