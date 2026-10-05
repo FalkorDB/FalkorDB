@@ -348,52 +348,64 @@ version arg. In Docker the same auto-detection runs against
 `clang-${CLANG_MAJOR}`, eliminating the prior drift risk between the
 apt-installed clang and a hand-pinned `LLVMORG_VERSION`.
 
-##### Building GraphBLAS + LAGraph
+##### Building the native dependencies
 
-[GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git) and
-[LAGraph](https://github.com/GraphBLAS/LAGraph.git) are built by a single
-script: GraphBLAS is installed system-wide, LAGraph is emitted under
-`./lagraph_lib`.
+[GraphBLAS](https://github.com/DrTimothyAldenDavis/GraphBLAS.git),
+[LAGraph](https://github.com/GraphBLAS/LAGraph.git) and
+[RediSearch](https://github.com/FalkorDB/RediSearch.git) are git submodules
+under `deps/`, built by the `native-deps` crate. **git owns those checkouts** —
+`native-deps` only builds what is there, so populate them first.
 
-On macOS, point the script at homebrew clang first:
+On macOS, point the build at Homebrew clang first: the system clang has no
+OpenMP, and GraphBLAS would build single-threaded without saying so.
 
 ```bash
 export CC=$(brew --prefix llvm)/bin/clang
 export CXX=$(brew --prefix llvm)/bin/clang++
-./graphblas.sh
 ```
-
-On Linux:
-
-```bash
-CC=clang-23 CXX=clang++-23 ./graphblas.sh
-```
-
-##### Building RediSearch
-
-RediSearch lives at `deps/RediSearch` as a git submodule (same layout as the C
-engine on `master`). **git owns that checkout** — `redisearch.sh` only builds
-what is there, so populate it first:
 
 ```bash
 git submodule update --init --recursive
-./redisearch.sh
+cargo build   # graph/build.rs calls native-deps; nothing else to run
 ```
 
-(`git clone --recurse-submodules` does the first step for you. The script exits
-with instructions if the submodule is empty.)
+(`git clone --recurse-submodules` does the first step for you.)
 
-To work on RediSearch itself, edit `deps/RediSearch` in place and re-run
-`./redisearch.sh` — it never fetches or resets, so local work is never
-clobbered. To land a RediSearch change, move the pin the ordinary way:
+`cargo build` builds any missing dependency automatically, so the explicit step
+below is only needed if you want to build them ahead of time or inspect the
+result:
+
+```bash
+cargo run --manifest-path native-deps/Cargo.toml
+```
+
+###### The artifact cache
+
+Results are cached at
+`${XDG_CACHE_HOME:-$HOME/.cache}/falkordb/native-deps/<dep>/<key>/`
+(`$FALKORDB_DEPS_CACHE` overrides the root). The key covers everything the artifacts are ABI-tied to:
+the submodule revision, the `GB_control` patch, the vendored PreJIT kernels, the
+recipe sources, `$CC`/`$CXX --version`, the target triple and the
+OpenMP/sanitizer flavour. Worktrees therefore share archives, and a compiler
+bump can never yield a stale-ABI cache hit.
+
+`$FALKORDB_NATIVE_DEPS_PREBUILT` names extra read-only roots to search first;
+the Docker images use it to expose the artifacts their dep stages built.
+
+###### Bumping a dependency
+
+Move the gitlink the ordinary way, then regenerate the lock file:
 
 ```bash
 git -C deps/RediSearch checkout <sha>
 git add deps/RediSearch
+cargo run --manifest-path native-deps/Cargo.toml -- lock
 ```
 
-The gitlink is the only place the commit is recorded, so there is nothing else
-to keep in step.
+`deps/native-deps.lock` mirrors the gitlinks as a plain file, because a Docker
+build context has no `.git` for the dep stages to read. CI enforces that the two
+agree via `lock --check`.
+
 
 - pytest - create virtualenv and install tests/requirements.txt
 
