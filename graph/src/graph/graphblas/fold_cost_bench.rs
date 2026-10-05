@@ -328,47 +328,50 @@ fn rebuild(
 }
 
 /// Grow-resize strategies for a COW-shared layer, which cannot be resized in
-/// place. All three produce the same matrix at larger dims; they differ in how
-/// much work they throw away getting there.
+/// place. Both produce the same matrix at larger dims; they differ in how much
+/// work they throw away getting there.
 ///
 /// * `rebuild` — row-iterate the source and `GrB_Matrix_build` into a fresh
-///   matrix at the target dims. Today's `Tensor::resize` grow path.
-/// * `concat` — `GxB_Matrix_concat` the source into the top-left of a fresh
-///   matrix, padded with empty tiles. One bulk block copy, no tuple arrays.
-/// * `dup+resize` — the baseline the current code replaced: deep-copy at the
-///   old dims (what `Cow::deref_mut` does on a shared layer), then
-///   `GrB_Matrix_resize`. The trailing `wait` is charged because
-///   `GrB_Matrix_resize` leaves the wrapper's `has_pending` set, so the next
-///   reader pays it.
+///   matrix at the target dims. Still the path `Tensor::resize` takes when a
+///   delta is non-empty.
+/// * `dup+resize` — deep-copy at the old dims (what `Cow::deref_mut` does on a
+///   shared layer), then `GrB_Matrix_resize`. What `Matrix::grown` does. The
+///   trailing `wait` is charged, because `resize` leaves the wrapper's
+///   `has_pending` set and the next reader pays it.
 ///
-/// Growth factor is 1.14x, matching the capacity-grow pattern that produced
-/// the original 2.4-9.8 ms spikes (100,000 nodes -> 114,688 capacity).
+/// Growth factor is 1.14x, matching the capacity-grow pattern that produced the
+/// original 2.4-9.8 ms spikes (100,000 nodes -> 114,688 capacity).
 ///
-/// What it found (macOS, two runs): concat beats rebuild by ~7x at 1m entries
-/// (1.2 ms vs 7.6-8.4 ms) and ~3x at 262k, they are par at 16k, and rebuild
-/// wins below that — hence the empty-delta short-circuits at the call sites.
+/// A third strategy, `GxB_Matrix_concat` into the top-left of a fresh matrix
+/// padded with empty tiles, used to be measured here and was what `grown` did.
+/// It beat `rebuild` by ~7x at 1m entries (1.2 ms against 7.6-8.4 ms) and ~3x at
+/// 262k, was par at 16k, and lost below that — which is why the call sites still
+/// short-circuit an empty delta. `dup+resize` beat it at every size (504 µs
+/// against 2,132 at 262k, 1,133 against 1,284 at 1m), so `grown` now does that
+/// instead and the concat column is gone rather than left measuring the same
+/// thing twice.
 ///
-/// **`dup+resize` measured faster still** — 0.8 ms at 1m, and 0.7 µs on a
-/// hypersparse 1k-entry delta where both others cost 20 µs — and
-/// `grow_cost_post_grow_usage` found no deferred penalty: iteration, point
-/// lookups, a follow-up mutation and `memory_usage` are identical across all
-/// three. It is *not* adopted here, and the reason is not the copy cost the
-/// original commit message gives (both strategies copy). It is that
-/// `GrB_Matrix_resize` frees the hyper hash and leaves the wrapper's
-/// `has_pending` set, so the layer needs a `wait` that rebuilds it — the effect
-/// behind the "1.4-5.7x write regressions" note on the shrink path, and behind
-/// `tensor::tests::resize_leaves_base_materialized`. Anyone revisiting this
-/// should measure that end to end rather than trusting the microbench: the
-/// `dup+resize` column here charges the `wait` but not what the *next*
-/// transaction pays for a rebuilt hash.
+/// That reversal came late, because an earlier revision of this comment argued
+/// against `dup+resize` on the grounds that `GrB_Matrix_resize` frees the hyper
+/// hash and leaves `has_pending` set, so the next transaction pays to rebuild
+/// it — a cost this microbench does not charge — and asked for an end-to-end
+/// measurement before anyone revisited it. That measurement has now been made
+/// and the penalty does not appear: `grow_cost_post_grow_usage` finds
+/// iteration, point lookups, a follow-up mutation and `memory_usage`
+/// indistinguishable (`set+wait`, where a rebuilt hash would land, is if
+/// anything faster), and the full `bench measure` suite moves 1.0008x with
+/// `write 1m` and `create 10k` flat to four figures. The hazard the concern
+/// points at is real but is handled by the callers, which `wait` the grown
+/// matrix before publishing it — `tensor::tests::resize_leaves_base_materialized`
+/// is the regression test for exactly that.
 #[test]
 #[ignore = "measurement, not a correctness check"]
-fn grow_cost_concat_vs_rebuild() {
+fn grow_cost_rebuild_vs_resize() {
     ensure_init();
     println!("\n=== grow-resize cost by strategy (uint64 layer, 1.14x dims) ===");
     println!(
-        "{:>10}  {:>12}  {:>12}  {:>12}  {:>10}",
-        "nvals", "rebuild us", "concat us", "dup+resize us", "concat/rebuild"
+        "{:>10}  {:>12}  {:>12}  {:>14}",
+        "nvals", "rebuild us", "dup+resize us", "resize/rebuild"
     );
     let (nrows, ncols) = (CAP + CAP * 14 / 100, CAP + CAP * 14 / 100);
     for &n in &[0u64, 1_024, 16_384, 262_144, 1_048_576] {
@@ -379,31 +382,20 @@ fn grow_cost_concat_vs_rebuild() {
             let g = rebuild(&src, nrows, ncols);
             std::hint::black_box(&g);
         });
-        let concat_us = time_us(reps, || {
+        // `grown` per rep rather than a reused copy: resize mutates, so a
+        // reused one would be measured already-grown after the first rep.
+        let dup_resize_us = time_us(reps, || {
             let g = src.grown(nrows, ncols);
             g.wait();
             std::hint::black_box(&g);
         });
-        // dup per rep: resize mutates, so a reused copy would be measured
-        // already-grown on every rep after the first.
-        let mut dup_resize_us = 0.0;
-        for _ in 0..reps {
-            let t = Instant::now();
-            let mut g = src.dup();
-            g.resize(nrows, ncols);
-            g.wait();
-            dup_resize_us += t.elapsed().as_secs_f64() * 1e6;
-            std::hint::black_box(&g);
-        }
-        dup_resize_us /= f64::from(reps);
 
         println!(
-            "{:>10}  {:>12.1}  {:>12.1}  {:>12.1}  {:>10.2}",
+            "{:>10}  {:>12.1}  {:>12.1}  {:>14.2}",
             n,
             rebuild_us,
-            concat_us,
             dup_resize_us,
-            concat_us / rebuild_us.max(f64::EPSILON)
+            dup_resize_us / rebuild_us.max(f64::EPSILON)
         );
     }
 }
@@ -486,4 +478,76 @@ fn grow_cost_post_grow_usage() {
             );
         }
     }
+}
+
+/// Which `GB_resize` path does the engine's capacity grow actually take?
+///
+/// GraphBLAS 10.5.0 added a fast path — no `GrB_wait` when the storage is
+/// sparse or hypersparse and neither dimension shrinks — and burbles which one
+/// it took. Since `Matrix::grown` is `dup` + `GrB_Matrix_resize`, this drives
+/// the real grow paths with burble on so the answer is observed rather than
+/// assumed. Look for:
+///
+/// * `(sparse/hyper and dims not shrinking; no wait required)` — the fast path
+/// * `(sparse/hypersparse: general case requiring a wait)` — the old one
+///
+/// On 10.4.1 and earlier neither appears; the existing case has no burble.
+#[test]
+#[ignore = "measurement, not a correctness check"]
+fn grow_resize_burble_path() {
+    use super::tensor::Tensor;
+    use super::versioned_matrix::VersionedMatrix;
+
+    ensure_init();
+    const N: u64 = 20_000;
+    const DIM: u64 = 65_536;
+    const GROWN: u64 = 114_688;
+
+    // A label-matrix-shaped bool layer, assembled, deltas empty: the shape the
+    // grow path's common branch handles.
+    let mut v = VersionedMatrix::<bool>::new(DIM, DIM);
+    v.set_all::<false>((0..N).map(|i| (i, (i * 11) % DIM)));
+    // Fold, so the entries live in the committed base and the deltas are empty
+    // — the state a real capacity grow finds, and the only one that reaches
+    // `grown`. Without this the grow takes the merge-rebuild branch instead.
+    v.fold_oversized();
+    v.wait();
+    assert!(v.m().nvals() > 0, "base empty: the fold did not happen");
+    assert_eq!(
+        v.dp().nvals(),
+        0,
+        "delta not folded, grow would take the merge path"
+    );
+    println!(
+        "\n=== VersionedMatrix::resize, growing {DIM} -> {GROWN} ===\n\
+         base nvals={} sparsity={}",
+        v.m().nvals(),
+        v.m().sparsity_status()
+    );
+    super::matrix::burble(true);
+    v.resize(GROWN, GROWN);
+    super::matrix::burble(false);
+
+    // And a relationship tensor, whose grow re-emits three layers.
+    let mut t = Tensor::new(DIM, DIM);
+    let srcs: Vec<u64> = (0..N).collect();
+    let dsts: Vec<u64> = (0..N).map(|i| (i * 11) % DIM).collect();
+    let ids: Vec<u64> = (0..N).collect();
+    t.set_all_from_slices(&srcs, &dsts, &ids);
+    t.fold_oversized();
+    t.wait_fwd();
+    assert!(
+        t.fwd_m().nvals() > 0,
+        "tensor base empty: the fold did not happen"
+    );
+    println!(
+        "\n=== Tensor::resize, growing {DIM} -> {GROWN} ===\n\
+         base nvals={} sparsity={}",
+        t.fwd_m().nvals(),
+        t.fwd_m().sparsity_status()
+    );
+    super::matrix::burble(true);
+    t.resize(GROWN, GROWN);
+    super::matrix::burble(false);
+    println!("\n=== done ===");
 }

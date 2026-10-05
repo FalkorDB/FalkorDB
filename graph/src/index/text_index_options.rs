@@ -18,11 +18,19 @@
 
 use std::sync::Arc;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TextIndexOptions {
     pub weight: Option<f64>,
     pub nostem: Option<bool>,
-    pub phonetic: Option<bool>,
+    /// The phonetic algorithm code, e.g. `"dm:en"`, or `None` when the
+    /// statement said nothing. Empty means explicitly off.
+    ///
+    /// A code and not a `bool`: C stores `char *phonetic` and accepts
+    /// `dm:fr`/`dm:pt`/`dm:es`, the v19 RDB persists the string, and the
+    /// effects wire carries the string. A `bool` here was the only narrow
+    /// representation in the chain, and it silently rewrote any other
+    /// algorithm to `dm:en` on an RDB round trip.
+    pub phonetic: Option<String>,
     pub language: Option<Arc<String>>,
     pub stopwords: Option<Vec<Arc<String>>>,
 }

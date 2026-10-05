@@ -1,9 +1,28 @@
 target/
 # Host-built native dep outputs that would shadow the build image's prebuilt versions
-# (graph/build.rs's link-search adds ../lagraph_lib and redisearch/... before /data paths).
+# (graph/build.rs's link-search adds ../lagraph_lib and deps/RediSearch/... before /data paths).
+#
+# Only the OUTPUT is a hazard, not the source: deps/RediSearch/bin is ~2.2GB of
+# host-arch archives that a Linux image build must never link, while the source
+# it is built from is ~60MB and is exactly what the images now COPY in (git owns
+# the submodule; redisearch.sh no longer clones it).
 lagraph_lib/
+deps/RediSearch/bin/
 redisearch/
+# All git metadata, at any depth. A submodule's `.git` is normally a small
+# `gitdir:` pointer file, but one bootstrapped by an older redisearch.sh is a
+# full repository (~62MB of objects) -- so leaving these in would make the build
+# context, and what lands in the image, depend on how the developer's checkout
+# happened to be created. Nothing in the image build runs git.
+#
+# RediSearch's redisearch_rs build scripts do need a `.git` ENTRY to exist:
+# build_utils::git_root walks up for one to locate the source root (an existence
+# check -- it never invokes git), and without it the ffi build script panics with
+# "Could not find git root". The Dockerfiles that build RediSearch create an
+# empty marker directory for that, which keeps it explicit and identical
+# everywhere instead of depending on what got copied in.
 .git/
+**/.git
 .github/
 .claude/
 .devcontainer/

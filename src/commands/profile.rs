@@ -5,7 +5,9 @@
 
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{ThreadedGraph, profile_mut},
+    graph_core::{
+        ThreadedGraph, c_graph_key, c_graph_name, profile_mut, register_graph, up_to_nul,
+    },
     redis_type::GRAPH_TYPE,
 };
 use parking_lot::RwLock;
@@ -18,7 +20,8 @@ pub fn graph_profile(
 ) -> RedisResult {
     let mut args = args.into_iter().skip(1);
     let key_str = args.next_arg()?;
-    let query = args.next_str()?;
+    // C ends the query at its first NUL byte; see `up_to_nul`.
+    let query = up_to_nul(args.next_str()?);
     let mut timeout: Option<i64> = None;
     while let Ok(arg) = args.next_str() {
         // Matched case-insensitively, as the C dispatcher does with strcasecmp:
@@ -30,6 +33,7 @@ pub fn graph_profile(
         }
     }
 
+    // The key the graph lives at, not C's name for it — see `graph_query`.
     let key_name: Arc<str> = Arc::from(key_str.to_string());
 
     // Try read-only key access first.
@@ -48,12 +52,18 @@ pub fn graph_profile(
         return profile_mut(ctx, &graph, query, &key_name, timeout);
     }
 
+    // Creating: a new graph lands at C's key, not the addressed one — see `graph_query`.
+    let name = c_graph_name(&key_str);
+    let key_name: Arc<str> = Arc::from(name.as_str());
     let graph = Arc::new(RwLock::new(ThreadedGraph::new(
         *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-        &key_str.to_string(),
+        &name,
     )));
     let result = profile_mut(ctx, &graph, query, &key_name, timeout);
-    key.set_value(&GRAPH_TYPE, graph.clone())?;
-    crate::graph_core::register_graph(key_str.to_string(), graph);
+    // Stored under C's key, not the addressed one — see `c_graph_key`.
+    let create_key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+    drop(key);
+    create_key.set_value(&GRAPH_TYPE, graph.clone())?;
+    register_graph(name, graph);
     result
 }

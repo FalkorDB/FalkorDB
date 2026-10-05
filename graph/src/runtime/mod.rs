@@ -39,6 +39,7 @@
 //!
 //! - [`batch::Batch`]: Columnar row batches with selection-vector filtering
 //! - [`bitset::BitSet`]: Compact bit set for tracking bound variables
+//! - [`vector_expr`]: Columnar evaluation of whole expression trees
 //! - [`vectorized`]: SIMD-friendly comparison kernels for typed columns
 //!
 //! ## Data Structures
@@ -50,6 +51,7 @@ pub mod batch;
 pub mod bitset;
 pub mod eval;
 pub mod functions;
+pub mod index_ddl;
 pub mod ops;
 pub mod ordermap;
 pub mod orderset;
@@ -59,4 +61,5 @@ pub mod runtime;
 pub mod string_pool;
 pub mod value;
 pub mod vec_distance;
+pub mod vector_expr;
 pub mod vectorized;

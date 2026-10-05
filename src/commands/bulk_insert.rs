@@ -2,7 +2,7 @@ use crate::dispatch::must_run_inline;
 use crate::query_session::{QuerySession, WriteFacts, hold_gil};
 use crate::{
     config::CONFIGURATION_CACHE_SIZE,
-    graph_core::{BlockedClient, ThreadedGraph, ffi, register_graph},
+    graph_core::{BlockedClient, ThreadedGraph, c_graph_key, c_graph_name, ffi, register_graph},
     redis_type::GRAPH_TYPE,
     telemetry,
 };
@@ -218,8 +218,10 @@ fn discard_created_graph(
     ctx: &Context,
     key_str: &RedisString,
 ) {
-    telemetry::delete_stream(ctx, &key_str.to_string());
-    let key = ctx.open_key_writable(key_str);
+    // The graph was created under C's name, so that — not the addressed key — is
+    // what has to be taken back out of the keyspace.
+    telemetry::delete_stream(ctx, &c_graph_name(key_str));
+    let key = ctx.open_key_writable(&c_graph_key(ctx, key_str));
     let _ = key.delete();
 }
 
@@ -409,7 +411,7 @@ fn process_node_token(
         return Ok(());
     }
 
-    g.create_nodes(&nodes_bitmap);
+    g.create_nodes(&nodes_bitmap).map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
     g.set_nodes_labels_bulk(&label_rows, &label_cols, &mut docs.nodes, true);
@@ -494,7 +496,8 @@ fn process_edge_token(
         return Ok(());
     }
 
-    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids);
+    g.create_relationships_bulk(&type_name, &srcs, &dsts, &edge_ids)
+        .map_err(|e| e.to_string())?;
     unsafe { maybe_yield(raw_ctx) };
 
     if !resolved_rel_attrs.is_empty() {
@@ -516,8 +519,22 @@ fn bulk_insert_sync(
     rel_token_count: usize,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count)?;
-    let rel_ids = g.reserve_relationships(edge_count)?;
+    // A bulk command has no `Pending`, so the whole command is one batch: opened
+    // with this write version, checked when it is published.
+    // Reserved once, before anything is created, so nothing is outstanding.
+    let nothing_outstanding = RoaringTreemap::new();
+    let node_ids: Vec<NodeId> = g
+        .node_id_space()
+        .reserve(node_count, &nothing_outstanding)?
+        .into_iter()
+        .map(NodeId::from)
+        .collect();
+    let rel_ids: Vec<RelationshipId> = g
+        .relationship_id_space()
+        .reserve(edge_count, &nothing_outstanding)?
+        .into_iter()
+        .map(RelationshipId::from)
+        .collect();
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
@@ -546,8 +563,22 @@ fn bulk_insert_sync_yield(
     raw_ctx: *mut raw::RedisModuleCtx,
     docs: &mut BulkIndexDocs,
 ) -> Result<(), String> {
-    let node_ids = g.reserve_nodes(node_count)?;
-    let rel_ids = g.reserve_relationships(edge_count)?;
+    // A bulk command has no `Pending`, so the whole command is one batch: opened
+    // with this write version, checked when it is published.
+    // Reserved once, before anything is created, so nothing is outstanding.
+    let nothing_outstanding = RoaringTreemap::new();
+    let node_ids: Vec<NodeId> = g
+        .node_id_space()
+        .reserve(node_count, &nothing_outstanding)?
+        .into_iter()
+        .map(NodeId::from)
+        .collect();
+    let rel_ids: Vec<RelationshipId> = g
+        .relationship_id_space()
+        .reserve(edge_count, &nothing_outstanding)?
+        .into_iter()
+        .map(RelationshipId::from)
+        .collect();
     let mut node_id_cursor = 0usize;
     let mut rel_id_cursor = 0usize;
 
@@ -708,7 +739,7 @@ pub fn graph_bulk_insert(
     // Bound the declared counts by what the payload can describe.
     //
     // `node_count` and `edge_count` are pure client input, and they size a `Vec` of ids
-    // directly in `Graph::reserve_nodes` / `reserve_relationships`. Unbounded, that is a
+    // directly in the two `IdSpace::reserve` calls this command reaches. Unbounded, that is a
     // crash: `GRAPH.BULK g BEGIN 9223372036854775807 0 0 0` carries no payload at all, and
     // the capacity overflow aborted the whole process (#2426). Below the overflow threshold
     // it is a memory-amplification vector, since the reservation really happens.
@@ -750,13 +781,16 @@ pub fn graph_bulk_insert(
     let graph = match existing {
         Some(g) => g,
         None => {
-            let key = ctx.open_key_writable(&key_str);
+            // Created under C's name and stored at the key rebuilt from it, not at
+            // the key the command addressed — see `c_graph_key`.
+            let key = ctx.open_key_writable(&c_graph_key(ctx, &key_str));
+            let name = c_graph_name(&key_str);
             let g = Arc::new(RwLock::new(ThreadedGraph::new(
                 *CONFIGURATION_CACHE_SIZE.lock(ctx) as usize,
-                &key_str.to_string(),
+                &name,
             )));
             key.set_value(&GRAPH_TYPE, g.clone())?;
-            register_graph(key_str.to_string(), g.clone());
+            register_graph(name, g.clone());
             g
         }
     };
@@ -789,14 +823,31 @@ pub fn graph_bulk_insert(
                 &mut docs,
             )
         };
+        // The commit joins the token result rather than sitting in the `Ok` arm
+        // below. `commit` validates before publishing, and returning its refusal
+        // straight to the caller skipped the whole error arm — so a `BEGIN` that
+        // failed validation left the graph key it had just created registered and
+        // empty, with no insert in it and nothing to remove it.
+        //
+        // The version is validated *before* the documents are published, and
+        // then again by `commit`. The documents go to RediSearch, which is not
+        // MVCC and has no version to throw away: once published they survive a
+        // rolled-back fork, and `BulkIndexDocs` cannot take them back — the edge
+        // side of `commit_edge_index` wants src and dst per removed edge, which
+        // this type does not keep. Asking first costs one walk of a roaring
+        // bitmap on a path that has just parsed a whole payload, and is the only
+        // ordering where a refusal leaves nothing behind.
+        //
+        // Still published before the swap rather than after it: `g_arc` is the
+        // un-published fork here, and after the swap a concurrent reader can
+        // hold the same graph, where this `borrow_mut` would panic.
+        let result = result.and_then(|()| {
+            g_arc.borrow().validate().map_err(|e| e.to_string())?;
+            docs.publish(&mut g_arc.borrow_mut());
+            tg.graph.commit(g_arc).map_err(|e| e.to_string())
+        });
         return match result {
             Ok(()) => {
-                // Every token succeeded, so the index documents are safe to publish. Do it
-                // while `g_arc` is still the un-published fork: after the swap it may be
-                // borrowed by concurrent readers, and on the error arm below it is thrown
-                // away — which is precisely what must happen to the documents too.
-                docs.publish(&mut g_arc.borrow_mut());
-                tg.graph.commit(g_arc);
                 ctx.replicate_verbatim();
                 let reply = format!("{node_count} nodes created, {edge_count} relations created");
                 Ok(RedisValue::SimpleString(reply))
@@ -905,10 +956,22 @@ pub fn graph_bulk_insert(
                 // insert that later rolls back. The cost is a GIL hold proportional to
                 // the number of indexed rows — paid only when the graph actually has an
                 // index, since `docs` is otherwise empty.
+                //
+                // Validated before publishing, as on the inline path above and
+                // for the same reason: RediSearch is not MVCC, so a document
+                // published here outlives the fork that `commit` would refuse,
+                // and nothing can take it back.
+                if let Err(e) = g_arc.borrow().validate() {
+                    session.with_graph(|tg| tg.graph.rollback());
+                    break 'phase Err(e.to_string());
+                }
                 docs.publish(&mut g_arc.borrow_mut());
-                session
+                if let Err(e) = session
                     .with_graph_mut(|tg| tg.graph.commit(g_arc))
-                    .expect("writer mode after upgrade_to_write");
+                    .expect("writer mode after upgrade_to_write")
+                {
+                    break 'phase Err(e.to_string());
+                }
                 // Replicate the client's own argument strings.
                 //
                 // `RM_ReplicateVerbatim` cannot be used from here. It propagates
@@ -955,7 +1018,11 @@ pub fn graph_bulk_insert(
                         // retake the GIL for this keyspace write.
                         let _gil = hold_gil();
                         let cleanup_ctx = Context::new(ts_ctx);
-                        let key_name = cleanup_ctx.create_string(key_bytes.as_slice());
+                        // `create_string` is `CString::new(..).unwrap()`, so a key
+                        // holding an interior NUL aborted the process here (#2490) —
+                        // the one constructor that cannot carry the bytes this path
+                        // deliberately captured. ptr+len carries them.
+                        let key_name = RedisString::create_from_slice(ts_ctx, key_bytes.as_slice());
                         discard_created_graph(&cleanup_ctx, &key_name);
                     }
                     let cerr = ffi::sanitise_error(msg);

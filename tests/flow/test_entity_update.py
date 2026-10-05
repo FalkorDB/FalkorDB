@@ -495,6 +495,48 @@ class testEntityUpdate():
         self.env.assertEqual(result.labels_removed, 0)
         self.validate_node_labels(self.graph, labels, 1)
 
+    def test_31_mix_add_and_remove_same_label_on_labeled_node(self):
+        # https://github.com/FalkorDB/FalkorDB/issues/2777
+        # a label re-added in the same query that removes it must survive;
+        # the last clause to touch a label wins, in both directions
+        self.graph.delete()
+        self.graph.query("CREATE (:L {v: 1})")
+        self.validate_node_labels(self.graph, ["L"], 1)
+
+        # remove prior to set: the label is kept
+        result = self.graph.query("MATCH (n:L) REMOVE n:L SET n:L RETURN labels(n)")
+        self.env.assertEqual(result.result_set[0][0], ["L"])
+        self.env.assertEqual(result.labels_removed, 0)
+        # still reachable by a label scan, and still a single node
+        self.validate_node_labels(self.graph, ["L"], 1)
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0], 1)
+
+        # set prior to remove: the label is dropped
+        result = self.graph.query("MATCH (n:L) SET n:L REMOVE n:L RETURN labels(n)")
+        self.env.assertEqual(result.result_set[0][0], [])
+        self.env.assertEqual(result.labels_removed, 1)
+        self.validate_node_labels(self.graph, ["L"], 0)
+        # the node itself survives, it only lost the label
+        self.env.assertEqual(self.graph.query("MATCH (n) RETURN count(n)").result_set[0][0], 1)
+
+        # a different label added while the original one is removed
+        for query in ["MATCH (n:A) REMOVE n:A SET n:B RETURN labels(n)",
+                      "MATCH (n:A) SET n:B REMOVE n:A RETURN labels(n)"]:
+            self.graph.delete()
+            self.graph.query("CREATE (:A)")
+            result = self.graph.query(query)
+            self.env.assertEqual(result.result_set[0][0], ["B"])
+            self.validate_node_labels(self.graph, ["A"], 0)
+            self.validate_node_labels(self.graph, ["B"], 1)
+
+        # multiple nodes updated by a single query
+        self.graph.delete()
+        self.graph.query("UNWIND range(1, 5) AS i CREATE (:L {v: i})")
+        result = self.graph.query("MATCH (n:L) REMOVE n:L SET n:L RETURN count(n)")
+        self.env.assertEqual(result.result_set[0][0], 5)
+        self.env.assertEqual(result.labels_removed, 0)
+        self.validate_node_labels(self.graph, ["L"], 5)
+
     def test_32_mix_merge_and_remove_node_labels(self):
         self.graph.delete()
         labels_to_remove = ["Foo"]

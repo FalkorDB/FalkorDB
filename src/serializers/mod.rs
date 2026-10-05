@@ -62,6 +62,20 @@ pub struct DecodeState {
     /// Finalized graphs ready to be picked up by graph_rdb_load or
     /// the finalize_pending_graphs callback.
     pub finalized: HashMap<String, Graph>,
+    /// Redis keys this load has identified as virtual keys: every key of a
+    /// multi-key graph other than the one the graph itself is stored under.
+    /// They carry a slice of the graph rather than a graph of their own, so
+    /// once the load finishes they are bookkeeping and must leave the
+    /// keyspace.
+    ///
+    /// This is C's `GraphDecodeContext` meta-key list: `decode_graph.c`
+    /// records every key it decodes whose name differs from the graph's, and
+    /// `_ClearKeySpaceMetaKeys(ctx, /*decode=*/true)` deletes exactly those.
+    /// Recording the names is what lets the cleanup name its own keys instead
+    /// of guessing which keys in the keyspace look like its own — the guess
+    /// (a `__placeholder` name prefix) deleted user graphs that chose such a
+    /// name, since the name is the client's to pick (#2773).
+    pub meta_keys: Vec<String>,
 }
 
 pub struct PendingGraph {
@@ -88,6 +102,7 @@ impl DecodeState {
             pending: HashMap::new(),
             placeholders: HashMap::new(),
             finalized: HashMap::new(),
+            meta_keys: Vec::new(),
         }
     }
 
@@ -96,6 +111,7 @@ impl DecodeState {
         self.pending.clear();
         self.placeholders.clear();
         self.finalized.clear();
+        self.meta_keys.clear();
     }
 }
 
@@ -183,12 +199,23 @@ impl Decode<19> for Header {
 }
 
 impl Header {
+    /// `graph_name` is the *Redis key* the graph is being written under, not
+    /// `Graph::name()`.
+    ///
+    /// The two agree at creation and diverge on RENAME: C's
+    /// `GraphContext_Rename` re-points `gc->graph_name` at the new key, while
+    /// here nothing updates the name inside the versioned `Graph`. The name in
+    /// this header is what the decoder keys its per-graph state by and what it
+    /// compares each key against to tell the graph's own key from its virtual
+    /// keys, so a stale one made a renamed multi-key graph load into state
+    /// nobody looked up — it came back empty and its key was gone.
     pub fn from_graph(
         graph: &Graph,
+        graph_name: &str,
         key_count: u64,
     ) -> Self {
         Self {
-            graph_name: graph.name().to_string(),
+            graph_name: graph_name.to_string(),
             node_count: graph.node_count(),
             edge_count: graph.relationship_count(),
             deleted_node_count: graph.deleted_nodes().len(),
@@ -369,19 +396,16 @@ fn encode_schema_index_block(
         let opts = f.options();
         w.write_double(opts.and_then(|o| o.weight).unwrap_or(1.0));
         w.write_unsigned(u64::from(opts.and_then(|o| o.nostem).unwrap_or(false)));
-        let phonetic = opts.and_then(|o| o.phonetic).map_or(String::new(), |p| {
-            if p {
-                "dm:en".to_string()
-            } else {
-                String::new()
-            }
-        });
+        // The field is the code, so this is no longer a conversion. It used to
+        // map a `bool` to "dm:en", which meant a C-written `dm:fr` came back
+        // out of a Rust round trip as `dm:en`.
+        let phonetic = opts.and_then(|o| o.phonetic.clone()).unwrap_or_default();
         w.write_buffer(&null_terminated(&phonetic));
 
         if field_type & index_field_type::INDEX_FLD_VECTOR != 0
             && let Some(vopts) = f.vector_options()
         {
-            w.write_unsigned(u64::from(vopts.dimension));
+            w.write_unsigned(vopts.dimension);
             w.write_unsigned(vopts.m.unwrap_or(16) as u64);
             w.write_unsigned(vopts.ef_construction.unwrap_or(200) as u64);
             w.write_unsigned(vopts.ef_runtime.unwrap_or(10) as u64);
@@ -622,7 +646,7 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
     };
 
     let vector_options = if is_vector {
-        let dimension = r.read_unsigned()? as u32;
+        let dimension = r.read_unsigned()?;
         let m = r.read_unsigned()? as usize;
         let ef_construction = r.read_unsigned()? as usize;
         let ef_runtime = r.read_unsigned()? as usize;
@@ -649,7 +673,7 @@ fn decode_index_field(r: &mut dyn Reader) -> Result<(Arc<String>, Field), String
         Some(TextIndexOptions {
             weight: Some(weight),
             nostem: Some(nostem),
-            phonetic: Some(!phonetic.is_empty()),
+            phonetic: Some(phonetic),
             language: None,
             stopwords: None,
         })

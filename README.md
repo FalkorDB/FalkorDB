@@ -322,7 +322,7 @@ GraphBLAS, LAGraph, and RediSearch must be built and installed before building t
 | Host | Compiler | OpenMP runtime |
 | --- | --- | --- |
 | macOS | `brew install llvm` (provides `clang` with OpenMP support) | `brew install libomp` |
-| Linux | `clang-22` (e.g. from [apt.llvm.org](https://apt.llvm.org/)) | `apt install libomp-22-dev` |
+| Linux | `clang-23` (e.g. from [apt.llvm.org](https://apt.llvm.org/)) | `apt install libomp-23-dev` |
 
 Local builds use whatever OpenMP package is on the system — `build/libomp.sh`
 is **not** required for local development. It is only invoked by the Docker
@@ -366,14 +366,34 @@ export CXX=$(brew --prefix llvm)/bin/clang++
 On Linux:
 
 ```bash
-CC=clang-22 CXX=clang++-22 ./graphblas.sh
+CC=clang-23 CXX=clang++-23 ./graphblas.sh
 ```
 
 ##### Building RediSearch
 
+RediSearch lives at `deps/RediSearch` as a git submodule (same layout as the C
+engine on `master`). **git owns that checkout** — `redisearch.sh` only builds
+what is there, so populate it first:
+
 ```bash
+git submodule update --init --recursive
 ./redisearch.sh
 ```
+
+(`git clone --recurse-submodules` does the first step for you. The script exits
+with instructions if the submodule is empty.)
+
+To work on RediSearch itself, edit `deps/RediSearch` in place and re-run
+`./redisearch.sh` — it never fetches or resets, so local work is never
+clobbered. To land a RediSearch change, move the pin the ordinary way:
+
+```bash
+git -C deps/RediSearch checkout <sha>
+git add deps/RediSearch
+```
+
+The gitlink is the only place the commit is recorded, so there is nothing else
+to keep in step.
 
 - pytest - create virtualenv and install tests/requirements.txt
 

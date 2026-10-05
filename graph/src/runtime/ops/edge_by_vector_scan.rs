@@ -51,10 +51,15 @@ impl<'a> EdgeByVectorScanOp<'a> {
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::with_binding(ScoredColumn {
-                id: edge.id,
-                score: score.as_ref().map(|v| v.id),
-            }),
+            // No cap, for the same reason as `node_by_vector_scan`: `k`
+            // bounds the scan and there is no boundary step to remove.
+            emitter: BatchedResultEmitter::with_binding(
+                ScoredColumn {
+                    id: edge.id,
+                    score: score.as_ref().map(|v| v.id),
+                },
+                None,
+            ),
             label,
             attr,
             k,

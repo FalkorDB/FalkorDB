@@ -21,24 +21,29 @@ runs:
   steps:
     - name: Authenticate to GCP
       shell: bash
+      env:
+        SERVICE_ACCOUNT_KEY: ${{ inputs.service_account_key }}
+        PROJECT_ID: ${{ inputs.project_id }}
       run: |
-        echo '${{ inputs.service_account_key }}' \
-          | gcloud --project '${{ inputs.project_id }}' --quiet \
+        printf '%s' "${SERVICE_ACCOUNT_KEY}" \
+          | gcloud --project "${PROJECT_ID}" --quiet \
               auth activate-service-account --key-file - >/dev/null 2>&1
 
     - name: Delete the runner VM (if any)
       shell: bash
+      env:
+        INSTANCE_LABEL: ${{ inputs.instance_label }}
       run: |
         set -euo pipefail
         # The create action tags the VM with `<runner_label>=1`, so match on
         # that label key (same identifier passed as instance_label).
         info=$(gcloud compute instances list \
-          --filter="labels.${{ inputs.instance_label }}=1" \
+          --filter="labels.${INSTANCE_LABEL}=1" \
           --format="value(name,zone)" | head -1 || true)
         name=$(echo "$info" | awk '{print $1}')
         zone=$(echo "$info" | awk '{print $2}')
         if [ -z "$name" ]; then
-          echo "no VM with label '${{ inputs.instance_label }}' — nothing to clean up"
+          echo "no VM with label '${INSTANCE_LABEL}' — nothing to clean up"
           exit 0
         fi
         echo "deleting $name ($zone)"

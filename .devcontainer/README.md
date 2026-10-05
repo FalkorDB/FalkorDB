@@ -10,7 +10,7 @@ The development container includes:
 - **Redis server** installed via apt
 - **Rust toolchain** with all necessary components
 - **LLVM 21** with clang, clang++, llvm-cov, and llvm-profdata for building and code coverage
-- **GraphBLAS** (v10.3.1) compiled and installed using `graphblas.sh`
+- **GraphBLAS** (v10.5.0) compiled and installed using `graphblas.sh`
 - **RediSearch** with vector similarity support, built using `redisearch.sh`
 - **Python 3 virtual environment** at `/data/venv` with all test dependencies
 
@@ -60,7 +60,7 @@ All skills automatically detect whether they're running inside or outside the de
 
 The container sets the following environment variables:
 
-- `CXX=clang++-22` - Required for building with GraphBLAS FFI
+- `CXX=clang++-23` - Required for building with GraphBLAS FFI
 - `PATH` includes Rust cargo bin directory
 
 ## Cargo Cache
@@ -89,9 +89,9 @@ source /data/venv/bin/activate
 
 ### Clippy Fails with FFI Errors
 
-Ensure that `CXX` is set to `clang++-22`:
+Ensure that `CXX` is set to `clang++-23`:
 ```bash
-export CXX=clang++-22
+export CXX=clang++-23
 ```
 
 This is automatically set in the container, but may need to be set manually if you encounter issues.

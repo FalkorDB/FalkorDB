@@ -9,7 +9,7 @@ fn main() {
     //     This makes libfalkordb.{so,dylib} self-contained for OpenMP and is
     //     the path CI/Docker takes (build/libomp.sh installs to /opt/libomp).
     //   * otherwise → fall back to dynamic `-lomp`, resolved against the
-    //     system search path (apt's libomp-22-dev on Linux, homebrew's
+    //     system search path (apt's libomp-23-dev on Linux, homebrew's
     //     /opt/homebrew/opt/llvm/lib/libomp.dylib on macOS).
     // The LIBOMP_PREFIX env var lets local devs point at a non-root install
     // (e.g. PREFIX=$HOME/libomp ./build/libomp.sh) without needing sudo.
@@ -28,6 +28,7 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     {
+        println!("cargo:rustc-link-search=/usr/lib/llvm-23/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-22/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-21/lib");
         println!("cargo:rustc-link-search=/usr/lib/llvm-20/lib");
@@ -93,21 +94,25 @@ fn main() {
     }
 
     // ---- RediSearch 8.6, embedded as a static library ----
-    // `redisearch.sh` builds the fork into
-    // redisearch/RediSearch/bin/<variant>/search-community. The main archive is
+    // `redisearch.sh` builds the fork (the deps/RediSearch submodule) into
+    // deps/RediSearch/bin/<variant>/search-community. The main archive is
     // `redisearch.so` (an ar archive despite the suffix); its C/C++ dependencies are
     // sibling .a files; the Rust crate is a separate libredisearch_rs.a one level up.
     // Local dev (and the asan Dockerfile, which runs redisearch.sh in-tree)
-    // build into `<repo>/redisearch/RediSearch/bin`; the Docker toolchain image
-    // (build/Dockerfile) builds into `/data/redisearch/RediSearch/bin`. Take the
+    // build into `<repo>/deps/RediSearch/bin`; the Docker toolchain image
+    // (build/Dockerfile) builds into `/data/deps/RediSearch/bin`. Take the
     // first that exists so the same build.rs works in every environment.
+    // `redisearch/RediSearch` is the pre-submodule layout, kept last so an
+    // existing local checkout still links until it is removed.
     let rs_bin = [
+        std::path::Path::new(&manifest_dir).join("../deps/RediSearch/bin"),
+        std::path::PathBuf::from("/data/deps/RediSearch/bin"),
         std::path::Path::new(&manifest_dir).join("../redisearch/RediSearch/bin"),
         std::path::PathBuf::from("/data/redisearch/RediSearch/bin"),
     ]
     .into_iter()
     .find_map(|p| p.canonicalize().ok().filter(|p| p.is_dir()))
-    .expect("redisearch/RediSearch/bin missing - run ./redisearch.sh first");
+    .expect("deps/RediSearch/bin missing - run ./redisearch.sh first");
 
     // The main archive is `redisearch.so` (macOS release) or `redisearch.a`
     // (Linux / sanitizer `debug-asan`), an ar archive in both cases. The
@@ -287,10 +292,11 @@ fn llvm_tool(
         return brew;
     }
     // Linux toolchain images install versioned binaries via apt.llvm.org
-    // (e.g. /usr/bin/llvm-objdump-22) and often lack the bare name. Prefer the
+    // (e.g. /usr/bin/llvm-objdump-23) and often lack the bare name. Prefer the
     // bare name if present, else the highest available versioned one.
     for cand in [
         bin.to_owned(),
+        format!("{bin}-23"),
         format!("{bin}-22"),
         format!("{bin}-21"),
         format!("{bin}-20"),

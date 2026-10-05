@@ -46,16 +46,25 @@ pub struct NodeByLabelScanOp<'a> {
 }
 
 impl<'a> NodeByLabelScanOp<'a> {
-    pub const fn new(
+    /// `record_cap` is the downstream `Skip`+`Limit` row budget, when one
+    /// reaches this scan. It only sizes the *first* batch: the scan is a leaf,
+    /// so the budget is a hint rather than a bound on its own output — an
+    /// operator between it and the `Limit` may discard rows — and the ceiling
+    /// therefore grows back to `BATCH_SIZE` if the first small batch does not
+    /// satisfy the query. Without it, `... LIMIT 10` packs a full 1024-row
+    /// batch and throws away 99% of the work.
+    pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         node_pattern: &'a QueryNode<Arc<String>, Variable>,
         idx: NodeIdx<Dyn<IR>>,
+        record_cap: Option<usize>,
     ) -> Self {
+        let emitter = BatchedResultEmitter::new(node_pattern.alias.id, record_cap);
         Self {
             runtime,
             child,
-            emitter: BatchedResultEmitter::new(node_pattern.alias.id),
+            emitter,
             node_pattern,
             idx,
         }

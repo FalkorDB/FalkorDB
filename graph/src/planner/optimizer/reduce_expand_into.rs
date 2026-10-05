@@ -170,6 +170,12 @@ pub(super) fn ir_references_variable(
         | IR::Commit
         | IR::CreateIndex { .. }
         | IR::DropIndex { .. } => false,
+        // Holds no expression: its children are the query's plan and the nested
+        // plans, each visited as its own node. What a nested plan reads is not
+        // lost either — the `ExprIR::NestedPlan` that calls it carries those
+        // variables as children, so the expression holding the call reports
+        // them. (`optimize` also strips this root before any pass runs.)
+        IR::NestedPlans => false,
     }
 }
 

@@ -61,6 +61,13 @@ pub struct Binder {
     /// property access like `r.prop` is allowed (per-edge predicate)
     /// whereas it is rejected on named-path Path variables.
     varlen_rel_var_ids: std::collections::HashSet<(u32, u32)>,
+    /// Scope tables no longer on `env_stack`: the scopes of a CALL body,
+    /// popped when the body closes, and those of UNION branches, each bound
+    /// by its own binder. The planner mints fresh variables at
+    /// `scope_vars[scope].len()`, so `bind` must report, for every scope, the
+    /// largest table any of them used, or those ids collide with real
+    /// variables (or index past the table).
+    retired_scope_vars: Vec<Vec<Variable>>,
 }
 
 impl Default for Binder {
@@ -72,6 +79,7 @@ impl Default for Binder {
             copy_from_parent: HashMap::new(),
             node_labels: HashMap::new(),
             varlen_rel_var_ids: std::collections::HashSet::new(),
+            retired_scope_vars: vec![],
         }
     }
 }
@@ -94,16 +102,17 @@ impl Binder {
     ) -> Result<(BoundQueryIR, Vec<Vec<Variable>>), String> {
         let mut bound = self.bind_ir(ir)?;
         self.update_all_node_labels(&mut bound);
-        let scope_vars = self
-            .env_stack
-            .iter()
-            .map(|env| {
-                let mut vars = env.values().cloned().collect::<Vec<_>>();
-                vars.sort_by_key(|v| v.id);
-                vars
-            })
-            .collect();
+        let mut scope_vars = self.scope_vars();
+        merge_scope_vars(
+            &mut scope_vars,
+            std::mem::take(&mut self.retired_scope_vars),
+        );
         Ok((bound, scope_vars))
+    }
+
+    /// The live scopes' variables, indexed by scope id.
+    fn scope_vars(&self) -> Vec<Vec<Variable>> {
+        self.env_stack.iter().map(sorted_scope_vars).collect()
     }
 
     /// Post-process the bound IR: update every QueryNode's labels to the
@@ -262,7 +271,8 @@ impl Binder {
                 let mut first_columns: Option<Vec<String>> = None;
                 for branch in branches {
                     let binder = Self::default();
-                    let (bound, _) = binder.bind(branch)?;
+                    let (bound, branch_scope_vars) = binder.bind(branch)?;
+                    merge_scope_vars(&mut self.retired_scope_vars, branch_scope_vars);
                     let columns = bound.return_column_names();
                     if let Some(ref expected) = first_columns {
                         if columns != *expected {
@@ -730,9 +740,13 @@ impl Binder {
 
         // 3. Capture subquery output, restore outer scope
         let subquery_env = self.current_env().clone();
-        while self.env_stack.len() > saved_env_stack_len {
-            self.env_stack.pop();
-        }
+        let mut inner_scopes = vec![vec![]; saved_env_stack_len];
+        inner_scopes.extend(
+            self.env_stack
+                .drain(saved_env_stack_len..)
+                .map(|env| sorted_scope_vars(&env)),
+        );
+        merge_scope_vars(&mut self.retired_scope_vars, inner_scopes);
         *self.current_env_mut() = saved_env;
 
         // 4. If returning, check for variable shadowing, allocate outer IDs,
@@ -858,6 +872,7 @@ impl Binder {
                         copy_from_parent: HashMap::new(),
                         node_labels: HashMap::new(),
                         varlen_rel_var_ids: std::collections::HashSet::new(),
+                        retired_scope_vars: vec![],
                     };
 
                     // Build bound clauses: explicit import WITH + remaining
@@ -903,6 +918,9 @@ impl Binder {
                     } else {
                         first_columns = Some(columns);
                     }
+                    let mut branch_scope_vars = binder.scope_vars();
+                    merge_scope_vars(&mut branch_scope_vars, binder.retired_scope_vars.clone());
+                    merge_scope_vars(&mut self.retired_scope_vars, branch_scope_vars);
                     // Capture the binder's final env (RETURN-projected vars)
                     last_binder_env = Some(binder.current_env().clone());
                     bound_branches.push(bound);
@@ -1827,6 +1845,23 @@ impl Binder {
                 Ok(new_tree)
             }
             ExprIR::PatternComprehension(graph) => {
+                // Where parent-scope variables are visible (ORDER BY), a name
+                // the pattern shares with one must refer to it rather than
+                // become a fresh pattern-local variable, as it would in an
+                // ordinary expression. Copy such names in first, so
+                // `bind_graph` reuses them and the cleanup below keeps them.
+                if self.use_parent_scope {
+                    for name in graph.variables() {
+                        if !name.starts_with("_anon")
+                            && !self.current_env().contains_key(&name)
+                            && !locals.iter().any(|scope| scope.contains_key(&name))
+                        {
+                            // Not a parent variable either: the pattern binds it.
+                            let _ = self.resolve_name(&name, locals);
+                        }
+                    }
+                }
+
                 // Snapshot outer scope so pattern-local aliases can be
                 // cleaned up after binding (they must not leak outward).
                 let outer_scope_names: HashSet<Arc<String>> =
@@ -1982,6 +2017,11 @@ impl Binder {
                         ExprIR::FuncInvocation(func)
                     }
                     ExprIR::Paren => ExprIR::Paren,
+                    ExprIR::NestedPlan(_) => {
+                        return Err(String::from(
+                            "A nested plan is created by the planner, never parsed",
+                        ));
+                    }
                     ExprIR::ShortestPath(info) => {
                         // Verify children (source/dest vars) are bound
                         for child in &children {
@@ -2266,7 +2306,8 @@ impl Binder {
             | ExprIR::GetElement
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
-            | ExprIR::PatternComprehension(_) => false,
+            | ExprIR::PatternComprehension(_)
+            | ExprIR::NestedPlan(_) => false,
 
             // Boolean literals, comparisons, predicates, and runtime-typed nodes
             ExprIR::Eq
@@ -2334,6 +2375,7 @@ impl Binder {
             | ExprIR::GetElements
             | ExprIR::ListComprehension(_)
             | ExprIR::PatternComprehension(_)
+            | ExprIR::NestedPlan(_)
             | ExprIR::Or
             | ExprIR::And
             | ExprIR::Xor
@@ -2609,4 +2651,27 @@ fn raw_exprs_structurally_equal(
     }
 
     nodes_eq(a, a.root().idx(), b, b.root().idx())
+}
+
+/// One scope's variables, ordered by id.
+fn sorted_scope_vars(env: &HashMap<Arc<String>, Variable>) -> Vec<Variable> {
+    let mut vars = env.values().cloned().collect::<Vec<_>>();
+    vars.sort_by_key(|v| v.id);
+    vars
+}
+
+/// Merge `other` into `scope_vars`, keeping for each scope whichever table is
+/// longer, so ids minted at `len()` are fresh for both.
+fn merge_scope_vars(
+    scope_vars: &mut Vec<Vec<Variable>>,
+    other: Vec<Vec<Variable>>,
+) {
+    if scope_vars.len() < other.len() {
+        scope_vars.resize(other.len(), vec![]);
+    }
+    for (scope, vars) in other.into_iter().enumerate() {
+        if vars.len() > scope_vars[scope].len() {
+            scope_vars[scope] = vars;
+        }
+    }
 }

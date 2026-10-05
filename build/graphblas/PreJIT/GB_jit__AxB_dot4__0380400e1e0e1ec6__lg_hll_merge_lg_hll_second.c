@@ -1,7 +1,7 @@
 //------------------------------------------------------------------------------
 // GB_jit__AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second.c
 //------------------------------------------------------------------------------
-// SuiteSparse:GraphBLAS v10.3.1, Timothy A. Davis, (c) 2017-2026,
+// SuiteSparse:GraphBLAS v10.5.0, Timothy A. Davis, (c) 2017-2026,
 // All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 // The above copyright and license do not apply to any
@@ -155,13 +155,13 @@ GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query) ;
 GB_JIT_GLOBAL GB_JIT_QUERY_PROTO (GB_jit_query)
 {
     (*hash) = 0x5e806b5f3995f9b2 ;
-    v [0] = 10 ; v [1] = 3 ; v [2] = 1 ;
+    v [0] = 10 ; v [1] = 5 ; v [2] = 0 ;
     defn [0] = GB_lg_hll_merge_USER_DEFN ;
     defn [1] = GB_lg_hll_second_USER_DEFN ;
     defn [2] = GB_HLL_USER_DEFN ;
     defn [3] = NULL ;
     defn [4] = defn [2] ;
-    if (id_size != 1024 || term_size != 0) return (false) ;
+    if (id_memsize != 1024 || term_memsize != 0) return (false) ;
     GB_DECLARE_IDENTITY_CONST (zidentity) ;
     if (id == NULL || memcmp (id, &zidentity, 1024) != 0) return (false) ;
     return (true) ;

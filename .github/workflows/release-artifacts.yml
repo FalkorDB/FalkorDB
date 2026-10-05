@@ -98,8 +98,8 @@ jobs:
             echo "::error::Cargo.toml version ($CARGO_VERSION) does not match tag ($TAG)"; exit 1
           fi
           ALL='[
-            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
-            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
+            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
+            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
             {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++"},
             {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19"}
           ]'
@@ -121,7 +121,10 @@ jobs:
       packages: read
     with:
       cells: ${{ needs.prepare.outputs.cells }}
-      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      revision: ${{ needs.prepare.outputs.commit_sha }}
+      # Release builds run on a tag / maintainer-supplied commit that is already
+      # in this repository — reviewed code, so this build may write the cache.
+      trusted_revision: true
     # No `secrets: inherit` — the reusable build only needs the auto GITHUB_TOKEN.
 
   publish:

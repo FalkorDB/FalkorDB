@@ -61,8 +61,8 @@ jobs:
           # release-artifacts.yml. macOS is built natively (no Docker) and is
           # selected via the separate `macos` flag below.
           ALL='[
-            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
-            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-22"},
+            {"suffix":"x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
+            {"suffix":"arm64v8","arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","dockerfile":"build/runtime/Dockerfile","build_image":"ghcr.io/falkordb/falkordb-build:latest","cxx":"clang++-23"},
             {"suffix":"rhel9-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.rhel9","build_image":"","cxx":"clang++"},
             {"suffix":"amazonlinux2023-x64","arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","dockerfile":"build/runtime/Dockerfile.amazonlinux2023","build_image":"","cxx":"clang++-19"}
           ]'
@@ -97,7 +97,11 @@ jobs:
       packages: read
     with:
       cells: ${{ needs.prepare.outputs.cells }}
-      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      revision: ${{ needs.prepare.outputs.commit_sha }}
+      # On a `pull_request` run the revision is the PR head — untrusted code, so
+      # the build may not write any cache. Only a maintainer dispatch (which can
+      # only target a ref already in this repo) is treated as trusted.
+      trusted_revision: ${{ github.event_name == 'workflow_dispatch' }}
     # No `secrets: inherit` — the reusable workflow only needs the auto-provided
     # GITHUB_TOKEN (GHCR read). Keeping custom secrets out of a PR-triggered
     # build that compiles untrusted code is deliberate.
@@ -109,4 +113,5 @@ jobs:
     permissions:
       contents: read
     with:
-      commit_sha: ${{ needs.prepare.outputs.commit_sha }}
+      revision: ${{ needs.prepare.outputs.commit_sha }}
+      trusted_revision: ${{ github.event_name == 'workflow_dispatch' }}

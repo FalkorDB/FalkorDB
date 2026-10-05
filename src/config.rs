@@ -14,7 +14,8 @@
 //! | VKEY_MAX_ENTITY_COUNT         |    | RESULTSET_SIZE             |
 //! | IMPORT_FOLDER / TEMP_FOLDER   |    | QUERY_MEM_CAPACITY         |
 //! | JS_HEAP_SIZE / JS_STACK_SIZE  |    | DELTA_MAX_PENDING_CHANGES  |
-//! | CMD_INFO / DELAY_INDEXING     |    | OMP_THREAD_COUNT ...       |
+//! | DELAY_INDEXING                |    | CMD_INFO                   |
+//! |                               |    | OMP_THREAD_COUNT ...       |
 //! +-------------------------------+    +----------------------------+
 //!       |                                      |
 //!       | requires Redis GIL to read           | lock-free atomic reads
@@ -24,19 +25,21 @@
 //!
 //! - **GIL-guarded configs** are declared via `lazy_static` and wrapped in
 //!   `RedisGILGuard`, ensuring safe access from the Redis main thread.
-//!   These are immutable after module load (flagged `IMMUTABLE` in the
-//!   `redis_module!` macro).
+//!   Most are immutable after module load (flagged `IMMUTABLE` in the
+//!   `redis_module!` macro); the ones C also lets change at run-time are
+//!   flagged `DEFAULT` and accepted by `GRAPH.CONFIG SET`.
 //!
-//! - **Atomic configs** use `AtomicI64` / `AtomicU64` for lock-free
-//!   concurrent reads from worker threads. Some are runtime-configurable
-//!   through `GRAPH.CONFIG SET`; others are read-only after init.
+//! - **Atomic configs** use `AtomicI64` / `AtomicU64` / `AtomicBool` for
+//!   lock-free concurrent reads from worker threads. Some are
+//!   runtime-configurable through `GRAPH.CONFIG SET`; others are read-only
+//!   after init.
 //!
 //! `CONFIG_NAMES` provides the ordered list of all configuration keys,
 //! used by `GRAPH.CONFIG GET *` to enumerate settings.
 
 use lazy_static::lazy_static;
 use redis_module::RedisGILGuard;
-use std::sync::atomic::{AtomicI64, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64};
 
 // ── Redis module-level configurations (set via moduleArgs) ──
 
@@ -54,7 +57,6 @@ lazy_static! {
         RedisGILGuard::new(graph::graph::graph::DEFAULT_NODE_CREATION_BUFFER as i64);
     pub static ref CONFIGURATION_VKEY_MAX_ENTITY_COUNT: RedisGILGuard<i64> =
         RedisGILGuard::new(100_000.into());
-    pub static ref CONFIGURATION_CMD_INFO: RedisGILGuard<bool> = RedisGILGuard::new(true);
     pub static ref CONFIGURATION_DELAY_INDEXING: RedisGILGuard<bool> = RedisGILGuard::new(false);
     pub static ref CONFIGURATION_TEMP_FOLDER: RedisGILGuard<String> =
         RedisGILGuard::new("/tmp".into());
@@ -73,14 +75,48 @@ pub static TIMEOUT_MAX: AtomicI64 = AtomicI64::new(0);
 pub static RESULTSET_SIZE: AtomicI64 = AtomicI64::new(-1);
 pub static QUERY_MEM_CAPACITY: AtomicI64 = AtomicI64::new(0);
 pub static DELTA_MAX_PENDING_CHANGES: AtomicI64 = AtomicI64::new(10000);
-pub static EFFECTS_THRESHOLD: AtomicI64 = AtomicI64::new(300);
+/// Smallest v3 effects payload worth compressing, in bytes; 0 disables it.
+/// Re-exported because the decision is made in the graph crate, and two statics
+/// would drift.
+pub use graph::effects::EFFECTS_COMPRESSION;
+/// **Deprecated and ignored.** Effects are the only replication mechanism now,
+/// so there is nothing left for the threshold to select.
+///
+/// Kept settable rather than removed. Removing it made `GRAPH.CONFIG SET
+/// EFFECTS_THRESHOLD` answer `Unknown configuration field`, which is a startup
+/// failure for any config file that names it and broke five flow suites that
+/// set it. A value is accepted, stored, reported back, and read by nothing.
+///
+/// Still 300, as it always was. The knob is ignored, but its *reported* value
+/// is observable — changing it would break a client or config check that
+/// asserts the default, for no benefit, which is the opposite of keeping it for
+/// compatibility.
+///
+/// There is deliberately no `EFFECTS_VERSION` beside it. That one never
+/// shipped in either engine — `main` has 23 configs and only this one, and C's
+/// `config.h` has `Config_EFFECTS_THRESHOLD` and no version knob — so a
+/// deprecated no-op for it would be compatibility with nothing.
+pub static EFFECTS_THRESHOLD_DEPRECATED: AtomicI64 = AtomicI64::new(300);
+/// Toggles the telemetry stream that backs `GRAPH.INFO`. Atomic rather than
+/// GIL-guarded because the query hot path reads it off the main thread, and
+/// because C lets `GRAPH.CONFIG SET CMD_INFO yes|no` flip it at runtime.
+pub static CONFIGURATION_CMD_INFO: AtomicBool = AtomicBool::new(true);
+/// Cap on the telemetry stream's length, applied by the flusher's stream trim.
+/// 0 means "keep nothing", the way C's unconditional `StreamTrimByLength` does.
+pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(MAX_INFO_QUERIES_CAP);
+/// Whether graph teardown may happen off the calling thread. Settable at run-time as
+/// in C, but not yet read: this engine always frees off-thread (see
+/// `graph_core::graph_free`).
+pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
 
 // ── Read-only runtime configs ──
 
 pub static OMP_THREAD_COUNT: AtomicI64 = AtomicI64::new(0);
-pub static ASYNC_DELETE: AtomicI64 = AtomicI64::new(0);
-pub static MAX_INFO_QUERIES: AtomicI64 = AtomicI64::new(1000);
 pub static BOLT_PORT: AtomicI64 = AtomicI64::new(65535);
+
+/// Highest accepted `MAX_INFO_QUERIES`, and its default. Larger values are
+/// clamped rather than rejected, matching C's `Config_cmd_info_max_queries_set`.
+pub const MAX_INFO_QUERIES_CAP: i64 = 1000;
 
 pub fn get_thread_count(ctx: &redis_module::Context) -> i64 {
     let val = *CONFIGURATION_THREAD_COUNT.lock(ctx);
@@ -115,6 +151,7 @@ pub const CONFIG_NAMES: &[&str] = &[
     "NODE_CREATION_BUFFER",
     "CMD_INFO",
     "MAX_INFO_QUERIES",
+    "EFFECTS_COMPRESSION",
     "EFFECTS_THRESHOLD",
     "BOLT_PORT",
     "DELAY_INDEXING",
