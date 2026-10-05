@@ -32,7 +32,7 @@
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
-use super::reduce_expand_into;
+use super::references::ir_references_variable;
 
 fn is_anon(name_opt: Option<&std::sync::Arc<String>>) -> bool {
     name_opt.is_some_and(|n| n.starts_with("_anon"))
@@ -53,7 +53,7 @@ fn rel_attrs_empty(
 
 /// True when no operator anywhere in the plan references the variable
 /// `(var_id, scope_id)`. Reuses the per-IR-node reference check from
-/// `reduce_expand_into`'s helper, which reports false for the traversal
+/// [`ir_references_variable`], which reports false for the traversal
 /// operators themselves, so the two hops being fused never veto their own
 /// intermediate.
 ///
@@ -72,9 +72,10 @@ fn intermediate_unreferenced(
     var_id: u32,
     scope_id: u32,
 ) -> bool {
-    !plan.root().indices::<Bfs>().any(|idx| {
-        reduce_expand_into::ir_references_variable(plan.node(idx).data(), var_id, scope_id)
-    })
+    !plan
+        .root()
+        .indices::<Bfs>()
+        .any(|idx| ir_references_variable(plan.node(idx).data(), var_id, scope_id))
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)

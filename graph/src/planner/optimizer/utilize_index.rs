@@ -63,6 +63,7 @@ use crate::{
 };
 
 use super::super::IR;
+use super::references::index_query_references_variable;
 
 use crate::parser::ast::QueryRelationship;
 use crate::runtime::orderset::OrderSet;
@@ -1067,43 +1068,15 @@ fn prune_all_node_scan_child(
     let IR::AllNodeScan(child_node) = child.data() else {
         return false;
     };
-    let child_alias_id = child_node.alias.id;
+    let (child_alias_id, child_scope_id) = (child_node.alias.id, child_node.alias.scope_id);
     let child_idx = child.idx();
-    // Safety: don't drop the scan that binds `child_alias_id` if the
+    // Safety: don't drop the scan that binds the child alias if the
     // edge-index query still depends on it.
-    if index_query_references_var(&query, child_alias_id) {
+    if index_query_references_variable(&query, child_alias_id, child_scope_id) {
         return false;
     }
     plan.node_mut(child_idx).prune();
     true
-}
-
-/// Walks every expression subtree inside an `IndexQuery` looking for a
-/// `Variable` reference with the given alias id. Used by
-/// `prune_all_node_scan_child` to avoid pruning a scan whose output is
-/// still needed by the index query.
-fn index_query_references_var(
-    q: &IndexQuery<QueryExpr<Variable>>,
-    alias_id: u32,
-) -> bool {
-    let expr_refs = |e: &QueryExpr<Variable>| -> bool {
-        e.root()
-            .indices::<Bfs>()
-            .any(|i| matches!(e.node(i).data(), ExprIR::Variable(v) if v.id == alias_id))
-    };
-    match q {
-        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
-            expr_refs(value)
-        }
-        IndexQuery::Range { min, max, .. } => {
-            min.as_ref().is_some_and(expr_refs) || max.as_ref().is_some_and(expr_refs)
-        }
-        IndexQuery::Point { point, radius, .. } => expr_refs(point) || expr_refs(radius),
-        IndexQuery::InList { list, .. } => expr_refs(list),
-        IndexQuery::And(children) | IndexQuery::Or(children) => children
-            .iter()
-            .any(|c| index_query_references_var(c, alias_id)),
-    }
 }
 
 /// Cleanup: add a `hasLabels` filter above an `EdgeByIndexScan` whose

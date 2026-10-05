@@ -682,11 +682,16 @@ pub fn split_edge_filter(
     // Whether a subtree, walked in place, references only the edge alias.
     // Deciding this before cloning matters: `DynTree::clone` allocates a whole
     // new tree, and this runs on every execution of every fusable traverse.
-    let only_edge = |node: &orx_tree::DynNode<ExprIR<Variable>>| {
+    //
+    // "The edge alias" is its `(id, scope_id)` pair, not the id alone: ids are
+    // allocated per scope, so a conjunct naming another scope's variable that
+    // happens to share the number would otherwise be fused into the traverse
+    // and evaluated against the edge.
+    let only_edge = |node: &DynNode<ExprIR<Variable>>| {
         let mut saw_edge = false;
         for n in node.walk::<Bfs>() {
             if let ExprIR::Variable(v) = n {
-                if v.id != alias.id {
+                if v.id != alias.id || v.scope_id != alias.scope_id {
                     return false;
                 }
                 saw_edge = true;
