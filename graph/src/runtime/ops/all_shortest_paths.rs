@@ -206,7 +206,15 @@ impl<'a> AllShortestPathsOp<'a> {
                         None,
                     )? {
                         Value::Bool(true) => {}
-                        _ => continue,
+                        Value::Bool(false) | Value::Null => continue,
+                        // As `FilterOp` answers it: a predicate that is neither
+                        // boolean nor null is a type error, not a quiet rejection.
+                        value => {
+                            return Err(format!(
+                                "Type mismatch: expected Boolean but was {}",
+                                value.name()
+                            ));
+                        }
                     }
                 }
 

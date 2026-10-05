@@ -287,3 +287,22 @@ class testInlinePatternAttributes(FlowTestsBase):
         actual = g.query("MATCH (p:P) MATCH (p)-[:R* {weight: p.limit}]->(x) RETURN count(x)")
         self.env.assertEqual(actual.result_set, [[2]])
         g.delete()
+
+    # A predicate folded into a traverse is evaluated per edge, and must answer a
+    # non-boolean the way a Filter does — a type error — instead of quietly
+    # rejecting the edge. A null still just drops it.
+    def test19_folded_edge_predicate_rejects_non_boolean(self):
+        g = self.db.select_graph(GRAPH_ID + "_nonbool")
+        g.query("CREATE (:A)-[:R {w: 5}]->(:B)")
+        for query in [
+            "MATCH (a:A)-[r:R]->(b) WHERE r.w RETURN count(a)",
+            "MATCH (a:A)-[r:R*1..2]->(b) WHERE r.w RETURN count(a)",
+        ]:
+            try:
+                g.query(query)
+                self.env.assertTrue(False)
+            except redis.ResponseError as e:
+                self.env.assertContains("expected Boolean but was Integer", str(e))
+        actual = g.query("MATCH (a:A)-[r:R]->(b) WHERE r.missing RETURN count(a)")
+        self.env.assertEqual(actual.result_set, [[0]])
+        g.delete()

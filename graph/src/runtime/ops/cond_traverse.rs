@@ -1057,7 +1057,16 @@ impl<'a> CondTraverseOp<'a> {
                         );
                         match ok {
                             Ok(Value::Bool(true)) => {}
-                            Ok(_) => continue,
+                            Ok(Value::Bool(false) | Value::Null) => continue,
+                            // As `FilterOp` answers it: a predicate that is
+                            // neither boolean nor null is a type error, not a
+                            // quiet rejection.
+                            Ok(value) => {
+                                return Err(format!(
+                                    "Type mismatch: expected Boolean but was {}",
+                                    value.name()
+                                ));
+                            }
                             Err(e) => return Err(e),
                         }
                     }
