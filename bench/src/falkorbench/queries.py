@@ -27,11 +27,12 @@ SETUP = [
     # 0%-selective, it is unsatisfiable against a property that does not exist.
     #
     # It doubles SETUP's edges (10,109 -> 20,109) but changes few rows outside
-    # its own: profiling every read row with and without it, 7 of 287 differ —
-    # the four that use it, the two catalogue procedures, and `untyped
-    # var-length`, which now walks both rings (6 -> 14 rows out of the walk).
-    # The untyped edge scans do not move: `reduce_count` answers them from
-    # per-type counts without visiting an edge.
+    # its own: profiling every read row with and without it, 7 of 287 differ.
+    # Three are rows that use it (`{w: 11}` matches nothing either way), two
+    # are the catalogue procedures, `multi-type` only prints its types in a
+    # different order, and `untyped var-length` now walks both rings (6 -> 14
+    # rows out of the walk). The untyped edge scans do not move:
+    # `reduce_count` answers them from per-type counts without visiting an edge.
     "UNWIND range(0, 9999) AS i MATCH (a:Person {id: i}) MATCH (b:Person {id: (i + 1) % 10000}) CREATE (a)-[:RATED {w: i % 10, c: 1}]->(b)",
     "MATCH (p:Person) SET p.age = p.id % 80, p.score = p.id * 1.5",
     # ---- Doc corpus for coverage features (fulltext / vector / edge index /
