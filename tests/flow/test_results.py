@@ -438,3 +438,25 @@ class testResultSetFlow(FlowTestsBase):
         query = """CREATE (a:Person {name: 'Alice', age: 30})-[r:KNOWS {since: 2020}]->(a) WITH r, a DELETE a RETURN typeof(r)"""
         result = self.graph.query(query)
         self.env.assertEqual(result.result_set[0][0], "Edge")
+
+    # LIMIT 0 must return zero rows (with the header intact), not one NULL row.
+    # Regression test for https://github.com/FalkorDB/falkordb/issues/2733
+    def test19_limit_zero_returns_empty_result(self):
+        # Exact repro from the issue: bare RETURN with no input rows.
+        result = self.graph.query("RETURN 1 LIMIT 0")
+        self.env.assertEqual(result.result_set, [])
+        self.env.assertEqual(len(result.header), 1)
+
+        # LIMIT 0 over a MATCH stream.
+        result = self.graph.query("MATCH (a) RETURN a.name LIMIT 0")
+        self.env.assertEqual(result.result_set, [])
+        self.env.assertEqual(len(result.header), 1)
+
+        # LIMIT 0 combined with ORDER BY (sort + limit path).
+        result = self.graph.query("MATCH (a) RETURN a.name ORDER BY a.name LIMIT 0")
+        self.env.assertEqual(result.result_set, [])
+        self.env.assertEqual(len(result.header), 1)
+
+        # Sanity: a positive limit still returns rows.
+        result = self.graph.query("RETURN 1 LIMIT 1")
+        self.env.assertEqual(result.result_set, [[1]])
