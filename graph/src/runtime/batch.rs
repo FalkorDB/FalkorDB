@@ -1302,9 +1302,6 @@ impl<'a> Batch<'a> {
         self.origin_rows.as_ref().map_or(0, |o| o[row])
     }
 
-    /// Installs the columnar per-row correlation sidecar. The vector is indexed
-    /// by logical row (length must equal [`len`](Self::len)). Ignored for
-    /// env-backed batches, which carry the tag inside each `Env`.
     /// Whether this batch carries per-row correlation tags.
     ///
     /// Distinguishes "every origin is 0" from "origins were never stamped",
@@ -1316,6 +1313,9 @@ impl<'a> Batch<'a> {
         self.origin_rows.is_some()
     }
 
+    /// Installs the columnar per-row correlation sidecar. The vector is indexed
+    /// by logical row (length must equal [`len`](Self::len)). Ignored for
+    /// env-backed batches, which carry the tag inside each `Env`.
     pub fn set_origin_rows(
         &mut self,
         origins: Vec<u32>,
