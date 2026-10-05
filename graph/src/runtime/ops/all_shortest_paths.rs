@@ -33,7 +33,7 @@ use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp, BatchRow},
     eval::ExprEval,
-    row::RowView,
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -98,10 +98,11 @@ impl<'a> AllShortestPathsOp<'a> {
     ) -> Result<Option<RowIter<'a, Value>>, String> {
         let vars = BatchRow::new(batch, row_idx);
 
-        // The env row is reused across edges: `insert` overwrites the alias
-        // slot in place, so no per-edge row clone. Mirrors
-        // `CondVarLenTraverse`'s edge_filter handling.
-        let mut edge_filter = edge_filter.map(|f| (f, vars.to_owned_row()));
+        // The fused predicate reads only the edge alias (`split_edge_filter`
+        // fuses nothing else), bound per edge, so the environment it needs is
+        // an empty row rather than a copy of the input row. `insert` overwrites
+        // the alias slot in place, so the row is reused across edges.
+        let mut edge_filter = edge_filter.map(|f| (f, Row::new()));
         let evaluator = ExprEval::from_runtime(runtime);
 
         // Get source node

@@ -546,9 +546,12 @@ impl<'a> CondVarLenTraverseOp<'a> {
             }
         }
 
-        // The WHERE filter environment is the input row extended per edge; the
-        // row is only cloned out of the batch when a filter is present.
-        let edge_filter = edge_filter.map(|f| (f, vars.to_owned_row()));
+        // The edge filter reads only the edge alias, plus the `@prev` marker:
+        // the planner and `absorb_edge_filters_into_vlt` only ever put
+        // edge-only predicates here, and both are inserted per frame before it
+        // is evaluated. So it needs an empty row to bind them into, not a copy
+        // of the input row.
+        let edge_filter = edge_filter.map(|f| (f, Row::new()));
 
         Ok(Some(RowIter::many(Box::new(VarLenIter {
             runtime,

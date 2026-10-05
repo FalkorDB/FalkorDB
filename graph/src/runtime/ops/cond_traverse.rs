@@ -40,7 +40,7 @@ use crate::planner::IR;
 use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp, BatchRow, Column},
-    row::RowView,
+    row::{Row, RowView},
     runtime::Runtime,
     value::Value,
 };
@@ -863,7 +863,11 @@ impl<'a> CondTraverseOp<'a> {
                 transposed,
                 from_id,
                 to_id,
-                edge_filter.map(|f| (f, env.to_owned_row())),
+                // The fused predicate reads only the edge alias —
+                // `split_edge_filter` fuses nothing else — and `process_pairs`
+                // binds that per candidate edge. So the environment it needs is
+                // an empty row, not a copy of every column of the input row.
+                edge_filter.map(|f| (f, Row::new())),
                 runtime,
                 &g,
                 rp,
@@ -909,7 +913,8 @@ impl<'a> CondTraverseOp<'a> {
                 !transposed,
                 from_id,
                 to_id,
-                edge_filter.map(|f| (f, env.to_owned_row())),
+                // Edge-only, as above.
+                edge_filter.map(|f| (f, Row::new())),
                 runtime,
                 &g,
                 rp,
@@ -962,7 +967,7 @@ impl<'a> CondTraverseOp<'a> {
         is_reverse: bool,
         from_id: Option<crate::graph::graph::NodeId>,
         to_id: Option<crate::graph::graph::NodeId>,
-        mut edge_filter: Option<(&QueryExpr<Variable>, crate::runtime::row::Row)>,
+        mut edge_filter: Option<(&QueryExpr<Variable>, Row)>,
         runtime: &Runtime,
         g: &crate::graph::graph::Graph,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
