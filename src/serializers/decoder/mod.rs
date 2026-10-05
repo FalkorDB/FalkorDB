@@ -3,7 +3,7 @@ use std::sync::Arc;
 use graph::entity_type::EntityType;
 use graph::graph::attribute_store::{AttrNameMap, AttributeStore};
 use graph::graph::graph::Graph;
-use graph::graph::graphblas::serialization::{Decode, Reader};
+use graph::graph::graphblas::serialization::{Decode, Reader, decode_capacity};
 use graph::graph::graphblas::tensor::Tensor;
 use graph::graph::graphblas::versioned_matrix::VersionedMatrix;
 use graph::index::IndexInfo;
@@ -14,7 +14,7 @@ use super::EncodeState;
 use super::Header;
 use super::Schema;
 use super::buffered_io::BufferedReader;
-use super::{DECODE_STATE, PendingGraph, decode_capacity};
+use super::{DECODE_STATE, PendingGraph};
 
 /// What one RDB key turned out to hold.
 pub enum LoadedKey {
