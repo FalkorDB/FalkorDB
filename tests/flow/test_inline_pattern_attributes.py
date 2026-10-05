@@ -1,4 +1,5 @@
 from common import *
+from index_utils import *
 
 GRAPH_ID = "inline_pattern_attributes"
 
@@ -148,6 +149,9 @@ class testInlinePatternAttributes(FlowTestsBase):
     def test11_merge_index_pushdown_still_filters_pending(self):
         g = self.db.select_graph(GRAPH_ID + "_pending")
         g.query("CREATE INDEX FOR (p:P) ON (p.age)")
+        # Index creation is asynchronous; until it is operational the planner
+        # cannot use it, and the plan assertion below would read a label scan.
+        wait_for_indices_to_sync(g)
         result = g.query("MERGE (a:P {age: 40}) MERGE (b:P {age: 41})")
         self.env.assertEqual(result.nodes_created, 2)
 
@@ -247,6 +251,7 @@ class testInlinePatternAttributes(FlowTestsBase):
         g = self.db.select_graph(GRAPH_ID + "_once")
         g.query("CREATE (a:L {p: 1})-[:R]->(b:L {p: 2})")
         g.query("CREATE INDEX FOR (n:L) ON (n.p)")
+        wait_for_indices_to_sync(g)
 
         plan = str(g.explain("MATCH (a:L {p: 1})-[:R]->(b) RETURN b"))
         self.env.assertContains("Node By Index Scan", plan)
