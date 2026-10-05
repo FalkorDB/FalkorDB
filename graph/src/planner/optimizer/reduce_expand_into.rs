@@ -113,9 +113,9 @@ pub(super) fn ir_references_variable(
                     .as_ref()
                     .is_some_and(|v| v.id == var_id && v.scope_id == scope_id)
         }
-        IR::AllShortestPaths { edge_filter, .. } => edge_filter
-            .as_ref()
-            .is_some_and(|f| expr_references_variable(f, var_id, scope_id)),
+        // Carries no expression: its edge predicate is the `Filter` above it,
+        // which every caller of this function visits as its own node.
+        IR::AllShortestPaths(_) => false,
         IR::NodeByFulltextScan { label, query, .. }
         | IR::EdgeByFulltextScan { label, query, .. } => {
             expr_references_variable(label, var_id, scope_id)
