@@ -698,6 +698,11 @@ class testFunctionCallsFlow(FlowTestsBase):
             """RETURN toInteger('')""",
             """RETURN toInteger('18446744073709551616')""",
             """RETURN toInteger('-18446744073709551616')""",
+            # just below i64::MIN: the f64 fallback used to round these to -2^63
+            """RETURN toInteger('-9223372036854775809')""",
+            """RETURN toInteger('-9223372036854776832')""",
+            """RETURN toInteger('9223372036854775808')""",
+            """RETURN toIntegerList(['-9223372036854775809'])[0]""",
         ]
         for query in queries:
             actual_result = self.graph.query(query)
