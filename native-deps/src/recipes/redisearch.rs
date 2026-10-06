@@ -26,6 +26,7 @@ use crate::util::{capture_opt, copy_file, find_archives, log, run_isolated};
 
 const MAIN_ARCHIVE_NAMES: [&str; 2] = ["redisearch.a", "redisearch.so"];
 const VECSIM_CMAKELISTS: &str = "deps/VectorSimilarity/src/VecSim/CMakeLists.txt";
+const VECSIM_VEC_UTILS: &str = "deps/VectorSimilarity/src/VecSim/utils/vec_utils.cpp";
 
 pub fn build(
     ctx: &Ctx<'_>,
@@ -43,6 +44,7 @@ pub fn build(
     // the nearest ancestor containing a `.git`, and panics if there is none.
     super::ensure_git_root(&source, &mut guard)?;
     relax_vecsim_warnings(&source, &mut guard)?;
+    include_string_in_vec_utils(&source, &mut guard)?;
 
     // Build RediSearch 8.6 as an embeddable STATIC library:
     //   REDISEARCH_BUILD_AS_LIBRARY=ON  omit src/module_main.c and its
@@ -95,6 +97,38 @@ fn relax_vecsim_warnings(
         fs::read_to_string(&path).map_err(|e| err!("cannot read {}: {e}", path.display()))?;
     fs::write(&path, text.replace("-Werror", ""))
         .map_err(|e| err!("cannot write {}: {e}", path.display()))?;
+    Ok(())
+}
+
+/// `vec_utils.cpp` uses `std::string` but relies on `<algorithm>` to pull in
+/// `<string>`; libc++ 23 (Homebrew LLVM 23) no longer does, so the file stops
+/// compiling. Once VectorSimilarity includes `<string>` itself this is a no-op
+/// and can go.
+fn include_string_in_vec_utils(
+    source: &Path,
+    guard: &mut SourceGuard,
+) -> Result<()> {
+    const ANCHOR: &str = "#include <algorithm>\n";
+    let path = source.join(VECSIM_VEC_UTILS);
+    let text =
+        fs::read_to_string(&path).map_err(|e| err!("cannot read {}: {e}", path.display()))?;
+    if text.contains("#include <string>") {
+        return Ok(());
+    }
+    // Fail rather than build a file we did not fix: a moved include means the
+    // file changed upstream, and this edit needs another look.
+    if !text.contains(ANCHOR) {
+        return Err(err!(
+            "{}: no `#include <algorithm>` to add `#include <string>` after",
+            path.display()
+        ));
+    }
+    guard.snapshot(&path)?;
+    fs::write(
+        &path,
+        text.replacen(ANCHOR, "#include <algorithm>\n#include <string>\n", 1),
+    )
+    .map_err(|e| err!("cannot write {}: {e}", path.display()))?;
     Ok(())
 }
 
@@ -255,9 +289,10 @@ fn pick_variant(
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    use super::collect;
+    use super::{VECSIM_VEC_UTILS, collect, include_string_in_vec_utils};
+    use crate::recipes::SourceGuard;
     use crate::testing::TempDir;
 
     fn put(
@@ -301,5 +336,76 @@ mod tests {
             assert_eq!(read("lib/libredisearch.a"), format!("main-{flavor}"));
             assert_eq!(read("rs/libredisearch_rs.a"), format!("rs-{flavor}"));
         }
+    }
+
+    // The include block of vec_utils.cpp at the pinned VectorSimilarity commit.
+    const PINNED_INCLUDES: &str = "#include \"VecSim/types/float16.h\"\n\
+                                   #include <cmath>\n\
+                                   #include <float.h>\n\
+                                   #include <algorithm>\n\
+                                   \n\
+                                   using bfloat16 = vecsim_types::bfloat16;\n";
+
+    /// A source tree holding only `vec_utils.cpp`, with `contents`.
+    fn vec_utils_source(
+        tmp: &TempDir,
+        contents: &str,
+    ) -> PathBuf {
+        let source = tmp.0.join("deps/RediSearch");
+        put(&source.join(VECSIM_VEC_UTILS), contents);
+        source
+    }
+
+    #[test]
+    fn vec_utils_gains_string_include_until_the_build_ends() {
+        let tmp = TempDir::new("vec-utils");
+        let source = vec_utils_source(&tmp, PINNED_INCLUDES);
+        let path = source.join(VECSIM_VEC_UTILS);
+
+        let mut guard = SourceGuard::new(tmp.0.join("journal"), "rev1").unwrap();
+        include_string_in_vec_utils(&source, &mut guard).unwrap();
+        let patched = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            patched,
+            PINNED_INCLUDES.replace(
+                "#include <algorithm>\n",
+                "#include <algorithm>\n#include <string>\n"
+            )
+        );
+        // A second pass, as a retried build makes, must not add it twice.
+        include_string_in_vec_utils(&source, &mut guard).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), patched);
+
+        drop(guard);
+        assert_eq!(fs::read_to_string(&path).unwrap(), PINNED_INCLUDES);
+    }
+
+    #[test]
+    fn vec_utils_that_already_includes_string_is_left_alone() {
+        let tmp = TempDir::new("vec-utils-fixed");
+        let fixed = PINNED_INCLUDES.replace("#include <cmath>\n", "#include <string>\n");
+        let source = vec_utils_source(&tmp, &fixed);
+
+        let mut guard = SourceGuard::new(tmp.0.join("journal"), "rev1").unwrap();
+        include_string_in_vec_utils(&source, &mut guard).unwrap();
+        assert_eq!(
+            fs::read_to_string(source.join(VECSIM_VEC_UTILS)).unwrap(),
+            fixed
+        );
+    }
+
+    #[test]
+    fn vec_utils_without_the_anchor_fails_the_build() {
+        let tmp = TempDir::new("vec-utils-moved");
+        let moved = PINNED_INCLUDES.replace("#include <algorithm>\n", "");
+        let source = vec_utils_source(&tmp, &moved);
+
+        let mut guard = SourceGuard::new(tmp.0.join("journal"), "rev1").unwrap();
+        let e = include_string_in_vec_utils(&source, &mut guard).unwrap_err();
+        assert!(e.to_string().contains("#include <algorithm>"), "{e}");
+        assert_eq!(
+            fs::read_to_string(source.join(VECSIM_VEC_UTILS)).unwrap(),
+            moved
+        );
     }
 }
