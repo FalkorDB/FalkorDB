@@ -218,71 +218,10 @@ impl<'a> NodeByIndexScanOp<'a> {
                     ExprEval::from_runtime(runtime).eval(list, list.root().idx(), Some(vars), None)
                 }?;
                 match list_val {
-                    Value::List(items) => {
-                        let equals = items
-                            .iter()
-                            .filter(|v| {
-                                matches!(
-                                    v,
-                                    Value::Int(_)
-                                        | Value::Float(_)
-                                        | Value::String(_)
-                                        | Value::Bool(_)
-                                )
-                            })
-                            .map(|v| IndexQuery::Equal {
-                                key: key.clone(),
-                                value: v.clone(),
-                            })
-                            .collect::<Vec<_>>();
-                        Ok(IndexQuery::Or(equals))
-                    }
+                    Value::List(items) => Ok(IndexQuery::in_list(key, &items)),
                     _ => Err("IN operator requires a list".into()),
                 }
             }
-        }
-    }
-
-    /// Check if an evaluated index query can be satisfied by the index.
-    /// Returns false when runtime values are types the index can't handle
-    /// (e.g. List, Map, large Int64), in which case the caller should fall
-    /// back to a label scan.
-    fn can_utilize_index(q: &IndexQuery<Value>) -> bool {
-        use crate::index::Index;
-
-        const fn is_indexable(v: &Value) -> bool {
-            match v {
-                Value::Int(i) => !Index::int_loses_f64_precision(*i),
-                Value::Float(_)
-                | Value::String(_)
-                | Value::Bool(_)
-                | Value::Point(_)
-                | Value::Null => true,
-                _ => false, // List, Map, Node, Relationship, Path, etc.
-            }
-        }
-        match q {
-            IndexQuery::Equal { value, .. } => is_indexable(value),
-            IndexQuery::Range { min, max, .. } => {
-                min.as_ref().is_none_or(is_indexable) && max.as_ref().is_none_or(is_indexable)
-            }
-            IndexQuery::And(children) | IndexQuery::Or(children) => {
-                // Empty `Or([])` / `And([])` is not a valid index
-                // query: the RediSearch backend treats it as
-                // match-all, which is unsafe when the optimizer has
-                // already pushed an IN-list whose elements were all
-                // filtered out at runtime (e.g. `IN [NULL]`). Force
-                // the fallback path so the retained post-filter
-                // re-establishes correctness.
-                !children.is_empty() && children.iter().all(Self::can_utilize_index)
-            }
-            IndexQuery::ArrayContains { value, .. } => {
-                matches!(
-                    value,
-                    Value::Int(_) | Value::Float(_) | Value::String(_) | Value::Bool(_)
-                )
-            }
-            _ => true,
         }
     }
 }
@@ -305,7 +244,7 @@ impl<'a> Iterator for NodeByIndexScanOp<'a> {
                 // Check if the index can satisfy this query. If not
                 // (e.g. non-indexable value types), fall back to a
                 // label scan.
-                let base: Box<dyn Iterator<Item = NodeId>> = if Self::can_utilize_index(&q) {
+                let base: Box<dyn Iterator<Item = NodeId>> = if q.can_be_served() {
                     Box::new(self.runtime.g.borrow().get_indexed_nodes(self.index, q))
                 } else {
                     Box::new(
