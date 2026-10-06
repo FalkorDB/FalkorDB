@@ -5,12 +5,43 @@
 
 #include "decode_v19.h"
 #include "../../../../index/indexer.h"
+#include "../../../../globals.h"
+
+// find the graph a multi-key load of 'graph_name' is building, NULL if none
+//
+// a graph split across keys (main key + virtual keys) is assembled from all of
+// them, so later keys must extend the graph the first key created. only such a
+// part-way graph qualifies: a live graph of the same name (e.g. the value a
+// RESTORE ... REPLACE is about to replace, or the source of a RESTORE under
+// another key) is never extended, the payload is decoded into a new graph
+static GraphContext *_GetGraphBeingDecoded
+(
+	const char *graph_name
+) {
+	KeySpaceGraphIterator it ;
+	Globals_ScanGraphs (&it) ;
+
+	GraphContext *found = NULL ;
+	GraphContext *gc ;
+	while ((gc = GraphIterator_Next (&it)) != NULL) {
+		bool match = strcmp (GraphContext_GetName (gc), graph_name) == 0 &&
+			GraphDecodeContext_GetProcessedKeyCount (
+					GraphContext_GetDecodingCtx (gc)) ;
+		GraphContext_DecreaseRefCount (gc) ;
+		if (match) {
+			found = gc ;
+			break ;
+		}
+	}
+
+	return found ;
+}
 
 static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
 ) {
-	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
+	GraphContext *gc = _GetGraphBeingDecoded (graph_name) ;
 	if (!gc) {
 		// new graph is being decoded
 		// inform the module and create new graph context

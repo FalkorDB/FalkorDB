@@ -357,6 +357,66 @@ class testRdbLoad():
 
         self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
 
+    #---------------------------------------------------------------------------
+    # RESTORE of a graph's dump while a graph of the same name is live
+    #---------------------------------------------------------------------------
+
+    # RESTORE decodes the payload before it deletes the value it replaces, so
+    # the replaced graph is still live under the payload's graph name. the
+    # decoder must build a new graph, not extend the live one (which doubled
+    # the graph, and crashed when it had an index: #2506)
+    def _restore_own_dump(self, indexed):
+        self.conn.flushall()
+        q = lambda s: self.conn.execute_command("GRAPH.QUERY", "g", s)
+        q("UNWIND range(1, 100) AS i CREATE (:N {v: i})")
+        if indexed:
+            q("CREATE INDEX FOR (n:N) ON (n.v)")
+            self.env.assertEqual(self.conn.execute_command("GRAPH.RO_QUERY",
+                "g", "MATCH (n:N) WHERE n.v = 1 RETURN n.v")[1], [[1]])
+
+        body, version_bytes = self._dump_body("g")
+        blob = self._reframe(body, version_bytes)
+
+        for _ in range(3):
+            self.conn.restore("g", 0, blob, replace=True)
+            res = self.conn.execute_command("GRAPH.RO_QUERY", "g",
+                "MATCH (n:N) RETURN count(n), max(n.v)")
+            self.env.assertEqual(res[1], [[100, 100]])
+            res = self.conn.execute_command("GRAPH.RO_QUERY", "g",
+                "MATCH (n:N) WHERE n.v = 7 RETURN n.v")
+            self.env.assertEqual(res[1], [[7]])
+
+        self.conn.delete("g")
+        self.env.assertTrue(self.conn.ping())
+
+    def test_restore_replace_own_dump(self):
+        self._restore_own_dump(indexed=False)
+
+    def test_restore_replace_own_dump_indexed(self):
+        self._restore_own_dump(indexed=True)
+
+    # RESTORE under another key while the source graph is live leaves the
+    # source as it was
+    def test_restore_new_key_source_live(self):
+        self.conn.flushall()
+        self.conn.execute_command("GRAPH.QUERY", "g",
+            "UNWIND range(1, 100) AS i CREATE (:N {v: i})")
+        body, version_bytes = self._dump_body("g")
+
+        self.conn.restore("copy", 0, self._reframe(body, version_bytes))
+
+        for key in ("g", "copy"):
+            res = self.conn.execute_command("GRAPH.RO_QUERY", key,
+                "MATCH (n:N) RETURN count(n)")
+            self.env.assertEqual(res[1], [[100]])
+
+        self.conn.delete("g")
+        res = self.conn.execute_command("GRAPH.RO_QUERY", "copy",
+            "MATCH (n:N) RETURN count(n)")
+        self.env.assertEqual(res[1], [[100]])
+        self.conn.delete("copy")
+        self.env.assertTrue(self.conn.ping())
+
 
 class testRdbLoadUDF():
     def __init__(self):
