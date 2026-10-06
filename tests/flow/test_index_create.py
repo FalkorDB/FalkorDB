@@ -866,6 +866,44 @@ class testIndexCreationFlow():
         self.env.assertEqual(result.indices_created, 1)
         self.env.assertEqual(result.labels_added, 1)
 
+    def test19_index_options_validation(self):
+        # index OPTIONS are validated like C: a vector index needs a dimension
+        # and a similarity function (matched case-insensitively), and a
+        # fulltext index refuses option keys it does not know
+        graph = self.db.select_graph("index_options_validation")
+
+        invalid = [
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v)",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {similarityFunction:'euclidean'}",
+             "Invalid vector index configuration"),
+            ("CREATE VECTOR INDEX FOR (n:A) ON (n.v) OPTIONS {dimension:2}",
+             "Invalid vector index configuration"),
+            ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {foo:1}",
+             "unknown option 'foo'"),
+            ("CREATE FULLTEXT INDEX FOR (n:A) ON (n.t) OPTIONS {weight:1, foo:1}",
+             "unknown option 'foo'"),
+        ]
+        for q, msg in invalid:
+            try:
+                graph.query(q)
+                self.env.assertTrue(False, message=q)
+            except ResponseError as e:
+                self.env.assertContains(msg, str(e))
+
+        res = graph.query("CREATE VECTOR INDEX FOR (n:B) ON (n.v) OPTIONS {dimension:2, similarityFunction:'Euclidean'}")
+        self.env.assertEqual(res.indices_created, 1)
+        res = graph.query("CREATE VECTOR INDEX FOR (n:C) ON (n.v) OPTIONS {dimension:2, similarityFunction:'COSINE'}")
+        self.env.assertEqual(res.indices_created, 1)
+        res = graph.query("CREATE FULLTEXT INDEX FOR (n:D) ON (n.t) OPTIONS {weight:2, nostem:true}")
+        self.env.assertEqual(res.indices_created, 1)
+
+        # the similarity function is stored normalized
+        res = graph.query("CALL db.indexes() YIELD label, options WHERE label = 'B' RETURN options")
+        self.env.assertEqual(res.result_set[0][0]['v']['similarityFunction'], 'euclidean')
+
     def test17_index_catalog_response(self):
         graph_name = "index_catalog_response"
         graph = self.db.select_graph(graph_name)

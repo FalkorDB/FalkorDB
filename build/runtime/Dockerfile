@@ -14,12 +14,20 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
-# CXX defaults to the Debian toolchain's clang++-22. Per-OS toolchain images
+# CXX defaults to the Debian toolchain's clang++-23. Per-OS toolchain images
 # (rhel9/al2023/rhel8/alpine) reuse this exact builder stage and override the
 # compiler via `--build-arg CXX=<their clang++>` — keeping one build path /
 # one self-containment contract for every platform (see build/Dockerfile.<os>).
-ARG CXX=clang++-22
+ARG CXX=clang++-23
 COPY --from=planner /src/recipe.json recipe.json
+# cargo-chef stubs out build SCRIPTS, but cargo still has to RESOLVE every
+# manifest -- and graph/Cargo.toml carries a path build-dependency on
+# ../native-deps. Without the crate present, `cook` fails with
+# "failed to read /src/native-deps/Cargo.toml". It is ~140KB of source and its
+# own workspace, so copying it here costs nothing and does not disturb the
+# dependency layer chef is caching.
+COPY native-deps native-deps
+COPY deps/native-deps.lock deps/native-deps.lock
 RUN CXX="$CXX" cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN CXX="$CXX" cargo build --release && \

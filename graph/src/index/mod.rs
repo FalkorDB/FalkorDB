@@ -719,9 +719,21 @@ impl Document {
         value: &Value,
     ) {
         unsafe {
-            // Vector fields only accept VecF32 values; skip everything else.
+            // Vector fields only accept VecF32 values of the index's dimension;
+            // skip everything else, including a field whose dimension is unknown
+            // (no vector options, or dimension 0): such a field is created in
+            // RediSearch without vector params. RediSearch rejects a whole
+            // document whose vector it cannot index, so adding it would drop the
+            // entity from every other index on the label too (C skips it the
+            // same way: `index.c` "vector dimension mis-match, can't index this
+            // vector").
             if field.ty == IndexType::Vector {
-                if let Value::VecF32(vec) = value {
+                if let Value::VecF32(vec) = value
+                    && field
+                        .vector_options
+                        .as_ref()
+                        .is_some_and(|o| o.dimension != 0 && o.dimension == vec.len() as u64)
+                {
                     RediSearch_DocumentAddFieldVector(
                         self.rs_doc,
                         field.name.as_ptr().cast::<c_char>(),
