@@ -32,6 +32,7 @@ pub mod list;
 pub mod memory;
 pub mod profile;
 pub mod query;
+pub mod query_args;
 pub mod record;
 pub mod restore;
 pub mod ro_query;
