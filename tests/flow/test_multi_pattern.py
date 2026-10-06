@@ -134,3 +134,29 @@ class testGraphMultiPatternQueryFlow(FlowTestsBase):
 
         g.delete()
 
+
+    def test08_inline_attrs_reading_another_pattern_variable(self):
+        # An inline property map may read any variable of the pattern, also
+        # one of another pattern part or of an earlier (folded) MATCH clause,
+        # and must be checked where that variable is bound (#2923).
+        g = self.db.select_graph("multi_pattern_inline_attrs")
+        g.query("CREATE (:A {v:1})-[:R {w:2}]->(:B {v:0}), (:B {v:5})")
+        cases = [
+            ("MATCH (a)-[r]->(b) MATCH (c:B {v: id(r)*0}) RETURN c.v", [[0]]),
+            ("MATCH (a)-[r]->(b), (c:B {v: id(r)*0}) RETURN c.v", [[0]]),
+            ("MATCH (b:B), (c:B {v: b.v}) RETURN b.v, c.v ORDER BY b.v", [[0, 0], [5, 5]]),
+            ("MATCH (b:B) MATCH (c:B {v: b.v}) RETURN b.v, c.v ORDER BY b.v", [[0, 0], [5, 5]]),
+            ("MATCH (a:A) MATCH (c:B {v: id(a)}) RETURN c.v", [[0]]),
+            ("MATCH (a:A)-[r]->(b {v: a.v-1}) RETURN count(*)", [[1]]),
+            ("MATCH (a)-[r]->(b {v: r.w-2}) RETURN count(*)", [[1]]),
+            ("MATCH ()-[r]->() MATCH (x:A)-[q {w: r.w}]->() RETURN count(*)", [[1]]),
+            ("MATCH (a:A) MATCH (x)-[q {w: a.v+1}]->() RETURN count(*)", [[1]]),
+            ("MATCH (a:A)-[r]->(b) MATCH (c:B)-[q {w: id(r)}]->() RETURN count(*)", [[0]]),
+        ]
+        for q, expected in cases:
+            self.env.assertEqual(g.query(q).result_set, expected, message=q)
+
+        # Across components the check becomes a hash join, as it does in C.
+        plan = str(g.explain("MATCH (b:B), (c:B {v: b.v}) RETURN b.v, c.v"))
+        self.env.assertContains("Value Hash Join", plan)
+        g.delete()

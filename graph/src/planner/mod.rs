@@ -570,6 +570,132 @@ pub(super) fn inline_attrs_to_filter(
     }
 }
 
+/// Splits an inline-attribute map into the entries that may be checked where
+/// `alias` is matched and the rest, returned as an equality filter.
+///
+/// An entry stays inline unless its value reads a variable in `pending`, the
+/// variables this pattern binds that are not bound when `alias` is matched
+/// (`local` lists the ones that are). The planner orders scans and traversals
+/// freely, so only the variables bound before the pattern, the entity itself
+/// and, for a relationship, its endpoints are known to be bound there.
+fn split_inline_attrs(
+    alias: &Variable,
+    attrs: &QueryExpr<Variable>,
+    pending: &HashSet<(u32, u32)>,
+    local: &[&Variable],
+    lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+) -> Option<QueryExpr<Variable>> {
+    let reads_pending = |entry: &DynNode<ExprIR<Variable>>| {
+        entry.walk::<Bfs>().any(|data| {
+            matches!(
+                data,
+                ExprIR::Variable(v) if pending.contains(&(v.id, v.scope_id))
+                    && !local.iter().any(|l| l.id == v.id && l.scope_id == v.scope_id)
+            )
+        })
+    };
+    if !attrs.root().children().any(|entry| reads_pending(&entry)) {
+        return None;
+    }
+    let mut kept = tree!(ExprIR::Map);
+    let mut moved = tree!(ExprIR::Map);
+    for entry in attrs.root().children() {
+        let target = if reads_pending(&entry) {
+            &mut moved
+        } else {
+            &mut kept
+        };
+        target.root_mut().push_child_tree(entry.as_cloned_subtree());
+    }
+    lifted.extend(inline_attrs_to_filter(alias, &moved));
+    Some(Arc::new(kept))
+}
+
+/// Takes the inline-attribute entries that read another variable of the same
+/// pattern out of `pattern` and appends them to `lifted` as filters.
+///
+/// `(b), (c {v: b.v})` or `(a)-[r]->(b) MATCH (c {v: id(r)})` (consecutive
+/// MATCH clauses are one pattern) are planned as separate components joined
+/// by a Cartesian product, and `(a {v: b.v})-->(b)` may be scanned from
+/// either end. Checked inline, `c.v = b.v` would run where `b` is not bound
+/// yet, and no row would pass. Applied above the whole pattern, like `WHERE`,
+/// it sees every variable, and the optimizer can still push it down or turn
+/// it into a hash join. Variable-length and shortest-path relationships keep
+/// their attrs: those are per-edge predicates, not a property of one entity.
+///
+/// Returns `None` when no entry has to move.
+fn lift_cross_entity_attrs(
+    pattern: &QueryGraph<Arc<String>, Arc<String>, Variable>,
+    visited: &HashSet<(u32, u32)>,
+    lifted: &mut Vec<DynTree<ExprIR<Variable>>>,
+) -> Option<QueryGraph<Arc<String>, Arc<String>, Variable>> {
+    let pending: HashSet<(u32, u32)> = pattern
+        .variables()
+        .map(|v| (v.id, v.scope_id))
+        .filter(|key| !visited.contains(key))
+        .collect();
+    let before = lifted.len();
+    // The same node is shared by `nodes()` and the endpoints of its
+    // relationships; rewrite each occurrence once so its filter is not
+    // emitted twice.
+    let mut rewritten: HashMap<*const QueryNode<Arc<String>, Variable>, _> = HashMap::new();
+    let mut rewrite_node =
+        |node: &Arc<QueryNode<Arc<String>, Variable>>,
+         lifted: &mut Vec<DynTree<ExprIR<Variable>>>| {
+            rewritten
+                .entry(Arc::as_ptr(node))
+                .or_insert_with(|| {
+                    split_inline_attrs(&node.alias, &node.attrs, &pending, &[&node.alias], lifted)
+                        .map_or_else(
+                            || node.clone(),
+                            |attrs| {
+                                Arc::new(QueryNode::new(
+                                    node.alias.clone(),
+                                    node.labels.clone(),
+                                    attrs,
+                                ))
+                            },
+                        )
+                })
+                .clone()
+        };
+    let mut res = QueryGraph::default();
+    for node in pattern.nodes() {
+        res.add_node(rewrite_node(node, lifted));
+    }
+    for rel in pattern.relationships() {
+        let from = rewrite_node(&rel.from, lifted);
+        let to = rewrite_node(&rel.to, lifted);
+        let attrs = if rel.min_hops.is_none() && rel.all_shortest_paths == AllShortestPaths::No {
+            split_inline_attrs(
+                &rel.alias,
+                &rel.attrs,
+                &pending,
+                &[&rel.alias, &rel.from.alias, &rel.to.alias],
+                lifted,
+            )
+        } else {
+            None
+        };
+        let mut new_rel = QueryRelationship::new(
+            rel.alias.clone(),
+            rel.types.clone(),
+            attrs.unwrap_or_else(|| rel.attrs.clone()),
+            from,
+            to,
+            rel.bidirectional,
+            rel.min_hops,
+            rel.max_hops,
+        );
+        new_rel.all_shortest_paths = rel.all_shortest_paths;
+        res.add_relationship(Arc::new(new_rel));
+    }
+    for path in pattern.paths() {
+        res.add_path(path.clone());
+    }
+    (lifted.len() > before).then_some(res)
+}
+
 /// Build a `hasLabels(var, [label1, label2, ...])` filter expression.
 fn has_labels_filter(
     var: &Variable,
@@ -1725,6 +1851,8 @@ impl Planner {
         // filters rather than as plan components, so they don't interfere
         // with stitching.
         let mut bound_filters: Vec<DynTree<ExprIR<Variable>>> = vec![];
+        let lifted = lift_cross_entity_attrs(pattern, &self.visited, &mut bound_filters);
+        let pattern = lifted.as_ref().unwrap_or(pattern);
         for component in pattern.connected_components() {
             let relationships = component.relationships();
             // Endpoints already bound by earlier clauses may carry labels
