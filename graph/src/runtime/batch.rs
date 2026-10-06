@@ -843,6 +843,24 @@ impl<'a> Batch<'a> {
         }
     }
 
+    /// Creates a batch of `len` rows that binds no variable.
+    ///
+    /// The shape a projection naming nothing produces: row count (and, once
+    /// stamped, `origin_row`) with no bindings. `Batch::new` cannot express it
+    /// because `len` there follows the first column installed, and this batch
+    /// has none.
+    #[must_use]
+    pub fn rows_only(len: usize) -> Self {
+        Self {
+            len,
+            selection: None,
+            columns: Vec::new(),
+            origin_rows: None,
+            value_only: BitSet::default(),
+            _marker: PhantomData,
+        }
+    }
+
     /// Creates a batch from fully materialized columns.
     #[must_use]
     pub fn from_columns(columns: impl IntoIterator<Item = Column>) -> Self {
@@ -1282,6 +1300,17 @@ impl<'a> Batch<'a> {
         row: usize,
     ) -> u32 {
         self.origin_rows.as_ref().map_or(0, |o| o[row])
+    }
+
+    /// Whether this batch carries per-row correlation tags.
+    ///
+    /// Distinguishes "every origin is 0" from "origins were never stamped",
+    /// which `origin_row` alone cannot: an operator replicating parent state
+    /// per result has to carry the tags across even when the parent binds no
+    /// variable to replicate.
+    #[must_use]
+    pub const fn has_origins(&self) -> bool {
+        self.origin_rows.is_some()
     }
 
     /// Installs the columnar per-row correlation sidecar. The vector is indexed
