@@ -698,6 +698,11 @@ class testFunctionCallsFlow(FlowTestsBase):
             """RETURN toInteger('')""",
             """RETURN toInteger('18446744073709551616')""",
             """RETURN toInteger('-18446744073709551616')""",
+            # just below i64::MIN: the f64 fallback used to round these to -2^63
+            """RETURN toInteger('-9223372036854775809')""",
+            """RETURN toInteger('-9223372036854776832')""",
+            """RETURN toInteger('9223372036854775808')""",
+            """RETURN toIntegerList(['-9223372036854775809'])[0]""",
         ]
         for query in queries:
             actual_result = self.graph.query(query)
@@ -2099,6 +2104,13 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        # coalesce needs at least one argument, as in C
+        try:
+            self.graph.query("RETURN coalesce()")
+            self.env.assertFalse(True)
+        except ResponseError as e:
+            self.env.assertIn("Received 0 arguments to function 'coalesce', expected at least 1", str(e))
     
     def test83_Replace(self):
         query_to_expected_result = {
