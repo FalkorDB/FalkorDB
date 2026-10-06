@@ -36,9 +36,8 @@ use super::super::IR;
 /// a predicate lives: `utilize_index` moves conjuncts into an index scan's
 /// `query` and `utilize_node_by_id` into `NodeByIdSeek`'s `filter`. Those are
 /// the same predicate, relocated — they reference variables exactly as they did
-/// while they were Filters. Edge predicates stay in `IR::Filter`; the traverses
-/// only absorb them when the runtime builds its operators, which is after every
-/// caller of this function has run.
+/// while they were Filters. A fixed-length traverse's edge predicate stays in
+/// `IR::Filter`, the only place it is evaluated.
 pub(super) fn ir_references_variable(
     ir: &IR,
     var_id: u32,

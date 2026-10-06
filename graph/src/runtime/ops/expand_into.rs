@@ -50,17 +50,6 @@ pub struct ExpandIntoOp<'a> {
     /// Whether to emit one row per edge (true) or collapse multi-edges into
     /// one row per (src, dst) pair (false). Set by the planner.
     emit_relationship: bool,
-    /// True when a `Filter` above this operator constrains its edge, so the
-    /// collapse to one representative edge per (src, dst) pair is unsound.
-    ///
-    /// The predicate itself stays in that Filter: unlike `CondTraverse`, this
-    /// operator does not take it, because it only verifies an edge between two
-    /// bound endpoints, so there is little materialization to save, and leaving
-    /// the predicate in the Filter keeps it on the Filter's column-at-a-time
-    /// evaluation. It still has to know the predicate exists, which is all this
-    /// flag is: computed once, when the operator is built, by
-    /// [`crate::planner::parent_filters_edge`].
-    edge_predicate: bool,
     /// Alias IDs of sibling relationship variables in the same MATCH clause.
     sibling_edges: &'a [u32],
     pub(crate) idx: NodeIdx<Dyn<IR>>,
@@ -80,13 +69,11 @@ pub struct ExpandIntoOp<'a> {
 }
 
 impl<'a> ExpandIntoOp<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         emit_relationship: bool,
-        edge_predicate: bool,
         sibling_edges: &'a [u32],
         idx: NodeIdx<Dyn<IR>>,
         record_cap: Option<usize>,
@@ -116,7 +103,6 @@ impl<'a> ExpandIntoOp<'a> {
             emitter,
             synthetic_label,
             emit_relationship,
-            edge_predicate,
             sibling_edges,
             idx,
             record_cap,
@@ -137,11 +123,9 @@ impl<'a> ExpandIntoOp<'a> {
     /// `from` carries all the required labels.
     #[allow(clippy::too_many_arguments)]
     fn expand_row(
-        _runtime: &'a Runtime<'a>,
         rp: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
         synthetic_label: bool,
         emit_relationship: bool,
-        edge_predicate: bool,
         sibling_edges: &'a [u32],
         g: &Graph,
         pending: &Pending,
@@ -182,8 +166,9 @@ impl<'a> ExpandIntoOp<'a> {
         }
 
         let env = BatchRow::new(batch, row_idx);
-        // The predicate itself is applied by the Filter above; all this owes it
-        // is every candidate edge rather than one representative per pair.
+        // An edge predicate is applied by the Filter above. The planner sets
+        // `emit_relationship` for such an edge, so every candidate edge is
+        // emitted for it to test rather than one representative per pair.
 
         // Edge directions to probe: forward, plus reverse when the pattern is
         // bidirectional and not a self-loop. NodeId is Copy, so this fixed array
@@ -209,7 +194,7 @@ impl<'a> ExpandIntoOp<'a> {
         for &(edge_src, edge_dst) in &pairs[..npairs] {
             let mat_src = u64::from(edge_src);
             let mat_dst = u64::from(edge_dst);
-            if !emit_relationship && !edge_predicate {
+            if !emit_relationship {
                 // One representative edge per (src, dst) pair.
                 let mut found_id: Option<RelationshipId> = None;
                 'outer: for &tidx in edge_type_indices.iter() {
@@ -268,7 +253,6 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
         let rp = self.relationship_pattern;
         let synthetic_label = self.synthetic_label;
         let emit_relationship = self.emit_relationship;
-        let edge_predicate = self.edge_predicate;
         let sibling_edges = self.sibling_edges;
 
         loop {
@@ -284,11 +268,9 @@ impl<'a> Iterator for ExpandIntoOp<'a> {
                 let mut iters_ref = self.edge_type_indices.borrow_mut();
                 self.emitter.emit_lazy(|batch, row_idx| {
                     Self::expand_row(
-                        runtime,
                         rp,
                         synthetic_label,
                         emit_relationship,
-                        edge_predicate,
                         sibling_edges,
                         &g,
                         &pending,

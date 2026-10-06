@@ -31,7 +31,7 @@ use orx_tree::{Dyn, NodeIdx};
 pub struct FilterOp<'a> {
     pub(crate) runtime: &'a Runtime<'a>,
     pub(crate) child: Box<BatchOp<'a>>,
-    tree: QueryExpr<Variable>,
+    tree: &'a QueryExpr<Variable>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -39,7 +39,7 @@ impl<'a> FilterOp<'a> {
     pub const fn new(
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
-        tree: QueryExpr<Variable>,
+        tree: &'a QueryExpr<Variable>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {

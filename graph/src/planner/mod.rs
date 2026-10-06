@@ -620,162 +620,6 @@ fn lower_inline_attrs(
     inline_attrs_to_filter(alias, attrs)
 }
 
-/// The edge alias of the traverse at `idx`, if it is one that can take a
-/// predicate on its edge.
-pub fn traverse_edge_alias(
-    plan: &DynTree<IR>,
-    idx: NodeIdx<Dyn<IR>>,
-) -> Option<&Variable> {
-    match plan.node(idx).data() {
-        // A fused chain binds no per-hop edge, so there is nothing for a
-        // predicate to test against.
-        IR::CondTraverse {
-            relationship,
-            chain,
-            ..
-        } if chain.is_empty() => Some(&relationship.alias),
-        // Only the fixed-length traverses fuse. The walks own their predicate
-        // in `edge_filter`; there is no `Filter` above them to take.
-        IR::ExpandInto { relationship, .. } => Some(&relationship.alias),
-        _ => None,
-    }
-}
-
-/// Splits the `Filter` directly above `idx` into the conjuncts that
-/// constrain only that traverse's edge and the ones that do not.
-///
-/// This is where an edge predicate is fused into a traverse. It is
-/// deliberately *not* an optimizer pass: the plan keeps one representation
-/// of a predicate — an `IR::Filter` — so every pass can see it, and folding
-/// it into the operator is a decision about physical execution, taken here
-/// while the operators are built. Doing it as an IR rewrite meant every
-/// future pass had to know that predicates also hide in operator fields.
-///
-/// Fusing here is also the only place it cannot be undone or reordered
-/// away, which matters because for a var-length walk it is not an
-/// optimization: `r` binds a list of edges, so a `Filter` above the walk
-/// asks a different question than pruning per edge.
-pub fn split_edge_filter(
-    plan: &DynTree<IR>,
-    traverse_idx: NodeIdx<Dyn<IR>>,
-) -> Option<(Option<QueryExpr<Variable>>, Vec<DynTree<ExprIR<Variable>>>)> {
-    let alias = traverse_edge_alias(plan, traverse_idx)?;
-    let parent = plan.node(traverse_idx).parent()?;
-    let IR::Filter(filter) = parent.data() else {
-        return None;
-    };
-    // Whether a subtree, walked in place, references only the edge alias.
-    // Deciding this before cloning matters: `DynTree::clone` allocates a whole
-    // new tree, and this runs on every execution of every fusable traverse.
-    //
-    // "The edge alias" is its `(id, scope_id)` pair, not the id alone: ids are
-    // allocated per scope, so a conjunct naming another scope's variable that
-    // happens to share the number would otherwise be fused into the traverse
-    // and evaluated against the edge.
-    let only_edge = |node: &DynNode<ExprIR<Variable>>| {
-        let mut saw_edge = false;
-        for n in node.walk::<Bfs>() {
-            if let ExprIR::Variable(v) = n {
-                if v.id != alias.id || v.scope_id != alias.scope_id {
-                    return false;
-                }
-                saw_edge = true;
-            }
-        }
-        saw_edge
-    };
-
-    if !matches!(filter.root().data(), ExprIR::And) {
-        // Single predicate: it either belongs to the edge whole or not at all,
-        // and when it does the fused expression *is* the filter — share the
-        // existing `Arc` rather than copying the tree.
-        return Some(if only_edge(&filter.root()) {
-            (Some(Arc::clone(filter)), vec![])
-        } else {
-            (None, vec![DynTree::clone(filter)])
-        });
-    }
-
-    // Conjunction: classify each child in place, then clone only what is kept.
-    let mut mine = vec![];
-    let mut theirs = vec![];
-    for c in filter.root().children() {
-        if only_edge(&c) {
-            mine.push(c.clone_as_tree());
-        } else {
-            theirs.push(c.clone_as_tree());
-        }
-    }
-    let fused = match mine.len() {
-        0 => None,
-        1 => Some(Arc::new(mine.into_iter().next().unwrap())),
-        _ => Some(Arc::new(tree!(ExprIR::And; mine))),
-    };
-    Some((fused, theirs))
-}
-
-/// The predicate to hand the traverse at `idx`, folded from the `Filter`
-/// above it. See [`Self::split_edge_filter`].
-pub fn fused_edge_predicate(
-    plan: &DynTree<IR>,
-    idx: NodeIdx<Dyn<IR>>,
-) -> Option<QueryExpr<Variable>> {
-    split_edge_filter(plan, idx)?.0
-}
-
-/// What the `Filter` at `idx` still has to evaluate, given the traverse
-/// beneath it folded in the conjuncts that constrain only its edge.
-///
-/// `None` when there is nothing beneath it to fuse with, so the Filter is
-/// built unchanged. `Some(rest)` when fusion happened — an empty `rest`
-/// meaning the operator is not needed at all.
-pub fn absorbed_into_child(
-    plan: &DynTree<IR>,
-    filter_idx: NodeIdx<Dyn<IR>>,
-) -> Option<Vec<DynTree<ExprIR<Variable>>>> {
-    let node = plan.node(filter_idx);
-    if node.num_children() != 1 {
-        return None;
-    }
-    let child_idx = node.child(0).idx();
-    // ExpandInto keeps its Filter: it reads only the fact that a predicate
-    // exists, so the predicate itself still needs evaluating.
-    if matches!(plan.node(child_idx).data(), IR::ExpandInto { .. }) {
-        return None;
-    }
-    let (fused, theirs) = split_edge_filter(plan, child_idx)?;
-    fused.is_some().then_some(theirs)
-}
-
-/// Whether a `Filter` above `idx` constrains its edge at all.
-///
-/// `ExpandInto` needs only this much: it keeps the `Filter`, because it
-/// verifies an edge between two bound endpoints rather than expanding the
-/// row set, so there is little wasted materialization to avoid and
-/// `FilterOp`'s vectorized kernels beat a scalar per-edge evaluation. But it
-/// must still stop collapsing a (src, dst) pair to one representative edge,
-/// or the `Filter` would test an arbitrary member of the group.
-pub fn parent_filters_edge(
-    plan: &DynTree<IR>,
-    idx: NodeIdx<Dyn<IR>>,
-) -> bool {
-    split_edge_filter(plan, idx).is_some_and(|(fused, _)| fused.is_some())
-}
-
-/// Whether the `Filter` at `idx` is fused away entirely — its whole predicate
-/// folded into the traverse below it, so no `FilterOp` is built.
-///
-/// `GRAPH.EXPLAIN` and `GRAPH.PROFILE` hide such a node: it describes no
-/// operator, and showing a `Filter` that never runs misreads as a cost.
-#[must_use]
-pub fn filter_is_fused_away(
-    plan: &DynTree<IR>,
-    idx: NodeIdx<Dyn<IR>>,
-) -> bool {
-    matches!(plan.node(idx).data(), IR::Filter(_))
-        && absorbed_into_child(plan, idx).is_some_and(|rest| rest.is_empty())
-}
-
 /// Returns `node` with its inline attributes removed, for embedding in a
 /// match-side IR operator once [`lower_inline_attrs`] has turned them into a
 /// `Filter`.
@@ -2243,7 +2087,7 @@ impl Planner {
                 if already_bound {
                     tree!(IR::ExpandInto {
                         relationship: rel.clone(),
-                        emit_relationship: emit_rel(relationship),
+                        emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                         sibling_edges: sibling_edges.clone(),
                     })
                 } else {
@@ -2257,7 +2101,7 @@ impl Planner {
                     tree!(
                         IR::ExpandInto {
                             relationship: rel.clone(),
-                            emit_relationship: emit_rel(relationship),
+                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                         },
                         scan
@@ -2275,13 +2119,13 @@ impl Planner {
                 // aliases.
                 tree!(IR::ExpandInto {
                     relationship: rel.clone(),
-                    emit_relationship: emit_rel(relationship),
+                    emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                     sibling_edges: sibling_edges.clone(),
                 })
             } else {
                 tree!(IR::CondTraverse {
                     relationship: rel.clone(),
-                    emit_relationship: emit_rel(relationship),
+                    emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                     sibling_edges: sibling_edges.clone(),
                     transposed: false,
                     chain: Vec::new(),
@@ -2289,10 +2133,13 @@ impl Planner {
                     bind_relationship: true,
                 })
             };
-            // Fixed-length traverses take the predicate as a `Filter`, which
-            // the runtime folds into the operator when it builds it. The walks
-            // above already took it into `edge_filter`, where it prunes per
-            // edge — a `Filter` there would test an assembled path instead.
+            // Fixed-length traverses take the predicate as a `Filter`, the one
+            // place it is evaluated. That Filter reads the edge, which is why
+            // the operator above was planned with `emit_relationship` set: it
+            // must emit every parallel edge for the Filter to test, not one
+            // representative per (src, dst) pair. The walks above already took
+            // it into `edge_filter`, where it prunes per edge — a `Filter` there
+            // would test an assembled path instead.
             if let Some(filter_expr) = edge_pred
                 && matches!(
                     res.root().data(),
@@ -2372,7 +2219,7 @@ impl Planner {
                         tree!(
                             IR::ExpandInto {
                                 relationship: rel.clone(),
-                                emit_relationship: emit_rel(relationship),
+                                emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                                 sibling_edges: sibling_edges.clone(),
                             },
                             res
@@ -2388,7 +2235,7 @@ impl Planner {
                         tree!(
                             IR::ExpandInto {
                                 relationship: rel.clone(),
-                                emit_relationship: emit_rel(relationship),
+                                emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                                 sibling_edges: sibling_edges.clone(),
                             },
                             scan,
@@ -2405,7 +2252,7 @@ impl Planner {
                     tree!(
                         IR::ExpandInto {
                             relationship: rel.clone(),
-                            emit_relationship: emit_rel(relationship),
+                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                         },
                         res
@@ -2414,7 +2261,7 @@ impl Planner {
                     tree!(
                         IR::CondTraverse {
                             relationship: rel.clone(),
-                            emit_relationship: emit_rel(relationship),
+                            emit_relationship: emit_rel(relationship) || edge_pred.is_some(),
                             sibling_edges: sibling_edges.clone(),
                             transposed: false,
                             chain: Vec::new(),

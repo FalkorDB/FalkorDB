@@ -50,11 +50,11 @@ use graph::{
         graph::{Graph, Plan},
         mvcc_graph::MvccGraph,
     },
-    planner::{IR, filter_is_fused_away},
+    planner::IR,
     runtime::runtime::{QueryStatistics, Runtime},
     threadpool::{pending_count, spawn},
 };
-use orx_tree::{Collection, Dfs, Dyn, DynTree, NodeIdx, NodeRef};
+use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
@@ -818,34 +818,21 @@ pub fn execute_query_write(
 }
 
 /// Reply with profile output: DFS walk of the plan tree, each line annotated
-/// with `Records produced: N, Execution time: T.TTTTTT ms`.
-/// Skips only the operators that do not exist at runtime.
+/// with `Records produced: N, Execution time: T.TTTTTT ms`. Every operator is
+/// listed, as `GRAPH.EXPLAIN` lists every plan node.
 fn reply_profile(
     ctx: &Context,
     runtime: &Runtime,
     plan: &DynTree<IR>,
 ) {
-    let all_ops: Vec<_> = plan.root().indices::<Dfs>().collect();
-    // Hide only what builds no operator: a `Filter` folded whole into the
-    // traverse below it. `Commit` builds a `CommitOp` and runs, so it stays —
-    // matching `GRAPH.EXPLAIN`, which has always shown it.
-    let hidden = |idx: NodeIdx<Dyn<IR>>| filter_is_fused_away(plan, idx);
-    let ops: Vec<_> = all_ops.iter().filter(|idx| !hidden(**idx)).collect();
+    let ops: Vec<_> = plan.root().indices::<Dfs>().collect();
     let profile_data = runtime.profile_data.borrow();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
     for idx in ops {
-        let node = plan.node(*idx);
-        // Effective depth: subtract the hidden ancestors.
-        let mut depth = node.depth();
-        let mut cur = *idx;
-        while let Some(parent) = plan.node(cur).parent() {
-            if hidden(parent.idx()) {
-                depth -= 1;
-            }
-            cur = parent.idx();
-        }
+        let node = plan.node(idx);
+        let depth = node.depth();
         let (records, time) = profile_data
-            .get(idx)
+            .get(&idx)
             .copied()
             .unwrap_or((0, std::time::Duration::ZERO));
         let time_ms = time.as_secs_f64() * 1000.0;
