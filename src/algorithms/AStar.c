@@ -283,14 +283,15 @@ static bool AStarCtx_Run
 
 	bool single_source = (dst_id == (NodeID)INVALID_ENTITY_ID);
 
-	// resolve dst's coordinates once, up front: every heuristic evaluation
-	// during this search targets this fixed goal. if dst has no numeric lat/lon,
-	// heur_scale is non-positive, this is a single-source sweep, or a landmark
-	// potential is driving h, the haversine term degrades to 0 -- the potential
-	// branch in _astar_node_h ignores these anyway.
+	// resolve dst's coordinates once, up front: every haversine evaluation during
+	// this search targets this fixed goal. skip the lookup entirely when the
+	// haversine term can't contribute -- a single-source sweep, a landmark
+	// potential driving h (its branch in _astar_node_h ignores coords), no weight
+	// prop, or a non-positive scale -- and, finally, when dst has no numeric lat/lon.
 	double dst_lat = 0;
 	double dst_lon = 0;
 	bool dst_has_coords = !single_source                          &&
+			(ac->potential == NULL)                              &&
 			(ac->weight_prop != ATTRIBUTE_ID_NONE)               &&
 			(ac->heur_scale > 0)                                 &&
 			_get_node_latlon (&dst_lat, &dst_lon,
@@ -398,9 +399,18 @@ static bool AStarCtx_Run
 				double h;
 				if(!is_new) {
 					AStarLabel *nlabel = ac->records + (*nslot - 1);
-					if(nlabel->finalized || new_g >= nlabel->g_score) {
-						continue;
+					if(new_g >= nlabel->g_score) {
+						continue;  // not a strictly better route to 'nid'
 					}
+					// strictly better route found. if 'nid' was already
+					// finalized, REOPEN it: the haversine heuristic is only
+					// admissible, not necessarily consistent, when some nodes
+					// lack coordinates (h==0 there) -- so a node can be
+					// finalized at a non-optimal g. A* with an admissible
+					// heuristic stays optimal as long as such nodes are
+					// reopened and re-expanded. clearing 'finalized' lets the
+					// re-queued entry below be processed again.
+					nlabel->finalized = false;
 					h = nlabel->h;  // heuristic is fixed per node
 				} else {
 					// first discovery: compute and cache h(nid).
@@ -551,13 +561,17 @@ bool AStar_ShortestPath
 typedef struct {
 	Path   *path;     // the candidate path
 	double  weight;   // its total weight
+	double  cost;     // its total cost (secondary selection key; see comparator)
 	uint    dev_idx;  // spur index it deviated from its parent at (Lawler's rule:
 	                  // once accepted, its own spurs need only start here)
 } AStarCandidate;
 
 // candidate-heap comparator: the heap keeps the *greatest* element (per this
-// cmp) on top, so invert the natural order -- smallest weight (then shortest
-// path) becomes the top, i.e. the next path to accept.
+// cmp) on top, so invert the natural order -- the smallest under the
+// (weight, cost, length) lexicographic order becomes the top, i.e. the next
+// path to accept. mirrors proc_sp_paths' path_cmp; with cost_prop unspecified
+// (ATTRIBUTE_ID_NONE) every edge's cost is 1, so cost equals the hop count and
+// this collapses to the (weight, length) order.
 static int _astar_cand_cmp
 (
 	const void *a,
@@ -569,6 +583,10 @@ static int _astar_cand_cmp
 
 	if(ca->weight != cb->weight) {
 		return (ca->weight < cb->weight) ? 1 : -1;
+	}
+
+	if(ca->cost != cb->cost) {
+		return (ca->cost < cb->cost) ? 1 : -1;
 	}
 
 	size_t la = Path_Len(ca->path);
@@ -657,6 +675,26 @@ static double _root_weight
 	return w;
 }
 
+// total cost of a whole path (sum of cost_prop over its edges, defaulting a
+// missing value to 1). secondary selection key only; ATTRIBUTE_ID_NONE yields
+// the hop count.
+static double _path_cost
+(
+	const Path *p,
+	AttributeID cost_prop
+) {
+	double c = 0;
+
+	uint ec = Path_EdgeCount(p);
+	for(uint j = 0; j < ec; j++) {
+		SIValue v = GraphEntity_GetNumericPropertyOrDefault(
+				(GraphEntity *)Path_GetEdge(p, j), cost_prop, SI_LongVal(1));
+		c += SI_GET_NUMERIC(v);
+	}
+
+	return c;
+}
+
 // build root(prev, i) ++ spur: prev's first i edges / i+1 nodes, then the spur
 // path (whose first node is prev.nodes[i], already included, so it is skipped).
 static Path *_concat
@@ -721,7 +759,8 @@ static uint _astar_kshortest
 	NodeID       src,
 	NodeID       dst,
 	uint64_t     k,       // number of paths
-	AttributeID  weight_prop
+	AttributeID  weight_prop,
+	AttributeID  cost_prop
 ) {
 	// A: accepted paths (ascending weight); AW: their weights (parallel)
 	Path   **A  = arr_new(Path *, 0);
@@ -824,6 +863,7 @@ static uint _astar_kshortest
 				AStarCandidate *c = rm_malloc(sizeof(AStarCandidate));
 				c->path    = total;
 				c->weight  = total_w;
+				c->cost    = _path_cost(total, cost_prop);
 				c->dev_idx = i;  // where this candidate branched off prev
 				Heap_offer(&B, c);
 			} else {
@@ -889,6 +929,7 @@ uint AStar_KShortestPaths
 	Tensor *relationMatrices,  // relation matrix per relationIDs entry
 	int relationCount,         // length of relationIDs
 	AttributeID weight_prop,   // weight attribute id
+	AttributeID cost_prop,     // secondary tie-break attribute, or NONE
 	AttributeID lat_prop,      // latitude attribute id, used for the heuristic
 	AttributeID lon_prop,      // longitude attribute id, used for the heuristic
 	double heur_scale          // meters -> weightProp units heuristic scale
@@ -900,7 +941,8 @@ uint AStar_KShortestPaths
 	AStarCtx *ac = AStarCtx_New(g, dir, relationIDs, relationMatrices,
 			relationCount, weight_prop, lat_prop, lon_prop, heur_scale);
 
-	uint n = _astar_kshortest(paths, weights, ac, src, dst, k, weight_prop);
+	uint n = _astar_kshortest(paths, weights, ac, src, dst, k, weight_prop,
+			cost_prop);
 
 	AStarCtx_Free(ac);
 	return n;

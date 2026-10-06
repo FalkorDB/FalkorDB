@@ -10,15 +10,18 @@
 #include "../util/arr.h"
 #include "../query_ctx.h"
 #include "../index/index.h"
+#include "../index/cch_index.h"
 #include "../schema/schema.h"
 #include "../datatypes/map.h"
 #include "../datatypes/array.h"
 
 #include <assert.h>
+#include <string.h>
 
 typedef struct {
 	SIValue out[9];             // outputs
 	Index *indices;             // indicies to emit
+	CCHIndex **cch_indices;     // CCH path indices to emit
 	GraphContext *gc;           // graph context
 	SIValue *yield_label;       // yield index label
 	SIValue *yield_types;       // yield index fields types
@@ -125,8 +128,9 @@ ProcedureResult Proc_IndexesInvoke
 
 	IndexesContext *pdata = rm_malloc(sizeof(IndexesContext));
 
-	pdata->gc      = gc;
-	pdata->indices = arr_new(Index, 0);
+	pdata->gc           = gc;
+	pdata->indices      = arr_new(Index, 0);
+	pdata->cch_indices  = arr_new(CCHIndex *, 0);
 
 	//--------------------------------------------------------------------------
 	// collect all indices
@@ -155,6 +159,12 @@ ProcedureResult Proc_IndexesInvoke
 		for(uint j = 0; j < idx_count; j++) {
 			arr_append(pdata->indices, indicies[j]);
 		}
+	}
+
+	// collect graph-level CCH path indices
+	uint cch_count = GraphContext_CCHIndexCount(gc);
+	for(uint i = 0; i < cch_count; i++) {
+		arr_append(pdata->cch_indices, GraphContext_GetCCHIndexAt(gc, i));
 	}
 
 	_process_yield(pdata, yield);
@@ -415,25 +425,96 @@ static bool _EmitIndex
 	return true;
 }
 
+// emit a graph-level CCH path index. CCH indices are not RediSearch-backed and
+// have no label/fields in the usual sense, so the RediSearch-specific columns
+// (options/language/stopwords/info) are reported empty. build is synchronous,
+// so a registered CCH index is always OPERATIONAL.
+static bool _EmitCCHIndex
+(
+	IndexesContext *ctx,
+	const CCHIndex *idx
+) {
+	GraphContext *gc = ctx->gc;
+
+	uint              n     = CCHIndex_RelTypeCount(idx);
+	const RelationID *rels  = CCHIndex_RelTypes(idx);
+	const char       *wname = GraphContext_GetAttributeName(gc,
+			CCHIndex_WeightAttr(idx));
+
+	if(ctx->yield_entity_type) {
+		*ctx->yield_entity_type = SI_ConstStringVal("RELATIONSHIP");
+	}
+
+	if(ctx->yield_status) {
+		*ctx->yield_status = SI_ConstStringVal("OPERATIONAL");
+	}
+
+	// label: the relationship types the index spans, joined by ','
+	if(ctx->yield_label) {
+		size_t cap = 1;
+		for(uint i = 0; i < n; i++) {
+			Schema *s = GraphContext_GetSchemaByID(gc, rels[i], SCHEMA_EDGE);
+			cap += strlen(Schema_GetName(s)) + 1;
+		}
+		char *buf = rm_malloc(cap);
+		buf[0] = '\0';
+		for(uint i = 0; i < n; i++) {
+			Schema *s = GraphContext_GetSchemaByID(gc, rels[i], SCHEMA_EDGE);
+			if(i > 0) strcat(buf, ",");
+			strcat(buf, Schema_GetName(s));
+		}
+		*ctx->yield_label = SI_DuplicateStringVal(buf);
+		rm_free(buf);
+	}
+
+	// properties: the single weight attribute
+	if(ctx->yield_fields) {
+		*ctx->yield_fields = SI_Array(1);
+		SIArray_Append(ctx->yield_fields, SI_ConstStringVal((char *)wname));
+	}
+
+	// types: { weightProp: ['CCH'] }
+	if(ctx->yield_types) {
+		*ctx->yield_types = SI_Map(1);
+		SIValue t = SI_Array(1);
+		SIArray_Append(&t, SI_ConstStringVal("CCH"));
+		Map_Add(ctx->yield_types, SI_ConstStringVal((char *)wname), t);
+		SIValue_Free(t);
+	}
+
+	// RediSearch-specific columns -- not applicable to a CCH index
+	if(ctx->yield_options)   *ctx->yield_options   = SI_Map(0);
+	if(ctx->yield_language)  *ctx->yield_language  = SI_ConstStringVal("");
+	if(ctx->yield_stopwords) *ctx->yield_stopwords = SI_Array(0);
+	if(ctx->yield_info)      *ctx->yield_info      = SI_Map(0);
+
+	return true;
+}
+
 SIValue *Proc_IndexesStep
 (
 	ProcedureCtx *ctx
 ) {
 	ASSERT(ctx->privateData != NULL);
 
-	SIValue *res;
 	IndexesContext *pdata = ctx->privateData;
 
-	// no more indices to emit
-	if(arr_len(pdata->indices) == 0) {
-		return NULL;
+	// emit RediSearch-backed indices first
+	if(arr_len(pdata->indices) > 0) {
+		Index idx = arr_pop(pdata->indices);
+		_EmitIndex(pdata, idx);
+		return pdata->out;
 	}
 
-	// emit index
-	Index idx = arr_pop(pdata->indices);
-	_EmitIndex(pdata, idx);
+	// then graph-level CCH path indices
+	if(arr_len(pdata->cch_indices) > 0) {
+		CCHIndex *idx = arr_pop(pdata->cch_indices);
+		_EmitCCHIndex(pdata, idx);
+		return pdata->out;
+	}
 
-	return pdata->out;
+	// no more indices to emit
+	return NULL;
 }
 
 ProcedureResult Proc_IndexesFree
@@ -444,6 +525,7 @@ ProcedureResult Proc_IndexesFree
 	if(ctx->privateData) {
 		IndexesContext *pdata = ctx->privateData;
 		arr_free(pdata->indices);
+		arr_free(pdata->cch_indices);
 		rm_free(pdata);
 	}
 

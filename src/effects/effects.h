@@ -32,6 +32,8 @@ typedef enum {
 	EFFECT_DROP_INDEX,         // index field deletion
 	EFFECT_CREATE_CONSTRAINT,  // constraint creation
 	EFFECT_DROP_CONSTRAINT,    // constraint deletion
+	EFFECT_CREATE_CCH,         // CCH path-index creation
+	EFFECT_DROP_CCH,           // CCH path-index deletion
 } EffectType;
 
 //------------------------------------------------------------------------------
@@ -187,6 +189,32 @@ void EffectsBuffer_AddDropIndexEffect
 	AttributeID attr_id,   // attribute id
 	const char *attr,      // attribute name
 	IndexFieldType t       // index field type (range/fulltext/vector)
+);
+
+// add a CCH path-index creation effect to buffer. the index is definition-only
+// on the wire ({relationship types, weight attribute}); each receiver rebuilds
+// its own hierarchy on apply. relationship types and the weight attribute are
+// carried as id+name pairs, cross-checked at the receiving end.
+void EffectsBuffer_AddCreateCCHEffect
+(
+	EffectsBuffer    *buff,        // effect buffer
+	const RelationID *rel_ids,     // relationship-type ids the index spans
+	const char      **rel_names,   // relationship-type names (parallel to rel_ids)
+	uint              rel_count,   // number of relationship types
+	AttributeID       weight_attr, // weight attribute id
+	const char       *weight_name  // weight attribute name
+);
+
+// add a CCH path-index deletion effect to buffer (same identity encoding as the
+// creation effect)
+void EffectsBuffer_AddDropCCHEffect
+(
+	EffectsBuffer    *buff,        // effect buffer
+	const RelationID *rel_ids,     // relationship-type ids the index spans
+	const char      **rel_names,   // relationship-type names (parallel to rel_ids)
+	uint              rel_count,   // number of relationship types
+	AttributeID       weight_attr, // weight attribute id
+	const char       *weight_name  // weight attribute name
 );
 
 // add a constraint creation effect to buffer

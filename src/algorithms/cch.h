@@ -6,7 +6,13 @@
 #pragma once
 
 #include "GraphBLAS.h"
+#include <stddef.h>
 #include <stdint.h>
+
+// forward declaration of the serializer stream (see serializers/serializer_io.h)
+// -- redefining the identical typedef is allowed under C11, so this stays in
+// sync without pulling the serializer header into the algorithms layer
+typedef struct SerializerIO_Opaque *SerializerIO;
 
 //------------------------------------------------------------------------------
 // Customizable Contraction Hierarchies (CCH)
@@ -72,6 +78,9 @@ typedef struct {
 	// dissection partitions in step 1. cached here from
 	// CCH_EliminationOrder for reuse by CCH_ChordalTriangulation, which
 	// needs the same topology to simulate the elimination game.
+	// PHASE-1 SCRATCH: freed (-> NULL) at the end of CCH_ChordalTriangulation --
+	// nothing past the chordal build (Phase 2 / query / maintenance) reads it,
+	// and a rebuild reconstructs it from the graph.
 	int64_t *xadj   ;    // size n+1
 	int64_t *adjncy ;
 
@@ -79,6 +88,8 @@ typedef struct {
 	// rank's parent (its lowest-ranked neighbor with a higher rank), or -1
 	// if 'rank' is a root. a graph need not be connected, so more than one
 	// root is possible -- each connected component gets its own.
+	// PHASE-1 SCRATCH, like xadj/adjncy: freed (-> NULL) at the end of
+	// CCH_ChordalTriangulation. (also recoverable as up[rank][0] if ever needed.)
 	int64_t *parent ;
 
 	// the chordal supergraph, stored as the upward graph: up[rank] is an
@@ -89,6 +100,15 @@ typedef struct {
 	// that's the only direction Phase 2's sweep and Phase 3's query ever
 	// walk. owned dynamic arrays, NULL until populated.
 	int64_t **up ;
+
+	// the downward adjacency: down[rank] is an arr_t of every rank' < rank that
+	// 'rank' is adjacent to in the chordal supergraph -- the exact inverse of
+	// 'up' (rank' in down[rank] iff rank in up[rank']), kept sorted ascending.
+	// metric-independent (topology only), built alongside 'up' by
+	// CCH_ChordalTriangulation. only an incremental re-customization needs it --
+	// to enumerate an arc's lower common neighbours when recomputing it in
+	// isolation -- so the full-sweep Customize ignores it. NULL until built.
+	int64_t **down ;
 
 	//--------------------------------------------------------------------------
 	// Phase 2 (customization) outputs -- metric-dependent
@@ -126,6 +146,14 @@ CCH *CCH_New
 void CCH_Free
 (
 	CCH *cch
+) ;
+
+// total heap bytes held by the resident hierarchy: the struct, the rank-space
+// arrays (perm/iperm/xadj/adjncy/parent), the upward + downward adjacency, and
+// the per-arc weight/middle arrays. returns 0 for a NULL hierarchy.
+size_t CCH_MemoryUsage
+(
+	const CCH *cch  // hierarchy to measure
 ) ;
 
 // step 1: computes a nested-dissection elimination order for 'A' via
@@ -177,6 +205,52 @@ void CCH_Customize
 	const GrB_Matrix W    // node-id space, W[u][v] = weight of edge u -> v
 ) ;
 
+// seed callback for CCH_RecustomizeScoped: for the directed node pair (u, v)
+// write the current metric weight of the cheapest u -> v original edge to
+// '*w_uv' (or +INFINITY if there is none) and the v -> u weight to '*w_vu'.
+// must reproduce exactly the seeding CCH_Customize does from its weight matrix W
+// (min over parallel edges / relationship types), so a scoped recustomization
+// lands on the same values a full one would.
+typedef void (*CCH_SeedFn)
+(
+	void   *ctx,     // opaque caller context
+	int64_t u,       // node id (rank space perm[] value)
+	int64_t v,       // node id
+	double *w_uv,    // [out] cheapest u -> v weight, or +INFINITY
+	double *w_vu     // [out] cheapest v -> u weight, or +INFINITY
+) ;
+
+// incrementally re-customize after the original arcs listed in 'du'[i] -> 'dv'[i]
+// (node-id space, 'k' of them) changed weight -- WITHOUT rerunning the full
+// Phase-2 sweep. each affected chordal arc is reset to its seed (via 'seed') and
+// re-relaxed over its lower common neighbours; the change is propagated up the
+// elimination structure, processing arcs in increasing lower-endpoint rank so an
+// arc is only recomputed once every arc it depends on is final. this handles
+// weight increases and decreases uniformly (a full recompute per arc, not a
+// min-relax) and lands on exactly the values CCH_Customize would, but touches
+// only the affected cone. requires Phase 1 (including cch->down) to have run and
+// a prior customization to be present. topology / elimination order unchanged.
+void CCH_RecustomizeScoped
+(
+	CCH          *cch,   // hierarchy to update in place
+	CCH_SeedFn    seed,  // per-arc seed weight lookup
+	void         *ctx,   // opaque context passed to 'seed'
+	const int64_t *du,   // changed arc source node ids
+	const int64_t *dv,   // changed arc destination node ids
+	uint64_t      k      // number of changed arcs
+) ;
+
+// true if a chordal arc connects ranks 'a' and 'b' (either direction). used to
+// tell an edge whose arc already exists (a weight-only change, handled by a
+// scoped recustomization) from one that introduces a brand-new adjacency (which
+// needs the chordal structure itself to grow -- a full rebuild). requires Phase 1.
+bool CCH_HasArc
+(
+	const CCH *cch,  // hierarchy
+	int64_t    a,    // rank
+	int64_t    b     // rank
+) ;
+
 // build the improving-shortcut matrix for materialization into the graph.
 // for every chordal arc, emit its customized weight into 'S' (a fresh GrB_FP64
 // matrix in node-id space, S[u][v] = customized weight of the directed arc
@@ -199,8 +273,8 @@ void CCH_ExtractShortcuts
 	GrB_Matrix      *M    // [output] shortcut middle node ids, node-id space INT64
 ) ;
 
-// Phase 3 (query) is not part of this API: the materialized SHORTCUT edges +
-// node ranks are queried by the stateless, concurrency-safe rank-pruned
-// bidirectional Dijkstra in proc_cch_query.c, so many queries can run against
-// the same graph in parallel without any shared CCH scratch.
+// Phase 3 (query) is not part of this API: the hierarchy is queried by the
+// stateless, concurrency-safe rank-pruned bidirectional Dijkstra in
+// proc_cch_idx_query.c, so many queries can run against the same index in
+// parallel without any shared CCH scratch.
 

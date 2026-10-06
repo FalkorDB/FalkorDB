@@ -357,8 +357,6 @@ class testProcedures(FlowTestsBase):
         expected_result = [
             ["READ", "algo.AStar"],
             ["READ", "algo.BFS"],
-            ["WRITE", "algo.CCH"],
-            ["READ", "algo.CCH.query"],
             ["READ", "algo.HarmonicCentrality"],
             ["READ", "algo.MSF"],
             ["READ", "algo.SPpaths"],
@@ -369,6 +367,7 @@ class testProcedures(FlowTestsBase):
             ["READ", "algo.maxFlow"],
             ["READ", "algo.pageRank"],
             ["READ", "db.constraints"],
+            ["READ", "db.idx.cch.query"],
             ["WRITE", "db.idx.fulltext.createNodeIndex"],
             ["WRITE", "db.idx.fulltext.drop"],
             ["READ", "db.idx.fulltext.queryNodes"],
