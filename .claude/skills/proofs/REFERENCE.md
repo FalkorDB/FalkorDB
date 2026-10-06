@@ -54,8 +54,9 @@ non-test fns PROVEN, with 0 unlisted.
 cp target/release/libfalkordb.dylib /tmp/fdb_$(date +%s).dylib    # fresh path
 redis-server --port 19xyz --loadmodule /tmp/fdb_….dylib --daemonize yes --save ''
 # wait for PING (RediSearch init takes a few seconds), run queries, then shutdown nosave
-RLTest -t tests/flow/test_x.py --module <dylib> --redis-config-file "$PWD/tests/flow/redis.conf" --randomize-ports
+RLTest -t tests/flow/test_x.py --module <dylib> --redis-config-file "$PWD/tests/flow/redis.conf" -p 19xyz
 ```
 
-Make sure nothing stale listens on `localhost:6379` first. The flow harness connects
-there too.
+Use `-p <port>`, not `--randomize-ports`: `Env()` in `tests/flow/common.py` connects
+to the port given by `-p` (default 6379), so randomized runs still hit 6379. Make
+sure nothing stale listens on the port you pick.

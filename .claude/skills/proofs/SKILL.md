@@ -56,5 +56,5 @@ live. Also check that the existing theorems still hold for the new code.
 
 - Never hand-edit Lean to match a guess about the Rust; read the cited lines in `origin/main`.
 - Back up `proofs/` before mass edits (`tar --exclude=.lake -czf …`). A bad `perl -pi` once wiped citations.
-- Live repros: give each run its own redis port. The flow harness also connects to `localhost:6379`, so a stale server there hangs tests. Copy a rebuilt dylib to a fresh path before loading it (macOS kills redis-server when the loaded dylib is overwritten).
+- Live repros: give each run its own redis port. For flow tests use `RLTest -p <port>`; the harness connects to that port (default 6379), and `--randomize-ports` does not change it. Copy a rebuilt dylib to a fresh path before loading it (macOS kills redis-server when the loaded dylib is overwritten).
 - Agents working in parallel: one owner per `proofs/<area>`, private scratch dirs, and no `./flow.sh` on 6379.
