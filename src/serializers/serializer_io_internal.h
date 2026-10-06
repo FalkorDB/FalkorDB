@@ -52,7 +52,7 @@ struct SerializerIO_Opaque {
 	void *stream;           // RedisModuleIO* or a Stream descriptor
 	bool free_buff;         // true if serializer has a buffer to free
 	bool error;             // sticky decode failure flag (short read or bad data)
-	const char *error_reason;  // decoder-detected bad data, NULL otherwise
+	char error_reason[256];  // decoder-detected bad data, empty otherwise
 	bool (*IsError)(void*); // backend error probe, NULL for encoders
 };
 

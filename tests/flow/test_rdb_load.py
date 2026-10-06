@@ -357,6 +357,24 @@ class testRdbLoad():
 
         self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
 
+    # a matrix whose value type GraphBLAS doesn't know (GxB_Type_from_name
+    # reports that as success with a NULL type)
+    def test_malformed_matrix_type(self):
+        self.conn.flushall()
+        self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (:N)-[:R]->(:N)")
+        self.conn.config_set('rdbcompression', 'no')
+        try:
+            body, version_bytes = self._dump_body("src")
+        finally:
+            self.conn.config_set('rdbcompression', 'yes')
+
+        body = bytearray(body)
+        i = body.find(b'GrB_UINT64')
+        self.env.assertGreater(i, 0)
+        body[i + 4] = ord('X')   # GrB_XINT64
+
+        self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
+
     #---------------------------------------------------------------------------
     # RESTORE of a graph's dump while a graph of the same name is live
     #---------------------------------------------------------------------------

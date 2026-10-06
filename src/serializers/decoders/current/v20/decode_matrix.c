@@ -81,7 +81,10 @@ static void _DecodeTensors
 				GxB_Vector_deserialize (&u, NULL, blob, blob_size, NULL) ;
 			rm_free (blob) ;
 			if (info != GrB_SUCCESS) {
-				SerializerIO_SetError (rdb, "malformed tensor") ;
+				SerializerIO_SetError (rdb,
+						"GraphBLAS error %d deserializing tensor (%llu, %llu)",
+						(int) info, (unsigned long long) i,
+						(unsigned long long) j) ;
 				return ;
 			}
 
@@ -89,9 +92,14 @@ static void _DecodeTensors
 			GrB_Index nvals;
 			info = GrB_Vector_nvals (&nvals, u) ;
 			ASSERT (info == GrB_SUCCESS) ;
-			if (nvals == 0) {
+			// a tensor holds at least two edges, a single edge is stored
+			// as a scalar entry
+			if (nvals < 2) {
 				GrB_Vector_free (&u) ;
-				SerializerIO_SetError (rdb, "empty tensor") ;
+				SerializerIO_SetError (rdb,
+						"tensor (%llu, %llu) holds %llu edges, expected at least 2",
+						(unsigned long long) i, (unsigned long long) j,
+						(unsigned long long) nvals) ;
 				return ;
 			}
 			*n_elem += nvals;
@@ -101,7 +109,10 @@ static void _DecodeTensors
 			info = GrB_Matrix_setElement_UINT64 (A, v, i, j) ;
 			if (info != GrB_SUCCESS) {
 				GrB_Vector_free (&u) ;
-				SerializerIO_SetError (rdb, "tensor index out of range") ;
+				SerializerIO_SetError (rdb,
+						"GraphBLAS error %d setting tensor (%llu, %llu)",
+						(int) info, (unsigned long long) i,
+						(unsigned long long) j) ;
 				return ;
 			}
 		}
@@ -156,24 +167,42 @@ static void _decode_and_load_vector
 		rm_free (arr) ;
 		rm_free (t_name) ;
 		*v = NULL ;
-		SerializerIO_SetError (rdb, "matrix vector size mismatch") ;
+		SerializerIO_SetError (rdb,
+				"matrix vector holds %zu bytes but declares %llu", n,
+				(unsigned long long) n_bytes) ;
 		return ;
 	}
 
 	// get GrB_Type
 	GrB_Type t;  // data type
+	// an unrecognized name is not an error to GraphBLAS: it returns NULL
 	info = GxB_Type_from_name (&t, t_name) ;
-	rm_free (t_name) ;
-	if (info != GrB_SUCCESS) {
+	if (info != GrB_SUCCESS || t == NULL) {
+		int name_len = (int) (t_name_len < 64 ? t_name_len : 64) ;
+		if (info != GrB_SUCCESS) {
+			SerializerIO_SetError (rdb,
+					"GraphBLAS error %d resolving matrix value type '%.*s'",
+					(int) info, name_len, t_name) ;
+		} else {
+			SerializerIO_SetError (rdb, "unknown matrix value type '%.*s'",
+					name_len, t_name) ;
+		}
+		rm_free (t_name) ;
 		rm_free (arr) ;
 		*v = NULL ;
-		SerializerIO_SetError (rdb, "unknown matrix value type") ;
 		return ;
 	}
+	rm_free (t_name) ;
 
 	// load vector
 	info = GrB_Vector_new (v, t, 0) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS) {
+		rm_free (arr) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb,
+				"GraphBLAS error %d creating a matrix vector", (int) info) ;
+		return ;
+	}
 
 	info = GxB_Vector_load (*v, &arr, t, n_entries, n_bytes, handling, NULL) ;
 	if (info != GrB_SUCCESS) {
@@ -181,7 +210,8 @@ static void _decode_and_load_vector
 		rm_free (arr) ;
 		GrB_Vector_free (v) ;
 		*v = NULL ;
-		SerializerIO_SetError (rdb, "malformed matrix vector") ;
+		SerializerIO_SetError (rdb,
+				"GraphBLAS error %d loading a matrix vector", (int) info) ;
 	}
 }
 
@@ -204,7 +234,9 @@ static GrB_Matrix _Decode_GrB_Matrix
 	// container and writing its fields would overflow the allocation
 	if (SerializerIO_Error (rdb) || n != sizeof(struct GxB_Container_struct)) {
 		rm_free (container) ;
-		SerializerIO_SetError (rdb, "malformed matrix container") ;
+		SerializerIO_SetError (rdb,
+				"matrix container holds %zu bytes, expected %zu", n,
+				sizeof (struct GxB_Container_struct)) ;
 		return NULL ;
 	}
 
@@ -240,7 +272,8 @@ static GrB_Matrix _Decode_GrB_Matrix
 	if (info != GrB_SUCCESS) {
 		GrB_Matrix_free (&A) ;
 		GxB_Container_free (&container) ;
-		SerializerIO_SetError (rdb, "malformed matrix") ;
+		SerializerIO_SetError (rdb,
+				"GraphBLAS error %d loading a matrix", (int) info) ;
 		return NULL ;
 	}
 
@@ -285,7 +318,8 @@ static void _Decode_Delta_Matrix
 		if (M  != NULL) GrB_Matrix_free (&M) ;
 		if (DP != NULL) GrB_Matrix_free (&DP) ;
 		if (DM != NULL) GrB_Matrix_free (&DM) ;
-		SerializerIO_SetError (rdb, "malformed delta matrix") ;
+		SerializerIO_SetError (rdb,
+				"GraphBLAS error %d setting delta matrix", (int) info) ;
 	}
 }
 

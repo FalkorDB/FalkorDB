@@ -9,6 +9,7 @@
 #include "../util/rmalloc.h"
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <unistd.h>
 
@@ -226,13 +227,17 @@ bool SerializerIO_Error
 void SerializerIO_SetError
 (
 	SerializerIO io,    // serializer
-	const char *reason  // what was wrong with the payload
+	const char *fmt,    // what was wrong with the payload
+	...
 ) {
-	ASSERT(io     != NULL);
-	ASSERT(reason != NULL);
+	ASSERT(io  != NULL);
+	ASSERT(fmt != NULL);
 
 	if(!io->error) {
-		io->error_reason = reason;
+		va_list args;
+		va_start(args, fmt);
+		vsnprintf(io->error_reason, sizeof(io->error_reason), fmt, args);
+		va_end(args);
 	}
 
 	io->error = true;
@@ -249,7 +254,7 @@ const char *SerializerIO_ErrorReason
 		return NULL;
 	}
 
-	if(io->error_reason != NULL) {
+	if(io->error_reason[0] != '\0') {
 		return io->error_reason;
 	}
 
