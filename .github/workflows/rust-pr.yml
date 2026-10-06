@@ -87,7 +87,7 @@ jobs:
         #     stack rebuilds the tag for this PR.
         run: |
           set -euo pipefail
-          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|graphblas\.sh|redisearch\.sh|deps/RediSearch|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
+          PATTERN="^(build/Dockerfile|build/libomp\.sh|build/graphblas/.*|native-deps/.*|deps/native-deps\.lock|deps/(GraphBLAS|LAGraph|RediSearch)|\.gitmodules|\.dockerignore|\.github/workflows/build-toolchain\.yml)$"
           if [ "$EVENT" = "merge_group" ]; then
             RANGE="HEAD~1 HEAD"
           else
@@ -266,7 +266,18 @@ jobs:
         run: cargo fmt --all --check
       - name: Lint
         run: |
-          CXX=clang++-22 cargo clippy --all-targets
+          CXX=clang++-23 cargo clippy --all-targets
+      - name: Format (native-deps)
+        run: cargo fmt --all --check --manifest-path native-deps/Cargo.toml
+      - name: Lint (native-deps)
+        run: cargo clippy --all-targets --manifest-path native-deps/Cargo.toml
+      - name: deps/native-deps.lock is in step with the gitlinks
+        # `lock --check` reads the gitlinks with `git ls-files`. This job runs in
+        # a container whose user differs from the checkout's owner, so git refuses
+        # with "detected dubious ownership" unless the workspace is marked safe.
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cargo run --locked --manifest-path native-deps/Cargo.toml -- lock --check
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -308,24 +319,24 @@ jobs:
           # Snapshot coverage here, before the e2e/TCK suites run below, so
           # cargo test's own profraw can be reported as its own Codecov flag
           # (unit-tests) instead of being indistinguishable from e2e coverage.
-          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov-unit.txt.all
+          llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov-unit.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov-unit.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov-unit.txt.all
           lcov --ignore-errors unused -r codecov-unit.txt.all -o codecov-unit.txt
           . /data/venv/bin/activate
           pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
           TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
-          llvm-profdata-22 merge --sparse `find . -name "*.profraw"` -o cov.profdata
-          llvm-cov-22 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
+          llvm-profdata-23 merge --sparse `find . -name "*.profraw"` -o cov.profdata
+          llvm-cov-23 export --format=lcov --instr-profile cov.profdata target/debug/libfalkordb.so $TEST_OBJECTS > codecov.txt.all
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
       - name: Upload unit test coverage to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./codecov-unit.txt
           flags: unit-tests
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: e2e-tck
@@ -365,10 +376,10 @@ jobs:
           # the embedded libredisearch_rs.a (its own std) links. cargo-fuzz
           # appends to an existing RUSTFLAGS env.
           export RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition"
-          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz build fuzz_target_runtime
-          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
-          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
-          CXX=clang++-22 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime
+          CXX=clang++-23 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz build fuzz_target_runtime
+          CXX=clang++-23 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz run fuzz_target_runtime -- -max_total_time=300
+          CXX=clang++-23 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz cmin fuzz_target_runtime
+          CXX=clang++-23 CARGO_PROFILE_RELEASE_LTO=false cargo fuzz coverage fuzz_target_runtime
           TOOLCHAIN_LLVM_COV=$(find $(rustc --print sysroot) -name "llvm-cov" -type f | head -1)
           echo "Using llvm-cov from: $TOOLCHAIN_LLVM_COV"
           "$TOOLCHAIN_LLVM_COV" --version
@@ -376,7 +387,7 @@ jobs:
           lcov --ignore-errors unused -r codecov.txt.all -o codecov.txt
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           flags: fuzz

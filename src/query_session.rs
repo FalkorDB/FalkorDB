@@ -65,6 +65,10 @@ pub enum WriteAbort {
     /// commits — so callers that can retry should.
     #[error("Write query aborted: another write is in progress")]
     WriteSlotBusy,
+    /// The version this write produced failed `Graph::validate`, so it was not
+    /// published. An engine fault rather than a reason to retry.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 /// The locks held by one query, on one thread. Not `Send`, because the GIL must be

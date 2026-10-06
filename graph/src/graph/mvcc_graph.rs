@@ -59,7 +59,7 @@ use std::sync::{
 
 use atomic_refcell::AtomicRefCell;
 
-use crate::graph::graph::Graph;
+use crate::graph::graph::{Graph, NodeOpError};
 
 /// MVCC coordinator for concurrent graph access.
 ///
@@ -119,11 +119,36 @@ impl MvccGraph {
         }
     }
 
+    /// Publish `new_graph` as the current version.
+    ///
+    /// Validates before touching anything, so a refusal leaves the published
+    /// version untouched and the private one unpublished. This is the only
+    /// place a version becomes visible, which makes it the only place the check
+    /// has to be.
+    ///
+    /// A refusal *is* a [`Self::rollback`], performed here rather than left to
+    /// the caller. That is not a convenience: the write slot is a single
+    /// `AtomicBool` for the whole graph, so returning without clearing it makes
+    /// every later `write()` fail until the process restarts. Five of the six
+    /// callers would have had to remember, and the sixth is `unreachable!()`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Graph::validate`] refuses. The version is not published and
+    /// the write slot is released.
     pub fn commit(
         &mut self,
         new_graph: Arc<AtomicRefCell<Graph>>,
-    ) {
+    ) -> Result<(), NodeOpError> {
         debug_assert_eq!(self.graph.borrow().version + 1, new_graph.borrow().version);
+
+        // Before any of the work below, so a refusal changes nothing — and
+        // releasing the slot on the way out, so a refusal is a rollback rather
+        // than a graph nobody can write to again.
+        if let Err(e) = new_graph.borrow().validate() {
+            self.rollback();
+            return Err(e);
+        }
 
         // Check if schema changed (new labels, relationship types, or attributes)
         // Single borrow for old graph to collect all schema counts
@@ -190,6 +215,7 @@ impl MvccGraph {
 
         self.graph = new_graph;
         self.write.store(false, Ordering::Release);
+        Ok(())
     }
 
     pub fn rollback(&self) {
@@ -200,5 +226,42 @@ impl MvccGraph {
 impl Drop for MvccGraph {
     fn drop(&mut self) {
         self.graph.borrow().cancel_indexing();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MvccGraph;
+    use crate::graph::graphblas::test_init::ensure_init;
+    use roaring::RoaringTreemap;
+
+    /// A refused version must leave the write slot free.
+    ///
+    /// The slot is one `AtomicBool` for the whole graph, so a `commit` that
+    /// returns without clearing it does not fail one write — it fails every
+    /// write for the life of the process. Found in review, by two reviewers
+    /// independently, after the validation was added here.
+    #[test]
+    fn a_refused_commit_releases_the_write_slot() {
+        ensure_init();
+        let mut mvcc = MvccGraph::new(64, 64, 0, "t");
+
+        let version = mvcc.write().expect("the slot starts free");
+        // Ids 0 and 5 with nothing between: a batch that cannot have come from
+        // an allocator, which is what `Graph::validate` refuses.
+        let holed: RoaringTreemap = [0u64, 5].into_iter().collect();
+        version
+            .borrow_mut()
+            .create_nodes(&holed)
+            .expect("neither id is live, so the graph takes them");
+
+        assert!(
+            mvcc.commit(version).is_err(),
+            "a hole in the id space must refuse the version"
+        );
+        assert!(
+            mvcc.write().is_some(),
+            "the refusal must release the write slot, or no write ever succeeds again"
+        );
     }
 }
