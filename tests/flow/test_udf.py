@@ -1802,6 +1802,37 @@ class test_udf_javascript():
         self.db.udf_load("gg", "var G = graph; falkor.register('f', function() { return typeof G.traverse; });")
         self.env.assertEqual(self.graph.query("RETURN gg.f()").result_set, [['function']])
 
+    def test_roundtrip_fidelity(self):
+        """
+        Values that C passes through an identity UDF unchanged: -0.0 stays a
+        float, a map with a `constructor` key stays a map, and a vecf32
+        holding inf survives.
+        """
+
+        script = """
+        function id(x) { return x; }
+        function nz() { return -0; }
+        falkor.register('id', id);
+        falkor.register('nz', nz);
+        """
+        self.db.udf_load("rt", script)
+
+        res = self.graph.query("RETURN rt.id(-0.0), 1 / rt.id(-0.0), 1 / rt.nz()").result_set
+        self.env.assertEqual(res, [[-0.0, float('-inf'), float('-inf')]])
+
+        for m in ["{constructor: {name: 'Date'}}", "{constructor: {name: 'RegExp'}}"]:
+            res = self.graph.query(f"RETURN rt.id({m}) = {m}").result_set
+            self.env.assertEqual(res, [[True]])
+
+        res = self.graph.query("RETURN rt.id(vecf32([1e39, 1.5])) = vecf32([1e39, 1.5])").result_set
+        self.env.assertEqual(res, [[True]])
+
+        # real Date and RegExp objects still convert
+        res = self.graph.query("""RETURN rt.id(localdatetime('2020-01-02T03:04:05'))
+                                         = localdatetime('2020-01-02T03:04:05'),
+                                         rt.id(date('2020-01-02')) = date('2020-01-02')""").result_set
+        self.env.assertEqual(res, [[True, True]])
+
     def test_returning_undefined(self):
         """
         UDFs returning `undefined` should map to Cypher NULL.
