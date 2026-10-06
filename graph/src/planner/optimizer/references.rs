@@ -207,16 +207,79 @@ pub(super) fn index_query_references_variable(
     scope_id: u32,
 ) -> bool {
     let refs = |e: &QueryExpr<Variable>| expr_references_variable(e, var_id, scope_id);
-    match query {
-        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => refs(value),
-        IndexQuery::InList { list, .. } => refs(list),
-        IndexQuery::Range { min, max, .. } => {
-            min.as_ref().is_some_and(&refs) || max.as_ref().is_some_and(&refs)
+    // An explicit stack rather than recursion: `And` and `Or` nest to whatever
+    // depth the query's predicates do.
+    let mut pending = vec![query];
+    while let Some(q) = pending.pop() {
+        let hit = match q {
+            IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
+                refs(value)
+            }
+            IndexQuery::InList { list, .. } => refs(list),
+            IndexQuery::Range { min, max, .. } => {
+                min.as_ref().is_some_and(&refs) || max.as_ref().is_some_and(&refs)
+            }
+            IndexQuery::Point { point, radius, .. } => refs(point) || refs(radius),
+            IndexQuery::And(qs) | IndexQuery::Or(qs) => {
+                pending.extend(qs);
+                false
+            }
+        };
+        if hit {
+            return true;
         }
-        IndexQuery::Point { point, radius, .. } => refs(point) || refs(radius),
-        IndexQuery::And(qs) | IndexQuery::Or(qs) => qs
-            .iter()
-            .any(|q| index_query_references_variable(q, var_id, scope_id)),
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use orx_tree::DynTree;
+
+    use super::index_query_references_variable;
+    use crate::index::indexer::IndexQuery;
+    use crate::parser::ast::{ExprIR, QueryExpr, Variable};
+    use crate::runtime::functions::Type;
+
+    fn var(
+        id: u32,
+        scope_id: u32,
+    ) -> QueryExpr<Variable> {
+        Arc::new(DynTree::new(ExprIR::Variable(Variable {
+            name: None,
+            id,
+            scope_id,
+            ty: Type::Any,
+        })))
+    }
+
+    fn eq(value: QueryExpr<Variable>) -> IndexQuery<QueryExpr<Variable>> {
+        IndexQuery::Equal {
+            key: Arc::new("k".to_string()),
+            value,
+        }
+    }
+
+    /// A reference buried under nested `And`/`Or` is found, at any depth and in
+    /// any position among siblings, and only for the right `(id, scope)`.
+    #[test]
+    fn finds_a_reference_inside_nested_and_or() {
+        let deep = IndexQuery::And(vec![
+            eq(var(1, 0)),
+            IndexQuery::Or(vec![
+                eq(var(2, 0)),
+                IndexQuery::And(vec![eq(var(3, 0)), eq(var(7, 1))]),
+            ]),
+        ]);
+        assert!(index_query_references_variable(&deep, 7, 1));
+        assert!(index_query_references_variable(&deep, 1, 0));
+        assert!(
+            !index_query_references_variable(&deep, 7, 0),
+            "same id, other scope"
+        );
+        assert!(!index_query_references_variable(&deep, 9, 0));
     }
 }
 
