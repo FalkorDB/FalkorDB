@@ -25,6 +25,8 @@ typedef struct {
 	size_t cap;             // io buffer capacity
 	size_t count;           // number of bytes written to io buffer
 	RedisModuleIO *stream;  // redis module io
+	bool corrupt;           // decode: the payload broke the buffer framing
+	const char *corrupt_reason;  // what broke it, for the failure log
 } BufferedIO;
 
 // generic serializer
@@ -49,15 +51,31 @@ struct SerializerIO_Opaque {
 	bool encoder;           // true is serializer is used for encoding, false decoding
 	void *stream;           // RedisModuleIO* or a Stream descriptor
 	bool free_buff;         // true if serializer has a buffer to free
-	bool error;             // sticky decode IO-error (short read) flag
+	bool error;             // sticky decode failure flag (short read or bad data)
+	const char *error_reason;  // decoder-detected bad data, NULL otherwise
 	bool (*IsError)(void*); // backend error probe, NULL for encoders
 };
 
-// probe whether the RedisModuleIO backing a buffered serializer hit an IO error
-// (e.g. a short read during diskless replication or a truncated RESTORE payload)
+// probe whether a buffered serializer failed: either the RedisModuleIO behind it
+// hit an IO error (e.g. a short read during diskless replication or a truncated
+// RESTORE payload) or the payload broke the buffer framing
 static inline bool Buffered_IsError
 (
 	void *stream  // BufferedIO*
 ) {
-	return RedisModule_IsIOError(((BufferedIO*)stream)->stream);
+	BufferedIO *buffer = (BufferedIO*)stream;
+	return buffer->corrupt || RedisModule_IsIOError(buffer->stream);
+}
+
+// mark a buffered serializer's payload as malformed; the read layer latches the
+// serializer's sticky error flag through Buffered_IsError
+static inline void Buffered_SetCorrupt
+(
+	BufferedIO *buffer,  // buffer
+	const char *reason   // what was malformed
+) {
+	if(!buffer->corrupt) {
+		buffer->corrupt_reason = reason;
+	}
+	buffer->corrupt = true;
 }

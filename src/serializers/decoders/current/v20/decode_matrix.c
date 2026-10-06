@@ -79,21 +79,31 @@ static void _DecodeTensors
 			GrB_Vector u;
 			GrB_Info info =
 				GxB_Vector_deserialize (&u, NULL, blob, blob_size, NULL) ;
-			ASSERT (info == GrB_SUCCESS) ;
+			rm_free (blob) ;
+			if (info != GrB_SUCCESS) {
+				SerializerIO_SetError (rdb, "malformed tensor") ;
+				return ;
+			}
 
 			// update number of elements loaded
 			GrB_Index nvals;
 			info = GrB_Vector_nvals (&nvals, u) ;
 			ASSERT (info == GrB_SUCCESS) ;
-			ASSERT (nvals > 0) ;
+			if (nvals == 0) {
+				GrB_Vector_free (&u) ;
+				SerializerIO_SetError (rdb, "empty tensor") ;
+				return ;
+			}
 			*n_elem += nvals;
 
 			// set tensor
 			uint64_t v = SET_MSB ((uint64_t)(uintptr_t) u) ;
 			info = GrB_Matrix_setElement_UINT64 (A, v, i, j) ;
-			ASSERT (info == GrB_SUCCESS) ;
-
-			rm_free(blob);
+			if (info != GrB_SUCCESS) {
+				GrB_Vector_free (&u) ;
+				SerializerIO_SetError (rdb, "tensor index out of range") ;
+				return ;
+			}
 		}
 
 		// set number of loaded tensors
@@ -141,18 +151,38 @@ static void _decode_and_load_vector
 		return ;
 	}
 
+	// the declared size must match the bytes actually read; GraphBLAS trusts it
+	if (n != n_bytes) {
+		rm_free (arr) ;
+		rm_free (t_name) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb, "matrix vector size mismatch") ;
+		return ;
+	}
+
 	// get GrB_Type
 	GrB_Type t;  // data type
 	info = GxB_Type_from_name (&t, t_name) ;
-	ASSERT (info == GrB_SUCCESS) ;
 	rm_free (t_name) ;
+	if (info != GrB_SUCCESS) {
+		rm_free (arr) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb, "unknown matrix value type") ;
+		return ;
+	}
 
 	// load vector
 	info = GrB_Vector_new (v, t, 0) ;
 	ASSERT (info == GrB_SUCCESS) ;
 
 	info = GxB_Vector_load (*v, &arr, t, n_entries, n_bytes, handling, NULL) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS) {
+		// on failure GraphBLAS leaves 'arr' with us
+		rm_free (arr) ;
+		GrB_Vector_free (v) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb, "malformed matrix vector") ;
+	}
 }
 
 // decode a GraphBLAS matrix
@@ -174,6 +204,7 @@ static GrB_Matrix _Decode_GrB_Matrix
 	// container and writing its fields would overflow the allocation
 	if (SerializerIO_Error (rdb) || n != sizeof(struct GxB_Container_struct)) {
 		rm_free (container) ;
+		SerializerIO_SetError (rdb, "malformed matrix container") ;
 		return NULL ;
 	}
 
@@ -206,7 +237,12 @@ static GrB_Matrix _Decode_GrB_Matrix
 	ASSERT (info == GrB_SUCCESS) ;
 
 	info = GxB_load_Matrix_from_Container (A, container, NULL) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS) {
+		GrB_Matrix_free (&A) ;
+		GxB_Container_free (&container) ;
+		SerializerIO_SetError (rdb, "malformed matrix") ;
+		return NULL ;
+	}
 
 	// A is now back to its original state. The container and its p,h,b,i,x
 	// GrB_Vectors exist but its vectors all have length 0.
@@ -245,7 +281,12 @@ static void _Decode_Delta_Matrix
 	}
 
 	GrB_Info info = Delta_Matrix_setMatrices (D, &M, &DP, &DM) ;
-	ASSERT (info == GrB_SUCCESS) ;
+	if (info != GrB_SUCCESS) {
+		if (M  != NULL) GrB_Matrix_free (&M) ;
+		if (DP != NULL) GrB_Matrix_free (&DP) ;
+		if (DM != NULL) GrB_Matrix_free (&DM) ;
+		SerializerIO_SetError (rdb, "malformed delta matrix") ;
+	}
 }
 
 // decode label matrices from rdb
@@ -278,7 +319,20 @@ void RdbLoadLabelMatrices_v20
 		if(SerializerIO_Error(rdb)) {
 			return;
 		}
+		if(l >= Graph_LabelTypeCount(g)) {
+			SerializerIO_SetError(rdb, "label matrix for an unknown label");
+			return;
+		}
+
 		Delta_Matrix lbl = Graph_GetLabelMatrix(g, l);
+
+		GrB_Index nvals;
+		Delta_Matrix_nvals(&nvals, lbl);
+		if(nvals != 0) {
+			SerializerIO_SetError(rdb, "label matrix decoded twice");
+			return;
+		}
+
 		_Decode_Delta_Matrix(rdb, lbl);
 	}
 }
@@ -314,14 +368,22 @@ void RdbLoadRelationMatrices_v20
 		if (SerializerIO_Error (rdb)) {
 			return;
 		}
-		ASSERT (r == i) ;
+
+		// relation matrices are encoded in id order
+		if (r != i) {
+			SerializerIO_SetError (rdb, "relation matrix out of order") ;
+			return ;
+		}
 
 		// plant M matrix
 		Delta_Matrix DR = Graph_GetRelationMatrix (g, r, false) ;
 
 		GrB_Index nvals;
 		Delta_Matrix_nvals (&nvals, DR) ;
-		ASSERT (nvals == 0) ;
+		if (nvals != 0) {
+			SerializerIO_SetError (rdb, "relation matrix decoded twice") ;
+			return ;
+		}
 
 		_Decode_Delta_Matrix(rdb, DR);
 
@@ -329,6 +391,9 @@ void RdbLoadRelationMatrices_v20
 		uint64_t n_elem    = 0;  // number of tensor edges
 		uint64_t n_tensors = 0;  // number of tensors in matrix
 		_DecodeTensors (rdb, DR, &n_tensors, &n_elem) ;
+		if (SerializerIO_Error (rdb)) {
+			return ;
+		}
 
 		// update graph edge statistics
 		// number of edges of type 'r' equals to:

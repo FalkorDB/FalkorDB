@@ -256,3 +256,128 @@ class testRdbLoad():
         for off in [15, 25, 40, n // 3, n // 2, n - 40, n - 12]:
             self._assert_restore_rejected(self._reframe(meta[:off],
                                                         version_bytes))
+
+    #---------------------------------------------------------------------------
+    # malformed (CRC-valid) payloads must be rejected, not crash the server
+    #---------------------------------------------------------------------------
+
+    # RDB length encoding (rdbLoadLen), plain lengths only
+    @staticmethod
+    def _rdb_len(b, p):
+        t = b[p]
+        if t >> 6 == 0:
+            return t & 0x3F, p + 1
+        if t >> 6 == 1:
+            return ((t & 0x3F) << 8) | b[p + 1], p + 2
+        if t == 0x80:
+            return int.from_bytes(b[p + 1:p + 5], 'big'), p + 5
+        if t == 0x81:
+            return int.from_bytes(b[p + 1:p + 9], 'big'), p + 9
+        raise ValueError(f'unexpected RDB length encoding {t:#x}')
+
+    # DUMP 'key' uncompressed; returns (body, version bytes, first chunk start,
+    # values) where values lists the chunk's (tag offset, tag, value offset,
+    # value length). each value is a 1-byte type tag then its payload: bytes
+    # (tag 0) carry an 8-byte length prefix, scalars are fixed size
+    def _dump_first_chunk(self, key):
+        self.conn.config_set('rdbcompression', 'no')
+        try:
+            body, version_bytes = self._dump_body(key)
+        finally:
+            self.conn.config_set('rdbcompression', 'yes')
+
+        # <RDB_TYPE_MODULE_2><module id><RDB_MODULE_OPCODE_STRING><len><chunk>
+        self.env.assertEqual(body[0], 7)
+        _, p = self._rdb_len(body, 1)
+        self.env.assertEqual(body[p], 5)
+        chunk_len, start = self._rdb_len(body, p + 1)
+
+        sizes  = {1: 4, 2: 8, 3: 8, 4: 8, 5: 16}
+        values = []
+        p      = start
+        while p < start + chunk_len:
+            tag = body[p]
+            if tag == 0:
+                l = int.from_bytes(body[p + 1:p + 9], 'little')
+                values.append((p, tag, p + 9, l))
+                p += 9 + l
+            else:
+                values.append((p, tag, p + 1, sizes[tag]))
+                p += 1 + sizes[tag]
+
+        return bytearray(body), version_bytes, start, values
+
+    # a value tagged with the wrong type
+    def test_malformed_type_tag(self):
+        self.conn.flushall()
+        self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (), (), ()")
+        body, version_bytes, _, values = self._dump_first_chunk("src")
+
+        # values[1] is the header's node count, an unsigned (tag 4)
+        tag_off, tag, _, _ = values[1]
+        self.env.assertEqual(tag, 4)
+        body[tag_off] = 0x7F
+
+        self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
+
+    # a byte buffer whose declared length runs past its chunk
+    def test_malformed_buffer_length(self):
+        self.conn.flushall()
+        self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (), (), ()")
+        body, version_bytes, _, values = self._dump_first_chunk("src")
+
+        # values[0] is the graph name, a byte buffer (tag 0) holding the name
+        # and its null terminator
+        tag_off, tag, _, l = values[0]
+        self.env.assertEqual(tag, 0)
+        self.env.assertEqual(l, len("src") + 1)
+        body[tag_off + 1:tag_off + 9] = (1 << 32).to_bytes(8, 'little')
+
+        self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
+
+    # a key schema naming a payload type the decoder doesn't know
+    def test_malformed_payload_type(self):
+        self.conn.flushall()
+        self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (), (), ()")
+        body, version_bytes, _, values = self._dump_first_chunk("src")
+
+        # header: name, 4 entity counts, label count, relation count (0, so no
+        # multi-edge flags), key count; schema: attribute, node schema and edge
+        # schema counts (all 0); then the key schema: #payloads, (type, count)*
+        vals = [int.from_bytes(body[o:o + l], 'little')
+                for _, _, o, l in values[1:]]
+        self.env.assertEqual(vals[:10], [3, 0, 0, 0, 0, 0, 1, 0, 0, 0])
+        payloads = vals[10]
+        self.env.assertGreater(payloads, 0)
+
+        # first payload: nodes (ENCODE_STATE_NODES = 1), 3 of them
+        _, _, type_off, _ = values[12]
+        self.env.assertEqual(vals[11:13], [1, 3])
+        body[type_off:type_off + 8] = (99).to_bytes(8, 'little')
+
+        self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
+
+
+class testRdbLoadUDF():
+    def __init__(self):
+        self.env, self.db = Env(enableDebugCommand=True)
+        self.conn = self.env.getConnection()
+
+    # UDF libraries live outside the keyspace and survive a flush; loading an
+    # RDB into a process that already holds a library (DEBUG RELOAD, or a
+    # replica's next full sync) must leave the RDB's version in place
+    def test_reload_replaces_udf(self):
+        v1 = "function f() { return 1; } falkor.register('f', f);"
+        v2 = "function f() { return 2; } falkor.register('f', f);"
+
+        self.conn.execute_command("GRAPH.UDF", "LOAD", "reload_lib", v1)
+        self.conn.execute_command("GRAPH.QUERY", "g", "CREATE ()")
+        self.conn.save()
+
+        self.conn.execute_command("GRAPH.UDF", "LOAD", "REPLACE", "reload_lib",
+                                  v2)
+        self.conn.execute_command("DEBUG", "RELOAD", "NOSAVE")
+
+        res = self.conn.execute_command("GRAPH.RO_QUERY", "g",
+                                        "RETURN reload_lib.f()")
+        self.env.assertEqual(res[1][0][0], 1)

@@ -222,6 +222,49 @@ bool SerializerIO_Error
 	return io->error;
 }
 
+// fail the decode, see serializer_io.h
+void SerializerIO_SetError
+(
+	SerializerIO io,    // serializer
+	const char *reason  // what was wrong with the payload
+) {
+	ASSERT(io     != NULL);
+	ASSERT(reason != NULL);
+
+	if(!io->error) {
+		io->error_reason = reason;
+	}
+
+	io->error = true;
+}
+
+// why the decode failed, see serializer_io.h
+const char *SerializerIO_ErrorReason
+(
+	SerializerIO io  // serializer
+) {
+	ASSERT(io != NULL);
+
+	if(!io->error) {
+		return NULL;
+	}
+
+	if(io->error_reason != NULL) {
+		return io->error_reason;
+	}
+
+	// buffered serializers record framing errors on the buffer
+	if(io->free_buff && !io->encoder) {
+		BufferedIO *buffer = (BufferedIO*)io->stream;
+		if(buffer->corrupt) {
+			return buffer->corrupt_reason;
+		}
+	}
+
+	// short read
+	return NULL;
+}
+
 //------------------------------------------------------------------------------
 // Buffered Serializer Read & Write API Version 2
 //------------------------------------------------------------------------------
@@ -251,6 +294,13 @@ static bool _load_buffer
 
 	// a short read yields a NULL buffer and latches the IO error on the stream
 	if(buffer->buffer == NULL || RedisModule_IsIOError(buffer->stream)) {
+		buffer->cap = 0;
+		return false;
+	}
+
+	// the encoder never flushes an empty buffer
+	if(unlikely(cap == 0)) {
+		Buffered_SetCorrupt(buffer, "empty serializer buffer");
 		buffer->cap = 0;
 		return false;
 	}
@@ -343,13 +393,16 @@ typedef enum {
 	s = *((uint8_t*)(buffer->buffer + buffer->count));              \
 	buffer->count++;
 
-// check that the type being read matches expectations.
-#define SERIALIZER_VALIDATE_TYPE(t)                             \
-do {                                                            \
-	assert (buffer->count < buffer->cap);                       \
-	uint8_t s = *((uint8_t*)(buffer->buffer + buffer->count));  \
-	buffer->count++;                                            \
-	assert (s == TYPE_ENCODE(t));                               \
+// check that the type being read matches expectations
+// a mismatch fails the decode: returns 0 from the enclosing read function
+#define SERIALIZER_VALIDATE_TYPE(t)                                  \
+do {                                                                 \
+	uint8_t s = *((uint8_t*)(buffer->buffer + buffer->count));       \
+	buffer->count++;                                                 \
+	if(unlikely(s != TYPE_ENCODE(t))) {                              \
+		Buffered_SetCorrupt(buffer, "unexpected value type");        \
+		return (t)0;                                                 \
+	}                                                                \
 } while (0);
 
 
@@ -387,8 +440,9 @@ static t BufferSerializerIOv2_Read##suffix(void *io) {          \
 		}                                                       \
 	}                                                           \
                                                                 \
-	/* a truncated buffer may not hold a full value */          \
+	/* a malformed buffer may not hold a full value */          \
 	if(unlikely((buffer->cap - buffer->count) < REQUIRED_SIZE(t))) { \
+		Buffered_SetCorrupt(buffer, "value overruns its buffer"); \
 		return (t)0;                                            \
 	}                                                           \
                                                                 \
@@ -489,7 +543,8 @@ void *BufferSerializerIOv2_ReadBuffer
 		RedisModule_Log (NULL, "warning",
 			"BufferSerializer ReadBuffer: no bytes available for type field "
 			"(count: %zu, cap: %zu)", buffer->count, buffer->cap) ;
-		RedisModule_Assert (false) ;
+		Buffered_SetCorrupt (buffer, "no room for a value type") ;
+		goto fail ;
 	}
 
 	// find the type
@@ -506,7 +561,8 @@ void *BufferSerializerIOv2_ReadBuffer
 			RedisModule_Log (NULL, "warning",
 				"BufferSerializer ReadBuffer: blob type found at unexpected "
 				"position (count: %zu, cap: %zu)", buffer->count, buffer->cap) ;
-			RedisModule_Assert (false) ;
+			Buffered_SetCorrupt (buffer, "misplaced blob marker") ;
+			goto fail ;
 		}
 
 		if(!_load_buffer (buffer)) {
@@ -533,7 +589,8 @@ void *BufferSerializerIOv2_ReadBuffer
 				"BufferSerializer ReadBuffer: insufficient bytes for length "
 				"field (remaining: %zu, needed: %zu)",
 				(size_t) (buffer->cap - buffer->count), sizeof (size_t)) ;
-			RedisModule_Assert (false) ;
+			Buffered_SetCorrupt (buffer, "no room for a buffer length") ;
+			goto fail ;
 		}
 
 		// read buffer len
@@ -546,7 +603,8 @@ void *BufferSerializerIOv2_ReadBuffer
 				"BufferSerializer ReadBuffer: sub-buffer length %zu exceeds "
 				"remaining bytes %zu",
 				l, (size_t) (buffer->cap - buffer->count)) ;
-			RedisModule_Assert (false) ;
+			Buffered_SetCorrupt (buffer, "buffer length overruns its buffer") ;
+			goto fail ;
 		}
 
 		// copy buffer
@@ -569,10 +627,18 @@ void *BufferSerializerIOv2_ReadBuffer
 			(unsigned) TYPE_ENCODE (char *),
 			(unsigned) TYPE_ENCODE (blob_t)) ;
 
-		RedisModule_Assert (false) ;
+		Buffered_SetCorrupt (buffer, "unexpected buffer type") ;
+		goto fail ;
 	}
 
 	return ret ;
+
+fail:
+	// malformed buffer, latched via Buffered_IsError
+	if (lenptr != NULL) {
+		*lenptr = 0 ;
+	}
+	return NULL ;
 }
 
 //------------------------------------------------------------------------------
@@ -661,7 +727,7 @@ SerializerIO SerializerIOv2_FromBufferedRedisModuleIO
 ) {
 	ASSERT(io != NULL);
 
-	BufferedIO *buffer_io = rm_malloc(sizeof(BufferedIO));
+	BufferedIO *buffer_io = rm_calloc(1, sizeof(BufferedIO));
 
 	buffer_io->stream = io;
 

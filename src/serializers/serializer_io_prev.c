@@ -47,6 +47,13 @@ static bool _load_buffer
 		return false;
 	}
 
+	// the encoder never flushes an empty buffer
+	if(unlikely(cap == 0)) {
+		Buffered_SetCorrupt(buffer, "empty serializer buffer");
+		buffer->cap = 0;
+		return false;
+	}
+
 	buffer->cap = cap;
 	return true;
 }
@@ -122,16 +129,19 @@ static inline bool _accommodate
 		/* update buffer offset */                                    \
 		buffer->count++;
 
-	#define DEBUG_VALIDATE_TYPE(t)                                    \
+	#define DEBUG_VALIDATE_TYPE(t, ret)                               \
 		/* validate type */                                           \
 		char s = *(char*)(buffer->buffer + buffer->count);            \
 		buffer->count++;                                              \
-		ASSERT(s == TYPE_ENCODE(t));
+		if(unlikely(s != TYPE_ENCODE(t))) {                           \
+			Buffered_SetCorrupt(buffer, "unexpected value type");     \
+			return ret;                                               \
+		}
 
 	#define REQUIRED_SIZE(t) (sizeof(t) + 1)
 #else
 	#define DEBUG_WRITE_TYPE(t)           /* nop */
-	#define DEBUG_VALIDATE_TYPE(t)        /* nop */
+	#define DEBUG_VALIDATE_TYPE(t, ret)   /* nop */
 	#define REQUIRED_SIZE(t) (sizeof(t))
 #endif
 
@@ -166,13 +176,14 @@ static t BufferSerializerIO_Read##suffix(void *io) {            \
 		}                                                       \
 	}                                                           \
                                                                 \
-	/* a truncated buffer may not hold a full value */          \
+	/* a malformed buffer may not hold a full value */          \
 	if(unlikely((buffer->cap - buffer->count) < REQUIRED_SIZE(t))) { \
+		Buffered_SetCorrupt(buffer, "value overruns its buffer"); \
 		return (t)0;                                            \
 	}                                                           \
                                                                 \
 	/* validate type */                                         \
-	DEBUG_VALIDATE_TYPE(t)                                      \
+	DEBUG_VALIDATE_TYPE(t, (t)0)                                \
                                                                 \
 	/* read value */                                            \
 	t v = *(t*)(buffer->buffer + buffer->count);                \
@@ -256,7 +267,11 @@ void *BufferSerializerIO_ReadBuffer
 	if(unlikely(buffer->cap > BUFFER_SIZE)) {
 		// large string stand on their own
 		// they're not encoded within the buffer, they are the buffer
-		ASSERT(buffer->count == 0);
+		if(unlikely(buffer->count != 0)) {
+			Buffered_SetCorrupt(buffer, "misplaced large string");
+			if(lenptr != NULL) *lenptr = 0;
+			return NULL;
+		}
 
 		void *ret = buffer->buffer;
 
@@ -272,10 +287,14 @@ void *BufferSerializerIO_ReadBuffer
 	}
 
 	// expecting at least the string length
-	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(size_t));
+	if(unlikely((buffer->cap - buffer->count) < REQUIRED_SIZE(size_t))) {
+		Buffered_SetCorrupt(buffer, "no room for a buffer length");
+		if(lenptr != NULL) *lenptr = 0;
+		return NULL;
+	}
 
 	// in DEBUG mode we validate the value type
-	DEBUG_VALIDATE_TYPE(char*);
+	DEBUG_VALIDATE_TYPE(char*, NULL);
 
 	// read buffer len
 	size_t l = *(size_t*)(buffer->buffer + buffer->count);
@@ -307,11 +326,17 @@ void *BufferSerializerIO_ReadBuffer
 
 	buffer->count += sizeof(size_t);
 
+	// the declared length must fit in what is left of the buffer
+	if(unlikely(l > (buffer->cap - buffer->count))) {
+		Buffered_SetCorrupt(buffer, "buffer length overruns its buffer");
+		if(lenptr != NULL) *lenptr = 0;
+		return NULL;
+	}
+
 	// copy buffer
 	void *v = rm_malloc(sizeof(char) * l);
 
 	if (l > 0) {
-		ASSERT ((buffer->cap - buffer->count) >= l) ;
 		memcpy(v, buffer->buffer + buffer->count, l);
 	}
 
@@ -332,7 +357,7 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 ) {
 	ASSERT(io != NULL);
 
-	BufferedIO *buffer_io = rm_malloc(sizeof(BufferedIO));
+	BufferedIO *buffer_io = rm_calloc(1, sizeof(BufferedIO));
 
 	buffer_io->stream = io;
 

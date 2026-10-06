@@ -196,6 +196,9 @@ GraphContext *RdbLoadGraphContext_v19
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
 				RdbLoadNodes_v19(rdb, g, payload.entities_count);
+				if(SerializerIO_Error(rdb)) {
+					break;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -208,6 +211,9 @@ GraphContext *RdbLoadGraphContext_v19
 
 			case ENCODE_STATE_DELETED_NODES:
 				RdbLoadDeletedNodes_v19(rdb, g, payload.entities_count);
+				if(SerializerIO_Error(rdb)) {
+					break;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -220,6 +226,9 @@ GraphContext *RdbLoadGraphContext_v19
 
 			case ENCODE_STATE_EDGES:
 				RdbLoadEdges_v19(rdb, g, payload.entities_count);
+				if(SerializerIO_Error(rdb)) {
+					break;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -230,6 +239,9 @@ GraphContext *RdbLoadGraphContext_v19
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
 				RdbLoadDeletedEdges_v19(rdb, g, payload.entities_count);
+				if(SerializerIO_Error(rdb)) {
+					break;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -273,7 +285,7 @@ GraphContext *RdbLoadGraphContext_v19
 				break;
 
 			default:
-				ASSERT(false && "Unknown encoding");
+				SerializerIO_SetError(rdb, "unknown payload type");
 				break;
 		}
 	}

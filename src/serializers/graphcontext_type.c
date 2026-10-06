@@ -99,10 +99,9 @@ static int _GraphContextType_AuxLoad
 	int when
 ) {
 	if (when == REDISMODULE_AUX_BEFORE_RDB) {
-		AUXLoad (rdb) ;
-		// abort on a short read so Redis fails the load cleanly instead of
-		// proceeding with half-decoded auxiliary (UDF) state
-		if (RedisModule_IsIOError (rdb)) {
+		// abort on a short read or malformed UDF data so Redis fails the load
+		// cleanly instead of proceeding with half-decoded auxiliary state
+		if (!AUXLoad (rdb) || RedisModule_IsIOError (rdb)) {
 			return REDISMODULE_ERR;
 		}
 		ModuleEventHandler_AUXBeforeKeyspaceEvent();

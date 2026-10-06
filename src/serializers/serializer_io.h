@@ -158,6 +158,23 @@ bool SerializerIO_Error
 	SerializerIO io  // serializer
 );
 
+// fail the decode: the payload violated an encoding invariant (e.g. a count
+// mismatch or a malformed matrix). latches the same sticky flag as a short
+// read, so the load aborts at the next checkpoint and the decoder returns NULL
+// the first 'reason' is kept, see SerializerIO_ErrorReason
+void SerializerIO_SetError
+(
+	SerializerIO io,    // serializer
+	const char *reason  // what was wrong with the payload
+);
+
+// why the decode failed: the reason given for bad data, or NULL when there is
+// no failure or the failure is a short read (Redis reports those itself)
+const char *SerializerIO_ErrorReason
+(
+	SerializerIO io  // serializer
+);
+
 #define SerializerIO_Write(io, value,...)                          \
 	_Generic                                                       \
 	(                                                              \

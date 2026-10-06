@@ -126,7 +126,11 @@ static SIValue _RdbLoadVector
 	void *buffer = SerializerIO_ReadBuffer(rdb, &buffer_size);
 
 	// validate buffer size is divisible by float
-	ASSERT (buffer_size % sizeof(float) == 0) ;
+	if (unlikely (buffer_size % sizeof(float) != 0)) {
+		rm_free (buffer) ;
+		SerializerIO_SetError (rdb, "vector size is not a multiple of float") ;
+		return SI_NullVal () ;
+	}
 
 	SIValue vector = { .type       = T_VECTOR_F32,
 					   .ptrval     = buffer,
@@ -135,6 +139,23 @@ static SIValue _RdbLoadVector
 }
 
 #define ENTITY_PROP_STACK_THRESHOLD 256
+
+// every decoded property value must be of a storable type (an unknown type
+// tag decodes as NULL); fails the decode otherwise
+static bool _ValidValues
+(
+	SerializerIO rdb,     // RDB
+	const SIValue *vals,  // decoded values
+	uint64_t n            // number of values
+) {
+	for (uint64_t i = 0 ; i < n ; i++) {
+		if (unlikely (!(SI_TYPE (vals [i]) & SI_VALID_PROPERTY_VALUE))) {
+			SerializerIO_SetError (rdb, "invalid property value type") ;
+			return false ;
+		}
+	}
+	return true ;
+}
 
 // free decoded property values that will not be attached to an entity
 static void _FreeValues
@@ -162,7 +183,10 @@ static void _RdbLoadEntity
 		return ;
 	}
 
-	ASSERT (n <= UINT16_MAX) ;
+	if (unlikely (n > UINT16_MAX)) {
+		SerializerIO_SetError (rdb, "entity has too many properties") ;
+		return ;
+	}
 
 	// small path: all storage lives on the stack, no allocation needed
 	if (likely (n <= ENTITY_PROP_STACK_THRESHOLD)) {
@@ -176,7 +200,7 @@ static void _RdbLoadEntity
 
 		// short read mid-entity: the remaining slots hold zeroed ids and
 		// NULL values, which AttributeSet_Add rejects; drop the entity
-		if (unlikely (SerializerIO_Error (rdb))) {
+		if (unlikely (SerializerIO_Error (rdb) || !_ValidValues (rdb, vals, n))) {
 			_FreeValues (vals, n) ;
 			return ;
 		}
@@ -198,7 +222,7 @@ static void _RdbLoadEntity
 	}
 
 	// short read mid-entity, see above
-	if (unlikely (SerializerIO_Error (rdb))) {
+	if (unlikely (SerializerIO_Error (rdb) || !_ValidValues (rdb, vals, n))) {
 		_FreeValues (vals, n) ;
 		rm_free (ids) ;
 		rm_free (vals) ;
@@ -234,6 +258,13 @@ void RdbLoadNodes_v19
 			return;
 		}
 
+		// the datablock was sized from the header's node counts; a valid id
+		// never makes it grow
+		if(id >= g->nodes->itemCap) {
+			SerializerIO_SetError(rdb, "node id out of range");
+			return;
+		}
+
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->nodes, id);
 		*set = NULL;
 
@@ -243,9 +274,11 @@ void RdbLoadNodes_v19
 		_RdbLoadEntity(rdb, (GraphEntity *)&n);
 	}
 
-	// read encoded node count and validate (skipped on a short-read abort)
-	ASSERT(SerializerIO_Error(rdb) ||
-			n + prev_graph_node_count == Graph_NodeCount(g));
+	// validate node count (meaningless after a short read)
+	if(!SerializerIO_Error(rdb) &&
+	   n + prev_graph_node_count != Graph_NodeCount(g)) {
+		SerializerIO_SetError(rdb, "decoded node count mismatch");
+	}
 }
 
 // decode deleted nodes
@@ -279,19 +312,27 @@ void RdbLoadDeletedNodes_v19
 			"Malformed RDB: deleted nodes buffer size %zu "
 			"is not aligned or does not match expected count %" PRIu64,
 			n, deleted_node_count);
-		RedisModule_Assert(false);
+		SerializerIO_SetError(rdb, "deleted nodes buffer size mismatch");
+		return;
 	}
 
 	// mark each node id as deleted
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = deleted_nodes_list[i];
+		if(id >= g->nodes->itemCap) {
+			rm_free(deleted_nodes_list);
+			SerializerIO_SetError(rdb, "deleted node id out of range");
+			return;
+		}
 		Serializer_Graph_MarkNodeDeleted(g, id);
 	}
 	rm_free(deleted_nodes_list);
 
 	// validate deleted node count is as expected
-	ASSERT(deleted_node_count + prev_deleted_node_count ==
-			Graph_DeletedNodeCount(g));
+	if(deleted_node_count + prev_deleted_node_count !=
+	   Graph_DeletedNodeCount(g)) {
+		SerializerIO_SetError(rdb, "deleted node count mismatch");
+	}
 }
 
 // decode edges
@@ -318,6 +359,13 @@ void RdbLoadEdges_v19
 			return;
 		}
 
+		// the datablock was sized from the header's edge counts; a valid id
+		// never makes it grow
+		if(id >= g->edges->itemCap) {
+			SerializerIO_SetError(rdb, "edge id out of range");
+			return;
+		}
+
 		AttributeSet *set = DataBlock_AllocateItemOutOfOrder(g->edges, id);
 		*set = NULL;
 
@@ -327,9 +375,11 @@ void RdbLoadEdges_v19
 		_RdbLoadEntity(rdb, (GraphEntity *)&e);
 	}
 
-	// read encoded edge count and validate (skipped on a short-read abort)
-	ASSERT(SerializerIO_Error(rdb) ||
-			n + prev_edge_count == Graph_EdgeCount(g));
+	// validate edge count (meaningless after a short read)
+	if(!SerializerIO_Error(rdb) &&
+	   n + prev_edge_count != Graph_EdgeCount(g)) {
+		SerializerIO_SetError(rdb, "decoded edge count mismatch");
+	}
 }
 
 // decode deleted edges
@@ -363,18 +413,26 @@ void RdbLoadDeletedEdges_v19
 			"Malformed RDB: deleted edges buffer size %zu "
 			"is not aligned or does not match expected count %" PRIu64,
 			n, deleted_edge_count);
-		RedisModule_Assert(false);
+		SerializerIO_SetError(rdb, "deleted edges buffer size mismatch");
+		return;
 	}
 
 	// mark each edge id as deleted
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = deleted_edges_list[i];
+		if(id >= g->edges->itemCap) {
+			rm_free(deleted_edges_list);
+			SerializerIO_SetError(rdb, "deleted edge id out of range");
+			return;
+		}
 		Serializer_Graph_MarkEdgeDeleted(g, id);
 	}
 	rm_free(deleted_edges_list);
 
 	// validate deleted edge count is as expected
-	ASSERT(deleted_edge_count + prev_deleted_edge_count ==
-			Graph_DeletedEdgeCount(g));
+	if(deleted_edge_count + prev_deleted_edge_count !=
+	   Graph_DeletedEdgeCount(g)) {
+		SerializerIO_SetError(rdb, "deleted edge count mismatch");
+	}
 }
 

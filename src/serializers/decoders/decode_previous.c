@@ -4,6 +4,7 @@
  * the Server Side Public License v1 (SSPLv1).
  */
 
+#include "decode_graph.h"
 #include "decode_previous.h"
 #include "prev/decoders.h"
 
@@ -90,6 +91,9 @@ GraphContext *Decode_Previous
 	// and are best-effort (no graceful short-read handling)
 	if(io != NULL) {
 		bool io_error = SerializerIO_Error(io);
+		if(io_error) {
+			RdbLoadGraph_LogFailure(rdb, io);
+		}
 		SerializerIO_Free(&io);
 
 		if(io_error) {

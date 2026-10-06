@@ -8,6 +8,23 @@
 #include "prev/v19/decode_v19.h"
 #include "../encoding_version.h"
 
+// log why a graph key failed to load, see decode_graph.h
+void RdbLoadGraph_LogFailure
+(
+	RedisModuleIO *rdb,  // redis IO the key was read from
+	SerializerIO io      // serializer that failed
+) {
+	const char *reason = SerializerIO_ErrorReason (io) ;
+	if (reason == NULL) {
+		return ;
+	}
+
+	const RedisModuleString *key = RedisModule_GetKeyNameFromIO (rdb) ;
+	RedisModule_Log (NULL, "warning", "Failed loading graph key '%s': %s",
+			key != NULL ? RedisModule_StringPtrLen (key, NULL) : "",
+			reason) ;
+}
+
 GraphContext *RdbLoadGraph
 (
 	RedisModuleIO *rdb
@@ -19,6 +36,9 @@ GraphContext *RdbLoadGraph
 
 	// detect a short read / IO error before the serializer is torn down
 	bool io_error = SerializerIO_Error (io) ;
+	if (io_error) {
+		RdbLoadGraph_LogFailure (rdb, io) ;
+	}
 	SerializerIO_Free (&io) ;
 
 	if(io_error) {

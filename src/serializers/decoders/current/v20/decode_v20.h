@@ -14,8 +14,8 @@ GraphContext *RdbLoadGraphContext_latest
 	bool detached
 );
 
-// encode DB UDFs
-void AUXLoadUDF_latest
+// decode DB UDFs, returns false if the UDF section is malformed
+bool AUXLoadUDF_latest
 (
 	RedisModuleIO *io  // IO
 );
