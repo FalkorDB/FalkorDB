@@ -1,0 +1,5 @@
+name = "falkor-expr-semantics"
+defaultTargets = ["FalkorExprSemantics"]
+
+[[lean_lib]]
+name = "FalkorExprSemantics"

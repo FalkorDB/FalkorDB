@@ -1,0 +1,16 @@
+name = "falkor-aeneas-pilot"
+defaultTargets = ["AeneasPilot"]
+
+# `Aeneas` here is a MINIMAL SHIM (Aeneas.lean) of the few Aeneas.Std
+# primitives the extracted narrow_int uses, so the extracted file type-checks on
+# our Lean 4.34.0 without Mathlib. The full extraction lives in full/.
+[[lean_lib]]
+name = "Aeneas"
+# needed so the register_option initializers run in importing files
+precompileModules = true
+
+[[lean_lib]]
+name = "Extracted"
+
+[[lean_lib]]
+name = "AeneasPilot"

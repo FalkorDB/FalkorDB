@@ -1,0 +1,9 @@
+{"plugins": [],
+ "package": "pr2845-review",
+ "options": {},
+ "name": "Pr2845Review.Row",
+ "isModule": false,
+ "importArts":
+ {"Pr2845Review.Binder":
+  [["/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Binder.olean"]]},
+ "dynlibs": []}

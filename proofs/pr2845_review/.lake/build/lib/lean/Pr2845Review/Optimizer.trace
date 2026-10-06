@@ -1,0 +1,33 @@
+{"synthetic": false,
+ "schemaVersion": "2025-09-10",
+ "outputs":
+ {"o": ["d947c3d68516aa58.olean"],
+  "m": false,
+  "i": "b52418f4d2323fc8.ilean",
+  "c": "aad101ca8ecc13e6.c"},
+ "log":
+ [{"message":
+   ".> LEAN_PATH=/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean /Users/aviavni/.elan/toolchains/leanprover--lean4---v4.34.0/bin/lean /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/Pr2845Review/Optimizer.lean -o /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Optimizer.olean -i /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/lib/lean/Pr2845Review/Optimizer.ilean -c /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/ir/Pr2845Review/Optimizer.c --setup /Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/.lake/build/ir/Pr2845Review/Optimizer.setup.json --json",
+   "level": "trace"}],
+ "inputs":
+ [["deps",
+   [["«pr2845-review»/Pr2845Review:extraDep",
+     [["@«pr2845-review»:extraDep", "00000000000006bb"]]],
+    ["imports",
+     [["Pr2845Review.Row transitive imports (legacy)", "38852e44a58d2c35"],
+      ["Pr2845Review.Row:importAllArts", "3e7b1bfdf9040d31"]]]]],
+  ["libs",
+   [["import dynlibs", "00000000000006bb"],
+    ["package external libraries", "00000000000006bb"],
+    ["module dynlibs", "00000000000006bb"],
+    ["module plugins", "00000000000006bb"]]],
+  ["Lean 4.34.0, commit 293d5d0c0c3f3dded4688b3ccd6a33939ac5102b",
+   "a1c6c7aa3e9abfe7"],
+  ["/Users/aviavni/repos/FalkorDB-wt/proofs-pr/proofs/pr2845_review/Pr2845Review/Optimizer.lean",
+   "3d85b4fbc2235cbc"],
+  ["options", "00000000000006bb"],
+  ["isModule: false", "feefd2a0d3a1847e"],
+  ["Module.name: Pr2845Review.Optimizer", "4f8461647bb8c87d"],
+  ["Package.id?: (some pr2845-review)", "9a51612c439adf66"],
+  ["Module.leanArgs: #[]", "00000000000006bb"]],
+ "depHash": "3e654fa91e45a99b"}

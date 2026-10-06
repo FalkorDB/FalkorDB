@@ -1,0 +1,183 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/value.rs	fmt_json	50	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	new	69	NOT COVERED	trivial constructor
+graph/src/runtime/value.rs	new	87	NOT COVERED	trivial constructor
+graph/src/runtime/value.rs	new	110	NOT COVERED	trivial constructor
+graph/src/runtime/value.rs	distance	121	MODELLED	proofs/functions_temporal Spatial.haversine (f64 abstract)
+graph/src/runtime/value.rs	validate	144	PROVEN	validatePoint_rejects_nan (class-level; range checks are f32 comparisons)
+graph/src/runtime/value.rs	clone	221	NOT COVERED	Clone: identity/Arc bump, no logic
+graph/src/runtime/value.rs	get_numeric	246	PROVEN	getNumeric_after_validation
+graph/src/runtime/value.rs	format_datetime	256	NOT COVERED	chrono formatting (trusted); live-checked vs C
+graph/src/runtime/value.rs	format_date	274	PROVEN	proofs/functions_temporal formatDate_*
+graph/src/runtime/value.rs	format_time	285	NOT COVERED	chrono formatting (trusted); live-checked
+graph/src/runtime/value.rs	format_duration	296	PROVEN	fmtDuration_fields, fmtDuration_zero, fmtDuration_ex (decompose_duration from functions_temporal)
+graph/src/runtime/value.rs	heap_size	342	PROVEN	heap_le_amortized, rel_charged
+graph/src/runtime/value.rs	amortized_heap_size	388	PROVEN	heap_le_amortized, shares_le
+graph/src/runtime/value.rs	get_attr	439	PROVEN	getAttr_null, getAttr_map_missing (temporal extractors parameters)
+graph/src/runtime/value.rs	get_point_component	458	PROVEN	point_component_case
+graph/src/runtime/value.rs	get_datetime_component	473	NOT COVERED	chrono Datelike/Timelike accessors; 17 components live-checked vs C
+graph/src/runtime/value.rs	get_date_component	532	NOT COVERED	chrono accessors; live-checked (dayOfQuarter matches spec, C off by one)
+graph/src/runtime/value.rs	get_time_component	580	NOT COVERED	chrono accessors; live-checked
+graph/src/runtime/value.rs	get_duration_component	608	PROVEN	duration_weeks_zero (pre-chrono dispatch); chrono part live-checked
+graph/src/runtime/value.rs	add_duration_to_timestamp	696	PROVEN	proofs/functions_temporal addDur
+graph/src/runtime/value.rs	sub_duration_from_timestamp	730	PROVEN	proofs/functions_temporal subDur
+graph/src/runtime/value.rs	days_in_month	752	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	is_leap	764	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	days_from_civil	771	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	civil_from_days	788	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	write_date_into	803	PROVEN	proofs/functions_temporal
+graph/src/runtime/value.rs	hash	823	PROVEN	proofs/value_order: sane_hash_consistent, hash_not_consistent_with_eq
+graph/src/runtime/value.rs	add	910	PROVEN	add_int, add_mixed, add_overflow_wraps, add_int_comm, add_null_*
+graph/src/runtime/value.rs	add_slow	925	PROVEN	add_list_*, lookup_omExtend, nodup_omExtend, add_str_*, add_*_dur_comm, str_plus_date_diverges
+graph/src/runtime/value.rs	sub	1042	PROVEN	sub_int, sub_null_*, sub_dur_date, wSub_eq_wAdd_neg
+graph/src/runtime/value.rs	mul	1091	PROVEN	mul_ok_iff, mul_int_comm, mul_agree_on_numeric, null_mul_str_diverges
+graph/src/runtime/value.rs	div	1120	PROVEN	div_ok_iff, div_int_zero, wDiv_exact, div_rem_identity, min_div_neg1_diverges
+graph/src/runtime/value.rs	rem	1148	PROVEN	rem_ok_iff, rem_int_zero, wRem_exact, rem_bounds, div_rem_identity
+graph/src/runtime/value.rs	order	1174	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	order	1178	PROVEN	eq_null_iff (order injective on Null); proofs/value_order: order_injective
+graph/src/runtime/value.rs	compare_value	1209	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	eq	1216	PROVEN	proofs/value_order: eqV; isNeverEqual_iff
+graph/src/runtime/value.rs	compare_value	1225	PROVEN	mayFail_sound; proofs/value_order: cmp_sane_eq_key, sane_le_trans
+graph/src/runtime/value.rs	value_of_type	1275	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	value_of_type	1282	PROVEN	valueOfType_none_iff
+graph/src/runtime/value.rs	get_type	1324	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	get_type	1328	PROVEN	getType (used in valueOfType_none_iff, optional_rejects_null)
+graph/src/runtime/value.rs	name	1352	MODELLED	V.name (used in error-message theorems)
+graph/src/runtime/value.rs	to_json_string	1374	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	fmt	1384	NOT COVERED	Display wrapper over fmt_json
+graph/src/runtime/value.rs	compare_list	1399	PROVEN	listLoop2_self, mayFail_sound; proofs/value_order: list_fst_eq_lex
+graph/src/runtime/value.rs	compare_map	1472	PROVEN	mapLoop_self, keysCmp_self; proofs/value_order: map_order_not_transitive
+graph/src/runtime/value.rs	is_never_equal	1531	PROVEN	isNeverEqual_iff
+graph/src/runtime/value.rs	may_fail_self_match	1554	PROVEN	mayFail_sound
+graph/src/runtime/value.rs	fmt_json	1582	MODELLED	jsonFloat_nonfinite; rest is write! formatting, live-checked vs C
+graph/src/runtime/value.rs	write_json_string	1704	NOT COVERED	json_escape crate (trusted)
+graph/src/runtime/value.rs	write_node_json	1716	NOT COVERED	runtime graph accessors + formatting
+graph/src/runtime/value.rs	contains	1756	NOT COVERED	trait method declaration
+graph/src/runtime/value.rs	contains	1763	PROVEN	proofs/functions_str_list Contains
+graph/src/runtime/value.rs	partial_cmp	1788	PROVEN	partialCmp_null
+graph/src/runtime/value.rs	compare_floats	1801	PROVEN	cmpFloats; proofs/value_order: nan_breaks_antisymmetry
+graph/src/runtime/value.rs	compare_vecf32	1817	PROVEN	chunked_eq_firstDiff
+graph/src/runtime/value.rs	first_difference	1821	PROVEN	firstDiff_append, firstDiff_self
+graph/src/runtime/value.rs	with_capacity	1859	NOT COVERED	constructor
+graph/src/runtime/value.rs	is_seen	1869	PROVEN	dedup_second_seen; proofs/value_order: fx_row_collision
+graph/src/runtime/value.rs	has_hash	1880	PROVEN	dedup_second_seen
+graph/src/runtime/value.rs	check_and_insert_hash	1887	PROVEN	dedup_second_seen, dedup_first_unseen
+graph/src/runtime/value.rs	encode	1899	PROVEN	decode_encode, encode_map_is_null
+graph/src/runtime/value.rs	decode	1985	PROVEN	decode_encode, readVec_vecBytes
+graph/src/runtime/functions/math.rs	register	42	PROVEN	AggScalar.mathRegistered: mathRegistered_nodup
+graph/src/runtime/functions/math.rs	abs	46	PROVEN	abs_agree_except, abs_min_diverges, abs_nzero_diverges, unary_no_panic
+graph/src/runtime/functions/math.rs	ceil	63	PROVEN	int_rounding_identity, unary_no_panic
+graph/src/runtime/functions/math.rs	e	77	PROVEN	AggScalar.eFn: eFn_spec
+graph/src/runtime/functions/math.rs	exp	86	PROVEN	unary_no_panic (libm exp abstract)
+graph/src/runtime/functions/math.rs	floor	100	PROVEN	int_rounding_identity, unary_no_panic
+graph/src/runtime/functions/math.rs	log	114	PROVEN	log_int_nonpos, unary_no_panic
+graph/src/runtime/functions/math.rs	log10	128	PROVEN	unary_no_panic (libm log10 abstract)
+graph/src/runtime/functions/math.rs	random_uuid	143	PROVEN	uuid_shape, uuid_version_nibble, uuid_variant_nibble, hex4_be16, hex8_be32
+graph/src/runtime/functions/math.rs	pow	176	PROVEN	pow_nonnumeric_null
+graph/src/runtime/functions/math.rs	rand	186	PROVEN	AggScalar.randFn (Rng structure, rand-crate contract): randFn_range
+graph/src/runtime/functions/math.rs	round	196	PROVEN	int_rounding_identity (Float: libm round, half away from zero, same as C live)
+graph/src/runtime/functions/math.rs	sign	210	PROVEN	sign_float_is_float, sign_zero_is_int, sign_int
+graph/src/runtime/functions/math.rs	sqrt	228	PROVEN	sqrt_float_eq_ieee, sqrt_int_eq_sqrt_float, sqrt_nan_iff, sqrt_nzero
+graph/src/runtime/functions/math.rs	range	254	PROVEN	proofs/functions_str_list range
+graph/src/runtime/functions/math.rs	coalesce	317	PROVEN	coalesce_spec, eq_null_iff; coalesce_zero_args_rejected (#2956 fixed 648b41c5c: zero args rejected at validate)
+graph/src/runtime/functions/math.rs	apply_pow	332	PROVEN	pow_nonnumeric_null
+graph/src/runtime/functions/conversion.rs	register	40	PROVEN	ConvReg convSigs: convSigs_lower_nodup, orNull_aliases, orNull_accepts
+graph/src/runtime/functions/conversion.rs	value_to_integer	44	PROVEN	toInteger_int_literal_agrees_c (all signed-digit strings = C strtoll), toInteger_neg_overflow_null (#2955 fixed ac5c27b76), toInteger_int_literals_agree, toInteger_pos_overflow, leading_space, exp_literal, toInteger_nonfinite_diverges
+graph/src/runtime/functions/conversion.rs	value_to_float	103	PROVEN	ConvReg toFloat_ret, toFloat_arms, toFloatArgs_spec, toFloat_unsupported (f64 parse = ConvOps.parseF parameter)
+graph/src/runtime/functions/conversion.rs	value_to_string	125	PROVEN	ConvReg toStr_no_panic, arity_one, toStr_ret, toStr_unsupported (float Display = ConvOps.display parameter)
+graph/src/runtime/functions/conversion.rs	to_json	161	PROVEN	ConvReg toJson_spec, toJson_ret (to_json_string = parameter)
+graph/src/runtime/functions/conversion.rs	is_empty	175	PROVEN	isEmpty_no_panic
+graph/src/runtime/functions/conversion.rs	to_boolean	189	PROVEN	toBoolean_roundtrip, toBooleanStr examples
+graph/src/runtime/functions/conversion.rs	to_boolean_list	219	PROVEN	toBooleanList_eq
+graph/src/runtime/functions/conversion.rs	to_float_list	246	PROVEN	toFloatList_eq
+graph/src/runtime/functions/conversion.rs	to_integer_list	265	PROVEN	toIntegerList_eq
+graph/src/runtime/functions/conversion.rs	to_string_list	281	PROVEN	toStringList_eq
+graph/src/runtime/functions/mod.rs	empty_procedure_batch	419	PROVEN	Registry.emptyProcedureBatch: emptyProcedureBatch_rows
+graph/src/runtime/functions/mod.rs	call	436	PROVEN	Registry.RuntimeFn.call (QuickJS bridge = argument): call_arms
+graph/src/runtime/functions/mod.rs	call_procedure_batch	451	PROVEN	Registry.RuntimeFn.callProcBatch: call_arms
+graph/src/runtime/functions/mod.rs	fmt	500	PROVEN	Registry.FnType.dbg: dbg_iff_tag (Debug text = PartialEq class)
+graph/src/runtime/functions/mod.rs	eq	515	PROVEN	fnTypeEq (constructor equality)
+graph/src/runtime/functions/mod.rs	union	560	PROVEN	Registry.Ty.mkUnion: mkUnion_eq
+graph/src/runtime/functions/mod.rs	can_return_boolean	569	PROVEN	canReturnBoolean_of_accepts
+graph/src/runtime/functions/mod.rs	can_return_entity	579	PROVEN	Registry.Ty.canReturnEntity: canReturnEntity_sound, canReturnEntity_complete (EntityLeaf)
+graph/src/runtime/functions/mod.rs	is_compatible_with	590	PROVEN	isCompatibleWith_refl, isCompatibleWith_any, isCompatibleWith_union_mem
+graph/src/runtime/functions/mod.rs	fmt	611	PROVEN	unionDisplay_one/two/three
+graph/src/runtime/functions/mod.rs	fmt	698	PROVEN	Registry.GraphFn.dbg: dbg_fields
+graph/src/runtime/functions/mod.rs	new	715	PROVEN	Registry.GraphFn.new: new_fields
+graph/src/runtime/functions/mod.rs	new_procedure	740	PROVEN	Registry.GraphFn.newProcedure: newProcedure_call
+graph/src/runtime/functions/mod.rs	new_udf	765	PROVEN	Registry.GraphFn.newUdf: newUdf_fields
+graph/src/runtime/functions/mod.rs	is_aggregate	783	PROVEN	Registry.GraphFn.isAggregate (tag = Aggregation): definitional + dbg_iff_tag
+graph/src/runtime/functions/mod.rs	validate	787	PROVEN	validate_fixed_iff, validate_varLength (built-in ≥1, UDF any), coalesce_zero_args_rejected (#2956 fixed 648b41c5c), udf_zero_args_ok
+graph/src/runtime/functions/mod.rs	validate_args_type	828	PROVEN	validateArgsType_go_none, numeric_body_cases
+graph/src/runtime/functions/mod.rs	validate_args_domain	862	PROVEN	getNumeric_after_validation
+graph/src/runtime/functions/mod.rs	call_procedure_batch	894	PROVEN	Registry.GraphFn.callProcBatch: newProcedure_call, callProcBatch_not_proc
+graph/src/runtime/functions/mod.rs	new	918	PROVEN	Registry.Fns.new (empty map): registerAll_ok base case
+graph/src/runtime/functions/mod.rs	add	923	PROVEN	Registry.add: add_spec (lookup after add, others unchanged, duplicate panics)
+graph/src/runtime/functions/mod.rs	add_procedure	951	PROVEN	Registry.addProcedure: addProcedure_spec
+graph/src/runtime/functions/mod.rs	add_var_len	979	PROVEN	Registry.addVarLen: addVarLen_name (stores lowered name)
+graph/src/runtime/functions/mod.rs	set_pure_fn	1009	PROVEN	Registry.setPureFn/update: setPureFn_spec, update_spec, update_none
+graph/src/runtime/functions/mod.rs	set_struct_fn	1031	PROVEN	Registry.setStructFn/update: setStructFn_spec
+graph/src/runtime/functions/mod.rs	get	1048	PROVEN	regGet_lower
+graph/src/runtime/functions/mod.rs	iter	1074	PROVEN	Registry.iter: iter_mem
+graph/src/runtime/functions/mod.rs	is_aggregate	1079	PROVEN	isAggregate_case_sensitive (latent, no caller)
+graph/src/runtime/functions/mod.rs	udf_version	1099	PROVEN	Registry.udfVersion: version_mono
+graph/src/runtime/functions/mod.rs	init_functions	1103	PROVEN	Registry.registerAll/initFunctions: registerAll_ok (no panic iff lowered names distinct), initFunctions_once
+graph/src/runtime/functions/mod.rs	init_udf_functions	1124	PROVEN	Registry.initUdf: initUdf_idem
+graph/src/runtime/functions/mod.rs	register_udf	1129	PROVEN	Registry.registerUdf: registerUdf_spec, udf_uninit_noop, version_mono
+graph/src/runtime/functions/mod.rs	unregister_udf	1140	PROVEN	Registry.unregisterUdf: unregisterUdf_spec, version_mono
+graph/src/runtime/functions/mod.rs	flush_udfs	1148	PROVEN	Registry.flushUdfs: flushUdfs_spec, version_mono
+graph/src/runtime/functions/mod.rs	get_udf_functions	1157	PROVEN	Registry.getUdfFunctions: registerUdf_spec, flushUdfs_spec, udf_uninit_noop
+graph/src/runtime/functions/mod.rs	get_functions	1164	PROVEN	Registry.getFunctions: getFunctions_after_init
+graph/src/runtime/functions/aggregation.rs	register	49	PROVEN	AggScalar.aggRegistered: aggRegistered_nodup
+graph/src/runtime/functions/aggregation.rs	collect	55	PROVEN	AggScalar.collect: collect_fold
+graph/src/runtime/functions/aggregation.rs	count	77	PROVEN	AggScalar.count: count_fold
+graph/src/runtime/functions/aggregation.rs	sum	95	PROVEN	AggScalar.sum (FM structure): sum_fold (unreachable arm dead)
+graph/src/runtime/functions/aggregation.rs	min	140	PROVEN	AggScalar.min: min_step, min_from_null
+graph/src/runtime/functions/aggregation.rs	avg	162	PROVEN	AggScalar.avg/avgStep: avg_count, avgStep_plain
+graph/src/runtime/functions/aggregation.rs	percentile	226	PROVEN	AggScalar.percentile: percentile_collects
+graph/src/runtime/functions/aggregation.rs	stdev	286	PROVEN	AggScalar.stdev: stdev_collects
+graph/src/runtime/functions/aggregation.rs	about_to_overflow	331	PROVEN	AggScalar.aboutToOverflow: avgStep_plain (mode switch) ; #eval vs C in Misc
+graph/src/runtime/functions/aggregation.rs	modf	669	PROVEN	AggScalar.modf: modf_recombine
+graph/src/runtime/functions/aggregation.rs	finalize_stdev	675	PROVEN	AggScalar.finalizeStdev: finalizeStdev_small, finalize_divisors
+graph/src/runtime/functions/aggregation.rs	finalize_stdevp	697	PROVEN	AggScalar.finalizeStdevp: finalizeStdevp_empty, finalize_divisors
+graph/src/runtime/functions/trig.rs	apply_unary_float	31	PROVEN	Trig applyUnary: applyUnary_no_panic (unreachable dead + ret type), applyUnary_null, applyUnary_int
+graph/src/runtime/functions/trig.rs	register	43	PROVEN	Trig trigSigs: trigSigs_names, trigSigs_nodup (add asserts hold), *_ret (results typed by declared ret)
+graph/src/runtime/functions/trig.rs	sin	47	PROVEN	Trig tSin: unary_rust_eq_c (= C AR_SIN), unary_null, applyUnary_no_panic (libm sin = parameter)
+graph/src/runtime/functions/trig.rs	cos	53	PROVEN	Trig tCos: unary_rust_eq_c, unary_null
+graph/src/runtime/functions/trig.rs	tan	59	PROVEN	Trig tTan: unary_rust_eq_c, unary_null
+graph/src/runtime/functions/trig.rs	cot	65	PROVEN	Trig tCot: cot_formula (cos/sin), unary_rust_eq_c (C cos/sin)
+graph/src/runtime/functions/trig.rs	asin	73	PROVEN	Trig tAsin: unary_rust_eq_c, unary_null
+graph/src/runtime/functions/trig.rs	acos	79	PROVEN	Trig tAcos: unary_rust_eq_c, unary_null
+graph/src/runtime/functions/trig.rs	atan	85	PROVEN	Trig tAtan: unary_rust_eq_c, unary_null
+graph/src/runtime/functions/trig.rs	atan2	94	PROVEN	Trig tAtan2: atan2_spec (= C AR_ATAN2, no panic, null iff either null), atan2_ret, atan2_null_first
+graph/src/runtime/functions/trig.rs	degrees	109	PROVEN	Trig tDegrees: degrees_formula (x*(180/pi) = f64::to_degrees), unary_rust_eq_c
+graph/src/runtime/functions/trig.rs	radians	115	PROVEN	Trig tRadians: radians_formula (x*(pi/180)), unary_rust_eq_c
+graph/src/runtime/functions/trig.rs	pi	121	PROVEN	Trig tPi: pi_value, pi_ret, pi_arity
+graph/src/runtime/functions/trig.rs	haversin	130	PROVEN	Trig tHaversin: haversin_formula ((1-cos)/2), unary_rust_eq_c
+graph/src/runtime/functions/procedures.rs	register	41	PROVEN	Procedures procRegs: procRegs_nodup; yields_* (one column per declared YIELD name, rectangular)
+graph/src/runtime/functions/procedures.rs	db_labels	47	PROVEN	Procedures dbLabels: yields_labels, dbLabels_rows; live = C (empty+populated)
+graph/src/runtime/functions/procedures.rs	db_types	64	PROVEN	Procedures dbTypes: yields_types; live = C
+graph/src/runtime/functions/procedures.rs	db_properties	81	PROVEN	Procedures dbProps: yields_props; live = C
+graph/src/runtime/functions/procedures.rs	db_indexes	97	PROVEN	Procedures dbIndexes: yields_indexes, typesOfFields_spec/_sublist, typesOf_isSome, attrOpts_defaults/_novec, dimToI64_le, statusOf_spec, infoNames_last; live vs C (row order + info detail differ)
+graph/src/runtime/functions/procedures.rs	db_meta_stats	292	PROVEN	Procedures dbMetaStats: yields_meta, metaStats_labels (map = label->count, no key overwritten); live = C
+graph/src/runtime/functions/procedures.rs	db_fulltext_create_node_index	332	PROVEN	Procedures ftCreate: stubs (zero-row batch; known stub, live C creates index)
+graph/src/runtime/functions/procedures.rs	db_fulltext_query_nodes	342	PROVEN	Procedures ftQueryNodes: stubs (planner-rewritten)
+graph/src/runtime/functions/procedures.rs	db_fulltext_query_relationships	356	PROVEN	Procedures ftQueryRels: stubs
+graph/src/runtime/functions/procedures.rs	db_fulltext_drop	366	PROVEN	Procedures ftDrop: stubs
+graph/src/runtime/functions/procedures.rs	db_vector_query_nodes	383	PROVEN	Procedures vecQueryNodes: stubs
+graph/src/runtime/functions/procedures.rs	db_vector_query_relationships	393	PROVEN	Procedures vecQueryRels: stubs
+graph/src/runtime/functions/procedures.rs	db_constraints	403	PROVEN	Procedures dbConstraints: yields_constraints; live vs C (same rows, order differs)
+graph/src/runtime/functions/procedures.rs	dbms_procedures	437	PROVEN	Procedures dbmsProcedures: yields_procedures, dbmsProcedures_sorted (sorted + permutation); live = C
+graph/src/runtime/functions/procedures.rs	dbms_functions	469	PROVEN	Procedures dbmsFunctions/mergePicks: mergePicks_eq (= List.merge), dbmsFunctions_merge_sorted, mergePicks_nil, keepUdf_spec
+graph/src/runtime/functions/procedures.rs	build_columns	557	PROVEN	Procedures buildColumns: yields_buildColumns, buildRow_reducible
+graph/src/runtime/functions/procedures.rs	type_to_dbms_value	616	PROVEN	Procedures tyValue: tyValue_eq (interning invisible), any_string
+graph/src/runtime/functions/procedures.rs	type_to_dbms_string	649	PROVEN	Procedures tyString: any_string (= C byte for byte), union_order_visible (divergence)
+graph/src/runtime/functions/procedures.rs	format_union	694	PROVEN	Procedures formatUnion: any_string, examples
+graph/src/runtime/functions/procedures.rs	format_union_strings	706	PROVEN	Procedures formatUnion_strings_eq
+graph/src/runtime/functions/path.rs	register	25	PROVEN	Procedures pathSigs + path_no_panic (validated Path|Null never hits unreachable!)
+graph/src/runtime/functions/path.rs	nodes	29	PROVEN	Procedures pathNodes: path_split, path_lengths, path_null, path_no_panic
+graph/src/runtime/functions/path.rs	relationships	52	PROVEN	Procedures pathRels: path_split, path_lengths, path_null, path_no_panic
+graph/src/entity_type.rs	fmt	26	PROVEN	Procedures EntityType.fmt: entityType_fmt_inj, entityType_fmt_values (= C spellings, live)
+graph/src/runtime/index_ddl.rs	create_index	30	PROVEN	IndexDdl createIndex/prep: ro_rejects, create_nonmap, create_eval_err, create_opts_err, create_upgrade_err, create_vector_no_opts, create_vector_none (#3094 vector needs options), create_graph_fail, create_ok
+graph/src/runtime/index_ddl.rs	drop_index	88	PROVEN	IndexDdl dropIndex: ro_rejects, drop_ok (dropped += graph count)
+graph/src/runtime/index_ddl.rs	emit_effect	116	PROVEN	IndexDdl emit: emit_off, emit_counts, emit_frame, emit_buffer_created_on_error

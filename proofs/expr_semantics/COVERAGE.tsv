@@ -1,0 +1,93 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/vector_expr.rs	ExprColumn::get	80	MODELLED	Col.vals (abstraction function used by every agreement theorem; not itself a theorem subject)
+graph/src/runtime/vector_expr.rs	ExprColumn::into_values	114	NOT COVERED	materialisation helper; not modelled
+graph/src/runtime/vector_expr.rs	ExprColumn::nulls_or_none	127	NOT COVERED	bitmap accessor; nulls modelled as Option per row
+graph/src/runtime/vector_expr.rs	ExprColumn::constant_nullness	139	NOT COVERED	bitmap accessor; not modelled
+graph/src/runtime/vector_expr.rs	ExprColumn::is_null	150	NOT COVERED	bitmap accessor; nulls modelled as Option per row
+graph/src/runtime/vector_expr.rs	union_nulls	168	MODELLED	implicit: Option bind in cmpRow/intRow/fltRow (bitmap union not modelled as such)
+graph/src/runtime/vector_expr.rs	VectorEval::new	202	NOT COVERED	constructor
+graph/src/runtime/vector_expr.rs	VectorEval::eval	211	NOT COVERED	dispatcher; only the arms it dispatches to are modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_values	286	NOT COVERED	not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_variable	310	NOT COVERED	batch access; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_property	334	NOT COVERED	attribute access; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::property_values	357	NOT COVERED	attribute access; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_and_or	392	PROVEN	RowSt/stepRow/vecAndOr: andOr_agrees (child eval assumed = per-row map)
+graph/src/runtime/vector_expr.rs	VectorEval::eval_case	475	PROVEN	CSt/whenPhase/thenPhase/elsePhase/vecCase: case_agrees, case_match_agrees
+graph/src/runtime/vector_expr.rs	VectorEval::eval_function	555	NOT COVERED	function dispatch; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_has_labels	642	NOT COVERED	label lookup; not modelled
+graph/src/runtime/vector_expr.rs	VectorEval::eval_per_row	706	MODELLED	assumed as induction hypothesis (child columnar eval = per-row eval mapped)
+graph/src/runtime/vector_expr.rs	compare_columns	731	PROVEN	typedLane/compareColumns: compareColumns_agrees
+graph/src/runtime/vector_expr.rs	compare_i64_pairs	795	PROVEN	kI64/cmpRow (ints,ints arm): compareColumns_agrees, vec_cmp_int
+graph/src/runtime/vector_expr.rs	compare_f64_pairs	818	PROVEN	kF64/cmpRow (floats,floats arm): compareColumns_agrees, vec_cmp_float
+graph/src/runtime/vector_expr.rs	mask_out_nulls	840	MODELLED	implicit: null rows are none in cmpRow (bitmap masking not modelled as such)
+graph/src/runtime/vector_expr.rs	negate_bools	854	NOT COVERED	columnar NOT not modelled (only scalar kNot / deMorgan_*)
+graph/src/runtime/vector_expr.rs	arithmetic	878	PROVEN	arith: arith_agrees
+graph/src/runtime/vector_expr.rs	int_lane	953	PROVEN	intLane: intLane_vals, arith_agrees, divGate_spec
+graph/src/runtime/vector_expr.rs	float_lane	965	PROVEN	floatLane: floatLane_vals, arith_agrees
+graph/src/runtime/vector_expr.rs	float_operand	980	PROVEN	floatOperand: floatOperand_allF, arith_agrees
+graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	NOT COVERED	op mapping; not modelled
+graph/src/runtime/vectorized.rs	CmpOp::flip	84	PROVEN	CmpOp.flip: vec_cmp_int_flip, vec_cmp_float_flip
+graph/src/runtime/vectorized.rs	compare_i64_column	105	PROVEN	kI64: vec_cmp_int, vec_cmp_int_flip
+graph/src/runtime/vectorized.rs	compare_f64_column	162	PROVEN	kF64: vec_cmp_float, vec_cmp_float_flip
+graph/src/runtime/vectorized.rs	compare_value_column	229	MODELLED	thin wrapper; per-row compareValues proved (vec_cmp_generic), column loop not modelled
+graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	compareValues: vec_cmp_generic (= per-row evalCmp for every op)
+graph/src/runtime/vectorized.rs	compare_value_column_3vl	279	MODELLED	column loop over compareValues; loop itself not modelled
+graph/src/runtime/eval.rs	classify_join_keys	86	PROVEN	EvalMore.classifyJoinKeys (classify_numeric FloatLane::None): classifyJoinKeys_lossless
+graph/src/runtime/eval.rs	RangeIter::next	111	PROVEN	rangeIterRel/rangeIterDbg: rangeIter_ok_up, rangeIter_wraps, rangeIter_panics, rangeIter_panics_down (bug)
+graph/src/runtime/eval.rs	NeighborIter::new	153	PROVEN	BFS.NI.new (matrix rows abstract, G structure laws): new_directed_typed, new_directed_untyped
+graph/src/runtime/eval.rs	NeighborIter::new_reversed	193	PROVEN	BFS.NI.newReversed: newReversed_typed (exactly the in-neighbours)
+graph/src/runtime/eval.rs	NeighborIter::neighbors	221	PROVEN	BFS.NI.neighbors: neighbors_mem
+graph/src/runtime/eval.rs	ExprEval::from_runtime	266	PROVEN	Eval.Ev.fromRuntime: rt_cases
+graph/src/runtime/eval.rs	ExprEval::constant	273	PROVEN	Eval.Ev.constant: rt_cases, constant_param, constant_prop_node
+graph/src/runtime/eval.rs	ExprEval::rt	278	PROVEN	Eval.Ev.rt: rt_cases
+graph/src/runtime/eval.rs	ExprEval::resolve_var	287	PROVEN	Eval.resolveVar: resolveVar_spec
+graph/src/runtime/eval.rs	ExprEval::eval	299	PROVEN	Eval.eval: eval_eq_root
+graph/src/runtime/eval.rs	ExprEval::eval_operand	316	PROVEN	Eval.evalOperand: evalOperand_eq (inline leaves = full evaluator)
+graph/src/runtime/eval.rs	ExprEval::eval_node	330	PROVEN	Eval.evalNode (all fast-path arms; compound = parameter): cmp_fast, cmp_le_not_gt, map_bad_key, constant_param, evalOperand_eq; arithmetic arms vArith/evalCmp (arith_agrees, vec_cmp_*)
+graph/src/runtime/eval.rs	ExprEval::eval_case	485	PROVEN	scalarCase/caseMatchScalar: case_agrees, case_match_agrees
+graph/src/runtime/eval.rs	ExprEval::eval_compound	525	MODELLED	arms And/Or (scalarAndOr: and_kleene, or_kleene, and_short_circuit), Xor (xor_kleene), Negate (checkedNeg: neg_vs_sub_zero), Pow (powFold: pow_drops_error bug), In, Eq..Ge proved; List/Map/GetElement/comprehension/etc. arms not modelled
+graph/src/runtime/eval.rs	ExprEval::eval_batch	1102	PROVEN	EvalMore.evalBatch: evalBatch_eq_perRow (bulk path = per-row evaluation)
+graph/src/runtime/eval.rs	ExprEval::try_eval_batch_property	1118	PROVEN	EvalMore.tryEvalBatchProperty (BatchLaws structure): evalBatch_eq_perRow
+graph/src/runtime/eval.rs	ExprEval::eval_batch_per_row	1148	PROVEN	EvalMore.evalBatchPerRow: evalBatch_eq_perRow, classifyJoinKeys_lossless
+graph/src/runtime/eval.rs	ExprEval::eval_iter_expr	1178	PROVEN	EvalMore.evalIterExpr: evalIter_cases, evalIter_list (RangeIter: rangeIter_ok_up)
+graph/src/runtime/eval.rs	ExprEval::eval_compiled_regex	1254	PROVEN	EvalMore.evalCompiledRegex (Regex structure): compiledRegex_spec
+graph/src/runtime/eval.rs	check_string_or_null	1261	PROVEN	EvalMore.checkStringOrNull: checkStringOrNull_ok
+graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1315	PROVEN	BFS.evalShortestPath: shortestPath_args, shortestPath_self, buildPath_length
+graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1400	PROVEN	BFS.search/level/scan/chain/bfsNodes: bfs_sound (meets ⇒ no expect-panic, src→dst walk over followed edges), search_sound, level_inv, scan_inv, chain_sound, chain_total
+graph/src/runtime/eval.rs	ExprEval::eval_map_projection	1529	PROVEN	EvalMore.evalMapProjection/projItems: mapProjection_null_other, mapProjection_prop, omInsert_lookup
+graph/src/runtime/eval.rs	eval_quantifier	1616	NOT COVERED	list quantifiers; lists out of scope
+graph/src/runtime/eval.rs	all_equals	1665	PROVEN	evalCmp Eq: vec_cmp_generic, evalCmp_eq_shape, int_float_eq_not_transitive
+graph/src/runtime/eval.rs	all_not_equals	1688	PROVEN	evalCmp Neq: vec_cmp_generic
+graph/src/runtime/eval.rs	list_contains	1708	MODELLED	delegates to Contains::contains (proved); List/Null/type-error dispatch not modelled
+graph/src/runtime/eval.rs	get_elements	1722	NOT COVERED	list slicing; lists out of scope
+graph/src/runtime/eval.rs	logical_xor	1755	PROVEN	scalarXor: xor_kleene
+graph/src/runtime/eval.rs	evaluate_param	1762	PROVEN	Eval.evalParam: evalParams_consts, evalParam_neg (i64::MIN overflow error), evalParam_neg_null, evalParam_badkey
+graph/src/runtime/value.rs	Add::add	910	PROVEN	vArith .add: arith_agrees, add_exact, max_add_one (scalar subset)
+graph/src/runtime/value.rs	Value::add_slow	925	MODELLED	vArith null and String-concat arms only; List/Map/temporal arms out of scope
+graph/src/runtime/value.rs	Sub::sub	1042	PROVEN	vArith .sub: arith_agrees, neg_vs_sub_zero (scalar subset)
+graph/src/runtime/value.rs	Mul::mul	1091	PROVEN	vArith .mul: arith_agrees (scalar subset)
+graph/src/runtime/value.rs	Div::div	1120	PROVEN	vArith .div: arith_agrees, divGate_spec, div_exact, min_div_neg_one
+graph/src/runtime/value.rs	Rem::rem	1148	PROVEN	vArith .rem: arith_agrees, min_rem_neg_one
+graph/src/runtime/value.rs	OrderedEnum::order	1178	MODELLED	V.order (scalar subset; value_order proves the full table)
+graph/src/runtime/value.rs	CompareValue::compare_value	1225	MODELLED	compareValue (scalar subset, abstract f64); used by the proofs, not their subject
+graph/src/runtime/value.rs	Contains::contains	1763	PROVEN	containsGo/contains: contains_is_kleene_any, null_in
+graph/src/runtime/value.rs	compare_floats	1801	MODELLED	compareFloats: compareFloats_flag, cf_ne (helper lemmas)
+graph/src/runtime/functions/math.rs	register	42	NOT COVERED	registration table
+graph/src/runtime/functions/math.rs	abs	46	NOT COVERED	checkedAbs defined but no theorem about abs()
+graph/src/runtime/functions/math.rs	ceil	63	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	e	77	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	exp	86	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	floor	100	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	log	114	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	log10	128	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	random_uuid	143	NOT COVERED	nondeterministic; not modelled
+graph/src/runtime/functions/math.rs	pow	176	NOT COVERED	wrapper over apply_pow; wrapper not modelled
+graph/src/runtime/functions/math.rs	rand	186	NOT COVERED	nondeterministic; not modelled
+graph/src/runtime/functions/math.rs	round	196	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	sign	210	PROVEN	signRust: sign_float_is_float (bug: Float result)
+graph/src/runtime/functions/math.rs	sqrt	228	NOT COVERED	not modelled
+graph/src/runtime/functions/math.rs	range	254	MODELLED	rangeMath: used as the spec in rangeIter_ok_up (argument validation not modelled)
+graph/src/runtime/functions/math.rs	coalesce	317	PROVEN	coalesce: coalesce_first_nonnull
+graph/src/runtime/functions/math.rs	apply_pow	332	PROVEN	applyPow: pow_agrees_without_errors, pow_drops_error
+graph/src/runtime/functions/conversion.rs	value_to_integer	44	MODELLED	toIntegerFloat/toIntegerString fragment only (out-of-range floor): toInteger_float_vs_string
+graph/src/planner/optimizer/eliminate_true_filters.rs	is_constant_true	49	MODELLED	only its effect: constant evaluator = error-valued variables fed to powFold (pow_constant_true, bug); is_constant_true itself not modelled

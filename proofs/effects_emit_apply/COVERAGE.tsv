@@ -1,0 +1,36 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/effects/v3/emit.rs	schema_id	56	PROVEN	EmitDDL.schemaId: schemaId_spec (panics iff id >= 2^32)
+graph/src/effects/v3/emit.rs	emit_schema_additions	61	PROVEN	Emit.schemaAdditions: suffixRecs_ids, replayNames_suffix (replica at baseline ends with master dict), gate_drops_* 
+graph/src/effects/v3/emit.rs	build_constraint_buffer	111	PROVEN	EmitDDL.buildConstraintRec/resolveRefs + encodeAll: buildConstraintRec_verifies, encodeAll_ok
+graph/src/effects/v3/emit.rs	encode_all	187	PROVEN	EmitDDL.encodeAll: encodeAll_ok, encodeAll_failed
+graph/src/effects/v3/emit.rs	index_field_flags	205	PROVEN	EmitDDL.indexFieldFlags: indexFieldFlags_spec
+graph/src/effects/v3/emit.rs	build_index_buffer	227	PROVEN	EmitDDL.buildIndexRec/resolveRefs + encodeAll: buildIndexRec_verifies, encodeAll_ok
+graph/src/effects/v3/emit.rs	for_each_record	325	PROVEN	Emit.gate_zero_stream, Emit.commitShips_eq_iff (record-opcode granularity)
+graph/src/effects/v3/emit.rs	digest_cancelled	397	PROVEN	Digests.digestCancelledF: digestCancelled_pairs; Emit.digestCancelled (gate)
+graph/src/effects/v3/emit.rs	digest_created_nodes	499	PROVEN	Basic.memoGroup_eq_groupBy, Basic.sortDedup_set_eq, Basic.groupBy_flat, Basic.groupBy_keyed (+ proofs/replication emit/apply roundtrip over groupBy)
+graph/src/effects/v3/emit.rs	digest_created_edges	576	PROVEN	Digests.digestCreatedEdges/mkEdgeRec: digestCreatedEdges_perm, digestCreatedEdges_keyed, mkEdgeRec_shape (FxHashMap order abstracted; theorems order-insensitive)
+graph/src/effects/v3/emit.rs	digest_deleted_edges	637	PROVEN	Digests.digestDeletedEdges: digestDeletedEdges_perm
+graph/src/effects/v3/emit.rs	digest_updates	688	PROVEN	Digests.digestUpdates/updKey: digestUpdates_perm, digestUpdates_shape
+graph/src/effects/v3/emit.rs	digest_deleted_nodes	793	PROVEN	Basic.memoGroup_eq_groupBy, Basic.sortDedup_set_eq (the ascending cursor walk over deleted_node_labels is not modelled)
+graph/src/effects/v3/emit.rs	digest_labels	855	PROVEN	Digests.digestLabels: digestLabels_perm, digestLabels_nonempty
+graph/src/effects/v3/emit.rs	gather_rows	923	PROVEN	Emit.mergeRow_eq_lookup, Emit.gatherRows_length (+ unsorted counterexample example)
+graph/src/effects/v3/apply.rs	from	43	PROVEN	ApplyHelpers.ofString: ofString_spec
+graph/src/effects/v3/apply.rs	apply_effects	53	PROVEN	ApplyHelpers.applyEffects (records then g.validate() then index commit, #2846): applyEffects_ok, applyEffects_validate_refused, validateG_ok (BUG W2-effects-4: not atomic for CREATE_INDEX, still present at 2c874022a, live repro)
+graph/src/effects/v3/apply.rs	from	96	PROVEN	ApplyHelpers.fromNodeOp (impl From<NodeOpError> for ApplyError, replaces node_op since #2846): fromNodeOp_spec, applyEffects_validate_refused
+graph/src/effects/v3/apply.rs	id_space_error_map	109	PROVEN	ApplyHelpers.idSpaceErrorMap: idSpaceErrorMap_injective (divergences), idSpaceErrorMap_internal (Inconsistent/AlreadyTaken -> Graph), idSpaceErrorMap_divergence_not_graph
+graph/src/effects/v3/apply.rs	apply_record	152	PROVEN	node arms: Apply.wf_createOne, Apply.wf_deleteNode, Apply.wf_updateNode_live, Apply.wf_setLabels_live; counterexamples Apply.update_dead_not_wf, Apply.setlabels_dead_not_wf, Apply.delete_endpoint_not_wf; edge/index/constraint arms not modelled (CREATE_EDGE is #2924, still present at 2c874022a)
+graph/src/effects/v3/apply.rs	apply_add_schema	496	PROVEN	ApplyHelpers.applyAddSchema/intern: applyAddSchema_eq_applyAddName; Emit.next_payload_refused
+graph/src/effects/v3/apply.rs	verify_id	516	PROVEN	ApplyHelpers.verifyId: verifyId_ok
+graph/src/effects/v3/apply.rs	verify_schema	539	PROVEN	ApplyHelpers.verifySchema: verifySchema_ok, buildIndexRec_verifies
+graph/src/effects/v3/apply.rs	verify_attribute	559	PROVEN	ApplyHelpers.verifyAttribute: verifyAttribute_ok
+graph/src/effects/v3/apply.rs	resolved	571	PROVEN	ApplyHelpers.resolved: resolved_ok
+graph/src/effects/v3/apply.rs	resolve_type	593	PROVEN	ApplyHelpers.resolveType: checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_type_id	617	PROVEN	ApplyHelpers.checkedTypeId: checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_label_ids	633	PROVEN	ApplyHelpers.checkedLabelIds: checkedLabelIds_ok
+graph/src/effects/v3/apply.rs	check_attr_shape	663	PROVEN	ApplyHelpers.checkAttrShape: checkAttrShape_ok; Emit.gatherRows_length
+graph/src/effects/v3/apply.rs	attr_map	707	PROVEN	ApplyHelpers.attrMap: attrMap_row
+graph/src/effects/v3/apply.rs	index_options	750	PROVEN	ApplyHelpers.indexOptions: indexOptions_spec
+graph/src/effects/v3/apply.rs	single_index_label	781	PROVEN	ApplyHelpers.singleIndexLabel: singleIndexLabel_ok
+graph/src/runtime/pending.rs	effects_count	1684	PROVEN	Emit.effectsCount, Emit.gate_zero_stream, Emit.gate_drops_cancelled, Emit.gate_drops_schema_only (BUG W2-effects-1, still present at 2c874022a)
+graph/src/runtime/ops/commit.rs	CommitOp::next (effects gate)	108	PROVEN	Emit.commitShips, Emit.commitShips_eq_iff (BUG W2-effects-1, still present at 2c874022a)
+graph/src/effects/v3/emit.rs	wire_index_options	2087	PROVEN	EmitDDL.wireIndexOptions: wireIndexOptions_spec

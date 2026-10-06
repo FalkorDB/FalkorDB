@@ -1,0 +1,61 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/effects/v3/emit.rs	schema_id	56	PROVEN	schemaRecs ids = offsets (applyRec_addLabel_refines); faithful: proofs/effects_emit_apply schemaId_spec
+graph/src/effects/v3/emit.rs	emit_schema_additions	61	PROVEN	schemaRecs: emit_apply, applyRec_addLabel_refines, applyRec_addAttribute_refines; faithful: proofs/effects_emit_apply suffixRecs_ids, replayNames_suffix
+graph/src/effects/v3/emit.rs	build_constraint_buffer	111	PROVEN	faithful: proofs/effects_emit_apply buildConstraintRec_verifies, encodeAll_ok; bytes: proofs/effects_codec readRecord_encRecord
+graph/src/effects/v3/emit.rs	encode_all	187	PROVEN	faithful: proofs/effects_emit_apply encodeAll_ok/encodeAll_failed; bytes: proofs/effects_codec readRecord_encRecord
+graph/src/effects/v3/emit.rs	index_field_flags	205	PROVEN	faithful: proofs/effects_emit_apply indexFieldFlags_spec
+graph/src/effects/v3/emit.rs	build_index_buffer	227	PROVEN	faithful: proofs/effects_emit_apply buildIndexRec_verifies, encodeAll_ok
+graph/src/effects/v3/emit.rs	for_each_record	325	PROVEN	emit = engine loops: emit_refines; emit_apply, stream_simulation; gate: proofs/effects_emit_apply commitShips_eq_iff
+graph/src/effects/v3/emit.rs	digest_cancelled	397	PROVEN	faithful: proofs/effects_emit_apply digestCancelled_pairs
+graph/src/effects/v3/emit.rs	digest_created_nodes	499	PROVEN	memo loop = groupBy: memo_refines_groupBy, emit_refines; createBatch_perm, specsOf_group, emit_apply
+graph/src/effects/v3/emit.rs	digest_created_edges	576	PROVEN	faithful: proofs/effects_emit_apply digestCreatedEdges_perm, digestCreatedEdges_keyed, mkEdgeRec_shape
+graph/src/effects/v3/emit.rs	digest_deleted_edges	637	PROVEN	faithful: proofs/effects_emit_apply digestDeletedEdges_perm
+graph/src/effects/v3/emit.rs	digest_updates	688	PROVEN	faithful: proofs/effects_emit_apply digestUpdates_perm, digestUpdates_shape
+graph/src/effects/v3/emit.rs	digest_deleted_nodes	793	PROVEN	memo loop = groupBy: memo_refines_groupBy, emit_refines; deleteBatch_perm, emit_apply
+graph/src/effects/v3/emit.rs	digest_labels	855	PROVEN	faithful: proofs/effects_emit_apply digestLabels_perm, digestLabels_nonempty
+graph/src/effects/v3/emit.rs	gather_rows	923	PROVEN	gatherRows: specsOf_group, chunk_flatMap, lookup_row; faithful merge: proofs/effects_emit_apply mergeRow_eq_lookup, gatherRows_length
+graph/src/effects/v3/emit.rs	wire_index_options	2087	PROVEN	faithful: proofs/effects_emit_apply wireIndexOptions_spec
+graph/src/effects/v3/apply.rs	ApplyError::from	43	PROVEN	faithful: proofs/effects_emit_apply ofString_spec
+graph/src/effects/v3/apply.rs	apply_effects	53	PROVEN	applyPayload (records, then Batch.verify = g.validate()): emit_apply, stream_simulation; faithful: proofs/effects_emit_apply applyEffects_ok, applyEffects_validate_refused
+graph/src/effects/v3/apply.rs	ApplyError::from	96	PROVEN	From<NodeOpError> (replaces node_op, #2846): okCreate/okDelete refusals surface as ApplyError; faithful: proofs/effects_emit_apply fromNodeOp_spec, idSpaceErrorMap_internal
+graph/src/effects/v3/apply.rs	id_space_error_map	109	PROVEN	faithful: proofs/effects_emit_apply idSpaceErrorMap_injective (divergences), idSpaceErrorMap_internal
+graph/src/effects/v3/apply.rs	apply_record	152	PROVEN	applyRec: add arms = apply_add_schema (applyRec_addLabel_refines, applyRec_addAttribute_refines); node arms faithful in proofs/effects_emit_apply wf_createOne/wf_deleteNode; emit_apply
+graph/src/effects/v3/apply.rs	apply_add_schema	496	PROVEN	applyRec_addLabel_refines, applyRec_addAttribute_refines, intern_refines (abstract = faithful get-or-create + verify_id)
+graph/src/effects/v3/apply.rs	verify_id	516	PROVEN	applyRec_addLabel_refines (FalkorFaithful.verifyIdF)
+graph/src/effects/v3/apply.rs	verify_schema	539	PROVEN	okCreate label bound; faithful: proofs/effects_emit_apply verifySchema_ok
+graph/src/effects/v3/apply.rs	verify_attribute	559	PROVEN	okCreate attr bound; faithful: proofs/effects_emit_apply verifyAttribute_ok
+graph/src/effects/v3/apply.rs	resolved	571	PROVEN	faithful: proofs/effects_emit_apply resolved_ok
+graph/src/effects/v3/apply.rs	resolve_type	593	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_type_id	617	PROVEN	faithful: proofs/effects_emit_apply checkedTypeId_ok
+graph/src/effects/v3/apply.rs	checked_label_ids	633	PROVEN	okCreate labels.all (< len); faithful: proofs/effects_emit_apply checkedLabelIds_ok
+graph/src/effects/v3/apply.rs	check_attr_shape	663	PROVEN	okCreate rows = ids*attrs; faithful: proofs/effects_emit_apply checkAttrShape_ok
+graph/src/effects/v3/apply.rs	attr_map	707	PROVEN	faithful: proofs/effects_emit_apply attrMap_row
+graph/src/effects/v3/apply.rs	index_options	750	PROVEN	faithful: proofs/effects_emit_apply indexOptions_spec
+graph/src/effects/v3/apply.rs	single_index_label	781	PROVEN	faithful: proofs/effects_emit_apply singleIndexLabel_ok
+graph/src/effects/v3/format.rs	EffectsPayload::new_buffer	22	PROVEN	faithful: proofs/effects_codec fmtIsEmpty_iff
+graph/src/effects/v3/format.rs	EffectsPayload::is_empty	27	PROVEN	faithful: proofs/effects_codec fmtIsEmpty_iff
+graph/src/effects/v3/format.rs	EffectsPayload::replicate	32	PROVEN	faithful: proofs/effects_codec fmtReplicate_transparent (sealed payload opens to the records)
+graph/src/effects/v3/format.rs	EffectsPayload::describe	46	PROVEN	faithful: proofs/effects_codec describe_spec
+graph/src/effects/v3/format.rs	EffectsPayload::apply	108	PROVEN	applyPayload; faithful: proofs/effects_codec fmtApply_eq, proofs/effects_emit_apply applyEffects_ok
+graph/src/effects/v3/format.rs	EffectsPayload::build	115	PROVEN	emit; faithful: proofs/effects_codec build_ok
+graph/src/effects/v3/format.rs	EffectsPayload::build_index	144	PROVEN	faithful: proofs/effects_codec fmtBuildIndex_eq, proofs/effects_emit_apply buildIndexRec_verifies
+graph/src/effects/v3/format.rs	EffectsPayload::build_constraint	154	PROVEN	faithful: proofs/effects_codec fmtBuildConstraint_eq, proofs/effects_emit_apply buildConstraintRec_verifies
+graph/src/runtime/ops/commit.rs	CommitOp::new	45	NOT COVERED	operator constructor; not in this abstract model (PROVEN in proofs/pending_commit)
+graph/src/runtime/ops/commit.rs	CommitOp::next	69	MODELLED	drives commit (abstract); end_segment -> roll_id_batches since #2846 (assumption 4 in header); faithful: proofs/pending_commit; effects gate proofs/effects_emit_apply commitShips_eq_iff
+graph/src/runtime/pending.rs	Pending::commit	1099	MODELLED	abstract commit (node create/delete + schema): emit_apply; faithful model PROVEN in proofs/pending_commit (pending.rs is that project's target)
+graph/src/graph/graph.rs	Graph::get_label_id_mut	1135	PROVEN	intern = faithful get-or-create: intern_refines, intern_fresh, intern_id_lt
+graph/src/graph/graph.rs	Graph::node_id_bound	1526	PROVEN	GState.bound = IdSpace::bound = live + recycled.len(): absIds, createOne_refines, deleteOne_refines (Faithful.Ids.bound)
+graph/src/graph/graph.rs	Graph::create_nodes	1565	PROVEN	createOne (id-space half) = IdSpace::create on one id: createOne_refines (Faithful.Ids.create1); refusals = okCreate; matrix sizing (grow_for_nodes) outside the abstract state
+graph/src/graph/graph.rs	Graph::delete_nodes	2072	PROVEN	deleteOne (id-space half) = IdSpace::release({id},{id}): deleteOne_refines (Faithful.Ids.release1); refusals = okDelete; label/attr/index removal = deleteOne fields
+graph/src/graph/id_space.rs	IdSpace::reserve	446	PROVEN	idsOf = reserve on a fresh batch (taken = issued = {}): idsOf_refines; faithful: proofs/id_space reserve_spec, reserve_fresh
+graph/src/graph/id_space.rs	IdSpace::refuse_recycled	513	PROVEN	okDelete (!free); faithful: proofs/id_space refuseRecycled_ok, release_spec
+graph/src/graph/id_space.rs	IdSpace::create	545	PROVEN	okCreate (free or (>= entry and not taken); every id < ID_LIMIT, #2911) + createOne_refines, emit_apply (PendingWF.inLimit); faithful: proofs/id_space create_spec, create_out_of_range, create_succeeds
+graph/src/graph/id_space.rs	IdSpace::release	642	PROVEN	okDelete + deleteOne_refines; faithful: proofs/id_space release_spec, release_succeeds, release_no_underflow
+graph/src/graph/id_space.rs	IdSpace::refuse_undeletable	601	PROVEN	okDelete (< entry or taken); faithful: proofs/id_space refuseUndeletable_ok
+graph/src/graph/id_space.rs	IdSpace::verify	676	PROVEN	Batch.verify (created = [entry, bound)); faithful: proofs/id_space verify_ok_iff (checked + same interval statement)
+src/divergence_guard.rs	is_replayed	41	PROVEN	Guard.isReplayed: isReplayed_iff, onFailure_client_noop
+src/divergence_guard.rs	on_failure	53	PROVEN	Guard.onFailure: onFailure_client_noop, onFailure_loading_exits, onFailure_replicated_resyncs, onFailure_logs_payload_only_when_replayed; guardReplica_spec, stepNode_failure_matches_guard, guard_loading_halts (Redis ctx flags/timer/exit are inputs/effects)
+src/divergence_guard.rs	force_full_resync	104	PROVEN	Guard.forceFullResync: forceFullResync_exit_iff, forceFullResync_no_one_first, forceFullResync_success (ctx.call result is an input)
+src/divergence_guard.rs	master_address	142	PROVEN	Guard.masterAddress: masterAddress_some, masterAddress_none_missing (INFO fields are inputs)
+src/divergence_guard.rs	log_payload	168	PROVEN	Guard.logPayload: logPayload_none, logPayload_length, onFailure_logs_payload_only_when_replayed
+src/divergence_guard.rs	clip	192	PROVEN	Guard.clip/findRev: clip_spec (char boundary, <= budget, longest, cut = rest), clip_prefix_chars + #guard UTF-8 cases

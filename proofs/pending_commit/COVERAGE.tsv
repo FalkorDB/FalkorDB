@@ -1,0 +1,177 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/ops/commit.rs	new	45	NOT COVERED	RO check
+graph/src/runtime/ops/commit.rs	next	69	PROVEN	CommitOpNext.commitNext_ok, commitNext_commit_err, commitNext_endSegment_err, pops_in_order
+graph/src/runtime/ops/create.rs	build_attr_template	55	NOT COVERED	pattern/attr resolution
+graph/src/runtime/ops/create.rs	resolve_map_attrs	84	NOT COVERED	pattern/attr resolution
+graph/src/runtime/ops/create.rs	new	102	NOT COVERED	pattern/attr resolution
+graph/src/runtime/ops/create.rs	next	121	NOT COVERED	pattern/attr resolution
+graph/src/runtime/ops/create.rs	create_batch	139	MODELLED	Snapshot.createRust / Stats.step create
+graph/src/runtime/ops/create.rs	resolve_pattern	353	NOT COVERED	pattern/attr resolution
+graph/src/runtime/ops/set.rs	new	40	NOT COVERED	operator plumbing
+graph/src/runtime/ops/set.rs	next	59	NOT COVERED	operator plumbing
+graph/src/runtime/ops/set.rs	set_batch	76	MODELLED	per-row set_inner
+graph/src/runtime/ops/set.rs	resolve_set_items	96	NOT COVERED	operator plumbing
+graph/src/runtime/ops/set.rs	set_inner	124	MODELLED	Props.replaceFromNode/replaceFromMap, replace_keeps_staged (#2776)
+graph/src/runtime/ops/delete.rs	node_attrs_to_map	38	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	rel_attrs_to_map	49	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	snapshot_required	69	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	new	93	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	next	113	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	delete_batch	127	NOT COVERED	operator plumbing / snapshot map building
+graph/src/runtime/ops/delete.rs	delete_nodes_bulk	191	MODELLED	Snapshot.del, Stats.step
+graph/src/runtime/ops/delete.rs	delete_relationships_bulk	297	MODELLED	Snapshot.del (relationship map)
+graph/src/runtime/ops/delete.rs	delete_entity	393	MODELLED	Snapshot.del, Stats.step
+graph/src/runtime/ops/remove.rs	new	30	NOT COVERED	operator plumbing
+graph/src/runtime/ops/remove.rs	next	48	NOT COVERED	operator plumbing
+graph/src/runtime/ops/remove.rs	remove_batch	62	NOT COVERED	operator plumbing
+graph/src/runtime/ops/remove.rs	remove	74	MODELLED	Labels.removeOp (filter to present labels), removeOp_no_dup_push
+graph/src/graph/graph.rs	node_id_bound	1526	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	relationship_id_bound	1532	MODELLED	Snapshot.fresh (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	create_nodes	1565	MODELLED	Snapshot.createRust (bin-first) (proved in proofs/graph_queries Ids)
+graph/src/graph/graph.rs	set_nodes_attributes	1674	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	import_node_attrs	1706	PROVEN	via import_attrs: Props.read_your_writes_new
+graph/src/graph/graph.rs	import_node_attrs_resolved	1749	MODELLED	bulk path, no null filter
+graph/src/graph/graph.rs	import_relationship_attrs	1848	PROVEN	via import_attrs: Props.read_your_writes_new
+graph/src/graph/graph.rs	set_relationships_attributes	2566	PROVEN	via insert_attrs: Span.mergeSpan_correct
+graph/src/graph/graph.rs	set_node_labels_product	1928	AXIOMATISED	GraphBLAS assign as set product
+graph/src/graph/graph.rs	set_nodes_labels_bulk	2002	AXIOMATISED	GraphBLAS set_all assumed set-insert; then Labels.commit_eq_ref
+graph/src/graph/graph.rs	remove_nodes_labels	2043	AXIOMATISED	GraphBLAS remove assumed set-delete; then Labels.commit_eq_ref
+graph/src/graph/graph.rs	delete_nodes	2072	MODELLED	Snapshot.del/commit; attrs cleared by remove_all (hypothesis of read_your_writes_new)
+graph/src/graph/graph.rs	create_relationships_bulk	2400	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_relationships	2649	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	delete_implicit_edges	2776	NOT COVERED	tensor (proofs/versioned_matrix)
+graph/src/graph/graph.rs	get_or_create_node_attr_id	1777	NOT COVERED	name interning
+graph/src/graph/graph.rs	get_or_create_rel_attr_id	1841	NOT COVERED	name interning
+graph/src/graph/graph.rs	commit_index	3532	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index	3555	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_edge_index_locked	3567	NOT COVERED	RediSearch index boundary
+graph/src/graph/graph.rs	commit_index_kind	3643	NOT COVERED	RediSearch index boundary
+graph/src/graph/attribute_store.rs	into_iter	148	PROVEN	NameMap.accessors (into_iter = vec)
+graph/src/graph/attribute_store.rs	len	155	PROVEN	NameMap.accessors
+graph/src/graph/attribute_store.rs	is_empty	160	PROVEN	NameMap.accessors
+graph/src/graph/attribute_store.rs	get	165	PROVEN	NameMap.accessors
+graph/src/graph/attribute_store.rs	iter	172	PROVEN	NameMap.accessors
+graph/src/graph/attribute_store.rs	get_index_of	177	PROVEN	NameMap.accessors
+graph/src/graph/attribute_store.rs	insert	189	PROVEN	NameMap.insert_wf
+graph/src/graph/attribute_store.rs	get_or_create	224	PROVEN	NameMap.getOrCreate_spec, getOrCreate_wf, getOrCreate_prefix, mint_cast_exact
+graph/src/graph/attribute_store.rs	index	244	PROVEN	NameMap.accessors (idx; none = panic)
+graph/src/graph/attribute_store.rs	heap_index	282	PROVEN	Pack.heapIndex_le32
+graph/src/graph/attribute_store.rs	len	364	PROVEN	Content.attrUpdates_view (trait decl)
+graph/src/graph/attribute_store.rs	id	365	PROVEN	Content.attrUpdates_view (trait decl)
+graph/src/graph/attribute_store.rs	value	369	PROVEN	Content.attrUpdates_view (trait decl)
+graph/src/graph/attribute_store.rs	len	376	PROVEN	Content.attrUpdates_view (slice impl)
+graph/src/graph/attribute_store.rs	id	380	PROVEN	Content.attrUpdates_view (slice impl)
+graph/src/graph/attribute_store.rs	value	387	PROVEN	Content.attrUpdates_view (slice impl)
+graph/src/graph/attribute_store.rs	len	405	PROVEN	Content.attrUpdates_view (RowUpdates)
+graph/src/graph/attribute_store.rs	id	409	PROVEN	Content.attrUpdates_view (RowUpdates)
+graph/src/graph/attribute_store.rs	value	416	PROVEN	Content.attrUpdates_view (RowUpdates)
+graph/src/graph/attribute_store.rs	pack_value	430	PROVEN	Pack.pack_unpack, Pack.pack_hinv
+graph/src/graph/attribute_store.rs	store_packed_value	471	PROVEN	Pack.store_get
+graph/src/graph/attribute_store.rs	unpack	486	PROVEN	Pack.pack_unpack, le64_roundtrip, le32_roundtrip
+graph/src/graph/attribute_store.rs	release_heap_value	510	PROVEN	Pack.release_hinv
+graph/src/graph/attribute_store.rs	release_span_values	522	PROVEN	Pack.releaseSpan_hinv
+graph/src/graph/attribute_store.rs	retire_span	535	PROVEN	Arena.retire_ok
+graph/src/graph/attribute_store.rs	resize_span_slack	548	PROVEN	Arena.setSpan_ok/mergeSpan_ok; Content.inPlace_ok
+graph/src/graph/attribute_store.rs	grow_slots	560	PROVEN	Arena.inv_grow, Content.grow_slotAt
+graph/src/graph/attribute_store.rs	set_span	573	PROVEN	Content.setSpanC_ok (+Arena.setSpan_ok; setSpan_u16_wrap, setSpan_cast_exact)
+graph/src/graph/attribute_store.rs	free_span	616	PROVEN	Content.freeSpanC_ok, Arena.freeSpan_ok
+graph/src/graph/attribute_store.rs	merge_span	636	PROVEN	Content.mergeSpanC_ok + Span.mergeSpan_correct + Arena.mergeSpan_ok
+graph/src/graph/attribute_store.rs	compact	798	PROVEN	Content.compactC_ok, Arena.compact_ok, Pack.compactHeap_unpack
+graph/src/graph/attribute_store.rs	maybe_compact	828	PROVEN	Content.maybeCompact_ok
+graph/src/graph/attribute_store.rs	entries	845	PROVEN	Content.span (spanRef_len)
+graph/src/graph/attribute_store.rs	len	851	PROVEN	Content.spanRef_len
+graph/src/graph/attribute_store.rs	get	856	PROVEN	Content.spanGet_eq
+graph/src/graph/attribute_store.rs	iter	867	PROVEN	Content.reads_spec (allAttrs = span)
+graph/src/graph/attribute_store.rs	heap_bytes	883	PROVEN	Pack.heapBytes_eq
+graph/src/graph/attribute_store.rs	default	914	PROVEN	Content.blockAt_set (fresh page = 64 None)
+graph/src/graph/attribute_store.rs	locate	933	PROVEN	Content.locate_eq
+graph/src/graph/attribute_store.rs	block	941	PROVEN	Content.blockAt_set
+graph/src/graph/attribute_store.rs	block_mut	962	PROVEN	Content.blockAt_set (blockSet/blockOf)
+graph/src/graph/attribute_store.rs	get	976	PROVEN	Content.dget_eq
+graph/src/graph/attribute_store.rs	set_span	991	PROVEN	Content.dsetSpan_ok
+graph/src/graph/attribute_store.rs	merge_span	1008	PROVEN	Content.dmergeSpan_ok
+graph/src/graph/attribute_store.rs	trim	1038	PROVEN	Content.dtrim_ok
+graph/src/graph/attribute_store.rs	remove	1072	PROVEN	Content.dremove_ok
+graph/src/graph/attribute_store.rs	structural_memory_usage	1102	PROVEN	Content.structural_partition
+graph/src/graph/attribute_store.rs	new	1152	PROVEN	Content.new_spec
+graph/src/graph/attribute_store.rs	new_version	1159	PROVEN	Content.newVersion_eq (value copy)
+graph/src/graph/attribute_store.rs	trim	1164	PROVEN	Content.dtrim_ok
+graph/src/graph/attribute_store.rs	get_attr_by_idx	1171	PROVEN	Content.getAttr_eq
+graph/src/graph/attribute_store.rs	get_attrs_by_idx_batch_into	1182	PROVEN	Content.getBatch_spec
+graph/src/graph/attribute_store.rs	has_attributes	1197	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	attr_count	1206	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	entity_memory_usage	1215	PROVEN	Content.reads_spec (+Pack.heapBytes_eq)
+graph/src/graph/attribute_store.rs	get_attr_ids	1226	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	get_all_attrs_by_id	1236	PROVEN	Content.reads_spec
+graph/src/graph/attribute_store.rs	remove_all	1246	PROVEN	Content.removeAll_spec
+graph/src/graph/attribute_store.rs	insert_attrs_rows	1266	PROVEN	Content.insertAttrs_spec on insertRows (zip view: attrUpdates_view)
+graph/src/graph/attribute_store.rs	insert_attrs	1315	PROVEN	Content.insertAttrs_spec
+graph/src/graph/attribute_store.rs	import_attrs	1351	PROVEN	Content.importAttrs_spec
+graph/src/graph/attribute_store.rs	import_attrs_resolved	1379	PROVEN	Content.importResolved_spec, resolved_duplicate
+graph/src/graph/attribute_store.rs	structural_memory_usage	1398	PROVEN	Content.structural_partition
+graph/src/graph/attribute_store.rs	encode_with_range	1409	PROVEN	Content.encode_spec, encode_decode_roundtrip
+graph/src/graph/attribute_store.rs	decode	1450	PROVEN	Content.decode_unimplemented
+graph/src/graph/attribute_store.rs	decode_with_count	1460	PROVEN	Content.decode_spec, encode_decode_roundtrip
+graph/src/runtime/pending.rs	flatten_label_map	46	PROVEN	PA.flatten_spec
+graph/src/runtime/pending.rs	is_valid_property	62	PROVEN	PA.isValid_spec
+graph/src/runtime/pending.rs	validate_node_property	84	PROVEN	PA.isValid_spec (validate)
+graph/src/runtime/pending.rs	validate_relationship_property	92	PROVEN	PA.isValid_spec (validate)
+graph/src/runtime/pending.rs	lookup_sorted	100	PROVEN	PA.lookupSorted_eq
+graph/src/runtime/pending.rs	is_empty	267	PROVEN	PD.isEmpty_spec
+graph/src/runtime/pending.rs	absorb	279	PROVEN	PD.absorb_spec
+graph/src/runtime/pending.rs	merge	298	PROVEN	PD.absorb_spec (merge = absorb.1)
+graph/src/runtime/pending.rs	ids_by_slot	318	PROVEN	PD.ids_spec
+graph/src/runtime/pending.rs	commit	344	PROVEN	PD.commitDocs_spec (graph index writers uninterpreted)
+graph/src/runtime/pending.rs	default	358	PROVEN	PD.new_spec
+graph/src/runtime/pending.rs	new	365	PROVEN	PD.new_spec
+graph/src/runtime/pending.rs	set_schema_baseline	395	PROVEN	PD.accessors_spec
+graph/src/runtime/pending.rs	created_nodes	406	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	set_node_attributes	417	PROVEN	PS.setAttrs_spec
+graph/src/runtime/pending.rs	set_node_attribute	444	PROVEN	PS.setAttr_spec (+PA.rustUpsert_eq, Props.stage_sorted_lastWrite)
+graph/src/runtime/pending.rs	clear_node_attributes	464	PROVEN	PS.clearA_spec
+graph/src/runtime/pending.rs	has_node_attrs	474	PROVEN	PS.hasA_spec
+graph/src/runtime/pending.rs	has_relationship_attrs	480	PROVEN	PS.hasA_spec
+graph/src/runtime/pending.rs	get_node_attribute	485	PROVEN	PS.getA_spec, Props.read_your_writes_existing
+graph/src/runtime/pending.rs	update_node_attrs	503	PROVEN	PS.updA_spec
+graph/src/runtime/pending.rs	stage_node_labels	532	PROVEN	Labels.overlay_eq_ref, Labels.run_disjoint
+graph/src/runtime/pending.rs	set_node_labels	549	PROVEN	Labels.stage
+graph/src/runtime/pending.rs	set_nodes_labels	557	PROVEN	Labels.stage per id
+graph/src/runtime/pending.rs	remove_node_labels	570	PROVEN	Labels.removeLabels_closed, overlay_eq_ref
+graph/src/runtime/pending.rs	node_has_label	596	PROVEN	Labels.nodeHas_eq_ref
+graph/src/runtime/pending.rs	update_node_labels	625	PROVEN	Labels.overlay_eq_ref
+graph/src/runtime/pending.rs	deleted_node	643	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	delete_pending_node	659	PROVEN	PS.deletePendingNode_spec, deletePendingNode_refused (CancelSpec hypothesis); Stats.step (cancel branch), Stats.cancel_example
+graph/src/runtime/pending.rs	remove_pending_relationships_for_node	710	PROVEN	PS.removeRels_spec, removeRels_none_incident, removeRelsG_spec, foldl_rmStep_taken
+graph/src/runtime/pending.rs	created_relationship	770	PROVEN	PS.createdRel_spec
+graph/src/runtime/pending.rs	set_relationship_attributes	787	PROVEN	PS.setAttrs_spec
+graph/src/runtime/pending.rs	set_relationship_attribute	813	PROVEN	PS.setAttr_spec
+graph/src/runtime/pending.rs	get_relationship_attribute	834	PROVEN	PS.getA_spec
+graph/src/runtime/pending.rs	update_relationship_attrs	852	PROVEN	PS.updA_spec
+graph/src/runtime/pending.rs	deleted_relationship	876	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	deleted_relationships_bulk	883	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_relationship_type	893	PROVEN	PS.sets_spec, createdRel_spec
+graph/src/runtime/pending.rs	is_node_created	901	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_pending_nodes_with_labels	911	PROVEN	PS.pendingWithLabels_spec
+graph/src/runtime/pending.rs	nodes_with_pending_label_removes	931	PROVEN	PS.withLabelRemoves_spec
+graph/src/runtime/pending.rs	is_relationship_created	949	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	get_created_relationship_endpoints	958	PROVEN	PS.createdEndpoints_spec
+graph/src/runtime/pending.rs	has_deleted_nodes	971	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	has_deleted_relationships	976	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	has_created_relationships	981	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	is_node_deleted	986	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	deleted_nodes	995	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	is_relationship_deleted	1000	PROVEN	PS.sets_spec
+graph/src/runtime/pending.rs	pending_indegree	1010	PROVEN	PS.pendingDeg_spec
+graph/src/runtime/pending.rs	pending_outdegree	1034	PROVEN	PS.pendingDeg_spec
+graph/src/runtime/pending.rs	pending_deleted_indegree	1059	PROVEN	PS.deletedDeg_some, deletedDeg_none, deg_panics_on_pending_deleted (#2769)
+graph/src/runtime/pending.rs	pending_deleted_outdegree	1081	PROVEN	PS.deletedDeg_some, deletedDeg_none
+graph/src/runtime/pending.rs	commit	1099	PROVEN	PC.commit_spec (stats, deleted_relationships; graph ops incl. id-space creates/deletes uninterpreted) + Props.read_your_writes_* + Labels.commit_eq_ref + Stats.c_eq_rust_plus_cancelled
+graph/src/runtime/pending.rs	enforce_constraints	1258	PROVEN	PC.enforce_spec, affected_spec
+graph/src/runtime/pending.rs	constraint_node_has_label	1331	PROVEN	PC.constraintHas_eq
+graph/src/runtime/pending.rs	check_node_constraint	1355	PROVEN	PC.check_spec, checkNode_spec, scan_ok
+graph/src/runtime/pending.rs	check_edge_constraint	1425	PROVEN	PC.check_spec, edgeMember_spec, scan_ok
+graph/src/runtime/pending.rs	take_deferred_indexes	1499	PROVEN	PD.commitDeferred_spec (takeDeferred)
+graph/src/runtime/pending.rs	resync_published_indexes	1517	PROVEN	PD.resync_spec
+graph/src/runtime/pending.rs	commit_deferred_indexes	1572	PROVEN	PD.commitDeferred_spec
+graph/src/runtime/pending.rs	effects_count	1684	PROVEN	PD.effects_ignores_cancelled (definition = documented sum)
+graph/src/runtime/pending.rs	end_segment	1613	PROVEN	PD.clear_spec, endSegment_spec; CommitOpNext.commitNext_endSegment_err

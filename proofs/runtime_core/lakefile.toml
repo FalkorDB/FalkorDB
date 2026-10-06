@@ -1,0 +1,5 @@
+name = "falkor-runtime-core"
+defaultTargets = ["RuntimeCore"]
+
+[[lean_lib]]
+name = "RuntimeCore"

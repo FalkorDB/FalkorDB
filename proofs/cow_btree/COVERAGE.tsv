@@ -1,0 +1,118 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	64	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	73	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::default	112	MODELLED	Cfg (const assert) + .leaf []; b3_* (Bugs.lean) show BRANCH_MAX >= 3 is too weak for remove
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::new	128	MODELLED	= default (.leaf [], Cfg)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::from_sorted	142	MODELLED	fromSorted (chunks + buildRoot); no correctness theorem
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::insert	169	PROVEN	insert: insert_spec (invariant preserved, sorted-set insertion)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::insert_batch	185	MODELLED	insertBatch; only snapshot_isolated (holds by purity), no batch-correctness theorem
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::remove	203	PROVEN	remove/collapse: remove_spec, collapse_spec; b3_one_remove_not_wf (bug at BRANCH_MAX=3)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::range	224	PROVEN	range: range_spec, range_empty; snapshot_isolated, snapshot_reads_committed
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::point	234	PROVEN	point_spec
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::count	245	NOT COVERED	nested helper of #[cfg(test)] len (toList length only used informally)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::is_empty	260	PROVEN	isEmpty: b3_drained_is_empty_lies (counterexample at BRANCH_MAX=3)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	CowBTree::walk	271	NOT COVERED	nested helper of #[cfg(test)] leaves; byte pages not modelled
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	56	MODELLED	packBranches; no theorem
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	90	MODELLED	buildRoot; no theorem
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	Branch::child_index	103	PROVEN	childIndex: childIndex_le, childIndex_cons, COK_route
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	Branch::rebalance	114	PROVEN	rebalance: rebalance_spec
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::min	155	PROVEN	minOpt: b3_drained_min_panics (counterexample)
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::apply_batch	169	PROVEN	applyBatch/route: route_never_routes_TOP, route_drops_TOP_example (bug); no batch-correctness theorem
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::insert_one	223	PROVEN	insertOne: insertOne_spec, insertOne_leaf, insertOne_shares_siblings
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::combine	279	PROVEN	combine: combine_spec
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::aos_combine	342	PROVEN	folded into combine (same count/2 split at list level): combine_spec; byte concat abstracted
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	Node::remove_one	363	PROVEN	removeOne: removeOne_shape, removeOne_mem, remove_spec
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	391	NOT COVERED	Arc clone-before-mutate argued informally (Snapshot.lean header); pages modelled as immutable values
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::new	28	PROVEN	Cursor.new/seek: seek_rest, new_inv_rest
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::set_leaf	68	PROVEN	wholeOf: wholeOf_sound
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::descend_left	85	PROVEN	descendLeft: descendLeft_rest, descendLeft_weight
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::advance_leaf	105	PROVEN	advanceLeaf: advanceLeaf_rest, advanceLeaf_weight
+graph/src/index/falkordb/data_structures/cow_btree/cursor.rs	RangeIter::next	124	PROVEN	Cursor.next: next_spec, next_none, next_in, take_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	42	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_sorted	50	MODELLED	mergeWalk; no theorem
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	77	MODELLED	abstracted as (takeWhile p).length on a monotone predicate (not proven equal to the binary search)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_walk	97	MODELLED	mergeWalk; no theorem
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::count	180	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::key	189	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::doc	201	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::doc_layout	213	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::lower_bound	223	PROVEN	lowerBound: seek_rest (via dropWhile_route)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::iter	233	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::to_pairs	238	MODELLED	the abstraction function itself (leaf = its entry list); fidelity assumed
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::from_pairs	260	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::from_parts	319	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::raw	350	NOT COVERED	page byte encoding abstracted to the sorted entry list (Leaf::to_pairs); covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::lower_bound_entry	359	PROVEN	lowerBoundEntry: lbe_facts
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::insert	372	PROVEN	leafInsert: leafInsert_spec (list level; fast/slow paths assumed to agree)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::remove	432	PROVEN	leafRemove: leafRemove_spec (list level)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	Leaf::merge_batch	471	MODELLED	mergeBatch; no theorem
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	AosLeaf::count	14	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	AosLeaf::read	21	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	AosLeaf::key	30	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	AosLeaf::doc	38	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	AosLeaf::build	46	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	AosLeaf::merge_batch	60	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	read_u16	18	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	is_indexed	28	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLayout::read	49	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	write_compact_header	72	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	append_spliced_docs	91	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	packing_fits	108	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLeaf::count	126	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLeaf::key	131	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLeaf::doc	140	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLeaf::doc_layout	150	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLeaf::build	161	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLeaf::splice_insert	187	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLeaf::splice_remove	217	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	CompactLeaf::merge	247	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	gallop_lower_bound	19	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::count	44	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::index_offset	49	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::key	56	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::doc	66	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::doc_layout	76	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::build	87	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::distinct_count	130	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::distinct_slot	136	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::splice_insert	159	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::splice_remove	240	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::merge	283	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/leaf/compact_indexed.rs	CompactIndexedLeaf::block_copy_merge	370	NOT COVERED	leaf byte format abstracted to the sorted entry list; covered by Rust differential tests only
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	splitmix	4	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	tree_range	12	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	ref_range	22	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	tree_pairs	35	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	empty_and_single	48	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	insert_split_parity	59	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	bulk_build_matches_incremental	89	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	remove_merge_parity	104	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	churn_stays_compact	121	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	clone_is_an_isolated_snapshot	167	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	snapshot_is_isolated_from_a_concurrent_writer	184	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	leaf_bytes_round_trip_through_a_byte_store	238	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	leaf_format_roundtrip	261	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	check	274	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	low_cardinality_parity	335	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	format_migration	376	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	bulk_built_thin_tail_deletes_without_panicking	409	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	aos_splice_insert_remove_edges	430	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	insert_batch_merge_parity	475	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	check	479	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	is_empty_tracks_emptiness	521	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	a_reader_reads_the_committed_version_lock_free_during_a_write	544	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	cow_writer_shares_committed_nodes_then_privatizes_on_write	612	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	root_rc	620	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	compact_splice_arms_parity	658	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	no_index_compact_splice_arms	740	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	block_copy_merge_parity	798	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	packed_compact_mutation_fuzz	860	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	const_generic_leaf_size_parity	947	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	const_generic_branch_size_parity	979	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	check_invariants	1014	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	walk	1020	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	differential	1122	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	integrity_differential_across_sizes	1179	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	integrity_from_sorted_well_formed_across_sizes	1191	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	build	1194	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap
+graph/src/index/falkordb/data_structures/cow_btree/tests.rs	integrity_adversarial_ascending_then_cascade_delete	1221	NOT COVERED	TEST-ONLY: #[cfg(test)] mod tests (cow_btree/mod.rs); differential tests vs BTreeMap

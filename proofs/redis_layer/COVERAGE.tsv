@@ -1,0 +1,275 @@
+file	function	line	bucket	lean_name_or_reason
+src/allocator.rs	alloc	44	PROVEN	Allocator.step (.alloc ok n): null_alloc_uncounted, run_traffic, query_accounting, alloc_passthrough (RedisAlloc = FFI input)
+src/allocator.rs	dealloc	61	PROVEN	Allocator.step (.dealloc n): run_traffic, query_accounting, disabled_frozen (RedisAlloc::dealloc = FFI effect)
+src/allocator.rs	enable_tracking	80	PROVEN	Allocator.step .enable: enable_sets, query_accounting
+src/allocator.rs	disable_tracking	88	PROVEN	Allocator.step .disable: disable_clears, disabled_frozen
+src/allocator.rs	current_thread_usage	97	PROVEN	Allocator.usage: query_accounting, other_thread_invisible, fresh_thread_counts
+src/allocator.rs	net_thread_usage	105	PROVEN	Allocator.net: net_saturates, query_accounting, other_thread_invisible
+src/allocator.rs	reset_counter	114	PROVEN	Allocator.step .reset: reset_zero, query_accounting
+src/dispatch.rs	must_run_inline	36	AXIOMATISED	Redis ctx flags (RM_GetContextFlags); predicate identical to C cmd_dispatcher.c main_thread; not modelled beyond that
+src/divergence_guard.rs	is_replayed	41	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
+src/divergence_guard.rs	on_failure	53	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
+src/divergence_guard.rs	force_full_resync	104	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
+src/divergence_guard.rs	master_address	142	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
+src/divergence_guard.rs	log_payload	168	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
+src/divergence_guard.rs	clip	192	NOT COVERED	replica resync via REPLICAOF (covered by proofs/replication narrative)
+src/serializers/buffered_io.rs	BufferedWriter::new	43	PROVEN	BufferedIO.writeAll starts from ⟨[],[]⟩: writeAll_flatten
+src/serializers/buffered_io.rs	BufferedWriter::flush	51	PROVEN	BufferedIO.flush: flat_flush, flush_buf, G_bound (never emits an empty chunk)
+src/serializers/buffered_io.rs	BufferedWriter::accommodate	59	PROVEN	BufferedIO.accommodate: flat_accommodate, writer_layout (records never straddle chunks)
+src/serializers/buffered_io.rs	BufferedWriter::write_unsigned	68	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::write_signed	77	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::write_double	86	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::write_float	96	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::write_buffer	107	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::finish	129	PROVEN	BufferedIO.finish/G: writeAll_flatten, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::write_unsigned	135	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::write_signed	142	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::write_double	149	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedWriter::write_buffer	156	PROVEN	BufferedIO.write: flat_write, writeAll_flatten (buffered = concatenation of logical writes, any B), writer_layout, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedReader::read_unsigned	177	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_signed	181	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_double	185	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_buffer	189	PROVEN	readW .buf (inline + blob): readW_inline, readW_blob, rdb_roundtrip
+src/serializers/buffered_io.rs	BufferedReader::new	195	PROVEN	listSrc false: rdb_roundtrip, rdb_roundtrip_256k
+src/serializers/buffered_io.rs	BufferedReader::from_slice	203	PROVEN	listSrc true: vec_roundtrip; from_slice_past_end (reads past the end call LoadStringBuffer(NULL), root cause of #2537)
+src/serializers/buffered_io.rs	BufferedReader::load_chunk	212	PROVEN	listSrc.load: rdb_roundtrip (writer chunks are non-empty: G_bound)
+src/serializers/buffered_io.rs	BufferedReader::ensure_available	221	PROVEN	BufferedIO.ensure: ensure_cons, load_head
+src/serializers/buffered_io.rs	BufferedReader::read_tag	229	PROVEN	BufferedIO.readTag: readW_inline
+src/serializers/buffered_io.rs	BufferedReader::read_bytes	246	PROVEN	BufferedIO.readBytes: readW_inline
+src/serializers/buffered_io.rs	BufferedReader::read_array	266	PROVEN	readBytes N + try_into: readW_inline
+src/serializers/buffered_io.rs	BufferedReader::read_unsigned	272	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_signed	277	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_double	282	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_float	288	PROVEN	BufferedIO.readW: readW_inline, rdb_roundtrip (u64/i64 two's complement, f64/f32 bit patterns)
+src/serializers/buffered_io.rs	BufferedReader::read_buffer	294	PROVEN	readW .buf (inline + blob): readW_inline, readW_blob, rdb_roundtrip
+src/serializers/buffered_io.rs	PipeWriter::new	350	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::flush	357	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::accommodate	366	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::finish	376	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::write_unsigned	386	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::write_signed	395	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::write_double	404	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeWriter::write_buffer	413	PROVEN	PipeWriter = BufferedWriter chunks framed by frame/pipeStream: pipe_roundtrip, pipeLoad_frame, pipeLoad_end
+src/serializers/buffered_io.rs	PipeReader::read_unsigned	444	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_signed	450	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_double	456	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_buffer	462	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::new	488	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::load_chunk	498	PROVEN	pipeLoad: pipeLoad_frame, pipeLoad_end (zero length = end of stream)
+src/serializers/buffered_io.rs	PipeReader::ensure_available	515	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_tag	522	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::read_bytes	538	PROVEN	readW over pipeSrc: pipe_roundtrip
+src/serializers/buffered_io.rs	PipeReader::close	555	AXIOMATISED	drops the OwnedFd (close(2)); no logic
+src/serializers/buffered_io.rs	VecWriter::new	576	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::into_vec	581	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::write_unsigned	587	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::write_signed	595	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::write_double	603	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	VecWriter::write_buffer	611	PROVEN	vecWrite: vecWrite_cons, vec_roundtrip (from_slice reads it back)
+src/serializers/buffered_io.rs	write_all_fd	626	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
+src/serializers/buffered_io.rs	read_all_fd	641	AXIOMATISED	std File::write_all/read_exact on the pipe fd (OS I/O); pipeLoad models a short read as Err
+src/serializers/mod.rs	VirtualKeyState::new	38	PROVEN	Serial.VKS.new: VKS.clear_eq_new
+src/serializers/mod.rs	VirtualKeyState::clear	45	PROVEN	Serial.VKS.clear: VKS.clear_eq_new
+src/serializers/mod.rs	DecodeState::new	100	PROVEN	Serial.DS.new: DS.new_empty
+src/serializers/mod.rs	DecodeState::clear	110	PROVEN	Serial.DS.clear: DS.clear_eq_new
+src/serializers/mod.rs	Header::encode	135	PROVEN	Serial.encH: decH_encH
+src/serializers/mod.rs	Header::null_terminated	139	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	Header::decode	164	PROVEN	Serial.decH: decH_encH, decH_flag_nonzero
+src/serializers/mod.rs	Header::from_graph	212	PROVEN	Serial.fromGraph: fromGraph_inv (flag count = rc)
+src/serializers/mod.rs	null_terminated	244	PROVEN	Serial.nullTerm: strip_nullTerm
+src/serializers/mod.rs	strip_null_terminator	252	PROVEN	Serial.strip: strip_nullTerm, strip_noterm
+src/serializers/mod.rs	Schema::encode	261	PROVEN	Serial.encSchema: decSchema_encSchema (decode∘encode = normSchema)
+src/serializers/mod.rs	encode_schema_index_block	337	PROVEN	Serial.encIdx: decIdx_enc
+src/serializers/mod.rs	encode_constraint_block	439	PROVEN	Serial.encCons: decConsBlock, cons_unknown_prop (unknown prop -> id 0, latent)
+src/serializers/mod.rs	Schema::decode	467	PROVEN	Serial.decSchema: decSchema_encSchema
+src/serializers/mod.rs	decode_schema_entry	529	PROVEN	Serial.decEntry/decIdx/decCons1: decEntry_enc, decCons1_enc
+src/serializers/mod.rs	decode_index_field	621	PROVEN	Serial.decField: decField_encField; field_prefix_lost (BUG: attr named range:x/vector:x reloads as x, confirmed live)
+src/serializers/mod.rs	Schema::from_graph	702	PROVEN	Serial.schemaFromGraph: schemaFromGraph_fields
+src/reply.rs	format_value_to_string	36	PROVEN	Resp.fmtS (verbose list/map/path/vec leaf): verbose_emits
+src/reply.rs	reply_with_str	102	AXIOMATISED	RM_ReplyWithStringBuffer: Resp.Call.str (bulk leaf)
+src/reply.rs	format_g	112	AXIOMATISED	libc snprintf %.*g: Compact.Env.fmt (abstract)
+src/reply.rs	reply_compact_value	134	PROVEN	Resp.encC call stream: compact_emits (= Compact.encPair, decoded by Compact.dec_enc); postponed label array closed by Emits.postponed
+src/reply.rs	reply_verbose_value	346	PROVEN	Resp.encVb: verbose_emits (node/edge postponed arrays closed with exact counts); postponed_wrong_len
+src/reply.rs	reply_stats	530	PROVEN	Resp.statCalls: stats_emits, statsLen_eq (announced length = lines sent)
+src/reply.rs	reply_result	619	PROVEN	Resp.resultCalls: compact_reply, verbose_reply, noreturn_reply
+src/reply.rs	reply_verbose	668	PROVEN	Resp.resultCalls false: verbose_reply
+src/reply.rs	reply_compact	676	PROVEN	Resp.resultCalls true: compact_reply + Compact.decReply_enc; bytes_of_emits (RESP2 bytes)
+src/graph_core.rs	up_to_nul	87	PROVEN	Telemetry.upToNul / GraphCore.upToNulC: upToNul_idem, upToNulC_split, streamName_key_name
+src/graph_core.rs	c_graph_name	104	PROVEN	GraphCore.cGraphName: cGraphName_key (name = lossy(c_graph_key))
+src/graph_core.rs	c_graph_key	119	PROVEN	GraphCore.cGraphKey: upToNulB_nonul, cGraphName_key
+src/graph_core.rs	register_graph	140	PROVEN	GraphCore.register: register_registered, register_get
+src/graph_core.rs	graph_is_registered	188	PROVEN	GraphCore.isRegistered: free_unregisters, free_keeps_others
+src/graph_core.rs	rename_graph	202	PROVEN	GraphCore.rename: rename_moves, rename_absent
+src/graph_core.rs	WriteQueryOk::new	251	PROVEN	GraphCore.modified: modified_zero, modified_replicates_or_warns
+src/graph_core.rs	ffi::sanitise_error	313	PROVEN	GraphCore.sanitise: sanitise_nonul, sanitise_len, sanitise_id
+src/graph_core.rs	ffi::block_client	328	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::unblock_client	339	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::get_thread_safe_context	348	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::free_thread_safe_context	359	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::reply_error	368	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::signal_modified_key	385	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::yield_ctx	407	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::measure_time_start	424	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::measure_time_end	434	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::hold_string	451	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::free_string	462	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::trim_string_allocation	477	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ffi::replicate_argv	492	AXIOMATISED	one RedisModule_* call (Redis module API contract)
+src/graph_core.rs	ThreadedGraph::new	543	PROVEN	GraphCore.TG.new: TG.new_idle
+src/graph_core.rs	ThreadedGraph::from_mvcc	559	PROVEN	GraphCore.TG.fromMvcc: TG.new_idle
+src/graph_core.rs	execute_query	576	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery: ro_write_rejected
+src/graph_core.rs	execute_profile	659	PROVEN	GraphCore.profileDetect: profileDetect_write
+src/graph_core.rs	execute_query_write	715	PROVEN	GraphCore.writeSteps: reply_after_commit, failed_no_commit
+src/graph_core.rs	reply_profile	823	PROVEN	GraphCore.profileDepth/profileOps: profileDepth_eq, profileDepth_no_underflow
+src/graph_core.rs	BlockedClient::new	873	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	BlockedClient::drop	881	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	compute_effective_timeout	896	PROVEN	Args.rustTimeout: rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
+src/graph_core.rs	reply_invalid_graph_version	933	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
+src/graph_core.rs	query_mut	945	PROVEN	GraphCore.dispatch: stale_version, inline_uncapped, capped
+src/graph_core.rs	query_sync	1154	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
+src/graph_core.rs	profile_mut	1275	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
+src/graph_core.rs	profile_sync	1369	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
+src/graph_core.rs	finish_write	1436	PROVEN	GraphCore.writeSteps (rollback unless writer): reply_after_commit
+src/graph_core.rs	abandon_write	1466	PROVEN	GraphCore.writeSteps false: failed_no_commit
+src/graph_core.rs	commit_and_replicate	1481	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent
+src/graph_core.rs	process_write_queued_query	1525	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit)
+src/graph_core.rs	CtxSink::replicate	1671	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
+src/graph_core.rs	graph_free	1684	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
+src/query_session.rs	QuerySession::begin	127	PROVEN	QuerySession.begin: escalate_order
+src/query_session.rs	QuerySession::begin_with	134	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
+src/query_session.rs	QuerySession::begin_writer	148	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order
+src/query_session.rs	QuerySession::release_locks	172	PROVEN	QuerySession.release: release_none, release_order
+src/query_session.rs	QuerySession::graph_arc	180	PROVEN	QuerySession.graphArc: graphArc_id
+src/query_session.rs	QuerySession::with_graph	189	PROVEN	QuerySession.withGraph: withGraph_released
+src/query_session.rs	QuerySession::with_graph_mut	205	PROVEN	QuerySession.withGraphMut: escalate_writer
+src/query_session.rs	QuerySession::upgrade_to_write	221	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_unregistered, upgrade_state
+src/query_session.rs	QuerySession::escalate	242	PROVEN	QuerySession.escalate: escalate_order, escalate_mode, escalate_writer
+src/query_session.rs	reauthorize_write	276	PROVEN	QuerySession.reauthorize: reauth_paused, reauth_replica, reauth_replay, reauth_main
+src/query_session.rs	QuerySession::upgrade_to_write	317	PROVEN	QuerySession.upgrade: upgrade_twice, upgrade_unregistered, upgrade_state
+src/query_session.rs	QuerySession::drop	327	PROVEN	QuerySession.release: release_none
+src/query_session.rs	hold_gil	347	PROVEN	QuerySession.gilAcquire: gil_nested, gil_stack, gil_main, gil_out_of_order
+src/query_session.rs	Gil::acquire	369	PROVEN	QuerySession.gilAcquire: gil_nested, gil_main, gil_stack
+src/query_session.rs	Gil::drop	392	PROVEN	QuerySession.gilDrop: gil_stack, gil_out_of_order
+src/query_session.rs	lock_gil	413	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
+src/query_session.rs	release_gil	426	AXIOMATISED	RM_ThreadSafeContextLock/Unlock + FreeThreadSafeContext (Redis API); QuerySession.Ev.gilLock/gilUnlock
+src/module_init.rs	pthread_atfork	93	AXIOMATISED	libc pthread_atfork declaration
+src/module_init.rs	on_fork_child	120	PROVEN	ModuleInit.forkChildAborts: fork_gc_never_aborts, fork_all_synced
+src/module_init.rs	graph_init	141	PROVEN	ModuleInit.table/initNames/argLoop/timeoutsBad: load_missing, load_extra, table_init_disjoint, table_defaults_in_range, maxInfo_clamped, timeouts_ok_inv; findValue/boolDefault: bool_yes_case, bool_garbage_off, table_name_case (BUGs, confirmed live)
+src/module_init.rs	info_func	496	PROVEN	ModuleInit.infoSections: info_normal
+src/module_init.rs	on_flush	511	PROVEN	ModuleInit.onFlush: onFlush_id
+src/module_init.rs	on_shutdown	524	PROVEN	ModuleInit.onShutdown: onShutdown_flusher_first
+src/module_init.rs	on_role_change	539	PROVEN	ModuleInit.onRoleChange: onRoleChange_promote, onRoleChange_demote
+src/module_init.rs	enforce_pending_constraints_after_promotion	569	PROVEN	ModuleInit.pendingPerGraph: pending_only_uc
+src/module_init.rs	on_replica_change	637	PROVEN	ModuleInit.onReplicaChange: onReplicaChange_latches
+src/module_init.rs	on_loading	649	PROVEN	ModuleInit.onLoading: onLoading_only_end
+src/module_init.rs	on_keyspace_event	670	PROVEN	ModuleInit.onKeyspace: rename_pair, rename_to_alone, other_event
+src/telemetry.rs	truncate	34	PROVEN	Telemetry.truncate: truncate_short, truncate_len, truncate_prefix
+src/telemetry.rs	truncate_arc	50	PROVEN	Telemetry.truncateArc: truncateArc_eq
+src/telemetry.rs	stream_name	66	PROVEN	Telemetry.streamName: streamName_key_name, streamName_inj, streamName_nul, stream_same_slot, stream_other_slot
+src/telemetry.rs	StreamTemplate::new	150	PROVEN	Telemetry.argv/FIELD_NAMES: argv_len
+src/telemetry.rs	StreamTemplate::add	170	PROVEN	Telemetry.fieldValues/argv: argv_len
+src/telemetry.rs	StreamTemplate::report_failures	228	PROVEN	Telemetry.failMsg: failMsg_none
+src/telemetry.rs	create_detached_string	244	AXIOMATISED	RM_CreateString/RM_FreeString (Redis API)
+src/telemetry.rs	free_detached_string	251	AXIOMATISED	RM_CreateString/RM_FreeString (Redis API)
+src/telemetry.rs	stream_entries	268	PROVEN	Telemetry.streamOps: streamOps_writable, streamOps_trim_zero, streamOps_foreign
+src/telemetry.rs	delete_stream	336	PROVEN	Telemetry.deleteStreamKey: deleteStream_key_or_name
+src/telemetry.rs	next_id	354	PROVEN	Telemetry.nextIds: nextIds_nodup
+src/telemetry.rs	unix_now_secs	359	AXIOMATISED	SystemTime::now (OS clock)
+src/telemetry.rs	shard_for	404	PROVEN	Telemetry.shardFor: shardFor_lt
+src/telemetry.rs	register_running	409	PROVEN	Telemetry.registerRunning: registerRunning_placed
+src/telemetry.rs	unregister_running	429	PROVEN	Telemetry.unregisterRunning/removeId: removeId_absent, removeId_sub
+src/telemetry.rs	unregister_waiting	437	PROVEN	Telemetry.unregisterWaiting: removeId_absent
+src/telemetry.rs	register_waiting	451	PROVEN	Telemetry.registerWaiting: registerWaiting_placed
+src/telemetry.rs	WaitingEntry::register	481	PROVEN	Telemetry.WE: WE.drop_armed
+src/telemetry.rs	WaitingEntry::promote	491	PROVEN	Telemetry.WE.promote: WE.promote_then_drop, WE.promote_twice
+src/telemetry.rs	WaitingEntry::drop	497	PROVEN	Telemetry.WE.drop: WE.drop_armed, WE.promote_then_drop
+src/telemetry.rs	transition_waiting_to_running	509	PROVEN	Telemetry.transition: transition_moves, transition_absent, transition_placed
+src/telemetry.rs	snapshot_running	525	PROVEN	Telemetry.snapshotRunning: trySnapshot_unlocked
+src/telemetry.rs	try_snapshot_running	536	PROVEN	Telemetry.trySnapshotRunning: trySnapshot_sub, trySnapshot_unlocked
+src/telemetry.rs	snapshot_waiting	547	PROVEN	Telemetry.snapshotWaiting: registerWaiting_placed (shard concatenation)
+src/telemetry.rs	running_queries_reply	556	PROVEN	Telemetry.runningRow/runningReply: runningRow_len, runningReply_len
+src/telemetry.rs	waiting_queries_reply	580	PROVEN	Telemetry.waitingRow: waitingRow_len
+src/telemetry.rs	resolve_current_names	695	PROVEN	Telemetry.resolve/pass1/pass2Step/retain: retain_sound, retain_drops, pass1_unmoved, pass1_rebound, pass2Step_sound
+src/telemetry.rs	hold_batch_graphs	771	PROVEN	Telemetry.distinctAlive: distinctAlive_nodup, distinctAlive_complete
+src/telemetry.rs	release_batch_graphs	802	PROVEN	Telemetry.releaseSpawns: releaseSpawns_len
+src/telemetry.rs	key_holds_graph	821	PROVEN	Telemetry.keyHolds: keyHolds_iff
+src/telemetry.rs	drain_queued	845	PROVEN	Telemetry.drain: drain_bound, drain_conserves
+src/telemetry.rs	enqueue_entry	905	PROVEN	Telemetry.enqueueOk: enqueue_off, enqueue_replica, enqueue_full
+src/telemetry.rs	set_is_replica	958	PROVEN	Telemetry.setReplica: setReplica_eq
+src/telemetry.rs	start_flusher_thread	963	PROVEN	Telemetry.start: start_idem
+src/telemetry.rs	shutdown_flusher_thread	1016	PROVEN	Telemetry.shutdown/stopped: shutdown_keeps_names_if_parked, shutdown_frees_on_stop, shutdown_closes_sender
+src/telemetry.rs	flusher_loop	1051	PROVEN	Telemetry.iter/capDeferred/groupOrder: iter_disconnected, iter_replica_never_writes, iter_write_iff, capDeferred_len, capDeferred_suffix, group_keeps_order
+src/slow_log.rs	truncate	29	PROVEN	SlowLog.truncate: truncate_panics (BUG: byte slice off a char boundary, confirmed live)
+src/slow_log.rs	entry_hash	41	PROVEN	SlowLog.hashInput: entry_hash_panics (BUG: server exits, confirmed live), hashInput_short, hashInput_ascii
+src/slow_log.rs	SlowLog::new	72	PROVEN	SlowLog.SL.new: new_empty
+src/slow_log.rs	SlowLog::add	88	PROVEN	SlowLog.add: add_bounded, add_nodup, add_repeat_max, add_fast
+src/slow_log.rs	SlowLog::reset	172	PROVEN	SlowLog.reset: reset_empty
+src/slow_log.rs	SlowLog::reply	182	PROVEN	SlowLog.replyLen: replyLen_len
+src/slow_log.rs	unix_now	219	AXIOMATISED	SystemTime::now (OS clock)
+src/config.rs	get_thread_count	121	PROVEN	ModuleInit.threadCount: threadCount_pos
+src/config.rs	normalize_node_creation_buffer	131	PROVEN	ModuleInit.normalizeNCB: normalizeNCB_ge, normalizeNCB_examples
+src/commands/bulk_insert.rs	read_cstring	30	PROVEN	Bulk.cstr: cstr_enc, cstr_len
+src/commands/bulk_insert.rs	read_u32_ne	46	AXIOMATISED	u32::from_ne_bytes (bounds-checked); Codec-style hypothesis
+src/commands/bulk_insert.rs	read_u64_ne	58	AXIOMATISED	u64::from_ne_bytes: Bulk.Codec.dec8 (hypothesis dec_enc8)
+src/commands/bulk_insert.rs	read_i64_ne	70	AXIOMATISED	i64::from_ne_bytes: Bulk.Codec.dec8 (hypothesis dec_enc8)
+src/commands/bulk_insert.rs	read_f64_ne	82	AXIOMATISED	f64 bits: Bulk.Codec.dec8 (hypothesis dec_enc8)
+src/commands/bulk_insert.rs	read_property	94	PROVEN	Bulk.go/attach: total (Lean termination proof), readProperty_enc, enc_len_pos
+src/commands/bulk_insert.rs	parse_header	176	PROVEN	Bulk.resolve: duplicate_header_ids (divergence); header byte parse via cstr
+src/commands/bulk_insert.rs	discard_created_graph	217	PROVEN	Commands.discardOps: discardOps_stream_first, bulk_begin_failure_discards
+src/commands/bulk_insert.rs	HeldArgs::hold	258	AXIOMATISED	RM_HoldString + RM_TrimStringAllocation
+src/commands/bulk_insert.rs	HeldArgs::replicate	285	PROVEN	Commands.heldReplicate: heldReplicate_verbatim
+src/commands/bulk_insert.rs	HeldArgs::drop	301	AXIOMATISED	RM_FreeString under hold_gil
+src/commands/bulk_insert.rs	maybe_yield	320	PROVEN	Commands.maybeYield: maybeYield_null
+src/commands/bulk_insert.rs	BulkIndexDocs::publish	343	PROVEN	Commands.publishOps: publishOps_empty
+src/commands/bulk_insert.rs	process_node_token	356	PROVEN	Bulk.records/readN: records_enc (imports exactly the encoded records); slot_len_truncates
+src/commands/bulk_insert.rs	process_edge_token	436	PROVEN	Commands.edgeRecords: edgeRecords_bound (+ Bulk.records/readN shared record loop)
+src/commands/bulk_insert.rs	bulk_insert_sync	513	PROVEN	Commands.processTokens false: sync_is_yield_without_yields
+src/commands/bulk_insert.rs	bulk_insert_sync_yield	556	PROVEN	Commands.processTokens true: sync_is_yield_without_yields
+src/commands/bulk_insert.rs	parse_count	607	PROVEN	Bulk.parseCount: parseCount_rejects (decide)
+src/commands/bulk_insert.rs	max_records	643	PROVEN	Bulk.ceiling_sound (never rejects honest payloads)
+src/commands/bulk_insert.rs	graph_bulk_insert	657	PROVEN	Commands.bulkFlow/bulkReply: bulk_begin_failure_discards, bulk_append_failure_keeps, bulk_reply_differs (DIVERGENCE: "relations created" vs C "edges created", confirmed live); Bulk.ceiling_sound
+src/commands/config_cmd.rs	config_get_one	57	PROVEN	Commands.getNames/getOne/ompGet: get_covers_documented, get_extra, ompGet_pos, getOne_unknown_text
+src/commands/config_cmd.rs	validate_config_set	114	PROVEN	Config.validate: vkey_ok_nonneg, jsheap_ok_ge, cmdinfo_ok_iff, fixed3021_counterexamples, maxinfo_clamped (subset of names); historical pre3021_* (fixed by #3021)
+src/commands/config_cmd.rs	validate_timeout_cross_constraints	210	PROVEN	Config.cross: rustSet_inv, rustSet_timeout_deprecated, c_breaks_inv
+src/commands/config_cmd.rs	apply_config_set	251	PROVEN	Config.apply1 (used by rustSet_inv)
+src/commands/config_cmd.rs	ConfigValue::as_i64	294	PROVEN	Commands.asI64: asI64_small
+src/commands/config_cmd.rs	ConfigValue::as_u64	300	PROVEN	Commands.asU64: asU64_nonneg, asU64_neg
+src/commands/config_cmd.rs	graph_config	308	PROVEN	Config.dispatch: get_extra_wrong_arity, set_pairs_complete, dotless_i_not_folded; Config.rustSet (SET): rustSet_inv; Commands.getOne (GET)
+src/commands/constraint.rs	is_valid_identifier	19	PROVEN	Commands.validIdent: validIdent_nonempty, validIdent_no_digit_start
+src/commands/constraint.rs	register_constraint_schema	63	PROVEN	Commands.registerSchema: registerSchema_contains
+src/commands/constraint.rs	find_status	82	PROVEN	Commands.findStatus: findStatus_none
+src/commands/constraint.rs	settle_constraint	171	PROVEN	Commands.settle: settle_bounded, settle_permanent
+src/commands/constraint.rs	attempt_settle	283	PROVEN	Commands.attempt: attempt_nothing, attempt_busy, attempt_upgrade_fail
+src/commands/constraint.rs	graph_constraint	415	PROVEN	Commands.consArgs/string2ll: consArgs_ok, cons_label_refused, cons_edge_refused, cons_count_noncanonical, cons_node_ok (#3053)
+src/commands/copy.rs	pipe	17	AXIOMATISED	libc pipe(2)
+src/commands/copy.rs	fork	18	AXIOMATISED	libc fork(2)
+src/commands/copy.rs	_exit	19	AXIOMATISED	libc _exit(2)
+src/commands/copy.rs	waitpid	20	AXIOMATISED	libc waitpid(2)
+src/commands/copy.rs	graph_copy	27	PROVEN	Commands.copyOut/tz/exitCode: copy_ok_iff, exited_iff (trailing_zeros>=7 = WIFEXITED); replica gets GRAPH.RESTORE of VecWriter bytes: BufferedIO.vec_roundtrip
+src/commands/debug.rs	graph_debug	5	PROVEN	Commands.debugCmd: debug_start
+src/commands/debug.rs	debug_aux	23	PROVEN	Commands.debugCmd: debug_bad_action_replicated
+src/commands/delete.rs	graph_delete	37	PROVEN	Commands.deleteCmd: delete_stream_first, delete_nongraph
+src/commands/effect.rs	graph_effect	25	PROVEN	Commands.effectCmd: effect_replicates_iff
+src/commands/explain.rs	explain	36	PROVEN	Commands.explainLine: explainLine_indent
+src/commands/explain.rs	graph_explain	60	PROVEN	Commands.explainCmd/explainCmdA: explain_missing, explain_inline, explain_flags_first, explain_flags_ok; QueryArgs.explainFront (parse_query_flags, explain.rs:65): four_commands_share
+src/commands/info.rs	graph_info	22	PROVEN	Commands.infoSections: info_all, info_unknown_only, info_case
+src/commands/info.rs	format_avg	88	PROVEN	Commands.formatAvg: formatAvg_int
+src/commands/list.rs	c_reply_name	47	PROVEN	Commands.cReplyName: cReplyName_nonul
+src/commands/list.rs	graph_list	60	PROVEN	Commands.scanLoop: scanLoop_nonul
+src/commands/memory.rs	c_schema_name	65	PROVEN	Commands.cSchemaName = cReplyName: cReplyName_nonul
+src/commands/memory.rs	memory_report	69	PROVEN	Commands.memTotal/memFields: memTotal_sum
+src/commands/memory.rs	graph_memory	181	PROVEN	Commands.memArgs: memArgs_default, memArgs_samples (SAMPLES 0 accepted, #3053), memArgs_samples_err
+src/commands/profile.rs	graph_profile	18	PROVEN	QueryArgs.profileFront (parse_query_flags, profile.rs:22): four_commands_share, profile_timeout_parsed, profile_timeout_garbage_rejected (#3009 fixed 557f18868), profile_other_args_ignored
+src/commands/query.rs	graph_query	42	PROVEN	QueryArgs.queryFront (parse_query_flags, query.rs:46-51): four_commands_share, rust_c_agree, parse_ok_iff, parse_documented; key/graph-creation part NOT modelled
+src/commands/record.rs	record_mut	44	PROVEN	Commands.recordShape: recordShape_two (+ GraphCore.writeSteps for the write path)
+src/commands/record.rs	graph_record	173	PROVEN	Commands.recordKey: recordKey_creates
+src/commands/restore.rs	graph_restore	12	PROVEN	Commands.restoreCmd: restore_no_overwrite; payload via BufferedIO.vec_roundtrip/from_slice_past_end
+src/commands/ro_query.rs	graph_ro_query	30	PROVEN	QueryArgs.roQueryFront (parse_query_flags, ro_query.rs:34-39): four_commands_share, garbage_timeout_rejected (#3009 fixed 557f18868); RoQuery.ro_never_writes
+src/commands/query_args.rs	parse_query_flags	44	PROVEN	QueryArgs.parseQueryFlags/scanFlags: parse_total, parse_arity, parse_ok_iff (accepts exactly 3..8 args + Grammar), parse_documented, parse_timeout_nonneg, rust_c_agree (= C _read_flags on every vector), four_commands_share, #3009 regressions (nonutf8_keeps_compact, timeout_noncanonical_rejected, garbage_timeout_rejected, version_above_uint_rejected, arity_capped)
+src/commands/query_args.rs	up_to_nul	82	PROVEN	QueryArgs.upToNul: nul_truncated_flag, rust_c_agree (C strcasecmp sees the same prefix)
+src/commands/slowlog.rs	graph_slowlog	16	PROVEN	Commands.slowlogCmd: slowlog_reset_ci
+src/commands/udf.rs	graph_udf	47	PROVEN	Commands.udfCmd: udf_unknown
+src/commands/udf.rs	udf_load	68	PROVEN	Commands.udfLoadArgs: udf_load_plain, udf_load_replace
+src/commands/udf.rs	udf_delete	134	PROVEN	Commands.udfCmd DELETE: udf_delete_one, udf_delete_extra
+src/commands/udf.rs	udf_flush	163	PROVEN	Commands.udfCmd FLUSH: udf_flush_noargs
+src/commands/udf.rs	udf_list	182	PROVEN	Commands.udfListArgs: udf_list_two_filters, udf_list_withcode_anywhere

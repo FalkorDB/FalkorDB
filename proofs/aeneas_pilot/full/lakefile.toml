@@ -1,0 +1,15 @@
+# NOT built by proofs/lean_ci.sh (nested dir). Type-checks the full extraction
+# (bitset + id_list) against the REAL Aeneas Lean library, which pins
+# Lean v4.31.0 and Mathlib v4.31.0 (~6 GB of oleans via `lake exe cache get`).
+# Not attempted in the pilot: the disk had < 9 GB free (see ../AeneasPilot.lean).
+name = "falkor-aeneas-full"
+defaultTargets = ["Extracted"]
+
+[[require]]
+name = "aeneas"
+git = "https://github.com/AeneasVerif/aeneas.git"
+rev = "557f7a15f3b75e18ddae224fc65db0807b70acdf"   # tag nightly-2026.09.24-557f7a1
+subDir = "backends/lean"
+
+[[lean_lib]]
+name = "Extracted"

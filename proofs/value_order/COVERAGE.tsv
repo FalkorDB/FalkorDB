@@ -1,0 +1,77 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/value.rs	DisplayJson::fmt_json	50	PROVEN	Json.DisplayJson class (single impl fmtJson): displayJson_eq
+graph/src/runtime/value.rs	DeletedNode::new	69	PROVEN	Glue.DeletedNode.new: new_fields, new_injective
+graph/src/runtime/value.rs	DeletedRelationship::new	87	PROVEN	Glue.DeletedRelationship.new: new_fields, new_injective (snapshot keeps src/dst/type/attrs)
+graph/src/runtime/value.rs	Point::new	110	NOT COVERED	constructor; Point appears only as a Tag
+graph/src/runtime/value.rs	Point::distance	121	NOT COVERED	geometry; Point appears only as a Tag
+graph/src/runtime/value.rs	Point::validate	144	NOT COVERED	geometry; Point appears only as a Tag
+graph/src/runtime/value.rs	Value::clone	221	PROVEN	Glue.W.clone (all 16 arms): clone_eq
+graph/src/runtime/value.rs	Value::get_numeric	246	NOT COVERED	numeric accessor; not modelled
+graph/src/runtime/value.rs	Value::format_datetime	256	NOT COVERED	temporal formatting; outside the order model
+graph/src/runtime/value.rs	Value::format_date	274	NOT COVERED	temporal formatting; outside the order model
+graph/src/runtime/value.rs	Value::format_time	285	NOT COVERED	temporal formatting; outside the order model
+graph/src/runtime/value.rs	Value::format_duration	296	NOT COVERED	temporal formatting; outside the order model
+graph/src/runtime/value.rs	Value::heap_size	342	NOT COVERED	memory accounting; not modelled
+graph/src/runtime/value.rs	Value::amortized_heap_size	388	NOT COVERED	memory accounting; not modelled
+graph/src/runtime/value.rs	Value::get_attr	439	NOT COVERED	property access; not modelled
+graph/src/runtime/value.rs	Value::get_point_component	458	NOT COVERED	property access; not modelled
+graph/src/runtime/value.rs	Value::get_datetime_component	473	NOT COVERED	temporal accessor; not modelled
+graph/src/runtime/value.rs	Value::get_date_component	532	NOT COVERED	temporal accessor; not modelled
+graph/src/runtime/value.rs	Value::get_time_component	580	NOT COVERED	temporal accessor; not modelled
+graph/src/runtime/value.rs	Value::get_duration_component	608	NOT COVERED	temporal accessor; not modelled
+graph/src/runtime/value.rs	add_duration_to_timestamp	696	NOT COVERED	temporal arithmetic; outside the order model
+graph/src/runtime/value.rs	sub_duration_from_timestamp	730	NOT COVERED	temporal arithmetic; outside the order model
+graph/src/runtime/value.rs	days_in_month	752	NOT COVERED	calendar helper; outside the order model
+graph/src/runtime/value.rs	is_leap	764	NOT COVERED	calendar helper; outside the order model
+graph/src/runtime/value.rs	days_from_civil	771	NOT COVERED	calendar helper; outside the order model
+graph/src/runtime/value.rs	civil_from_days	788	NOT COVERED	calendar helper; outside the order model
+graph/src/runtime/value.rs	write_date_into	803	NOT COVERED	formatting helper; outside the order model
+graph/src/runtime/value.rs	Hash::hash	823	PROVEN	hwords/floatWord (+fx): sane_hash_consistent, hash_not_consistent_with_eq (bug), nan_eq_irreflexive; Str words abstracted; Path/Rel/Point/VecF32/temporal arms not modelled
+graph/src/runtime/value.rs	Add::add	910	NOT COVERED	arithmetic; outside the order model
+graph/src/runtime/value.rs	Value::add_slow	925	NOT COVERED	arithmetic; outside the order model
+graph/src/runtime/value.rs	Sub::sub	1042	NOT COVERED	arithmetic; outside the order model
+graph/src/runtime/value.rs	Mul::mul	1091	NOT COVERED	arithmetic; outside the order model
+graph/src/runtime/value.rs	Div::div	1120	NOT COVERED	arithmetic; outside the order model
+graph/src/runtime/value.rs	Rem::rem	1148	NOT COVERED	arithmetic; outside the order model
+graph/src/runtime/value.rs	OrderedEnum::order	1174	PROVEN	Glue.OrderedEnum class: orderedEnum_order_eq, order_null_gt
+graph/src/runtime/value.rs	OrderedEnum::order	1178	PROVEN	orderTag: order_injective, no_tag_between_int_and_float, null_not_greatest (all 16 variants)
+graph/src/runtime/value.rs	CompareValue::compare_value	1209	PROVEN	Glue.CompareValue class + eqVia/partialCmpVia: partialCmpVia_none_iff, partialCmpVia_some
+graph/src/runtime/value.rs	PartialEq::eq	1216	PROVEN	eqV: nan_eq_irreflexive (bug), hash_not_consistent_with_eq (bug), cmp_sane_eq_key
+graph/src/runtime/value.rs	CompareValue::compare_value	1225	PROVEN	cmpV: cmp_sane_eq_key, sane_refl/sane_swap/sane_le_trans; nan_breaks_antisymmetry, mixed_numeric_not_transitive (bugs); Str=Nat, floats NaN-or-integral, Path/Rel/Point/VecF32/temporal arms not modelled
+graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1275	PROVEN	Glue.ValueTypeOf class / W.valueOfType: valueTypeOf_eq, valueOfType_any, valueOfType_self
+graph/src/runtime/value.rs	ValueTypeOf::value_of_type	1282	NOT COVERED	type test; not modelled
+graph/src/runtime/value.rs	ValueGetType::get_type	1324	PROVEN	Glue.ValueGetType class / W.getType: valueGetType_eq, getType_concrete
+graph/src/runtime/value.rs	ValueGetType::get_type	1328	NOT COVERED	type reflection; not modelled
+graph/src/runtime/value.rs	Value::name	1352	PROVEN	Glue.W.name: name_eq_iff_order_eq (name is a bijective function of the variant)
+graph/src/runtime/value.rs	Value::to_json_string	1374	PROVEN	Json.toJsonString: toJsonString_eq
+graph/src/runtime/value.rs	fmt	1384	PROVEN	Json.jsonWrapperFmt: jsonWrapperFmt_eq
+graph/src/runtime/value.rs	Value::compare_list	1399	PROVEN	St/step/listLoop/listFinish: list_fst_eq_lex, lex_swap, lex_le_trans, sane_list_le_trans, sane_list_swap (flag component only via firstDiff)
+graph/src/runtime/value.rs	Value::compare_map	1472	PROVEN	keysCmp/mapVals: map_order_not_transitive, map_order_not_transitive_null, map_neq_both_false (bugs); maps modelled with pre-sorted unique keys
+graph/src/runtime/value.rs	Value::is_never_equal	1531	NOT COVERED	self-comparison predicate added after the model; not modelled
+graph/src/runtime/value.rs	Value::may_fail_self_match	1554	NOT COVERED	pre-filter added after the model; not modelled
+graph/src/runtime/value.rs	DisplayJson::fmt_json	1582	PROVEN	Json.fmtS/fmtJson (all arms; f64/f32 Display, escape, runtime accessors in JsonEnv structure): fmt_float_nonfinite, fmt_float_finite, fmt_list, fmt_node, fmt_rel, fmtS_entityFree
+graph/src/runtime/value.rs	write_json_string	1704	PROVEN	Json.writeJsonString: writeJsonString_plain
+graph/src/runtime/value.rs	write_node_json	1716	PROVEN	Json.writeNodeJson: writeNodeJson_includeType, writeNodeJson_depth
+graph/src/runtime/value.rs	Contains::contains	1756	PROVEN	Glue.Contains class / containsImpl: containsImpl_false
+graph/src/runtime/value.rs	Contains::contains	1763	NOT COVERED	IN-list membership; not modelled here
+graph/src/runtime/value.rs	PartialOrd::partial_cmp	1788	NOT COVERED	thin wrapper over compare_value (null -> None); wrapper itself not modelled
+graph/src/runtime/value.rs	compare_floats	1801	PROVEN	cmpF: nan_breaks_antisymmetry (bug), floatLane_eq_cmpV
+graph/src/runtime/value.rs	compare_vecf32	1817	NOT COVERED	VecF32 appears only as a Tag
+graph/src/runtime/value.rs	first_difference	1821	NOT COVERED	VecF32 appears only as a Tag
+graph/src/runtime/value.rs	ValuesDeduper::with_capacity	1859	PROVEN	Glue.withCapacity/checkAndInsert: withCapacity_first_then_seen, withCapacity_seen_iff
+graph/src/runtime/value.rs	ValuesDeduper::is_seen	1869	PROVEN	sliceHash: fx_row_collision (bug: distinct lists collide), fx_collision_general
+graph/src/runtime/value.rs	ValuesDeduper::has_hash	1880	NOT COVERED	hash-set membership not modelled (only the hash stream is)
+graph/src/runtime/value.rs	ValuesDeduper::check_and_insert_hash	1887	NOT COVERED	hash-set membership not modelled (only the hash stream is)
+graph/src/runtime/value.rs	Encode::encode	1899	NOT COVERED	serialisation; outside the order model
+graph/src/runtime/value.rs	Decode::decode	1985	NOT COVERED	serialisation; outside the order model
+graph/src/runtime/ops/sort.rs	OrderedKey::cmp_key	76	PROVEN	sortCmp: sortCmp_not_antisymmetric, sortCmp_not_transitive (bugs: sort_by panic); DESC reversal not modelled
+graph/src/runtime/batch.rs	Column::compare_at	400	PROVEN	floatLane (Floats lane) = sortCmp: floatLane_eq_cmpV; Values lane = sortCmp; Ints lane = cmpI
+graph/src/runtime/ops/distinct.rs	DistinctOp::next	62	PROVEN	rowHash: fx_row_collision, fx_collision_general (bug: second colliding row dropped); set insert not modelled
+graph/src/runtime/functions/aggregation.rs	min_batch	487	PROVEN	minFold: min_nan_picks_larger (bug)
+graph/src/runtime/vectorized.rs	CmpOp::from_expr_ir	70	NOT COVERED	op mapping; not modelled
+graph/src/runtime/vectorized.rs	CmpOp::flip	84	NOT COVERED	operand flip; not modelled
+graph/src/runtime/vectorized.rs	compare_i64_column	105	NOT COVERED	typed-column fast path; not modelled
+graph/src/runtime/vectorized.rs	compare_f64_column	162	NOT COVERED	typed-column fast path; not modelled
+graph/src/runtime/vectorized.rs	compare_value_column	229	NOT COVERED	wrapper over compare_value_column_3vl; not modelled
+graph/src/runtime/vectorized.rs	compare_values	239	PROVEN	evalEq/evalNeq: map_neq_both_false (bug); Lt/Le/Gt/Ge arms not modelled
+graph/src/runtime/vectorized.rs	compare_value_column_3vl	279	NOT COVERED	column loop over compare_values; loop not modelled

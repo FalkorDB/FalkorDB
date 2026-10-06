@@ -1,0 +1,129 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/graph/graphblas/versioned_matrix.rs	should_fold	154	PROVEN	VMPolicy.shouldFold: write_implies_read, foldBalance_mono_delta, dominates_folds
+graph/src/graph/graphblas/versioned_matrix.rs	should_fold_read	166	PROVEN	VMPolicy.shouldFoldRead: write_implies_read, foldBalance_exact
+graph/src/graph/graphblas/versioned_matrix.rs	fold_balance	175	PROVEN	VMPolicy.foldBalance: foldBalance_readOnly, foldBalance_tiny, foldBalance_exact, foldBalance_mono_{delta,k,base}
+graph/src/graph/graphblas/versioned_matrix.rs	delta_dominates_base	195	PROVEN	VMPolicy.deltaDominatesBase: dominates_folds
+graph/src/graph/graphblas/versioned_matrix.rs	RowFilter::slot	249	PROVEN	VMRowFilter.slot: slot_word_lt, slot_bit_ne_zero (bv_decide)
+graph/src/graph/graphblas/versioned_matrix.rs	RowFilter::add	254	PROVEN	VMRowFilter.add: add_self, add_mono, sound_add
+graph/src/graph/graphblas/versioned_matrix.rs	RowFilter::may_hold	276	PROVEN	VMRowFilter.mayHold: mayHold_sound, mayHold_wide, mayHold_empty
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::clone	330	PROVEN	VMDelta.clone: clone_eq, clone_rowsOk
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::deref	338	PROVEN	VMDelta.deref: deref_eq
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::new	346	PROVEN	VMDelta.ofLayer: ofLayer_rowsOk, ofLayer_exact, ofLayer_spec
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::transposed	364	PROVEN	VMDelta.transposed: transposed_keys, transposed_bookkeeping, rowsOf_transpose_irrelevant
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::relayer	374	PROVEN	VMDelta.relayer: relayer_rowsOk
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::new_version	391	PROVEN	VMDelta.newVersion: newVersion_spec, newVersion_rowsOk, fresh_version_decision
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::count	406	PROVEN	VMDelta count field: resync_count, insertB_exact, erase_exact, erase_absent_drift
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::resync	412	PROVEN	VMDelta.resync: resync_exact, resync_rowsOk
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::latch	420	PROVEN	VMDelta.latch: latch_fold, latch_monotone, latch_layer
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::fold_decision	433	PROVEN	VMDelta.foldDecision: foldDecision_latched, fresh_version_decision
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::folding	445	PROVEN	VMDelta.folding: folding_eq
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::take_fold	451	PROVEN	VMDelta.takeFold: takeFold_spec, takeFold_rowsOk
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::clear	458	PROVEN	VMDelta.clear: clear_spec, clear_rowsOk, clear_exact
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::replace	478	PROVEN	VMDelta.replace: replace_rowsOk, replace_bookkeeping
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::resize	487	PROVEN	VMDelta.resize: resize_rowsOk, resize_count
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::layer_mut	502	PROVEN	VMDelta.layerMut: layerMut_rowsOk
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::layer_mut_row	513	PROVEN	VMDelta.layerMutRow: erase_rowsOk, insertB_rowsOk (via sound_add)
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::may_hold_rows	523	PROVEN	VMDelta.mayHoldRows: mayHoldRows_sound
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::erase	534	PROVEN	VMDelta.erase: erase_layer, erase_rowsOk, erase_exact, erase_absent_drift
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::insert	553	PROVEN	VMDelta.insertB: insertB_layer, insertB_rowsOk, insertB_exact
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::insert_product	573	PROVEN	VMDelta.insertProduct: insertProduct_keys, insertProduct_rowsOk, insertProduct_count
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::tombstone_masked	588	PROVEN	VMDelta.tombstoneMasked: tombstoneMasked_keys, tombstoneMasked_rowsOk, tombstoneMasked_exact
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::remove_all	602	PROVEN	VMDelta.removeAll: removeAll_keys, removeAll_rowsOk, removeAll_exact
+graph/src/graph/graphblas/versioned_matrix.rs	Delta::insert	620	PROVEN	VMDelta.insertV: insertV_layer, insertV_rowsOk
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::clone	661	PROVEN	VMOps.clone: clone_eq
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::m	678	PROVEN	VMOps.getM: accessors
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::dp	684	PROVEN	VMOps.getDp: accessors
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::dm	690	PROVEN	VMOps.getDm: accessors
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::nrows	695	PROVEN	VMOps.nrows: accessors
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::ncols	700	PROVEN	VMOps.ncols: accessors
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::wait	709	PROVEN	VMOps.wait: wait_eff, wait_nf, wait_latch_mono, wait_exact, wait_rowsOk
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::wait_base	744	PROVEN	VMOps.waitBase: waitBase_synced
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::wait_all	750	PROVEN	VMOps.waitAll: waitAll_synced, waitAll_eff
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::is_synced	759	PROVEN	VMOps.isSynced: isSynced_iff, waitAll_synced
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::memory_usage	764	PROVEN	VMOps.memoryUsage: memoryUsage_eq (per-matrix GxB_Matrix_memoryUsage is FFI)
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::extract	773	PROVEN	eff: run_repr, effList_nodup, mem_effList
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::nvals	793	PROVEN	nvals_eq (no underflow, exact count under Inv)
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::print	798	PROVEN	VMOps.print: print_order
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::iter	811	PROVEN	Iter drain: iter_correct, drain_eq
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::resize	820	PROVEN	resize (grow/shrink): grow_inv_eff, shrink_inv_eff
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::clear_deltas	925	PROVEN	VMOps.clearDeltas: clearDeltas_spec, clearDeltas_eff
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::remove	944	PROVEN	remove: remove_inv, remove_eff, remove_set_committed
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::remove_mask	963	PROVEN	removeMask: removeMask_inv_eff
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::get	983	PROVEN	get: get_iff_eff, get_eff_disagree_without_inv
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::set	1008	PROVEN	set: set_inv, set_eff, set_remove_absent
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::new	1024	PROVEN	VM.empty: inv_empty, run_from_empty
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::from_matrix	1041	PROVEN	VMOps.fromMatrix: fromMatrix_spec
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::flush	1056	PROVEN	flush/fold: flush_inv, flush_eff, flush_flush, fold_eff
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::fold_latched	1112	PROVEN	foldNow: fold_eff, step_repr
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::fold_oversized	1136	PROVEN	foldNow: fold_eff, step_repr
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::set_product	1167	PROVEN	setProduct: setProduct_inv_eff
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::set_all	1216	PROVEN	setAll/setAllFast/setEach: setAll_inv_eff, setAllFast_inv_eff, setAll_new_contract_needed
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::dup	1261	PROVEN	dup: step_repr; Cow newVersion_iso
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::transpose	1280	PROVEN	VMOps.transpose: transpose_eff, transpose_bookkeeping
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::encode	1293	PROVEN	VMOps.encode: decode_encode
+graph/src/graph/graphblas/versioned_matrix.rs	VersionedMatrix::decode	1304	PROVEN	VMOps.decode: decode_encode, decode_decision, decode_short
+graph/src/graph/graphblas/versioned_matrix.rs	Iter::new	1352	PROVEN	VMIterSeek.newIt: newIt_abs (+ VMIter.drain_eq)
+graph/src/graph/graphblas/versioned_matrix.rs	Iter::from_layers	1379	PROVEN	VMIterSeek.fromLayers: fromLayers_abs (+ VMIter.drain_eq)
+graph/src/graph/graphblas/versioned_matrix.rs	Iter::from_layers_detaching	1393	PROVEN	VMIterSeek.fromLayersDetaching: detach_harmless, fromLayersDetaching_bound
+graph/src/graph/graphblas/versioned_matrix.rs	Iter::seek	1430	PROVEN	VMIterSeek.seek: seek_abs
+graph/src/graph/graphblas/versioned_matrix.rs	Iter::next	1455	PROVEN	Iter.next/skipDel/dropLt: next_spec, skipDel_spec, drain_eq, shadow_dp_wins, stray_tombstone_harmless
+graph/src/graph/graphblas/tensor.rs	compound_key	222	PROVEN	compoundKey: compoundKey_injective, compoundKey_row_lt, compoundKey_bits
+graph/src/graph/graphblas/tensor.rs	compound_key_inverse	241	PROVEN	compoundKeyInv: compoundKey_inv
+graph/src/graph/graphblas/tensor.rs	Tensor::clone	324	PROVEN	VMTensorOps.cloneT: cloneT_eq
+graph/src/graph/graphblas/tensor.rs	Tensor::new	338	PROVEN	VMTensorOps.newT: newT_blkInv, newT_empty
+graph/src/graph/graphblas/tensor.rs	Tensor::me_block	365	PROVEN	VMTensorOps.meBlock: meBlock_some, meBlock_none
+graph/src/graph/graphblas/tensor.rs	Tensor::me_block_mut	378	PROVEN	VMTensorOps.meBlockMut: meBlockMut_present, meBlockMut_inv
+graph/src/graph/graphblas/tensor.rs	Tensor::widen_me_for_id	403	PROVEN	VMTensorOps.widenMe: widenMe_fits, widenMe_inv, widenMe_st
+graph/src/graph/graphblas/tensor.rs	Tensor::wait_fwd	421	PROVEN	VMTensorOps.waitFwd: waitFwd_st, waitFwd_latch_mono, waitFwd_exact
+graph/src/graph/graphblas/tensor.rs	Tensor::eff_get	442	PROVEN	effV: addBatch_correct, removeBatch_correct, encoding
+graph/src/graph/graphblas/tensor.rs	Tensor::get	463	PROVEN	edges: addBatch_correct, removeBatch_correct
+graph/src/graph/graphblas/tensor.rs	Tensor::set_all_from_slices	497	PROVEN	vacant/occupied/writeEntry/addBatch: addBatch_correct, insAll_spec
+graph/src/graph/graphblas/tensor.rs	Tensor::remove_all	629	PROVEN	removeBatch (slow) + removeFast: removeBatch_correct, removeFast_correct
+graph/src/graph/graphblas/tensor.rs	Tensor::resize	809	PROVEN	VMTensorOps.resizeT: resizeT_grow, shrink_safe; BUG shrink_orphans_me (test tensor_shrink_keeps_orphan_me_rows)
+graph/src/graph/graphblas/tensor.rs	Tensor::flush	880	PROVEN	foldP: foldP_correct
+graph/src/graph/graphblas/tensor.rs	Tensor::fold_latched	937	PROVEN	VMTensorOps.foldLatched: foldLatched_correct
+graph/src/graph/graphblas/tensor.rs	Tensor::fold_oversized	955	PROVEN	VMTensorOps.foldOversized: foldOversized_correct, foldOversized_lazy
+graph/src/graph/graphblas/tensor.rs	Tensor::extract	977	PROVEN	VMTensorOps.extract: mem_extract
+graph/src/graph/graphblas/tensor.rs	Tensor::rebuild_backward	998	PROVEN	VMTensorOps.rebuildBackward: rebuildBackward_mt, rebuildBackward_edges, rebuildBackward_inv
+graph/src/graph/graphblas/tensor.rs	Tensor::dup	1009	PROVEN	VMTensorOps.dupT: dupT_spec, dupT_fresh
+graph/src/graph/graphblas/tensor.rs	Tensor::fwd_m	1025	PROVEN	VMTensorOps.fwdM: accessors
+graph/src/graph/graphblas/tensor.rs	Tensor::fwd_dp	1031	PROVEN	VMTensorOps.fwdDp: accessors
+graph/src/graph/graphblas/tensor.rs	Tensor::fwd_dm	1038	PROVEN	VMTensorOps.fwdDm: accessors
+graph/src/graph/graphblas/tensor.rs	Tensor::structural_iter	1045	PROVEN	VMTensorOps.structuralIter: mem_structuralIter
+graph/src/graph/graphblas/tensor.rs	Tensor::fwd_iter	1057	PROVEN	VMTensorOps.fwdIter: mem_fwdIter (+ VMIter.shadow_dp_wins)
+graph/src/graph/graphblas/tensor.rs	Tensor::row_degree	1082	PROVEN	VMTensorOps.rowDegree: rowDegree_eq, degLoop_eq
+graph/src/graph/graphblas/tensor.rs	Tensor::me_degree	1106	PROVEN	VMTensorOps.meDegree: meDegree_cursor_irrelevant, contrib_edges
+graph/src/graph/graphblas/tensor.rs	Tensor::col_degree	1134	PROVEN	VMTensorOps.colDegree: colDegree_eq (unreachable! never hit)
+graph/src/graph/graphblas/tensor.rs	Tensor::matrix_t	1168	PROVEN	VMTensorOps.matrixT: accessors
+graph/src/graph/graphblas/tensor.rs	Tensor::edge_versioned_block_0	1179	PROVEN	VMTensorOps.block0: block0_is_block0
+graph/src/graph/graphblas/tensor.rs	Tensor::edge_versioned_all	1186	PROVEN	VMTensorOps.blocksAll: blocksAll_names
+graph/src/graph/graphblas/tensor.rs	Tensor::edge_count	1221	PROVEN	partials/countTerms: count_correct
+graph/src/graph/graphblas/tensor.rs	Tensor::iter_edges	1283	PROVEN	GBW.iterExpand (graphblas_wrappers Misc): iterExpand_eq_flatMap; VMTensorOps.mem_fwdIter
+graph/src/graph/graphblas/tensor.rs	Tensor::iter	1300	PROVEN	VMTensorOps.newTIt: seek_eq_new; GBW Misc.iterExpand_eq_flatMap
+graph/src/graph/graphblas/tensor.rs	Tensor::multi_pairs	1349	PROVEN	VMTensorOps.multiPairs: multiPairs_eq
+graph/src/graph/graphblas/tensor.rs	Tensor::multi_pairs_in	1357	PROVEN	VMTensorOps.multiPairsIn: multiPairsIn_eq, countRows_groups
+graph/src/graph/graphblas/tensor.rs	Tensor::has_multi_edge	1386	PROVEN	VMTensorOps.hasMultiEdge: hasMultiEdge_iff, me_nonempty_iff_multi
+graph/src/graph/graphblas/tensor.rs	Tensor::wait	1390	PROVEN	VMTensorOps.waitT: waitT_st, waitT_me_synced
+graph/src/graph/graphblas/tensor.rs	Tensor::wait_base	1401	PROVEN	VMTensorOps.waitBase: waitBase_st
+graph/src/graph/graphblas/tensor.rs	Tensor::wait_all	1410	PROVEN	VMTensorOps.waitAll: waitAll_synced, waitAll_st
+graph/src/graph/graphblas/tensor.rs	Tensor::is_synced	1423	PROVEN	VMTensorOps.isSyncedT: waitAll_synced
+graph/src/graph/graphblas/tensor.rs	Tensor::memory_usage	1432	PROVEN	VMTensorOps.memoryUsage: memoryUsage_eq
+graph/src/graph/graphblas/tensor.rs	Tensor::encode	1451	PROVEN	VMTensorOps.encVal: encVal_roundtrip, msb_or (+ count_correct for the total)
+graph/src/graph/graphblas/tensor.rs	Tensor::decode	1530	PROVEN	graphblas_wrappers Decode.orphan_row_panics / more_me_rows_than_pattern_panics
+graph/src/graph/graphblas/tensor.rs	EdgeIds::next	1643	PROVEN	graphblas_wrappers Misc.expand
+graph/src/graph/graphblas/tensor.rs	EdgeIds::size_hint	1650	PROVEN	VMTensorOps.sizeHint: sizeHint_sound
+graph/src/graph/graphblas/tensor.rs	Iter::new	1678	PROVEN	VMTensorOps.newTIt: seek_eq_new, iterBwd_eff_get_isSome
+graph/src/graph/graphblas/tensor.rs	Iter::seek	1710	PROVEN	VMTensorOps.seekTIt: seek_eq_new (+ VMIterSeek.seek_abs for the base)
+graph/src/graph/graphblas/tensor.rs	Iter::next	1727	PROVEN	graphblas_wrappers Misc.iterExpand_eq_flatMap / iterExpand_length; iterBwd_eff_get_isSome
+graph/src/graph/cow.rs	Cow::new	50	PROVEN	VMCow.cowNew: cowNew_spec
+graph/src/graph/cow.rs	Cow::new_version	55	PROVEN	Cow.newVersion: newVersion_iso
+graph/src/graph/cow.rs	Cow::replace	66	PROVEN	replace: wstep_iso
+graph/src/graph/cow.rs	Cow::deref	78	PROVEN	VMCow.deref: deref_view
+graph/src/graph/cow.rs	Cow::deref_mut	84	PROVEN	derefMut: wstep_iso; old_write_leaks_into_new_version (hazard)
+graph/src/graph/mvcc_graph.rs	MvccGraph::new	80	PROVEN	VMCow.mvccNew: mvccNew_ready
+graph/src/graph/mvcc_graph.rs	MvccGraph::from_graph	95	PROVEN	VMCow.mvccNew: mvccNew_ready
+graph/src/graph/mvcc_graph.rs	MvccGraph::read	103	PROVEN	reader_view_frozen, snapshot_isolation
+graph/src/graph/mvcc_graph.rs	MvccGraph::write	108	PROVEN	Mvcc.write/sstep .begin: single_writer, newVersion_iso
+graph/src/graph/mvcc_graph.rs	MvccGraph::commit	139	PROVEN	sstep .commit (Graph::validate as `valid`): snapshot_isolation, refused_commit_rolls_back
+graph/src/graph/mvcc_graph.rs	MvccGraph::rollback	221	PROVEN	sstep .rollback: snapshot_isolation
+graph/src/graph/mvcc_graph.rs	MvccGraph::drop	227	PROVEN	VMCow.dropG: dropG_spec

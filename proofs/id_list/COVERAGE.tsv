@@ -1,0 +1,48 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/effects/v3/id_list.rs	width_code	78	PROVEN	IdListWire.widthCode: widthOfCode_widthCode, widthCode_lt
+graph/src/effects/v3/id_list.rs	width_of_code	89	PROVEN	IdListWire.widthOfCode: widthOfCode_widthCode, widthOfCode_le
+graph/src/effects/v3/id_list.rs	bucket_body	267	PROVEN	bucketBody: bucketBody_spec, bucketBody_le
+graph/src/effects/v3/id_list.rs	bitmap_header	289	PROVEN	bitmapHeader: bitmapHeader_spec
+graph/src/effects/v3/id_list.rs	Run::restart	311	PROVEN	restart + PushT.claimT/tallyOut (every Rust restart site): restart_spec, pushT_st, pushAllT_ok
+graph/src/effects/v3/id_list.rs	Run::absorb	323	PROVEN	absorb: absorb_rangeBytes, absorbAll_rangeBytes
+graph/src/effects/v3/id_list.rs	Run::prefers_bitmap	337	PROVEN	prefersBitmap: prefersBitmap_iff, collapse_shrinks, no_collapse_below_floor; drives push via PushT.decision (pushAllT_ok)
+graph/src/effects/v3/id_list.rs	Run::add_range	348	PROVEN	addRange/addLoop/pieces: addLoop_eq, pieces_sum, pieces_bucket, addRange_top, addRange_rangeBytes
+graph/src/effects/v3/id_list.rs	Run::freeze_bucket	409	PROVEN	freezeBucket: bitmapBytes_closeout
+graph/src/effects/v3/id_list.rs	Run::freeze_bitmap	416	PROVEN	freezeBitmap: bitmapBytes_closeout
+graph/src/effects/v3/id_list.rs	Run::bitmap_bytes	430	PROVEN	bitmapBytes: bitmapBytes_closeout, bitmapBytes_empty, collapse_shrinks
+graph/src/effects/v3/id_list.rs	Segment::len	545	PROVEN	Seg.len: iter_length
+graph/src/effects/v3/id_list.rs	Segment::max	557	PROVEN	Seg.max: iter_bounds
+graph/src/effects/v3/id_list.rs	Segment::min	570	PROVEN	Seg.min: iter_bounds, min_mem
+graph/src/effects/v3/id_list.rs	Segment::encoded_len	582	PROVEN	encodedLen: encodedLen_eq (= length of encodeSeg bytes)
+graph/src/effects/v3/id_list.rs	Segment::encode	601	PROVEN	encodeSeg: decode_encodeSeg, encodeSeg_len
+graph/src/effects/v3/id_list.rs	Segment::write_pair	652	PROVEN	writePair: decode_writePair, pairHeader_fields
+graph/src/effects/v3/id_list.rs	Segment::decode	673	PROVEN	decodeSeg: decode_encodeSeg, decodeSeg_ok, decodeSeg_never_panics
+graph/src/effects/v3/id_list.rs	Segment::iter	763	PROVEN	Seg.iter: iter_bounds, iter_length, iter_lt_W
+graph/src/effects/v3/id_list.rs	IdList::fmt	804	PROVEN	Misc.fmt: fmt_ignores_run (prints len+segments only)
+graph/src/effects/v3/id_list.rs	IdList::eq	818	PROVEN	Misc.eqList: eqList_iff (equal iff same id sequence)
+graph/src/effects/v3/id_list.rs	IdList::new	830	PROVEN	St.empty: inv_empty
+graph/src/effects/v3/id_list.rs	IdList::claim_direction	857	PROVEN	claim/claimStep: claim_segs, claimStep_segs, push_ok
+graph/src/effects/v3/id_list.rs	IdList::push	886	PROVEN	push: push_ok, pushAll_ok (any collapse decisions)
+graph/src/effects/v3/id_list.rs	IdList::maybe_collapse_run	1029	PROVEN	collapse: collapse_ok (assert never fires under Inv)
+graph/src/effects/v3/id_list.rs	IdList::len	1109	PROVEN	St.len: pushAll_ok (len = number of pushes)
+graph/src/effects/v3/id_list.rs	IdList::is_empty	1114	PROVEN	Misc.isEmpty: isEmpty_iff
+graph/src/effects/v3/id_list.rs	IdList::iter	1126	PROVEN	flat: fromIter_iter, pushAll_ok
+graph/src/effects/v3/id_list.rs	IdList::count	1136	PROVEN	Misc.count: count_spec (panics iff len >= 2^32)
+graph/src/effects/v3/id_list.rs	IdList::to_roaring	1146	PROVEN	Misc.toRoaring: toRoaring_spec (sorted, exactly the ids)
+graph/src/effects/v3/id_list.rs	IdList::from_segments	1176	PROVEN	fromSegments: decoded_then_pushed_reorders, decoded_then_pushed_asserts (bug)
+graph/src/effects/v3/id_list.rs	IdList::encode	1200	PROVEN	encodeIds: readIds_encodeIds, push_encode_decode
+graph/src/effects/v3/id_list.rs	IdList::decode_sized	1229	PROVEN	= read_ids: readIds_safe, readIds_encodeIds
+graph/src/effects/v3/id_list.rs	IdList::eq	1242	PROVEN	Misc.eqSlice: eqSlice_iff
+graph/src/effects/v3/id_list.rs	IdList::eq	1251	PROVEN	Misc.eqArr: eqArr_eq_eqSlice, eqSlice_iff
+graph/src/effects/v3/id_list.rs	IdList::from_iter	1260	PROVEN	pushAll from St.empty: fromIter_iter
+graph/src/effects/v3/id_list.rs	IdList::from	1270	PROVEN	Misc.fromIds: from_eq, fromIds_lenOk (via pushAllT)
+graph/src/effects/v3/id_list.rs	IdList::from	1276	PROVEN	Misc.fromIds: from_eq, fromIds_lenOk (via pushAllT)
+graph/src/effects/v3/id_list.rs	write_narrow	1282	PROVEN	le n v inside writePair: ofLe_le, decode_writePair
+graph/src/effects/v3/id_list.rs	read_narrow	1296	PROVEN	readU: readU_ok, readU_le, readU_lt
+graph/src/effects/v3/id_list.rs	read_ids	1337	PROVEN	readIds/loop: readIds_encodeIds, readIds_safe, readIds_never_panics, refuses_*
+graph/src/effects/reader.rs	Reader::take	40	PROVEN	take: take_ok, take_append
+graph/src/effects/reader.rs	Reader::u8	99	PROVEN	readU 1: readU_ok, readU_le
+graph/src/effects/reader.rs	Reader::u16	103	PROVEN	readU 2: readU_ok, readU_le
+graph/src/effects/reader.rs	Reader::u32	107	PROVEN	readU 4: readU_ok, readU_le
+graph/src/effects/reader.rs	Reader::u64	111	PROVEN	readU 8: readU_ok, readU_le
+graph/src/narrow_int.rs	width_for	19	PROVEN	IdListWire.widthFor: widthFor_fits, widthFor_cases, widthFor_ge

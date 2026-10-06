@@ -1,0 +1,2 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/narrow_int.rs	width_for	19	PROVEN	AeneasPilot.width_for_refines/width_for_lossless/width_for_minimal (against Aeneas-extracted def)

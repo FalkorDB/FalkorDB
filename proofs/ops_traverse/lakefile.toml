@@ -1,0 +1,5 @@
+name = "falkor-ops-traverse"
+defaultTargets = ["OpsTraverse"]
+
+[[lean_lib]]
+name = "OpsTraverse"

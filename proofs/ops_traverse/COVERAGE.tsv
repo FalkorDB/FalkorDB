@@ -1,0 +1,79 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::ncols	69	PROVEN	CTGlue.ncolsT: ncolsT_spec
+graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::delta_lmxm_into	77	AXIOMATISED	CondTraverse.MxmSpec (GrB_mxm ANY_PAIR); used by chain / mem_chain
+graph/src/runtime/ops/cond_traverse.rs	build_unrestricted_iter	195	AXIOMATISED	Basic.pairs / mem_pairs (structural iterator of the merged relationship matrix)
+graph/src/runtime/ops/cond_traverse.rs	empty_edge_iter	211	PROVEN	CTGlue.emptyIter: emptyIter_nil
+graph/src/runtime/ops/cond_traverse.rs	build_transposed_iter	221	AXIOMATISED	Basic.pairs read dst-major; seek restriction = processPairs bound-endpoint filter
+graph/src/runtime/ops/cond_traverse.rs	attrs_is_static_empty	240	PROVEN	CTGlue.staticEmpty: staticEmpty_iff
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::new	247	PROVEN	CTGlue.ctNew: ctNew_spec; BidirDedup.dedupRows
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::build_state	361	PROVEN	CTGlue.buildState: buildState_spec
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::expand_batch	451	PROVEN	CondTraverse.batched_eq_collapse, fused_chain_semantics, chain_nodup (under MxmSpec)
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::expand_row	757	PROVEN	CondTraverse.expandRow: emit_directed_iff, emit_bidir_iff, collapse_directed_iff, collapse_directed_keys_nodup; bidir_collapse_duplicates_pair (bug); BidirDedup.* for the dedup block
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::process_pairs	977	PROVEN	CondTraverse.processPairs/pairRows: mem_processPairs, collapse_sub_emit, collapse_keys_sublist
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::trim_to_cap	1121	PROVEN	CTGlue.trimToCap: trimToCap_spec
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::out_alias_id	1144	PROVEN	CTGlue.outAlias: outAlias_spec
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::null_pad	1156	PROVEN	CTGlue.nullPad: nullPad_spec
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::next	1177	PROVEN	CTGlue.ctPack + Drive.capDrive: ctNext_stream, capDrive_flatten; BidirDedup.dedupBatches (bug)
+graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::new	73	PROVEN	CTGlue.eiNew: eiNew_spec
+graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::expand_row	126	PROVEN	CondTraverse.expandInto: mem_expandInto_emit; expandInto_bidir_collapse_two_rows (bug)
+graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::next	269	PROVEN	Drive.capDrive: eiNext_stream, capDrive_flatten
+graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::path_value	139	PROVEN	VarLenGlue.pathValue: pathValue_spec, Alt.reverse
+graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::begin_start_node	152	PROVEN	VarLen.varLen 0-hop branch: varLen_sound, varLen_complete, zero_zero
+graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::advance	196	PROVEN	VarLen.dfs: dfs_sound, dfs_complete, varLen_iff (trails, min..max); filters not modelled
+graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::next	392	PROVEN	VarLenGlue.vlStep/run: run_complete, run_err
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::new	441	PROVEN	VarLenGlue.VlSt.new/findPrev: vlNew_spec
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::expand_row	500	PROVEN	VarLenGlue.rowPlan: rowPlan_spec; VarLen.varLen (no_sibling_uniqueness)
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::next	611	PROVEN	Drive.driveE: vlOpNext_stream, driveE_ok, driveE_child_err
+graph/src/runtime/ops/node_by_label_scan.rs	NodeByLabelScanOp::new	56	PROVEN	CTGlue.labelScanNew: ctors_spec
+graph/src/runtime/ops/node_by_label_scan.rs	NodeByLabelScanOp::next	77	PROVEN	Scans.labelScan: mem_labelScan, length_labelScan (get_nodes axiomatised as sorted list)
+graph/src/runtime/ops/node_by_id_seek.rs	NodeByIdSeekOp::new	32	PROVEN	CTGlue.idSeekNew: ctors_spec
+graph/src/runtime/ops/node_by_id_seek.rs	NodeByIdSeekOp::next	55	PROVEN	Scans.idSeek: mem_idSeek (evaluate_id_filter taken as input)
+graph/src/runtime/ops/node_by_label_and_id_scan.rs	NodeByLabelAndIdScanOp::new	34	PROVEN	CTGlue.labelIdScanNew: ctors_spec
+graph/src/runtime/ops/node_by_label_and_id_scan.rs	NodeByLabelAndIdScanOp::next	59	PROVEN	Scans.labelIdScan_correct (take_while + filter = labelled ∩ range, given sorted get_nodes)
+graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::new	59	PROVEN	CTGlue.aspNew: ctors_spec
+graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::expand_row	85	PROVEN	ASP.bfs/relax/back/asp: asp_minimal (length = true shortest distance), asp_complete' (every shortest walk ≤ max_hops returned), asp_nodup (exactly once), fin_drained (BFS terminates), asp_sound; directed_cycle_backtrack_order + directed_cycle_not_a_walk (bug), undirected_cycle_repeats_edge (shared with C)
+graph/src/runtime/ops/all_shortest_paths.rs	AllShortestPathsOp::next	311	PROVEN	Drive.drive: uncapped_stream, drive_flatten
+graph/src/runtime/ops/path_builder.rs	PathBuilderOp::new	44	PROVEN	CTGlue.pathBuilderNew: pathBuilderNew_spec
+graph/src/runtime/ops/path_builder.rs	PathBuilderOp::next	62	PROVEN	ASP.buildNodes (Value::List branch): buildNodes_walk, pathbuilder_on_cycle; Value::Path reversed-VLT branch NOT COVERED (tested only)
+graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1929	NOT COVERED	config parsing (tested against C: defaults differ, see bug 6)
+graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2015	NOT COVERED	config parsing
+graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2051	NOT COVERED	config parsing
+graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2070	NOT COVERED	f64->Int presentation (Rust returns Integer weights, C Float)
+graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2092	NOT COVERED	ordering (weight, cost, hops); tested only
+graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2104	NOT COVERED	confirmed bug by Cypher repro: default cost 0.0 at call sites 2308/2397/2518 (C: 1)
+graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2121	NOT COVERED	tested only
+graph/src/runtime/functions/algo_procedures.rs	node_successors	2153	NOT COVERED	tested only
+graph/src/runtime/functions/algo_procedures.rs	DijkstraItem::cmp	2188	NOT COVERED	f64 heap ordering
+graph/src/runtime/functions/algo_procedures.rs	DijkstraItem::partial_cmp	2203	NOT COVERED	f64 heap ordering
+graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2219	NOT COVERED	f64 Dijkstra; differential-tested vs C
+graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2322	NOT COVERED	differential-tested vs C
+graph/src/runtime/functions/algo_procedures.rs	record_found_path	2405	NOT COVERED	differential-tested vs C
+graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2469	NOT COVERED	differential-tested vs C (maxCost bug 6)
+graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2572	NOT COVERED	result assembly
+graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2603	NOT COVERED	driver
+graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2654	NOT COVERED	registration
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2666	NOT COVERED	registration
+graph/src/runtime/eval.rs	NeighborIter::new	153	NOT COVERED	shortestPath() BFS helpers; differential-tested only
+graph/src/runtime/eval.rs	NeighborIter::new_reversed	193	NOT COVERED	idem
+graph/src/runtime/eval.rs	NeighborIter::neighbors	221	NOT COVERED	idem
+graph/src/runtime/eval.rs	ExprEval::eval_shortest_path	1315	NOT COVERED	differential-tested vs C (matches except undirected: C errors, Rust answers)
+graph/src/runtime/eval.rs	ExprEval::bfs_shortest_path	1400	NOT COVERED	bidirectional BFS; stop rule argued in comments, not formalised
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::new	56	PROVEN	IndexScan.IxSt.new/extraLabels: ixNew_spec
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::evaluate_index_query	98	PROVEN	IndexScan.evalIQ: evalIQ_eq, evalIQ_inList, evalIQ_inList_err (W2-index-3)
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::can_utilize_index	250	PROVEN	IndexScan.canUse: canUse_spec, canUseL_iff
+graph/src/runtime/ops/node_by_index_scan.rs	is_indexable	253	PROVEN	IndexScan.indexable/losesPrecision: canUse_spec
+graph/src/runtime/ops/node_by_index_scan.rs	NodeByIndexScanOp::next	293	PROVEN	IndexScan.scanRow (IndexSound = RediSearch contract): scanRow_spec, scans_stream
+graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::new	47	PROVEN	IndexScan.VecSt.new: vecNew_spec
+graph/src/runtime/ops/node_by_vector_scan.rs	NodeByVectorScanOp::next	83	PROVEN	IndexScan.vecRow: vecRow_spec, scans_stream
+graph/src/runtime/ops/node_by_vector_scan.rs	eval_vector_args	120	PROVEN	IndexScan.vecArgs: vecArgs_ok, vecArgs_bad_k
+graph/src/runtime/ops/node_by_fulltext_scan.rs	NodeByFulltextScanOp::new	42	PROVEN	IndexScan.ftNew: ftNew_spec
+graph/src/runtime/ops/node_by_fulltext_scan.rs	NodeByFulltextScanOp::next	73	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, scans_stream
+graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::new	47	PROVEN	IndexScan.ftNew: ftNew_spec
+graph/src/runtime/ops/edge_by_fulltext_scan.rs	EdgeByFulltextScanOp::next	78	PROVEN	IndexScan.ftArgs (fulltext index = FFI): ftArgs_spec, scans_stream
+graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::new	40	PROVEN	IndexScan.ftNew/VecSt.new: ftNew_spec
+graph/src/runtime/ops/edge_by_vector_scan.rs	EdgeByVectorScanOp::next	75	PROVEN	IndexScan.edgeVecRow/vecArgs: edgeVecRow_spec, vecArgs_ok
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::new	78	PROVEN	IndexScan.edgeIxNew: edgeIxNew_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::evaluate_index_query	116	PROVEN	IndexScan.evalIQ (identical to node version): evalIQ_eq, evalIQ_inList, evalIQ_inList_err
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::can_utilize_index	265	PROVEN	IndexScan.canUseE: canUseE_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	is_indexable	268	PROVEN	IndexScan.indexable: canUse_spec, canUseE_spec
+graph/src/runtime/ops/edge_by_index_scan.rs	EdgeByIndexScanOp::next	310	PROVEN	IndexScan.edgeRow: edgeRow_sound, scans_stream

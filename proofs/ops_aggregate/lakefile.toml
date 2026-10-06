@@ -1,0 +1,5 @@
+name = "falkor-ops-aggregate"
+defaultTargets = ["FalkorAggOps"]
+
+[[lean_lib]]
+name = "FalkorAggOps"

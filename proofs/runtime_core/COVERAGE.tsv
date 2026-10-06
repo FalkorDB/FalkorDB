@@ -1,0 +1,90 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/runtime.rs	get_variables	209	PROVEN	Plan.getVariables/nodeVars (trait decl): getVariables_spec, getVariables_stops
+graph/src/runtime/runtime.rs	get_variables	213	PROVEN	Plan.getVariables/nodeVars: getVariables_spec, getVariables_stops
+graph/src/runtime/runtime.rs	get_return_names	335	PROVEN	Plan.returnNames (trait decl): returnNames_spec
+graph/src/runtime/runtime.rs	get_return_names	339	PROVEN	Plan.returnNames/skipApply: returnNames_spec
+graph/src/runtime/runtime.rs	inspect_batch	384	PROVEN	Plan.inspectBatch: inspectBatch_spec
+graph/src/runtime/runtime.rs	new	406	PROVEN	Plan.rtNew: rtNew_spec; Misc.checkTimeout_spec (deadline)
+graph/src/runtime/runtime.rs	check_timeout	467	PROVEN	Misc.checkTimeout_spec
+graph/src/runtime/runtime.rs	check_mem_capacity	477	PROVEN	Misc.checkMem_spec, checkMem_disabled, checkMem_wrap
+graph/src/runtime/runtime.rs	write_escalation	494	PROVEN	Plan.writeEscalation: delegates_spec
+graph/src/runtime/runtime.rs	resync_published_indexes	500	PROVEN	Plan.resyncPublished (delegates to Pending, proofs/pending_commit): delegates_spec
+graph/src/runtime/runtime.rs	commit_deferred_indexes	510	PROVEN	Plan.commitDeferred (delegates to Pending): delegates_spec
+graph/src/runtime/runtime.rs	query	514	PROVEN	Query.query_rows, Query.capLoop_flatten, Query.keep_exact, Query.query_write_pulls_all
+graph/src/runtime/runtime.rs	default_batch	564	PROVEN	Plan.defaultBatch: defaultBatch_spec
+graph/src/runtime/runtime.rs	effective_limit	575	PROVEN	Budget.recordCap_sound_oneSkip; bug B1 Budget.hard_cap_unsound_expandInto/condTraverse/through_traverse
+graph/src/runtime/runtime.rs	effective_skip	610	PROVEN	Budget.recordCap_sound_oneSkip; bug B2 Budget.hard_cap_unsound_stacked_skip
+graph/src/runtime/runtime.rs	record_cap	642	PROVEN	Budget.recordCap_hardCap_sound_oneSkip, Budget.need_sound; soft use Emitter.drive_flatten
+graph/src/runtime/runtime.rs	children_to_recurse	652	PROVEN	RunBatch.childrenToRecurse: childrenToRecurse_spec
+graph/src/runtime/runtime.rs	run_nested_plan	678	PROVEN	Plan.runNested: runNested_spec
+graph/src/runtime/runtime.rs	run_batch	710	PROVEN	RunBatch.runBatch_eq_rec, RunBatch.runBatch_ok_single
+graph/src/runtime/runtime.rs	build_batch_op	743	PROVEN	Plan.buildOp/popOrOnce/popOrArgument: buildOp_spec; RunBatch.runBatch_eq_rec
+graph/src/runtime/runtime.rs	evaluate_id_filter	1309	PROVEN	reused: proofs/optimizer_scan OptimizerScan.IdSeek.fold_some, go_eq_fold, seek_sound
+graph/src/runtime/runtime.rs	set_pending_node_attr	1371	PROVEN	RelAccessors.setPendingAttr: setPendingAttr_spec
+graph/src/runtime/runtime.rs	set_pending_relationship_attr	1390	PROVEN	RelAccessors.setPendingAttr (rel tables): setPendingAttr_spec
+graph/src/runtime/runtime.rs	memo_lookup	1407	PROVEN	Accessors.memoLookup_ok
+graph/src/runtime/runtime.rs	memo_insert	1417	PROVEN	Accessors.attrIdM_correct (validity + 32-entry cap)
+graph/src/runtime/runtime.rs	node_attr_id	1432	PROVEN	Accessors.attrIdM_correct, memo_ok_mono
+graph/src/runtime/runtime.rs	rel_attr_id	1446	PROVEN	Accessors.attrIdM_correct (same code over rel memo)
+graph/src/runtime/runtime.rs	get_node_attribute	1459	PROVEN	Accessors.getNodeAttribute; attrs_agree, materialize_eq
+graph/src/runtime/runtime.rs	get_node_attribute_no_delete_check	1479	PROVEN	Accessors.noDelete; attrs_agree
+graph/src/runtime/runtime.rs	get_relationship_attribute_no_delete_check	1493	PROVEN	RelAccessors.relNoDelete: relNoDelete_eq, relNoDelete_spec
+graph/src/runtime/runtime.rs	get_relationship_attribute	1510	PROVEN	RelAccessors.getRelAttribute: getRelAttribute_eq
+graph/src/runtime/runtime.rs	materialize_node_property	1542	PROVEN	RelAccessors.materializeNodeProp: materializeNodeProp_eq
+graph/src/runtime/runtime.rs	materialize_node_property_values	1556	PROVEN	Accessors.materialize_eq
+graph/src/runtime/runtime.rs	materialize_relationship_property	1604	PROVEN	RelAccessors.materializeRelProp: materializeRelProp_eq
+graph/src/runtime/runtime.rs	materialize_relationship_property_values	1616	PROVEN	RelAccessors.materializeRel: materializeRel_eq
+graph/src/runtime/runtime.rs	get_node_labels	1660	PROVEN	Accessors.getLabelIds; hasLabelId_iff, hasLabel_iff
+graph/src/runtime/runtime.rs	node_has_label	1690	PROVEN	Accessors.hasLabel_iff
+graph/src/runtime/runtime.rs	label_id	1711	PROVEN	RelAccessors.labelIdOf: labelIdOf_spec
+graph/src/runtime/runtime.rs	node_has_label_id	1725	PROVEN	Accessors.hasLabelId_iff
+graph/src/runtime/runtime.rs	get_node_attrs	1739	PROVEN	Accessors.attrs_agree (and reuse_diverges witness)
+graph/src/runtime/runtime.rs	get_relationship_attrs	1757	PROVEN	RelAccessors.getRelAttrs: relAttrs_agree
+graph/src/runtime/runtime.rs	get_relationship_endpoints	1777	PROVEN	RelAccessors.relEndpoints: relEndpoints_spec
+graph/src/runtime/runtime.rs	get_relationship_type	1790	PROVEN	RelAccessors.relType: relType_spec
+graph/src/runtime/runtime.rs	get_node_indegree	1804	PROVEN	Accessors.degree_exact (endp = dst, types = [])
+graph/src/runtime/runtime.rs	get_node_indegree_by_type	1821	PROVEN	Accessors.degree_exact (endp = dst)
+graph/src/runtime/runtime.rs	get_node_outdegree	1839	PROVEN	Accessors.degree_exact (endp = src, types = [])
+graph/src/runtime/runtime.rs	get_node_outdegree_by_type	1856	PROVEN	Accessors.degree_exact (endp = src)
+graph/src/runtime/runtime.rs	map_to_index_options	1881	PROVEN	Misc.vectorOptions/fulltextUnknown/phonetic: vector_requires_dimension, vector_requires_similarity, vector_similarity_lowered (#3094), vector_negative_refused, natOpt_ok, fulltextUnknown_none_iff, phonetic_codes (other fulltext keys are direct type matches)
+graph/src/runtime/ops/mod.rs	drain_pending	127	PROVEN	Misc.drainPending_spec
+graph/src/runtime/ops/mod.rs	edge_already_used	155	PROVEN	Misc.edgeAlreadyUsed_iff
+graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	60	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	push_into	67	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	finish	75	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	87	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	push_into	94	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	finish	102	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	118	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	push_into	125	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	finish	133	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	157	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	push_into	170	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	finish	182	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	199	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	push_into	211	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	finish	223	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	264	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	push_into	281	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	finish	299	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	346	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	push_into	368	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	finish	387	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	new_lanes	412	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	push_into	419	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	finish	427	NOT COVERED	GatherItem typed-lane impl (columnar representation abstracted to (row,item) pairs)
+graph/src/runtime/ops/batched_result_emitter.rs	one	458	MODELLED	Emitter.RowIter.one
+graph/src/runtime/ops/batched_result_emitter.rs	spread	464	MODELLED	Emitter.RowIter.spread
+graph/src/runtime/ops/batched_result_emitter.rs	many	469	MODELLED	Emitter.RowIter.many
+graph/src/runtime/ops/batched_result_emitter.rs	next	478	PROVEN	Emitter.next_none, next_some
+graph/src/runtime/ops/batched_result_emitter.rs	with_binding	553	PROVEN	Emitter.initCeiling_pos, initCeiling_cases
+graph/src/runtime/ops/batched_result_emitter.rs	seed	575	PROVEN	Emitter.seed, remaining_seed, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	start_batch	602	MODELLED	should_expand/gather vs Batch::new(0) abstracted to (row,item) pairs
+graph/src/runtime/ops/batched_result_emitter.rs	drain_pending_entry	619	PROVEN	Emitter.drain_spec, drain_nonempty, drain_empty
+graph/src/runtime/ops/batched_result_emitter.rs	finish_batch	648	MODELLED	output = packed (row,item) pairs; gather not modelled
+graph/src/runtime/ops/batched_result_emitter.rs	refill_from_cursor	673	PROVEN	Emitter.refill_none, refill_some
+graph/src/runtime/ops/batched_result_emitter.rs	emit_lazy	726	PROVEN	Emitter.loop_inv, loop_len, loop_progress, emit_inv, emit_len, emit_none_remaining, drive_flatten
+graph/src/runtime/ops/batched_result_emitter.rs	reset	747	PROVEN	Emitter.reset_remaining
+graph/src/runtime/ops/batched_result_emitter.rs	batch	756	NOT COVERED	trivial accessor
+graph/src/runtime/ops/batched_result_emitter.rs	new	770	MODELLED	Emitter.initCeiling via with_binding
+graph/src/runtime/ops/batched_result_emitter.rs	new_without_alias	780	MODELLED	Emitter.initCeiling via with_binding (no bound column)

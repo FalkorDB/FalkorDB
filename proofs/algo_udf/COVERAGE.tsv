@@ -1,0 +1,106 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/runtime/functions/algo_procedures.rs	new_msg	101	PROVEN	AlgoGlue.msgToString_new (zeroed 256-byte buffer)
+graph/src/runtime/functions/algo_procedures.rs	msg_to_string	105	PROVEN	AlgoGlue.msgToString_new, msgToString_prefix (bytes before the first NUL)
+graph/src/runtime/functions/algo_procedures.rs	msf_score	144	PROVEN	AlgoGlue.msfScore_missing, msfScore_unit, msfScore_max, missing_never_selected
+graph/src/runtime/functions/algo_procedures.rs	msf_scored_edge_index_op	176	PROVEN	AlgoGlue.indexOp_spec, ops_null_guard
+graph/src/runtime/functions/algo_procedures.rs	msf_scored_edge_value_op	200	PROVEN	AlgoGlue.valueOp_spec, ops_null_guard
+graph/src/runtime/functions/algo_procedures.rs	msf_keep_min_score	238	PROVEN	MsfFlow.keepMin_comm, identity_neutral, keepMin_nan_not_comm
+graph/src/runtime/functions/algo_procedures.rs	msf_score_of	266	PROVEN	AlgoGlue.scoreOf_spec
+graph/src/runtime/functions/algo_procedures.rs	opt_string	278	PROVEN	Config.optString (definition-level; used by strList proofs)
+graph/src/runtime/functions/algo_procedures.rs	validate_config_map	290	PROVEN	Config.validate_ok
+graph/src/runtime/functions/algo_procedures.rs	extract_node_labels	303	PROVEN	Config.strList_ok, allStrings_spec
+graph/src/runtime/functions/algo_procedures.rs	extract_rel_types	321	PROVEN	Config.strList_ok, allStrings_spec
+graph/src/runtime/functions/algo_procedures.rs	parse_config	345	PROVEN	AlgoGlue.parseConfig_spec (Config.parseConfig)
+graph/src/runtime/functions/algo_procedures.rs	create_lagraph_graph	372	PROVEN	AlgoGlue.lifecycle_frees_once (LAGraph_New ownership contract as model input)
+graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph	397	PROVEN	AlgoGlue.lifecycle_frees_once (LAGraph_Delete frees G->A)
+graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph_borrowed	404	PROVEN	AlgoGlue.lifecycle_frees_once (detach G->A first)
+graph/src/runtime/functions/algo_procedures.rs	delete_lagraph_graph_maybe_borrowed	417	PROVEN	AlgoGlue.lifecycle_frees_once
+graph/src/runtime/functions/algo_procedures.rs	extract_vector_f64	429	AXIOMATISED	GrB_Vector_extractTuples_FP64: (index,value) pairs
+graph/src/runtime/functions/algo_procedures.rs	extract_vector_i64	446	AXIOMATISED	GrB_Vector_extractTuples_INT64: (index,value) pairs
+graph/src/runtime/functions/algo_procedures.rs	node_value	463	PROVEN	AlgoGlue.nodeValue_spec
+graph/src/runtime/functions/algo_procedures.rs	collect_node_ids	469	PROVEN	AlgoGlue.collectNodeIds_spec (get_nodes({l}) AXIOMATISED accessor), mem_activeNodes
+graph/src/runtime/functions/algo_procedures.rs	active_node_set	493	PROVEN	AlgoGlue.mem_activeNodes (Graph::get_nodes(∅), graph.rs:2177-2198)
+graph/src/runtime/functions/algo_procedures.rs	build_bool_pattern	521	AXIOMATISED	GxB_Matrix_build_Scalar iso build, duplicates collapse
+graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_from_tensors	552	PROVEN	Compact.compactEdges_sound (id_to_compact / sorted_ids)
+graph/src/runtime/functions/algo_procedures.rs	build_compact_adj_symmetric_from_tensors	618	PROVEN	Compact.compactEdges_sound (both orientations pushed)
+graph/src/runtime/functions/algo_procedures.rs	register	687	PROVEN	AlgoBfsReg.register_empty, table_names_distinct
+graph/src/runtime/functions/algo_procedures.rs	register_pagerank	702	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry ePagerank; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_pagerank	707	PROVEN	Compact.pagerank_unknown_label_compact_empty, unfiltered_rows_exact; LAGr_PageRank AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	register_wcc	812	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eWcc; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_wcc	817	PROVEN	Compact.wcc_compact_component_id_not_member, unfiltered_component_ids_are_members (LagWcc hypothesis)
+graph/src/runtime/functions/algo_procedures.rs	register_betweenness	913	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBetweenness; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_betweenness	918	PROVEN	Config.samplingSize_wraps, Compact.seed0_sources_lt, seed0_samples_deleted; LAGr_Betweenness AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	register_bfs	1058	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eBfs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_bfs	1063	PROVEN	AlgoBfsReg.edgesBranch_aligned, branches_agree, levelBranch_no_src, algoBfs_deleted_src, algoBfs_null (LAGr_BreadthFirstSearch_Extended AXIOMATISED)
+graph/src/runtime/functions/algo_procedures.rs	register_cdlp	1208	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eCdlp; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_cdlp	1213	PROVEN	Compact.wcc_compact_component_id_not_member (same assembly), Config.maxIterations_wraps_to_zero
+graph/src/runtime/functions/algo_procedures.rs	register_msf	1320	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMsf; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_msf	1325	PROVEN	MsfFlow.keepMin_*, msf_dense_no_fallback, msf_fallback_key_space_mixed; GraphBLAS build/extract/LAGraph_msf AXIOMATISED
+graph/src/runtime/functions/algo_procedures.rs	parse_common_path_config	1929	PROVEN	Config.maxLen_wraps, maxLen_small, pathCount
+graph/src/runtime/functions/algo_procedures.rs	parse_sp_config	2015	PROVEN	PathDispatch.parseSp_ok, parseSp_missing, parseSp_not_node
+graph/src/runtime/functions/algo_procedures.rs	parse_ss_config	2051	PROVEN	PathDispatch.parseSs_ok, parseSs_missing
+graph/src/runtime/functions/algo_procedures.rs	to_numeric_value	2070	PROVEN	PathDispatch.toNumeric_nat, toNumeric_neg_zero, toNumeric_nonfinite
+graph/src/runtime/functions/algo_procedures.rs	cmp_found_path	2092	PROVEN	AlgoGlue.cmp_found_path_strict (= Dfs.fpLt), DfsResult.fpLt_trans; Paths.lt
+graph/src/runtime/functions/algo_procedures.rs	edge_numeric_attr	2104	PROVEN	Paths.cost_default_diverges, cost_agree_when_present
+graph/src/runtime/functions/algo_procedures.rs	far_endpoint	2121	PROVEN	Paths.far_outgoing, far_incoming, far_both
+graph/src/runtime/functions/algo_procedures.rs	node_successors	2153	PROVEN	Graph.mem_succs, succs_map_fst_sublist
+graph/src/runtime/functions/algo_procedures.rs	cmp	2188	PROVEN	Dijkstra.itemCmp_gt, itemCmp_max_min_weight (BinaryHeap pops a minimum weight)
+graph/src/runtime/functions/algo_procedures.rs	partial_cmp	2203	PROVEN	Dijkstra.itemPartialCmp_total (Some(cmp))
+graph/src/runtime/functions/algo_procedures.rs	dijkstra_single_path	2219	PROVEN	Dijkstra.dijkstra_correct (sound, optimal, complete, no panic), dijkstra_terminates
+graph/src/runtime/functions/algo_procedures.rs	bfs_find_bound	2322	PROVEN	BfsBound.bfs_sound, bfs_complete, bfs_src_eq_tgt
+graph/src/runtime/functions/algo_procedures.rs	record_found_path	2405	PROVEN	Paths.recordK_length, record1_min, record0_ties; Dfs.recordB_mem, recordB_bound, recordB_length; DfsResult.k1_step, k0_step
+graph/src/runtime/functions/algo_procedures.rs	enumerate_paths	2469	PROVEN	DfsSound.dfs_sound, dfs_no_panic; DfsExplore.explore; DfsResult.dfs_complete, dfs_k1, dfs_k0 (bound monotonicity proven for pathCount 0/1, hypothesis for >=2)
+graph/src/runtime/functions/algo_procedures.rs	build_path_batch	2572	PROVEN	Paths.nextNode_far
+graph/src/runtime/functions/algo_procedures.rs	run_path_algo	2603	PROVEN	PathDispatch.plan_dijkstra_iff, bfs_none_sound; PathSeed.bfs_seed_keeps_answer_k1/_k0; Paths.dijkstra_never_src_eq_dst
+graph/src/runtime/functions/algo_procedures.rs	register_sp_paths	2654	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSp; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_sp_paths	2659	PROVEN	PathDispatch.algoSp_spec
+graph/src/runtime/functions/algo_procedures.rs	register_ss_paths	2666	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eSs; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_ss_paths	2671	PROVEN	PathDispatch.algoSs_spec
+graph/src/runtime/functions/algo_procedures.rs	register_harmonic_centrality	2680	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eHarmonic; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_harmonic_centrality	2685	PROVEN	Compact.harmonic_correct_iff, unfiltered_drops_high_ids
+graph/src/runtime/functions/algo_procedures.rs	register_maxflow	2844	PROVEN	AlgoBfsReg.addProc_spec, register_empty (entry eMaxflow; cypher_fn! procedure arm functions/mod.rs:328-352)
+graph/src/runtime/functions/algo_procedures.rs	algo_maxflow	2849	PROVEN	MsfFlow.flowAlign_aligned, superFresh; LAGr_MaxFlow AXIOMATISED
+graph/src/udf/js_classes.rs	set_current_graph	72	PROVEN	UdfClasses.withGraph_set
+graph/src/udf/js_classes.rs	clear_current_graph	78	PROVEN	UdfClasses.withGraph_clear
+graph/src/udf/js_classes.rs	with_current_graph	84	PROVEN	UdfClasses.withGraph_set, withGraph_clear
+graph/src/udf/js_classes.rs	collect_edges	97	PROVEN	Neighbors.outgoing_ok, self_loop_twice
+graph/src/udf/js_classes.rs	create_js_node	129	PROVEN	UdfClasses.jsNode_markers, attrLoop_keeps (QuickJS object set AXIOMATISED)
+graph/src/udf/js_classes.rs	create_js_edge	213	PROVEN	UdfClasses.jsEdge_markers, edgeType_runtime_first
+graph/src/udf/js_classes.rs	create_js_path	289	PROVEN	UdfClasses.jsPath_length
+graph/src/udf/js_classes.rs	js_get_neighbors_entry	349	PROVEN	UdfClasses.getNeighbors_no_arg_errors (BUG), getNeighbors_with_config, entryErr_spec
+graph/src/udf/js_classes.rs	js_get_neighbors	368	PROVEN	Neighbors.non_string_types_disable_filter, string_types_filter, neighborNodes
+graph/src/udf/js_classes.rs	throw_js_error	498	PROVEN	UdfClasses.entryErr_spec (throwJs)
+graph/src/udf/js_classes.rs	js_get_node_by_id	510	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects, entryErr_spec
+graph/src/udf/js_classes.rs	js_get_node_by_id_impl	517	PROVEN	UdfClasses.nodeById_spec, nodeById_rejects
+graph/src/udf/js_classes.rs	js_iterate_nodes	553	PROVEN	UdfClasses.iterNodes_all, iter_errors
+graph/src/udf/js_classes.rs	js_iterate_nodes_impl	560	PROVEN	UdfClasses.iterNodes_all, iter_errors (label-matrix scan AXIOMATISED)
+graph/src/udf/js_classes.rs	js_iterate_edges	608	PROVEN	UdfClasses.iter_errors
+graph/src/udf/js_classes.rs	js_iterate_edges_impl	615	PROVEN	UdfClasses.iter_errors (tensor scans AXIOMATISED)
+graph/src/udf/js_classes.rs	js_traverse	658	PROVEN	UdfClasses.traverseEntry_spec, traverse_no_config_ok
+graph/src/udf/js_classes.rs	js_traverse_impl	676	PROVEN	UdfTraverse.traverse_nodes_nodup, traverse_both_edges_nodup, traverse_self_loop_twice (BUG), traverse_drops_self_neighbour (BUG)
+graph/src/udf/js_context.rs	caught_error_message	70	PROVEN	UdfContext.norm_example, norm_quoted, norm_other, norm_idem_example, errMsg_name, errMsg_plain_error
+graph/src/udf/js_context.rs	compute_effective_js_timeout_ms	130	PROVEN	UdfContext.effTimeout_bounds, effTimeout_spec
+graph/src/udf/js_context.rs	validate_script	154	PROVEN	UdfContext.validateScript_spec, validateTimeout_bounds (QuickJS eval AXIOMATISED oracle)
+graph/src/udf/js_context.rs	ensure_context_current	187	PROVEN	UdfContext.ensureCurrent_version
+graph/src/udf/js_context.rs	rebuild_context	204	PROVEN	UdfContext.rebuild_keys, rebuild_fail; Repo.keys
+graph/src/udf/js_context.rs	call_udf_bridge	281	PROVEN	UdfContext.bridge_clears, bridge_timeout, bridge_not_found
+graph/src/udf/js_globals.rs	setup_validate_globals	45	PROVEN	UdfGlobals.validate_names_nodup, vRegister_rejects (the eval-ed JS register body; global install AXIOMATISED)
+graph/src/udf/js_globals.rs	collect_validate_names	98	PROVEN	UdfGlobals.collectNames_ok
+graph/src/udf/js_globals.rs	setup_runtime_globals	111	PROVEN	UdfGlobals.runtime_keys_eq_qualified, empty_lib_name_mismatch (BUG)
+graph/src/udf/js_globals.rs	collect_runtime_funcs	193	PROVEN	UdfGlobals.collectFuncs_ok
+graph/src/udf/js_globals.rs	js_value_to_log_string	222	PROVEN	UdfGlobals.logString_spec
+graph/src/udf/mod.rs	init_udf_repo	59	PROVEN	UdfRepoOps.initRepo_idem
+graph/src/udf/mod.rs	get_udf_repo	63	PROVEN	UdfRepoOps.getRepo_after_init, getRepo_uninit
+graph/src/udf/repository.rs	default	67	PROVEN	UdfRepoOps.rnew_spec
+graph/src/udf/repository.rs	new	74	PROVEN	UdfRepoOps.rnew_spec
+graph/src/udf/repository.rs	version	83	PROVEN	UdfRepoOps.bump_spec
+graph/src/udf/repository.rs	bump_version	89	PROVEN	UdfRepoOps.bump_spec
+graph/src/udf/repository.rs	load	94	PROVEN	Repo.load, collision_accepted, case_folded, dotted_collision; UdfGlobals.empty_lib_name_mismatch
+graph/src/udf/repository.rs	delete	140	PROVEN	Repo.delete_preserves, delete_breaks_other
+graph/src/udf/repository.rs	flush	157	PROVEN	UdfRepoOps.flush_spec
+graph/src/udf/repository.rs	list	170	PROVEN	UdfRepoOps.list_shows_raw, list_filter, strip_qual
+graph/src/udf/repository.rs	get_all_libraries	205	PROVEN	UdfRepoOps.getAll_spec
+graph/src/udf/repository.rs	serialize	211	PROVEN	UdfRepoOps.serialize_roundtrip
+graph/src/udf/repository.rs	deserialize	226	PROVEN	UdfRepoOps.deserialize_atomic, serialize_roundtrip
+graph/src/udf/type_convert.rs	value_to_js	58	PROVEN	Marshal.toJs; int_roundtrip, float_rt_iff, node_rt, rel_rt, point_rt, datetime_rt, vecf32_finite_rt, map_never_marked, constructor_key_breaks_roundtrip
+graph/src/udf/type_convert.rs	js_to_value	185	PROVEN	Marshal.fromJs; forged_node_marker, forged_edge_marker, neg_zero_not_preserved, vecf32_inf_not_roundtrip, internal_keys_dropped, unesc_esc

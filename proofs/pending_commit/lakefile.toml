@@ -1,0 +1,5 @@
+name = "falkor-pending-commit"
+defaultTargets = ["PendingCommit"]
+
+[[lean_lib]]
+name = "PendingCommit"

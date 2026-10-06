@@ -1,0 +1,70 @@
+file	function	line	bucket	lean_name_or_reason
+graph/src/graph/endpoint_index.rs	Endpoint::get	64	PROVEN	trait declaration (no body); contract proven for all 4 impls: Paged.get_put_contract, Paged.u24_get_put (U24 LE bytes = putF 1)
+graph/src/graph/endpoint_index.rs	Endpoint::put	65	PROVEN	trait declaration (no body); contract proven for all 4 impls: Paged.get_put_contract, Paged.u24_get_put
+graph/src/graph/endpoint_index.rs	Endpoint::vacant	69	PROVEN	decode (EMPTY test): get_view, u64_max_pair_reads_as_absent
+graph/src/graph/endpoint_index.rs	u16::get	84	PROVEN	slot value read at bits 0: fits, widen_ok
+graph/src/graph/endpoint_index.rs	u16::put	87	PROVEN	putF 0 (truncation): fits
+graph/src/graph/endpoint_index.rs	U24::get	95	PROVEN	Paged.u24Get: u24_get_put (3 LE bytes read back = v mod 2^24); fits, widen_ok
+graph/src/graph/endpoint_index.rs	U24::put	98	PROVEN	Paged.u24Put: u24_get_put; putF 1
+graph/src/graph/endpoint_index.rs	u32::get	107	PROVEN	slot value read at bits 2: fits, widen_ok
+graph/src/graph/endpoint_index.rs	u32::put	110	PROVEN	putF 2 (truncation): fits
+graph/src/graph/endpoint_index.rs	u64::get	118	PROVEN	slot value read at bits 3: fits, u64_max_pair_reads_as_absent
+graph/src/graph/endpoint_index.rs	u64::put	121	PROVEN	putF 3: fits
+graph/src/graph/endpoint_index.rs	Paged::clone	156	PROVEN	Paged.cloneV: cloneV_spec (page pointers cloned, strong counts exact, same contents); dropV_spec
+graph/src/graph/endpoint_index.rs	Paged::default	165	PROVEN	Paged.PG.dflt: dflt_wf (WF, empty view)
+graph/src/graph/endpoint_index.rs	empty_page	178	PROVEN	Paged.emptyPage: emptyPage_spec; fresh Arc = pushFresh_spec
+graph/src/graph/endpoint_index.rs	Paged::len	183	PROVEN	Paged.PG.length: length_view (= view length)
+graph/src/graph/endpoint_index.rs	Paged::is_empty	187	PROVEN	Paged.PG.isEmpty: isEmpty_iff
+graph/src/graph/endpoint_index.rs	Paged::at	192	PROVEN	paged_at (pages[i/P][i%P] = flat[i])
+graph/src/graph/endpoint_index.rs	Paged::iter	199	PROVEN	Paged.PG.iter: iter_eq (= flat view, every index in range; via paged_at)
+graph/src/graph/endpoint_index.rs	Paged::allocated_bytes	204	PROVEN	Paged.allocBytes: allocBytes_eq, used_le_alloc
+graph/src/graph/endpoint_index.rs	Paged::used_bytes	213	PROVEN	Paged.usedBytes: used_le_alloc; sz_eq (no padding at any width)
+graph/src/graph/endpoint_index.rs	Paged::regrow	218	PROVEN	regrow: regrow_ext; Arc side Paged.replace: replace_spec (old page intact for snapshots)
+graph/src/graph/endpoint_index.rs	Paged::from_slots	234	PROVEN	Paged.fromSlots: fromSlots_spec (Shape, flatten = first len items, ceil(len/P) pages, none empty), fromSlots_wf, promote_paged
+graph/src/graph/endpoint_index.rs	Paged::ensure_pages	256	PROVEN	ensurePages: ensurePages_spec, shape_concat, flatten_full_len; Paged.growTo_spec (slack stays EMPTY); fresh pages pushFresh_spec
+graph/src/graph/endpoint_index.rs	Paged::page_mut	293	PROVEN	Paged.pageMut: pageMut_spec (writes page p only, no other live version changes, counts exact), unique_index, copy_spec; addressing flatten_pagePut
+graph/src/graph/endpoint_index.rs	promote	336	PROVEN	widen/Ix.promote: widen_ok, raise1, raise2, raise3
+graph/src/graph/endpoint_index.rs	EndpointIndex::rank_for	391	PROVEN	rankFor: rankFor_le, rank_cases, fits
+graph/src/graph/endpoint_index.rs	EndpointIndex::append_rank	402	PROVEN	Ix.appendRank: appendRank_le, view_set
+graph/src/graph/endpoint_index.rs	EndpointIndex::len	412	PROVEN	Ix.len: len_view
+graph/src/graph/endpoint_index.rs	EndpointIndex::is_empty	421	PROVEN	Paged.ix_isEmpty, ix_isEmpty_get
+graph/src/graph/endpoint_index.rs	EndpointIndex::memory_usage	427	PROVEN	Paged.memUsage: memUsage_ge_used, allocBytes_eq
+graph/src/graph/endpoint_index.rs	EndpointIndex::bytes_per_edge	437	PROVEN	Paged.bytesOf: bytes_per_edge_bounds (4n..16n), bytes_single_tier (4/6/8/16); final f64 division not modelled
+graph/src/graph/endpoint_index.rs	EndpointIndex::get	459	PROVEN	Ix.get/walk: get_view, walk_flat, run_refines
+graph/src/graph/endpoint_index.rs	EndpointIndex::raise_to	486	PROVEN	Ix.raiseTo: raiseTo_spec
+graph/src/graph/endpoint_index.rs	EndpointIndex::prepare	520	PROVEN	Ix.prepare: view_prepare, get_prepare
+graph/src/graph/endpoint_index.rs	EndpointIndex::tier_len	537	PROVEN	Ix.tierLen: tierLen_eq
+graph/src/graph/endpoint_index.rs	EndpointIndex::with_tier	549	PROVEN	Ix.withTier: view_withTier, tierOK_withTier
+graph/src/graph/endpoint_index.rs	EndpointIndex::resize_tier	581	PROVEN	withTier r (growTo r n): view_grow
+graph/src/graph/endpoint_index.rs	EndpointIndex::prepare_tiers	605	PROVEN	Ix.prepareTiers: view_prepareTiers, restore_agrees
+graph/src/graph/endpoint_index.rs	EndpointIndex::locate	626	PROVEN	Ix.locate: locate_some, locate_none
+graph/src/graph/endpoint_index.rs	EndpointIndex::set	642	PROVEN	Ix.set: view_set, get_set, u64_max_pair_reads_as_absent (boundary)
+graph/src/graph/endpoint_index.rs	EndpointIndex::clear	692	PROVEN	Ix.clear: view_clear, get_clear
+graph/src/graph/endpoint_index.rs	TierOps::grow_to	710	PROVEN	trait declaration (no body); sole impl Paged::grow_to PROVEN (Paged.growTo_spec)
+graph/src/graph/endpoint_index.rs	TierOps::put	714	PROVEN	trait declaration (no body); sole impl Paged::put PROVEN (Paged.put_spec; callers in range: set_inplace/promote/append_in_range)
+graph/src/graph/endpoint_index.rs	TierOps::vacate	720	PROVEN	trait declaration (no body); sole impl Paged::vacate PROVEN (Paged.vacate_spec)
+graph/src/graph/endpoint_index.rs	TierOps::len	724	PROVEN	trait declaration (no body); sole impl Paged::len PROVEN (Paged.length_view)
+graph/src/graph/endpoint_index.rs	TierOps::reserve_exact	725	PROVEN	trait declaration (no body); sole impl PROVEN (Paged.reserve_covers)
+graph/src/graph/endpoint_index.rs	Paged::grow_to	732	PROVEN	growTo: viewT_growTo, view_grow; paged form Paged.growTo_spec (ensure_pages then len; exposed slack reads EMPTY)
+graph/src/graph/endpoint_index.rs	Paged::put	741	PROVEN	putAt: view_set; paged form Paged.put_spec + flatten_pagePut (page at/P slot at%P = flat at); set_inplace_in_range, set_promote_in_range, set_append_in_range
+graph/src/graph/endpoint_index.rs	Paged::vacate	750	PROVEN	vacate: view_clear; paged form Paged.vacate_spec
+graph/src/graph/endpoint_index.rs	Paged::len	758	PROVEN	Paged.PG.length: length_view; tierLen_eq
+graph/src/graph/endpoint_index.rs	Paged::reserve_exact	761	PROVEN	Paged.reserveCap: reserve_covers (covers ceil((len+extra)/P), saturating_sub never wraps; contents untouched)
+graph/src/graph/graph.rs	Graph::restore	831	MODELLED	endpoint-index part only (prepare_tiers then set): restore_agrees; rest of restore not modelled
+graph/src/graph/graph.rs	Graph::delete_implicit_edges	2776	MODELLED	per-type endpoint collection only: mem_collect, collect_nodup, detach_delete_index; rest not modelled
+graph/src/graph/graph.rs	Graph::clear_edge_endpoint	3131	PROVEN	= EndpointIndex::clear: get_clear, run_refines
+graph/src/graph/endpoint_index.rs	w16_page_ids	679	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	the_widest_id_of_each_tier_is_not_an_empty_slot	784	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	early_edges_keep_their_narrow_tier	809	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	reusing_a_low_id_with_wide_endpoints_promotes_and_preserves	838	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	promotion_preserves_pairs_and_tombstones_at_every_tier	856	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	prepare_tiers_rebuilds_the_layout_growth_produced	879	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	gaps_read_as_absent	913	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	preparing_first_changes_nothing_but_the_cost	926	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	xorshift	959	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	random_edits_and_snapshots_agree_with_a_flat_reference	992	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	promoting_a_tier_larger_than_a_page_preserves_every_slot	1067	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	a_small_tier_does_not_allocate_a_whole_page	1105	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	a_version_that_writes_one_edge_copies_one_page	1142	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	get_cost_of_paging	1194	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
+graph/src/graph/endpoint_index.rs	cow_cost_of_a_version	1263	NOT COVERED	TEST-ONLY: #[cfg(test)] (unit test / test helper)
