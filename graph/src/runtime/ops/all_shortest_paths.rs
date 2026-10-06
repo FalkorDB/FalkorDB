@@ -28,7 +28,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use crate::graph::graph::{EdgeDirection, NodeId, RelationshipId};
-use crate::parser::ast::{AllShortestPaths, QueryExpr, QueryRelationship, Variable};
+use crate::parser::ast::{AllShortestPaths, QueryRelationship, Variable};
 use crate::planner::IR;
 use crate::runtime::{
     batch::{Batch, BatchOp, BatchRow},
@@ -52,11 +52,6 @@ pub struct AllShortestPathsOp<'a> {
     /// produces more than `BATCH_SIZE` paths never drops rows.
     pub(crate) emitter: BatchedResultEmitter<'a, Value>,
     relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-    /// Predicate every edge on a path must satisfy, from the pattern's inline
-    /// edge attributes. Applied during the BFS so a failing edge prunes the
-    /// frontier; a `Filter` above this operator could only reject an assembled
-    /// path, which is both later and a different question.
-    edge_filter: Option<&'a QueryExpr<Variable>>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
 }
 
@@ -65,7 +60,6 @@ impl<'a> AllShortestPathsOp<'a> {
         runtime: &'a Runtime<'a>,
         child: Box<BatchOp<'a>>,
         relationship_pattern: &'a QueryRelationship<Arc<String>, Arc<String>, Variable>,
-        edge_filter: Option<&'a QueryExpr<Variable>>,
         idx: NodeIdx<Dyn<IR>>,
     ) -> Self {
         Self {
@@ -76,7 +70,6 @@ impl<'a> AllShortestPathsOp<'a> {
             // by the pattern rather than by how much it packs.
             emitter: BatchedResultEmitter::with_binding(relationship_pattern.alias.id, None),
             relationship_pattern,
-            edge_filter,
             idx,
         }
     }
@@ -92,19 +85,19 @@ impl<'a> AllShortestPathsOp<'a> {
     fn expand_row(
         runtime: &Runtime,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
-        edge_filter: Option<&QueryExpr<Variable>>,
         batch: &Batch,
         row_idx: usize,
     ) -> Result<Option<RowIter<'a, Value>>, String> {
         let vars = BatchRow::new(batch, row_idx);
 
-        // The edge filter's environment is the input row, extended per edge
-        // with the edge alias. It needs the whole row: the planner writes
-        // inline attrs here, and those can name any variable bound earlier —
-        // `-[:R* {weight: p.limit}]->` reads `p`. `insert` overwrites the
-        // alias slot in place, so the row is reused across edges.
-        let mut edge_filter = edge_filter.map(|f| (f, vars.to_owned_row()));
-        let evaluator = ExprEval::from_runtime(runtime);
+        // Evaluate edge attribute filter
+        let filter_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.attrs,
+            rp.attrs.root().idx(),
+            Some(&vars),
+            None,
+        )?;
+        let has_edge_filter = matches!(&filter_attrs, Value::Map(m) if !m.is_empty());
 
         // Get source node
         let src_val = vars.value_at(rp.from.alias.id);
@@ -197,25 +190,20 @@ impl<'a> AllShortestPathsOp<'a> {
                     continue;
                 };
 
-                // Prune on the edge predicate before the neighbour is queued.
-                if let Some((filter_expr, filter_env)) = &mut edge_filter {
-                    filter_env.insert(&rp.alias, Value::Relationship(edge_id));
-                    match evaluator.eval(
-                        filter_expr,
-                        filter_expr.root().idx(),
-                        Some(&*filter_env),
-                        None,
-                    )? {
-                        Value::Bool(true) => {}
-                        Value::Bool(false) | Value::Null => continue,
-                        // As `FilterOp` answers it: a predicate that is neither
-                        // boolean nor null is a type error, not a quiet rejection.
-                        value => {
-                            return Err(format!(
-                                "Type mismatch: expected Boolean but was {}",
-                                value.name()
-                            ));
+                // Check edge attribute filter
+                if has_edge_filter && let Value::Map(filter_map) = &filter_attrs {
+                    let mut matches = true;
+                    for (attr, avalue) in filter_map.iter() {
+                        match g.get_relationship_attribute(edge_id, attr) {
+                            Some(pvalue) if pvalue == *avalue => {}
+                            _ => {
+                                matches = false;
+                                break;
+                            }
                         }
+                    }
+                    if !matches {
+                        continue;
                     }
                 }
 
@@ -323,7 +311,6 @@ impl<'a> Iterator for AllShortestPathsOp<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let runtime = self.runtime;
         let rp = self.relationship_pattern;
-        let edge_filter = self.edge_filter;
         loop {
             // Enumerate each active parent row's shortest paths (the BFS +
             // DFS-backtrack borrows the graph, so it runs eagerly) and let the
@@ -333,7 +320,7 @@ impl<'a> Iterator for AllShortestPathsOp<'a> {
             // sibling rows. When exhausted (`Ok(None)`), pull the next batch.
             match self
                 .emitter
-                .emit_lazy(|batch, row| Self::expand_row(runtime, rp, edge_filter, batch, row))
+                .emit_lazy(|batch, row| Self::expand_row(runtime, rp, batch, row))
             {
                 Ok(Some(out)) => return Some(Ok(out)),
                 Ok(None) => match self.child.next() {

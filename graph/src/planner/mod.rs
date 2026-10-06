@@ -213,14 +213,7 @@ pub enum IR {
     /// Variable-length traversal (BFS) from known nodes
     CondVarLenTraverse {
         relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-        /// Predicate every edge on the walk must satisfy.
-        ///
-        /// Unlike the fixed-length traverses, this is not an absorbed `Filter`
-        /// and is not fused when operators are built. `r` binds a *list* of
-        /// edges, so `Filter(r.w = 1)` above the walk asks a different question
-        /// than pruning per edge — the predicate is part of what this operator
-        /// computes, like `min_hops`. Set by the planner from inline attrs, or
-        /// by `absorb_edge_filters_into_vlt` from a WHERE clause.
+        /// Optional per-hop edge filter absorbed from a WHERE clause by the optimizer.
         edge_filter: Option<QueryExpr<Variable>>,
         /// When false, the path/relationship-list binding (`relationship.alias`)
         /// is not consumed by any ancestor, so the operator skips materializing
@@ -237,12 +230,7 @@ pub enum IR {
         expand_into: bool,
     },
     /// All shortest paths between two known nodes
-    AllShortestPaths {
-        relationship: Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>,
-        /// See [`IR::CondVarLenTraverse::edge_filter`]: pruned per edge during
-        /// the BFS, not fused from a `Filter`.
-        edge_filter: Option<QueryExpr<Variable>>,
-    },
+    AllShortestPaths(Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>),
     /// Check relationship between two known nodes.
     /// `emit_relationship`: when false, anonymous edge optimization applies.
     ExpandInto {
@@ -513,9 +501,7 @@ impl Display for IR {
                 };
                 write!(f, "{name} | {}", fmt_var_len_rel(rel))
             }
-            Self::AllShortestPaths { relationship, .. } => {
-                write!(f, "All Shortest Paths | {relationship}")
-            }
+            Self::AllShortestPaths(rel) => write!(f, "All Shortest Paths | {rel}"),
             Self::ExpandInto {
                 relationship: rel, ..
             } => {
@@ -670,6 +656,32 @@ fn strip_rel_attrs(
         rel.alias.clone(),
         rel.types.clone(),
         Arc::new(tree!(ExprIR::Map)),
+        from,
+        to,
+        rel.bidirectional,
+        rel.min_hops,
+        rel.max_hops,
+    );
+    stripped.all_shortest_paths = rel.all_shortest_paths;
+    Arc::new(stripped)
+}
+
+/// Like [`strip_rel_attrs`], but keeps the edge's own attrs, for the
+/// var-length walks: they prune on those per edge, which a `Filter` above the
+/// walk cannot express (it would test an assembled path). Only the endpoints'
+/// attrs, which are lowered to Filters, are stripped.
+fn strip_endpoint_attrs(
+    rel: &Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
+) -> Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>> {
+    let from = strip_node_attrs(&rel.from);
+    let to = strip_node_attrs(&rel.to);
+    if Arc::ptr_eq(&from, &rel.from) && Arc::ptr_eq(&to, &rel.to) {
+        return rel.clone();
+    }
+    let mut stripped = QueryRelationship::new(
+        rel.alias.clone(),
+        rel.types.clone(),
+        rel.attrs.clone(),
         from,
         to,
         rel.bidirectional,
@@ -2013,16 +2025,24 @@ impl Planner {
                 .collect();
             // Inline attrs are lowered to Filters below; the operator embeds the
             // stripped pattern so the predicate has one representation only.
-            let rel = strip_rel_attrs(relationship);
-            // One lowering for the edge's own attrs; each operator below takes
-            // it in whichever form it can enforce.
-            let edge_pred =
-                lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs);
+            // A var-length walk is the exception for its edge's own attrs: it
+            // keeps them on the pattern and prunes per edge with them, as on
+            // main, because above the walk `r` binds a list and a `Filter` there
+            // would test an assembled path instead.
+            let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
+                || relationship.min_hops.is_some();
+            let rel = if is_walk {
+                strip_endpoint_attrs(relationship)
+            } else {
+                strip_rel_attrs(relationship)
+            };
+            let edge_pred = if is_walk {
+                None
+            } else {
+                lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
+            };
             let mut res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                tree!(IR::AllShortestPaths {
-                    relationship: rel.clone(),
-                    edge_filter: edge_pred.clone().map(Arc::new),
-                })
+                tree!(IR::AllShortestPaths(rel.clone()))
             } else if relationship.min_hops.is_some() {
                 // Variable-length path — must use CVLT even for self-loops (a)-[*0]->(a).
                 // Build scan child for the from-node when it's not yet visited
@@ -2058,7 +2078,7 @@ impl Planner {
                     || {
                         tree!(IR::CondVarLenTraverse {
                             relationship: rel.clone(),
-                            edge_filter: edge_pred.clone().map(Arc::new),
+                            edge_filter: None,
                             emit_path: true,
                             path_var: None,
                             expand_into,
@@ -2068,7 +2088,7 @@ impl Planner {
                         tree!(
                             IR::CondVarLenTraverse {
                                 relationship: rel.clone(),
-                                edge_filter: edge_pred.clone().map(Arc::new),
+                                edge_filter: None,
                                 emit_path: true,
                                 path_var: None,
                                 expand_into,
@@ -2137,9 +2157,8 @@ impl Planner {
             // place it is evaluated. That Filter reads the edge, which is why
             // the operator above was planned with `emit_relationship` set: it
             // must emit every parallel edge for the Filter to test, not one
-            // representative per (src, dst) pair. The walks above already took
-            // it into `edge_filter`, where it prunes per edge — a `Filter` there
-            // would test an assembled path instead.
+            // representative per (src, dst) pair. The walks never get one: they
+            // keep the edge's attrs on their pattern and prune with them.
             if let Some(filter_expr) = edge_pred
                 && matches!(
                     res.root().data(),
@@ -2178,20 +2197,21 @@ impl Planner {
             // Chain remaining relationships in the component, each one
             // stacking on top of the previous result using the same logic.
             for relationship in iter {
-                let rel = strip_rel_attrs(relationship);
-                let edge_pred = lower_inline_attrs(
-                    &mut lowered_attrs,
-                    &relationship.alias,
-                    &relationship.attrs,
-                );
+                // As above: a walk keeps its edge's own attrs on the pattern.
+                let is_walk = relationship.all_shortest_paths != AllShortestPaths::No
+                    || relationship.min_hops.is_some();
+                let rel = if is_walk {
+                    strip_endpoint_attrs(relationship)
+                } else {
+                    strip_rel_attrs(relationship)
+                };
+                let edge_pred = if is_walk {
+                    None
+                } else {
+                    lower_inline_attrs(&mut lowered_attrs, &relationship.alias, &relationship.attrs)
+                };
                 res = if relationship.all_shortest_paths != AllShortestPaths::No {
-                    tree!(
-                        IR::AllShortestPaths {
-                            relationship: rel.clone(),
-                            edge_filter: edge_pred.clone().map(Arc::new),
-                        },
-                        res
-                    )
+                    tree!(IR::AllShortestPaths(rel.clone()), res)
                 } else if relationship.min_hops.is_some() {
                     let expand_into = relationship.from.alias.id != relationship.to.alias.id
                         && self.visited.contains(&(
@@ -2204,7 +2224,7 @@ impl Planner {
                     tree!(
                         IR::CondVarLenTraverse {
                             relationship: rel.clone(),
-                            edge_filter: edge_pred.clone().map(Arc::new),
+                            edge_filter: None,
                             emit_path: true,
                             path_var: None,
                             expand_into,
@@ -2804,7 +2824,7 @@ impl Planner {
                     | IR::OrApplyMultiplexer(_)
                     | IR::CondTraverse { .. }
                     | IR::CondVarLenTraverse { .. }
-                    | IR::AllShortestPaths { .. }
+                    | IR::AllShortestPaths(_)
                     | IR::ExpandInto { .. }
                     | IR::EdgeByIndexScan { .. }
                     | IR::PathBuilder(_)))
@@ -2865,7 +2885,7 @@ impl Planner {
                 | IR::NodeByLabelAndIdScan { .. }
                 | IR::CondTraverse { .. }
                 | IR::CondVarLenTraverse { .. }
-                | IR::AllShortestPaths { .. }
+                | IR::AllShortestPaths(_)
                 | IR::ExpandInto { .. }
                 | IR::EdgeByIndexScan { .. }
                 | IR::CartesianProduct

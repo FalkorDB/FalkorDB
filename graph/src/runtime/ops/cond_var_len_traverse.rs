@@ -89,6 +89,8 @@ struct VarLenIter<'a> {
     prev_var: Option<&'a Variable>,
     emit_path: bool,
     /// Evaluated inline edge-attribute filter (`{k: v}`), shared by all hops.
+    filter_attrs: Value,
+    has_edge_filter: bool,
     reversed: bool,
     bidirectional: bool,
     min_hops: u32,
@@ -201,6 +203,7 @@ impl VarLenIter<'_> {
         let (min_hops, max_hops) = (self.min_hops, self.max_hops);
         let dest_id = self.dest_id;
         let emit_path = self.emit_path;
+        let has_edge_filter = self.has_edge_filter;
         let dest_label_missing = self.dest_label_missing;
         let dest_label_ids = self.dest_label_ids.clone();
         let evaluator = ExprEval::from_runtime(rt);
@@ -259,6 +262,23 @@ impl VarLenIter<'_> {
                     None
                 };
                 if let Some(dest) = neighbor {
+                    // Check edge attribute filter (inline {key: value})
+                    if has_edge_filter && let Value::Map(filter_map) = &self.filter_attrs {
+                        let mut matches = true;
+                        for (attr, avalue) in filter_map.iter() {
+                            match g.get_relationship_attribute(edge_id, attr) {
+                                Some(pvalue) if pvalue == *avalue => {}
+                                _ => {
+                                    matches = false;
+                                    break;
+                                }
+                            }
+                        }
+                        if !matches {
+                            continue;
+                        }
+                    }
+
                     // Check WHERE-clause edge filter (absorbed by optimizer).
                     // The env row is reused across edges: `insert` overwrites
                     // the alias slot in place, so no per-edge row clone.
@@ -499,6 +519,15 @@ impl<'a> CondVarLenTraverseOp<'a> {
     ) -> Result<Option<RowIter<'a, VarLenResult>>, String> {
         let vars = BatchRow::new(batch, row_idx);
 
+        // Evaluate edge attribute filter (e.g. {connects: 'BC'})
+        let filter_attrs = ExprEval::from_runtime(runtime).eval(
+            &rp.attrs,
+            rp.attrs.root().idx(),
+            Some(&vars),
+            None,
+        )?;
+        let has_edge_filter = matches!(&filter_attrs, Value::Map(m) if !m.is_empty());
+
         let from_id = vars.value_at(rp.from.alias.id).and_then(|v| match v {
             Value::Node(id) => Some(id),
             _ => None,
@@ -556,10 +585,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
             }
         }
 
-        // The edge filter's environment is the input row, extended per edge
-        // with the edge alias (and the `@prev` marker). It needs the whole row:
-        // the planner writes inline attrs here, and those can name any variable
-        // bound earlier — `-[:R* {weight: p.limit}]->` reads `p`.
+        // The WHERE filter environment is the input row extended per edge; the
+        // row is only cloned out of the batch when a filter is present.
         let edge_filter = edge_filter.map(|f| (f, vars.to_owned_row()));
 
         Ok(Some(RowIter::many(Box::new(VarLenIter {
@@ -568,6 +595,8 @@ impl<'a> CondVarLenTraverseOp<'a> {
             edge_filter,
             prev_var,
             emit_path,
+            filter_attrs,
+            has_edge_filter,
             reversed,
             bidirectional,
             min_hops,

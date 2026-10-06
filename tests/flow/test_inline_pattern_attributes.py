@@ -343,3 +343,27 @@ class testInlinePatternAttributes(FlowTestsBase):
         actual = g.query(shortest + " WHERE all(x IN r WHERE x.k = 1) RETURN length(p)")
         self.env.assertEqual(actual.result_set, [[1]])
         g.delete()
+
+    # An inline edge predicate on allShortestPaths constrains the search: the
+    # shortest paths among edges that match. The same condition as a WHERE asks
+    # for the shortest paths and then filters them. They differ when the
+    # shortest path has an edge that fails — here the direct a->b edge — and C
+    # answers both this way, which is why the predicate is evaluated inside the
+    # walk rather than by a Filter above it.
+    def test21_all_shortest_paths_edge_attr_prunes_the_search(self):
+        g = self.db.select_graph(GRAPH_ID + "_aspprune")
+        g.query(
+            "CREATE (a:N {n: 1}), (m:N {n: 2}), (b:N {n: 3}), "
+            "(a)-[:R {c: 0}]->(b), (a)-[:R {c: 1}]->(m), (m)-[:R {c: 1}]->(b)"
+        )
+        endpoints = "MATCH (a:N {n: 1}), (b:N {n: 3}) WITH a, b "
+        actual = g.query(
+            endpoints + "MATCH p = allShortestPaths((a)-[:R* {c: 1}]->(b)) RETURN length(p)"
+        )
+        self.env.assertEqual(actual.result_set, [[2]])
+        actual = g.query(
+            endpoints + "MATCH p = allShortestPaths((a)-[:R*]->(b)) "
+            "WHERE all(e IN relationships(p) WHERE e.c = 1) RETURN length(p)"
+        )
+        self.env.assertEqual(actual.result_set, [])
+        g.delete()

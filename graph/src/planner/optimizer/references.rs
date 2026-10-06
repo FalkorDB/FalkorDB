@@ -114,21 +114,26 @@ pub(super) fn ir_references_variable(
         IR::NodeByLabelAndIdScan { filter, .. } | IR::NodeByIdSeek { filter, .. } => filter
             .iter()
             .any(|(expr, _)| expr_references_variable(expr, var_id, scope_id)),
+        // A walk prunes per edge on its pattern's own attrs (`-[:R* {w: p.v}]->`
+        // reads `p`) and, for CVLT, on a WHERE predicate absorbed into
+        // `edge_filter`.
         IR::CondVarLenTraverse {
+            relationship,
             edge_filter,
             path_var,
             ..
         } => {
-            edge_filter
-                .as_ref()
-                .is_some_and(|f| expr_references_variable(f, var_id, scope_id))
+            expr_references_variable(&relationship.attrs, var_id, scope_id)
+                || edge_filter
+                    .as_ref()
+                    .is_some_and(|f| expr_references_variable(f, var_id, scope_id))
                 || path_var
                     .as_ref()
                     .is_some_and(|v| v.id == var_id && v.scope_id == scope_id)
         }
-        IR::AllShortestPaths { edge_filter, .. } => edge_filter
-            .as_ref()
-            .is_some_and(|f| expr_references_variable(f, var_id, scope_id)),
+        IR::AllShortestPaths(relationship) => {
+            expr_references_variable(&relationship.attrs, var_id, scope_id)
+        }
         IR::NodeByFulltextScan { label, query, .. }
         | IR::EdgeByFulltextScan { label, query, .. } => {
             expr_references_variable(label, var_id, scope_id)

@@ -290,10 +290,7 @@ impl<T: MemoryPolicy> GetVariables for DynNode<'_, IR, T> {
                     relationship: query_relationship,
                     ..
                 }
-                | IR::AllShortestPaths {
-                    relationship: query_relationship,
-                    ..
-                }
+                | IR::AllShortestPaths(query_relationship)
                 | IR::ExpandInto {
                     relationship: query_relationship,
                     ..
@@ -1267,16 +1264,12 @@ impl<'a> Runtime<'a> {
                     record_cap,
                 )))
             }
-            IR::AllShortestPaths {
-                relationship: relationship_pattern,
-                edge_filter,
-            } => {
+            IR::AllShortestPaths(relationship_pattern) => {
                 let child = pop_or_once(&mut children);
                 Ok(BatchOp::AllShortestPaths(AllShortestPathsOp::new(
                     self,
                     Box::new(child),
                     relationship_pattern,
-                    edge_filter.as_ref(),
                     idx,
                 )))
             }
