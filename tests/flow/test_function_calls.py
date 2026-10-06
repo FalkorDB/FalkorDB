@@ -2108,6 +2108,20 @@ class testFunctionCallsFlow(FlowTestsBase):
         }
         for query, expected_result in query_to_expected_result.items():
             self.get_res_and_assertEquals(query, expected_result)
+
+        # a range whose bounds sit at the i64 limits must be rejected
+        # cleanly, negating i64::MIN used to crash the server
+        queries_with_errors = [
+            "RETURN range(0, -9223372036854775808, -1)",
+            "RETURN range(0, -9223372036854775807, -1)",
+            "RETURN range(-9223372036854775808, 0, 1)",
+        ]
+        for query in queries_with_errors:
+            self.expect_error(query, "Range too large")
+
+        # a zero step is a distinct, equally clean error
+        self.expect_error("RETURN range(0, 10, 0)",
+                          "step argument to range() can't be 0")
     
     def test80_IN(self):
         query_to_expected_result = {
@@ -2922,3 +2936,23 @@ class testFunctionCallsFlow(FlowTestsBase):
         self.env.assertEqual(res.result_set, [])
         res = self.graph.query("MATCH (n:NoSuchLabel) RETURN split(1, 2)")
         self.env.assertEqual(res.result_set, [])
+
+    def test98_exists_unbound_variables(self):
+        # exists() over a traversal pattern referencing unbound variables,
+        # reusing the same relationship variable in both patterns, used to
+        # dereference unresolved entities and crash the server
+        q = "RETURN exists( (n0)-[r1]-(n1), (n1)-[r1]-(n0) ) AS has_path"
+        self.expect_error(q, "'n0' not defined")
+
+        # a traversal pattern is not a valid exists() argument at all,
+        # whether or not its variables resolve
+        q = "RETURN exists( (n0)-[r1]-(n1) )"
+        self.expect_error(q,
+            "traversal patterns are not allowed as arguments to exists()")
+
+        q = "MATCH (a) RETURN exists( (a)-[r1]-(n1) )"
+        self.expect_error(q,
+            "traversal patterns are not allowed as arguments to exists()")
+
+        # the server is still responsive
+        self.env.assertEqual(self.graph.query("RETURN 1").result_set, [[1]])
