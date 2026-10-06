@@ -810,6 +810,14 @@ impl GraphFn {
                     ));
                 }
             }
+            // Every built-in variadic (coalesce, indegree, outdegree) needs at
+            // least one argument, as in C; UDFs take any number.
+            FnArguments::VarLength(_) if args == 0 && !matches!(self.fn_type, FnType::Udf) => {
+                return Err(format!(
+                    "Received 0 arguments to function '{}', expected at least 1",
+                    self.name
+                ));
+            }
             FnArguments::VarLength(_) => {}
         }
         Ok(())
