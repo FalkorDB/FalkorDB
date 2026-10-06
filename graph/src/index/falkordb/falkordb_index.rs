@@ -18,8 +18,9 @@ use crate::entity_type::EntityType;
 use crate::index::IndexQuery;
 use crate::runtime::value::Value;
 
-use super::encode::encode_numeric;
-use super::numeric::{DocIter, EncodedTuples, NumericIndex};
+use super::doc_iter::DocIter;
+use super::numeric::NumericIndex;
+use super::range::{EncodedTuples, RangeIndex};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
@@ -35,25 +36,27 @@ pub type StagedColumns = HashMap<IndexKey, Vec<(Value, u64)>>;
 ///
 /// Index kinds are a **closed set we own**, so this is a static enum — no
 /// `Box<dyn>`, no boxed iterators, and exhaustive matching forces every kind to
-/// be handled (an unimplemented kind fails loudly, never silently). Kind-specific
-/// queries (numeric range/point vs a future vector ANN) are reached by matching
-/// the variant; the uniform lifecycle ([`add`](Self::add)/[`remove`](Self::remove))
-/// is delegated here. More variants (Text, Vector, Geo) land with their kinds.
+/// be handled (an unimplemented kind fails loudly, never silently). The uniform
+/// lifecycle ([`add`](Self::add)/[`remove`](Self::remove)) is delegated here.
+///
+/// `Range` is the one kind a `CREATE INDEX ... ON (n.p)` makes, and it is itself the union of
+/// three value kinds (numeric, tag, geo) over one column — see [`RangeIndex`], which owns the
+/// routing between them. A Vector variant lands with its kind; Fulltext stays on RediSearch,
+/// which is why there is no variant for it.
 #[derive(Clone)]
 pub enum IndexColumn {
-    Numeric(NumericIndex),
+    Range(RangeIndex),
 }
 
 impl IndexColumn {
-    /// Index `id` under `value` — the new value on create/update. Each kind
-    /// interprets the `Value` (numeric encodes it; a future text kind tokenizes).
+    /// Index `id` under `value` — the new value on create/update.
     pub fn add(
         &mut self,
         value: &Value,
         id: u64,
     ) {
         match self {
-            Self::Numeric(idx) => idx.add(value, id),
+            Self::Range(idx) => idx.add(value, id),
         }
     }
 
@@ -64,7 +67,7 @@ impl IndexColumn {
         id: u64,
     ) {
         match self {
-            Self::Numeric(idx) => idx.remove(value, id),
+            Self::Range(idx) => idx.remove(value, id),
         }
     }
 
@@ -74,7 +77,7 @@ impl IndexColumn {
         entries: impl IntoIterator<Item = (Value, u64)>,
     ) {
         match self {
-            Self::Numeric(idx) => idx.add_batch(entries),
+            Self::Range(idx) => idx.add_batch(entries),
         }
     }
 
@@ -84,32 +87,37 @@ impl IndexColumn {
         entries: impl IntoIterator<Item = (Value, u64)>,
     ) {
         match self {
-            Self::Numeric(idx) => idx.remove_batch(entries),
+            Self::Range(idx) => idx.remove_batch(entries),
         }
     }
 
     /// Encode `(value, id)` entries under *this* column's kind, dropping whatever the kind
-    /// does not index (numeric drops non-numeric and `NaN`). Lets the background job encode
-    /// BASE off-thread, so the install commit pays only the tree build.
+    /// does not index. Lets the background job encode BASE off-thread, so the install commit
+    /// pays only the tree build.
+    ///
+    /// Takes `&self`, not an associated function, because the tag kind's encoding is relative to
+    /// *this column's* dictionary — a BASE encoded against any other numbering is unmergeable.
     #[must_use]
     pub fn encode_entries(
         &self,
         entries: Vec<(Value, u64)>,
     ) -> EncodedTuples {
         match self {
-            Self::Numeric(_) => NumericIndex::encode_entries(entries),
+            Self::Range(idx) => idx.encode_entries(entries),
         }
     }
 
     /// A new column of *this* column's kind, built from already-encoded tuples — how the
-    /// install adopts BASE without hard-coding a kind at the call site.
+    /// install adopts BASE without hard-coding a kind at the call site. Carries this column's
+    /// tag dictionary across, for the same reason [`encode_entries`](Self::encode_entries) takes
+    /// `&self`.
     #[must_use]
     pub fn new_like_from_encoded(
         &self,
         tuples: EncodedTuples,
     ) -> Self {
         match self {
-            Self::Numeric(_) => Self::Numeric(NumericIndex::from_encoded(tuples)),
+            Self::Range(idx) => Self::Range(idx.from_encoded_like(tuples)),
         }
     }
 
@@ -120,7 +128,7 @@ impl IndexColumn {
     #[must_use]
     pub fn encoded_tuples(&self) -> EncodedTuples {
         match self {
-            Self::Numeric(idx) => idx.encoded_tuples(),
+            Self::Range(idx) => idx.encoded_tuples(),
         }
     }
 
@@ -130,7 +138,7 @@ impl IndexColumn {
         tuples: &mut EncodedTuples,
     ) {
         match self {
-            Self::Numeric(idx) => idx.add_encoded(tuples),
+            Self::Range(idx) => idx.add_encoded(tuples),
         }
     }
 
@@ -140,7 +148,7 @@ impl IndexColumn {
         tuples: &mut EncodedTuples,
     ) {
         match self {
-            Self::Numeric(idx) => idx.remove_encoded(tuples),
+            Self::Range(idx) => idx.remove_encoded(tuples),
         }
     }
 
@@ -148,7 +156,7 @@ impl IndexColumn {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
-            Self::Numeric(idx) => idx.is_empty(),
+            Self::Range(idx) => idx.is_empty(),
         }
     }
 }
@@ -167,21 +175,21 @@ impl IndexColumn {
 ///
 /// Generic in the row iterator so the read path can retype the rows — raw docs to `NodeId`, or to
 /// `(src, dst, edge_id)` — without flattening the three cases back into an `Option` on the way.
-pub enum NumericAnswer<I = DocIter> {
+pub enum IndexAnswer<I = DocIter> {
     Rows(I),
     NotReady,
 }
 
-impl<I> NumericAnswer<I> {
+impl<I> IndexAnswer<I> {
     /// Map the rows, leaving `NotReady` alone. `f` runs only when there are rows, so a caller may
     /// move setup into it that would be wasted on a not-ready column.
     pub fn map_rows<J>(
         self,
         f: impl FnOnce(I) -> J,
-    ) -> NumericAnswer<J> {
+    ) -> IndexAnswer<J> {
         match self {
-            Self::Rows(rows) => NumericAnswer::Rows(f(rows)),
-            Self::NotReady => NumericAnswer::NotReady,
+            Self::Rows(rows) => IndexAnswer::Rows(f(rows)),
+            Self::NotReady => IndexAnswer::NotReady,
         }
     }
 }
@@ -316,11 +324,11 @@ impl FalkorDbIndex {
         }
     }
 
-    /// Create an empty numeric column for `(entity, label, attr)` in the `Ready`
+    /// Create an empty Range column for `(entity, label, attr)` in the `Ready`
     /// state, replacing any existing one. Used by the synchronous paths (RDB load /
-    /// replica), where the caller fills it via [`build_numeric`](Self::build_numeric)
+    /// replica), where the caller fills it via [`build_column`](Self::build_column)
     /// before any read is served. An edge column's docs are `edge_id`s.
-    pub fn create_numeric(
+    pub fn create_column(
         &mut self,
         entity: EntityType,
         label: &Arc<String>,
@@ -328,7 +336,7 @@ impl FalkorDbIndex {
     ) {
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
-            ColumnEntry::ready(IndexColumn::Numeric(NumericIndex::new())),
+            ColumnEntry::ready(IndexColumn::Range(RangeIndex::new())),
         );
     }
 
@@ -346,26 +354,27 @@ impl FalkorDbIndex {
     ) -> u64 {
         self.next_build_epoch += 1;
         let epoch = self.next_build_epoch;
+        let column = RangeIndex::new();
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
             ColumnEntry {
-                column: IndexColumn::Numeric(NumericIndex::new()),
+                // TOMB shares the column's tag dictionary: its tuples are subtracted from the
+                // column's, so both sides have to number the same strings the same way.
                 state: ColumnState::Building {
-                    tomb: IndexColumn::Numeric(NumericIndex::new()),
+                    tomb: IndexColumn::Range(column.empty_like()),
                     epoch,
                 },
+                column: IndexColumn::Range(column),
             },
         );
         epoch
     }
 
-    /// Build (or rebuild) the numeric column for `(entity, label, attr)` from
-    /// `entries` (any order) in the `Ready` state, replacing any existing one — the
-    /// bulk populate path. `NumericIndex::from_entries` bottom-up-loads the sorted
-    /// pairs (cheaper than looping incremental adds). Non-numeric / `NaN` values are
-    /// skipped by the encoder, so a Range attr holding mixed types indexes only its
-    /// numeric values — mirroring the NUMERIC half of the RediSearch Range field.
-    pub fn build_numeric<'a>(
+    /// Build (or rebuild) the column for `(entity, label, attr)` from `entries` (any order) in the
+    /// `Ready` state, replacing any existing one — the bulk populate path. Each kind bottom-up-loads
+    /// its sorted pairs, which is cheaper than looping incremental adds. A value no kind indexes
+    /// (`NULL`, `NaN`, a map) is skipped, exactly as the RediSearch Range field skips it.
+    pub fn build_column<'a>(
         &mut self,
         entity: EntityType,
         label: &Arc<String>,
@@ -374,7 +383,7 @@ impl FalkorDbIndex {
     ) {
         self.columns_mut(entity).insert(
             (label.clone(), attr.clone()),
-            ColumnEntry::ready(IndexColumn::Numeric(NumericIndex::from_entries(entries))),
+            ColumnEntry::ready(IndexColumn::Range(RangeIndex::from_entries(entries))),
         );
     }
 
@@ -389,9 +398,46 @@ impl FalkorDbIndex {
             .remove(&(label.clone(), attr.clone()));
     }
 
-    /// The numeric column for `(entity, label, attr)`, if one exists and is numeric.
+    /// The column for `(entity, label, attr)`, if one exists.
     /// State-agnostic (inspects a `Building` or `Ready` column alike) — used by the
     /// populate path and tests, not the read path (which gates on state).
+    #[must_use]
+    pub fn column(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<&RangeIndex> {
+        match self.columns(entity).get(&(label.clone(), attr.clone())) {
+            Some(ColumnEntry {
+                column: IndexColumn::Range(idx),
+                ..
+            }) => Some(idx),
+            None => None,
+        }
+    }
+
+    /// Mutable column for `(entity, label, attr)`, if one exists.
+    pub fn column_mut(
+        &mut self,
+        entity: EntityType,
+        label: &Arc<String>,
+        attr: &Arc<String>,
+    ) -> Option<&mut RangeIndex> {
+        match self
+            .columns_mut(entity)
+            .get_mut(&(label.clone(), attr.clone()))
+        {
+            Some(ColumnEntry {
+                column: IndexColumn::Range(idx),
+                ..
+            }) => Some(idx),
+            None => None,
+        }
+    }
+
+    /// The numeric kind of the column for `(entity, label, attr)` — the accessor that predates
+    /// the tag and geo kinds, kept for the callers that only ever mean numbers.
     #[must_use]
     pub fn numeric(
         &self,
@@ -399,32 +445,7 @@ impl FalkorDbIndex {
         label: &Arc<String>,
         attr: &Arc<String>,
     ) -> Option<&NumericIndex> {
-        match self.columns(entity).get(&(label.clone(), attr.clone())) {
-            Some(ColumnEntry {
-                column: IndexColumn::Numeric(idx),
-                ..
-            }) => Some(idx),
-            None => None,
-        }
-    }
-
-    /// Mutable numeric column for `(entity, label, attr)`, if one exists and is numeric.
-    pub fn numeric_mut(
-        &mut self,
-        entity: EntityType,
-        label: &Arc<String>,
-        attr: &Arc<String>,
-    ) -> Option<&mut NumericIndex> {
-        match self
-            .columns_mut(entity)
-            .get_mut(&(label.clone(), attr.clone()))
-        {
-            Some(ColumnEntry {
-                column: IndexColumn::Numeric(idx),
-                ..
-            }) => Some(idx),
-            None => None,
-        }
+        self.column(entity, label, attr).map(RangeIndex::numeric)
     }
 
     /// Whether a column exists for `(entity, label, attr)` — the write path's staging gate.
@@ -526,7 +547,7 @@ impl FalkorDbIndex {
     /// A conjunction spanning several attributes: intersect one column per attribute.
     ///
     /// Each attribute's own conjuncts are folded by its own column first (see
-    /// `NumericIndex::intersect_same_key`), so this only combines one doc stream per attribute.
+    /// `RangeIndex::intersect_refs`), so this only combines one doc stream per attribute.
     ///
     /// **Set probe, not a sorted merge.** `DocIter` yields docs in *value* order, not id order —
     /// deliberately, since Cypher guarantees no order without `ORDER BY`, and merging would cost
@@ -535,7 +556,7 @@ impl FalkorDbIndex {
     /// Memory is proportional to the first attribute's match count; there is no cardinality
     /// estimate to pick the smallest side with, so the order is the query's.
     ///
-    /// Every attribute needs a `Ready` numeric column. One still `Building` makes the whole
+    /// Every attribute needs a `Ready` column. One still `Building` makes the whole
     /// conjunction `NotReady` — intersecting against a half-built column would silently drop rows,
     /// which is worse than scanning.
     fn intersect_columns(
@@ -543,7 +564,7 @@ impl FalkorDbIndex {
         entity: EntityType,
         label: &Arc<String>,
         children: &[IndexQuery<Value>],
-    ) -> Option<NumericAnswer> {
+    ) -> Option<IndexAnswer> {
         // Regroup the leaves per attribute, keeping each attribute's own conjuncts together so
         // its column can fold them into one window.
         fn group<'a>(
@@ -557,7 +578,24 @@ impl FalkorDbIndex {
                         group(nested, out)?;
                         continue;
                     }
-                    _ => return None,
+                    // A union (or array-contains, or distance) conjunct belongs to whichever
+                    // attribute it constrains, and its column answers it whole. Without this,
+                    // `p.name IN [..] AND p.age IN [..]` — two servable unions — was declined for
+                    // being neither one column's problem nor groupable into two.
+                    IndexQuery::Or(_)
+                    | IndexQuery::ArrayContains { .. }
+                    | IndexQuery::Point { .. } => {
+                        let mut keys = Vec::new();
+                        if !attributes_of(child, &mut keys) {
+                            return None;
+                        }
+                        let first = *keys.first()?;
+                        if keys.iter().any(|k| *k != first) {
+                            return None; // one conjunct spanning columns is not groupable
+                        }
+                        first
+                    }
+                    IndexQuery::InList { .. } => return None,
                 };
                 match out.iter_mut().find(|(k, _)| *k == key) {
                     Some((_, qs)) => qs.push(child),
@@ -576,9 +614,9 @@ impl FalkorDbIndex {
         for (attr, conjuncts) in per_attr {
             let entry = self.columns(entity).get(&(label.clone(), attr.clone()))?;
             if !matches!(entry.state, ColumnState::Ready) {
-                return Some(NumericAnswer::NotReady);
+                return Some(IndexAnswer::NotReady);
             }
-            let IndexColumn::Numeric(idx) = &entry.column;
+            let IndexColumn::Range(idx) = &entry.column;
             let folded = idx.intersect_refs(&conjuncts)?;
             result = Some(match result {
                 None => folded.collect(),
@@ -588,7 +626,73 @@ impl FalkorDbIndex {
                 break; // a later conjunct can only remove rows, never add them
             }
         }
-        result.map(|docs| NumericAnswer::Rows(DocIter::Set(docs.into_iter())))
+        result.map(|docs| {
+            IndexAnswer::Rows(DocIter::Set(
+                docs.into_iter().collect::<Vec<_>>().into_iter(),
+            ))
+        })
+    }
+
+    /// A union spanning several attributes: union one column per attribute.
+    ///
+    /// `n.name IN [...] OR n.age = 33` is answerable, and unlike the conjunction case it has to be
+    /// answered by *combining columns* rather than by one of them: asking a single column for both
+    /// values would look the age up among the names and return rows the query never asked for.
+    ///
+    /// **Materialised, not chained.** A doc may satisfy several members (a node whose name matches
+    /// *and* whose age is 33), and `OR` must yield it once; the streams are in value order per
+    /// column, so there is nothing to merge-dedup against. The set is the dedup.
+    ///
+    /// Every attribute needs a `Ready` column. One still `Building` makes the whole union
+    /// `NotReady` — dropping a member's rows would be a wrong answer, not a slower one.
+    fn union_columns(
+        &self,
+        entity: EntityType,
+        label: &Arc<String>,
+        children: &[IndexQuery<Value>],
+    ) -> Option<IndexAnswer> {
+        // Regroup the members per attribute, flattening the nesting `a IN [..] OR b IN [..]`
+        // arrives with, so each column is asked once for its whole share.
+        fn group<'a>(
+            children: &'a [IndexQuery<Value>],
+            out: &mut Vec<(&'a Arc<String>, Vec<&'a IndexQuery<Value>>)>,
+        ) -> Option<()> {
+            for child in children {
+                let key = match child {
+                    IndexQuery::Equal { key, .. } => key,
+                    IndexQuery::Or(nested) => {
+                        group(nested, out)?;
+                        continue;
+                    }
+                    // A range or other combinator inside a union is not a shape any column has
+                    // been asked to serve yet.
+                    _ => return None,
+                };
+                match out.iter_mut().find(|(k, _)| *k == key) {
+                    Some((_, qs)) => qs.push(child),
+                    None => out.push((key, vec![child])),
+                }
+            }
+            Some(())
+        }
+        let mut per_attr: Vec<(&Arc<String>, Vec<&IndexQuery<Value>>)> = Vec::new();
+        group(children, &mut per_attr)?;
+        if per_attr.len() < 2 {
+            return None; // the caller already handles the single-column case
+        }
+
+        let mut docs: FxHashSet<u64> = FxHashSet::default();
+        for (attr, members) in per_attr {
+            let entry = self.columns(entity).get(&(label.clone(), attr.clone()))?;
+            if !matches!(entry.state, ColumnState::Ready) {
+                return Some(IndexAnswer::NotReady);
+            }
+            let IndexColumn::Range(idx) = &entry.column;
+            docs.extend(idx.union_refs(&members)?);
+        }
+        Some(IndexAnswer::Rows(DocIter::Set(
+            docs.into_iter().collect::<Vec<_>>().into_iter(),
+        )))
     }
 
     /// Encode `entries` under the kind of the column `(entity, label, attr)`, if it exists.
@@ -625,122 +729,80 @@ impl FalkorDbIndex {
         out
     }
 
-    /// Answer an index query for `(entity, label)` from the numeric column — but ONLY a **numeric**
-    /// `Equal`/`Range`/union leaf. Yields docs — node ids for a node column, `edge_id`s for an edge
-    /// column.
+    /// Answer an index query for `(entity, label)`. Yields docs — node ids for a node column,
+    /// `edge_id`s for an edge column.
     ///
-    /// Three outcomes, and the caller must keep them apart (see [`NumericAnswer`]):
+    /// This layer answers only *which column(s)* a predicate needs and whether they can be read
+    /// yet; whether the predicate itself is servable is [`RangeIndex::query`]'s business, since
+    /// that depends on the value's type and therefore on the kinds inside the column.
     ///
-    /// * [`Rows`](NumericAnswer::Rows) — served here.
-    /// * [`NotReady`](NumericAnswer::NotReady) — the column exists but is still `Building`, so its
+    /// Three outcomes, and the caller must keep them apart (see [`IndexAnswer`]):
+    ///
+    /// * [`Rows`](IndexAnswer::Rows) — served here. Possibly zero rows: a predicate Cypher says
+    ///   cannot match (`n.v = null`, a cross-type comparison) is *answered*, not declined.
+    /// * [`NotReady`](IndexAnswer::NotReady) — the column exists but is still `Building`, so its
     ///   base is not installed. The caller scans; this is a timing state, never an error.
-    /// * `None` — not a numeric leaf, or no such column. A Range index also holds strings and geo
-    ///   (RediSearch's, in the dark-launch build), so those land here too. Under `index-falkordb`
-    ///   there is no other index, and the caller turns this into an error.
+    /// * `None` — no such column, or no kind in it can serve this predicate. Under
+    ///   `index-falkordb` there is no other index, and the caller turns this into an error.
     #[must_use]
-    pub fn query_numeric(
+    pub fn query_column(
         &self,
         entity: EntityType,
         label: &Arc<String>,
         query: &IndexQuery<Value>,
-    ) -> Option<NumericAnswer> {
-        let (key, servable) = match query {
-            IndexQuery::Equal { key, value } => (key, encode_numeric(value).is_some()),
-            IndexQuery::Range { key, min, max, .. } => (
-                key,
-                min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
-                    && max.as_ref().is_none_or(|v| encode_numeric(v).is_some()),
-            ),
-            // A union of `Equal`s — what `n.a IN [...]` becomes before it reaches the index.
-            // Every member must target this same attribute and encode numerically; a mixed or
-            // empty list is declined whole, because answering with only the numeric members
-            // would drop rows another kind still holds. `NumericIndex::union` re-checks the
-            // encodability, so this only has to agree on the key.
-            IndexQuery::Or(children) if !children.is_empty() => {
-                // Flatten nested unions: `a IN [..] OR a IN [..]` arrives as an `Or` of `Or`s.
-                fn keys_of<'a>(
-                    children: &'a [IndexQuery<Value>],
-                    out: &mut Vec<&'a Arc<String>>,
-                ) -> bool {
-                    children.iter().all(|c| match c {
-                        IndexQuery::Equal { key, .. } => {
-                            out.push(key);
-                            true
-                        }
-                        IndexQuery::Or(nested) => !nested.is_empty() && keys_of(nested, out),
-                        _ => false,
-                    })
-                }
-                let mut member_keys = Vec::new();
-                if !keys_of(children, &mut member_keys) || member_keys.is_empty() {
-                    return None;
-                }
-                let first_key = member_keys[0];
-                let same_key = member_keys.iter().all(|k| *k == first_key);
-                (first_key, same_key)
-            }
-            // A conjunction constraining ONE attribute — `v = 5 AND v > 2`, or two bounds the
-            // planner could not fold because they were still expressions. `NumericIndex`
-            // collapses it arithmetically into a single window. A conjunction spanning two
-            // attributes is a different problem (it needs a real intersection across columns)
-            // and is declined here, so the error names that rather than blaming the values.
-            IndexQuery::And(children) if !children.is_empty() => {
-                fn leaves<'a>(
-                    children: &'a [IndexQuery<Value>],
-                    out: &mut Vec<(&'a Arc<String>, bool)>,
-                ) -> bool {
-                    children.iter().all(|c| match c {
-                        IndexQuery::Equal { key, value } => {
-                            out.push((key, encode_numeric(value).is_some()));
-                            true
-                        }
-                        IndexQuery::Range { key, min, max, .. } => {
-                            let numeric = min.as_ref().is_none_or(|v| encode_numeric(v).is_some())
-                                && max.as_ref().is_none_or(|v| encode_numeric(v).is_some());
-                            out.push((key, numeric));
-                            true
-                        }
-                        IndexQuery::And(nested) => !nested.is_empty() && leaves(nested, out),
-                        _ => false,
-                    })
-                }
-                let mut found = Vec::new();
-                if !leaves(children, &mut found) || found.is_empty() {
-                    return None;
-                }
-                if !found.iter().all(|(_, numeric)| *numeric) {
-                    return None; // a non-numeric member: no column can answer the conjunction
-                }
-                let first = found[0].0;
-                if found.iter().any(|(k, _)| *k != first) {
-                    // Spans several attributes: intersect one column per attribute.
-                    return self.intersect_columns(entity, label, children);
-                }
-                (first, true)
-            }
-            // `value IN n.prop`, where the property holds a list. Served from the column's
-            // separate array tree — see `NumericIndex::array_contains`. Servable when the probed
-            // value encodes; the elements themselves were filtered at write time.
-            IndexQuery::ArrayContains { key, value } => (key, encode_numeric(value).is_some()),
-            // And / Point (geo) / InList → not a numeric leaf.
-            _ => return None,
-        };
-        if !servable {
-            // A string/geo leaf on a Range index (RediSearch owns those entries), or a union
-            // whose members do not all target this attribute.
-            return None;
+    ) -> Option<IndexAnswer> {
+        let mut keys = Vec::new();
+        if !attributes_of(query, &mut keys) || keys.is_empty() {
+            return None; // a shape with no attribute to route by (an empty composite, an `InList`)
         }
-        let entry = self.columns(entity).get(&(label.clone(), key.clone()))?;
+        let first = keys[0];
+        if keys.iter().any(|k| *k != first) {
+            // Several attributes: combine one column per attribute — intersect for a conjunction,
+            // union for a disjunction. What neither can do is answer from a single column: looking
+            // every value up in one of them would return rows the query never asked for.
+            return match query {
+                IndexQuery::And(children) => self.intersect_columns(entity, label, children),
+                IndexQuery::Or(children) => self.union_columns(entity, label, children),
+                _ => None,
+            };
+        }
+        let entry = self.columns(entity).get(&(label.clone(), first.clone()))?;
         if !matches!(entry.state, ColumnState::Ready) {
             // Building: the base is not installed yet. This is NOT an unsupported predicate —
             // the column will serve it once the build finishes — so the caller must scan rather
             // than error. `NotReady` keeps that distinct from `None`, which under the
             // no-fallback build is a hard failure.
-            return Some(NumericAnswer::NotReady);
+            return Some(IndexAnswer::NotReady);
         }
         match &entry.column {
-            IndexColumn::Numeric(idx) => idx.query(query).map(NumericAnswer::Rows),
+            IndexColumn::Range(idx) => idx.query(query).map(IndexAnswer::Rows),
         }
+    }
+}
+
+/// Collect the attributes a predicate constrains, flattening nested composites. `false` when the
+/// shape names no attribute at all — an empty `And`/`Or`, or an `InList` the runtime should have
+/// desugared into a union before the index ever saw it.
+///
+/// Deliberately says nothing about *values*: which types a column can serve is decided inside the
+/// column, where the kinds live. Duplicating that judgement here is what made the previous version
+/// declare a string leaf unservable before the tag kind existed to be asked.
+pub(super) fn attributes_of<'a>(
+    query: &'a IndexQuery<Value>,
+    out: &mut Vec<&'a Arc<String>>,
+) -> bool {
+    match query {
+        IndexQuery::Equal { key, .. }
+        | IndexQuery::Range { key, .. }
+        | IndexQuery::ArrayContains { key, .. }
+        | IndexQuery::Point { key, .. } => {
+            out.push(key);
+            true
+        }
+        IndexQuery::And(children) | IndexQuery::Or(children) => {
+            !children.is_empty() && children.iter().all(|c| attributes_of(c, out))
+        }
+        IndexQuery::InList { .. } => false,
     }
 }
 
@@ -757,10 +819,10 @@ mod tests {
     /// Rows of an answer that must be `Rows`. Panics on the other two, rather than reporting them
     /// as "no rows" — a test that expected rows and got `NotReady` or `None` has found a bug, and
     /// collapsing all three into an empty `Vec` is exactly what hid one.
-    fn rows(answer: Option<NumericAnswer>) -> Vec<u64> {
+    fn rows(answer: Option<IndexAnswer>) -> Vec<u64> {
         match answer {
-            Some(NumericAnswer::Rows(it)) => it.collect(),
-            Some(NumericAnswer::NotReady) => panic!("column is still Building"),
+            Some(IndexAnswer::Rows(it)) => it.collect(),
+            Some(IndexAnswer::NotReady) => panic!("column is still Building"),
             None => panic!("predicate is not servable by the numeric index"),
         }
     }
@@ -783,15 +845,15 @@ mod tests {
         };
         let key = |v: i64| encode_numeric(&Value::Int(v)).unwrap();
         let hits = |idx: &FalkorDbIndex, v: i64| -> Vec<u64> {
-            rows(idx.query_numeric(Node, &label, &eq(v)))
+            rows(idx.query_column(Node, &label, &eq(v)))
         };
         // `NotReady`, specifically — not `None`. A `Building` column is a timing state and the
         // caller scans; `None` means unservable, which the no-fallback build turns into a query
         // error. Collapsing the two errored every read against a still-building index.
         let building = |idx: &FalkorDbIndex, v: i64| {
             matches!(
-                idx.query_numeric(Node, &label, &eq(v)),
-                Some(NumericAnswer::NotReady)
+                idx.query_column(Node, &label, &eq(v)),
+                Some(IndexAnswer::NotReady)
             )
         };
 
@@ -857,13 +919,13 @@ mod tests {
         let (label, attr) = (arc("Person"), arc("age"));
 
         let mut v1 = FalkorDbIndex::new();
-        v1.create_numeric(Node, &label, &attr);
-        v1.numeric_mut(Node, &label, &attr)
+        v1.create_column(Node, &label, &attr);
+        v1.column_mut(Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(30), 1);
 
         let mut v2 = v1.clone(); // the O(1) fork
-        v2.numeric_mut(Node, &label, &attr)
+        v2.column_mut(Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(40), 2);
 
@@ -884,7 +946,7 @@ mod tests {
         assert!(idx.is_empty());
         assert!(idx.numeric(Node, &label, &attr).is_none());
 
-        idx.create_numeric(Node, &label, &attr);
+        idx.create_column(Node, &label, &attr);
         assert_eq!(idx.len(), 1);
         assert!(idx.numeric(Node, &label, &attr).is_some());
         assert!(idx.numeric(Node, &label, &attr).unwrap().is_empty());
@@ -895,7 +957,7 @@ mod tests {
     fn merge_batches_into_columns() {
         let (label, attr) = (arc("Person"), arc("age"));
         let mut idx = FalkorDbIndex::new();
-        idx.create_numeric(Node, &label, &attr);
+        idx.create_column(Node, &label, &attr);
 
         let staged = |vals: &[(i64, u64)]| -> StagedColumns {
             let mut m: StagedColumns = HashMap::new();
@@ -922,14 +984,14 @@ mod tests {
     fn node_and_edge_columns_do_not_collide() {
         let (name, attr) = (arc("Rated"), arc("score")); // same name as a node label AND a rel type
         let mut idx = FalkorDbIndex::new();
-        idx.create_numeric(Node, &name, &attr);
-        idx.create_numeric(Relationship, &name, &attr);
+        idx.create_column(Node, &name, &attr);
+        idx.create_column(Relationship, &name, &attr);
         assert_eq!(idx.len(), 2, "one node column + one edge column");
 
-        idx.numeric_mut(Node, &name, &attr)
+        idx.column_mut(Node, &name, &attr)
             .unwrap()
             .add(&Value::Int(1), 10);
-        idx.numeric_mut(Relationship, &name, &attr)
+        idx.column_mut(Relationship, &name, &attr)
             .unwrap()
             .add(&Value::Int(1), 20);
 
@@ -952,16 +1014,16 @@ mod tests {
         assert!(idx.numeric(Node, &name, &attr).is_some());
     }
 
-    /// Reads route only numeric `Equal`/`Range` leaves to the numeric column, for either entity.
-    /// A node query on a shared name must not see the edge column, and vice-versa.
+    /// Reads route each leaf to the column its attribute names, for either entity. A node query on
+    /// a shared name must not see the edge column, and vice-versa.
     #[test]
-    fn query_numeric_routes_only_numeric_leaves_per_entity() {
+    fn query_routes_leaves_to_the_named_column_per_entity() {
         let (label, attr) = (arc("Person"), arc("age"));
         let mut idx = FalkorDbIndex::new();
-        idx.create_numeric(Node, &label, &attr);
-        idx.numeric_mut(Node, &label, &attr)
-            .unwrap()
-            .add(&Value::Int(30), 1);
+        idx.create_column(Node, &label, &attr);
+        for (v, id) in [(Value::Int(30), 1), (Value::String(arc("x")), 2)] {
+            idx.column_mut(Node, &label, &attr).unwrap().add(&v, id);
+        }
         let key = attr.clone();
 
         // Numeric Equal / Range → routed to the node column, correct ids.
@@ -969,7 +1031,7 @@ mod tests {
             key: key.clone(),
             value: Value::Int(30),
         };
-        assert_eq!(rows(idx.query_numeric(Node, &label, &eq)), vec![1]);
+        assert_eq!(rows(idx.query_column(Node, &label, &eq)), vec![1]);
         let rg = IndexQuery::Range {
             key: key.clone(),
             min: Some(Value::Int(10)),
@@ -977,27 +1039,39 @@ mod tests {
             include_min: true,
             include_max: true,
         };
-        assert!(idx.query_numeric(Node, &label, &rg).is_some());
+        assert!(idx.query_column(Node, &label, &rg).is_some());
 
-        // A string on the same Range index must fall through (RediSearch owns the TAG entries).
+        // A string on the same column reaches the tag kind — the routing is by the operand's
+        // type, and both kinds live in the one column.
         let str_eq = IndexQuery::Equal {
             key: key.clone(),
-            value: Value::String(Arc::new("x".to_string())),
+            value: Value::String(arc("x")),
         };
-        assert!(idx.query_numeric(Node, &label, &str_eq).is_none());
+        assert_eq!(rows(idx.query_column(Node, &label, &str_eq)), vec![2]);
+        assert!(
+            rows(idx.query_column(
+                Node,
+                &label,
+                &IndexQuery::Equal {
+                    key: key.clone(),
+                    value: Value::String(arc("never stored")),
+                }
+            ))
+            .is_empty()
+        );
         // A conjunction on ONE attribute is served — it folds to a single window.
         let eq2 = IndexQuery::Equal {
             key: key.clone(),
             value: Value::Int(30),
         };
         assert!(matches!(
-            idx.query_numeric(Node, &label, &IndexQuery::And(vec![eq2])),
-            Some(NumericAnswer::Rows(_))
+            idx.query_column(Node, &label, &IndexQuery::And(vec![eq2])),
+            Some(IndexAnswer::Rows(_))
         ));
         // A conjunction spanning TWO attributes is not: that needs an intersection across
         // columns, which this column-scoped lookup cannot do.
         assert!(
-            idx.query_numeric(
+            idx.query_column(
                 Node,
                 &label,
                 &IndexQuery::And(vec![
@@ -1018,9 +1092,9 @@ mod tests {
             key: arc("height"),
             value: Value::Int(5),
         };
-        assert!(idx.query_numeric(Node, &label, &other).is_none());
+        assert!(idx.query_column(Node, &label, &other).is_none());
         assert!(
-            idx.query_numeric(Relationship, &label, &eq).is_none(),
+            idx.query_column(Relationship, &label, &eq).is_none(),
             "no edge column of this name"
         );
     }
@@ -1035,14 +1109,14 @@ mod tests {
         let label = arc("C");
         let (a, b) = (arc("a"), arc("b"));
         let mut idx = FalkorDbIndex::new();
-        idx.create_numeric(Node, &label, &a);
-        idx.create_numeric(Node, &label, &b);
+        idx.create_column(Node, &label, &a);
+        idx.create_column(Node, &label, &b);
         // ids 0..9; a = id % 2, b = id
         for id in 0..10u64 {
-            idx.numeric_mut(Node, &label, &a)
+            idx.column_mut(Node, &label, &a)
                 .unwrap()
                 .add(&Value::Int((id % 2) as i64), id);
-            idx.numeric_mut(Node, &label, &b)
+            idx.column_mut(Node, &label, &b)
                 .unwrap()
                 .add(&Value::Int(id as i64), id);
         }
@@ -1058,7 +1132,7 @@ mod tests {
             include_max: true,
         };
         let got = |q: IndexQuery<Value>| {
-            let mut v = rows(idx.query_numeric(Node, &label, &q));
+            let mut v = rows(idx.query_column(Node, &label, &q));
             v.sort_unstable();
             v
         };
@@ -1080,13 +1154,121 @@ mod tests {
         // A missing column cannot be intersected — decline rather than answer from a subset,
         // which would return rows the conjunction excludes.
         assert!(
-            idx.query_numeric(
+            idx.query_column(
                 Node,
                 &label,
                 &IndexQuery::And(vec![eq(&a, 1), eq(&arc("nope"), 1)])
             )
             .is_none()
         );
+    }
+
+    /// `p.name IN [..] AND p.age IN [..]` — a conjunction whose children are *unions*, on two
+    /// attributes. Each column answers its own union and the results intersect.
+    ///
+    /// It reaches the index in exactly this shape (the runtime desugars `IN` into an `Or` before
+    /// the index is consulted), and it is the shape `test05_test_in_operator_string_props`
+    /// exercises. It used to be declined for being neither a single column's problem nor a
+    /// conjunction of plain leaves.
+    #[test]
+    fn a_conjunction_of_unions_intersects_the_columns() {
+        let label = arc("person");
+        let (name, age) = (arc("name"), arc("age"));
+        let mut idx = FalkorDbIndex::new();
+        idx.create_column(Node, &label, &name);
+        idx.create_column(Node, &label, &age);
+        for (id, n, a) in [(0u64, "Gal Derriere", 26i64), (1, "Lucy Yanfital", 30)] {
+            idx.column_mut(Node, &label, &name)
+                .unwrap()
+                .add(&Value::String(arc(n)), id);
+            idx.column_mut(Node, &label, &age)
+                .unwrap()
+                .add(&Value::Int(a), id);
+        }
+        let names = IndexQuery::Or(vec![
+            IndexQuery::Equal {
+                key: name.clone(),
+                value: Value::String(arc("Gal Derriere")),
+            },
+            IndexQuery::Equal {
+                key: name.clone(),
+                value: Value::String(arc("Lucy Yanfital")),
+            },
+        ]);
+        let ages = IndexQuery::Or(vec![IndexQuery::Equal {
+            key: age.clone(),
+            value: Value::Int(30),
+        }]);
+
+        // Each union alone.
+        let mut both = rows(idx.query_column(Node, &label, &names));
+        both.sort_unstable();
+        assert_eq!(both, vec![0, 1]);
+        assert_eq!(rows(idx.query_column(Node, &label, &ages)), vec![1]);
+
+        // And their conjunction: only Lucy is 30.
+        assert_eq!(
+            rows(idx.query_column(Node, &label, &IndexQuery::And(vec![names, ages]))),
+            vec![1]
+        );
+    }
+
+    /// `p.name IN [..] OR p.age = 33` — a union spanning two columns. Each column answers its own
+    /// members and the results are combined, deduplicated: a doc satisfying both members is one
+    /// row in Cypher, not two.
+    #[test]
+    fn a_union_across_columns_combines_and_dedups() {
+        let label = arc("person");
+        let (name, age) = (arc("name"), arc("age"));
+        let mut idx = FalkorDbIndex::new();
+        idx.create_column(Node, &label, &name);
+        idx.create_column(Node, &label, &age);
+        // Doc 1 satisfies BOTH members — the dedup case.
+        for (id, n, a) in [(0u64, "Gal", 26i64), (1, "Lucy", 33), (2, "Omri", 33)] {
+            idx.column_mut(Node, &label, &name)
+                .unwrap()
+                .add(&Value::String(arc(n)), id);
+            idx.column_mut(Node, &label, &age)
+                .unwrap()
+                .add(&Value::Int(a), id);
+        }
+        let q = IndexQuery::Or(vec![
+            IndexQuery::Or(vec![
+                IndexQuery::Equal {
+                    key: name.clone(),
+                    value: Value::String(arc("Gal")),
+                },
+                IndexQuery::Equal {
+                    key: name.clone(),
+                    value: Value::String(arc("Lucy")),
+                },
+            ]),
+            IndexQuery::Equal {
+                key: age.clone(),
+                value: Value::Int(33),
+            },
+        ]);
+        let mut got = rows(idx.query_column(Node, &label, &q));
+        got.sort_unstable();
+        assert_eq!(got, vec![0, 1, 2]);
+        assert_eq!(
+            got.len(),
+            3,
+            "Lucy matches both members and must appear once"
+        );
+
+        // A missing column cannot be unioned: answering from the rest would drop its rows.
+        let partial = IndexQuery::Or(vec![
+            IndexQuery::Equal {
+                key: name,
+                value: Value::String(arc("Gal")),
+            },
+            IndexQuery::Equal {
+                key: arc("nope"),
+                value: Value::Int(1),
+            },
+        ]);
+        assert!(idx.query_column(Node, &label, &partial).is_none());
     }
 
     /// A column still building makes the whole conjunction `NotReady`. Intersecting against a
@@ -1096,8 +1278,8 @@ mod tests {
         let label = arc("C");
         let (a, b) = (arc("a"), arc("b"));
         let mut idx = FalkorDbIndex::new();
-        idx.create_numeric(Node, &label, &a);
-        idx.numeric_mut(Node, &label, &a)
+        idx.create_column(Node, &label, &a);
+        idx.column_mut(Node, &label, &a)
             .unwrap()
             .add(&Value::Int(1), 1);
         idx.create_building(Node, &label, &b);
@@ -1113,8 +1295,8 @@ mod tests {
             },
         ]);
         assert!(matches!(
-            idx.query_numeric(Node, &label, &q),
-            Some(NumericAnswer::NotReady)
+            idx.query_column(Node, &label, &q),
+            Some(IndexAnswer::NotReady)
         ));
     }
 }

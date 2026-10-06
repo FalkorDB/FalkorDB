@@ -9,88 +9,10 @@
 
 use std::sync::Arc;
 
-use super::data_structures::cow_btree::{CowBTree, RangeIter};
+use super::doc_iter::{DocIter, KeyTuples, Tree, UnionIter, empty_docs};
 use super::encode::{StoredKeys, encode_numeric, encode_stored};
 use crate::index::IndexQuery;
 use crate::runtime::value::Value;
-
-/// Tree fan-out. Fixed at the tuned default for now; a future step can make the
-/// index generic over these if a workload wants a different page size.
-const LEAF_MAX: usize = 256;
-const BRANCH_MAX: usize = 256;
-/// Full-width doc ids. The tree can store them narrower (fewer bytes per entry, so more entries
-/// per page), but that caps the representable id and the index must hold any node or edge id the
-/// graph can mint. Narrowing is a memory optimization to make deliberately, once there is a bound
-/// to justify it — not a default to inherit.
-const DOC_BYTES: usize = 8;
-
-type Tree = CowBTree<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
-
-/// Lazy iterator of matching entity ids, yielded in `(value, id)` order.
-type TreeIter = RangeIter<LEAF_MAX, BRANCH_MAX, DOC_BYTES>;
-
-/// Lazy iterator of matching entity ids.
-///
-/// `One` is a single cursor over a contiguous key range. `Many` chains several — the shape an
-/// `IN [...]` union takes, one cursor per distinct member. An enum rather than a boxed trait
-/// object because the scan op already boxes the result once; a second layer of dynamic dispatch
-/// per id would be pure overhead.
-///
-/// The chain is *not* merged into id order. Order is deliberately unspecified here: Cypher
-/// guarantees none without `ORDER BY`, and a merge would cost a comparison per id and force every
-/// branch to stay live. Nothing downstream may assume sortedness.
-pub enum DocIter {
-    One(TreeIter),
-    Many(UnionIter),
-    /// An already-materialised doc set — a cross-attribute intersection, which cannot be produced
-    /// lazily from value-ordered streams. Distinct by construction.
-    Set(std::collections::hash_set::IntoIter<u64>),
-}
-
-impl Iterator for DocIter {
-    type Item = u64;
-
-    fn next(&mut self) -> Option<u64> {
-        match self {
-            Self::One(it) => it.next(),
-            Self::Many(it) => it.next(),
-            Self::Set(it) => it.next(),
-        }
-    }
-}
-
-/// The cursor chain behind a union: the keys still to visit, and a cursor over the current one.
-///
-/// **One cursor exists at a time, and none until the first `next()`.** `RangeIter::new` performs a
-/// full root-to-leaf descent in its constructor, so building a cursor per member up front made
-/// `IN $list` with 100k members do 100k descents — and hold 100k live snapshots — before yielding
-/// a single row. Under a `LIMIT`, almost all of that work is thrown away.
-///
-/// The tree is **owned**, not borrowed. That is load-bearing rather than a lifetime convenience:
-/// the eager version happened to share one root because every `point()` call sat inside a single
-/// `&self` borrow. Deferring those calls past the borrow means the snapshot has to be pinned here,
-/// or a member visited after a concurrent write would descend into a newer root and the union
-/// would be a torn read. The clone is an `O(1)` root-`Arc` bump.
-pub struct UnionIter {
-    tree: Tree,
-    keys: std::vec::IntoIter<u64>,
-    current: Option<TreeIter>,
-}
-
-impl Iterator for UnionIter {
-    type Item = u64;
-
-    fn next(&mut self) -> Option<u64> {
-        loop {
-            if let Some(doc) = self.current.as_mut().and_then(Iterator::next) {
-                return Some(doc);
-            }
-            // Current member exhausted (or not started): descend for the next one. Keys are
-            // distinct, so this advances — it cannot spin.
-            self.current = Some(self.tree.point(self.keys.next()?));
-        }
-    }
-}
 
 /// A numeric property index over one `(label, attribute)`: entity ids keyed by
 /// the order-preserving encoding of their value, so `n.x <predicate> v` is a
@@ -116,48 +38,6 @@ pub struct NumericIndex {
     array_tree: Tree,
 }
 
-/// Encoded tuples for one column, split by the tree they belong to.
-///
-/// The online build moves BASE, DELTA and TOMB around as raw `(key, doc)` tuples; each of those
-/// artifacts has to keep the two key spaces apart for the same reason the trees do.
-#[derive(Default, Debug, Clone)]
-pub struct EncodedTuples {
-    pub scalar: Vec<(u64, u64)>,
-    pub array: Vec<(u64, u64)>,
-}
-
-impl EncodedTuples {
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.scalar.is_empty() && self.array.is_empty()
-    }
-
-    /// Total tuples across both key spaces.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.scalar.len() + self.array.len()
-    }
-
-    /// Scalar-only tuples — the shape a column with no list values produces.
-    #[must_use]
-    pub fn scalars(scalar: Vec<(u64, u64)>) -> Self {
-        Self {
-            scalar,
-            array: Vec::new(),
-        }
-    }
-
-    /// Drop every tuple whose doc fails `keep` — the install's deleted-entity backstop, which
-    /// must sweep both key spaces or a deleted node survives in its array half.
-    pub fn retain_docs(
-        &mut self,
-        mut keep: impl FnMut(u64) -> bool,
-    ) {
-        self.scalar.retain(|&(_, doc)| keep(doc));
-        self.array.retain(|&(_, doc)| keep(doc));
-    }
-}
-
 impl NumericIndex {
     /// An empty index.
     #[must_use]
@@ -171,7 +51,7 @@ impl NumericIndex {
     /// traversal.
     #[must_use]
     pub fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a Value, u64)>) -> Self {
-        let mut out = EncodedTuples::default();
+        let mut out = KeyTuples::default();
         let mut keys = Vec::new();
         for (v, id) in entries {
             let dest = match encode_stored(v, &mut keys) {
@@ -249,9 +129,25 @@ impl NumericIndex {
         self.array_tree.remove_batch(&t.array);
     }
 
+    /// Append the tuples one `(value, id)` contributes, reusing `keys` as scratch. The streaming
+    /// half of the batch path: the column runs every kind over the same entry, so materialising a
+    /// per-kind copy of the batch first would be one pass and one allocation too many.
+    pub(super) fn encode_into(
+        value: &Value,
+        id: u64,
+        out: &mut KeyTuples,
+        keys: &mut Vec<u64>,
+    ) {
+        let dest = match encode_stored(value, keys) {
+            StoredKeys::Scalar => &mut out.scalar,
+            StoredKeys::Array => &mut out.array,
+        };
+        dest.extend(keys.iter().map(|&k| (k, id)));
+    }
+
     /// Encode `(value, id)` entries to `(key, id)` tree tuples, dropping non-numeric / `NaN` values.
-    fn encode_pairs(entries: impl IntoIterator<Item = (Value, u64)>) -> EncodedTuples {
-        let mut out = EncodedTuples::default();
+    fn encode_pairs(entries: impl IntoIterator<Item = (Value, u64)>) -> KeyTuples {
+        let mut out = KeyTuples::default();
         let mut keys = Vec::new();
         for (v, id) in entries {
             let dest = match encode_stored(&v, &mut keys) {
@@ -266,7 +162,7 @@ impl NumericIndex {
     /// Build directly from already-encoded `(key, doc)` tuples, in any order — how the
     /// install adopts a background-built BASE without re-encoding or re-sorting it per row.
     #[must_use]
-    pub fn from_encoded(mut tuples: EncodedTuples) -> Self {
+    pub fn from_encoded(mut tuples: KeyTuples) -> Self {
         let build = |pairs: &mut Vec<(u64, u64)>| {
             pairs.sort_unstable();
             pairs.dedup();
@@ -280,16 +176,29 @@ impl NumericIndex {
 
     /// Encode `(value, id)` entries to tree tuples, dropping non-numeric / `NaN`.
     /// Public so a background build can encode BASE off the write thread.
+    ///
+    /// Borrows rather than consumes: the column runs one encoder per kind over the same batch, and
+    /// a `Vec`-consuming signature made each of them clone every `Value` first — which measured as
+    /// the whole of the write path's regression against the RediSearch build.
     #[must_use]
-    pub fn encode_entries(entries: Vec<(Value, u64)>) -> EncodedTuples {
-        Self::encode_pairs(entries)
+    pub fn encode_entries(entries: &[(Value, u64)]) -> KeyTuples {
+        let mut out = KeyTuples::default();
+        let mut keys = Vec::new();
+        for (v, id) in entries {
+            let dest = match encode_stored(v, &mut keys) {
+                StoredKeys::Scalar => &mut out.scalar,
+                StoredKeys::Array => &mut out.array,
+            };
+            dest.extend(keys.iter().map(|&k| (k, *id)));
+        }
+        out
     }
 
     /// Every `(key, doc)` tuple, in key order — the install's DELTA/TOMB enumeration.
     /// `O(n)`; intended for build-sized artifacts, not a populated column.
     #[must_use]
-    pub fn encoded_tuples(&self) -> EncodedTuples {
-        EncodedTuples {
+    pub fn encoded_tuples(&self) -> KeyTuples {
+        KeyTuples {
             scalar: self.tree.range_tuples(0, u64::MAX).collect(),
             array: self.array_tree.range_tuples(0, u64::MAX).collect(),
         }
@@ -300,7 +209,7 @@ impl NumericIndex {
     /// decoded key would be a second trip through a many-to-one map.
     pub fn add_encoded(
         &mut self,
-        tuples: &mut EncodedTuples,
+        tuples: &mut KeyTuples,
     ) {
         tuples.scalar.sort_unstable();
         tuples.array.sort_unstable();
@@ -311,7 +220,7 @@ impl NumericIndex {
     /// Remove already-encoded tuples — the install subtracting TOMB from BASE.
     pub fn remove_encoded(
         &mut self,
-        tuples: &mut EncodedTuples,
+        tuples: &mut KeyTuples,
     ) {
         tuples.scalar.sort_unstable();
         tuples.array.sort_unstable();
@@ -575,16 +484,36 @@ impl NumericIndex {
         keys.dedup();
         // No cursor is built here — see [`UnionIter`]. The tree snapshot is taken now, so every
         // member is answered from the same version however late its cursor is created.
-        Some(DocIter::Many(UnionIter {
-            tree: self.tree.clone(),
-            keys: keys.into_iter(),
-            current: None,
-        }))
+        Some(DocIter::Many(UnionIter::new(
+            vec![self.tree.clone()],
+            keys.into_iter().map(|k| (0, k, k)).collect(),
+        )))
     }
 
     /// An iterator over no entries (`lo > hi` yields nothing).
     fn empty(&self) -> DocIter {
-        DocIter::One(self.tree.range(1, 0))
+        empty_docs(&self.tree)
+    }
+
+    /// The scalar tree — for the column facade, which composes windows across kinds into one
+    /// [`UnionIter`] and must name each window's tree.
+    pub(super) fn tree(&self) -> &Tree {
+        &self.tree
+    }
+
+    /// The key a scalar query value maps to, or `None` when this kind cannot represent it.
+    pub(super) fn key_of(value: &Value) -> Option<u64> {
+        encode_numeric(value)
+    }
+
+    /// [`bounds`](Self::bounds), for the facade's cross-kind folding.
+    pub(super) fn window(
+        min: Option<&Value>,
+        max: Option<&Value>,
+        include_min: bool,
+        include_max: bool,
+    ) -> Option<(u64, u64)> {
+        Self::bounds(min, max, include_min, include_max)
     }
 }
 
@@ -924,14 +853,14 @@ mod tests {
             panic!("a union must produce DocIter::Many");
         };
         assert!(
-            u.current.is_none(),
+            !u.has_cursor(),
             "no cursor may exist before the first next()"
         );
-        assert_eq!(u.keys.len(), 100, "and every member is still pending");
+        assert_eq!(u.pending(), 100, "and every member is still pending");
 
         assert_eq!(u.next(), Some(0));
-        assert!(u.current.is_some(), "the first row descends for its member");
-        assert_eq!(u.keys.len(), 99, "exactly one member consumed");
+        assert!(u.has_cursor(), "the first row descends for its member");
+        assert_eq!(u.pending(), 99, "exactly one member consumed");
     }
 
     /// Deferring the descents means later members are visited after the caller has moved on, so
