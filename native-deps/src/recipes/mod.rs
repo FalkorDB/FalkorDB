@@ -69,10 +69,11 @@ impl Ctx<'_> {
 /// Restores source files that a build mutates in place.
 ///
 /// GraphBLAS needs `GB_control.patch` applied and PreJIT kernels copied in;
-/// RediSearch needs `-Werror` stripped from VectorSimilarity. Snapshotting the
-/// original bytes and writing them back on drop makes those edits idempotent and
-/// keeps `git status` clean -- and unlike `git checkout --`, it works in a
-/// Docker context where the submodule has no `.git`.
+/// RediSearch needs `-Werror` stripped from VectorSimilarity and `<string>`
+/// included in its `vec_utils.cpp`. Snapshotting the original bytes and writing
+/// them back on drop makes those edits idempotent and keeps `git status` clean
+/// -- and unlike `git checkout --`, it works in a Docker context where the
+/// submodule has no `.git`.
 ///
 /// Drop does not run when the build is killed (Ctrl-C reaches the build
 /// script's whole process group), so every snapshot is also written to an

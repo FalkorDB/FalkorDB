@@ -590,16 +590,20 @@ impl<'a, I: GatherItem> BatchedResultEmitter<'a, I> {
     /// when expanding), and the typed result lanes.
     ///
     /// We gather (rather than build a standalone batch) whenever the parent has
-    /// columns to replicate; otherwise a no-alias emitter (which never sets a
-    /// column) would emit an empty batch. Correlation origins never need a
-    /// separate check: they are only ever stamped by
-    /// `clone_active_rows_seq_origin`, which clones the outer batch's columns, so
-    /// a parent carrying origins always has at least one column. The result lanes
-    /// accumulate straight into typed columns instead of a `Vec<I>`, so a
-    /// multi-column item never materializes an intermediate tuple `Vec` just to
-    /// transpose it back into columns at the end.
+    /// something to replicate per result — a column, or a correlation origin;
+    /// otherwise a no-alias emitter (which never sets a column) would emit an
+    /// empty batch. Origins have to be checked in their own right: a parent can
+    /// carry them with no column at all, as the entry projection of a `CALL {}`
+    /// body that imports nothing does, and dropping them there detaches every
+    /// result from the input row it belongs to. The result lanes accumulate
+    /// straight into typed columns instead of a `Vec<I>`, so a multi-column item
+    /// never materializes an intermediate tuple `Vec` just to transpose it back
+    /// into columns at the end.
     fn start_batch(&self) -> (bool, Vec<usize>, I::Lanes) {
-        let should_expand = self.batch.as_ref().is_some_and(|b| b.num_columns() > 0);
+        let should_expand = self
+            .batch
+            .as_ref()
+            .is_some_and(|b| b.num_columns() > 0 || b.has_origins());
         let indices = if should_expand {
             Vec::with_capacity(self.pack_ceiling)
         } else {
