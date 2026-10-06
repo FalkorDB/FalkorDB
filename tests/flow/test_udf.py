@@ -1793,6 +1793,31 @@ class test_udf_javascript():
         v2 = self.graph.query("RETURN lib_args.f(1, 2, 3)").result_set[0][0]
         self.env.assertEqual(v2, [1, 2])
 
+    def test_get_neighbors_self_loop_once(self):
+        """
+        getNeighbors({returnType: 'edges'}) and graph.traverse report a
+        self-loop once, in every direction.
+        """
+
+        script = """
+        falkor.register('e', function(x, d) {
+            return x.getNeighbors({direction: d, returnType: 'edges'}).map(function(y) { return y.id; });
+        });
+        falkor.register('t', function(x, d) {
+            return graph.traverse([x], {direction: d, returnType: 'edges'})[0].map(function(y) { return y.id; });
+        });
+        """
+        self.db.udf_load("loop", script)
+        # e0 a->b, e1 b->c, e2 a->a, e3 c->a, e4 a->b
+        self.graph.query("""CREATE (a:A {id:0})-[:R]->(b:A {id:1})-[:R]->(c:A {id:2}),
+                                   (a)-[:R]->(a), (c)-[:S]->(a), (a)-[:R]->(b)""")
+
+        expected = {'outgoing': [0, 2, 4], 'incoming': [2, 3], 'both': [0, 2, 3, 4]}
+        for d, ids in expected.items():
+            res = self.graph.query(f"MATCH (n {{id: 0}}) RETURN loop.e(n, '{d}'), loop.t(n, '{d}')").result_set
+            self.env.assertEqual(sorted(res[0][0]), ids)
+            self.env.assertEqual(sorted(res[0][1]), ids)
+
     def test_returning_undefined(self):
         """
         UDFs returning `undefined` should map to Cypher NULL.

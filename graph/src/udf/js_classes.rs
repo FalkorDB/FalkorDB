@@ -101,10 +101,16 @@ fn collect_edges(
 ) -> Vec<(u64, u64, u64)> {
     let nid = NodeId::from(node_id);
     let mut edges = Vec::new();
+    // `get_node_relationships` yields a self-loop once as outgoing and once
+    // as incoming; report it once.
+    let mut self_loops: HashSet<u64> = HashSet::new();
     for (src, dst, rel_id) in g.get_node_relationships(nid) {
         let src_u64: u64 = src.into();
         let dst_u64: u64 = dst.into();
         let rel_u64: u64 = rel_id.into();
+        if src_u64 == dst_u64 && !self_loops.insert(rel_u64) {
+            continue;
+        }
         match direction {
             "outgoing" => {
                 if src_u64 == node_id {
