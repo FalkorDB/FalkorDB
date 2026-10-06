@@ -1316,6 +1316,17 @@ class testIndexScanFlow():
             with_idx.delete()
             no_idx.delete()
 
+    def test_38_exclusive_equal_string_bounds(self):
+        # `> 'a' AND < 'a'` is empty; the equal-bounds exact-match
+        # shortcut must only apply when both bounds are inclusive.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:'a', k:'a'}), (:L {v:'b', k:'b'})",
+            ["MATCH (n:L) WHERE n.v > 'a' AND n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a' AND n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 'a' AND n.v <= 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a' AND n.v <= 'a' RETURN n.k"])
+
     def test_41_open_bound_includes_infinity(self):
         # An absent bound is unbounded: `n.v > 0` selects a stored +inf.
         self._index_vs_scan(
