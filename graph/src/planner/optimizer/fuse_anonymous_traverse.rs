@@ -23,9 +23,9 @@
 //!
 //! The intermediate variable `b` must be anonymous (`_anon*` prefix), have no
 //! labels (the v1 runtime does not apply mid-chain label filters), have no
-//! inline attribute predicates, and not be referenced by any ancestor of the
-//! outer CT. Both edges must be anonymous, non-bidirectional, non-variable-
-//! length, and have no inline attribute predicates. Both ops must have empty
+//! inline attribute predicates, and not be read by any operator outside the
+//! outer CT's subtree. Both edges must be anonymous, non-bidirectional,
+//! non-variable-length, and have no inline attribute predicates. Both ops must have empty
 //! `sibling_edges` and `transposed = false`. When any condition fails the
 //! pair is left alone and the fast/slow paths run as before.
 
@@ -59,23 +59,16 @@ fn node_attrs_empty(
     matches!(root.data(), ExprIR::Map) && root.children().next().is_none()
 }
 
-/// True when no ancestor of `idx` (excluding the parent CondTraverse if any)
-/// references the variable `(var_id, scope_id)`. We reuse the per-IR-node
-/// reference check from `reduce_expand_into`'s helper.
+/// True when no operator outside the subtree rooted at `idx` (the parent
+/// CondTraverse, which consumes the intermediate) reads the variable
+/// `(var_id, scope_id)`.
 fn intermediate_unreferenced(
     plan: &DynTree<IR>,
     idx: orx_tree::NodeIdx<orx_tree::Dyn<IR>>,
     var_id: u32,
     scope_id: u32,
 ) -> bool {
-    let mut cur = idx;
-    while let Some(parent) = plan.node(cur).parent() {
-        if reduce_expand_into::ir_references_variable(parent.data(), var_id, scope_id) {
-            return false;
-        }
-        cur = parent.idx();
-    }
-    true
+    !reduce_expand_into::variable_read_outside(plan, idx, var_id, scope_id)
 }
 
 /// Returns true when `parent_ct` (outer) and `child_ct` (its only CT child)
@@ -171,11 +164,8 @@ fn can_fuse(
     // construction (the pass only ever inserts non-transposed hops).
     let _ = c_chain;
 
-    // Intermediate must not be referenced by any ancestor of the parent CT,
-    // since after fusion it disappears from the binding set. (Filters that
-    // reference the intermediate sit between parent and grandparent — those
-    // ancestors are skipped by intermediate_unreferenced's BFS walk, so we
-    // explicitly check the parent's siblings/ancestors via the same helper.)
+    // Intermediate must not be read by anything that sees the parent CT's
+    // output, since after fusion it disappears from the binding set.
     if !intermediate_unreferenced(
         plan,
         parent_idx,

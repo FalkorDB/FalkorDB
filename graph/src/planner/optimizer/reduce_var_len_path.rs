@@ -1,5 +1,5 @@
 //! Reduces `CondVarLenTraverse`'s `emit_path` to false when the path /
-//! relationship-list variable is not consumed by any ancestor operator.
+//! relationship-list variable is not read by any operator.
 //!
 //! `CondVarLenTraverse` binds its relationship alias to a `Value::Path` (the
 //! alternating `[Node, Rel, Node, ...]` element list). Materializing that path
@@ -7,22 +7,23 @@
 //! every emitted row — wasted work when the query never reads the path
 //! (e.g. `MATCH (a)-[:R*2..3]->(b) RETURN b.id`).
 //!
-//! This pass walks ancestors of each `CondVarLenTraverse` to check whether any
-//! expression references the path alias. If it is never consumed, `emit_path`
-//! is set to false and the operator skips path materialization.
+//! This pass checks every operator that can see a `CondVarLenTraverse`'s
+//! output (see `variable_read_outside`) for an expression referencing the
+//! path alias. If it is never consumed, `emit_path` is set to false and the
+//! operator skips path materialization.
 //!
 //! It runs twice. The first run (before the filter-movement passes) sees every
-//! original path consumer (Project/Filter/Sort/Aggregate/PathBuilder/...) as a
-//! direct ancestor. A second run after `absorb_edge_filters_into_vlt` catches
-//! paths whose last consumer was an edge-only filter that the absorption pass
-//! folded into the traversal. The second run is safe because
+//! original path consumer (Project/Filter/Sort/Aggregate/PathBuilder/...). A
+//! second run after `absorb_edge_filters_into_vlt` catches paths whose last
+//! consumer was an edge-only filter that the absorption pass folded into the
+//! traversal. The second run is safe because
 //! `ir_references_variable` inspects `ValueHashJoin` keys — the only new path
 //! consumer `replace_cartesian_with_hash_join` can introduce in between.
 
 use orx_tree::{Bfs, DynTree, NodeRef};
 
 use super::super::IR;
-use super::reduce_expand_into::ir_references_variable;
+use super::reduce_expand_into::variable_read_outside;
 
 pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
     let indices: Vec<_> = plan.root().indices::<Bfs>().collect();
@@ -36,18 +37,7 @@ pub(super) fn reduce_var_len_path(plan: &mut DynTree<IR>) {
             _ => continue,
         };
 
-        // Walk ancestors to check if the path alias is referenced.
-        let mut referenced = false;
-        let mut cur = idx;
-        while let Some(parent) = plan.node(cur).parent() {
-            if ir_references_variable(parent.data(), alias_id, alias_scope_id) {
-                referenced = true;
-                break;
-            }
-            cur = parent.idx();
-        }
-
-        if !referenced
+        if !variable_read_outside(plan, idx, alias_id, alias_scope_id)
             && let IR::CondVarLenTraverse { emit_path, .. } = plan.node_mut(idx).data_mut()
         {
             *emit_path = false;
@@ -133,5 +123,18 @@ mod tests {
         let paths = emit_paths(&plan);
         assert_eq!(paths.len(), 2, "expected two CondVarLenTraverse nodes");
         assert!(paths.into_iter().all(|kept| kept));
+    }
+
+    #[test]
+    fn path_read_outside_the_ancestors_is_kept() {
+        for query in [
+            "MATCH (a)-[p:R*1..2]->(b) CALL { WITH p RETURN length(p) AS s } RETURN s",
+            "MATCH (a)-[p:R*1..2]->(b) OPTIONAL MATCH (c) WHERE length(p) = 1 RETURN count(c)",
+            "MATCH (a)-[p:R*1..2]->(b) UNWIND p AS x RETURN count(x)",
+            "MATCH (a)-[p:R*1..2]->(b) CREATE (:Q {n: length(p)})",
+        ] {
+            let paths = emit_paths(&optimized_varlen_plan(query));
+            assert_eq!(paths, vec![true], "{query}");
+        }
     }
 }
