@@ -59,14 +59,24 @@ class testRdbLoad():
     # CRC-64 (Jones variant) - the checksum Redis stamps into DUMP/RESTORE
     # payload footers. reflected CRC, so the right-shift form uses the reflected
     # Jones polynomial (reflect(0xad93d23594c935a9))
-    @staticmethod
-    def _crc64(data):
+    # table-driven, so multi-megabyte payloads checksum in well under a second
+    _CRC64_TABLE = None
+
+    @classmethod
+    def _crc64(cls, data):
         POLY = 0x95ac9329ac4bc9b5
+        if cls._CRC64_TABLE is None:
+            table = []
+            for i in range(256):
+                crc = i
+                for _ in range(8):
+                    crc = (crc >> 1) ^ POLY if (crc & 1) else (crc >> 1)
+                table.append(crc)
+            cls._CRC64_TABLE = table
+        table = cls._CRC64_TABLE
         crc = 0
         for byte in data:
-            crc ^= byte
-            for _ in range(8):
-                crc = (crc >> 1) ^ POLY if (crc & 1) else (crc >> 1)
+            crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
         return crc & 0xFFFFFFFFFFFFFFFF
 
     # rebuild a valid DUMP payload from a (possibly truncated) module body:
@@ -143,3 +153,106 @@ class testRdbLoad():
         result = self.conn.execute_command("GRAPH.RO_QUERY", "sane",
                                            "MATCH (n:N) RETURN n.v")
         self.env.assertEqual(result[1], [[1]])
+
+    # DUMP 'key' over a raw connection, returns (module body, version bytes)
+    def _dump_body(self, key):
+        kw  = self.conn.connection_pool.connection_kwargs
+        raw = redis.Redis(host=kw.get('host', 'localhost'), port=kw['port'],
+                          decode_responses=False)
+        full = raw.execute_command("DUMP", key)
+        self.env.assertEqual(self._crc64(full[:-8]),
+                             int.from_bytes(full[-8:], 'little'))
+        return full[:-10], full[-10:-8]
+
+    # RESTORE of a truncated payload must fail, keep the server up and leave
+    # no key behind
+    def _assert_restore_rejected(self, payload):
+        self.conn.flushall()
+        failed = False
+        try:
+            self.conn.restore('trunc', 0, payload)
+        except ResponseError:
+            failed = True
+        self.env.assertTrue(failed)
+        self.env.assertTrue(self.conn.ping())
+        self.env.assertEqual(self.conn.keys('*'), [])
+
+    # Redis module type id: 9 chars of 6 bits each, then a 10-bit encver
+    @staticmethod
+    def _module_type_id(name, encver):
+        charset = ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                   "0123456789-_")
+        mid = 0
+        for ch in name:
+            mid = (mid << 6) | charset.index(ch)
+        return (mid << 10) | encver
+
+    # the encoder writes the graph in 256000-byte chunks, one RDB string each;
+    # a short read can only surface where a chunk fails to load. cutting
+    # inside the 2nd+ chunk leaves the decoder mid-graph, typically inside an
+    # entity's property list
+    def test_short_read_mid_decode(self):
+        self.conn.flushall()
+
+        props = ', '.join(f"p{k}: 'value_{k}_' + toString(i)" for k in range(8))
+        self.conn.execute_command("GRAPH.QUERY", "big",
+            "CREATE INDEX FOR (n:N) ON (n.v)")
+        self.conn.execute_command("GRAPH.QUERY", "big",
+            f"UNWIND range(1, 4000) AS i CREATE (:N {{v: i, {props}}})")
+        self.conn.execute_command("GRAPH.QUERY", "big",
+            "MATCH (a:N) MATCH (b:N {v: a.v + 1}) CREATE (a)-[:R {w: a.v}]->(b)")
+
+        # uncompressed, so each chunk occupies ~256000 bytes of the payload and
+        # the offsets below land one per chunk
+        self.conn.config_set('rdbcompression', 'no')
+        try:
+            body, version_bytes = self._dump_body("big")
+        finally:
+            self.conn.config_set('rdbcompression', 'yes')
+
+        # the graph must span several chunks for this test to mean anything
+        chunk = 256000
+        self.env.assertGreater(len(body), 4 * chunk)
+
+        # one cut in the middle of every chunk after the first
+        for off in range(chunk + chunk // 2, len(body) - 64, chunk):
+            self._assert_restore_rejected(self._reframe(body[:off],
+                                                        version_bytes))
+
+        # the untruncated payload still restores
+        self.conn.flushall()
+        self.conn.restore('big', 0, self._reframe(body, version_bytes))
+        result = self.conn.execute_command("GRAPH.RO_QUERY", "big",
+                                           "MATCH (n:N) RETURN count(n)")
+        self.env.assertEqual(result[1], [[4000]])
+
+    # graphs above VKEY_MAX_ENTITY_COUNT are split into a graphdata key plus
+    # graphmeta virtual keys (RDB files, replication streams). both types share
+    # the decoder, so a DUMP retagged as graphmeta exercises the graphmeta
+    # loader; a short read there must fail cleanly as well
+    def test_short_read_graphmeta(self):
+        self.conn.flushall()
+
+        self.conn.execute_command("GRAPH.QUERY", "src",
+            "CREATE (a:N {v:1})-[:R {w:2.5}]->(b:N {v:3}), (:M {s:'hello'})")
+        body, version_bytes = self._dump_body("src")
+
+        # body: <RDB_TYPE_MODULE_2><0x81><8-byte big-endian module type id>...
+        self.env.assertEqual(body[0], 7)
+        self.env.assertEqual(body[1], 0x81)
+        type_id = int.from_bytes(body[2:10], 'big')
+        encver  = type_id & 1023
+        self.env.assertEqual(type_id, self._module_type_id('graphdata', encver))
+
+        meta_id = self._module_type_id('graphmeta', encver)
+        meta    = body[:2] + meta_id.to_bytes(8, 'big') + body[10:]
+
+        # control: the retagged, untruncated payload loads as a graphmeta key
+        self.conn.flushall()
+        self.conn.restore('meta', 0, self._reframe(meta, version_bytes))
+        self.env.assertEqual(self.conn.type('meta'), 'graphmeta')
+
+        n = len(meta)
+        for off in [15, 25, 40, n // 3, n // 2, n - 40, n - 12]:
+            self._assert_restore_rejected(self._reframe(meta[:off],
+                                                        version_bytes))

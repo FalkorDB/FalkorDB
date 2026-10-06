@@ -136,6 +136,17 @@ static SIValue _RdbLoadVector
 
 #define ENTITY_PROP_STACK_THRESHOLD 256
 
+// free decoded property values that will not be attached to an entity
+static void _FreeValues
+(
+	SIValue *vals,  // values to free
+	uint64_t n      // number of values
+) {
+	for (uint64_t i = 0 ; i < n ; i++) {
+		SIValue_Free (vals [i]) ;
+	}
+}
+
 static void _RdbLoadEntity
 (
 	SerializerIO rdb,
@@ -163,6 +174,13 @@ static void _RdbLoadEntity
 			vals [i] = _RdbLoadSIValue (rdb) ;
 		}
 
+		// short read mid-entity: the remaining slots hold zeroed ids and
+		// NULL values, which AttributeSet_Add rejects; drop the entity
+		if (unlikely (SerializerIO_Error (rdb))) {
+			_FreeValues (vals, n) ;
+			return ;
+		}
+
 		AttributeSet_Add (e->attributes, ids, vals, n, false) ;
 		return ;
 	}
@@ -177,6 +195,14 @@ static void _RdbLoadEntity
 	for (uint64_t i = 0 ; i < n ; i++) {
 		ids  [i] = SerializerIO_ReadUnsigned (rdb) ;
 		vals [i] = _RdbLoadSIValue (rdb) ;
+	}
+
+	// short read mid-entity, see above
+	if (unlikely (SerializerIO_Error (rdb))) {
+		_FreeValues (vals, n) ;
+		rm_free (ids) ;
+		rm_free (vals) ;
+		return ;
 	}
 
 	AttributeSet_Add (e->attributes, ids, vals, n, false) ;
