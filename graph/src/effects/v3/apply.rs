@@ -36,6 +36,7 @@ use crate::{
 // wrote it, so the error lives beside `DecodeError`. Re-exported because
 // this is where callers have always found it.
 pub use crate::effects::error::{ApplyError, LocalName};
+use roaring::RoaringTreemap;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
@@ -78,7 +79,10 @@ pub fn apply_effects(
     // it hands back is part of the replication protocol's diagnostics — the
     // caller must not commit a version built from one. `MvccGraph::commit`
     // validates again before publishing; that is the net under every write path,
-    // not a substitute for rejecting the buffer here.
+    // not a substitute for rejecting the buffer here. It is also where an edge
+    // onto a node this buffer deleted is refused if it is still standing (see
+    // `CreateEdge` below): settled only at the end, like the id space, because
+    // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
 
     g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
@@ -97,6 +101,7 @@ impl From<NodeOpError> for ApplyError {
         match e {
             NodeOpError::Graph(e) => Self::Graph(e),
             NodeOpError::IdSpace { kind, source } => id_space_error_map(kind, source),
+            NodeOpError::DanglingRelationship { id } => Self::DanglingRelationship { id },
         }
     }
 }
@@ -254,6 +259,25 @@ fn apply_record(
             rows,
         } => {
             let type_name = resolve_type(g, relation_id)?;
+            // Both endpoints must be live nodes — created before this buffer
+            // or by an earlier record in it. The bulk create writes the pairs
+            // straight into the tensor, the adjacency matrix and the endpoint
+            // index, so a dead endpoint becomes an edge hanging off an id the
+            // next created node inherits (#2924).
+            //
+            // Per segment, not per id: a bulk create's endpoint columns are
+            // runs, and collecting them id by id cost more than the create.
+            //
+            // One exception, and the only way a legitimate buffer names a dead
+            // endpoint: a node an earlier record of this buffer deleted. The
+            // primary emits a cancelled edge's create/delete pair after the
+            // deleted nodes, so a query that created an edge off a committed
+            // node and then deleted the node ships the pair after the node is
+            // gone. The node id space remembers what this batch released, and
+            // `Graph::validate` refuses the buffer at the end if such an edge
+            // is still standing.
+            let endpoints = (src.to_roaring() | dst.to_roaring()) - g.node_id_space().released();
+            require_live(g, EntityType::Node, &endpoints)?;
             // `&[u64]` for the bulk APIs; materialized once each.
             let (ids, src, dst): (Vec<u64>, Vec<u64>, Vec<u64>) = (
                 ids.iter().collect(),
@@ -287,6 +311,7 @@ fn apply_record(
             attr_ids,
             rows,
         } => {
+            require_live(g, EntityType::Node, &ids.to_roaring())?;
             let ids: Vec<u64> = ids.iter().collect();
             check_attr_shape(g, &ids, &attr_ids, &rows)?;
             let label_ids = checked_label_ids(g, &labels)?;
@@ -306,6 +331,7 @@ fn apply_record(
             attr_ids,
             rows,
         } => {
+            require_live(g, EntityType::Relationship, &ids.to_roaring())?;
             let ids: Vec<u64> = ids.iter().collect();
             // Stated once for the record, so the index bookkeeping does not
             // re-derive it per edge. `set_relationships_attributes` calls
@@ -320,6 +346,7 @@ fn apply_record(
         }
 
         Record::SetLabels { ids, labels } => {
+            require_live(g, EntityType::Node, &ids.to_roaring())?;
             let label_ids = checked_label_ids(g, &labels)?;
             g.set_node_labels_product(
                 &ids.iter().collect::<Vec<_>>(),
@@ -331,6 +358,7 @@ fn apply_record(
         }
 
         Record::RemoveLabels { ids, labels } => {
+            require_live(g, EntityType::Node, &ids.to_roaring())?;
             let label_ids = checked_label_ids(g, &labels)?;
             // Removal still takes the expanded pairs; only the add path has
             // been given the compact form so far.
@@ -353,6 +381,15 @@ fn apply_record(
             // `Vec<u64>` first, and a delete-by-label arrives as a consecutive
             // range — the one shape that has no vector to hand over.
             let nodes = ids.to_roaring();
+            // Liveness first: the relationship check below seeks every id in
+            // the tensors, which only hold rows for ids this graph allocated.
+            require_live(g, EntityType::Node, &nodes)?;
+            // The delete does not cascade — the primary ships every edge it
+            // removed as a `DELETE_EDGE` ahead of this record — so a node that
+            // still has one here would leave it dangling off a recycled id.
+            if let Some(id) = g.first_node_with_relationships(&nodes) {
+                return Err(ApplyError::NodeHasRelationships { id });
+            }
             // Two ways a delete can name something that is not live, and the
             // graph answers one of them by itself: an id already in the recycle
             // bin. The other — at or above the boundary this buffer started from
@@ -599,6 +636,27 @@ fn resolve_type(
             kind: "relationship type",
             id: i64::from(relation_id),
         })
+}
+
+/// Refuse a record that acts on an entity this replica does not hold live.
+///
+/// Live means allocated — before this buffer, or by an earlier record in it —
+/// and not in the recycle bin, which is exactly what [`IdSpace`] already
+/// answers for deletes. Records that update, relabel or connect an entity ask
+/// the same question: without it they write to a recycled id, and the next
+/// entity to reclaim that id is born with the write.
+fn require_live(
+    g: &Graph,
+    kind: EntityType,
+    ids: &RoaringTreemap,
+) -> Result<(), ApplyError> {
+    let (space, name) = match kind {
+        EntityType::Node => (g.node_id_space(), "node"),
+        EntityType::Relationship => (g.relationship_id_space(), "relationship"),
+    };
+    space
+        .refuse_not_live(ids)
+        .map_err(|e| id_space_error_map(name, e))
 }
 
 /// An `UPDATE_EDGE`'s relationship type, checked against this graph.
@@ -2003,5 +2061,301 @@ mod tests {
         };
         assert_eq!(got.dimension, 4);
         assert_eq!(got.similarity_function.as_deref(), Some("cosine"));
+    }
+
+    /// Nodes 0, 1 and 2, edge 0 from 0 to 1, then node 2 deleted: one live
+    /// node with an edge, one without, and one id in the recycle bin.
+    fn liveness_setup() -> Graph {
+        let mut g = graph();
+        let mut buf = new_buffer();
+        Record::AddRelType {
+            id: 0,
+            name: "R".to_owned(),
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::AddLabel {
+            id: 0,
+            name: "L".to_owned(),
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::AddAttribute {
+            id: 0,
+            name: "x".to_owned(),
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateNode {
+            ids: IdList::from([0, 1, 2]),
+            labels: vec![],
+            attr_ids: vec![],
+            rows: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        write_create_edge(&mut buf, &[0]);
+        write_delete(&mut buf, &IdList::from([2]), &[]);
+        apply_effects(&mut g, &buf).expect("setup must apply");
+        // A later buffer is a later write version, with a batch of its own —
+        // as `GRAPH.EFFECT` applies it. Without that, node 2 would still read
+        // as released by *this* batch, which a buffer may legitimately name.
+        g.new_version()
+    }
+
+    fn apply_one(
+        g: &mut Graph,
+        record: Record,
+    ) -> Result<(), ApplyError> {
+        let mut buf = new_buffer();
+        record.encode(&mut buf).unwrap();
+        apply_effects(g, &buf)
+    }
+
+    fn assert_not_live(
+        res: Result<(), ApplyError>,
+        want_kind: &str,
+        want_id: u64,
+    ) {
+        match res {
+            Err(ApplyError::NotLive { kind, id, .. }) if kind == want_kind && id == want_id => {}
+            other => panic!("expected NotLive {want_kind} {want_id}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_edge_to_a_node_that_is_not_live_is_refused() {
+        // #2924: the endpoints went straight into the tensor, so the edge
+        // dangled and the next node to take the id inherited it.
+        for (src, dst, dead) in [(0, 2, 2), (2, 0, 2), (0, 7, 7), (7, 7, 7)] {
+            let mut g = liveness_setup();
+            let res = apply_one(
+                &mut g,
+                Record::CreateEdge {
+                    ids: IdList::from([1]),
+                    relation_id: 0,
+                    src: IdList::from([src]),
+                    dst: IdList::from([dst]),
+                    attr_ids: vec![],
+                    rows: vec![],
+                },
+            );
+            assert_not_live(res, "node", dead);
+            assert_eq!(g.relationship_count(), 1, "{src}->{dst} was applied");
+        }
+    }
+
+    #[test]
+    fn an_edge_to_a_node_created_earlier_in_the_buffer_applies() {
+        let mut g = liveness_setup();
+        let mut buf = new_buffer();
+        Record::CreateNode {
+            ids: IdList::from([2, 3]),
+            labels: vec![],
+            attr_ids: vec![],
+            rows: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::CreateEdge {
+            ids: IdList::from([1]),
+            relation_id: 0,
+            src: IdList::from([2]),
+            dst: IdList::from([3]),
+            attr_ids: vec![],
+            rows: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        apply_effects(&mut g, &buf).expect("both endpoints are live by then");
+        assert_eq!(g.relationship_count(), 2);
+    }
+
+    /// A node deleted earlier in the buffer may still be named, as the
+    /// primary's cancelled-edge pair does, but only if the edge goes too.
+    fn edge_onto_a_node_deleted_here(delete_edge_after: bool) -> Result<(), ApplyError> {
+        let mut g = liveness_setup();
+        let mut buf = new_buffer();
+        Record::CreateNode {
+            ids: IdList::from([2]),
+            labels: vec![],
+            attr_ids: vec![],
+            rows: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        write_delete(&mut buf, &IdList::from([2]), &[]);
+        Record::CreateEdge {
+            ids: IdList::from([1]),
+            relation_id: 0,
+            src: IdList::from([0]),
+            dst: IdList::from([2]),
+            attr_ids: vec![],
+            rows: vec![],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        if delete_edge_after {
+            Record::DeleteEdge {
+                ids: IdList::from([1]),
+                relation_id: 0,
+                src: IdList::from([0]),
+                dst: IdList::from([2]),
+            }
+            .encode(&mut buf)
+            .unwrap();
+        }
+        // Refused at the end of the buffer, after the records ran: the caller's
+        // rollback is what discards them, as for every end-of-buffer check.
+        apply_effects(&mut g, &buf)
+    }
+
+    #[test]
+    fn an_edge_onto_a_node_deleted_earlier_in_the_buffer_must_not_survive_it() {
+        edge_onto_a_node_deleted_here(true).expect("the pair nets out");
+        let res = edge_onto_a_node_deleted_here(false);
+        assert!(
+            matches!(res, Err(ApplyError::DanglingRelationship { id: 1 })),
+            "{res:?}"
+        );
+    }
+
+    #[test]
+    fn updating_a_node_that_is_not_live_is_refused() {
+        // The recycled id first: the write used to land in the store and
+        // surface on the next node created with that id.
+        for id in [2, 50, 1 << 36] {
+            let mut g = liveness_setup();
+            let res = apply_one(
+                &mut g,
+                Record::UpdateNode {
+                    ids: IdList::from([id]),
+                    labels: vec![],
+                    attr_ids: vec![0],
+                    rows: vec![Value::Int(666)],
+                },
+            );
+            assert_not_live(res, "node", id);
+        }
+    }
+
+    #[test]
+    fn relabelling_a_node_that_is_not_live_is_refused() {
+        for id in [2, 50, 1 << 40] {
+            let mut g = liveness_setup();
+            let res = apply_one(
+                &mut g,
+                Record::SetLabels {
+                    ids: IdList::from([id]),
+                    labels: vec![0],
+                },
+            );
+            assert_not_live(res, "node", id);
+            let res = apply_one(
+                &mut g,
+                Record::RemoveLabels {
+                    ids: IdList::from([id]),
+                    labels: vec![0],
+                },
+            );
+            assert_not_live(res, "node", id);
+        }
+    }
+
+    #[test]
+    fn updating_an_edge_that_is_not_live_is_refused() {
+        let mut g = liveness_setup();
+        let res = apply_one(
+            &mut g,
+            Record::UpdateEdge {
+                ids: IdList::from([5]),
+                relation_id: 0,
+                attr_ids: vec![0],
+                rows: vec![Value::Int(888)],
+            },
+        );
+        assert_not_live(res, "relationship", 5);
+    }
+
+    #[test]
+    fn updates_and_labels_on_live_entities_still_apply() {
+        let mut g = liveness_setup();
+        let mut buf = new_buffer();
+        Record::UpdateNode {
+            ids: IdList::from([0, 1]),
+            labels: vec![],
+            attr_ids: vec![0],
+            rows: vec![Value::Int(1), Value::Int(2)],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::SetLabels {
+            ids: IdList::from([0]),
+            labels: vec![0],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::RemoveLabels {
+            ids: IdList::from([0]),
+            labels: vec![0],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        Record::UpdateEdge {
+            ids: IdList::from([0]),
+            relation_id: 0,
+            attr_ids: vec![0],
+            rows: vec![Value::Int(3)],
+        }
+        .encode(&mut buf)
+        .unwrap();
+        apply_effects(&mut g, &buf).expect("every id is live");
+    }
+
+    #[test]
+    fn deleting_a_node_that_still_has_edges_is_refused() {
+        // Either end: node 0 is the source, node 1 the destination. With one
+        // edge the check walks the tensor; with three parallel edges it has
+        // more edges than nodes to check, and seeks the node's rows instead.
+        for (id, extra) in [(0, false), (1, false), (0, true), (1, true)] {
+            let mut g = liveness_setup();
+            if extra {
+                let mut buf = new_buffer();
+                write_create_edge(&mut buf, &[1, 2]);
+                apply_effects(&mut g, &buf).expect("parallel edges apply");
+            }
+            let edges = g.relationship_count();
+            let res = apply_one(
+                &mut g,
+                Record::DeleteNode {
+                    ids: IdList::from([id]),
+                    labels: vec![],
+                },
+            );
+            assert!(
+                matches!(res, Err(ApplyError::NodeHasRelationships { id: got }) if got == id),
+                "{res:?}"
+            );
+            assert_eq!(g.node_count(), 2);
+            assert_eq!(g.relationship_count(), edges);
+        }
+    }
+
+    #[test]
+    fn deleting_the_edges_first_lets_the_node_go() {
+        // What the primary actually ships for `DETACH DELETE`.
+        let mut g = liveness_setup();
+        let mut buf = new_buffer();
+        Record::DeleteEdge {
+            ids: IdList::from([0]),
+            relation_id: 0,
+            src: IdList::from([0]),
+            dst: IdList::from([1]),
+        }
+        .encode(&mut buf)
+        .unwrap();
+        write_delete(&mut buf, &IdList::from([0, 1]), &[]);
+        apply_effects(&mut g, &buf).expect("no edge is left on either node");
+        assert_eq!(g.node_count(), 0);
     }
 }
