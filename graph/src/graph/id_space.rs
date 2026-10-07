@@ -51,6 +51,11 @@
 //! whole effects buffer, or one commit segment of a write query.
 //! [`IdSpace::open_batch`] begins one, and has a precondition worth reading.
 //!
+//! A fifth field, `released`, records what the batch freed. It is outside the
+//! equation above — a release already moves both of its halves — and exists
+//! for callers that must tell "freed by this batch" from "free before it"; see
+//! [`IdSpace::released`].
+//!
 //! A batch exists because density holds between batches and not within one. The
 //! effects apply path ingests records grouped by shape rather than ordered by
 //! id, so a create of 500..600 may precede one of 0..500; between them the space
@@ -189,6 +194,17 @@ pub struct IdSpace {
     /// Only grows within a batch — a later delete does not un-allocate an id, it
     /// frees one that was.
     taken: RoaringTreemap,
+    /// Every id the open batch has *released* — freed by [`Self::release`] —
+    /// whether or not a later create in the same batch reclaimed it.
+    ///
+    /// Not part of the invariant: a release already moves `live` and
+    /// `recycled` together, so the boundary needs nothing more. It is kept for
+    /// the one question only the batch can answer — "was this entity live when
+    /// the batch began, and did the batch itself end it" — which a caller
+    /// reading a buffer in record order needs: a record may legitimately name an
+    /// id an earlier record of the same batch freed. Cleared with `taken`, for
+    /// the same reason.
+    released: RoaringTreemap,
 }
 
 /// Append up to `count` ids from `pool` that `held` does not already hold, to
@@ -253,6 +269,7 @@ impl IdSpace {
             recycled: RoaringTreemap::new(),
             entry_bound: 0,
             taken: RoaringTreemap::new(),
+            released: RoaringTreemap::new(),
         }
     }
 
@@ -270,6 +287,7 @@ impl IdSpace {
             recycled,
             entry_bound,
             taken: RoaringTreemap::new(),
+            released: RoaringTreemap::new(),
         }
     }
 
@@ -283,6 +301,21 @@ impl IdSpace {
     #[must_use]
     pub const fn recycled(&self) -> &RoaringTreemap {
         &self.recycled
+    }
+
+    /// Every id the open batch has taken: created, or reserved and cancelled.
+    ///
+    /// Untrimmed (see the field), so it may hold ids below the entry boundary
+    /// that the batch reclaimed, and ids it has since released again.
+    #[must_use]
+    pub const fn taken(&self) -> &RoaringTreemap {
+        &self.taken
+    }
+
+    /// Every id the open batch has released, including any it then reclaimed.
+    #[must_use]
+    pub const fn released(&self) -> &RoaringTreemap {
+        &self.released
     }
 
     /// How many of them there are.
@@ -326,7 +359,8 @@ impl IdSpace {
 
     /// The same id space in a new MVCC version, with a fresh batch.
     ///
-    /// A version is where a batch begins, so `taken` is not carried forward:
+    /// A version is where a batch begins, so neither `taken` nor `released` is
+    /// carried forward:
     /// that would put per-batch state in a version readers hold, and have a
     /// `verify` there measure the previous version's work.
     #[must_use]
@@ -349,6 +383,7 @@ impl IdSpace {
             recycled,
             entry_bound,
             taken,
+            released: RoaringTreemap::new(),
         }
     }
 
@@ -385,7 +420,8 @@ impl IdSpace {
     ///
     /// Rebuilt rather than re-anchored: carrying `taken` across would measure
     /// two batches against one boundary. An id the last batch took is an
-    /// ordinary recycled id to the next one.
+    /// ordinary recycled id to the next one, and one it released is an ordinary
+    /// free one.
     ///
     /// # Every reservation must be settled first
     ///
@@ -412,6 +448,7 @@ impl IdSpace {
         self.checked()?;
         self.entry_bound = self.bound();
         self.taken.clear();
+        self.released.clear();
         Ok(())
     }
 
@@ -623,6 +660,30 @@ impl IdSpace {
         }
     }
 
+    /// Refuse ids that are not live right now: free, or never allocated.
+    ///
+    /// Both halves of liveness — [`Self::refuse_recycled`] and
+    /// [`Self::refuse_undeletable`] — for a caller that acts on an entity
+    /// rather than creating or freeing it: an update, a label change, an edge
+    /// endpoint. Without it such a record lands on a recycled id, and the next
+    /// entity that reclaims the id is born carrying it. Changes nothing.
+    ///
+    /// A reserved id is still in the bin (see [`Self::reserve`]) and reads as
+    /// not live here; the effects path, which is what asks, never reserves.
+    ///
+    /// # Errors
+    ///
+    /// [`IdSpaceError::AlreadyRecycled`] for an id that is already free, and
+    /// [`IdSpaceError::NeverCreated`] for one at or above the entry boundary
+    /// that this batch never allocated.
+    pub fn refuse_not_live(
+        &self,
+        ids: &RoaringTreemap,
+    ) -> Result<(), IdSpaceError> {
+        self.refuse_recycled(ids)?;
+        self.refuse_undeletable(ids)
+    }
+
     /// Free `freed`, having first refused the whole of `requested`.
     ///
     /// The mirror of [`Self::create`].
@@ -650,10 +711,10 @@ impl IdSpace {
             freed.is_subset(requested),
             "freeing an id that was not asked for"
         );
-        self.refuse_recycled(requested)?;
-        self.refuse_undeletable(requested)?;
+        self.refuse_not_live(requested)?;
         self.recycled |= freed;
         self.live -= freed.len();
+        self.released |= freed;
         self.checked()
     }
 

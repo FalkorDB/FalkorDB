@@ -1306,6 +1306,19 @@ impl Tensor {
         Iter::new(self, min_row, max_row, transpose)
     }
 
+    /// How many `(src, dst)` pairs end at one of `dsts`: the selected rows of
+    /// the backward adjacency `mt`, counted in one bulk product whose cost
+    /// follows `dsts` rather than the tensor (see
+    /// [`VersionedMatrix::count_in_rows`]). Pairs, not edges: a multi-edge pair
+    /// counts once. `dsts` must be as long as the tensor is wide.
+    #[must_use]
+    pub fn count_pairs_into(
+        &self,
+        dsts: &Vector<bool>,
+    ) -> u64 {
+        self.mt.count_in_rows(dsts)
+    }
+
     /// How many pairs are multi-edge, computed from `me` rather than tracked.
     ///
     /// Promotion completeness makes this a structural property of `me`:
