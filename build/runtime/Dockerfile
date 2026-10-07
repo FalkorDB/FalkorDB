@@ -152,7 +152,7 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 #   libssl3                         : redis-server with BUILD_TLS=yes
 #
 # CVE trim: purge python3.13 + force-remove essential packages not needed at
-# runtime (ncurses, perl, login, passwd). With no LLVM in this image any more
+# runtime (ncurses, perl, login, passwd, util-linux). With no LLVM in this image any more
 # we can run the trim straight through without the load-bearing ordering the
 # old layout required.
 RUN set -eux; \
@@ -174,6 +174,16 @@ RUN set -eux; \
     (dpkg --force-remove-essential --purge perl-base || true); \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true); \
     (dpkg --purge passwd || true); \
+    # util-linux, mount and bsdutils ship the setuid mount/umount/su plus
+    # nsenter/unshare, and between them carry most of the image's HIGH
+    # findings that Debian has not fixed yet. Nothing here runs them, and no
+    # other installed package depends on them or on their five libraries.
+    # No `|| true`: if a new dependent appears, fail the build rather than
+    # silently ship them — the Trivy gate ignores unfixed findings, so
+    # nothing else would notice.
+    dpkg --force-remove-essential --purge \
+        util-linux mount bsdutils \
+        libmount1 libblkid1 libuuid1 libsmartcols1 liblastlog2-2; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
 
