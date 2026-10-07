@@ -1,4 +1,4 @@
-//! Order-preserving key encoding for the index (PR2 · P1).
+//! Order-preserving key encoding for the index.
 //!
 //! The numeric index stores `(key, doc)` tuples in a
 //! [`CowBTree`](super::data_structures::cow_btree), sorted by `(key, doc)`:

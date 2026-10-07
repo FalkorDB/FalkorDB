@@ -438,7 +438,7 @@ pub struct Graph {
     pub schema_version: u64,
     /// FalkorDB numeric indexes, folded into the graph version: `new_version`
     /// forks them copy-on-write and the committed-version swap publishes graph +
-    /// index atomically (PR2 · P3). Strictly gated — absent when the feature is
+    /// index atomically. Strictly gated — absent when the feature is
     /// off.
     #[cfg(feature = "index-falkordb")]
     falkordb_index: crate::index::falkordb::falkordb_index::FalkorDbIndex,

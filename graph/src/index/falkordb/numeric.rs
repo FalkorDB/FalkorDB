@@ -1,11 +1,11 @@
-//! The index (PR2 · P2): a CoW B⁺-tree of `(key, entity_id)`
-//! tuples, where `key` is the [`encode_numeric`] image of the indexed value.
+//! The numeric index: a CoW B⁺-tree of `(key, entity_id)` tuples, where `key` is the
+//! [`encode_numeric`] image of the indexed value.
 //!
-//! Concrete-first — no trait yet. The generic `Index` trait is extracted at P4,
-//! when there is an actual dispatch caller (the indexer). MVCC is intrinsic: a
-//! query snapshots the tree in `O(1)` (root-`Arc` clone) and writes are
-//! copy-on-write, so readers never see a torn write. Folding the root into the
-//! graph's committed version is P3.
+//! One concrete type, no trait: index kinds are a closed set, dispatched through the
+//! [`IndexColumn`](super::falkordb_index::IndexColumn) enum. MVCC is intrinsic: a query snapshots
+//! the tree in `O(1)` (root-`Arc` clone) and writes are copy-on-write, so readers never see a torn
+//! write. The tree's root lives on the graph version itself — see
+//! [`FalkorDbIndex`](super::falkordb_index::FalkorDbIndex).
 
 use super::data_structures::cow_btree::{CowBTree, RangeIter};
 use super::encode::encode_numeric;

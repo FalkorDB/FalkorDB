@@ -1,4 +1,4 @@
-//! Folded-roots MVCC holder (PR2 · P3/P4a): the FalkorDB index state that lives
+//! Folded-roots MVCC holder: the FalkorDB index state that lives
 //! on [`Graph`](crate::graph::Graph) as its own copy-on-write field, so
 //! `Graph::new_version()` forks it in `O(1)` per column and the committed-version
 //! `Arc<AtomicRefCell<Graph>>` swap publishes graph + index together — one atomic
@@ -21,8 +21,8 @@ use super::numeric::{DocIter, NumericIndex};
 
 /// Identifies one index column: `(label, attribute)`.
 ///
-/// Placeholder key shape for P4 — a later step may switch to interned numeric
-/// ids for compactness once the write/read wiring already resolves names.
+/// Keyed by name for now; interned numeric ids would be more compact once the write and read
+/// paths both resolve names to ids.
 pub type IndexKey = (Arc<String>, Arc<String>);
 
 /// A staged batch of maintenance for one commit: `(label, attr) → [(value, id)]`,
