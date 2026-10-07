@@ -72,6 +72,13 @@ def module_type_name(module_id):
                    for i in range(9))
 
 
+def module_type_id(name, encver):
+    mid = 0
+    for ch in name:
+        mid = (mid << 6) | _MODULE_CHARSET.index(ch)
+    return (mid << 10) | encver
+
+
 _CRC64_TABLE = None
 
 
@@ -398,6 +405,11 @@ class GraphValue:
         assert f.tag == TAG_UNSIGNED, name
         self.buf[f.off:f.off + 8] = value.to_bytes(8, 'little')
 
+    def set_tag(self, name, tag):
+        """overwrite a value's serializer type tag"""
+        f = self.fields[name]
+        self.buf[f.off - (9 if f.tag == TAG_BYTES else 1)] = tag
+
     def set_length(self, name, length):
         """overwrite a byte buffer's declared length, keeping its bytes"""
         f = self.fields[name]
@@ -410,16 +422,20 @@ class GraphValue:
     def remove_value(self, name):
         """drop a value (tag and bytes), fixing the RDB string length around
         it; field offsets after it are stale afterwards"""
-        f = self.fields[name]
+        self.remove_values(name, name)
+
+    def remove_values(self, first, last):
+        """drop the values from 'first' through 'last', both included"""
+        f, l = self.fields[first], self.fields[last]
         start = f.off - (9 if f.tag == TAG_BYTES else 1)
-        end = f.off + f.size
+        end = l.off + l.size
         for q, d, e in self.chunks:
             if d <= start and end <= e:
                 prefix = rdb_len_bytes((e - d) - (end - start))
                 self.buf[start:end] = b''
                 self.buf[q:d] = prefix
                 return
-        raise ValueError(f'{name} spans RDB strings')
+        raise ValueError(f'{first}..{last} spans RDB strings')
 
     def find(self, suffix, value):
         """names of the fields ending with 'suffix' whose value is 'value'"""

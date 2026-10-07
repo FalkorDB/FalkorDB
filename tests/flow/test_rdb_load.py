@@ -1,4 +1,5 @@
 from common import *
+from rdb_payload import crc64, reframe, module_type_id
 
 # TODO: when introducing new encoder/decoder this needs to be updated consider
 # using GRAPH.DEBUG command to be able to get this data
@@ -56,37 +57,6 @@ class testRdbLoad():
 
         self.conn.save()
 
-    # CRC-64 (Jones variant) - the checksum Redis stamps into DUMP/RESTORE
-    # payload footers. reflected CRC, so the right-shift form uses the reflected
-    # Jones polynomial (reflect(0xad93d23594c935a9))
-    # table-driven, so multi-megabyte payloads checksum in well under a second
-    _CRC64_TABLE = None
-
-    @classmethod
-    def _crc64(cls, data):
-        POLY = 0x95ac9329ac4bc9b5
-        if cls._CRC64_TABLE is None:
-            table = []
-            for i in range(256):
-                crc = i
-                for _ in range(8):
-                    crc = (crc >> 1) ^ POLY if (crc & 1) else (crc >> 1)
-                table.append(crc)
-            cls._CRC64_TABLE = table
-        table = cls._CRC64_TABLE
-        crc = 0
-        for byte in data:
-            crc = table[(crc ^ byte) & 0xFF] ^ (crc >> 8)
-        return crc & 0xFFFFFFFFFFFFFFFF
-
-    # rebuild a valid DUMP payload from a (possibly truncated) module body:
-    # <body><2-byte RDB version><8-byte CRC64>. without a correct footer Redis
-    # rejects the payload before the module decoder ever runs
-    @classmethod
-    def _reframe(cls, body, version_bytes):
-        payload = body + version_bytes
-        return payload + cls._crc64(payload).to_bytes(8, 'little')
-
     # a truncated RDB payload must fail the load gracefully - the module must
     # detect the short read, tear down the partial graph and error out, without
     # crashing the server or leaking a graph
@@ -103,21 +73,7 @@ class testRdbLoad():
         self.conn.execute_command("GRAPH.QUERY", "src",
             "CREATE INDEX FOR (n:N) ON (n.v)")
 
-        # DUMP returns a binary payload; use a raw (non-decoding) connection so
-        # the bytes are not mangled by UTF-8 decoding
-        kw  = self.conn.connection_pool.connection_kwargs
-        raw = redis.Redis(host=kw.get('host', 'localhost'), port=kw['port'],
-                          decode_responses=False)
-        full = raw.execute_command("DUMP", "src")
-
-        version_bytes = full[-10:-8]   # 2-byte RDB version
-        body          = full[:-10]     # module payload without the footer
-
-        # sanity: our CRC64 reproduces the footer of the known-good payload,
-        # which proves the reframed truncated payloads below are accepted by
-        # Redis and actually reach the module decoder
-        self.env.assertEqual(self._crc64(full[:-8]),
-                             int.from_bytes(full[-8:], 'little'))
+        body, version_bytes = self._dump_body("src")
 
         self.conn.flushall()
 
@@ -128,7 +84,7 @@ class testRdbLoad():
             if off <= 12 or off >= n:
                 continue
 
-            truncated = self._reframe(body[:off], version_bytes)
+            truncated = reframe(body[:off], version_bytes)
 
             self.conn.flushall()
 
@@ -154,13 +110,12 @@ class testRdbLoad():
                                            "MATCH (n:N) RETURN n.v")
         self.env.assertEqual(result[1], [[1]])
 
-    # DUMP 'key' over a raw connection, returns (module body, version bytes)
+    # DUMP 'key', returns (module body, version bytes)
     def _dump_body(self, key):
-        kw  = self.conn.connection_pool.connection_kwargs
-        raw = redis.Redis(host=kw.get('host', 'localhost'), port=kw['port'],
-                          decode_responses=False)
-        full = raw.execute_command("DUMP", key)
-        self.env.assertEqual(self._crc64(full[:-8]),
+        full = self.conn.dump(key)
+        # our CRC64 reproduces the footer of the known-good payload, so the
+        # payloads the tests reframe pass Redis' check and reach the decoder
+        self.env.assertEqual(crc64(full[:-8]),
                              int.from_bytes(full[-8:], 'little'))
         return full[:-10], full[-10:-8]
 
@@ -176,16 +131,6 @@ class testRdbLoad():
         self.env.assertTrue(failed)
         self.env.assertTrue(self.conn.ping())
         self.env.assertEqual(self.conn.keys('*'), [])
-
-    # Redis module type id: 9 chars of 6 bits each, then a 10-bit encver
-    @staticmethod
-    def _module_type_id(name, encver):
-        charset = ("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-                   "0123456789-_")
-        mid = 0
-        for ch in name:
-            mid = (mid << 6) | charset.index(ch)
-        return (mid << 10) | encver
 
     # the encoder writes the graph in 256000-byte chunks, one RDB string each;
     # a short read can only surface where a chunk fails to load. cutting
@@ -216,12 +161,12 @@ class testRdbLoad():
 
         # one cut in the middle of every chunk after the first
         for off in range(chunk + chunk // 2, len(body) - 64, chunk):
-            self._assert_restore_rejected(self._reframe(body[:off],
+            self._assert_restore_rejected(reframe(body[:off],
                                                         version_bytes))
 
         # the untruncated payload still restores
         self.conn.flushall()
-        self.conn.restore('big', 0, self._reframe(body, version_bytes))
+        self.conn.restore('big', 0, reframe(body, version_bytes))
         result = self.conn.execute_command("GRAPH.RO_QUERY", "big",
                                            "MATCH (n:N) RETURN count(n)")
         self.env.assertEqual(result[1], [[4000]])
@@ -242,138 +187,20 @@ class testRdbLoad():
         self.env.assertEqual(body[1], 0x81)
         type_id = int.from_bytes(body[2:10], 'big')
         encver  = type_id & 1023
-        self.env.assertEqual(type_id, self._module_type_id('graphdata', encver))
+        self.env.assertEqual(type_id, module_type_id('graphdata', encver))
 
-        meta_id = self._module_type_id('graphmeta', encver)
+        meta_id = module_type_id('graphmeta', encver)
         meta    = body[:2] + meta_id.to_bytes(8, 'big') + body[10:]
 
         # control: the retagged, untruncated payload loads as a graphmeta key
         self.conn.flushall()
-        self.conn.restore('meta', 0, self._reframe(meta, version_bytes))
+        self.conn.restore('meta', 0, reframe(meta, version_bytes))
         self.env.assertEqual(self.conn.type('meta'), 'graphmeta')
 
         n = len(meta)
         for off in [15, 25, 40, n // 3, n // 2, n - 40, n - 12]:
-            self._assert_restore_rejected(self._reframe(meta[:off],
+            self._assert_restore_rejected(reframe(meta[:off],
                                                         version_bytes))
-
-    #---------------------------------------------------------------------------
-    # malformed (CRC-valid) payloads must be rejected, not crash the server
-    #---------------------------------------------------------------------------
-
-    # RDB length encoding (rdbLoadLen), plain lengths only
-    @staticmethod
-    def _rdb_len(b, p):
-        t = b[p]
-        if t >> 6 == 0:
-            return t & 0x3F, p + 1
-        if t >> 6 == 1:
-            return ((t & 0x3F) << 8) | b[p + 1], p + 2
-        if t == 0x80:
-            return int.from_bytes(b[p + 1:p + 5], 'big'), p + 5
-        if t == 0x81:
-            return int.from_bytes(b[p + 1:p + 9], 'big'), p + 9
-        raise ValueError(f'unexpected RDB length encoding {t:#x}')
-
-    # DUMP 'key' uncompressed; returns (body, version bytes, first chunk start,
-    # values) where values lists the chunk's (tag offset, tag, value offset,
-    # value length). each value is a 1-byte type tag then its payload: bytes
-    # (tag 0) carry an 8-byte length prefix, scalars are fixed size
-    def _dump_first_chunk(self, key):
-        self.conn.config_set('rdbcompression', 'no')
-        try:
-            body, version_bytes = self._dump_body(key)
-        finally:
-            self.conn.config_set('rdbcompression', 'yes')
-
-        # <RDB_TYPE_MODULE_2><module id><RDB_MODULE_OPCODE_STRING><len><chunk>
-        self.env.assertEqual(body[0], 7)
-        _, p = self._rdb_len(body, 1)
-        self.env.assertEqual(body[p], 5)
-        chunk_len, start = self._rdb_len(body, p + 1)
-
-        sizes  = {1: 4, 2: 8, 3: 8, 4: 8, 5: 16}
-        values = []
-        p      = start
-        while p < start + chunk_len:
-            tag = body[p]
-            if tag == 0:
-                l = int.from_bytes(body[p + 1:p + 9], 'little')
-                values.append((p, tag, p + 9, l))
-                p += 9 + l
-            else:
-                values.append((p, tag, p + 1, sizes[tag]))
-                p += 1 + sizes[tag]
-
-        return bytearray(body), version_bytes, start, values
-
-    # a value tagged with the wrong type
-    def test_malformed_type_tag(self):
-        self.conn.flushall()
-        self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (), (), ()")
-        body, version_bytes, _, values = self._dump_first_chunk("src")
-
-        # values[1] is the header's node count, an unsigned (tag 4)
-        tag_off, tag, _, _ = values[1]
-        self.env.assertEqual(tag, 4)
-        body[tag_off] = 0x7F
-
-        self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
-
-    # a byte buffer whose declared length runs past its chunk
-    def test_malformed_buffer_length(self):
-        self.conn.flushall()
-        self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (), (), ()")
-        body, version_bytes, _, values = self._dump_first_chunk("src")
-
-        # values[0] is the graph name, a byte buffer (tag 0) holding the name
-        # and its null terminator
-        tag_off, tag, _, l = values[0]
-        self.env.assertEqual(tag, 0)
-        self.env.assertEqual(l, len("src") + 1)
-        body[tag_off + 1:tag_off + 9] = (1 << 32).to_bytes(8, 'little')
-
-        self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
-
-    # a key schema naming a payload type the decoder doesn't know
-    def test_malformed_payload_type(self):
-        self.conn.flushall()
-        self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (), (), ()")
-        body, version_bytes, _, values = self._dump_first_chunk("src")
-
-        # header: name, 4 entity counts, label count, relation count (0, so no
-        # multi-edge flags), key count; schema: attribute, node schema and edge
-        # schema counts (all 0); then the key schema: #payloads, (type, count)*
-        vals = [int.from_bytes(body[o:o + l], 'little')
-                for _, _, o, l in values[1:]]
-        self.env.assertEqual(vals[:10], [3, 0, 0, 0, 0, 0, 1, 0, 0, 0])
-        payloads = vals[10]
-        self.env.assertGreater(payloads, 0)
-
-        # first payload: nodes (ENCODE_STATE_NODES = 1), 3 of them
-        _, _, type_off, _ = values[12]
-        self.env.assertEqual(vals[11:13], [1, 3])
-        body[type_off:type_off + 8] = (99).to_bytes(8, 'little')
-
-        self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
-
-    # a matrix whose value type GraphBLAS doesn't know (GxB_Type_from_name
-    # reports that as success with a NULL type)
-    def test_malformed_matrix_type(self):
-        self.conn.flushall()
-        self.conn.execute_command("GRAPH.QUERY", "src", "CREATE (:N)-[:R]->(:N)")
-        self.conn.config_set('rdbcompression', 'no')
-        try:
-            body, version_bytes = self._dump_body("src")
-        finally:
-            self.conn.config_set('rdbcompression', 'yes')
-
-        body = bytearray(body)
-        i = body.find(b'GrB_UINT64')
-        self.env.assertGreater(i, 0)
-        body[i + 4] = ord('X')   # GrB_XINT64
-
-        self._assert_restore_rejected(self._reframe(bytes(body), version_bytes))
 
     #---------------------------------------------------------------------------
     # RESTORE of a graph's dump while a graph of the same name is live
@@ -393,7 +220,7 @@ class testRdbLoad():
                 "g", "MATCH (n:N) WHERE n.v = 1 RETURN n.v")[1], [[1]])
 
         body, version_bytes = self._dump_body("g")
-        blob = self._reframe(body, version_bytes)
+        blob = reframe(body, version_bytes)
 
         for _ in range(3):
             self.conn.restore("g", 0, blob, replace=True)
@@ -421,7 +248,7 @@ class testRdbLoad():
             "UNWIND range(1, 100) AS i CREATE (:N {v: i})")
         body, version_bytes = self._dump_body("g")
 
-        self.conn.restore("copy", 0, self._reframe(body, version_bytes))
+        self.conn.restore("copy", 0, reframe(body, version_bytes))
 
         for key in ("g", "copy"):
             res = self.conn.execute_command("GRAPH.RO_QUERY", key,
@@ -454,6 +281,10 @@ class testRdbLoadUDF():
 
         self.conn.execute_command("GRAPH.UDF", "LOAD", "REPLACE", "reload_lib",
                                   v2)
+        res = self.conn.execute_command("GRAPH.RO_QUERY", "g",
+                                        "RETURN reload_lib.f()")
+        self.env.assertEqual(res[1][0][0], 2)
+
         self.conn.execute_command("DEBUG", "RELOAD", "NOSAVE")
 
         res = self.conn.execute_command("GRAPH.RO_QUERY", "g",

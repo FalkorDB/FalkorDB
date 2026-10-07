@@ -33,11 +33,11 @@ static SIValue _RdbLoadSIValue
 	case T_STRING:
 		// transfer ownership of the heap-allocated string to the
 		// newly-created SIValue
-		return SI_TransferStringVal(SerializerIO_ReadBuffer(rdb, NULL));
+		return SI_TransferStringVal(SerializerIO_ReadCString(rdb));
 
 	case T_INTERN_STRING:
 		// create intern string and free loaded buffer
-		str = SerializerIO_ReadBuffer(rdb, NULL);
+		str = SerializerIO_ReadCString(rdb);
 		v = SI_InternStringVal(str);
 		rm_free(str);
 		return v;
@@ -67,7 +67,11 @@ static SIValue _RdbLoadSIValue
 		return SI_Duration(SerializerIO_ReadSigned(rdb));
 
 	case T_NULL:
-	default: // currently impossible
+		return SI_NullVal();
+
+	default:
+		SerializerIO_SetError(rdb, "unknown value type %llu",
+				(unsigned long long) t);
 		return SI_NullVal();
 	}
 }
@@ -238,9 +242,10 @@ static void _RdbLoadEntity
 // decode nodes
 void RdbLoadNodes_v19
 (
-	SerializerIO rdb, // RDB
-	Graph *g,         // graph context
-	const uint64_t n  // number of nodes to decode
+	SerializerIO rdb,         // RDB
+	Graph *g,                 // graph context
+	const uint64_t n,         // number of nodes to decode
+	const uint64_t id_limit   // node ids are below this (header counts)
 ) {
 	// format:
 	//  ID
@@ -258,10 +263,10 @@ void RdbLoadNodes_v19
 			return;
 		}
 
-		// the datablock was sized from the header's node counts; a valid id
-		// never makes it grow
-		if(id >= g->nodes->itemCap) {
-			SerializerIO_SetError(rdb, "node id out of range");
+		// ids run below the header's live + deleted node count
+		if(id >= id_limit) {
+			SerializerIO_SetError(rdb, "node id %llu out of range",
+					(unsigned long long) id);
 			return;
 		}
 
@@ -284,9 +289,10 @@ void RdbLoadNodes_v19
 // decode deleted nodes
 void RdbLoadDeletedNodes_v19
 (
-	SerializerIO rdb,                  // RDB
-	Graph *g,                          // graph context
-	const uint64_t deleted_node_count  // number of deleted nodes
+	SerializerIO rdb,                   // RDB
+	Graph *g,                           // graph context
+	const uint64_t deleted_node_count,  // number of deleted nodes
+	const uint64_t id_limit             // node ids are below this
 ) {
 	// Format:
 	// node ids
@@ -319,9 +325,10 @@ void RdbLoadDeletedNodes_v19
 	// mark each node id as deleted
 	for(uint64_t i = 0; i < deleted_node_count; i++) {
 		NodeID id = deleted_nodes_list[i];
-		if(id >= g->nodes->itemCap) {
+		if(id >= id_limit) {
 			rm_free(deleted_nodes_list);
-			SerializerIO_SetError(rdb, "deleted node id out of range");
+			SerializerIO_SetError(rdb, "deleted node id %llu out of range",
+					(unsigned long long) id);
 			return;
 		}
 		Serializer_Graph_MarkNodeDeleted(g, id);
@@ -338,9 +345,10 @@ void RdbLoadDeletedNodes_v19
 // decode edges
 void RdbLoadEdges_v19
 (
-	SerializerIO rdb,  // RDB
-	Graph *g,          // graph context
-	const uint64_t n   // number of edges to decode
+	SerializerIO rdb,         // RDB
+	Graph *g,                 // graph context
+	const uint64_t n,         // number of edges to decode
+	const uint64_t id_limit   // edge ids are below this (header counts)
 ) {
 	// format:
 	//  ID
@@ -359,10 +367,10 @@ void RdbLoadEdges_v19
 			return;
 		}
 
-		// the datablock was sized from the header's edge counts; a valid id
-		// never makes it grow
-		if(id >= g->edges->itemCap) {
-			SerializerIO_SetError(rdb, "edge id out of range");
+		// ids run below the header's live + deleted edge count
+		if(id >= id_limit) {
+			SerializerIO_SetError(rdb, "edge id %llu out of range",
+					(unsigned long long) id);
 			return;
 		}
 
@@ -385,9 +393,10 @@ void RdbLoadEdges_v19
 // decode deleted edges
 void RdbLoadDeletedEdges_v19
 (
-	SerializerIO rdb,                  // RDB
-	Graph *g,                          // graph context
-	const uint64_t deleted_edge_count  // number of deleted edges
+	SerializerIO rdb,                   // RDB
+	Graph *g,                           // graph context
+	const uint64_t deleted_edge_count,  // number of deleted edges
+	const uint64_t id_limit             // edge ids are below this
 ) {
 	// Format:
 	// edge ids
@@ -420,9 +429,10 @@ void RdbLoadDeletedEdges_v19
 	// mark each edge id as deleted
 	for(uint64_t i = 0; i < deleted_edge_count; i++) {
 		EdgeID id = deleted_edges_list[i];
-		if(id >= g->edges->itemCap) {
+		if(id >= id_limit) {
 			rm_free(deleted_edges_list);
-			SerializerIO_SetError(rdb, "deleted edge id out of range");
+			SerializerIO_SetError(rdb, "deleted edge id %llu out of range",
+					(unsigned long long) id);
 			return;
 		}
 		Serializer_Graph_MarkEdgeDeleted(g, id);

@@ -86,7 +86,7 @@ static GraphContext *_DecodeHeader
 	// Schema
 
 	// graph name
-	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
+	char *graph_name = SerializerIO_ReadCString(rdb);
 
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
@@ -227,7 +227,9 @@ GraphContext *RdbLoadGraphContext_latest
 		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
-				RdbLoadNodes_v20(rdb, g, payload.entities_count);
+				RdbLoadNodes_v20(rdb, g, payload.entities_count,
+						decoding_context->node_count +
+						decoding_context->deleted_node_count);
 				if(SerializerIO_Error(rdb)) {
 					break;
 				}
@@ -242,7 +244,9 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v20(rdb, g, payload.entities_count);
+				RdbLoadDeletedNodes_v20(rdb, g, payload.entities_count,
+						decoding_context->node_count +
+						decoding_context->deleted_node_count);
 				if(SerializerIO_Error(rdb)) {
 					break;
 				}
@@ -257,7 +261,9 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			case ENCODE_STATE_EDGES:
-				RdbLoadEdges_v20(rdb, g, payload.entities_count);
+				RdbLoadEdges_v20(rdb, g, payload.entities_count,
+						decoding_context->edge_count +
+						decoding_context->deleted_edge_count);
 				if(SerializerIO_Error(rdb)) {
 					break;
 				}
@@ -270,7 +276,9 @@ GraphContext *RdbLoadGraphContext_latest
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v20(rdb, g, payload.entities_count);
+				RdbLoadDeletedEdges_v20(rdb, g, payload.entities_count,
+						decoding_context->edge_count +
+						decoding_context->deleted_edge_count);
 				if(SerializerIO_Error(rdb)) {
 					break;
 				}

@@ -143,12 +143,11 @@ static void _decode_and_load_vector
 	uint64_t n_bytes;       // data size in bytes
 	int handling;           // memory owner GraphBLAS / App
 	char   *t_name;         // type name
-	size_t t_name_len = 0;  // type name length
 	GrB_Info info;
 
 	// load vector from stream
 	arr       = SerializerIO_ReadBuffer   (rdb, &n) ;
-	t_name    = SerializerIO_ReadBuffer   (rdb, &t_name_len) ;
+	t_name    = SerializerIO_ReadCString  (rdb) ;
 	n_entries = SerializerIO_ReadUnsigned (rdb) ;
 	n_bytes   = SerializerIO_ReadUnsigned (rdb) ;
 	handling  = SerializerIO_ReadSigned   (rdb) ;
@@ -178,14 +177,13 @@ static void _decode_and_load_vector
 	// an unrecognized name is not an error to GraphBLAS: it returns NULL
 	info = GxB_Type_from_name (&t, t_name) ;
 	if (info != GrB_SUCCESS || t == NULL) {
-		int name_len = (int) (t_name_len < 64 ? t_name_len : 64) ;
 		if (info != GrB_SUCCESS) {
 			SerializerIO_SetError (rdb,
-					"GraphBLAS error %d resolving matrix value type '%.*s'",
-					(int) info, name_len, t_name) ;
+					"GraphBLAS error %d resolving matrix value type '%.64s'",
+					(int) info, t_name) ;
 		} else {
-			SerializerIO_SetError (rdb, "unknown matrix value type '%.*s'",
-					name_len, t_name) ;
+			SerializerIO_SetError (rdb, "unknown matrix value type '%.64s'",
+					t_name) ;
 		}
 		rm_free (t_name) ;
 		rm_free (arr) ;
@@ -193,6 +191,19 @@ static void _decode_and_load_vector
 		return ;
 	}
 	rm_free (t_name) ;
+
+	// GraphBLAS checks n_entries * type size against n_bytes without guarding
+	// the product; an overflowing count passes and reads past the buffer
+	size_t t_size = 0 ;
+	GxB_Type_size (&t_size, t) ;
+	if (t_size == 0 || n_entries > n_bytes / t_size) {
+		rm_free (arr) ;
+		*v = NULL ;
+		SerializerIO_SetError (rdb,
+				"matrix vector declares %llu entries in %llu bytes",
+				(unsigned long long) n_entries, (unsigned long long) n_bytes) ;
+		return ;
+	}
 
 	// load vector
 	info = GrB_Vector_new (v, t, 0) ;
@@ -339,22 +350,29 @@ void RdbLoadLabelMatrices_v19
 
 	GrB_Info info;
 
-	// read number of label matricies
-	int n = SerializerIO_ReadUnsigned(rdb);
-	
+	// read number of label matricies: one per label
+	uint64_t n = SerializerIO_ReadUnsigned(rdb);
+	uint64_t label_count = Graph_LabelTypeCount(g);
+	if(!SerializerIO_Error(rdb) && n != label_count) {
+		SerializerIO_SetError(rdb, "%llu label matrices for %llu labels",
+				(unsigned long long) n, (unsigned long long) label_count);
+		return;
+	}
+
 	// decode each label matrix
-	for(int i = 0; i < n; i++) {
+	for(uint64_t i = 0; i < n; i++) {
 		// abort on a short read
 		if(SerializerIO_Error(rdb)) {
 			return;
 		}
-		// read label ID
-		LabelID l = SerializerIO_ReadUnsigned(rdb);
+		// read label ID, validated before narrowing to LabelID
+		uint64_t l = SerializerIO_ReadUnsigned(rdb);
 		if(SerializerIO_Error(rdb)) {
 			return;
 		}
-		if(l >= Graph_LabelTypeCount(g)) {
-			SerializerIO_SetError(rdb, "label matrix for an unknown label");
+		if(l >= label_count) {
+			SerializerIO_SetError(rdb, "label matrix for an unknown label: %llu",
+					(unsigned long long) l);
 			return;
 		}
 
@@ -397,14 +415,14 @@ void RdbLoadRelationMatrices_v19
 		if (SerializerIO_Error (rdb)) {
 			return;
 		}
-		// read relation ID
-		RelationID r = SerializerIO_ReadUnsigned (rdb) ;
+		// read relation ID, compared before narrowing to RelationID
+		uint64_t r = SerializerIO_ReadUnsigned (rdb) ;
 		if (SerializerIO_Error (rdb)) {
 			return;
 		}
 
 		// relation matrices are encoded in id order
-		if (r != i) {
+		if (r != (uint64_t) i) {
 			SerializerIO_SetError (rdb, "relation matrix out of order") ;
 			return ;
 		}

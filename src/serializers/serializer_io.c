@@ -214,6 +214,26 @@ void *SerializerIO_ReadBuffer
 	return data;
 }
 
+// read a NUL-terminated string, see serializer_io.h
+char *SerializerIO_ReadCString
+(
+	SerializerIO io  // stream
+) {
+	ASSERT(io != NULL);
+
+	size_t len = 0;
+	char *s = SerializerIO_ReadBuffer(io, &len);
+
+	if(!io->error && (len == 0 || s[len - 1] != '\0')) {
+		SerializerIO_SetError(io, "string of %zu bytes is not NUL-terminated",
+				len);
+		rm_free(s);
+		return rm_calloc(1, 1);
+	}
+
+	return s;
+}
+
 // returns true if a short read / IO error was encountered during decoding
 bool SerializerIO_Error
 (

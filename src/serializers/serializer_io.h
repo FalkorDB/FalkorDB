@@ -150,6 +150,14 @@ long double SerializerIO_ReadLongDouble
 	SerializerIO io  // stream
 );
 
+// read a NUL-terminated string
+// a buffer that doesn't end in NUL fails the decode, an empty string is
+// returned in its place; free with rm_free
+char *SerializerIO_ReadCString
+(
+	SerializerIO io  // stream
+);
+
 // returns true if a short read / IO error was encountered during decoding
 // once set the flag is sticky: further reads short-circuit and return zeroed
 // values, so decoders can keep going until the next checkpoint aborts the load

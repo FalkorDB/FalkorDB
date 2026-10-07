@@ -189,6 +189,13 @@ CCHIndex *CCHIndex_RdbLoad
 		return NULL ;
 	}
 
+	// an index covers at least one relationship type
+	if (n == 0) {
+		SerializerIO_SetError (io, "CCH index without relationship types") ;
+		arr_free (rels) ;
+		return NULL ;
+	}
+
 	CCHIndex *idx = CCHIndex_New (rels, arr_len (rels), weight_attr) ;
 
 	arr_free (rels) ;

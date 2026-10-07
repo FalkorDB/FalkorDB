@@ -1,9 +1,12 @@
 from common import *
+from index_utils import create_node_range_index, create_node_vector_index
+from constraint_utils import (create_unique_node_constraint,
+                              create_mandatory_node_constraint)
 from rdb_payload import (GraphValue, reframe, crc64, rdb_module_values,
-                         T_INT64, T_NULL, T_VECTOR_F32)
+                         T_ARRAY, T_INT64, T_NULL, T_STRING, T_INTERN_STRING,
+                         T_VECTOR_F32)
 
 import os
-import time
 import shutil
 import tempfile
 import subprocess
@@ -13,30 +16,22 @@ FAILED = "Failed loading graph key"
 
 
 # a small graph touching every part of the encoding the tests below corrupt:
-# indexes (range + vector), constraints, properties of several types, a
+# indexes (range, vector, CCH), constraints, properties of several types, a
 # multi-edge (tensor), and a deleted node and edge
-def _build_graph(conn):
-    q = lambda s: conn.execute_command("GRAPH.QUERY", GRAPH_ID, s)
-    q("CREATE INDEX FOR (n:N) ON (n.v)")
-    q("CREATE VECTOR INDEX FOR (m:V) ON (m.e) "
-      "OPTIONS {dimension: 4, similarityFunction: 'euclidean'}")
-    q("CREATE (a:N {v: 1, s: 'one'}), (b:N {v: 2}), (c:N {v: 3}), "
-      "(:V {e: vecf32([1, 2, 3, 4])}), "
-      "(a)-[:R {w: 1}]->(b), (a)-[:R {w: 2}]->(b), (b)-[:R {w: 3}]->(c)")
-    q("CREATE (:N {v: 4})-[:R {w: 4}]->(:N {v: 5})")
-    q("MATCH (n:N {v: 4}) DETACH DELETE n")
-    for kind in ("UNIQUE", "MANDATORY"):
-        conn.execute_command("GRAPH.CONSTRAINT", "CREATE", GRAPH_ID, kind,
-                             "NODE", "N", "PROPERTIES", 1, "v")
+def _build_graph(db):
+    g = db.select_graph(GRAPH_ID)
+    create_node_range_index(g, "N", "v", sync=True)
+    create_node_vector_index(g, "V", "e", dim=4, sync=True)
+    g.query("CREATE (a:N {v: 1, s: 'one', a: [1, 2]}), (b:N {v: 2}), "
+            "(c:N {v: 3}), (:V {e: vecf32([1, 2, 3, 4])}), "
+            "(a)-[:R {w: 1}]->(b), (a)-[:R {w: 2}]->(b), (b)-[:R {w: 3}]->(c)")
+    g.query("CREATE (:N {v: 4})-[:R {w: 4}]->(:N {v: 5})")
+    g.query("MATCH (n:N {v: 4}) DETACH DELETE n")
+    g.query("CREATE CCH INDEX FOR ()-[e:R]->() ON (e.w)")
 
     # only active constraints are encoded
-    for _ in range(100):
-        res = conn.execute_command("GRAPH.RO_QUERY", GRAPH_ID,
-            "CALL db.constraints() YIELD status RETURN status")
-        if res[1] and all(row[0] == "OPERATIONAL" for row in res[1]):
-            return
-        time.sleep(0.1)
-    raise AssertionError("constraints did not become operational")
+    create_unique_node_constraint(g, "N", "v", sync=True)
+    create_mandatory_node_constraint(g, "N", "v", sync=True)
 
 
 def _log_path(env):
@@ -73,9 +68,32 @@ def _schema(gv, label):
 # the property prefix ("node[k].property[p]") of the first property of type 't'
 def _property_of_type(gv, t):
     names = [n[:-len(".type")] for n in gv.find(".type", t)
-             if ".property[" in n]
+             if ".property[" in n and ".element[" not in n]
     assert names, t
     return names[0]
+
+
+# the id of the attribute named 'name'
+def _attribute(gv, name):
+    names = gv.find("", name.encode() + b"\0")
+    names = [n for n in names if n.startswith("attribute[")]
+    assert len(names) == 1, names
+    return int(names[0][len("attribute["):-1])
+
+
+# the fields prefix ("label_matrix[k].M.p") of the first matrix vector of
+# component 'part' (p, h, i, x, b) holding data of a multi-byte integer type,
+# with that type's size
+_INT_TYPES = {b"GrB_UINT64\0": 8, b"GrB_INT64\0": 8,
+              b"GrB_UINT32\0": 4, b"GrB_INT32\0": 4}
+
+def _int_vector(gv, part):
+    for n, f in gv.fields.items():
+        if n.endswith(f".{part}.type") and f.value in _INT_TYPES:
+            v = n[:-len(".type")]
+            if gv.fields[f"{v}.bytes"].value > 0:
+                return v, _INT_TYPES[f.value]
+    raise AssertionError(f"no integer matrix vector .{part}")
 
 
 #-------------------------------------------------------------------------------
@@ -89,15 +107,12 @@ class testRdbMalformed():
         self.conn = self.env.getConnection()
 
         self.conn.flushall()
-        _build_graph(self.conn)
+        _build_graph(self.db)
 
         # uncompressed, so the walker can read the serializer buffers
         self.conn.config_set("rdbcompression", "no")
         try:
-            kw = self.conn.connection_pool.connection_kwargs
-            raw = redis.Redis(host=kw.get("host", "localhost"),
-                              port=kw["port"], decode_responses=False)
-            payload = raw.execute_command("DUMP", GRAPH_ID)
+            payload = self.conn.dump(GRAPH_ID)
         finally:
             self.conn.config_set("rdbcompression", "yes")
 
@@ -167,15 +182,45 @@ class testRdbMalformed():
         gv.set_length(f"{p}.value", size - 1)
         self._assert_rejected(gv, "vector size is not a multiple of float")
 
+    def test_unknown_nested_value_type(self):
+        # an array element of a type no value has, its value removed
+        gv = self._value()
+        p = _property_of_type(gv, T_ARRAY)
+        e = f"{p}.element[0]"
+        self.env.assertEqual(gv.fields[f"{e}.type"].value, T_INT64)
+        gv.set_uint(f"{e}.type", 1 << 24)
+        gv.remove_value(f"{e}.value")
+        self._assert_rejected(gv, f"unknown value type {1 << 24}")
+
+    def test_unterminated_string_property(self):
+        gv = self._value()
+        names = [n[:-len(".value")] for n in gv.find(".value", b"one\0")
+                 if ".property[" in n]
+        self.env.assertEqual(len(names), 1)
+        self.env.assertContains(gv.fields[f"{names[0]}.type"].value,
+                                (T_STRING, T_INTERN_STRING))
+        f = gv.fields[f"{names[0]}.value"]
+        gv.set_bytes(f.off + f.size - 1, b"X")
+        self._assert_rejected(gv, "string of 4 bytes is not NUL-terminated")
+
+    # entity ids run below the header's live + deleted count; the datablocks
+    # are allocated with room past it, so the bound is the count, not the
+    # allocation
+    def _id_limit(self, gv, kind):
+        f = gv.fields
+        return f[f"{kind}_count"].value + f[f"deleted_{kind}_count"].value
+
     def test_node_id_out_of_range(self):
         gv = self._value()
-        gv.set_uint("node[0].id", 1 << 40)
-        self._assert_rejected(gv, "node id out of range")
+        limit = self._id_limit(gv, "node")
+        gv.set_uint("node[0].id", limit)
+        self._assert_rejected(gv, f"node id {limit} out of range")
 
     def test_edge_id_out_of_range(self):
         gv = self._value()
-        gv.set_uint("edge[0].id", 1 << 40)
-        self._assert_rejected(gv, "edge id out of range")
+        limit = self._id_limit(gv, "edge")
+        gv.set_uint("edge[0].id", limit)
+        self._assert_rejected(gv, f"edge id {limit} out of range")
 
     def test_deleted_nodes_buffer_size(self):
         gv = self._value()
@@ -186,13 +231,45 @@ class testRdbMalformed():
 
     def test_deleted_node_id_out_of_range(self):
         gv = self._value()
+        limit = self._id_limit(gv, "node")
+        self.env.assertEqual(gv.fields["deleted_nodes"].size, 8)
         gv.set_bytes(gv.fields["deleted_nodes"].off,
-                     (1 << 40).to_bytes(8, "little"))
-        self._assert_rejected(gv, "deleted node id out of range")
+                     limit.to_bytes(8, "little"))
+        self._assert_rejected(gv, f"deleted node id {limit} out of range")
+
+    def test_deleted_edge_id_out_of_range(self):
+        gv = self._value()
+        limit = self._id_limit(gv, "edge")
+        self.env.assertEqual(gv.fields["deleted_edges"].size, 8)
+        gv.set_bytes(gv.fields["deleted_edges"].off,
+                     limit.to_bytes(8, "little"))
+        self._assert_rejected(gv, f"deleted edge id {limit} out of range")
 
     #---------------------------------------------------------------------------
     # schema
     #---------------------------------------------------------------------------
+
+    def test_duplicate_attribute_name(self):
+        # the second attribute renamed after the first (same length)
+        gv = self._value()
+        a0, a1 = gv.fields["attribute[0]"], gv.fields["attribute[1]"]
+        self.env.assertEqual(a0.size, a1.size)
+        self.env.assertNotEqual(a0.value, a1.value)
+        gv.set_bytes(a1.off, a0.value)
+        self._assert_rejected(gv, "duplicate attribute name")
+
+    def test_unterminated_attribute_name(self):
+        gv = self._value()
+        f = gv.fields["attribute[0]"]
+        gv.set_bytes(f.off + f.size - 1, b"X")
+        self._assert_rejected(gv,
+            f"string of {f.size} bytes is not NUL-terminated")
+
+    def test_duplicate_label(self):
+        # label V renamed N
+        gv = self._value()
+        gv.set_bytes(gv.fields[f"{_schema(gv, 'V')}.name"].off, b"N")
+        self._assert_rejected(gv, "duplicate or out of order schema")
 
     def test_schema_out_of_order(self):
         gv = self._value()
@@ -212,6 +289,50 @@ class testRdbMalformed():
         s = _schema(gv, "N")
         gv.set_uint(f"{s}.constraint[0].attribute[0]", 99)
         self._assert_rejected(gv, "constraint on an unknown attribute")
+
+    def test_constraint_without_attributes(self):
+        gv = self._value()
+        c = f"{_schema(gv, 'N')}.constraint[0]"
+        self.env.assertEqual(gv.fields[f"{c}.attribute_count"].value, 1)
+        gv.set_uint(f"{c}.attribute_count", 0)
+        gv.remove_value(f"{c}.attribute[0]")
+        self._assert_rejected(gv, "constraint with 0 attributes")
+
+    # counts and ids are read as 64 bits and checked before they are narrowed:
+    # each corruption below wraps to the healthy value once narrowed
+
+    def test_constraint_attribute_count_wraps(self):
+        # 257 narrows to 1 (uint8_t), the count the payload holds
+        gv = self._value()
+        c = f"{_schema(gv, 'N')}.constraint[0]"
+        self.env.assertEqual(gv.fields[f"{c}.attribute_count"].value, 1)
+        gv.set_uint(f"{c}.attribute_count", 257)
+        self._assert_rejected(gv, "constraint with 257 attributes")
+
+    def test_constraint_attribute_wraps(self):
+        # narrows to the same attribute (AttributeID is 16 bits)
+        gv = self._value()
+        name = f"{_schema(gv, 'N')}.constraint[0].attribute[0]"
+        gv.set_uint(name, (1 << 16) + gv.fields[name].value)
+        self._assert_rejected(gv, "constraint on an unknown attribute")
+
+    def test_unique_constraint_without_index(self):
+        # the unique constraint moved to an attribute no index covers
+        gv = self._value()
+        s = _schema(gv, "N")
+        unique = [n[:-len(".type")] for n in gv.find(".type", 0)   # CT_UNIQUE
+                  if n.startswith(f"{s}.constraint[")]
+        self.env.assertEqual(len(unique), 1)
+        gv.set_uint(f"{unique[0]}.attribute[0]", _attribute(gv, "s"))
+        self._assert_rejected(gv, "constraint can't be created",
+                              "missing supporting exact-match index")
+
+    def test_cch_without_relationship_types(self):
+        gv = self._value()
+        self.env.assertEqual(gv.fields["cch[0].relation_count"].value, 1)
+        gv.set_uint("cch[0].relation_count", 0)
+        gv.remove_value("cch[0].relation[0]")
+        self._assert_rejected(gv, "CCH index without relationship types")
 
     def test_duplicate_constraint(self):
         # turn the mandatory constraint into a second unique one
@@ -249,12 +370,42 @@ class testRdbMalformed():
     def test_label_matrix_unknown_label(self):
         gv = self._value()
         gv.set_uint("label_matrix[0].label", 99)
-        self._assert_rejected(gv, "label matrix for an unknown label")
+        self._assert_rejected(gv, "label matrix for an unknown label: 99")
+
+    def test_label_matrix_negative_label(self):
+        # read into a signed 32-bit LabelID, 0xFFFFFFFF passed for -1
+        gv = self._value()
+        gv.set_uint("label_matrix[0].label", 0xFFFFFFFF)
+        self._assert_rejected(gv,
+            f"label matrix for an unknown label: {0xFFFFFFFF}")
+
+    def test_label_matrix_missing(self):
+        # the last label matrix dropped, count adjusted: well formed, one short
+        gv = self._value()
+        n = gv.fields["label_matrix_count"].value
+        self.env.assertEqual(n, gv.fields["label_count"].value)
+        gv.set_uint("label_matrix_count", n - 1)
+        gv.remove_values(f"label_matrix[{n - 1}].label",
+                         f"label_matrix[{n - 1}].DM.b.handling")
+        self._assert_rejected(gv, f"{n - 1} label matrices for {n} labels")
+
+    def test_label_matrix_twice(self):
+        gv = self._value()
+        self.env.assertEqual(gv.fields["label_matrix[0].label"].value, 0)
+        gv.set_uint("label_matrix[1].label", 0)
+        self._assert_rejected(gv, "label matrix decoded twice")
 
     def test_relation_matrix_out_of_order(self):
         gv = self._value()
         self.env.assertEqual(gv.fields["relation_matrix[0].relation"].value, 0)
         gv.set_uint("relation_matrix[0].relation", 5)
+        self._assert_rejected(gv, "relation matrix out of order")
+
+    def test_relation_matrix_id_wraps(self):
+        # narrows to 0 (RelationID is 32 bits)
+        gv = self._value()
+        self.env.assertEqual(gv.fields["relation_matrix[0].relation"].value, 0)
+        gv.set_uint("relation_matrix[0].relation", 1 << 32)
         self._assert_rejected(gv, "relation matrix out of order")
 
     def test_tensor_out_of_range(self):
@@ -278,6 +429,42 @@ class testRdbMalformed():
         name = "label_matrix[0].M.container"
         gv.set_length(name, gv.fields[name].size - 8)
         self._assert_rejected(gv, "matrix container holds")
+
+    def test_matrix_vector_entries_overflow(self):
+        # entries * type size wraps to 0, which GraphBLAS' own size check
+        # accepts; nothing later checks the length of an index (i) vector
+        gv = self._value()
+        v, size = _int_vector(gv, "i")
+        entries = (1 << 64) // size
+        gv.set_uint(f"{v}.entries", entries)
+        self._assert_rejected(gv, f"matrix vector declares {entries} entries")
+
+    def test_unknown_matrix_type(self):
+        # GxB_Type_from_name reports an unknown name as success, NULL type
+        gv = self._value()
+        v, _ = _int_vector(gv, "p")
+        f = gv.fields[f"{v}.type"]
+        gv.set_bytes(f.off + 4, b"X")
+        self._assert_rejected(gv, "unknown matrix value type 'GrB_X")
+
+    #---------------------------------------------------------------------------
+    # framing
+    #---------------------------------------------------------------------------
+
+    def test_unexpected_value_type(self):
+        gv = self._value()
+        gv.set_tag("node_count", 0x7F)
+        self._assert_rejected(gv, "unexpected value type")
+
+    def test_buffer_length_overrun(self):
+        gv = self._value()
+        gv.set_length("graph_name", 1 << 32)
+        self._assert_rejected(gv, "buffer length overruns its buffer")
+
+    def test_unknown_payload_type(self):
+        gv = self._value()
+        gv.set_uint("payload[0].type", 99)
+        self._assert_rejected(gv, "unknown payload type")
 
 
 #-------------------------------------------------------------------------------
@@ -364,7 +551,7 @@ class testRdbLoadTruncatedGraphKey():
         self.conn = self.env.getConnection()
 
     def test_truncated_graph_key(self):
-        _build_graph(self.conn)
+        _build_graph(self.db)
         _assert_truncated_load(self.env, self.conn, "graphdata")
 
 
@@ -390,7 +577,7 @@ class testRdbLoadMalformedGraphKey():
         self.conn = self.env.getConnection()
 
     def test_malformed_graph_key(self):
-        _build_graph(self.conn)
+        _build_graph(self.db)
         rdb = _save_graph_rdb(self.conn)
         values = [v for v in rdb_module_values(rdb) if v[1] == "graphdata"]
         self.env.assertEqual(len(values), 1)

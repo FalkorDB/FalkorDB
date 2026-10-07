@@ -34,7 +34,7 @@ static void _RdbDecodeIndexField
 	//   dimension
 
 	// decode field name
-	*name = SerializerIO_ReadBuffer(rdb, NULL);
+	*name = SerializerIO_ReadCString(rdb);
 
 	// docode field type
 	*type = SerializerIO_ReadUnsigned(rdb);
@@ -50,7 +50,7 @@ static void _RdbDecodeIndexField
 	*nostem = SerializerIO_ReadUnsigned(rdb);
 
 	// decode field phonetic
-	*phonetic = SerializerIO_ReadBuffer(rdb, NULL);
+	*phonetic = SerializerIO_ReadCString(rdb);
 
 	// decode field dimension
 	if(*type & INDEX_FLD_VECTOR) {
@@ -81,14 +81,14 @@ static void _RdbLoadIndex
 	 * M * property: {options} */
 
 	Index idx        = NULL ;
-	char *language   = SerializerIO_ReadBuffer (rdb, NULL) ;
+	char *language   = SerializerIO_ReadCString (rdb) ;
 	char **stopwords = NULL ;
 	
 	uint stopwords_count = SerializerIO_ReadUnsigned (rdb) ;
 	if (stopwords_count > 0 && !SerializerIO_Error (rdb)) {
 		stopwords = arr_new (char *, 0) ;
 		for (uint i = 0; i < stopwords_count; i++) {
-			char *stopword = SerializerIO_ReadBuffer (rdb, NULL) ;
+			char *stopword = SerializerIO_ReadCString (rdb) ;
 			if (SerializerIO_Error (rdb)) {
 				rm_free (stopword) ;
 				break ;
@@ -224,7 +224,16 @@ static void _RdbLoadConstraint
 	// decode constraint fields count
 	//--------------------------------------------------------------------------
 	
-	uint8_t n = SerializerIO_ReadUnsigned(rdb);
+	uint64_t n_fields = SerializerIO_ReadUnsigned(rdb);
+	if (SerializerIO_Error (rdb)) {
+		return ;
+	}
+	if (n_fields == 0 || n_fields > UINT8_MAX) {
+		SerializerIO_SetError (rdb, "constraint with %llu attributes",
+				(unsigned long long) n_fields) ;
+		return ;
+	}
+	uint8_t n = n_fields;
 
 	//--------------------------------------------------------------------------
 	// decode constraint fields
@@ -236,7 +245,7 @@ static void _RdbLoadConstraint
 	// read fields
 	uint attr_count = GraphContext_AttributeCount (gc) ;
 	for (uint8_t i = 0; i < n; i++) {
-		AttributeID attr = SerializerIO_ReadUnsigned (rdb) ;
+		uint64_t attr = SerializerIO_ReadUnsigned (rdb) ;
 
 		// abort on a short read before building a constraint from partial
 		// fields, and on an attribute the graph doesn't have
@@ -267,8 +276,14 @@ static void _RdbLoadConstraint
 		GraphEntityType et = (Schema_GetType(s) == SCHEMA_NODE) ?
 			GETYPE_NODE : GETYPE_EDGE;
 
+		const char *err = NULL;
 		c = Constraint_New((struct GraphContext*)gc, t, Schema_GetID(s),
-				attr_ids, attr_strs, n, et, NULL);
+				attr_ids, attr_strs, n, et, &err);
+		if(c == NULL) {
+			SerializerIO_SetError(rdb, "constraint can't be created: %s",
+					err != NULL ? err : "unknown reason");
+			return;
+		}
 
 		// set constraint status to active
 		// only active constraints are encoded
@@ -316,7 +331,7 @@ static void _RdbLoadSchema
 
 	Schema *s    = NULL;
 	int     id   = SerializerIO_ReadUnsigned (rdb) ;
-	char   *name = SerializerIO_ReadBuffer (rdb, NULL) ;
+	char   *name = SerializerIO_ReadCString (rdb) ;
 
 	// abort on a short read before building schema objects from empty data
 	if (SerializerIO_Error (rdb)) {
@@ -373,9 +388,16 @@ static void _RdbLoadAttributeKeys
 		if(SerializerIO_Error(rdb)) {
 			return;
 		}
-		char *attr = SerializerIO_ReadBuffer(rdb, NULL);
-		GraphContext_FindOrAddAttribute(gc, attr, NULL);
+		char *attr = SerializerIO_ReadCString(rdb);
+		AttributeID id = GraphContext_FindOrAddAttribute(gc, attr, NULL);
 		RedisModule_Free(attr);
+
+		// attribute keys are encoded once each, in id order; a repeated name
+		// would map two encoded ids onto one attribute
+		if(!SerializerIO_Error(rdb) && id != i) {
+			SerializerIO_SetError(rdb, "duplicate attribute name");
+			return;
+		}
 	}
 }
 
