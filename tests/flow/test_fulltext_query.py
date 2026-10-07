@@ -175,4 +175,30 @@ class testFulltextIndexQuery():
 
         # verify no results
         self.env.assertEquals(result.result_set, [])
-    
+
+    def test04_fulltext_edge_query_with_match_plan(self):
+        # this test verifies that when an edge is yielded from queryRelationships
+        # the planner should be aware of the edge's endpoints and avoid full scan
+
+        # first, let's verify the issue exists without optimization
+        # when using the edge in a MATCH pattern, planner should not do a full scan
+        query = """CALL db.idx.fulltext.queryRelationships('E', 'nice')
+                   YIELD relationship AS e
+                   MATCH ()-[e]->(z)
+                   RETURN z"""
+
+        # get the execution plan
+        plan_result = self.graph.explain(query)
+        plan_str = str(plan_result.structured_plan)
+
+        # the plan should NOT contain "All Node Scan" for the anonymous node
+        # before the fix, it would show:
+        #   Conditional Traverse | (@anon_0)-[e]->(z)
+        #       All Node Scan | (@anon_0)
+        # after the fix, it should use Expand Into or not scan anonymous node
+        self.env.assertNotContains(plan_str, "All Node Scan")
+
+        # verify the query actually works and returns correct results
+        result = self.graph.query(query)
+        self.env.assertEquals(len(result.result_set), 2)
+

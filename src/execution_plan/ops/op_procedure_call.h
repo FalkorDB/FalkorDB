@@ -17,6 +17,8 @@
 typedef struct {
 	uint proc_out_idx;  // Index into procedure output.
 	uint rec_idx;       // Index into record.
+	int src_node_idx;   // Index into record for edge source node (-1 if not an edge).
+	int dest_node_idx;  // Index into record for edge dest node (-1 if not an edge).
 } OutputMap;
 
 /* OpProcCall, */
