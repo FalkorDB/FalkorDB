@@ -72,6 +72,8 @@
 use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use smallvec::SmallVec;
+
 use super::{
     GxB_Print_Level,
     matrix::{self, Dup, Matrix},
@@ -817,6 +819,45 @@ impl VersionedMatrix<bool> {
         Iter::<BoolExtract>::new(self, min_row, max_row)
     }
 
+    /// Push every column present in row `row` below `cols` onto `out`, in
+    /// ascending column order.
+    ///
+    /// Point-probes each column instead of opening a row iterator over the
+    /// row. [`Self::iter`] pays `GxB_Iterator_new` +
+    /// `GxB_rowIterator_attach` + the matching free — about 1,700
+    /// instructions, the figure [`matrix::Iter::detached`] documents — before
+    /// it yields anything, and a caller reading one short row per entity pays
+    /// that per entity. Probing trades the fixed setup for one
+    /// `GrB_Matrix_extractElement` per column, so it only wins while `cols`
+    /// stays small; choosing between the two is the caller's, since only the
+    /// caller knows how wide its rows are.
+    ///
+    /// With no delta pending the committed base is the whole effective state,
+    /// so the probe reads `m` alone and skips the `dp`/`dm` lookups
+    /// [`Self::get`] would otherwise repeat on every column. That is the same
+    /// raw base read `get` ends in, under the same `wait`.
+    pub fn probe_row_into(
+        &self,
+        row: u64,
+        cols: u64,
+        out: &mut SmallVec<[u64; 4]>,
+    ) {
+        self.wait();
+        if self.dp.nvals() == 0 && self.dm.nvals() == 0 {
+            for col in 0..cols {
+                if self.m.get(row, col).is_some() {
+                    out.push(col);
+                }
+            }
+            return;
+        }
+        for col in 0..cols {
+            if self.get(row, col).is_some() {
+                out.push(col);
+            }
+        }
+    }
+
     pub fn resize(
         &mut self,
         nrows: u64,
@@ -1502,7 +1543,8 @@ mod tests {
     use super::super::matrix::{Dup, Matrix};
     use super::super::test_init::ensure_init;
     use super::{
-        MIN_FOLD_DELTA, READ_FOLD_K, VersionedMatrix, WRITE_FOLD_K, should_fold, should_fold_read,
+        MIN_FOLD_DELTA, READ_FOLD_K, SmallVec, VersionedMatrix, WRITE_FOLD_K, should_fold,
+        should_fold_read,
     };
 
     /// Smallest delta that satisfies the sqrt rule, i.e. `ceil(sqrt(k · tx))`.
@@ -1616,6 +1658,27 @@ mod tests {
         );
         let effective: BTreeSet<(u64, u64)> = v.iter(0, u64::MAX).collect();
         assert_eq!(&effective, model, "effective state diverged from the model");
+
+        // `probe_row_into` is the point-read alternative to `iter` for one
+        // short row, and `Graph::get_node_label_ids` picks between them purely
+        // on width — so the two must be indistinguishable in every delta
+        // state this sequence reaches, including the `dp`-shadowed and
+        // `dm`-masked pairs that only the three-way merge normally resolves.
+        let rows: BTreeSet<u64> = model.iter().map(|&(i, _)| i).collect();
+        for &row in &rows {
+            let mut probed: SmallVec<[u64; 4]> = SmallVec::new();
+            v.probe_row_into(row, DIM, &mut probed);
+            let expected: Vec<u64> = model
+                .iter()
+                .filter(|&&(i, _)| i == row)
+                .map(|&(_, j)| j)
+                .collect();
+            assert_eq!(
+                probed.as_slice(),
+                expected.as_slice(),
+                "probe_row_into disagrees with the model on row {row}"
+            );
+        }
     }
 
     /// Deterministic LCG — the sequence must be reproducible so a failure is
