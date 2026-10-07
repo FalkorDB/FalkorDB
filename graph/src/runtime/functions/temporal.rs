@@ -380,6 +380,17 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
         }
     }
 
+    // A number with no unit after it -- `P5`, `P-` -- is not a valid ISO
+    // 8601 duration, and both loops below only consume a number when a unit
+    // character closes it, so whatever a loop leaves behind is dropped
+    // silently and the duration collapses to something shorter than it reads.
+    // Checked here as well as after the time loop, because that loop clears the
+    // buffer before it starts: `P1Y5T1H` would otherwise lose its `5` and
+    // answer P1YT1H.
+    if !num_buf.is_empty() {
+        return Err(format!("Invalid duration, missing unit after: {num_buf}"));
+    }
+
     // Parse time part
     if let Some(tp) = time_part {
         num_buf.clear();
@@ -402,6 +413,12 @@ fn parse_duration_string(s: &str) -> Result<(i64, i64, i64, i64, i64, i64, i64),
                 }
             }
         }
+    }
+
+    // Same check for the time part, which is where an unconsumed fraction
+    // (`PT1.5`) or a dangling `4H5` would otherwise be lost.
+    if !num_buf.is_empty() {
+        return Err(format!("Invalid duration, missing unit after: {num_buf}"));
     }
 
     Ok((years, months, 0, days, hours, minutes, seconds))
@@ -820,4 +837,36 @@ pub fn register(funcs: &mut Functions) {
         LOCALDATETIME_SLOTS,
     );
     funcs.set_struct_fn("duration", duration_struct_pure, DURATION_SLOTS);
+}
+
+#[cfg(test)]
+mod parse_duration_string_tests {
+    use super::parse_duration_string;
+
+    /// The parser's tuple, as a fixed-size array so the expectations below stay
+    /// on one line.
+    fn parse(s: &str) -> [i64; 7] {
+        let (y, mo, w, d, h, mi, s) = parse_duration_string(s).unwrap();
+        [y, mo, w, d, h, mi, s]
+    }
+
+    #[test]
+    fn a_trailing_number_with_no_unit_is_rejected() {
+        for bad in ["P5", "P-", "P1Y5", "P1M2", "PT1.5", "PT4H5", "P1Y5T1H"] {
+            assert!(
+                parse_duration_string(bad).is_err(),
+                "{bad} has no unit after its last number"
+            );
+        }
+    }
+
+    #[test]
+    fn a_number_with_a_unit_still_parses() {
+        assert_eq!(parse("P5D"), [0, 0, 0, 5, 0, 0, 0]);
+        assert_eq!(parse("P2W"), [0, 0, 0, 14, 0, 0, 0]);
+        assert_eq!(parse("P1Y2M3DT4H5M6S"), [1, 2, 0, 3, 4, 5, 6]);
+        // The date part may not leave a number behind for the time part to
+        // discard: this is the case a single trailing check misses.
+        assert_eq!(parse("P1YT1H"), [1, 0, 0, 0, 1, 0, 0]);
+    }
 }
