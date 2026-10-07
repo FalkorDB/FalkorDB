@@ -351,6 +351,19 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                         }))
                     };
 
+                // An undirected pattern matches each edge in both
+                // orientations (a self-loop once), as `CondTraverse` does;
+                // the index yields it once, `src -> dst`.
+                let oriented_hits: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
+                    if rp.bidirectional {
+                        Box::new(base.flat_map(|(src, dst, edge)| {
+                            std::iter::once((src, dst, edge))
+                                .chain((src != dst).then_some((dst, src, edge)))
+                        }))
+                    } else {
+                        base
+                    };
+
                 // Filter edges by *both* endpoints when the child has
                 // already bound them. `transposed` flips which
                 // graph-side (src/dst) role the pattern's from/to
@@ -374,7 +387,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                 let same_endpoint_alias = rp.from.alias == rp.to.alias;
                 let edges: Box<dyn Iterator<Item = (NodeId, NodeId, RelationshipId)>> =
                     if bound_from.is_some() || bound_to.is_some() || same_endpoint_alias {
-                        Box::new(base.filter(move |(src, dst, _)| {
+                        Box::new(oriented_hits.filter(move |(src, dst, _)| {
                             let (from_id, to_id) = if transposed {
                                 (*dst, *src)
                             } else {
@@ -385,7 +398,7 @@ impl<'a> Iterator for EdgeByIndexScanOp<'a> {
                                 && (!same_endpoint_alias || from_id == to_id)
                         }))
                     } else {
-                        base
+                        oriented_hits
                     };
                 Ok(Some(RowIter::many(edges)))
             }) {
