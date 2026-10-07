@@ -66,6 +66,16 @@ class testRdbLoad():
 
         self.env.assertIsNotNone(graphdata_key)
 
+        # Virtual keys must be typed graphmeta, as C types its own: C frees a
+        # graphdata key by dropping its graph from GRAPH.LIST, so a virtual
+        # key saved as graphdata emptied GRAPH.LIST once C finished loading
+        # the RDB and deleted it (#3160).
+        for key in graphmeta_keys:
+            key_type = self.conn.type(key)
+            if isinstance(key_type, bytes):
+                key_type = key_type.decode()
+            self.env.assertEqual(key_type, 'graphmeta')
+
         # Flush and verify empty
         self.conn.flushall()
         self.validate_key_count(0)
