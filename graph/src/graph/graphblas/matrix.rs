@@ -91,15 +91,15 @@ use super::{
     GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
     GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
-    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
-    GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32,
-    GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
-    GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
-    GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field,
-    GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
-    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
-    GxB_unload_Matrix_into_Container,
+    GrB_Vector, GrB_Vector_free, GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL,
+    GxB_ANY_PAIR_BOOL, GxB_ANY_UINT64, GxB_BITMAP, GxB_Container_free, GxB_Container_new, GxB_FULL,
+    GxB_Global_Option_set_INT32, GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free,
+    GxB_Iterator_get_UINT64, GxB_Iterator_new, GxB_JIT_Control, GxB_Matrix_build_Scalar,
+    GxB_Matrix_fprint, GxB_Matrix_isStoredElement, GxB_Matrix_memoryUsage, GxB_Matrix_type,
+    GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field, GxB_Print_Level, GxB_SPARSE, GxB_init,
+    GxB_load_Matrix_from_Container, GxB_rowIterator_attach, GxB_rowIterator_getColIndex,
+    GxB_rowIterator_getRowIndex, GxB_rowIterator_kount, GxB_rowIterator_nextCol,
+    GxB_rowIterator_nextRow, GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -426,6 +426,41 @@ unsafe fn pin_sparse(m: GrB_Matrix) {
     debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 }
 
+/// Owns a `GxB_Container` and frees it, with every component it holds, on
+/// drop — so an error part-way through [`Matrix::decode`] leaks nothing.
+struct OwnedContainer(super::GxB_Container);
+
+impl OwnedContainer {
+    fn new() -> Result<Self, String> {
+        let mut c: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
+        let info = unsafe { GxB_Container_new(c.as_mut_ptr()) };
+        if info != GrB_Info::GrB_SUCCESS {
+            return Err(format!("GxB_Container_new failed: {info:?}"));
+        }
+        Ok(Self(unsafe { c.assume_init() }))
+    }
+
+    /// Put `v` in the component slot `slot`, freeing what was there
+    /// (`GxB_Container_new` fills every slot with an empty vector).
+    unsafe fn replace(
+        slot: &mut GrB_Vector,
+        v: Vector<bool>,
+    ) {
+        unsafe {
+            let info = GrB_Vector_free(slot);
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        *slot = ManuallyDrop::new(v).ptr();
+    }
+}
+
+impl Drop for OwnedContainer {
+    fn drop(&mut self) {
+        let info = unsafe { GxB_Container_free(&raw mut self.0) };
+        debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+    }
+}
+
 impl<T> Decode<19> for Matrix<T> {
     fn decode(r: &mut dyn Reader) -> Result<Self, String> {
         let container_bytes = r.read_buffer()?;
@@ -438,62 +473,65 @@ impl<T> Decode<19> for Matrix<T> {
                 CONTAINER_STRUCT_SIZE
             ));
         }
+        // Read unaligned: the buffer is only byte-aligned.
+        let header: super::GxB_Container_struct =
+            unsafe { std::ptr::read_unaligned(container_bytes.as_ptr().cast()) };
 
+        // GraphBLAS sanity-checks the components against the format it is
+        // given, but loads an unknown format unchecked.
+        if ![GxB_HYPERSPARSE, GxB_SPARSE, GxB_BITMAP, GxB_FULL]
+            .iter()
+            .any(|&f| i64::from(f) == i64::from(header.format))
+        {
+            return Err(format!("container has unknown format {}", header.format));
+        }
+
+        let container = OwnedContainer::new()?;
         unsafe {
-            let mut container: MaybeUninit<super::GxB_Container> = MaybeUninit::uninit();
-            let info = GxB_Container_new(container.as_mut_ptr());
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GxB_Container_new failed: {info:?}"
-            );
-            let container = container.assume_init();
-
-            // Copy struct data into the allocated container
-            std::ptr::copy_nonoverlapping(
-                container_bytes.as_ptr(),
-                container.cast::<u8>(),
-                CONTAINER_STRUCT_SIZE,
-            );
-
-            // Nullify vector/matrix pointers (will be populated below)
-            (*container).x = null_mut();
-            (*container).h = null_mut();
-            (*container).b = null_mut();
-            (*container).i = null_mut();
-            (*container).p = null_mut();
-            (*container).Y = null_mut();
+            let c = container.0;
+            // Only the scalar description comes from the payload. Its pointer
+            // fields are addresses in the writer's process, and the fresh
+            // container's own components (and allocator bookkeeping) must stay
+            // in place: overwriting them wholesale leaked the five empty
+            // vectors `GxB_Container_new` allocated.
+            (*c).nrows = header.nrows;
+            (*c).ncols = header.ncols;
+            (*c).nrows_nonempty = header.nrows_nonempty;
+            (*c).ncols_nonempty = header.ncols_nonempty;
+            (*c).nvals = header.nvals;
+            (*c).format = header.format;
+            (*c).orientation = header.orientation;
+            (*c).iso = header.iso;
+            (*c).jumbled = header.jumbled;
 
             // Read and load 5 vectors: x, h, p, i, b
-            (*container).x = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
-            (*container).h = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
-            (*container).p = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
-            (*container).i = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
-            (*container).b = ManuallyDrop::new(Vector::<bool>::decode(r)?).ptr();
+            OwnedContainer::replace(&mut (*c).x, Vector::<bool>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).h, Vector::<bool>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).p, Vector::<bool>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).i, Vector::<bool>::decode(r)?);
+            OwnedContainer::replace(&mut (*c).b, Vector::<bool>::decode(r)?);
 
             // Create matrix and load from container
             let mut m: MaybeUninit<GrB_Matrix> = MaybeUninit::uninit();
             let info = GrB_Matrix_new(m.as_mut_ptr(), GrB_BOOL, 0, 0);
-            assert_eq!(
-                info,
-                GrB_Info::GrB_SUCCESS,
-                "GrB_Matrix_new failed: {info:?}"
-            );
-            let m = m.assume_init();
+            if info != GrB_Info::GrB_SUCCESS {
+                return Err(format!("GrB_Matrix_new failed: {info:?}"));
+            }
+            let mut m = m.assume_init();
             pin_sparse(m);
 
-            let info = GxB_load_Matrix_from_Container(m, container, null_mut());
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+            // The components come from the payload: GraphBLAS validates them
+            // here, and a rejection is bad input, not a broken invariant.
+            let info = GxB_load_Matrix_from_Container(m, c, null_mut());
+            if info != GrB_Info::GrB_SUCCESS {
+                GrB_Matrix_free(&raw mut m);
+                return Err(format!("GxB_load_Matrix_from_Container failed: {info:?}"));
+            }
 
-            // The hyper-hash (Y) was nullified above and is not serialized, so
-            // a hypersparse matrix comes back with GxB_WILL_WAIT set. Rebuild
-            // it now so `pending()` reflects real pending work (no-op for
-            // non-hypersparse matrices).
+            // The hyper-hash (Y) is not serialized, so a hypersparse matrix
+            // comes back with GxB_WILL_WAIT set. Rebuild it now so `pending()`
+            // reflects real pending work (no-op for non-hypersparse matrices).
             let info = GrB_Matrix_wait(m, GrB_WaitMode::GrB_MATERIALIZE as _);
-            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
-
-            let mut c = container;
-            let info = GxB_Container_free(&raw mut c);
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
 
             Ok(Self {
@@ -1892,6 +1930,123 @@ mod tests {
             scalar_built.memory_usage() < raw_bytes,
             "iso build should be the cheaper of the two: {} vs {raw_bytes} bytes",
             scalar_built.memory_usage()
+        );
+    }
+
+    /// Replays an encoder's calls to a decoder, in order.
+    #[derive(Default, Clone)]
+    struct Tape(std::collections::VecDeque<Op>);
+
+    #[derive(Clone)]
+    enum Op {
+        U(u64),
+        S(i64),
+        B(Vec<u8>),
+    }
+
+    impl super::Writer for Tape {
+        fn write_unsigned(
+            &mut self,
+            v: u64,
+        ) {
+            self.0.push_back(Op::U(v));
+        }
+        fn write_signed(
+            &mut self,
+            v: i64,
+        ) {
+            self.0.push_back(Op::S(v));
+        }
+        fn write_double(
+            &mut self,
+            _: f64,
+        ) {
+            unreachable!("matrices write no doubles")
+        }
+        fn write_buffer(
+            &mut self,
+            d: &[u8],
+        ) {
+            self.0.push_back(Op::B(d.to_vec()));
+        }
+    }
+
+    impl super::Reader for Tape {
+        fn read_unsigned(&mut self) -> Result<u64, String> {
+            match self.0.pop_front() {
+                Some(Op::U(v)) => Ok(v),
+                _ => Err("tape: expected unsigned".to_string()),
+            }
+        }
+        fn read_signed(&mut self) -> Result<i64, String> {
+            match self.0.pop_front() {
+                Some(Op::S(v)) => Ok(v),
+                _ => Err("tape: expected signed".to_string()),
+            }
+        }
+        fn read_double(&mut self) -> Result<f64, String> {
+            Err("tape: no doubles".to_string())
+        }
+        fn read_buffer(&mut self) -> Result<Vec<u8>, String> {
+            match self.0.pop_front() {
+                Some(Op::B(v)) => Ok(v),
+                _ => Err("tape: expected buffer".to_string()),
+            }
+        }
+    }
+
+    fn encoded() -> Tape {
+        let mut m = Matrix::<bool>::new(8, 8);
+        m.set(1, 2, true);
+        m.set(3, 4, true);
+        m.wait();
+        let mut tape = Tape::default();
+        super::Encode::encode(&m, &mut tape);
+        tape
+    }
+
+    /// The round trip keeps the entries, and a payload cut short or holding a
+    /// container GraphBLAS refuses to load is an error rather than a panic
+    /// (the load's result used to be a `debug_assert`).
+    #[test]
+    fn decode_round_trips_and_refuses_bad_payloads() {
+        use super::super::GxB_Container_struct;
+        use super::Decode;
+        ensure_init();
+        let back = Matrix::<bool>::decode(&mut encoded()).expect("round trip");
+        assert_eq!(back.nvals(), 2);
+        assert_eq!(back.get(1, 2), Some(true));
+        assert_eq!(back.get(3, 4), Some(true));
+
+        // container header plus the first component only
+        let mut cut = encoded();
+        cut.0.truncate(1 + 5);
+        assert!(Matrix::<bool>::decode(&mut cut).is_err());
+
+        // a sparsity format that does not exist: GraphBLAS would load it
+        // unchecked
+        let mut bad = encoded();
+        if let Some(Op::B(header)) = bad.0.front_mut() {
+            let at = std::mem::offset_of!(GxB_Container_struct, format);
+            header[at..at + 4].copy_from_slice(&99i32.to_ne_bytes());
+        }
+        let err = Matrix::<bool>::decode(&mut bad)
+            .err()
+            .expect("unknown sparsity format accepted");
+        assert!(err.contains("unknown format 99"), "unexpected error: {err}");
+
+        // fewer rows than the stored entries need: GraphBLAS's own check
+        let mut bad = encoded();
+        if let Some(Op::B(header)) = bad.0.front_mut() {
+            let at = std::mem::offset_of!(GxB_Container_struct, nrows);
+            header[at..at + 8].copy_from_slice(&1u64.to_ne_bytes());
+        }
+        let err = Matrix::<bool>::decode(&mut bad)
+            .err()
+            .expect("container with too few rows accepted");
+        assert!(
+            err.contains("GxB_load_Matrix_from_Container"),
+            "unexpected error: {err}"
         );
     }
 }
