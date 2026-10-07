@@ -1201,6 +1201,19 @@ def signum(x):
 def test_sign(a):
     res = query("RETURN sign($a)", params={"a": a})
     assert res.result_set == [[signum(a) if a is not None else None]]
+    # sign() returns an Integer even for a Float argument (Python's
+    # -1 == -1.0, so check the type too).
+    if a is not None:
+        assert type(res.result_set[0][0]) is int
+
+
+def test_sign_float_special_values():
+    res = query(
+        "RETURN sign(-2.5), sign(2.5), sign(0.0), sign(-0.0), sign(0.0/0.0), "
+        "sign(1.0/0.0), sign(-1.0/0.0), sign(1e-300)"
+    )
+    assert res.result_set == [[-1, 1, 0, 0, 0, 1, -1, 1]]
+    assert all(type(v) is int for v in res.result_set[0])
 
 
 def test_sqrt():
