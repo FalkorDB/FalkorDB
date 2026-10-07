@@ -1047,22 +1047,6 @@ impl Graph {
         }
     }
 
-    /// Shared read access to this version's FalkorDB indexes.
-    #[cfg(feature = "index-falkordb")]
-    #[must_use]
-    pub fn falkordb_index(&self) -> &crate::index::falkordb::falkordb_index::FalkorDbIndex {
-        &self.falkordb_index
-    }
-
-    /// Mutable access to this version's FalkorDB indexes, for the write path to
-    /// maintain them within the already-CoW-forked version.
-    #[cfg(feature = "index-falkordb")]
-    pub fn falkordb_index_mut(
-        &mut self
-    ) -> &mut crate::index::falkordb::falkordb_index::FalkorDbIndex {
-        &mut self.falkordb_index
-    }
-
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -4409,7 +4393,7 @@ impl Graph {
         label: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<impl Iterator<Item = NodeId> + use<>> {
-        self.falkordb_index()
+        self.falkordb_index
             .query_numeric(EntityType::Node, label, query)
             .map(|iter| iter.map(NodeId))
     }
@@ -4426,9 +4410,9 @@ impl Graph {
         type_name: &Arc<String>,
         query: &IndexQuery<Value>,
     ) -> Option<impl Iterator<Item = (NodeId, NodeId, RelationshipId)> + use<>> {
-        let iter =
-            self.falkordb_index()
-                .query_numeric(EntityType::Relationship, type_name, query)?;
+        let iter = self
+            .falkordb_index
+            .query_numeric(EntityType::Relationship, type_name, query)?;
         // Own the reverse index rather than borrowing `self`, so the iterator stays lazy: the
         // signature is `+ use<>` (captures no lifetime), which is why this used to `collect()`
         // into a Vec. `edge_endpoints` is an `Arc`, so cloning is a refcount bump, and `get` is
@@ -6054,10 +6038,10 @@ mod falkordb_index_mvcc_tests {
 
         let mut committed = Graph::new(64, 64, 10, 1, "t");
         committed
-            .falkordb_index_mut()
+            .falkordb_index
             .create_numeric(EntityType::Node, &label, &attr);
         committed
-            .falkordb_index_mut()
+            .falkordb_index
             .numeric_mut(EntityType::Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(30), 1);
@@ -6065,13 +6049,13 @@ mod falkordb_index_mvcc_tests {
         // A writer forks the next version and indexes another node.
         let mut writer = committed.new_version();
         writer
-            .falkordb_index_mut()
+            .falkordb_index
             .numeric_mut(EntityType::Node, &label, &attr)
             .unwrap()
             .add(&Value::Int(40), 2);
 
         let all = |g: &Graph| -> Vec<u64> {
-            g.falkordb_index()
+            g.falkordb_index
                 .numeric(EntityType::Node, &label, &attr)
                 .unwrap()
                 .range(None, None, true, true)
@@ -6123,7 +6107,7 @@ mod falkordb_index_mvcc_tests {
         let scan = |lo: Option<i64>, hi: Option<i64>| -> Vec<u64> {
             let lo = lo.map(Value::Int);
             let hi = hi.map(Value::Int);
-            g.falkordb_index()
+            g.falkordb_index
                 .numeric(EntityType::Node, &label, &attr)
                 .unwrap()
                 .range(lo.as_ref(), hi.as_ref(), true, true)
@@ -6144,7 +6128,7 @@ mod falkordb_index_mvcc_tests {
         let mut g = Graph::new(64, 64, 10, 1, "t");
         let label = Arc::new("Person".to_string());
         let attr = Arc::new("v".to_string());
-        g.falkordb_index_mut()
+        g.falkordb_index
             .create_numeric(EntityType::Node, &label, &attr);
         let lid = g.get_label_id_mut("Person");
         let ids: Vec<u64> = reserve_nodes(&mut g, n);
@@ -6180,7 +6164,7 @@ mod falkordb_index_mvcc_tests {
         lo: i64,
         hi: i64,
     ) -> Vec<u64> {
-        g.falkordb_index()
+        g.falkordb_index
             .numeric(EntityType::Node, label, attr)
             .unwrap()
             .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
@@ -6254,7 +6238,7 @@ mod falkordb_index_mvcc_tests {
         let mut g = Graph::new(64, 64, 10, 1, "t");
         let label = Arc::new("Person".to_string());
         let attr = Arc::new("v".to_string());
-        g.falkordb_index_mut()
+        g.falkordb_index
             .create_numeric(EntityType::Node, &label, &attr);
         let _lid = g.get_label_id_mut("Person"); // register the label matrix
         let ids: Vec<u64> = reserve_nodes(&mut g, 1);
