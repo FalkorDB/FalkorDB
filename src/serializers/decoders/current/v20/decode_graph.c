@@ -12,6 +12,24 @@ static GraphContext *_GetOrCreateGraphContext
 	char *graph_name
 ) {
 	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
+
+	// only continue decoding into an existing graph context when that context
+	// is in the middle of a multi virtual-key decode (a large graph is loaded
+	// across several keys that share a single GraphContext). such a context has
+	// already processed at least one key.
+	//
+	// a context that hasn't processed any key is a *live* graph already in the
+	// keyspace - e.g. 'RESTORE <key> ... REPLACE' decodes the payload before
+	// evicting the old value, so the old graph is still registered under this
+	// name. decoding into it would merge the payload into the live graph:
+	// duplicate its schema (Schema_AddIndex returns a NULL index -> crash in
+	// Index_SetLanguage) and hand the still-referenced context back to Redis as
+	// the "new" value, leading to a double free. build a fresh context instead.
+	if (gc != NULL &&
+		GraphDecodeContext_GetProcessedKeyCount (GraphContext_GetDecodingCtx (gc)) == 0) {
+		gc = NULL ;
+	}
+
 	if (!gc) {
 		// new graph is being decoded
 		// inform the module and create new graph context
