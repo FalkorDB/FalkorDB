@@ -209,6 +209,7 @@ void CCHIndex_RdbSave
 // reconstruct a CCH index definition from 'io' (inverse of CCHIndex_RdbSave).
 // the returned index is unbuilt (cch == NULL); the hierarchy is rebuilt from
 // the graph at decode finalization once the whole graph is materialized.
+// returns NULL on a short read / IO error
 CCHIndex *CCHIndex_RdbLoad
 (
 	SerializerIO io  // stream to read from

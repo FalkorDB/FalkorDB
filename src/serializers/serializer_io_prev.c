@@ -5,6 +5,7 @@
 
 #include "RG.h"
 #include "serializer_io.h"
+#include "serializer_io_internal.h"
 #include "../util/rmalloc.h"
 
 #include <stdio.h>
@@ -13,43 +14,13 @@
 
 #define BUFFER_SIZE 256000  // buffered searializer buffer size 256KB
 
-typedef struct {
-	unsigned char *buffer;  // io buffer
-	size_t cap;             // io buffer capacity
-	size_t count;           // number of bytes written to io buffer
-	RedisModuleIO *stream;  // redis module io
-} BufferedIO;
-
-// generic serializer
-// contains a number of function pointers for data serialization
-struct SerializerIO_Opaque {
-	void (*WriteFloat)(void*, float);                 // write float
-	void (*WriteDouble)(void*, double);               // write dobule
-	void (*WriteSigned)(void*, int64_t);              // write signed int
-	void (*WriteUnsigned)(void*, uint64_t);           // write unsigned int
-	void (*WriteLongDouble)(void*, long double);      // write long double
-	void (*WriteString)(void*, RedisModuleString*);   // write RedisModuleString
-	void (*WriteBuffer)(void*, const void*, size_t);  // write bytes
-
-	float (*ReadFloat)(void*);                        // read float
-	double (*ReadDouble)(void*);                      // read dobule
-	int64_t (*ReadSigned)(void*);                     // read signed int
-	uint64_t (*ReadUnsigned)(void*);                  // read unsigned int
-	void* (*ReadBuffer)(void*, size_t*);              // read bytes
-	long double	(*ReadLongDouble)(void*);             // read long double
-	RedisModuleString* (*ReadString)(void*);          // read RedisModuleString
-
-	bool encoder;  // true is serializer is used for encoding, false decoding
-	void *stream;  // RedisModuleIO* or a Stream descriptor
-	bool free_buff; // true if serializer has a buffer to free
-};
-
 //------------------------------------------------------------------------------
 // PREVIOUS Buffered Serializer Read & Write API
 //------------------------------------------------------------------------------
 
 // load buffer from stream to memory
-static void _load_buffer
+// returns false on a short read (the underlying RedisModuleIO latched an error)
+static bool _load_buffer
 (
 	BufferedIO *buffer  // buffer
 ) {
@@ -63,15 +34,21 @@ static void _load_buffer
 	}
 
 	// read new buffer from stream
+	size_t cap = 0;
 	buffer->buffer =
-		(unsigned char*)RedisModule_LoadStringBuffer(buffer->stream,
-				&buffer->cap);
-
-	ASSERT(buffer->cap    > 0);
-	ASSERT(buffer->buffer != NULL);
+		(unsigned char*)RedisModule_LoadStringBuffer(buffer->stream, &cap);
 
 	// reset offset
 	buffer->count = 0;
+
+	// a short read yields a NULL buffer and latches the IO error on the stream
+	if(buffer->buffer == NULL || RedisModule_IsIOError(buffer->stream)) {
+		buffer->cap = 0;
+		return false;
+	}
+
+	buffer->cap = cap;
+	return true;
 }
 
 // flush buffer to underline stream
@@ -183,11 +160,16 @@ static t BufferSerializerIO_Read##suffix(void *io) {            \
                                                                 \
 	/* load buffer if depleted */                               \
 	if(unlikely(buffer->count == buffer->cap)) {                \
-		_load_buffer(buffer);                                   \
+		if(!_load_buffer(buffer)) {                             \
+			/* short read - latched via Buffered_IsError */     \
+			return (t)0;                                        \
+		}                                                       \
 	}                                                           \
                                                                 \
-	/* ensure there's at least sizeof(t) bytes in buffer */     \
-	ASSERT((buffer->cap - buffer->count) >= REQUIRED_SIZE(t));  \
+	/* a truncated buffer may not hold a full value */          \
+	if(unlikely((buffer->cap - buffer->count) < REQUIRED_SIZE(t))) { \
+		return (t)0;                                            \
+	}                                                           \
                                                                 \
 	/* validate type */                                         \
 	DEBUG_VALIDATE_TYPE(t)                                      \
@@ -263,7 +245,11 @@ void *BufferSerializerIO_ReadBuffer
 
 	// load buffer if depleted
 	if(unlikely(buffer->count == buffer->cap)) {
-		_load_buffer(buffer);
+		if(!_load_buffer(buffer)) {
+			// short read - the read layer latches via Buffered_IsError
+			if(lenptr != NULL) *lenptr = 0;
+			return NULL;
+		}
 	}
 
 	// check for large string
@@ -346,7 +332,8 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 ) {
 	ASSERT(io != NULL);
 
-	BufferedIO *buffer_io = rm_malloc(sizeof(BufferedIO));
+	// zeroed: the shared error probe reads the corrupt flag
+	BufferedIO *buffer_io = rm_calloc(1, sizeof(BufferedIO));
 
 	buffer_io->stream = io;
 
@@ -384,6 +371,9 @@ SerializerIO SerializerIO_FromBufferedRedisModuleIO
 	serializer->stream    = buffer_io;
 	serializer->encoder   = encoder;
 	serializer->free_buff = true;
+
+	// decoders latch short reads via the backend error probe
+	if(!encoder) serializer->IsError = Buffered_IsError;
 
 	return serializer;
 }

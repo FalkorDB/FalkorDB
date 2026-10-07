@@ -8,6 +8,23 @@
 #include "prev/v19/decode_v19.h"
 #include "../encoding_version.h"
 
+// log why a graph key failed to load, see decode_graph.h
+void RdbLoadGraph_LogFailure
+(
+	RedisModuleIO *rdb,  // redis IO the key was read from
+	SerializerIO io      // serializer that failed
+) {
+	const char *reason = SerializerIO_ErrorReason (io) ;
+	if (reason == NULL) {
+		return ;
+	}
+
+	const RedisModuleString *key = RedisModule_GetKeyNameFromIO (rdb) ;
+	RedisModule_Log (NULL, "warning", "Failed loading graph key '%s': %s",
+			key != NULL ? RedisModule_StringPtrLen (key, NULL) : "",
+			reason) ;
+}
+
 GraphContext *RdbLoadGraph
 (
 	RedisModuleIO *rdb
@@ -16,7 +33,26 @@ GraphContext *RdbLoadGraph
 
 	SerializerIO io = SerializerIOv2_FromBufferedRedisModuleIO (rdb, false) ;
 	GraphContext *gc = RdbLoadGraphContext_latest (io, rm_key_name, false) ;
+
+	// detect a short read / IO error before the serializer is torn down
+	bool io_error = SerializerIO_Error (io) ;
+	if (io_error) {
+		RdbLoadGraph_LogFailure (rdb, io) ;
+	}
 	SerializerIO_Free (&io) ;
+
+	if(io_error) {
+		// short read - abort the load and return NULL so Redis fails cleanly
+		// (a truncated RESTORE errors, a truncated replication stream retries)
+		// a graph that isn't registered yet (ref count 0) was created by this
+		// virtual key and must be freed here - nothing else will. an already
+		// registered graph belongs to earlier virtual keys and is reconciled by
+		// Redis via their key free callbacks when it aborts the load
+		if(gc != NULL && GraphContext_RefCount(gc) == 0) {
+			GraphContext_Free(gc);
+		}
+		return NULL;
+	}
 
 	return gc ;
 }

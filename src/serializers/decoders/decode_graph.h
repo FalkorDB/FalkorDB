@@ -13,6 +13,14 @@
 // load RDB
 GraphContext *RdbLoadGraph(RedisModuleIO *rdb);
 
+// log why a graph key failed to load, once, naming the key
+// silent for short reads, which Redis reports itself
+void RdbLoadGraph_LogFailure
+(
+	RedisModuleIO *rdb,  // redis IO the key was read from
+	SerializerIO io      // serializer that failed
+);
+
 // decoder for a graph encoding version, matching RdbLoadGraphContext_latest
 typedef GraphContext *(*RdbLoadGraphContext_t)
 (

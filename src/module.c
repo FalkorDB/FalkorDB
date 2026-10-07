@@ -161,6 +161,12 @@ int RedisModule_OnLoad
 		return REDISMODULE_ERR;
 	}
 
+	// declare that our RDB decoders detect and handle IO errors (short reads)
+	// themselves; without this Redis panics ("short read or EOF") on the first
+	// truncated read instead of returning an error flag we can act on - e.g. a
+	// truncated RESTORE payload or a diskless-replication stream that drops
+	RedisModule_SetModuleOptions(ctx, REDISMODULE_OPTIONS_HANDLE_IO_ERRORS);
+
 	if (_ExportAPIs (ctx) != REDISMODULE_OK) {
 		return REDISMODULE_ERR ;
 	}

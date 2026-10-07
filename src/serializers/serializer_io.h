@@ -150,6 +150,40 @@ long double SerializerIO_ReadLongDouble
 	SerializerIO io  // stream
 );
 
+// read a NUL-terminated string
+// a buffer that doesn't end in NUL fails the decode, an empty string is
+// returned in its place; free with rm_free
+char *SerializerIO_ReadCString
+(
+	SerializerIO io  // stream
+);
+
+// returns true if a short read / IO error was encountered during decoding
+// once set the flag is sticky: further reads short-circuit and return zeroed
+// values, so decoders can keep going until the next checkpoint aborts the load
+bool SerializerIO_Error
+(
+	SerializerIO io  // serializer
+);
+
+// fail the decode: the payload violated an encoding invariant (e.g. a count
+// mismatch or a malformed matrix). latches the same sticky flag as a short
+// read, so the load aborts at the next checkpoint and the decoder returns NULL
+// the first reason is kept (printf-style), see SerializerIO_ErrorReason
+void SerializerIO_SetError
+(
+	SerializerIO io,    // serializer
+	const char *fmt,    // what was wrong with the payload
+	...
+) __attribute__ ((format (printf, 2, 3)));
+
+// why the decode failed: the reason given for bad data, or NULL when there is
+// no failure or the failure is a short read (Redis reports those itself)
+const char *SerializerIO_ErrorReason
+(
+	SerializerIO io  // serializer
+);
+
 #define SerializerIO_Write(io, value,...)                          \
 	_Generic                                                       \
 	(                                                              \

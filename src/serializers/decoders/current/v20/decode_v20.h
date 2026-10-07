@@ -14,8 +14,8 @@ GraphContext *RdbLoadGraphContext_latest
 	bool detached
 );
 
-// encode DB UDFs
-void AUXLoadUDF_latest
+// decode DB UDFs, returns false if the UDF section is malformed
+bool AUXLoadUDF_latest
 (
 	RedisModuleIO *io  // IO
 );
@@ -25,31 +25,35 @@ void RdbLoadNodes_v20
 (
 	SerializerIO rdb,          // RDB
 	Graph *g,                  // graph context
-	const uint64_t node_count  // number of nodes to decode
+	const uint64_t node_count, // number of nodes to decode
+	const uint64_t id_limit    // node ids are below this (header counts)
 );
 
 // decode deleted nodes
 void RdbLoadDeletedNodes_v20
 (
-	SerializerIO rdb,                  // RDB
-	Graph *g,                          // graph context
-	const uint64_t deleted_node_count  // number of deleted nodes
+	SerializerIO rdb,                   // RDB
+	Graph *g,                           // graph context
+	const uint64_t deleted_node_count,  // number of deleted nodes
+	const uint64_t id_limit             // node ids are below this
 );
 
 // decode edges
 void RdbLoadEdges_v20
 (
-	SerializerIO rdb,  // RDB
-	Graph *g,          // graph context
-	const uint64_t n   // virtual key capacity
+	SerializerIO rdb,         // RDB
+	Graph *g,                 // graph context
+	const uint64_t n,         // virtual key capacity
+	const uint64_t id_limit   // edge ids are below this (header counts)
 );
 
 // decode deleted edges
 void RdbLoadDeletedEdges_v20
 (
-	SerializerIO rdb,                  // RDB
-	Graph *g,                          // graph context
-	const uint64_t deleted_edge_count  // number of deleted edges
+	SerializerIO rdb,                   // RDB
+	Graph *g,                           // graph context
+	const uint64_t deleted_edge_count,  // number of deleted edges
+	const uint64_t id_limit             // edge ids are below this
 );
 
 void RdbLoadGraphSchema_v20
