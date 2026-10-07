@@ -90,6 +90,20 @@ impl<'a> ProjectOp<'a> {
             return Ok(out);
         }
 
+        // A projection that names nothing still has work to do: it is the
+        // record boundary at the entry to a `CALL {}` body, where it drops the
+        // outer row and hands the body its row count and correlation alone.
+        // Build that directly — the general path below would walk every row to
+        // push an empty `Row`.
+        if self.trees.is_empty() && self.copy_from_parent.is_empty() {
+            let mut out = Batch::rows_only(active.len());
+            let origins: Vec<u32> = active.iter().map(|&row| batch.origin_row(row)).collect();
+            if origins.iter().any(|&o| o != 0) {
+                out.set_origin_rows(origins);
+            }
+            return Ok(out);
+        }
+
         // Transpose the projected columns into the output batch row by row.
         let mut builder = BatchBuilder::new();
         for (out_idx, &row) in active.iter().enumerate() {

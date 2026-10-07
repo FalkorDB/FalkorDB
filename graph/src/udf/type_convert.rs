@@ -199,7 +199,8 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
 
     if let Some(f) = val.as_float() {
         // Check if it's an integer value
-        if f == f.floor() && f.abs() < (1i64 << 53) as f64 {
+        // -0.0 stays a Float (as in C): as an Int it would lose its sign.
+        if f == f.floor() && f.abs() < (1i64 << 53) as f64 && !(f == 0.0 && f.is_sign_negative()) {
             return Ok(Value::Int(f as i64));
         }
         return Ok(Value::Float(f));
@@ -235,10 +236,9 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
         {
             let mut vec = Vec::with_capacity(arr.len());
             for i in 0..arr.len() {
+                // Any f32 round-trips, including inf / NaN, which `vecf32()`
+                // accepts too (as in C).
                 let item: f64 = arr.get(i).map_err(|e| format!("VecF32 item error: {e}"))?;
-                if !item.is_finite() {
-                    return Err(format!("VecF32 element at index {i} is not finite"));
-                }
                 vec.push(item as f32);
             }
             return Ok(Value::VecF32(Arc::new(vec.into())));
@@ -310,41 +310,38 @@ pub fn js_to_value(val: JsValue<'_>) -> Result<Value, String> {
             }
         }
 
-        // Check constructor name for Date/RegExp
-        if let Ok(constructor) = obj.get::<_, Object>("constructor")
-            && let Ok(name) = constructor.get::<_, String>("name")
-        {
-            match name.as_str() {
-                "Date" => {
-                    let get_time: rquickjs::Function = obj
-                        .get("getTime")
-                        .map_err(|e| format!("Date getTime error: {e}"))?;
-                    let ms: f64 = get_time
-                        .call((This(obj.clone()),))
-                        .map_err(|e| format!("Date getTime error: {e}"))?;
-                    if !ms.is_finite() {
-                        return Err(format!("Invalid Date value: {ms}"));
-                    }
-                    let secs = (ms / 1000.0) as i64;
-                    // Check the temporal type metadata to distinguish Date from Datetime
-                    if let Ok(tt) = obj.get::<_, String>("__falkor_temporal_type")
-                        && tt == "date"
-                    {
-                        return Ok(Value::Date(secs));
-                    }
-                    return Ok(Value::Datetime(secs));
-                }
-                "RegExp" => {
-                    let to_string: rquickjs::Function = obj
-                        .get("toString")
-                        .map_err(|e| format!("RegExp toString error: {e}"))?;
-                    let s: String = to_string
-                        .call((This(obj.clone()),))
-                        .map_err(|e| format!("RegExp toString error: {e}"))?;
-                    return Ok(Value::String(Arc::new(s)));
-                }
-                _ => {}
+        // Date / RegExp by their internal class, not by a `constructor`
+        // property, which a plain object (e.g. a Cypher map) can carry too.
+        let raw = obj.as_raw();
+        // SAFETY: `raw` is a live value owned by `obj` for the duration of the call.
+        if unsafe { rquickjs::qjs::JS_IsDate(raw) } {
+            let get_time: rquickjs::Function = obj
+                .get("getTime")
+                .map_err(|e| format!("Date getTime error: {e}"))?;
+            let ms: f64 = get_time
+                .call((This(obj.clone()),))
+                .map_err(|e| format!("Date getTime error: {e}"))?;
+            if !ms.is_finite() {
+                return Err(format!("Invalid Date value: {ms}"));
             }
+            let secs = (ms / 1000.0) as i64;
+            // Check the temporal type metadata to distinguish Date from Datetime
+            if let Ok(tt) = obj.get::<_, String>("__falkor_temporal_type")
+                && tt == "date"
+            {
+                return Ok(Value::Date(secs));
+            }
+            return Ok(Value::Datetime(secs));
+        }
+        // SAFETY: as above.
+        if unsafe { rquickjs::qjs::JS_IsRegExp(raw) } {
+            let to_string: rquickjs::Function = obj
+                .get("toString")
+                .map_err(|e| format!("RegExp toString error: {e}"))?;
+            let s: String = to_string
+                .call((This(obj.clone()),))
+                .map_err(|e| format!("RegExp toString error: {e}"))?;
+            return Ok(Value::String(Arc::new(s)));
         }
 
         // Plain object -> Map
