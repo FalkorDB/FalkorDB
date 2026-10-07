@@ -182,6 +182,20 @@ CCHIndex *CCHIndex_RdbLoad
 	}
 	AttributeID weight_attr = (AttributeID) SerializerIO_ReadUnsigned (io) ;
 
+	// abort on a short read: the fields are zeroed, and a zero type count
+	// would trip CCHIndex_New's n > 0 assertion
+	if (SerializerIO_Error (io)) {
+		arr_free (rels) ;
+		return NULL ;
+	}
+
+	// an index covers at least one relationship type
+	if (n == 0) {
+		SerializerIO_SetError (io, "CCH index without relationship types") ;
+		arr_free (rels) ;
+		return NULL ;
+	}
+
 	CCHIndex *idx = CCHIndex_New (rels, arr_len (rels), weight_attr) ;
 
 	arr_free (rels) ;

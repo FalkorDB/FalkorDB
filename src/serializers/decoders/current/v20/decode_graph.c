@@ -6,30 +6,43 @@
 #include "decode_v20.h"
 #include "../../../../index/indexer.h"
 #include "../../../../index/cch_index.h"
+#include "../../../../globals.h"
+
+// find the graph a multi-key load of 'graph_name' is building, NULL if none
+//
+// a graph split across keys (main key + virtual keys) is assembled from all of
+// them, so later keys must extend the graph the first key created. only such a
+// part-way graph qualifies: a live graph of the same name (e.g. the value a
+// RESTORE ... REPLACE is about to replace, or the source of a RESTORE under
+// another key) is never extended, the payload is decoded into a new graph
+static GraphContext *_GetGraphBeingDecoded
+(
+	const char *graph_name
+) {
+	KeySpaceGraphIterator it ;
+	Globals_ScanGraphs (&it) ;
+
+	GraphContext *found = NULL ;
+	GraphContext *gc ;
+	while ((gc = GraphIterator_Next (&it)) != NULL) {
+		bool match = strcmp (GraphContext_GetName (gc), graph_name) == 0 &&
+			GraphDecodeContext_GetProcessedKeyCount (
+					GraphContext_GetDecodingCtx (gc)) ;
+		GraphContext_DecreaseRefCount (gc) ;
+		if (match) {
+			found = gc ;
+			break ;
+		}
+	}
+
+	return found ;
+}
 
 static GraphContext *_GetOrCreateGraphContext
 (
 	char *graph_name
 ) {
-	GraphContext *gc = GraphContext_UnsafeGetGraphContext (graph_name) ;
-
-	// only continue decoding into an existing graph context when that context
-	// is in the middle of a multi virtual-key decode (a large graph is loaded
-	// across several keys that share a single GraphContext). such a context has
-	// already processed at least one key.
-	//
-	// a context that hasn't processed any key is a *live* graph already in the
-	// keyspace - e.g. 'RESTORE <key> ... REPLACE' decodes the payload before
-	// evicting the old value, so the old graph is still registered under this
-	// name. decoding into it would merge the payload into the live graph:
-	// duplicate its schema (Schema_AddIndex returns a NULL index -> crash in
-	// Index_SetLanguage) and hand the still-referenced context back to Redis as
-	// the "new" value, leading to a double free. build a fresh context instead.
-	if (gc != NULL &&
-		GraphDecodeContext_GetProcessedKeyCount (GraphContext_GetDecodingCtx (gc)) == 0) {
-		gc = NULL ;
-	}
-
+	GraphContext *gc = _GetGraphBeingDecoded (graph_name) ;
 	if (!gc) {
 		// new graph is being decoded
 		// inform the module and create new graph context
@@ -73,7 +86,7 @@ static GraphContext *_DecodeHeader
 	// Schema
 
 	// graph name
-	char *graph_name = SerializerIO_ReadBuffer(rdb, NULL);
+	char *graph_name = SerializerIO_ReadCString(rdb);
 
 	// each key header contains the following:
 	// #nodes, #edges, #deleted nodes, #deleted edges, #labels matrices, #relation matrices
@@ -121,7 +134,13 @@ static GraphContext *_DecodeHeader
 			arr_append (decoding_context->multi_edge,  multi_edge [i]) ;
 		}
 
-		GraphDecodeContext_SetKeyCount (decoding_context, key_number) ;
+		// on a short read key_number may be a bogus 0; setting the key count to
+		// 0 would make GraphDecodeContext_Finished() true and mislead
+		// GraphContext_Free into the full-graph (non-partial) teardown path.
+		// leave the count at its default (1) so the partial path is taken
+		if (!SerializerIO_Error (rdb)) {
+			GraphDecodeContext_SetKeyCount (decoding_context, key_number) ;
+		}
 	}
 
 	// decode graph schemas
@@ -200,10 +219,20 @@ GraphContext *RdbLoadGraphContext_latest
 	// The following switch checks which part of the graph the current key holds, and decodes it accordingly
 	uint payloads_count = arr_len(payloads);
 	for(uint i = 0; i < payloads_count; i++) {
+		// abort on a short read / IO error
+		if(SerializerIO_Error(rdb)) {
+			break;
+		}
+
 		PayloadInfo payload = payloads[i];
 		switch(payload.state) {
 			case ENCODE_STATE_NODES:
-				RdbLoadNodes_v20(rdb, g, payload.entities_count);
+				RdbLoadNodes_v20(rdb, g, payload.entities_count,
+						decoding_context->node_count +
+						decoding_context->deleted_node_count);
+				if(SerializerIO_Error(rdb)) {
+					break;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -215,7 +244,12 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			case ENCODE_STATE_DELETED_NODES:
-				RdbLoadDeletedNodes_v20(rdb, g, payload.entities_count);
+				RdbLoadDeletedNodes_v20(rdb, g, payload.entities_count,
+						decoding_context->node_count +
+						decoding_context->deleted_node_count);
+				if(SerializerIO_Error(rdb)) {
+					break;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -227,7 +261,12 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			case ENCODE_STATE_EDGES:
-				RdbLoadEdges_v20(rdb, g, payload.entities_count);
+				RdbLoadEdges_v20(rdb, g, payload.entities_count,
+						decoding_context->edge_count +
+						decoding_context->deleted_edge_count);
+				if(SerializerIO_Error(rdb)) {
+					break;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -237,7 +276,12 @@ GraphContext *RdbLoadGraphContext_latest
 
 				break;
 			case ENCODE_STATE_DELETED_EDGES:
-				RdbLoadDeletedEdges_v20(rdb, g, payload.entities_count);
+				RdbLoadDeletedEdges_v20(rdb, g, payload.entities_count,
+						decoding_context->edge_count +
+						decoding_context->deleted_edge_count);
+				if(SerializerIO_Error(rdb)) {
+					break;
+				}
 
 				// log progress
 				RedisModule_Log(NULL, "notice",
@@ -285,12 +329,22 @@ GraphContext *RdbLoadGraphContext_latest
 				break;
 
 			default:
-				ASSERT(false && "Unknown encoding");
+				SerializerIO_SetError(rdb, "unknown payload type");
 				break;
 		}
 	}
 
 	arr_free(payloads);
+
+	// abort on a short read / IO error
+	// return the partial graph without advancing the processed-key count or
+	// finalizing it; keeping GraphDecodeContext_Finished() false makes
+	// GraphContext_Free take the partial-graph teardown path, and the write
+	// lock (held since the first virtual key) is released there. the caller
+	// (RdbLoadGraph) owns the teardown decision
+	if(SerializerIO_Error(rdb)) {
+		return gc;
+	}
 
 	// update decode context
 	GraphDecodeContext_IncreaseProcessedKeyCount(decoding_context);

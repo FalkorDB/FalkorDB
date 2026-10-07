@@ -8,8 +8,8 @@
 
 #include "../serializers_include.h"
 
-// load AUX
-void AUXLoad
+// load AUX, returns false if the auxiliary data is malformed
+bool AUXLoad
 (
 	RedisModuleIO *io
 );
