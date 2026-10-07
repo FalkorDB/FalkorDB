@@ -54,7 +54,7 @@ use graph::{
     runtime::runtime::{QueryStatistics, Runtime},
     threadpool::{pending_count, spawn},
 };
-use orx_tree::{Collection, Dfs, NodeRef};
+use orx_tree::{Collection, Dfs, DynTree, NodeRef};
 use parking_lot::RwLock;
 use redis_module::{Context, ContextFlags, RedisResult, RedisString, RedisValue, raw};
 use std::{
@@ -818,34 +818,21 @@ pub fn execute_query_write(
 }
 
 /// Reply with profile output: DFS walk of the plan tree, each line annotated
-/// with `Records produced: N, Execution time: T.TTTTTT ms`.
-/// Skips `Commit` nodes (internal implementation detail).
+/// with `Records produced: N, Execution time: T.TTTTTT ms`. Every operator is
+/// listed, as `GRAPH.EXPLAIN` lists every plan node.
 fn reply_profile(
     ctx: &Context,
     runtime: &Runtime,
-    plan: &orx_tree::DynTree<IR>,
+    plan: &DynTree<IR>,
 ) {
-    let all_ops: Vec<_> = plan.root().indices::<Dfs>().collect();
-    // Filter out Commit nodes and adjust depth accordingly.
-    let ops: Vec<_> = all_ops
-        .iter()
-        .filter(|idx| !matches!(plan.node(**idx).data(), IR::Commit))
-        .collect();
+    let ops: Vec<_> = plan.root().indices::<Dfs>().collect();
     let profile_data = runtime.profile_data.borrow();
     raw::reply_with_array(ctx.ctx, ops.len() as _);
     for idx in ops {
-        let node = plan.node(*idx);
-        // Calculate effective depth (subtract number of Commit ancestors).
-        let mut depth = node.depth();
-        let mut cur = *idx;
-        while let Some(parent) = plan.node(cur).parent() {
-            if matches!(parent.data(), IR::Commit) {
-                depth -= 1;
-            }
-            cur = parent.idx();
-        }
+        let node = plan.node(idx);
+        let depth = node.depth();
         let (records, time) = profile_data
-            .get(idx)
+            .get(&idx)
             .copied()
             .unwrap_or((0, std::time::Duration::ZERO));
         let time_ms = time.as_secs_f64() * 1000.0;
