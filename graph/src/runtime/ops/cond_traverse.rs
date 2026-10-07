@@ -35,9 +35,8 @@ use crate::graph::graph::{LabelId, NodeId, RelationshipId};
 use crate::graph::graphblas::matrix::Matrix;
 use crate::graph::graphblas::tensor::Tensor;
 use crate::graph::graphblas::versioned_matrix::{Iter, VersionedMatrix};
-use crate::parser::ast::{ExprIR, QueryExpr, QueryRelationship, Variable};
+use crate::parser::ast::{QueryRelationship, Variable};
 use crate::planner::IR;
-use crate::runtime::eval::ExprEval;
 use crate::runtime::{
     batch::{BATCH_SIZE, Batch, BatchOp, BatchRow, Column},
     row::RowView,
@@ -45,7 +44,7 @@ use crate::runtime::{
     value::Value,
 };
 use itertools::Either;
-use orx_tree::{Dyn, NodeIdx, NodeRef};
+use orx_tree::{Dyn, NodeIdx};
 
 use super::batched_result_emitter::{BatchedResultEmitter, EdgeEndpoints, RowIter};
 
@@ -234,14 +233,6 @@ fn build_transposed_iter(
     Some(VersionedMatrix::from_matrix(merged.transpose()).iter(0, u64::MAX))
 }
 
-/// Returns true when an inline-attributes tree is structurally an empty
-/// `Map` literal (`{}`). Such expressions never reference outer variables,
-/// so the F·A batched path can skip evaluating them per row.
-fn attrs_is_static_empty(attrs: &QueryExpr<Variable>) -> bool {
-    let root = attrs.root();
-    matches!(root.data(), ExprIR::Map) && root.children().next().is_none()
-}
-
 impl<'a> CondTraverseOp<'a> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -299,20 +290,21 @@ impl<'a> CondTraverseOp<'a> {
             };
 
         // For fused chains the batched path is the ONLY correct path —
-        // expand_row only handles single-hop. The planner inserts a Filter
-        // for any non-empty inline attrs, so attribute predicates are
-        // enforced by surrounding Filter nodes regardless of which path runs.
-        // Single-hop ops keep the existing strict check (expand_row applies
-        // attrs redundantly, but the Filter is still the source of truth).
-        let chain_is_empty = chain.is_empty();
+        // expand_row only handles single-hop.
+        //
+        // The endpoints' inline attrs no longer gate this. The planner lowers
+        // both endpoints of every traverse into a Filter unconditionally, so
+        // the predicate is enforced whichever path runs, and expand_row's own
+        // check on them is redundant.
+        //
+        // An edge predicate is excluded by `!emit_relationship`: the planner
+        // sets it for an edge that carries one, because expand_batch binds one
+        // representative edge per (src, dst) pair and the Filter above has to
+        // see every parallel edge to test them apart.
         let batched_eligible = !emit_relationship
             && !rp.bidirectional
             && bidir_dedup.is_none()
             && sibling_edges.is_empty()
-            && (!chain_is_empty
-                || (attrs_is_static_empty(&rp.attrs)
-                    && attrs_is_static_empty(&rp.from.attrs)
-                    && attrs_is_static_empty(&rp.to.attrs)))
             && chain.iter().all(|hop| !hop.bidirectional);
 
         // Self-loop patterns like `MATCH (n)-[r:T]->(n)` share one alias on both
@@ -769,25 +761,6 @@ impl<'a> CondTraverseOp<'a> {
     ) -> Result<(), String> {
         let env = BatchRow::new(batch, row_idx);
 
-        let filter_attrs = ExprEval::from_runtime(runtime).eval(
-            &rp.attrs,
-            rp.attrs.root().idx(),
-            Some(&env),
-            None,
-        )?;
-        let from_node_attrs = ExprEval::from_runtime(runtime).eval(
-            &rp.from.attrs,
-            rp.from.attrs.root().idx(),
-            Some(&env),
-            None,
-        )?;
-        let to_node_attrs = ExprEval::from_runtime(runtime).eval(
-            &rp.to.attrs,
-            rp.to.attrs.root().idx(),
-            Some(&env),
-            None,
-        )?;
-
         let from_id = env.value_at(rp.from.alias.id).and_then(|v| match v {
             Value::Node(id) => Some(id),
             _ => None,
@@ -878,9 +851,6 @@ impl<'a> CondTraverseOp<'a> {
                 transposed,
                 from_id,
                 to_id,
-                &from_node_attrs,
-                &to_node_attrs,
-                &filter_attrs,
                 &g,
                 rp,
                 batch,
@@ -925,9 +895,6 @@ impl<'a> CondTraverseOp<'a> {
                 !transposed,
                 from_id,
                 to_id,
-                &from_node_attrs,
-                &to_node_attrs,
-                &filter_attrs,
                 &g,
                 rp,
                 batch,
@@ -979,9 +946,6 @@ impl<'a> CondTraverseOp<'a> {
         is_reverse: bool,
         from_id: Option<crate::graph::graph::NodeId>,
         to_id: Option<crate::graph::graph::NodeId>,
-        from_node_attrs: &Value,
-        to_node_attrs: &Value,
-        filter_attrs: &Value,
         g: &crate::graph::graph::Graph,
         rp: &QueryRelationship<Arc<String>, Arc<String>, Variable>,
         batch: &Batch<'a>,
@@ -1016,51 +980,15 @@ impl<'a> CondTraverseOp<'a> {
             if to_id.is_some() && to_id.unwrap() != to_node {
                 continue;
             }
-            // Check from node attrs
-            if let Value::Map(attrs) = from_node_attrs
-                && !attrs.is_empty()
-            {
-                let mut skip = false;
-                for (attr, avalue) in attrs.iter() {
-                    match g.get_node_attribute(from_node, attr) {
-                        Some(pvalue) if pvalue == *avalue => {}
-                        _ => {
-                            skip = true;
-                            break;
-                        }
-                    }
-                }
-                if skip {
-                    continue;
-                }
-            }
-            // Check to node attrs
-            if let Value::Map(attrs) = to_node_attrs
-                && !attrs.is_empty()
-            {
-                let mut skip = false;
-                for (attr, avalue) in attrs.iter() {
-                    match g.get_node_attribute(to_node, attr) {
-                        Some(pvalue) if pvalue == *avalue => {}
-                        _ => {
-                            skip = true;
-                            break;
-                        }
-                    }
-                }
-                if skip {
-                    continue;
-                }
-            }
-            // When emit_relationship is false (anonymous edge not in a named
-            // path) and there are no edge attribute filters, skip per-edge
-            // iteration and emit one row per (src, dst) pair.  The outer
-            // `get_relationships` iterator already returns unique matrix-level
-            // pairs, so one representative edge per pair is sufficient.
-            let has_edge_filter = matches!(filter_attrs, Value::Map(m) if !m.is_empty());
+            // When emit_relationship is false — an anonymous edge, outside any
+            // named path, that no predicate reads (the planner sets it for an
+            // edge with one) — skip per-edge iteration and emit one row per
+            // (src, dst) pair. The outer `get_relationships` iterator already
+            // returns unique matrix-level pairs, so one representative edge per
+            // pair is sufficient.
             let mat_src = u64::from(src);
             let mat_dst = u64::from(dst);
-            if !emit_relationship && !has_edge_filter {
+            if !emit_relationship {
                 let mut found_id: Option<RelationshipId> = None;
                 let env = BatchRow::new(batch, row_idx);
                 'outer: for &tidx in edge_type_indices {
@@ -1089,25 +1017,6 @@ impl<'a> CondTraverseOp<'a> {
                     // relationship variables in this MATCH clause.
                     if super::edge_already_used(&env, id, rp.alias.id, sibling_edges) {
                         continue;
-                    }
-                    if let Value::Map(filter_map) = filter_attrs
-                        && !filter_map.is_empty()
-                    {
-                        let mut matches = true;
-                        for (attr, avalue) in filter_map.iter() {
-                            if let Some(pvalue) = g.get_relationship_attribute(id, attr) {
-                                if *avalue == pvalue {
-                                    continue;
-                                }
-                                matches = false;
-                                break;
-                            }
-                            matches = false;
-                            break;
-                        }
-                        if !matches {
-                            continue;
-                        }
                     }
                     out.push((from_node, to_node, id));
                 }

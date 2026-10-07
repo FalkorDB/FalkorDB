@@ -4,43 +4,43 @@
 use std::sync::Arc;
 
 use super::leaf::{AosLeaf, Leaf, LeafInsert};
-use super::{FIELD, STRIDE, read_u64};
+use super::{FIELD, read_u64, read_width};
 
 /// A tree node: either a leaf (a byte blob of sorted tuples) or an internal branch.
 ///
 /// Both variants are `Arc`-wrapped, so cloning a node — and therefore a whole tree version — is an
 /// `O(1)` reference-count bump that shares all underlying pages.
 #[derive(Clone)]
-pub(super) enum Node<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
+pub(super) enum Node<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> {
     /// A leaf page of sorted `(key, doc)` tuples — see [`Leaf`].
-    Leaf(Leaf<LEAF_MAX>),
-    Branch(Arc<Branch<LEAF_MAX, BRANCH_MAX>>),
+    Leaf(Leaf<LEAF_MAX, DOC_BYTES>),
+    Branch(Arc<Branch<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>),
 }
 
 /// An internal node: separator keys plus child pointers. `seps[i]` is the minimum `(key, doc)` of
 /// `children[i + 1]`, so `seps.len() == children.len() - 1`.
 #[derive(Clone)]
-pub(super) struct Branch<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
+pub(super) struct Branch<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> {
     pub(super) seps: Vec<(u64, u64)>,
-    pub(super) children: Vec<Node<LEAF_MAX, BRANCH_MAX>>,
+    pub(super) children: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
 }
 
 // ---- node-operation results ------------------------------------------------------------------
 
 /// A node that split under an insert: the new right sibling plus the separator promoted to the parent.
-pub(super) struct Split<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
+pub(super) struct Split<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> {
     pub(super) sep: (u64, u64),
-    pub(super) right: Node<LEAF_MAX, BRANCH_MAX>,
+    pub(super) right: Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
 }
 
 /// Outcome of combining two siblings: a single merged node, or two re-balanced nodes plus their new
 /// separator.
-enum Combined<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
-    One(Node<LEAF_MAX, BRANCH_MAX>),
+enum Combined<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize> {
+    One(Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>),
     Two(
-        Node<LEAF_MAX, BRANCH_MAX>,
+        Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
         (u64, u64),
-        Node<LEAF_MAX, BRANCH_MAX>,
+        Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>,
     ),
 }
 
@@ -53,9 +53,9 @@ enum Combined<const LEAF_MAX: usize, const BRANCH_MAX: usize> {
 /// later delete that underflowed its only child could not rebalance it (see [`Branch::rebalance`]). The
 /// only way `chunks(BRANCH_MAX)` would leave a singleton is a trailing remainder of exactly 1, i.e. an
 /// input length of `BRANCH_MAX + 1`; that case is split as `BRANCH_MAX - 1` + `2` instead.
-fn pack_branches<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    children: &[Node<LEAF_MAX, BRANCH_MAX>]
-) -> Vec<Node<LEAF_MAX, BRANCH_MAX>> {
+fn pack_branches<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    children: &[Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>]
+) -> Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>> {
     // One branch per chunk of up to `BRANCH_MAX` children, so the count is known up front.
     let mut packed = Vec::with_capacity(children.len().div_ceil(BRANCH_MAX));
     let mut rest = children;
@@ -87,9 +87,9 @@ fn pack_branches<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
 
 /// Stitch a flat list of node fragments into a single root, packing branch levels bottom-up until
 /// one node remains. An empty list becomes an empty leaf.
-pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
-    mut fragments: Vec<Node<LEAF_MAX, BRANCH_MAX>>
-) -> Node<LEAF_MAX, BRANCH_MAX> {
+pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    mut fragments: Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>
+) -> Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
     while fragments.len() > 1 {
         fragments = pack_branches(&fragments);
     }
@@ -98,7 +98,90 @@ pub(super) fn build_root<const LEAF_MAX: usize, const BRANCH_MAX: usize>(
         .unwrap_or_else(|| Node::Leaf(Leaf::from_pairs(&[])))
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Branch<LEAF_MAX, BRANCH_MAX> {
+/// Repair one under-full child by combining it with an adjacent sibling, returning the index to
+/// examine next. The single shared step behind both removal paths: [`Branch::rebalance`] applies it
+/// once to a known child, [`merge_underfull`] loops it until every child is min-full.
+///
+/// The caller must guarantee `children.len() >= 2` — with no sibling there is nothing to combine, and
+/// the under-flow has to propagate to the parent instead.
+///
+/// [`Node::combine`] re-splits the pair in sorted order, so the merged / new-left node keeps the
+/// pair's minimum (`min(new left) == min(old left)`). That is why only the **inter-pair** separator
+/// `seps[left]` is ever touched: the separators bracketing the pair from outside
+/// (`seps[left - 1] == min(left)`, and `seps[right]`) still point at unchanged minima, so they stay
+/// valid without being rewritten.
+fn combine_with_sibling<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    children: &mut Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
+    seps: &mut Vec<(u64, u64)>,
+    child_idx: usize,
+) -> usize {
+    debug_assert!(children.len() >= 2, "combine needs a sibling to pair with");
+    // Pair the under-full child with its right neighbour, or its left when it is the last.
+    let (left, right) = if child_idx + 1 < children.len() {
+        (child_idx, child_idx + 1)
+    } else {
+        (child_idx - 1, child_idx)
+    };
+    match children[left].combine(seps[left], &children[right]) {
+        Combined::One(merged) => {
+            // Merge: the inter-pair separator vanishes along with the absorbed right child.
+            children[left] = merged;
+            children.remove(right);
+            seps.remove(left);
+            left // the merged node may still be under-full — re-check it
+        }
+        Combined::Two(new_left, sep, new_right) => {
+            // Borrow: only the inter-pair separator moves — to the rebalanced right node's new min.
+            children[left] = new_left;
+            children[right] = new_right;
+            seps[left] = sep;
+            right // `new_left` is now min-full
+        }
+    }
+}
+
+/// Merge under-full adjacent children left-to-right (re-checking a merged node) so the child list
+/// regains minimum fill after a batch removal — the batch analog of [`Branch::rebalance`], over the
+/// same [`combine_with_sibling`] step. A merge that itself stays under-full (a nearly-empty subtree
+/// draining) shrinks the list further and, if the whole branch drops below minimum, propagates up as
+/// this branch's own underflow — resolved by the parent's merge or the root-level level-collapse.
+fn merge_underfull<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    children: &mut Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
+    seps: &mut Vec<(u64, u64)>,
+) {
+    let mut i = 0;
+    while children.len() > 1 && i < children.len() {
+        if children[i].is_underfull() {
+            i = combine_with_sibling(children, seps, i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// Drop children that hold nothing (all their tuples were removed) along with the matching separator.
+/// Dropping child `i` fuses its two boundaries into one: keep the far side, drop the near separator
+/// (`seps[i]` for a non-last child, else the trailing separator).
+fn strip_empty<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>(
+    children: &mut Vec<Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>,
+    seps: &mut Vec<(u64, u64)>,
+) {
+    let mut i = 0;
+    while i < children.len() {
+        if children[i].is_empty_node() {
+            if !seps.is_empty() {
+                seps.remove(i.min(seps.len() - 1));
+            }
+            children.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
+    Branch<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     /// Index of the child that an entry `(key, doc)` routes into — the number of separators `<=` it.
     pub(super) fn child_index(
         &self,
@@ -106,6 +189,13 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Branch<LEAF_MAX, BRANCH_MAX
         doc: u64,
     ) -> usize {
         self.seps.partition_point(|&sep| sep <= (key, doc))
+    }
+
+    /// Whether this branch dropped below its minimum fan-out, so a parent must merge it. The one
+    /// definition of the branch threshold — [`Node::is_underfull`] and [`Node::remove_one`] both
+    /// report through here rather than restating `BRANCH_MAX / 2`.
+    fn is_underfull(&self) -> bool {
+        self.children.len() < BRANCH_MAX / 2
     }
 
     /// Repair this branch **in place** after its child `child_idx` underflowed, by combining that
@@ -122,37 +212,22 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Branch<LEAF_MAX, BRANCH_MAX
         if self.children.len() < 2 {
             return;
         }
-        // Pair the underflowed child with its right neighbour when there is one, otherwise its left.
-        let (left_idx, right_idx) = if child_idx + 1 < self.children.len() {
-            (child_idx, child_idx + 1)
-        } else {
-            (child_idx - 1, child_idx)
-        };
-        // `combine` re-splits the pair in sorted order, so the merged / new-left node keeps the pair's
-        // minimum (`min(new left) == min(old left)`). That is why only the **inter-pair** separator
-        // `seps[left_idx]` is ever touched below: the separators bracketing the pair from outside
-        // (`seps[left_idx - 1] == min(left)` and `seps[right_idx]`, untouched) still point at unchanged
-        // minima, so they stay valid without being rewritten.
-        match self.children[left_idx].combine(self.seps[left_idx], &self.children[right_idx]) {
-            Combined::One(merged) => {
-                // Merge: the inter-pair separator vanishes along with the absorbed right child.
-                self.children[left_idx] = merged;
-                self.children.remove(right_idx);
-                self.seps.remove(left_idx);
-            }
-            Combined::Two(left, sep, right) => {
-                // Borrow: only the inter-pair separator moves — to the rebalanced right node's new min.
-                self.children[left_idx] = left;
-                self.children[right_idx] = right;
-                self.seps[left_idx] = sep;
-            }
-        }
+        // One repair, then stop: the single-key path removes one tuple, so at most one child can have
+        // underflowed. The batch path loops the same step (see [`merge_underfull`]) because a batch can
+        // underflow several children at once, and fusing a pair can leave the result under-full again.
+        let _ = combine_with_sibling(&mut self.children, &mut self.seps, child_idx);
     }
 }
 
-impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> {
+impl<const LEAF_MAX: usize, const BRANCH_MAX: usize, const DOC_BYTES: usize>
+    Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES>
+{
     /// The minimum `(key, doc)` in this subtree — walk the left spine down to its first leaf.
-    fn min(&self) -> (u64, u64) {
+    ///
+    /// Panics on an empty subtree. That is the tree's invariant, not an assumption: `strip_empty`
+    /// drops emptied children along with their separator, so only a whole-tree root leaf is ever
+    /// empty, and a root leaf is never reached through a branch.
+    pub(super) fn min(&self) -> (u64, u64) {
         let mut node = self;
         loop {
             match node {
@@ -193,16 +268,21 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 // (touched ones recurse, untouched share by Arc), so the O(children) walk is unavoidable.)
                 let mut cursor = 0usize;
                 for (child_idx, child) in branch.children.iter().enumerate() {
-                    // Each child owns keys strictly below its right separator; the last child (no separator)
-                    // owns everything remaining.
-                    let child_upper = branch
-                        .seps
-                        .get(child_idx)
-                        .copied()
-                        .unwrap_or((u64::MAX, u64::MAX));
+                    // Each child owns keys strictly below its right separator; the last child (no
+                    // separator) owns everything remaining.
+                    //
+                    // The last child is handled by taking the rest of the batch outright, NOT by
+                    // comparing against a `(u64::MAX, u64::MAX)` sentinel: `<` against that
+                    // sentinel excludes an entry exactly equal to it, so the maximal tuple would
+                    // route nowhere and be silently dropped.
                     let start = cursor;
-                    while cursor < batch.len() && batch[cursor] < child_upper {
-                        cursor += 1;
+                    if child_idx + 1 == branch.children.len() {
+                        cursor = batch.len();
+                    } else {
+                        let child_upper = branch.seps[child_idx];
+                        while cursor < batch.len() && batch[cursor] < child_upper {
+                            cursor += 1;
+                        }
                     }
                     let for_child = &batch[start..cursor];
                     if for_child.is_empty() {
@@ -220,32 +300,39 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
     /// cloned into a private copy before it is mutated (see [`make_private`]), so the committed version a
     /// reader may hold is never disturbed. Returns `Some(Split)` when the node split (the parent must take
     /// in the new right sibling), else `None`. Idempotent: inserting an already-present tuple is a no-op.
+    ///
+    /// Returns `(inserted, split)`: `inserted` is `false` when the tuple was already present (a no-op
+    /// on content), so callers can maintain an exact live count; `split` is `Some` when the node split.
     pub(super) fn insert_one(
         &mut self,
         key: u64,
         doc: u64,
-    ) -> Option<Split<LEAF_MAX, BRANCH_MAX>> {
+    ) -> (bool, Option<Split<LEAF_MAX, BRANCH_MAX, DOC_BYTES>>) {
         match self {
             // The leaf owns the encoding-specific work (an AoS leaf splices its bytes; see [`Leaf::insert`]).
-            Self::Leaf(leaf) => match leaf.insert(key, doc)? {
-                LeafInsert::Fit(new) => {
+            Self::Leaf(leaf) => match leaf.insert(key, doc) {
+                None => (false, None), // already present
+                Some(LeafInsert::Fit(new)) => {
                     *leaf = new;
-                    None
+                    (true, None)
                 }
-                LeafInsert::Split { left, sep, right } => {
+                Some(LeafInsert::Split { left, sep, right }) => {
                     *leaf = left;
-                    Some(Split {
-                        sep,
-                        right: Self::Leaf(right),
-                    })
+                    (
+                        true,
+                        Some(Split {
+                            sep,
+                            right: Self::Leaf(right),
+                        }),
+                    )
                 }
             },
             Self::Branch(branch_arc) => {
                 let branch = make_private(branch_arc); // CoW: clone the shared branch, mutate the copy
                 let child_idx = branch.child_index(key, doc);
-                let Some(Split { sep, right }) = branch.children[child_idx].insert_one(key, doc)
-                else {
-                    return None; // absorbed below — nothing to insert here
+                let (inserted, child_split) = branch.children[child_idx].insert_one(key, doc);
+                let Some(Split { sep, right }) = child_split else {
+                    return (inserted, None); // absorbed below — nothing to insert here
                 };
                 // The child split — take in the promoted separator and the new right sibling beside it.
                 branch.seps.insert(child_idx, sep);
@@ -253,7 +340,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 #[cfg(test)]
                 cow_gate::park_if(key); // test-only: parks AFTER the working copy is mutated
                 if branch.children.len() <= BRANCH_MAX {
-                    None
+                    (inserted, None)
                 } else {
                     // This branch overflowed in turn: keep the left half, promote the middle
                     // separator (it moves up, into neither side), hand the right half up.
@@ -261,13 +348,16 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                     let right_children = branch.children.split_off(mid);
                     let right_seps = branch.seps.split_off(mid);
                     let promoted = branch.seps.pop().unwrap(); // the separator between the two halves
-                    Some(Split {
-                        sep: promoted,
-                        right: Self::Branch(Arc::new(Branch {
-                            seps: right_seps,
-                            children: right_children,
-                        })),
-                    })
+                    (
+                        inserted,
+                        Some(Split {
+                            sep: promoted,
+                            right: Self::Branch(Arc::new(Branch {
+                                seps: right_seps,
+                                children: right_children,
+                            })),
+                        }),
+                    )
                 }
             }
         }
@@ -280,7 +370,7 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
         &self,
         sep: (u64, u64),
         right: &Self,
-    ) -> Combined<LEAF_MAX, BRANCH_MAX> {
+    ) -> Combined<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         match (self, right) {
             (Self::Leaf(left_leaf), Self::Leaf(right_leaf)) => {
                 // Two AoS leaves are tag-free `[(key, doc) × n]` and the siblings are ordered, so the join
@@ -337,21 +427,24 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
 
     /// Join two ordered AoS sibling leaves. Their buffers are tag-free `[(key, doc) × n]` and `left`
     /// precedes `right`, so the merge is a plain byte concat — no decode. If the result overflows
-    /// `LEAF_MAX` we split at the midpoint entry; the fixed `STRIDE` makes that a balanced split (both
+    /// `LEAF_MAX` we split at the midpoint entry; the fixed `(FIELD + DOC_BYTES)` makes that a balanced split (both
     /// halves `>= LEAF_MAX / 2`), and `mid_sep` (the first entry of the right half) is the new separator.
     fn aos_combine(
-        left: &AosLeaf,
-        right: &AosLeaf,
-    ) -> Combined<LEAF_MAX, BRANCH_MAX> {
+        left: &AosLeaf<DOC_BYTES>,
+        right: &AosLeaf<DOC_BYTES>,
+    ) -> Combined<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
         let mut buf = Vec::with_capacity(left.0.len() + right.0.len());
         buf.extend_from_slice(&left.0);
         buf.extend_from_slice(&right.0);
         let leaf = |bytes: Vec<u8>| Self::Leaf(Leaf::Aos(AosLeaf(bytes.into())));
-        if buf.len() / STRIDE <= LEAF_MAX {
+        if buf.len() / (FIELD + DOC_BYTES) <= LEAF_MAX {
             Combined::One(leaf(buf))
         } else {
-            let split = buf.len() / STRIDE / 2 * STRIDE;
-            let mid_sep = (read_u64(&buf, split), read_u64(&buf, split + FIELD));
+            let split = buf.len() / (FIELD + DOC_BYTES) / 2 * (FIELD + DOC_BYTES);
+            let mid_sep = (
+                read_u64(&buf, split),
+                read_width(&buf, split + FIELD, DOC_BYTES),
+            );
             let right_buf = buf.split_off(split);
             Combined::Two(leaf(buf), mid_sep, leaf(right_buf))
         }
@@ -377,9 +470,90 @@ impl<const LEAF_MAX: usize, const BRANCH_MAX: usize> Node<LEAF_MAX, BRANCH_MAX> 
                 if branch.children[child_idx].remove_one(key, doc)? {
                     branch.rebalance(child_idx);
                 }
-                Some(branch.children.len() < BRANCH_MAX / 2)
+                Some(branch.is_underfull())
             }
         }
+    }
+
+    /// Remove a sorted `batch` (every entry routing into this subtree) by **copying only the nodes the
+    /// batch touches** — every untouched subtree is shared by `Arc` clone, never materialized, so peak
+    /// memory is proportional to the *touched* pages, not the tree. Removal only shrinks, so this
+    /// returns a single replacement node (no split fragments); under-filled children left behind are
+    /// merged by [`merge_underfull`] so the tree stays compact.
+    pub(super) fn remove_batch(
+        &self,
+        batch: &[(u64, u64)],
+    ) -> Node<LEAF_MAX, BRANCH_MAX, DOC_BYTES> {
+        match self {
+            Node::Leaf(leaf) => {
+                // Subtract the sorted `batch` from this sorted page — a linear merge-walk — and rebuild
+                // just this one leaf. Iterate the page's pairs directly; no full `to_pairs` copy.
+                let mut survivors = Vec::with_capacity(leaf.count());
+                let mut bi = 0usize;
+                for pair in leaf.iter() {
+                    while bi < batch.len() && batch[bi] < pair {
+                        bi += 1;
+                    }
+                    if bi < batch.len() && batch[bi] == pair {
+                        continue; // this tuple is removed
+                    }
+                    survivors.push(pair);
+                }
+                Node::Leaf(Leaf::from_pairs(&survivors))
+            }
+            Node::Branch(branch) => {
+                // Hand each child the slice of `batch` that routes into it (one linear sweep against the
+                // separators, as in `apply_batch`), recursing only into touched children — others share
+                // by `Arc`. Separators need no rewrite: removal only raises a child's min and lowers its
+                // max, so every boundary `max(left) < sep <= min(right)` still holds.
+                let mut children = Vec::with_capacity(branch.children.len());
+                let mut seps = branch.seps.clone();
+                let mut cursor = 0usize;
+                for (child_idx, child) in branch.children.iter().enumerate() {
+                    // Last child takes the remainder outright — see the note in `apply_batch`: a
+                    // `<` against a `(u64::MAX, u64::MAX)` sentinel silently skips the maximal
+                    // tuple.
+                    let start = cursor;
+                    if child_idx + 1 == branch.children.len() {
+                        cursor = batch.len();
+                    } else {
+                        let child_upper = branch.seps[child_idx];
+                        while cursor < batch.len() && batch[cursor] < child_upper {
+                            cursor += 1;
+                        }
+                    }
+                    let for_child = &batch[start..cursor];
+                    if for_child.is_empty() {
+                        children.push(child.clone()); // nothing routes here ⇒ share the page
+                    } else {
+                        children.push(child.remove_batch(for_child));
+                    }
+                }
+                // A child that emptied entirely has nothing to merge into a sibling — drop it (with
+                // its separator). If every child emptied, the whole subtree collapses to one leaf.
+                strip_empty(&mut children, &mut seps);
+                if children.is_empty() {
+                    return Node::Leaf(Leaf::from_pairs(&[]));
+                }
+                // Merge any child that merely under-filled back to minimum.
+                merge_underfull(&mut children, &mut seps);
+                Node::Branch(Arc::new(Branch { seps, children }))
+            }
+        }
+    }
+
+    /// Whether this node dropped below its minimum fill (so a parent must merge it).
+    fn is_underfull(&self) -> bool {
+        match self {
+            Node::Leaf(leaf) => leaf.count() < LEAF_MAX / 2,
+            Node::Branch(branch) => branch.is_underfull(),
+        }
+    }
+
+    /// Whether this node holds nothing. After a batch removal only ever an all-emptied leaf — an
+    /// emptied branch is returned as an empty leaf, never a childless branch.
+    fn is_empty_node(&self) -> bool {
+        matches!(self, Node::Leaf(leaf) if leaf.count() == 0)
     }
 }
 
