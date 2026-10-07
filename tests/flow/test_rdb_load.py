@@ -263,6 +263,41 @@ class testRdbLoad():
         self.env.assertTrue(self.conn.ping())
 
 
+    # regression test for the RESTORE ... REPLACE crash (#259 / #2506):
+    # a full-text indexed graph dumped and restored with REPLACE onto its own
+    # (still live) key used to decode the payload into the existing graph
+    # context, duplicating its schema. that drove Schema_AddIndex to return a
+    # NULL index which _RdbLoadIndex handed to Index_SetLanguage -> SIGSEGV
+    # (and, with lazy-free, a double free of the live context on the BIO thread)
+    def test_restore_replace_indexed_graph(self):
+        self.conn.flushall()
+
+        g = self.db.select_graph('replace_me')
+        g.query("CREATE (:Person {name:'alice', bio:'hello world'}),"
+                "       (:Person {name:'bob',   bio:'bonjour monde'})")
+
+        # full-text index carrying a language (exercises Index_SetLanguage)
+        g.query("CALL db.idx.fulltext.createNodeIndex("
+                "{label:'Person', language:'english'}, 'name', 'bio')")
+
+        payload = self.conn.dump('replace_me')
+
+        # restore with REPLACE onto the live key - twice, to make sure the old
+        # context is freed cleanly and the operation is repeatable
+        for _ in range(2):
+            self.conn.restore('replace_me', 0, payload, replace=True)
+
+            # server must still be alive and the graph intact
+            self.env.assertTrue(self.conn.ping())
+
+            result = g.query("MATCH (n:Person) RETURN n.name ORDER BY n.name")
+            self.env.assertEqual(result.result_set, [['alice'], ['bob']])
+
+            # the full-text index survived and is usable
+            idx = g.query("CALL db.idx.fulltext.queryNodes('Person', 'alice') "
+                          "YIELD node RETURN node.name")
+            self.env.assertEqual(idx.result_set, [['alice']])
+
 class testRdbLoadUDF():
     def __init__(self):
         self.env, self.db = Env(enableDebugCommand=True)
