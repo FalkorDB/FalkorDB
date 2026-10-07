@@ -161,7 +161,7 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "startnode",
-        args: [Type::Relationship],
+        args: [Type::union([Type::Relationship, Type::Null])],
         ret: Type::union([Type::Node, Type::Null]),
         fn start_node(runtime, args) {
             match args.first() {
@@ -169,6 +169,7 @@ pub fn register(funcs: &mut Functions) {
                     let (src, _dst) = runtime.get_relationship_endpoints(*rel);
                     Ok(Value::Node(src))
                 }
+                Some(Value::Null) => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
@@ -176,7 +177,7 @@ pub fn register(funcs: &mut Functions) {
     );
 
     cypher_fn!(funcs, "endnode",
-        args: [Type::Relationship],
+        args: [Type::union([Type::Relationship, Type::Null])],
         ret: Type::union([Type::Node, Type::Null]),
         fn end_node(runtime, args) {
             match args.first() {
@@ -184,6 +185,7 @@ pub fn register(funcs: &mut Functions) {
                     let (_src, dst) = runtime.get_relationship_endpoints(*rel);
                     Ok(Value::Node(dst))
                 }
+                Some(Value::Null) => Ok(Value::Null),
 
                 _ => unreachable!(),
             }
