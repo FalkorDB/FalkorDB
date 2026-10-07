@@ -1295,9 +1295,12 @@ class testIndexScanFlow():
         # `n.v` is a scalar int, never a list — no row should match.
         self.env.assertEqual(res, [])
 
-    def _index_vs_scan(self, indices, setup, queries, expect_index=True):
+    def _index_vs_scan(self, indices, setup, queries, expect_index=True,
+                       expected_rows=None):
         # Run each query on a graph with the indices and on one without,
         # and require the same rows: an index must never change a result.
+        # `expected_rows`, when given, pins each query's sorted rows too, so the
+        # parity check cannot pass on two equally wrong (e.g. empty) results.
         with_idx = self.db.select_graph("index_parity_idx")
         no_idx = self.db.select_graph("index_parity_scan")
         try:
@@ -1306,12 +1309,14 @@ class testIndexScanFlow():
             wait_for_indices_to_sync(with_idx)
             with_idx.query(setup)
             no_idx.query(setup)
-            for q in queries:
+            for i, q in enumerate(queries):
                 if expect_index:
                     self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)))
                 expected = sorted(no_idx.query(q).result_set)
                 actual = sorted(with_idx.query(q).result_set)
                 self.env.assertEqual(actual, expected, message=q)
+                if expected_rows is not None:
+                    self.env.assertEqual(actual, sorted(expected_rows[i]), message=q)
         finally:
             with_idx.delete()
             no_idx.delete()
@@ -1327,6 +1332,21 @@ class testIndexScanFlow():
              "MATCH (n:L) WHERE n.v > 'a' AND n.v <= 'a' RETURN n.k",
              "MATCH (n:L) WHERE n.v >= 'a' AND n.v <= 'a' RETURN n.k"])
 
+    def test_40_temporals_not_in_numeric_range(self):
+        # Temporals must not be indexed as their raw number, where numeric
+        # ranges would match them. Each query has a numeric match, so the
+        # expected rows are non-empty and a temporal leaking in shows up.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:5, k:'int'}), (:L {v:-3, k:'neg'}), (:L {v:86400, k:'day'}),"
+            " (:L {v:date('2020-01-01'), k:'date'}), (:L {v:date('1960-01-01'), k:'old'}),"
+            " (:L {v:duration('P1D'), k:'dur'}), (:L {v:localtime('01:00:00'), k:'time'}),"
+            " (:L {v:localdatetime('2020-01-01T00:00:00'), k:'ldt'})",
+            ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 86400 RETURN n.k"],
+            expected_rows=[[['day'], ['int']], [['neg']], [['day']]])
+
     def test_41_open_bound_includes_infinity(self):
         # An absent bound is unbounded: `n.v > 0` selects a stored +inf.
         self._index_vs_scan(
@@ -1335,4 +1355,5 @@ class testIndexScanFlow():
             ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
              "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
              "MATCH (n:L) WHERE n.v >= 1.0/0.0 RETURN n.k",
-             "MATCH (n:L) WHERE n.v <= -1.0/0.0 RETURN n.k"])
+             "MATCH (n:L) WHERE n.v <= -1.0/0.0 RETURN n.k"],
+            expected_rows=[[['inf'], ['one']], [['-inf']], [['inf']], [['-inf']]])
