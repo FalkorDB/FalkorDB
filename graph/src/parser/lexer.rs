@@ -311,54 +311,34 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Length of the whitespace and comments starting at `pos`.
+    ///
+    /// A `//` comment runs to the end of its line, a `/*` comment to the
+    /// first `*/`. Any other `/` is the division operator, and so is the `/`
+    /// of a `/*` that is never closed: it is left for the parser to reject.
     fn read_spaces(
         str: &'a str,
         pos: usize,
     ) -> usize {
-        let mut len = 0;
-        let mut chars = str[pos..].chars();
-        let mut next = chars.next();
-
-        while let Some(' ' | '\t' | '\n' | '/') = next {
-            if next == Some('/') {
-                len += 1;
-                next = chars.next();
-                let Some(c) = next else {
-                    break;
-                };
-                len += c.len_utf8();
-                if c == '/' {
-                    next = chars.next();
-                    while let Some(c) = next {
-                        len += c.len_utf8();
-                        if c == '\n' {
-                            next = chars.next();
-                            break;
-                        }
-                        next = chars.next();
+        let bytes = str.as_bytes();
+        let mut end = pos;
+        loop {
+            match bytes.get(end) {
+                Some(b' ' | b'\t' | b'\n') => end += 1,
+                Some(b'/') => match bytes.get(end + 1) {
+                    Some(b'/') => {
+                        end = str[end..].find('\n').map_or(str.len(), |n| end + n + 1);
                     }
-                } else if c == '*' {
-                    for c in chars.by_ref() {
-                        if c == '*' {
-                            len += 1;
-                            continue;
-                        }
-                        len += c.len_utf8();
-                        if c == '/' {
-                            break;
-                        }
-                    }
-                    next = chars.next();
-                } else {
-                    len -= 1 + c.len_utf8();
-                    break;
-                }
-                continue;
+                    Some(b'*') => match str[end + 2..].find("*/") {
+                        Some(n) => end += 2 + n + 2,
+                        None => break,
+                    },
+                    _ => break,
+                },
+                _ => break,
             }
-            len += 1;
-            next = chars.next();
         }
-        len
+        end - pos
     }
 
     pub fn current(&self) -> Result<Token, String> {
@@ -869,6 +849,57 @@ mod tests {
         lexer.set_pos(5000);
         let msg = lexer.format_error("boom");
         assert!(msg.contains('é'));
+    }
+
+    // Regression (#2901): a block comment ended at the first `/`, so the
+    // rest of it was lexed as code (`RETURN 5 /* a/ -1 //*/` returned 4).
+    #[test]
+    fn block_comment_ends_at_star_slash() {
+        assert_eq!(lex_all("5 /* a/ -1 //*/").unwrap(), vec![Token::Integer(5)]);
+        assert_eq!(
+            lex_all("1 /* a/b */ + 1").unwrap(),
+            vec![Token::Integer(1), Token::Plus, Token::Integer(1)]
+        );
+        assert_eq!(
+            lex_all("1 /*/ ** / * */ 2 /**/").unwrap(),
+            vec![Token::Integer(1), Token::Integer(2)]
+        );
+        assert_eq!(
+            lex_all("1 // a /* b\n2").unwrap(),
+            vec![Token::Integer(1), Token::Integer(2)]
+        );
+    }
+
+    // Regression (#2901): a `/` at the end of the input was swallowed as
+    // whitespace, so `RETURN 1 /` returned 1.
+    #[test]
+    fn lone_slash_is_division() {
+        assert_eq!(
+            lex_all("1 /").unwrap(),
+            vec![Token::Integer(1), Token::Slash]
+        );
+        assert_eq!(
+            lex_all("1 / 2").unwrap(),
+            vec![Token::Integer(1), Token::Slash, Token::Integer(2)]
+        );
+    }
+
+    // Regression (#2901): an unterminated `/*` hid the rest of the query.
+    // It is not a comment, so the parser gets to reject the `/` `*`.
+    #[test]
+    fn unterminated_block_comment_is_not_a_comment() {
+        assert_eq!(
+            lex_all("1 /* never").unwrap(),
+            vec![
+                Token::Integer(1),
+                Token::Slash,
+                Token::Star,
+                Token::IdentifierOrKeyword {
+                    ident: Arc::new(String::from("never")),
+                    keyword: None,
+                },
+            ]
+        );
     }
 
     #[test]
