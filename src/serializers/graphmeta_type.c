@@ -37,6 +37,12 @@ static void *_GraphMetaType_RdbLoad(RedisModuleIO *rdb, int encver) {
 		gc = RdbLoadGraph(rdb);
 	}
 
+	// decode failed (e.g. a short read inside this virtual key); the decoder
+	// already tore down any partial graph - abort the load without registering
+	if(gc == NULL) {
+		return NULL;
+	}
+
 	// add GraphContext to global array of graphs
 	GraphContext_RegisterWithModule(gc);
 	return gc;
