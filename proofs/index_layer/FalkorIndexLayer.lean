@@ -29,19 +29,19 @@ Build: `lake build`. The project has no `sorry`, `admit`, `axiom` or
 | `tagEnc`, `escaped`, `hexDigit` | `mod.rs:565` `tag_encode_lower` |
 | `hexEncode`, `leBytes`, `nodeKey` | `mod.rs:581` `hex_encode_into`, `Document::new` `mod.rs:657` |
 | `hexNibble`, `hexDecode`, `fromLe`, `decodeId` | `mod.rs:591` `hex_nibble`, `mod.rs:601` `decode_id` |
-| `edgeKey` | `Document::new_edge` `mod.rs:684`, `decode_triple` `mod.rs:612`, `delete_edge_document` `mod.rs:1932` |
-| `intLosesPrecision` | `mod.rs:1371` `int_loses_f64_precision` |
+| `edgeKey` | `Document::new_edge` `mod.rs:684`, `decode_triple` `mod.rs:612`, `delete_edge_document` `mod.rs:1941` |
+| `intLosesPrecision` | `mod.rs:1370` `int_loses_f64_precision` |
 | `setRange`, `docOf` | `Document::set` `mod.rs:716` (Range field arm), field names `mod.rs:121` |
 | `setVector` (`SetVector.lean`) | `Document::set` vector arm `mod.rs:730-744` (#3087 dimension guard) |
-| `valueToNumeric` | `mod.rs:1357` |
-| `buildNumRange` | `mod.rs:1376` `build_numeric_range_node` |
-| `buildStrRange` | `mod.rs:1415` `build_string_range_node` |
-| `buildEq`, `buildQ` | `mod.rs:1463` `build_query_node` |
-| `indexHit` | `Index::query` `mod.rs:1677` (null node ⇒ empty iterator) |
+| `valueToNumeric` | `mod.rs:1356` |
+| `buildNumRange` | `mod.rs:1375` `build_numeric_range_node` |
+| `buildStrRange` | `mod.rs:1414` `build_string_range_node` |
+| `buildEq`, `buildQ` | `mod.rs:1472` `build_query_node` |
+| `indexHit` | `Index::query` `mod.rs:1686` (null node ⇒ empty iterator) |
 | `expandIn`, `indexable`, `canUtilize`, `scanEmits` | `runtime/ops/node_by_index_scan.rs:216,252,249,309` |
 | `holds`, `cyEqScalar`, `cyLt`, `cyLe` | the Cypher predicate replaced by `utilize_index.rs:324 build_op_query` |
-| `Table.add/del`, `commit` | `add_document` `mod.rs:1893` (ADD_REPLACE), `delete_document` `mod.rs:1915`, `Indexer::commit` `indexer.rs:714` |
-| `Slots.inc/dec/bump/countFor` | `mod.rs:2097/2115/1049/2137`, `indexer.rs:608-701` |
+| `Table.add/del`, `commit` | `add_document` `mod.rs:1902` (ADD_REPLACE), `delete_document` `mod.rs:1924`, `Indexer::commit` `indexer.rs:714` |
+| `Slots.inc/dec/bump/countFor` | `mod.rs:2106/2124/1048/2146`, `indexer.rs:608-701` |
 | `rsMatch`, `rsStore`, `inNum`, `inLex` | **axiomatised RediSearch spec** (below) |
 
 Axiomatised boundary. `rsMatch`/`rsStore` state the documented LLAPI
@@ -69,7 +69,7 @@ Query exactness (index hits = full scan plus the Cypher filter):
 - `equal_exact`: `n.k = literal` is exact for stored Int, Float or non-empty String.
 - `inList_exact`: `n.k IN [scalar literals]` is exact under the same conditions.
 - `numRange_exact`: numeric `<,<=,>,>=` and two-sided ranges are exact for finite or NaN stored numbers.
-- `strRange_exact` (`Strings.lean`): string ranges are exact when no string has a byte ≤ 0x20, `\` or `_`, stored strings are non-empty, and equal bounds are inclusive. `lexLt_irrefl`, `lexLt_asymm`, `lexLt_total`, `tagEnc_id` support it.
+- `strRange_exact` (`Strings.lean`): string ranges are exact when no string has a byte ≤ 0x20, `\` or `_` and stored strings are non-empty (since #3072 equal bounds need no premise). `lexLt_irrefl`, `lexLt_asymm`, `lexLt_total`, `tagEnc_id` support it.
 
 Maintenance and tickets (`Maintenance.lean`):
 - `foldl_add_lookup`, `foldl_del_lookup`, `commit_lookup`: exactly what `Indexer::commit` leaves for each id.
@@ -90,7 +90,7 @@ scan.
    - Rust returns **every** node of the label: `['date']` → `['date','int']`. C: `['date']`.
    - Cause: the constant is folded to `Constant(Date)`, which `is_non_indexable_subexpr` treats as indexable, so the filter is dropped. The runtime then refuses the index and falls back to a label scan.
    - Fix: keep the filter for any non-scalar `Constant`, or treat an index-refused fallback as "filter required".
-2. `bug_point_equality` (`mod.rs:1672`; `node_by_index_scan.rs:257` says Point is indexable).
+2. `bug_point_equality` (`mod.rs:1681`; `node_by_index_scan.rs:257` says Point is indexable).
    - Query: `n.v = point({latitude:1.0, longitude:2.0})`.
    - Rust: `['p']` → `[]`. C: `['p']`.
    - Fix: add a Point `Equal` arm (a geo node with radius 0 plus the kept filter), or mark Point not indexable for `Equal`.
@@ -98,27 +98,28 @@ scan.
    - Query: `n.v IN [date('2020-01-01'), 2]`.
    - Rust: `['date','int']` → `['int']`. C: `['date','int']`.
    - Fix: if any item is dropped, fall back to a label scan (the filter is already kept).
-4. `bug_multilabel_and` / `bug_multilabel_or` (`utilize_index.rs:503-531`, `mod.rs:1559,1576`).
+4. `bug_multilabel_and` / `bug_multilabel_or` (`utilize_index.rs:503-531`, `mod.rs:1568,1585`).
    - Setup: `(n:A:B)`, with A indexing x and B indexing y.
    - `WHERE n.x = 1 AND n.y = 2` → `[]`. `WHERE n.y = 2 OR n.x = 1` loses rows. `{x:1, y:2}` → `[]`.
    - C returns the rows.
    - Fix: merge only conjuncts and disjuncts whose label matches the first one. Leave the rest in the post-filter, and bail on OR.
-5. `bug_temporal_in_numeric_range` (`mod.rs:797`).
-   - Query: `n.v > 0` matches a stored date: `['int']` → `['date','int']`. C: `['int']`.
-   - Fix: index temporals under a separate sub-field (C uses per-type field names).
-6. `bug_exclusive_equal_bounds` (`mod.rs:1430`).
-   - Query: `n.v > 'a' AND n.v < 'a'`.
-   - Rust: `[]` → `['a']`. C: `[]`.
-   - Fix: use the exact-token shortcut only when both include flags are set; otherwise return an empty node.
-7. `bug_string_range_order` / `_gt`, `tagEnc_not_monotone` (`mod.rs:565` used by `mod.rs:1444`).
+5. FIXED by #3076 (e20300436). `pre3076_temporal_in_numeric_range` (old `mod.rs:797`).
+   - Query: `n.v > 0` matched a stored date: `['int']` → `['date','int']`. C: `['int']`.
+   - Now temporals are not indexed (`mod.rs:803`): `Temporal.temporal_not_indexed`,
+     `temporal_numRange_exact`, `temporal_equal_exact`, `fixed3076_temporal_in_numeric_range`.
+6. FIXED by #3072 (1c9994e37). `pre3072_exclusive_equal_bounds` (old `mod.rs:1430`).
+   - Query: `n.v > 'a' AND n.v < 'a'`: Rust `[]` → `['a']`. C: `[]`.
+   - Now an exclusive side with equal bounds is the empty node (`mod.rs:1429-1434`):
+     `fixed3072_exclusive_equal_bounds`, and `strRange_exact` lost its equal-bounds premise.
+7. `bug_string_range_order` / `_gt`, `tagEnc_not_monotone` (`mod.rs:565` used by `mod.rs:1453`).
    - The TAG encoding does not preserve order, so string ranges over strings with a byte ≤ 0x20, `\` or `_` are wrong in both directions.
    - `n.v < 'JohnA'` with `'John Smith'` stored: `['js']` → `[]`. `n.v > 'a!'` with `'a b'` stored: `[]` → `['ab']`.
    - C is also wrong, differently (it does not encode). Batch runs show C's string range index is much worse.
    - Fix: use an order-preserving escape. For example, map bytes b ≤ 0x20 to `0x21 0x21+b`, shift `!` itself, and so on. Or keep the filter for string ranges.
-8. `bug_bool_eq_int` (`mod.rs:760,1361`).
+8. `bug_bool_eq_int` (`mod.rs:760,1360`).
    - Query: `n.v = 1` also returns `v = true`, and `n.v = true` returns `v = 1`: `['int']` → `['bool','int']`.
    - C has the same bug.
-9. `bug_open_bound_excludes_inf` (`mod.rs:1389,1396`).
+9. `bug_open_bound_excludes_inf` (`mod.rs:1388,1395`).
    - An absent bound becomes ±inf with an exclusive flag, so `n.v > 0`, `n.v >= 1.0/0.0` and `n.v <= -1.0/0.0` miss stored ±inf: `['-inf','inf']` → `[]`.
    - C has the same bug.
    - Fix: set the include flag to true for an absent bound.
@@ -178,7 +179,7 @@ New modules, all `sorry`-free:
   size heuristic picks, `merge_batch` fast paths = slow path = `merge_sorted`, plus
   `partition_point`, gallop, `pack_branches`/`build_root`/`from_sorted`/`insert_batch`.
 
-NEW CONFIRMED BUG 13 (`index/mod.rs:1398,1423,1471,1483,1541,1602`, `queryField` /
+NEW CONFIRMED BUG 13 (`index/mod.rs:1397,1422,1480,1492,1550,1611`, `queryField` /
 `IndexerM.bug_range_after_fulltext`): `build_query_node` targets
 `self.fields.get(key).and_then(|f| f.first())` — the attribute's *first* field whatever its
 type. After `CREATE FULLTEXT INDEX FOR (n:L) ON (n.s)` then `CREATE INDEX FOR (n:L) ON (n.s)`,
@@ -201,9 +202,27 @@ This discharges, for vector fields, the `ht` premise of `query_eq_scan_filter` (
 holds `docOf` of every entity: a vector can no longer make RediSearch reject the document).
 HISTORICAL (fe619ac5f): `pre3087_dim_mismatch`, `pre3087_noparams` — W3-conc-3 / #3075 and the
 W5-idx-2 no-options shape; fixed by #3087.
+
+## Re-target to 8743953a8 (#3072, #3076, #2278)
+- `index/mod.rs`: #3076 dropped the temporal arm of `Document::set` (one line shorter from `mod.rs:797`)
+  and #3072 added the equal-bounds guard (10 lines at `mod.rs:1426`); every citation is updated.
+  W2-index-5 (bug 5) and W2-index-6 (bug 6) are fixed: their counterexamples are now historical
+  `pre3076_*` / `pre3072_*` theorems next to the correctness theorems above.
+- `cow_btree` (#2278): `AosLeaf` is generic over `DOC_BYTES`. `LeafAosD.lean` models `doc_le_bytes`
+  (`docLeBytes_spec`: the assert passes iff the doc fits; `docLeBytes_lossless`), the D-wide page
+  (`aos_roundtripD`, `aosMergeD_spec`, `docLayoutD_spec`, `aosBuildD_length`, `fromPairsD_roundtrip`
+  for every `DOC_BYTES ∈ {1, 2, 4, 8}`) and proves it is the old model at 8 (`aosD8_*`, `fromPairsD8`).
+  NEW BUG 14 (latent: no production `CowBTree` yet): the const assert admits `DOC_BYTES ∈ 1..=8`,
+  but `read_width` (`cow_btree/mod.rs:88-102`) reads 8 bytes for any width outside {1, 2, 4, 8}, so
+  `DOC_BYTES = 3/5/6/7` reads garbage docs or panics (`docBytes3_reads_garbage`,
+  `docBytes3_last_oob`). Confirmed on the Rust sources: `CowBTree::<256, 256, 3>` panics on its second
+  `insert` ("range end index 16 out of range for slice of length 11", `mod.rs:99`). Fix: assert
+  `DOC_BYTES ∈ {1, 2, 4, 8}`.
+- Still present: bugs 1-4, 7-13 (code unchanged at the cited lines).
 -/
 import FalkorIndexLayer.Model
 import FalkorIndexLayer.Proofs
+import FalkorIndexLayer.Temporal
 import FalkorIndexLayer.Strings
 import FalkorIndexLayer.Maintenance
 import FalkorIndexLayer.Bugs
@@ -224,3 +243,4 @@ import FalkorIndexLayer.LeafBlockCopy
 import FalkorIndexLayer.LeafBlockCopy2
 import FalkorIndexLayer.LeafOps
 import FalkorIndexLayer.LeafTree
+import FalkorIndexLayer.LeafAosD

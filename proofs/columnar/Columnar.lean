@@ -28,7 +28,7 @@ Lean↔Rust tables are in each file's header; per-function buckets in
 | `Batch` | `Batch` selection / gather / compaction / `set_column` / `write_column` (`batch.rs:805-1394`), selection producers `filter.rs`, `limit.rs`, `skip.rs`, `runtime.rs:529` |
 | `Row` | `Row` (`row.rs`), `BatchRow::value_at` / `to_owned_row` (`batch.rs:1415-1447`) |
 | `Concat` | `Batch::concat`, `concat_typed_column` vs `BatchBuilder` (`batch.rs:525-797`, `:979-1151`) |
-| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-783`), ExpandInto trim (`expand_into.rs:311-320`) |
+| `Emitter` | `BatchedResultEmitter` (`batched_result_emitter.rs:487-783`), ExpandInto trim (`expand_into.rs:285-294`) |
 | `VectorExpr` | `CmpOp`, comparison kernels, `ExprColumn`, `union_nulls`, `compare_columns` |
 | `Arith` | `arithmetic`, `int_lane`, `float_lane` vs `Value` `+ - * / %` |
 | `Lanes` | `negate_bools`, `eval_case`, `eval_function` folding, `eval_variable`, filter mask |

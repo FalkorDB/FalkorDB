@@ -53,13 +53,13 @@ theorem beq_bytes (a b : Bytes) : (a == b) = decide (a = b) := by
 `tag_encode_lower` escapes (bytes `<= 0x20`, `\`, `_`) and every stored
 string is non-empty. Both side conditions are necessary: see
 `bug_string_range_order` and `bug_empty_string_not_indexed`. The optimizer's
-equal-bounds shortcut is exact only when both bounds are inclusive; see
-`bug_exclusive_equal_bounds`. -/
+equal-bounds case needs no side condition since #3072 (1c9994e37): with an
+exclusive side the node is empty (before, the premise `lo = hi → imn ∧ imx`
+was needed; `pre3072_exclusive_equal_bounds`). -/
 theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
     (lo hi : Option Bytes) (imn imx : Bool) (hf : fields k = true)
     (hb : lo.isSome ∨ hi.isSome)
     (hlo : ∀ s, lo = some s → plain s) (hhi : ∀ s, hi = some s → plain s)
-    (heq : ∀ s, lo = some s → hi = some s → imn = true ∧ imx = true)
     (hp : ∀ v, p k = some v → Pure v)
     (hps : ∀ t, p k = some (.str t) → plain t) :
     indexHit fields p (.range k (lo.map .str) (hi.map .str) imn imx) =
@@ -103,8 +103,25 @@ theorem strRange_exact (fields : Attr → Bool) (p : Props) (k : Attr)
       ite_true, buildStrRange, hf]
     by_cases hab : a = b
     · subst hab
-      obtain ⟨rfl, rfl⟩ := heq a rfl rfl
-      simp only [ite_true]
+      by_cases hboth : ¬ (imn = true ∧ imx = true)
+      · -- #3072: an exclusive side with equal bounds is the empty node, and selects nothing
+        have hne : (!(imn && imx)) = true := by cases imn <;> cases imx <;> simp_all
+        simp only [ite_true, hne, rsMatch]
+        cases hpk : p k with
+        | none => cases imn <;> cases imx <;> simp_all [holds, propOr, cyLt, cyLe, cyEqScalar, numOf, isTrue]
+        | some v =>
+          cases hp v hpk with
+          | int i => cases imn <;> cases imx <;> simp_all [holds, propOr, cyLt, cyLe, cyEqScalar, numOf, isTrue]
+          | flt f => cases imn <;> cases imx <;> simp_all [holds, propOr, cyLt, cyLe, cyEqScalar, numOf, isTrue]
+          | str t ht htb =>
+            simp only [holds, propOr, hpk, Option.getD_some, cyLe, cyLt, cyEqScalar, beq_bytes]
+            by_cases hta : t = a
+            · subst hta; cases imn <;> cases imx <;> simp_all [lexLt_irrefl]
+            · rcases lexLt_total a t (Ne.symm hta) with h | h
+              · cases imn <;> cases imx <;> simp_all [lexLt_asymm a t h, Ne.symm hta]
+              · cases imn <;> cases imx <;> simp_all [lexLt_asymm t a h, Ne.symm hta]
+      obtain ⟨rfl, rfl⟩ := Classical.not_not.1 hboth
+      simp only [ite_true, Bool.and_self, Bool.not_true, Bool.false_eq_true, ite_false]
       cases hpk : p k with
       | none => simp [rsMatch, docOf, hpk, holds, propOr, cyLt, cyLe, cyEqScalar, numOf, setRange]
       | some v =>

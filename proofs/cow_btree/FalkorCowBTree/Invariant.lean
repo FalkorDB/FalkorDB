@@ -9,7 +9,7 @@ import FalkorCowBTree.Basic
 * a leaf is sorted, holds `<= LEAF_MAX` entries, and is non-empty unless it is the root (`r = true`);
 * a branch has `2 ..= BRANCH_MAX` children, and its separators form a chain
   `lo = b₀ < b₁ = seps[0] < … < b_k = hi` with child `i` well-formed within `[b_i, b_{i+1})`
-  (`COK`). That is the Rust doc's "`max(left) < sep <= min(right)`" (`tests.rs:1097`), stated with
+  (`COK`). That is the Rust doc's "`max(left) < sep <= min(right)`" (`tests.rs:1229`), stated with
   explicit bounds so it survives the stale separators a remove leaves behind.
 
 `lo`/`hi` range over `Nat`; the root is checked against `[0, 2^128)`, i.e. all `(u64, u64)` pairs.
@@ -126,7 +126,7 @@ theorem childIndex_le (ss : List E) (x : E) : childIndex ss x ≤ ss.length := b
   | nil => simp [childIndex_nil]
   | cons s ss ih => rw [childIndex_cons]; split <;> simp <;> omega
 
-/-- **Routing** (`Branch::child_index`, `node.rs:103`). An `x` within the chain's bounds goes to a
+/-- **Routing** (`Branch::child_index`, `node.rs:186`). An `x` within the chain's bounds goes to a
     child whose own bounds contain it; replacing that child by any chain over the same bounds keeps
     the whole chain valid (the one-hole context used by insert and remove). -/
 theorem COK_route :
@@ -158,7 +158,7 @@ theorem COK_route :
       simp only [List.take_zero, List.nil_append, List.drop_zero, List.drop_succ_cons]
       exact (COK_append (COK_len hm)).2 ⟨hm, h.2⟩
 
-/-- Cutting a chain at child `m` (used by every branch split: `node.rs:260-263`, `:318-323`). -/
+/-- Cutting a chain at child `m` (used by every branch split: `node.rs:347-350`, `:405-410`). -/
 theorem COK_split {lo hi : Nat} {ss : List E} {ns : List Node} (h : COK P lo ss ns hi)
     (m : Nat) (hm0 : 0 < m) (hm : m < ns.length) :
     ∃ (hs : m - 1 < ss.length),

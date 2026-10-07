@@ -49,21 +49,21 @@ src/graph_core.rs	from_mvcc	559	MODELLED	as new
 src/graph_core.rs	execute_query	576	MODELLED	Mvcc Ev.read on snapshot; write detection not modelled
 src/graph_core.rs	execute_profile	659	MODELLED	as execute_query
 src/graph_core.rs	execute_query_write	715	PROVEN	Mvcc.multi_write_refused: slot claimed before escalation (BUG 5); claim/mutate/commit/rollback
-src/graph_core.rs	reply_profile	823	NOT COVERED	reply formatting
-src/graph_core.rs	new	873	AXIOMATISED	RM_BlockClient FFI
-src/graph_core.rs	drop	881	AXIOMATISED	RM_UnblockClient FFI
-src/graph_core.rs	compute_effective_timeout	896	NOT COVERED	config arithmetic, not concurrency
-src/graph_core.rs	reply_invalid_graph_version	933	NOT COVERED	reply formatting
-src/graph_core.rs	query_mut	945	PROVEN	Locks.pool_deadlock_reachable (spawn from main, GIL held) + drain producer (send then CAS)
-src/graph_core.rs	query_sync	1154	PROVEN	Mvcc.multi_write_refused (inline writer = escalate 0 then claim)
-src/graph_core.rs	profile_mut	1275	MODELLED	same producer protocol as query_mut
-src/graph_core.rs	profile_sync	1369	MODELLED	as query_sync
-src/graph_core.rs	finish_write	1436	PROVEN	Mvcc Ev.commit / Ev.rollback
-src/graph_core.rs	abandon_write	1466	PROVEN	Mvcc Ev.rollback; index resync not modelled
-src/graph_core.rs	commit_and_replicate	1481	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
-src/graph_core.rs	process_write_queued_query	1525	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
-src/graph_core.rs	replicate	1671	AXIOMATISED	RM_Replicate FFI
-src/graph_core.rs	graph_free	1684	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
+src/graph_core.rs	reply_profile	823	NOT COVERED	reply formatting here; PROVEN in redis_layer (GraphCore.profileOps_all, profileDepth_eq; #2390 lists every op)
+src/graph_core.rs	new	860	AXIOMATISED	RM_BlockClient FFI
+src/graph_core.rs	drop	868	AXIOMATISED	RM_UnblockClient FFI
+src/graph_core.rs	compute_effective_timeout	883	NOT COVERED	config arithmetic, not concurrency
+src/graph_core.rs	reply_invalid_graph_version	920	NOT COVERED	reply formatting
+src/graph_core.rs	query_mut	932	PROVEN	Locks.pool_deadlock_reachable (spawn from main, GIL held) + drain producer (send then CAS)
+src/graph_core.rs	query_sync	1141	PROVEN	Mvcc.multi_write_refused (inline writer = escalate 0 then claim)
+src/graph_core.rs	profile_mut	1262	MODELLED	same producer protocol as query_mut
+src/graph_core.rs	profile_sync	1356	MODELLED	as query_sync
+src/graph_core.rs	finish_write	1423	PROVEN	Mvcc Ev.commit / Ev.rollback
+src/graph_core.rs	abandon_write	1453	PROVEN	Mvcc Ev.rollback; index resync not modelled
+src/graph_core.rs	commit_and_replicate	1468	PROVEN	Mvcc Ev.commit requires GIL (fork_excludes_commit)
+src/graph_core.rs	process_write_queued_query	1512	PROVEN	Locks.drain_no_lost_message/explore_saturated/recheck_needed (write_loop protocol, 2 producers exhaustive)
+src/graph_core.rs	replicate	1658	AXIOMATISED	RM_Replicate FFI
+src/graph_core.rs	graph_free	1671	PROVEN	Mvcc Ev.delete (registered := false) + delete_blocks_writes
 src/query_session.rs	begin	127	MODELLED	reader mode (graphR acquire)
 src/query_session.rs	begin_with	134	MODELLED	reader mode
 src/query_session.rs	begin_writer	148	PROVEN	Locks.inlineWriterProg ordered (all_programs_ordered)
@@ -86,15 +86,15 @@ src/commands/delete.rs	graph_delete	37	PROVEN	Mvcc Ev.delete on main thread with
 graph/src/index/mod.rs	make_arr_names	121	PROVEN	Search.arrNames used by range_never_vector_or_text
 graph/src/index/mod.rs	new	137	MODELLED	Search.Field
 graph/src/index/mod.rs	new_with_vector_options	154	MODELLED	Search.Field.vdim (vector_options.map dimension)
-graph/src/index/mod.rs	set	716	PROVEN	Search.docSet @49f698d22 (#3087 guard): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; historical pre3087_*), fulltext_only_strings, range_never_vector_or_text
-graph/src/index/mod.rs	add_document	1893	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
-graph/src/index/mod.rs	register_fields	1181	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
-graph/src/index/mod.rs	bump_id	1049	PROVEN	Tickets.bump_inv, stale_release_isolated
-graph/src/index/mod.rs	increment_pending_for_generation	2097	PROVEN	Tickets.inc_inv
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2115	PROVEN	Tickets.dec_inv, release_exact
-graph/src/index/mod.rs	pending_count_for_generation	2137	PROVEN	Tickets.pendingFor
-graph/src/index/mod.rs	pending_count	2151	PROVEN	Tickets.operational_iff
-graph/src/index/mod.rs	is_operational	2070	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	set	716	PROVEN	Search.docSet @8743953a8 (#3087 vector guard, #3076 temporals skipped): docSet_vector_sound, doc_always_accepted, other_fields_never_dropped, vector_dim_mismatch_keeps_range_entry, dim0/noopts_keeps_range_entry (BUG 3 fixed; historical pre3087_*), docSet_temporal_not_indexed, docSet_eq_pre3076_off_temporal (historical pre3076_temporal_in_numeric), fulltext_only_strings, range_never_vector_or_text
+graph/src/index/mod.rs	add_document	1902	AXIOMATISED	Search.RediSearch.accepts_iff (IndexAddDocument REPLACE, whole-doc reject)
+graph/src/index/mod.rs	register_fields	1180	PROVEN	Search.metricOf_ok_iff, phoneticFlag (phonetic_false_no_flag)
+graph/src/index/mod.rs	bump_id	1048	PROVEN	Tickets.bump_inv, stale_release_isolated
+graph/src/index/mod.rs	increment_pending_for_generation	2106	PROVEN	Tickets.inc_inv
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2124	PROVEN	Tickets.dec_inv, release_exact
+graph/src/index/mod.rs	pending_count_for_generation	2146	PROVEN	Tickets.pendingFor
+graph/src/index/mod.rs	pending_count	2160	PROVEN	Tickets.operational_iff
+graph/src/index/mod.rs	is_operational	2079	PROVEN	Tickets.operational_iff
 graph/src/index/indexer.rs	create_index	181	PROVEN	Tickets.createRange: no generation bump for non-vector fields -> second_index_never_populated (BUG 2)
 graph/src/index/indexer.rs	acquire_population_ticket	608	PROVEN	Tickets.inc_inv
 graph/src/index/indexer.rs	acquire_population_snapshot	626	PROVEN	Tickets.inc_inv / Worker.attrs snapshot

@@ -5,11 +5,13 @@
 | `F64`                 | f64 as `==`/`floor`/`abs`/`is_finite` see it |
 | `JsV`                 | the QuickJS values `js_to_value` distinguishes |
 | `objSet`, `jsKeys`    | AXIOMATISED QuickJS object semantics (ECMA-262 §10.1.9 [[Set]] through the `Object.prototype.__proto__` accessor, §10.1.11 OrdinaryOwnPropertyKeys: array-index keys first, ascending) |
-| `ctorOf`              | `obj.get("constructor")`: own property, else the prototype's |
+| `JsKind`              | the object's internal class, as `JS_IsDate` / `JS_IsRegExp` test it (QuickJS FFI, AXIOMATISED by construction) |
+| `ctorName`            | historical only: `obj.get("constructor").name`, the pre-#3074 test |
 | `RV`                  | `runtime::value::Value` (all variants; Path as node/rel id lists) |
 | `toJs`                | `value_to_js` :58 |
-| `fromJs`              | `js_to_value` :185 |
-| `esc`, `unesc`        | key escaping :104-109 / :351-366 |
+| `fromJs`              | `js_to_value` :185-371 @ 8743953a8 (-0.0 :203, vecf32 :230-244, Date/RegExp by class :313-345) |
+| `esc`, `unesc`        | key escaping :104-109 / :348-366 |
+| `pre3074_*`           | historical: `js_to_value` before #3074 (`7a81c83b0`) |
 -/
 namespace AlgoUdf.Marshal
 
@@ -28,6 +30,10 @@ def F64.integral : F64 → Bool
 def F64.small : F64 → Bool
   | .zero _ => true
   | .integ k => decide (k.natAbs < two53.toNat)
+  | _ => false
+/-- `f == 0.0 && f.is_sign_negative()` -/
+def F64.negZero : F64 → Bool
+  | .zero true => true
   | _ => false
 def F64.finite : F64 → Bool
   | .nan | .inf _ => false
@@ -143,12 +149,27 @@ def numOf : JsV → Option F64
   | .num f => some f
   | _ => none
 
-/-- The non-marker object branch; `props` is `fromProps ps` (only used on the Map path). -/
+/-- The non-marker object branch (:313-345): Date / RegExp by internal class
+(`JS_IsDate`, `JS_IsRegExp`), never by a `constructor` property; anything else is a
+map. `props` is `fromProps ps` (only used on the Map path). -/
 def fromObjWith (ps : List (List Char × JsV)) (kind : JsKind) (props : Except String (List (List Char × RV))) : Except String RV :=
+  match kind with
+  | .date ms => if ms.finite then
+      (let secs := ms.toInt.tdiv 1000  -- `(ms / 1000.0) as i64` on integral ms, |ms| ≤ 8.64e15
+       match get ps "__falkor_temporal_type".toList with
+       | some (.str "date") => .ok (.date secs)
+       | _ => .ok (.datetime secs))
+    else .error "Invalid Date value"
+  | .regexp s => .ok (.str s)
+  | .plain => do let kv ← props; pure (.map kv)
+
+/-- HISTORICAL (before #3074, `7a81c83b0`): Date / RegExp chosen by
+`obj.get("constructor").name`, which a plain object can carry as an own key. -/
+def pre3074_fromObjWith (ps : List (List Char × JsV)) (kind : JsKind) (props : Except String (List (List Char × RV))) : Except String RV :=
   match ctorName ps kind with
   | some "Date" => match kind with
     | .date ms => if ms.finite then
-        (let secs := ms.toInt.tdiv 1000  -- `(ms / 1000.0) as i64` on integral ms, |ms| ≤ 8.64e15
+        (let secs := ms.toInt.tdiv 1000
          match get ps "__falkor_temporal_type".toList with
          | some (.str "date") => .ok (.date secs)
          | _ => .ok (.datetime secs))
@@ -159,11 +180,32 @@ def fromObjWith (ps : List (List Char × JsV)) (kind : JsKind) (props : Except S
     | _ => .ok (.str "[object Object]")  -- Object.prototype.toString
   | _ => do let kv ← props; pure (.map kv)
 
+/-- HISTORICAL (before #3074): the number arm turned -0.0 into Int 0. -/
+def pre3074_num (f : F64) : RV := if f.integral && f.small then .int f.toInt else .float f
+
+/-- HISTORICAL (before #3074): vecf32 elements had to be finite. -/
+def pre3074_fromVec : List JsV → Except String RV
+  | [] => .ok (.vecf32 [])
+  | .num f :: xs => if f.finite then (do
+        let r ← pre3074_fromVec xs
+        match r with | .vecf32 t => pure (.vecf32 (f :: t)) | _ => .error "unreachable")
+      else .error "VecF32 element is not finite"
+  | _ :: _ => .error "VecF32 item error"
+
+/-- vecf32 arm (:236-244): every element converts (`arr.get::<f64>`, then `as f32`;
+the abstract `F64` already stands for the f32 value), inf / NaN included since #3074. -/
+def fromVec : List JsV → Except String RV
+  | [] => .ok (.vecf32 [])
+  | .num f :: xs => do
+      let r ← fromVec xs
+      match r with | .vecf32 t => pure (.vecf32 (f :: t)) | _ => .error "unreachable"
+  | _ :: _ => .error "VecF32 item error"
+
 mutual
 def fromJs : JsV → Except String RV
   | .null | .undef => .ok .null
   | .bool b => .ok (.bool b)
-  | .num f => .ok (if f.integral && f.small then .int f.toInt else .float f)
+  | .num f => .ok (if f.integral && f.small && !f.negZero then .int f.toInt else .float f)
   | .big i => if i.natAbs ≤ i64max.toNat then .ok (.int i) else .error "BigInt out of i64 range"
   | .str s => .ok (.str s)
   | .sym => .error "Symbol values are not supported"
@@ -183,13 +225,6 @@ def fromJs : JsV → Except String RV
 def fromJsList : List JsV → Except String (List RV)
   | [] => .ok []
   | x :: xs => do let v ← fromJs x; let vs ← fromJsList xs; pure (v :: vs)
-def fromVec : List JsV → Except String RV
-  | [] => .ok (.vecf32 [])
-  | .num f :: xs => if f.finite then (do
-        let r ← fromVec xs
-        match r with | .vecf32 t => pure (.vecf32 (f :: t)) | _ => .error "unreachable")
-      else .error "VecF32 element is not finite"
-  | _ :: _ => .error "VecF32 item error"
 def fromProps : List (List Char × JsV) → Except String (List (List Char × RV))
   | [] => .ok []
   | (k, v) :: ps => if keep k then (do

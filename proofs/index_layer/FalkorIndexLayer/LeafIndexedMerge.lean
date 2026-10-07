@@ -1,6 +1,6 @@
 import FalkorIndexLayer.LeafIndexedOps
 /-
-# `CompactIndexedLeaf::merge` (`compact_indexed.rs`, origin/main 3fec7d7c9)
+# `CompactIndexedLeaf::merge` (`compact_indexed.rs`, origin/main 8743953a8)
 -/
 namespace IndexLayer.Leaf
 

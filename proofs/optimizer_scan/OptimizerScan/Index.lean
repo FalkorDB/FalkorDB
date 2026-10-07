@@ -9,24 +9,24 @@ their `sel` agree on every node of the graph.
 | --- | --- |
 | `P`, `V`                   | `runtime::value::Value` restricted to Bool / Int / String / temporal / list-of-scalars (strings as `Nat` codes; Float, Point, Map not modelled) |
 | `eq3`, `ord3`, `Op.holds`  | Cypher three-valued `=`/`<`/… as a WHERE predicate (`runtime/value.rs` compare_value, `eval.rs`) — the reference semantics |
-| `Fld`, `enc`, `arrEnc`     | `Document::set`, `index/mod.rs:716-847` (Bool→0/1, Int, temporal→ts all NUMERIC; String→TAG; list→`:numeric:arr`/`:string:arr`) |
+| `Fld`, `enc`, `arrEnc`     | `Document::set`, `index/mod.rs:716-846` (Bool→0/1, Int NUMERIC; temporal not indexed since #3076; String→TAG; list→`:numeric:arr`/`:string:arr`) |
 | `Q`                        | `IndexQuery<Value>` after evaluation, `index/indexer.rs` |
-| `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs:1357-1364` |
-| `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1371-1373` |
-| `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1463-1674` (`null_mut` ↦ `none`) |
-| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1677`, `graph/graph.rs:3775`) |
+| `valueToNumeric`           | `Index::value_to_numeric`, `index/mod.rs:1356-1363` |
+| `lossy`                    | `Index::int_loses_f64_precision`, `index/mod.rs:1370-1372` |
+| `build`/`buildAll`/`buildSome` | `Index::build_query_node`, `index/mod.rs:1472-1683` (`null_mut` ↦ `none`) |
+| `idxSel`                   | `Index::query` + `Graph::get_indexed_nodes` (`index/mod.rs:1686`, `graph/graph.rs:3775`) |
 | `isIndexable`, `canUtilize`| `NodeByIndexScanOp::can_utilize_index`, `runtime/ops/node_by_index_scan.rs:250-287` |
 | `evalIQ`                   | `NodeByIndexScanOp::evaluate_index_query`, `node_by_index_scan.rs:98-244` (InList → `Or` of the scalar items) |
 | `T`, `R`, `A`, `F`         | `ExprIR` filter trees: terms, IN right-hand sides, atoms, AND/OR roots |
-| `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs:557-576` |
-| `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs:367-378` |
-| `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr`, `utilize_index.rs:910-928` |
-| `needsPost`                | `needs_post_filter`, `utilize_index.rs:845-891` |
-| `buildOp`                  | `build_op_query`, `utilize_index.rs:325-365` |
-| `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` + `extract_attribute_and_expression_from_filter`, `utilize_index.rs:386-428, 612-714` |
-| `mergeRange`               | `merge_range_queries`, `utilize_index.rs:491-554` |
-| `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs:770-826` |
-| `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs:995-1085` |
+| `hasT`/`hasR`              | `subtree_has_property_of`, `utilize_index.rs:547-566` |
+| `firstP`/`firstR`          | `extract_attribute_from_subtree` (BFS first `Property`), `utilize_index.rs:357-368` |
+| `nonIdxT`/`nonIdxA`        | `is_non_indexable_subexpr`, `utilize_index.rs:855-873` |
+| `needsPost`                | `needs_post_filter`, `utilize_index.rs:802-848` |
+| `buildOp`                  | `build_op_query`, `utilize_index.rs:315-355` |
+| `trySingle`                | `try_single_filter_scan` + `try_in_filter_scan` + `extract_attribute_and_expression_from_filter`, `utilize_index.rs:376-418, 602-704` |
+| `mergeRange`               | `merge_range_queries`, `utilize_index.rs:481-544` |
+| `tryPushdown`              | `try_filter_pushdown`, `utilize_index.rs:727-783` |
+| `utilize`                  | `apply_filter_pushdown` + `try_index_rewrite`, `utilize_index.rs:973-1046` |
 | `Plan.idxScan` sel         | `NodeByIndexScanOp::next` (index or label-scan fallback, then extra labels), `node_by_index_scan.rs:301-328` |
 -/
 namespace OptimizerScan.Index
@@ -89,7 +89,7 @@ theorem eq3_swap (a b : V) : eq3 b a = eq3 a b := by
   cases a <;> cases b <;> first | rfl | exact congrArg some (beq_symm _ _)
 
 /-- **PROVEN**: the operator flip used when the property is on the right
-(`utilize_index.rs:697-708`) is sound: `b op a ↔ a (flip op) b`. -/
+(`utilize_index.rs:687-698`) is sound: `b op a ↔ a (flip op) b`. -/
 theorem flip_correct (op : Op) (a b : V) : op.holds b a = op.flip.holds a b := by
   cases op <;> simp only [Op.holds, Op.flip, ord3_swap a b, eq3_swap a b] <;>
     cases h : ord3 a b <;> (try rename_i o; cases o) <;> simp [Ordering.swap]
@@ -109,12 +109,13 @@ def encP : P → Fld
   | .i x => .num x
   | .s x => .tag x
 
-/-- `Document::set` (`index/mod.rs:758-846`). Temporal values go in as NUMERIC. -/
+/-- `Document::set` (`index/mod.rs:758-845`). Since #3076 (e20300436) temporal values are not
+    indexed (`index/mod.rs:803`; before, they went in as NUMERIC timestamps — `IndexCex` C2). -/
 def enc : V → Option Fld
   | .b x => some (.num (bI x))
   | .i x => some (.num x)
   | .s x => some (.tag x)
-  | .date ts => some (.num ts)
+  | .date _ => none
   | .null => none
   | .arr _ => none
 
@@ -161,7 +162,7 @@ def within (x : Int) (lo hi : Option Int) (il ih : Bool) : Bool :=
   (match hi with | none => true | some c => leB x c ih)
 
 mutual
-/-- `Index::build_query_node` (`index/mod.rs:1463-1674`); `none` is a null query node. -/
+/-- `Index::build_query_node` (`index/mod.rs:1472-1683`); `none` is a null query node. -/
 def build (F : List Nat) : Q → Option (Node → Bool)
   | .eq k v =>
     if k ∈ F then
@@ -175,10 +176,11 @@ def build (F : List Nat) : Q → Option (Node → Bool)
       if isStrB lo || isStrB hi then
         match strB lo, strB hi with
         | some lo', some hi' =>
-          -- `build_string_range_node`: equal bounds become an exact token match,
-          -- ignoring the include flags (`index/mod.rs:1430-1442`).
+          -- `build_string_range_node`: equal bounds with an exclusive side select nothing
+          -- (#3072, `index/mod.rs:1429-1434`); both inclusive become an exact token match
+          -- (`index/mod.rs:1439-1451`).
           some (fun n =>
-            if lo'.isSome ∧ lo' = hi' then enc (n.prop k) == some (.tag (lo'.getD 0))
+            if lo'.isSome ∧ lo' = hi' then (il && ih) && enc (n.prop k) == some (.tag (lo'.getD 0))
             else match enc (n.prop k) with
               | some (.tag x) => within x (lo'.map Int.ofNat) (hi'.map Int.ofNat) il ih
               | _ => false)
@@ -202,14 +204,14 @@ def build (F : List Nat) : Q → Option (Node → Bool)
   | .and qs => (buildAll F qs).map (fun fs n => fs.all (· n))
   | .or qs => some (fun n => (buildSome F qs).any (· n))
 
-/-- AND: one null child nulls the whole intersection (`index/mod.rs:1555-1568`). -/
+/-- AND: one null child nulls the whole intersection (`index/mod.rs:1564-1577`). -/
 def buildAll (F : List Nat) : List Q → Option (List (Node → Bool))
   | [] => some []
   | q :: qs => match build F q, buildAll F qs with
     | some f, some fs => some (f :: fs)
     | _, _ => none
 
-/-- OR: null children are silently skipped (`index/mod.rs:1569-1581`). -/
+/-- OR: null children are silently skipped (`index/mod.rs:1578-1590`). -/
 def buildSome (F : List Nat) : List Q → List (Node → Bool)
   | [] => []
   | q :: qs => match build F q with
@@ -344,7 +346,7 @@ def scalarLit : T → Bool
   | .lit (.b _) | .lit (.s _) => true
   | _ => false
 
-/-- `needs_post_filter` (`utilize_index.rs:845-891`). -/
+/-- `needs_post_filter` (`utilize_index.rs:802-848`). -/
 def needsPost : F → Bool
   | .atom (.inn (.prop _) (.list ts)) =>
     if !ts.isEmpty && ts.all scalarLit then false else true
@@ -362,7 +364,7 @@ inductive IQ
   | or (qs : List IQ)
   deriving Repr
 
-/-- `build_op_query` (`utilize_index.rs:325-365`). -/
+/-- `build_op_query` (`utilize_index.rs:315-355`). -/
 def buildOp (op : Op) (k : Nat) (c : T) : IQ :=
   match op with
   | .eq => .eq k c
@@ -380,7 +382,7 @@ def nestedList : R → Bool
 
 def anyPropR : R → Bool := hasR
 
-/-- `try_single_filter_scan` / `try_in_filter_scan` (`utilize_index.rs:612-714`). -/
+/-- `try_single_filter_scan` / `try_in_filter_scan` (`utilize_index.rs:602-704`). -/
 def trySingle (idx : Nat → List Nat) (ls : List Nat) : A → Option (Nat × IQ)
   | .inn l r =>
     match hasT l, hasR r with
@@ -410,7 +412,7 @@ def trySingle (idx : Nat → List Nat) (ls : List Nat) : A → Option (Nat × IQ
     | _, _ => none
   | .opq _ => none
 
-/-- `merge_range_queries` (`utilize_index.rs:491-554`). -/
+/-- `merge_range_queries` (`utilize_index.rs:481-544`). -/
 def mergeRange : IQ → IQ → IQ
   | .range k lo hi il ih, .range k' lo' hi' il' ih' =>
     if k = k' then
@@ -424,13 +426,13 @@ def mergeRange : IQ → IQ → IQ
   | a, b => .and [a, b]
 
 /-- Fold one pushed conjunct into the running query: the first one fixes the label, later
-ones are merged into it on that label (`utilize_index.rs:782-787`). -/
+ones are merged into it on that label (`utilize_index.rs:739-744`). -/
 def mergeInto (m : Option (Nat × IQ)) (L : Nat) (q : IQ) : Option (Nat × IQ) :=
   match m with
   | none => some (L, q)
   | some (L0, q0) => some (L0, mergeRange q0 q)
 
-/-- The AND branch of `try_filter_pushdown` (`utilize_index.rs:776-793`). -/
+/-- The AND branch of `try_filter_pushdown` (`utilize_index.rs:733-750`). -/
 def pushAnd (idx : Nat → List Nat) (ls : List Nat) :
     List A → Option (Nat × IQ) → List A → Option (Nat × IQ) × List A
   | [], m, rem => (m, rem)
@@ -439,7 +441,7 @@ def pushAnd (idx : Nat → List Nat) (ls : List Nat) :
     | some (L, q) => pushAnd idx ls as (mergeInto m L q) rem
     | none => pushAnd idx ls as m (rem ++ [a])
 
-/-- The OR branch: every disjunct must convert (`utilize_index.rs:794-811`). -/
+/-- The OR branch: every disjunct must convert (`utilize_index.rs:751-768`). -/
 def pushOr (idx : Nat → List Nat) (ls : List Nat) : List A → Option (Option Nat × List IQ)
   | [] => some (none, [])
   | a :: as => match trySingle idx ls a, pushOr idx ls as with
@@ -450,7 +452,7 @@ def isArrayContains : A → Bool
   | .inn l r => !hasT l && hasR r
   | _ => false
 
-/-- `try_filter_pushdown` (`utilize_index.rs:770-826`). -/
+/-- `try_filter_pushdown` (`utilize_index.rs:727-783`). -/
 def tryPushdown (idx : Nat → List Nat) (ls : List Nat) : F → Option (Nat × IQ × List A)
   | .and as =>
     match pushAnd idx ls as none [] with
@@ -503,7 +505,7 @@ def Plan.sel (idx : Nat → List Nat) (opq : Nat → Node → Bool) : Plan → N
     (if canUtilize qv then idxSel idx L qv n else hasAll ls n) && hasAll (ls.erase L) n
   | .filter f p, n => Plan.sel idx opq p n && evalF opq n f
 
-/-- `apply_filter_pushdown` driven by `try_index_rewrite` (`utilize_index.rs:995-1085`). -/
+/-- `apply_filter_pushdown` driven by `try_index_rewrite` (`utilize_index.rs:973-1046`). -/
 def utilize (idx : Nat → List Nat) (ls : List Nat) (f : F) : Plan :=
   match tryPushdown idx ls f with
   | none => .filter f (.labelScan ls)

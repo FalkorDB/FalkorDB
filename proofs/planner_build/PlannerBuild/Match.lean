@@ -5,14 +5,17 @@ import PlannerBuild.Clauses
 * `query_correct`: if every clause plan implements its clause (the theorems of
   Clauses.lean), the plan `plan_query` stitches evaluates to the openCypher
   clause-sequence semantics `Fₙ ∘ … ∘ F₂ ∘ ⟦c₁⟧`.
-* `selfloop_ignores_chain` (bug 4): `ExpandInto(scan, res)` (mod.rs:2144-2152)
+* `selfloop_ignores_chain` (bug 4): `ExpandInto(scan, res)` (mod.rs:2255-2263)
   never runs `res`.
 * `cp_stitch_loses_correlation` (bug 2) / `cp_stitch_sound`: a MATCH plan
-  prepended to the next MATCH's CartesianProduct (mod.rs:2704-2708) is
+  prepended to the next MATCH's CartesianProduct (mod.rs:2809-2813) is
   correct only when no other component reads its variables.
 * `where_scan_indistinguishable` (bug 3): `MATCH (a) WHERE φ MATCH (a)-->(b)`
   stitches into the exact tree shape `is_planner_scan_subtree`
-  (optimizer/select_scan_node.rs:239) treats as prunable.
+  (optimizer/select_scan_node.rs:315) treats as prunable. **Fixed by #2390 (d2c42e032)**:
+  the rebuild now carries the spine's Filters along (`filters_of`, select_scan_node.rs:250,
+  re-wrapped by `make_scan_subtree` :214) — `rebuild_keeps_where`; the old bare rebuild is
+  `pre2390_rebuild_drops_where`.
 -/
 namespace PlannerBuild
 
@@ -81,7 +84,7 @@ theorem selfloop_ignores_chain (s : Nat) (scan res res' : Plan) (r : Rec V) (g :
 /-! ## Bug 2: a MATCH stitched as a CartesianProduct branch -/
 
 /-- `insertStep` at a CartesianProduct with a plan that does not need wrapping
-(its root is a scan / traversal / Filter over one, mod.rs:2769-2789) makes it
+(its root is a scan / traversal / Filter over one, mod.rs:2874-2894) makes it
 the first branch. -/
 theorem cp_stitch_shape (cs : List Plan) (n : Plan) (h : needsApplyWrapping n = false) :
     fillAt (.node .cartesian cs) [] n = .node .cartesian (n :: cs) := by
@@ -157,5 +160,40 @@ theorem where_scan_indistinguishable (φ s t : Nat) :
     simp [slotLoop, slotWith, walkLoop, Plan.get, projDescend, descendClause_nil, descendOne]
     exact descendClause_nil _ rfl
   rw [this, fillAt, insertStep_nonCP _ [] _ _ [] rfl (by simp)]; rfl
+
+/-! ### The fix (#2390): the rebuilt scan keeps the spine's Filters -/
+
+/-- `filters_of` (select_scan_node.rs:250-265): the `Filter`s on a scan subtree's single-child
+spine, outermost first. -/
+def spineFilters : Plan → List Nat
+  | .node (.filter φ) [c] => φ :: spineFilters c
+  | .node _ [c] => spineFilters c
+  | .node _ _ => []
+
+/-- `make_scan_subtree`'s tail (select_scan_node.rs:232-235): wrap the new scan in the salvaged
+filters, innermost first, so the original nesting is preserved. -/
+def wrapFilters (fs : List Nat) (scan : Plan) : Plan :=
+  fs.foldr (fun φ p => .node (.filter φ) [p]) scan
+
+theorem spineFilters_wrap (fs : List Nat) (s : Nat) :
+    spineFilters (wrapFilters fs (.node (.scan s) [])) = fs := by
+  induction fs with
+  | nil => rfl
+  | cons φ fs ih => simp only [wrapFilters, List.foldr_cons] at ih ⊢; simp [spineFilters, ih]
+
+/-- **Bug 3 fixed**: pruning `Filter(φ, Scan a)` and rebuilding the scan from another endpoint
+keeps `φ` — every Filter of the old spine is on the new one, in order. -/
+theorem rebuild_keeps_where (φ s s' : Nat) :
+    let prev := Plan.node (.filter φ) [.node (.scan s) []]
+    spineFilters (wrapFilters (spineFilters prev) (.node (.scan s') [])) = spineFilters prev ∧
+      spineFilters prev = [φ] := by
+  exact ⟨spineFilters_wrap _ _, rfl⟩
+
+/-- Historical (a9377c636): the rebuild was the bare scan (plus the node's inline-attr Filter),
+so the stitched WHERE vanished — live `MATCH (a) WHERE a.v = 99 MATCH (a)-[r:R]->(b)
+RETURN count(r)` was 2 (C 0); on 8743953a8 both give 0. -/
+theorem pre2390_rebuild_drops_where (φ s' : Nat) :
+    spineFilters (.node (.scan s') []) = [] ∧ φ ∉ spineFilters (.node (.scan s') []) := by
+  simp [spineFilters]
 
 end PlannerBuild

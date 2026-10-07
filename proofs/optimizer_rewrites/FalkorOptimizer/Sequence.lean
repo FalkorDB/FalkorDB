@@ -3,7 +3,7 @@
 
 | here | there |
 | --- | --- |
-| `passes`, `optimize` | `optimize` optimizer/mod.rs:124-167 (pass order; NestedPlans recursion) |
+| `passes`, `optimize` | `optimize` optimizer/mod.rs:125-168 (pass order; NestedPlans recursion) |
 | `rebuildHJ` | `rebuild_with_hash_joins` replace_cartesian_with_hash_join.rs:80-99 |
 | `splitCP`, `rebuildCP` | `rebuild_with_cp_split` / `rebuild_node` push_filters_down.rs:389-466 |
 | `findVlt` | `find_descendant_vlt` absorb_edge_filters_into_vlt.rs:58-83 |

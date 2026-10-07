@@ -21,7 +21,7 @@ import OpsTraverse.ASPFuel
 A Lean 4 model of FalkorDB-rs's pattern-matching operators, checked against
 openCypher's semantics (relationship isomorphism inside one MATCH, direction,
 self-loops, `*min..max` including `*0`) and against C FalkorDB on live servers.
-162 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
+166 theorems, no `sorry` / `admit` / `axiom`. The GraphBLAS matrix product is
 the only FFI primitive the proofs lean on, and it enters as a *hypothesis*
 (`CondTraverse.MxmSpec`: the GrB_mxm ANY_PAIR spec), discharged once by the
 reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
@@ -32,11 +32,11 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 | here | there |
 | --- | --- |
 | `Basic.pairs`, `edgesBetween`, `step` | relationship-matrix pair iterator, `Tensor::get`, `Graph::get_node_relationships_by_type` (`graph/graph.rs:2079`) |
-| `CondTraverse.processPairs`, `expandRow` | `CondTraverseOp::process_pairs` / `expand_row` (`runtime/ops/cond_traverse.rs:977`, `:757`) |
-| `CondTraverse.expandInto` | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs:126`) |
-| `CondTraverse.MxmSpec`, `chain` | `Matrix::delta_lmxm` + `expand_batch` (`cond_traverse.rs:451-750`) |
+| `CondTraverse.processPairs`, `expandRow` | `CondTraverseOp::process_pairs` / `expand_row` (`runtime/ops/cond_traverse.rs:944`, `:749`) |
+| `CondTraverse.expandInto` | `ExpandIntoOp::expand_row` (`runtime/ops/expand_into.rs:125`) |
+| `CondTraverse.MxmSpec`, `chain` | `Matrix::delta_lmxm` + `expand_batch` (`cond_traverse.rs:443-742`) |
 | `CondTraverse.twoHop` | two chained traverses with sibling uniqueness (`ops/mod.rs:155`) |
-| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:947-968`, reset `:1267`) |
+| `BidirDedup.dedupRows`, `dedupBatches` | the `bidir_dedup` block (`cond_traverse.rs:914-935`, reset `:1176`) |
 | `VarLen.dfs`, `varLen` | `VarLenIter::begin_start_node` / `advance` (`runtime/ops/cond_var_len_traverse.rs:152`, `:196`) |
 | `ASP.relax`, `bfs`, `back`, `asp` | `AllShortestPathsOp::expand_row` (`runtime/ops/all_shortest_paths.rs:85-305`) |
 | `ASP.buildNodes` | `PathBuilderOp::next`, `Value::List` branch (`runtime/ops/path_builder.rs:148-172`) |
@@ -84,25 +84,36 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
   `dedupRows_keys_complete`) — the bugs are in *which* key it uses.
 * The id-range label scan returns exactly labelled ∩ range for a sorted
   `get_nodes` (`labelIdScan_correct`).
+* Re-target to origin/main 8743953a8 (#2390, d2c42e032 "plan an inline property map once"):
+  CondTraverse / ExpandInto no longer evaluate inline attrs per row (the planner lowers
+  them to a `Filter` and sets `emit_relationship` for an edge predicate), so the models'
+  attr-free `processPairs` / `expandInto` are now literal; the batched F·A path lost its
+  inline-attr gate (`ctNew_eligible_iff`, `pre2390_eligible_le`: it only widened); and a
+  var-length walk's absorbed edge filter now raises a type error on a non-boolean value,
+  exactly as `FilterOp` (`edgeVerdict_eq_filterRow`; was a silent skip, `pre2390_edgeVerdict_differs`).
 
 ## Confirmed bugs (Rust repro fails; C and/or openCypher disagree)
 
 1. **Unreferenced named edge collapsed while a sibling traverse reads it for
-   uniqueness** — `planner/optimizer/reduce_expand_into.rs:118-143` (its
+   uniqueness** — `planner/optimizer/reduce_expand_into.rs:30-55` (its
    `ir_references_variable` ignores ancestor `sibling_edges`).
    `MATCH (a)-[r]->(x)<-[s]-(c) RETURN count(*)` on `a⇉b→c`: Rust 1, C 2 (Cypher 2),
    while `RETURN r.w, s.w` lists 2 rows. Lean `twoHop_collapse_changes_count`.
    Test `bug_unreferenced_edge_collapse_breaks_sibling_uniqueness`. Related to #2896.
+   **Still present on 8743953a8** (re-checked live: Rust 1, C 2): #2390 moved the oracle to
+   `optimizer/references.rs`, which still classifies `CondTraverse`/`ExpandInto` (and so their
+   `sibling_edges`) as reading nothing.
 2. **Bidirectional dedup of chained anonymous undirected hops drops rows**
-   (`cond_traverse.rs:273-299, 947-968, 1267`): key ignores other columns
+   (`cond_traverse.rs:264-290, 947-968, 1267`): key ignores other columns
    (`UNWIND [1,2] AS x MATCH (a)-[]-()-[]-(b)`: Rust 5 rows, C 10), uses an
    intermediate node as source for ≥3 hops (`(a)-[]-()-[]-()-[]-(b)`: Rust 7
    pairs, C 12), and is reset per batch (K(2,3000): Rust counts 3/4, C 1).
    Lean `drops_outer_rows`, `three_hops_collide`, `batch_split_changes_result`.
+   Still present on 8743953a8 (live: `UNWIND [1,2]` 5 vs C 10; 3-hop star 7 vs C 12).
 3. **Undirected anonymous collapse is per direction, not per pair**
-   (`cond_traverse.rs:876-942`, `expand_into.rs:182-221`): `a→b, b→a, a→b`,
+   (`cond_traverse.rs:849-909`, `expand_into.rs:176-215`): `a→b, b→a, a→b`,
    `MATCH (a)-[]-(b) RETURN a.id, b.id` Rust 4 rows, C 2.
-   Lean `bidir_collapse_duplicates_pair`.
+   Lean `bidir_collapse_duplicates_pair`. Still present on 8743953a8 (live: 4 rows vs C 2).
 4. **Consecutive MATCH clauses are merged into one pattern**
    (`parser/cypher.rs:1549-1556`, outside the target files but it decides
    uniqueness scope): `MATCH (a)-[r]->(b) MATCH (c)-[q]->(b)` Rust 2 rows, C 4
@@ -131,8 +142,11 @@ reference `mxmRef`. Per-function buckets are in `COVERAGE.tsv`; repros are in
 
 ## Gaps / assumptions
 
-* Labels, inline property maps and WHERE edge filters are pure filters and
-  are abstracted away; relationship types are a pre-filtered edge list.
+* Labels and WHERE edge filters are pure filters and are abstracted away;
+  relationship types are a pre-filtered edge list. Inline property maps no longer
+  reach the fixed-length operators at all (#2390: stripped by the planner); a
+  var-length walk still prunes on its edge's own attrs, which `advance` checks per edge
+  and the model abstracts like the WHERE filter.
 * Iterator `seek` (forward / transposed) is modelled as a filter of the full
   pair list; emission *order* (stack vs recursion, `swap_remove`) is not modelled.
 * `get_nodes` (label-matrix intersection) is assumed sorted ascending.

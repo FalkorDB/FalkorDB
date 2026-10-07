@@ -6,8 +6,8 @@ A model of `graph/src/planner/mod.rs` plan construction (`Planner::plan`,
 reference semantics, with machine-checked agreement against an openCypher
 driving-table semantics (each clause maps a bag of records, plus the graph
 state, to a bag of records). `lake build` succeeds; no `sorry`/`admit`/`axiom`.
-349 theorems. Rust source: origin/main `3fec7d7c9` (an origin/main checkout;
-planner/mod.rs identical to `2363723ac`). Rust repros: `cargo test -p graph --test lean_planner_build`
+395 theorems. Rust source: origin/main `8743953a8` (re-targeted across #2390, d2c42e032
+"plan an inline property map once"). Rust repros: `cargo test -p graph --test lean_planner_build`
 (`bug_*` tests assert the C/openCypher answer and FAIL today).
 
 ## Lean ↔ Rust
@@ -17,32 +17,33 @@ planner/mod.rs identical to `2363723ac`). Rust repros: `cargo test -p graph --te
 | `Op`, `Plan` | `enum IR` mod.rs:65-328, `DynTree<IR>` |
 | `ev`, `evUnion`, `evRights`, `evAny` | `Runtime::build_batch_op` / `children_to_recurse` runtime/runtime.rs:654-1180 (child-0 input, `pop_or_once`, CP right branches materialised on the argument row) |
 | `forRows` | openCypher "for each record" |
-| `walkFirst` / `walkLoop` | insertion-point walks mod.rs:2638-2648 / 2712-2729 |
-| `projDescend`, `applyChain` | mod.rs:2651-2664, 2730-2743 |
-| `descendOne`, `descendClause`, `satChain`, `saturated` | mod.rs:852-895, 836-841 |
-| `insertStep`, `stitchLoop`, `rustStitch` | mod.rs:2669-2745 (`push_sibling_tree(Left)` / `push_child_tree`, Apply-wrap of a CartesianProduct) |
-| `needsApplyWrapping`, `addArgs` | mod.rs:2769-2802, 748-782 |
-| `planProject`, `ProjC` | `plan_project` mod.rs:2310-2481 |
-| `planMerge` | MERGE arm mod.rs:2995-3028 |
-| `planProc` | CALL procedure arm mod.rs:2836-2927 |
-| `planUnion` | UNION arm mod.rs:3197-3214 |
-| `.apply [.aggregate _ [b]]`, `.apply [b]` | CALL {} arm mod.rs:3215-3300 |
-| `.forEach e x [b]` | FOREACH arm mod.rs:3301-3364 |
-| `.optional vs [m]`, `.apply [.optional vs [m]]`, `.apply [m]` | MATCH arm mod.rs:2929-2978 |
+| `walkFirst` / `walkLoop` | insertion-point walks mod.rs:2743-2753 / 2712-2729 |
+| `projDescend`, `applyChain` | mod.rs:2756-2769, 2730-2743 |
+| `descendOne`, `descendClause`, `satChain`, `saturated` | mod.rs:974-1017, 836-841 |
+| `insertStep`, `stitchLoop`, `rustStitch` | mod.rs:2774-2850 (`push_sibling_tree(Left)` / `push_child_tree`, Apply-wrap of a CartesianProduct) |
+| `needsApplyWrapping`, `addArgs` | mod.rs:2874-2907, 748-782 |
+| `planProject`, `ProjC` | `plan_project` mod.rs:2415-2586 |
+| `planMerge` | MERGE arm mod.rs:3100-3133 |
+| `planProc` | CALL procedure arm mod.rs:2941-3032 |
+| `planUnion` | UNION arm mod.rs:3302-3319 |
+| `.apply [.aggregate _ [b]]`, `.apply [b]` | CALL {} arm mod.rs:3320-3405 |
+| `.forEach e x [b]` | FOREACH arm mod.rs:3406-3469 |
+| `.optional vs [m]`, `.apply [.optional vs [m]]`, `.apply [m]` | MATCH arm mod.rs:3034-3083 |
 | `isPlannerScanSubtree` | optimizer/select_scan_node.rs:239-252 |
 | `E.Ex`, `E.D`, `E.QG`, `E.V` (Expr.lean) | `DynTree<ExprIR<Variable>>`, `QueryGraph`, `(id, scope_id)` |
-| `E.containsInlineVar`, `hasPatternExpr`, `patternExprScope`, `Mode`, `needsExtraction`, `inlineAttrsToFilter`, `hasLabelsFilter`, `patternExprVariables` | mod.rs:811, 822, 1223, 660-689, 1247, 543, 574, 1128 |
+| `E.containsInlineVar`, `hasPatternExpr`, `patternExprScope`, `Mode`, `needsExtraction`, `inlineAttrsToFilter`, `hasLabelsFilter`, `patternExprVariables` | mod.rs:933, 822, 1223, 660-689, 1247, 543, 574, 1128 |
 | `E.tv` (Decomp.lean) | openCypher three-valued WHERE (Kleene AND/OR/NOT; pattern = has a match) |
-| `E.collect`, `E.mint` | `collect_patterns_and_rebuild` mod.rs:1570-1662 |
-| `E.FP`, `E.run`, `E.toPlan`, `orClass`, `andFold` (ToPlan.lean) | Filter/SemiApply/AntiSemiApply/OrApplyMultiplexer runtime; `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` mod.rs:1371-1548 |
-| `E.planFilter` (FilterPlan.lean) | `plan_filter` mod.rs:2492-2530 |
+| `E.collect`, `E.mint` | `collect_patterns_and_rebuild` mod.rs:1692-1784 |
+| `E.FP`, `E.run`, `E.toPlan`, `orClass`, `andFold` (ToPlan.lean) | Filter/SemiApply/AntiSemiApply/OrApplyMultiplexer runtime; `expr_to_plan` / `or_expr_to_plan` / `and_expr_to_plan` mod.rs:1493-1670 |
+| `E.planFilter` (FilterPlan.lean) | `plan_filter` mod.rs:2597-2635 |
 | `E.PSt`, `E.fresh`, `E.EC`, `E.build`, `E.hoist`, `E.extract` (Nested.lean) | Planner state, `fresh_var`, `ExtractedComprehension`, `build_pattern_comprehension_plan`, `hoist_or_nest`, `extract_pattern_comprehensions` |
 | `E.chainOf`, `extractClause`, `extractFilter` (Nested2.lean) | `extract_clause_expr_comprehensions` / `extract_list_expr_comprehensions` / `extract_filter_comprehensions` |
-| `E.QN`, `QR`, `Comp`, `MSt`, `MP`, `firstRel`, `chainRel`, `nodeOnly`, `planComp`, `planMatch` (PlanMatch*.lean) | `plan_match` mod.rs:1710-2298, `mark_labels_verified`, `unverified_labels`, `build_pattern_sub_plan` |
+| `E.QN`, `QR`, `Comp`, `MSt`, `MP`, `firstRel`, `chainRel`, `nodeOnly`, `planComp`, `planMatch` (PlanMatch*.lean) | `plan_match` mod.rs:1832-2403, `mark_labels_verified`, `unverified_labels`, `build_pattern_sub_plan` |
+| `E.lowerInline`, `stripNode`, `stripRel`, `stripEndpoints`, `MP.stripped` (PlanMatch.lean) | `lower_inline_attrs` mod.rs:598, `strip_node_attrs` :623, `strip_rel_attrs` :644, `strip_endpoint_attrs` :673 |
 | `subtreeContains`, `stitchBelow`, `ensureInput`, `setIP`, `isRedundantOptional` (Misc.lean) | mod.rs:331, 900, 2806, 787, 2582 |
 | `Fmt.*` | EXPLAIN text mod.rs:341-536 |
 | `Ast.*`, `Ast2.*` | parser/ast.rs: `Variable` impls, `QueryGraph` builders, `filter_visited`, `connected_components`/`dfs`, `validate`/`inner_validate`, `return_column_names`, the `Display` impls |
-| `E.renameProj`, `newPSt` (Rename.lean) | `rename_projection_outputs` mod.rs:2541, `Planner::new` mod.rs:692 |
+| `E.renameProj`, `newPSt` (Rename.lean) | `rename_projection_outputs` mod.rs:2646, `Planner::new` mod.rs:814 |
 
 ## Proven (plain English)
 * `stitchLoop_eq_nest`, `rustStitch_eq_nestStitch`: the Rust stitching loop builds exactly the nested
@@ -74,6 +75,14 @@ planner/mod.rs identical to `2363723ac`). Rust repros: `cargo test -p graph --te
   (fixed < var-length < shortest, stable permutation), `planComp_binds`, bound-label filters
   `labelStep_spec`/`labelStep_verifies`, `nodeOnly_*` (synthetic self-loop id `u32::MAX - id`), path elision
   `elide_*`, joining `planMatch_join`/`planMatch_cp`, `buildPatternSubPlan_restores`.
+* #2390 (inline maps lowered once, PlanMatch*): `lowerInline_once` (one Filter per (alias, map) —
+  no more `And(p, p)`), `lowerInline_two_maps`; `firstRel_lowers_from`/`_to`, `chainRel_lowers_from`/`_to`
+  (both endpoints of every hop lowered to Filters, bound or not, for every operator kind);
+  `firstRel_edge_pred`/`chainRel_edge_pred` (a fixed hop's edge map is a Filter right above an
+  operator with `emit_relationship` set); `walk_keeps_edge_attrs`; `planMatch_stripped` (no scan or
+  fixed-length operator carries an inline map — the precondition of proofs/optimizer_rewrites
+  `refsNew_complete`); fixed bug `pre2390_firstRel_varlen_drops` (live: `MATCH (a:N) WITH a MATCH
+  (a {x: 1})-[:R*1..2]->(b)` gave 2, 3, 3; now 2, 3 as C). Match: `rebuild_keeps_where` (bug 3 fixed).
 * Helpers (Misc/Fmt/Rename): `subtreeContains_iff`, `addArgs_leaves`, `stitchBelow_get`/`_ev`,
   `ensureInput_ev_local`/`_saturates`, `setIP_scansLeaf`, `redundant_optional_identity`, `renameProj_*`,
   `inlineAttrs_passes`, EXPLAIN strings.
@@ -83,8 +92,9 @@ planner/mod.rs identical to `2363723ac`). Rust repros: `cargo test -p graph --te
 
 ## CONFIRMED bugs (Rust release vs C `bin/macos-arm64v8-release/falkordb.so`, live servers; plus Rust tests)
 Graph: `CREATE (a:A {v:1})-[:R {w:2}]->(b:B {v:0}), (:B {v:5}), (a)-[:R {w:3}]->(b), (b)-[:S {w:1}]->(:C {v:7})`.
+Re-checked live on 8743953a8 (Rust release vs C): 1, 2, 4, 5, 6 (crash), 7 still reproduce; 3 is fixed.
 1. **MERGE with a named path as the last clause** (of a query, a `CALL {}` body or a FOREACH body)
-   fails: the first walk mod.rs:2638-2644 (and FOREACH's mod.rs:3335) does not step over
+   fails: the first walk mod.rs:2743-2749 (and FOREACH's mod.rs:3440) does not step over
    `PathBuilder`, so the previous clause becomes `PathBuilder(prev, Merge(..))` and `Merge` never runs.
    `MATCH (a:A) MERGE p=(a)-[:T]->(x:X)` → Rust `Variable _anon_0 not found`; C creates 1 node, 1 edge.
    Also `UNWIND [1,2] AS i MERGE p=(x:X {v:i})`, `… CALL { WITH a MERGE p=… }`,
@@ -92,28 +102,30 @@ Graph: `CREATE (a:A {v:1})-[:R {w:2}]->(b:B {v:0}), (:B {v:5}), (a)-[:R {w:3}]->
    Fix: add `IR::PathBuilder(_)` to the first walk's list (and the FOREACH body walk), or reuse the
    loop walk. Tests `bug_merge_named_path_as_last_clause`, `…_last_in_call_body`, `…_last_in_foreach_body`.
 2. **A `MATCH … WHERE` followed by a multi-component MATCH is cross-joined, not correlated**:
-   `needs_apply_wrapping` (mod.rs:2769-2789) treats a Filter-over-scan as a plain CP branch and
-   mod.rs:2704-2708 prepends it; the component that mentions the earlier variable was planned as if it
+   `needs_apply_wrapping` (mod.rs:2874-2894) treats a Filter-over-scan as a plain CP branch and
+   mod.rs:2809-2813 prepends it; the component that mentions the earlier variable was planned as if it
    were bound, but under the CartesianProduct it re-binds it. `MATCH (a) WHERE a.v = 0 MATCH (a)-[:R]->(b), (c:C) RETURN a.v, b.v, c.v`
    → Rust `[1,0,7]`, C `[]`; `MATCH (a) WHERE a.v = 0 MATCH (x)-[:S]->(a), (b:B) …` → Rust 2 rows
    (a.v = 7!), C `[]`; `MATCH (a {v:5}) WHERE true MATCH (x:C), (a)-[:R]->(b) RETURN count(*)` → 1 vs 0.
    Fix: Apply-wrap whenever `n` binds a variable any CP branch uses (or always for a previous clause).
    Tests `bug_prior_match_stitched_as_cartesian_branch`, `bug_prior_match_cartesian_branch_incoming`.
-3. **The WHERE of a `MATCH (a) WHERE φ` is dropped when the next MATCH traverses from `a`**:
-   stitching puts `Filter(φ, Scan a)` under the next clause's leaf CondTraverse (mod.rs:2710), the
+3. **(FIXED by #2390, d2c42e032 — select_scan_node `filters_of` keeps the spine's Filters on
+   rebuild; live on 8743953a8: Rust 0 = C 0; Lean `rebuild_keeps_where`, historical
+   `pre2390_rebuild_drops_where`.)** **The WHERE of a `MATCH (a) WHERE φ` is dropped when the next MATCH traverses from `a`**:
+   stitching puts `Filter(φ, Scan a)` under the next clause's leaf CondTraverse (mod.rs:2815), the
    exact shape `is_planner_scan_subtree` (select_scan_node.rs:239) prunes and rebuilds as a bare scan.
    `MATCH (a) WHERE a.v = 99 MATCH (a)-[r:R]->(b) RETURN count(r)` → Rust 2, C 0; also into writes:
    `… MATCH (a)-[:R]->(b) DELETE b` deletes a node (C nothing), `SET b.hit = 1` sets 1 property.
    (`WITH a` between them is fine.) Fix: Apply-wrap the previous clause, or mark planner-built scans.
    Tests `bug_where_of_previous_match_dropped`, `…_before_delete`.
 4. **A fixed-length self-loop hop after other hops drops them**: when var-length hops are sorted after
-   fixed ones (mod.rs:1752-1784) a self-loop on an unbound node is planned as `ExpandInto(scan, res)`
-   (mod.rs:2129-2153); the runtime builds only child 0, so `res` is lost.
+   fixed ones (mod.rs:1877-1909) a self-loop on an unbound node is planned as `ExpandInto(scan, res)`
+   (mod.rs:2247-2264); the runtime builds only child 0, so `res` is lost.
    `MATCH (a)-[:R]->(b)-[:S*]->(c)-[:L]->(c) RETURN a.v, b.v, c.v` on `(:A{v:1})-[:R]->(:B{v:2})-[:S]->(c:C{v:3}), (c)-[:L]->(c)`
    → Rust `[null,2,3]`, C `[1,2,3]`. Test `bug_self_loop_hop_drops_earlier_hops`.
 
 5. **`NOT (complex)` over an inline pattern predicate keeps NULL rows** (NEW): `expr_to_plan` plans
-   `NOT c` with `c` containing an inline pattern as `AntiSemiApply(input, plan(c))` (mod.rs:1421-1427); the
+   `NOT c` with `c` containing an inline pattern as `AntiSemiApply(input, plan(c))` (mod.rs:1543-1549); the
    inner plan keeps rows where `c` is *true*, so the anti-join keeps rows where `c` is false **or null**.
    openCypher (and C) keep only `c = false`. Graph `CREATE (:N {v:1}), (:N), (:N {v:5})-[:R]->(:M)`:
    `MATCH (a:N) WHERE NOT (a.v > 1 OR (a)-->()) RETURN count(a)` → Rust 2, C 1;
@@ -147,19 +159,21 @@ Graph: `CREATE (a:A {v:1})-[:R {w:2}]->(b:B {v:0}), (:B {v:5}), (a)-[:R {w:3}]->
   (`chainRel_selfloop_unbound` describes origin/main).
 * #2981 (inline attrs reading another pattern variable): splits inline maps (`split_inline_attrs`) and checks
   the moved entries where the variable is bound — changes `inline_attrs_to_filter` call sites in `plan_match`
-  (binder #2923 case); `inlineAttrs_passes` still describes each produced filter.
+  (binder #2923 case); `inlineAttrs_passes` still describes each produced filter. #2390 now routes those
+  call sites through `lower_inline_attrs`, so #2981 needs a rebase; the #2923 node case is still
+  present on 8743953a8 (live: `MATCH (a:A), (b:B {v: a.v})` Rust [], C 2 rows).
 
 ## Deviations vs openCypher (and C)
-* `CREATE p=(…) RETURN p` → Rust `null` (Create arm mod.rs:3030 adds no PathBuilder); openCypher: the
+* `CREATE p=(…) RETURN p` → Rust `null` (Create arm mod.rs:3135 adds no PathBuilder); openCypher: the
   path; C rejects (`'p' not defined`). Test `bug_create_named_path_is_null`.
 * `SET n.v = 10, n.w = n.v` → Rust `n.w = 10` (items in order, openCypher/Neo4j), C uses the old value.
 * `Labels added` counts differ (C counts per node) — known (#2655).
 
 ## Suspected, not confirmed
-* `expr_to_plan`/`or_expr_to_plan` key `inline_map` by id only (mod.rs:1377, 1388); ids are per scope.
+* `expr_to_plan`/`or_expr_to_plan` key `inline_map` by id only (mod.rs:1499, 1388); ids are per scope.
   `planFilter_correct` needs all patterns of one WHERE to start in one scope and the predicate's ids to be
   below that scope's length (`Pre`); no query breaking it was found.
-* `emit_rel` path membership and `filter_vars` compare ids without scope (mod.rs:1778, 1882).
+* `emit_rel` path membership and `filter_vars` compare ids without scope (mod.rs:1903, 1882).
 * `connected_components` visited set is id-only (ast.rs:823-893).
 
 ## Gaps

@@ -120,21 +120,21 @@ src/graph_core.rs	ThreadedGraph::from_mvcc	559	PROVEN	GraphCore.TG.fromMvcc: TG.
 src/graph_core.rs	execute_query	576	PROVEN	RoQuery.ro_never_writes, GraphCore.executeQuery: ro_write_rejected
 src/graph_core.rs	execute_profile	659	PROVEN	GraphCore.profileDetect: profileDetect_write
 src/graph_core.rs	execute_query_write	715	PROVEN	GraphCore.writeSteps: reply_after_commit, failed_no_commit
-src/graph_core.rs	reply_profile	823	PROVEN	GraphCore.profileDepth/profileOps: profileDepth_eq, profileDepth_no_underflow
-src/graph_core.rs	BlockedClient::new	873	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	BlockedClient::drop	881	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
-src/graph_core.rs	compute_effective_timeout	896	PROVEN	Args.rustTimeout: rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
-src/graph_core.rs	reply_invalid_graph_version	933	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
-src/graph_core.rs	query_mut	945	PROVEN	GraphCore.dispatch: stale_version, inline_uncapped, capped
-src/graph_core.rs	query_sync	1154	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
-src/graph_core.rs	profile_mut	1275	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
-src/graph_core.rs	profile_sync	1369	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
-src/graph_core.rs	finish_write	1436	PROVEN	GraphCore.writeSteps (rollback unless writer): reply_after_commit
-src/graph_core.rs	abandon_write	1466	PROVEN	GraphCore.writeSteps false: failed_no_commit
-src/graph_core.rs	commit_and_replicate	1481	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent
-src/graph_core.rs	process_write_queued_query	1525	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit)
-src/graph_core.rs	CtxSink::replicate	1671	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
-src/graph_core.rs	graph_free	1684	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
+src/graph_core.rs	reply_profile	823	PROVEN	GraphCore.profileDepth/profileOps (#2390: all ops, plain depth): profileDepth_eq, profileDepth_commit_counts, profileOps_all
+src/graph_core.rs	BlockedClient::new	860	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	BlockedClient::drop	868	AXIOMATISED	RM_BlockClient/UnblockClient + BlockedClientMeasureTime* (Redis API)
+src/graph_core.rs	compute_effective_timeout	883	PROVEN	Args.rustTimeout: rustTimeout_le_max, rustTimeout_pos, rustTimeout_exceeds, rustTimeout_write_ignores_pq
+src/graph_core.rs	reply_invalid_graph_version	920	PROVEN	GraphCore.invalidVersionBytes: invalidVersion_shape
+src/graph_core.rs	query_mut	932	PROVEN	GraphCore.dispatch: stale_version, inline_uncapped, capped
+src/graph_core.rs	query_sync	1141	PROVEN	GraphCore.syncOutcome: sync_err, sync_write_logs
+src/graph_core.rs	profile_mut	1262	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
+src/graph_core.rs	profile_sync	1356	PROVEN	GraphCore.profileOutcome: profile_write_runs_as_write, profile_read_replied
+src/graph_core.rs	finish_write	1423	PROVEN	GraphCore.writeSteps (rollback unless writer): reply_after_commit
+src/graph_core.rs	abandon_write	1453	PROVEN	GraphCore.writeSteps false: failed_no_commit
+src/graph_core.rs	commit_and_replicate	1468	PROVEN	GraphCore.commitSteps: modified_replicates_or_warns, unmodified_silent
+src/graph_core.rs	process_write_queued_query	1512	PROVEN	GraphCore.loopExit: loopExit_safe (no stranded message on exit)
+src/graph_core.rs	CtxSink::replicate	1658	PROVEN	GraphCore.replicateArgv: replicateArgv_shape
+src/graph_core.rs	graph_free	1671	PROVEN	GraphCore.free: free_unregisters, free_keeps_others
 src/query_session.rs	QuerySession::begin	127	PROVEN	QuerySession.begin: escalate_order
 src/query_session.rs	QuerySession::begin_with	134	PROVEN	QuerySession.begin (facts parameter): upgrade_unregistered, reauth_replay
 src/query_session.rs	QuerySession::begin_writer	148	PROVEN	QuerySession.beginWriter: writer_holds_gil, release_order

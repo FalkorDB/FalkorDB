@@ -5,7 +5,7 @@ import OpsTraverse.Basic
 | here | there |
 | --- | --- |
 | `step`             | `get_node_relationships_by_type(current, types, direction)` cached in `adj_cache` (`cond_var_len_traverse.rs:239-242`); `bidir` = `EdgeDirection::Both` |
-| `dfs`              | `VarLenIter::advance` (`cond_var_len_traverse.rs:196-386`): skip used edges (`:247`), `will_emit = hop >= min_hops` (`:314`), `will_continue = hop < max_hops` (`:319`), push `(dest, used+[e], hop)` |
+| `dfs`              | `VarLenIter::advance` (`cond_var_len_traverse.rs:196-396`): skip used edges (`:247`), `will_emit = hop >= min_hops` (`:324`), `will_continue = hop < max_hops` (`:329`), push `(dest, used+[e], hop)` |
 | fuel               | `max_hops - depth` (`if hop > max_hops continue`, `:222`) |
 | `varLen`           | `VarLenIter::begin_start_node` (`:152-183`, the 0-hop emission when `min_hops == 0`) + the DFS |
 | `Walk`, trail      | openCypher variable-length semantics: a walk whose relationships are pairwise distinct |
@@ -165,5 +165,50 @@ by *sibling* relationships of the same MATCH, so in
 single hop, e.g. `(a)-[*1..1]->(b)-[r]->(c)`, the self-loop `e0` is used by
 both. openCypher forbids it. -/
 theorem no_sibling_uniqueness : ([0], 3) ∈ varLen [⟨0, 3, 3⟩] false 3 1 1 := by decide
+
+/-! ## Absorbed WHERE edge filter: per-edge verdict (`cond_var_len_traverse.rs:282-308`)
+
+#2390 (d2c42e032) made a non-boolean, non-null verdict a type error, exactly as
+`FilterOp` answers it (`filter.rs:95-101`; proofs/ops_aggregate `StreamOps.filterEval`).
+Before it, `Ok(_) => continue` silently dropped the edge (`pre2390_edgeVerdict`). -/
+
+/-- An evaluated predicate value (`Value` restricted to what the match distinguishes). -/
+inductive PV where
+  | t | f | null | other (name : String)
+  deriving DecidableEq, Repr
+
+inductive EdgeVerdict where
+  | keep | skip | err (msg : String)
+  deriving DecidableEq, Repr
+
+/-- The `match evaluator.eval(..)` arms (`:288-306`). -/
+def edgeVerdict : Except String PV → EdgeVerdict
+  | .ok .t => .keep
+  | .ok .f | .ok .null => .skip
+  | .ok (.other n) => .err s!"Type mismatch: expected Boolean but was {n}"
+  | .error e => .err e
+
+/-- FilterOp on one row (filter.rs:95-101): keep `true`, drop `false`/`null`, error otherwise. -/
+def filterRow : Except String PV → EdgeVerdict
+  | .error e => .err e
+  | .ok v => match v with
+    | .t => .keep
+    | .f | .null => .skip
+    | .other n => .err s!"Type mismatch: expected Boolean but was {n}"
+
+/-- **Parity**: the per-edge filter of a var-length walk answers every value as a `Filter` does. -/
+theorem edgeVerdict_eq_filterRow (r : Except String PV) : edgeVerdict r = filterRow r := by
+  rcases r with e | (_ | _ | _ | n) <;> rfl
+
+/-- Historical: before #2390 a non-boolean value skipped the edge. -/
+def pre2390_edgeVerdict : Except String PV → EdgeVerdict
+  | .ok .t => .keep
+  | .ok _ => .skip
+  | .error e => .err e
+
+theorem pre2390_edgeVerdict_differs :
+    pre2390_edgeVerdict (.ok (.other "Integer")) = .skip ∧
+    edgeVerdict (.ok (.other "Integer")) = .err "Type mismatch: expected Boolean but was Integer" := by
+  decide
 
 end OpsTraverse.VarLen

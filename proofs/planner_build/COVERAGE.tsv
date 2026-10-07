@@ -5,44 +5,48 @@ graph/src/planner/mod.rs	fmt_rel_with_labels	375	PROVEN	Fmt.fmtRel_eq (= fmt_rel
 graph/src/planner/mod.rs	fmt_rel_with_labels_dir	379	PROVEN	Fmt.fmtRelDir, arrows_table, fmtRelDir_anon (anonymous edges print no bracket)
 graph/src/planner/mod.rs	IR::fmt	420	PROVEN	Fmt.irFmt (every variant), fmt_set_remove, fmt_fused (hop/hops), fmt_condTraverse_plain
 graph/src/planner/mod.rs	inline_attrs_to_filter	543	PROVEN	E.inlineAttrsToFilter_none, inlineAttrsToFilter_conj, Rename.inlineAttrs_passes (passes iff every n.k = v is true)
-graph/src/planner/mod.rs	has_labels_filter	574	PROVEN	E.hasLabelsFilter_shape (hasLabels(var, [labels...]) exactly)
-graph/src/planner/mod.rs	PatternMode::descend	673	PROVEN	E.descend_table (SemiApply survives only under AND/OR/NOT/Paren, else Exists)
-graph/src/planner/mod.rs	Planner::new	692	PROVEN	E.newPSt_spec (nothing bound, no nested plans, first fresh id = binder length)
-graph/src/planner/mod.rs	Planner::finish	706	PROVEN	E.finish_empty, finish_nonempty (NestedPlans root iff nested plans exist)
-graph/src/planner/mod.rs	Planner::fresh_var	721	PROVEN	E.fresh_minv / extract_fresh (minted ids pairwise distinct and >= binder lengths); proofs/binder mint_fresh_iff
-graph/src/planner/mod.rs	add_argument_to_leaves	748	PROVEN	Misc.addArgs_leaves (every walked leaf is an Argument, MERGE match branch skipped), addArgs_leaf_ev (tap transparent for per-row leaves)
-graph/src/planner/mod.rs	set_include_pending_on_scans	787	PROVEN	Misc.setIP_scan, setIP_other, setIP_scansLeaf (every scan ends up a leaf under IncludePending)
-graph/src/planner/mod.rs	contains_inline_var	811	PROVEN	E.containsInlineVar_iff (by id only: containsInlineVar_ignores_scope)
-graph/src/planner/mod.rs	has_pattern_expr	822	PROVEN	E.hasPatternExpr_eq (= some node is Pattern/PatternComprehension)
-graph/src/planner/mod.rs	is_saturated_apply	836	PROVEN	saturated (Stitch.lean), used in walkFirst/walkLoop; rustStitch_eq_nestStitch; Misc.satChain_get
-graph/src/planner/mod.rs	descend_clause_expr_applies	852	PROVEN	descendClause; descendClause_valid, stitch theorems
-graph/src/planner/mod.rs	descend_one_clause_expr_chain	868	PROVEN	descendOne; descendOne_valid
-graph/src/planner/mod.rs	stitch_below_apply_chain	900	PROVEN	Misc.stitchBelow_get (input becomes child 0 of the first unsaturated Apply), stitchBelow_ev
-graph/src/planner/mod.rs	build_pattern_sub_plan	916	PROVEN	E.buildPatternSubPlan_restores (visited/verified restored, = add_argument_to_leaves(plan_match))
-graph/src/planner/mod.rs	extract_pattern_comprehensions	942	PROVEN	E.extract_frame (loop/pattern vars and visited restored), extract_fresh (minted vars distinct and new), extract_clean (nothing left to extract), extract_noPat (Collect/Exists: no pattern left)
-graph/src/planner/mod.rs	hoist_or_nest	1078	PROVEN	E.hoist_spec (hoisted iff no loop var read), hoist_nested (nested plan id/free vars), hoisted_loop_invariant
-graph/src/planner/mod.rs	pattern_expr_variables	1128	PROVEN	E.patternExprVariables_spec (each mentioned variable exactly once)
-graph/src/planner/mod.rs	extract_list_expr_comprehensions	1170	PROVEN	E.extractClause with Some scope (Nested2): chainOf_innermost, chainOf_some, extractClause_visited, clauseStep_noPat
-graph/src/planner/mod.rs	extract_clause_expr_comprehensions	1187	PROVEN	E.extractClause/chainOf: chainOf_innermost (innermost Apply single-child), chainOf_some, extractClause_visited, clauseStep_noPat
-graph/src/planner/mod.rs	pattern_expr_scope	1223	PROVEN	E.patternExprScope_eq (scope of first variable of first pattern in pre-order)
-graph/src/planner/mod.rs	extract_filter_comprehensions	1242	PROVEN	E.extractFilter_clean (result always satisfies plan_filter precondition), extract_* theorems
-graph/src/planner/mod.rs	needs_extraction	1247	PROVEN	E.needsExtraction_exists (= has_pattern_expr outside SemiApply mode), needs_le_exists, needs_semi_pat/xor
-graph/src/planner/mod.rs	build_pattern_comprehension_plan	1284	PROVEN	E.build_shape (Aggregate(collect) / Filter / nested Applys / PathBuilder / plan_match; acc minted after nested), build_frame, build_minv
-graph/src/planner/mod.rs	expr_to_plan	1371	PROVEN	E.toPlan_correct (exact with two-valued atoms); toPlan_not_null_bug (3VL counterexample, CONFIRMED bug mod.rs:1421-1427)
-graph/src/planner/mod.rs	or_expr_to_plan	1438	PROVEN	E.orClass_correct (row passes OrApplyMultiplexer iff some disjunct is true), anyBr_append
-graph/src/planner/mod.rs	and_expr_to_plan	1504	PROVEN	E.andFold_correct, scalarFilter_correct, and_split (scalars first then non-scalars = all conjuncts)
-graph/src/planner/mod.rs	collect_patterns_and_rebuild	1570	PROVEN	E.collect_value (exact rebuild, 3VL), collect_passes (extracted conjuncts), collect_inv/good_final/fresh_final (inline ids distinct, fresh), collect_wf
-graph/src/planner/mod.rs	mark_labels_verified	1665	PROVEN	E.markLabels: unverified_after_mark, markLabels_mono
-graph/src/planner/mod.rs	unverified_labels	1687	PROVEN	E.unverified_spec, unverified_mark_self
-graph/src/planner/mod.rs	plan_match	1710	PROVEN	E.firstRel_core/chainRel_core (operator table), chainRel_selfloop_unbound (bug 4 shape), sortRels_spec/tiers, planComp_binds, labelStep_spec/verifies, nodeOnly_*, elide_*, planMatch_join/cp; Match.selfloop_ignores_chain
-graph/src/planner/mod.rs	plan_project	2310	PROVEN	planProject; project_correct (without pattern comprehensions)
-graph/src/planner/mod.rs	plan_filter	2492	PROVEN	E.planFilter_correct (two-valued), planFilter_scalar_correct (3VL, no inline pattern); preceded by extractFilter_clean
-graph/src/planner/mod.rs	rename_projection_outputs	2541	PROVEN	E.renameProj_none, renameProj_some, renameProj_row (= Project then rename columns)
-graph/src/planner/mod.rs	is_redundant_optional_match	2582	PROVEN	Misc.isRedundantOptional, redundant_optional_identity (OPTIONAL MATCH of bound nodes only is the identity)
-graph/src/planner/mod.rs	plan_query	2614	PROVEN	rustStitch/stitchLoop; stitchLoop_eq_nest, rustStitch_eq_nestStitch, query_correct, merge_path_last_misplaced (bug 1; PR #3101 adds PathBuilder to the walk)
-graph/src/planner/mod.rs	needs_apply_wrapping	2769	PROVEN	needsApplyWrapping; cp_stitch_shape, cp_stitch_loses_correlation (bug 2; PR #3100 also wraps when the CP reads its variables)
-graph/src/planner/mod.rs	ensure_apply_has_input	2806	PROVEN	Misc.ensureInput_ev_local (Apply(Argument, s) = Apply(s)), ensureInput_saturates
-graph/src/planner/mod.rs	Planner::plan	2829	PROVEN	per-clause plans: unwind/create/set/remove/delete/proc/merge/foreach/call/unit_call/optional/optional_apply/match_bound/union/project _correct
+graph/src/planner/mod.rs	lower_inline_attrs	598	PROVEN	E.lowerInline: lowerInline_fresh, lowerInline_once (at most once per (alias, map)), lowerInline_two_maps (identity, not equality), lowerInline_mem/_mono/_other
+graph/src/planner/mod.rs	strip_node_attrs	623	PROVEN	E.stripNode: stripNode_spec (attrs [], alias/labels kept), stripNode_self (same node when nothing to strip)
+graph/src/planner/mod.rs	strip_rel_attrs	644	PROVEN	E.stripRel: stripRel_spec (edge and endpoint attrs [], everything else kept)
+graph/src/planner/mod.rs	strip_endpoint_attrs	673	PROVEN	E.stripEndpoints: stripEndpoints_spec (edge attrs kept, endpoint attrs []), walk_keeps_edge_attrs
+graph/src/planner/mod.rs	has_labels_filter	696	PROVEN	E.hasLabelsFilter_shape (hasLabels(var, [labels...]) exactly)
+graph/src/planner/mod.rs	PatternMode::descend	795	PROVEN	E.descend_table (SemiApply survives only under AND/OR/NOT/Paren, else Exists)
+graph/src/planner/mod.rs	Planner::new	814	PROVEN	E.newPSt_spec (nothing bound, no nested plans, first fresh id = binder length)
+graph/src/planner/mod.rs	Planner::finish	828	PROVEN	E.finish_empty, finish_nonempty (NestedPlans root iff nested plans exist)
+graph/src/planner/mod.rs	Planner::fresh_var	843	PROVEN	E.fresh_minv / extract_fresh (minted ids pairwise distinct and >= binder lengths); proofs/binder mint_fresh_iff
+graph/src/planner/mod.rs	add_argument_to_leaves	870	PROVEN	Misc.addArgs_leaves (every walked leaf is an Argument, MERGE match branch skipped), addArgs_leaf_ev (tap transparent for per-row leaves)
+graph/src/planner/mod.rs	set_include_pending_on_scans	909	PROVEN	Misc.setIP_scan, setIP_other, setIP_scansLeaf (every scan ends up a leaf under IncludePending)
+graph/src/planner/mod.rs	contains_inline_var	933	PROVEN	E.containsInlineVar_iff (by id only: containsInlineVar_ignores_scope)
+graph/src/planner/mod.rs	has_pattern_expr	944	PROVEN	E.hasPatternExpr_eq (= some node is Pattern/PatternComprehension)
+graph/src/planner/mod.rs	is_saturated_apply	958	PROVEN	saturated (Stitch.lean), used in walkFirst/walkLoop; rustStitch_eq_nestStitch; Misc.satChain_get
+graph/src/planner/mod.rs	descend_clause_expr_applies	974	PROVEN	descendClause; descendClause_valid, stitch theorems
+graph/src/planner/mod.rs	descend_one_clause_expr_chain	990	PROVEN	descendOne; descendOne_valid
+graph/src/planner/mod.rs	stitch_below_apply_chain	1022	PROVEN	Misc.stitchBelow_get (input becomes child 0 of the first unsaturated Apply), stitchBelow_ev
+graph/src/planner/mod.rs	build_pattern_sub_plan	1038	PROVEN	E.buildPatternSubPlan_restores (visited/verified restored, = add_argument_to_leaves(plan_match))
+graph/src/planner/mod.rs	extract_pattern_comprehensions	1064	PROVEN	E.extract_frame (loop/pattern vars and visited restored), extract_fresh (minted vars distinct and new), extract_clean (nothing left to extract), extract_noPat (Collect/Exists: no pattern left)
+graph/src/planner/mod.rs	hoist_or_nest	1200	PROVEN	E.hoist_spec (hoisted iff no loop var read), hoist_nested (nested plan id/free vars), hoisted_loop_invariant
+graph/src/planner/mod.rs	pattern_expr_variables	1250	PROVEN	E.patternExprVariables_spec (each mentioned variable exactly once)
+graph/src/planner/mod.rs	extract_list_expr_comprehensions	1292	PROVEN	E.extractClause with Some scope (Nested2): chainOf_innermost, chainOf_some, extractClause_visited, clauseStep_noPat
+graph/src/planner/mod.rs	extract_clause_expr_comprehensions	1309	PROVEN	E.extractClause/chainOf: chainOf_innermost (innermost Apply single-child), chainOf_some, extractClause_visited, clauseStep_noPat
+graph/src/planner/mod.rs	pattern_expr_scope	1345	PROVEN	E.patternExprScope_eq (scope of first variable of first pattern in pre-order)
+graph/src/planner/mod.rs	extract_filter_comprehensions	1364	PROVEN	E.extractFilter_clean (result always satisfies plan_filter precondition), extract_* theorems
+graph/src/planner/mod.rs	needs_extraction	1369	PROVEN	E.needsExtraction_exists (= has_pattern_expr outside SemiApply mode), needs_le_exists, needs_semi_pat/xor
+graph/src/planner/mod.rs	build_pattern_comprehension_plan	1406	PROVEN	E.build_shape (Aggregate(collect) / Filter / nested Applys / PathBuilder / plan_match; acc minted after nested), build_frame, build_minv
+graph/src/planner/mod.rs	expr_to_plan	1493	PROVEN	E.toPlan_correct (exact with two-valued atoms); toPlan_not_null_bug (3VL counterexample, CONFIRMED bug mod.rs:1421-1427)
+graph/src/planner/mod.rs	or_expr_to_plan	1560	PROVEN	E.orClass_correct (row passes OrApplyMultiplexer iff some disjunct is true), anyBr_append
+graph/src/planner/mod.rs	and_expr_to_plan	1626	PROVEN	E.andFold_correct, scalarFilter_correct, and_split (scalars first then non-scalars = all conjuncts)
+graph/src/planner/mod.rs	collect_patterns_and_rebuild	1692	PROVEN	E.collect_value (exact rebuild, 3VL), collect_passes (extracted conjuncts), collect_inv/good_final/fresh_final (inline ids distinct, fresh), collect_wf
+graph/src/planner/mod.rs	mark_labels_verified	1787	PROVEN	E.markLabels: unverified_after_mark, markLabels_mono
+graph/src/planner/mod.rs	unverified_labels	1809	PROVEN	E.unverified_spec, unverified_mark_self
+graph/src/planner/mod.rs	plan_match	1832	PROVEN	E.firstRel_core/chainRel_core (operator table firstOp/chainOp), chainRel_selfloop_unbound (bug 4 shape), sortRels_spec/tiers, planComp_binds, labelStep_spec/verifies, nodeOnly_*, elide_*, planMatch_join/cp; #2390: firstRel_/chainRel_lowers_from/_to, firstRel_/chainRel_edge_pred, walk_keeps_edge_attrs, planComp_stripped/planMatch_stripped, pre2390_firstRel_varlen_drops; Match.selfloop_ignores_chain
+graph/src/planner/mod.rs	plan_project	2415	PROVEN	planProject; project_correct (without pattern comprehensions)
+graph/src/planner/mod.rs	plan_filter	2597	PROVEN	E.planFilter_correct (two-valued), planFilter_scalar_correct (3VL, no inline pattern); preceded by extractFilter_clean
+graph/src/planner/mod.rs	rename_projection_outputs	2646	PROVEN	E.renameProj_none, renameProj_some, renameProj_row (= Project then rename columns)
+graph/src/planner/mod.rs	is_redundant_optional_match	2687	PROVEN	Misc.isRedundantOptional, redundant_optional_identity (OPTIONAL MATCH of bound nodes only is the identity)
+graph/src/planner/mod.rs	plan_query	2719	PROVEN	rustStitch/stitchLoop; stitchLoop_eq_nest, rustStitch_eq_nestStitch, query_correct, merge_path_last_misplaced (bug 1; PR #3101 adds PathBuilder to the walk)
+graph/src/planner/mod.rs	needs_apply_wrapping	2874	PROVEN	needsApplyWrapping; cp_stitch_shape, cp_stitch_loses_correlation (bug 2; PR #3100 also wraps when the CP reads its variables)
+graph/src/planner/mod.rs	ensure_apply_has_input	2911	PROVEN	Misc.ensureInput_ev_local (Apply(Argument, s) = Apply(s)), ensureInput_saturates
+graph/src/planner/mod.rs	Planner::plan	2934	PROVEN	per-clause plans: unwind/create/set/remove/delete/proc/merge/foreach/call/unit_call/optional/optional_apply/match_bound/union/project _correct
 graph/src/parser/ast.rs	Variable::fmt	100	PROVEN	Ast.AV.fmt_named, AV.fmt_anon
 graph/src/parser/ast.rs	Variable::eq	113	PROVEN	Ast.AV.eqv_iff (id only), AV.eqv_other_scope, AV.eqv_equivalence
 graph/src/parser/ast.rs	Variable::hash	124	PROVEN	Ast.AV.hash_consistent (hash agrees with Eq)

@@ -11,13 +11,13 @@ the value is `true` (filter.rs). `tv [] e` is the meaning of the user's WHERE.
 
 | here | there |
 | --- | --- |
-| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs:1570-1662 (inline ids minted at mod.rs:1590/1615) |
+| `CSt`, `mint`, `collect`/`collectL` | `collect_patterns_and_rebuild` mod.rs:1692-1784 (inline ids minted at mod.rs:1712/1615) |
 | `FP`, `run` | IR filter operators: `Filter` (filter.rs), `SemiApply`/`AntiSemiApply` (semi_apply.rs), `OrApplyMultiplexer` (or_apply_multiplexer.rs: row passes iff some branch has `has_result ^ is_anti`), `Argument` |
-| `FP.patSub g` | `build_pattern_sub_plan` mod.rs:916-927 (its rows are `sub g`) |
-| `toPlan` | `expr_to_plan` mod.rs:1371-1432 |
-| `orClass`, `orPlan` | `or_expr_to_plan` mod.rs:1438-1500 |
-| `andFold`, `andPlan` | `and_expr_to_plan` mod.rs:1504-1548 |
-| `planFilter` | `plan_filter` mod.rs:2492-2530 (after `extract_filter_comprehensions`) |
+| `FP.patSub g` | `build_pattern_sub_plan` mod.rs:1038-1049 (its rows are `sub g`) |
+| `toPlan` | `expr_to_plan` mod.rs:1493-1554 |
+| `orClass`, `orPlan` | `or_expr_to_plan` mod.rs:1560-1622 |
+| `andFold`, `andPlan` | `and_expr_to_plan` mod.rs:1626-1670 |
+| `planFilter` | `plan_filter` mod.rs:2597-2635 (after `extract_filter_comprehensions`) |
 
 Results: `collect_value` / `collect_passes` (the rebuild is exact, also in
 three-valued logic); `toPlan_correct` (the decomposition is exact when atoms
@@ -120,7 +120,7 @@ theorem tvL_map (ι : List (Nat × QG)) (l : List Ex) (r : R) :
   | nil => rfl
   | cons c cs ih => simp [tvL, ih]
 
-/-! ## `collect_patterns_and_rebuild` (mod.rs:1570-1662) -/
+/-! ## `collect_patterns_and_rebuild` (mod.rs:1692-1784) -/
 
 structure CSt where
   lens : Nat → Nat
@@ -129,14 +129,14 @@ structure CSt where
 
 def scopeOf (g : QG) : Nat := (g.vars.head?.map V.scope).getD 0
 
-/-- Inline variable minted at mod.rs:1586-1593 / 1611-1618: id = current length
+/-- Inline variable minted at mod.rs:1708-1715 / 1611-1618: id = current length
 of the pattern's first variable's scope table, which then grows by one. -/
 def mint (st : CSt) (g : QG) : Nat × CSt :=
   let s := scopeOf g
   (st.lens s, { st with lens := fun t => if t = s then st.lens s + 1 else st.lens t,
                         inl := (st.lens s, g) :: st.inl })
 
-/-- `NOT` directly wrapping a pattern (mod.rs:1600-1602). -/
+/-- `NOT` directly wrapping a pattern (mod.rs:1722-1724). -/
 def notPat : List Ex → Option QG
   | .node (.pat g) _ :: _ => some g
   | _ => none

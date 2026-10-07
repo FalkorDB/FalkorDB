@@ -1,4 +1,4 @@
-# PR #2845 review project. #2845 merged as eb470521b; the modelled code is origin/main a9377c636.
+# PR #2845 review project. #2845 merged as eb470521b; the modelled code is origin/main a9377c636 = 8743953a8 for these fns (#2390 only appended tests to push_filters_down.rs).
 # The pre-#2845 counterexamples are kept as pre2845_* historical theorems.
 #file	function	line	bucket	lean_name_or_reason
 graph/src/planner/binder.rs	Binder::bind_call_body	824	PROVEN	bodyNew_entry, branchNew_entry, bodyNew_eq_old, body_own_unbound; historical pre2845_bodyOld_empty, pre2845_old_aliases; union_branch_label_alias (open, #3027)

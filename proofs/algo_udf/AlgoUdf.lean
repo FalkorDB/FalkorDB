@@ -3,7 +3,8 @@
 
 Scope: `graph/src/runtime/functions/algo_procedures.rs` (BFS, WCC, CDLP, pageRank,
 betweenness, HarmonicCentrality, MSF, maxFlow, SPpaths/SSpaths) and
-`graph/src/udf/` (all files). Rust source of truth: origin/main 3fec7d7c9.
+`graph/src/udf/` (all files). Rust source of truth: origin/main 3fec7d7c9; `type_convert.rs`
+and `js_globals.rs` re-targeted to 8743953a8 (#3074, #3079 — see "Fixed on main").
 Per-function buckets: `COVERAGE.tsv` (every function PROVEN except three
 GraphBLAS FFI wrappers, AXIOMATISED). Repros: wave 1-4 in
 `graph/tests/lean_algo_udf.rs`; wave 5 in the standalone package
@@ -42,7 +43,8 @@ Every `bug_*` test asserts C's answer and fails today.
 * `Graph::get_node_relationships` yields out-edges then in-edges (self-loop in both).
 * QuickJS: `obj.set("__proto__", v)` never creates an own key; `obj.keys()`
   lists array-index keys first; `obj.get("constructor")` falls back to the
-  prototype's constructor; `Object.prototype.toString` gives "[object Object]";
+  prototype's constructor (historical `pre3074_*` model only); `JS_IsDate` / `JS_IsRegExp`
+  test the internal class (`Marshal.JsKind`); `Object.prototype.toString` gives "[object Object]";
   `new Date(ms)` is NaN beyond ±8.64e15 ms.
 * f64 is abstracted (`Marshal.F64`, `MsfFlow.Score`): only `==`, `<`, `floor`,
   `abs < 2^53`, `is_finite` are modelled. Path weights are modelled as `Int`.
@@ -121,7 +123,7 @@ Known before this wave (counterexamples added):
 * pageRank with an unknown label errors (:727-778) — `Compact.pagerank_unknown_label_compact_empty`.
 * Forged `__falkor_type` markers accepted (type_convert.rs:258-268) —
   `Marshal.forged_node_marker`, `forged_edge_marker`.
-* -0.0 → Int 0 (type_convert.rs:202) — `Marshal.neg_zero_not_preserved`.
+* -0.0 → Int 0 — **FIXED by #3074** (see "Fixed on main").
 * Qualified-name collision / case folding (repository.rs:94-137, functions/mod.rs:1121) —
   `Repo.collision_accepted`, `dotted_collision`, `delete_breaks_other`, `case_folded`.
 * getNeighbors self-loop twice (js_classes.rs:97-127) — `Neighbors.self_loop_twice`.
@@ -130,14 +132,28 @@ New in this wave (checked on live C 18620 / Rust 18621, then cargo):
    C charges 1 per edge, so pathCost = hops without costProp and `maxCost` bounds hops.
    `Paths.cost_default_diverges`; `bug_sppaths_missing_cost_defaults_to_zero`
    (C 2, Rust 0), `bug_sppaths_max_cost_ignores_hops` (C no rows, Rust 1 row).
-2. UDF map with key `constructor: {name:'Date'}` fails ("Date getTime error");
+2. **FIXED by #3074** — UDF map with key `constructor: {name:'Date'}` fails ("Date getTime error");
    `{name:'RegExp'}` becomes the string "[object Object]" (type_convert.rs:314-350).
    `Marshal.constructor_key_breaks_roundtrip`, `constructor_regexp_becomes_string`;
    `bug_udf_constructor_key_mistaken_for_date` (C returns the map).
-3. vecf32 holding ±inf cannot pass through a UDF (type_convert.rs:239-241).
+3. **FIXED by #3074** — vecf32 holding ±inf cannot pass through a UDF (type_convert.rs:239-241).
    `Marshal.vecf32_inf_not_roundtrip`; `bug_udf_vecf32_inf_rejected` (C [inf]).
 4. betweenness / HarmonicCentrality with an unknown nodeLabels entry return no rows;
    C errors ("unknown label Nope"). `bug_betweenness_unknown_label_is_empty_not_error`.
+
+## Fixed on main (re-target a9377c636 → 8743953a8)
+* #3074 (`7a81c83b0`, issue #3073) — `js_to_value` keeps -0.0 a Float (type_convert.rs:203),
+  picks Date/RegExp by internal class (`JS_IsDate`/`JS_IsRegExp`, :313-345) instead of a
+  `constructor` property, and lets non-finite vecf32 elements through (:236-244).
+  Now: `Marshal.float_rt_iff` (−0.0 excluded), `neg_zero_rt`, `num_eq_pre3074_off_negZero`,
+  `plain_obj_is_map`, `constructor_key_roundtrips`, `constructor_regexp_roundtrips`,
+  `vecf32_rt`, `vecf32_inf_rt`. Historical: `pre3074_neg_zero_not_preserved`,
+  `pre3074_constructor_key_breaks_roundtrip`, `pre3074_constructor_regexp_becomes_string`,
+  `pre3074_vecf32_inf_not_roundtrip`.
+* #3079 (`006428fc5`, issue #3077) — the validation context now defines the `graph` global
+  (`setup_graph_global`, js_globals.rs:163-197, called from both setups).
+  Now: `UdfGlobals.validate_runtime_same_globals`, `graph_global_in_both`,
+  `validate_runtime_same_graph`. Historical: `pre3079_validate_lacks_graph`.
 
 ## Shared with C (live-checked, same answer on both) — not divergences
 * maxIterations / samplingSize / maxLen are truncated by `as i32`/`as u32`

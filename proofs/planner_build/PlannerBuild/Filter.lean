@@ -1,6 +1,6 @@
 import PlannerBuild.ToPlan
 /-
-# `plan_filter` (mod.rs:2492-2530) end to end, for a WHERE without pattern comprehensions
+# `plan_filter` (mod.rs:2597-2635) end to end, for a WHERE without pattern comprehensions
 
 `planFilter` = `collect_patterns_and_rebuild` from an empty extractable list
 and inline map, then `expr_to_plan` (inline patterns present) or a plain
@@ -10,7 +10,7 @@ and inline map, then `expr_to_plan` (inline patterns present) or a plain
 Side facts proved here: the minted inline ids are pairwise distinct and above
 every id the predicate mentions, *when the predicate's patterns all start in
 one scope `s0` and its variables' ids are below that scope's length*
-(`collect_keys`) — the planner keys `inline_map` by id only (mod.rs:1377), so
+(`collect_keys`) — the planner keys `inline_map` by id only (mod.rs:1499), so
 this is exactly what keeps `Good`/`Fresh` true; and the rebuilt predicate is
 in the shape `expr_to_plan` handles (`collect_wf`).
 

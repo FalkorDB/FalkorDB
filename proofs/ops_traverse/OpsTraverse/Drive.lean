@@ -4,8 +4,8 @@ record cap.
 
 | here | there |
 | --- | --- |
-| `drive`    | `next` of `NodeByLabelScanOp` (node_by_label_scan.rs:77), `AllShortestPathsOp` (all_shortest_paths.rs:311), `CondVarLenTraverseOp` (cond_var_len_traverse.rs:611, error-free case): emit the seeded batch's packed outputs, then pull and seed the next child batch |
-| `capDrive` | `CondTraverseOp::next` (cond_traverse.rs:1177) with `trim_to_cap` (:1121); `ExpandIntoOp::next` (expand_into.rs:269) with its `set_selection(0..remaining)` trim |
+| `drive`    | `next` of `NodeByLabelScanOp` (node_by_label_scan.rs:77), `AllShortestPathsOp` (all_shortest_paths.rs:311), `CondVarLenTraverseOp` (cond_var_len_traverse.rs:621, error-free case): emit the seeded batch's packed outputs, then pull and seed the next child batch |
+| `capDrive` | `CondTraverseOp::next` (cond_traverse.rs:1086) with `trim_to_cap` (:1121); `ExpandIntoOp::next` (expand_into.rs:244) with its `set_selection(0..remaining)` trim |
 | `driveE`   | the same loop with errors: a failed child pull or expansion ends the stream with that error |
 
 `pack c` = the list of output batches the emitter produces for child batch `c`

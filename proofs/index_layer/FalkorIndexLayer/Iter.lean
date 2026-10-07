@@ -191,7 +191,7 @@ theorem DocLife.freed_once (d : DocLife) :
 
 /-! ## Query entry points -/
 
-/-- `Index::query` (`mod.rs:1677`): no spec or a dead spec ⇒ empty; a null
+/-- `Index::query` (`mod.rs:1686`): no spec or a dead spec ⇒ empty; a null
 query node ⇒ empty; else the results iterator over `run n`. -/
 def queryN (spec : Option Nat) (cloneOk : Bool) (node : Option QN) (run : QN → List (Key × Nat)) : RIter :=
   match spec with
@@ -317,7 +317,7 @@ theorem queryE_eq_scan_filter (fields : Attr → Bool) (P : Nat × Nat × Nat �
 
 /-! ### Full-text and vector queries (abstract RediSearch semantics) -/
 
-/-- `fulltext_query` (`mod.rs:1718`): `CString::new` fails on a NUL ⇒ `Err`;
+/-- `fulltext_query` (`mod.rs:1727`): `CString::new` fails on a NUL ⇒ `Err`;
 no / dead spec ⇒ `Ok(empty)`; `RediSearch_IterateQuery` error ⇒ `Err(msg)`;
 otherwise the scored iterator. `ft s str` is RediSearch's answer (FFI). -/
 def fulltextQ (hasNul : Bool) (spec : Option Nat) (cloneOk : Bool)
@@ -352,7 +352,7 @@ theorem fulltextQ_errors (spec : Option Nat) (c : Bool) (ft : Nat → Except Str
     (∀ s e, ft s = .error e → fulltextQ false (some s) true ft = .error e) := by
   refine ⟨rfl, rfl, fun s e h => by simp [fulltextQ, h]⟩
 
-/-- `vector_query` (`mod.rs:1784`): the field is `vector:{attr}`; a null node or
+/-- `vector_query` (`mod.rs:1793`): the field is `vector:{attr}`; a null node or
 a null results iterator ⇒ empty; else the scored iterator. `node`/`iterOk` are
 `CreateVecSimNode`/`GetResultsIterator` (FFI). -/
 def vectorQ (spec : Option Nat) (cloneOk nodeOk iterOk : Bool) (l : List (Key × Nat)) : RIter :=

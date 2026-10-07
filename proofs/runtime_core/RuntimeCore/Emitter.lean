@@ -10,7 +10,7 @@
 | `drain`                   | `drain_pending_entry`, `:619-644` |
 | `loop`, `emit`            | `emit_lazy`, `:726-742` (loop + ceiling doubling) |
 | `seed`, `reset`           | `seed`, `:575-586`; `reset`, `:747-751` |
-| `drive`                   | the operator's pull loop: `emit_lazy` until `None`, then pull the next child batch and `seed` (e.g. `ExpandIntoOp::next`, `ops/expand_into.rs:283-330`) |
+| `drive`                   | the operator's pull loop: `emit_lazy` until `None`, then pull the next child batch and `seed` (e.g. `ExpandIntoOp::next`, `ops/expand_into.rs:258-304`) |
 
 Abstractions. Output batches are the list of `(parent_row, item)` pairs that
 `finish_batch` gathers (`batch.gather(indices)` replicates parent row `indices[i]` for

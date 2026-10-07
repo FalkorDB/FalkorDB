@@ -4,14 +4,14 @@
 A model of `graph/src/planner/binder.rs` (and the id-minting side of
 `graph/src/planner/mod.rs`) and a machine-checked account of its scoping.
 `lake build` succeeds; no `sorry`, `admit` or `axiom`; every theorem depends at
-most on `propext`, `Quot.sound`, `Classical.choice`. 153 theorems. Rust source: origin/main `3fec7d7c9`
-(an origin/main checkout; binder.rs identical to `2363723ac`).
+most on `propext`, `Quot.sound`, `Classical.choice`. 153 theorems. Rust source: origin/main `8743953a8`
+(binder.rs unchanged since `2363723ac`; planner/mod.rs cites re-targeted across #2390).
 
 ## The one invariant that matters
 
 Every id is minted as the **current size of its scope table**: `fresh_var`
 (binder.rs:2243), the parent copy in `resolve_name` (binder.rs:2224), and the
-planner's `fresh_var` (planner/mod.rs:721, also mod.rs:1590/1615), which gets
+planner's `fresh_var` (planner/mod.rs:843, also mod.rs:1590/1615), which gets
 `scope_vars[s] = sorted_scope_vars(env_stack[s])`. `mint_fresh_iff` proves the
 planner's ids `len, len+1, …` avoid every id `H` the bound IR uses iff
 `∀ i ∈ H, i < len`. Minting under a new key keeps that (`mint_new_covers`,
@@ -26,7 +26,7 @@ in two places while the removed ids are still in the IR
 | --- | --- |
 | `Env`, `Env.insert/erase/retain` | `HashMap<Arc<String>, Variable>` scope table (binder.rs:47) |
 | `freshVar` | `Binder::fresh_var` binder.rs:2243 |
-| `mint_fresh_iff` | `Planner::fresh_var` planner/mod.rs:721-735 |
+| `mint_fresh_iff` | `Planner::fresh_var` planner/mod.rs:843-857 |
 | `St`, `pushScope` | `env_stack`, `use_parent_scope`, `parent_to_child_scope`, `copy_from_parent`; `push_scope` :251, `commit_scope` :256 |
 | `resolve`, `lookupLocals` | `resolve_name` binder.rs:2175-2241 |
 | `defineName`, `ensureType` | `define_name_in_scope` :2143, `ensure_type` :2259 |
@@ -84,7 +84,10 @@ in two places while the removed ids are still in the IR
    (0 vs 1), `bug_optional_match_swallows_following_match` (row [null] vs spec none; C rejects).
    Also single-MATCH `(a)-[r]->(b {v: r.w-2})` rejected (C accepts).
 2. **Inline attrs of one component referencing another** are filtered on that component's own scan under the
-   Cartesian product (planner/mod.rs:1840): `bug_inline_attr_referencing_other_component` ([] vs C 2 rows) — #2923's node case.
+   Cartesian product (planner/mod.rs:1964-1980, `lower_inline_attrs` + Filter over the scan since #2390):
+   `bug_inline_attr_referencing_other_component` ([] vs C 2 rows) — #2923's node case. Still present on
+   8743953a8 (live: `MATCH (a:A), (b:B {v: a.v}) RETURN a.v, b.v` → Rust [], C [[1,1],[2,2]]; #2923's
+   `MATCH (a)-[r:R]->(x) MATCH (c:B {v: id(r)*0+r.w})` → Rust "'r' not defined", C 2 rows).
 3. **Removed-key id reuse** (binder.rs:1260-1268 WHERE/SKIP/LIMIT copies; :1922/:2097 comprehension/pattern locals):
    `bug_with_where_copy_id_reused_by_next_match` ([] vs [[0,1,0]]), `..._by_pattern_comprehension`,
    `bug_pattern_comprehension_locals_reused` (4 rows vs 3), `bug_where_comprehension_locals_reused`

@@ -1,6 +1,6 @@
 import FalkorIndexLayer.LeafCompact
 /-
-# `CompactIndexedLeaf` (`cow_btree/leaf/compact_indexed.rs`, origin/main 3fec7d7c9)
+# `CompactIndexedLeaf` (`cow_btree/leaf/compact_indexed.rs`, origin/main 8743953a8)
 
 Page = header, `distinct_count` value deltas, a one-byte slot index per entry,
 then the docs. Entry `i` is `(min + values[index[i]], docs[i])`.

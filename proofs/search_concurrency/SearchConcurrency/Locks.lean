@@ -9,8 +9,8 @@
 | `populateProg`                 | `populate_index_batch` (`graph.rs:532`): indexer lock only |
 | `commitIndexProg`              | `Graph::commit_index` under writer mode (`graph.rs:3532`): GIL, W, indexer |
 | `forkProg`                     | `pre_fork_prepare` (`redis_type.rs:350`): GIL (main), registry mutex |
-| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1525-1554`) `write_loop` flag protocol |
-| `Pool`                         | `threadpool.rs:58` `bounded_blocking(1024)` MPMC + `spawn` (`:89`) called from `query_mut` on the Redis main thread (`graph_core.rs:1052`) |
+| `Drain`                        | `process_write_queued_query` (`src/graph_core.rs:1512-1541`) `write_loop` flag protocol |
+| `Pool`                         | `threadpool.rs:58` `bounded_blocking(1024)` MPMC + `spawn` (`:89`) called from `query_mut` on the Redis main thread (`graph_core.rs:1002`) |
 -/
 
 namespace SC.Locks

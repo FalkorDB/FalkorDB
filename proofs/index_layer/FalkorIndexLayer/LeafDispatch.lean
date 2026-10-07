@@ -1,6 +1,6 @@
 import FalkorIndexLayer.LeafIndexedMerge
 /-
-# The `Leaf` enum (`cow_btree/leaf/mod.rs`, origin/main 3fec7d7c9): dispatch,
+# The `Leaf` enum (`cow_btree/leaf/mod.rs`, origin/main 8743953a8): dispatch,
 `from_pairs` (format choice), `from_parts`, `raw`, `pow2_bytes_for`.
 -/
 namespace IndexLayer.Leaf
@@ -19,7 +19,8 @@ def LeafV.key : LeafV → Nat → Nat
   | .aos b => aosKey b | .compact b => cKey b | .indexed b => ciKey b
 def LeafV.doc : LeafV → Nat → Nat
   | .aos b => aosDoc b | .compact b => cDoc b | .indexed b => ciDoc b
-/-- `doc_layout`: `(FIELD, STRIDE, FIELD)` for AoS. -/
+/-- `doc_layout`: `(FIELD, FIELD + DOC_BYTES, DOC_BYTES)` for AoS (`leaf/mod.rs:215`), here at `DOC_BYTES = 8`
+(general `D`: `docLayoutD`, `LeafAosD.lean`). -/
 def LeafV.docLayout : LeafV → Nat × Nat × Nat
   | .aos _ => (8, 16, 8) | .compact b => cDocLayout b | .indexed b => ciDocLayout b
 /-- `iter` / `to_pairs`. -/
@@ -77,7 +78,7 @@ def fromPairs (ps : List P) : LeafV :=
     let dw := pow2BytesFor maxDoc
     let dedup := decide (distinct < count)
     let compactSize := 14 + distinct * vw + (if dedup then count else 0) + count * dw
-    let aosSize := count * 16
+    let aosSize := count * 16   -- `count * (FIELD + DOC_BYTES)` at `DOC_BYTES = 8` (`fromPairsD`)
     if compactSize + 8 * count ≤ aosSize then
       if dedup then .indexed (ciBuild ps minValue vw dw) else .compact (cBuild ps minValue vw dw)
     else .aos (aosBuild ps)

@@ -4,11 +4,11 @@
 | here | there |
 | --- | --- |
 | `Slots`                 | `graph/src/index/mod.rs:987` `PendingSlots` (`current_generation`, `current_pending`, `stale_pending`) |
-| `inc`                   | `mod.rs:2097` `increment_pending_for_generation` |
-| `dec`                   | `mod.rs:2115` `try_decrement_pending_for_generation` (`if prev > 0 { -= 1 }` = `Nat` truncated `-`) |
-| `pendingFor`            | `mod.rs:2137` `pending_count_for_generation` |
-| `Slots.cur = 0`         | `mod.rs:2070` `is_operational` / `indexer.rs:704` `enabled` (`pending_count() == 0`) |
-| `bump`                  | `mod.rs:1049` `bump_id` (called only from `recreate_index`, i.e. when a *vector* field is added) |
+| `inc`                   | `mod.rs:2106` `increment_pending_for_generation` |
+| `dec`                   | `mod.rs:2124` `try_decrement_pending_for_generation` (`if prev > 0 { -= 1 }` = `Nat` truncated `-`) |
+| `pendingFor`            | `mod.rs:2146` `pending_count_for_generation` |
+| `Slots.cur = 0`         | `mod.rs:2079` `is_operational` / `indexer.rs:704` `enabled` (`pending_count() == 0`) |
+| `bump`                  | `mod.rs:1048` `bump_id` (called only from `recreate_index`, i.e. when a *vector* field is added) |
 | `acquire`/`release`     | `indexer.rs:626` `acquire_population_snapshot`, `:670` `release_population_ticket` |
 | `batch`                 | `graph/src/graph/graph.rs:505` `populate_index_batch` (the three exits at `:535`, `:546`, `:710`) |
 

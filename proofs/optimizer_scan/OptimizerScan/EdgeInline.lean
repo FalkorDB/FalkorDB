@@ -1,16 +1,16 @@
 import OptimizerScan.IndexPipeline
 /-
 # Edge index scans, inline-attribute rewrites, `distance()` scans and the
-# `NodeByIndexScanOp` runtime (origin/main 3fec7d7c9)
+# `NodeByIndexScanOp` runtime (origin/main 8743953a8)
 
 | here | there |
 | --- | --- |
 | `QNode`, `QRel`, `IRs` | `QueryNode`, `QueryRelationship`, the `IR` variants the pass matches |
-| `nAlias`/`nLabels`/`nInline`/`nIndexed`/`nMatch`/`nBuild` | `impl IndexSubject for Arc<QueryNode>` `utilize_index.rs:155-223` |
-| `eAlias`/`eLabels`/`eInline`/`eIndexed`/`eFunc`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs:225-320` |
+| `nAlias`/`nLabels`/`nIndexed`/`nMatch`/`nBuild` | `impl IndexSubject for Arc<QueryNode>` `utilize_index.rs:151-216` |
+| `eAlias`/`eLabels`/`eIndexed`/`eFunc`/`eMatch`/`eBuild` | `impl IndexSubject for Arc<QueryRelationship>` `utilize_index.rs:218-310` |
 | `endpointOK`, `edgeScanSel`, `edgeRefSel` | `EdgeByIndexScanOp::next` `runtime/ops/edge_by_index_scan.rs:330-380` (bound-endpoint filter), `CondTraverse` + `Filter` |
-| `inlineIdx`, `needsInlinePost`, `applyInline` | `get_inline_attr_index` 721, `needs_inline_post_filter` 897, `apply_inline_rewrite` 1038 |
-| `distScan`, `pointSel` | `try_distance_index_scan` 431, `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs:1531`) |
+| `pre2390_inlineIdx`, `pre2390_needsInlinePost`, `pre2390_applyInline` | HISTORICAL: `get_inline_attr_index` 721, `needs_inline_post_filter` 897, `apply_inline_rewrite` 1038 at a9377c636, removed by #2390 |
+| `distScan`, `pointSel` | `try_distance_index_scan` 421, `IndexQuery::Point` arm of `build_query_node` (`index/mod.rs:1540`) |
 | `extraLabels`, `scanRow`, `evalIQE` | `NodeByIndexScanOp::{new,next,evaluate_index_query}` `runtime/ops/node_by_index_scan.rs:56,293,98` |
 -/
 namespace OptimizerScan.Index
@@ -38,7 +38,6 @@ inductive IRs
 
 def nAlias (n : QNode) : Nat := n.alias
 def nLabels (n : QNode) : List Nat := n.labels
-def nInline (n : QNode) : List (Nat × T) := n.attrs
 /-- `graph.is_indexed(label, attr, Range)`. -/
 def nIndexed (idx : Nat → List Nat) (L k : Nat) : Bool := k ∈ idx L
 def nMatch : IRs → Option QNode
@@ -48,7 +47,6 @@ def nBuild (n : QNode) (L : Nat) (q : IQ) : IRs := .nodeByIndexScan n L q
 
 def eAlias (r : QRel) : Nat := r.alias
 def eLabels (r : QRel) : List Nat := r.types
-def eInline (r : QRel) : List (Nat × T) := r.attrs
 /-- `graph.is_edge_indexed(type, attr, Range)`. -/
 def eIndexed (eidx : Nat → List Nat) (T' k : Nat) : Bool := k ∈ eidx T'
 /-- `try_func_scan` for edges: no `distance()` path. -/
@@ -62,10 +60,10 @@ def eMatch : IRs → Option (QRel × Bool)
 def eBuild (r : QRel) (q : IQ) (tr : Bool) : IRs := .edgeByIndexScan r q tr
 
 theorem subject_accessors (n : QNode) (r : QRel) (idx : Nat → List Nat) (L k : Nat) :
-    nAlias n = n.alias ∧ nLabels n = n.labels ∧ nInline n = n.attrs ∧ (nIndexed idx L k = true ↔ k ∈ idx L) ∧
-    eAlias r = r.alias ∧ eLabels r = r.types ∧ eInline r = r.attrs ∧ (eIndexed idx L k = true ↔ k ∈ idx L) ∧
+    nAlias n = n.alias ∧ nLabels n = n.labels ∧ (nIndexed idx L k = true ↔ k ∈ idx L) ∧
+    eAlias r = r.alias ∧ eLabels r = r.types ∧ (eIndexed idx L k = true ↔ k ∈ idx L) ∧
     eFunc r = none ∧ nBuild n L = IRs.nodeByIndexScan n L := by
-  refine ⟨rfl, rfl, rfl, by simp [nIndexed], rfl, rfl, rfl, by simp [eIndexed], rfl, rfl⟩
+  refine ⟨rfl, rfl, by simp [nIndexed], rfl, rfl, by simp [eIndexed], rfl, rfl⟩
 
 
 /-- `match_scan_source` (node): a `NodeByLabelScan` with at least one label. -/
@@ -137,24 +135,31 @@ theorem edge_utilize_sound (eidx : Nat → List Nat) (opq : Nat → Node → Boo
     edgeScanSel eidx opq T' f bf bt tr same e = edgeRefSel eidx opq T' f bf bt tr same e := by
   simp only [edgeScanSel, edgeRefSel, utilize_sound eidx T' opq f hf e.ent he]
 
-/-! ## Inline attributes (`(n:L {k: v})`) -/
+/-! ## HISTORICAL: the inline-attribute path (`(n:L {k: v})`), removed by #2390 (d2c42e032)
 
-/-- `get_inline_attr_index` (`utilize_index.rs:721-747`): labels outer, attrs
+Until #2390 `try_index_rewrite` had a second path for patterns carrying inline attributes. #2390
+removed it (with `IndexSubject::inline_attrs`): the planner now lowers inline attributes to an
+`IR::Filter` and strips them from the pattern, so they reach the index through the filter path.
+`pre2390_applyInline_eq_utilize` is the reason that removal loses nothing on literal values: the old
+inline rewrite was already exactly `utilize` of the equivalent filter `n.k = v`. Lines below cite
+a9377c636. -/
+
+/-- `get_inline_attr_index` (`utilize_index.rs:721-747` at a9377c636): labels outer, attrs
 inner; first indexed `(label, attr)` wins. -/
-def inlineIdx (isIdx : Nat → Nat → Bool) (ls : List Nat) (attrs : List (Nat × T)) : Option (Nat × Nat × T) :=
+def pre2390_inlineIdx (isIdx : Nat → Nat → Bool) (ls : List Nat) (attrs : List (Nat × T)) : Option (Nat × Nat × T) :=
   ls.findSome? (fun L => (attrs.find? (fun p => isIdx L p.1)).map (fun p => (L, p.1, p.2)))
 
-/-- `needs_inline_post_filter` (`utilize_index.rs:897-903`) on the value side. -/
-def needsInlinePost (v : T) : Bool := nonIdxT v
+/-- `needs_inline_post_filter` (`utilize_index.rs:897-903` at a9377c636) on the value side. -/
+def pre2390_needsInlinePost (v : T) : Bool := nonIdxT v
 
-/-- `apply_inline_rewrite` (`utilize_index.rs:1038-1057`). -/
-def applyInline (ls : List Nat) (L k : Nat) (v : T) : Plan :=
-  if needsInlinePost v then .filter (.atom (.cmp .eq (.prop k) v)) (.idxScan ls L (.eq k v))
+/-- `apply_inline_rewrite` (`utilize_index.rs:1038-1057` at a9377c636). -/
+def pre2390_applyInline (ls : List Nat) (L k : Nat) (v : T) : Plan :=
+  if pre2390_needsInlinePost v then .filter (.atom (.cmp .eq (.prop k) v)) (.idxScan ls L (.eq k v))
   else .idxScan ls L (.eq k v)
 
-theorem inlineIdx_spec (isIdx : Nat → Nat → Bool) (ls : List Nat) (attrs : List (Nat × T)) (L k : Nat) (v : T)
-    (h : inlineIdx isIdx ls attrs = some (L, k, v)) : L ∈ ls ∧ (k, v) ∈ attrs ∧ isIdx L k = true := by
-  unfold inlineIdx at h
+theorem pre2390_inlineIdx_spec (isIdx : Nat → Nat → Bool) (ls : List Nat) (attrs : List (Nat × T)) (L k : Nat) (v : T)
+    (h : pre2390_inlineIdx isIdx ls attrs = some (L, k, v)) : L ∈ ls ∧ (k, v) ∈ attrs ∧ isIdx L k = true := by
+  unfold pre2390_inlineIdx at h
   obtain ⟨L', hL', hs⟩ := List.exists_of_findSome?_eq_some h
   cases hf : attrs.find? (fun p => isIdx L' p.1) with
   | none => simp [hf] at hs
@@ -165,24 +170,24 @@ theorem inlineIdx_spec (isIdx : Nat → Nat → Bool) (ls : List Nat) (attrs : L
 /-- **PROVEN**: the inline rewrite on a literal equals what `utilize` builds for
 the equivalent filter `n.k = v`, so `utilize_sound` applies: the rewritten scan
 selects exactly the nodes of `L` with `n.k = v`. -/
-theorem applyInline_eq_utilize (idx : Nat → List Nat) (L k : Nat) (c : V) (hc : goodV c = true)
-    (hk : k ∈ idx L) : applyInline [L] L k (.lit c) = utilize idx [L] (.atom (.cmp .eq (.prop k) (.lit c))) := by
+theorem pre2390_applyInline_eq_utilize (idx : Nat → List Nat) (L k : Nat) (c : V) (hc : goodV c = true)
+    (hk : k ∈ idx L) : pre2390_applyInline [L] L k (.lit c) = utilize idx [L] (.atom (.cmp .eq (.prop k) (.lit c))) := by
   have hl : litFlag c = false := by
     cases c <;> simp_all [litFlag, goodV]
-  simp [applyInline, needsInlinePost, hl, utilize, tryPushdown, trySingle, hasT, firstP, findLabel_single, hk,
+  simp [pre2390_applyInline, pre2390_needsInlinePost, hl, utilize, tryPushdown, trySingle, hasT, firstP, findLabel_single, hk,
     buildOp, isArrayContains, needsPost, nonIdxA, nonIdxT]
 
-theorem applyInline_sound (idx : Nat → List Nat) (opq : Nat → Node → Bool) (L k : Nat) (c : V)
+theorem pre2390_applyInline_sound (idx : Nat → List Nat) (opq : Nat → Node → Bool) (L k : Nat) (c : V)
     (hc : goodV c = true) (hk : k ∈ idx L) (n : Node) (hn : Faithful n) :
-    (applyInline [L] L k (.lit c)).sel idx opq n = (decide (L ∈ n.labels) && Op.eq.holds (n.prop k) c) := by
-  rw [applyInline_eq_utilize idx L k c hc hk, utilize_sound idx L opq _ (by simp [goodF, goodA, hc]) n hn]
+    (pre2390_applyInline [L] L k (.lit c)).sel idx opq n = (decide (L ∈ n.labels) && Op.eq.holds (n.prop k) c) := by
+  rw [pre2390_applyInline_eq_utilize idx L k c hc hk, utilize_sound idx L opq _ (by simp [goodF, goodA, hc]) n hn]
   simp [reference, Plan.sel, hasAll, evalF, evalA, evalT]
 
 /-- A non-literal inline value (parameter, function call, …) keeps the equality
 filter above the index scan (the runtime may fall back to a label scan). -/
-theorem applyInline_keeps_filter (ls : List Nat) (L k : Nat) (v : T) (h : nonIdxT v = true) :
-    applyInline ls L k v = .filter (.atom (.cmp .eq (.prop k) v)) (.idxScan ls L (.eq k v)) := by
-  simp [applyInline, needsInlinePost, h]
+theorem pre2390_applyInline_keeps_filter (ls : List Nat) (L k : Nat) (v : T) (h : nonIdxT v = true) :
+    pre2390_applyInline ls L k v = .filter (.atom (.cmp .eq (.prop k) v)) (.idxScan ls L (.eq k v)) := by
+  simp [pre2390_applyInline, pre2390_needsInlinePost, h]
 
 /-! ## `distance()` scans -/
 

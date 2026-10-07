@@ -6,7 +6,7 @@ variable's id is minted as the *current size* of its scope's table
 (`fresh_var`, binder.rs:2243-2257; the parent copy in `resolve_name`,
 binder.rs:2224), and the planner mints its own ids the same way, as
 `scope_vars[scope].len()`, pushing each one so the next is one larger
-(`Planner::fresh_var`, planner/mod.rs:721-735).
+(`Planner::fresh_var`, planner/mod.rs:843-857).
 
 A `HashMap` is modelled as an association list with distinct keys; `insert`
 replaces the value of a present key and appends otherwise, so `length` is the

@@ -5,17 +5,17 @@ import RedisLayer.Resp
 | here | there (`origin/main`) |
 | --- | --- |
 | `upToNulB`, `cGraphKey`, `cGraphName` | `up_to_nul` `:87`, `c_graph_name` `:104`, `c_graph_key` `:119` |
-| `Reg.*`                     | `register_graph` `:140`, `graph_is_registered` `:188`, `rename_graph` `:202`, `graph_free` `:1684` |
+| `Reg.*`                     | `register_graph` `:140`, `graph_is_registered` `:188`, `rename_graph` `:202`, `graph_free` `:1671` |
 | `modified`                  | `WriteQueryOk::new` `:251` |
 | `sanitise`                  | `ffi::sanitise_error` `:313` |
-| `invalidVersionBytes`       | `reply_invalid_graph_version` `:933` |
-| `profileDepth`, `profileOps`| `reply_profile` `:823` |
+| `invalidVersionBytes`       | `reply_invalid_graph_version` `:920` |
+| `profileDepth`, `profileOps`| `reply_profile` `:823` (all ops, plain depth, since #2390) |
 | `isWrite`, `profileDetect`  | `execute_query` `:576` / `execute_profile` `:659` write detection |
-| `writeSteps`                | `execute_query_write` `:715`, `finish_write` `:1436`, `abandon_write` `:1466`, `commit_and_replicate` `:1481` |
-| `dispatch`                  | `query_mut` `:945` |
-| `syncOutcome`               | `query_sync` `:1154`, `profile_sync` `:1369`, `profile_mut` `:1275` |
-| `loopExit`                  | `process_write_queued_query` `:1525` |
-| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1671` |
+| `writeSteps`                | `execute_query_write` `:715`, `finish_write` `:1423`, `abandon_write` `:1453`, `commit_and_replicate` `:1468` |
+| `dispatch`                  | `query_mut` `:932` |
+| `syncOutcome`               | `query_sync` `:1141`, `profile_sync` `:1356`, `profile_mut` `:1262` |
+| `loopExit`                  | `process_write_queued_query` `:1512` |
+| `EFFECT_COMMAND`            | `CtxSink::replicate` `:1658` |
 | `TG`                        | `ThreadedGraph::new` `:543`, `from_mvcc` `:559` |
 -/
 namespace RedisLayer.GraphCore
@@ -173,8 +173,8 @@ inductive Step | commit | signal | replicate | warnNoEffects | rollback | resync
 def commitSteps (mod : Bool) (hasBuf : Bool) : List Step :=
   [.commit, .signal] ++ (if !mod then [] else if hasBuf then [.replicate] else [.warnNoEffects])
 
-/-- `commit_and_replicate` (graph_core.rs:1481) since #2846: `MvccGraph::commit` now
-validates, and a refusal here is `unreachable!()` (:1497-1499) — the panic step. The
+/-- `commit_and_replicate` (graph_core.rs:1468) since #2846: `MvccGraph::commit` now
+validates, and a refusal here is `unreachable!()` (:1484-1486) — the panic step. The
 argument it rests on: every write query ends its last segment through
 `Pending::end_segment`, which verifies the batch and rolls it, so the batch reaching
 here is fresh (proofs/graph_queries `rollIdBatches_spec`: `entry_bound = bound`,
@@ -233,26 +233,43 @@ def invalidVersionBytes (v : Int) : String :=
 
 theorem invalidVersion_shape : invalidVersionBytes 7 = "*2\r\n-ERR invalid graph version\r\n:7\r\n" := by decide
 
-/-! ## `reply_profile` depth (`:823-857`) -/
+/-! ## `reply_profile` (`:823-845`)
 
-/-- Depth printed for an op: tree depth minus the `Commit` ancestors. `anc` lists, for each
-ancestor, whether it is a `Commit`. -/
-def profileDepth (anc : List Bool) : Nat := anc.length - (anc.filter id).length
+Since #2390 (`d2c42e032`) every plan node is listed, `Commit` included, at its plain
+tree depth — the same rows `GRAPH.EXPLAIN` prints. -/
 
-theorem profileDepth_eq (anc : List Bool) : profileDepth anc = (anc.filter (! ·)).length := by
+/-- Depth printed for an op: `node.depth()`, the number of ancestors. `anc` lists, for
+each ancestor, whether it is a `Commit` (no longer consulted). -/
+def profileDepth (anc : List Bool) : Nat := anc.length
+
+/-- The printed depth is the tree depth: a `Commit` ancestor counts like any other. -/
+theorem profileDepth_eq (anc : List Bool) : profileDepth anc = anc.length := rfl
+
+theorem profileDepth_commit_counts (anc : List Bool) :
+    profileDepth (true :: anc) = profileDepth anc + 1 := by
+  simp [profileDepth]
+
+/-- Ops reported: `plan.root().indices::<Dfs>()`, every node. -/
+def profileOps {α} (_isCommit : α → Bool) (ops : List α) : List α := ops
+
+/-- PROFILE reports exactly the DFS node list (Commit included); the reply array
+length `ops.len()` equals the plan size. -/
+theorem profileOps_all {α} (isCommit : α → Bool) (ops : List α) :
+    profileOps isCommit ops = ops ∧ (profileOps isCommit ops).length = ops.length :=
+  ⟨rfl, rfl⟩
+
+/-- Historical (before #2390, `d2c42e032`): `Commit` nodes were filtered out and the
+depth was the tree depth minus the `Commit` ancestors. Kept as a labelled note. -/
+def pre2390_profileDepth (anc : List Bool) : Nat := anc.length - (anc.filter id).length
+
+theorem pre2390_profileDepth_eq (anc : List Bool) :
+    pre2390_profileDepth anc = (anc.filter (! ·)).length := by
   have : ∀ l : List Bool, (l.filter id).length + (l.filter (! ·)).length = l.length := by
     intro l; induction l with
     | nil => rfl
     | cons a as ih => cases a <;> simp_all <;> omega
   have := this anc
-  unfold profileDepth; omega
-
-/-- …and the `usize` subtraction cannot underflow. -/
-theorem profileDepth_no_underflow (anc : List Bool) : (anc.filter id).length ≤ anc.length :=
-  List.length_filter_le _ _
-
-/-- Ops reported: all but `Commit`. -/
-def profileOps {α} (isCommit : α → Bool) (ops : List α) : List α := ops.filter (! isCommit ·)
+  unfold pre2390_profileDepth; omega
 
 /-! ## Write detection (`execute_query` / `execute_profile`) -/
 
@@ -280,7 +297,7 @@ def executeQuery (plan : List Op) (writeAllowed : Bool) : QOut :=
 theorem ro_write_rejected (plan : List Op) (h : isWrite plan) : executeQuery plan false = .roError := by
   simp [executeQuery, h]
 
-/-! ## `query_mut` dispatch (`:945-1150`) -/
+/-! ## `query_mut` dispatch (`:932-1137`) -/
 
 inductive Disp | invalidVersion (cur : Nat) | inline | maxPending | spawn
   deriving DecidableEq
@@ -326,7 +343,7 @@ theorem profile_write_runs_as_write (w : Bool) :
     profileOutcome true .write w = (if w then .writeTelemetry else .writeErr) := rfl
 theorem profile_read_replied (w : Bool) : profileOutcome true .readReplied w = .profileRead := rfl
 
-/-! ## `process_write_queued_query` exit protocol (`:1525-1569`) -/
+/-! ## `process_write_queued_query` exit protocol (`:1512-1556`) -/
 
 /-- After `try_recv` finds nothing: release the flag, then return only if the queue is
 still empty or another thread won the flag back; otherwise loop again as owner. -/

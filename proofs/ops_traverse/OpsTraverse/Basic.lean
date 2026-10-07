@@ -9,8 +9,8 @@ matrix, one entry per `(src, dst)` — and (b) the *edge* level —
 | here | there |
 | --- | --- |
 | `Edge`, `Graph`         | an entry of a relationship `Tensor` (`graph/src/graph/graphblas/tensor.rs`); relationship types are modelled as a pre-filtered edge list |
-| `pairs`                 | the structural iterator of the (merged) relationship matrix: `build_unrestricted_iter` (`runtime/ops/cond_traverse.rs:195`) |
-| `edgesBetween`          | `relationship_tensors()[t].get(src, dst)` (`cond_traverse.rs:1067,1086`, `expand_into.rs:207,224`) |
+| `pairs`                 | the structural iterator of the (merged) relationship matrix: `build_unrestricted_iter` (`runtime/ops/cond_traverse.rs:194`) |
+| `edgesBetween`          | `relationship_tensors()[t].get(src, dst)` (`cond_traverse.rs:995,1086`, `expand_into.rs:201,224`) |
 | `step`                  | `Graph::get_node_relationships_by_type` (`graph/src/graph/graph.rs:2079`) — a self-loop is reported once under `Both` (`graph.rs:2105-2110`) |
 -/
 

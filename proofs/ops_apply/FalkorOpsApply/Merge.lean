@@ -10,7 +10,7 @@ Rust (`MergeOp::next`, `merge.rs:279-444`): per input batch of up to
 `BATCH_SIZE` rows, the match sub-plan runs ONCE over all rows (`merge.rs:313-343`)
 against the graph as it is at the start of the batch (the scans see pending
 creations of *earlier batches* through `IncludePending`,
-`planner/mod.rs:3008`); then rows are processed in order (`merge.rs:347-431`):
+`planner/mod.rs:3113`); then rows are processed in order (`merge.rs:347-431`):
 
 * no match → `do_create_fallback` (`merge.rs:113-178`): look the pattern hash up
   in `runtime.merge_pattern_cache` (`runtime.rs:163`); on a hit bind the cached

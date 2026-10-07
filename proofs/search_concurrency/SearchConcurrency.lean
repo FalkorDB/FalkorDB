@@ -48,7 +48,9 @@ mutate, commit, rollback, delete, fork):
 `Tickets`: `inc_inv`, `dec_inv`, `bump_inv`, `release_exact`, `operational_iff`,
 `stale_release_isolated`, `second_index_never_populated`, `lucky_order_complete`,
 `fixed_trace_complete`.
-`Search` (re-targeted to 49f698d22, #3087): `docSet_vector_sound` (key property: any
+`Search` (re-targeted to 8743953a8: #3087 vector guard; #3076 `e20300436` temporals no
+longer indexed — `docSet_temporal_not_indexed`, `docSet_eq_pre3076_off_temporal`, historical
+`pre3076_temporal_in_numeric`): `docSet_vector_sound` (key property: any
 value, any field options — a vector add always has the field's own non-zero dimension),
 `docSet_good_vector`, `docSet_bad_vector_skipped`, `docSet_noparams_no_vector`,
 `doc_always_accepted`, `other_fields_never_dropped`, `docSet_nonvector_eq_pre`,
@@ -69,7 +71,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
 ## CONFIRMED bugs (all reproduced on live servers, Rust vs C)
 
 1. **Server deadlock under >1024 queued queries** (`graph/src/threadpool.rs:59,96`,
-   `src/graph_core.rs:1052`). `spawn` does a *blocking* send into a 1024-slot pool
+   `src/graph_core.rs:1002`). `spawn` does a *blocking* send into a 1024-slot pool
    queue from the Redis main thread, which holds the GIL; running workers escalate
    and wait for the GIL. Permanent hang, 0% CPU, PING times out.
    `repro/flood.py 18470 1400` (one graph) or `repro/flood2.py 18470 3000 16 "UNWIND
@@ -79,7 +81,7 @@ query = `ranked.take k`, length `min k |index|`), `rows_length_topk`, `huge_k_on
    Model: `Locks.pool_deadlock_reachable`. Fix: never block the main thread in
    `spawn` (try_send → "Max pending queries exceeded", or unbounded queue like C).
    A second cycle with one graph: workers block on the full 1024 write channel
-   (`graph_core.rs:548`, `tg.sender.send` `:1100`) while holding a pool worker.
+   (`graph_core.rs:547`, `tg.sender.send` `:1082`) while holding a pool worker.
 2. **Second index on a label is never populated** (`graph/src/graph/graph.rs:547`
    `ticket_pending_changes > 1` bail + `index/indexer.rs:319-331` no `bump_id` for
    non-vector fields). `CREATE INDEX … (n.a)` then `(n.b)` on 300k nodes: Rust
@@ -119,7 +121,7 @@ all four cases now answer as C. W5-idx-2 (vector index with no OPTIONS half-crea
 also fixed: `index_ddl.rs:61-65` refuses before anything is registered — live, `db.indexes()` lists
 only the range index and `n.v = 1` still finds the node on both servers.
 Still divergent (live, #guards): (a) `OPTIONS {dimension:0, similarityFunction:'bogus'}` Rust
-creates the index (metric only checked for `dimension > 0`, mod.rs:1271-1273), C refuses;
+creates the index (metric only checked for `dimension > 0`, mod.rs:1270-1272), C refuses;
 (since #3087 a vector on that index no longer drops the node: `dim0_keeps_range_entry`);
 (b) fulltext `OPTIONS {weight:1.0, foo:true}` Rust refuses (`unknown option 'foo'`), C creates —
 C refuses only a non-empty map with no known key (`cFulltextKeysOk`; `rust_keys_ok_imp_c`).
@@ -142,7 +144,7 @@ parameter; every invariant theorem holds for any `valid`; new
 `refused_commit_releases_slot` (nothing published or acked, the next writer can
 claim — the property the Rust test `a_refused_commit_releases_the_write_slot`
 checks) and `valid_commit_publishes`. `commit_and_replicate` treats a refusal as
-`unreachable!` (graph_core.rs:1497).
+`unreachable!` (graph_core.rs:1484).
 
 ## Gaps
 

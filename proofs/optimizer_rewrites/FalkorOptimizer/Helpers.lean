@@ -8,12 +8,12 @@ import FalkorOptimizer.Basic
 | `anyX` | a BFS `walk().any(..)` over an expression |
 | `hasParam` | `expr_has_parameter` eliminate_true_filters.rs:75-79 |
 | `subst`, `evX` | `substitute_params` eliminate_true_filters.rs:83-98; a parameter-aware evaluator |
-| `refsVar` | `expr_references_variable` reduce_expand_into.rs:91-105 (by `(id, scope)`) |
+| `refsVar` | `expr_references_variable` / `subtree_references_variable` references.rs:317-334 (a BFS, by `(id, scope)`) |
 | `refsVarId` | `references_var` utilize_node_by_id.rs:92-104 (`Variable ==` is by id only, ast.rs:113) |
-| `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:91-110 |
+| `collectIds` | `collect_expr_variables` / `collect_subtree_variables` optimizer/mod.rs:92-111 |
 | `countVar` | `extract_count_variable` reduce_count.rs:193-212 |
-| `isAnon`, `attrsEmpty` | `is_anon`, `rel_attrs_empty`, `node_attrs_empty` fuse_anonymous_traverse.rs:37-63 |
-| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-188 |
+| `isAnon`, `attrsEmpty` | `is_anon`, `rel_attrs_empty` fuse_anonymous_traverse.rs:36-51 (`node_attrs_empty` removed by #2390) |
+| `CT`, `canFuse` | `can_fuse` fuse_anonymous_traverse.rs:83-192 (`unread` = `intermediate_unreferenced`, References2.wholeRead) |
 | `fusable`, `fusedCT` | `fusable_traverse`, `fused_traverse` fuse_optional_traverse.rs:40-103 |
 | `OutIR`, `branchOut` | `branch_output_variables` push_filters_down.rs:59-87 |
 -/
@@ -233,31 +233,35 @@ structure CT where
   fromV : Var
   fromName : Option String
   fromLabels : List String
-  fromAttrs : X
   toV : Var
+  /-- The edge alias (`relationship.alias`). -/
+  edgeV : Var
 
-/-- `can_fuse(parent, child)`; `unread` = `intermediate_unreferenced`. -/
+/-- `can_fuse(parent, child)`; `unread` = `intermediate_unreferenced` (whole plan since #2390).
+#2390 dropped the `node_attrs_empty(intermediate)` test (its map is a Filter now, which the
+reference check sees) and added the two edges to the reference check (:181-185). -/
 def canFuse (p c : CT) (unread : Var → Bool) : Bool :=
   p.bind && c.bind && !p.optional && !c.optional && !p.transposed && !c.transposed &&
   isAnon p.edgeName && isAnon c.edgeName && !p.emit && !c.emit &&
   p.siblings.isEmpty && c.siblings.isEmpty && !p.bidirectional && !c.bidirectional &&
   !p.varLen && !c.varLen && attrsEmpty p.edgeAttrs && attrsEmpty c.edgeAttrs &&
-  p.fromV == c.toV && isAnon p.fromName && p.fromLabels.isEmpty && attrsEmpty p.fromAttrs &&
-  unread p.fromV
+  p.fromV == c.toV && isAnon p.fromName && p.fromLabels.isEmpty &&
+  unread p.fromV && unread p.edgeV && unread c.edgeV
 
 /-- Fusion only happens on two plain, storage-direction, anonymous, unfiltered,
-fixed-length hops whose shared middle node is anonymous, unlabelled, without
-inline properties and read by no ancestor — the preconditions of
-`fuse_same_support` (Passes.lean). -/
+fixed-length hops whose shared middle node is anonymous, unlabelled and — like both
+edges — read by no operator of the plan (its inline map, if any, is a Filter that reads
+it) — the preconditions of `fuse_same_support` (Passes.lean). -/
 theorem canFuse_spec (p c : CT) (u : Var → Bool) (h : canFuse p c u = true) :
     p.optional = false ∧ c.optional = false ∧ p.emit = false ∧ c.emit = false ∧
     isAnon p.edgeName = true ∧ isAnon c.edgeName = true ∧ p.fromV = c.toV ∧
-    isAnon p.fromName = true ∧ p.fromLabels = [] ∧ p.fromAttrs = .node .map [] ∧
+    isAnon p.fromName = true ∧ p.fromLabels = [] ∧
     p.edgeAttrs = .node .map [] ∧ c.edgeAttrs = .node .map [] ∧ p.varLen = false ∧ c.varLen = false ∧
-    p.siblings = [] ∧ c.siblings = [] ∧ u p.fromV = true := by
+    p.siblings = [] ∧ c.siblings = [] ∧ u p.fromV = true ∧ u p.edgeV = true ∧ u c.edgeV = true := by
   simp only [canFuse, Bool.and_eq_true, Bool.not_eq_true', beq_iff_eq, List.isEmpty_iff] at h
   simp only [← attrsEmpty_iff]
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> first | exact h.2 | simp_all
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+    first | exact h.2 | exact h.1.2 | exact h.1.1.2 | simp_all
 
 /-! ## `fuse_optional_traverse` -/
 

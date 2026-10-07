@@ -1,6 +1,6 @@
 /-
 # Byte-level helpers of the COW B+-tree leaf pages
-(`graph/src/index/falkordb/data_structures/cow_btree/{mod.rs,leaf/*.rs}`, origin/main 3fec7d7c9)
+(`graph/src/index/falkordb/data_structures/cow_btree/{mod.rs,leaf/*.rs}`, origin/main 8743953a8)
 
 Bytes are `Nat`s (`< 256` where it matters); `le w x` is `x.to_le_bytes()[..w]`
 (for `x < 256^8`), `rd b off w` reads `w` little-endian bytes at `off`.
@@ -8,8 +8,8 @@ Bytes are `Nat`s (`< 256` where it matters); `le w x` is `x.to_le_bytes()[..w]`
 | Lean | Rust |
 | --- | --- |
 | `le`, `unle`, `rd` | `to_le_bytes()[..w]`, `from_le_bytes` |
-| `readU64` | `read_u64` `cow_btree/mod.rs:64` |
-| `readWidth` | `read_width` `cow_btree/mod.rs:73` |
+| `readU64` | `read_u64` `cow_btree/mod.rs:79` |
+| `readWidth` | `read_width` `cow_btree/mod.rs:88` |
 | `readU16` | `read_u16` `leaf/compact.rs:18` |
 | `widthFor` | `narrow_int::width_for` via `pow2_bytes_for` `leaf/mod.rs:42` |
 | `slice` | `&bytes[lo..hi]` |
@@ -39,11 +39,11 @@ theorem unle_le_of_lt (w x : Nat) (h : x < 256 ^ w) : unle (le w x) = x := by
 
 def rd (b : List Nat) (off w : Nat) : Nat := unle ((b.drop off).take w)
 
-/-- `read_u64` (`cow_btree/mod.rs:64`). -/
+/-- `read_u64` (`cow_btree/mod.rs:79`). -/
 def readU64 (b : List Nat) (off : Nat) : Nat := rd b off 8
 /-- `read_u16` (`leaf/compact.rs:18`). -/
 def readU16 (b : List Nat) (off : Nat) : Nat := rd b off 2
-/-- `read_width` (`cow_btree/mod.rs:73`): widths 1/2/4, anything else reads 8. -/
+/-- `read_width` (`cow_btree/mod.rs:88`): widths 1/2/4, anything else reads 8. -/
 def readWidth (b : List Nat) (off w : Nat) : Nat :=
   match w with
   | 1 => rd b off 1

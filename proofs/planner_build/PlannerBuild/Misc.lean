@@ -5,10 +5,10 @@ import PlannerBuild.Match
 | here | there |
 | --- | --- |
 | `subtreeContains` | `subtree_contains` mod.rs:331-339 |
-| `addArgs` (Stitch.lean) | `add_argument_to_leaves` mod.rs:748-782 — `addArgs_leaves`, `addArgs_leaf_ev` |
-| `stitchBelow` | `stitch_below_apply_chain` mod.rs:900-913 — `stitchBelow_get`, `stitchBelow_ev` |
-| `ensureInput` | `ensure_apply_has_input` mod.rs:2806-2822 — `ensureInput_ev_local`, `ensureInput_saturates` |
-| `RedOpt`, `isRedundantOptional` | `is_redundant_optional_match` mod.rs:2582-2602 — `redundant_optional_identity` |
+| `addArgs` (Stitch.lean) | `add_argument_to_leaves` mod.rs:870-904 — `addArgs_leaves`, `addArgs_leaf_ev` |
+| `stitchBelow` | `stitch_below_apply_chain` mod.rs:1022-1035 — `stitchBelow_get`, `stitchBelow_ev` |
+| `ensureInput` | `ensure_apply_has_input` mod.rs:2911-2927 — `ensureInput_ev_local`, `ensureInput_saturates` |
+| `RedOpt`, `isRedundantOptional` | `is_redundant_optional_match` mod.rs:2687-2707 — `redundant_optional_identity` |
 -/
 namespace PlannerBuild
 
@@ -188,7 +188,7 @@ theorem redundant_optional_identity (mt : Rec V → G → List (Rec V))
   · intro r g
     rcases hm r g with h | h <;> simp [h, hpad]
 
-/-! ## `set_include_pending_on_scans` (mod.rs:787-807)
+/-! ## `set_include_pending_on_scans` (mod.rs:909-929)
 
 On a tree whose nodes are scans (`NodeByLabelScan`/`AllNodeScan`), other
 operators, or `IncludePending`: every scan node's payload becomes

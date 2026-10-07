@@ -8,9 +8,9 @@ Line numbers are from origin/main (49f698d22).
 | `IType` | `IndexType` `mod.rs:96` |
 | `Field`, `makeArrNames`, `Field.new`, `Field.newVec` | `mod.rs:107-168` |
 | `Field.beqF`, `Field.hashF` | `PartialEq::eq` `mod.rs:192`, `Hash::hash` `mod.rs:203` |
-| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:888`) |
-| `Idx` | `Index` `mod.rs:876` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
-| `Idx.*` accessors / mutators | `mod.rs:1040-2226` (each cited below) |
+| `AMap`, `AMap.upd`, `AMap.erase` | the `HashMap<Arc<String>, Vec<Arc<Field>>>` in `Index` (`mod.rs:887`) |
+| `Idx` | `Index` `mod.rs:875` (RediSearch spec abstracted to `spec : Option Nat` + registered fields `rs`) |
+| `Idx.*` accessors / mutators | `mod.rs:1039-2235` (each cited below) |
 
 A Rust `HashMap` is modelled as an association list with unique keys; its
 iteration order is unspecified in Rust, so every theorem below is either

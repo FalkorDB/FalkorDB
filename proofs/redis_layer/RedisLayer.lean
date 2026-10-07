@@ -32,7 +32,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
 | `Args.rustParseI64`     | `str::parse::<i64>` (GRAPH.CONFIG) |
 | `Args.string2ll`        | Redis `string2ll` (`RedisModule_StringToLongLong`, `parse_integer`) |
 | `QueryArgs.cReadFlags`  | C `_read_flags` + `_validate_command_arity` (`cmd_dispatcher.c`) |
-| `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:896-931` |
+| `Args.rustTimeout`      | `compute_effective_timeout`, `src/graph_core.rs:883-918` |
 | `Config.validate/cross/apply1/rustSet` | `config_cmd.rs:114-202`, `:210-242`, `:251-291`, `:342-390` (as of #3021; `validatePre3021` historical) |
 | `Config.dispatch`, `upA` | `graph_config` arity / sub-command / `to_ascii_uppercase`, `config_cmd.rs:308-343` (#3021) |
 | `Config.cSet`           | C `_Config_set` (`cmd_config.c`) |
@@ -84,7 +84,7 @@ against the C engine (`master`, `bin/macos-arm64v8-release/falkordb.so`) on live
    Now one parser mirrors C: `nonutf8_keeps_compact`, `timeout_noncanonical_rejected`,
    `garbage_timeout_rejected`, `version_above_uint_rejected`, `arity_capped`, and the
    general `rust_c_agree`.
-2. Writes ignore the per-query TIMEOUT (`graph_core.rs:911-914`): with TIMEOUT_MAX
+2. Writes ignore the per-query TIMEOUT (`graph_core.rs:898-901`): with TIMEOUT_MAX
    = 100000, `UNWIND range(1,300000) … CREATE … TIMEOUT 1` creates 300000 nodes on Rust;
    C times out and creates none (`write_timeout_divergence`).
 3. **FIXED by #3021 (`30b4fb7dc`, issue #3020)** — formerly GRAPH.CONFIG:

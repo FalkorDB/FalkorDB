@@ -9,15 +9,16 @@ properties into RediSearch calls. RediSearch itself is the FFI boundary and is
 | --- | --- |
 | `IndexType`, `Field`            | `graph/src/index/mod.rs:96` `IndexType`, `:107` `Field`, `:137` `Field::new`, `:154` `new_with_vector_options` |
 | `arrNames`                      | `mod.rs:121` `Field::make_arr_names` |
-| `docSet`                        | `mod.rs:716-872` `Document::set` @ 49f698d22 (branch for branch; vector arm `:730-744`, #3087) |
+| `docSet`                        | `mod.rs:716-871` `Document::set` @ 8743953a8 (branch for branch; vector arm `:730-744`, #3087; temporal arm `:803`, #3076) |
+| `docSetPre3076`                 | historical: the range arm before #3076 (`e20300436`) wrote a temporal as a number |
 | `docSetPre3087`                 | historical: the vector arm at fe619ac5f (no dimension check) |
-| `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:865-869` |
+| `docSetPanics`                  | the `unreachable!()` arm, `mod.rs:864-868` |
 | `buildDoc`                      | the per-attribute loop in `graph.rs:3664` `commit_index_kind` / `graph.rs:625` population `build_doc` |
-| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1893` `Index::add_document`) |
+| `RediSearch`                    | `RediSearch_IndexAddDocument(.., REDISEARCH_ADD_REPLACE)` (`mod.rs:1902` `Index::add_document`) |
 | `fulltextUnknown`               | `graph/src/runtime/runtime.rs:1894-1903` fulltext unknown-key refusal (#3094) |
 | `parseDimension` … `parseNatOpt`| `graph/src/runtime/runtime.rs:1972-2050` `map_to_index_options`, vector branch |
 | `parsePhonetic`                 | `runtime.rs:1924` phonetic arm |
-| `metricOf`                      | `mod.rs:1274-1288` similarity match in `Index::register_fields` |
+| `metricOf`                      | `mod.rs:1273-1287` similarity match in `Index::register_fields` |
 | `evalK`                         | `graph/src/runtime/ops/node_by_vector_scan.rs:143` `eval_vector_args` (k arm) |
 | `withCapacity`                  | Rust std `Vec::with_capacity`; historical use: `graph.rs:3883` / `:3938` `Vec::with_capacity(k)` @ 49f698d22 (removed by #3088; current model in `Knn`) |
 -/
@@ -78,7 +79,7 @@ def isStr : Val → Bool
   | .str _ => true
   | _ => false
 
-/-- `Document::set` (mod.rs:716-872 @ 49f698d22), branch for branch. The vector arm
+/-- `Document::set` (mod.rs:716-871 @ 8743953a8), branch for branch. The vector arm
 (mod.rs:730-744, #3087) adds the blob only when
 `field.vector_options.as_ref().is_some_and(|o| o.dimension != 0 && o.dimension == vec.len())`,
 mirrored literally by `Option.any`. -/
@@ -91,8 +92,10 @@ def docSet (f : Field) (v : Val) : List RSAdd :=
     | .str _ => [.text f.name]
     | _ => []
   | .range => match v with
-    | .bool _ | .int _ | .float | .temporal => [.num f.name]
+    | .bool _ | .int _ | .float => [.num f.name]
     | .str _ => [.tag f.name]
+    -- #3076 (`e20300436`): temporals are not indexed (mod.rs:796-803)
+    | .temporal => []
     | .list xs =>
       let n := (xs.filter isNumeric).length
       let s := (xs.filter isStr).length
@@ -104,11 +107,36 @@ def docSet (f : Field) (v : Val) : List RSAdd :=
 
 /-- HISTORICAL (fe619ac5f, before #3087): the vector arm wrote `vec.len() * 4` bytes
 with no dimension check (`if let Value::VecF32(vec) = value { AddFieldVector(..) }`);
-every other arm is unchanged. Kept only to state what #3087 fixed. -/
+every other arm is as in `docSet` (whose temporal arm is the post-#3076 one; the
+#3087 theorems never involve temporals). Kept only to state what #3087 fixed. -/
 def docSetPre3087 (f : Field) (v : Val) : List RSAdd :=
   match f.ty, v with
   | .vector, .vecf32 d => [.vector f.name (d * 4)]
   | _, _ => docSet f v
+
+/-- HISTORICAL (before #3076, `e20300436`): the range arm wrote a temporal's raw
+number into the numeric field (`RediSearch_DocumentAddFieldNumber(.., *ts as f64, ..)`),
+so `n.v > 0` index scans matched dates. Every other arm as in `docSet`. -/
+def docSetPre3076 (f : Field) (v : Val) : List RSAdd :=
+  match f.ty, v with
+  | .range, .temporal => [.num f.name]
+  | _, _ => docSet f v
+
+/-- **#3076: a temporal value is never written to any RediSearch field**, on any
+index type, so no numeric index query can return it. -/
+theorem docSet_temporal_not_indexed (f : Field) : docSet f .temporal = [] := by
+  unfold docSet; cases f.ty <;> rfl
+
+/-- What #3076 fixed: before it, a temporal on a range field landed in the numeric field. -/
+theorem pre3076_temporal_in_numeric (f : Field) (h : f.ty = .range) :
+    docSetPre3076 f .temporal = [.num f.name] := by
+  unfold docSetPre3076; rw [h]
+
+/-- #3076 changed only the temporal arm. -/
+theorem docSet_eq_pre3076_off_temporal (f : Field) (v : Val) (hv : v ≠ .temporal) :
+    docSet f v = docSetPre3076 f v := by
+  unfold docSetPre3076
+  cases hf : f.ty <;> cases v <;> simp_all
 
 /-- The `unreachable!()` arm: `Null`, `Map`, `Node`, `Relationship`, `Path` on a range field. -/
 def docSetPanics (f : Field) (v : Val) : Bool :=
@@ -133,7 +161,7 @@ RediSearch (`src/document.c` `AddDocumentCtx_Submit`, vector preprocess in
 `dim * sizeof(float32)`, or the field was created without vector params (no
 `dimOf`, the #3087 comment at mod.rs:722-729). Under `REPLACE` the previous document
 under the same key is removed first. `dimOf` is the dimension
-`RediSearch_VectorFieldSetParams` registered (`register_fields`, mod.rs:1271-1330,
+`RediSearch_VectorFieldSetParams` registered (`register_fields`, mod.rs:1270-1329,
 only when `dimension > 0`). -/
 structure RediSearch where
   dimOf : String → Option Nat
@@ -146,7 +174,7 @@ if accepted, nothing otherwise (REPLACE already deleted the old one). -/
 def RediSearch.stored (rs : RediSearch) (d : List RSAdd) : List RSAdd :=
   if rs.accepts d then d else []
 
-/-- `register_fields` (mod.rs:1271-1273): a vector field gets params, of its own
+/-- `register_fields` (mod.rs:1270-1272): a vector field gets params, of its own
 dimension, exactly when `vector_options` is present with `dimension > 0`. Only the
 "if" half is needed for the correctness theorems. -/
 def Registered (rs : RediSearch) (fv : List (Field × Val)) : Prop :=
@@ -377,7 +405,7 @@ inductive Metric where
   | l2 | ip | cosine
 deriving DecidableEq, Repr
 
-/-- `register_fields`' similarity match (mod.rs:1274-1288): default `"euclidean"`,
+/-- `register_fields`' similarity match (mod.rs:1273-1287): default `"euclidean"`,
 exact string compare — on the lower-cased name `parseSim` stored. -/
 def metricOf (s : Option String) : Except String Metric :=
   match s.getD "euclidean" with
@@ -403,7 +431,7 @@ def parseVector (m : Opts) : Except String VecOpts := do
   return { dimension := d, sim := s, m := mm, efC := c, efR := r }
 
 /-- Whether CREATE VECTOR INDEX succeeds end-to-end in Rust: parse, then the metric
-check in `register_fields` (only reached when `dimension > 0`, mod.rs:1271-1273).
+check in `register_fields` (only reached when `dimension > 0`, mod.rs:1270-1272).
 With no `OPTIONS` map at all, `create_index` now refuses (index_ddl.rs:61-65); that
 is `parseVector []`, an error, here. -/
 def rustAccepts (m : Opts) : Bool :=
@@ -568,7 +596,7 @@ def parsePhonetic : Option OptVal → Except String (Option String)
   | none => .ok none
   | some _ => .error "Phonetic must be bool or string"
 
-/-- `register_fields` sets `RSFLDOPT_TXTPHONETIC` iff the code is non-empty (mod.rs:1249). -/
+/-- `register_fields` sets `RSFLDOPT_TXTPHONETIC` iff the code is non-empty (mod.rs:1248). -/
 def phoneticFlag (p : Option String) : Bool := p.any (· ≠ "")
 
 /-- `phonetic:false` is stored as `""` and therefore does *not* set the flag. -/

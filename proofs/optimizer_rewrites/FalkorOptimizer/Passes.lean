@@ -4,7 +4,7 @@
 | here | there |
 | --- | --- |
 | `out`, `travCollapsed` | `CondTraverse` with `emit_relationship = false` (`runtime/ops/cond_traverse.rs`): one row per distinct `(src, dst)` |
-| `unfused`, `fused`     | two chained anonymous CTs vs the fused `F·A1·A2` chain (`optimizer/fuse_anonymous_traverse.rs:190-283`) |
+| `unfused`, `fused`     | two chained anonymous CTs vs the fused `F·A1·A2` chain (`optimizer/fuse_anonymous_traverse.rs:194-287`) |
 | `optionalOp`, `optCT`  | `Optional` (`runtime/ops/optional.rs`) vs `CondTraverse{optional: true}` (`fuse_optional_traverse.rs:105-156`) |
 | `IdOp`, `step`, `idFilter` | `Runtime::evaluate_id_filter` (`graph/src/runtime/runtime.rs:1309-1363`), the operator `utilize_node_by_id` (`optimizer/utilize_node_by_id.rs:107-155`) introduces |
 | `wrap`                 | Rust `id as u64` on an `i64` (two's-complement reinterpretation) |

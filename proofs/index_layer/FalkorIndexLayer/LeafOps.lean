@@ -1,6 +1,6 @@
 import FalkorIndexLayer.LeafBlockCopy2
 /-
-# `Leaf::merge_batch` (`cow_btree/leaf/mod.rs:471`, origin/main 3fec7d7c9):
+# `Leaf::merge_batch` (`cow_btree/leaf/mod.rs:471`, origin/main 8743953a8):
 every fast path agrees with the slow path (`merge_sorted` + `chunks` + `from_pairs`).
 -/
 namespace IndexLayer.Leaf

@@ -2,7 +2,7 @@ import FalkorIndexLayer.LeafOps
 /-
 # Tree-level glue: `pack_branches`, `build_root`, `make_private` (`cow_btree/node.rs`)
 # and `CowBTree::{default,new,from_sorted,insert_batch}` + the test walkers
-# (`cow_btree/mod.rs`), origin/main 3fec7d7c9.
+# (`cow_btree/mod.rs`), origin/main 8743953a8.
 -/
 namespace IndexLayer.Leaf
 

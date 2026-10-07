@@ -12,7 +12,7 @@ answer and FAIL today, `agrees_*` pass.
 | here | there |
 | --- | --- |
 | `Budget.effectiveLimit/effectiveSkip/recordCap` | `Runtime::effective_limit` (`runtime.rs:575`), `effective_skip` (`:610`), `record_cap` (`:642`) |
-| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs:1121,1179`), `ExpandIntoOp` (`ops/expand_into.rs:271`), SortOp top-k (`ops/sort.rs:491`) |
+| `Budget.hardCap`, `Budget.run` | the hard `record_cap` stop of `CondTraverseOp` (`ops/cond_traverse.rs:1030,1179`), `ExpandIntoOp` (`ops/expand_into.rs:246`), SortOp top-k (`ops/sort.rs:491`) |
 | `Emitter.*`   | `BatchedResultEmitter` (`ops/batched_result_emitter.rs:455-785`) |
 | `Query.query` | `Runtime::query` result-set cap + write drain (`runtime.rs:514-561`) |
 | `RunBatch.runBatch`, `childrenToRecurse` | `Runtime::run_batch` (`runtime.rs:710`), `children_to_recurse` (`:652`) |
@@ -53,8 +53,8 @@ answer and FAIL today, `agrees_*` pass.
 
 ## CONFIRMED bugs (Rust repro in `graph/tests/lean_runtime_core.rs`, C = `bin/macos-arm64v8-release/falkordb.so`)
 B1. `record_cap` walks through `CondTraverse`/`ExpandInto` (`runtime.rs:593-596`), but
-    `CondTraverseOp`/`ExpandIntoOp` treat it as a HARD stop (`cond_traverse.rs:1179`,
-    `expand_into.rs:271`). A traverse feeding another row-reducing traverse stops after
+    `CondTraverseOp`/`ExpandIntoOp` treat it as a HARD stop (`cond_traverse.rs:1088`,
+    `expand_into.rs:246`). A traverse feeding another row-reducing traverse stops after
     LIMIT rows and the answer is lost.
     `MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1` (a1→b1, a2⇄b2): Rust [] , C [2].
     `MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 1` (a1→b1 dead end, a2→b2→c): Rust [], C [30].

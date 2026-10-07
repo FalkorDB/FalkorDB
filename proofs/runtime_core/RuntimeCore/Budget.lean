@@ -8,7 +8,7 @@
 | `effectiveSkip`       | `Runtime::effective_skip`, `runtime/runtime.rs:610-636` |
 | `recordCap`           | `Runtime::record_cap`, `runtime/runtime.rs:642-648` |
 | `Anc.sem`, `run`      | what each ancestor does to the row stream it pulls (LimitOp / SkipOp / ProjectOp / CondTraverseOp / ExpandIntoOp) |
-| `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs:1121-1140,1179`) and `ExpandIntoOp` (`ops/expand_into.rs:271-319`), and SortOp's top-`limit+skip` heap (`ops/sort.rs:491-493`) |
+| `hardCap`             | the `produced >= cap` stop + trim of `CondTraverseOp` (`ops/cond_traverse.rs:1030-1049,1179`) and `ExpandIntoOp` (`ops/expand_into.rs:246-293`), and SortOp's top-`limit+skip` heap (`ops/sort.rs:491-493`) |
 | `need`                | the smallest sound budget (reference) |
 
 The walks start at the *parent* of the operator (`self.plan.node(cur).parent()`), so an

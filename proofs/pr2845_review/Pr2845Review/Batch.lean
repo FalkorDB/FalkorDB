@@ -196,7 +196,7 @@ theorem emit_len {V : Type} [Inhabited V] (p : Batch V) (idx : List Nat) (lane :
 
 /-- Residual (unchanged from proofs/columnar `finishLen_drops`): a no-alias
 emitter over a parent with no column AND no origin yields 0 rows. Its one
-user, ExpandInto (expand_into.rs:96), always has both endpoint columns. -/
+user, ExpandInto (expand_into.rs:95), always has both endpoint columns. -/
 theorem emit_len_residual :
     (finishBatch (V := Nat) (shouldExpandNew (rowsOnly 3 : Batch Nat)) (rowsOnly 3) [0, 1, 2] none).len = 0 := by
   decide

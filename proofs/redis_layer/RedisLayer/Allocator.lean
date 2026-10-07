@@ -144,7 +144,7 @@ theorem run_traffic (es : List Ev) : ∀ (t : TLS), t.enabled = true → Bounded
     | disable => simp [Traffic] at hte
     | reset => simp [Traffic] at hte
 
-/-- **Per-query accounting** (`graph_core.rs:1020-1075`: `reset_counter(); enable_tracking();`
+/-- **Per-query accounting** (`graph_core.rs:1007-1062`: `reset_counter(); enable_tracking();`
 … query … `current_thread_usage()`): from any prior thread state, the counters report
 exactly the bytes this query's traffic allocated and freed on this thread (below `2^64`
 total — wrapping needs 16 EiB of traffic), and `net_thread_usage` is their saturating

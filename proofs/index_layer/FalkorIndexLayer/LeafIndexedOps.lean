@@ -1,6 +1,6 @@
 import FalkorIndexLayer.LeafIndexed
 /-
-# `CompactIndexedLeaf` splices (`compact_indexed.rs`, origin/main 3fec7d7c9):
+# `CompactIndexedLeaf` splices (`compact_indexed.rs`, origin/main 8743953a8):
 `distinct_slot`, `splice_insert` (both arms), `splice_remove`.
 -/
 namespace IndexLayer.Leaf

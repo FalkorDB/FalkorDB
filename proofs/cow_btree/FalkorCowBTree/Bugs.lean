@@ -6,21 +6,22 @@ import FalkorCowBTree.Cursor
 
 namespace CowBTree
 
-/-! ## Bug 1: `insert_batch` drops `(u64::MAX, u64::MAX)` (`node.rs:198-206`)
+/-! ## Bug 1 (historical, FIXED by #2278, 3597b3a82): `insert_batch` dropped `(u64::MAX, u64::MAX)`
 
-`apply_batch` gives the last child the upper bound `TOP = (u64::MAX, u64::MAX)` and keeps a batch
-entry for a child only while `entry < upper`. `TOP < TOP` is false, so `TOP` is routed to *no*
-child, and the sweep simply ends — the entry is lost. -/
+Before #2278 `apply_batch` gave the last child the upper bound `TOP = (u64::MAX, u64::MAX)` and kept a
+batch entry for a child only while `entry < upper`. `TOP < TOP` is false, so `TOP` was routed to *no*
+child, and the sweep simply ended — the entry was lost. The two theorems below are about the old
+sweep `pre2278_route`; `route_keeps_all` / `route_routes_TOP` (`Batch.lean`) prove the fix. -/
 
 /-- No slice handed to any child ever contains `TOP`, whatever the separators. -/
-theorem route_never_routes_TOP (seps : List E) (hs : ∀ s ∈ seps, s ≤ TOP) :
-    ∀ (cs : List Node) (batch : List E), ∀ p ∈ route seps cs batch, TOP ∉ p.2 := by
+theorem pre2278_route_never_routes_TOP (seps : List E) (hs : ∀ s ∈ seps, s ≤ TOP) :
+    ∀ (cs : List Node) (batch : List E), ∀ p ∈ pre2278_route seps cs batch, TOP ∉ p.2 := by
   intro cs
   induction cs generalizing seps with
-  | nil => intro batch p hp; simp [route] at hp
+  | nil => intro batch p hp; simp [pre2278_route] at hp
   | cons ch cs ih =>
     intro batch p hp
-    simp only [route, List.mem_cons] at hp
+    simp only [pre2278_route, List.mem_cons] at hp
     rcases hp with rfl | hp
     · intro hT
       have := mem_takeWhile_p hT
@@ -33,17 +34,17 @@ theorem route_never_routes_TOP (seps : List E) (hs : ∀ s ∈ seps, s ≤ TOP) 
     · exact ih seps.tail (fun s h => hs s (List.mem_of_mem_tail h)) _ p hp
 
 /-- Concretely: a two-leaf root, batch `[TOP]` — the routed slices are all empty. -/
-theorem route_drops_TOP_example :
-    route [enc 2 0] [.leaf [enc 0 0, enc 1 0], .leaf [enc 2 0, enc 3 0]] [TOP] =
+theorem pre2278_route_drops_TOP_example :
+    pre2278_route [enc 2 0] [.leaf [enc 0 0, enc 1 0], .leaf [enc 2 0, enc 3 0]] [TOP] =
       [(.leaf [enc 0 0, enc 1 0], []), (.leaf [enc 2 0, enc 3 0], [])] := by
-  simp [route, enc, TOP, W]
+  simp [pre2278_route, enc, TOP, W]
 
-/-! ## Bug 2: with `BRANCH_MAX = 3` (allowed by the assert, `mod.rs:131`) remove breaks the tree
+/-! ## Bug 2: with `BRANCH_MAX = 3` (allowed by the assert, `mod.rs:135-138`) remove breaks the tree
 
-The underflow flag of a branch is `children < BRANCH_MAX / 2 = 1` (`node.rs:380`): a branch merged
+The underflow flag of a branch is `children < BRANCH_MAX / 2 = 1` (`node.rs:197`, reported at `:473`): a branch merged
 down to ONE child is not reported, so its parent never repairs it. Its lone child then cannot
-rebalance (`node.rs:122` guard) and drains to an empty non-root leaf. `is_empty()` then lies, and
-a later `insert_batch` hits `Node::min` on the empty leaf (out-of-bounds panic, `node.rs:159`) or the
+rebalance (`node.rs:212` guard) and drains to an empty non-root leaf. `is_empty()` then lies, and
+a later `insert_batch` hits `Node::min` on the empty leaf (out-of-bounds panic, `node.rs:234`) or the
 single-child `debug_assert` (`node.rs:71`). -/
 
 def c23 : Cfg := ⟨2, 3, by decide, by decide⟩

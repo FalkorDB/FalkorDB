@@ -1,29 +1,28 @@
 file	function	line	bucket	lean_name_or_reason
-graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::ncols	69	PROVEN	CTGlue.ncolsT: ncolsT_spec
-graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::delta_lmxm_into	77	AXIOMATISED	CondTraverse.MxmSpec (GrB_mxm ANY_PAIR); used by chain / mem_chain
-graph/src/runtime/ops/cond_traverse.rs	build_unrestricted_iter	195	AXIOMATISED	Basic.pairs / mem_pairs (structural iterator of the merged relationship matrix)
-graph/src/runtime/ops/cond_traverse.rs	empty_edge_iter	211	PROVEN	CTGlue.emptyIter: emptyIter_nil
-graph/src/runtime/ops/cond_traverse.rs	build_transposed_iter	221	AXIOMATISED	Basic.pairs read dst-major; seek restriction = processPairs bound-endpoint filter
-graph/src/runtime/ops/cond_traverse.rs	attrs_is_static_empty	240	PROVEN	CTGlue.staticEmpty: staticEmpty_iff
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::new	247	PROVEN	CTGlue.ctNew: ctNew_spec; BidirDedup.dedupRows
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::build_state	361	PROVEN	CTGlue.buildState: buildState_spec
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::expand_batch	451	PROVEN	CondTraverse.batched_eq_collapse, fused_chain_semantics, chain_nodup (under MxmSpec)
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::expand_row	757	PROVEN	CondTraverse.expandRow: emit_directed_iff, emit_bidir_iff, collapse_directed_iff, collapse_directed_keys_nodup; bidir_collapse_duplicates_pair (bug); BidirDedup.* for the dedup block
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::process_pairs	977	PROVEN	CondTraverse.processPairs/pairRows: mem_processPairs, collapse_sub_emit, collapse_keys_sublist
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::trim_to_cap	1121	PROVEN	CTGlue.trimToCap: trimToCap_spec
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::out_alias_id	1144	PROVEN	CTGlue.outAlias: outAlias_spec
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::null_pad	1156	PROVEN	CTGlue.nullPad: nullPad_spec
-graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::next	1177	PROVEN	CTGlue.ctPack + Drive.capDrive: ctNext_stream, capDrive_flatten; BidirDedup.dedupBatches (bug)
-graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::new	73	PROVEN	CTGlue.eiNew: eiNew_spec
-graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::expand_row	126	PROVEN	CondTraverse.expandInto: mem_expandInto_emit; expandInto_bidir_collapse_two_rows (bug)
-graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::next	269	PROVEN	Drive.capDrive: eiNext_stream, capDrive_flatten
+graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::ncols	68	PROVEN	CTGlue.ncolsT: ncolsT_spec
+graph/src/runtime/ops/cond_traverse.rs	TraversalMatrix::delta_lmxm_into	76	AXIOMATISED	CondTraverse.MxmSpec (GrB_mxm ANY_PAIR); used by chain / mem_chain
+graph/src/runtime/ops/cond_traverse.rs	build_unrestricted_iter	194	AXIOMATISED	Basic.pairs / mem_pairs (structural iterator of the merged relationship matrix)
+graph/src/runtime/ops/cond_traverse.rs	empty_edge_iter	210	PROVEN	CTGlue.emptyIter: emptyIter_nil
+graph/src/runtime/ops/cond_traverse.rs	build_transposed_iter	220	AXIOMATISED	Basic.pairs read dst-major; seek restriction = processPairs bound-endpoint filter
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::new	238	PROVEN	CTGlue.ctNew: ctNew_spec, ctNew_eligible_iff (#2390: no inline-attr gate), pre2390_eligible_le/pre2390_widened; BidirDedup.dedupRows
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::build_state	353	PROVEN	CTGlue.buildState: buildState_spec
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::expand_batch	443	PROVEN	CondTraverse.batched_eq_collapse, fused_chain_semantics, chain_nodup (under MxmSpec)
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::expand_row	749	PROVEN	CondTraverse.expandRow: emit_directed_iff, emit_bidir_iff, collapse_directed_iff, collapse_directed_keys_nodup; bidir_collapse_duplicates_pair (bug); BidirDedup.* for the dedup block
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::process_pairs	944	PROVEN	CondTraverse.processPairs/pairRows: mem_processPairs, collapse_sub_emit, collapse_keys_sublist; #2390 removed the inline-attr checks, so the model (attrs absent) is now literal
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::trim_to_cap	1030	PROVEN	CTGlue.trimToCap: trimToCap_spec
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::out_alias_id	1053	PROVEN	CTGlue.outAlias: outAlias_spec
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::null_pad	1065	PROVEN	CTGlue.nullPad: nullPad_spec
+graph/src/runtime/ops/cond_traverse.rs	CondTraverseOp::next	1086	PROVEN	CTGlue.ctPack + Drive.capDrive: ctNext_stream, capDrive_flatten; BidirDedup.dedupBatches (bug)
+graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::new	72	PROVEN	CTGlue.eiNew: eiNew_spec
+graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::expand_row	125	PROVEN	CondTraverse.expandInto: mem_expandInto_emit; expandInto_bidir_collapse_two_rows (bug); #2390: no edge-attr filter, collapse iff !emit_relationship (planner sets emit for an edge predicate: planner_build E.firstRel_edge_pred)
+graph/src/runtime/ops/expand_into.rs	ExpandIntoOp::next	244	PROVEN	Drive.capDrive: eiNext_stream, capDrive_flatten
 graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::path_value	139	PROVEN	VarLenGlue.pathValue: pathValue_spec, Alt.reverse
 graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::begin_start_node	152	PROVEN	VarLen.varLen 0-hop branch: varLen_sound, varLen_complete, zero_zero
-graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::advance	196	PROVEN	VarLen.dfs: dfs_sound, dfs_complete, varLen_iff (trails, min..max); filters not modelled
-graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::next	392	PROVEN	VarLenGlue.vlStep/run: run_complete, run_err
-graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::new	441	PROVEN	VarLenGlue.VlSt.new/findPrev: vlNew_spec
-graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::expand_row	500	PROVEN	VarLenGlue.rowPlan: rowPlan_spec; VarLen.varLen (no_sibling_uniqueness)
-graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::next	611	PROVEN	Drive.driveE: vlOpNext_stream, driveE_ok, driveE_child_err
+graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::advance	196	PROVEN	VarLen.dfs: dfs_sound, dfs_complete, varLen_iff (trails, min..max); absorbed edge filter verdict edgeVerdict_eq_filterRow (= FilterOp, #2390), pre2390_edgeVerdict_differs
+graph/src/runtime/ops/cond_var_len_traverse.rs	VarLenIter::next	402	PROVEN	VarLenGlue.vlStep/run: run_complete, run_err
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::new	451	PROVEN	VarLenGlue.VlSt.new/findPrev: vlNew_spec
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::expand_row	510	PROVEN	VarLenGlue.rowPlan: rowPlan_spec; VarLen.varLen (no_sibling_uniqueness)
+graph/src/runtime/ops/cond_var_len_traverse.rs	CondVarLenTraverseOp::next	621	PROVEN	Drive.driveE: vlOpNext_stream, driveE_ok, driveE_child_err
 graph/src/runtime/ops/node_by_label_scan.rs	NodeByLabelScanOp::new	56	PROVEN	CTGlue.labelScanNew: ctors_spec
 graph/src/runtime/ops/node_by_label_scan.rs	NodeByLabelScanOp::next	77	PROVEN	Scans.labelScan: mem_labelScan, length_labelScan (get_nodes axiomatised as sorted list)
 graph/src/runtime/ops/node_by_id_seek.rs	NodeByIdSeekOp::new	32	PROVEN	CTGlue.idSeekNew: ctors_spec

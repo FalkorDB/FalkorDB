@@ -2,8 +2,8 @@
 # Optimizer rewrites: which passes preserve the query result, and which do not
 
 A Lean 4 model of the optimizer passes in `graph/src/planner/optimizer/`
-(origin/main `2363723ac`), except `select_scan_node.rs` and `utilize_index.rs`
-(another agent's). Each pass is judged against a reference semantics of the IR:
+(origin/main `8743953a8`), except `select_scan_node.rs`, `utilize_index.rs` and
+`utilize_node_by_id.rs`'s #2390 changes (another agent's). Each pass is judged against a reference semantics of the IR:
 rows are association lists (`Basic.Row`), expressions follow `eval.rs`
 (three-valued, errors short-circuit, `AND` exactly as `eval.rs:674`), `Filter`
 keeps `true` and drops `false`/`null` (`filter.rs:48-80`), and operators are
@@ -12,17 +12,18 @@ correct if it preserves the result multiset — and row order where ORDER BY
 applies — and does not make a succeeding query fail.
 
 Files: `Basic` (rows, eval, Filter, push-down, merge, eliminate_true_filters),
-`References` (the "is this variable read?" oracle behind reduce_expand_into /
-reduce_bound_edge / reduce_var_len_path / fuse_anonymous_traverse, origin/main
-vs PR #2918), `Passes` (fusion, optional fusion, node-by-id, reduce_count,
+`References` (the "is this variable read?" oracle `optimizer/references.rs` behind
+reduce_expand_into / reduce_bound_edge / reduce_var_len_path / fuse_anonymous_traverse,
+introduced by #2390; also the a9377c636 and PR #2918 oracles), `References2` (the tree walks:
+ancestor-only for the three `reduce_*` passes, whole-plan for fusion since #2390), `Passes` (fusion, optional fusion, node-by-id, reduce_count,
 reorder_labels, hash join, the push-down routing and exclusion list).
 Each file's header maps its definitions to Rust `file:line`.
 Files (wave 5): `Helpers` (the syntactic helpers: parameters, variable
 references, count extraction, fusion preconditions, Project/Aggregate outputs),
 `Sequence` (`optimize` sequencing, the tree rebuilds, edge-filter absorption).
-Build: `lake build` — 98 theorems, no `sorry`/`admit`/`axiom`. Every row of
-COVERAGE.tsv is PROVEN. Rust source: origin/main `3fec7d7c9`
-(an origin/main checkout; optimizer files identical to `2363723ac`).
+Build: `lake build` — 116 theorems, no `sorry`/`admit`/`axiom`. Every row of
+COVERAGE.tsv is PROVEN. Rust source: origin/main `8743953a8` (re-targeted across #2390,
+d2c42e032: `references.rs` added, the four passes switched to it, fusion checks the whole plan).
 
 ## Proven (plain English)
 
@@ -39,11 +40,15 @@ COVERAGE.tsv is PROVEN. Rust source: origin/main `3fec7d7c9`
 * `filter_true`, `andLoop_drop_true`, `filter_and_single`, `eliminate_whole_filter`
   — eliminate_true_filters is exact given that plan-time constant evaluation agrees
   with runtime evaluation (false for `^`, known #2902).
-* `refsPR_complete` — PR #2918's `ir_references_variable` sees every read of every IR variant.
-* `readOutside_iff` — PR #2918's `variable_read_outside` is exactly "some
-  operator outside the traverse's subtree reads v"; `pr_keeps_flag_when_read`.
-* `refsMain_sound`, `ancestors_le_outside` — origin/main errs only toward
-  collapsing (never keeps a flag it should drop).
+* `refsNew_complete` — #2390's `ir_references_variable` (references.rs) sees every read of every
+  IR variant of a plan the planner built (`PlanInv`: inline maps are Filters —
+  proofs/planner_build `planMatch_stripped`); `refsNew_sound` — it reports only reads or
+  variables the operator binds; `iqLoop_iff` — the index-query stack loop finds an operand at any
+  `And`/`Or` depth; `setItemsRefs_iff`, `exprRefs_iff`.
+* `anyRead_plug`, `wholeRead_covers`, `fuse_unread_sound` — fusion's whole-plan check (since #2390)
+  sees every reader of the intermediate and both edges, inside or outside the hops.
+* `refsPR_complete`, `readOutside_iff`, `pr_keeps_flag_when_read` — PR #2918 (its walk is still
+  not merged); `pre2390_refs_sound`, `ancestors_le_outside` — the old oracle erred only toward collapsing.
 * `fuse_same_support` — anonymous-chain fusion keeps the set of rows (and,
   `fuse_changes_multiplicity`, collapses paths to pairs exactly as C does).
 * `fuse_optional_correct` — Optional-over-traverse fusion is column-exact.
@@ -97,20 +102,28 @@ COVERAGE.tsv is PROVEN. Rust source: origin/main `3fec7d7c9`
    → 4 on both. Lean `hash_join_drops_row` (and `vhj_correct` for when it is safe).
    Root is the Int/Float equality of #2891, but this is the optimizer changing a
    result. Test `bug_hash_join_disagrees_with_filter_on_int_float`.
-6. **(known #2557, new path)** Uncorrelated `CALL {}` filter pushed onto `Argument`:
+6. **(known #2557, new path — no longer reproduces on 8743953a8: Rust = C (1,1)…(5,1);
+   push_filters_down.rs is unchanged by #2390, so most likely #2845's CALL-body entry
+   projection, merged before a9377c636; `id_only_routing_unsound` still describes the id-only
+   routing)** Uncorrelated `CALL {}` filter pushed onto `Argument`:
    `MATCH (o1:N) CALL { MATCH (q:N) WHERE q.v = 1 RETURN q } RETURN o1.v, q.v`
    → Rust (1,1),(1,2)…(1,5); C (1,1),(2,1)…(5,1). Scope-blind ids (mod.rs:91-109)
    plus Apply Case 2 inheritance (push_filters_down.rs:214-261). Lean
    `id_only_routing_unsound`. Test `known_2557_call_subquery_filter_reads_outer_variable`.
-7. **(known #2896, fixed by PR #2918)** origin/main `ir_references_variable`
-   misses Unwind/ForEach lists, Create/Merge pattern properties, ProcedureCall
-   args, LoadCsv, scan/traverse inline attrs, Skip/Limit, and every sibling branch:
+7. **(known #2896) — per-operator part FIXED by #2390 (d2c42e032), sibling part still open.**
+   a9377c636's `ir_references_variable` missed Unwind/ForEach lists, Create/Merge pattern
+   properties, ProcedureCall args, LoadCsv, Skip/Limit, index-scan queries:
    `MATCH (a)-[r]->(b) UNWIND [r.w] AS w RETURN w` → Rust [1],[3] of [1],[2],[3];
-   `… CREATE (:C {w: r.w})` creates 2 of 3; `FOREACH`, pattern comprehension
-   likewise; `()-[r*1..1]->() UNWIND r` loses rows (reduce_var_len_path).
-   Lean `main_misses_*`; PR #2918 proven complete (`refsPR_complete`, `readOutside_iff`).
+   `… CREATE (:C {w: r.w})` created 2 of 3; `FOREACH` likewise; `()-[r*1..1]->() UNWIND r` lost rows.
+   On 8743953a8 all of these match C (live); Lean `pre2390_misses_*` (historical) and
+   `refsNew_complete` / `refsNew_sees_*`. **Still open**: the three `reduce_*` passes walk
+   ancestors only, so a reader in a sibling subtree is missed —
+   `MATCH (a)-[r]->(b) CALL { WITH r RETURN r.w AS w } RETURN w` → Rust 1 row, C 3;
+   `RETURN [(a)-->(b) | r.w]` → Rust `[1]`, C three rows (Lean `main_misses_call_sibling`);
+   and the oracle ignores `sibling_edges` (W2-traverse-1: `MATCH (a)-[r]->(x)<-[s]-(c)
+   RETURN count(*)` → Rust 1, C 2; Lean `refsNew_misses_sibling_edges`).
 
-8. **(NEW) `utilize_node_by_id` panics on a root scan** — `utilize_node_by_id.rs:118`
+8. **(NEW; still crashes the server on 8743953a8, live) `utilize_node_by_id` panics on a root scan** — `utilize_node_by_id.rs:118`
    `optimized_plan.node(idx).parent().unwrap()`: `CALL db.labels() YIELD label MATCH (n)`
    (accepted because `inner_validate` skips everything after a CALL — planner_build bug 6)
    plans `NodeByLabelScan`/`AllNodeScan` as the root → **Rust server crash**
@@ -143,10 +156,9 @@ COVERAGE.tsv is PROVEN. Rust source: origin/main `3fec7d7c9`
 
 ## Open PRs touching these files (model = origin/main)
 
-* #2918 — `ir_references_variable` completeness and `variable_read_outside`
-  (fuse_anonymous_traverse, reduce_bound_edge, reduce_expand_into,
-  reduce_var_len_path): modelled as `refsPR`/`readOutside` (`refsPR_complete`,
-  `readOutside_iff`); fixes bug 7.
+* #2918 — `variable_read_outside` for the three `reduce_*` passes (its per-operator
+  oracle is superseded by #2390's references.rs): modelled as `readOutside`
+  (`readOutside_iff`); would fix the sibling part of bug 7 (`main_misses_call_sibling`).
 * #3006 — `push_filters_down.rs:122` merges `[child_filter, filter]`: the
   `merge_child_first_row` order; fixes bug 2.
 * #2981 — `push_filters_down` routes with `branch_visible_variables` (below an
@@ -157,7 +169,7 @@ COVERAGE.tsv is PROVEN. Rust source: origin/main `3fec7d7c9`
   only) instead of `get_variables` of the whole subtree — same direction as
   #2981; `mem_subtreeIds` describes origin/main.
 * #3100 — exports `ir_references_variable` for the planner's CP-correlation check
-  (planner bug 2); no change to the oracle itself.
+  (planner bug 2); no change to the oracle itself (needs a rebase onto references.rs).
 * #3054 — `reduce_expand_into` removes a collapsed (no longer emitted) edge from
   its siblings' `sibling_edges` uniqueness lists (`forget_sibling_edge`); the
   emit-flag decision (`refsMain`) is unchanged.
@@ -181,6 +193,7 @@ COVERAGE.tsv is PROVEN. Rust source: origin/main `3fec7d7c9`
 -/
 import FalkorOptimizer.Basic
 import FalkorOptimizer.References
+import FalkorOptimizer.References2
 import FalkorOptimizer.Passes
 import FalkorOptimizer.Helpers
 import FalkorOptimizer.Sequence

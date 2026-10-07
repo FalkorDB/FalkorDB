@@ -45,7 +45,7 @@ historical notes named `pre2845_…` (fixed by #2845, eb470521b; closes
      (`filter_pushed_through_boundary`), where the row is the entry projection's
      (`pushed_read_unbound`). Live: `MATCH (x:A:B) CALL { OPTIONAL MATCH
      (n:A:B {id:3}) RETURN n.id AS nid } RETURN x.id, nid` → Rust "Variable n not
-     found" (main and merged), C `[[1,3],[2,3],[3,3]]`. Fix modelled
+     found" (main and merged; still on 8743953a8 = W6-opt-1, re-checked live), C `[[1,3],[2,3],[3,3]]`. Fix modelled
      (`fixed_keeps_filter`, `fixed_conservative`, `fixed_optional_inherits_left`)
      and validated live.
 3. Fresh-id minting: PROVEN — entry ids are `0..k-1` in the body scope, the

@@ -3,7 +3,7 @@ import PlannerBuild.Stitch
 # Clause plans vs openCypher clause semantics
 
 For each clause kind, `planX` is the plan `Planner::plan` builds for it
-(mod.rs:2829-3366; `plan_project` mod.rs:2310-2481), and `specX` is the
+(mod.rs:2934-3471; `plan_project` mod.rs:2415-2586), and `specX` is the
 openCypher meaning of the clause as a map from the incoming driving table to
 the outgoing one (with the graph state threaded, clause at a time). The
 theorems say: filling the clause plan's insertion point with *any* input plan
@@ -40,8 +40,8 @@ def wrapOpt (mk : Nat → Op) : Option Nat → Plan → Plan
   | some k, p => .node (mk k) [p]
   | none, p => p
 
-/-- mod.rs:2392-2479, in the same order: Project/Aggregate [Commit], then
-Distinct (only without aggregation, mod.rs:2452), Sort, Skip, Limit, Filter. -/
+/-- mod.rs:2497-2584, in the same order: Project/Aggregate [Commit], then
+Distinct (only without aggregation, mod.rs:2557), Sort, Skip, Limit, Filter. -/
 def planProject (c : ProjC) : Plan :=
   let base := Plan.node (if c.agg then .aggregate c.p else .project c.p)
     (if c.write then [.node .commit []] else [])
@@ -63,7 +63,7 @@ def specProject (c : ProjC) (r : Rec V) (T : Res V G) : Res V G :=
   (optApply (fun φ rs => rs.filter fun row => S.test φ row T.2) c.filter rows5, T.2)
 
 /-- `DISTINCT` over an aggregation is the identity (groups have distinct keys);
-the planner relies on it to drop the `Distinct` (mod.rs:2452). -/
+the planner relies on it to drop the `Distinct` (mod.rs:2557). -/
 def AggDistinct (c : ProjC) : Prop := ∀ r rows, S.dedup (S.agg c.p r rows) = S.agg c.p r rows
 
 /-! ## Generic machinery: implementing a clause at the insertion point -/
@@ -229,7 +229,7 @@ theorem unary_rowSem (W : Op) (h1 : W.isBag = false)
     UnarySem S W (rowSem S W) := unary_row S W h1 h2
 
 /-- A per-row leaf clause (UNWIND, CREATE, SET, REMOVE, DELETE, a procedure
-call): its plan is the operator alone (mod.rs:2979-2991, 3030-3038, 3042-3104,
+call): its plan is the operator alone (mod.rs:3084-3096, 3030-3038, 3042-3104,
 2912-2916), and it implements "run the step on every incoming row". -/
 theorem implements_rowLeaf (w : Plan → Path) (hw : GoodWalk w) (W : Op)
     (h1 : W.isBag = false)
@@ -280,7 +280,7 @@ theorem delete_correct (w : Plan → Path) (hw : GoodWalk w) (p : Nat) (ok : Pla
       specWrite S p (ev S y r g) :=
   implements_rowLeaf S w hw (.delete p) rfl (by simp [Op.isCorr]) rfl ok q y r g hq
 
-/-- `CALL proc(...) YIELD ... [WHERE φ]` (mod.rs:2836-2927, non-index procedures). -/
+/-- `CALL proc(...) YIELD ... [WHERE φ]` (mod.rs:2941-3032, non-index procedures). -/
 def planProc (p : Nat) (φ : Option Nat) : Plan := wrapOpt .filter φ (.node (.procCall p) [])
 
 def specProc (p : Nat) (φ : Option Nat) (T : Res V G) : Res V G :=
@@ -320,7 +320,7 @@ def specMerge (p : Nat) (mt : Rec V → G → List (Rec V)) (path : Option Nat)
   | none => merged
   | some q => (merged.1.map (S.path q), merged.2)
 
-/-- mod.rs:2995-3028: `Merge(match_branch)`, under a `PathBuilder` when the
+/-- mod.rs:3100-3133: `Merge(match_branch)`, under a `PathBuilder` when the
 pattern has named paths. -/
 def planMerge (p : Nat) (m : Plan) (path : Option Nat) : Plan :=
   match path with
@@ -350,7 +350,7 @@ theorem forRows_path (q : Nat) (T : Res V G) :
   | cons x xs ih => simp [ih]
 
 /-- **MERGE is correct at the in-loop insertion point**, with or without a
-named path: the walk steps over `PathBuilder` (mod.rs:2725) and the input lands
+named path: the walk steps over `PathBuilder` (mod.rs:2830) and the input lands
 as `Merge`'s child 0. -/
 theorem merge_loop_correct (p : Nat) (m : Plan) (path : Option Nat) (mt : Rec V → G → List (Rec V))
     (hm : MatchBranch S m mt) (ok : Plan → Prop) (q y : Plan) (r : Rec V) (g : G) :
@@ -385,7 +385,7 @@ theorem merge_first_correct (p : Nat) (m : Plan) (mt : Rec V → G → List (Rec
   exact ev_merge_two S p m y mt hm r g
 
 /-- **Bug (confirmed): MERGE with a named path as the last clause.** The first
-walk (mod.rs:2638-2644) stops at `PathBuilder`, so the previous clause becomes
+walk (mod.rs:2743-2749) stops at `PathBuilder`, so the previous clause becomes
 `PathBuilder`'s child 0 beside `Merge`: -/
 theorem merge_path_last_misplaced (p k : Nat) (m q y : Plan) :
     refill (planMerge p m (some k)) (slotFirst (planMerge p m (some k))) q y =
@@ -426,7 +426,7 @@ theorem forItems_congr {A : Type} (f f' : A → G → G) (h : ∀ a g, f a g = f
   | nil => rfl
   | cons a as ih => simp [forItems, h, ih]
 
-/-- FOREACH (mod.rs:3301-3364, no comprehension in the list): `ForEach(body)`,
+/-- FOREACH (mod.rs:3406-3469, no comprehension in the list): `ForEach(body)`,
 the input becomes child 0. -/
 theorem foreach_correct (w : Plan → Path) (hw : GoodWalk w) (e : Nat) (x : Var) (b : Plan)
     (sb : Rec V → G → Res V G) (hb : Body S b sb) (q y : Plan) (r : Rec V) (g : G) :
@@ -443,7 +443,7 @@ theorem foreach_correct (w : Plan → Path) (hw : GoodWalk w) (e : Nat) (x : Var
 extend it). -/
 def specCall (sb : Rec V → G → Res V G) (T : Res V G) : Res V G := forRows sb T.1 T.2
 
-/-- Returning CALL {} (mod.rs:3215-3281): `Apply(body)` — with the body's root
+/-- Returning CALL {} (mod.rs:3320-3386): `Apply(body)` — with the body's root
 Project renamed in place, or a remapping Project on top: either way a plan
 `b` implementing the body. -/
 theorem call_correct (w : Plan → Path) (hw : GoodWalk w) (b : Plan) (sb : Rec V → G → Res V G)
@@ -460,7 +460,7 @@ def specUnitCall (sb : Rec V → G → Res V G) (T : Res V G) : Res V G :=
   forRows (fun row g => ([row], (sb row g).2)) T.1 T.2
 
 /-- The keyless, aggregation-free `Aggregate` the planner puts over a unit
-body (mod.rs:3287-3298) yields exactly one row, which Apply merges over the
+body (mod.rs:3392-3403) yields exactly one row, which Apply merges over the
 input row: the input row. -/
 def KeylessOne (p0 : Nat) : Prop := ∀ r rows, S.agg p0 r rows = [r]
 
@@ -481,7 +481,7 @@ with nulls for the pattern's new variables. -/
 def specOptional (vs : List Var) (mt : Rec V → G → List (Rec V)) (T : Res V G) : Res V G :=
   forRows (fun row g => (if (mt row g).isEmpty then [S.pad vs row] else mt row g, g)) T.1 T.2
 
-/-- OPTIONAL MATCH with no bound pattern variable (mod.rs:2959): `Optional(m)`. -/
+/-- OPTIONAL MATCH with no bound pattern variable (mod.rs:3064): `Optional(m)`. -/
 theorem optional_correct (w : Plan → Path) (hw : GoodWalk w) (vs : List Var) (m : Plan)
     (mt : Rec V → G → List (Rec V)) (hm : MatchBranch S m mt) (q y : Plan) (r : Rec V) (g : G) :
     ev S (refill (.node (.optional vs) [m]) (slotWith w (.node (.optional vs) [m])) q y) r g =
@@ -493,7 +493,7 @@ theorem optional_correct (w : Plan → Path) (hw : GoodWalk w) (vs : List Var) (
   show (let b := ev S m row g'; (if b.1.isEmpty then [S.pad vs row] else b.1, b.2)) = _
   simp only; rw [hm row g']
 
-/-- OPTIONAL MATCH with a bound pattern variable (mod.rs:2957):
+/-- OPTIONAL MATCH with a bound pattern variable (mod.rs:3062):
 `Apply(Optional(m))`. Same meaning. -/
 theorem optional_apply_correct (w : Plan → Path) (hw : GoodWalk w) (vs : List Var) (m : Plan)
     (mt : Rec V → G → List (Rec V)) (hm : MatchBranch S m mt) (q y : Plan) (r : Rec V) (g : G) :
@@ -511,7 +511,7 @@ theorem optional_apply_correct (w : Plan → Path) (hw : GoodWalk w) (vs : List 
 def specMatch (mt : Rec V → G → List (Rec V)) (T : Res V G) : Res V G :=
   (T.1.flatMap fun row => mt row T.2, T.2)
 
-/-- MATCH whose variables are all bound (mod.rs:2970-2973): `Apply(m)`. -/
+/-- MATCH whose variables are all bound (mod.rs:3075-3078): `Apply(m)`. -/
 theorem match_bound_correct (w : Plan → Path) (hw : GoodWalk w) (m : Plan)
     (mt : Rec V → G → List (Rec V)) (hm : MatchBranch S m mt) (q y : Plan) (r : Rec V) (g : G) :
     ev S (refill (.node .apply [m]) (slotWith w (.node .apply [m])) q y) r g =
@@ -520,7 +520,7 @@ theorem match_bound_correct (w : Plan → Path) (hw : GoodWalk w) (m : Plan)
   show forRows _ _ _ = _
   exact forRows_ro _ mt hm _ _
 
-/-- UNION / UNION ALL (mod.rs:3197-3214): every branch on the argument row,
+/-- UNION / UNION ALL (mod.rs:3302-3319): every branch on the argument row,
 concatenated; `Distinct` on top for UNION. -/
 def planUnion (bs : List Plan) (all : Bool) : Plan :=
   if all then .node .union bs else .node .distinct [.node .union bs]

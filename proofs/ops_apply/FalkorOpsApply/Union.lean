@@ -3,7 +3,7 @@
 
 `UnionOp` concatenates its children's streams: each branch is instantiated
 lazily (`run_batch`) once the previous one is exhausted.  `UNION` (distinct) is
-planned as `Distinct` over this operator (`planner/mod.rs:3197`), so the operator
+planned as `Distinct` over this operator (`planner/mod.rs:3302`), so the operator
 itself is always the `ALL` form.
 
 State refinement: Rust keeps `current_child : usize` and indexes

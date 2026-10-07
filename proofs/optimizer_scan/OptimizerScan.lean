@@ -22,19 +22,19 @@ comparison (only `true` keeps a row).
 
 | Lean | Rust |
 | --- | --- |
-| `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:51-89, 118-131` |
+| `IdSeek.getIdFilter`, `Op.flip`, `collectFilters` | `utilize_node_by_id.rs:52-92, 106-119` |
 | `IdSeek.step`, `evalIdFilter`, `asU64` | `runtime/runtime.rs:1309-1367` (`id as u64` at 1322) |
 | `IdSeek.maxNodeId`, `seek` | `graph/graph.rs:1602` (→ `IdSpace::max_id`), `runtime/ops/node_by_id_seek.rs:63-73` |
-| `Index.enc`, `arrEnc` | `index/mod.rs:716-846` (`Document::set`) |
-| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1463-1674`, `Index::query` 1677 |
+| `Index.enc`, `arrEnc` | `index/mod.rs:716-845` (`Document::set`) |
+| `Index.build`/`buildAll`/`buildSome`, `bsel`, `idxSel` | `index/mod.rs:1472-1683`, `Index::query` 1677 |
 | `Index.canUtilize`, `evalIQ` | `runtime/ops/node_by_index_scan.rs:98-287` |
-| `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:367-378, 557-605, 845-928` |
-| `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:325-365, 612-714, 491-554` |
-| `Index.pushAnd`/`mergeInto`, `pushOr`, `tryPushdown` | `utilize_index.rs:770-826` |
-| `Index.utilize`, `Plan.sel` | `utilize_index.rs:995-1085`, `node_by_index_scan.rs:301-328` |
-| `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:294-311, 914-974` |
-| `ScanOrder.place`, `runScoped` | `select_scan_node.rs:893-900, 1067-1117` |
-| `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:206-222, 296-319` |
+| `Index.hasT`, `firstP`, `nonIdxT`, `needsPost` | `utilize_index.rs:357-368, 547-595, 802-873` |
+| `Index.buildOp`, `trySingle`, `mergeRange` | `utilize_index.rs:315-355, 602-704, 481-544` |
+| `Index.pushAnd`/`mergeInto`, `pushOr`, `tryPushdown` | `utilize_index.rs:727-783` |
+| `Index.utilize`, `Plan.sel` | `utilize_index.rs:973-1046`, `node_by_index_scan.rs:301-328` |
+| `ScanOrder.Hop.swap`, `pick`, `order` | `select_scan_node.rs:370-387, 1000-1060` |
+| `ScanOrder.place`, `runScoped` | `select_scan_node.rs:979-986, 1185-1235` |
+| `ScanOrder.reorderLabels`, `withPrimary` | `reorder_labels.rs:16-47`, `utilize_index.rs:199-215, 286-309` |
 
 ## Proven (plain English)
 
@@ -69,14 +69,16 @@ Scan selection (`ScanOrder.lean`):
 ## CONFIRMED bugs (new in this wave)
 
 1. **`select_scan_node` places an inline-attribute Filter before its variable is bound**
-   — `select_scan_node.rs:893-900` seeds `initial_bound` with `best_node` even when the
-   outer-context child is kept (no scan for `best_node` is built, line 1080). Lean:
+   — `select_scan_node.rs:979-986` seeds `initial_bound` with `best_node` even when the
+   outer-context child is kept (no scan for `best_node` is built, line 1198). Lean:
    `ScanOrder` counterexample after `place_wellScoped`. Query
    `MATCH (b:A) WITH b LIMIT 1 MATCH (b)<-[]-(d)-[:R]->(c {v:1})-[:R]->(z) RETURN count(*)`
    → Rust 0, C 1 (also `ORDER BY`/`SKIP`/`DISTINCT` children; `WITH b` alone is fine).
    Found by the oracle fuzz (`fuzz3.py`, 1 Rust-only mismatch in 480 queries). Fix: insert
    `best_node` into `initial_bound` only when `existing_child` is `None`.
    Test `bug_select_scan_node_places_filter_before_its_variable_is_bound`.
+   STILL PRESENT at 8743953a8 (re-checked live on a build of main's planner, b3582e34a: Rust 0,
+   expected 1; the EXPLAIN shows the `c` Filter right after `(b)<-(d)`).
 2. **`NodeByIdSeek` returns a node that never existed, and writes to it persist** —
    `Graph::max_node_id` (`graph.rs:1602`, `IdSpace::max_id` since #2846) is 0 on a graph with no nodes, so
    `evaluate_id_filter` yields `{0}` and `node_by_id_seek.rs:67` only subtracts deleted ids.
@@ -88,14 +90,14 @@ Scan selection (`ScanOrder.lean`):
    make the range `[0, bound)` exclusive. Tests `bug_id_seek_phantom_node_*`.
    Re-checked live at 2c874022a (after #2846): still present (Rust 1 row, C 0).
 3. **Computed constants ≥ 2^52 return every node** — `is_non_indexable_subexpr`
-   (`utilize_index.rs:910-928`) flags only literal lossy ints; `4503599627370495 +
+   (`utilize_index.rs:855-873`) flags only literal lossy ints; `4503599627370495 +
    4503599627370495 + 3` is not flagged, the Filter is dropped, `can_utilize_index` rejects
    the runtime value and the op falls back to a label scan with no Filter. Lean `IndexCex` C4.
    `MATCH (n:L) WHERE n.v = 4503599627370495 + 4503599627370495 + 3` → Rust all 6 nodes,
    Rust without index 0, C 0 (same for `n.v > 4503599627370495 * 2`). Fix: keep the Filter
    whenever the op may fall back (any non-literal value side), or have the fallback re-apply it.
 4. **`IN` with a computed left side is pushed as `n.a IN [...]`** — `try_in_filter_scan`
-   (`utilize_index.rs:630-655`) only asks that the side *contain* a property, and takes
+   (`utilize_index.rs:620-645`) only asks that the side *contain* a property, and takes
    the first one. Lean C7/C7'. `abs(n.a) IN [1]` → Rust `[1]` (misses a=-1), without index
    `[1],[2]`, C `[1],[2]`; `toString(n.a) IN ['1']` → Rust `[]`, C `[1]`;
    `n.a + 1 IN [2]` → Rust `[]`, without index `[1]` (C errors). Fix: require
@@ -108,18 +110,22 @@ Scan selection (`ScanOrder.lean`):
 ## Also reproduced here but already reported by parallel wave-2 agents
 - `proofs/index_layer` bugs 1, 3, 4, 5, 6, 8: folded `date()` constant returns every node
   (C3); `IN [.., date()]` drops the item (C9); multi-label AND → nothing / OR loses rows
-  (C5, C6); temporals indexed as numbers (C2); `n.v > 'B' AND n.v < 'B'` exact-match trap
-  (C11); Bool/Int conflation (C1, shared with C).
+  (C5, C6); temporals indexed as numbers (C2, FIXED by #3076); `n.v > 'B' AND n.v < 'B'`
+  exact-match trap (C11, FIXED by #3072 — both `IndexCex` examples now state agreement);
+  Bool/Int conflation (C1, shared with C). `utilize_sound` still assumes no temporal values and no
+  strict string bound in an AND (gap: those hypotheses could now be weakened).
 - `proofs/optimizer_rewrites` bugs 3, 4: `id(n) > -1` / `>= -5` / `< -1` / `<= -1` via
   `id as u64` (`bug_id_seek_negative_operand` here), non-integer id operands error.
-- Array-contains keeps its Filter only at the root (`utilize_index.rs:816-823`): inside AND
+- Array-contains keeps its Filter only at the root (`utilize_index.rs:773-780`): inside AND
   it is dropped, so `1 IN n.arr AND n.k > 0` returns `arr: [true]` (Bool/Int share the numeric
   array field). Rust with index `[4],[5]`, without `[5]`, C `[4],[5]` — index-dependent result
   shared with C (Lean C10).
 
 ## Suspected / hazards (not confirmed as wrong results)
-- `utilize_node_by_id.rs:118` `parent().unwrap()` panics if a scan is the plan root (no
-  query found that does this).
+- `utilize_node_by_id.rs:106` `parent().unwrap()` panics if a scan is the plan root. W4-plan-4's
+  repro (`CALL db.labels() YIELD label MATCH (n) RETURN label`) no longer crashes: on builds at
+  1c9994e37+#3076 (88e92ae25) and at main's planner (b3582e34a) the plan is
+  `Project → AllNodeScan(n) → ProcedureCall`, so the scan has a parent. The `unwrap` remains (hazard).
 - `evaluate_id_filter` stops at the first empty conjunct, so a type error in a later one is
   masked: `id(n) = 100 AND id(n) = 'x'` → 0 rows, swapped → error (`probe_id_seek_error_order`).
 - `count(*)` with unused edge variables collapses parallel/multi-type edges (`(d:B)-[e:R|S]->(a)`
@@ -140,16 +146,16 @@ Scan selection (`ScanOrder.lean`):
   modelled for filter placement (`runScoped`); `CondTraverseOp` expansion, `IncludePending`,
   `Argument`, var-len traversal and the endpoint *scores* (cost only) are not modelled.
 - Edge index scans (`EdgeByIndexScan`, `prune_all_node_scan_child`, `add_to_labels_filter`)
-  and the inline-attribute path are NOT COVERED (see `COVERAGE.tsv`).
+  were NOT COVERED at the time (wave 4 below covers them).
 
 ## Wave 4 additions (origin/main 3fec7d7c9)
 - `EdgeInline`: both `IndexSubject` impls (`nMatch_spec`, `eMatch_spec`), the edge headline
   `edge_utilize_sound` (EdgeByIndexScan + bound-endpoint filter = Filter → CondTraverse),
-  the inline-attribute path (`applyInline_eq_utilize`, `applyInline_sound`), `distance()`
+  the inline-attribute path (now historical `pre2390_applyInline_*`), `distance()`
   scans (`distance_sound`: sound with a complete GEO filter; the Filter is always kept),
   and `NodeByIndexScanOp` (`scanRow_eq_sel`, `evalIQE_*`, `canUtilize_empty`).
 - `Cleanup`: BFS walkers (`mem_bfs`, `extractAttr_*`, `hasPropOf_iff`, `nonIdxD_spec`),
-  `refsVar_iff`, `prune_sound` (dropping the AllNodeScan child keeps the edge multiset),
+  `pre2390_refsVar_iff` (historical), `prune_sound` (dropping the AllNodeScan child keeps the edge multiset),
   `addToLabels_idem`, the fixed-point driver (`untilStable_preserves`, `untilStable_stable`),
   `tryIndexRewrite_sound`, `utilizeIndex_sound`.
 - `ScanTree`: `select_scan_node` helpers on a path-addressed rose tree (`nodePath_eq`,
@@ -160,6 +166,37 @@ Scan selection (`ScanOrder.lean`):
   outscores a bare bound one (3), contrary to the "bound has highest priority" doc comment.
 - Hazard: `prune_all_node_scan_child` prunes the AllNodeScan *subtree*; `prune_sound` assumes
   the scan is a leaf (no live query found where it is not).
+
+## Re-target to 8743953a8 (#2390 d2c42e032: plan an inline property map once)
+The planner now lowers inline attributes to `IR::Filter`s and strips them from the pattern; the
+optimizer's own inline paths are gone. Model changes (every citation re-mapped):
+- `ScanTree`: `score_endpoint` returns `(score, filter_runs_late, cardinality)` and no longer adds
+  2 for attributes (`scoreEndpoint_spec`; `score_bound_dominant`: a bound endpoint is never
+  outscored now; the old double count is `pre2390_score_bound_not_dominant`);
+  `collect_filtered_vars` returns `above` and `all` (the downward spine: `spineVars_eq`,
+  `filteredVars_above_sub`); `make_scan_subtree` takes salvaged filters and `filters_of` collects
+  them (`makeScanSubtree_planner`, `filtersOf_wrap`, `filtersOf_makeScanSubtree`);
+  `select_var_len_scan_node` (`vlNonLeaf_keeps_wrappers`, `vlLeaf_guards`).
+- `ScanOrder`: salvaged filters re-attached above the re-ordered chain are well-scoped
+  (`salvage_wellScoped`, `boundAfter_hop`).
+- `Cleanup`: `governing_filter` (`governingFilter_spec`), `match_scan_with_filter`, and
+  `apply_filter_pushdown`'s `over_pending` (`utilizeP_false`, `utilizeP_true`, `overPending_sound`:
+  over `IncludePending` the kept Filter makes the index scan exact for any pending set;
+  `overPending_needs_filter`: dropping it would not be); `try_index_rewrite` has only the filter
+  path (`tryIndexRewrite_sound`, `tryIndexRewrite_pending_sound`). Removed fns
+  (`get_inline_attr_index`, `needs_inline_post_filter`, `apply_inline_rewrite`, `inline_attrs`,
+  `index_query_references_var`, `references_var`) are kept as `pre2390_*` history;
+  `pre2390_applyInline_eq_utilize` shows the inline path was already `utilize` of the lowered filter.
+- `IdSeek`: `get_id_filter` compares `(id, scope_id)` and asks `subtree_references_variable`
+  (`getIdFilter_spec`, `getIdFilter_other_scope`).
+
+NEW CONFIRMED BUG (pre-existing; present before and after #2390): `select_var_len_scan_node`'s leaf
+rewrite prunes the whole child subtree (`select_scan_node.rs:661`), including a `Filter` wrapper that
+`planner_scan_alias` looked through. `MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2})
+RETURN a.v, b.w` on `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` returns
+`[1,2],[5,2]` (should be `[1,2]`; the fixed-length `-[:R]->` form is right) on builds 88e92ae25
+and b3582e34a. `ScanTree.vl_leaf_fires_over_filter`, `vl_leaf_drops_filter`. Fix: refuse the leaf
+rewrite when the wrapper holds a `Filter`, or salvage it above the traverse with `filters_of`.
 -/
 import OptimizerScan.IdSeek
 import OptimizerScan.Index

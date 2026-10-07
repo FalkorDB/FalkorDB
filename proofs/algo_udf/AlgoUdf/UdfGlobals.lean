@@ -8,19 +8,22 @@ object is QuickJS (AXIOMATISED: `globals.set(k, v)` makes `k` resolve to `v`).
 | here | there |
 | --- | --- |
 | `vRegister`              | `globalThis.__falkor_register` of `setup_validate_globals` :62-72 |
-| `validateGlobals`        | `setup_validate_globals` :45-95 (installs `falkor.register`, a no-op `falkor.log`) |
+| `validateGlobals`        | `setup_validate_globals` :45-95 (installs `falkor.register`, a no-op `falkor.log`, then `setup_graph_global` :94, since #3079) |
 | `collectNames`           | `collect_validate_names` :98-108 (`names_arr.get::<String>`) |
 | `rRegister`              | `__falkor_register` of `setup_runtime_globals` :121-127 |
-| `runtimeGlobals`         | `setup_runtime_globals` :111-190 (`falkor.{register,log}`, `graph.{traverse,getNodeById,iterateNodes,iterateEdges}`) |
-| `collectFuncs`           | `collect_runtime_funcs` :193-220 |
-| `logString`              | `js_value_to_log_string` :222-248 |
+| `runtimeGlobals`         | `setup_runtime_globals` :111-158 (`falkor.{register,log}`, then `setup_graph_global` :157) |
+| `graphGlobal`            | `setup_graph_global` :163-197 (`graph.{traverse,getNodeById,iterateNodes,iterateEdges}`; shared since #3079) |
+| `collectFuncs`           | `collect_runtime_funcs` :200-227 |
+| `logString`              | `js_value_to_log_string` :229-255 |
 
 Results: validation rejects non-functions and exact duplicate names and
 returns names in registration order (`validate_names_nodup`); at runtime a
 library `L` (non-empty name) registering the same sequence stores exactly the
 keys `L.name` — the qualified names `UdfRepo::load` computes
 (`runtime_keys_eq_qualified`). An empty library name breaks that agreement
-(`empty_lib_name_mismatch`).
+(`empty_lib_name_mismatch`). Since #3079 (`006428fc5`, issue #3077) both contexts
+install the same `graph` global (`graph_global_in_both`, `validate_runtime_same_graph`);
+before it the validation context had none (`pre3079_validate_lacks_graph`).
 -/
 namespace AlgoUdf.UdfGlobals
 
@@ -45,8 +48,16 @@ def vRun : List String → List (String × JVal) → Except String (List String)
     | .error e => .error e
     | .ok ns => vRun ns t
 
-/-- Globals installed by `setup_validate_globals`. -/
-def validateGlobals : List String := ["falkor.register", "falkor.log"]
+/-- Globals installed by `setup_graph_global` (:163-197). -/
+def graphGlobal : List String :=
+  ["graph.traverse", "graph.getNodeById", "graph.iterateNodes", "graph.iterateEdges"]
+
+/-- Globals installed by `setup_validate_globals`: `falkor.*`, then `setup_graph_global` (#3079). -/
+def validateGlobals : List String := ["falkor.register", "falkor.log"] ++ graphGlobal
+
+/-- HISTORICAL (before #3079, `006428fc5`): validation installed only `falkor.*`, so a
+library touching `graph` at top level failed to load though it would run. -/
+def pre3079_validateGlobals : List String := ["falkor.register", "falkor.log"]
 
 /-- `collect_validate_names`: every element must convert to a String. -/
 def collectNames (arr : List JVal) : Except String (List String) :=
@@ -102,10 +113,24 @@ def rRun (lib : String) : List (String × Nat) → List (String × JVal) → Exc
     | .error e => .error e
     | .ok r => rRun lib r t
 
-/-- Globals installed by `setup_runtime_globals`. -/
-def runtimeGlobals : List String :=
-  ["falkor.register", "falkor.log", "graph.traverse", "graph.getNodeById", "graph.iterateNodes",
-   "graph.iterateEdges"]
+/-- Globals installed by `setup_runtime_globals`: `falkor.*`, then `setup_graph_global`. -/
+def runtimeGlobals : List String := ["falkor.register", "falkor.log"] ++ graphGlobal
+
+/-- **#3079: the validation and runtime contexts define the same globals**, so a
+library that validates is one whose top level sees what it will see at runtime. -/
+theorem validate_runtime_same_globals : validateGlobals = runtimeGlobals := rfl
+
+/-- Every `graph.*` entry point exists in both contexts. -/
+theorem graph_global_in_both (g : String) (h : g ∈ graphGlobal) :
+    g ∈ validateGlobals ∧ g ∈ runtimeGlobals := by
+  simp [validateGlobals, runtimeGlobals, h]
+
+theorem validate_runtime_same_graph :
+    validateGlobals.filter (·.startsWith "graph.") = runtimeGlobals.filter (·.startsWith "graph.") := rfl
+
+/-- What #3079 fixed: `graph.traverse` existed at runtime but not during validation. -/
+theorem pre3079_validate_lacks_graph :
+    "graph.traverse" ∉ pre3079_validateGlobals ∧ "graph.traverse" ∈ runtimeGlobals := by decide
 
 theorem rRun_keys (lib : String) (hl : lib ≠ "") :
     ∀ (calls : List (String × JVal)) (reg out : List (String × Nat)),

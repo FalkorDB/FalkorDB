@@ -1,14 +1,19 @@
 import FalkorIndexLayer.LeafBytes
 import FalkorIndexLayer.LeafMerge
 /-
-# `AosLeaf` (`cow_btree/leaf/aos.rs`, origin/main 3fec7d7c9) and the `(key, doc)` order
+# `AosLeaf<8>` (`cow_btree/leaf/aos.rs`, origin/main 8743953a8) and the `(key, doc)` order
+
+This is the default `DOC_BYTES = 8` (16-byte entry) instance, which the rest of the `Leaf*` modules
+use. The general `AosLeaf<DOC_BYTES>` (#2278) is `LeafAosD.lean`; `aosD8_*` there prove it equals
+this model at `DOC_BYTES = 8`. `aosRead` is the old `AosLeaf::read` helper, inlined by #2278 into
+`key`/`doc` (same reads).
 
 | Lean | Rust |
 | --- | --- |
 | `lexLe` | `(u64, u64)` tuple `<=` |
-| `aosEnc`, `aosBuild` | `AosLeaf::build` `aos.rs:46` |
-| `aosCount`, `aosRead`, `aosKey`, `aosDoc` | `count` 14, `read` 21, `key` 30, `doc` 38 |
-| `aosMerge` | `AosLeaf::merge_batch` 60 (via `merge_walk`) |
+| `aosEnc`, `aosBuild` | `AosLeaf::build` `aos.rs:39` |
+| `aosCount`, `aosRead`, `aosKey`, `aosDoc` | `count` 18, (`read`, inlined), `key` 23, `doc` 31 |
+| `aosMerge` | `AosLeaf::merge_batch` 51 (via `merge_walk`) |
 | `pairsOf` | `Leaf::iter` / `to_pairs` (`leaf/mod.rs:233,238`) |
 -/
 namespace IndexLayer.Leaf

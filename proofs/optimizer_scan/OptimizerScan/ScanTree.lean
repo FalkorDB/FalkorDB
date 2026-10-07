@@ -1,5 +1,5 @@
 /-
-# `select_scan_node.rs` helpers (origin/main 3fec7d7c9)
+# `select_scan_node.rs` helpers (origin/main 8743953a8, after #2390 d2c42e032)
 
 The plan is a rose tree; an orx-tree `NodeIdx` is modelled by its structural
 path (child indices from the root), which is exactly what `node_path` computes.
@@ -7,16 +7,16 @@ path (child indices from the root), which is exactly what `node_path` computes.
 | here | there |
 | --- | --- |
 | `IRk`, `PT`, `getAt` | `IR`, `DynTree<IR>`, `plan.node(idx)` |
-| `scoreEndpoint` | `score_endpoint` 89 |
-| `collectFilteredVars` | `collect_filtered_vars` 134 |
-| `makeScanSubtree` | `make_scan_subtree` 167 |
-| `argumentLeafOf` | `argument_leaf_of` 200 |
-| `inMergeMatchBranch` | `in_merge_match_branch` 219 |
-| `scanDepth`, `isPlannerScan`, `plannerScanAlias`, `plannerScanIdx` | `is_planner_scan_subtree` 239, `planner_scan_alias` 258, `planner_scan_idx` 277 |
-| `collectOutputAliases` | `collect_output_aliases` 315 |
-| `nodePath`, `resolvePath` | `node_path` 366, `resolve_path` 383 |
-| `childSubtreeBinds` | `child_subtree_binds` 399 |
-| `vlRewrite`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 434 |
+| `scoreEndpoint` | `score_endpoint` 98 |
+| `collectFilteredVars`, `spineVars`, `filteredVars` | `collect_filtered_vars` 156 (`above` / `all`), its `collect` 160 (= `filterVars`) |
+| `makeScanSubtree`, `filtersOf` | `make_scan_subtree` 214, `filters_of` 250 |
+| `argumentLeafOf` | `argument_leaf_of` 276 |
+| `inMergeMatchBranch` | `in_merge_match_branch` 295 |
+| `scanDepth`, `isPlannerScan`, `plannerScanAlias`, `plannerScanIdx` | `is_planner_scan_subtree` 315, `planner_scan_alias` 334, `planner_scan_idx` 353 |
+| `collectOutputAliases` | `collect_output_aliases` 391 |
+| `nodePath`, `resolvePath` | `node_path` 442, `resolve_path` 459 |
+| `childSubtreeBinds` | `child_subtree_binds` 475 |
+| `vlNonLeaf`, `vlLeaf`, `reach`, `vl_reverse_sound` | `select_var_len_scan_node` 510 |
 -/
 namespace OptimizerScan.ScanTree
 
@@ -54,42 +54,62 @@ def getAt : PT → List Nat → Option PT
 
 /-! ## `score_endpoint` -/
 
+/-- An endpoint as `score_endpoint` reads it. Since #2390 the inline attributes are no longer read
+    (the planner lowers them to `Filter`s and strips them from the pattern). -/
 structure EP where
   alias : Var
   labels : List Nat
-  nattrs : Nat
 
-def scoreEndpoint (n : EP) (filtered : List Var) (bound : List Nat) (count : Nat → Nat) : Nat × Nat :=
-  ((if n.alias.1 ∈ bound then 3 else 0) + (if n.alias ∈ filtered then 2 else 0) +
-   (if n.nattrs > 0 then 2 else 0) + (if n.labels.isEmpty then 0 else 1),
+/-- `FilteredVars` (`select_scan_node.rs:145-154`): variables of the Filters *above* the chain, and
+    `above` plus those of the Filters on the chain's own single-child spine. -/
+structure FV where
+  above : List Var
+  all : List Var
+
+/-- `score_endpoint` (`select_scan_node.rs:98-132`): `(score, filter_runs_late, cardinality)`. -/
+def scoreEndpoint (n : EP) (fv : FV) (bound : List Nat) (count : Nat → Nat) : Nat × Bool × Nat :=
+  ((if n.alias.1 ∈ bound then 3 else 0) + (if n.alias ∈ fv.all then 2 else 0) +
+   (if n.labels.isEmpty then 0 else 1),
+   decide (n.alias ∈ fv.above),
    match n.labels with
    | [] => 2 ^ 64 - 1
    | l :: ls => (ls.map count).foldl min (count l))
 
-/-- **PROVEN** (score formula and its two halves): bound +3, filtered +2,
-inline attributes +2, labelled +1; cardinality is `u64::MAX` for an unlabelled
-node, else the minimum label count. -/
-theorem scoreEndpoint_spec (n : EP) (f : List Var) (b : List Nat) (c : Nat → Nat) :
-    (scoreEndpoint n f b c).1 ≤ 8 ∧
-    (n.alias.1 ∈ b → (scoreEndpoint n f b c).1 ≥ 3) ∧
-    (n.alias ∈ f → (scoreEndpoint n f b c).1 ≥ 2) ∧ (n.nattrs > 0 → (scoreEndpoint n f b c).1 ≥ 2) ∧
-    (n.labels ≠ [] → (scoreEndpoint n f b c).1 ≥ 1) ∧
-    (n.labels = [] → (scoreEndpoint n f b c).2 = 2 ^ 64 - 1) := by
+/-- **PROVEN** (score formula): bound +3, filtered anywhere around the chain +2, labelled +1; the
+tie-breaker flag says the endpoint's Filter sits above the chain; cardinality is `u64::MAX` for an
+unlabelled node, else the minimum label count. -/
+theorem scoreEndpoint_spec (n : EP) (fv : FV) (b : List Nat) (c : Nat → Nat) :
+    (scoreEndpoint n fv b c).1 ≤ 6 ∧
+    (n.alias.1 ∈ b → (scoreEndpoint n fv b c).1 ≥ 3) ∧
+    (n.alias ∈ fv.all → (scoreEndpoint n fv b c).1 ≥ 2) ∧
+    (n.labels ≠ [] → (scoreEndpoint n fv b c).1 ≥ 1) ∧
+    (scoreEndpoint n fv b c).2.1 = decide (n.alias ∈ fv.above) ∧
+    (n.labels = [] → (scoreEndpoint n fv b c).2.2 = 2 ^ 64 - 1) := by
   unfold scoreEndpoint
-  refine ⟨by split <;> split <;> split <;> split <;> omega, fun h => ?_, fun h => ?_, fun h => ?_,
-    fun h => ?_, fun h => by simp [h]⟩
-  · simp only [h, ite_true]; omega
+  refine ⟨by split <;> split <;> split <;> omega, fun h => ?_, fun h => ?_, fun h => ?_, rfl,
+    fun h => by simp [h]⟩
   · simp only [h, ite_true]; omega
   · simp only [h, ite_true]; omega
   · have : n.labels.isEmpty = false := by cases hl : n.labels <;> simp_all
     simp only [this]; simp
 
-/-- The documented "bound has highest priority" is a heuristic only: a filtered,
-attributed, labelled endpoint (5) outranks a bare bound one (3). Cost, not
-correctness (soundness is `ScanOrder.order_sound`). -/
-theorem score_bound_not_dominant :
-    (scoreEndpoint ⟨(1, 0), [], 0⟩ [] [1] (fun _ => 0)).1 <
-    (scoreEndpoint ⟨(2, 0), [7], 1⟩ [(2, 0)] [1] (fun _ => 0)).1 := by decide
+/-- **PROVEN**: since #2390 a bound endpoint is never outscored by an unbound one (an unbound
+endpoint scores at most 2 + 1 = 3), as the doc comment says. -/
+theorem score_bound_dominant (n m : EP) (fv : FV) (b : List Nat) (c : Nat → Nat)
+    (hn : n.alias.1 ∈ b) (hm : m.alias.1 ∉ b) :
+    (scoreEndpoint m fv b c).1 ≤ (scoreEndpoint n fv b c).1 := by
+  unfold scoreEndpoint
+  simp only [hn, hm, ite_true, ite_false]
+  split <;> split <;> split <;> split <;> omega
+
+/-- **Historical** (before #2390, d2c42e032): the score also added 2 for inline attributes, so an
+attributed endpoint counted its predicate twice and a filtered, attributed, labelled endpoint (5)
+outranked a bare bound one (3), contrary to the doc comment. -/
+def pre2390_scoreEndpoint (bound filtered attrs labelled : Bool) : Nat :=
+  (if bound then 3 else 0) + (if filtered then 2 else 0) + (if attrs then 2 else 0) + (if labelled then 1 else 0)
+
+theorem pre2390_score_bound_not_dominant :
+    pre2390_scoreEndpoint true false false false < pre2390_scoreEndpoint false true true true := by decide
 
 /-! ## Paths: `node_path` / `resolve_path` -/
 
@@ -133,7 +153,7 @@ def pruneAt : PT → List Nat → Nat → PT
   | .node ir cs, [], i => .node ir (cs.eraseIdx i)
   | .node ir cs, j :: p, i => .node ir (cs.modify j (fun c => pruneAt c p i))
 
-/-- "pruning a child never changes the parent's path" (`select_scan_node.rs:532,587`). -/
+/-- "pruning a child never changes the parent's path" (`select_scan_node.rs:612,663`). -/
 theorem pruneAt_parent : ∀ (t : PT) (p : List Nat) (i : Nat),
     (getAt t p).isSome → (getAt (pruneAt t p i) p).isSome
   | .node _ _, [], _, _ => by simp [getAt, pruneAt]
@@ -230,22 +250,40 @@ theorem argumentLeafOf_spec : ∀ (t : PT) (a : IRk), argumentLeafOf t = some a 
         exact ⟨k + 1, v, rfl, by simpa [List.replicate_succ, getAt] using hk⟩
       · cases h
 
-/-! ## `make_scan_subtree` -/
+/-! ## `make_scan_subtree` and `filters_of` -/
 
-def makeScanSubtree (alias : Var) (labels : List Nat) (attrFilter : Option (List Var)) (pending : Bool)
-    (argument : Option IRk) : PT :=
+/-- `make_scan_subtree` (`select_scan_node.rs:214-237`): scan, optional `Argument` leaf, optional
+    `IncludePending`, then the salvaged `filters` wrapped innermost-first (`filters[0]` outermost). -/
+def makeScanSubtree (alias : Var) (labels : List Nat) (pending : Bool)
+    (argument : Option IRk) (filters : List (List Var)) : PT :=
   let scan := if labels.isEmpty then IRk.allNodeScan alias else .labelScan alias labels
   let s0 := PT.node scan (argument.toList.map (fun a => PT.node a []))
   let s1 := if pending then PT.node .includePending [s0] else s0
-  match attrFilter with
-  | some vs => PT.node (.filter vs) [s1]
-  | none => s1
+  filters.foldr (fun vs t => PT.node (.filter vs) [t]) s1
 
-/-- **PROVEN**: `make_scan_subtree` builds exactly the shape the planner-scan
-walkers accept, with the node's alias at the bottom. -/
-theorem makeScanSubtree_planner (alias : Var) (labels : List Nat) (af : Option (List Var)) (pend : Bool)
-    (arg : Option IRk) :
-    plannerScanAlias (makeScanSubtree alias labels af pend arg) = some alias := by
+/-- `filters_of` (`select_scan_node.rs:250-266`): the `Filter`s on a subtree's single-child spine,
+    outermost first. -/
+def filtersOf : PT → List (List Var)
+  | .node ir cs =>
+    (match ir with | .filter vs => [vs] | _ => []) ++ (match cs with | [c] => filtersOf c | _ => [])
+
+theorem plannerScanAlias_filter (alias : Var) (vs : List Var) (t : PT) (ht : plannerScanAlias t = some alias) :
+    plannerScanAlias (PT.node (.filter vs) [t]) = some alias := by
+  simp only [plannerScanAlias, plannerScanIdx] at ht
+  cases hd : scanDepth t with
+  | none => simp [hd] at ht
+  | some k =>
+    simp only [hd, Option.map_some, Option.bind_some] at ht
+    have e : scanDepth (PT.node (.filter vs) [t]) = some (k + 1) := by
+      simp [scanDepth, scanAlias, isWrapper, hd]
+    simp only [plannerScanAlias, plannerScanIdx, e, Option.map_some, Option.bind_some, List.replicate_succ]
+    exact ht
+
+/-- **PROVEN**: `make_scan_subtree` builds exactly the shape the planner-scan walkers accept, with the
+node's alias at the bottom, whatever filters are salvaged onto it. -/
+theorem makeScanSubtree_planner (alias : Var) (labels : List Nat) (pend : Bool)
+    (arg : Option IRk) (fs : List (List Var)) :
+    plannerScanAlias (makeScanSubtree alias labels pend arg fs) = some alias := by
   unfold makeScanSubtree
   have hs : ∀ cs, plannerScanAlias (PT.node (if labels.isEmpty then IRk.allNodeScan alias else .labelScan alias labels) cs) = some alias := by
     intro cs
@@ -261,17 +299,6 @@ theorem makeScanSubtree_planner (alias : Var) (labels : List Nat) (af : Option (
         simp [scanDepth, scanAlias, isWrapper, hd]
       simp only [plannerScanAlias, plannerScanIdx, e, Option.map_some, Option.bind_some, List.replicate_succ]
       exact ht
-  have hf : ∀ vs t, plannerScanAlias t = some alias → plannerScanAlias (PT.node (.filter vs) [t]) = some alias := by
-    intro vs t ht
-    simp only [plannerScanAlias, plannerScanIdx] at ht
-    cases hd : scanDepth t with
-    | none => simp [hd] at ht
-    | some k =>
-      simp only [hd, Option.map_some, Option.bind_some] at ht
-      have e : scanDepth (PT.node (.filter vs) [t]) = some (k + 1) := by
-        simp [scanDepth, scanAlias, isWrapper, hd]
-      simp only [plannerScanAlias, plannerScanIdx, e, Option.map_some, Option.bind_some, List.replicate_succ]
-      exact ht
   have h1 : plannerScanAlias (if pend then PT.node .includePending
       [PT.node (if labels.isEmpty then IRk.allNodeScan alias else .labelScan alias labels)
         (arg.toList.map (fun a => PT.node a []))] else
@@ -280,9 +307,27 @@ theorem makeScanSubtree_planner (alias : Var) (labels : List Nat) (af : Option (
     split
     · exact hp _ (hs _)
     · exact hs _
-  cases af with
-  | none => exact h1
-  | some vs => exact hf vs _ h1
+  induction fs with
+  | nil => exact h1
+  | cons vs fs ih => exact plannerScanAlias_filter alias vs _ ih
+
+/-- **PROVEN** (salvaging loses nothing): re-wrapping salvaged filters around any subtree puts them back
+    on its spine, outermost first, in their original order. -/
+theorem filtersOf_wrap (fs : List (List Var)) (t : PT) :
+    filtersOf (fs.foldr (fun vs t => PT.node (.filter vs) [t]) t) = fs ++ filtersOf t := by
+  induction fs with
+  | nil => rfl
+  | cons vs fs ih => simp [filtersOf, ih]
+
+/-- ...so the rebuilt scan subtree carries exactly the Filters `filters_of` took off the old one
+    (the scan itself and `IncludePending` add none). -/
+theorem filtersOf_makeScanSubtree (alias : Var) (labels : List Nat) (pend : Bool) (v : Option (List Var))
+    (fs : List (List Var)) :
+    filtersOf (makeScanSubtree alias labels pend (some (.argument v)) fs) = fs ∧
+    filtersOf (makeScanSubtree alias labels pend none fs) = fs := by
+  unfold makeScanSubtree
+  rw [filtersOf_wrap, filtersOf_wrap]
+  constructor <;> (cases pend <;> cases labels.isEmpty <;> simp [filtersOf])
 
 /-! ## Ancestor walks -/
 
@@ -300,6 +345,7 @@ def collectLoop : List IRk → List Var
   | .filter vs :: rest => vs ++ collectLoop rest
   | ir :: rest => if transparent ir then collectLoop rest else []
 
+/-- The upward walk of `collect_filtered_vars` (`select_scan_node.rs:171-181`): `above`. -/
 def collectFilteredVars (t : PT) (p : List Nat) : List Var :=
   collectLoop ((ancestors p).filterMap (fun q => (getAt t q).map PT.ir))
 
@@ -307,11 +353,13 @@ def contOK : IRk → Bool
   | .filter _ => true
   | ir => transparent ir
 
+/-- The nested `collect` (`select_scan_node.rs:160-169`): every `Variable` of the filter expression,
+    which is how a `Filter` is modelled here (`IRk.filter vars`). -/
 def filterVars : IRk → List Var
   | .filter vs => vs
   | _ => []
 
-/-- **PROVEN**: the variables collected are those of the `Filter`s in the
+/-- **PROVEN**: the variables collected upwards are those of the `Filter`s in the
 maximal run of Filter / CondTraverse / CondVarLenTraverse / PathBuilder
 ancestors directly above the node. -/
 theorem collectLoop_eq (l : List IRk) : collectLoop l = (l.takeWhile contOK).flatMap filterVars := by
@@ -319,6 +367,39 @@ theorem collectLoop_eq (l : List IRk) : collectLoop l = (l.takeWhile contOK).fla
   | nil => rfl
   | cons ir rest ih =>
     cases ir <;> simp [collectLoop, contOK, transparent, filterVars, List.takeWhile_cons, ih]
+
+/-- The downward walk (`select_scan_node.rs:183-199`): from `start` itself, through
+    Filter / CondTraverse / CondVarLenTraverse / PathBuilder nodes while they have one child. -/
+def spineVars : PT → List Var
+  | .node ir cs =>
+    if contOK ir then filterVars ir ++ (match cs with | [c] => spineVars c | _ => []) else []
+
+/-- `collect_filtered_vars` (`select_scan_node.rs:156-201`). -/
+def filteredVars (t : PT) (p : List Nat) : FV :=
+  let above := collectFilteredVars t p
+  { above := above, all := above ++ ((getAt t p).map spineVars).getD [] }
+
+/-- The spine the downward walk visits: the start node and its single-child descendants, while
+    each is a Filter or a transparent traverse. -/
+def spine : PT → List IRk
+  | .node ir cs => if contOK ir then ir :: (match cs with | [c] => spine c | _ => []) else []
+
+/-- **PROVEN**: the downward walk collects exactly the variables of the Filters on that spine, and
+    `all` is `above` plus them (so `above ⊆ all`: a filter above the chain still counts as filtering). -/
+theorem spineVars_eq : ∀ (t : PT), spineVars t = (spine t).flatMap filterVars
+  | .node ir cs => by
+    unfold spineVars spine
+    split
+    · cases cs with
+      | nil => simp
+      | cons c cs => cases cs with
+        | nil => simp [spineVars_eq c]
+        | cons _ _ => simp
+    · rfl
+
+theorem filteredVars_above_sub (t : PT) (p : List Nat) (v : Var) (h : v ∈ (filteredVars t p).above) :
+    v ∈ (filteredVars t p).all := by
+  simp only [filteredVars] at h ⊢; exact List.mem_append_left _ h
 
 /-- `in_merge_match_branch`: the child of the nearest `Merge` ancestor on the
 path is that `Merge`'s last child. `chain` = (ancestor IR, its child count,
@@ -468,33 +549,76 @@ theorem vl_reverse_sound (R : Nat → Nat → Prop) (Lf Lt : Nat → Prop) (lo h
   · rintro ⟨h1, h2, k, hk1, hk2, hr⟩; exact ⟨h2, h1, k, hk1, hk2, Reach.reverse hr⟩
   · rintro ⟨h1, h2, k, hk1, hk2, hr⟩; exact ⟨h2, h1, k, hk1, hk2, (reach_reverse_iff R k a b).mpr hr⟩
 
-/-- The rewrite's decision (`select_var_len_scan_node.rs:467-570`): every guard
-must pass, and the `to` endpoint must score strictly higher. -/
+/-- What `select_var_len_scan_node` (`select_scan_node.rs:510-666`) inspects. -/
 structure VLCase where
   expandInto : Bool
   bidirectional : Bool
   allShortest : Bool
   sameEnds : Bool
   oneChild : Bool
-  childIsFromScan : Bool
-  wrapperHasPending : Bool
+  childIsFromScan : Bool      -- `planner_scan_alias(child) == from` (looks through Filter/IncludePending)
+  wrapperHasPending : Bool    -- an `IncludePending` between the child and the scan
+  wrapperHasFilter : Bool     -- a `Filter` between the child and the scan
+  childBindsTo : Bool         -- `child_subtree_binds(scan, to)`
+  scanHasChildren : Bool      -- `kept` non-empty
   argBindsTo : Bool
   argOpaque : Bool
-  attrsUnfiltered : Bool
   fromScore : Nat
   toScore : Nat
 
-def vlRewrite (c : VLCase) : Bool :=
-  !c.expandInto && !c.bidirectional && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan &&
-  !c.argOpaque && !c.argBindsTo && !c.attrsUnfiltered && decide (c.fromScore < c.toScore)
+def vlGuards (c : VLCase) : Bool :=
+  !c.expandInto && !c.bidirectional && !c.allShortest && !c.sameEnds && c.oneChild && c.childIsFromScan
 
-/-- The rewrite fires only when every guard holds (ties keep the direction). -/
-theorem vlRewrite_guards (c : VLCase) (h : vlRewrite c = true) :
+/-- The non-leaf rewrite (`select_scan_node.rs:574-617`): drop the planner's scan *and its wrapper
+    chain*, keeping what is under the scan. Since #2390 a `Filter` in the wrapper refuses it. -/
+def vlNonLeaf (c : VLCase) : Bool :=
+  vlGuards c && !c.wrapperHasPending && !c.wrapperHasFilter && c.childBindsTo && c.scanHasChildren
+
+/-- The leaf rewrite (`select_scan_node.rs:619-665`): scan `to` instead, replacing the *whole* child
+    subtree (`node_mut(child_idx).prune()`, line 661) — wrapper chain included. -/
+def vlLeaf (c : VLCase) : Bool :=
+  vlGuards c && !vlNonLeaf c && !c.argOpaque && !c.argBindsTo && decide (c.fromScore < c.toScore)
+
+/-- **PROVEN** (#2390): the non-leaf rewrite never drops a `Filter` (nor an `IncludePending`). -/
+theorem vlNonLeaf_keeps_wrappers (c : VLCase) (h : vlNonLeaf c = true) :
+    c.wrapperHasFilter = false ∧ c.wrapperHasPending = false := by
+  simp [vlNonLeaf] at h; exact ⟨h.1.1.2, h.1.1.1.2⟩
+
+/-- The leaf rewrite fires only when every guard holds (ties keep the direction). -/
+theorem vlLeaf_guards (c : VLCase) (h : vlLeaf c = true) :
     c.expandInto = false ∧ c.bidirectional = false ∧ c.allShortest = false ∧ c.sameEnds = false ∧
-    c.childIsFromScan = true ∧ c.argBindsTo = false ∧ c.argOpaque = false ∧ c.attrsUnfiltered = false ∧
-    c.fromScore < c.toScore := by
-  simp [vlRewrite] at h
-  obtain ⟨⟨⟨⟨⟨⟨⟨⟨⟨h1, h2⟩, h3⟩, h4⟩, -⟩, h6⟩, h7⟩, h8⟩, h9⟩, h10⟩ := h
-  exact ⟨h1, h2, h3, h4, h6, h8, h7, h9, h10⟩
+    c.childIsFromScan = true ∧ c.argBindsTo = false ∧ c.argOpaque = false ∧ c.fromScore < c.toScore := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp_all [vlLeaf, vlGuards]
+
+/-! ### CONFIRMED BUG (pre-existing, not fixed by #2390): the leaf rewrite drops a wrapper `Filter`
+
+`MATCH (a) WHERE a.v = 1 MATCH (a)-[*1..2]->(b:B {w:2}) RETURN a.v, b.w`: clause 1's
+`Filter(a.v = 1) → AllNodeScan(a)` is stitched in as the var-length traverse's child, which
+`planner_scan_alias` accepts as the planner's scan of `from = a` (it looks through `Filter`). `a`
+scores 2 (filtered, via the downward spine of `collect_filtered_vars`), `b` scores 3 (labelled, its
+lowered `{w:2}` Filter above the traverse), so the leaf rewrite scans `b` and walks backwards — and the
+pruned child took `a.v = 1` with it. Live (Rust built from main's planner, b3582e34a; also on the
+pre-#2390 build 88e92ae25): graph `(:A {v:1})-[:R]->(:B {w:2}), (:A {v:5})-[:R]->(:B {w:2})` returns
+`[1, 2], [5, 2]`; the right answer (and the fixed-length `-[:R]->` form, which salvages the Filter via
+`filters_of`) is `[1, 2]`. Fix: refuse the leaf rewrite when the wrapper chain holds a `Filter`
+(as the non-leaf path now does), or salvage it with `filters_of` above the traverse. -/
+
+def vlBugCase : VLCase :=
+  { expandInto := false, bidirectional := false, allShortest := false, sameEnds := false, oneChild := true,
+    childIsFromScan := true, wrapperHasPending := false, wrapperHasFilter := true, childBindsTo := false,
+    scanHasChildren := false, argBindsTo := false, argOpaque := false,
+    fromScore := (scoreEndpoint ⟨(0, 0), []⟩ ⟨[(1, 0)], [(1, 0), (0, 0)]⟩ [] (fun _ => 1)).1,
+    toScore := (scoreEndpoint ⟨(1, 0), [7]⟩ ⟨[(1, 0)], [(1, 0), (0, 0)]⟩ [] (fun _ => 1)).1 }
+
+/-- The rewrite fires on the repro although the wrapper holds `a.v = 1`. -/
+theorem vl_leaf_fires_over_filter : vlLeaf vlBugCase = true ∧ vlBugCase.wrapperHasFilter = true := by
+  decide
+
+/-- What the rewritten plan selects (`Lt b`, `Lf a`, the backward walk) differs from the original
+    (which also tests the dropped `F a`) exactly on the rows where `F a` is false — `(a.v = 5, b)`. -/
+theorem vl_leaf_drops_filter (R : Nat → Nat → Prop) (Lf Lt F : Nat → Prop) (lo hi a b : Nat)
+    (hF : ¬ F a) (hsel : Lt b ∧ Lf a ∧ ∃ k, lo ≤ k ∧ k ≤ hi ∧ Reach (tr R) k b a) :
+    (Lt b ∧ Lf a ∧ ∃ k, lo ≤ k ∧ k ≤ hi ∧ Reach (tr R) k b a) ∧
+    ¬ (Lf a ∧ F a ∧ Lt b ∧ ∃ k, lo ≤ k ∧ k ≤ hi ∧ Reach R k a b) := ⟨hsel, fun h => hF h.2.1⟩
 
 end OptimizerScan.ScanTree

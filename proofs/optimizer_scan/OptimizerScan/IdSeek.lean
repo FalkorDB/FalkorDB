@@ -3,9 +3,9 @@
 
 | here | there |
 | --- | --- |
-| `Op`, `Op.flip`            | `ExprIR::{Eq,Gt,Ge,Lt,Le}` and the flip table, `planner/optimizer/utilize_node_by_id.rs:77-84` |
-| `getIdFilter`              | `get_id_filter`, `utilize_node_by_id.rs:51-89` |
-| `collectFilters`           | the AND walk of `utilize_node_by_id`, `utilize_node_by_id.rs:118-131` |
+| `Op`, `Op.flip`            | `ExprIR::{Eq,Gt,Ge,Lt,Le}` and the flip table, `planner/optimizer/utilize_node_by_id.rs:80-87` |
+| `getIdFilter`              | `get_id_filter`, `utilize_node_by_id.rs:52-92` |
+| `collectFilters`           | the AND walk of `utilize_node_by_id`, `utilize_node_by_id.rs:106-119` |
 | `asU64`                    | `Value::Int(id) => id as u64`, `runtime/runtime.rs:1322` |
 | `step`                     | one arm of the `match op`, `runtime/runtime.rs:1327-1362` |
 | `evalIdFilter`             | `Runtime::evaluate_id_filter`, `runtime/runtime.rs:1309-1367` |
@@ -20,7 +20,7 @@ inductive Op | eq | gt | ge | lt | le
   deriving DecidableEq, Repr
 
 /-- The flip applied when `id(n)` is on the right: `v op id(n)` becomes `id(n) (flip op) v`
-(`utilize_node_by_id.rs:77-84`). -/
+(`utilize_node_by_id.rs:80-87`). -/
 def Op.flip : Op → Op
   | .eq => .eq | .gt => .lt | .ge => .le | .lt => .gt | .le => .ge
 
@@ -52,14 +52,19 @@ def cypherHolds (op : Op) (x : Nat) : V → Bool
 
 /-! ### The optimizer side: which filters become an id seek -/
 
+/-- A variable is its `(id, scope_id)` pair (`references.rs` module doc). -/
+abbrev Var := Nat × Nat
+
 /-- Minimal expression shapes that matter to `get_id_filter`. -/
 inductive E
-  | idOf (var : Nat)          -- `id(var)` — FuncInvocation "id" over Variable
+  | idOf (var : Var)          -- `id(var)` — FuncInvocation "id" over Variable
   | lit (v : V)                -- anything without a Variable
-  | refs (var : Nat)           -- any expression mentioning `var`
+  | refs (var : Var)           -- any expression mentioning `var`
   deriving DecidableEq, Repr
 
-def E.references (x : Nat) : E → Bool
+/-- `subtree_references_variable(expr, id, scope)` (`references.rs:327`, proven in
+    `proofs/optimizer_rewrites`: `References.subtreeRefs_iff`): some `Variable` node is `(id, scope)`. -/
+def E.references (x : Var) : E → Bool
   | .idOf v => v == x
   | .lit _ => false
   | .refs v => v == x
@@ -70,8 +75,10 @@ structure Cmp where
   rhs : E
   deriving DecidableEq, Repr
 
-/-- `get_id_filter` (`utilize_node_by_id.rs:51-89`). -/
-def getIdFilter (alias : Nat) (c : Cmp) : Option (E × Op) :=
+/-- `get_id_filter` (`utilize_node_by_id.rs:52-92`). Since #2390 the `id()` argument must be the alias
+    by `(id, scope_id)` (lines 62-64, 76-78) and the other side must not reference it by
+    `(id, scope_id)`; before, both tests compared `Variable`s with `==`, which compares ids only. -/
+def getIdFilter (alias : Var) (c : Cmp) : Option (E × Op) :=
   match c.lhs with
   | .idOf v =>
       if v == alias && !c.rhs.references alias then some (c.rhs, c.op)
@@ -82,9 +89,27 @@ def getIdFilter (alias : Nat) (c : Cmp) : Option (E × Op) :=
     | .idOf w => if w == alias && !c.lhs.references alias then some (c.lhs, c.op.flip) else none
     | _ => none
 
+/-- **PROVEN** (`get_id_filter`): a hit is `id(alias) op e` read as is, or `e op id(alias)` with the
+    operator flipped (`flip_correct`), and the value side never mentions the alias. -/
+theorem getIdFilter_spec (alias : Var) (c : Cmp) (e : E) (op : Op) (h : getIdFilter alias c = some (e, op)) :
+    (c.lhs = .idOf alias ∧ e = c.rhs ∧ op = c.op ∨ c.rhs = .idOf alias ∧ e = c.lhs ∧ op = c.op.flip) ∧
+    e.references alias = false := by
+  obtain ⟨cop, l, r⟩ := c
+  cases l <;> cases r <;> simp only [getIdFilter] at h <;>
+    (try (split at h <;> (try split at h))) <;>
+    (try simp only [Option.some.injEq, Prod.mk.injEq] at h) <;> (try obtain ⟨rfl, rfl⟩ := h) <;>
+    simp_all [E.references]
+
+/-- **PROVEN** (#2390 scope check): `id(v)` over a variable with the alias's id but another scope is
+    not an id filter for the alias. -/
+theorem getIdFilter_other_scope (i s s' : Nat) (hs : s ≠ s') (op : Op) (v : V) :
+    getIdFilter (i, s) ⟨op, .idOf (i, s'), .lit v⟩ = none ∧
+    getIdFilter (i, s) ⟨op, .lit v, .idOf (i, s')⟩ = none := by
+  simp [getIdFilter, E.references, Ne.symm hs]
+
 /-- The AND walk: every conjunct must be an id comparison, else nothing
-(`utilize_node_by_id.rs:118-131`). -/
-def collectFilters (alias : Nat) : List Cmp → List (E × Op)
+(`utilize_node_by_id.rs:106-119`). -/
+def collectFilters (alias : Var) : List Cmp → List (E × Op)
   | cs => match cs.mapM (getIdFilter alias) with
     | some fs => fs
     | none => []

@@ -9,7 +9,7 @@ Shared primitives for the query-command argument models (`QueryArgs.lean`) and
   since #3010 (`557f18868`).
 * `rustParseI64`  — `core::str::parse::<i64>` (`from_str_radix`, radix 10), used by
   `GRAPH.CONFIG SET` (`Config.lean`).
-* `rustTimeout`   — `compute_effective_timeout` (`src/graph_core.rs:896-931`).
+* `rustTimeout`   — `compute_effective_timeout` (`src/graph_core.rs:883-918`).
 
 Bytes are `Nat`s; `eq_ignore_ascii_case` is byte-wise (`eqIC`).
 -/
@@ -73,7 +73,7 @@ instance instDecEqExcept {ε α : Type} [DecidableEq ε] [DecidableEq α] :
   | .ok _, .error _ => isFalse (by intro e; cases e)
   | .error _, .ok _ => isFalse (by intro e; cases e)
 
-/-! ## `compute_effective_timeout` (`graph_core.rs:896-931`) -/
+/-! ## `compute_effective_timeout` (`graph_core.rs:883-918`) -/
 
 structure TCfg where
   timeoutMax : Int
@@ -85,7 +85,7 @@ inductive TErr where
   | exceedsMax
   deriving DecidableEq, Repr
 
-/-- The global fallback (`graph_core.rs:917-930`). -/
+/-- The global fallback (`graph_core.rs:904-917`). -/
 def fallback (c : TCfg) (isWrite : Bool) : Except TErr (Option Nat) :=
   if c.timeoutDefault > 0 then .ok (some c.timeoutDefault.toNat)
   else if c.timeoutMax > 0 then .ok (some c.timeoutMax.toNat)

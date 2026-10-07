@@ -18,7 +18,7 @@ gathers the parent columns by the packed parent rows.
 | `stream` | the flattened `(row, item)` sequence of `pending` + unread rows |
 | `emitAll` | repeated `emit_lazy` until `Ok(None)` |
 | `finishLen` | `finish_batch` (`:648-666`) row count incl. the `should_expand` switch (`start_batch`, `:602-614`) |
-| `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs:311-320`) |
+| `expandTrim` | `ExpandIntoOp::next` record-cap trim (`expand_into.rs:285-294`) |
 -/
 
 namespace Columnar
@@ -271,13 +271,13 @@ theorem finishLen_origins_kept : finishLen 0 true false 5 = 5 := rfl
 
 /-- **Latent row loss**: a no-alias emitter over a parent with no column and no
 origins emits `count` results as a 0-row batch. The only no-alias user, ExpandInto
-(`expand_into.rs:96`), always has both endpoint columns bound, so this is not
+(`expand_into.rs:95`), always has both endpoint columns bound, so this is not
 reachable today. -/
 theorem finishLen_drops : finishLen 0 false false 5 = 0 := rfl
 
 /-! ## ExpandInto's record-cap trim -/
 
-/-- `ExpandIntoOp::next` (`expand_into.rs:313-319`) on a dense output batch of
+/-- `ExpandIntoOp::next` (`expand_into.rs:287-293`) on a dense output batch of
 `n` rows: `(new selection, rows counted)`. -/
 def expandTrim (cap produced n : Nat) : Option (List Nat) × Nat :=
   let remaining := cap - produced

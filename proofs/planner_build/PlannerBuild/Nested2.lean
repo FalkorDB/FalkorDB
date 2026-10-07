@@ -2,17 +2,17 @@ import PlannerBuild.Nested
 /-
 # Comprehension sub-plans and the clause / WHERE wrappers
 
-* `build_shape`: `build_pattern_comprehension_plan` (mod.rs:1284-1366) is
+* `build_shape`: `build_pattern_comprehension_plan` (mod.rs:1406-1488) is
   `Aggregate(collect(result, acc))` over the WHERE `Filter` over one `Apply` per
   nested comprehension (in order, the first innermost) over the `PathBuilder`
   over `plan_match(pattern)`; `acc` is minted in the comprehension's scope
   after the nested ones'; `visited` is restored.
 * `interleave_length`: an existential pattern's path has `n` nodes and `n-1` rels.
-* `chain_*`: `extract_clause_expr_comprehensions` (mod.rs:1187-1218) builds
+* `chain_*`: `extract_clause_expr_comprehensions` (mod.rs:1309-1340) builds
   `Apply(…Apply(sub_k)…, sub_1)`: the innermost Apply single-child (stitching
   fills it, `descend_clause_expr_applies`), the first comprehension outermost.
 * `extractFilter_clean`: whatever `extract_filter_comprehensions`
-  (mod.rs:1242-1280) returns satisfies `plan_filter`'s precondition
+  (mod.rs:1364-1402) returns satisfies `plan_filter`'s precondition
   `needsExtraction · .semiApply = false` (FilterPlan.lean).
 * `extract_noPat`: in Collect/Exists mode no pattern is left at all.
 -/
@@ -79,7 +79,7 @@ def chainOf (st : PSt) (chain : Option CP) : List EC → Option CP × PSt
       | some inner => .apply inner b.1
       | none => .applyIn b.1)) cs
 
-/-- One expression of the clause (mod.rs:1197-1209): skipped when it has no
+/-- One expression of the clause (mod.rs:1319-1331): skipped when it has no
 pattern, else rewritten in Collect mode in the given scope or the pattern's. -/
 def clauseStep (scope : Option Nat) (x : Ex × PSt × List EC) : Ex × PSt × List EC :=
   match patternExprScope x.1 with

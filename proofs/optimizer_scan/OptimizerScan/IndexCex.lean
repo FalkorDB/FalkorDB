@@ -38,9 +38,11 @@ example : agree [0] (.or [.cmp .eq (.prop 0) (.lit (.i 1)), .cmp .eq (.prop 0) (
 example : agree [0] (.atom (.cmp .eq (.prop 0) (.lit (.i 1)))) (node [0] [(0, .b true)]) = false := by
   decide
 
-/-- C2 (Rust only): temporal values are indexed as NUMERIC timestamps — `n.v > 0` matches
-`v: date(...)`, and the Filter is gone. -/
-example : agree [0] (.atom (.cmp .gt (.prop 0) (.lit (.i 0)))) (node [0] [(0, .date 5)]) = false := by
+/-- C2 — FIXED by #3076 (e20300436). Temporal values used to be indexed as NUMERIC timestamps, so
+`n.v > 0` matched `v: date(...)` with the Filter gone (W2-index-5; the old encoding's counterexample
+is `proofs/index_layer` `pre3076_temporal_in_numeric_range`). Temporals are no longer indexed: the
+scan now agrees. -/
+example : agree [0] (.atom (.cmp .gt (.prop 0) (.lit (.i 0)))) (node [0] [(0, .date 5)]) = true := by
   decide
 
 /-- C3: `n.v = date(...)` (folded to a `Constant(Date)`, which `is_non_indexable_subexpr` does
@@ -88,10 +90,12 @@ inside AND it is dropped, and Bool/Int share the numeric array field. -/
 example : agree [0] (.and [.inn (.lit (.i 1)) (.term (.prop 3)), .opq 0])
     (node [0] [(3, .arr [.b true])]) = false := by decide
 
-/-- C11: `n.v > 'B' AND n.v < 'B'` merges into `Range{min:'B', max:'B', exclusive}`, which
-`build_string_range_node` turns into an exact match on 'B'. -/
+/-- C11 — FIXED by #3072 (1c9994e37). `n.v > 'B' AND n.v < 'B'` merges into
+`Range{min:'B', max:'B', exclusive}`, which `build_string_range_node` used to turn into an exact match
+on 'B' (W2-index-6; `proofs/index_layer` `pre3072_exclusive_equal_bounds`). It is now the empty node:
+the scan agrees. -/
 example : agree [0] (.and [.cmp .gt (.prop 0) (.lit (.s 66)), .cmp .lt (.prop 0) (.lit (.s 66))])
-    (node [0] [(0, .s 66)]) = false := by decide
+    (node [0] [(0, .s 66)]) = true := by decide
 
 /-- …while the numeric analogue is right (empty `RediSearch` numeric range). -/
 example : agree [0] (.and [.cmp .gt (.prop 0) (.lit (.i 66)), .cmp .lt (.prop 0) (.lit (.i 66))])

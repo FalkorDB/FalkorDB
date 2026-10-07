@@ -34,65 +34,65 @@ graph/src/index/mod.rs	drop	641	PROVEN	Iter.DocLife.freed_once (consumed gate: e
 graph/src/index/mod.rs	new	657	PROVEN	nodeKey; decodeId_nodeKey, nodeKey_injective
 graph/src/index/mod.rs	new_edge	684	PROVEN	edgeKey; decode_edgeKey
 graph/src/index/mod.rs	id	712	PROVEN	Meta.Idx.idOf_spec (Document.id = id/edge_id; Iter.delKey_spec)
-graph/src/index/mod.rs	set	716	PROVEN	setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int, bug_temporal_in_numeric_range; vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams (historical pre3087_*)
-graph/src/index/mod.rs	from_owned	926	PROVEN	Iter.RC.create/RC.clone (NULL => None), RC.create_inv
-graph/src/index/mod.rs	as_ptr	931	PROVEN	Iter.RC (transient handle; not_freed while owned)
-graph/src/index/mod.rs	try_clone	937	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
-graph/src/index/mod.rs	into_raw	944	PROVEN	Iter.RC.into_raw_needed, dropSpec_inv
-graph/src/index/mod.rs	drop	952	PROVEN	Iter.RC.release_inv, RC.not_freed
-graph/src/index/mod.rs	new	980	PROVEN	Iter.RC.create_inv (SpecHandle)
-graph/src/index/mod.rs	as_ptr	985	PROVEN	Iter.RC.not_freed
-graph/src/index/mod.rs	try_clone_ref	991	PROVEN	Iter.RC.clone_inv, clone_after_drop
-graph/src/index/mod.rs	drop	997	PROVEN	Iter.RC.dropSpec_inv, into_raw_needed
-graph/src/index/mod.rs	default	1014	PROVEN	Meta.Idx.default_spec, default_inv
-graph/src/index/mod.rs	id	1040	PROVEN	Meta.Idx.idOf_spec
-graph/src/index/mod.rs	bump_id	1049	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump
-graph/src/index/mod.rs	clone_for_update	1068	PROVEN	Meta.Idx.cloneForUpdate_eq
-graph/src/index/mod.rs	has_rs_index	1088	PROVEN	Meta.Idx.hasRsIndex_spec
-graph/src/index/mod.rs	rs_ptr	1095	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
-graph/src/index/mod.rs	create_rs_index	1101	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle)
-graph/src/index/mod.rs	register_fields	1181	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok
-graph/src/index/mod.rs	value_to_numeric	1357	PROVEN	valueToNumeric; equal_exact, numRange_exact
-graph/src/index/mod.rs	int_loses_f64_precision	1371	PROVEN	intLosesPrecision; intLosesPrecision_sound
-graph/src/index/mod.rs	build_numeric_range_node	1376	PROVEN	buildNumRange; numRange_exact, bug_open_bound_excludes_inf
-graph/src/index/mod.rs	build_string_range_node	1415	PROVEN	buildStrRange; strRange_exact, bug_exclusive_equal_bounds, bug_string_range_order
-graph/src/index/mod.rs	build_query_node	1463	PROVEN	buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_point_equality, bug_multilabel_and/or
-graph/src/index/mod.rs	query	1677	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
-graph/src/index/mod.rs	query_edges	1700	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
-graph/src/index/mod.rs	fulltext_query	1718	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
-graph/src/index/mod.rs	fulltext_query_edges	1747	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
-graph/src/index/mod.rs	vector_query	1784	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
-graph/src/index/mod.rs	vector_query_edges	1846	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
-graph/src/index/mod.rs	add_document	1893	PROVEN	Table.add; commit_lookup, commit_preserves_inv
-graph/src/index/mod.rs	delete_document	1915	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
-graph/src/index/mod.rs	delete_edge_document	1932	PROVEN	Iter.delEdgeKey_spec
-graph/src/index/mod.rs	has_fulltext_field	1955	PROVEN	Meta.Idx.hasFulltextField_iff
-graph/src/index/mod.rs	contains_field	1963	PROVEN	Meta.Idx.containsField_iff
-graph/src/index/mod.rs	has_field_with_type	1972	PROVEN	Meta.Idx.hasFieldWithType_iff
-graph/src/index/mod.rs	get_fields	1984	PROVEN	Meta.Idx.getFields_spec
-graph/src/index/mod.rs	add_field_to_existing	1992	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
-graph/src/index/mod.rs	insert_field	2003	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
-graph/src/index/mod.rs	remove_field	2015	PROVEN	Meta.Idx.removeField_spec, removeField_inv
-graph/src/index/mod.rs	retain_fields	2027	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
-graph/src/index/mod.rs	is_empty	2039	PROVEN	Meta.Idx.isEmpty_iff
-graph/src/index/mod.rs	field_keys	2045	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
-graph/src/index/mod.rs	fields	2051	PROVEN	Meta.Idx.accessors
-graph/src/index/mod.rs	field_order	2057	PROVEN	Meta.Idx.accessors, Inv
-graph/src/index/mod.rs	all_fields	2062	PROVEN	Meta.Idx.allFields_mem
-graph/src/index/mod.rs	is_operational	2070	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
-graph/src/index/mod.rs	set_progress	2075	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	progress	2086	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	increment_pending_for_generation	2097	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
-graph/src/index/mod.rs	try_decrement_pending_for_generation	2115	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
-graph/src/index/mod.rs	pending_count_for_generation	2137	PROVEN	Slots.countFor; bump_fresh
-graph/src/index/mod.rs	pending_count	2151	PROVEN	Slots.countFor s.gen; bump_fresh
-graph/src/index/mod.rs	language	2159	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	set_language	2164	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	stopwords	2175	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	set_stopwords	2180	PROVEN	Meta.Idx.setters, accessors
-graph/src/index/mod.rs	memory_usage	2191	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
-graph/src/index/mod.rs	index_count	2201	PROVEN	Meta.Idx.indexCount_eq
-graph/src/index/mod.rs	recreate_index	2205	PROVEN	Meta.Idx.recreateIndex_ok
+graph/src/index/mod.rs	set	716	PROVEN	setRange/docOf; equal_exact, numRange_exact, strRange_exact; bug_bool_eq_int; temporals not indexed since #3076 (e20300436): Temporal.temporal_not_indexed, temporal_numRange_exact, temporal_equal_exact, fixed3076_temporal_in_numeric_range (historical pre3076_temporal_in_numeric_range); vector arm @49f698d22 (#3087): Meta.setVector_sound, setVector_has_params, setVector_noparams (historical pre3087_*)
+graph/src/index/mod.rs	from_owned	925	PROVEN	Iter.RC.create/RC.clone (NULL => None), RC.create_inv
+graph/src/index/mod.rs	as_ptr	930	PROVEN	Iter.RC (transient handle; not_freed while owned)
+graph/src/index/mod.rs	try_clone	936	PROVEN	Iter.RC.clone_inv, RC.clone_after_drop
+graph/src/index/mod.rs	into_raw	943	PROVEN	Iter.RC.into_raw_needed, dropSpec_inv
+graph/src/index/mod.rs	drop	951	PROVEN	Iter.RC.release_inv, RC.not_freed
+graph/src/index/mod.rs	new	979	PROVEN	Iter.RC.create_inv (SpecHandle)
+graph/src/index/mod.rs	as_ptr	984	PROVEN	Iter.RC.not_freed
+graph/src/index/mod.rs	try_clone_ref	990	PROVEN	Iter.RC.clone_inv, clone_after_drop
+graph/src/index/mod.rs	drop	996	PROVEN	Iter.RC.dropSpec_inv, into_raw_needed
+graph/src/index/mod.rs	default	1013	PROVEN	Meta.Idx.default_spec, default_inv
+graph/src/index/mod.rs	id	1039	PROVEN	Meta.Idx.idOf_spec
+graph/src/index/mod.rs	bump_id	1048	PROVEN	Slots.bump; bump_total, bump_fresh, ok_bump
+graph/src/index/mod.rs	clone_for_update	1067	PROVEN	Meta.Idx.cloneForUpdate_eq
+graph/src/index/mod.rs	has_rs_index	1087	PROVEN	Meta.Idx.hasRsIndex_spec
+graph/src/index/mod.rs	rs_ptr	1094	PROVEN	Meta.Idx.hasRsIndex_spec (rsPtr)
+graph/src/index/mod.rs	create_rs_index	1100	PROVEN	Meta.Idx.createRsIndex_ok, createRsIndex_lang_err (FFI create = fresh handle)
+graph/src/index/mod.rs	register_fields	1180	PROVEN	Meta.Idx.registerOne_range/_text/_vector_err, registerAll_ok, registerFields_ok, metricOf_ok
+graph/src/index/mod.rs	value_to_numeric	1356	PROVEN	valueToNumeric; equal_exact, numRange_exact
+graph/src/index/mod.rs	int_loses_f64_precision	1370	PROVEN	intLosesPrecision; intLosesPrecision_sound
+graph/src/index/mod.rs	build_numeric_range_node	1375	PROVEN	buildNumRange; numRange_exact, bug_open_bound_excludes_inf
+graph/src/index/mod.rs	build_string_range_node	1414	PROVEN	buildStrRange (#3072 empty node for exclusive equal bounds); strRange_exact (no equal-bounds premise since #3072), fixed3072_exclusive_equal_bounds (historical pre3072_exclusive_equal_bounds), bug_string_range_order
+graph/src/index/mod.rs	build_query_node	1472	PROVEN	buildQ/buildEq; equal_exact, inList_exact, numRange_exact, strRange_exact, bug_point_equality, bug_multilabel_and/or
+graph/src/index/mod.rs	query	1686	PROVEN	Iter.queryN_mem, query_eq_scan_filter (RunSpec = RS LLAPI contract)
+graph/src/index/mod.rs	query_edges	1709	PROVEN	Iter.queryE_mem, queryE_eq_scan_filter
+graph/src/index/mod.rs	fulltext_query	1727	PROVEN	Iter.fulltextQ_exact, fulltextQ_errors (FtSpec abstract RS full-text match)
+graph/src/index/mod.rs	fulltext_query_edges	1756	PROVEN	Iter.fulltextQ_errors + queryE_mem shape (48-char keys, decTriple_edgeKey)
+graph/src/index/mod.rs	vector_query	1793	PROVEN	Iter.vectorQ_sound (KnnSpec: <= k stored vector docs), vectorField_spec
+graph/src/index/mod.rs	vector_query_edges	1855	PROVEN	Iter.vectorQ_sound (edge keys via decTriple_edgeKey)
+graph/src/index/mod.rs	add_document	1902	PROVEN	Table.add; commit_lookup, commit_preserves_inv
+graph/src/index/mod.rs	delete_document	1924	PROVEN	Iter.delKey_spec (deletes the key Document::new wrote)
+graph/src/index/mod.rs	delete_edge_document	1941	PROVEN	Iter.delEdgeKey_spec
+graph/src/index/mod.rs	has_fulltext_field	1964	PROVEN	Meta.Idx.hasFulltextField_iff
+graph/src/index/mod.rs	contains_field	1972	PROVEN	Meta.Idx.containsField_iff
+graph/src/index/mod.rs	has_field_with_type	1981	PROVEN	Meta.Idx.hasFieldWithType_iff
+graph/src/index/mod.rs	get_fields	1993	PROVEN	Meta.Idx.getFields_spec
+graph/src/index/mod.rs	add_field_to_existing	2001	PROVEN	Meta.Idx.addFieldToExisting_get, addFieldToExisting_inv
+graph/src/index/mod.rs	insert_field	2012	PROVEN	Meta.Idx.insertField_get, insertField_inv (field_order = keys, nodup)
+graph/src/index/mod.rs	remove_field	2024	PROVEN	Meta.Idx.removeField_spec, removeField_inv
+graph/src/index/mod.rs	retain_fields	2036	PROVEN	Meta.Idx.retainFields_get, retainFields_inv, IndexerM.retain_nonempty
+graph/src/index/mod.rs	is_empty	2048	PROVEN	Meta.Idx.isEmpty_iff
+graph/src/index/mod.rs	field_keys	2054	PROVEN	Meta.Idx.containsField_iff (fieldKeys)
+graph/src/index/mod.rs	fields	2060	PROVEN	Meta.Idx.accessors
+graph/src/index/mod.rs	field_order	2066	PROVEN	Meta.Idx.accessors, Inv
+graph/src/index/mod.rs	all_fields	2071	PROVEN	Meta.Idx.allFields_mem
+graph/src/index/mod.rs	is_operational	2079	PROVEN	Slots.countFor s.gen = 0; bump_fresh, dec_stale_keeps_current
+graph/src/index/mod.rs	set_progress	2084	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	progress	2095	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	increment_pending_for_generation	2106	PROVEN	Slots.inc; inc_dec_cur, inc_dec_stale, ok_inc, inc_stale_keeps_current
+graph/src/index/mod.rs	try_decrement_pending_for_generation	2124	PROVEN	Slots.dec; ok_dec, dec_stale_keeps_current
+graph/src/index/mod.rs	pending_count_for_generation	2146	PROVEN	Slots.countFor; bump_fresh
+graph/src/index/mod.rs	pending_count	2160	PROVEN	Slots.countFor s.gen; bump_fresh
+graph/src/index/mod.rs	language	2168	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_language	2173	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	stopwords	2184	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	set_stopwords	2189	PROVEN	Meta.Idx.setters, accessors
+graph/src/index/mod.rs	memory_usage	2200	PROVEN	Meta.Idx.memoryUsage_spec (RediSearch_MemUsage passthrough)
+graph/src/index/mod.rs	index_count	2210	PROVEN	Meta.Idx.indexCount_eq
+graph/src/index/mod.rs	recreate_index	2214	PROVEN	Meta.Idx.recreateIndex_ok
 graph/src/index/indexer.rs	generation_id	89	PROVEN	Meta.Ticket.accessors
 graph/src/index/indexer.rs	label	94	PROVEN	Meta.Ticket.accessors
 graph/src/index/indexer.rs	language	102	PROVEN	Meta.IdxOptions.spec
@@ -218,19 +218,19 @@ graph/src/index/redisearch/mod.rs	RediSearch_IndexInfoFree	897	AXIOMATISED	RediS
 graph/src/index/redisearch/mod.rs	RediSearch_ExportCapi	902	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_Init	905	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
 graph/src/index/redisearch/mod.rs	RediSearch_CleanupModule	914	AXIOMATISED	RediSearch LLAPI boundary; spec = Model.rsMatch/rsStore (documented RS semantics)
-graph/src/index/redisearch/redis.rs	(no fns; bindgen consts/types)	0	AXIOMATISED	Redis module ABI types
-graph/src/index/falkordb/data_structures/cow_btree/*	(all)	0	PROVEN	proofs/cow_btree (assumed spec; not re-proved here; not yet wired to the index layer)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	64	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	73	PROVEN	Leaf.readWidth_eq (widths 1/2/4/8)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	default	112	PROVEN	Leaf.emptyTree_contents
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	new	128	PROVEN	Leaf.emptyTree_contents (new = default)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	from_sorted	142	PROVEN	Leaf.fromSorted_contents
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	insert_batch	185	PROVEN	Leaf.insertBatch_contents (relative to apply_batch fragments)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	245	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts)
-graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	271	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
+# graph/src/index/redisearch/redis.rs	(no fns; bindgen consts/types)	0	AXIOMATISED	Redis module ABI types
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_u64	79	PROVEN	Leaf.readU64 (rd_le, rd_chunk, unle_le)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	doc_le_bytes	65	PROVEN	LeafAosD.docLeBytes: docLeBytes_spec (assert passes iff doc < 256^DOC_BYTES), docLeBytes_lossless, aosBuildD_some, aosBuildD_none
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	read_width	88	PROVEN	Leaf.readWidth_eq (widths 1/2/4/8); LeafAosD.docBytes3_reads_garbage (any other width reads 8 bytes: BUG for DOC_BYTES 3/5/6/7)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	default	133	PROVEN	Leaf.emptyTree_contents
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	new	155	PROVEN	Leaf.emptyTree_contents (new = default)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	from_sorted	173	PROVEN	Leaf.fromSorted_contents
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	insert_batch	224	PROVEN	Leaf.insertBatch_contents (relative to apply_batch fragments)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	count	431	PROVEN	Leaf.walk_spec (test-only len(): count = sum of leaf counts)
+graph/src/index/falkordb/data_structures/cow_btree/mod.rs	walk	457	PROVEN	Leaf.walk_spec (test-only leaves(): concatenation = contents)
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	pack_branches	56	PROVEN	Leaf.packBranches_contents, packBranches_arity, packBranches_kids, packBranches_shrinks
 graph/src/index/falkordb/data_structures/cow_btree/node.rs	build_root	90	PROVEN	Leaf.buildRoot_contents
-graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	391	PROVEN	Leaf.makePrivate_cow
+graph/src/index/falkordb/data_structures/cow_btree/node.rs	make_private	565	PROVEN	Leaf.makePrivate_cow
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	pow2_bytes_for	42	PROVEN	Leaf.pow2BytesFor_spec, lt_widthFor
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_sorted	50	PROVEN	Leaf.mergeD_spec (union, strictly sorted)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	partition_point	77	PROVEN	Leaf.partitionPoint_spec
@@ -241,16 +241,15 @@ graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc	201	PROVEN	Le
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	iter	233	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	to_pairs	238	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	raw	350	PROVEN	Leaf.dispatch_spec, aos_roundtrip/cBuild_roundtrip/ciRead
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc_layout	213	PROVEN	Leaf.docLayout_spec
-graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_pairs	260	PROVEN	Leaf.fromPairs_roundtrip, scan_doc, scan_distinct
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	doc_layout	213	PROVEN	Leaf.docLayout_spec; LeafAosD.docLayoutD_spec (FIELD, FIELD + DOC_BYTES, DOC_BYTES)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_pairs	260	PROVEN	Leaf.fromPairs_roundtrip, scan_doc, scan_distinct; LeafAosD.fromPairsD_roundtrip (every DOC_BYTES in {1,2,4,8}), fromPairsD8
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	from_parts	319	PROVEN	Leaf.fromParts_spec, fromParts_format
 graph/src/index/falkordb/data_structures/cow_btree/leaf/mod.rs	merge_batch	471	PROVEN	Leaf.mergeBatch_spec (all fast paths = slow path = merge_sorted)
-graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	count	14	PROVEN	Leaf.aos_roundtrip
-graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	read	21	PROVEN	Leaf.aos_roundtrip (rd_in_chunk)
-graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	key	30	PROVEN	Leaf.aos_roundtrip
-graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	doc	38	PROVEN	Leaf.aos_roundtrip
-graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	build	46	PROVEN	Leaf.aos_roundtrip
-graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	merge_batch	60	PROVEN	Leaf.aosMerge_spec
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	count	18	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	key	23	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	doc	31	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	build	39	PROVEN	Leaf.aos_roundtrip; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
+graph/src/index/falkordb/data_structures/cow_btree/leaf/aos.rs	merge_batch	51	PROVEN	Leaf.aosMerge_spec; DOC_BYTES-generic: LeafAosD.aos_roundtripD, aosMergeD_spec, aosD8_* (BUG docBytes3_reads_garbage)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	read_u16	18	PROVEN	Leaf.header_read (readU16)
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	is_indexed	28	PROVEN	Leaf.isIndexed_spec, fromParts_spec
 graph/src/index/falkordb/data_structures/cow_btree/leaf/compact.rs	read	49	PROVEN	Leaf.cLayout, ciLayout (CompactLayout::read)

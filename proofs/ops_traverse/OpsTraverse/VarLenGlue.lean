@@ -169,7 +169,7 @@ def asNode : Option EV → Option Nat
   | some (.node n) => some n
   | _ => none
 
-/-- cond_var_len_traverse.rs:521-560. `fromBound`/`toBound` = `batch.is_bound_at`. -/
+/-- cond_var_len_traverse.rs:531-570. `fromBound`/`toBound` = `batch.is_bound_at`. -/
 def rowPlan (fromV toV : Option EV) (fromBound toBound bidir : Bool) (minH maxH : Option Nat) :
     Option Plan :=
   let fromId := asNode fromV

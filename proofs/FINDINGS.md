@@ -1,6 +1,6 @@
 # Lean 4 verification of FalkorDB-rs: findings
 
-Current state (2026-10-06): proofs cite `origin/main` @ a9377c636. There is one
+Current state (2026-10-07): proofs cite `origin/main` @ 8743953a8. There is one
 Lake project per area under `proofs/<area>/` (35 projects).
 `bash proofs/lean_ci.sh` builds all of them and fails on any `sorry`, `admit`,
 `native_decide` or an axiom that is not justified with a `-- AXIOM-OK:` comment.
@@ -8,7 +8,7 @@ Headline theorems depend only on `propext`, `Quot.sound` and `Classical.choice`.
 Each project's root `.lean` file holds its report in the header: a table mapping
 Lean definitions to Rust `file:line`, the theorems, the bugs and the gaps.
 `bash proofs/coverage.sh` aggregates the per-function `COVERAGE.tsv` files:
-2449/2449 non-FFI, non-test functions are PROVEN (1295 FFI functions are
+2466/2466 non-FFI, non-test functions are PROVEN (1295 FFI functions are
 AXIOMATISED). See `.claude/skills/proofs/SKILL.md` for how to work with them.
 
 A bug is **confirmed** only if a repro against the real Rust shows it, and it is
@@ -290,6 +290,13 @@ IDs are `W2-<area>-<n>`. "C ✓" means C gives the correct answer, so the bug is
 - **W4-matrix-1** (latent, API-level only) — `Tensor::resize` shrinking (`tensor.rs:814-828`) never trims `me`. Orphan multi-edge rows survive: `iter_edges` yields phantom ids and `edge_count` is too high. After growing back and adding an edge, `get` and `iter_edges` disagree. Its only shrinking caller, `rebuild_derived_matrices`, covers every node id, so Cypher can't reach it. Lean `VMTensorOps.shrink_orphans_me`; test `lean_versioned_matrix::tensor_shrink_keeps_orphan_me_rows`. Fix: drop `me` rows whose pair falls outside the new bounds.
 
 ### Merged
+- 2026-10-07 on main (now 8743953a8): #3072 (closes #2961, W2-index-6), #3074 (closes #3073), #3076 (closes #2959, W2-index-5), #3079 (closes #3077), #2390 (plans an inline property map once; adds `optimizer/references.rs`), #2278 (CowBTree point lookups, memory accounting, tuple cursor, narrowable doc width), plus #2487 and #2488 (tests only). Proofs re-targeted: 35 projects green, 2466/2466 non-FFI, non-test fns PROVEN, 0 unlisted, 0 unmatched.
+  - Fixed and re-checked live: W2-index-5 (#3076), W2-index-6 (#3072); the UDF -0.0, constructor-key and vecf32-inf round trips (#3074); the `graph` global at LOAD (#3079); W1 #13 bug 1, `insert_batch` dropping `(MAX,MAX)` (#2278); and from #2390, the per-operator part of #2896 (UNWIND/CREATE/FOREACH/var-length reads) and the earlier `MATCH … WHERE` dropped under a traversal (#2972). W2-rewrites-4 now matches C (most likely fixed by #2845). W4-plan-4 no longer crashes on current builds, but the `parent().unwrap()` at `utilize_node_by_id.rs:106` is still there.
+  - Still present: the sibling part of #2896 (CALL body, pattern comprehension), W2-traverse-1/2/3, W2-binder-2 / #2923, W6-opt-1, W4-plan-1/2/3/5, planner_build bugs 1, 2 and 4, W2-scan-1, W1 #13 bug 2 (BRANCH_MAX=3), W3-algo-1/2, W5-udf-1..4. The W3-conc-1 cite is now `graph_core.rs:1002`.
+  - New bugs:
+    - **W7-btree-1** (latent; CowBTree has no production caller): `remove_batch` leaves a one-child non-root branch at any BRANCH_MAX ≥ 4; one later `remove` then makes `insert_batch` panic in `Node::min`. Lean `BugsBatch.lean`.
+    - **W7-btree-2** (latent): DOC_BYTES ∈ {3,5,6,7} passes the const assert, but `read_width` handles only 1/2/4/8, so `CowBTree::<256,256,3>` panics on its second insert. Lean `LeafAosD.docBytes3_*`.
+    - **W7-scan-1**: `select_var_len_scan_node`'s leaf rewrite prunes a Filter wrapper: `MATCH (a) WHERE a.v=1 MATCH (a)-[*1..2]->(b:B {w:2})` returns an extra row. Predates #2390. Lean `ScanTree.vl_leaf_*`.
 - 2026-10-06 on main (now a9377c636): #2952 (closes #2926, W2-strlist-2), #3021 (closes #3020: GRAPH.CONFIG validation, arity, ASCII name folding, `ASYNC_DELETE` default 1, C's unknown-field text), #2845 (every `CALL {}` body gets an entry projection as a record boundary; closes #2601, #2602), plus #3170 and #2471 (build/tests only). Proofs re-targeted: 35 projects green, 2449/2449 non-FFI fns PROVEN, 0 unlisted. Counterexamples turned into correctness theorems with `pre<PR>_` historical notes: functions_str_list `listRemove_eq_spec` / `removeSpan_wf` (`pre2952_listRemove_end_overflows`); redis_layer `fixed3021_counterexamples`, `vkey_ok_nonneg`, `jsheap_ok_ge`, `cmdinfo_ok_iff`, `get_extra_wrong_arity`, `dotless_i_not_folded` (`pre3021_*`); pr2845_review now models main (`pre2845_old_aliases`, `pre2845_bodyOld_empty`, `pre2845_emit_origin_lost_old`), and columnar proves `rows_only` / `has_origins` and the new `start_batch` arm. Still open: W6-opt-1 (push-down through the CALL boundary) and the UNION-branch scope alias (#3027).
 - 2026-10-05 on main (now da6f808c3): #2989 (closes #2955), #2990 (closes #2956), #3010 (closes #3009), #3087 (closes #3075), #3088 (closes #3085). Proofs re-targeted: 35 projects green, 2446/2446 non-FFI fns PROVEN. The #2955, #2956 and #3009 counterexamples are now correctness theorems (`toInteger_neg_overflow_null`, `coalesce_zero_args_rejected`, `rust_c_agree` / `four_commands_share` for the shared flag parser). Still open: write queries ignore the per-query TIMEOUT (#2998, PR #3000).
 - 2026-10-04/05 on main (now fe619ac5f): #2911 (closes #2892), #3053 (closes #3052), #3060 (closes #3057), #3094 (closes #3091), plus #3161 and #3163 (not from this work).

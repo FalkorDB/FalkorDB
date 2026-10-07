@@ -11,14 +11,14 @@ themselves are not re-modelled).
 
 | here | there |
 | --- | --- |
-| `containsInlineVar` | `Planner::contains_inline_var` mod.rs:811-818 |
-| `hasPatternExpr` | `Planner::has_pattern_expr` mod.rs:822-827 |
-| `patternExprScope` | `Planner::pattern_expr_scope` mod.rs:1223-1230 |
-| `Mode`, `Mode.descend` | `PatternMode`, `PatternMode::descend` mod.rs:660-689 |
-| `needsExtraction` | `extract_filter_comprehensions::needs_extraction` mod.rs:1247-1260 |
+| `containsInlineVar` | `Planner::contains_inline_var` mod.rs:933-940 |
+| `hasPatternExpr` | `Planner::has_pattern_expr` mod.rs:944-949 |
+| `patternExprScope` | `Planner::pattern_expr_scope` mod.rs:1345-1352 |
+| `Mode`, `Mode.descend` | `PatternMode`, `PatternMode::descend` mod.rs:782-811 |
+| `needsExtraction` | `extract_filter_comprehensions::needs_extraction` mod.rs:1369-1382 |
 | `inlineAttrsToFilter` | `inline_attrs_to_filter` mod.rs:543-571 |
-| `hasLabelsFilter` | `has_labels_filter` mod.rs:574-587 |
-| `patternExprVariables` | `Planner::pattern_expr_variables` mod.rs:1128-1160 |
+| `hasLabelsFilter` | `has_labels_filter` mod.rs:696-709 |
+| `patternExprVariables` | `Planner::pattern_expr_variables` mod.rs:1250-1282 |
 -/
 namespace PlannerBuild.E
 
@@ -102,7 +102,7 @@ theorem anyL_eq (p : D → Bool) : ∀ l, anyL p l = (nodesL l).any p
   | c :: cs => by simp [anyL, nodesL, anyN_eq p c, anyL_eq p cs]
 end
 
-/-! ## `contains_inline_var` (mod.rs:811-818): BFS `any` over the subtree, id only -/
+/-! ## `contains_inline_var` (mod.rs:933-940): BFS `any` over the subtree, id only -/
 
 def isInl (ids : List Nat) : D → Bool
   | .var v => ids.contains v.id
@@ -130,7 +130,7 @@ theorem containsInlineVar_ignores_scope (i s s' : Nat) :
   · exact Or.inr h
   · exact Or.inl ⟨by simp [containsInlineVar, Ex.v, anyN, isInl, anyL], h⟩
 
-/-! ## `has_pattern_expr` (mod.rs:822-827) -/
+/-! ## `has_pattern_expr` (mod.rs:944-949) -/
 
 def isPat : D → Bool
   | .pat _ | .patComp _ => true
@@ -155,7 +155,7 @@ theorem hasPatternExprL_eq : ∀ l, hasPatternExprL l = (nodesL l).any isPat
   | c :: cs => by simp [hasPatternExprL, nodesL, hasPatternExpr_eq c, hasPatternExprL_eq cs]
 end
 
-/-! ## `pattern_expr_scope` (mod.rs:1223-1230) -/
+/-! ## `pattern_expr_scope` (mod.rs:1345-1352) -/
 
 def patScope : D → Option Nat
   | .pat g | .patComp g => g.vars.head?.map V.scope
@@ -210,7 +210,7 @@ theorem patternExprScopeL_eq : ∀ l, PatsNamed (nodesL l) →
     cases (nodes c).findSome? patScope <;> rfl
 end
 
-/-! ## `PatternMode` (mod.rs:660-689) and `needs_extraction` (mod.rs:1247-1260) -/
+/-! ## `PatternMode` (mod.rs:782-811) and `needs_extraction` (mod.rs:1369-1382) -/
 
 inductive Mode | collect | semiApply | exists_
   deriving DecidableEq, Repr
@@ -256,7 +256,7 @@ theorem needs_semi_xor (g : QG) (b : Ex) :
     needsExtraction (.node .xor [.node (.pat g) [], b]) .semiApply = true := by
   simp [needsExtraction, needsExtractionL, Mode.descend, isConn]
 
-/-! ## `inline_attrs_to_filter` (mod.rs:543-571) and `has_labels_filter` (mod.rs:574-587) -/
+/-! ## `inline_attrs_to_filter` (mod.rs:543-571) and `has_labels_filter` (mod.rs:696-709) -/
 
 /-- `alias.k = value` -/
 def attrEq (alias : V) (kv : String × Ex) : Ex :=
@@ -302,7 +302,7 @@ theorem hasLabelsFilter_shape (v : V) (labels : List String) :
   | nil => rfl
   | cons l ls ih => simp [nodesL, nodes, ih]
 
-/-! ## `pattern_expr_variables` (mod.rs:1128-1160)
+/-! ## `pattern_expr_variables` (mod.rs:1250-1282)
 
 A stack walk: pop, record, push. Popping the children pushed last-first is a
 pre-order walk with children right-to-left (`pevL` folds the tail first); a pattern's attribute maps are

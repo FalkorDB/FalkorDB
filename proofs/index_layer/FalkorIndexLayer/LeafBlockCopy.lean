@@ -1,6 +1,6 @@
 import FalkorIndexLayer.LeafDispatch
 /-
-# `CompactIndexedLeaf::block_copy_merge` (`compact_indexed.rs`, origin/main 3fec7d7c9)
+# `CompactIndexedLeaf::block_copy_merge` (`compact_indexed.rs`, origin/main 8743953a8)
 
 The list-level algorithm (`bcmL`): for each batch entry, gallop to the first
 leaf entry not below it, emit the leaf entries skipped over, then the batch

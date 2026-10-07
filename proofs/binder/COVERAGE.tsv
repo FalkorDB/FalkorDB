@@ -42,4 +42,4 @@ graph/src/planner/binder.rs	raw_exprs_structurally_equal::nodes_eq	2635	PROVEN	A
 graph/src/planner/binder.rs	raw_exprs_structurally_equal::expr_ir_eq	2665	PROVEN	AggEq.exprIrEq_refl, exprIrEq_symm, exprIrEq_exact, const_kinds_conflated (bug cause binder.rs:2682)
 graph/src/planner/binder.rs	sorted_scope_vars	2686	PROVEN	Stack.sortedScopeVars_spec (permutation of the table, sorted by id, same length)
 graph/src/planner/binder.rs	merge_scope_vars	2694	PROVEN	mergeSV_ge, mergeSV_covers
-graph/src/planner/mod.rs	Planner::fresh_var	721	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)
+graph/src/planner/mod.rs	Planner::fresh_var	843	PROVEN	mint_fresh_iff (planner mints len, len+1, ...)

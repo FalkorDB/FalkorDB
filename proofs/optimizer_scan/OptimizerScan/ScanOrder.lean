@@ -11,12 +11,12 @@ only affects cost — it is the modelling gap stated in `OptimizerScan.lean`.
 | here | there |
 | --- | --- |
 | `Hop`, `Hop.holds`         | `IR::CondTraverse { relationship, transposed, .. }` and `CondTraverseOp` reading the relation matrix, or its transpose when `transposed` (`runtime/ops/cond_traverse.rs`) |
-| `Hop.swap`                 | `swap_relationship(rel, rel.to, rel.from)` + `transposed = true`, `select_scan_node.rs:294-311, 965-970` |
-| `pick`, `order`            | the greedy hop ordering loop, `select_scan_node.rs:914-974` |
+| `Hop.swap`                 | `swap_relationship(rel, rel.to, rel.from)` + `transposed = true`, `select_scan_node.rs:370-387, 1051-1056` |
+| `pick`, `order`            | the greedy hop ordering loop, `select_scan_node.rs:1000-1060` |
 | `hasAll`                   | label conjunction checked by `NodeByLabelScan` / `get_nodes(labels)` |
 | `reorderLabels`            | `reorder_labels` (stable sort by schema id), `optimizer/reorder_labels.rs:16-47` |
-| `withPrimary`              | `IndexSubject::with_primary_label`, `utilize_index.rs:206-222, 296-319` |
-| `placeFilters`             | re-attachment of inter-CT filters "as soon as their inputs are bound", `select_scan_node.rs:1067-1117` |
+| `withPrimary`              | `IndexSubject::with_primary_label`, `utilize_index.rs:199-215, 286-309` |
+| `placeFilters`             | re-attachment of inter-CT filters "as soon as their inputs are bound", `select_scan_node.rs:1185-1235` |
 -/
 namespace OptimizerScan.ScanOrder
 
@@ -37,7 +37,7 @@ def Hop.holds (E : Store) (σ : Nat → Nat) (h : Hop) : Bool :=
   if h.transposed then E h.rel (σ h.dst) (σ h.src) (σ h.edge)
   else E h.rel (σ h.src) (σ h.dst) (σ h.edge)
 
-/-- `swap_relationship` + flipping `transposed` (`select_scan_node.rs:965-970`, `1001-1003`). -/
+/-- `swap_relationship` + flipping `transposed` (`select_scan_node.rs:1051-1056`, `1001-1003`). -/
 def Hop.swap (h : Hop) : Hop :=
   { h with src := h.dst, dst := h.src, transposed := !h.transposed }
 
@@ -77,7 +77,7 @@ theorem run_append (E : Store) (a b : List Op) (rows : List (Nat → Nat)) :
   simp only [run, List.filter_filter, List.all_append]
   congr 1; funext σ; exact Bool.and_comm _ _
 
-/-! ### The greedy ordering (`select_scan_node.rs:914-974`) -/
+/-! ### The greedy ordering (`select_scan_node.rs:1000-1060`) -/
 
 /-- Pick the first pending hop with an already-bound endpoint (the Rust loop picks the
 best-scoring such hop; which one is chosen does not matter for soundness, so the model
@@ -90,7 +90,7 @@ def pick (bound : List Nat) : List Hop → Option (Hop × List Hop)
       | some (h', rest) => some (h', h :: rest)
       | none => none
 
-/-- Orient the picked hop to start from its bound endpoint (`select_scan_node.rs:965-970`). -/
+/-- Orient the picked hop to start from its bound endpoint (`select_scan_node.rs:1051-1056`). -/
 def orient (bound : List Nat) (h : Hop) : Hop :=
   if h.src ∈ bound then h else h.swap
 
@@ -247,7 +247,7 @@ theorem primary_split (label : Nat) (ls labels : List Nat) (h : label ∈ ls) :
   simpa [hasAll, withPrimary] using this
 
 
-/-! ### Binding-aware semantics and filter placement (`select_scan_node.rs:893-1117`)
+/-! ### Binding-aware semantics and filter placement (`select_scan_node.rs:979-1235`)
 
 Generate-and-test hides one thing: a `Filter` evaluated before its variable is bound reads
 Null and drops the row. `runScoped` is the sequential semantics with a bound set `B`: a hop
@@ -285,7 +285,7 @@ theorem runScoped_wellScoped (E : Store) (σ : Nat → Nat) :
     have : vs.all (· ∈ B) = true := List.all_eq_true.mpr (fun v h => by simpa using hv v h)
     rw [this, runScoped_wellScoped E σ B rest hw, Bool.true_and]
 
-/-- Filter placement after each hop (`select_scan_node.rs:1084-1111`): emit the hop, add its
+/-- Filter placement after each hop (`select_scan_node.rs:1202-1229`): emit the hop, add its
 destination and edge to `placed`, then emit every pending filter whose variables are all in
 `placed`. Returns the steps and the filters left over (non-empty ⇒ rewrite abandoned). -/
 def place : List Nat → List Hop → List (List Nat × ((Nat → Nat) → Bool)) →
@@ -333,11 +333,65 @@ theorem place_wellScoped : ∀ (placed B : List Nat) (hs : List Hop) fs,
       · exact Or.inr (Or.inr (Or.inl h1))
       · exact Or.inr (Or.inr (Or.inr (hpl v h1)))
 
-/-! #### Counterexample: the dishonest initial bound set (CONFIRMED bug)
+/-! #### Salvaged filters (#2390): re-attached above the re-ordered hops
 
-`select_scan_node.rs:893-900` seeds `initial_bound` with `best_node.alias.id` *and* the
+When `select_scan_node` discards a planner scan subtree, `filters_of` takes the `Filter`s off its
+spine (`select_scan_node.rs:958`, `:1114`, `:1315`). On a swap they go back *above* the re-ordered
+chain (`:1240-1246`) or above the reversed CondTraverse (`:1156-1176`), never inside the new scan
+(their variable is the old scan endpoint, which the hops now bind). At the top of the chain every
+variable the hops bind is bound, so the result is well-scoped, and by `run_append` the filters
+are applied exactly as before (generate-and-test is a conjunction). -/
+
+/-- The variables bound after running a chain from bound set `B`. -/
+def boundAfter : List Nat → List Step → List Nat
+  | B, [] => B
+  | B, .hop h :: rest => boundAfter (h.src :: h.dst :: h.edge :: B) rest
+  | B, .filt _ _ :: rest => boundAfter B rest
+
+/-- **PROVEN**: appending filters above a well-scoped chain keeps it well-scoped when the filters
+    read only variables the chain (or what is below it) binds. -/
+theorem salvage_wellScoped : ∀ (B : List Nat) (steps : List Step), wellScoped B steps →
+    ∀ (fs : List (List Nat × ((Nat → Nat) → Bool))), (∀ f ∈ fs, ∀ v ∈ f.1, v ∈ boundAfter B steps) →
+    wellScoped B (steps ++ fs.map (fun f => Step.filt f.1 f.2))
+  | B, [], _, fs, hf => by
+    simpa using wellScoped_filts B fs hf [] trivial
+  | B, .hop h :: rest, hw, fs, hf => by
+    simp only [List.cons_append, wellScoped]
+    exact salvage_wellScoped _ rest hw fs hf
+  | B, .filt vs p :: rest, ⟨hv, hw⟩, fs, hf => by
+    simp only [List.cons_append, wellScoped]
+    exact ⟨hv, salvage_wellScoped B rest hw fs hf⟩
+
+/-- **PROVEN**: the hops bind their endpoints, so a salvaged filter over any hop endpoint is placeable. -/
+theorem boundAfter_hop : ∀ (B : List Nat) (steps : List Step) (h : Hop), Step.hop h ∈ steps →
+    h.src ∈ boundAfter B steps ∧ h.dst ∈ boundAfter B steps
+  | B, [], h, hm => by simp at hm
+  | B, .hop h' :: rest, h, hm => by
+    simp only [boundAfter]
+    rcases List.mem_cons.1 hm with he | hm
+    · cases he
+      have mono : ∀ (B' : List Nat) (st : List Step) v, v ∈ B' → v ∈ boundAfter B' st := by
+        intro B' st
+        induction st generalizing B' with
+        | nil => intro v hv; exact hv
+        | cons s st ih =>
+          intro v hv
+          cases s with
+          | hop h2 => exact ih _ v (by simp [hv])
+          | filt _ _ => exact ih B' v hv
+      exact ⟨mono _ rest _ (by simp), mono _ rest _ (by simp)⟩
+    · exact boundAfter_hop _ rest h hm
+  | B, .filt _ _ :: rest, h, hm => by
+    simp only [boundAfter]
+    rcases List.mem_cons.1 hm with he | hm
+    · cases he
+    · exact boundAfter_hop B rest h hm
+
+/-! #### Counterexample: the dishonest initial bound set (CONFIRMED bug, still present at 8743953a8)
+
+`select_scan_node.rs:979-986` seeds `initial_bound` with `best_node.alias.id` *and* the
 variables of an existing (outer-context) child. When that child is kept, no scan for
-`best_node` is built (`subtree = existing_child.clone().unwrap_or_else(..)`, line 1080), so
+`best_node` is built (`subtree = existing_child.clone().unwrap_or_else(..)`, line 1198), so
 `best_node` is not bound — yet its inline-attribute Filter is placed as soon as the first hop
 runs. Query (C returns 1, Rust 0):
 `MATCH (b:A) WITH b LIMIT 1 MATCH (b)<-[]-(d)-[:R]->(c {v:1})-[:R]->(z) RETURN count(*)`.

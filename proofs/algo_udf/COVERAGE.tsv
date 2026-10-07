@@ -84,11 +84,12 @@ graph/src/udf/js_context.rs	validate_script	154	PROVEN	UdfContext.validateScript
 graph/src/udf/js_context.rs	ensure_context_current	187	PROVEN	UdfContext.ensureCurrent_version
 graph/src/udf/js_context.rs	rebuild_context	204	PROVEN	UdfContext.rebuild_keys, rebuild_fail; Repo.keys
 graph/src/udf/js_context.rs	call_udf_bridge	281	PROVEN	UdfContext.bridge_clears, bridge_timeout, bridge_not_found
-graph/src/udf/js_globals.rs	setup_validate_globals	45	PROVEN	UdfGlobals.validate_names_nodup, vRegister_rejects (the eval-ed JS register body; global install AXIOMATISED)
+graph/src/udf/js_globals.rs	setup_validate_globals	45	PROVEN	UdfGlobals.validate_names_nodup, vRegister_rejects, validate_runtime_same_globals (#3079: also calls setup_graph_global; historical pre3079_validate_lacks_graph) (the eval-ed JS register body; global install AXIOMATISED)
 graph/src/udf/js_globals.rs	collect_validate_names	98	PROVEN	UdfGlobals.collectNames_ok
-graph/src/udf/js_globals.rs	setup_runtime_globals	111	PROVEN	UdfGlobals.runtime_keys_eq_qualified, empty_lib_name_mismatch (BUG)
-graph/src/udf/js_globals.rs	collect_runtime_funcs	193	PROVEN	UdfGlobals.collectFuncs_ok
-graph/src/udf/js_globals.rs	js_value_to_log_string	222	PROVEN	UdfGlobals.logString_spec
+graph/src/udf/js_globals.rs	setup_runtime_globals	111	PROVEN	UdfGlobals.runtime_keys_eq_qualified, empty_lib_name_mismatch (BUG), validate_runtime_same_globals
+graph/src/udf/js_globals.rs	setup_graph_global	163	PROVEN	UdfGlobals.graphGlobal: graph_global_in_both, validate_runtime_same_graph (#3079; property install AXIOMATISED QuickJS)
+graph/src/udf/js_globals.rs	collect_runtime_funcs	200	PROVEN	UdfGlobals.collectFuncs_ok
+graph/src/udf/js_globals.rs	js_value_to_log_string	229	PROVEN	UdfGlobals.logString_spec
 graph/src/udf/mod.rs	init_udf_repo	59	PROVEN	UdfRepoOps.initRepo_idem
 graph/src/udf/mod.rs	get_udf_repo	63	PROVEN	UdfRepoOps.getRepo_after_init, getRepo_uninit
 graph/src/udf/repository.rs	default	67	PROVEN	UdfRepoOps.rnew_spec
@@ -102,5 +103,5 @@ graph/src/udf/repository.rs	list	170	PROVEN	UdfRepoOps.list_shows_raw, list_filt
 graph/src/udf/repository.rs	get_all_libraries	205	PROVEN	UdfRepoOps.getAll_spec
 graph/src/udf/repository.rs	serialize	211	PROVEN	UdfRepoOps.serialize_roundtrip
 graph/src/udf/repository.rs	deserialize	226	PROVEN	UdfRepoOps.deserialize_atomic, serialize_roundtrip
-graph/src/udf/type_convert.rs	value_to_js	58	PROVEN	Marshal.toJs; int_roundtrip, float_rt_iff, node_rt, rel_rt, point_rt, datetime_rt, vecf32_finite_rt, map_never_marked, constructor_key_breaks_roundtrip
-graph/src/udf/type_convert.rs	js_to_value	185	PROVEN	Marshal.fromJs; forged_node_marker, forged_edge_marker, neg_zero_not_preserved, vecf32_inf_not_roundtrip, internal_keys_dropped, unesc_esc
+graph/src/udf/type_convert.rs	value_to_js	58	PROVEN	Marshal.toJs; int_roundtrip, float_rt_iff, neg_zero_rt, node_rt, rel_rt, point_rt, datetime_rt, vecf32_rt, map_never_marked, constructor_key_roundtrips, constructor_regexp_roundtrips
+graph/src/udf/type_convert.rs	js_to_value	185	PROVEN	Marshal.fromJs @8743953a8 (#3074): neg_zero_rt, vecf32_fromVec, vecf32_inf_rt, plain_obj_is_map, num_eq_pre3074_off_negZero; forged_node_marker, forged_edge_marker (BUG), internal_keys_dropped, unesc_esc; historical pre3074_neg_zero_not_preserved, pre3074_vecf32_inf_not_roundtrip, pre3074_constructor_key_breaks_roundtrip
