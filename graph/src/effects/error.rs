@@ -357,7 +357,10 @@ pub enum ApplyError {
     /// not delete the relationship again.
     ///
     /// The primary does this only for a cancelled edge, whose `DELETE_EDGE`
-    /// follows at once. One left standing hangs off a recycled id.
+    /// follows at once. One left standing hangs off a recycled id. Found by
+    /// `Graph::validate` at the end of the buffer
+    /// (`NodeOpError::DanglingRelationship`), the check every write path
+    /// shares.
     #[error(
         "effects buffer leaves relationship {id} attached to a node it deleted. \
          The two engines have diverged; the buffer was not applied."

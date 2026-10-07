@@ -46,22 +46,6 @@ impl From<String> for ApplyError {
     }
 }
 
-/// Nodes a buffer deleted, and the edges it then created onto them.
-///
-/// The one way a legitimate buffer names a dead endpoint: a committed node
-/// deleted by the same query that created, and then cancelled, an edge off it.
-/// `digest_cancelled` runs after `digest_deleted_nodes`, so the pair's
-/// `CREATE_EDGE` arrives after the endpoint is already gone.
-#[derive(Default)]
-struct DeletedHere {
-    /// Nodes an earlier record of this buffer deleted.
-    nodes: RoaringTreemap,
-    /// Edges created onto such a node and not yet deleted again. The pair nets
-    /// out, so this must be empty by the end of the buffer; an edge still here
-    /// is one left hanging off a recycled id.
-    dangling_edges: RoaringTreemap,
-}
-
 /// Apply a whole `GRAPH.EFFECT` payload.
 ///
 /// Every failure aborts the buffer rather than applying a prefix: effects are
@@ -87,22 +71,18 @@ pub fn apply_effects(
     // ordered by id, so the id space is legitimately fragmented partway through
     // and only has to be whole at the end.
     let mut docs = IndexDocs::default();
-    let mut deleted_here = DeletedHere::default();
     for record in payload.records() {
-        apply_record(g, record?, &mut docs, &mut deleted_here)?;
+        apply_record(g, record?, &mut docs)?;
     }
 
-    // Like the id space below, settled only now: the cancelled pair's
-    // `DELETE_EDGE` follows its `CREATE_EDGE`, so mid-buffer an edge onto a
-    // deleted node is legitimately still standing.
-    if let Some(id) = deleted_here.dangling_edges.min() {
-        return Err(ApplyError::DanglingRelationship { id });
-    }
     // Refusing a divergent buffer is this function's contract, and the refusal
     // it hands back is part of the replication protocol's diagnostics — the
     // caller must not commit a version built from one. `MvccGraph::commit`
     // validates again before publishing; that is the net under every write path,
-    // not a substitute for rejecting the buffer here.
+    // not a substitute for rejecting the buffer here. It is also where an edge
+    // onto a node this buffer deleted is refused if it is still standing (see
+    // `CreateEdge` below): settled only at the end, like the id space, because
+    // the cancelled pair's `DELETE_EDGE` follows its `CREATE_EDGE`.
     g.validate()?;
 
     g.commit_index(&mut docs.node_adds, &mut docs.node_removes);
@@ -121,6 +101,7 @@ impl From<NodeOpError> for ApplyError {
         match e {
             NodeOpError::Graph(e) => Self::Graph(e),
             NodeOpError::IdSpace { kind, source } => id_space_error_map(kind, source),
+            NodeOpError::DanglingRelationship { id } => Self::DanglingRelationship { id },
         }
     }
 }
@@ -177,7 +158,6 @@ fn apply_record(
     g: &mut Graph,
     record: Record,
     docs: &mut IndexDocs,
-    deleted: &mut DeletedHere,
 ) -> Result<(), ApplyError> {
     match record {
         // One opcode, two variants: the wire's `SchemaType` byte is now the
@@ -287,27 +267,23 @@ fn apply_record(
             //
             // Per segment, not per id: a bulk create's endpoint columns are
             // runs, and collecting them id by id cost more than the create.
-            let endpoints = src.to_roaring() | dst.to_roaring();
-            // A node this buffer deleted was live, so it is not a divergence
-            // to name it — the cancelled pair does — but the edge must be gone
-            // again by the end of the buffer.
-            let deleted_here = &endpoints & &deleted.nodes;
-            require_live(g, EntityType::Node, &(endpoints - &deleted_here))?;
+            //
+            // One exception, and the only way a legitimate buffer names a dead
+            // endpoint: a node an earlier record of this buffer deleted. The
+            // primary emits a cancelled edge's create/delete pair after the
+            // deleted nodes, so a query that created an edge off a committed
+            // node and then deleted the node ships the pair after the node is
+            // gone. The node id space remembers what this batch released, and
+            // `Graph::validate` refuses the buffer at the end if such an edge
+            // is still standing.
+            let endpoints = (src.to_roaring() | dst.to_roaring()) - g.node_id_space().released();
+            require_live(g, EntityType::Node, &endpoints)?;
             // `&[u64]` for the bulk APIs; materialized once each.
             let (ids, src, dst): (Vec<u64>, Vec<u64>, Vec<u64>) = (
                 ids.iter().collect(),
                 src.iter().collect(),
                 dst.iter().collect(),
             );
-            let dead_here = deleted_here & g.node_id_space().recycled();
-            if !dead_here.is_empty() {
-                deleted.dangling_edges.extend(
-                    ids.iter()
-                        .zip(src.iter().zip(&dst))
-                        .filter(|(_, (s, d))| dead_here.contains(**s) || dead_here.contains(**d))
-                        .map(|(&id, _)| id),
-                );
-            }
             g.create_relationships_bulk(&type_name, &src, &dst, &ids)?;
 
             // As in `CreateNode` above: `attr_map` shape-checks internally, so
@@ -420,14 +396,12 @@ fn apply_record(
             // and never created by it, so nothing has ever held it — needs the
             // batch, which is why it is handed over here.
             g.delete_nodes(&nodes, &mut docs.node_removes)?;
-            deleted.nodes |= nodes;
             Ok(())
         }
 
         Record::DeleteEdge { ids, .. } => {
             let edges = ids.to_roaring();
             g.delete_relationships(&edges, &mut docs.edge_removes)?;
-            deleted.dangling_edges -= edges;
             Ok(())
         }
 
@@ -2123,7 +2097,10 @@ mod tests {
         write_create_edge(&mut buf, &[0]);
         write_delete(&mut buf, &IdList::from([2]), &[]);
         apply_effects(&mut g, &buf).expect("setup must apply");
-        g
+        // A later buffer is a later write version, with a batch of its own —
+        // as `GRAPH.EFFECT` applies it. Without that, node 2 would still read
+        // as released by *this* batch, which a buffer may legitimately name.
+        g.new_version()
     }
 
     fn apply_one(

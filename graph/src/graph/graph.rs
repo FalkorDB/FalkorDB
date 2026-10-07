@@ -91,6 +91,7 @@ use crate::{
             matrix::{Descriptor, Dup, Matrix},
             serialization::{Encode, EncodeState, PayloadEntry, Writer},
             tensor::{GrB_INDEX_MAX, Tensor},
+            vector::Vector,
             versioned_matrix::{self, VersionedMatrix},
         },
         id_space::{IdSpace, IdSpaceError},
@@ -300,6 +301,21 @@ pub enum NodeOpError {
         kind: &'static str,
         source: IdSpaceError,
     },
+
+    /// A relationship the open batch created, and did not delete again, ends at
+    /// a node that is not live — freed, or never allocated.
+    ///
+    /// Checked once at the end of the batch by [`Graph::validate`], not per
+    /// record: a batch may legitimately name an endpoint it freed earlier, as
+    /// long as the relationship is gone again by the end (the effects buffer's
+    /// cancelled create/delete pair does exactly this). One left standing hangs
+    /// off a recycled id, and the next node to reclaim that id inherits it.
+    #[error(
+        "internal error: relationship {id} was left attached to a node that is not live. \
+         No part of this write was applied. This is a bug in FalkorDB rather than a problem \
+         with the query — please report it"
+    )]
+    DanglingRelationship { id: u64 },
 }
 
 impl NodeOpError {
@@ -1480,14 +1496,57 @@ impl Graph {
     ///
     /// Deliberately opaque: callers are told *that* a version is checked, not
     /// what is checked, so an invariant added later needs no call-site change.
-    /// Today that is the id batches; [`MvccGraph::commit`] is the only caller
-    /// and the only place a version becomes visible.
+    /// Today that is the id batches, and that every relationship the batch
+    /// created still ends at two live nodes; [`MvccGraph::commit`] is the
+    /// place a version becomes visible, and the effects apply path and
+    /// `GRAPH.BULK` ask it before that.
     ///
     /// # Errors
     ///
     /// The first refusal, naming the entity kind it is about.
     pub fn validate(&self) -> Result<(), NodeOpError> {
-        self.verify_id_batches()
+        self.verify_id_batches()?;
+        self.verify_created_relationships()
+    }
+
+    /// Check that every relationship this batch created, and did not delete
+    /// again, ends at two live nodes.
+    ///
+    /// Only the batch's own relationships: one that predates it was checked by
+    /// the batch that created it, and deleting a node with relationships is
+    /// refused before the node goes (implicitly by Cypher's `DELETE`, and by
+    /// the effects apply path's `NodeHasRelationships`). O(1) per created
+    /// relationship — an endpoint-index lookup and two liveness probes.
+    ///
+    /// # Errors
+    ///
+    /// [`NodeOpError::DanglingRelationship`] naming the lowest such id.
+    fn verify_created_relationships(&self) -> Result<(), NodeOpError> {
+        let rels = &self.relationship_ids;
+        let nodes = &self.node_ids;
+        // Between batches the node space is dense, so live is "below the
+        // boundary and not free".
+        let bound = nodes.bound();
+        let free = nodes.recycled();
+        // The probes are most of the cost, and the ordinary bulk create has
+        // nothing free on either side: skip them there.
+        let check_free = !free.is_empty();
+        let live = |n: u64| n < bound && !(check_free && free.contains(n));
+        let skip_freed = !rels.recycled().is_empty();
+        // `taken` is untrimmed and also holds what the batch released again
+        // (a cancelled reservation, a create then delete) — those are free.
+        for id in rels.taken() {
+            if skip_freed && rels.is_free(id) {
+                continue;
+            }
+            if !self
+                .endpoints_for_edge(id)
+                .is_some_and(|(src, dst)| live(src) && live(dst))
+            {
+                return Err(NodeOpError::DanglingRelationship { id });
+            }
+        }
+        Ok(())
     }
 
     /// Check that both batches left possible id spaces behind.
@@ -2168,47 +2227,61 @@ impl Graph {
 
     /// The lowest of `nodes` that still has a relationship, in either direction.
     ///
-    /// Per type, whichever side is smaller is walked: the type's edges, checking
-    /// both endpoints, or the nodes, seeking each one's row in both directions.
-    /// A bulk delete ships its edges first, so the tensors it reaches here are
-    /// usually empty or small, and walking them costs far less than a seek per
-    /// node. The seeking side re-seeks two iterators rather than rebuilding
-    /// them: building one allocates a `GxB_Iterator` per layer.
+    /// Two questions, each answered in bulk with a cost that follows `nodes`
+    /// rather than the graph: whether any of them has one at all, and — only
+    /// when one does, which is a refusal — which is the lowest.
+    ///
+    /// * Outgoing: the graph-wide adjacency matrix, which is exact for this (a
+    ///   pair leaves it when its last edge of any type goes), so one matrix
+    ///   answers for every type.
+    /// * Incoming: that matrix is stored by row, and a column question asked of
+    ///   it visits every row. Each type's backward adjacency holds the same
+    ///   pairs by destination, so the incoming side asks those instead —
+    ///   one bulk product per type, each following `nodes`.
+    ///
+    /// Both are `Aᵀ·x` over the indicator `x` of `nodes`, which GraphBLAS
+    /// computes by pushing just the selected rows.
     #[must_use]
     pub fn first_node_with_relationships(
         &self,
         nodes: &RoaringTreemap,
     ) -> Option<u64> {
-        let mut first: Option<u64> = None;
-        for m in &self.relationship_matrices {
-            let edges = m.edge_count();
-            if edges == 0 {
-                continue;
-            }
-            if edges <= nodes.len() {
-                first = m
-                    .iter(0, u64::MAX, false)
-                    .flat_map(|(src, dst, _)| [src, dst])
-                    .filter(|id| nodes.contains(*id))
-                    .chain(first)
-                    .min();
-                continue;
-            }
-            let mut out = m.iter(0, 0, false);
-            let mut inc = m.iter(0, 0, true);
-            for id in nodes {
-                if first.is_some_and(|f| f <= id) {
-                    break;
-                }
-                out.seek(id, id);
-                inc.seek(id, id);
-                if out.next().is_some() || inc.next().is_some() {
-                    first = Some(id);
-                    break;
-                }
-            }
+        let adj = &self.adjacancy_matrix;
+        if nodes.is_empty() || adj.nvals() == 0 {
+            return None;
         }
-        first
+        // An id past the matrices has neither a row nor a column.
+        let n = adj.nrows();
+        let ids: Vec<u64> = nodes.iter().take_while(|&id| id < n).collect();
+        if ids.is_empty() {
+            return None;
+        }
+        let x = Vector::<bool>::from_sorted_indices(n, &ids);
+        let touched = adj.count_in_rows(&x) > 0
+            || self
+                .relationship_matrices
+                .iter()
+                .any(|t| t.count_pairs_into(&x) > 0);
+        if !touched {
+            return None;
+        }
+
+        // Some node in the set has a relationship, and the buffer will be
+        // refused: find the lowest, re-seeking one iterator per matrix.
+        let mut out = adj.iter(0, 0);
+        let mut inc: Vec<_> = self
+            .relationship_matrices
+            .iter()
+            .map(|t| t.iter(0, 0, true))
+            .collect();
+        ids.into_iter().find(|&id| {
+            out.seek(id, id);
+            out.next().is_some()
+                || inc.iter_mut().any(|it| {
+                    it.seek(id, id);
+                    it.next().is_some()
+                })
+        })
     }
 
     /// Returns an iterator over all relationship tensors (one per type).
@@ -5363,6 +5436,146 @@ mod adjacency_cascade_tests {
         // And deleting both endpoints clears it, S edge included.
         delete_nodes_cascade(&mut g, &[0, 1]);
         assert!(adjacency_entries(&g).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod relationship_liveness_tests {
+    use super::*;
+    use crate::graph::graphblas::test_init::ensure_init;
+
+    /// Nodes 0..8, all created in one batch, then a fresh batch opened.
+    fn graph() -> Graph {
+        ensure_init();
+        let mut g = Graph::new(64, 64, 0, 0, "liveness");
+        g.open_id_batches().expect("a consistent space");
+        g.create_nodes(&(0..8).collect()).expect("created");
+        g.open_id_batches().expect("a consistent space");
+        g
+    }
+
+    fn edges(
+        g: &mut Graph,
+        ty: &str,
+        pairs: &[(u64, u64)],
+    ) {
+        let ids = g
+            .relationship_id_space()
+            .reserve(pairs.len(), &RoaringTreemap::new())
+            .expect("reserved");
+        let (src, dst): (Vec<u64>, Vec<u64>) = pairs.iter().copied().unzip();
+        g.create_relationships_bulk(&Arc::new(ty.to_owned()), &src, &dst, &ids)
+            .expect("created");
+    }
+
+    fn first(
+        g: &Graph,
+        nodes: &[u64],
+    ) -> Option<u64> {
+        g.first_node_with_relationships(&nodes.iter().copied().collect())
+    }
+
+    /// 3 -> 0 (R), 4 -> 4 (S), 2 -> 6 (S); 1, 5 and 7 are isolated.
+    fn shaped() -> Graph {
+        let mut g = graph();
+        edges(&mut g, "R", &[(3, 0)]);
+        edges(&mut g, "S", &[(4, 4), (2, 6)]);
+        g
+    }
+
+    #[test]
+    fn no_node_with_relationships() {
+        let g = shaped();
+        assert_eq!(first(&g, &[1, 5, 7]), None);
+        assert_eq!(first(&g, &[]), None);
+        // Past the matrix: no row, no column.
+        assert_eq!(first(&g, &[1, 1 << 40]), None);
+        assert_eq!(first(&graph(), &[0, 1, 2]), None, "no edges at all");
+    }
+
+    #[test]
+    fn outgoing_only() {
+        let g = shaped();
+        assert_eq!(first(&g, &[3, 5]), Some(3));
+        assert_eq!(first(&g, &[1, 2, 7]), Some(2));
+    }
+
+    #[test]
+    fn incoming_only() {
+        let g = shaped();
+        assert_eq!(first(&g, &[0, 5]), Some(0));
+        assert_eq!(first(&g, &[1, 6, 7]), Some(6));
+    }
+
+    #[test]
+    fn self_loop() {
+        let g = shaped();
+        assert_eq!(first(&g, &[4, 5]), Some(4));
+    }
+
+    #[test]
+    fn lowest_across_types_and_directions() {
+        let g = shaped();
+        // 0 has an R edge in, 3 one out: the incoming one is lower.
+        assert_eq!(first(&g, &[0, 3]), Some(0));
+        // 3 has R out, 6 has S in: the outgoing one is lower.
+        assert_eq!(first(&g, &[3, 6]), Some(3));
+        // Every kind at once.
+        assert_eq!(first(&g, &[7, 6, 5, 4, 3, 2]), Some(2));
+        assert_eq!(first(&g, &[0, 1, 2, 3, 4, 5, 6, 7]), Some(0));
+    }
+
+    /// The adjacency matrix is exact: a pair whose last edge went is gone, so
+    /// the node is free to delete again — and a pair with an edge of another
+    /// type left is not.
+    #[test]
+    fn deleting_the_last_edge_clears_the_node() {
+        let mut g = graph();
+        edges(&mut g, "R", &[(1, 2)]);
+        edges(&mut g, "S", &[(1, 2)]);
+        let mut docs = FxHashMap::default();
+        g.delete_relationships(&std::iter::once(0).collect(), &mut docs)
+            .expect("deleted");
+        assert_eq!(first(&g, &[1]), Some(1), "the S edge is still there");
+        assert_eq!(first(&g, &[2]), Some(2));
+        g.delete_relationships(&std::iter::once(1).collect(), &mut docs)
+            .expect("deleted");
+        assert_eq!(first(&g, &[1, 2]), None);
+    }
+
+    /// `validate` holds every write path to it: an edge this batch created
+    /// onto a node that is gone is refused, one deleted again is not.
+    #[test]
+    fn validate_refuses_an_edge_onto_a_node_that_is_not_live() {
+        let mut g = graph();
+        edges(&mut g, "R", &[(0, 1), (2, 3)]);
+        g.validate().expect("both endpoints live");
+
+        let mut docs = FxHashMap::default();
+        // Freed without the edge: what `NodeHasRelationships` stops the
+        // effects path from doing, and Cypher never does.
+        g.delete_nodes(&std::iter::once(3).collect(), &mut docs)
+            .expect("deleted");
+        assert_eq!(
+            g.validate(),
+            Err(NodeOpError::DanglingRelationship { id: 1 })
+        );
+
+        let mut edocs = FxHashMap::default();
+        g.delete_relationships(&std::iter::once(1).collect(), &mut edocs)
+            .expect("deleted");
+        g.validate().expect("the edge went with it");
+    }
+
+    /// A relationship from before the batch is the batch that created it's
+    /// business; only this batch's own are walked.
+    #[test]
+    fn validate_checks_only_this_batch() {
+        let mut g = graph();
+        edges(&mut g, "R", &[(0, 1)]);
+        g.open_id_batches().expect("a consistent space");
+        assert!(g.relationship_id_space().taken().is_empty());
+        g.validate().expect("nothing created in this batch");
     }
 }
 
