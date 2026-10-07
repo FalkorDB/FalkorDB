@@ -112,7 +112,7 @@ class testCreateClause():
         self.env.assertEqual(len(res), 1)
         path = res[0][0]
         self.env.assertEqual(len(path.nodes()), 1)
-        self.env.assertEqual(len(path.relationships()), 0)
+        self.env.assertEqual(len(path.edges()), 0)
         self.env.assertEqual(path.first_node().properties["name"], "Alice")
 
         # Test 2: Multi-node relationship named path
@@ -121,11 +121,11 @@ class testCreateClause():
         self.env.assertEqual(len(res), 1)
         path = res[0][0]
         self.env.assertEqual(len(path.nodes()), 2)
-        self.env.assertEqual(len(path.relationships()), 1)
+        self.env.assertEqual(len(path.edges()), 1)
         self.env.assertEqual(path.nodes()[0].properties["name"], "Bob")
         self.env.assertEqual(path.nodes()[1].properties["name"], "Charlie")
-        self.env.assertEqual(path.relationships()[0].relation, "KNOWS")
-        self.env.assertEqual(path.relationships()[0].properties["since"], 2026)
+        self.env.assertEqual(path.edges()[0].relation, "KNOWS")
+        self.env.assertEqual(path.edges()[0].properties["since"], 2026)
 
         # Test 3: Path functions length() and nodes() on created path
         q = "CREATE p=(x:Item {id: 1})-[r:LINK]->(y:Item {id: 2}) RETURN length(p), nodes(p)"
