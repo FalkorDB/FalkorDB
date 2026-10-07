@@ -2885,3 +2885,193 @@ updating clause.")
         res = self.graph.query(q).result_set
         self.env.assertEqual(res[0][0], 2) # avgX
 
+
+    def test_54_writes_apply_to_every_input_row(self):
+        """A subquery performing writes must apply them once per input row.
+
+        A unit subquery used to run its write for the first input row only.
+        The remaining rows still passed through, so the cardinality and the
+        success reply looked right while the writes were silently dropped.
+        """
+
+        # DELETE inside a unit subquery removes every matched relationship,
+        # not just the one belonging to the first row
+        # https://github.com/FalkorDB/FalkorDB/issues/2159
+        self.graph.delete()
+        self.graph.query("""CREATE (a1:User {active: true}), (b1:User {active: false}),
+                                   (a2:User {active: true}), (b2:User {active: false}),
+                                   (a3:User {active: true}), (b3:User {active: false}),
+                                   (a1)-[:FRIEND]->(b1),
+                                   (a2)-[:FRIEND]->(b2),
+                                   (a3)-[:FRIEND]->(b3)""")
+
+        res = self.graph.query("""MATCH (a:User {active: true})-[r:FRIEND]->(b:User {active: false})
+                                  CALL { WITH r DELETE r }""")
+        self.env.assertEqual(res.relationships_deleted, 3)
+        self.get_res_and_assertEquals(
+            "MATCH ()-[r:FRIEND]->() RETURN count(r)", [[0]])
+
+        # the same when a filter selects a subset of the relationships: both
+        # matching edges go, the third is untouched
+        # https://github.com/FalkorDB/FalkorDB/issues/2164
+        self.graph.delete()
+        self.graph.query("""CREATE (n1:BugA {id: 1}), (n2:BugA {id: 2}),
+                                   (n1)-[:E {w: 1}]->(n2),
+                                   (n1)-[:E {w: 2}]->(n2),
+                                   (n1)-[:E {w: 1}]->(n2)""")
+
+        res = self.graph.query("""MATCH ()-[r:E]->() WHERE r.w = 1
+                                  CALL { WITH r DELETE r }""")
+        self.env.assertEqual(res.relationships_deleted, 2)
+        self.get_res_and_assertEquals(
+            "MATCH ()-[r:E]->() RETURN count(r)", [[1]])
+
+        # DETACH DELETE takes the same path: every active node and each of
+        # their relationships go, leaving only the inactive endpoints
+        # https://github.com/FalkorDB/FalkorDB/issues/2234
+        self.graph.delete()
+        self.graph.query("""CREATE (a1:U {active: true}), (b1:U {active: false}), (a1)-[:FRIEND]->(b1),
+                                   (a2:U {active: true}), (b2:U {active: false}), (a2)-[:FRIEND]->(b2),
+                                   (a3:U {active: true}), (b3:U {active: false}), (a3)-[:FRIEND]->(b3)""")
+
+        res = self.graph.query("MATCH (a:U {active: true}) CALL { WITH a DETACH DELETE a }")
+        self.env.assertEqual(res.nodes_deleted, 3)
+        self.env.assertEqual(res.relationships_deleted, 3)
+        self.get_res_and_assertEquals("MATCH (n:U) RETURN count(n)", [[3]])
+        self.get_res_and_assertEquals("MATCH ()-[r:FRIEND]->() RETURN count(r)", [[0]])
+
+        # MERGE runs per row as well, so each value of the driving list picks
+        # its own branch: three creations and two matches
+        # https://github.com/FalkorDB/FalkorDB/issues/2164
+        self.graph.delete()
+        self.graph.query("""CREATE (:Node {id: 1}), (:Node {id: 2}), (:Node {id: 3}),
+                                   (:Node {id: 4}), (:Node {id: 5})""")
+
+        res = self.graph.query("""UNWIND range(4, 8) AS i
+                                  CALL {
+                                      WITH i
+                                      MERGE (n:Node {id: i})
+                                        ON CREATE SET n.ctime = 1
+                                        ON MATCH  SET n.mtime = 1
+                                  }""")
+        self.env.assertEqual(res.nodes_created, 3)
+        self.get_res_and_assertEquals("MATCH (n:Node) RETURN count(n)", [[8]])
+        self.get_res_and_assertEquals(
+            "MATCH (n:Node) WHERE n.ctime IS NOT NULL RETURN count(n)", [[3]])
+        self.get_res_and_assertEquals(
+            "MATCH (n:Node) WHERE n.mtime IS NOT NULL RETURN count(n)", [[2]])
+
+        # a returning subquery that deletes must still emit one row per input
+        # row rather than collapsing them into one
+        # https://github.com/FalkorDB/FalkorDB/issues/1943
+        self.graph.delete()
+        self.graph.query("""CREATE (:Person {name: 'Alice'}), (:Person {name: 'Bob'}),
+                                   (:Person {name: 'Charlie'})""")
+
+        res = self.graph.query("""MATCH (p:Person)
+                                  WITH p LIMIT 2
+                                  CALL {
+                                      WITH p
+                                      DELETE p
+                                      RETURN 1 AS deleted
+                                  }
+                                  RETURN deleted""")
+        self.env.assertEqual(res.result_set, [[1], [1]])
+        self.env.assertEqual(res.nodes_deleted, 2)
+        self.get_res_and_assertEquals("MATCH (p:Person) RETURN count(p)", [[1]])
+
+    def test_55_body_variables_do_not_alias_the_imported_row(self):
+        """A subquery body without an explicit `WITH` import must still be
+        isolated from the outer row, not evaluate its own predicates against
+        it."""
+
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:A:B {id: 1}), (:A:B {id: 2}), (:A:B {id: 3})")
+
+        # The body's filter constrains `n`, never the imported `x`.
+        expected = [[1, 1], [2, 1], [3, 1]]
+        for body in ["MATCH (n:A:B {id: 1}) RETURN n.id AS id",
+                     "MATCH (n:A:B) WHERE n.id = 1 RETURN n.id AS id"]:
+            for imports in ["WITH x", "WITH *", ""]:
+                self.get_res_and_assertEquals(
+                    f"""MATCH (x:A:B) {imports}
+                        CALL {{ {body} }}
+                        RETURN x.id AS xid, id ORDER BY xid, id""",
+                    expected)
+
+        # A non-entity import used to make the same predicate raise a type
+        # error, because `n.id` read the imported scalar.
+        for value in ["1", "'q'"]:
+            self.get_res_and_assertEquals(
+                f"""WITH {value} AS keep
+                    CALL {{ MATCH (n:A:B {{id: 1}}) RETURN n.id AS id }}
+                    RETURN count(id) AS c""",
+                [[1]])
+
+        # The body's entry projection binds nothing here, so it hands the body
+        # row count and correlation alone. Every result must still carry the
+        # origin of the input row it belongs to, or the whole cross product
+        # collapses onto the first `x`.
+        self.get_res_and_assertEquals(
+            """MATCH (x:A:B)
+               WITH x
+               CALL { MATCH (n:A:B) RETURN n.id AS id }
+               RETURN x.id AS xid, id ORDER BY xid, id""",
+            [[a, b] for a in (1, 2, 3) for b in (1, 2, 3)])
+        self.get_res_and_assertEquals(
+            """MATCH (x:A:B)
+               WITH x
+               CALL { RETURN 7 AS id }
+               RETURN x.id AS xid, id ORDER BY xid""",
+            [[1, 7], [2, 7], [3, 7]])
+
+        # The same misresolution let a write in the body escape its filter.
+        res = self.graph.query(
+            """MATCH (x:A:B)
+               WITH x
+               CALL { MATCH (n:A:B {id: 1}) SET n.hit = true RETURN n.id AS id }
+               RETURN count(*)""")
+        self.env.assertEqual(res.properties_set, 1)
+        self.get_res_and_assertEquals(
+            "MATCH (n) WHERE n.hit IS NOT NULL RETURN n.id ORDER BY n.id", [[1]])
+
+    def test_56_body_scan_not_anchored_to_the_imported_row(self):
+        """An unbound scan in the body must scan, not degrade into an expand
+        out of whatever the outer scope imported."""
+
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("CREATE (:Hub), (:Leaf), (:Iso)")
+        self.graph.query("""MATCH (h:Hub), (l:Leaf)
+                            CREATE (h)-[:R]->(l), (h)-[:R]->(l), (h)-[:R]->(l),
+                                   (h)-[:R]->(l), (h)-[:R]->(l), (l)-[:R]->(h)""")
+
+        # Every count below used to track the out-degree of the imported node
+        # (Hub 5, Leaf 1, Iso 0) or collapse to 0 for a non-node import.
+        for imports in ["MATCH (a:Hub) WITH *",
+                        "MATCH (a:Leaf) WITH *",
+                        "MATCH (a:Iso) WITH *",
+                        "MATCH (a:Hub) WITH a, 1 AS k",
+                        "MATCH (a:Hub) WITH 1 AS k, a",
+                        "MATCH (a:Leaf), (b:Hub) WITH a, b",
+                        ""]:
+            self.get_res_and_assertEquals(
+                f"""{imports}
+                    CALL {{ MATCH ()-[r]->() RETURN count(r) AS z }}
+                    RETURN z""",
+                [[6]])
+
+        # The reported shape: a relationship CREATE anchored the body's
+        # fixed-hop traversal to the freshly created edge, yielding 0 rows.
+        self.graph.query("MATCH (n) DETACH DELETE n")
+        self.graph.query("UNWIND range(0, 7) AS i CREATE (:l10:l5 {id: i})")
+        self.graph.query("""UNWIND range(0, 7) AS i
+                            MATCH (a {id: i})
+                            UNWIND [1, 2, 3, 4] AS d
+                            MATCH (b {id: ((i + d) % 8)})
+                            CREATE (a)-[:R]->(b)""")
+        self.get_res_and_assertEquals(
+            """CREATE (a:Seed)-[:R]->(b:Seed)
+               WITH *
+               CALL { MATCH p = (n3:l10)-[]-(n4:l5) RETURN 1 AS z }
+               RETURN count(*) AS c""",
+            [[64]])

@@ -337,6 +337,53 @@ class testIndexScanFlow():
         plan = str(self.graph.explain(q))
         self.env.assertNotContains("Node By Index Scan", plan)
 
+        # a negative radius can never match: no distance is below zero. Handing
+        # such a range to the index used to hang the server, and later to
+        # segfault it inside the index iterator.
+        # https://github.com/FalkorDB/FalkorDB/issues/291
+        # the optimizer accepts the point on either side of distance(), and the
+        # report is written with the literal first, so cover both orders
+        for dist in ["distance(r.location, point({latitude:30.27822306, longitude:-97.75134723}))",
+                     "distance(point({latitude:30.27822306, longitude:-97.75134723}), r.location)"]:
+            q = f"""MATCH (r:restaurant)
+            WHERE {dist} < -20000
+            RETURN r"""
+            self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+            self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # the same when the negative bound is computed rather than a literal
+        # https://github.com/FalkorDB/FalkorDB/issues/281
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) <= -(round(0.7784249186515808))
+        RETURN r"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # #281 reproduced against an empty index too, which is a different path
+        # through the iterator than one holding an entry
+        self.graph.query("MATCH (r:restaurant) DELETE r")
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # restore the node the remaining assertions match against
+        self.graph.query("CREATE (:restaurant {location: point({latitude:30.27822306, longitude:-97.75134723})})")
+
+        # a bound of exactly zero is the boundary case: distance is never
+        # negative, so '< 0' cannot match however close the two points are
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:40.4, longitude:30.3})) < 0
+        RETURN r"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [])
+
+        # the crash was asynchronous - the reply arrived and the server died
+        # afterwards - so the index must still be queryable
+        q = """MATCH (r:restaurant)
+        WHERE distance(r.location, point({latitude:30.27822306, longitude:-97.75134723})) < 1000
+        RETURN count(r)"""
+        self.env.assertContains("Node By Index Scan", str(self.graph.explain(q)))
+        self.env.assertEqual(self.graph.query(q).result_set, [[1]])
+
     def test14_index_scan_utilize_array(self):
         # Querying indexed properties using IN a constant array should utilize indexes.
         query = "MATCH (a:person) WHERE a.age IN [34, 33] RETURN a.name ORDER BY a.name"
@@ -1247,3 +1294,55 @@ class testIndexScanFlow():
         res = self.graph.query(q).result_set
         # `n.v` is a scalar int, never a list — no row should match.
         self.env.assertEqual(res, [])
+
+    def _index_vs_scan(self, indices, setup, queries, expect_index=True,
+                       expected_rows=None):
+        # Run each query on a graph with the indices and on one without,
+        # and require the same rows: an index must never change a result.
+        # `expected_rows`, when given, pins each query's sorted rows too, so the
+        # parity check cannot pass on two equally wrong (e.g. empty) results.
+        with_idx = self.db.select_graph("index_parity_idx")
+        no_idx = self.db.select_graph("index_parity_scan")
+        try:
+            for label, attr in indices:
+                with_idx.create_node_range_index(label, attr)
+            wait_for_indices_to_sync(with_idx)
+            with_idx.query(setup)
+            no_idx.query(setup)
+            for i, q in enumerate(queries):
+                if expect_index:
+                    self.env.assertContains('Node By Index Scan', str(with_idx.explain(q)))
+                expected = sorted(no_idx.query(q).result_set)
+                actual = sorted(with_idx.query(q).result_set)
+                self.env.assertEqual(actual, expected, message=q)
+                if expected_rows is not None:
+                    self.env.assertEqual(actual, sorted(expected_rows[i]), message=q)
+        finally:
+            with_idx.delete()
+            no_idx.delete()
+
+    def test_38_exclusive_equal_string_bounds(self):
+        # `> 'a' AND < 'a'` is empty; the equal-bounds exact-match
+        # shortcut must only apply when both bounds are inclusive.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:'a', k:'a'}), (:L {v:'b', k:'b'})",
+            ["MATCH (n:L) WHERE n.v > 'a' AND n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a' AND n.v < 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v > 'a' AND n.v <= 'a' RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 'a' AND n.v <= 'a' RETURN n.k"])
+
+    def test_40_temporals_not_in_numeric_range(self):
+        # Temporals must not be indexed as their raw number, where numeric
+        # ranges would match them. Each query has a numeric match, so the
+        # expected rows are non-empty and a temporal leaking in shows up.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:5, k:'int'}), (:L {v:-3, k:'neg'}), (:L {v:86400, k:'day'}),"
+            " (:L {v:date('2020-01-01'), k:'date'}), (:L {v:date('1960-01-01'), k:'old'}),"
+            " (:L {v:duration('P1D'), k:'dur'}), (:L {v:localtime('01:00:00'), k:'time'}),"
+            " (:L {v:localdatetime('2020-01-01T00:00:00'), k:'ldt'})",
+            ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v = 86400 RETURN n.k"],
+            expected_rows=[[['day'], ['int']], [['neg']], [['day']]])

@@ -63,8 +63,8 @@ pub(crate) fn with_edge(
 ) {
     let mut graph = g.borrow_mut();
     graph
-        .create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id], None)
-        .expect("no batch, nothing to refuse");
+        .create_relationships_bulk(&Arc::new(type_name.to_owned()), &[0], &[1], &[id])
+        .expect("a fixture's own ids, nothing to refuse");
 }
 
 /// One live node, labelled.
@@ -75,10 +75,7 @@ pub(crate) fn live_node(
 ) {
     let mut graph = g.borrow_mut();
     let ids: RoaringTreemap = std::iter::once(id).collect();
-    // `create_nodes` consumes a reservation, exactly as the apply path does
-    // before it — without this the counter underflows.
-    graph.inc_reserved_node_count();
-    graph.create_allocated_nodes(&ids);
+    graph.create_nodes(&ids).expect("fixture ids are fresh");
     let mut rows = Vec::new();
     let mut cols = Vec::new();
     for name in labels {

@@ -1,0 +1,329 @@
+# Reusable workflow: the CI suites, parameterised by how they obtain the engine.
+#
+# There is ONE definition per flavour. What varies between a pull request and a
+# merge-queue entry is the VEHICLE, not the tests:
+#
+#   artifact - build libfalkordb.so, upload it, let RLTest spawn redis locally.
+#              No registry write, no `packages:` permission, so it runs on the
+#              read-only token a fork gets and on a stacked pull request.
+#   image    - build and publish the RC image, run the cells against it in
+#              service containers. This is what ships, so it is what the merge
+#              queue gates on.
+#
+# Coverage is always the artifact vehicle: the profiles have to land in the
+# workspace, and nothing ships the coverage image. a-sanitizer is image-only
+# for now - converting it needs an instrumented redis-server alongside the
+# module, which is its own change.
+
+name: CI pipeline (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      ci_key:
+        description: "Per-run key: pr-<N> on a pull request, mg-<sha> in the merge queue. Runtime tags are rc-<ci_key>."
+        required: true
+        type: string
+      commit_sha:
+        description: "Commit SHA to build the RC images from"
+        required: true
+        type: string
+      build_image:
+        description: "Toolchain image used as the job container and the chef stage base"
+        required: true
+        type: string
+      services_files:
+        description: "JSON array of services-bucket flow test files (image vehicle)"
+        required: true
+        type: string
+      spawn_files:
+        description: "JSON array of spawn-bucket flow test files (image vehicle)"
+        required: true
+        type: string
+      test_files:
+        description: "JSON array of all flow test files (artifact vehicle)"
+        required: true
+        type: string
+      use_image:
+        description: >
+          Gate the image vehicle. True in the merge queue, where the published
+          image is the thing being gated on. False on a pull request, where the
+          artifact vehicle has already run the same suites and publishing an
+          image only exists so release-image.yml can retag one.
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Builds the engine once and runs the Rust unit tests here, where the compiled
+  # tree already exists, rather than making `test` compile it a second time.
+  build-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: ${{ inputs.build_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "release"
+      - name: Build
+        run: cargo build --release
+      - name: Run unit tests
+        run: |
+          # Doctests are linked separately by rustdoc, which ignores RUSTFLAGS and
+          # the .cargo rustflags, so the duplicate-symbol allowance for
+          # libredisearch_rs.a's bundled std has to come via RUSTDOCFLAGS. Release
+          # LTO is off for the test build: the embedded C/Rust archives carry no
+          # LLVM bitcode, so a release-LTO doctest fails on a missing .llvmbc.
+          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+      - name: Upload release binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-binary
+          path: target/release/libfalkordb.so
+  build-engine-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: ${{ inputs.build_image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "coverage"
+          env-vars: "RUSTFLAGS"
+      - name: Build with coverage
+        run: |
+          RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build
+      - name: Upload coverage binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: coverage-binary
+          path: target/debug/libfalkordb.so
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container: ${{ inputs.build_image }}
+    needs: [build-engine]
+    if: ${{ !cancelled() && needs.build-engine.result == 'success' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: release-binary
+          path: target/release
+      - run: chmod +x target/release/libfalkordb.so
+      - name: Run tests
+        run: |
+          . /data/venv/bin/activate
+          RELEASE=1 pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+      - name: Run TCK tests
+        run: |
+          . /data/venv/bin/activate
+          RELEASE=1 TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+  # Release flavour. The vehicle is the whole difference between the two events:
+  # a pull request tests the binary it just built, the queue tests the image it
+  # is about to promote. Same file list, same flavour config — two thin calls
+  # rather than one, because a job cannot choose its `uses:` at runtime and the
+  # two shapes cannot share a workflow run (see _flow-artifact.yml's header).
+  flow-release:
+    needs: [build-engine]
+    if: ${{ !cancelled() && !inputs.use_image && needs.build-engine.result == 'success' }}
+    uses: ./.github/workflows/_flow-artifact.yml
+    permissions:
+      contents: read
+    with:
+      flavour: release
+      archs: '["amd64"]'
+      test_files: ${{ inputs.test_files }}
+      build_image: ${{ inputs.build_image }}
+    secrets: inherit
+
+  flow-release-image:
+    needs: [build-rc-image]
+    if: ${{ !cancelled() && inputs.use_image && needs.build-rc-image.result == 'success' }}
+    uses: ./.github/workflows/_flow-flavour.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      flavour: release
+      image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}
+      archs: '["amd64", "arm64"]'
+      services_files: ${{ inputs.services_files }}
+      spawn_files: ${{ inputs.spawn_files }}
+      build_image: ${{ inputs.build_image }}
+    secrets: inherit
+
+  # Coverage is artifact-only, both events. The profiles have to land in the
+  # workspace, and the queue run's upload is what gives main its Codecov
+  # baseline - it is keyed on the commit SHA, which is the SHA that lands.
+  flow-coverage:
+    needs: [build-engine-coverage]
+    if: ${{ !cancelled() && needs.build-engine-coverage.result == 'success' }}
+    uses: ./.github/workflows/_flow-artifact.yml
+    permissions:
+      contents: read
+    with:
+      flavour: coverage
+      archs: '["amd64"]'
+      test_files: ${{ inputs.test_files }}
+      build_image: ${{ inputs.build_image }}
+      artifact_name: coverage-binary
+      artifact_path: target/debug
+      collect_coverage: true
+    secrets: inherit
+
+  build-rc-image:
+    if: ${{ inputs.use_image }}
+    uses: ./.github/workflows/_build-flavour.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      flavour: release
+      tag: rc-${{ inputs.ci_key }}
+      commit_sha: ${{ inputs.commit_sha }}
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"full","repo":"falkordb"},{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb-server"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"full","repo":"falkordb"},{"arch":"arm64v8","platform":"linux/arm64","runner":"ubuntu-24.04-arm","target":"server","repo":"falkordb-server"}]'
+      browser_tag: edge
+      build_image: ${{ inputs.build_image }}
+      # push_to_dockerhub left at default false — PR RC builds stay on GHCR.
+      # create_manifest defaults true (release is multi-arch).
+
+  # Build the asan instrumented runtime image (amd64-only). Single cell,
+  # no manifest needed (push directly to the bare tag).
+  build-rc-asan-image:
+    if: ${{ inputs.use_image }}
+    uses: ./.github/workflows/_build-flavour.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      flavour: a-sanitizer
+      # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
+      # — historical from when the asan image bundled the browser stage.
+      tag: rc-${{ inputs.ci_key }}-asan
+      commit_sha: ${{ inputs.commit_sha }}
+      cells: '[{"arch":"x64","platform":"linux/amd64","runner":"ubuntu-latest","target":"server","repo":"falkordb"}]'
+      dockerfile: build/runtime/Dockerfile.asan
+      build_image: ${{ inputs.build_image }}
+      create_manifest: false
+
+  # Build the coverage-instrumented runtime image (amd64-only).
+  test-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    container:
+      image: ${{ inputs.build_image }}
+      # Mount the runner's docker socket so the "Capture service container
+      # logs on failure" step below can run `docker ps`/`docker logs` against
+      # the GHA service container. Without this the log-capture step is a
+      # silent no-op (and could mask the upload-artifact step).
+      options: --volume /var/run/docker.sock:/var/run/docker.sock
+    needs: [build-rc-image]
+    if: ${{ inputs.use_image && (!cancelled() && needs.build-rc-image.result == 'success') }}
+    permissions:
+      contents: read
+      packages: read
+    services:
+      falkordb:
+        image: ghcr.io/falkordb/falkordb-server:rc-${{ inputs.ci_key }}
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports: ["6379:6379"]
+        env:
+          # Empty FALKORDB_ARGS overrides the image's compiled-in default
+          # (MAX_QUEUED_QUERIES 25 ...) so the service starts with the
+          # module's true zero-config defaults; tests that need specific
+          # config bring it via GRAPH.CONFIG SET.
+          FALKORDB_ARGS: ""
+    env:
+      EXISTING_ENV: "1"
+      FALKORDB_HOST: falkordb
+      FALKORDB_PORT: "6379"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup default stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "release"
+      # Cargo unit tests run against in-process code and don't touch redis.
+      - name: Run cargo unit tests
+        run: |
+          # Doctests are linked separately by rustdoc (which ignores RUSTFLAGS /
+          # .cargo rustflags), so they need the duplicate-symbol allowance for
+          # libredisearch_rs.a's bundled std via RUSTDOCFLAGS. Also disable release
+          # LTO for the test build: the embedded C/Rust archives carry no LLVM
+          # bitcode, so a release-LTO doctest fails with "Can't find section .llvmbc"
+          # (same reason the fuzz job sets CARGO_PROFILE_RELEASE_LTO=false).
+          CARGO_PROFILE_RELEASE_LTO=false RUSTDOCFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test --release -p graph
+      - name: Run pytest tests against the RC image
+        run: |
+          . /data/venv/bin/activate
+          pytest tests/test_e2e.py tests/test_functions.py tests/test_mvcc.py tests/test_concurrency.py -vv
+      - name: Run TCK tests against the RC image
+        run: |
+          . /data/venv/bin/activate
+          TCK_DONE=tck_done.txt pytest tests/tck/test_tck.py -s
+      # Capture the GHA service container's stdout/stderr so a failing run
+      # carries the redis lifecycle, module RedisModule_Log output, and any
+      # ASAN/LSan reports off the runner. The service container is named
+      # after its YAML key ("falkordb"); `docker logs` is run via the
+      # /var/run/docker.sock the runner shares with the job container.
+      - name: Capture service container logs on failure
+        if: failure()
+        run: |
+          mkdir -p tests/flow/logs
+          # Dump every container the runner can see — GHA service containers
+          # are named after their YAML key but a workflow-run prefix can show
+          # up too; iterating all containers is safer than matching by name.
+          for cid in $(docker ps -aq); do
+            name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | sed 's|^/||')
+            docker logs "$cid" > "tests/flow/logs/service-${name:-$cid}.log" 2>&1 || true
+          done
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: test-service-logs
+          path: tests/flow/logs/
+          if-no-files-found: ignore
+
+  # Per-flavour flow-test cells. Each `flow-<flavour>` block calls
+  # _flow-flavour.yml, which runs the services + spawn matrices for that
+  # one flavour. Calling the reusable workflow once per flavour gives each
+  # call its own 256-cell GHA matrix budget — splitting the otherwise
+  # over-the-limit (97 × multi-flavour × multi-arch) matrix into chunks.
+  # Adding a new flavour later = one more block here + one Dockerfile.<f> +
+  # one build-rc-<f>-image job.
+  flow-asan:
+    needs: [build-rc-asan-image]
+    if: ${{ inputs.use_image && (!cancelled() && needs.build-rc-asan-image.result == 'success') }}
+    uses: ./.github/workflows/_flow-flavour.yml
+    permissions:
+      contents: read
+      packages: read
+    with:
+      flavour: a-sanitizer
+      # Note: asan image lives under the `falkordb` repo (not `falkordb-server`)
+      # — historical from when the asan image bundled the browser stage.
+      image: ghcr.io/falkordb/falkordb:rc-${{ inputs.ci_key }}-asan
+      archs: '["amd64"]'
+      services_files: ${{ inputs.services_files }}
+      spawn_files: ${{ inputs.spawn_files }}
+      build_image: ${{ inputs.build_image }}
+      sanitizer_env: address

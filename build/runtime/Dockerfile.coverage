@@ -1,6 +1,6 @@
 ARG BUILD_IMAGE=ghcr.io/falkordb/falkordb-build:latest
 ARG TARGETPLATFORM=linux/amd64
-ARG REDIS_VERSION=8.10.1
+ARG REDIS_VERSION=8.10.2
 
 # Stage 1: chef/planner — same cache split as the regular Dockerfile so a
 # source-only change skips the dep cook.
@@ -17,10 +17,18 @@ RUN cargo chef prepare --recipe-path recipe.json
 # accurate source mapping. Output lands in target/debug/.
 FROM chef AS builder
 COPY --from=planner /src/recipe.json recipe.json
-RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" \
+# cargo-chef stubs out build SCRIPTS, but cargo still has to RESOLVE every
+# manifest -- and graph/Cargo.toml carries a path build-dependency on
+# ../native-deps. Without the crate present, `cook` fails with
+# "failed to read /src/native-deps/Cargo.toml". It is ~140KB of source and its
+# own workspace, so copying it here costs nothing and does not disturb the
+# dependency layer chef is caching.
+COPY native-deps native-deps
+COPY deps/native-deps.lock deps/native-deps.lock
+RUN CXX=clang++-23 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" \
     cargo chef cook --recipe-path recipe.json
 COPY . .
-RUN CXX=clang++-22 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build && \
+RUN CXX=clang++-23 RUSTFLAGS="-C instrument-coverage -C link-arg=-Wl,--allow-multiple-definition" cargo build && \
     mkdir -p /out && cp target/debug/libfalkordb.so /out/falkordb.so
 
 # Stage 3: redis-builder — stock redis on debian:trixie-slim. Coverage
@@ -73,7 +81,7 @@ RUN mkdir -p ${FALKORDB_DATA_PATH} ${FALKORDB_COV_PATH} && ln -s ${FALKORDB_DATA
 # Runtime apt install — bare essentials only. After PR #483 GraphBLAS JIT is
 # disabled and libomp is statically linked into the instrumented .so (see
 # graph/build.rs + build/libomp.sh), so this image no longer needs clang,
-# libomp5, libomp-22-dev, the LLVM repo, or any dpkg force-removes. The
+# libomp5, libomp-23-dev, the LLVM repo, or any dpkg force-removes. The
 # coverage runtime itself is baked into the instrumented .so by rustc's
 # -C instrument-coverage profile.
 RUN apt-get update && \

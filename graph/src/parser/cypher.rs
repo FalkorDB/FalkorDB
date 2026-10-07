@@ -120,9 +120,26 @@ use orx_tree::{DynTree, NodeRef};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use thin_vec::ThinVec;
+use thiserror::Error;
 /// Opening of every rejection [`Parser::too_deep`] produces, and what
 /// [`is_too_deep`] recognises.
 const TOO_DEEP: &str = "Query nesting exceeds the maximum depth of";
+
+/// A place where a pattern comprehension cannot be planned as a sub-plan, so
+/// the parser rejects one found there (#2308).
+#[derive(Debug, Clone, Copy, Error)]
+enum ForbiddenPatternComprehension {
+    /// A pattern's inline property map; worded as FalkorDB C words it, and
+    /// also the rejection for any other map the parser cannot accept there.
+    #[error("Encountered unhandled type in inlined properties.")]
+    InlineProperties,
+    /// MERGE's ON CREATE / ON MATCH SET, which MERGE applies itself.
+    #[error("Pattern comprehensions are not supported in MERGE ON CREATE / ON MATCH SET.")]
+    MergeSet,
+    /// Index OPTIONS, evaluated once with no input row.
+    #[error("Pattern comprehensions are not supported in index OPTIONS.")]
+    IndexOptions,
+}
 
 /// Rejections [`evaluate_param`] produces for a value that is not a literal.
 ///
@@ -189,6 +206,16 @@ pub struct Parser<'a> {
     anon_counter: u32,
     /// Nesting level of the two recursive descents, see [`Parser::MAX_NESTING`].
     depth: u32,
+    /// Height of the tree the last [`Parser::parse_expr_inner`] returned, see
+    /// [`Parser::MAX_TREE_DEPTH`].
+    expr_height: usize,
+    /// Tallest expression [`Parser::parse_expr`] has returned since
+    /// [`Parser::with_child_height`] last cleared it, so a helper that embeds
+    /// those expressions in a tree of its own can account for their height.
+    max_child_height: usize,
+    /// Set while parsing where a pattern comprehension cannot be planned as
+    /// a sub-plan, to the rejection to raise if one is found there.
+    forbidden_pattern_comprehension: Option<ForbiddenPatternComprehension>,
 }
 
 impl<'a> Parser<'a> {
@@ -208,10 +235,10 @@ impl<'a> Parser<'a> {
     /// How deep an expression tree may get.
     ///
     /// Constructs that build on [`Parser::parse_expr_inner`]'s own stack
-    /// (`[[..]]`, `-(-(..))`, `x[0][0]`) cost no call frames here, but the
-    /// binder, planner and evaluator all walk the result recursively, so the
-    /// tree still has to be bounded - just by what those stages can walk
-    /// rather than by what this one can.
+    /// (`[[..]]`, `-(-(..))`, `x[0][0]`, `(1+(1+(1+..)))`) cost no call frames
+    /// here, but the binder, planner and evaluator all walk the result
+    /// recursively, so the tree still has to be bounded - just by what those
+    /// stages can walk rather than by what this one can.
     ///
     /// Looser than [`Self::MAX_NESTING`] for that reason, and deliberately so:
     /// `(((1)))` collapses to `1` and test_parentheses pins 10000 of them,
@@ -222,6 +249,14 @@ impl<'a> Parser<'a> {
     /// for `-(-(..))`), leaving room for builds with fatter frames.
     const MAX_TREE_DEPTH: usize = 256;
 
+    /// Levels [`Parser::parse_primary_expr`] may add above the expressions it
+    /// parses, e.g. the `FuncInvocation` and `Distinct` of `count(DISTINCT x)`.
+    ///
+    /// Heights are tracked to keep a tree from outgrowing what later stages can
+    /// walk, so an estimate a level or two out either way is harmless - what
+    /// matters is that each nesting level is charged for.
+    const PRIMARY_LEVELS: usize = 2;
+
     /// Creates a new parser for the given query string.
     #[must_use]
     pub fn new(str: &'a str) -> Self {
@@ -229,6 +264,9 @@ impl<'a> Parser<'a> {
             lexer: Lexer::new(str),
             anon_counter: 0,
             depth: 0,
+            expr_height: 0,
+            max_child_height: 0,
+            forbidden_pattern_comprehension: None,
         }
     }
 
@@ -238,6 +276,49 @@ impl<'a> Parser<'a> {
         limit: usize,
     ) -> String {
         self.lexer.format_error(&format!("{TOO_DEEP} {limit}"))
+    }
+
+    /// Fails once a tree being built has passed [`Self::MAX_TREE_DEPTH`].
+    ///
+    /// Called wherever a height grows rather than on the finished tree,
+    /// because every wrap copies the tree it wraps: a query that nests a
+    /// million levels would spend that copying quadratically long before a
+    /// check on the result could reject it.
+    fn check_depth(
+        &self,
+        height: usize,
+    ) -> Result<(), String> {
+        if height > Self::MAX_TREE_DEPTH {
+            return Err(self.too_deep(Self::MAX_TREE_DEPTH));
+        }
+        Ok(())
+    }
+
+    /// Runs `parse`, reporting the tallest expression it parsed alongside its
+    /// result, so a helper's caller can charge itself for what it nested.
+    ///
+    /// The surrounding tally is restored afterwards, leaving each helper
+    /// measuring only its own expressions.
+    fn with_child_height<T>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<(T, usize), String> {
+        let outer = std::mem::take(&mut self.max_child_height);
+        let res = parse(self);
+        let height = std::mem::replace(&mut self.max_child_height, outer);
+        res.map(|res| (res, height))
+    }
+
+    /// Height of `tree`, walked iteratively so measuring a deep one cannot
+    /// overflow the stack the measurement exists to protect.
+    fn tree_height(tree: &DynTree<ExprIR<Arc<String>>>) -> usize {
+        let mut pending = vec![(tree.root(), 1)];
+        let mut height = 0;
+        while let Some((node, depth)) = pending.pop() {
+            height = height.max(depth);
+            pending.extend(node.children().map(|child| (child, depth + 1)));
+        }
+        height
     }
 
     /// Runs `descend` one nesting level down, or fails if that is too deep.
@@ -551,7 +632,11 @@ impl<'a> Parser<'a> {
                 IndexType::Range
             };
             let options = if (vector || fulltext) && optional_match_token!(self.lexer => Options) {
-                Some(Arc::new(self.parse_map()?))
+                // Evaluated once, with no input row for a sub-plan to run on.
+                Some(Arc::new(self.without_pattern_comprehensions(
+                    ForbiddenPatternComprehension::IndexOptions,
+                    Self::parse_map,
+                )?))
             } else {
                 None
             };
@@ -836,7 +921,6 @@ impl<'a> Parser<'a> {
                 ..
             } => {
                 self.lexer.next();
-                optional_match_token!(self.lexer => Match);
                 self.parse_match_clause(false)
             }
             Token::IdentifierOrKeyword {
@@ -852,8 +936,10 @@ impl<'a> Parser<'a> {
             } => {
                 self.lexer.next();
                 match_token!(self.lexer => Csv);
-                let headers = optional_match_token!(self.lexer => With)
-                    && optional_match_token!(self.lexer => Headers);
+                let headers = optional_match_token!(self.lexer => With);
+                if headers {
+                    match_token!(self.lexer => Headers);
+                }
                 match_token!(self.lexer => From);
                 let file_path = Arc::new(self.parse_expr(false)?);
                 match_token!(self.lexer => As);
@@ -1051,15 +1137,20 @@ impl<'a> Parser<'a> {
         let mut on_match_set_items = vec![];
         let mut on_create_set_items = vec![];
         while optional_match_token!(self.lexer => On) {
-            if optional_match_token!(self.lexer => Match) {
-                match_token!(self.lexer => Set);
-                self.parse_set_items(&mut on_match_set_items)?;
+            // MERGE applies these items itself, once it has matched or
+            // created the pattern, so no sub-plan can run in between to
+            // bind a pattern comprehension; rejected as in FalkorDB C.
+            let items = if optional_match_token!(self.lexer => Match) {
+                &mut on_match_set_items
             } else if optional_match_token!(self.lexer => Create) {
-                match_token!(self.lexer => Set);
-                self.parse_set_items(&mut on_create_set_items)?;
+                &mut on_create_set_items
             } else {
                 return Err(self.lexer.format_error("Expected MATCH or CREATE after ON"));
-            }
+            };
+            match_token!(self.lexer => Set);
+            self.without_pattern_comprehensions(ForbiddenPatternComprehension::MergeSet, |s| {
+                s.parse_set_items(items)
+            })?;
         }
         Ok(QueryIR::Merge {
             pattern,
@@ -2061,11 +2152,17 @@ impl<'a> Parser<'a> {
     /// Precedence climbing itself runs on `stack` and costs no call frames;
     /// the level is spent by the sub-expressions inside maps, lists, calls and
     /// comprehensions, which re-enter here.
+    ///
+    /// How tall the result is carries over to the caller through
+    /// [`Self::with_child_height`], so nesting spread over several of these
+    /// calls is still counted as the one tree it becomes.
     fn parse_expr(
         &mut self,
         allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        self.nested(|s| s.parse_expr_inner(allow_pattern_predicate))
+        let res = self.nested(|s| s.parse_expr_inner(allow_pattern_predicate))?;
+        self.max_child_height = self.max_child_height.max(self.expr_height);
+        Ok(res)
     }
 
     #[allow(clippy::too_many_lines)]
@@ -2074,21 +2171,15 @@ impl<'a> Parser<'a> {
         &mut self,
         allow_pattern_predicate: bool,
     ) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>)];
-        // Stack heights at which a tree level is still open. Constructs that
-        // nest on `stack` rather than the call stack are invisible to
-        // `nested`, so their depth is counted here instead. A level closes
-        // when the frame that opened it is popped, which is what the prune
-        // below detects.
-        let mut open: Vec<usize> = Vec::new();
-        while let Some((current, res)) = stack.pop() {
-            while open.last().is_some_and(|&at| at >= stack.len()) {
-                open.pop();
-            }
+        // Each frame carries the height of the tree it has built so far, so
+        // nesting that builds on this stack rather than the call stack is
+        // still bounded, by `check_depth`, as the tree grows.
+        let mut stack = vec![(0, None::<DynTree<ExprIR<Arc<String>>>>, 0usize)];
+        while let Some((current, res, height)) = stack.pop() {
             let Some(res) = res else {
                 if current < 3 || (current > 3 && current < 9) || current == 10 {
-                    stack.push((current, None));
-                    stack.push((current + 1, None));
+                    stack.push((current, None, 0));
+                    stack.push((current + 1, None, 0));
                 } else if current == 3 {
                     // Not
                     let mut not_count = 0;
@@ -2100,13 +2191,17 @@ impl<'a> Parser<'a> {
                         self.lexer.next();
                         not_count += 1;
                     }
-                    let res = if not_count % 2 == 1 {
-                        Some(tree!(ExprIR::Not))
+                    // NOT type-checks its operand, so `NOT NOT x` is not `x`.
+                    // A longer run still folds, keeping its parity: to one
+                    // NOT, or to two that the operand is placed under.
+                    if not_count == 0 {
+                        stack.push((current, None, 0));
                     } else {
-                        None
-                    };
-                    stack.push((current, res));
-                    stack.push((current + 1, None));
+                        for _ in 0..(2 - not_count % 2) {
+                            stack.push((current, Some(tree!(ExprIR::Not)), 1));
+                        }
+                    }
+                    stack.push((current + 1, None, 0));
                 } else if current == 9 {
                     // unary add or subtract
                     optional_match_token!(self.lexer, Plus);
@@ -2117,61 +2212,54 @@ impl<'a> Parser<'a> {
                         return Err(err.replace("Integer overflow '", "Integer overflow '-"));
                     }
 
-                    let res = if is_negate {
-                        // `-(-(-1))` keeps a Negate per level even though the
-                        // parens around it collapse, so this is a real level.
-                        if open.len() >= Self::MAX_TREE_DEPTH {
-                            return Err(self.too_deep(Self::MAX_TREE_DEPTH));
-                        }
-                        open.push(stack.len());
-                        Some(tree!(ExprIR::Negate))
+                    let (res, height) = if is_negate {
+                        (Some(tree!(ExprIR::Negate)), 1)
                     } else {
-                        None
+                        (None, 0)
                     };
-                    stack.push((current, res));
-                    stack.push((current + 1, None));
+                    stack.push((current, res, height));
+                    stack.push((current + 1, None, 0));
                 } else {
                     // primary expression
-                    let (res, recurse) = self.parse_primary_expr(allow_pattern_predicate)?;
+                    let ((res, recurse), child_height) =
+                        self.with_child_height(|s| s.parse_primary_expr(allow_pattern_predicate))?;
                     if recurse {
-                        // A list keeps a node per level; a parenthesis does
-                        // not - `(((1)))` collapses to `1` however deep it
-                        // goes, and test_parentheses pins 10000 of them.
-                        if !matches!(res.root().data(), ExprIR::Paren) {
-                            if open.len() >= Self::MAX_TREE_DEPTH {
-                                return Err(self.too_deep(Self::MAX_TREE_DEPTH));
-                            }
-                            open.push(stack.len());
-                        }
-                        stack.push((current, Some(res)));
-                        stack.push((0, None));
+                        // What follows is parsed into this still-empty node,
+                        // so it is one level tall for now.
+                        stack.push((current, Some(res), 1));
+                        stack.push((0, None, 0));
                         continue;
                     }
-                    parse_expr_return!(stack, res);
+                    // A complete expression, built around whatever
+                    // sub-expressions it parsed.
+                    let height = child_height + Self::PRIMARY_LEVELS;
+                    self.check_depth(height)?;
+                    parse_expr_return!(self, stack, res, height);
                 }
                 continue;
             };
             match current {
                 0 => {
                     // Or
-                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Or), .. } => Or);
+                    parse_operators!(self, stack, res, height, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Or), .. } => Or);
                 }
                 1 => {
                     // Xor
-                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Xor), .. } => Xor);
+                    parse_operators!(self, stack, res, height, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::Xor), .. } => Xor);
                 }
                 2 => {
                     // And
-                    parse_operators!(self, stack, res, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::And), .. } => And);
+                    parse_operators!(self, stack, res, height, current, Token::IdentifierOrKeyword { keyword: Some(Keyword::And), .. } => And);
                 }
                 3 => {
                     // Not
-                    parse_expr_return!(stack, res);
+                    parse_expr_return!(self, stack, res, height);
                 }
                 4 => {
                     // Comparison with chained-range desugaring.
                     // Cypher `a < b <= c` means `a < b AND b <= c`.
                     let mut res = res;
+                    let mut height = height;
                     let cmp_op = match self.lexer.current()? {
                         Token::Equal => Some(ExprIR::Eq),
                         Token::NotEqual => Some(ExprIR::Neq),
@@ -2215,34 +2303,34 @@ impl<'a> Parser<'a> {
                             };
                             let middle_clone: DynTree<ExprIR<Arc<String>>> =
                                 last_cmp_node.children().last().unwrap().clone_as_tree();
+                            // The clone already costs a walk of that operand,
+                            // so measuring it costs nothing extra.
+                            let middle_height = Self::tree_height(&middle_clone);
                             // Wrap in And if not already from a prior step.
                             if !matches!(res.root().data(), ExprIR::And) {
                                 res = tree!(ExprIR::And, res);
+                                height += 1;
                             }
                             let new_cmp = tree!(op, middle_clone);
-                            stack.push((current, Some(res)));
-                            stack.push((current, Some(new_cmp)));
+                            self.check_depth(height.max(middle_height + 1))?;
+                            stack.push((current, Some(res), height));
+                            stack.push((current, Some(new_cmp), middle_height + 1));
                         } else {
                             res = tree!(op, res);
-                            stack.push((current, Some(res)));
+                            height += 1;
+                            self.check_depth(height)?;
+                            stack.push((current, Some(res), height));
                         }
-                        stack.push((current + 1, None));
+                        stack.push((current + 1, None, 0));
                         continue;
                     }
 
-                    match &mut stack.last_mut() {
-                        Some((_, Some(expr))) => {
-                            expr.root_mut().push_child_tree(res);
-                        }
-                        Some((_, expr)) => {
-                            *expr = Some(res);
-                        }
-                        _ => return Ok(res),
-                    }
+                    parse_expr_return!(self, stack, res, height);
                 }
                 5 => {
                     // String, List, Null predicates
                     let mut res = res;
+                    let mut height = height;
                     match self.lexer.current()? {
                         Token::IdentifierOrKeyword {
                             keyword: Some(Keyword::In),
@@ -2307,6 +2395,10 @@ impl<'a> Parser<'a> {
                                     optional_match_token!(self.lexer => Not)
                                 )));
                                 match_token!(self.lexer => Null);
+                                // Each `IS NULL` wraps the last, so a repeated
+                                // one leans a level deeper every time.
+                                height += 1;
+                                self.check_depth(height)?;
                                 res = tree!(
                                     ExprIR::FuncInvocation(
                                         get_functions().get("is_null", &FnType::Internal)?
@@ -2315,7 +2407,9 @@ impl<'a> Parser<'a> {
                                     res
                                 );
                             }
-                            parse_expr_return!(stack, res);
+                            // More predicates may follow, e.g.
+                            // `x IS NULL IN [false]`: come back to this level.
+                            stack.push((current, Some(res), height));
                             continue;
                         }
                         // Negated predicates: peek after NOT to decide
@@ -2344,7 +2438,7 @@ impl<'a> Parser<'a> {
                                     ..
                                 } => {
                                     self.lexer.next();
-                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    stack.push((current, Some(tree!(ExprIR::Not)), 1));
                                     res = tree!(ExprIR::In, res);
                                 }
                                 // name NOT STARTS WITH 'A'
@@ -2354,7 +2448,7 @@ impl<'a> Parser<'a> {
                                 } => {
                                     self.lexer.next();
                                     match_token!(self.lexer => With);
-                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    stack.push((current, Some(tree!(ExprIR::Not)), 1));
                                     res = tree!(
                                         ExprIR::FuncInvocation(
                                             get_functions()
@@ -2370,7 +2464,7 @@ impl<'a> Parser<'a> {
                                 } => {
                                     self.lexer.next();
                                     match_token!(self.lexer => With);
-                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    stack.push((current, Some(tree!(ExprIR::Not)), 1));
                                     res = tree!(
                                         ExprIR::FuncInvocation(
                                             get_functions().get("ends_with", &FnType::Internal)?,
@@ -2384,7 +2478,7 @@ impl<'a> Parser<'a> {
                                     ..
                                 } => {
                                     self.lexer.next();
-                                    stack.push((current, Some(tree!(ExprIR::Not))));
+                                    stack.push((current, Some(tree!(ExprIR::Not)), 1));
                                     res = tree!(
                                         ExprIR::FuncInvocation(
                                             get_functions().get("contains", &FnType::Internal)?,
@@ -2402,24 +2496,28 @@ impl<'a> Parser<'a> {
                             }
                         }
                         _ => {
-                            parse_expr_return!(stack, res);
+                            parse_expr_return!(self, stack, res, height);
                             continue;
                         }
                     }
-                    stack.push((current, Some(res)));
-                    stack.push((current + 1, None));
+                    // Every predicate above wraps its left-hand side, so each
+                    // one leans a level deeper.
+                    height += 1;
+                    self.check_depth(height)?;
+                    stack.push((current, Some(res), height));
+                    stack.push((current + 1, None, 0));
                 }
                 6 => {
                     // Add, Sub
-                    parse_operators!(self, stack, res, current, Token::Plus => Add, Token::Dash => Sub);
+                    parse_operators!(self, stack, res, height, current, Token::Plus => Add, Token::Dash => Sub);
                 }
                 7 => {
                     // Mul, Div, Modulo
-                    parse_operators!(self, stack, res, current, Token::Star => Mul, Token::Slash => Div, Token::Modulo => Modulo);
+                    parse_operators!(self, stack, res, height, current, Token::Star => Mul, Token::Slash => Div, Token::Modulo => Modulo);
                 }
                 8 => {
                     // Power
-                    parse_operators!(self, stack, res, current, Token::Power => Pow);
+                    parse_operators!(self, stack, res, height, current, Token::Power => Pow);
                 }
                 9 => {
                     // unary add or subtract
@@ -2430,7 +2528,7 @@ impl<'a> Parser<'a> {
                         )
                     {
                         let res = tree!(ExprIR::Constant(Value::Int(i64::MIN)));
-                        parse_expr_return!(stack, res);
+                        parse_expr_return!(self, stack, res, 1);
                         continue;
                     } else if matches!(res.root().data(), ExprIR::Constant(Value::Int(i64::MIN))) {
                         // This case should not happen with proper error handling
@@ -2440,38 +2538,42 @@ impl<'a> Parser<'a> {
                             9_223_372_036_854_775_808_u64
                         ));
                     }
-                    parse_expr_return!(stack, res);
+                    parse_expr_return!(self, stack, res, height);
                 }
                 10 => {
                     // None arithmetic operators
                     let mut res = res;
+                    let mut height = height;
                     // Each postfix step wraps what came before, so a chain
                     // like `x[0][0][0]...` leans one level deeper per step
                     // while the brackets stay balanced and this stack stays
-                    // flat - neither of the other two guards sees it. Wrapping
-                    // copies the accumulated tree, so an unbounded chain is
+                    // flat. Wrapping copies the accumulated tree, so the
+                    // height is checked every step, before the chain can get
                     // quadratic as well as deep.
-                    let mut steps = 0u32;
                     loop {
-                        steps += 1;
-                        if steps > Self::MAX_TREE_DEPTH as u32 {
-                            return Err(self.too_deep(Self::MAX_TREE_DEPTH));
-                        }
                         match self.lexer.current()? {
                             Token::LBrace => {
                                 self.lexer.next();
-                                res = self.parse_list_operator_expression(res)?;
+                                let (next, index_height) = self
+                                    .with_child_height(|s| s.parse_list_operator_expression(res))?;
+                                res = next;
+                                height = (height + 1).max(index_height + 1);
                             }
                             Token::Dot => {
                                 self.lexer.next();
                                 res = self.parse_property_lookup(res)?;
+                                height += 1;
                             }
                             Token::LBracket => {
                                 self.lexer.next();
-                                res = self.parse_map_projection(res)?;
+                                let (next, value_height) =
+                                    self.with_child_height(|s| s.parse_map_projection(res))?;
+                                res = next;
+                                height = (height + 1).max(value_height + 2);
                             }
                             _ => break,
                         }
+                        self.check_depth(height)?;
                     }
                     if self.lexer.current()? == Token::Colon {
                         let labels = tree!(ExprIR::List; self.parse_labels()?.into_iter().map(|l| tree!(ExprIR::Constant(Value::String(l)))));
@@ -2482,26 +2584,32 @@ impl<'a> Parser<'a> {
                             res,
                             labels
                         );
+                        height = (height + 1).max(3);
+                        self.check_depth(height)?;
                     }
-                    parse_expr_return!(stack, res);
+                    parse_expr_return!(self, stack, res, height);
                 }
                 11 => {
                     // primary expression
                     let mut res = res;
+                    let mut height = height;
                     if matches!(res.root().data(), ExprIR::Paren) {
                         match_token!(self.lexer, RParen);
                         if matches!(res.root().child(0).data(), ExprIR::Paren) {
                             res.root_mut().child_mut(0).take_out();
+                            // `((x))` is the same tree as `(x)`, one shorter
+                            // than what was built.
+                            height = height.saturating_sub(1);
                         }
                     } else if matches!(res.root().data(), ExprIR::List) {
                         if optional_match_token!(self.lexer, Comma) {
-                            stack.push((current, Some(res)));
-                            stack.push((0, None));
+                            stack.push((current, Some(res), height));
+                            stack.push((0, None, 0));
                             continue;
                         }
                         match_token!(self.lexer, RBrace);
                     }
-                    parse_expr_return!(stack, res);
+                    parse_expr_return!(self, stack, res, height);
                 }
                 _ => unreachable!(),
             }
@@ -2618,11 +2726,15 @@ impl<'a> Parser<'a> {
         allow_pattern_predicate: bool,
     ) -> Result<Vec<DynTree<ExprIR<Arc<String>>>>, String> {
         let mut exprs = Vec::new();
-        while !expression_list_type.is_end_token(&self.lexer.current()?) {
-            exprs.push(self.parse_expr(allow_pattern_predicate)?);
-            match self.lexer.current()? {
-                Token::Comma => self.lexer.next(),
-                _ => break,
+        // Only an empty list may end at once: after a `,` an expression must
+        // follow, so `f(1,)` is an error.
+        if !expression_list_type.is_end_token(&self.lexer.current()?) {
+            loop {
+                exprs.push(self.parse_expr(allow_pattern_predicate)?);
+                match self.lexer.current()? {
+                    Token::Comma => self.lexer.next(),
+                    _ => break,
+                }
             }
         }
 
@@ -2634,6 +2746,23 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(exprs)
+    }
+
+    /// Run `parse` with pattern comprehensions rejected as `place`.
+    fn without_pattern_comprehensions<T>(
+        &mut self,
+        place: ForbiddenPatternComprehension,
+        parse: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let outer = self.forbidden_pattern_comprehension.replace(place);
+        let res = parse(self);
+        self.forbidden_pattern_comprehension = outer;
+        res
+    }
+
+    fn reject_forbidden_pattern_comprehension(&self) -> Result<(), String> {
+        self.forbidden_pattern_comprehension
+            .map_or(Ok(()), |place| Err(place.to_string()))
     }
 
     /// Parses the contents after an opening `[` bracket.
@@ -2669,6 +2798,7 @@ impl<'a> Parser<'a> {
             && self.lexer.current()? == Token::LParen
             && let Ok(result) = self.parse_pattern_comprehension(Some(var), allow_pattern_predicate)
         {
+            self.reject_forbidden_pattern_comprehension()?;
             self.reject_aggregate(&result)?;
             return Ok((result, false));
         }
@@ -2677,6 +2807,7 @@ impl<'a> Parser<'a> {
         // 3) Try unnamed pattern comprehension: [(pattern) ... | expr]
         if self.lexer.current()? == Token::LParen {
             if let Ok(result) = self.parse_pattern_comprehension(None, allow_pattern_predicate) {
+                self.reject_forbidden_pattern_comprehension()?;
                 self.reject_aggregate(&result)?;
                 return Ok((result, false));
             }
@@ -2782,11 +2913,17 @@ impl<'a> Parser<'a> {
     /// Parses an inline property map, preserving "Unknown function" errors
     /// while replacing other parse errors with a generic inlined-properties message.
     fn parse_inline_properties(&mut self) -> Result<DynTree<ExprIR<Arc<String>>>, String> {
-        self.parse_map().map_err(|e| {
+        // parse_map already refuses pattern predicates in its values; pattern
+        // comprehensions are refused too, as FalkorDB C does.
+        self.without_pattern_comprehensions(
+            ForbiddenPatternComprehension::InlineProperties,
+            Self::parse_map,
+        )
+        .map_err(|e| {
             if e.starts_with("Unknown function") {
                 e
             } else {
-                String::from("Encountered unhandled type in inlined properties.")
+                ForbiddenPatternComprehension::InlineProperties.to_string()
             }
         })
     }
@@ -3098,6 +3235,7 @@ impl<'a> Parser<'a> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr(false)?;
             if recurse {
+                self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
             }
@@ -3145,6 +3283,20 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// A `SET`/`REMOVE` target that opens a nested expression may only open
+    /// it with `(`: an open list literal would otherwise be dropped and its
+    /// first element read as the target, so `SET [n).x = 5` set `n.x`.
+    fn reject_unparenthesized_target(
+        &self,
+        expr: &DynTree<ExprIR<Arc<String>>>,
+    ) -> Result<(), String> {
+        if matches!(expr.root().data(), ExprIR::Paren) {
+            Ok(())
+        } else {
+            Err(self.lexer.format_error("Invalid input '[': expected '('"))
+        }
+    }
+
     fn parse_remove_clause(&mut self) -> Result<QueryIR<Arc<String>>, String> {
         let mut remove_items = vec![];
         self.parse_remove_items(&mut remove_items)?;
@@ -3164,6 +3316,7 @@ impl<'a> Parser<'a> {
         loop {
             let (mut expr, recurse) = self.parse_primary_expr(false)?;
             if recurse {
+                self.reject_unparenthesized_target(&expr)?;
                 expr = self.parse_expr(false)?;
                 match_token!(self.lexer, RParen);
             }
@@ -3357,9 +3510,10 @@ mod tests {
     /// The parser reaches these three different ways - plain call recursion
     /// (`{k:{k:..}}`, `CALL {}`), iteration on `parse_expr`'s own stack
     /// (`[[..]]`, `-(-(..))`), and left-leaning postfix chains (`x[0][0]`) -
-    /// so each needs its own guard, and each is listed here.
+    /// and call recursion is bounded by `MAX_NESTING` while the other two are
+    /// bounded by the height of the tree they build, so each is listed here.
     fn nesting_shapes(n: usize) -> Vec<(&'static str, String)> {
-        vec![
+        let mut shapes = vec![
             (
                 "map",
                 format!(
@@ -3417,6 +3571,36 @@ mod tests {
                 "map projection",
                 format!("MATCH (a) RETURN {}a{{.k}}{}", "[".repeat(n), "]".repeat(n)),
             ),
+        ];
+        // The same nesting an expression can hide, wrapped in a clause.
+        shapes.extend(
+            nesting_expressions(n)
+                .into_iter()
+                .map(|(name, expr)| (name, format!("RETURN {expr}"))),
+        );
+        shapes
+    }
+
+    /// Nesting that shows only in the height of the expression tree: the
+    /// query stays flat, and so does the parser's own stack.
+    fn nesting_expressions(n: usize) -> Vec<(&'static str, String)> {
+        vec![
+            // Parentheses that cannot collapse, one operator per level - the
+            // shape of issue #2531.
+            (
+                "paren arithmetic",
+                format!("{}1{}", "(".repeat(n), "+1)".repeat(n)),
+            ),
+            (
+                "nested operand",
+                format!("{}1{}", "1+(".repeat(n), ")".repeat(n)),
+            ),
+            // Operators only nest where they alternate: a run of the same one
+            // flattens into a single n-ary node.
+            ("alternating operators", format!("1{}", "+1-1".repeat(n))),
+            ("is null", format!("1{}", " IS NULL".repeat(n))),
+            // `a < b < c` desugars to `a < b AND b < c`, one And per step.
+            ("comparison chain", format!("1{}", "<2".repeat(n))),
         ]
     }
 
@@ -3453,9 +3637,31 @@ mod tests {
         }
     }
 
+    // Rejecting the deep shapes is only half of it: whatever the parser does
+    // accept has to stay inside the cap, because it is the height of the tree
+    // - not the shape of the query - that the binder, planner and evaluator
+    // pay for. #2531 nested parentheses that cannot collapse, one operator
+    // per level, and the tree they built outgrew the stack that walks it.
+    #[test]
+    fn accepted_expressions_stay_within_the_cap() {
+        with_functions();
+        for n in [1, 2, 3, 16, 100, 127, 128, 255, 256, 512] {
+            for (name, expr) in nesting_expressions(n) {
+                let Ok(tree) = Parser::new(&expr).parse_expr(false) else {
+                    continue;
+                };
+                let height = Parser::tree_height(&tree);
+                assert!(
+                    height <= Parser::MAX_TREE_DEPTH,
+                    "{name}: {n} levels were accepted as a tree {height} deep",
+                );
+            }
+        }
+    }
+
     // Nesting that collapses costs the later stages nothing, so it is not
-    // capped: `(((1)))` folds to `1` and `NOT NOT x` to `x`, however many
-    // there are. test_parentheses in the e2e suite pins the first at 10000.
+    // capped: `(((1)))` folds to `1` and a run of NOTs to one or two,
+    // however many there are. test_parentheses in the e2e suite pins the first at 10000.
     #[test]
     fn collapsing_nesting_is_not_capped() {
         for (name, query) in [
@@ -3485,6 +3691,61 @@ mod tests {
                     "{name}: 16 levels rejected as too deep: {e}"
                 );
             }
+        }
+    }
+
+    // Inputs outside the grammar that used to parse, each by a different
+    // slip: a call's trailing comma, a doubled MATCH, `WITH` without
+    // `HEADERS`, and a SET/REMOVE target opened by `[` but closed by `)`.
+    #[test]
+    fn invalid_syntax_is_rejected() {
+        with_functions();
+        for query in [
+            "RETURN abs(-1,)",
+            "RETURN toUpper('a',)",
+            "MATCH MATCH (n) RETURN n",
+            "LOAD CSV WITH FROM 'file://x.csv' AS r RETURN r",
+            "MATCH (n) SET [n).x = 5",
+            "MATCH (n) REMOVE [n).x",
+        ] {
+            assert!(Parser::new(query).parse().is_err(), "accepted {query:?}");
+        }
+        for query in [
+            "RETURN abs(-1)",
+            "RETURN rand()",
+            "LOAD CSV WITH HEADERS FROM 'file://x.csv' AS r RETURN r",
+            "LOAD CSV FROM 'file://x.csv' AS r RETURN r",
+            "MATCH (n) SET (n).x = 5",
+            "MATCH (n) REMOVE (n).x",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
+        }
+    }
+
+    // The grammar lets any number of string, list and null predicates
+    // follow one another, `IS NULL` included.
+    #[test]
+    fn predicates_chain_after_is_null() {
+        with_functions();
+        for query in [
+            "RETURN 1 IS NULL IN [false]",
+            "RETURN 'a' IS NULL STARTS WITH 'a'",
+            "RETURN 1 IS NOT NULL = true",
+            "RETURN 1 IS NULL IS NOT NULL IN [true]",
+        ] {
+            assert!(Parser::new(query).parse().is_ok(), "rejected {query:?}");
+        }
+    }
+
+    // NOT type-checks its operand, so `NOT NOT x` is not `x`: a run of NOTs
+    // still folds, but to one or two, never to none.
+    #[test]
+    fn not_not_keeps_its_type_check() {
+        with_functions();
+        for (nots, expected) in [(1, 1), (2, 2), (3, 1), (4, 2), (5, 1)] {
+            let query = format!("RETURN {}1", "NOT ".repeat(nots));
+            let ir = format!("{:?}", Parser::new(&query).parse().unwrap());
+            assert_eq!(ir.matches("Not").count(), expected, "{query}: {ir}");
         }
     }
 

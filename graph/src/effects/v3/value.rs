@@ -321,6 +321,14 @@ mod tests {
             Value::Int(-9_007_199_254_740_993),
             Value::Float(0.1),
             Value::String(Arc::new("hello".into())),
+            // A length that includes the terminator makes the empty string
+            // "length 1, no bytes", and a multi-byte string a length in
+            // *bytes* rather than characters.
+            Value::String(Arc::new(String::new())),
+            Value::String(Arc::new(
+                "\u{05e9}\u{05dc}\u{05d5}\u{05dd} \u{4e16}\u{754c} \u{1f426}\u{200d}\u{1f525}"
+                    .into(),
+            )),
             Value::List(Arc::new([Value::Int(1), Value::Null].into_iter().collect())),
             Value::Point(Point {
                 latitude: 32.07,
@@ -338,6 +346,31 @@ mod tests {
             let mut r = Reader::new(&buf);
             assert_eq!(Value::decode(&mut r).unwrap(), case);
             assert!(r.is_empty(), "{case:?} left {} bytes", r.remaining());
+        }
+    }
+
+    #[test]
+    fn float_edges_round_trip_bit_for_bit() {
+        // Not folded into `value_roundtrips_every_encodable_variant`: that test
+        // compares with `PartialEq`, which is `compare_floats`, and it calls
+        // -0.0 equal to 0.0. A dropped sign bit would read as a pass there. So
+        // these compare the bits, which is what `to_le_bytes` preserves.
+        for f in [
+            0.0_f64,
+            -0.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MIN_POSITIVE,
+        ] {
+            let mut buf = Vec::new();
+            Value::Float(f).encode(&mut buf).unwrap();
+            let mut r = Reader::new(&buf);
+            let decoded = Value::decode(&mut r).unwrap();
+            let Value::Float(back) = decoded else {
+                panic!("{f} decoded as {decoded:?}, not a float");
+            };
+            assert_eq!(back.to_bits(), f.to_bits(), "{f} changed bits");
+            assert!(r.is_empty(), "{f} left {} bytes", r.remaining());
         }
     }
 

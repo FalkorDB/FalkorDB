@@ -129,7 +129,17 @@ impl<'a> Iterator for CommitOp<'a> {
                     }
                 }
             }
-            self.runtime.pending.borrow_mut().clear();
+            // Ends the segment in both senses: this `Pending`'s accumulated
+            // mutations and the graph's id batches, which move together or the
+            // next segment allocates against a stale boundary.
+            if let Err(e) = self
+                .runtime
+                .pending
+                .borrow_mut()
+                .end_segment(&self.runtime.g)
+            {
+                return Some(Err(e.to_string()));
+            }
             // Update schema baseline so the next commit in this query only
             // emits newly added schema entries.
             self.runtime
