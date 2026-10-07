@@ -646,7 +646,7 @@ class testFunctionCallsFlow(FlowTestsBase):
                 error = str(e)
             self.env.assertTrue(
                 error is not None,
-                "hasLabels(n, ['person', %s]) was accepted" % value)
+                message="hasLabels(n, ['person', %s]) was accepted" % value)
             self.env.assertContains(
                 "Type mismatch: expected String but was %s" % expected, error)
 
