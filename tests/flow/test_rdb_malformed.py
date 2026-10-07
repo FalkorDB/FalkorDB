@@ -528,18 +528,22 @@ def _start_on_rdb(env, rdb):
 
 
 # a short read: Redis reports an unexpected EOF, the module adds nothing
+def _assert_short_read_exit(env, rdb):
+    exit_code, log = _start_on_rdb(env, rdb)
+    tail = f"exit code {exit_code}: " + log[-2000:]
+    env.assertEqual(exit_code, 1, message=tail)
+    env.assertContains("Internal error in RDB reading", log, message=tail)
+    env.assertContains("Unexpected EOF reading RDB file", log, message=tail)
+    env.assertNotContains(FAILED, log, message=tail)
+
+
+# cut the saved file halfway through the first value of 'module_type'
 def _assert_truncated_load(env, conn, module_type):
     rdb = _save_graph_rdb(conn)
     values = [v for v in rdb_module_values(rdb) if v[1] == module_type]
     env.assertGreater(len(values), 0)
     _, _, start, end = values[0]
-
-    exit_code, log = _start_on_rdb(env, rdb[:(start + end) // 2])
-    tail = log[-2000:]
-    env.assertEqual(exit_code, 1, message=tail)
-    env.assertContains("Internal error in RDB reading", log, message=tail)
-    env.assertContains("Unexpected EOF reading RDB file", log, message=tail)
-    env.assertNotContains(FAILED, log, message=tail)
+    _assert_short_read_exit(env, rdb[:(start + end) // 2])
 
 
 class testRdbLoadTruncatedGraphKey():
@@ -567,6 +571,40 @@ class testRdbLoadTruncatedVirtualKey():
         self.conn.execute_command("GRAPH.QUERY", GRAPH_ID,
             "UNWIND range(1, 100) AS i CREATE (:N {v: i})")
         _assert_truncated_load(self.env, self.conn, "graphmeta")
+
+
+class testRdbLoadTruncatedLargeGraph():
+    def __init__(self):
+        if VALGRIND or SANITIZER:
+            Environment.skip(None)
+        self.env, self.db = Env()
+        self.conn = self.env.getConnection()
+
+    # the graph is saved in serializer chunks of 256000 bytes; cutting the file
+    # at 80% of its length leaves the load failing part-way through the graph,
+    # after several chunks decoded
+    def test_truncated_large_graph(self):
+        g = self.db.select_graph(GRAPH_ID)
+        create_node_range_index(g, "N", "v", sync=True)
+        props = ", ".join(f"p{k}: 'value_{k}_' + toString(i)" for k in range(8))
+        g.query(f"UNWIND range(1, 8000) AS i CREATE (:N {{v: i, {props}}})")
+        g.query("MATCH (a:N) MATCH (b:N {v: a.v + 1}) "
+                "CREATE (a)-[:R {w: a.v}]->(b)")
+
+        rdb = _save_graph_rdb(self.conn)
+        values = [v for v in rdb_module_values(rdb) if v[1] == "graphdata"]
+        self.env.assertEqual(len(values), 1)
+        _, _, start, _ = values[0]
+        chunks = GraphValue(rdb, start, parse=False).chunks
+        self.env.assertGreaterEqual(len(chunks), 8)
+
+        # the cut lands inside a chunk past the first
+        cut = len(rdb) * 8 // 10
+        inside = [i for i, (_, d, e) in enumerate(chunks) if d <= cut < e]
+        self.env.assertEqual(len(inside), 1)
+        self.env.assertGreater(inside[0] if inside else 0, 0)
+
+        _assert_short_read_exit(self.env, rdb[:cut])
 
 
 class testRdbLoadMalformedGraphKey():
