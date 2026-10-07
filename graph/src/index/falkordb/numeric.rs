@@ -317,6 +317,45 @@ mod tests {
         assert_eq!(ids(idx.point(&Value::Int(20))), vec![3]);
     }
 
+    /// A temporal value must not reach the tree. Stored as its raw number it lands among the
+    /// numbers, so a numeric range scan walks straight over it and returns the entity — measured
+    /// on a server as `WHERE n.v > 0` returning date-valued nodes. The RediSearch path skips
+    /// temporals for exactly this reason (`index/mod.rs`), and no index query is ever built for a
+    /// temporal value, so an entry here could only ever surface as a wrong row.
+    ///
+    /// Covers all four variants through both write paths — the bulk build and the incremental
+    /// add — with raw numbers above zero, which is where they collided.
+    #[test]
+    fn temporal_values_are_not_returned_by_a_numeric_range() {
+        let temporals = [
+            Value::Date(18_262),
+            Value::Datetime(1_577_836_800),
+            Value::Time(3_600),
+            Value::Duration(86_400),
+        ];
+        let int_id = 99;
+
+        let entries: Vec<(&Value, u64)> = temporals
+            .iter()
+            .zip(1u64..)
+            .chain(std::iter::once((&Value::Int(5), int_id)))
+            .collect();
+        let bulk = NumericIndex::from_entries(entries.iter().map(|&(v, id)| (v, id)));
+
+        let mut incremental = NumericIndex::new();
+        for &(v, id) in &entries {
+            incremental.add(v, id);
+        }
+
+        for (how, idx) in [("bulk build", &bulk), ("incremental add", &incremental)] {
+            assert_eq!(
+                ids(idx.range(Some(&Value::Int(0)), None, false, true)),
+                vec![int_id],
+                "{how}: `> 0` must return only the integer, not the temporals"
+            );
+        }
+    }
+
     #[test]
     fn non_numeric_and_nan_are_not_indexed() {
         let mut idx = NumericIndex::new();

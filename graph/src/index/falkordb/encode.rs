@@ -23,15 +23,18 @@ const SIGN: u64 = 0x8000_0000_0000_0000;
 /// Encode a numeric [`Value`] into the monotone `u64` key half of a
 /// `(key, doc)` index tuple.
 ///
-/// Returns `None` for non-numeric values and for `NaN`, which has no position
-/// in a sorted index.
+/// Returns `None` for non-numeric values, for temporal values (see the match), and for
+/// `NaN`, which has no position in a sorted index.
 #[must_use]
 pub fn encode_numeric(value: &Value) -> Option<u64> {
     let x = match value {
         Value::Int(i) => *i as f64,
         Value::Float(f) => *f,
         Value::Bool(b) => f64::from(*b),
-        Value::Datetime(t) | Value::Date(t) | Value::Time(t) | Value::Duration(t) => *t as f64,
+        // Temporals are not indexed, matching the RediSearch path (`index/mod.rs`): stored as
+        // their raw number they land among the numbers, so `n.v > 0` returns dates. No index
+        // query is ever built for a temporal value — `can_utilize_index` refuses them — so an
+        // entry here could only ever surface as a wrong row.
         _ => return None,
     };
     (!x.is_nan()).then(|| encode_f64(x))
@@ -114,15 +117,26 @@ mod tests {
         assert!(neg5 < neg4 && neg4 < three);
     }
 
-    /// Bool and temporal values coerce like their f64 equivalents (parity).
+    /// Bool coerces like its f64 equivalent, as the RediSearch NUMERIC field stores it.
     #[test]
-    fn bool_and_temporal_parity() {
+    fn bool_parity() {
         assert_eq!(encode_numeric(&Value::Bool(true)), Some(encode_f64(1.0)));
-        assert_eq!(
-            encode_numeric(&Value::Datetime(1000)),
-            Some(encode_f64(1000.0))
-        );
-        assert_eq!(encode_numeric(&Value::Duration(-7)), Some(encode_f64(-7.0)));
+        assert_eq!(encode_numeric(&Value::Bool(false)), Some(encode_f64(0.0)));
+    }
+
+    /// Temporals are not encoded at all — the RediSearch path skips them too. See
+    /// `temporal_values_are_not_returned_by_a_numeric_range` in `numeric.rs` for the wrong rows
+    /// encoding them produced.
+    #[test]
+    fn temporals_are_not_indexed() {
+        for v in [
+            Value::Date(18_262),
+            Value::Datetime(1_577_836_800),
+            Value::Time(3_600),
+            Value::Duration(-7),
+        ] {
+            assert_eq!(encode_numeric(&v), None, "{v:?} must not be encoded");
+        }
     }
 
     /// NaN and non-numeric values are not indexable.
