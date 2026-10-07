@@ -516,6 +516,15 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.env.assertEqual(row[0], row[1])
             self.env.assertEqual(row[2], row[3])
 
+        # startNode(null) and endNode(null) must return null per Cypher specification
+        query = """OPTIONAL MATCH (n)-[r:NONEXISTENT]->() WHERE false RETURN startNode(r), endNode(r)"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[None, None]])
+
+        query = """RETURN startNode(null) AS s, endNode(null) AS e"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[None, None]])
+
     def test17_to_json(self):
         # Test JSON literal values in an array.
         query = """RETURN toJSON([1, 0.000000000000001, 'str', true, NULL])"""
