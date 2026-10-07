@@ -5,8 +5,9 @@
 # starts as root: the browser entrypoint needs root to switch to nextjs, and a
 # data volume written by an older image is owned by root and has to be handed
 # over first. Root is kept when the container was started with --user, when
-# SKIP_DROP_PRIVS is set, or when it lacks CAP_SETUID/CAP_SETGID (e.g.
-# --cap-drop ALL) and so could not switch users anyway. SKIP_FIX_PERMS skips
+# SKIP_DROP_PRIVS is set, when it lacks CAP_SETUID/CAP_SETGID (e.g.
+# --cap-drop ALL) and so could not switch users anyway, or when the files
+# redis-server writes could not be handed to falkordb. SKIP_FIX_PERMS skips
 # the ownership fix-up. Both names are the official image's.
 FALKORDB_USER=falkordb
 
@@ -26,27 +27,41 @@ has_cap() {
 # is never re-owned. The official list is *.rdb and appendonlydir; nodes*.conf
 # is added because a cluster node's volume from a root-run image holds one,
 # and as `falkordb` the node cannot rewrite it and exits at startup.
+# Returns non-zero when the dir was not handed over.
 fix_data_dir_perms() {
     unknown=$(find "${FALKORDB_DATA_PATH}" -mindepth 1 -maxdepth 1 \
         ! \( -name '*.rdb' -o -name 'nodes*.conf' -o \( -type d -name appendonlydir \) \) -print -quit)
     if [ -n "$unknown" ]; then
-        echo "Notice: unknown file '$unknown' in ${FALKORDB_DATA_PATH}; ownership not changed. Set SKIP_FIX_PERMS=1 to skip this check."
-        return
+        echo "Notice: unknown file '$unknown' in ${FALKORDB_DATA_PATH}; ownership not changed."
+        return 1
     fi
-    find "${FALKORDB_DATA_PATH}" ! -user "$FALKORDB_USER" -exec chown "$FALKORDB_USER:$FALKORDB_USER" {} + ||
-        echo "Warning: could not hand ${FALKORDB_DATA_PATH} to $FALKORDB_USER. Set SKIP_FIX_PERMS=1 to skip this step."
+    if ! find "${FALKORDB_DATA_PATH}" ! -user "$FALKORDB_USER" -exec chown "$FALKORDB_USER:$FALKORDB_USER" {} +; then
+        echo "Warning: could not hand ${FALKORDB_DATA_PATH} to $FALKORDB_USER."
+        return 1
+    fi
 }
 
 # gen-certs.sh runs as root and writes its keys 0600. Hand falkordb the files it
 # generates, and only those, so a certificate mounted alongside is left alone.
+# Returns non-zero when any of them was not handed over.
 fix_tls_perms() {
+    rc=0
     for f in ca.key ca.crt ca.txt openssl.cnf server.key server.crt \
              client.key client.crt redis.key redis.crt redis.dh; do
-        if [ -e "${FALKORDB_TLS_PATH}/$f" ]; then
-            chown "$FALKORDB_USER:$FALKORDB_USER" "${FALKORDB_TLS_PATH}/$f" ||
-                echo "Warning: could not hand ${FALKORDB_TLS_PATH}/$f to $FALKORDB_USER."
+        if [ -e "${FALKORDB_TLS_PATH}/$f" ] &&
+            ! chown "$FALKORDB_USER:$FALKORDB_USER" "${FALKORDB_TLS_PATH}/$f"; then
+            echo "Warning: could not hand ${FALKORDB_TLS_PATH}/$f to $FALKORDB_USER."
+            rc=1
         fi
     done
+    return $rc
+}
+
+# Called when a fix-up above failed: falkordb could not use those files, so
+# redis-server stays root, as it ran before this image dropped privileges.
+keep_root() {
+    echo "Notice: running redis-server as root. Set SKIP_FIX_PERMS=1 to run it as $FALKORDB_USER regardless."
+    drop_privs=""
 }
 
 if [ "${BROWSER:-1}" -eq "1" ]; then
@@ -65,16 +80,16 @@ fi
 drop_privs=""
 if [ "$(id -u)" = "0" ] && [ -z "${SKIP_DROP_PRIVS:-}" ] && has_cap 6 && has_cap 7; then
     drop_privs=1
-    if [ -z "${SKIP_FIX_PERMS:-}" ]; then
-        fix_data_dir_perms
+    if [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_data_dir_perms; then
+        keep_root
     fi
 fi
 
 if [ "${TLS:-0}" -eq "1" ]; then
     # shellcheck disable=SC2086
     ${FALKORDB_BIN_PATH}/gen-certs.sh
-    if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ]; then
-        fix_tls_perms
+    if [ -n "$drop_privs" ] && [ -z "${SKIP_FIX_PERMS:-}" ] && ! fix_tls_perms; then
+        keep_root
     fi
 fi
 
@@ -83,7 +98,7 @@ if [ "$(umask)" = "0022" ]; then
     umask 0077
 fi
 
-# The exec prefix: `gosu redis` when dropping root, nothing otherwise.
+# The exec prefix: `gosu falkordb` when dropping root, nothing otherwise.
 if [ -n "$drop_privs" ]; then
     set -- gosu "$FALKORDB_USER"
 else
