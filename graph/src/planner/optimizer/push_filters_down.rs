@@ -117,9 +117,13 @@ pub(super) fn push_filters_down(optimized_plan: &mut DynTree<IR>) {
                 let filter = filter.clone();
                 let child_idx = child.idx();
 
-                // Flatten conjuncts from both filters
+                // Flatten conjuncts from both filters. The child's run first:
+                // it was evaluated first before the merge, and `And` stops at
+                // the first false conjunct, so a conjunct pushed down onto it
+                // must still be guarded by it (`n.v <> 1` before
+                // `1 / (n.v - 1) = 0`, or the merge raises "Division by zero").
                 let mut conjuncts: Vec<DynTree<ExprIR<Variable>>> = vec![];
-                for f in [&filter, &child_filter] {
+                for f in [&child_filter, &filter] {
                     if matches!(f.root().data(), ExprIR::And) {
                         conjuncts.extend(f.root().children().map(|c| c.clone_as_tree()));
                     } else {
