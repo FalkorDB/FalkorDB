@@ -91,15 +91,15 @@ use super::{
     GrB_Matrix_resize, GrB_Matrix_set_INT32, GrB_Matrix_setElement_BOOL,
     GrB_Matrix_setElement_UINT64, GrB_Matrix_wait, GrB_Mode, GrB_Orientation, GrB_SECOND_UINT64,
     GrB_Scalar, GrB_Scalar_free, GrB_Scalar_new, GrB_Scalar_setElement_BOOL, GrB_Type, GrB_UINT64,
-    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
+    GrB_WaitMode, GrB_finalize, GrB_mxm, GrB_mxv, GrB_transpose, GxB_ANY_BOOL, GxB_ANY_PAIR_BOOL,
     GxB_ANY_UINT64, GxB_Container_free, GxB_Container_new, GxB_Global_Option_set_INT32,
     GxB_HYPERSPARSE, GxB_Iterator, GxB_Iterator_free, GxB_Iterator_get_UINT64, GxB_Iterator_new,
     GxB_JIT_Control, GxB_Matrix_build_Scalar, GxB_Matrix_fprint, GxB_Matrix_isStoredElement,
     GxB_Matrix_memoryUsage, GxB_Matrix_type, GxB_NTHREADS, GxB_ONE_BOOL, GxB_Option_Field,
-    GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container, GxB_rowIterator_attach,
-    GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex, GxB_rowIterator_kount,
-    GxB_rowIterator_nextCol, GxB_rowIterator_nextRow, GxB_rowIterator_seekRow,
-    GxB_unload_Matrix_into_Container,
+    GxB_PLUS_PAIR_UINT64, GxB_Print_Level, GxB_SPARSE, GxB_init, GxB_load_Matrix_from_Container,
+    GxB_rowIterator_attach, GxB_rowIterator_getColIndex, GxB_rowIterator_getRowIndex,
+    GxB_rowIterator_kount, GxB_rowIterator_nextCol, GxB_rowIterator_nextRow,
+    GxB_rowIterator_seekRow, GxB_unload_Matrix_into_Container,
 };
 
 /// Initializes the GraphBLAS library in non-blocking mode.
@@ -759,6 +759,36 @@ impl<T> Matrix<T> {
             debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
         }
         t.nvals()
+    }
+
+    /// How many entries the rows `rows` selects hold: `Σ_{i ∈ rows} |A(i, :)|`.
+    ///
+    /// One `w = Aᵀ·x` over `PLUS_PAIR`, then a `PLUS` reduction of `w`. On a
+    /// by-row matrix GraphBLAS computes the transposed product by pushing each
+    /// selected row into `w`, so the cost follows `rows` and their lengths,
+    /// not the size of the matrix — where `A·x` would visit every row. `PAIR`
+    /// reads only the two patterns, so the element type of `self` does not
+    /// matter. `rows` must be `nrows` long. Call [`Self::wait`] first if
+    /// `self` may have queued mutations.
+    #[must_use]
+    pub fn count_in_rows(
+        &self,
+        rows: &Vector<bool>,
+    ) -> u64 {
+        let w = Vector::<u64>::new(self.ncols());
+        unsafe {
+            let info = GrB_mxv(
+                w.ptr(),
+                null_mut(),
+                null_mut(),
+                GxB_PLUS_PAIR_UINT64,
+                *self.m,
+                rows.ptr(),
+                GrB_DESC_T0,
+            );
+            debug_assert_eq!(info, GrB_Info::GrB_SUCCESS);
+        }
+        w.sum()
     }
 
     #[must_use]
