@@ -35,11 +35,9 @@
 //! If only some AND conjuncts are indexable, the indexable ones are merged
 //! into the scan and the remaining conjuncts stay as a reduced Filter.
 //!
-//! **Inline node attributes:**
-//!
-//! Also converts `NodeByLabelScan` nodes that carry inline property attributes
-//! (e.g. `(n:Person {name: 'Alice'})`) into `NodeByIndexScan` when the
-//! attribute is indexed.
+//! **Inline node attributes** (e.g. `(n:Person {name: 'Alice'})`) need no path
+//! of their own: the planner lowers them to an `IR::Filter` like any other
+//! predicate, so they reach an index through the rewrite above.
 //!
 //! ## Supported operators and index types
 //!
@@ -63,6 +61,7 @@ use crate::{
 };
 
 use super::super::IR;
+use super::references::index_query_references_variable;
 
 use crate::parser::ast::QueryRelationship;
 use crate::runtime::orderset::OrderSet;
@@ -104,9 +103,6 @@ trait IndexSubject: Clone {
     /// All labels/types on the pattern — iterated to find an indexed
     /// label/type match.
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_>;
-
-    /// Inline property attributes (e.g. `{age: 30}` on the pattern).
-    fn inline_attrs(&self) -> &DynTree<ExprIR<Variable>>;
 
     /// Look up the appropriate indexer (node vs edge) on the graph.
     fn is_indexed(
@@ -160,9 +156,6 @@ impl IndexSubject for Arc<QueryNode<Arc<String>, Variable>> {
     }
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_> {
         Box::new(self.labels.iter())
-    }
-    fn inline_attrs(&self) -> &DynTree<ExprIR<Variable>> {
-        &self.attrs
     }
     fn is_indexed(
         graph: &Graph,
@@ -230,9 +223,6 @@ impl IndexSubject for Arc<QueryRelationship<Arc<String>, Arc<String>, Variable>>
     }
     fn all_labels(&self) -> Box<dyn Iterator<Item = &Arc<String>> + '_> {
         Box::new(self.types.iter())
-    }
-    fn inline_attrs(&self) -> &DynTree<ExprIR<Variable>> {
-        &self.attrs
     }
     fn is_indexed(
         graph: &Graph,
@@ -713,39 +703,6 @@ fn try_single_filter_scan<T: IndexSubject>(
     }
 }
 
-/// Checks whether an inline property attribute on a pattern
-/// (e.g. `(n:Person {name: 'Alice'})` or `[r:KNOWS {since: 2020}]`) is
-/// covered by a range index and, if so, returns the subject, the label
-/// or type that carries the index, the indexed attribute, and an
-/// equivalent `attr = value` filter tree for the index scan.
-fn get_inline_attr_index<T: IndexSubject>(
-    graph: &Graph,
-    subject: &T,
-) -> Option<(T, Arc<String>, Arc<String>, DynTree<ExprIR<Variable>>)> {
-    for label in subject.all_labels() {
-        for attr in subject.inline_attrs().root().children() {
-            if let ExprIR::Constant(Value::String(attr_str)) = attr.data()
-                && T::is_indexed(graph, label, attr_str, &IndexType::Range)
-            {
-                return Some((
-                    subject.clone(),
-                    label.clone(),
-                    attr_str.clone(),
-                    tree!(
-                        ExprIR::Eq,
-                        tree!(
-                            ExprIR::Property(attr_str.clone()),
-                            tree!(ExprIR::Variable(subject.alias().clone()))
-                        ),
-                        attr.child(0).as_cloned_subtree()
-                    ),
-                ));
-            }
-        }
-    }
-    None
-}
-
 /// Result of pushing a whole `Filter` predicate into a single index
 /// scan: the label/type the index lives on, the merged index query and
 /// any conjuncts that couldn't be indexed and must stay as a reduced
@@ -890,18 +847,6 @@ fn needs_post_filter(
     })
 }
 
-/// Same as `needs_post_filter`, but applied to the value subtree of an
-/// inline-attribute equality filter (the RHS of `attr = value`). For a
-/// bare constant literal the index handles it exactly and no filter is
-/// needed.
-fn needs_inline_post_filter(filter: &DynTree<ExprIR<Variable>>) -> bool {
-    let value_idx = filter.root().child(1).idx();
-    filter
-        .node(value_idx)
-        .indices::<Bfs>()
-        .any(|i| is_non_indexable_subexpr(filter.node(i).data(), None))
-}
-
 /// Returns true when the given `ExprIR` describes a value that the
 /// index may not be able to resolve. `scan_alias_id`, when `Some`,
 /// tolerates `Variable` references to the scan target itself (the
@@ -954,20 +899,53 @@ fn rewrite_until_stable<F>(
     }
 }
 
-/// Match `Filter(expr) → scan-source` at `idx`. Returns the subject,
-/// the filter expression, and the subject's metadata. Returns `None`
-/// when the scan source doesn't match, when its labels/types are empty,
-/// or when there's no `Filter` parent (including when the scan is at
-/// the plan root — parent is absent rather than panicking).
+/// Find the `Filter` governing the scan at `idx`, looking through a
+/// single-child `IncludePending` wrapper.
+///
+/// A MERGE match branch is `Filter → IncludePending → Scan`
+/// (`Planner::set_include_pending_on_scans`, and `make_scan_subtree` in
+/// `select_scan_node`), and `push_filters_down` will not descend through
+/// `IncludePending`, so the `Filter` never becomes the scan's immediate
+/// parent there. Requiring adjacency meant no MERGE pattern could ever be
+/// served by an index through this path.
+///
+/// Reports whether an `IncludePending` was skipped, because that decides
+/// whether the `Filter` may be removed once its conjuncts are pushed into
+/// the index. It may not: `IncludePending` unions in nodes created earlier
+/// in the same query, which are by construction *not* in the index, so the
+/// index scan cannot have filtered them. Drop the `Filter` and those rows
+/// reach the operator unchecked — `MERGE (p1:person {age: 40}) MERGE
+/// (p2:person {age: 41})` then matches the pending `p1` for `p2` and
+/// creates one node instead of two.
+fn governing_filter(
+    plan: &DynTree<IR>,
+    idx: NodeIdx<Dyn<IR>>,
+) -> Option<(NodeIdx<Dyn<IR>>, QueryExpr<Variable>, bool)> {
+    let mut node = plan.node(idx).parent()?;
+    let mut over_pending = false;
+    if matches!(node.data(), IR::IncludePending { .. }) && node.num_children() == 1 {
+        node = node.parent()?;
+        over_pending = true;
+    }
+    let IR::Filter(filter) = node.data() else {
+        return None;
+    };
+    Some((node.idx(), filter.clone(), over_pending))
+}
+
+/// Match `Filter(expr) → [IncludePending →] scan-source` at `idx`. Returns
+/// the subject, the filter expression and its index in the plan, and the
+/// subject's metadata. Returns `None` when the scan source doesn't match,
+/// when its labels/types are empty, or when no `Filter` governs it
+/// (including when the scan is at the plan root — parent is absent rather
+/// than panicking).
 fn match_scan_with_filter<T: IndexSubject>(
     plan: &DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
-) -> Option<(T, QueryExpr<Variable>, T::Metadata)> {
+) -> Option<(T, QueryExpr<Variable>, NodeIdx<Dyn<IR>>, bool, T::Metadata)> {
     let (subject, metadata) = T::match_scan_source(plan.node(idx).data())?;
-    let IR::Filter(filter) = plan.node(idx).parent()?.data() else {
-        return None;
-    };
-    Some((subject, filter.clone(), metadata))
+    let (filter_idx, filter, over_pending) = governing_filter(plan, idx)?;
+    Some((subject, filter, filter_idx, over_pending, metadata))
 }
 
 /// Reorders the subject's labels so the indexed label is first.
@@ -1000,17 +978,22 @@ fn apply_filter_pushdown<T: IndexSubject>(
     query: IndexQuery<QueryExpr<Variable>>,
     remaining: Vec<DynTree<ExprIR<Variable>>>,
     original_filter: &QueryExpr<Variable>,
+    filter_idx: NodeIdx<Dyn<IR>>,
+    over_pending: bool,
     metadata: T::Metadata,
 ) {
-    let keep_filter = needs_post_filter(original_filter, subject.alias().id);
+    // `over_pending`: rows injected by `IncludePending` bypass the index, so
+    // the filter has to stay and re-check them. See `governing_filter`.
+    let keep_filter = over_pending || needs_post_filter(original_filter, subject.alias().id);
     let subject = reorder_subject_labels(subject, &index);
     let scan_ir = subject.build_scan_ir(index, Arc::new(query), metadata);
-    let mut op = plan.node_mut(idx);
-    *op.data_mut() = scan_ir;
+    *plan.node_mut(idx).data_mut() = scan_ir;
 
+    // Target the Filter by index rather than as the scan's parent: an
+    // `IncludePending` may sit between them (see `governing_filter`).
     if remaining.is_empty() {
         if !keep_filter {
-            op.parent_mut().unwrap().take_out();
+            plan.node_mut(filter_idx).take_out();
         }
         // else: leave the original filter as a runtime safety net.
     } else if keep_filter {
@@ -1020,64 +1003,42 @@ fn apply_filter_pushdown<T: IndexSubject>(
         // when the scan falls back to a label/type iterator — not
         // just the unpushed conjuncts (which would let false
         // positives through).
-        *op.parent_mut().unwrap().data_mut() = IR::Filter(original_filter.clone());
+        *plan.node_mut(filter_idx).data_mut() = IR::Filter(original_filter.clone());
     } else {
         let remaining_filter = if remaining.len() == 1 {
             Arc::new(remaining.into_iter().next().unwrap())
         } else {
             Arc::new(tree!(ExprIR::And; remaining))
         };
-        *op.parent_mut().unwrap().data_mut() = IR::Filter(remaining_filter);
+        *plan.node_mut(filter_idx).data_mut() = IR::Filter(remaining_filter);
     }
 }
 
-/// Apply an inline-attr rewrite: replace the scan with an equality
-/// index scan, optionally prefixed with a post-filter when the inline
-/// value expression isn't a bare constant.
-#[allow(clippy::needless_pass_by_value)]
-fn apply_inline_rewrite<T: IndexSubject>(
-    plan: &mut DynTree<IR>,
-    idx: NodeIdx<Dyn<IR>>,
-    subject: T,
-    label: Arc<String>,
-    attr: Arc<String>,
-    inline_filter: DynTree<ExprIR<Variable>>,
-    metadata: T::Metadata,
-) {
-    if needs_inline_post_filter(&inline_filter) {
-        plan.node_mut(idx)
-            .push_parent(IR::Filter(Arc::new(inline_filter.clone())));
-    }
-    let query = Arc::new(IndexQuery::Equal {
-        key: attr,
-        value: Arc::new(inline_filter.root().child(1).clone_as_tree()),
-    });
-    let subject = reorder_subject_labels(subject, &label);
-    *plan.node_mut(idx).data_mut() = subject.build_scan_ir(label, query, metadata);
-}
-
-/// Attempt an index rewrite at `idx` for subject kind `T`. Tries the
-/// filter-pushdown path first (scan under a `Filter`), then the
-/// inline-attr path (pattern with inline `{attr: value}`). Returns
-/// `true` if either path modified the plan.
+/// Attempt an index rewrite at `idx` for subject kind `T`: push the
+/// indexable conjuncts of the `Filter` above the scan into an index scan.
+/// Inline `{attr: value}` predicates arrive here as that `Filter` too. Returns
+/// `true` if the plan was modified.
 fn try_index_rewrite<T: IndexSubject>(
     plan: &mut DynTree<IR>,
     idx: NodeIdx<Dyn<IR>>,
     graph: &Graph,
 ) -> bool {
-    if let Some((subject, filter, metadata)) = match_scan_with_filter::<T>(plan, idx)
+    if let Some((subject, filter, filter_idx, over_pending, metadata)) =
+        match_scan_with_filter::<T>(plan, idx)
         && let Some((label, query, remaining)) = try_filter_pushdown(&subject, &filter, graph)
     {
         apply_filter_pushdown(
-            plan, idx, subject, label, query, remaining, &filter, metadata,
+            plan,
+            idx,
+            subject,
+            label,
+            query,
+            remaining,
+            &filter,
+            filter_idx,
+            over_pending,
+            metadata,
         );
-        return true;
-    }
-
-    if let Some((subject, metadata)) = T::match_scan_source(plan.node(idx).data())
-        && let Some((_, label, attr, inline_filter)) = get_inline_attr_index(graph, &subject)
-    {
-        apply_inline_rewrite(plan, idx, subject, label, attr, inline_filter, metadata);
         return true;
     }
 
@@ -1105,43 +1066,15 @@ fn prune_all_node_scan_child(
     let IR::AllNodeScan(child_node) = child.data() else {
         return false;
     };
-    let child_alias_id = child_node.alias.id;
+    let (child_alias_id, child_scope_id) = (child_node.alias.id, child_node.alias.scope_id);
     let child_idx = child.idx();
-    // Safety: don't drop the scan that binds `child_alias_id` if the
+    // Safety: don't drop the scan that binds the child alias if the
     // edge-index query still depends on it.
-    if index_query_references_var(&query, child_alias_id) {
+    if index_query_references_variable(&query, child_alias_id, child_scope_id) {
         return false;
     }
     plan.node_mut(child_idx).prune();
     true
-}
-
-/// Walks every expression subtree inside an `IndexQuery` looking for a
-/// `Variable` reference with the given alias id. Used by
-/// `prune_all_node_scan_child` to avoid pruning a scan whose output is
-/// still needed by the index query.
-fn index_query_references_var(
-    q: &IndexQuery<QueryExpr<Variable>>,
-    alias_id: u32,
-) -> bool {
-    let expr_refs = |e: &QueryExpr<Variable>| -> bool {
-        e.root()
-            .indices::<Bfs>()
-            .any(|i| matches!(e.node(i).data(), ExprIR::Variable(v) if v.id == alias_id))
-    };
-    match q {
-        IndexQuery::Equal { value, .. } | IndexQuery::ArrayContains { value, .. } => {
-            expr_refs(value)
-        }
-        IndexQuery::Range { min, max, .. } => {
-            min.as_ref().is_some_and(expr_refs) || max.as_ref().is_some_and(expr_refs)
-        }
-        IndexQuery::Point { point, radius, .. } => expr_refs(point) || expr_refs(radius),
-        IndexQuery::InList { list, .. } => expr_refs(list),
-        IndexQuery::And(children) | IndexQuery::Or(children) => children
-            .iter()
-            .any(|c| index_query_references_var(c, alias_id)),
-    }
 }
 
 /// Cleanup: add a `hasLabels` filter above an `EdgeByIndexScan` whose

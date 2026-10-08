@@ -35,6 +35,27 @@ pub enum EncodeError {
         got: usize,
     },
 
+    /// A record whose `AttrValues` block is not one value per entity per
+    /// attribute.
+    ///
+    /// The block has no length on the wire: the reader takes `count ×
+    /// attr_ids.len()` values. Any other number shifts the record boundary, so
+    /// the reader either refuses the buffer or reads the next record from the
+    /// wrong place.
+    #[error("{got} attribute values for {entities} entities of {attrs} attributes each")]
+    RowShapeMismatch {
+        entities: usize,
+        attrs: usize,
+        got: usize,
+    },
+
+    /// A batchable record covering no entities.
+    ///
+    /// The reader refuses one at the header, so writing it produces a buffer
+    /// this engine cannot read back.
+    #[error("record with opcode {opcode} covers no entities")]
+    EmptyRecord { opcode: u32 },
+
     /// A `CREATE_INDEX` whose options do not match the field type they are
     /// gated by.
     ///
@@ -305,12 +326,13 @@ pub enum ApplyError {
         first_unallocated: u64,
     },
 
-    /// A delete names an id this replica does not hold live — either it is
-    /// already in the recycle bin, or it was never allocated. `kind` says which
+    /// A record acts on an id this replica does not hold live — either it is
+    /// already in the recycle bin, or it was never allocated. Deletes, updates,
+    /// label changes and edge endpoints are all checked. `kind` says which
     /// entity: nodes and relationships are checked the same way, against the same
     /// [`crate::graph::id_space::IdSpace`].
     #[error(
-        "effects buffer deletes {kind} {id}, which is not live on this replica ({reason}). \
+        "effects buffer names {kind} {id}, which is not live on this replica ({reason}). \
          The two engines have diverged; the buffer was not applied."
     )]
     NotLive {
@@ -318,6 +340,32 @@ pub enum ApplyError {
         id: u64,
         reason: &'static str,
     },
+
+    /// A node delete names a node that still has relationships here.
+    ///
+    /// The primary ships every edge it removes as a `DELETE_EDGE` ahead of the
+    /// node, and the node delete does not cascade. A node that still has an
+    /// edge at this point would leave that edge hanging off a recycled id, and
+    /// the next node to reclaim the id would inherit it.
+    #[error(
+        "effects buffer deletes node {id}, which still has relationships on this \
+         replica. The two engines have diverged; the buffer was not applied."
+    )]
+    NodeHasRelationships { id: u64 },
+
+    /// The buffer created a relationship onto a node it had deleted, and did
+    /// not delete the relationship again.
+    ///
+    /// The primary does this only for a cancelled edge, whose `DELETE_EDGE`
+    /// follows at once. One left standing hangs off a recycled id. Found by
+    /// `Graph::validate` at the end of the buffer
+    /// (`NodeOpError::DanglingRelationship`), the check every write path
+    /// shares.
+    #[error(
+        "effects buffer leaves relationship {id} attached to a node it deleted. \
+         The two engines have diverged; the buffer was not applied."
+    )]
+    DanglingRelationship { id: u64 },
 
     /// A record names an id with nothing past it.
     ///
@@ -347,23 +395,6 @@ pub enum ApplyError {
         entry_bound: u64,
         highest: u64,
         created: u64,
-    },
-
-    /// The graph's own id boundary for `kind` is not where the ids it was given
-    /// put it.
-    ///
-    /// The entity's count is an independent counter, so the same id applied twice
-    /// moves it twice while the set of ids does not change. This is the only
-    /// place anything checks that counter against a value not derived from it.
-    #[error(
-        "effects buffer left this replica's {kind} id boundary at {graph_bound}, but the \
-         ids it carried put it at {expected}. The two engines have diverged; the buffer \
-         was not applied."
-    )]
-    CountMiscounted {
-        kind: &'static str,
-        graph_bound: u64,
-        expected: u64,
     },
 
     /// A schema id the local dictionary does not hold.

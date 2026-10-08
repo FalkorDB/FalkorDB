@@ -3,7 +3,7 @@ ARG BROWSER_TAG=latest
 ARG TARGETPLATFORM=linux/amd64
 # Redis base image version. Override via `--build-arg REDIS_VERSION=X.Y.Z`
 # to ship against a different redis release without editing the Dockerfile.
-ARG REDIS_VERSION=8.10.1
+ARG REDIS_VERSION=8.10.2
 
 FROM $BUILD_IMAGE AS chef
 RUN cargo install cargo-chef --locked
@@ -14,12 +14,20 @@ COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
-# CXX defaults to the Debian toolchain's clang++-22. Per-OS toolchain images
+# CXX defaults to the Debian toolchain's clang++-23. Per-OS toolchain images
 # (rhel9/al2023/rhel8/alpine) reuse this exact builder stage and override the
 # compiler via `--build-arg CXX=<their clang++>` — keeping one build path /
 # one self-containment contract for every platform (see build/Dockerfile.<os>).
-ARG CXX=clang++-22
+ARG CXX=clang++-23
 COPY --from=planner /src/recipe.json recipe.json
+# cargo-chef stubs out build SCRIPTS, but cargo still has to RESOLVE every
+# manifest -- and graph/Cargo.toml carries a path build-dependency on
+# ../native-deps. Without the crate present, `cook` fails with
+# "failed to read /src/native-deps/Cargo.toml". It is ~140KB of source and its
+# own workspace, so copying it here costs nothing and does not disturb the
+# dependency layer chef is caching.
+COPY native-deps native-deps
+COPY deps/native-deps.lock deps/native-deps.lock
 RUN CXX="$CXX" cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN CXX="$CXX" cargo build --release && \
@@ -144,7 +152,7 @@ ENV FALKORDB_HOME=/var/lib/falkordb \
 #   libssl3                         : redis-server with BUILD_TLS=yes
 #
 # CVE trim: purge python3.13 + force-remove essential packages not needed at
-# runtime (ncurses, perl, login, passwd). With no LLVM in this image any more
+# runtime (ncurses, perl, login, passwd, util-linux). With no LLVM in this image any more
 # we can run the trim straight through without the load-bearing ordering the
 # old layout required.
 RUN set -eux; \
@@ -166,6 +174,16 @@ RUN set -eux; \
     (dpkg --force-remove-essential --purge perl-base || true); \
     (dpkg --force-remove-protected --force-remove-essential --purge login || true); \
     (dpkg --purge passwd || true); \
+    # util-linux, mount and bsdutils ship the setuid mount/umount/su plus
+    # nsenter/unshare, and between them carry most of the image's HIGH
+    # findings that Debian has not fixed yet. Nothing here runs them, and no
+    # other installed package depends on them or on their five libraries.
+    # No `|| true`: if a new dependent appears, fail the build rather than
+    # silently ship them — the Trivy gate ignores unfixed findings, so
+    # nothing else would notice.
+    dpkg --force-remove-essential --purge \
+        util-linux mount bsdutils \
+        libmount1 libblkid1 libuuid1 libsmartcols1 liblastlog2-2; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/* /var/cache/debconf/*
 

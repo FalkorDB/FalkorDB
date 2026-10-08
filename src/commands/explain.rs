@@ -21,7 +21,7 @@
 use crate::dispatch::must_run_inline;
 use crate::query_session::QuerySession;
 use crate::{
-    commands::EMPTY_KEY_ERR,
+    commands::{EMPTY_KEY_ERR, query_args::parse_query_flags},
     graph_core::{BlockedClient, ThreadedGraph, ffi, up_to_nul},
     redis_type::GRAPH_TYPE,
 };
@@ -61,6 +61,8 @@ pub fn graph_explain(
     ctx: &Context,
     args: Vec<RedisString>,
 ) -> RedisResult {
+    // Flags are validated as C does; EXPLAIN itself reads none of them.
+    parse_query_flags(&args)?;
     let mut args = args.into_iter().skip(1);
     let key = args.next_arg()?;
     // C ends the query at its first NUL byte; see `up_to_nul`.
