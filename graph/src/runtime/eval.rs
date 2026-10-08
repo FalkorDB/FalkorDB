@@ -95,30 +95,37 @@ fn classify_join_keys(values: Vec<Value>) -> (Column, NullBitmap) {
 
 /// Lazy integer range iterator backing `UNWIND range(a, b, step)`: yields
 /// `Value::Int`s on the fly without materialising an intermediate
-/// `Value::List`. `step` is stored as a positive magnitude and `up` selects the
-/// direction (ascending when the original step was positive). Boxed into a
-/// [`RowIter::many`] by [`ExprEval::eval_iter_expr`].
+/// `Value::List`. Boxed into a [`RowIter::many`] by
+/// [`ExprEval::eval_iter_expr`].
+///
+/// Termination is driven by the element count `remaining` (computed exactly by
+/// the caller), not by comparing `current` against the end: a range whose last
+/// element lies within one `step` of `i64::MAX`/`i64::MIN` would otherwise
+/// overflow when stepping past it.
 struct RangeIter {
     current: i64,
-    end: i64,
     step: i64,
-    up: bool,
+    remaining: u64,
 }
 
 impl Iterator for RangeIter {
     type Item = Value;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.up {
-            if self.current > self.end {
-                return None;
-            }
-        } else if self.current < self.end {
+        if self.remaining == 0 {
             return None;
         }
+        self.remaining -= 1;
         let val = self.current;
-        self.current += if self.up { self.step } else { -self.step };
+        // Only wraps when stepping past the last element, whose successor is
+        // never yielded.
+        self.current = self.current.wrapping_add(self.step);
         Some(Value::Int(val))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = usize::try_from(self.remaining).unwrap_or(usize::MAX);
+        (n, Some(n))
     }
 }
 
@@ -1214,9 +1221,9 @@ impl<'a> ExprEval<'a> {
                 }
                 let iter = RangeIter {
                     current: start,
-                    end,
-                    step: step.unsigned_abs() as i64,
-                    up: step > 0,
+                    step,
+                    // Bounded by `u32::MAX` above.
+                    remaining: length as u64,
                 };
                 Ok(Some(RowIter::many(Box::new(iter))))
             }
@@ -1788,5 +1795,35 @@ pub fn evaluate_param(expr: &DynNode<ExprIR<Arc<String>>>) -> Result<Value, Stri
             }
         }
         _ => Err(String::from("Invalid parameter expression.")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect_range(
+        current: i64,
+        step: i64,
+        remaining: u64,
+    ) -> Vec<i64> {
+        RangeIter {
+            current,
+            step,
+            remaining,
+        }
+        .map(|v| match v {
+            Value::Int(i) => i,
+            v => panic!("expected Int, got {v:?}"),
+        })
+        .collect()
+    }
+
+    #[test]
+    fn range_iter_stops_at_i64_bounds() {
+        assert_eq!(collect_range(i64::MAX - 1, 1, 2), [i64::MAX - 1, i64::MAX]);
+        assert_eq!(collect_range(i64::MIN + 1, -1, 2), [i64::MIN + 1, i64::MIN]);
+        assert_eq!(collect_range(0, i64::MIN, 1), [0]);
+        assert_eq!(collect_range(-1, i64::MAX, 2), [-1, i64::MAX - 1]);
     }
 }
