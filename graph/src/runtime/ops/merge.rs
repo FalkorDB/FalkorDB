@@ -119,7 +119,7 @@ impl<'a> MergeOp<'a> {
 
         let merge_cache = self.runtime.merge_pattern_cache.borrow_mut();
 
-        if let Some(cached_vars) = merge_cache.get(&pattern_hash) {
+        if let Some(cached_vars) = merge_cache.get(&(self.idx, pattern_hash)) {
             // Pattern already created, apply ON MATCH and return cached vars
             let mut vars = vars;
             for (id, value) in cached_vars {
@@ -169,7 +169,7 @@ impl<'a> MergeOp<'a> {
             self.runtime
                 .merge_pattern_cache
                 .borrow_mut()
-                .insert(pattern_hash, pattern_vars);
+                .insert((self.idx, pattern_hash), pattern_vars);
 
             let resolved = self.resolve_on_create_set_items();
             self.runtime.set_batch(resolved, &batch)?;
