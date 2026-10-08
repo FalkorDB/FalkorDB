@@ -252,21 +252,24 @@ impl Value {
         }
     }
 
+    // Format datetime as ISO-8601: "2025-04-14T06:08:21"
     #[must_use]
     pub fn format_datetime(timestamp_secs: i64) -> String {
-        use chrono::{Datelike, TimeZone, Timelike, Utc};
-        match Utc.timestamp_opt(timestamp_secs, 0) {
-            chrono::LocalResult::Single(dt) => format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
-                dt.year(),
-                dt.month(),
-                dt.day(),
-                dt.hour(),
-                dt.minute(),
-                dt.second()
-            ),
-            _ => format!("<invalid timestamp: {timestamp_secs}>"),
-        }
+        let days = timestamp_secs.div_euclid(86400);
+        let secs = timestamp_secs.rem_euclid(86400) as u32;
+        let (y, m, d) = civil_from_days(days);
+        let mut s = String::with_capacity(19);
+        push_date(&mut s, y, m, d);
+        let mut buf = [0u8; 9];
+        buf[0] = b'T';
+        write_two_digits(&mut buf[1..3], secs / 3600);
+        buf[3] = b':';
+        write_two_digits(&mut buf[4..6], secs % 3600 / 60);
+        buf[6] = b':';
+        write_two_digits(&mut buf[7..9], secs % 60);
+        // Safe: ASCII digits, 'T' and ':'
+        s.push_str(unsafe { std::str::from_utf8_unchecked(&buf) });
+        s
     }
 
     // Format date as ISO-8601: "2025-04-14"
@@ -274,10 +277,9 @@ impl Value {
     pub fn format_date(timestamp_secs: i64) -> String {
         let days = timestamp_secs.div_euclid(86400);
         let (y, m, d) = civil_from_days(days);
-        let mut buf = [0u8; 10];
-        write_date_into(&mut buf, y, m, d);
-        // Safe: ASCII digits and '-'
-        unsafe { String::from_utf8_unchecked(buf.to_vec()) }
+        let mut s = String::with_capacity(10);
+        push_date(&mut s, y, m, d);
+        s
     }
 
     // Format time as ISO-8601: "06:08:21"
@@ -799,24 +801,39 @@ pub const fn civil_from_days(z: i64) -> (i32, u32, u32) {
     (y as i32, m, d)
 }
 
-/// Write "YYYY-MM-DD" into buf[0..10]. buf must be at least 10 bytes.
-const fn write_date_into(
-    buf: &mut [u8],
+/// Append a date as "YYYY-MM-DD". Years outside 0..=9999 keep all their
+/// digits and a leading '-' when negative ("12345-01-01", "-0005-01-01").
+fn push_date(
+    s: &mut String,
     y: i32,
     m: u32,
     d: u32,
 ) {
-    let yr = y.unsigned_abs();
-    buf[0] = b'0' + ((yr / 1000) % 10) as u8;
-    buf[1] = b'0' + ((yr / 100) % 10) as u8;
-    buf[2] = b'0' + ((yr / 10) % 10) as u8;
-    buf[3] = b'0' + (yr % 10) as u8;
-    buf[4] = b'-';
-    buf[5] = b'0' + ((m / 10) % 10) as u8;
-    buf[6] = b'0' + (m % 10) as u8;
-    buf[7] = b'-';
-    buf[8] = b'0' + ((d / 10) % 10) as u8;
-    buf[9] = b'0' + (d % 10) as u8;
+    if (0..=9999).contains(&y) {
+        let y = y as u32;
+        let mut buf = [0u8; 10];
+        write_two_digits(&mut buf[0..2], y / 100);
+        write_two_digits(&mut buf[2..4], y % 100);
+        buf[4] = b'-';
+        write_two_digits(&mut buf[5..7], m);
+        buf[7] = b'-';
+        write_two_digits(&mut buf[8..10], d);
+        // Safe: ASCII digits and '-'
+        s.push_str(unsafe { std::str::from_utf8_unchecked(&buf) });
+    } else {
+        use std::fmt::Write;
+        let sign = if y < 0 { "-" } else { "" };
+        let _ = write!(s, "{sign}{:04}-{m:02}-{d:02}", y.unsigned_abs());
+    }
+}
+
+/// Write `v` (0..=99) as two ASCII digits into buf[0..2].
+const fn write_two_digits(
+    buf: &mut [u8],
+    v: u32,
+) {
+    buf[0] = b'0' + (v / 10 % 10) as u8;
+    buf[1] = b'0' + (v % 10) as u8;
 }
 
 impl Hash for Value {

@@ -158,6 +158,19 @@ class testTemporalDate(FlowTestsBase):
         self.env.assertEqual(dayOfQuarter, 21)
         self.env.assertEqual(ordinalDay, 295)
 
+    # years outside 0..9999 keep all their digits and their sign
+    def test_date_to_string_extended_years(self):
+        q = """RETURN toString(date({year: 12345})),
+                      toString(date('2020-01-01') + duration({years: 10000})),
+                      toString(date({year: -5})),
+                      toString(date({year: 5})),
+                      toString(localdatetime('2020-01-01T10:20:30') + duration({years: 300000})),
+                      toString(localdatetime({year: -5, month: 3, day: 4, hour: 5}))"""
+        actual = self.graph.query(q).result_set[0]
+        self.env.assertEqual(actual, ['12345-01-01', '12020-01-01', '-0005-01-01',
+                                      '0005-01-01', '302020-01-01T10:20:30',
+                                      '-0005-03-04T05:00:00'])
+
     def test_date_to_from_string(self):
         test_cases = [
             ({'year': 1984},                                   '1984-01-01'),
