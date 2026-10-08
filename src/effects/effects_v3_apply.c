@@ -1,0 +1,1838 @@
+/*
+ * Copyright FalkorDB Ltd. 2023 - present
+ * Licensed under the Server Side Public License v1 (SSPLv1).
+ */
+
+#include "RG.h"
+#include "effects_v3.h"
+#include "effects_v3_stream.h"
+#include "effects_internal.h"
+#include "../graph/graph_hub.h"
+#include "../datatypes/map.h"
+#include "../index/indexer.h"
+#include "../util/arr.h"
+#include "../util/rmalloc.h"
+#include "../util/roaring_include.h"
+
+#include <inttypes.h>
+#include <stdlib.h>
+
+//------------------------------------------------------------------------------
+// v3 apply: records -> graph
+//------------------------------------------------------------------------------
+//
+// This is where ids are expanded, and it is the only place that is allowed to.
+// Decode returns segments precisely so that the cost of expansion is paid where
+// the graph is in scope and can bound it.
+//
+// TWO BOUNDS DO THAT WORK, and neither is an invented constant:
+//
+//   * ids are expanded in fixed batches (APPLY_BATCH), never all at once, so
+//     peak memory is independent of a record's declared count. One valid
+//     segment describes four billion ids in seven bytes.
+//   * for records that reference EXISTING entities - the updates, the deletes,
+//     the label changes - a declared count larger than the local graph holds is
+//     divergence, and is refused before it sizes anything. Graph_NodeCount and
+//     Graph_RelationEdgeCount are the bound. A create cannot be bounded that
+//     way (it is making the entities), which is why the batching above carries
+//     that case on its own.
+//
+// EXISTENCE IS CHECKED BEFORE EVERY GraphHub CALL. GraphHub_UpdateNodeProperty
+// guards its own Graph_GetNode with ASSERT (graph_hub.c), and ASSERT compiles to
+// nothing when RG_DEBUG is off (RG.h) - so a missing node leaves an
+// uninitialized Node whose 'attributes' is stack garbage, and the update writes
+// through it. That is the AttributeSet_Update crash seen when C was fed a
+// foreign buffer. The checks here are load-bearing in release, not belt and
+// braces.
+//
+// VALUE OWNERSHIP: the record owns its SIValues and frees them. GraphHub's
+// update entry points take ownership of the value they are handed
+// (AttributeSet_Update with clone=false), so they are given SI_CloneValue and
+// the record keeps its own copy.
+//
+//------------------------------------------------------------------------------
+
+// how many ids are materialized at once
+//
+// matches v2's DELETE_NODE batch. Bounds peak memory independently of a
+// record's count, which is a wire-derived u32.
+#define APPLY_BATCH 4096
+
+//------------------------------------------------------------------------------
+// walking an IdList without expanding it
+//------------------------------------------------------------------------------
+
+// a cursor over an IdList that yields one id at a time
+//
+// holds no array proportional to the list's cardinality: a Range and a Repeat
+// are arithmetic, and a Set segment is walked with roaring's own
+// iterator rather than converted to an array
+typedef struct {
+	const EffectsV3IdList *list;
+	uint32_t               seg;       // segment being walked
+	uint64_t               produced;  // ids yielded from that segment
+	roaring64_bitmap_t    *bitmap;    // Set kinds only, owned
+	roaring64_iterator_t  *bit_it;    // Set kinds only, owned
+	bool                   broken;    // a bitmap failed to deserialize
+} IdIter;
+
+static void _IdIter_Init
+(
+	IdIter *it,
+	const EffectsV3IdList *list
+) {
+	it->list     = list ;
+	it->seg      = 0 ;
+	it->produced = 0 ;
+	it->bitmap   = NULL ;
+	it->bit_it   = NULL ;
+	it->broken   = false ;
+}
+
+// release whatever the current Set segment allocated
+static void _IdIter_CloseSegment
+(
+	IdIter *it
+) {
+	if (it->bit_it != NULL) {
+		roaring64_iterator_free (it->bit_it) ;
+		it->bit_it = NULL ;
+	}
+	if (it->bitmap != NULL) {
+		roaring64_bitmap_free (it->bitmap) ;
+		it->bitmap = NULL ;
+	}
+}
+
+static void _IdIter_Free
+(
+	IdIter *it
+) {
+	_IdIter_CloseSegment (it) ;
+}
+
+// yield the next id
+//
+// returns false when the list is exhausted, or when a bitmap could not be
+// deserialized - 'broken' distinguishes the two
+static bool _IdIter_Next
+(
+	IdIter *it,
+	uint64_t *id
+) {
+	while (it->seg < it->list->n) {
+		const EffectsV3IdListSegment *s = it->list->segments + it->seg ;
+
+		// direction is folded into the kind, so a range and a set each split
+		// into two arms sharing their reading but not their step. A descending
+		// repeat is unrepresentable, so there is no such case to guard.
+		switch (s->kind) {
+			case EFFECTS_V3_SEG_RANGE_ASCENDING:
+				if (it->produced < s->range_ascending.len) {
+					*id = s->range_ascending.base + it->produced ;
+					it->produced++ ;
+					return true ;
+				}
+				break ;
+
+			case EFFECTS_V3_SEG_RANGE_DESCENDING:
+				// a descending range's base is its FIRST and HIGHEST id
+				if (it->produced < s->range_descending.len) {
+					*id = s->range_descending.base - it->produced ;
+					it->produced++ ;
+					return true ;
+				}
+				break ;
+
+			case EFFECTS_V3_SEG_REPEAT:
+				if (it->produced < s->repeat.count) {
+					*id = s->repeat.id ;
+					it->produced++ ;
+					return true ;
+				}
+				break ;
+
+			case EFFECTS_V3_SEG_SET_ASCENDING:
+			case EFFECTS_V3_SEG_SET_DESCENDING: {
+				const bool descending =
+					(s->kind == EFFECTS_V3_SEG_SET_DESCENDING) ;
+
+				// one wire kind read two ways: the blob is identical and only
+				// the traversal differs, so the two arms share this body
+				const unsigned char *blob = descending
+					? s->set_descending.blob : s->set_ascending.blob ;
+				const uint32_t blob_n = descending
+					? s->set_descending.n : s->set_ascending.n ;
+				const uint64_t card = descending
+					? s->set_descending.cardinality
+					: s->set_ascending.cardinality ;
+
+				if (it->bitmap == NULL) {
+					it->bitmap = roaring64_bitmap_portable_deserialize_safe (
+							(const char*)blob, blob_n) ;
+					if (it->bitmap == NULL) {
+						// decode already deserialized this blob to take its
+						// cardinality, so failing here means memory pressure
+						// rather than a malformed payload
+						it->broken = true ;
+						return false ;
+					}
+					it->bit_it = descending
+						? roaring64_iterator_create_last (it->bitmap)
+						: roaring64_iterator_create (it->bitmap) ;
+					if (it->bit_it == NULL) {
+						_IdIter_CloseSegment (it) ;
+						it->broken = true ;
+						return false ;
+					}
+				}
+
+				if (roaring64_iterator_has_value (it->bit_it)) {
+					*id = roaring64_iterator_value (it->bit_it) ;
+					if (descending) {
+						roaring64_iterator_previous (it->bit_it) ;
+					} else {
+						roaring64_iterator_advance (it->bit_it) ;
+					}
+					it->produced++ ;
+					return true ;
+				}
+
+				// THE SET YIELDED WHAT DECODE COUNTED, checked rather than
+				// assumed. A Range and a Repeat bound 'produced' against a
+				// number on the segment, so running short is impossible for
+				// them; a Set stops when its iterator says so, and the count
+				// decode recorded came from deserializing this blob a first
+				// time. Same bytes and the same library, so the two agree - but
+				// that is an assumption about determinism, and if it ever broke
+				// the list would quietly run short. Four of the seven appliers
+				// do not compare their own tally against the record's count,
+				// because decode already guarantees it, so a silent short walk
+				// there would apply a prefix and report success.
+				if (it->produced != card) {
+					it->broken = true ;
+					return false ;
+				}
+				break ;
+			}
+
+			default:
+				it->broken = true ;
+				return false ;
+		}
+
+		// this segment is spent
+		_IdIter_CloseSegment (it) ;
+		it->seg++ ;
+		it->produced = 0 ;
+	}
+
+	return false ;
+}
+
+//------------------------------------------------------------------------------
+// shared validation
+//------------------------------------------------------------------------------
+
+// resolve every label a record names against local schema
+//
+// RESOLUTION, not a range check: an id can be inside the schema count and still
+// map to nothing, which a count comparison cannot see. Records 9 and 10 are
+// normatively ordered ahead of anything referencing the ids they introduce, so
+// in a well-formed buffer these always resolve - one that does not IS
+// divergence. This is not an invented ceiling: it is a lookup against local
+// state, so it cannot fire on legitimate data.
+static bool _VerifyLabels
+(
+	GraphContext *gc,
+	const LabelID *labels,
+	uint16_t n_labels,
+	const char *op
+) {
+	for (uint16_t i = 0; i < n_labels; i++) {
+		if (GraphContext_GetSchemaByID (gc, labels[i],
+					SCHEMA_NODE) == NULL) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT %s references unknown label schema %d",
+					op, labels[i]) ;
+			return false ;
+		}
+	}
+	return true ;
+}
+
+// resolve a record's relationship type against local schema
+static bool _VerifyRelation
+(
+	GraphContext *gc,
+	RelationID relation_id,
+	const char *op
+) {
+	if (GraphContext_GetSchemaByID (gc, relation_id, SCHEMA_EDGE) == NULL) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT %s references relationship type %d "
+				"which doesn't exist locally", op, relation_id) ;
+		return false ;
+	}
+	return true ;
+}
+
+// confirm the graph knows every attribute the record's shape names
+//
+// once per record rather than once per row: the grouping has already
+// established that every entity in the record has exactly these attribute ids
+static bool _VerifyAttrIds
+(
+	GraphContext *gc,
+	const AttributeID *attr_ids,
+	uint16_t n_attrs,
+	const char *op
+) {
+	for (uint16_t i = 0; i < n_attrs; i++) {
+		const AttributeID a = attr_ids[i] ;
+
+		if (a == ATTRIBUTE_ID_NONE) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT %s illegal attribute id %d", op, a) ;
+			return false ;
+		}
+
+		if (a != ATTRIBUTE_ID_ALL && !GraphContext_HasAttribute (gc, a)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT %s unknown attribute id %d", op, a) ;
+			return false ;
+		}
+	}
+	return true ;
+}
+
+// every value in the record must be storable, or a removal
+//
+// T_NULL is legal and means REMOVE THIS ATTRIBUTE - FalkorDB never stores a
+// null property, so SET n.x = NULL replicates as a null in a value slot. A
+// reader that rejected or filtered nulls would turn every removal into a no-op.
+static bool _VerifyValues
+(
+	const SIValue *values,
+	uint64_t n_values,
+	const char *op
+) {
+	for (uint64_t i = 0; i < n_values; i++) {
+		if (!(SI_TYPE (values[i]) & (SI_VALID_PROPERTY_VALUE | T_NULL))) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT %s carries a value that cannot be stored",
+					op) ;
+			return false ;
+		}
+	}
+	return true ;
+}
+
+// refuse a count that exceeds what the local graph could possibly satisfy
+//
+// only meaningful for records referencing entities that must ALREADY exist. A
+// bound taken from local graph state, so it cannot misfire on legitimate data
+// the way a constant would - being told to update more nodes than exist is
+// divergence by definition.
+static bool _VerifyCountAgainstGraph
+(
+	uint64_t count,
+	uint64_t local,
+	const char *op,
+	const char *what
+) {
+	if (count > local) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT %s declares %" PRIu64 " %s but only %" PRIu64
+				" exist locally", op, count, what, local) ;
+		return false ;
+	}
+	return true ;
+}
+
+//------------------------------------------------------------------------------
+// records 9 and 10 - the two that establish an id space
+//------------------------------------------------------------------------------
+
+// ADD_SCHEMA: create the schema and confirm it landed on the id the wire states
+//
+// This is the check v3 exists for. v2 carried no id and the replica inferred it
+// from append order, so a dictionary of a different length assigned a different
+// id to the same name and every later record silently used the wrong one. The
+// id is on the wire now, so the disagreement is caught where it is introduced.
+static bool _ApplyAddSchema
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	if (rec->add_schema.name == NULL) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_SCHEMA carries no name") ;
+		return false ;
+	}
+
+	// VALIDATED BEFORE THE GRAPH IS TOUCHED, so a divergent payload leaves
+	// nothing behind.
+	//
+	// Schema ids are the array index - Graph_AddLabel returns arr_len - 1,
+	// GetSchemaByID indexes schemas[id], RemoveSchema permits only the tail -
+	// so they are dense and append-only and the next id IS the current count.
+	// Unlike node ids they are never reused, so deriving the expected id is
+	// validation rather than inference.
+	//
+	// SchemaCount reads through the pending-aware accessor: a schema added
+	// earlier in this same payload lives in gc->_node_schemas until the write
+	// lock is released, so the committed array would miss it and refuse the
+	// second schema of any two.
+	if (GraphContext_GetSchema (gc, rec->add_schema.name,
+				rec->add_schema.schema_type) != NULL) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_SCHEMA targets schema '%s' which already "
+				"exists locally", rec->add_schema.name) ;
+		return false ;
+	}
+
+	const int expected =
+		(int)GraphContext_SchemaCount (gc, rec->add_schema.schema_type) ;
+
+	if (rec->add_schema.schema_id != expected) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_SCHEMA '%s' states id %d but this replica "
+				"would assign %d - schema numbering has diverged",
+				rec->add_schema.name, rec->add_schema.schema_id, expected) ;
+		return false ;
+	}
+
+	// both preconditions hold, so this creates rather than finds, and the id it
+	// assigns is 'expected' by construction - there is nothing left to check
+	// afterwards
+	Schema *s = GraphContext_FindOrAddSchema (gc, rec->add_schema.name,
+			rec->add_schema.schema_type, NULL) ;
+
+	return (s != NULL) ;
+}
+
+// ADD_ATTRIBUTE: same shape, on the attribute dictionary
+//
+// no node/relationship discriminator: #2459 unified the two dictionaries and C
+// has always had one
+static bool _ApplyAddAttribute
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	if (rec->add_attribute.name == NULL) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_ATTRIBUTE carries no name") ;
+		return false ;
+	}
+
+	if (GraphContext_GetAttributeID (gc, rec->add_attribute.name) != ATTRIBUTE_ID_NONE) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_ATTRIBUTE targets attribute '%s' which "
+				"already exists locally", rec->add_attribute.name) ;
+		return false ;
+	}
+
+	// the same pre-check as ADD_SCHEMA: attribute ids are the index into the
+	// attribute array, so the id the next one gets is the current count
+	const AttributeID expected = (AttributeID)GraphContext_AttributeCount (gc) ;
+
+	if (rec->add_attribute.attr_id != expected) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_ATTRIBUTE '%s' states id %d but this replica "
+				"would assign %d - attribute numbering has diverged",
+				rec->add_attribute.name, rec->add_attribute.attr_id, expected) ;
+		return false ;
+	}
+
+	const AttributeID assigned =
+		GraphHub_FindOrAddAttribute (gc, rec->add_attribute.name, false) ;
+
+	// THE ONE POST-CHECK THAT IS NOT REDUNDANT. The id is settled by the
+	// pre-check, but the dictionary can still refuse to grow: AttributeID is 16
+	// bits and its top two values are reserved sentinels, so a graph at the cap
+	// gets ATTRIBUTE_ID_NONE back rather than an id. That is a local limit
+	// rather than a divergence, and it cannot be known before the call.
+	if (assigned == ATTRIBUTE_ID_NONE) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT ADD_ATTRIBUTE '%s' could not be added - the "
+				"attribute limit is exhausted", rec->add_attribute.name) ;
+		return false ;
+	}
+
+	return true ;
+}
+
+//------------------------------------------------------------------------------
+// records 3 and 4 - creates
+//------------------------------------------------------------------------------
+
+// build the AttributeSet for row 'k'
+//
+// values are CLONED: the record owns its SIValues and frees them, while the
+// attribute set takes ownership of what it is given
+static AttributeSet _RowAttributes
+(
+	const AttributeID *attr_ids,
+	uint16_t n_attrs,
+	const SIValue *values,
+	uint64_t k
+) {
+	AttributeSet set = NULL ;
+	if (n_attrs == 0) {
+		return set ;
+	}
+
+	SIValue vals[n_attrs] ;
+	for (uint16_t a = 0; a < n_attrs; a++) {
+		vals[a] = SI_CloneValue (values[k * n_attrs + a]) ;
+	}
+
+	AttributeSet_Add (&set, attr_ids, vals, n_attrs, false) ;
+	return set ;
+}
+
+static bool _ApplyCreateNode
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	if (!_VerifyLabels (gc, rec->create_node.labels, rec->create_node.n_labels, "CREATE_NODE")   ||
+		!_VerifyAttrIds (gc, rec->create_node.attr_ids, rec->create_node.n_attrs, "CREATE_NODE")  ||
+		!_VerifyValues (rec->create_node.values, rec->create_node.n_values, "CREATE_NODE")) {
+		return false ;
+	}
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+	const uint32_t count = rec->create_node.count ;
+
+	//--------------------------------------------------------------------------
+	// collect the ids the primary stated
+	//--------------------------------------------------------------------------
+	//
+	// ACCEPT THE PRIMARY'S IDS, do not re-derive them. C reuses the most
+	// recently freed id and Rust the smallest; both are correct, so comparing
+	// against the id this replica would have chosen refuses a valid payload
+	// after every delete-then-create cycle. What is checked is liveness, which
+	// is a property of THIS graph: an id already live here cannot be created
+	// again.
+	uint64_t *ids = rm_malloc (sizeof (uint64_t) * count) ;
+
+	IdIter it ;
+	_IdIter_Init (&it, &rec->create_node.ids) ;
+
+	uint32_t got = 0 ;
+	uint64_t id ;
+	while (got < count && _IdIter_Next (&it, &id)) {
+		ids[got++] = id ;
+	}
+
+	const bool broken = it.broken ;
+	_IdIter_Free (&it) ;
+
+	if (broken || got != count) {
+		// decode has already checked the segments total the record's count, so
+		// a short list here is a decoder bug rather than a wire problem
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_NODE id list is shorter than its count") ;
+		rm_free (ids) ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// claim them, ONCE for the whole record
+	//--------------------------------------------------------------------------
+	//
+	// Claiming walks the free list, so claiming per chunk walks it once per
+	// chunk - quadratic again, just divided by the chunk size. One walk per
+	// record costs two arrays of 8 bytes per node, freed before returning.
+	//
+	// It also means the graph is untouched until every id is known to be free,
+	// so a divergent record is refused with nothing to unwind.
+	void **items = rm_malloc (sizeof (void *) * count) ;
+
+	if (!Graph_ClaimNodeIds (g, ids, count, items)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_NODE names a node id that is already live "
+				"on this replica, or names one twice"
+				" - node id space has diverged") ;
+		rm_free (ids) ;
+		rm_free (items) ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// write them, in bounded chunks
+	//--------------------------------------------------------------------------
+	//
+	// Chunked at APPLY_BATCH so a record describing a very large batch costs a
+	// bounded amount of stack, and so the label matrices are written in bulk.
+	// Every id is claimed by now, so nothing below can fail.
+	Node          storage[APPLY_BATCH] ;
+	Node        **batch = arr_new (Node *, APPLY_BATCH) ;
+	AttributeSet *sets  = arr_new (AttributeSet, APPLY_BATCH) ;
+
+	uint32_t n = 0 ;              // nodes in the current chunk
+	uint32_t chunk_start = 0 ;    // index of the chunk's first node
+
+	for (uint32_t k = 0 ; k < count ; k++) {
+		storage[n]    = GE_NEW_NODE () ;
+		storage[n].id = ids[k] ;
+
+		arr_append (batch, storage + n) ;
+		arr_append (sets, _RowAttributes (rec->create_node.attr_ids,
+					rec->create_node.n_attrs, rec->create_node.values, k)) ;
+		n++ ;
+
+		if (n == APPLY_BATCH) {
+			GraphHub_CreateNodesAtIds (gc, batch, items + chunk_start, sets, n,
+					rec->create_node.labels, rec->create_node.n_labels) ;
+			arr_clear (batch) ;
+			arr_clear (sets) ;
+			chunk_start = k + 1 ;
+			n = 0 ;
+		}
+	}
+
+	if (n > 0) {
+		GraphHub_CreateNodesAtIds (gc, batch, items + chunk_start, sets, n,
+				rec->create_node.labels, rec->create_node.n_labels) ;
+	}
+
+	arr_free (batch) ;
+	arr_free (sets) ;
+	rm_free (ids) ;
+	rm_free (items) ;
+
+	return true ;
+}
+
+static bool _ApplyCreateEdge
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	if (!_VerifyRelation (gc, rec->create_edge.relation_id, "CREATE_EDGE") ||
+		!_VerifyAttrIds (gc, rec->create_edge.attr_ids, rec->create_edge.n_attrs, "CREATE_EDGE")  ||
+		!_VerifyValues (rec->create_edge.values, rec->create_edge.n_values, "CREATE_EDGE")) {
+		return false ;
+	}
+
+	Graph *g = GraphContext_GetGraph (gc) ;
+	Schema *schema = GraphContext_GetSchemaByID (gc, rec->create_edge.relation_id,
+			SCHEMA_EDGE) ;
+	const char *rel_name = Schema_GetName (schema) ;
+	const uint32_t count = rec->create_edge.count ;
+
+	//--------------------------------------------------------------------------
+	// collect and validate, before anything is claimed
+	//--------------------------------------------------------------------------
+	//
+	// The endpoint check has to happen BEFORE the ids are claimed. Claiming
+	// marks slots live and bumps the item count, so bailing out afterwards
+	// would leave claimed slots holding no edge - a leak that only shows up
+	// later as a wrong id. Nothing is touched until the whole record is known
+	// to be applicable.
+	uint64_t *ids  = rm_malloc (sizeof (uint64_t) * count) ;
+	uint64_t *srcs = rm_malloc (sizeof (uint64_t) * count) ;
+	uint64_t *dsts = rm_malloc (sizeof (uint64_t) * count) ;
+
+	IdIter it_ids, it_srcs, it_dsts ;
+	_IdIter_Init (&it_ids,  &rec->create_edge.ids) ;
+	_IdIter_Init (&it_srcs, &rec->create_edge.src) ;
+	_IdIter_Init (&it_dsts, &rec->create_edge.dst) ;
+
+	bool ok = true ;
+	uint32_t got = 0 ;
+	uint64_t id, src, dst ;
+
+	while (ok && got < count && _IdIter_Next (&it_ids, &id)) {
+		// the three lists are positionally aligned by construction, and decode
+		// has already checked all three total the record's count - so a short
+		// one here is a decoder bug, not a wire problem
+		if (!_IdIter_Next (&it_srcs, &src) || !_IdIter_Next (&it_dsts, &dst)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_EDGE endpoint lists are shorter than "
+					"its id list") ;
+			ok = false ;
+			break ;
+		}
+
+		// endpoints must exist before an edge can join them. Checked here
+		// because the bulk path only asserts it, and ASSERT compiles out.
+		if (!Graph_HasNode (g, src) || !Graph_HasNode (g, dst)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_EDGE references nodes %" PRIu64
+					" -> %" PRIu64 ", at least one of which doesn't exist "
+					"locally", src, dst) ;
+			ok = false ;
+			break ;
+		}
+
+		ids[got]  = id ;
+		srcs[got] = src ;
+		dsts[got] = dst ;
+		got++ ;
+	}
+
+	if (ok && (it_ids.broken || it_srcs.broken || it_dsts.broken)) {
+		ok = false ;
+	}
+
+	_IdIter_Free (&it_ids) ;
+	_IdIter_Free (&it_srcs) ;
+	_IdIter_Free (&it_dsts) ;
+
+	if (ok && got != count) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_EDGE id list is shorter than its count") ;
+		ok = false ;
+	}
+
+	if (!ok) {
+		rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// claim the ids, ONCE for the whole record
+	//--------------------------------------------------------------------------
+	//
+	// see _ApplyCreateNode: per chunk would walk the free list once per chunk,
+	// which is the quadratic this shape exists to avoid
+	void **items = rm_malloc (sizeof (void *) * count) ;
+
+	if (!Graph_ClaimEdgeIds (g, ids, count, items)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_EDGE names an edge id that is already live "
+				"on this replica, or names one twice"
+				" - edge id space has diverged") ;
+		rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ; rm_free (items) ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// write them, in bounded chunks
+	//--------------------------------------------------------------------------
+	//
+	// KEEPS THE BATCH SHAPE. The singular Graph_CreateEdge reads the relation
+	// matrix, which forces a GB_wait against the pending tuples of every edge
+	// already written in this record - measured at 91x on 8k edges. The whole
+	// chunk still goes over in one call.
+	Edge          storage[APPLY_BATCH] ;
+	Edge        **batch = arr_new (Edge *, APPLY_BATCH) ;
+	AttributeSet *sets  = arr_new (AttributeSet, APPLY_BATCH) ;
+
+	uint32_t n = 0 ;
+	uint32_t chunk_start = 0 ;
+
+	for (uint32_t k = 0 ; k < count ; k++) {
+		// the bulk call reads the endpoints off the Edge rather than taking
+		// them as arguments, so they are set here
+		storage[n] = GE_NEW_LABELED_EDGE (rel_name, rec->create_edge.relation_id) ;
+		storage[n].id = ids[k] ;
+		Edge_SetSrcNodeID  (storage + n, srcs[k]) ;
+		Edge_SetDestNodeID (storage + n, dsts[k]) ;
+
+		arr_append (batch, storage + n) ;
+		arr_append (sets, _RowAttributes (rec->create_edge.attr_ids,
+					rec->create_edge.n_attrs, rec->create_edge.values, k)) ;
+		n++ ;
+
+		if (n == APPLY_BATCH) {
+			GraphHub_CreateEdgesAtIds (gc, batch, items + chunk_start,
+					rec->create_edge.relation_id, sets) ;
+			arr_clear (batch) ;
+			arr_clear (sets) ;
+			chunk_start = k + 1 ;
+			n = 0 ;
+		}
+	}
+
+	if (n > 0) {
+		GraphHub_CreateEdgesAtIds (gc, batch, items + chunk_start,
+				rec->create_edge.relation_id, sets) ;
+	}
+
+	arr_free (batch) ;
+	arr_free (sets) ;
+	rm_free (ids) ; rm_free (srcs) ; rm_free (dsts) ; rm_free (items) ;
+
+	return true ;
+}
+
+//------------------------------------------------------------------------------
+// records 1 and 2 - updates
+//------------------------------------------------------------------------------
+
+static bool _ApplyUpdateNode
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	if (!_VerifyCountAgainstGraph (rec->update_node.count, Graph_NodeCount (g),
+				"UPDATE_NODE", "nodes")                ||
+		!_VerifyLabels (gc, rec->update_node.labels, rec->update_node.n_labels, "UPDATE_NODE")        ||
+		!_VerifyAttrIds (gc, rec->update_node.attr_ids, rec->update_node.n_attrs, "UPDATE_NODE")       ||
+		!_VerifyValues (rec->update_node.values, rec->update_node.n_values, "UPDATE_NODE")) {
+		return false ;
+	}
+
+	IdIter it ;
+	_IdIter_Init (&it, &rec->update_node.ids) ;
+
+	bool ok = true ;
+	uint64_t id ;
+	uint64_t k = 0 ;
+
+	while (ok && _IdIter_Next (&it, &id)) {
+		if (id == INVALID_ENTITY_ID || !Graph_HasNode (g, id)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT UPDATE_NODE references node %" PRIu64
+					" which doesn't exist locally", id) ;
+			ok = false ;
+			break ;
+		}
+
+		for (uint16_t a = 0; a < rec->update_node.n_attrs; a++) {
+			const SIValue v = rec->update_node.values[k * rec->update_node.n_attrs + a] ;
+
+			// ATTRIBUTE_ID_ALL means "remove everything" and is only legal
+			// alongside a null, mirroring v2's check
+			if (rec->update_node.attr_ids[a] == ATTRIBUTE_ID_ALL && !SIValue_IsNull (v)) {
+				RedisModule_Log (NULL, "warning",
+						"GRAPH.EFFECT UPDATE_NODE illegal attribute id %d",
+						rec->update_node.attr_ids[a]) ;
+				ok = false ;
+				break ;
+			}
+
+			// the hub takes ownership of the value it is handed
+			GraphHub_UpdateNodeProperty (gc, id, rec->update_node.attr_ids[a],
+					SI_CloneValue (v)) ;
+		}
+
+		k++ ;
+	}
+
+	if (ok && it.broken) {
+		ok = false ;
+	}
+
+	_IdIter_Free (&it) ;
+	return ok ;
+}
+
+// (edge id -> row) for UPDATE_EDGE's tensor scan
+typedef struct { uint64_t id ; uint64_t row ; } IdRow ;
+
+// sort by id, then row, so duplicate ids land adjacent with rows ascending
+static int _IdRowCmp
+(
+	const void *a,
+	const void *b
+) {
+	const IdRow *x = a ;
+	const IdRow *y = b ;
+
+	// compared, not subtracted: a uint64 difference does not fit in an int
+	if (x->id  != y->id)  return (x->id  < y->id)  ? -1 : 1 ;
+	if (x->row != y->row) return (x->row < y->row) ? -1 : 1 ;
+	return 0 ;
+}
+
+// bsearch key comparator: the key is a bare edge id
+static int _IdRowFind
+(
+	const void *key,
+	const void *elem
+) {
+	const uint64_t id = *(const uint64_t *)key ;
+	const IdRow   *e  = elem ;
+
+	if (id != e->id) return (id < e->id) ? -1 : 1 ;
+	return 0 ;
+}
+
+// UPDATE_EDGE carries its relationship type and deliberately not its endpoints
+//
+// They are per edge rather than per record, so carrying them would cost two
+// more IdLists where the type costs four bytes. C needs them anyway, because
+// GraphHub_UpdateEdgeProperty fills an Edge for the index and index_edge.c
+// stores 'range:_src_id' / 'range:_dest_id'. Graph_GetEdge sets only id and
+// attributes and will not help.
+//
+// So the endpoints are recovered by scanning the relationship's own tensor
+// once, which yields (src, dst, edge_id) - precedent at
+// graphcontext_memoryUsage.c. One scan per record, not per edge: a per-edge
+// scan would be quadratic.
+static bool _ApplyUpdateEdge
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	// the local edge count of this type is what makes the (id -> row) table
+	// below safe to size: being told to update more edges of a type than exist
+	// is divergence, and refusing first means a wire-declared count never
+	// reaches an allocator
+	if (!_VerifyRelation (gc, rec->update_edge.relation_id, "UPDATE_EDGE")) {
+		return false ;
+	}
+
+	const uint64_t local =
+		Graph_RelationEdgeCount (g, rec->update_edge.relation_id) ;
+
+	if (!_VerifyCountAgainstGraph (rec->update_edge.count, local, "UPDATE_EDGE", "edges") ||
+		!_VerifyAttrIds (gc, rec->update_edge.attr_ids, rec->update_edge.n_attrs, "UPDATE_EDGE")                              ||
+		!_VerifyValues (rec->update_edge.values, rec->update_edge.n_values, "UPDATE_EDGE")) {
+		return false ;
+	}
+
+	if (rec->update_edge.count == 0) {
+		return true ;
+	}
+
+	//--------------------------------------------------------------------------
+	// materialize (edge id -> row) so a single tensor scan can find each row
+	//--------------------------------------------------------------------------
+
+	IdRow *table = rm_malloc (rec->update_edge.count * sizeof (IdRow)) ;
+
+	IdIter it ;
+	_IdIter_Init (&it, &rec->update_edge.ids) ;
+
+	uint64_t id ;
+	uint64_t k = 0 ;
+	while (k < rec->update_edge.count && _IdIter_Next (&it, &id)) {
+		table[k].id  = id ;
+		table[k].row = k ;
+		k++ ;
+	}
+	const bool broken = it.broken ;
+	_IdIter_Free (&it) ;
+
+	if (broken || k != rec->update_edge.count) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT UPDATE_EDGE id list yielded %" PRIu64
+				" of %u ids", k, rec->update_edge.count) ;
+		rm_free (table) ;
+		return false ;
+	}
+
+	//--------------------------------------------------------------------------
+	// scan the relationship tensor, updating each edge the record names
+	//--------------------------------------------------------------------------
+
+	// sorted once per record so the scan below can binary search it
+	qsort (table, rec->update_edge.count, sizeof (IdRow), _IdRowCmp) ;
+
+	Tensor R = Graph_GetRelationMatrix (g, rec->update_edge.relation_id, false) ;
+
+	TensorIterator ti ;
+	TensorIterator_ScanRange (&ti, R, 0, UINT64_MAX, false) ;
+
+	uint64_t applied = 0 ;
+	GrB_Index row, col ;
+	uint64_t  edge_id ;
+
+	while (applied < rec->update_edge.count &&
+			TensorIterator_next (&ti, &row, &col, &edge_id, NULL)) {
+		// binary search: a linear scan here is quadratic in the RECORD. The
+		// tensor walk stops once every named edge is applied, so a bigger
+		// record scans more edges AND compares each against a longer table.
+		const IdRow *hit = bsearch (&edge_id, table, rec->update_edge.count,
+				sizeof (IdRow), _IdRowFind) ;
+
+		if (hit != NULL) {
+			// the sort's secondary key puts duplicate ids adjacent with rows
+			// ascending, so walking back to the first takes the lowest row
+			while (hit > table && (hit - 1)->id == edge_id) {
+				hit-- ;
+			}
+
+			for (uint16_t a = 0; a < rec->update_edge.n_attrs; a++) {
+				const SIValue v =
+					rec->update_edge.values[hit->row * rec->update_edge.n_attrs + a] ;
+
+				if (rec->update_edge.attr_ids[a] == ATTRIBUTE_ID_ALL &&
+						!SIValue_IsNull (v)) {
+					RedisModule_Log (NULL, "warning",
+							"GRAPH.EFFECT UPDATE_EDGE illegal attribute id %d",
+							rec->update_edge.attr_ids[a]) ;
+					rm_free (table) ;
+					return false ;
+				}
+
+				GraphHub_UpdateEdgeProperty (gc, edge_id, rec->update_edge.relation_id,
+						row, col, rec->update_edge.attr_ids[a], SI_CloneValue (v)) ;
+			}
+
+			applied++ ;
+		}
+	}
+
+	rm_free (table) ;
+
+	if (applied != rec->update_edge.count) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT UPDATE_EDGE matched %" PRIu64 " of %u edges of "
+				"relationship type %d locally", applied, rec->update_edge.count,
+				rec->update_edge.relation_id) ;
+		return false ;
+	}
+
+	return true ;
+}
+
+//------------------------------------------------------------------------------
+// records 5 and 6 - deletes
+//------------------------------------------------------------------------------
+
+// DELETE_NODE carries the labels the node ACTUALLY held, captured as it was
+// deleted - they cannot be recovered when the buffer is built, because by then
+// the node is gone.
+//
+// On a replica the node still exists at apply time, so C does not need them to
+// drive the deletion: GraphHub_DeleteNodes reads the local matrices. They are
+// used here as a divergence check, which is what a replica can do with them.
+static bool _ApplyDeleteNode
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	if (!_VerifyCountAgainstGraph (rec->delete_node.count, Graph_NodeCount (g),
+				"DELETE_NODE", "nodes")                ||
+		!_VerifyLabels (gc, rec->delete_node.labels, rec->delete_node.n_labels, "DELETE_NODE")) {
+		return false ;
+	}
+
+	IdIter it ;
+	_IdIter_Init (&it, &rec->delete_node.ids) ;
+
+	Node batch[APPLY_BATCH] ;
+	uint32_t n = 0 ;
+	bool ok = true ;
+	uint64_t id ;
+
+	while (ok && _IdIter_Next (&it, &id)) {
+		if (!Graph_GetNode (g, id, batch + n)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT DELETE_NODE references node %" PRIu64
+					" which doesn't exist locally", id) ;
+			ok = false ;
+			break ;
+		}
+
+		n++ ;
+
+		if (n == APPLY_BATCH) {
+			GraphHub_DeleteNodes (gc, batch, n, false) ;
+			n = 0 ;
+		}
+	}
+
+	if (ok && it.broken) {
+		ok = false ;
+	}
+
+	if (ok && n > 0) {
+		GraphHub_DeleteNodes (gc, batch, n, false) ;
+	}
+
+	_IdIter_Free (&it) ;
+	return ok ;
+}
+
+static bool _ApplyDeleteEdge
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	if (!_VerifyRelation (gc, rec->delete_edge.relation_id, "DELETE_EDGE")) {
+		return false ;
+	}
+
+	if (!_VerifyCountAgainstGraph (rec->delete_edge.count,
+				Graph_RelationEdgeCount (g, rec->delete_edge.relation_id),
+				"DELETE_EDGE", "edges")) {
+		return false ;
+	}
+
+	Schema *schema = GraphContext_GetSchemaByID (gc, rec->delete_edge.relation_id,
+			SCHEMA_EDGE) ;
+	const char *rel_name = Schema_GetName (schema) ;
+
+	IdIter ids, srcs, dsts ;
+	_IdIter_Init (&ids,  &rec->delete_edge.ids) ;
+	_IdIter_Init (&srcs, &rec->delete_edge.src) ;
+	_IdIter_Init (&dsts, &rec->delete_edge.dst) ;
+
+	Edge batch[APPLY_BATCH] ;
+	uint32_t n = 0 ;
+	bool ok = true ;
+	uint64_t id, src, dst ;
+
+	while (ok && _IdIter_Next (&ids, &id)) {
+		if (!_IdIter_Next (&srcs, &src) || !_IdIter_Next (&dsts, &dst)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT DELETE_EDGE endpoint lists are shorter than "
+					"its id list") ;
+			ok = false ;
+			break ;
+		}
+
+		// the delete records carry endpoints precisely because a deleted
+		// edge's endpoints cannot be recovered afterwards, so they are used
+		// rather than re-derived
+		Edge *e = batch + n ;
+		*e = GE_NEW_LABELED_EDGE (rel_name, rec->delete_edge.relation_id) ;
+		e->id      = id ;
+		e->src_id  = src ;
+		e->dest_id = dst ;
+
+		if (!Graph_GetEdge (g, id, e)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT DELETE_EDGE references edge %" PRIu64
+					" which doesn't exist locally", id) ;
+			ok = false ;
+			break ;
+		}
+
+		// Graph_GetEdge fills only id and attributes, so the endpoints and
+		// type from the wire are restored over whatever it left
+		e->src_id     = src ;
+		e->dest_id    = dst ;
+		e->relationID = rec->delete_edge.relation_id ;
+
+		n++ ;
+
+		if (n == APPLY_BATCH) {
+			GraphHub_DeleteEdges (gc, batch, n, false, false) ;
+			n = 0 ;
+		}
+	}
+
+	if (ok && (ids.broken || srcs.broken || dsts.broken)) {
+		ok = false ;
+	}
+
+	if (ok && n > 0) {
+		GraphHub_DeleteEdges (gc, batch, n, false, false) ;
+	}
+
+	_IdIter_Free (&ids) ;
+	_IdIter_Free (&srcs) ;
+	_IdIter_Free (&dsts) ;
+	return ok ;
+}
+
+//------------------------------------------------------------------------------
+// records 7 and 8 - label changes
+//------------------------------------------------------------------------------
+
+// SET_LABELS / REMOVE_LABELS carry the labels and ALL their nodes, rather than
+// one (node, label) pair per node
+//
+// Grouping is sound because label add and remove are idempotent set
+// operations, so order within a record carries no information - unlike edge
+// endpoints, which is why those stay positional.
+//
+// GraphHub_UpdateNodeLabels takes one GrB_Vector per label, named by the
+// schema's name, whose pattern is the node set. Every node in the record gets
+// every label in the record, so all the vectors share one pattern.
+static bool _ApplyLabels
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec,
+	bool add
+) {
+	const char *op = add ? "SET_LABELS" : "REMOVE_LABELS" ;
+	Graph *g = GraphContext_GetGraph (gc) ;
+
+	// SET_LABELS and REMOVE_LABELS are the same shape in two arms - same
+	// fields, opposite direction - so the arm is bound once here and the body
+	// below reads it without asking which opcode it is again.
+	const uint32_t         count    = add ? rec->set_labels.count
+	                                      : rec->remove_labels.count ;
+	const LabelID *const   labels   = add ? rec->set_labels.labels
+	                                      : rec->remove_labels.labels ;
+	const uint16_t         n_labels = add ? rec->set_labels.n_labels
+	                                      : rec->remove_labels.n_labels ;
+	const EffectsV3IdList *ids      = add ? &rec->set_labels.ids
+	                                      : &rec->remove_labels.ids ;
+
+	if (!_VerifyCountAgainstGraph (count, Graph_NodeCount (g),
+				op, "nodes")) {
+		return false ;
+	}
+
+	// A LABEL CHANGE NAMING NO LABELS IS A NO-OP, NOT A REFUSAL.
+	//
+	// This refused the record, which was wrong twice over. Internally: decode
+	// accepts an empty LabelSet (_ReadLabelSet returns OK on n == 0), so the
+	// two halves of this file disagreed about the same bytes. Externally: a
+	// Rust master emits exactly this record today. `MATCH (n) SET n:Foo REMOVE
+	// n:Foo` empties the label vector while leaving the entry, and their
+	// emitter has no guard against digesting it, so the record reaches the wire.
+	//
+	// A refused effect is divergence, and the same buffer is refused identically
+	// on every retry - so the refusal produced a forced-resync LOOP against a
+	// live peer. A flapping replica rather than a wrong answer, which is harder
+	// to attribute.
+	//
+	// A no-op is correct under both futures, which is why it is the answer
+	// rather than a stopgap. If the record stays legal, setting no labels
+	// genuinely changes nothing. If Rust adds the emitter guard and the record
+	// becomes illegal, this branch is unreachable and harmless, and refusing it
+	// can be restored deliberately once the guard is shipped and verified.
+	//
+	// Deliberately NOT validating the ids on this path: the record changes
+	// nothing, so refusing it over a node that no longer exists would recreate
+	// the same loop through a narrower door.
+	//
+	// Applies to REMOVE_LABELS too. Rust's remove path cannot currently go
+	// empty - it always pushes - but the two paths differing is accidental on
+	// their side, and one guard covering both is safer than a rule that depends
+	// on that accident holding.
+	if (n_labels == 0) {
+		return true ;
+	}
+
+	if (!_VerifyLabels (gc, labels, n_labels, op)) {
+		return false ;
+	}
+
+	GrB_Vector *lbls = rm_calloc (n_labels, sizeof (GrB_Vector)) ;
+	const uint64_t cap = Graph_NodeCap (g) ;
+
+	for (uint16_t i = 0; i < n_labels; i++) {
+		Schema *s = GraphContext_GetSchemaByID (gc, labels[i],
+				SCHEMA_NODE) ;
+		GrB_OK (GrB_Vector_new (lbls + i, GrB_BOOL, cap)) ;
+		GrB_OK (GrB_set (lbls[i], (char*) Schema_GetName (s), GrB_NAME)) ;
+	}
+
+	IdIter it ;
+	_IdIter_Init (&it, ids) ;
+
+	bool ok = true ;
+	uint64_t id ;
+
+	while (ok && _IdIter_Next (&it, &id)) {
+		if (!Graph_HasNode (g, id)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT %s references node %" PRIu64
+					" which doesn't exist locally", op, id) ;
+			ok = false ;
+			break ;
+		}
+
+		for (uint16_t i = 0; i < n_labels; i++) {
+			GrB_OK (GrB_Vector_setElement (lbls[i], true, id)) ;
+		}
+	}
+
+	if (ok && it.broken) {
+		ok = false ;
+	}
+
+	_IdIter_Free (&it) ;
+
+	if (ok) {
+		if (add) {
+			GraphHub_UpdateNodeLabels (gc, lbls, n_labels, NULL, 0,
+					false) ;
+		} else {
+			GraphHub_UpdateNodeLabels (gc, NULL, 0, lbls, n_labels,
+					false) ;
+		}
+	}
+
+	for (uint16_t i = 0; i < n_labels; i++) {
+		GrB_OK (GrB_free (lbls + i)) ;
+	}
+	rm_free (lbls) ;
+
+	return ok ;
+}
+
+//------------------------------------------------------------------------------
+// records 11-14 - index and constraint DDL
+//------------------------------------------------------------------------------
+
+// rebuild the options map the index constructors take
+//
+// v3 carries options as a typed block; Index_FulltextCreate and
+// Index_VectorCreate take an SIValue map. Reconstructing keeps ONE code path
+// for index construction shared with v2, so the two cannot diverge in how an
+// index is built - which is worth more than the seam being tidy. A lower-level
+// API taking the typed struct is the better end state and belongs in its own
+// change.
+//
+// A KEY IS OMITTED WHEN ITS PRESENCE BYTE IS CLEAR, never defaulted. The
+// constructors seed their own defaults and override only on a hit, so omission
+// reproduces "the statement did not say" exactly - and for per-field options
+// that is right anyway, because the field is being created and has no prior
+// value. Language and stopwords are NOT put in the map: they are index-level,
+// applied separately through their guarded setters, and that is where absence
+// genuinely has to mean "do not call".
+//
+// Returns false, with a named reason logged, when the record asks for
+// something this build cannot express. Refusing names the gap; a
+// reconstruction would have to invent a value.
+static bool _OptionsToMap
+(
+	const EffectsV3Record *rec,
+	SIValue *out
+) {
+	const EffectsV3IndexOptions *o = &rec->create_index.options ;
+
+	*out = Map_New (8) ;
+
+	// per-field fulltext options
+	if (o->has_weight) {
+		Map_Add (out, SI_ConstStringVal ("weight"), SI_DoubleVal (o->weight)) ;
+	}
+	if (o->has_nostem) {
+		Map_Add (out, SI_ConstStringVal ("nostem"),
+				SI_BoolVal (o->nostem)) ;
+	}
+	if (o->has_phonetic) {
+		Map_Add (out, SI_ConstStringVal ("phonetic"),
+				SI_ConstStringVal (o->phonetic)) ;
+	}
+
+	if (!o->is_vector) {
+		return true ;
+	}
+
+	//--------------------------------------------------------------------------
+	// the vector half
+	//--------------------------------------------------------------------------
+
+	// _parseOptions REQUIRES a dimension and rejects a zero one, so a record
+	// asking for a dimensionless vector field describes something C cannot
+	// build. Refused rather than substituted.
+	if (o->dimension == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_INDEX vector field on '%s' declares "
+				"dimension 0, which this build cannot create", rec->create_index.name) ;
+		Map_Free (*out) ;
+		*out = SI_NullVal () ;
+		return false ;
+	}
+
+	Map_Add (out, SI_ConstStringVal ("dimension"),
+			SI_LongVal ((int64_t)o->dimension)) ;
+
+	// similarityFunction is required by _parseOptions and is a STRING there,
+	// while the wire carries a code. Absence means euclidean, which is what
+	// the emitter's own builder defaults to.
+	const char *sim = "euclidean" ;
+	if (o->has_sim_func) {
+		switch (o->sim_func) {
+			case VecSimMetric_L2:     sim = "euclidean" ; break ;
+			case VecSimMetric_Cosine: sim = "cosine"    ; break ;
+			case VecSimMetric_IP:     sim = "ip"        ; break ;
+
+			// refuse a code this build has no name for, rather than
+			// substitute a metric the writer did not ask for
+			default:
+				RedisModule_Log (NULL, "warning",
+						"GRAPH.EFFECT CREATE_INDEX vector field on '%s' asks "
+						"for similarity function %" PRIu64
+						", which this build cannot create", rec->create_index.name,
+						o->sim_func) ;
+				Map_Free (*out) ;
+				*out = SI_NullVal () ;
+				return false ;
+		}
+	}
+	Map_Add (out, SI_ConstStringVal ("similarityFunction"),
+			SI_ConstStringVal (sim)) ;
+
+	if (o->has_m) {
+		Map_Add (out, SI_ConstStringVal ("M"),
+				SI_LongVal ((int64_t)o->m)) ;
+	}
+	if (o->has_ef_construction) {
+		Map_Add (out, SI_ConstStringVal ("efConstruction"),
+				SI_LongVal ((int64_t)o->ef_construction)) ;
+	}
+	if (o->has_ef_runtime) {
+		Map_Add (out, SI_ConstStringVal ("efRuntime"),
+				SI_LongVal ((int64_t)o->ef_runtime)) ;
+	}
+
+	return true ;
+}
+
+// resolve the schema and every attribute a DDL record names
+//
+// VerifySchema and VerifyAttribute are the shared helpers the v2 DDL appliers
+// already use: the id drives the operation and the name is the cross-check
+// that surfaces divergence instead of trusting a stale id.
+static Schema *_VerifyDDLRefs
+(
+	GraphContext *gc,
+	SchemaType schema_type,
+	int schema_id,
+	const char *name,
+	const EffectsV3AttrRef *attrs,
+	uint16_t n_attrs,
+	const char *op
+) {
+	// THE NAME IS THE CROSS-CHECK, not decoration. VerifySchema takes the id
+	// and the name together so a stale or diverged id is refused instead of
+	// resolving to the wrong schema locally.
+	Schema *s = VerifySchema (gc, schema_type, schema_id, name) ;
+	if (s == NULL) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT %s references schema '%s' (%d) which does not "
+				"resolve locally", op, name, schema_id) ;
+		return NULL ;
+	}
+
+	for (uint16_t i = 0 ; i < n_attrs ; i++) {
+		if (!VerifyAttribute (gc, attrs[i].id, attrs[i].name)) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT %s references attribute '%s' (%u) which does "
+					"not resolve locally", op, attrs[i].name, attrs[i].id) ;
+			return NULL ;
+		}
+	}
+
+	return s ;
+}
+
+// CREATE_INDEX - ONE RECORD PER STATEMENT
+//
+// v2 sent one record per field and reconstructed the statement by accident;
+// v3 states it once. So the fields are added in a loop against one set of
+// statement-level options, and the index-level configuration is applied ONCE.
+//
+// The asymmetry between the two index-level setters is why that matters:
+// Index_SetLanguage fails only if the language DIFFERS, but Index_SetStopwords
+// fails if stopwords are set AT ALL. Passing the same options to every field
+// would therefore work for language and fail on the second field of any
+// statement carrying stopwords - and pass every test that does not use them.
+static bool _ApplyCreateIndex
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	Schema *s = _VerifyDDLRefs (gc, rec->create_index.schema_type, rec->create_index.schema_id,
+			rec->create_index.name, rec->create_index.attrs,
+			rec->create_index.n_attrs, "CREATE_INDEX") ;
+	if (s == NULL) {
+		return false ;
+	}
+
+	if (rec->create_index.n_attrs == 0) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_INDEX on '%s' names no fields",
+				rec->create_index.name) ;
+		return false ;
+	}
+
+	SIValue options ;
+	if (!_OptionsToMap (rec, &options)) {
+		return false ;
+	}
+
+	const GraphEntityType et =
+		(rec->create_index.schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
+
+	bool ok = true ;
+	Index idx = NULL ;
+
+	for (uint16_t i = 0 ; i < rec->create_index.n_attrs && ok ; i++) {
+		idx = GraphHub_AddIndex (gc, rec->create_index.name, rec->create_index.attrs[i].name, et,
+				(IndexFieldType)rec->create_index.field_type, options, false) ;
+
+		if (idx == NULL) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_INDEX failed to create field '%s' "
+					"on '%s'", rec->create_index.attrs[i].name, rec->create_index.name) ;
+			ok = false ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// index-level configuration, once per statement
+	//--------------------------------------------------------------------------
+
+	if (ok && rec->create_index.options.has_language) {
+		Index_SetLanguage (idx, rec->create_index.options.language) ;
+	}
+
+	if (ok && rec->create_index.options.has_stopwords) {
+		// Index_SetStopwords takes ownership of the array, so it is built here
+		// rather than borrowed from the record
+		char **sw = arr_new (char*, rec->create_index.options.n_stopwords) ;
+		for (uint64_t i = 0 ; i < rec->create_index.options.n_stopwords ; i++) {
+			arr_append (sw, rm_strdup (rec->create_index.options.stopwords[i])) ;
+		}
+
+		if (!Index_ContainsStopwords (idx)) {
+			Index_SetStopwords (idx, &sw) ;
+		} else {
+			arr_free_cb (sw, rm_free) ;
+		}
+	}
+
+	//--------------------------------------------------------------------------
+	// populate, once, synchronously
+	//--------------------------------------------------------------------------
+	//
+	// a replica must not spawn population threads and must not reorder its work
+	// against the effect stream, so this is the same in-line population v2's
+	// apply uses rather than the async variant a query would take.
+	if (ok) {
+		Index_Disable (idx) ;
+		Indexer_PopulateIndex (gc, s, idx) ;
+	}
+
+	SIValue_Free (options) ;
+	return ok ;
+}
+
+// DROP_INDEX - mirrors create without the options, and sends n = 0 fields
+static bool _ApplyDropIndex
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	Schema *s = _VerifyDDLRefs (gc, rec->drop_index.schema_type, rec->drop_index.schema_id,
+			rec->drop_index.name, rec->drop_index.attrs,
+			rec->drop_index.n_attrs, "DROP_INDEX") ;
+	if (s == NULL) {
+		return false ;
+	}
+
+	const GraphEntityType et =
+		(rec->drop_index.schema_type == SCHEMA_NODE) ? GETYPE_NODE : GETYPE_EDGE ;
+
+	for (uint16_t i = 0 ; i < rec->drop_index.n_attrs ; i++) {
+		if (GraphHub_DropIndex (gc, rec->drop_index.schema_type, rec->drop_index.name,
+					rec->drop_index.attrs[i].name, (IndexFieldType)rec->drop_index.field_type,
+					false) != INDEX_OK) {
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT DROP_INDEX failed to drop field '%s' on "
+					"'%s'", rec->drop_index.attrs[i].name, rec->drop_index.name) ;
+			return false ;
+		}
+	}
+
+	return true ;
+}
+
+// adopt the primary's constraint status instead of computing our own
+//
+// Constraint_SetStatus guards itself with two ASSERTs - the current status must
+// be CT_PENDING, and the new one must be CT_ACTIVE or CT_FAILED - and ASSERT is
+// empty in a release build, so calling it out of turn corrupts silently rather
+// than trapping. Both conditions are therefore checked here rather than
+// assumed.
+//
+// A record stating CT_PENDING needs no action: a freshly created constraint is
+// already pending, and the re-announcement that follows validation carries the
+// final status.
+static void _AdoptConstraintStatus
+(
+	Schema *s,
+	const EffectsV3Record *rec
+) {
+	if (rec->create_constraint.status == CT_PENDING) {
+		return ;
+	}
+
+	AttributeID attrs[rec->create_constraint.n_attrs > 0 ? rec->create_constraint.n_attrs : 1] ;
+	for (uint16_t i = 0 ; i < rec->create_constraint.n_attrs ; i++) {
+		attrs[i] = rec->create_constraint.attrs[i].id ;
+	}
+
+	Constraint c = Schema_GetConstraint (s, (ConstraintType)rec->create_constraint.constraint_type,
+			attrs, rec->create_constraint.n_attrs) ;
+
+	if (c != NULL && Constraint_GetStatus (c) == CT_PENDING) {
+		Constraint_SetStatus (c, (ConstraintStatus)rec->create_constraint.status) ;
+	}
+}
+
+// CREATE_CONSTRAINT
+//
+// A REPLICA INSTALLS THE MASTER'S OUTCOME AND DOES NOT RE-VALIDATE. Scanning
+// independently would run at a different time against different write
+// interleavings and could legitimately reach a different status, so the
+// announcement is what the replica takes.
+//
+// The record carries a ConstraintStatus that C never sends - the one place v3
+// deliberately carries more than C - and it is what lets the second
+// announcement, the one after validation completes, converge on the first
+// rather than duplicate it.
+static bool _ApplyCreateConstraint
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	const GraphEntityType et = (GraphEntityType)rec->create_constraint.entity_type ;
+
+	// GraphEntityType is 1-BASED: GETYPE_UNKNOWN takes 0, so a node is 1
+	if (et != GETYPE_NODE && et != GETYPE_EDGE) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_CONSTRAINT unknown entity type %u",
+				rec->create_constraint.entity_type) ;
+		return false ;
+	}
+
+
+	// THE SCHEMA TYPE COMES FROM entity_type, and this was a latent bug the
+	// typed model exposed. The flat record had one shared 'schema_type' field
+	// that _ReadConstraintRecord never set, so it was 0 - SCHEMA_NODE - and an
+	// EDGE constraint verified its schema id against the NODE schemas. It
+	// resolved to whatever node schema happened to hold that id, or to nothing.
+	// Constraints carry entity_type rather than schema_type on this wire, and
+	// it is 1-based, so the mapping is explicit here.
+	const SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
+
+	Schema *s = _VerifyDDLRefs (gc, st, rec->create_constraint.schema_id,
+			rec->create_constraint.name, rec->create_constraint.attrs,
+			rec->create_constraint.n_attrs, "CREATE_CONSTRAINT") ;
+	if (s == NULL) {
+		return false ;
+	}
+
+	const char *props[rec->create_constraint.n_attrs > 0 ? rec->create_constraint.n_attrs : 1] ;
+	for (uint16_t i = 0 ; i < rec->create_constraint.n_attrs ; i++) {
+		props[i] = rec->create_constraint.attrs[i].name ;
+	}
+
+	// the wire status is the PRIMARY's outcome, and it is validated before use
+	if (rec->create_constraint.status > CT_FAILED) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' carries unknown status "
+				"%u", rec->create_constraint.name, rec->create_constraint.status) ;
+		return false ;
+	}
+
+	ConstraintCreateStatus status ;
+	const char *err_msg = NULL ;
+	Constraint c = GraphHub_AddConstraint (gc, (ConstraintType)rec->create_constraint.constraint_type,
+			et, rec->create_constraint.name, props, (uint8_t)rec->create_constraint.n_attrs, false, &status,
+			&err_msg) ;
+
+	switch (status) {
+		case CONSTRAINT_ALREADY_EXISTS:
+			// THE CONVERGENT CASE THE STATUS FIELD EXISTS FOR.
+			//
+			// A constraint validated asynchronously is announced twice: once
+			// on creation while still pending, and again once validation
+			// finishes. This is the second one, and adopting its status is
+			// what makes it converge on the first rather than be discarded.
+			//
+			// GraphHub_AddConstraint returns NULL on this path, so the
+			// constraint has to be looked up to be updated.
+			_AdoptConstraintStatus (s, rec) ;
+			return true ;
+
+		case CONSTRAINT_CREATED:
+			ASSERT (c != NULL) ;
+
+			// THE REPLICA REPLAYS THE PRIMARY'S DECISION, IT DOES NOT
+			// RE-DERIVE IT. Constraint_Enforce scans every entity the
+			// constraint governs; the primary already did that and put the
+			// answer on the wire. A replica validating independently does so
+			// at a different time against different write interleavings, and
+			// can legitimately reach a different status from its primary.
+			_AdoptConstraintStatus (s, rec) ;
+			return true ;
+
+		case CONSTRAINT_ERROR:
+		default:
+			RedisModule_Log (NULL, "warning",
+					"GRAPH.EFFECT CREATE_CONSTRAINT on '%s' failed: %s",
+					rec->create_constraint.name, err_msg != NULL ? err_msg : "unknown error") ;
+			return false ;
+	}
+}
+
+// DROP_CONSTRAINT - mirrors create without the status, which apply never reads
+static bool _ApplyDropConstraint
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	const GraphEntityType et = (GraphEntityType)rec->drop_constraint.entity_type ;
+
+	if (et != GETYPE_NODE && et != GETYPE_EDGE) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT DROP_CONSTRAINT unknown entity type %u",
+				rec->drop_constraint.entity_type) ;
+		return false ;
+	}
+
+	// see _ApplyCreateConstraint: the schema type is derived from entity_type,
+	// not from a field this record does not have
+	const SchemaType st = (et == GETYPE_NODE) ? SCHEMA_NODE : SCHEMA_EDGE ;
+
+	if (_VerifyDDLRefs (gc, st, rec->drop_constraint.schema_id,
+			rec->drop_constraint.name, rec->drop_constraint.attrs,
+			rec->drop_constraint.n_attrs, "DROP_CONSTRAINT") == NULL) {
+		return false ;
+	}
+
+	const char *props[rec->drop_constraint.n_attrs > 0 ? rec->drop_constraint.n_attrs : 1] ;
+	for (uint16_t i = 0 ; i < rec->drop_constraint.n_attrs ; i++) {
+		props[i] = rec->drop_constraint.attrs[i].name ;
+	}
+
+	const char *err_msg = NULL ;
+	if (!GraphHub_DropConstraint (gc, (ConstraintType)rec->drop_constraint.constraint_type, et,
+				rec->drop_constraint.name, props, (uint8_t)rec->drop_constraint.n_attrs, false, &err_msg)) {
+		RedisModule_Log (NULL, "warning",
+				"GRAPH.EFFECT DROP_CONSTRAINT on '%s' failed: %s", rec->drop_constraint.name,
+				err_msg != NULL ? err_msg : "unknown error") ;
+		return false ;
+	}
+
+	return true ;
+}
+
+//------------------------------------------------------------------------------
+// the entry point
+//------------------------------------------------------------------------------
+
+// apply one record
+//
+// split out of EffectsV3_Apply so the streaming path can call it per record as
+// each is decoded. The whole-payload form below is now a loop over this, so
+// there is one switch rather than two that could drift.
+bool EffectsV3_ApplyRecord
+(
+	GraphContext *gc,
+	const EffectsV3Record *rec
+) {
+	ASSERT (gc  != NULL) ;
+	ASSERT (rec != NULL) ;
+
+	if (gc == NULL || rec == NULL) {
+		return false ;
+	}
+
+	{
+		bool ok ;
+
+		switch (rec->opcode) {
+			case EFFECT_ADD_SCHEMA:
+				ok = _ApplyAddSchema (gc, rec) ;
+				break ;
+
+			case EFFECT_ADD_ATTRIBUTE:
+				ok = _ApplyAddAttribute (gc, rec) ;
+				break ;
+
+			case EFFECT_CREATE_NODE:
+				ok = _ApplyCreateNode (gc, rec) ;
+				break ;
+
+			case EFFECT_CREATE_EDGE:
+				ok = _ApplyCreateEdge (gc, rec) ;
+				break ;
+
+			case EFFECT_UPDATE_NODE:
+				ok = _ApplyUpdateNode (gc, rec) ;
+				break ;
+
+			case EFFECT_UPDATE_EDGE:
+				ok = _ApplyUpdateEdge (gc, rec) ;
+				break ;
+
+			case EFFECT_DELETE_NODE:
+				ok = _ApplyDeleteNode (gc, rec) ;
+				break ;
+
+			case EFFECT_DELETE_EDGE:
+				ok = _ApplyDeleteEdge (gc, rec) ;
+				break ;
+
+			case EFFECT_SET_LABELS:
+				ok = _ApplyLabels (gc, rec, true) ;
+				break ;
+
+			case EFFECT_REMOVE_LABELS:
+				ok = _ApplyLabels (gc, rec, false) ;
+				break ;
+
+			case EFFECT_CREATE_INDEX:
+				ok = _ApplyCreateIndex (gc, rec) ;
+				break ;
+
+			case EFFECT_DROP_INDEX:
+				ok = _ApplyDropIndex (gc, rec) ;
+				break ;
+
+			case EFFECT_CREATE_CONSTRAINT:
+				ok = _ApplyCreateConstraint (gc, rec) ;
+				break ;
+
+			case EFFECT_DROP_CONSTRAINT:
+				ok = _ApplyDropConstraint (gc, rec) ;
+				break ;
+
+			default:
+				RedisModule_Log (NULL, "warning",
+						"GRAPH.EFFECT cannot apply record type %d",
+						(int)rec->opcode) ;
+				ok = false ;
+				break ;
+		}
+
+		if (!ok) {
+			// stop at the first failure: the caller treats a false return as
+			// divergence and must not propagate the effects any further
+			return false ;
+		}
+	}
+
+	return true ;
+}
+
+// apply a whole decoded payload
+//
+// KEPT FOR THE ROUND TRIP, alongside EffectsV3_Decode. The production path
+// streams - decode one record, apply it, free it - and this is a loop over the
+// same per-record entry point, so the two cannot disagree about what a record
+// means.
+bool EffectsV3_Apply
+(
+	GraphContext *gc,
+	const EffectsV3Records *records
+) {
+	ASSERT (gc      != NULL) ;
+	ASSERT (records != NULL) ;
+
+	if (gc == NULL || records == NULL) {
+		return false ;
+	}
+
+	// records arrive in apply order and are applied in it. Records 9 and 10
+	// are normatively ahead of anything referencing the ids they introduce, so
+	// nothing here reorders.
+	for (uint32_t i = 0; i < records->n; i++) {
+		if (!EffectsV3_ApplyRecord (gc, records->records + i)) {
+			return false ;
+		}
+	}
+
+	return true ;
+}
