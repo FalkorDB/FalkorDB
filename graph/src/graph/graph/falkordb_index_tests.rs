@@ -387,3 +387,108 @@ fn edge_writes_maintain_the_index() {
         "the cascade removes what the explicit delete did not"
     );
 }
+
+// --- The replica's write paths ---
+//
+// A replica applies effects through its own `Graph` entry points, not the query path's. Each
+// test drives one of them the way `effects::v3::apply` does and checks the replica's column.
+
+/// CREATE_NODE then UPDATE_NODE, as the replica applies them: labels through
+/// `set_node_labels_product`, values through `set_nodes_attributes_rows_of_labels`. The update
+/// must remove the old value as well as add the new one.
+#[test]
+fn replica_node_rows_maintain_the_index() {
+    ensure_graphblas();
+    let mut g = Graph::new(64, 64, 10, 1, "t");
+    let label = Arc::new("Person".to_string());
+    let attr = Arc::new("v".to_string());
+    g.falkordb_index
+        .create_numeric(EntityType::Node, &label, &attr);
+    let lid = g.get_label_id_mut("Person").0 as u64;
+    let aid = g.get_or_create_node_attr_id(&attr);
+
+    // CREATE_NODE: two nodes, v = 5 and 6.
+    let ids = reserve_nodes(&mut g, 2);
+    g.create_nodes(&ids.iter().copied().collect())
+        .expect("freshly reserved ids are creatable");
+    g.set_node_labels_product(&ids, &[lid], &mut FxHashMap::default(), true);
+    g.set_nodes_attributes_rows_of_labels(
+        &ids,
+        &[lid],
+        &[aid],
+        &[Value::Int(5), Value::Int(6)],
+        &mut FxHashMap::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        range_scan(&g, &label, &attr, 0, 100),
+        ids,
+        "created nodes are indexed"
+    );
+
+    // UPDATE_NODE: the first node's v goes 5 -> 9.
+    g.set_nodes_attributes_rows_of_labels(
+        &ids[..1],
+        &[lid],
+        &[aid],
+        &[Value::Int(9)],
+        &mut FxHashMap::default(),
+    )
+    .unwrap();
+    assert!(
+        range_scan(&g, &label, &attr, 5, 5).is_empty(),
+        "the old value is gone"
+    );
+    assert_eq!(range_scan(&g, &label, &attr, 9, 9), vec![ids[0]]);
+}
+
+/// SET_LABELS on a node that already has attributes, as the replica applies it.
+#[test]
+fn replica_set_labels_indexes_existing_attrs() {
+    let (mut g, label, attr, id) = unlabeled_graph_with_index();
+    set_attr(&mut g, id, &attr, Value::Int(5));
+    let lid = g.get_label_id_mut("Person").0 as u64;
+    g.set_node_labels_product(&[id], &[lid], &mut FxHashMap::default(), false);
+    assert_eq!(range_scan(&g, &label, &attr, 4, 6), vec![id]);
+}
+
+/// UPDATE_EDGE, as the replica applies it: one record is one type, through
+/// `set_relationships_attributes_of_type`.
+#[test]
+fn replica_edge_update_of_type_maintains_the_index() {
+    ensure_graphblas();
+    let mut g = Graph::new(64, 64, 10, 1, "t");
+    let ty = Arc::new("R".to_string());
+    let attr = Arc::new("w".to_string());
+    g.falkordb_index
+        .create_numeric(EntityType::Relationship, &ty, &attr);
+    let aid = g.get_or_create_rel_attr_id(&attr);
+    let nodes = reserve_nodes(&mut g, 2);
+    g.create_nodes(&nodes.iter().copied().collect())
+        .expect("freshly reserved ids are creatable");
+    let ids: Vec<u64> = g
+        .relationship_id_space()
+        .reserve(1, &RoaringTreemap::new())
+        .expect("reserved");
+    g.create_relationships_bulk(&ty, &nodes[..1], &nodes[1..], &ids)
+        .expect("freshly reserved ids are creatable");
+    let type_id = g.get_type_id_mut("R");
+
+    let attrs_of = |w: i64| -> FxHashMap<u64, Vec<(u16, Value)>> {
+        std::iter::once((ids[0], vec![(aid, Value::Int(w))])).collect()
+    };
+    g.set_relationships_attributes_of_type(type_id, &attrs_of(10), &mut FxHashMap::default())
+        .unwrap();
+    g.set_relationships_attributes_of_type(type_id, &attrs_of(20), &mut FxHashMap::default())
+        .unwrap();
+
+    let scan = |lo: i64, hi: i64| -> Vec<u64> {
+        g.falkordb_index
+            .numeric(EntityType::Relationship, &ty, &attr)
+            .unwrap()
+            .range(Some(&Value::Int(lo)), Some(&Value::Int(hi)), true, true)
+            .collect()
+    };
+    assert!(scan(10, 10).is_empty(), "the old value is gone");
+    assert_eq!(scan(20, 20), ids);
+}

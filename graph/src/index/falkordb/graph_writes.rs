@@ -87,6 +87,43 @@ pub fn node_attrs_set(
     staged.apply(g);
 }
 
+/// The replica's CREATE_NODE and UPDATE_NODE: node `ids[i]` takes
+/// `rows[i * attr_ids.len() + j]` for attribute `attr_ids[j]`, under the labels in `label_ids`.
+/// As in [`node_attrs_set`], called before the overwrite.
+///
+/// The labels are the record's, not read from the label matrix: the record states the labels
+/// the primary indexed under, and that is what this index must hold too. A created node has no
+/// old values, so it only adds.
+pub fn node_rows_set(
+    g: &mut Graph,
+    ids: &[u64],
+    label_ids: &[u64],
+    attr_ids: &[u16],
+    rows: &[Value],
+) {
+    if !g.falkordb_index.has_columns(EntityType::Node) || attr_ids.is_empty() {
+        return;
+    }
+    let mut staged = Staged::new(EntityType::Node);
+    let attrs: Vec<Option<Arc<String>>> = attr_ids.iter().map(|&a| g.node_attr_name(a)).collect();
+    for (&id, row) in ids.iter().zip(rows.chunks_exact(attr_ids.len())) {
+        for ((&attr_id, attr), new_value) in attr_ids.iter().zip(&attrs).zip(row) {
+            let Some(attr) = attr else {
+                continue;
+            };
+            let old = g.get_node_attribute_by_idx(NodeId::from(id), attr_id);
+            for &label_id in label_ids {
+                let label = &g.get_labels()[label_id as usize];
+                if let Some(old) = &old {
+                    staged.remove(&g.falkordb_index, label, attr, old, id);
+                }
+                staged.add(&g.falkordb_index, label, attr, new_value, id);
+            }
+        }
+    }
+    staged.apply(g);
+}
+
 /// Nodes created in this transaction: every attribute is an add, under the labels in
 /// `new_labels`.
 ///
@@ -163,6 +200,25 @@ pub fn labels_added(
     staged.apply(g);
 }
 
+/// The replica's label add: every node in `ids` gains every label in `label_ids`. As
+/// [`labels_added`], with the pairs left as a product.
+pub fn labels_product_added(
+    g: &mut Graph,
+    ids: &[u64],
+    label_ids: &[u64],
+) {
+    if !g.falkordb_index.has_columns(EntityType::Node) {
+        return;
+    }
+    let mut staged = Staged::new(EntityType::Node);
+    for &label_id in label_ids {
+        for &id in ids {
+            staged.add_node_under_label(g, id, label_id);
+        }
+    }
+    staged.apply(g);
+}
+
 /// REMOVE `:Label`: each `(label_rows[i], label_cols[i])` node loses a label, so its attributes
 /// come out of that label's columns. Without this the entries orphan, and come back as wrong
 /// rows when the id is reused.
@@ -217,6 +273,25 @@ pub fn edge_attrs_set(
     g: &mut Graph,
     attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
 ) {
+    edge_attrs_set_with(g, attrs, None);
+}
+
+/// [`edge_attrs_set`] for edges all of type `type_id`: the replica's UPDATE_EDGE, where one
+/// record is one type. Taking the type saves a type-matrix scan per edge.
+pub fn edge_attrs_set_of_type(
+    g: &mut Graph,
+    type_id: TypeId,
+    attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
+) {
+    edge_attrs_set_with(g, attrs, Some(type_id));
+}
+
+/// `type_id` is the edges' shared type when the caller knows it; `None` looks it up per edge.
+fn edge_attrs_set_with(
+    g: &mut Graph,
+    attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
+    type_id: Option<TypeId>,
+) {
     if !g.falkordb_index.has_columns(EntityType::Relationship) {
         return;
     }
@@ -225,7 +300,10 @@ pub fn edge_attrs_set(
         if written.is_empty() {
             continue;
         }
-        let type_name = edge_type(g, id);
+        let type_name = match type_id {
+            Some(type_id) => &g.get_types()[type_id.0],
+            None => edge_type(g, id),
+        };
         for (attr_id, new_value) in written {
             let Some(attr) = g.rel_attr_name(*attr_id) else {
                 continue;

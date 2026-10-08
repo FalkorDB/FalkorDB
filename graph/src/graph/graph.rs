@@ -1728,6 +1728,9 @@ impl Graph {
         rows: &[Value],
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(usize, usize), String> {
+        // Before the overwrite, while the old values are still readable.
+        #[cfg(feature = "index-falkordb")]
+        graph_writes::node_rows_set(self, ids, label_ids, attr_ids, rows);
         let (nremoved, nset) = self.node_attrs.insert_attrs_rows(ids, attr_ids, rows)?;
 
         if self.node_indexer.has_indices() {
@@ -2028,6 +2031,9 @@ impl Graph {
         index_add_docs: &mut FxHashMap<u64, RoaringTreemap>,
         all_new: bool,
     ) {
+        #[cfg(feature = "index-falkordb")]
+        graph_writes::labels_product_added(self, ids, label_ids);
+
         // Which labels are indexed, decided once per label rather than once per
         // pair. Collected before the mutations below so the immutable borrows
         // of `node_labels` and `node_indexer` end first.
@@ -2759,6 +2765,9 @@ impl Graph {
         attrs: &FxHashMap<u64, Vec<(u16, Value)>>,
         index_add_edge_docs: &mut FxHashMap<u64, RoaringTreemap>,
     ) -> Result<(usize, usize), String> {
+        // Before the overwrite, while the old values are still readable.
+        #[cfg(feature = "index-falkordb")]
+        graph_writes::edge_attrs_set_of_type(self, type_id, attrs);
         let (nremoved, nset) = self.relationship_attrs.insert_attrs(attrs)?;
         self.track_edge_index_updates_of_type(type_id, attrs, index_add_edge_docs);
         Ok((nremoved, nset))
