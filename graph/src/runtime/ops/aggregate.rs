@@ -56,7 +56,12 @@ use thin_vec::ThinVec;
 /// to O(n^2) (algorithmic-complexity DoS). This mirrors the seeded hasher the
 /// value-hash-join operator uses for the same reason, while staying far faster
 /// than the std default SipHash.
-type GroupMap = HashMap<GroupKey, (Row, Row), RandomState>;
+///
+/// The value is `(key row, accumulators, group id)`. The id is the group's
+/// insertion index, unique within one map: it keys the group's DISTINCT state
+/// in `Runtime::value_dedupers`, so two groups never share a seen-set (a hash
+/// of the key row would merge colliding groups).
+type GroupMap = HashMap<GroupKey, (Row, Row, u64), RandomState>;
 
 // ---------------------------------------------------------------------------
 // GroupKey — collision-free composite grouping key
@@ -270,7 +275,7 @@ pub struct AggregateOp<'a> {
     copy_from_parent: &'a [(Variable, Variable)],
     default_acc: Option<Row>,
     errors: std::vec::IntoIter<String>,
-    groups: std::collections::hash_map::IntoIter<GroupKey, (Row, Row)>,
+    groups: std::collections::hash_map::IntoIter<GroupKey, (Row, Row, u64)>,
     pub(crate) idx: NodeIdx<Dyn<IR>>,
     /// Lazily-initialized vectorizable analysis cache.
     vectorized: CachedAggAnalysis,
@@ -513,17 +518,16 @@ impl<'a> AggregateOp<'a> {
         let child = self.child.take().unwrap();
         let default_acc = self.default_acc.take().unwrap();
 
-        // Whether any aggregate uses DISTINCT — gates the per-row group-hash
-        // computation so the common non-distinct path stays free of it.
-        let any_distinct = analysis.agg_kinds.iter().any(|a| a.distinct_idx.is_some());
-
         let mut groups: GroupMap = GroupMap::with_hasher(RandomState::new());
         let mut errors: Vec<String> = Vec::new();
 
         // Pre-insert default group for keyless aggregation.
         if self.keys.is_empty() {
             let key_env = Row::new();
-            groups.insert(GroupKey(GroupKeyVec::new()), (key_env, default_acc.clone()));
+            groups.insert(
+                GroupKey(GroupKeyVec::new()),
+                (key_env, default_acc.clone(), 0),
+            );
         }
 
         for batch_result in child {
@@ -693,6 +697,7 @@ impl<'a> AggregateOp<'a> {
                     key_columns.iter().map(|col| col[row_idx].clone()).collect();
                 let group_key = GroupKey(key_values);
 
+                let next_group_id = groups.len() as u64;
                 let entry = groups.entry(group_key).or_insert_with(|| {
                     let mut key_env = Row::new();
                     for (ki, (name, _tree)) in self.keys.iter().enumerate() {
@@ -705,14 +710,13 @@ impl<'a> AggregateOp<'a> {
                             .unwrap_or(Value::Null);
                         key_env.insert(new_var, val);
                     }
-                    (key_env, default_acc.clone())
+                    (key_env, default_acc.clone(), next_group_id)
                 });
 
-                // Opaque group identifier for DISTINCT dedup — computed only
-                // when an aggregate is distinct, and identically to the per-row
-                // fallback (`entry.0.hash_u64()`) so the shared dedup state in
+                // Group identifier for DISTINCT dedup, shared with the per-row
+                // fallback through the map so the dedup state in
                 // `Runtime::value_dedupers` stays consistent across both paths.
-                let group_id = if any_distinct { entry.0.hash_u64() } else { 0 };
+                let group_id = entry.2;
 
                 let acc = &mut entry.1;
                 for (agg_idx, agg) in analysis.agg_kinds.iter().enumerate() {
@@ -878,7 +882,10 @@ impl<'a> AggregateOp<'a> {
         // Pre-insert default group for keyless aggregation.
         if self.keys.is_empty() {
             let key_env = Row::new();
-            groups.insert(GroupKey(GroupKeyVec::new()), (key_env, default_acc.clone()));
+            groups.insert(
+                GroupKey(GroupKeyVec::new()),
+                (key_env, default_acc.clone(), 0),
+            );
         }
 
         for batch_result in child {
@@ -951,12 +958,13 @@ impl<'a> AggregateOp<'a> {
 
             let group_key = GroupKey(key_values);
 
+            let next_group_id = groups.len() as u64;
             let entry = groups
                 .entry(group_key)
-                .or_insert_with(|| (key_env, default_acc.clone()));
+                .or_insert_with(|| (key_env, default_acc.clone(), next_group_id));
 
-            // Compute group hash for DISTINCT tracking.
-            let agg_group_key = entry.0.hash_u64();
+            // Group identifier for DISTINCT tracking.
+            let agg_group_key = entry.2;
 
             for (_, tree) in agg {
                 if let Err(e) = Self::run_agg_expr(
@@ -1139,7 +1147,7 @@ impl<'a> Iterator for AggregateOp<'a> {
         // Emit finalized groups in batches.
         let mut builder = BatchBuilder::new();
         for _ in 0..BATCH_SIZE {
-            let Some((_group_key, (key, mut acc))) = self.groups.next() else {
+            let Some((_group_key, (key, mut acc, _))) = self.groups.next() else {
                 break;
             };
             match (|| {
@@ -1245,19 +1253,5 @@ fn unbind_agg_accumulators(
                 unbind_agg_accumulators(&child, acc);
             }
         }
-    }
-}
-
-/// Computes a u64 hash of an `Env`, used as an opaque group identifier
-/// for DISTINCT tracking in the per-row fallback path.
-trait HashU64 {
-    fn hash_u64(&self) -> u64;
-}
-
-impl HashU64 for Row {
-    fn hash_u64(&self) -> u64 {
-        let mut hasher = rustc_hash::FxHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish()
     }
 }
