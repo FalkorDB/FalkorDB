@@ -571,3 +571,37 @@ class testTraversalConstruction():
             self.env.assertContains("Node By Label Scan | (p:P)", plan)
             self.env.assertEqual(g.query(q).result_set, [[3]])
         g.delete()
+
+    # A Limit (and every Skip under it) bounds a traverse only when nothing
+    # between them can drop rows: a traverse feeding another traverse or an
+    # ExpandInto must not stop at the Limit, or the rows the upper operator
+    # needed are lost (#2957).
+    def test_limit_budget_through_traversals(self):
+        g = self.db.select_graph("LimitBudgetThroughTraversals")
+        # a1 -> b1 (dead end); a2 <-> b2: only a2 closes the cycle
+        g.query("""CREATE (:A {id:1})-[:R]->(:B {id:10}),
+                          (a2:A {id:2})-[:R]->(b2:B {id:20}), (b2)-[:R]->(a2)""")
+        q = "MATCH (a:A)-[:R]->(b)-[:R]->(a) RETURN a.id LIMIT 1"
+        self.env.assertEqual(g.query(q).result_set, [[2]])
+        g.delete()
+
+        g = self.db.select_graph("LimitBudgetThroughTraversals")
+        # a1 -> b1 (dead end); a2 -> b2 -> c: only a2 has a second hop
+        g.query("""CREATE (:A {id:1})-[:R]->(:B {id:10}),
+                          (:A {id:2})-[:R]->(:B {id:20})-[:R]->(:C {id:30})""")
+        q = "MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 1"
+        self.env.assertEqual(g.query(q).result_set, [[30]])
+        g.delete()
+
+        g = self.db.select_graph("LimitBudgetSkips")
+        g.query("""UNWIND range(1,3) AS i
+                   CREATE (:A {id:i})-[:R]->(:B {id:10*i})-[:R]->(:C {id:100*i})""")
+        cases = [
+            ("MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id SKIP 1 LIMIT 1", 1),
+            ("MATCH (a:A)-[:R]->(b) WITH b SKIP 0 RETURN b.id SKIP 1 LIMIT 1", 1),
+            ("MATCH (a:A)-[:R]->(b) WITH b SKIP 1 RETURN b.id SKIP 1 LIMIT 5", 1),
+            ("MATCH (a:A)-[:R]->(b)-[:R]->(c) RETURN c.id LIMIT 5", 3),
+        ]
+        for q, n in cases:
+            self.env.assertEqual(len(g.query(q).result_set), n)
+        g.delete()
