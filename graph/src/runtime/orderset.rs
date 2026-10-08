@@ -30,8 +30,17 @@ impl<T> Default for OrderSet<T> {
 }
 
 impl<T: PartialEq> OrderSet<T> {
+    /// Wrap `vec` as a set without deduplicating it. The caller guarantees
+    /// the elements are distinct: with a duplicate, `remove` drops only the
+    /// first copy and the element stays present. Checked in debug builds only.
     #[must_use]
-    pub const fn from_vec(vec: Vec<T>) -> Self {
+    pub fn from_vec(vec: Vec<T>) -> Self {
+        debug_assert!(
+            vec.iter()
+                .enumerate()
+                .all(|(i, a)| vec[..i].iter().all(|b| b != a)),
+            "OrderSet::from_vec called with duplicate elements"
+        );
         Self { vec }
     }
 
@@ -143,5 +152,26 @@ impl<T> IntoIterator for OrderSet<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.vec.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_vec_keeps_distinct_elements() {
+        let mut s = OrderSet::from_vec(vec![1, 2, 3]);
+        s.remove(&2);
+        assert!(!s.contains(&2));
+        assert_eq!(s.len(), 2);
+    }
+
+    /// `from_vec` does not deduplicate; a duplicate would survive `remove`.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "duplicate elements")]
+    fn from_vec_rejects_duplicates_in_debug() {
+        let _ = OrderSet::from_vec(vec![1, 1]);
     }
 }
