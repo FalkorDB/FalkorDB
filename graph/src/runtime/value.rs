@@ -842,6 +842,9 @@ impl Hash for Value {
                 let diff = *x - casted as f64;
                 if diff == 0.0 {
                     casted.hash(state);
+                } else if x.is_nan() {
+                    // every NaN is one grouping key, whatever its sign/payload
+                    f64::NAN.to_bits().hash(state);
                 } else {
                     x.to_bits().hash(state);
                 }
@@ -1508,6 +1511,77 @@ impl Value {
         (Ordering::Equal, DisjointOrNull::None)
     }
 
+    /// The total order `ORDER BY` and `list.sort` sort by.
+    ///
+    /// [`CompareValue::compare_value`] answers the three-valued `=`/`<`
+    /// question, and its ordering half is not a total order: NaN is `Less`
+    /// than every number in both directions, `Int` against `Float` rounds the
+    /// integer to `f64` (so `2^53 = 2^53.0 = 2^53+1` while `2^53 < 2^53+1`),
+    /// and maps stop at the first null/disjoint value. `slice::sort_by` panics
+    /// on such a comparator, so sorting uses this order instead:
+    ///
+    /// - values of different types order by type, except that `Int` and
+    ///   `Float` are one numeric type ordered by exact value (no rounding);
+    /// - NaN sorts above every number and equal to itself;
+    /// - lists and paths are lexicographic, then shorter first;
+    /// - maps order by key count, then sorted keys, then values in key order.
+    #[must_use]
+    pub fn sort_cmp(
+        &self,
+        other: &Self,
+    ) -> Ordering {
+        match (self, other) {
+            (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
+            (Self::Int(a), Self::Int(b))
+            | (Self::Datetime(a), Self::Datetime(b))
+            | (Self::Date(a), Self::Date(b))
+            | (Self::Time(a), Self::Time(b))
+            | (Self::Duration(a), Self::Duration(b)) => a.cmp(b),
+            (Self::Float(a), Self::Float(b)) => sort_cmp_f64(*a, *b),
+            (Self::Int(i), Self::Float(f)) => sort_cmp_int_float(*i, *f),
+            (Self::Float(f), Self::Int(i)) => sort_cmp_int_float(*i, *f).reverse(),
+            (Self::String(a), Self::String(b)) => a.cmp(b),
+            (Self::List(a), Self::List(b)) | (Self::Path(a), Self::Path(b)) => a
+                .iter()
+                .zip(b.iter())
+                .map(|(x, y)| x.sort_cmp(y))
+                .find(|o| o.is_ne())
+                .unwrap_or_else(|| a.len().cmp(&b.len())),
+            (Self::Map(a), Self::Map(b)) => Self::sort_cmp_map(a, b),
+            (Self::VecF32(a), Self::VecF32(b)) => a.len().cmp(&b.len()).then_with(|| {
+                a.iter()
+                    .zip(b.iter())
+                    .map(|(x, y)| sort_cmp_f32(*x, *y))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(Ordering::Equal)
+            }),
+            (Self::Node(a), Self::Node(b)) => a.cmp(b),
+            (Self::Relationship(a), Self::Relationship(b)) => a.cmp(b),
+            (Self::Point(a), Self::Point(b)) => sort_cmp_f32(a.longitude, b.longitude)
+                .then_with(|| sort_cmp_f32(a.latitude, b.latitude)),
+            _ => self.order().cmp(&other.order()),
+        }
+    }
+
+    fn sort_cmp_map(
+        a: &OrderMap<Arc<String>, Self>,
+        b: &OrderMap<Arc<String>, Self>,
+    ) -> Ordering {
+        a.len().cmp(&b.len()).then_with(|| {
+            let mut a_keys: Vec<&Arc<String>> = a.keys().collect();
+            a_keys.sort();
+            let mut b_keys: Vec<&Arc<String>> = b.keys().collect();
+            b_keys.sort();
+            a_keys.cmp(&b_keys).then_with(|| {
+                a_keys
+                    .iter()
+                    .map(|key| a[*key].sort_cmp(&b[*key]))
+                    .find(|o| o.is_ne())
+                    .unwrap_or(Ordering::Equal)
+            })
+        })
+    }
+
     /// True when Cypher `=` involving this value can never be TRUE — not even
     /// against an identical copy of itself.
     ///
@@ -1808,6 +1882,64 @@ fn compare_floats(
         Some(Ordering::Greater) => (Ordering::Greater, DisjointOrNull::None),
         None => (Ordering::Less, DisjointOrNull::NaN),
     }
+}
+
+/// Total order on `f64` for sorting: IEEE order for numbers (`-0.0` equals
+/// `0.0`), with NaN above every number and equal to itself.
+#[inline]
+#[must_use]
+pub fn sort_cmp_f64(
+    a: f64,
+    b: f64,
+) -> Ordering {
+    match a.partial_cmp(&b) {
+        Some(ordering) => ordering,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
+/// [`sort_cmp_f64`] for `f32` (points and vectors).
+#[inline]
+fn sort_cmp_f32(
+    a: f32,
+    b: f32,
+) -> Ordering {
+    match a.partial_cmp(&b) {
+        Some(ordering) => ordering,
+        None => a.is_nan().cmp(&b.is_nan()),
+    }
+}
+
+/// Compares an integer with a float by exact value, without rounding the
+/// integer to `f64` (above 2^53 `i as f64` merges neighbouring integers). NaN
+/// sorts above every integer, as in [`sort_cmp_f64`].
+#[inline]
+fn sort_cmp_int_float(
+    i: i64,
+    f: f64,
+) -> Ordering {
+    // 2^63 is exactly representable; every f64 in [-2^63, 2^63) truncates to
+    // an i64 without overflow.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    if f.is_nan() || f >= TWO_POW_63 {
+        return Ordering::Less;
+    }
+    if f < -TWO_POW_63 {
+        return Ordering::Greater;
+    }
+    let whole = f.trunc();
+    // `whole` is integral and in range, so the cast is exact, and so is the
+    // fractional part `f - whole`.
+    i.cmp(&(whole as i64)).then_with(|| {
+        let frac = f - whole;
+        if frac > 0.0 {
+            Ordering::Less
+        } else if frac < 0.0 {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    })
 }
 
 /// Orders two vectors the way C's `SIVector_Compare` does: dimension first,
@@ -2318,5 +2450,178 @@ mod is_never_equal_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod sort_cmp_tests {
+    use super::{OrderMap, Ordering, Value, sort_cmp_f64};
+    use std::sync::Arc;
+
+    const P53: i64 = 1 << 53;
+
+    fn list(items: Vec<Value>) -> Value {
+        Value::List(Arc::new(items.into_iter().collect()))
+    }
+
+    fn map(entries: Vec<(&str, Value)>) -> Value {
+        Value::Map(Arc::new(OrderMap::from_vec(
+            entries
+                .into_iter()
+                .map(|(k, v)| (Arc::new(k.to_string()), v))
+                .collect(),
+        )))
+    }
+
+    fn string(s: &str) -> Value {
+        Value::String(Arc::new(s.to_string()))
+    }
+
+    /// Values on which `compare_value(..).0` is not a total order (#2891),
+    /// plus neighbours of every type so the order between types is covered.
+    fn corpus() -> Vec<Value> {
+        vec![
+            Value::Null,
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Int(i64::MIN),
+            Value::Int(-1),
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(P53 - 1),
+            Value::Int(P53),
+            Value::Int(P53 + 1),
+            Value::Int(P53 + 2),
+            Value::Int(i64::MAX),
+            Value::Float(f64::NEG_INFINITY),
+            Value::Float(-1.5),
+            Value::Float(-0.0),
+            Value::Float(0.0),
+            Value::Float(0.5),
+            Value::Float(1.0),
+            Value::Float(P53 as f64),
+            Value::Float((P53 + 2) as f64),
+            Value::Float(9_223_372_036_854_775_808.0),
+            Value::Float(-9_223_372_036_854_775_808.0),
+            Value::Float(f64::INFINITY),
+            Value::Float(f64::NAN),
+            Value::Float(-f64::NAN),
+            string(""),
+            string("s"),
+            list(vec![]),
+            list(vec![Value::Float(f64::NAN)]),
+            list(vec![Value::Int(1), Value::Null]),
+            list(vec![Value::Int(1), Value::Int(2)]),
+            map(vec![("a", Value::Int(1)), ("b", Value::Int(1))]),
+            map(vec![("a", string("s")), ("b", Value::Int(3))]),
+            map(vec![("a", Value::Int(1)), ("b", Value::Int(2))]),
+            map(vec![("a", Value::Null)]),
+            map(vec![("a", Value::Float(f64::NAN))]),
+            Value::VecF32(Arc::new([1.0, f32::NAN].into_iter().collect())),
+            Value::VecF32(Arc::new([1.0, 2.0].into_iter().collect())),
+        ]
+    }
+
+    /// `sort_cmp` is a total order: reflexive, antisymmetric and transitive
+    /// over every pair and triple of the corpus. `compare_value` breaks each
+    /// of these (NaN, `2^53` Int/Float, maps).
+    #[test]
+    fn sort_cmp_is_a_total_order() {
+        let values = corpus();
+        for a in &values {
+            assert_eq!(a.sort_cmp(a), Ordering::Equal, "{a:?}");
+            for b in &values {
+                let ab = a.sort_cmp(b);
+                assert_eq!(ab, b.sort_cmp(a).reverse(), "{a:?} vs {b:?}");
+                for c in &values {
+                    let bc = b.sort_cmp(c);
+                    if ab == bc {
+                        assert_eq!(a.sort_cmp(c), ab, "{a:?} {b:?} {c:?}");
+                    }
+                    if ab == Ordering::Equal {
+                        assert_eq!(a.sort_cmp(c), bc, "{a:?} {b:?} {c:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nan_sorts_above_every_number_and_below_null() {
+        let nan = Value::Float(f64::NAN);
+        for number in [
+            Value::Int(i64::MAX),
+            Value::Float(f64::INFINITY),
+            Value::Float(-1.0),
+        ] {
+            assert_eq!(nan.sort_cmp(&number), Ordering::Greater);
+            assert_eq!(number.sort_cmp(&nan), Ordering::Less);
+        }
+        assert_eq!(nan.sort_cmp(&Value::Null), Ordering::Less);
+        assert_eq!(sort_cmp_f64(f64::NAN, f64::NAN), Ordering::Equal);
+        assert_eq!(sort_cmp_f64(-0.0, 0.0), Ordering::Equal);
+    }
+
+    #[test]
+    fn int_float_compare_exactly() {
+        let f = Value::Float(P53 as f64);
+        assert_eq!(Value::Int(P53).sort_cmp(&f), Ordering::Equal);
+        assert_eq!(Value::Int(P53 + 1).sort_cmp(&f), Ordering::Greater);
+        assert_eq!(f.sort_cmp(&Value::Int(P53 + 1)), Ordering::Less);
+        assert_eq!(Value::Int(P53 - 1).sort_cmp(&f), Ordering::Less);
+        assert_eq!(Value::Int(1).sort_cmp(&Value::Float(1.5)), Ordering::Less);
+        assert_eq!(
+            Value::Int(2).sort_cmp(&Value::Float(1.5)),
+            Ordering::Greater
+        );
+        assert_eq!(Value::Int(-2).sort_cmp(&Value::Float(-1.5)), Ordering::Less);
+        assert_eq!(
+            Value::Int(-1).sort_cmp(&Value::Float(-1.5)),
+            Ordering::Greater
+        );
+        // i64::MAX rounds up to 2^63 as f64, but is below it.
+        let two_63 = Value::Float(9_223_372_036_854_775_808.0);
+        assert_eq!(Value::Int(i64::MAX).sort_cmp(&two_63), Ordering::Less);
+        assert_eq!(
+            Value::Int(i64::MIN).sort_cmp(&Value::Float(-9_223_372_036_854_775_808.0)),
+            Ordering::Equal
+        );
+    }
+
+    /// The inputs that made `ORDER BY` panic with "comparison function does
+    /// not correctly implement a total order" sort cleanly.
+    #[test]
+    fn sorting_the_panicking_inputs_succeeds() {
+        let nan = f64::NAN;
+        let mut floats: Vec<Value> = [
+            1.0, 6.0, nan, 2.0, nan, 1.0, 3.0, 20.0, 1.0, 12.0, nan, nan, 4.0, nan, nan, nan, 5.0,
+            nan, 6.0, 17.0, 18.0,
+        ]
+        .into_iter()
+        .map(Value::Float)
+        .collect();
+        floats.sort_by(Value::sort_cmp);
+        let numbers: Vec<f64> = floats
+            .iter()
+            .map(|v| match v {
+                Value::Float(f) => *f,
+                _ => unreachable!(),
+            })
+            .collect();
+        assert!(numbers[..13].is_sorted());
+        assert!(numbers[13..].iter().all(|f| f.is_nan()));
+
+        let mut mixed: Vec<Value> = (0..24)
+            .map(|i| {
+                let n = P53 - 1 + (i * 7) % 4;
+                if i % 2 == 0 {
+                    Value::Int(n)
+                } else {
+                    Value::Float(n as f64)
+                }
+            })
+            .collect();
+        mixed.sort_by(Value::sort_cmp);
+        assert!(mixed.is_sorted_by(|a, b| a.sort_cmp(b).is_le()));
     }
 }
