@@ -456,6 +456,21 @@ def test_match_node_by_id():
     assert res1.result_set == res2.result_set == [[1000]]
     assert res1.run_time_ms < res2.run_time_ms
 
+def test_scan_below_outer_child_binds_only_what_the_child_binds():
+    # `WITH b LIMIT 1` / `WITH DISTINCT b` stays below the chain as its leaf,
+    # so the traversals must start from `b`; `c` scores best as a start but no
+    # scan is built for it, so it is not bound there.
+    query(
+        "CREATE (b:A), (d:D), (c {v: 1}), (z:Z), (d)-[:X]->(b), (d)-[:R]->(c), (c)-[:R]->(z)",
+        write=True,
+    )
+    for with_clause in ["WITH b", "WITH b LIMIT 1", "WITH b SKIP 0", "WITH DISTINCT b", "WITH b ORDER BY b"]:
+        res = query(
+            f"MATCH (b:A) {with_clause} MATCH (b)<-[]-(d)-[:R]->(c {{v: 1}})-[:R]->(z) RETURN count(*)"
+        )
+        assert res.result_set == [[1]], with_clause
+
+
 def test_node_labels():
     res = query("CREATE ()", write=True)
     assert res.result_set == []
