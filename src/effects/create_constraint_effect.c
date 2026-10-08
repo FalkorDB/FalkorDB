@@ -6,49 +6,29 @@
 #include "RG.h"
 #include "effects.h"
 #include "effects_internal.h"
+#include "writers/effects_writer.h"
 #include "../util/wire_string.h"
 #include "../graph/graph_hub.h"
 
 #include <stdio.h>
 
 // add a constraint creation effect to buffer
+//
+// forwards to the version's writer; see writers/effects_writer.h
 void EffectsBuffer_AddCreateConstraintEffect
 (
 	EffectsBuffer *buff,          // effect buffer
 	ConstraintType ct,            // constraint type (unique/mandatory)
 	GraphEntityType et,           // entity type (node/edge)
+	uint32_t status,              // ConstraintStatus; v3 only
 	int label_id,                 // label/relationship-type id
 	const char *label,            // label/relationship-type name
 	const AttributeID *attr_ids,  // constrained attribute ids
 	const char **attrs,           // constrained attribute names
 	uint8_t n                     // number of constrained attributes
 ) {
-	//--------------------------------------------------------------------------
-	// effect format:
-	// effect type
-	// constraint type
-	// entity type
-	// label id
-	// label name
-	// attribute count
-	// (attribute id, attribute name) pairs
-	//--------------------------------------------------------------------------
-
-	EffectType eff_t = EFFECT_CREATE_CONSTRAINT ;
-	EffectsBuffer_WriteBytes (&eff_t, sizeof (eff_t), buff) ;
-
-	EffectsBuffer_WriteBytes (&ct, sizeof (ct), buff) ;
-	EffectsBuffer_WriteBytes (&et, sizeof (et), buff) ;
-	EffectsBuffer_WriteBytes (&label_id, sizeof (label_id), buff) ;
-	EffectsBuffer_WriteString (label, buff) ;
-
-	EffectsBuffer_WriteBytes (&n, sizeof (n), buff) ;
-	for (uint8_t i = 0; i < n; i++) {
-		EffectsBuffer_WriteBytes (attr_ids + i, sizeof (AttributeID), buff) ;
-		EffectsBuffer_WriteString (attrs [i], buff) ;
-	}
-
-	EffectsBuffer_IncEffectCount (buff) ;
+	EffectsBuffer_Writer (buff)->CreateConstraint (buff, ct, et, status,
+			label_id, label, attr_ids, attrs, n) ;
 }
 
 // process CreateConstraint effect
