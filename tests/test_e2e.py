@@ -1201,6 +1201,19 @@ def signum(x):
 def test_sign(a):
     res = query("RETURN sign($a)", params={"a": a})
     assert res.result_set == [[signum(a) if a is not None else None]]
+    # sign() returns an Integer even for a Float argument (Python's
+    # -1 == -1.0, so check the type too).
+    if a is not None:
+        assert type(res.result_set[0][0]) is int
+
+
+def test_sign_float_special_values():
+    res = query(
+        "RETURN sign(-2.5), sign(2.5), sign(0.0), sign(-0.0), sign(0.0/0.0), "
+        "sign(1.0/0.0), sign(-1.0/0.0), sign(1e-300)"
+    )
+    assert res.result_set == [[-1, 1, 0, 0, 0, 1, -1, 1]]
+    assert all(type(v) is int for v in res.result_set[0])
 
 
 def test_sqrt():
@@ -1693,6 +1706,31 @@ def test_list_comprehension():
 
 
 @pytest.mark.extra
+def test_syntax_outside_the_grammar_is_rejected():
+    # Each of these used to parse and run.
+    query_exception("RETURN abs(-1,)", "Invalid input")
+    query_exception("MATCH MATCH (n) RETURN n", "Invalid input")
+    query_exception("LOAD CSV WITH FROM 'file://x.csv' AS r RETURN r", "Invalid input")
+    query("CREATE (:SetBracket {x: 1})", write=True)
+    query_exception("MATCH (n:SetBracket) SET [n).x = 5", "Invalid input")
+    query_exception("MATCH (n:SetBracket) REMOVE [n).x", "Invalid input")
+    res = query("MATCH (n:SetBracket) RETURN n.x")
+    assert res.result_set == [[1]]
+    query("MATCH (n:SetBracket) DELETE n", write=True)
+
+
+def test_predicates_after_is_null():
+    res = query("RETURN 1 IS NULL IN [false], 1 IS NOT NULL = true, null IS NULL IS NOT NULL")
+    assert res.result_set == [[True, True, True]]
+
+
+def test_not_not_type_checks_its_operand():
+    query_exception("RETURN NOT NOT 1", "Type mismatch")
+    query_exception("RETURN NOT NOT NOT NOT 1", "Type mismatch")
+    res = query("RETURN NOT NOT true, NOT NOT NOT true, NOT NOT null")
+    assert res.result_set == [[True, False, None]]
+
+
 def test_parentheses():
     lparen = "(" * 10000
     rparen = ")" * 10000
@@ -1709,6 +1747,15 @@ def test_nested_list():
     for _ in range(100):
         expected = [expected]
     assert res.result_set == [expected]
+
+
+def test_block_comments():
+    # A block comment ends at the first `*/`, not at the first `/` (#2901).
+    assert query("RETURN 5 /* a/ -1 //*/").result_set == [[5]]
+    assert query("RETURN 1 /* a/b */ + 1").result_set == [[2]]
+    # A lone `/` is division, and an unterminated `/*` is not a comment.
+    query_exception("RETURN 1 /", "Invalid input")
+    query_exception("RETURN 1 /* never closed", "Invalid input")
 
 
 def test_deep_expression_nesting_is_rejected():

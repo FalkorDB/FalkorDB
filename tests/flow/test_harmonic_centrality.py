@@ -287,7 +287,7 @@ class testCentrality(FlowTestsBase):
         `AxB_dot4__0380400e1e0e1ec6__lg_hll_merge_lg_hll_second` (+ `lg_hll_count`
         apply / `lg_hll_delta` ewise) kernels. The tiny graphs in the tests above
         instead produce the A-bitmap `...eca` dot4 variant. Keeping both shapes
-        under test means `gen_prejit.sh` (which runs this suite with
+        under test means `native-deps prejit` (which runs this suite with
         `--features prejit_harvest`) re-harvests the full HLL PreJIT kernel set
         that ships in `build/graphblas/PreJIT/`; without this larger shape the
         benchmark-relevant `...ec6` kernel would never be exercised and would

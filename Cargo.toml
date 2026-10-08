@@ -3,10 +3,13 @@ members = [
     "graph",
     "fuzz",
     "runtime-fuzz-target", ]
+# native-deps is its own workspace: graph/build.rs uses it as a build-dependency,
+# so it must not inherit this workspace's RUSTFLAGS/target (e.g. an ASAN build).
+exclude = ["native-deps"]
 
 [package]
 name = "falkordb-rs"
-version = "6.0.1"
+version = "6.0.2"
 edition = "2024"
 description = "Graph database"
 license = "SSPL-1.0"
@@ -79,6 +82,6 @@ strip = false
 fuzz = []
 # Drive GraphBLAS at GxB_JIT_ON (full JIT including compile-on-demand) so the
 # JIT cache populates as we exercise the test suite. Consumed by graph's
-# matrix.rs and forwarded by gen_prejit.sh; never enable in shipped builds —
+# matrix.rs and forwarded by `native-deps prejit`; never enable in shipped builds —
 # the runtime image has no compiler and no on-disk cache.
 prejit_harvest = ["graph/prejit_harvest"]
