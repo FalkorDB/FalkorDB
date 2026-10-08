@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::entity_type::EntityType;
-use crate::index::IndexQuery;
+use crate::index::{IndexQuery, IndexType};
 use crate::runtime::value::Value;
 
 use super::encode::encode_numeric;
@@ -142,6 +142,16 @@ impl FalkorDbIndex {
         self.node_columns.is_empty() && self.edge_columns.is_empty()
     }
 
+    /// Whether any column exists for `entity` — the write path's fast path: with none, a hook
+    /// stages nothing and skips the graph reads staging would cost.
+    #[must_use]
+    pub fn has_columns(
+        &self,
+        entity: EntityType,
+    ) -> bool {
+        !self.columns(entity).is_empty()
+    }
+
     /// Number of index columns (node + edge).
     #[must_use]
     pub fn len(&self) -> usize {
@@ -214,6 +224,39 @@ impl FalkorDbIndex {
     ) {
         self.columns_mut(entity)
             .remove(&(label.clone(), attr.clone()));
+    }
+
+    /// CREATE INDEX on the RDB-load path: create each attribute's column empty, if the index
+    /// type has native columns (only Range does). The load fills them with
+    /// [`graph_writes::populate`](super::graph_writes::populate) once every entity is in.
+    pub fn create_unpopulated(
+        &mut self,
+        index_type: &IndexType,
+        entity: EntityType,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+    ) {
+        if *index_type == IndexType::Range {
+            for attr in attrs {
+                self.create_numeric(entity, label, attr);
+            }
+        }
+    }
+
+    /// DROP INDEX: drop each attribute's column, if the index type has native columns. `O(1)`
+    /// each, since it only releases the tree `Arc`.
+    pub fn drop_index(
+        &mut self,
+        index_type: &IndexType,
+        entity: EntityType,
+        label: &Arc<String>,
+        attrs: &[Arc<String>],
+    ) {
+        if *index_type == IndexType::Range {
+            for attr in attrs {
+                self.drop_column(entity, label, attr);
+            }
+        }
     }
 
     /// The numeric column for `(entity, label, attr)`, if one exists and is numeric.
