@@ -1162,6 +1162,32 @@ def test_pow():
     assert res.result_set == [[None]]
 
 
+
+def test_pow_operator_propagates_errors():
+    res = query("RETURN 2 ^ 3, 2 ^ -1, null ^ 2, 2 ^ null")
+    assert res.result_set == [[8.0, 0.5, None, None]]
+
+    # An operand's error must not be dropped.
+    query_exception("RETURN 2 ^ (1/0)", "Division by zero")
+    query_exception("RETURN (1/0) ^ 3", "Division by zero")
+
+    # Non-numeric operands are a type error, like pow().
+    for q in ["RETURN 'a' ^ 2", "RETURN 2 ^ 'a'", "RETURN null ^ 'a'"]:
+        query_exception(
+            q, "Type mismatch: expected Integer, Float, or Null but was String"
+        )
+    query_exception(
+        "UNWIND [1, 2] AS x RETURN x ^ true",
+        "Type mismatch: expected Integer, Float, or Null but was Boolean",
+    )
+
+    # The optimizer must not fold this predicate to constant true and drop
+    # the filter: it is a type error at runtime (C errors too).
+    query_exception(
+        "UNWIND [1, 2] AS x WITH x WHERE x ^ true RETURN x",
+        "Type mismatch",
+    )
+
 def shannon_entropy(data):
     n = len(data)
     counts = Counter(data)
