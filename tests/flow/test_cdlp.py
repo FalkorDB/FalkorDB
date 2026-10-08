@@ -501,3 +501,17 @@ class testCDLP(FlowTestsBase):
         combined_community_count = len(both_communities)
         self.env.assertEqual(combined_community_count, 4)
 
+
+    def test_label_propagation_label_filter_reports_node_ids(self):
+        """With nodeLabels, communityId is the id of a node in the community
+        (as without a filter), not an index into the filtered node set"""
+
+        self.graph.query("""CREATE (:A {id:0}), (:B {id:1}), (:A {id:2}), (:A {id:3})""")
+        self.graph.query("MATCH (a {id:2}), (b {id:3}) CREATE (a)-[:R]->(b)")
+        self.graph.query("MATCH (a {id:0}), (b {id:1}) CREATE (a)-[:R]->(b)")
+
+        res = self.graph.query("""CALL algo.labelPropagation({nodeLabels: ['A']})
+                                  YIELD node, communityId
+                                  RETURN id(node), communityId
+                                  ORDER BY id(node)""").result_set
+        self.env.assertEqual(res, [[0, 0], [2, 2], [3, 3]])
