@@ -10,7 +10,24 @@
 #include "../index/index_field.h"
 #include "../constraint/constraint.h"
 
-#define EFFECTS_VERSION 2  // current effects encoding/decoding version
+// the highest payload version this build can READ
+//
+// a reader accepts any version <= this and dispatches per version, so raising
+// it is how C learns to read a new format
+#define EFFECTS_VERSION 2
+
+// the version a newly created buffer STAMPS
+//
+// deliberately separate from EFFECTS_VERSION: the two numbers answer different
+// questions, and conflating them means raising the read ceiling silently
+// changes what goes on the wire - a peer would read the new version byte and
+// parse the old records under it, which the rollout rule calls silent data loss
+// rather than a degraded mode
+//
+// the ordering constraint is always: teach every reader first, then flip
+// writers. So this trails EFFECTS_VERSION and is moved by the version-switch
+// change (GRAPH.CONFIG SET EFFECTS_VERSION), never by teaching C to read
+#define EFFECTS_VERSION_EMIT 2
 
 // EffectsBuffer is an opaque data structure
 typedef struct _EffectsBuffer EffectsBuffer;

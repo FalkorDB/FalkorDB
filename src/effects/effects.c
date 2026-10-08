@@ -368,7 +368,7 @@ EffectsBuffer *EffectsBuffer_New
 	eb->block_size = n;
 
 	// write effects version to newly created buffer
-	uint8_t v = EFFECTS_VERSION;
+	uint8_t v = EFFECTS_VERSION_EMIT;
 	EffectsBuffer_WriteBytes(&v, sizeof(v), eb);
 
 	return eb;
@@ -394,7 +394,7 @@ void EffectsBuffer_Reset
 	buff->current = buff->head;
 
 	// write effects version
-	uint8_t v = EFFECTS_VERSION;
+	uint8_t v = EFFECTS_VERSION_EMIT;
 	EffectsBuffer_WriteBytes(&v, sizeof(v), buff);
 }
 
