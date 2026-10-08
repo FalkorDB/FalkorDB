@@ -74,13 +74,19 @@ mod block_scaling_bench;
 mod degree_bench;
 #[cfg(test)]
 mod fold_cost_bench;
+#[cfg(test)]
+mod issue_2430_bench;
 pub mod lagraph_bindings;
 pub mod lagraphx_bindings;
 pub mod matrix;
 #[cfg(test)]
 mod me_delta_bench;
+#[cfg(test)]
+mod oscillation_bench;
 pub mod serialization;
 pub mod tensor;
+#[cfg(test)]
+mod tensor_cost_bench;
 pub mod vector;
 pub mod versioned_matrix;
 
