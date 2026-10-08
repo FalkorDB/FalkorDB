@@ -516,6 +516,15 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.env.assertEqual(row[0], row[1])
             self.env.assertEqual(row[2], row[3])
 
+        # startNode(null) and endNode(null) must return null per Cypher specification
+        query = """OPTIONAL MATCH (n)-[r:NONEXISTENT]->() WHERE false RETURN startNode(r), endNode(r)"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[None, None]])
+
+        query = """RETURN startNode(null) AS s, endNode(null) AS e"""
+        result = self.graph.query(query)
+        self.env.assertEqual(result.result_set, [[None, None]])
+
     def test17_to_json(self):
         # Test JSON literal values in an array.
         query = """RETURN toJSON([1, 0.000000000000001, 'str', true, NULL])"""
@@ -625,6 +634,30 @@ class testFunctionCallsFlow(FlowTestsBase):
             self.graph.query(query)
         except redis.ResponseError as e:
             self.env.assertContains("Type mismatch: expected String but was Integer", str(e))
+
+    def test19a_hasLabels_type_mismatch_names_the_received_type(self):
+        # The three explicit arms in `has_labels` name the received type; the
+        # catch-all covers the other 12 Value variants and used to say nothing
+        # about what it got, which is the only type-mismatch message in the file
+        # without a `but was X` clause.
+        for value, expected in [('null', 'Null'),
+                                ('{a: 1}', 'Map'),
+                                ('[1]', 'List'),
+                                ('1', 'Integer'),
+                                ('1.5', 'Float'),
+                                ('true', 'Boolean')]:
+            query = ("MATCH (n) WHERE hasLabels(n, ['person', %s]) "
+                     "RETURN n.name" % value)
+            error = None
+            try:
+                self.graph.query(query)
+            except redis.ResponseError as e:
+                error = str(e)
+            self.env.assertTrue(
+                error is not None,
+                message="hasLabels(n, ['person', %s]) was accepted" % value)
+            self.env.assertContains(
+                "Type mismatch: expected String but was %s" % expected, error)
 
     def test20_keys(self):
         # Test retrieving keys of a nested map

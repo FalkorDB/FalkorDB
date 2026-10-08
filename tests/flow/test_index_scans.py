@@ -1346,3 +1346,14 @@ class testIndexScanFlow():
              "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
              "MATCH (n:L) WHERE n.v = 86400 RETURN n.k"],
             expected_rows=[[['day'], ['int']], [['neg']], [['day']]])
+
+    def test_41_open_bound_includes_infinity(self):
+        # An absent bound is unbounded: `n.v > 0` selects a stored +inf.
+        self._index_vs_scan(
+            [('L', 'v')],
+            "CREATE (:L {v:1.0/0.0, k:'inf'}), (:L {v:-1.0/0.0, k:'-inf'}), (:L {v:1, k:'one'})",
+            ["MATCH (n:L) WHERE n.v > 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v < 0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v >= 1.0/0.0 RETURN n.k",
+             "MATCH (n:L) WHERE n.v <= -1.0/0.0 RETURN n.k"],
+            expected_rows=[[['inf'], ['one']], [['-inf']], [['inf']], [['-inf']]])

@@ -76,6 +76,7 @@ use super::{
     GxB_Print_Level,
     matrix::{self, Dup, Matrix},
     serialization::{Decode, Encode, Reader, Writer},
+    vector::Vector,
 };
 use crate::graph::{
     cow::Cow,
@@ -806,6 +807,31 @@ impl<T> VersionedMatrix<T> {
 }
 
 impl VersionedMatrix<bool> {
+    /// How many effective entries the rows `rows` selects hold, without
+    /// materializing the merged matrix.
+    ///
+    /// Per layer ([`Matrix::count_in_rows`], whose cost follows the selected
+    /// rows), then combined as `|m| + |dp| − |dm|`, which is exact on a bool
+    /// matrix because `dm ⊆ m` and `dp ∩ m = ∅` (see [`Self::nvals`]). An empty
+    /// delta costs nothing. `rows` must be `nrows` long.
+    #[must_use]
+    pub fn count_in_rows(
+        &self,
+        rows: &Vector<bool>,
+    ) -> u64 {
+        // Materializes both deltas under the readers' lock, as every read does.
+        self.wait();
+        self.m.wait();
+        let layer = |l: &Matrix<bool>| {
+            if l.nvals() == 0 {
+                0
+            } else {
+                l.count_in_rows(rows)
+            }
+        };
+        layer(&self.m) + layer(&self.dp) - layer(&self.dm)
+    }
+
     #[must_use]
     #[allow(clippy::iter_without_into_iter)]
     pub fn iter(
@@ -1616,6 +1642,17 @@ mod tests {
         );
         let effective: BTreeSet<(u64, u64)> = v.iter(0, u64::MAX).collect();
         assert_eq!(&effective, model, "effective state diverged from the model");
+        // The per-layer row count, against the model: exact only while the
+        // two invariants above hold, which is what it relies on.
+        for rows in [
+            &[0u64, 14, 77, 161][..],
+            &[7, 21, 35, 70, 112, 154],
+            &[1, 2, 3],
+        ] {
+            let x = super::super::vector::Vector::<bool>::from_sorted_indices(DIM, rows);
+            let want = model.iter().filter(|(i, _)| rows.contains(i)).count() as u64;
+            assert_eq!(v.count_in_rows(&x), want, "count_in_rows({rows:?})");
+        }
     }
 
     /// Deterministic LCG — the sequence must be reproducible so a failure is
