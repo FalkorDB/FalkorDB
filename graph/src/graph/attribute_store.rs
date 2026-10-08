@@ -1376,17 +1376,33 @@ impl AttributeStore {
 
     /// Import pre-resolved attribute data directly.
     /// Skips name resolution and OrderMap construction; used by bulk insert.
+    ///
+    /// The ids come straight from a client-supplied header, so they are brought to
+    /// the span invariant here — unique and real — as the RDB decoder does with its
+    /// `attr_limit` check: a column the dictionary refused to mint
+    /// ([`ATTRIBUTE_ID_NONE`]) is dropped, and of a repeated id the first column is
+    /// kept (the sort is stable). Otherwise a header naming more attributes than the
+    /// id space holds builds a span longer than `Slot::len` (a `u16`) can count:
+    /// 65,536 entries stored `len = 0` and the entity silently lost every property
+    /// (#2539).
     pub fn import_attrs_resolved(
         &mut self,
         data: &mut Vec<(u64, Vec<(u16, Value)>)>,
     ) -> usize {
         let mut nset = 0;
         for (entity_id, mut entries) in data.drain(..) {
+            entries.sort_by_key(|(idx, _)| *idx);
+            entries.dedup_by_key(|(idx, _)| *idx);
+            if entries
+                .last()
+                .is_some_and(|(idx, _)| *idx == ATTRIBUTE_ID_NONE)
+            {
+                entries.pop();
+            }
             if entries.is_empty() {
                 continue;
             }
             nset += entries.len();
-            entries.sort_by_key(|(idx, _)| *idx);
             self.data.set_span(entity_id, &mut entries);
         }
         nset
@@ -2095,6 +2111,37 @@ mod tests {
             store.get_attr_by_idx(7, 0),
             Some(Value::Int(10)),
             "an id wider than u16 must be dropped, not narrowed onto attribute 0"
+        );
+    }
+
+    #[test]
+    fn resolved_import_never_overflows_the_slot_length() {
+        // A bulk header with more names than the id space: every id is minted,
+        // then the dictionary refuses the rest (ATTRIBUTE_ID_NONE), which used to
+        // make 65,536 entries and store `len = 0` — every property lost.
+        for extra in [1usize, 2, 70] {
+            let mut entries: Vec<(u16, Value)> = (0..MAX_ATTRIBUTES)
+                .map(|i| (i as u16, Value::Int(i as i64)))
+                .collect();
+            entries.extend((0..extra).map(|i| (ATTRIBUTE_ID_NONE, Value::Int(-(i as i64)))));
+            let mut store = AttributeStore::default();
+            let nset = store.import_attrs_resolved(&mut vec![(3, entries)]);
+            assert_eq!(nset, MAX_ATTRIBUTES, "extra = {extra}");
+            assert_eq!(store.get_all_attrs_by_id(3).count(), MAX_ATTRIBUTES);
+            assert_eq!(store.get_attr_by_idx(3, 0), Some(Value::Int(0)));
+            assert_eq!(
+                store.get_attr_by_idx(3, (MAX_ATTRIBUTES - 1) as u16),
+                Some(Value::Int((MAX_ATTRIBUTES - 1) as i64))
+            );
+        }
+
+        // a repeated id keeps its first value and is stored once
+        let mut store = AttributeStore::default();
+        let entries = vec![(0, Value::Int(1)), (1, Value::Int(2)), (0, Value::Int(3))];
+        assert_eq!(store.import_attrs_resolved(&mut vec![(0, entries)]), 2);
+        assert_eq!(
+            store.get_all_attrs_by_id(0).collect::<Vec<_>>(),
+            vec![(0, Value::Int(1)), (1, Value::Int(2))]
         );
     }
 
